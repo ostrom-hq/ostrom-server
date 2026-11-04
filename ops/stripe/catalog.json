@@ -46,7 +46,7 @@
     "headline": "Ostrom billing",
     "privacyPolicyUrl": "https://ostrom.run/legal/privacy",
     "termsOfServiceUrl": "https://ostrom.run/legal/terms",
-    "returnUrl": "https://app.ostrom.run/settings/billing"
+    "returnUrl": "https://app.ostrom.run/billing"
   },
   "webhook": {
     "url": "https://api.ostrom.run/webhooks/stripe",

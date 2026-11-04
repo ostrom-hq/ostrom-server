@@ -25,8 +25,18 @@ enum class MemberRole {
  * @property orgId The org.
  * @property memberId The member, stable across tokens.
  * @property role The member's role in the org.
+ * @property launchId The launch whose agent token made the request (`POST /launches`), or null for the member's own
+ *   credential: the journal and the usage events keep it, so an agent's call is told from the person's.
+ * @property workflowId The workflow that launch plays (`createLaunch.workflowId`), or null: the model calls of an agent
+ *   whose launch names a workflow count under it, for its budgets and its spending.
  */
-data class Caller(val orgId: Uuid, val memberId: Uuid, val role: MemberRole) {
+data class Caller(
+    val orgId: Uuid,
+    val memberId: Uuid,
+    val role: MemberRole,
+    val launchId: String? = null,
+    val workflowId: String? = null,
+) {
     /**
      * Refuses a member who does not administer the org.
      *

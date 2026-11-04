@@ -29,6 +29,8 @@ class StripeMockTest {
         }
         val gateway = StripeGatewayImpl(HttpClient(), StripeConfig("sk_test_123", url))
         val customer = gateway.createCustomer(Uuid.random(), "Acme", "a@acme.dev")
+        gateway.updateCustomerEmail(customer, "billing@acme.dev")
+        gateway.customerEmail(customer)
         val price = gateway.priceId("ostrom_team_monthly")
         val checkout = gateway.createCheckoutSession(
             CheckoutRequest(Uuid.random(), customer, price, 2, "https://a/s", "https://a/c")
@@ -39,6 +41,7 @@ class StripeMockTest {
         gateway.changePrice(subscription.id, "si_123", price, 2, Proration.CREATE_PRORATIONS)
         gateway.setCancelAtPeriodEnd(subscription.id, true)
         gateway.setQuantity(subscription.id, "si_123", 3)
+        gateway.cancelNow(subscription.id)
         gateway.recordActivePerson(customer, "mock-${Uuid.random()}", Clock.System.now())
         gateway.listInvoices(customer, 3)
     }

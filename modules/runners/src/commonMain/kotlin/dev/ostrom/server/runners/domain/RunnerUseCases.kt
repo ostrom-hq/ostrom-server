@@ -43,6 +43,37 @@ data class HeartbeatAnswer(
     val state: SessionState,
 )
 
+/**
+ * Checks a runner token before anything else of its call is read: the runner channel is outside the members'
+ * authentication, so without this a forged `Authorization` header would make the server read and parse a body
+ * (SECURITY-AUDIT S2-46).
+ */
+interface CheckRunnerTokenUseCase {
+    /**
+     * Checks a token.
+     *
+     * @param token The runner token, as presented.
+     *
+     * @throws RunnerUnauthenticatedException When no current execution holds it.
+     */
+    suspend operator fun invoke(token: String)
+}
+
+/**
+ * [CheckRunnerTokenUseCase] on the repository.
+ *
+ * @param repository The sessions.
+ * @param tokens Hashes the presented token.
+ */
+class CheckRunnerTokenUseCaseImpl(
+    private val repository: CloudSessionsRepository,
+    private val tokens: RunnerTokens,
+) : CheckRunnerTokenUseCase {
+    override suspend fun invoke(token: String) {
+        repository.findByRunnerTokenHash(tokens.hash(token)) ?: throw RunnerUnauthenticatedException()
+    }
+}
+
 /** The runner channel: authenticates a runner by its token and records its heartbeats. */
 interface RunnerHeartbeatUseCase {
     /**
@@ -64,11 +95,13 @@ interface RunnerHeartbeatUseCase {
  *
  * @param repository The sessions.
  * @param tokens Hashes the presented token.
+ * @param usage Counts the execution time.
  * @param clock The time.
  */
 class RunnerHeartbeatUseCaseImpl(
     private val repository: CloudSessionsRepository,
     private val tokens: RunnerTokens,
+    private val usage: CloudUsageMeter,
     private val clock: Clock,
 ) : RunnerHeartbeatUseCase {
     // The three refusals are the runner protocol's answers (unknown token, fenced, lost every race).
@@ -85,7 +118,9 @@ class RunnerHeartbeatUseCaseImpl(
             if (stored != null) {
                 val last = session.lastHeartbeatAt ?: session.executionStartedAt ?: now
                 val seconds = (now - last).inWholeSeconds.coerceIn(0, MAX_BILLED_GAP.inWholeSeconds)
-                if (seconds > 0) repository.addUsage(session.orgId, monthOf(now), seconds)
+                // The execution's first report counts its session once, even when no second has passed yet.
+                val first = session.lastHeartbeatAt == null
+                if (seconds > 0 || first) usage.record(session.orgId, seconds, first, now)
                 return HeartbeatAnswer(instructionFor(stored), stored.state)
             }
         }

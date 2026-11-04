@@ -4,6 +4,7 @@
 package dev.ostrom.runner
 
 import kotlinx.cinterop.ExperimentalForeignApi
+import dev.ostrom.runner.pty.ostrom_pipe_spawn
 import dev.ostrom.runner.pty.ostrom_pty_resize
 import dev.ostrom.runner.pty.ostrom_pty_spawn
 import kotlinx.cinterop.IntVar
@@ -25,6 +26,7 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import platform.posix.EINTR
 import platform.posix.POLLIN
 import platform.posix.SIGKILL
@@ -51,6 +53,9 @@ import kotlin.time.Duration.Companion.seconds
 class PtyTerminal private constructor(val pid: Int, private val master: Int, private val grace: Duration) : Terminal {
     private val closed = AtomicInt(0)
     private val buffer = ByteArray(CHUNK)
+    private val exit = AtomicInt(RUNNING)
+
+    override val exitCode: Int? get() = exit.value.takeIf { it != RUNNING }
 
     override suspend fun read(): ByteArray? = withContext(Dispatchers.IO) {
         // A short poll before the read: a blocked read() would ignore a cancellation until the PTY speaks.
@@ -60,8 +65,9 @@ class PtyTerminal private constructor(val pid: Int, private val master: Int, pri
         if (count > 0L) {
             buffer.copyOf(count.toInt())
         } else {
-            // 0 or EIO: the last process holding the PTY's slave side is gone.
-            reap()
+            // 0 or EIO: the last process holding the PTY's slave side is gone. The shell's exit is waited for, a grace
+            // at most, so that its code is known.
+            withTimeoutOrNull(grace) { while (!reap()) delay(POLL) }
             null
         }
     }
@@ -91,7 +97,7 @@ class PtyTerminal private constructor(val pid: Int, private val master: Int, pri
         }
     }
 
-    override fun resize(columns: Int, rows: Int) {
+    override suspend fun resize(columns: Int, rows: Int) {
         ostrom_pty_resize(master, columns, rows)
     }
 
@@ -110,15 +116,30 @@ class PtyTerminal private constructor(val pid: Int, private val master: Int, pri
         if (closed.compareAndSet(0, 1)) platform.posix.close(master)
     }
 
-    /** Collects the shell's exit if it ended; true once it has. */
+    /** Collects the shell's exit if it ended, and its code; true once it has. */
     private fun reap(): Boolean = memScoped {
         val status = alloc<IntVar>()
         val result = waitpid(pid, status.ptr, WNOHANG)
+        if (result == pid) exit.compareAndSet(RUNNING, code(status.value))
         result == pid || result < 0
+    }
+
+    /**
+     * Starts `sh -c script` without a terminal (a check of the check host): no input, stdout and stderr on one pipe.
+     * Its terminal ignores keystrokes and sizes.
+     */
+    object Pipes : TerminalStarter {
+        override suspend fun start(script: String, environment: Map<String, String>, directory: String): Terminal =
+            spawnPipe(listOf(SHELL, "-c", script), environment, directory, GRACE)
     }
 
     /** Constants and readers of the enclosing type. */
     companion object : TerminalStarter {
+        private const val RUNNING = -1
+        private const val SIGNAL_MASK = 0x7f
+        private const val CODE_MASK = 0xff
+        private const val CODE_SHIFT = 8
+        private const val SIGNALED = 128
         private const val CHUNK = 16 * 1024
         private val POLL = 100.milliseconds
         const val SHELL = "/bin/sh"
@@ -126,7 +147,7 @@ class PtyTerminal private constructor(val pid: Int, private val master: Int, pri
         private const val ROWS = 40
         private val GRACE = 10.seconds
 
-        override fun start(script: String, environment: Map<String, String>, directory: String): Terminal =
+        override suspend fun start(script: String, environment: Map<String, String>, directory: String): Terminal =
             spawn(listOf(SHELL, "-c", script), environment, directory, COLUMNS, ROWS, GRACE)
 
         /**
@@ -163,6 +184,43 @@ class PtyTerminal private constructor(val pid: Int, private val master: Int, pri
             val pid = ostrom_pty_spawn(argv.first(), arguments, envp, directory, columns, rows, master.ptr)
             check(pid > 0) { "Could not open a PTY: ${strerror(errno)?.toKString()}" }
             PtyTerminal(pid, master.value, grace)
+        }
+
+        /**
+         * Starts a program without a terminal: stdin is /dev/null, stdout and stderr go to one pipe.
+         *
+         * @param argv The program (absolute path) and its arguments.
+         * @param environment Its environment.
+         * @param directory Its working directory.
+         * @param grace The SIGTERM grace of [terminate].
+         *
+         * @return The process, read through its pipe.
+         *
+         * @throws IllegalStateException When the process cannot be started.
+         */
+        fun spawnPipe(
+            argv: List<String>,
+            environment: Map<String, String>,
+            directory: String,
+            grace: Duration,
+        ): PtyTerminal = memScoped {
+            val arguments = allocArray<CPointerVar<ByteVar>>(argv.size + 1)
+            argv.forEachIndexed { index, value -> arguments[index] = value.cstr.ptr }
+            arguments[argv.size] = null
+            val variables = environment.entries.map { "${it.key}=${it.value}" }
+            val envp = allocArray<CPointerVar<ByteVar>>(variables.size + 1)
+            variables.forEachIndexed { index, value -> envp[index] = value.cstr.ptr }
+            envp[variables.size] = null
+            val output = alloc<IntVar>()
+            val pid = ostrom_pipe_spawn(argv.first(), arguments, envp, directory, output.ptr)
+            check(pid > 0) { "Could not start the process: ${strerror(errno)?.toKString()}" }
+            PtyTerminal(pid, output.value, grace)
+        }
+
+        /** The exit code of a `waitpid` status: its code, or 128 + the signal that ended it. */
+        private fun code(status: Int): Int {
+            val signal = status and SIGNAL_MASK
+            return if (signal == 0) (status shr CODE_SHIFT) and CODE_MASK else SIGNALED + signal
         }
     }
 }

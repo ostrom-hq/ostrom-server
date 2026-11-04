@@ -3,6 +3,8 @@ headers = stdlib.h
 linkerOpts.linux = -lutil
 ---
 #include <stdlib.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <signal.h>
 #include <sys/ioctl.h>
@@ -11,7 +13,51 @@ linkerOpts.linux = -lutil
 #include <util.h>
 #else
 #include <pty.h>
+#include <sys/prctl.h>
+#include <sys/syscall.h>
+/* close_range is 436 on every architecture; the toolchain's headers may predate it. */
+#ifndef SYS_close_range
+#define SYS_close_range 436
 #endif
+#endif
+
+/*
+ * In the child, before exec: closes every descriptor above stderr, so that a script never inherits the host's own
+ * (its connection to the runner, a socket of the runtime) whether or not they were opened close-on-exec.
+ */
+static inline void ostrom_close_inherited(void) {
+#ifdef __linux__
+    if (syscall(SYS_close_range, 3U, ~0U, 0U) == 0) return;
+#endif
+    long max = sysconf(_SC_OPEN_MAX);
+    if (max < 0 || max > 65536) max = 65536;
+    for (int fd = 3; fd < max; fd++) close(fd);
+}
+
+/*
+ * The check host, as the pid 1 of its container: no longer dumpable, so that a script of the same uid can neither
+ * trace it nor read its memory or descriptors. Returns 0, or -1 when the call failed or this is not Linux.
+ */
+static inline int ostrom_check_host_harden(void) {
+#ifdef __linux__
+    return prctl(PR_SET_DUMPABLE, 0, 0, 0, 0);
+#else
+    return -1;
+#endif
+}
+
+/*
+ * After a check: SIGKILL to every other process of this uid in the container, which kill(-1) reaches (never the
+ * caller, never pid 1). Only on Linux and only as the pid 1 of a container: anywhere else it would reach the user's
+ * own processes. Returns 0, or -1 when it failed or was skipped.
+ */
+static inline int ostrom_check_host_sweep(void) {
+#ifdef __linux__
+    /* ESRCH: nothing was left behind. */
+    if (getpid() == 1) return kill(-1, SIGKILL) == 0 || errno == ESRCH ? 0 : -1;
+#endif
+    return -1;
+}
 
 /*
  * Starts `file` with `argv` and `envp` in a new session on a new PTY of `columns` x `rows`, in `dir`. Everything
@@ -33,10 +79,55 @@ static inline int ostrom_pty_spawn(const char *file, char *const argv[], char *c
         signal(SIGQUIT, SIG_DFL);
         signal(SIGTERM, SIG_DFL);
         signal(SIGCHLD, SIG_DFL);
+        ostrom_close_inherited();
         if (dir != NULL && chdir(dir) != 0) _exit(126);
         execve(file, argv, envp);
         _exit(127);
     }
+    return pid;
+}
+
+/*
+ * Starts `file` with `argv` and `envp` in a new session, without a terminal, in `dir`: stdin is /dev/null, stdout and
+ * stderr both go to one pipe, whose read end is returned in *out (close-on-exec). Everything between fork and exec
+ * runs here, in C. Returns the child's pid, or -1.
+ */
+static inline int ostrom_pipe_spawn(const char *file, char *const argv[], char *const envp[], const char *dir,
+                                    int *out) {
+    int fds[2];
+    if (pipe(fds) != 0) return -1;
+    fcntl(fds[0], F_SETFD, FD_CLOEXEC);
+    pid_t pid = fork();
+    if (pid == 0) {
+        sigset_t none;
+        sigemptyset(&none);
+        sigprocmask(SIG_SETMASK, &none, NULL);
+        signal(SIGPIPE, SIG_DFL);
+        signal(SIGINT, SIG_DFL);
+        signal(SIGQUIT, SIG_DFL);
+        signal(SIGTERM, SIG_DFL);
+        signal(SIGCHLD, SIG_DFL);
+        setsid();
+        int input = open("/dev/null", O_RDONLY);
+        if (input >= 0 && input != 0) {
+            dup2(input, 0);
+            close(input);
+        }
+        dup2(fds[1], 1);
+        dup2(fds[1], 2);
+        close(fds[0]);
+        if (fds[1] > 2) close(fds[1]);
+        ostrom_close_inherited();
+        if (dir != NULL && chdir(dir) != 0) _exit(126);
+        execve(file, argv, envp);
+        _exit(127);
+    }
+    close(fds[1]);
+    if (pid < 0) {
+        close(fds[0]);
+        return -1;
+    }
+    *out = fds[0];
     return pid;
 }
 

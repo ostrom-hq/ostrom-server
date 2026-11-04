@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.usage
 
+import dev.ostrom.server.gateway.domain.ModelUsageSink
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.EnvironmentConfigSource
 import dev.ostrom.server.kernel.config.InvalidConfigException
@@ -9,12 +10,15 @@ import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.secrets.domain.CallerResolver
 import dev.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
+import dev.ostrom.server.sessions.domain.services.SessionCosts
 import dev.ostrom.server.usage.domain.IngestUsageEventsUseCase
 import dev.ostrom.server.usage.domain.IngestUsageEventsUseCaseImpl
 import dev.ostrom.server.usage.domain.ListUsageEventsUseCase
 import dev.ostrom.server.usage.domain.ListUsageEventsUseCaseImpl
 import dev.ostrom.server.usage.domain.PurgeUsageUseCase
 import dev.ostrom.server.usage.domain.PurgeUsageUseCaseImpl
+import dev.ostrom.server.usage.domain.SpendAdmission
+import dev.ostrom.server.usage.domain.SpendAdmissionImpl
 import dev.ostrom.server.usage.domain.SpendReader
 import dev.ostrom.server.usage.domain.SpendReaderImpl
 import dev.ostrom.server.usage.domain.UsageFeed
@@ -27,6 +31,8 @@ import dev.ostrom.server.usage.domain.UsageSummaryUseCase
 import dev.ostrom.server.usage.domain.UsageSummaryUseCaseImpl
 import dev.ostrom.server.usage.domain.WatchUsageUseCase
 import dev.ostrom.server.usage.domain.WatchUsageUseCaseImpl
+import dev.ostrom.server.usage.infrastructure.LedgerModelUsageSink
+import dev.ostrom.server.usage.infrastructure.LedgerSessionCosts
 import dev.ostrom.server.usage.infrastructure.UsageFeedImpl
 import dev.ostrom.server.usage.infrastructure.UsageMigrations
 import dev.ostrom.server.usage.infrastructure.UsageRepositoryImpl
@@ -78,8 +84,8 @@ data class UsageConfig(val retention: Duration) {
 }
 
 /**
- * The usage module: the central ledger. It binds [UsageRecorder] and [SpendReader], which the gateway, the budgets and
- * the sharing modules use.
+ * The usage module: the central ledger. It binds [UsageRecorder], [SpendReader] and [SpendAdmission], which the
+ * gateway, the budgets and the sharing modules use.
  */
 object UsageModule : ServerModule {
     override val name: String = "usage"
@@ -89,7 +95,11 @@ object UsageModule : ServerModule {
         single<UsageRepository> { UsageRepositoryImpl(get()) }
         single<UsageFeed> { UsageFeedImpl() }
         single<UsageRecorder> { UsageRecorderImpl(get(), get(), get()) }
+        // The ports of the gateway and the sessions, which fall back to dropping everything without this module.
+        single<ModelUsageSink> { LedgerModelUsageSink(get()) }
+        single<SessionCosts> { LedgerSessionCosts(get()) }
         single<SpendReader> { SpendReaderImpl(get()) }
+        single<SpendAdmission> { SpendAdmissionImpl(get(), get()) }
         single<IngestUsageEventsUseCase> { IngestUsageEventsUseCaseImpl(get(), get(), get()) }
         single<UsageSummaryUseCase> { UsageSummaryUseCaseImpl(get(), get()) }
         single<UsageReportUseCase> { UsageReportUseCaseImpl(get(), get()) }

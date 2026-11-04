@@ -1,15 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.budgets
 
+import dev.ostrom.server.budgets.domain.BudgetAction
 import dev.ostrom.server.budgets.domain.BudgetAlert
 import dev.ostrom.server.budgets.domain.BudgetAlerts
 import dev.ostrom.server.budgets.domain.BudgetDecisionCache
+import dev.ostrom.server.budgets.domain.BudgetLimit
 import dev.ostrom.server.budgets.domain.BudgetLimits
 import dev.ostrom.server.budgets.domain.BudgetSettings
+import dev.ostrom.server.budgets.domain.BudgetTarget
+import dev.ostrom.server.budgets.domain.BudgetWindow
 import dev.ostrom.server.budgets.domain.BudgetsRepository
+import dev.ostrom.server.budgets.domain.ExceededBudget
 import dev.ostrom.server.budgets.domain.MemberBudget
-import dev.ostrom.server.budgets.domain.SharedLimit
+import dev.ostrom.server.budgets.domain.WorkflowBudget
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalChannel.BROWSER
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.logging.LogLevel
@@ -45,6 +51,8 @@ object TestCallers {
         "stranger" to null,
     )
 
+    private val browserScopes = setOf(RelayScopes.ALL_USER)
+
     /** The scopes and kind of each token: a browser session has every user scope (`user:*`). */
     private val principals = mapOf(
         "agent-a" to (PrincipalKind.SERVICE to setOf(RelayScopes.AGENT_SESSION)),
@@ -68,10 +76,14 @@ object TestCallers {
         single<Clock> { clock }
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
-                override suspend fun authenticate(token: String): AuthenticatedPrincipal? {
-                    if (token !in byToken) return null
-                    val (kind, scopes) = principals[token] ?: (PrincipalKind.USER to setOf(RelayScopes.ALL_USER))
-                    return AuthenticatedPrincipal(token, kind, scopes)
+                override suspend fun authenticate(token: String): AuthenticatedPrincipal? = when {
+                    token !in byToken -> null
+                    // A token without its own kind is a browser session, with every user scope.
+                    token !in principals ->
+                        AuthenticatedPrincipal(token, PrincipalKind.USER, browserScopes, channel = BROWSER)
+                    else -> principals.getValue(token).let { (kind, scopes) ->
+                        AuthenticatedPrincipal(token, kind, scopes)
+                    }
                 }
             }
         }
@@ -104,9 +116,11 @@ class RecordingLogger : Logger {
     override fun with(fields: Map<String, Any?>): Logger = this
 }
 
-/** Spend by (org, member), member null for the org's total; counts the reads. */
+/** Spend by (org, member), member null for the org's total, and by (org, workflow); counts the reads. */
 class FakeSpendReader : SpendReader {
     val spent = mutableMapOf<Pair<Uuid, Uuid?>, Long>()
+    val workflowSpent = mutableMapOf<Pair<Uuid, String>, Long>()
+    val workflowReads = mutableListOf<Pair<Uuid, String>>()
     val reads = mutableListOf<Pair<Uuid, Uuid?>>()
     val sinces = mutableListOf<Instant>()
 
@@ -124,6 +138,11 @@ class FakeSpendReader : SpendReader {
     }
 
     override suspend fun accountSpentMicros(orgId: Uuid, accountId: Uuid, since: Instant): Long = 0
+
+    override suspend fun workflowSpentMicros(orgId: Uuid, workflowId: String, since: Instant): Long {
+        workflowReads += orgId to workflowId
+        return workflowSpent[orgId to workflowId] ?: 0
+    }
 }
 
 /** Keeps every alert published; can fail. */
@@ -146,50 +165,82 @@ class RecordingCache : BudgetDecisionCache {
     }
 }
 
-/** [BudgetsRepository] in memory. */
+/**
+ * [BudgetsRepository] in memory. [orgLimits], [defaultLimits] and [memberLimits] hold the monthly limits that stop
+ * (a member's may also warn); [otherLimits] the subjects' other limits, by the day or that warn.
+ */
 class InMemoryBudgetsRepository : BudgetsRepository {
     val orgLimits = mutableMapOf<Uuid, Long>()
     val defaultLimits = mutableMapOf<Uuid, Long>()
     val memberLimits = mutableMapOf<Pair<Uuid, Uuid>, MemberBudget>()
+    val otherLimits = mutableMapOf<Pair<Uuid, BudgetTarget>, List<BudgetLimit>>()
+    val exceeded = mutableListOf<Pair<Uuid, ExceededBudget>>()
     val marked = mutableSetOf<List<Any?>>()
     var limitReads = 0
     var markFailure: Exception? = null
 
+    private fun others(orgId: Uuid, target: BudgetTarget) = otherLimits[orgId to target].orEmpty()
+
+    private fun org(orgId: Uuid) =
+        listOfNotNull(orgLimits[orgId]?.let { BudgetLimit(it) }) + others(orgId, BudgetTarget.Org)
+
+    private fun defaultMember(orgId: Uuid) =
+        listOfNotNull(defaultLimits[orgId]?.let { BudgetLimit(it) }) + others(orgId, BudgetTarget.DefaultMember)
+
+    private fun member(orgId: Uuid, memberId: Uuid) =
+        listOfNotNull(memberLimits[orgId to memberId]?.limit) + others(orgId, BudgetTarget.Member(memberId))
+
     override suspend fun settings(orgId: Uuid, maxOverrides: Int) = BudgetSettings(
-        orgLimits[orgId],
-        defaultLimits[orgId],
+        org(orgId),
+        defaultMember(orgId),
         memberLimits.filterKeys { it.first == orgId }.values.sortedBy { it.memberId.toString() }.take(maxOverrides),
+        otherLimits.filterKeys { it.first == orgId }.mapNotNull { (key, limits) ->
+            (key.second as? BudgetTarget.Workflow)?.let { target ->
+                limits.map { WorkflowBudget(target.workflowId, it, Instant.fromEpochSeconds(0)) }
+            }
+        }.flatten().sortedBy { it.workflowId },
     )
 
-    override suspend fun limits(orgId: Uuid, memberId: Uuid): BudgetLimits {
+    override suspend fun limits(orgId: Uuid, memberId: Uuid, workflowId: String?): BudgetLimits {
         limitReads++
-        return BudgetLimits(orgLimits[orgId], memberLimits[orgId to memberId]?.limitMicros ?: defaultLimits[orgId])
+        return BudgetLimits(
+            org(orgId),
+            member(orgId, memberId).ifEmpty { defaultMember(orgId) },
+            workflowId?.let { others(orgId, BudgetTarget.Workflow(it)) }.orEmpty(),
+        )
     }
 
-    override suspend fun putOrgLimits(
-        orgId: Uuid,
-        orgLimitMicros: Long?,
-        defaultMemberLimitMicros: Long?,
-        at: Instant,
-    ) {
-        if (orgLimitMicros == null) orgLimits.remove(orgId) else orgLimits[orgId] = orgLimitMicros
-        if (defaultMemberLimitMicros == null) {
-            defaultLimits.remove(orgId)
-        } else {
-            defaultLimits[orgId] = defaultMemberLimitMicros
+    override suspend fun replaceLimits(orgId: Uuid, target: BudgetTarget, limits: List<BudgetLimit>, at: Instant) {
+        val monthly = limits.firstOrNull { it.window == BudgetWindow.MONTH }
+        val kept = when (target) {
+            BudgetTarget.Org -> orgLimits.store(orgId, monthly)
+            BudgetTarget.DefaultMember -> defaultLimits.store(orgId, monthly)
+            is BudgetTarget.Member -> {
+                val key = orgId to target.memberId
+                if (monthly == null) {
+                    memberLimits.remove(key)
+                } else {
+                    memberLimits[key] =
+                        MemberBudget(target.memberId, monthly.micros, at, monthly.window, monthly.action)
+                }
+                monthly
+            }
+            is BudgetTarget.Workflow -> null
         }
+        val rest = limits.filter { it !== kept }
+        if (rest.isEmpty()) otherLimits.remove(orgId to target) else otherLimits[orgId to target] = rest
     }
 
-    override suspend fun putSharedLimit(orgId: Uuid, limit: SharedLimit, limitMicros: Long?, at: Instant) {
-        val limits = if (limit == SharedLimit.ORG) orgLimits else defaultLimits
-        if (limitMicros == null) limits.remove(orgId) else limits[orgId] = limitMicros
+    /** Keeps a monthly limit that stops in this map; returns it, or null when it belongs with the others. */
+    private fun MutableMap<Uuid, Long>.store(orgId: Uuid, monthly: BudgetLimit?): BudgetLimit? {
+        val stops = monthly?.takeIf { it.action == BudgetAction.BLOCK }
+        if (stops == null) remove(orgId) else this[orgId] = stops.micros
+        return stops
     }
 
-    override suspend fun putMemberLimit(orgId: Uuid, memberId: Uuid, limitMicros: Long, at: Instant): MemberBudget =
-        MemberBudget(memberId, limitMicros, at).also { memberLimits[orgId to memberId] = it }
-
-    override suspend fun deleteMemberLimit(orgId: Uuid, memberId: Uuid): Boolean =
-        memberLimits.remove(orgId to memberId) != null
+    override suspend fun removeWorkflow(orgId: Uuid, workflowId: String) {
+        otherLimits.remove(orgId to BudgetTarget.Workflow(workflowId))
+    }
 
     override suspend fun markAlerted(alert: BudgetAlert, at: Instant): Boolean {
         markFailure?.let { throw it }
@@ -200,5 +251,17 @@ class InMemoryBudgetsRepository : BudgetsRepository {
         marked.remove(alert.markKey())
     }
 
-    private fun BudgetAlert.markKey() = listOf(orgId, memberId, scope, periodStart, thresholdPercent, limitMicros)
+    override suspend fun exceeded(
+        orgId: Uuid,
+        memberId: Uuid?,
+        day: Instant,
+        month: Instant,
+        max: Int,
+    ): List<ExceededBudget> = exceeded
+        .filter { (org, budget) -> org == orgId && (memberId == null || budget.memberId == memberId) }
+        .map { it.second }
+        .take(max)
+
+    private fun BudgetAlert.markKey() =
+        listOf(orgId, memberId, workflowId, scope, window, action, periodStart, thresholdPercent, limitMicros)
 }

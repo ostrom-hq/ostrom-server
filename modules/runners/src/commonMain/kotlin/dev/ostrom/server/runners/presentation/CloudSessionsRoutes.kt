@@ -3,6 +3,7 @@ package dev.ostrom.server.runners.presentation
 
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
+import dev.ostrom.server.kernel.http.bodyLimit
 import dev.ostrom.server.runners.domain.CloudSession
 import dev.ostrom.server.runners.domain.CloudSessionNotFoundException
 import dev.ostrom.server.runners.domain.CreateCloudSessionPayload
@@ -72,20 +73,32 @@ fun Route.cloudSessionsRoutes(dependencies: CloudSessionsRoutesDependencies) = w
             call.respond(HttpStatusCode.Accepted, resumed.toResponse())
         }
     }
-    post<RunnerHeartbeatApi> {
-        val token = call.runnerToken()
-        val request = call.receive<RunnerHeartbeatRequest>()
-        val heartbeat = RunnerHeartbeat(
-            sessionId = parseId(request.sessionId),
-            epoch = request.epoch,
-            ready = request.ready,
-            stopped = request.stopped,
-            lastModelRequestAt = request.lastModelRequestAt?.let { parseInstant(it) },
-        )
-        val answer = runnerHeartbeat(token, heartbeat)
-        call.respond(RunnerHeartbeatResponse(answer.instruction.wire, answer.state.wire))
+    runnerChannelRoutes(dependencies)
+}
+
+/** The runner channel, authenticated by the execution's runner token, checked before the body is read (S2-46). */
+private fun Route.runnerChannelRoutes(dependencies: CloudSessionsRoutesDependencies) = with(dependencies) {
+    bodyLimit(HEARTBEAT_BODY_LIMIT) {
+        post<RunnerHeartbeatApi> {
+            val token = call.runnerToken()
+            // The token first, the body after (S2-46): an unknown token never makes the server read a byte.
+            checkRunnerToken(token)
+            val request = call.receive<RunnerHeartbeatRequest>()
+            val heartbeat = RunnerHeartbeat(
+                sessionId = parseId(request.sessionId),
+                epoch = request.epoch,
+                ready = request.ready,
+                stopped = request.stopped,
+                lastModelRequestAt = request.lastModelRequestAt?.let { parseInstant(it) },
+            )
+            val answer = runnerHeartbeat(token, heartbeat)
+            call.respond(RunnerHeartbeatResponse(answer.instruction.wire, answer.state.wire))
+        }
     }
 }
+
+/** A heartbeat is a few fields: 4 KiB is plenty (S2-46). */
+private const val HEARTBEAT_BODY_LIMIT = 4L * 1024
 
 private const val DEFAULT_LIMIT = 20
 
@@ -134,4 +147,5 @@ fun CloudSession.toResponse() = CloudSessionResponse(
     lastActivityAt = lastActivityAt?.toString(),
     pausedAt = pausedAt?.toString(),
     endedAt = terminatedAt?.toString(),
+    runnerId = runnerId?.toString(),
 )

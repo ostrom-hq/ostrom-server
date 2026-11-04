@@ -4,8 +4,10 @@ package dev.ostrom.server.automations.presentation
 import dev.ostrom.server.automations.domain.AskWait
 import dev.ostrom.server.automations.domain.InvalidWaitException
 import dev.ostrom.server.automations.domain.WaitQuery
+import dev.ostrom.server.kernel.auth.WriteAccess
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
+import dev.ostrom.server.kernel.auth.requireWrite
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.request.header
@@ -20,7 +22,8 @@ import io.ktor.server.routing.Route
 import kotlin.uuid.Uuid
 
 /**
- * The waits API under `/api/v1/waits` ("Waiting for you"), and the agents' MCP server at `/api/v1/waits/mcp`.
+ * The waits API under `/api/v1/waits` ("Waiting for you"), and the agents' MCP server at `/api/v1/waits/mcp`. An
+ * agent token reaches only the MCP server, bound to one of its launch's sessions; the REST routes refuse it.
  *
  * @param dependencies The use cases.
  */
@@ -28,8 +31,8 @@ fun Route.waitsRoutes(dependencies: WaitsRoutesDependencies) = with(dependencies
     val mcp = WaitsMcpServer(dependencies)
     authenticated {
         post<WaitsMcpApi> { params ->
-            val principal = call.requirePrincipal()
-            val reply = mcp.handle(call.receiveText(), params) { scope -> orgResolver.waitCallerOf(principal, scope) }
+            val callers = mcpCallers(call.requirePrincipal(), params)
+            val reply = mcp.handle(call.receiveText(), params, callers)
             if (reply == null) {
                 call.respond(HttpStatusCode.Accepted)
             } else {
@@ -69,7 +72,10 @@ fun Route.waitsRoutes(dependencies: WaitsRoutesDependencies) = with(dependencies
             call.respond(read.get(caller, waitId(params.id)).toResponse())
         }
         post<WaitsApi.Id.Answer> { params ->
-            val caller = orgResolver.waitCallerOf(call.requirePrincipal(), WAITS_WRITE)
+            val principal = call.requirePrincipal()
+            // Only a person answers, in the console or the unlocked app: never a token, whatever its scopes (S2-52).
+            principal.requireWrite(WriteAccess.PERSON)
+            val caller = orgResolver.waitCallerOf(principal, WAITS_WRITE)
             val request = call.receive<AnswerWaitRequest>()
             call.respond(answer.answer(caller, waitId(params.parent.id), request.action, request.values).toResponse())
         }

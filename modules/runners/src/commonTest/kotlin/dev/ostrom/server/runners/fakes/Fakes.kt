@@ -71,11 +71,13 @@ class FakeRunnerTokens : RunnerTokens {
 
 /** A runtime that records calls and answers what the test sets. */
 class FakeRuntimeDriver : RuntimeDriver {
+    override var relocates = false
     val calls = mutableListOf<String>()
     val started = mutableListOf<ExecutionSpec>()
     var status: ExecutionStatus = ExecutionStatus.PENDING
     var workspaceDeleted = true
     var failStart: Exception? = null
+    var holder: Uuid? = null
 
     override suspend fun ensureWorkspace(session: CloudSession) {
         calls += "ensureWorkspace"
@@ -100,6 +102,8 @@ class FakeRuntimeDriver : RuntimeDriver {
         calls += "deleteWorkspace"
         return workspaceDeleted
     }
+
+    override suspend fun holder(session: CloudSession): Uuid? = holder
 }
 
 /**
@@ -137,6 +141,9 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
         val start = before?.let { cursor -> all.indexOfFirst { it.id == cursor } + 1 } ?: 0
         return all.drop(start).take(limit)
     }
+
+    override suspend fun executions(orgId: Uuid, ownerId: String, limit: Int): List<CloudSession> =
+        list(orgId, ownerId, null, Int.MAX_VALUE).filter { it.state.holdsExecution }.take(limit)
 
     override suspend fun setDesiredState(
         orgId: Uuid,

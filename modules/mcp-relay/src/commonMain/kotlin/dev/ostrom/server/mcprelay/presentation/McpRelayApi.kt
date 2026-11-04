@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.mcprelay.presentation
 
+import dev.ostrom.server.kernel.audit.OrgAuditRecord
+import dev.ostrom.server.kernel.audit.OrgAuditTrail
+import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.mcprelay.domain.AssignMcpServerUseCase
 import dev.ostrom.server.mcprelay.domain.CreateArgumentPolicyUseCase
 import dev.ostrom.server.mcprelay.domain.CreateMcpServerUseCase
@@ -17,9 +20,11 @@ import dev.ostrom.server.mcprelay.domain.PutMcpSettingsUseCase
 import dev.ostrom.server.mcprelay.domain.RelayMcpMessageUseCase
 import dev.ostrom.server.mcprelay.domain.UnassignMcpServerUseCase
 import dev.ostrom.server.mcprelay.domain.UpdateMcpServerUseCase
+import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.CallerResolver
 import dev.ostrom.server.secrets.domain.SecretDirectoryUseCase
 import io.ktor.resources.Resource
+import io.ktor.server.application.ApplicationCall
 import kotlinx.serialization.Serializable
 
 /**
@@ -250,6 +255,7 @@ data class McpSettingsDto(val agentPrefix: String)
  * @property outcome `OK`, `DENIED`, `UPSTREAM_ERROR`, ...
  * @property responseBytes The upstream answer size.
  * @property policyId The argument policy that refused it.
+ * @property launchId The launch whose agent token made it; absent for the member's own credential.
  */
 @Serializable
 data class McpCallDto(
@@ -263,6 +269,7 @@ data class McpCallDto(
     val outcome: String,
     val responseBytes: Long,
     val policyId: String? = null,
+    val launchId: String? = null,
 )
 
 /**
@@ -302,7 +309,7 @@ data class McpUsageRow(
 @Serializable
 data class McpUsageResponse(val byServer: Map<String, Long>, val byTool: Map<String, Long>, val rows: List<McpUsageRow>)
 
-/** What the relay routes need. */
+/** What the relay routes need; [audit] writes each change of the MCP governance to the organization's audit log. */
 data class McpRelayRoutesDependencies(
     val callers: CallerResolver,
     val createServer: CreateMcpServerUseCase,
@@ -322,4 +329,25 @@ data class McpRelayRoutesDependencies(
     val listMemberServers: ListMemberServersUseCase,
     val relay: RelayMcpMessageUseCase,
     val directory: SecretDirectoryUseCase,
-)
+    val audit: OrgAuditTrail,
+) {
+    /**
+     * Writes a change of an MCP server's governance (the server, its assignments, its policies) to the organization's
+     * audit log, once made.
+     *
+     * @param call The request, for who made it and with which credential.
+     * @param caller The member.
+     * @param event What happened (`mcp.server.created`).
+     * @param server The server's name.
+     * @param details Extra facts, never a secret.
+     */
+    suspend fun recordChange(
+        call: ApplicationCall,
+        caller: Caller,
+        event: String,
+        server: String,
+        details: Map<String, String>,
+    ) {
+        audit.record(OrgAuditRecord(caller.orgId, call.requirePrincipal(), event, "mcp_server", server, details))
+    }
+}

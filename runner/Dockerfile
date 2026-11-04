@@ -1,29 +1,39 @@
-# The cloud session image: the runner (pid 1 of the session pod), the agents' CLIs and the `ostrom` CLI, on Debian
-# with Node.js for the agents. Contract with the server (modules/runners): /usr/local/bin/ostrom-runner, UID 1000,
-# /bin/sh, git and bash. Build context: a directory holding bin/ostrom-runner and, when available, bin/ostrom.
+# The cloud session image: the runner, the agents' CLIs and the `ostrom` CLI, on Debian with Node.js for the agents.
+# A session runs it three times (S2-49): `ostrom-runner agent-host` as UID 1000 runs the agent, with the workspace;
+# `ostrom-runner` as UID 1001 holds the runner token and talks to the server; `ostrom-runner check-host` as UID 1000,
+# in a container of its own with the workspace, runs the hooks' checks for the runner. The agent and the runner share
+# only the socket directory /run/ostrom (group 2000); the runner and the check host only /run/ostrom-check, where the runner listens and the check host links to it. Contract with the server (modules/runners): /usr/local/bin/ostrom-runner, those UIDs and
+# that group, /bin/sh, git and bash. Build context (ci/session-image-context.sh): bin/ostrom-runner and, when
+# available, bin/ostrom; agents/ (package.json, package-lock.json); npm-cache/ (empty or a warm npm cache).
 FROM node:22-bookworm-slim
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends bash ca-certificates curl git less openssh-client procps python3 ripgrep \
  && rm -rf /var/lib/apt/lists/*
 
-# Agents installed globally, pinned by the build arguments (empty: the latest at build time).
-ARG CLAUDE_CODE_VERSION=latest
-ARG CODEX_VERSION=latest
-ARG OPENCODE_VERSION=latest
-ARG GEMINI_CLI_VERSION=latest
-RUN npm install -g \
-      "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
-      "@openai/codex@${CODEX_VERSION}" \
-      "opencode-ai@${OPENCODE_VERSION}" \
-      "@google/gemini-cli@${GEMINI_CLI_VERSION}" \
- && npm cache clean --force
+# The agents' CLIs, pinned in agents/package.json and its lockfile, installed by `npm ci`: the same versions on every
+# build (a `latest` that changed under us broke the image, runs 41045488208). The build context may carry an npm cache
+# in npm-cache/ (the CI keeps one per lockfile): mounted, never copied into a layer, so a warm cache reads nothing from
+# the registry. npm retries a network error or a 5xx/429 only, with backoff; a missing version or a failing install
+# script fails at once. On failure the full npm log is printed.
+ENV NPM_CONFIG_FETCH_RETRIES=5 \
+    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=10000 \
+    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=60000 \
+    NPM_CONFIG_UPDATE_NOTIFIER=false
+COPY agents/package.json agents/package-lock.json /opt/agents/
+RUN --mount=type=bind,source=npm-cache,target=/tmp/npm-cache,rw \
+    cd /opt/agents \
+ && { npm ci --omit=dev --no-audit --no-fund --prefer-offline --cache /tmp/npm-cache --logs-dir /tmp/npm-logs \
+      || { cat /tmp/npm-logs/*.log; exit 1; }; } \
+ && rm -rf /tmp/npm-logs
+ENV PATH=/opt/agents/node_modules/.bin:$PATH
 
 COPY bin/ /opt/ostrom-bin/
 RUN install -m 0755 /opt/ostrom-bin/* /usr/local/bin/ && rm -rf /opt/ostrom-bin \
- && mkdir -p /workspace && chown 1000:1000 /workspace
+ && mkdir -p /workspace /run/ostrom /run/ostrom-check && chown 1000:1000 /workspace \
+ && chown 1000:2000 /run/ostrom /run/ostrom-check && chmod 2770 /run/ostrom /run/ostrom-check
 
-# The image's `node` user is UID 1000.
+# The image's `node` user is UID 1000: the agent's. The runner's container sets its own UID.
 USER 1000:1000
 WORKDIR /workspace
 ENV HOME=/workspace/.home

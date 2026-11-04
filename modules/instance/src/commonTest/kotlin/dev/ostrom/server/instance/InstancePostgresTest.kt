@@ -3,10 +3,12 @@ package dev.ostrom.server.instance
 
 import dev.ostrom.server.instance.domain.Instance
 import dev.ostrom.server.instance.domain.InstanceRepository
+import dev.ostrom.server.instance.domain.KeyRotation
+import dev.ostrom.server.instance.domain.SigningKey
 import dev.ostrom.server.instance.infrastructure.InstanceRepositoryImpl
 import dev.ostrom.server.instance.presentation.InstanceResponse
 import dev.ostrom.server.instance.presentation.SigningKeysResponse
-import dev.ostrom.server.kernel.database.MigrationRunner
+import dev.ostrom.server.kernel.database.MigrationRunnerImpl
 import dev.ostrom.server.kernel.signing.InstanceSigner
 import dev.ostrom.server.testing.serverTest
 import io.ktor.client.call.body
@@ -47,9 +49,26 @@ class InstancePostgresTest {
         assertEquals(listOf(signer.keyId), keys.keys.map { it.keyId })
     }
 
+    // A rotation is recorded on a key that has none, then never changes (docs/receipt-key-rotation.md).
+    @Test
+    fun aKeyTakesItsFirstRotationOnly() = serverTest(listOf(InstanceModule)) { server ->
+        val repository = server.koin.get<InstanceRepository>()
+        val at = Instant.parse("2026-11-03T12:00:00Z")
+        val key = SigningKey("00000000000000aa", "ed25519", "pem", at)
+        repository.registerKey(key)
+        repository.registerKey(key.copy(rotation = KeyRotation("00000000000000bb", "c2ln")))
+        repository.registerKey(key.copy(rotation = KeyRotation("00000000000000cc", "b3RoZXI=")))
+
+        val stored = repository.listKeys().single { it.keyId == key.keyId }
+        assertEquals(KeyRotation("00000000000000bb", "c2ln"), stored.rotation)
+        assertEquals(at, stored.firstSeenAt)
+    }
+
     @Test
     fun repositoryReadsNoInstanceBeforeItsCreation() = serverTest(emptyList()) { server ->
-        server.koin.get<MigrationRunner>().migrate(InstanceModule.name, InstanceModule.migrations)
+        // Migrations are the owner's, like `ostrom-server migrate`; the serving role cannot create a table.
+        MigrationRunnerImpl(server.database.owner, server.koin.get())
+            .migrate(InstanceModule.name, InstanceModule.migrations)
         val repository = InstanceRepositoryImpl(server.driver)
         assertNull(repository.get())
         assertEquals(emptyList(), repository.listKeys())

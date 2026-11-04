@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel.signing
 
+import dev.ostrom.server.kernel.config.InvalidConfigException
 import dev.ostrom.server.kernel.platform.createPrivateFile
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.buffered
@@ -8,8 +9,10 @@ import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.files.SystemTemporaryDirectory
 import kotlinx.io.readString
+import kotlinx.io.writeString
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
@@ -55,6 +58,40 @@ class Ed25519InstanceSignerTest {
         } finally {
             deleteTree(Path(directory, "nested"))
             SystemFileSystem.delete(directory)
+        }
+    }
+
+    // The previous key of a rotation is only read: a missing file is a configuration error, never a new key.
+    @Test
+    fun loadReadsAnExistingKeyAndNeverCreatesOne() = runTest {
+        val directory = temporaryDirectory()
+        val path = Path(directory, "previous-key.pem").toString()
+        try {
+            val missing = assertFailsWith<InvalidConfigException> { Ed25519InstanceSigner.load(path) }
+            assertEquals("Signing key file $path does not exist.", missing.message)
+            assertFalse(SystemFileSystem.exists(Path(path)))
+            val created = Ed25519InstanceSigner.loadOrCreate(path)
+            assertEquals(created.keyId, Ed25519InstanceSigner.load(path).keyId)
+        } finally {
+            deleteTree(directory)
+        }
+    }
+
+    // A key file that is not an Ed25519 private key stops the start with its path, current key or previous one.
+    @Test
+    fun aCorruptedKeyFileIsAConfigurationErrorNamingIt() = runTest {
+        val directory = temporaryDirectory()
+        val path = Path(directory, "instance-key.pem").toString()
+        try {
+            SystemFileSystem.createDirectories(directory)
+            val corrupted = "-----BEGIN PRIVATE KEY-----\nbm9wZQ==\n"
+            SystemFileSystem.sink(Path(path)).buffered().use { it.writeString(corrupted) }
+            val message = "Signing key file $path is not an Ed25519 private key in PKCS#8 PEM."
+            val current = assertFailsWith<InvalidConfigException> { Ed25519InstanceSigner.loadOrCreate(path) }
+            assertEquals(message, current.message)
+            assertEquals(message, assertFailsWith<InvalidConfigException> { Ed25519InstanceSigner.load(path) }.message)
+        } finally {
+            deleteTree(directory)
         }
     }
 

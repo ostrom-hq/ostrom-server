@@ -12,11 +12,17 @@ CREATE ROLE ostrom_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION N
 DO $$ BEGIN CREATE ROLE ostrom_tenant NOLOGIN NOSUPERUSER NOBYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 GRANT ostrom_tenant TO ostrom_owner WITH ADMIN OPTION;
 GRANT ostrom_tenant TO ostrom_app;
+-- The owner of the cross-organization functions (docs/tenancy.md): owner of no table, never granted to the serving
+-- role. The owner administers it to hand its functions over; tolerate one created before, like ostrom_tenant.
+DO $$ BEGIN CREATE ROLE ostrom_router NOLOGIN NOSUPERUSER NOBYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+GRANT ostrom_router TO ostrom_owner WITH ADMIN OPTION;
 CREATE DATABASE ostrom OWNER ostrom_owner;
 \connect ostrom
 ALTER SCHEMA public OWNER TO ostrom_owner;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO ostrom_app, ostrom_tenant;
+-- Every table, the migrations' history `_migrations_<module>` included: `ostrom-server migrate` then revokes every
+-- write on the history from every role but the owner (MigrationRunnerImpl), so the serving role only reads it.
 ALTER DEFAULT PRIVILEGES FOR ROLE ostrom_owner IN SCHEMA public
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ostrom_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE ostrom_owner IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO ostrom_app;

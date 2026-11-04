@@ -38,6 +38,9 @@ import kotlin.uuid.Uuid
 /** The Stripe API version every request pins; the same as `ops/stripe/catalog.json` and the webhook endpoint. */
 const val STRIPE_API_VERSION = "2026-09-30.endive"
 
+/** The base of the address print in a customer's idempotency key. */
+private const val HEX = 16
+
 /**
  * Stripe refused a request. The message is Stripe's, which never contains a secret; the body is not kept.
  *
@@ -83,8 +86,16 @@ class StripeGatewayImpl(
         HttpMethod.Post,
         "/v1/customers",
         listOfNotNull(name?.let { "name" to it }, email?.let { "email" to it }, "metadata[org_id]" to orgId.toString()),
-        key = "ostrom-customer-$orgId",
+        // One key per org and address: a retry dedupes, another payer within Stripe's 24 h is not refused.
+        key = "ostrom-customer-$orgId" + email?.let { "-" + addressPrint(it) }.orEmpty(),
     ).requireString("id")
+
+    override suspend fun customerEmail(customerId: String): String? =
+        call(HttpMethod.Get, "/v1/customers/$customerId", emptyList()).string("email")
+
+    override suspend fun updateCustomerEmail(customerId: String, email: String) {
+        call(HttpMethod.Post, "/v1/customers/$customerId", listOf("email" to email))
+    }
 
     override suspend fun priceId(lookupKey: String): String = priceLock.withLock {
         priceIds[lookupKey] ?: run {
@@ -151,6 +162,10 @@ class StripeGatewayImpl(
         call(HttpMethod.Post, "/v1/subscriptions/$subscriptionId", listOf("cancel_at_period_end" to cancel.toString()))
     }
 
+    override suspend fun cancelNow(subscriptionId: String) {
+        call(HttpMethod.Delete, "/v1/subscriptions/$subscriptionId", emptyList())
+    }
+
     override suspend fun setQuantity(subscriptionId: String, itemId: String, quantity: Int) {
         call(
             HttpMethod.Post,
@@ -192,8 +207,8 @@ class StripeGatewayImpl(
         val form = params.joinToString("&") { (key, value) ->
             "${key.encodeURLParameter()}=${value.encodeURLParameter()}"
         }
-        // Every GET carries parameters (a lookup key, an expansion or a limit).
-        val query = if (method == HttpMethod.Get) "?$form" else ""
+        // A GET carries its parameters in the query (a lookup key, an expansion, a limit); a customer read has none.
+        val query = if (method == HttpMethod.Get && form.isNotEmpty()) "?$form" else ""
         val url = config.baseUrl.trimEnd('/') + path + query
         val response = client.request(url) {
             this.method = method
@@ -284,6 +299,9 @@ private fun JsonObject.toInvoice(): Invoice {
         pdfUrl = string("invoice_pdf"),
     )
 }
+
+/** A short print of an address, the same in any case: the idempotency key then differs by payer. */
+private fun addressPrint(email: String): String = email.lowercase().hashCode().toUInt().toString(HEX)
 
 private fun JsonObject.requireString(key: String): String =
     string(key) ?: throw StripeApiException(HttpStatusCode.OK.value, null, "Stripe's answer has no $key.")

@@ -14,7 +14,6 @@ import dev.ostrom.server.automations.domain.InvalidSignatureException
 import dev.ostrom.server.automations.domain.InvalidWebhookPayloadException
 import dev.ostrom.server.automations.domain.LaunchResult
 import dev.ostrom.server.automations.domain.ManageAutomationsUseCaseImpl
-import dev.ostrom.server.automations.domain.MemberDirectory
 import dev.ostrom.server.automations.domain.Overlap
 import dev.ostrom.server.automations.domain.PayloadProblem
 import dev.ostrom.server.automations.domain.RunAutomationsUseCaseImpl
@@ -33,6 +32,7 @@ import dev.ostrom.server.automations.fakes.cronDefinition
 import dev.ostrom.server.automations.fakes.daveAuto
 import dev.ostrom.server.automations.fakes.webhookDefinition
 import dev.ostrom.server.automations.presentation.toResponse
+import dev.ostrom.server.kernel.auth.MemberDirectory
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
@@ -59,7 +59,7 @@ class RunAutomationsTest {
     private val manage = ManageAutomationsUseCaseImpl(repository, PlainSecrets, clock)
     private val runs get() = RunAutomationsUseCaseImpl(repository, launcher, PlainSecrets, owners, clock)
 
-    private val body = """{"ticket":{"number":"SUP-12"},"priority":"high"}""".encodeToByteArray()
+    private val body = """{"ticket":{"number":"TKT-12"},"priority":"high"}""".encodeToByteArray()
 
     private suspend fun hook(
         definition: AutomationDefinition = webhookDefinition(),
@@ -94,7 +94,7 @@ class RunAutomationsTest {
         assertEquals(aliceAuto.memberId, request.owner)
         assertEquals(triggered.run.id, request.runId)
         assertEquals("Ticket", request.name)
-        assertEquals("Fix ticket SUP-12 (high) for Ticket", request.prompt)
+        assertEquals("Fix ticket TKT-12 (high) for Ticket", request.prompt)
     }
 
     @Test
@@ -194,7 +194,7 @@ class RunAutomationsTest {
     @Test
     fun aPayloadThatDoesNotFitIsRecordedWithoutASession() = runTest {
         val automation = hook()
-        val bytes = """{"ticket":{"number":"SUP-123456789"}}""".encodeToByteArray()
+        val bytes = """{"ticket":{"number":"TKT-123456789"}}""".encodeToByteArray()
         val triggered = runs.trigger(automation.id, signed(automation, bytes), bytes)
         assertEquals(RunStatus.INVALID_PAYLOAD, triggered.run.status)
         assertEquals(listOf(PayloadProblem("$.ticket.number", "max_length")), triggered.run.problems)
@@ -236,7 +236,7 @@ class RunAutomationsTest {
     @Test
     fun theOwnerTestsTheSavedDefinitionWithAKey() = runTest {
         val automation = hook(enabled = false)
-        val payload = buildJsonObject { putJsonObject("ticket") { put("number", "SUP-1") } }
+        val payload = buildJsonObject { putJsonObject("ticket") { put("number", "TKT-1") } }
         assertFailsWith<AutomationForbiddenException> { runs.test(daveAuto, automation.id, payload, "k") }
         assertFailsWith<AutomationNotFoundException> { runs.test(bobAuto, automation.id, payload, "k") }
         assertFailsWith<InvalidAutomationException> { runs.test(aliceAuto, automation.id, null, "k") }
@@ -244,7 +244,7 @@ class RunAutomationsTest {
         assertFailsWith<InvalidAutomationException> { runs.test(aliceAuto, automation.id, payload, "a b") }
         val tested = runs.test(aliceAuto, automation.id, payload, "k")
         assertEquals(RunSource.TEST, tested.run.source)
-        assertEquals("Fix ticket SUP-1 () for Ticket", launcher.launched.single().prompt)
+        assertEquals("Fix ticket TKT-1 () for Ticket", launcher.launched.single().prompt)
         assertTrue(runs.test(aliceAuto, automation.id, payload, "k").deduplicated)
         val cron = manage.create(aliceAuto, cronDefinition()).automation
         assertFailsWith<InvalidAutomationException> { runs.test(aliceAuto, cron.id, payload, "k") }
@@ -255,7 +255,7 @@ class RunAutomationsTest {
     @Test
     fun testsDoNotCountTowardsTheDayBudget() = runTest {
         val automation = hook(webhookDefinition().copy(overlap = Overlap.ALLOW, maxRunsPerDay = 1))
-        val payload = buildJsonObject { putJsonObject("ticket") { put("number", "SUP-1") } }
+        val payload = buildJsonObject { putJsonObject("ticket") { put("number", "TKT-1") } }
         repeat(3) { runs.test(aliceAuto, automation.id, payload, "t$it") }
         assertEquals(RunStatus.STARTED, runs.trigger(automation.id, signed(automation), body).run.status)
     }
@@ -264,12 +264,12 @@ class RunAutomationsTest {
     fun aDryRunRendersMasksAndTellsWhatWouldSkip() = runTest {
         val automation = hook(enabled = false)
         val payload = buildJsonObject {
-            putJsonObject("ticket") { put("number", "SUP-1") }
+            putJsonObject("ticket") { put("number", "TKT-1") }
             put("priority", "p1")
         }
         val dry = runs.dryRun(aliceAuto, automation.id, payload)
-        assertEquals("Fix ticket SUP-1 (p1) for Ticket", dry.renderedPrompt)
-        assertEquals(listOf("SUP-1", "••••"), dry.variables.map { it.value })
+        assertEquals("Fix ticket TKT-1 (p1) for Ticket", dry.renderedPrompt)
+        assertEquals(listOf("TKT-1", "••••"), dry.variables.map { it.value })
         assertEquals("disabled", dry.wouldSkip)
         assertEquals(emptyList(), dry.nextRuns)
         manage.setEnabled(aliceAuto, automation.id, true)

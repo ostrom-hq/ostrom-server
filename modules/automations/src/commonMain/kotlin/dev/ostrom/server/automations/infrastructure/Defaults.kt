@@ -4,9 +4,12 @@ package dev.ostrom.server.automations.infrastructure
 import dev.ostrom.server.automations.domain.AutomationLauncher
 import dev.ostrom.server.automations.domain.LaunchRequest
 import dev.ostrom.server.automations.domain.LaunchResult
-import dev.ostrom.server.automations.domain.MemberDirectory
 import dev.ostrom.server.automations.domain.Wait
+import dev.ostrom.server.automations.domain.WaitAgent
+import dev.ostrom.server.automations.domain.WaitAgentResolver
 import dev.ostrom.server.automations.domain.WaitEvents
+import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.MemberDirectory
 import kotlin.uuid.Uuid
 
 /**
@@ -15,6 +18,11 @@ import kotlin.uuid.Uuid
  */
 internal object NoOtherMembers : MemberDirectory {
     override suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean = false
+}
+
+/** No agent token is anyone until the launches module binds its [WaitAgentResolver]: the waits MCP refuses it. */
+internal object NoWaitAgents : WaitAgentResolver {
+    override suspend fun resolve(principal: AuthenticatedPrincipal, sessionId: String): WaitAgent? = null
 }
 
 /** No one listens to waits until notifications and the waking of sessions bind a [WaitEvents]. */

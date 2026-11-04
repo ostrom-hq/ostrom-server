@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel.config
 
+import dev.ostrom.core.telemetry.TelemetrySettings
+import dev.ostrom.server.kernel.http.ReadLimits
 import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.kernel.network.TrustedProxies
 import kotlin.time.Duration
@@ -15,12 +17,18 @@ import kotlin.time.Duration.Companion.seconds
  * @property database How to reach PostgreSQL.
  * @property signingKeyFile The PEM file (PKCS#8) of the instance's Ed25519 key, created on first start if missing.
  * @property logLevel The lowest level written to the logs.
+ * @property telemetry Where traces, metrics, logs and product events go (the standard `OTEL_*` variables,
+ *   `OSTROM_LANGFUSE_*`, `OSTROM_POSTHOG_*`); nowhere by default.
+ * @property instanceId The `service.instance.id` of the telemetry (`OSTROM_POD_NAME`, the pod name in Kubernetes);
+ *   null to draw a random one at start.
  * @property trustedProxies The reverse proxies whose `X-Forwarded-For` is believed (`OSTROM_TRUSTED_PROXIES`), and
  *   their client address header (`OSTROM_CLIENT_ADDRESS_HEADER`).
  * @property drainDelay How long the server keeps serving, `/ready` at 503, between SIGTERM and stopping the engine
  *   (`OSTROM_SHUTDOWN_DELAY_SECONDS`, 0 to 10), so the load balancer stops sending it requests first. With the 15 s
  *   the engine then gives requests in flight, a stop takes at most 25 s, leaving 5 s of the Helm chart's 30 s grace
  *   period to close the pool and the workers.
+ * @property readLimits How much one subject may read of the costly routes (`OSTROM_READS_PER_MINUTE`,
+ *   `OSTROM_READS_IN_FLIGHT`, `OSTROM_READ_WAITS_IN_FLIGHT`).
  */
 data class ServerConfig(
     val host: String,
@@ -28,8 +36,12 @@ data class ServerConfig(
     val database: DatabaseConfig,
     val signingKeyFile: String,
     val logLevel: LogLevel,
+    val telemetry: TelemetrySettings = TelemetrySettings(serviceName = SERVICE_NAME),
+    val instanceId: String? = null,
     val trustedProxies: TrustedProxies = TrustedProxies.NONE,
     val drainDelay: Duration = DEFAULT_DRAIN_DELAY_SECONDS.seconds,
+    val readLimits: ReadLimits =
+        ReadLimits(ReadLimits.DEFAULT_PER_MINUTE, ReadLimits.DEFAULT_IN_FLIGHT, ReadLimits.DEFAULT_WAITS_IN_FLIGHT),
 ) {
     /** Reading the configuration. */
     companion object {
@@ -40,6 +52,9 @@ data class ServerConfig(
         private const val DEFAULT_DRAIN_DELAY_SECONDS = 5
         private const val MAX_DRAIN_DELAY_SECONDS = 10
         private const val MIGRATION_CONNECTIONS = 2
+        private const val MAX_READS_PER_MINUTE = 100_000
+        private const val MAX_READS_IN_FLIGHT = 1000
+        private const val MAX_READ_WAITS_IN_FLIGHT = 10_000
 
         /**
          * Reads the configuration from a source.
@@ -65,6 +80,13 @@ data class ServerConfig(
             ),
             signingKeyFile = source["OSTROM_SIGNING_KEY_FILE"] ?: "data/instance-key.pem",
             logLevel = logLevel(source["OSTROM_LOG_LEVEL"]),
+            telemetry = try {
+                TelemetrySettings.fromEnvironment({ source[it] }, SERVICE_NAME)
+            } catch (error: IllegalArgumentException) {
+                // The message names the variable, never its value (it may hold a key).
+                throw InvalidConfigException("Invalid telemetry settings: ${error.message}", error)
+            },
+            instanceId = source["OSTROM_POD_NAME"],
             trustedProxies = TrustedProxies.parse(
                 source["OSTROM_TRUSTED_PROXIES"],
                 source["OSTROM_CLIENT_ADDRESS_HEADER"],
@@ -74,6 +96,28 @@ data class ServerConfig(
                 DEFAULT_DRAIN_DELAY_SECONDS,
                 0..MAX_DRAIN_DELAY_SECONDS,
             ).seconds,
+            readLimits = readLimits(source),
+        )
+
+        /**
+         * The read limits of the costly routes (AUDIT-SECU-LECTURES M1), per subject and per replica:
+         * `OSTROM_READS_PER_MINUTE` (1 to 100 000, 600 by default), `OSTROM_READS_IN_FLIGHT` (1 to 1 000, 16 by
+         * default) and `OSTROM_READ_WAITS_IN_FLIGHT` (1 to 10 000, 256 by default).
+         *
+         * @param source Where values are read from.
+         *
+         * @return The limits.
+         *
+         * @throws InvalidConfigException When a value is not an integer in its range.
+         */
+        fun readLimits(source: ConfigSource): ReadLimits = ReadLimits(
+            perMinute = source.int("OSTROM_READS_PER_MINUTE", ReadLimits.DEFAULT_PER_MINUTE, 1..MAX_READS_PER_MINUTE),
+            inFlight = source.int("OSTROM_READS_IN_FLIGHT", ReadLimits.DEFAULT_IN_FLIGHT, 1..MAX_READS_IN_FLIGHT),
+            waitsInFlight = source.int(
+                "OSTROM_READ_WAITS_IN_FLIGHT",
+                ReadLimits.DEFAULT_WAITS_IN_FLIGHT,
+                1..MAX_READ_WAITS_IN_FLIGHT,
+            ),
         )
 
         /**
@@ -95,6 +139,9 @@ data class ServerConfig(
             maxConnections = MIGRATION_CONNECTIONS,
             keys = "OSTROM_DATABASE_MIGRATION",
         )
+
+        /** The default `service.name` of the server's telemetry. */
+        const val SERVICE_NAME: String = "ostrom-server"
 
         /**
          * The configuration source of the process: the environment, then the file named by `OSTROM_CONFIG_FILE` if

@@ -1,11 +1,11 @@
 # Adding a functional module
 
-Every functional domain of the server (`identity`, `orgs`, `sessions`, `gates`, `receipts`, `compiler`,
-`mcp-relay`, `secrets`, `usage`, `gateway`, `budgets`, `runners`, `automations`, `artifacts`, `integrations-github`,
-`integrations-slack`, `sharing`) is a Gradle module under `modules/<name>/`. Each one already exists as an empty
-skeleton, registered in the app: **the owner of a module only edits its own directory**, plus its single line in
-`app/.../ServerModules.kt` if the order must change. `modules/instance` is the complete reference example: copy
-its shape.
+Every functional domain of the server (`identity`, `orgs`, `sessions`, `launches`, `gates`, `receipts`, `compiler`,
+`workflow-runs`, `mcp-relay`, `secrets`, `usage`, `gateway`, `budgets`, `runners`, `automations`, `artifacts`,
+`integrations-github`, `integrations-slack`, `sharing`, `governance`) is a Gradle module under `modules/<name>/`.
+Each one already exists as an empty skeleton, registered in the app: **the owner of a module only edits its own
+directory**, plus its single line in `app/.../ServerModules.kt` if the order must change. `modules/instance` is the
+complete reference example: copy its shape.
 
 Read [`ostrom-core/docs/CONVENTIONS.md`](https://github.com/ostrom-hq/ostrom-core/blob/main/docs/CONVENTIONS.md)
 first: it wins over this page wherever they differ.
@@ -151,7 +151,7 @@ fun Route.orgsRoutes(dependencies: OrgsRoutesDependencies) = with(dependencies) 
 
 Inject `Logger` and log events with constant messages and named fields:
 `logger.info("org created", mapOf("org_id" to org.id))`. Never log a token, a secret, a password or a request body.
-Every request is already logged once by the kernel (method, path, status, duration, request id).
+Every request is already logged once by the kernel (method, route template — never the path, which may carry a ticket or a slug — status, duration, request id).
 
 ## 7. Tests
 
@@ -203,15 +203,29 @@ Every request is already logged once by the kernel (method, path, status, durati
 | `OSTROM_DATABASE_PASSWORD` | the URL's | Database password; wins over the URL's (required to use one with `%`, `@`, `:` or `/`) |
 | `OSTROM_DATABASE_MAX_CONNECTIONS` | `10` | Pool size |
 | `OSTROM_SIGNING_KEY_FILE` | `data/instance-key.pem` | Ed25519 key (PKCS#8 PEM), created with mode 0600 at first start; keep it on a persistent volume |
+| `OSTROM_PREVIOUS_SIGNING_KEY_FILE` | — | For a key rotation only: the PEM file of the key the instance signed with before `OSTROM_SIGNING_KEY_FILE`, read (never created) at start to hand the new key over (`rotation` of `GET /receipts/keys`). A missing file stops the start. See [receipt-key-rotation.md](receipt-key-rotation.md) |
 | `OSTROM_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `OSTROM_TRUSTED_PROXIES` | none | Comma-separated networks (`10.0.0.0/8, fd00::/8`) of the reverse proxies whose `X-Forwarded-For` is believed: the client is the right-most hop that is not one of them. With none, the header is ignored and the client is the socket's peer |
 | `OSTROM_CLIENT_ADDRESS_HEADER` | none | A header in which the trusted proxies give the client's address, read before `X-Forwarded-For` when the peer is one of them (`CF-Connecting-IP` behind Cloudflare). Absent, sent twice, not an IP address or a trusted proxy's: `X-Forwarded-For` decides. Without `OSTROM_TRUSTED_PROXIES`, or set to `X-Forwarded-For`, the server refuses to start. Set it only when clients cannot reach the server around that proxy (Cloudflare: Authenticated Origin Pulls on the ingress), or they could choose their address |
 | `OSTROM_SHUTDOWN_DELAY_SECONDS` | `5` | 0 to 10: after SIGTERM, how long the server keeps serving with `/ready` at 503 before stopping the engine (then up to 15 s for requests in flight: at most 25 s, within the Helm grace period of 30 s) |
+| `OSTROM_READS_PER_MINUTE` | `600` | 1 to 100 000: how many calls one subject (a person, a device, an agent, a service) makes per minute to the costly reads (sessions and their thread, activity, spending, receipts, the audit log, a gate and its wait, the approvals); past it, a 429 with `Retry-After`. Counted per replica |
+| `OSTROM_READS_IN_FLIGHT` | `16` | 1 to 1 000: how many of those reads one subject holds at once; past it, a 429 with `Retry-After`. Counted per replica |
+| `OSTROM_READ_WAITS_IN_FLIGHT` | `256` | 1 to 10 000: how many gate reads (`GET /gates/{id}`, whose `wait` holds the call up to 30 s) one subject holds at once, apart from the reads above; they count in `OSTROM_READS_PER_MINUTE` too. Past it, a 429 with `Retry-After`. Counted per replica |
 | `OSTROM_DATABASE_MIGRATION_URL` | required by `migrate` | The owner's connection, read by `ostrom-server migrate` only; never give it to the serving process |
 | `OSTROM_DATABASE_MIGRATION_USER`, `OSTROM_DATABASE_MIGRATION_PASSWORD` | the URL's | The owner's credentials, as for `OSTROM_DATABASE_USER` |
 | `OSTROM_ALLOW_TEST_ACCOUNTS` | — | `true` lets `ostrom-server seed-test-account` run; never set in production |
 | `OSTROM_SECRETS_KEY` | — | The secrets key, base64 of 32 bytes (AES-256-GCM); wins over the file. Losing it loses every stored secret |
 | `OSTROM_SECRETS_KEY_FILE` | `data/secrets.key` | File of the secrets key, created with mode 0600 at first start when `OSTROM_SECRETS_KEY` is unset; keep it on a persistent volume |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | — | OTLP/HTTP base URL (Grafana Cloud OTLP gateway, any collector); nothing is exported without it |
+| `OTEL_EXPORTER_OTLP_HEADERS` | — | `Authorization=Basic%20…` for Grafana Cloud (keep it in a Secret) |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` | The only protocol written; any other value stops the start |
+| `OTEL_SERVICE_NAME` | `ostrom-server` | `service.name` of traces, metrics and logs |
+| `OTEL_RESOURCE_ATTRIBUTES` | — | `deployment.environment.name=production` |
+| `OTEL_TRACES_SAMPLER_ARG` | `1` | Share of new traces recorded (0 to 1); a caller's sampled trace is always continued |
+| `OTEL_SDK_DISABLED` | `false` | The standard OpenTelemetry variable, read as every SDK reads it (not an Ostrom feature switch): `true` exports nothing even with an endpoint |
+| `OSTROM_LANGFUSE_HOST`, `_PUBLIC_KEY`, `_SECRET_KEY` | — | Model calls to Langfuse (the three together) |
+| `OSTROM_POSTHOG_API_KEY`, `OSTROM_POSTHOG_HOST` | —, EU cloud | Product events to PostHog |
+| `OSTROM_POD_NAME` | random | `service.instance.id` (`ServerConfig.instanceId`; the chart sets it from the pod name) |
 | `OSTROM_USAGE_RETENTION_DAYS` | `400` | Days the usage ledger keeps its events (1 to 3650); older ones are purged every hour |
 | `OSTROM_STRIPE_SECRET_KEY` (or `_FILE`) | — | Billing: Stripe secret key (`sk_test_…` or `sk_live_…`). Unset: self-hosted, limits come from the license key |
 | `OSTROM_STRIPE_WEBHOOK_SECRET` (or `_FILE`) | required with a key | Billing: the endpoint's `whsec_…` signing secret; two comma-separated during a rotation |
@@ -223,6 +237,59 @@ Every request is already logged once by the kernel (method, path, status, durati
 A module that needs its own keys reads them from the `ConfigSource` bound in Koin (`get<ConfigSource>()`: the
 environment, then `OSTROM_CONFIG_FILE`), with the `OSTROM_<MODULE>_…` prefix, and adds them to this table. In a
 `serverTest`, give it values with `overrides = module { single<ConfigSource> { MapConfigSource(mapOf(…)) } }`.
+
+### Module `gateway`
+
+The inference gateway reads these keys at start (a malformed URL stops the server). An instance key serves every org
+of the instance and comes before an org's own key (`/api/v1/inference/settings` names an org secret instead).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `OSTROM_GATEWAY_ANTHROPIC_API_KEY` | — | Anthropic API key for every org, when no shared Claude account serves |
+| `OSTROM_GATEWAY_OPENAI_API_KEY` | — | OpenAI API key for every org (Responses, Chat Completions) |
+| `OSTROM_GATEWAY_OPENROUTER_API_KEY` | — | OpenRouter key for every org (Chat Completions with a `vendor/model` name) |
+| `OSTROM_GATEWAY_ANTHROPIC_URL` | `https://api.anthropic.com` | Anthropic base URL (`/v1/messages` is added); `http(s)` only |
+| `OSTROM_GATEWAY_OPENAI_URL` | `https://api.openai.com` | OpenAI base URL (`/v1/responses`, `/v1/chat/completions`) |
+| `OSTROM_GATEWAY_OPENROUTER_URL` | `https://openrouter.ai/api` | OpenRouter base URL (`/v1/chat/completions`) |
+| `OSTROM_GATEWAY_CODEX_URL` | `https://chatgpt.com/backend-api/codex` | ChatGPT's Codex backend (`/responses`), for shared ChatGPT accounts |
+
+### Module `governance`
+
+A governance write (the rules, the gate policy, the model policy, a workflow's decision) made with a person's API
+token, the CLI's (elevated by `ostrom login --admin` or not) or a personal one, is not applied: the route answers 202
+with a confirmation that an owner or an admin answers on the console, at
+`OSTROM_CONSOLE_URL/confirm/<id>` (audit CLI H1: an agent on the developer's machine can present the developer's
+tokens). A confirmation shows what the write replaces and what it writes, lives 15 minutes, is answered once, and
+each step (created, confirmed, refused, expired, failed) is an event of the organization's signed audit log. A token
+never answers; a browser session and an `inference:admin` service key still write at once. A module that owns a
+governance write binds a `GovernanceChange` named after itself (preview, apply) and calls `holdForConfirmation`
+for a token; without this module loaded, a token's governance write is refused.
+
+**Known limit: the confirmation is a fresh sign-in, not a passkey.** The server has no WebAuthn yet: confirming
+needs a console sign-in less than 5 minutes old, the same step-up as a gate's yes (S2-54, `StepUp.WITHIN`), and
+answers 403 `step_up_required` otherwise. An agent that can read the developer's mailbox could sign in again with an
+e-mail link and confirm its own request; WebAuthn, planned after the go, closes that hole.
+
+### Module `sharing`
+
+The shared accounts' tokens are renewed at the providers' OAuth token endpoints. An operator can point them elsewhere
+(a proxy, or the fake provider of the local demo, which renews any token). The refresh token is sent there: an endpoint
+is `https`, or `http` to a local host only (`localhost`, `127.0.0.1`, `*.localhost`, `*.localtest.me`), judged on
+the host the client parses; an endpoint with credentials (`@`), a fragment (`#`), a backslash, an IPv6 literal or a
+port above 65535 is refused too. Anything else stops the server at start. A blank value counts as unset, so the
+provider's own endpoint is used.
+
+Each renewal also checks whose tokens they are. The provider names the account in its answer: `account.uuid` for
+Claude, and for Codex the `chatgpt_account_id` of the `id_token`. When that account differs from the
+`providerAccountId` the account was shared as (by the CLI or an import), the account becomes `wrong_account`: it
+serves no call and the new pair is not stored. Pausing and resuming do not bring it back; it serves again once its
+owner shares it again. An answer that names no account is accepted, because the field is optional at the providers.
+A fake token endpoint must therefore name the account's own id, or none.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `OSTROM_SHARING_CLAUDE_TOKEN_URL` | `https://platform.claude.com/v1/oauth/token` | Token endpoint of shared Claude accounts |
+| `OSTROM_SHARING_CODEX_TOKEN_URL` | `https://auth.openai.com/oauth/token` | Token endpoint of shared ChatGPT (Codex) accounts |
 
 ## Commands
 
@@ -238,15 +305,53 @@ The probes: `GET /health` (liveness: 200 while the dependencies answer, also whi
 The database roles of a deployment (the Helm chart creates them): an **owner**, which owns the schema and runs
 `migrate`, and a **serving role** that owns nothing, `NOSUPERUSER NOBYPASSRLS`, granted `USAGE` on the schema and,
 through `ALTER DEFAULT PRIVILEGES FOR ROLE <owner>`, `SELECT, INSERT, UPDATE, DELETE` on its tables and `USAGE, SELECT`
-on its sequences. CI's smoke test sets them up the same way.
+on its sequences. CI's smoke test sets them up the same way. The migrations' history tables (`_migrations_<name>`)
+are the exception: after each pass, `migrate` revokes every privilege but `SELECT` on them from every role but the
+owner, so the serving role reads the history (the start-up check) and never rewrites it.
 
 ## Known limits of the foundation
 
 - **The in-memory limits are per replica**: a rate limit keyed on the client address (now the real one behind
-  `OSTROM_TRUSTED_PROXIES`) counts each pod apart.
+  `OSTROM_TRUSTED_PROXIES`) counts each pod apart, and so do the read limits (`OSTROM_READS_*`, `OSTROM_READ_WAITS_IN_FLIGHT`).
 - **SQLite** (tests and local mode) is not wired yet: sqlx4k has a SQLite driver with the same `Driver` interface;
   repositories must stay portable SQL where they can.
 - **The instance signer is provisional** (`kernel/signing`): it moves to `ostrom-core` once published; the
   `InstanceSigner` interface and the key file format (PKCS#8 PEM, `kid` = 16 hex of SHA-256 of the SPKI DER, as the
   prototype) stay.
 - **API DTOs** live in each module until `ostrom-core` publishes the contract.
+
+## Observability
+
+The kernel traces and measures every request (`kernel/…/observability/Tracing.kt`): a SERVER span continuing the
+caller's `traceparent`, named after the route template, returned in `traceresponse`; `/health` is measured, never
+traced. A module adds its own work to the current trace and the server's metrics through Koin:
+
+```kotlin
+val telemetry = koin.get<Telemetry>()      // dev.ostrom.core.telemetry
+val metrics = koin.get<OstromMetrics>()    // dev.ostrom.server.kernel.observability
+
+telemetry.tracer.inSpan("gates.compile") { compile(request) }        // nested under the request's span
+metrics.gateRequested(GateKind.MERGE.wire)
+telemetry.capture(ProductEvents.gateRequested(userId, orgId, GateKind.MERGE, clock.now().toEpochMilliseconds()))
+```
+
+A model call (gateway, extraction) runs in
+`telemetry.tracer.inSpan(ModelCall.SPAN_NAME, SpanKind.CLIENT, call.toAttributes(org.contentCapture))` and then
+`metrics.modelCalled(call, duration)`: the span alone goes to Langfuse, prompts only when the org turned capture on.
+The gateway's span (`SpanModelCallTracer`) covers every try of a call, from before planning to its record, under the
+request's span; it carries the model, provider, tokens, cost, organization, session, outcome and status, and never the
+prompt nor the answer (`ContentCapture.NONE`: the gateway does not read the org's capture choice yet).
+Metric attributes are bounded values, never ids; a new metric is added to `OstromMetrics` and to
+`ostrom-infra/observability/catalog.py` together. Event taxonomy and privacy rules: ostrom-core `docs/telemetry.md`.
+
+Where the product metrics are emitted, each next to the code that decides, never inside it:
+
+| Metric | Emitted by |
+|---|---|
+| `ostrom.gates.requested{kind}` | `gates` `MetricsGateChannel`, when an enforced gate opens (the notifier, after the commit) |
+| `ostrom.gates.answered{answer,channel}`, `ostrom.gates.time_to_answer{answer}` | `gates` `MetricsGateChannel`, when a gate is decided |
+| `ostrom.sessions.started{agent,where="local"}` | `sessions` `SessionSegments`, at a session's first segment |
+| `ostrom.sessions.started{agent,where="cloud"}` | `runners` `MeteredCreateCloudSession`, once a cloud session is created |
+| `ostrom.inference.cost_usd`, `.tokens`, `.duration` `{source,provider}` | `gateway` `MeteredModelCallObserver`, per relayed call that reached a provider |
+| `ostrom.gates.pending` | `gates` `PendingGatesCount`, read every 30 s across organizations (`gates_pending_count()`) |
+| `ostrom.sessions.active{where="local"}` | `sessions` `ActiveSessionsCount`, read every 30 s across organizations (`sessions_active_count`) |

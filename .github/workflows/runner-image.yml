@@ -49,23 +49,27 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mkdir -p image/bin
-          cp runner/build/bin/linuxX64/releaseExecutable/ostrom-runner.kexe image/bin/ostrom-runner
-          cp runner/Dockerfile image/Dockerfile
           # The ostrom CLI, from its latest release when there is one (the image works without it).
-          gh release download -R ostrom-hq/ostrom-cli --pattern 'ostrom-linux-x64*' -D cli 2>/dev/null \
-            && find cli -type f -name 'ostrom-linux-x64*' ! -name '*.sha256' -exec cp {} image/bin/ostrom \; || echo "no ostrom CLI release yet"
+          gh release download -R ostrom-hq/ostrom-cli --pattern 'ostrom-linux-x64*' -D cli 2>/dev/null || true
+          cli_binary=$(find cli -type f -name 'ostrom-linux-x64*' ! -name '*.sha256' 2>/dev/null | head -n 1 || true)
+          [ -n "$cli_binary" ] || echo "no ostrom CLI release yet"
+          ci/session-image-context.sh image runner/build/bin/linuxX64/releaseExecutable/ostrom-runner.kexe "$cli_binary"
           ls -l image/bin
 
       - name: Image
-        run: docker build -t ostrom-runner:ci image
+        run: docker build --progress=plain -t ostrom-runner:ci image
 
-      - name: Smoke test (the runner refuses a missing configuration, the agents are installed)
+      - name: Smoke test (the runner and the machine mode refuse a missing configuration, the agents are installed)
         run: |
           set +e
           docker run --rm ostrom-runner:ci; code=$?
+          docker run --rm ostrom-runner:ci machine; machine=$?
+          docker run --rm -e OSTROM_SERVER_URL=http://server -e OSTROM_RUNNER_ID=00000000-0000-4000-8000-000000000000 \
+            -e OSTROM_RUNNER_KEY_FILE=/nonexistent ostrom-runner:ci machine; unreadable=$?
           set -e
           test "$code" = 2
+          test "$machine" = 2
+          test "$unreadable" = 2
           docker run --rm --entrypoint sh ostrom-runner:ci -c 'claude --version && codex --version && git --version && id -u | grep -x 1000'
 
       - name: Push to GHCR

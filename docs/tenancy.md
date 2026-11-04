@@ -35,6 +35,33 @@ CREATE POLICY gates_org ON gates
 
 Without an organization set, no row matches and nothing errors.
 
+### Tables without an organization
+
+Every other table is listed here, with the role that reaches it and why no organization owns its rows;
+`SchemaTenancyPostgresTest` fails on a table that has no `org_id` and is not in this list (`INSTANCE_TABLES`), and on a
+listed table that gained one. The migrator's own tables, one per module (`_migrations_<module>`), are the only ones
+admitted by their prefix: the owner role writes them when it migrates.
+
+| Table | Module | Reached by | Why no organization |
+|---|---|---|---|
+| `billing_stripe_events` | billing | serving role, Stripe webhook | the Stripe events already handled, by Stripe's id, before the organization is known |
+| `github_apps` | integrations-github | serving role | the instance's one GitHub App, its secrets sealed |
+| `github_installation_origins` | integrations-github | serving role, GitHub webhook | who installed an installation, read before its organization is known; row-level security forced, one row opened by `ostrom.github_installation` (R7) |
+| `github_manifest_states` | integrations-github | serving role | the state of an instance admin's GitHub App creation, by hash |
+| `github_webhook_deliveries` | integrations-github | serving role, GitHub webhook | the webhook deliveries already received (an id and a time), to drop a replay |
+| `identity_device_authorizations` | identity | serving role, device sign-in | a person's pending CLI sign-in |
+| `identity_identities` | identity | serving role, sign-in | a person's external accounts |
+| `identity_magic_links` | identity | serving role, sign-in | e-mail sign-in links, by hash |
+| `identity_mobile_codes` | identity | serving role, the app's sign-in | one-time codes, by hash |
+| `identity_notification_preferences` | identity | serving role | a person's preferences, across their organizations |
+| `identity_oauth_attempts` | identity | serving role, sign-in | an OAuth round trip's state, by hash |
+| `identity_sign_in_links` | identity | serving role | a signed-in person's one-time link to a browser, by hash |
+| `identity_user_emails` | identity | serving role, sign-in | a person's e-mail addresses |
+| `identity_users` | identity | serving role | the people, members of any number of organizations |
+| `identity_web_sessions` | identity | serving role | a person's browser sessions, by hash, read before an organization is chosen |
+| `instance_info` | instance | serving role | the instance's one identity row |
+| `instance_signing_keys` | instance | serving role | the public keys of the instance's receipt signatures |
+
 ## The queries
 
 A repository of a tenant table only runs inside `driver.withOrganization(orgId) { tx -> … }` (kernel,
@@ -45,11 +72,85 @@ rolls back on any failure.
 ## Cross-organization operations
 
 What must run before or across organizations (resolving a token, sign-in, creating an organization, invitations,
-billing webhooks…) goes through narrow `SECURITY DEFINER` functions, each listed here with its test. None exists yet:
-the module that adds the first one lists it below, with its owner role and grants.
+billing webhooks…) goes through narrow `SECURITY DEFINER` functions, each listed here with its test. They are owned
+by **`ostrom_router`** (`NOLOGIN`, owner of no table, never a member of the serving role), reach the rows through a
+policy `TO ostrom_router` of their tables whose rule is `current_user = 'ostrom_router'`, true only inside those
+functions (the owner, a member of `ostrom_router` to hand the functions over, does not pass it: RLS audit R9,
+`SchemaTenancyPostgresTest.everyRouterPolicyHoldsOnlyInsideTheRoutersFunctions`), and set
+`search_path = pg_catalog, public, pg_temp` (`pg_temp` last, so a temporary object never stands in for theirs).
+`EXECUTE` is revoked from `PUBLIC` and granted to `ostrom_app` only (audit S2-60).
 
 | Function | Module | What it touches | Test |
 |---|---|---|---|
+| `orgs_create_organization(…)` | orgs | inserts an organization and its owner | `OrgsServingRolePostgresTest` |
+| `orgs_claim_holders(claim)` | orgs | reads the live organizations holding a free-plan claim | `OrgsServingRolePostgresTest` |
+| `orgs_find_by_slug(slug)` | orgs | reads a live organization by short name | `OrgsServingRolePostgresTest` |
+| `orgs_slug_taken(slug)` | orgs | whether a short name is taken: by a live organization, or a deleted one in its 30 days of grace (an erased one gives it back) | `OrgsServingRolePostgresTest` |
+| `orgs_memberships_of(user)` | orgs | reads a user's memberships and their organizations | `OrgsServingRolePostgresTest` |
+| `orgs_live_invitation(hash, now)` | orgs | reads a live invitation by its token's hash | `OrgsServingRolePostgresTest` |
+| `identity_token_by_hash(hash)` | identity | reads an API token by its hash, to authenticate it | `IdentityTenancyPostgresTest` |
+| `identity_token_touch(id, at)` | identity | notes an API token's last use | `IdentityTenancyPostgresTest` |
+| `identity_revoke_agent_session_tokens(session, at)` | identity | revokes the agent tokens of one agent session | `IdentityTenancyPostgresTest` |
+| `identity_purge_agent_tokens(before)` | identity | deletes the agent tokens expired before the date, never one expired less than 7 days ago; no date, an infinite or a future one is refused | `IdentityTenancyPostgresTest` |
+| `automations_route_org(id)` | automations | an automation's organization, for its webhook | `AutomationsRoutesTenancyPostgresTest` |
+| `automations_due_routes(now, limit)` | automations | claims the due crons of every organization (`FOR UPDATE SKIP LOCKED`) | `AutomationsPostgresTest` |
+| `automations_organizations()` | automations | the organizations that have automations, for the retention jobs | `AutomationsPostgresTest` |
+| `sessions_stale(cutoff, limit)` | sessions | the open sessions of every organization last seen before the cutoff, for the sweep | `SessionsPostgresTest` |
+| `usage_purge(before, limit)` | usage | deletes one batch of events older than the retention | `UsagePostgresTest` |
+| `usage_daily_add()`, `usage_daily_remove()`, `usage_daily_change()`, `usage_daily_clear()` | usage | trigger functions of `usage_events` (no `EXECUTE` grant): keep the daily totals `usage_daily`, which an organization only reads, in the transaction of every write of the ledger | `UsageDailyTotalsPostgresTest` |
+| `mcp_relay_purge(before)` | mcp-relay | deletes the calls older than the retention | `McpRelayPostgresTest` |
+| `launches_purge(before)` | launches | deletes the launches expired before the date, never one expired less than 30 days ago; no date, an infinite or a future one is refused | `LaunchPurgeTest` |
+| `gates_pending_count()` | gates | counts the pending gates (sees `status` alone), for the `ostrom.gates.pending` gauge | `GatesPostgresTest` |
+| `sessions_active_count(since)` | sessions | counts the open sessions of every organization seen since, for `ostrom.sessions.active` | `SessionsPostgresTest` |
+| `artifacts_route_by_id(id)` | artifacts | an artifact's organization by its id, for the content origin | `ArtifactsRoutesTenancyPostgresTest` |
+| `artifacts_route_by_slug(slug)` | artifacts | an artifact's organization by its public link | `ArtifactsRoutesTenancyPostgresTest` |
+| `runners_session_org(id)` | runners | a session's organization | `RunnersRoutesTenancyPostgresTest` |
+| `runners_session_by_token(hash)` | runners | the session a runner token belongs to, for the runner channel | `RunnersRoutesTenancyPostgresTest` |
+| `runners_claim_due(owner, until, now, limit)` | runners | leases the due sessions of every organization to one reconciler (`FOR UPDATE SKIP LOCKED`) | `CloudSessionsPostgresTest` |
+| `runners_release(id, owner, has_next, next_at)` | runners | ends a reconciler's lease, keeping a look asked for meanwhile | `CloudSessionsPostgresTest` |
+| `runners_registered_key(id)` | runners | a registered runner's organization and key hash, for its heartbeat | `RegisteredRunnersHeartbeatPostgresTest` |
+| `workflow_runs_claim_due(owner, until, now, limit)` | workflow-runs | leases the runs of workflows due now, of every organization, to one engine replica (`FOR UPDATE SKIP LOCKED`); everything else of a run is read and written in its organization | `RunEnginePostgresTest` |
+| `billing_customer_org(customer)` | billing | an organization by its Stripe customer, for the webhook | `BillingPostgresTest` |
+| `billing_claim_due_tasks(now, lease, limit)` | billing | leases the due outbox tasks of every organization (`FOR UPDATE SKIP LOCKED`) | `BillingPostgresTest` |
+| `billing_complete_task(id, at)`, `billing_fail_task(id, retry)` | billing | ends or retries an outbox task | `BillingPostgresTest` |
+| `governance_expired_organizations(now, limit)` | governance | the organizations with confirmations past their 15 minutes, for the sweep | `GovernancePostgresTest` |
+
+One function is not the router's: the member search, `orgs_search_members(org, prefix, after, limit)` (orgs, version
+7; `MemberSearchPostgresTest`). It is owned by **`ostrom_member_search`** (`NOLOGIN`, no RLS bypass) and run by
+`ostrom_tenant` alone, inside a request's transaction. It reads three columns of `identity_users`, `id`, `login` and `display_name` (no e-mail, a column grant) and the members
+of one organization through a policy of its own bound to `ostrom.org_id` and to `current_user`; it refuses any other
+organization than the session's, and a session without one. It returns member ids only, in order and paged, under the
+`text_pattern_ops` indexes of `lower(login)` and `lower(display_name)`. Roles are global to the cluster. On a new cluster the
+migration creates the role itself (the owner has `CREATEROLE`, and administers the roles it creates), which is how
+`ci/database-roles.sql` and the Helm chart of main run it; a role created before by another role must be
+administered by the owner (`GRANT ostrom_member_search TO <owner> WITH ADMIN OPTION`, as the tests' `TestDatabase`
+and ostrom-helm#42 do), or the migration stops on `permission denied to grant role`, before any grant or function.
+
+## The audit log is append-only
+
+The policies say which organization's rows a query reaches, not what it may do to them, and the serving role holds
+`UPDATE` and `DELETE` on every table through the default privileges. For `identity_audit_events`, the signed log, that
+is not enough: one statement-level trigger (identity migration 9) refuses `UPDATE`, `DELETE` and `TRUNCATE` with an
+error, whatever rows the statement reaches, for every role that runs it. It is enabled `ALWAYS`, so
+`session_replication_role = replica` does not skip it.
+
+What it does not stop: the owner (the migrations' role, which serves no request) and a superuser can drop or disable
+the trigger, then change the table. Against them the defence is detection: `GET /api/v1/audit` checks every line it
+serves against its hash, its signature and the line before it. Erasing the newest lines of a chain is not detected
+yet (no anchor outside the table).
+
+No request erases an audit line, an organization's deletion included. Removing lines (a legal erasure request) is an
+operation by hand: the owner disables the trigger in a transaction, deletes, and enables it `ALWAYS` again; the lines
+after the erased ones then read `unlinked`.
+
+## Known exceptions
+
+`app/…/SchemaTenancyPostgresTest.kt` reads the catalog once every module has migrated and checks the rules above for
+every table, policy, grant and `SECURITY DEFINER` function. The exceptions it still lists are open findings of the RLS
+audit, each to be closed by moving the cross-organization path into a function of the table above:
+
+- policies a setting opens to one row of any organization: the read and delete policies of
+  `github_installations` (`ostrom.github_installation`) and `github_install_states` (`ostrom.github_state`).
 
 ## The proof
 
@@ -58,3 +159,10 @@ an organization reads and writes only its rows, that no row is visible without a
 not outlive the transaction, that the serving role cannot disable row-level security, drop a policy or create a
 function or a table, and that the start check refuses a superuser, a `BYPASSRLS` role and a role that owns a table. Each module adds the same
 test for each of its tenant tables.
+
+Every PostgreSQL test runs as a deployment does (`testing/…/TestDatabase.kt`): each test database has its own owner
+role, which applies the migrations, and its own serving role, owner of nothing and member of `ostrom_tenant`, with the
+attributes and grants of `ci/database-roles.sql`. The test server and the tests' queries go through the serving role,
+which must pass the start check, so a query that forgets its organization fails in CI as it would in production. The
+configured user, a superuser, creates the database and the roles; tests use it only for what no request does
+(fixtures across organizations, statistics, the roles the start check must refuse, a count across organizations).

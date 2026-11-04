@@ -23,6 +23,9 @@ kover = "0.9.11"
 detekt = "1.23.8"
 maven-publish = "0.37.0"
 zodable = "1.7.6"
+# ostrom-core, from GitHub Packages (0.1.<run number of its main build>). CI builds it from the commit that published
+# this version, written in gradle/ostrom-core.ref: change both together.
+ostrom-core = "0.1.411"
 
 [plugins]
 multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
@@ -34,6 +37,8 @@ maven = { id = "com.vanniktech.maven.publish", version.ref = "maven-publish" }
 zodable = { id = "dev.zodable", version.ref = "zodable" }
 
 [libraries]
+ostrom-receipts = { module = "dev.ostrom:ostrom-receipts", version.ref = "ostrom-core" }
+ostrom-api = { module = "dev.ostrom:ostrom-api", version.ref = "ostrom-core" }
 # Gradle plugins as libraries, for build-logic/build.gradle.kts
 kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
 kotlin-serialization-plugin = { module = "org.jetbrains.kotlin:kotlin-serialization", version.ref = "kotlin" }
@@ -64,10 +69,16 @@ ktor-client-engine-defaults = { module = "io.ktor:ktor-client-engine-defaults", 
 ktor-client-resources = { module = "io.ktor:ktor-client-resources", version.ref = "ktor" }
 ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
 ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
-# Explicit engine of the runners module on native: Curl (TLS, a custom CA); CIO above serves the JVM target
+# Explicit engines. Runners on native: Curl (TLS, a custom CA); CIO above serves their JVM target and the telemetry
+# export (pure Kotlin, its own TLS).
 ktor-client-curl = { module = "io.ktor:ktor-client-curl", version.ref = "ktor" }
 ktor-server-websockets = { module = "io.ktor:ktor-server-websockets", version.ref = "ktor" }
 ktor-client-websockets = { module = "io.ktor:ktor-client-websockets", version.ref = "ktor" }
+# The Unix socket between the runner and the agent host of a session pod
+ktor-network = { module = "io.ktor:ktor-network", version.ref = "ktor" }
+
+# ostrom-core
+ostrom-telemetry = { module = "dev.ostrom:ostrom-telemetry", version.ref = "ostrom-core" }
 
 # Koin (constructor injection, wired in the composition root only)
 koin-core = { module = "io.insert-koin:koin-core", version.ref = "koin" }

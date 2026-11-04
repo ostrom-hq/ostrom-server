@@ -2,8 +2,9 @@
 package dev.ostrom.runner
 
 import kotlinx.coroutines.channels.ReceiveChannel
+import kotlinx.serialization.Serializable
 
-/** A PTY running a program. */
+/** A PTY running a program: in the agent host, or seen from the runner through it. */
 interface Terminal {
     /**
      * Reads output, waiting for some.
@@ -25,17 +26,23 @@ interface Terminal {
      * @param columns Columns.
      * @param rows Rows.
      */
-    fun resize(columns: Int, rows: Int)
+    suspend fun resize(columns: Int, rows: Int)
 
     /** Asks the program's process group to stop (SIGTERM), then kills it after a grace period. */
     suspend fun terminate()
 
     /** Frees the PTY. */
     fun close()
+
+    /**
+     * The program's exit code, once [read] returned null: 128 + the signal when a signal ended it, null while it runs
+     * or when it could not be read.
+     */
+    val exitCode: Int?
 }
 
 /** Starts terminals. */
-fun interface TerminalStarter {
+interface TerminalStarter {
     /**
      * Starts `sh -c script` on a new PTY.
      *
@@ -45,7 +52,7 @@ fun interface TerminalStarter {
      *
      * @return The terminal.
      */
-    fun start(script: String, environment: Map<String, String>, directory: String): Terminal
+    suspend fun start(script: String, environment: Map<String, String>, directory: String): Terminal
 }
 
 /** What the server tells the runner after a heartbeat. */
@@ -79,6 +86,57 @@ interface TerminalLink {
     suspend fun close()
 }
 
+/** What the server answered to the launch of the session's agent. */
+sealed interface RunnerLaunch {
+    /**
+     * The launch is open: the agent runs with its token, and its hooks ask the runner for their checks.
+     *
+     * @property launchId The launch.
+     * @property agentToken The agent's token, for the agent's environment only.
+     */
+    class Opened(val launchId: String, val agentToken: String) : RunnerLaunch {
+        /** The token never appears in logs. */
+        override fun toString(): String = "Opened(launchId=$launchId)"
+    }
+
+    /**
+     * The server refused the launch (the organization's policy, a limit): the agent does not start.
+     *
+     * @property reason Why, as the server says it.
+     */
+    data class Refused(val reason: String) : RunnerLaunch
+}
+
+/**
+ * A check the runner ran on the check host, as it reports it (the contract's `ReportCheckRequest`).
+ *
+ * @property sessionId The agent's session the check guards.
+ * @property digest The package's digest.
+ * @property nodeId The node of the check.
+ * @property scriptId The script.
+ * @property scriptSha The SHA-256 of the script the runner ran, computed by the runner.
+ * @property exit Its exit code, null when it was stopped at its time limit.
+ * @property outcome `passed`, `failed` or `timeout`.
+ * @property durationMs How long it ran.
+ * @property head The commit it tested, as the hook said.
+ * @property sandbox How it was confined.
+ * @property outputTail The end of its output.
+ */
+@Serializable
+data class RunnerCheck(
+    val sessionId: String,
+    val digest: String,
+    val nodeId: String,
+    val scriptId: String,
+    val scriptSha: String,
+    val exit: Int?,
+    val outcome: String,
+    val durationMs: Long,
+    val head: String?,
+    val sandbox: String,
+    val outputTail: String,
+)
+
 /** The server, seen from the runner. */
 interface ServerApi {
     /**
@@ -102,4 +160,22 @@ interface ServerApi {
      * @throws ExecutionEndedException When the server refuses this execution.
      */
     suspend fun openTerminal(): TerminalLink
+
+    /**
+     * Opens the launch of the session's agent.
+     *
+     * @return The launch, or the server's refusal.
+     *
+     * @throws ExecutionEndedException When the server no longer knows this execution.
+     */
+    suspend fun openLaunch(): RunnerLaunch
+
+    /**
+     * Reports a check the runner ran: the server records it as attested by the isolated runner.
+     *
+     * @param check The run.
+     *
+     * @return Whether the server recorded it.
+     */
+    suspend fun reportCheck(check: RunnerCheck): Boolean
 }

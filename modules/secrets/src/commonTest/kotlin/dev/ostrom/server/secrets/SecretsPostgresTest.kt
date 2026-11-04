@@ -37,12 +37,42 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** Real PostgreSQL and real HTTP: storage, encryption at rest, roles and org isolation. */
 class SecretsPostgresTest {
     private val base = "/api/v1/secrets"
+
+    @Test
+    fun changingASecretFromTheConsoleNeedsASignInOfLessThanFiveMinutes() =
+        serverTest(listOf(SecretsModule), TestCallers.overrides) { server ->
+            val write = SecretWriteRequest("GRAFANA_TOKEN", "glsa_value")
+            val created = server.client.post(base) {
+                bearerAuth("stale-admin-a")
+                contentType(ContentType.Application.Json)
+                setBody(write)
+            }
+            val fresh = server.client.post(base) {
+                bearerAuth("admin-a")
+                contentType(ContentType.Application.Json)
+                setBody(write)
+            }
+            assertEquals(HttpStatusCode.Created, fresh.status, fresh.bodyAsText())
+            val rotated = server.client.put("$base/GRAFANA_TOKEN") {
+                bearerAuth("stale-admin-a")
+                contentType(ContentType.Application.Json)
+                setBody(write)
+            }
+            val deleted = server.client.delete("$base/GRAFANA_TOKEN") { bearerAuth("stale-admin-a") }
+            for (refused in listOf(created, rotated, deleted)) {
+                assertEquals(HttpStatusCode.Forbidden, refused.status)
+                assertTrue("step_up_required" in refused.bodyAsText(), refused.bodyAsText())
+            }
+            val names = server.client.get(base) { bearerAuth("admin-a") }.body<SecretsPageResponse>().items
+            assertEquals(listOf("GRAFANA_TOKEN"), names.map { it.name }, "Still there")
+        }
 
     @Test
     fun anAdminStoresASecretThatIsEncryptedAtRestAndNeverReturned() =
@@ -56,8 +86,9 @@ class SecretsPostgresTest {
             assertFalse("glsa_very_secret_value" in created.bodyAsText(), "The value never comes back")
             val secret = created.body<SecretResponse>()
 
-            val stored = server.driver.fetchAll(
-                "SELECT envelope FROM secrets_entries",
+            val stored = server.driver.fetchInOrg(
+                TestCallers.orgA,
+                Statement.create("SELECT envelope FROM secrets_entries"),
             ).getOrThrow().single().get("envelope").asString()
             assertFalse("glsa_very_secret_value" in stored, "Encrypted at rest")
             assertEquals("org", secret.scope)
@@ -259,6 +290,25 @@ class SecretsPostgresTest {
                 setBody(write)
             }
             assertEquals(HttpStatusCode.Forbidden, byCli.status, "secrets:read does not write")
+            // S2-52: a personal token holding secrets:write reads, but never makes a console change.
+            assertEquals(HttpStatusCode.OK, server.client.get(base) { bearerAuth("cli-write-a") }.status)
+            val writes = listOf(
+                server.client.post(base) {
+                    bearerAuth("cli-write-a")
+                    contentType(ContentType.Application.Json)
+                    setBody(write)
+                },
+                server.client.put("$base/MINE") {
+                    bearerAuth("cli-write-a")
+                    contentType(ContentType.Application.Json)
+                    setBody(write)
+                },
+                server.client.delete("$base/MINE") { bearerAuth("cli-write-a") },
+            )
+            for (refused in writes) {
+                assertEquals(HttpStatusCode.Forbidden, refused.status)
+                assertTrue("session in the console" in refused.bodyAsText())
+            }
         }
 
     @Test

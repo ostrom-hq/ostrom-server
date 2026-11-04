@@ -142,17 +142,8 @@ class BillingPostgresTest {
             assertEquals(0, repository.usage(ORG_A, NOW).agentSeconds)
             repository.addUsage(ORG_A, NOW, 90, 1)
             assertEquals(90, repository.usage(ORG_A, NOW).agentSeconds)
-            // The CI database user is a superuser, which bypasses row level security: the proof runs as a plain role.
-            server.driver.execute(
-                "DO \$\$ BEGIN CREATE ROLE ostrom_billing_rls_probe NOLOGIN; " +
-                    "EXCEPTION WHEN duplicate_object THEN NULL; END \$\$",
-            ).getOrThrow()
-            server.driver.execute(
-                "GRANT SELECT, INSERT ON billing_accounts, billing_active_people, billing_usage, billing_alerts " +
-                    "TO ostrom_billing_rls_probe",
-            ).getOrThrow()
+            // The test server's driver is the serving role, as in production: row level security applies to it.
             val counts = server.driver.transaction {
-                execute("SET LOCAL ROLE ostrom_billing_rls_probe").getOrThrow()
                 val seen = mutableListOf<String>()
                 for (org in listOf(null, ORG_B, ORG_A)) {
                     org?.let {
@@ -167,7 +158,6 @@ class BillingPostgresTest {
             }
             assertEquals(listOf("0/0", "0/0", "1/1"), counts, "No org set: nothing; org B: nothing; org A: its rows")
             val forged = server.driver.transaction {
-                execute("SET LOCAL ROLE ostrom_billing_rls_probe").getOrThrow()
                 fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", "$ORG_B"))
                     .getOrThrow()
                 execute(
@@ -178,6 +168,42 @@ class BillingPostgresTest {
                 )
             }
             assertEquals(0L, forged.getOrThrow(), "Org B can neither see nor write org A's rows")
+        }
+
+    @Test
+    fun theCustomersAndTheQueueAreSeenAcrossOrganizationsOnlyByTheWebhookAndTheWorker() =
+        serverTest(listOf(BillingModule), overrides) { server ->
+            val repository = server.koin.get<BillingRepository>()
+            repository.save(OrgBilling(orgId = ORG_A, stripeCustomerId = "cus_a", updatedAt = NOW))
+            val task = OutboxTask(Uuid.random(), ORG_A, OutboxKind.ACTIVE_PERSON, "ostrom-a-1-bob", NOW, 0)
+            repository.enqueue(task)
+            // The test server's driver is the serving role: no organization, or another one, sees no row of A's.
+            val counts = server.driver.transaction {
+                val seen = mutableListOf<String>()
+                for (org in listOf(null, ORG_B, ORG_A)) {
+                    org?.let {
+                        fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", "$it"))
+                            .getOrThrow()
+                    }
+                    val customers = fetchAll("SELECT COUNT(*) AS n FROM billing_customers").getOrThrow()
+                    val tasks = fetchAll("SELECT COUNT(*) AS n FROM billing_outbox").getOrThrow()
+                    seen += "${customers.first().get("n").asString()}/${tasks.first().get("n").asString()}"
+                }
+                seen
+            }
+            assertEquals(listOf("0/0", "0/0", "1/1"), counts, "No org set: nothing; org B: nothing; org A: its rows")
+            val rewritten = server.driver.transaction {
+                fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", "$ORG_B"))
+                    .getOrThrow()
+                execute("UPDATE billing_customers SET org_id = '$ORG_B' WHERE stripe_customer_id = 'cus_a'")
+                    .getOrThrow() + execute("UPDATE billing_outbox SET done_at = NOW()").getOrThrow()
+            }
+            assertEquals(0L, rewritten, "Org B can neither take A's customer nor finish A's task")
+            // The webhook and the worker still reach them.
+            assertEquals(ORG_A, repository.findByCustomer("cus_a")?.orgId)
+            assertEquals(listOf(task), repository.claimDueTasks(NOW, NOW + 10.minutes, 10))
+            repository.completeTask(task.id, NOW)
+            assertEquals(emptyList(), repository.claimDueTasks(NOW + 10.minutes, NOW + 20.minutes, 10))
         }
 
     @Test

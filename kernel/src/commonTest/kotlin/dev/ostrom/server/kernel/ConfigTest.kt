@@ -9,6 +9,7 @@ import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.kernel.config.ServerConfig
 import dev.ostrom.server.kernel.config.parseConfigFile
 import dev.ostrom.server.kernel.config.readConfigFile
+import dev.ostrom.server.kernel.http.ReadLimits
 import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.kernel.network.TrustedProxies
 import kotlinx.io.buffered
@@ -260,6 +261,28 @@ class ConfigTest {
         assertEquals("CF-Connecting-IP", cloudflare.trustedProxies.clientHeader)
         assertFailsWith<InvalidConfigException> {
             ServerConfig.from(MapConfigSource(database + mapOf("OSTROM_CLIENT_ADDRESS_HEADER" to "CF-Connecting-IP")))
+        }
+    }
+
+    @Test
+    fun readsTheReadLimitsWithinTheirBounds() {
+        assertEquals(ReadLimits(600, 16, 256), ServerConfig.from(MapConfigSource(database)).readLimits)
+        val set = mapOf(
+            "OSTROM_READS_PER_MINUTE" to "100000",
+            "OSTROM_READS_IN_FLIGHT" to "1",
+            "OSTROM_READ_WAITS_IN_FLIGHT" to "10000",
+        )
+        assertEquals(ReadLimits(100_000, 1, 10_000), ServerConfig.from(MapConfigSource(database + set)).readLimits)
+        val wrongs = listOf(
+            "OSTROM_READS_PER_MINUTE" to "0",
+            "OSTROM_READS_IN_FLIGHT" to "1001",
+            "OSTROM_READS_IN_FLIGHT" to "many",
+            "OSTROM_READ_WAITS_IN_FLIGHT" to "0",
+        )
+        for (wrong in wrongs) {
+            assertFailsWith<InvalidConfigException>(wrong.toString()) {
+                ServerConfig.from(MapConfigSource(database + wrong))
+            }
         }
     }
 

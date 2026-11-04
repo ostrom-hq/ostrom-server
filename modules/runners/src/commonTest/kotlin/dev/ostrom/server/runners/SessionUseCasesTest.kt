@@ -5,11 +5,11 @@ import dev.ostrom.server.runners.domain.AgentKind
 import dev.ostrom.server.runners.domain.Caller
 import dev.ostrom.server.runners.domain.ChangeCloudSessionUseCaseImpl
 import dev.ostrom.server.runners.domain.CloudHoursExhaustedException
-import dev.ostrom.server.runners.domain.CloudSessionsClosedException
 import dev.ostrom.server.runners.domain.CloudPlan
 import dev.ostrom.server.runners.domain.CloudSessionLimitException
 import dev.ostrom.server.runners.domain.CloudSessionNotFoundException
 import dev.ostrom.server.runners.domain.CloudSessionStateException
+import dev.ostrom.server.runners.domain.CloudSessionsClosedException
 import dev.ostrom.server.runners.domain.CreateCloudSessionPayload
 import dev.ostrom.server.runners.domain.CreateCloudSessionUseCaseImpl
 import dev.ostrom.server.runners.domain.DesiredState
@@ -17,14 +17,17 @@ import dev.ostrom.server.runners.domain.FreeCloudPlanProvider
 import dev.ostrom.server.runners.domain.GetCloudSessionUseCaseImpl
 import dev.ostrom.server.runners.domain.InvalidCloudSessionRequestException
 import dev.ostrom.server.runners.domain.ListCloudSessionsUseCaseImpl
+import dev.ostrom.server.runners.domain.RepositoryCloudUsageMeter
 import dev.ostrom.server.runners.domain.RepositorySpec
 import dev.ostrom.server.runners.domain.SessionState
+import dev.ostrom.server.runners.fakes.FakeRuntimeDriver
 import dev.ostrom.server.runners.fakes.FixedPlans
 import dev.ostrom.server.runners.fakes.InMemoryCloudSessionsRepository
 import dev.ostrom.server.runners.fakes.ORG_A
 import dev.ostrom.server.runners.fakes.ORG_B
 import dev.ostrom.server.runners.fakes.SettableClock
 import dev.ostrom.server.runners.fakes.session
+import dev.ostrom.server.runners.presentation.toResponse
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -40,8 +43,8 @@ class SessionUseCasesTest {
     private val repository = InMemoryCloudSessionsRepository()
     private val plans = FixedPlans()
     private val clock = SettableClock()
-    private val create = CreateCloudSessionUseCaseImpl(repository, plans, clock)
-    private val change = ChangeCloudSessionUseCaseImpl(repository, plans, clock)
+    private val create = CreateCloudSessionUseCaseImpl(repository, plans, RepositoryCloudUsageMeter(repository), clock)
+    private val change = ChangeCloudSessionUseCaseImpl(repository, plans, RepositoryCloudUsageMeter(repository), clock)
 
     private fun payload(
         name: String = "Fix the relist retry",
@@ -81,6 +84,14 @@ class SessionUseCasesTest {
         )
         assertEquals("codex", create(alice, CreateCloudSessionPayload("  ", "codex", null)).name)
         assertEquals("codex", create(alice, CreateCloudSessionPayload(null, "codex", null)).name)
+    }
+
+    @Test
+    fun aSessionKeepsTheIdItsServerCallerChose() = runTest {
+        val id = Uuid.parse("0f8a2d3c-1111-4222-8333-444455556666")
+        val created = create(alice, CreateCloudSessionPayload("x", "claude", null, id = id))
+        assertEquals(id, created.id)
+        assertEquals(id, repository.get(created.orgId, id)?.id)
     }
 
     @Test
@@ -180,13 +191,31 @@ class SessionUseCasesTest {
 
     @Test
     fun getReturnsOnlyTheCallersSessions() = runTest {
-        val get = GetCloudSessionUseCaseImpl(repository)
+        val get = GetCloudSessionUseCaseImpl(repository, FakeRuntimeDriver())
         val created = create(alice, payload())
 
         assertEquals(created, get(alice, created.id))
         assertFailsWith<CloudSessionNotFoundException> { get(Caller(ORG_A, "mallory"), created.id) }
         assertFailsWith<CloudSessionNotFoundException> { get(Caller(ORG_B, "alice"), created.id) }
         assertFailsWith<CloudSessionNotFoundException> { get(alice, Uuid.random()) }
+    }
+
+    @Test
+    fun getNamesTheRegisteredRunnerTheSessionRunsOn() = runTest {
+        // the contract's CloudSession.runnerId: where a member (or `ostrom claude --cloud`) sees its session placed
+        val machine = Uuid.random()
+        val driver = FakeRuntimeDriver().apply { holder = machine }
+        val created = create(alice, payload())
+
+        val read = GetCloudSessionUseCaseImpl(repository, driver)(alice, created.id)
+        assertEquals(machine, read.runnerId)
+        assertEquals(machine.toString(), read.toResponse().runnerId)
+        assertNull(GetCloudSessionUseCaseImpl(repository, FakeRuntimeDriver())(alice, created.id).runnerId)
+        for (state in listOf(SessionState.PAUSED, SessionState.TERMINATED, SessionState.FAILED)) {
+            repository.sessions[created.id] = repository.sessions.getValue(created.id).copy(state = state)
+            val nowhere = GetCloudSessionUseCaseImpl(repository, driver)(alice, created.id)
+            assertNull(nowhere.runnerId, "$state runs nowhere")
+        }
     }
 
     @Test
@@ -277,7 +306,8 @@ class SessionUseCasesTest {
         }
 
         assertFailsWith<CloudSessionNotFoundException> {
-            ChangeCloudSessionUseCaseImpl(vanishing, FreeCloudPlanProvider(), clock).resume(alice, paused.id)
+            val meter = RepositoryCloudUsageMeter(vanishing)
+            ChangeCloudSessionUseCaseImpl(vanishing, FreeCloudPlanProvider(), meter, clock).resume(alice, paused.id)
         }
     }
 
@@ -309,7 +339,7 @@ class SessionUseCasesTest {
         val vanishing = object : dev.ostrom.server.runners.domain.CloudSessionsRepository by repository {
             override suspend fun setDesiredState(orgId: Uuid, id: Uuid, desiredState: DesiredState, now: Instant) = null
         }
-        val racing = ChangeCloudSessionUseCaseImpl(vanishing, plans, clock)
+        val racing = ChangeCloudSessionUseCaseImpl(vanishing, plans, RepositoryCloudUsageMeter(vanishing), clock)
 
         assertFailsWith<CloudSessionNotFoundException> { racing.pause(alice, created.id) }
         assertFailsWith<CloudSessionNotFoundException> { racing.delete(alice, created.id) }

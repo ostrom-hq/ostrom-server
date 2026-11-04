@@ -2,6 +2,7 @@
 package dev.ostrom.server.mcprelay
 
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.mcprelay.presentation.McpAssignmentRequest
@@ -37,6 +38,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.koin.dsl.module
 import kotlin.test.assertEquals
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.ZERO
+import kotlin.time.Duration.Companion.minutes
 import kotlin.uuid.Uuid
 
 /**
@@ -53,6 +57,8 @@ abstract class RelayPostgresHarness {
         "device-a" to Relay.memberA,
         "cli-a" to Relay.adminA,
         "admin-agent-a" to Relay.adminA,
+        // A browser session of the admin signed in more than five minutes ago (web audit n°2 M3).
+        "stale-admin-a" to Relay.adminA,
     )
 
     /** Browser sessions by default; agents (one an admin's), a device, and a console token that may only read. */
@@ -104,7 +110,12 @@ abstract class RelayPostgresHarness {
             object : TokenAuthenticator {
                 override suspend fun authenticate(token: String) = principals[token]
                     ?: byToken[token]?.let {
-                        AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(RelayScopes.ALL_USER))
+                        val scopes = setOf(RelayScopes.ALL_USER)
+                        val signedIn = Clock.System.now() - if (token.startsWith("stale-")) 10.minutes else ZERO
+                        AuthenticatedPrincipal(
+                            token, PrincipalKind.USER, scopes, channel = PrincipalChannel.BROWSER,
+                            authenticatedAt = signedIn,
+                        )
                     }
             }
         }

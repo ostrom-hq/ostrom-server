@@ -1,0 +1,25 @@
+# The OpenTelemetry collector of the CI step "Telemetry reaches an OpenTelemetry collector": receives the server's
+# OTLP/HTTP export and writes every signal as JSON lines, read back by ci/otel-smoke.sh.
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+exporters:
+  file/traces:
+    path: /out/traces.json
+  file/metrics:
+    path: /out/metrics.json
+  file/logs:
+    path: /out/logs.json
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [file/traces]
+    metrics:
+      receivers: [otlp]
+      exporters: [file/metrics]
+    logs:
+      receivers: [otlp]
+      exporters: [file/logs]

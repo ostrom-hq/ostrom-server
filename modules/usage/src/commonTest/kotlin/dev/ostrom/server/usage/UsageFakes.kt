@@ -2,6 +2,7 @@
 package dev.ostrom.server.usage
 
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalChannel.BROWSER
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.logging.LogLevel
@@ -10,6 +11,11 @@ import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.CallerResolver
 import dev.ostrom.server.secrets.domain.MemberRole
 import dev.ostrom.server.secrets.domain.RelayScopes
+import dev.ostrom.server.usage.domain.Admission
+import dev.ostrom.server.usage.domain.HoldWindow
+import dev.ostrom.server.usage.domain.SpendHold
+import dev.ostrom.server.usage.domain.SpendLimits
+import dev.ostrom.server.usage.domain.SpendTotals
 import dev.ostrom.server.usage.domain.UsageCursor
 import dev.ostrom.server.usage.domain.UsageEvent
 import dev.ostrom.server.usage.domain.UsageGroupBy
@@ -43,6 +49,8 @@ object TestCallers {
         "stranger" to null,
     )
 
+    private val browserScopes = setOf(RelayScopes.ALL_USER)
+
     /** The scopes and kind of each token: a browser session has every user scope (`user:*`). */
     private val principals = mapOf(
         "agent-a" to (PrincipalKind.SERVICE to setOf(RelayScopes.AGENT_SESSION)),
@@ -64,10 +72,14 @@ object TestCallers {
         single<Clock> { clock }
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
-                override suspend fun authenticate(token: String): AuthenticatedPrincipal? {
-                    if (token !in byToken) return null
-                    val (kind, scopes) = principals[token] ?: (PrincipalKind.USER to setOf(RelayScopes.ALL_USER))
-                    return AuthenticatedPrincipal(token, kind, scopes)
+                override suspend fun authenticate(token: String): AuthenticatedPrincipal? = when {
+                    token !in byToken -> null
+                    // A token without its own kind is a browser session, with every user scope.
+                    token !in principals ->
+                        AuthenticatedPrincipal(token, PrincipalKind.USER, browserScopes, channel = BROWSER)
+                    else -> principals.getValue(token).let { (kind, scopes) ->
+                        AuthenticatedPrincipal(token, kind, scopes)
+                    }
                 }
             }
         }
@@ -140,12 +152,62 @@ class InMemoryUsageRepository : UsageRepository {
         this.events += events
     }
 
+    /** The holds of the calls in flight. */
+    val holds = mutableMapOf<Uuid, Pair<SpendHold, Instant>>()
+
+    override suspend fun settle(event: UsageEvent) {
+        insert(event.orgId, listOf(event))
+        holds.remove(event.id)
+    }
+
+    override suspend fun holdWithin(hold: SpendHold, limits: SpendLimits, window: HoldWindow): Admission {
+        failure?.let { throw it }
+        val live = holds.values.filter { (other, expires) ->
+            other.orgId == hold.orgId && other.callId != hold.callId && expires > window.now
+        }.map { it.first }
+        val totals = SpendTotals(
+            orgSpent = spentMicros(hold.orgId, null, window.since),
+            orgHeld = live.sumOf { it.micros },
+            memberSpent = spentMicros(hold.orgId, hold.memberId, window.since),
+            memberHeld = live.filter { it.memberId == hold.memberId }.sumOf { it.micros },
+            orgDaySpent = limits.daily?.let { spentMicros(hold.orgId, null, it.since) } ?: 0,
+            memberDaySpent = limits.daily?.let { spentMicros(hold.orgId, hold.memberId, it.since) } ?: 0,
+        )
+        return limits.admit(withWorkflow(totals, hold, limits, window, live), hold.micros).also {
+            if (it == Admission.Admitted) holds[hold.callId] = hold to window.expiresAt
+        }
+    }
+
+    /** The sums of the workflow [hold]'s launch plays, if any. */
+    private suspend fun withWorkflow(
+        totals: SpendTotals,
+        hold: SpendHold,
+        limits: SpendLimits,
+        window: HoldWindow,
+        live: List<SpendHold>,
+    ): SpendTotals {
+        val id = hold.workflowId ?: return totals
+        return totals.copy(
+            workflowSpent = workflowSpentMicros(hold.orgId, id, window.since),
+            workflowHeld = live.filter { it.workflowId == id }.sumOf { it.micros },
+            workflowDaySpent = limits.daily?.let { workflowSpentMicros(hold.orgId, id, it.since) } ?: 0,
+        )
+    }
+
     override suspend fun spentMicros(orgId: Uuid, memberId: Uuid?, since: Instant): Long = events
         .filter { it.orgId == orgId && it.at >= since && (memberId == null || it.memberId == memberId) }
         .sumOf { it.costMicros }
 
     override suspend fun accountSpentMicros(orgId: Uuid, accountId: Uuid, since: Instant): Long =
         events.filter { it.orgId == orgId && it.accountId == accountId && it.at >= since }.sumOf { it.costMicros }
+
+    override suspend fun workflowSpentMicros(orgId: Uuid, workflowId: String, since: Instant): Long =
+        events.filter { it.orgId == orgId && it.workflowId == workflowId && it.at >= since }.sumOf { it.costMicros }
+
+    override suspend fun launchSpentMicros(orgId: Uuid, launchId: String, from: Instant, to: Instant): Long? = events
+        .filter { it.orgId == orgId && it.launchId == launchId && it.at >= from && it.at < to && it.costMicros > 0 }
+        .takeIf { it.isNotEmpty() }
+        ?.sumOf { it.costMicros }
 
     override suspend fun summary(window: UsageWindow, groupBy: UsageGroupBy, limit: Int): List<UsageTotal> =
         events.filter { it in window }

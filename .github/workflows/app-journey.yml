@@ -1,0 +1,361 @@
+name: App journey
+
+# The mobile app's flows against the real server (ostrom-app .maestro/real/, demo/PARCOURS.md 6.7) on a PUBLISHED image
+# of this server: by default the newest published `sha-<7>` of main's last commits, never `edge`, which a slower run of an older commit may still
+# hold. The job prepares the server through its own routes (ostrom-app scripts/real-server-session.sh): the phone's
+# person signs in with GitHub (the demo stack's fake GitHub, ostrom-helm compose/demo/fake-github.mjs), owns the
+# organization and approves pushes to main; another member asks two; the phone's session comes from the app's own
+# sign-in routes (PKCE, `POST /auth/mobile/token`). The app is built here from ostrom-app with that session (a release
+# APK for an x86_64 emulator), its Maestro flows say yes to one request and no to the other on an Android emulator of
+# this same Linux runner (the server runs on the host, the emulator reaches it at 10.0.2.2), and the job then checks the
+# gates and their receipts through the API. A model call through the gateway, to ostrom-e2e's fake provider, spends the
+# organization's tiny budget: the app's Spending tab shows it passed (PARCOURS 3.5). It runs in this repository because its
+# token reads its own GHCR packages, which ostrom-app's cannot yet (as cli-journey.yml and console-journey.yml). On
+# demand, and, off the org's one-`ci`-job rule on purpose (as demo-stack.yml), on a pull request only when the pull
+# request changes this file.
+on:
+  workflow_dispatch:
+    inputs:
+      server_image:
+        description: Server image (empty = the newest published ghcr.io/ostrom-hq/ostrom-server:sha-<7> of main)
+        default: ""
+      app_ref:
+        description: ostrom-app ref whose app and flows run
+        default: main
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths: [.github/workflows/app-journey.yml]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  journey:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
+    # The database is `ostrom_ci`: ci/database-roles.sql creates `ostrom` itself, owned by its owner role.
+    services:
+      postgres:
+        image: postgres:18@sha256:979bccfde35445db618c65107d27d08c6c21339d8dc3ad4c830c6633947be0e4
+        env: { POSTGRES_USER: ostrom, POSTGRES_PASSWORD: ostrom, POSTGRES_DB: ostrom_ci }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ostrom -d ostrom_ci" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      APP_REF: ${{ inputs.app_ref || 'main' }}
+      WANTED_IMAGE: ${{ inputs.server_image }}
+    steps:
+      # The whole history: main's last commits name the image, and the image's own commit gives its database roles.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: server
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-app
+          ref: ${{ env.APP_REF }}
+          ssh-key: ${{ secrets.DEPLOY_KEY_APP }}
+          path: app
+          persist-credentials: false
+      # The demo stack's fake GitHub: the OAuth web flow the server's GitHub sign-in uses, without any real account.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-helm
+          ssh-key: ${{ secrets.DEPLOY_KEY_HELM }}
+          path: helm
+          # The fake and the demo seed it reads its accounts from.
+          sparse-checkout: |
+            compose/demo/fake-github.mjs
+            compose/demo/teamcode/seed.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      # ostrom-e2e's fake model provider, the one its scenarios and e2e-journey.yml's start: not written a second time.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-e2e
+          ssh-key: ${{ secrets.DEPLOY_KEY_E2E }}
+          path: e2e
+          sparse-checkout: |
+            package.json
+            src/fake-tokens.ts
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      # Node 24 runs the fake provider's TypeScript as it is (type stripping), and builds the app later.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Start the fake model provider
+        # The gateway's Anthropic API (OSTROM_GATEWAY_ANTHROPIC_URL): every model call bills 300 000 input tokens, $1.50
+        # at claude-opus-5's $5 per million, past the organization's $0.01 budget that real-server-session.sh sets
+        # (PARCOURS 3.5: the phone shows the budget passed, and the calls refused until the month ends).
+        run: |
+          cat > "$RUNNER_TEMP/fake-provider.mjs" <<'JS'
+          const { FakeTokens } = await import(process.argv[2]);
+          const provider = new FakeTokens();
+          provider.usage = { input_tokens: 300_000, output_tokens: 1 };
+          await provider.start(4620);
+          console.log('The fake model provider listens on 127.0.0.1:4620');
+          JS
+          sed -i 's/^ *//' "$RUNNER_TEMP/fake-provider.mjs"
+          nohup node "$RUNNER_TEMP/fake-provider.mjs" "$PWD/e2e/src/fake-tokens.ts" > "$RUNNER_TEMP/fake-provider.log" 2>&1 &
+          for _ in $(seq 1 30); do curl -sS -o /dev/null 127.0.0.1:4620/ 2>/dev/null && exit 0; sleep 1; done
+          cat "$RUNNER_TEMP/fake-provider.log"; exit 1
+      - name: Start the fake GitHub
+        env:
+          PORT: "8080"
+          FAKE_GITHUB_CLIENT_ID: Iv1.ostromappe2e
+        # The OAuth client's secret is made for this run, known to the fake and this job's server only.
+        run: |
+          secret="$(openssl rand -hex 16)"
+          echo "::add-mask::$secret"
+          echo "FAKE_GITHUB_CLIENT_SECRET=$secret" >> "$GITHUB_ENV"
+          export FAKE_GITHUB_CLIENT_SECRET="$secret"
+          nohup node helm/compose/demo/fake-github.mjs > "$RUNNER_TEMP/fake-github.log" 2>&1 &
+          for _ in $(seq 1 30); do curl -fsS 127.0.0.1:8080/health >/dev/null 2>&1 && exit 0; sleep 1; done
+          cat "$RUNNER_TEMP/fake-github.log"; exit 1
+      - name: The server image (the newest published sha-<7> of main unless named)
+        id: server
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          main=$(git -C server rev-parse origin/main)
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          if [ -n "$WANTED_IMAGE" ]; then
+            image=$WANTED_IMAGE
+            docker pull --quiet "$image" || { echo "::error::$image cannot be pulled"; exit 1; }
+          else
+            # Main moves faster than its images are published: the newest `sha-<7>` among its last 20 commits.
+            image=""
+            for commit in $(git -C server rev-list --max-count=20 origin/main); do
+              if docker pull --quiet "ghcr.io/ostrom-hq/ostrom-server:sha-${commit:0:7}" > /dev/null 2>&1; then
+                image="ghcr.io/ostrom-hq/ostrom-server:sha-${commit:0:7}"
+                break
+              fi
+            done
+            [ -n "$image" ] || { echo "::error::No image of main's last 20 commits is published"; exit 1; }
+          fi
+          revision=$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")
+          [ -n "$revision" ] || { echo "::error::$image carries no org.opencontainers.image.revision label"; exit 1; }
+          # The database roles of the image's own commit, not of a main that may have moved past it.
+          git -C server show "${revision}:ci/database-roles.sql" > "$RUNNER_TEMP/database-roles.sql"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Images"
+            echo "- server: \`$image\` (ostrom-server@${revision:0:7}; main is at ${main:0:7})"
+            echo "- app: ostrom-app $(git -C app rev-parse --short HEAD) ($APP_REF), built here"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Start the server (roles, migrate, serve as ostrom_app)
+        env:
+          IMAGE: ${{ steps.server.outputs.image }}
+          PGPASSWORD: ostrom
+          OWNER_URL: postgresql://ostrom_owner:ostrom_owner@localhost:5432/ostrom
+        run: |
+          psql -h localhost -U ostrom -d ostrom_ci -v ON_ERROR_STOP=1 -f "$RUNNER_TEMP/database-roles.sql"
+          docker run --rm --network host -e OSTROM_DATABASE_MIGRATION_URL="$OWNER_URL" "$IMAGE" migrate
+          # The server's non-root user writes the mails (0644); the session script, as the runner's user, reads them.
+          mkdir -p "$RUNNER_TEMP/ostrom-mail" && chmod 0777 "$RUNNER_TEMP/ostrom-mail"
+          # Test values only: sign-in mails are written to a directory, Stripe is never called by the flows, and the
+          # model provider behind the gateway is the fake one started above (its token endpoint too).
+          # Read limits (AUDIT-SECU-LECTURES M1) set explicitly: a journey reads in bursts, never a flood.
+          # stripe-mock refuses a key with another underscore after `sk_test_` (401, as console-journey.yml's did).
+          cat > "$RUNNER_TEMP/server.env" <<'ENV'
+          OSTROM_DATABASE_URL=postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
+          OSTROM_PORT=4600
+          OSTROM_MAIL_DIR=/var/lib/ostrom/mail
+          OSTROM_PUBLIC_URL=http://127.0.0.1:4600
+          OSTROM_CONSOLE_URL=http://127.0.0.1:4600
+          OSTROM_STRIPE_SECRET_KEY=sk_test_appe2e
+          OSTROM_STRIPE_WEBHOOK_SECRET=whsec_app_e2e
+          OSTROM_STRIPE_API_BASE=http://127.0.0.1:12111
+          OSTROM_GITHUB_CLIENT_ID=Iv1.ostromappe2e
+          OSTROM_GITHUB_WEB_URL=http://127.0.0.1:8080
+          OSTROM_GITHUB_API_URL=http://127.0.0.1:8080/api
+          OSTROM_READS_PER_MINUTE=6000
+          OSTROM_READS_IN_FLIGHT=64
+          OSTROM_READ_WAITS_IN_FLIGHT=256
+          OSTROM_GATEWAY_ANTHROPIC_URL=http://127.0.0.1:4620
+          OSTROM_SHARING_CLAUDE_TOKEN_URL=http://127.0.0.1:4620/v1/oauth/token
+          ENV
+          sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
+          echo "OSTROM_GITHUB_CLIENT_SECRET=$FAKE_GITHUB_CLIENT_SECRET" >> "$RUNNER_TEMP/server.env"
+          docker run -d --name ostrom-server --network host -v "$RUNNER_TEMP/ostrom-mail:/var/lib/ostrom/mail" \
+            --env-file "$RUNNER_TEMP/server.env" "$IMAGE"
+          for _ in $(seq 1 60); do curl -fsS 127.0.0.1:4600/ready >/dev/null 2>&1 && exit 0; sleep 1; done
+          docker logs ostrom-server; exit 1
+      - name: Two requests waiting for the phone's person, and the phone's session
+        id: session
+        # The fake GitHub must still answer: its start-up log, rather than an unclear sign-in failure.
+        # The script masks the secrets and writes its outputs to $GITHUB_OUTPUT itself.
+        run: |
+          curl -fsS 127.0.0.1:8080/health > /dev/null || { cat "$RUNNER_TEMP/fake-github.log"; exit 1; }
+          app/scripts/real-server-session.sh http://127.0.0.1:4600 "$RUNNER_TEMP/ostrom-mail" http://127.0.0.1:8080
+      - name: The session gave all its outputs
+        env:
+          OUTPUTS: ${{ toJSON(steps.session.outputs) }}
+        run: |
+          names="token unlock_key login yes_approval no_approval yes_gate no_gate asker_token"
+          # The repository of the requests, once the app's flow reads it (its Activity screen).
+          if grep -q OSTROM_E2E_REPO app/.maestro/real/journey.yaml; then names="$names repo"; fi
+          for name in $names; do
+            if [ -z "$(jq -r --arg n "$name" '.[$n] // ""' <<< "$OUTPUTS")" ]; then
+              echo "::error::The session step gave no $name: the app or the checks would fail later, unclearly"
+              exit 1
+            fi
+          done
+      - name: The member the app signs in as, seen with and without Ostrom-Org
+        # The app reads no role from /auth/me (it gates the yes on the approval's `you.canApprove`, which the gates
+        # resolve for the only organization without the header, server#64); this keeps the contract's case in the
+        # journey: with `Ostrom-Org`, /auth/me gives the owner's membership; without it, none (core#51).
+        env:
+          TOKEN: ${{ steps.session.outputs.token }}
+        run: |
+          auth=(-H "accept: application/json" -H "authorization: Bearer $TOKEN")
+          org="$(curl -fsS "${auth[@]}" http://127.0.0.1:4600/api/v1/me/organizations | jq -er '.items | if length == 1 then .[0].id else error("not one organization") end')"
+          role="$(curl -fsS "${auth[@]}" -H "Ostrom-Org: $org" http://127.0.0.1:4600/api/v1/auth/me | jq -r '.member.role // ""')"
+          if [ "$role" != "owner" ]; then
+            echo "::error::/auth/me with Ostrom-Org gave the role \"$role\", not owner"
+            exit 1
+          fi
+          bare="$(curl -fsS "${auth[@]}" http://127.0.0.1:4600/api/v1/auth/me | jq -r '.member.role // "none"')"
+          echo "With Ostrom-Org: $role; without: $bare"
+      - name: Free disk space on the runner
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /usr/share/swift \
+            /opt/hostedtoolcache/CodeQL /opt/microsoft /opt/google/chrome \
+            /usr/local/share/powershell /usr/local/share/chromium
+          free_kib=$(df --output=avail -k / | tail -n 1)
+          echo "Free on / after the cleanup: $((free_kib / 1024 / 1024)) GiB"
+          if [ "$free_kib" -lt $((8 * 1024 * 1024)) ]; then
+            echo "::error::Less than 8 GiB free after the cleanup: the build and the emulator would not fit"
+            exit 1
+          fi
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-provider: basic
+      - name: Install the app's dependencies
+        working-directory: app
+        run: npm ci
+      # The emulator reaches the runner at 10.0.2.2, over plain HTTP: allowed in this build only, never in a store build.
+      - name: Build the Android app against the server (release, x86_64)
+        working-directory: app
+        env:
+          EXPO_PUBLIC_OSTROM_REAL_E2E: "1"
+          EXPO_PUBLIC_OSTROM_E2E_SERVER: http://10.0.2.2:4600
+          EXPO_PUBLIC_OSTROM_E2E_TOKEN: ${{ steps.session.outputs.token }}
+          EXPO_PUBLIC_OSTROM_E2E_LOGIN: ${{ steps.session.outputs.login }}
+          EXPO_PUBLIC_OSTROM_E2E_UNLOCK_KEY: ${{ steps.session.outputs.unlock_key }}
+        run: |
+          npx expo prebuild --platform android --no-install
+          sed -i 's/<application /<application android:usesCleartextTraffic="true" /' android/app/src/main/AndroidManifest.xml
+          grep -q 'usesCleartextTraffic="true"' android/app/src/main/AndroidManifest.xml
+          cd android && ./gradlew assembleRelease -PreactNativeArchitectures=x86_64 --no-daemon
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/journey.apk"
+      # The app's own sign-in, through Chrome, the server and the fake GitHub, in a build given no session
+      # (ostrom-app .maestro/real-browser/, AUDIT-SECU-APP-2 N1): the server's page that asks before a code goes back to
+      # the app. The emulator reaches the server and the fake GitHub on 127.0.0.1 (`adb reverse`), the address the
+      # server sends the browser to; skipped for an app ref without those flows.
+      - name: Build the Android app that signs in through the browser, given no session
+        if: hashFiles('app/.maestro/real-browser/*.yaml') != ''
+        working-directory: app
+        env:
+          EXPO_PUBLIC_OSTROM_REAL_E2E: "1"
+          EXPO_PUBLIC_OSTROM_E2E_SERVER: http://127.0.0.1:4600
+          EXPO_PUBLIC_OSTROM_E2E_SIGN_IN: browser
+          SESSION_TOKEN: ${{ steps.session.outputs.token }}
+        run: |
+          # The bundle is made again with these variables: Metro's cache and Gradle's up-to-date check would keep the
+          # first build's, which carries the session.
+          rm -rf "${TMPDIR:-/tmp}"/metro-* "${TMPDIR:-/tmp}"/haste-map-* node_modules/.cache
+          cd android
+          ./gradlew createBundleReleaseJsAndAssets --rerun -PreactNativeArchitectures=x86_64 --no-daemon
+          ./gradlew assembleRelease -PreactNativeArchitectures=x86_64 --no-daemon
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/browser.apk"
+          bundle="$RUNNER_TEMP/browser-bundle"
+          unzip -p "$RUNNER_TEMP/browser.apk" assets/index.android.bundle > "$bundle"
+          if grep -aqF "$SESSION_TOKEN" "$bundle"; then
+            echo "::error::The browser build carries the journey's session: it would skip the sign-in it must prove"
+            exit 1
+          fi
+          grep -aqF "http://127.0.0.1:4600" "$bundle" || { echo "::error::The browser build does not carry its server"; exit 1; }
+      - name: Install Maestro (pinned)
+        env:
+          MAESTRO_VERSION: 2.12.0
+        run: |
+          curl -fsSL "https://get.maestro.mobile.dev" | bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+      - name: The app's flows against the server
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        env:
+          OSTROM_E2E_LOGIN: ${{ steps.session.outputs.login }}
+          OSTROM_E2E_YES: ${{ steps.session.outputs.yes_approval }}
+          OSTROM_E2E_NO: ${{ steps.session.outputs.no_approval }}
+          # The repository of the requests, which the Activity screen shows (checked above once the flow reads it).
+          OSTROM_E2E_REPO: ${{ steps.session.outputs.repo }}
+        with:
+          working-directory: app
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          disk-size: 4096M
+          script: |
+            adb install "$RUNNER_TEMP/journey.apk"
+            scripts/run-maestro.sh .maestro/real -e OSTROM_E2E_LOGIN="$OSTROM_E2E_LOGIN" -e OSTROM_E2E_YES="$OSTROM_E2E_YES" -e OSTROM_E2E_NO="$OSTROM_E2E_NO" -e OSTROM_E2E_REPO="$OSTROM_E2E_REPO"
+            if [ -f "$RUNNER_TEMP/browser.apk" ]; then adb uninstall run.ostrom.app && adb reverse tcp:4600 tcp:4600 && adb reverse tcp:8080 tcp:8080 && adb install "$RUNNER_TEMP/browser.apk" && scripts/run-maestro.sh .maestro/real-browser -e OSTROM_E2E_LOGIN="$OSTROM_E2E_LOGIN"; fi
+      - name: The server took the yes and the no, and signed both receipts
+        # Read by the asker's token (gates:read, receipts:read): what the phone sent, as the server recorded it.
+        env:
+          TOKEN: ${{ steps.session.outputs.asker_token }}
+          YES_GATE: ${{ steps.session.outputs.yes_gate }}
+          NO_GATE: ${{ steps.session.outputs.no_gate }}
+        run: |
+          auth=(-H "accept: application/json" -H "authorization: Bearer $TOKEN")
+          api=http://127.0.0.1:4600/api/v1
+          check() {
+            local gate="$1" wanted="$2" read status receipt verified
+            # The gate names its signed receipt (`gate.receiptId`); the receipt's subject id is the pushed commit, not
+            # the gate id, so it is not looked up by subject.
+            read="$(curl -fsS "${auth[@]}" "$api/gates/$gate")"
+            status="$(jq -r '.gate.status' <<< "$read")"
+            [ "$status" = "$wanted" ] || { echo "::error::Gate $gate is $status, not $wanted"; return 1; }
+            receipt="$(jq -er '.gate.receiptId' <<< "$read")" || { echo "::error::Gate $gate names no receipt"; return 1; }
+            verified="$(curl -fsS "${auth[@]}" "$api/receipts/$receipt/verify")"
+            [ "$(jq -r '.ok' <<< "$verified")" = "true" ] || { echo "::error::Receipt $receipt does not verify: $verified"; return 1; }
+            echo "Gate $gate: $status; receipt $receipt verifies ($(jq -r '.kid' <<< "$verified"))"
+          }
+          check "$YES_GATE" approved
+          check "$NO_GATE" rejected
+      - name: Server logs
+        if: always()
+        run: |
+          docker logs ostrom-server 2>&1 | tail -n 300 || true
+          echo "--- fake GitHub"
+          tail -n 50 "$RUNNER_TEMP/fake-github.log" || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: app-journey-report
+          path: |
+            app/maestro-report-*.xml
+            app/maestro-output/
+          if-no-files-found: ignore
+          retention-days: 7

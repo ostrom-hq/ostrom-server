@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners
 
+import dev.ostrom.server.runners.domain.CheckRunnerTokenUseCaseImpl
+import dev.ostrom.server.runners.domain.CloudUsageMeter
 import dev.ostrom.server.runners.domain.DesiredState
 import dev.ostrom.server.runners.domain.ExecutionFencedException
 import dev.ostrom.server.runners.domain.RecordCloudSessionActivityUseCaseImpl
+import dev.ostrom.server.runners.domain.RepositoryCloudUsageMeter
 import dev.ostrom.server.runners.domain.RunnerHeartbeat
 import dev.ostrom.server.runners.domain.RunnerHeartbeatUseCaseImpl
 import dev.ostrom.server.runners.domain.RunnerInstruction
@@ -21,12 +24,14 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 class RunnerHeartbeatUseCaseTest {
     private val repository = InMemoryCloudSessionsRepository()
     private val clock = SettableClock()
-    private val heartbeat = RunnerHeartbeatUseCaseImpl(repository, FakeRunnerTokens(), clock)
+    private val meter = RepositoryCloudUsageMeter(repository)
+    private val heartbeat = RunnerHeartbeatUseCaseImpl(repository, FakeRunnerTokens(), meter, clock)
     private val startedAt = clock.now
 
     private fun running(state: SessionState = SessionState.CREATING, desired: DesiredState = DesiredState.RUNNING) =
@@ -44,6 +49,14 @@ class RunnerHeartbeatUseCaseTest {
         model: kotlin.time.Instant? = null,
     ) =
         RunnerHeartbeat(id, epoch, ready, stopped, model)
+
+    @Test
+    fun aRunnerIsAuthenticatedByTheTokenOfACurrentExecution() = runTest {
+        running()
+        val check = CheckRunnerTokenUseCaseImpl(repository, FakeRunnerTokens())
+        check("tok")
+        assertFailsWith<RunnerUnauthenticatedException> { check("forged") }
+    }
 
     @Test
     fun aReadyHeartbeatMakesTheSessionRunning() = runTest {
@@ -100,6 +113,25 @@ class RunnerHeartbeatUseCaseTest {
         heartbeat("tok", beat(session.id))
 
         assertEquals(75, repository.usage[ORG_A to "2026-10"])
+    }
+
+    @Test
+    fun theFirstReportOfAnExecutionCountsItsSessionOnceAndAnEmptyGapNothing() = runTest {
+        val recorded = mutableListOf<Triple<Uuid, Long, Boolean>>()
+        val meter = object : CloudUsageMeter {
+            override suspend fun usedSeconds(orgId: Uuid, now: Instant): Long = 0
+
+            override suspend fun record(orgId: Uuid, seconds: Long, newExecution: Boolean, now: Instant) {
+                recorded += Triple(orgId, seconds, newExecution)
+            }
+        }
+        val counting = RunnerHeartbeatUseCaseImpl(repository, FakeRunnerTokens(), meter, clock)
+        val session = running()
+        counting("tok", beat(session.id))
+        counting("tok", beat(session.id))
+        clock.now += 5.seconds
+        counting("tok", beat(session.id))
+        assertEquals(listOf(Triple(ORG_A, 0L, true), Triple(ORG_A, 5L, false)), recorded)
     }
 
     @Test

@@ -22,6 +22,9 @@ enum class UsageKind { MODEL, MCP, SKILL, HOOK, SESSION }
  * @property provider The provider (anthropic, openai, openrouter, claude-max, codex…), when there is one.
  * @property accountId The pooled personal account used, if any (personal account sharing).
  * @property sessionId The agent session, when known.
+ * @property launchId The launch whose agent token sent it (set by the server from the token, never from the body), or
+ *   null for a person's own credential.
+ * @property workflowId The workflow that launch plays (set by the server from the token), or null.
  * @property inputTokens Input tokens billed.
  * @property outputTokens Output tokens billed.
  * @property cacheReadTokens Tokens read from the provider's prompt cache.
@@ -40,6 +43,8 @@ data class UsageEvent(
     val provider: String? = null,
     val accountId: Uuid? = null,
     val sessionId: String? = null,
+    val launchId: String? = null,
+    val workflowId: String? = null,
     val inputTokens: Long = 0,
     val outputTokens: Long = 0,
     val cacheReadTokens: Long = 0,

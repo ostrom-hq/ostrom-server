@@ -2,12 +2,33 @@
 # CONVENTIONS section 11). Pull requests and main, Linux only. Not on version tags: releases are built by the release
 # workflow without these caches, which a tag build must never restore (zizmor cache-poisoning).
 name: Build
+# A run against an ostrom-core branch says so, for squash.sh to find before it squashes a core PR that touches an answer.
+run-name: ${{ inputs.core_ref && format('Build against ostrom-core {0}', inputs.core_ref) || '' }}
 on:
   push:
     branches: [main]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  # A manual run with full_validation also links linuxArm64; a tag (release-binaries.yml) and main's Image workflow
+  # always do (AGENTS.md rule 14: arm64 runs on tags or full_validation only, never on a pull request).
   workflow_dispatch:
+    inputs:
+      full_validation:
+        description: Also link the linuxArm64 release binary
+        type: boolean
+        default: false
+      # A core PR that touches an answer (schema, status, enum) is squashed only after this server's strict contract
+      # test ran green against it: core#96 turned every server PR red with three drifts (JOURNAL 03/11 15:1x).
+      core_ref:
+        description: The ostrom-core commit (full SHA) whose contract the tests check, instead of main
+        type: string
+        default: ''
+      # A server change that an e2e scenario proves, while main's scenario still waits for it (a temporary skip):
+      # play the e2e branch that drops the skip against this pull request's image before the squash.
+      e2e_ref:
+        description: The ostrom-e2e ref whose scenarios ci-e2e runs, instead of main
+        type: string
+        default: ''
 env:
   KOTLIN_VERSION: '2.4.21'
 permissions:
@@ -15,13 +36,143 @@ permissions:
   packages: read # dev.ostrom artifacts of ostrom-core on GitHub Packages
 # One run per workflow and ref; a new push cancels the previous run, except on main (org CI rules, JOURNAL 03:10).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.core_ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
-  # One job, `ci`, the required check of main. A draft pull request runs no CI: mark it ready when you want it.
-  ci:
+  # The build in three jobs side by side (the single 40-minute job timed out on #135, with every test green), ci-e2e
+  # after ci-image, and `ci`, the required check of main, green only when all four are. A draft pull request runs no
+  # CI: mark it ready.
+  ci-jvm:
+    name: JVM tests, Kover 100 %, detekt, docs and conventions
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    timeout-minutes: 40
+    timeout-minutes: 30
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: ostrom
+          POSTGRES_PASSWORD: ostrom
+          POSTGRES_DB: ostrom_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ostrom" --health-interval 5s --health-timeout 5s --health-retries 20
+      # Stripe's official mock, for the billing gateway's integration test.
+      stripe-mock:
+        image: stripe/stripe-mock@sha256:aeb96b83e87a893d2ac005e363ac01ffa6e59a5ad85b49c155dfc9129de02e78 # latest, 2026-10-01
+        ports: ['12111:12111']
+    env:
+      OSTROM_TEST_DATABASE_URL: postgresql://ostrom:ostrom@localhost:5432/ostrom_test
+      # Database tests fail instead of being skipped when the service is missing: CI never passes by skipping them.
+      OSTROM_TEST_DATABASE_REQUIRED: 'true'
+      # Billing: the stripe-mock integration test, and the end-to-end test against the real Stripe test mode (its key
+      # is the repository secret STRIPE_TEST_KEY); both fail instead of being skipped here.
+      OSTROM_STRIPE_MOCK_URL: http://localhost:12111
+      OSTROM_STRIPE_MOCK_REQUIRED: 'true'
+      OSTROM_STRIPE_E2E_KEY: ${{ secrets.STRIPE_TEST_KEY }}
+      OSTROM_STRIPE_E2E_REQUIRED: 'true'
+      # The contract tests (ContractSchema) compare real answers with ostrom-core main's schemas, written as JSON by
+      # the contract step below; they fail instead of being skipped here.
+      OSTROM_CONTRACT_REQUIRED: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # docs-truth (ostrom-core's tools/docs-truth) at a pinned commit, whose api/contract/served-routes.txt says what
+      # ostrom-server main serves; moved out of the workspace, so that no check of this repository scans it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-core
+          ref: 67621d384e41d8cd851faf40a169702ea05596eb # docs-truth and served-routes.txt; move it forward by pull request
+          ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
+          path: docs-truth-core
+          persist-credentials: false
+      - name: The README and docs/ cite only routes main serves and variables the server reads (docs-truth)
+        run: |
+          mv docs-truth-core "$RUNNER_TEMP/docs-truth-core"
+          core="$RUNNER_TEMP/docs-truth-core"
+          node "$core/tools/docs-truth/bin/docs-truth.mjs" --routes "$core/api/contract/served-routes.txt" \
+            --tests --source . --source "$core/telemetry" README.md docs
+      # The contract at ostrom-core main against the routes this server mounts, read from the sources (no build): fails
+      # for a mounted route the contract lacks and for a `served` operation not mounted; warns for a mounted route
+      # still `planned` (the server may merge before core).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-core
+          ref: ${{ inputs.core_ref }}
+          ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
+          path: contract-core
+          persist-credentials: false
+      - name: The mounted routes and the ostrom-core contract agree
+        run: |
+          mv contract-core "$RUNNER_TEMP/contract-core"
+          python3 scripts/check-contract.py --self-test
+          python3 scripts/check-contract.py "$RUNNER_TEMP/contract-core"
+          # The same contract as JSON, for the tests that check real answers against its schemas (ContractSchema).
+          yq -o=json "$RUNNER_TEMP/contract-core/api/openapi.yaml" > "$RUNNER_TEMP/openapi.json"
+          echo "OSTROM_CONTRACT_OPENAPI=$RUNNER_TEMP/openapi.json" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/build-setup
+        with:
+          core-deploy-key: ${{ secrets.DEPLOY_KEY_CORE }}
+          kotlin-version: ${{ env.KOTLIN_VERSION }}
+          build-cache: jvm
+      - run: python3 scripts/check-conventions.py
+      # Ktor's CIO client has no TLS on Kotlin/Native, and with two engines linked Ktor gives CIO to every engine-less
+      # HttpClient { }: one CIO in a shipped source set of the server and every https call fails (ostrom-server#89).
+      # The runner binary (runner/) talks plain http to the in-cluster Service; tests and the JVM target never ship.
+      - name: The server binary links no CIO HTTP client (no TLS on Kotlin/Native)
+        shell: python3 {0}
+        run: |
+          import pathlib, re, sys
+          found = []
+          for build in sorted(pathlib.Path(".").glob("**/build.gradle.kts")):
+              if build.parts[0] in ("runner", "build-logic") or "build" in build.parts[:-1]:
+                  continue
+              for block in re.finditer(r"(\w+)\.dependencies\s*\{(.*?)\n\s*\}", build.read_text(), re.S):
+                  shipped = not re.search(r"Test$|^jvm", block.group(1))
+                  if shipped and "libs.ktor.client.cio" in block.group(2):
+                      found.append(f"{build}: {block.group(1)} links ktor-client-cio")
+          print("\n".join(found) or "no CIO client in the server's shipped source sets")
+          sys.exit(1 if found else 0)
+      - name: License signing tool (ee/tools/license, 100 % lines and branches)
+        working-directory: ee/tools/license
+        run: |
+          python3 -m venv "$RUNNER_TEMP/license-venv"
+          "$RUNNER_TEMP/license-venv/bin/pip" install --quiet --require-hashes -r requirements-ci.txt
+          "$RUNNER_TEMP/license-venv/bin/python" -m coverage run --branch --data-file="$RUNNER_TEMP/license.coverage" -m unittest -v test_sign
+          "$RUNNER_TEMP/license-venv/bin/python" -m coverage report --data-file="$RUNNER_TEMP/license.coverage" -m --include=sign.py --fail-under=100
+      # Coverage first, in its own step, with its gaps printed right after: a runner lost during the native links that
+      # follow used to take the coverage report with it (same split as ostrom-cli 0e03e4b and 698cde2).
+      - name: detekt, JVM tests with Kover 100 %, all with PostgreSQL
+        run: ./gradlew --continue detekt jvmTest koverXmlReport koverVerify
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Gradle's build cache, saved from main only (a pull request restores, never writes)
+        if: success() && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.gradle/caches/build-cache-1
+          key: gradle-build-cache-jvm-${{ github.sha }}
+      - name: Lines and branches not covered
+        if: failure()
+        run: python3 scripts/uncovered.py
+      # Every served operation that answers JSON was seen answering by a test, so ContractObserver checked it against
+      # the contract (or contract/unobserved-operations.txt says why not); prints the drifts the tests met.
+      - name: Every served operation's answer was checked against the contract
+        if: success() || failure()
+        run: |
+          python3 scripts/check-contract-coverage.py --self-test
+          python3 scripts/check-contract-coverage.py "$RUNNER_TEMP/openapi.json" contract/unobserved-operations.txt \
+            testing/src/commonMain/kotlin/dev/ostrom/server/testing/KnownDrifts.kt .
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: reports
+          path: '**/build/reports/**'
+          retention-days: 7
+
+  ci-native:
+    name: Native tests (linuxX64)
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     services:
       postgres:
@@ -49,56 +200,11 @@ jobs:
       OSTROM_STRIPE_E2E_REQUIRED: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+      - uses: ./.github/actions/build-setup
         with:
-          distribution: temurin
-          java-version: '21'
-      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
-        with:
-          cache-provider: basic
-      # The Kotlin/Native toolchain and its dependencies (~1 GB) are not in the Gradle cache.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.konan
-          key: konan-${{ runner.os }}-${{ runner.arch }}-${{ env.KOTLIN_VERSION }}-${{ hashFiles('gradle/libs.versions.toml') }}
-          restore-keys: konan-${{ runner.os }}-${{ runner.arch }}-${{ env.KOTLIN_VERSION }}-
-      - name: Never serve a test task from the cache (ENG-032)
-        run: |
-          mkdir -p ~/.gradle/init.d
-          cat > ~/.gradle/init.d/always-run-tests.init.gradle.kts <<'KTS'
-          allprojects {
-              tasks.withType<AbstractTestTask>().configureEach {
-                  outputs.cacheIf { false }
-                  outputs.upToDateWhen { false }
-              }
-          }
-          KTS
-      # One Gradle daemon (4 GB) and one Kotlin daemon (2 GB) fit the runner with PostgreSQL and stripe-mock; the 6 GB of
-      # gradle.properties, meant for a workstation, plus the Kotlin daemon got runners killed (exit 143) while linking.
-      - name: Gradle memory for this runner
-        run: |
-          mkdir -p ~/.gradle
-          cat >> ~/.gradle/gradle.properties <<'PROPS'
-          org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8
-          kotlin.daemon.jvmargs=-Xmx2g
-          PROPS
-      - run: python3 scripts/check-conventions.py
-      - name: License signing tool (ee/tools/license, 100 % lines and branches)
-        working-directory: ee/tools/license
-        run: |
-          python3 -m venv "$RUNNER_TEMP/license-venv"
-          "$RUNNER_TEMP/license-venv/bin/pip" install --quiet --require-hashes -r requirements-ci.txt
-          "$RUNNER_TEMP/license-venv/bin/python" -m coverage run --branch --data-file="$RUNNER_TEMP/license.coverage" -m unittest -v test_sign
-          "$RUNNER_TEMP/license-venv/bin/python" -m coverage report --data-file="$RUNNER_TEMP/license.coverage" -m --include=sign.py --fail-under=100
-      # Coverage first, in its own step, with its gaps printed right after: a runner lost during the native links that
-      # follow used to take the coverage report with it (same split as ostrom-cli 0e03e4b and 698cde2).
-      - name: detekt, JVM tests with Kover 100 %, all with PostgreSQL
-        run: ./gradlew --continue detekt jvmTest koverXmlReport koverVerify
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Lines and branches not covered
-        if: failure()
-        run: python3 scripts/uncovered.py
+          core-deploy-key: ${{ secrets.DEPLOY_KEY_CORE }}
+          kotlin-version: ${{ env.KOTLIN_VERSION }}
+          build-cache: native
       # From here, two Gradle workers at a time: several Kotlin/Native compilations and links at once exhaust the
       # runner's memory (#13, exit 143 while linking linuxArm64).
       - name: Two Gradle workers for the native builds
@@ -109,17 +215,117 @@ jobs:
         run: ./gradlew --continue linuxX64Test
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Server binaries (linuxX64 in dist/, linuxArm64 cross-linked)
+      - name: Gradle's build cache, saved from main only (a pull request restores, never writes)
+        if: success() && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.gradle/caches/build-cache-1
+          key: gradle-build-cache-native-${{ github.sha }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: reports-native
+          path: '**/build/reports/**'
+          retention-days: 7
+
+  # The release binary, the session image, the server image and its smoke tests against PostgreSQL, then the AGPL build.
+  ci-image:
+    name: Binary, images and smoke tests
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    timeout-minutes: 30
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: ostrom
+          POSTGRES_PASSWORD: ostrom
+          POSTGRES_DB: ostrom_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ostrom" --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/build-setup
+        with:
+          core-deploy-key: ${{ secrets.DEPLOY_KEY_CORE }}
+          kotlin-version: ${{ env.KOTLIN_VERSION }}
+          build-cache: image
+      # From here, two Gradle workers at a time: several Kotlin/Native compilations and links at once exhaust the
+      # runner's memory (#13, exit 143 while linking linuxArm64).
+      - name: Two Gradle workers for the native builds
+        if: ${{ !cancelled() }}
+        run: echo 'org.gradle.workers.max=2' >> ~/.gradle/gradle.properties
+      # A private repository's runner has 7 GB: after the tests, the Gradle and Kotlin daemons still hold much of it,
+      # and the release links were killed (exit 143) even with #52's lighter daemons. Stop them, and add swap where the
+      # disk has room, before the native links.
+      - name: Free memory for the native links
+        run: |
+          ./gradlew --stop
+          pkill -f KotlinCompileDaemon || true
+          df -h / /mnt
+          # Swap where the disk has room (the runner's /mnt can be too small): stopping the daemons is the main fix.
+          for size in 4G 2G; do
+            if sudo fallocate -l "$size" /native-link.swap; then
+              sudo chmod 600 /native-link.swap
+              sudo mkswap /native-link.swap
+              sudo swapon /native-link.swap
+              break
+            fi
+          done
+          free -h
+      # S2-49: one session of the real image, run as the Docker driver runs it; the agent must not reach the token.
+      - name: Server binary (linuxX64 in dist/)
         run: |
           ci/build-linux.sh
-          ./gradlew :app:linkReleaseExecutableLinuxArm64
           ldd dist/ostrom-server
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Server binary (linuxArm64 cross-linked, full validation only)
+        if: github.event_name == 'workflow_dispatch' && inputs.full_validation
+        run: ./gradlew :app:linkReleaseExecutableLinuxArm64
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # The swap file takes the root disk the images need (run 41029912954: "no space left on device" pulling the
+      # collector): give it back once the links are done.
+      - name: Release the swap of the native links
+        if: ${{ !cancelled() }}
+        run: |
+          sudo swapoff /native-link.swap || true
+          sudo rm -f /native-link.swap
+          df -h /
+      # After the swap is given back: the agents' CLIs take the disk the swap held (runs 41045488208, three tries).
+      - name: Cache the npm tarballs of the session image's agents
+        if: ${{ !cancelled() }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ostrom-agents-npm
+          key: agents-npm-${{ hashFiles('runner/agents/package-lock.json') }}
+      - name: Session image, the agent cannot read the runner token (S2-49)
+        if: ${{ !cancelled() }}
+        run: |
+          export SESSION_IMAGE_NPM_CACHE="$HOME/.cache/ostrom-agents-npm"
+          ci/warm-agents-npm-cache.sh "$SESSION_IMAGE_NPM_CACHE"
+          ./gradlew :runner:linkDebugExecutableLinuxX64
+          ci/runner-isolation.sh runner/build/bin/linuxX64/debugExecutable/ostrom-runner.kexe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Docker image
         run: |
           docker build -t ostrom-server:ci .
           docker images ostrom-server:ci --format '{{.Size}}'
+      # The image this pull request builds, for ci-e2e: ostrom-e2e main runs against it before the merge, not after.
+      - name: Save the image for ci-e2e
+        run: |
+          docker save ostrom-server:ci | gzip -1 > "$RUNNER_TEMP/ostrom-server-image.tar.gz"
+          ls -lh "$RUNNER_TEMP/ostrom-server-image.tar.gz"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ostrom-server-image
+          path: ${{ runner.temp }}/ostrom-server-image.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
       # As deployed: the owner migrates, the server serves as a role that owns nothing (ci/database-roles.sql).
       - name: Smoke test of the image (roles, migrate, /ready, /api/v1/instance, graceful SIGTERM)
         env:
@@ -139,6 +345,16 @@ jobs:
           expect 1 MigrationsNotAppliedException -e OSTROM_DATABASE_URL="$APP_URL" ostrom-server:ci
           expect 0 'migrations done' -e OSTROM_DATABASE_MIGRATION_URL="$OWNER_URL" ostrom-server:ci migrate
           expect 0 'migrations done' -e OSTROM_DATABASE_MIGRATION_URL="$OWNER_URL" ostrom-server:ci migrate
+          # AUDIT-RLS R8: the migrations' history is read, never written, by any role but its owner.
+          read -r histories writable < <(psql "$OWNER_URL" -At -F ' ' -v ON_ERROR_STOP=1 -c "SELECT count(*),
+            count(*) FILTER (WHERE EXISTS (SELECT 1 FROM unnest(ARRAY['ostrom_app', 'ostrom_tenant', 'public']) r
+              WHERE has_table_privilege(r, c.oid, 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
+                 OR has_any_column_privilege(r, c.oid, 'INSERT, UPDATE, REFERENCES')))
+            FROM pg_class c WHERE c.relkind = 'r' AND c.relnamespace = 'public'::regnamespace
+              AND c.relname LIKE '\_migrations\_%'")
+          echo "migration histories: $histories, writable by another role: $writable"
+          [ "$histories" -gt 0 ] || { echo "no migrations' history"; exit 1; }
+          [ "$writable" -eq 0 ] || { echo "a migrations' history is writable by another role"; exit 1; }
           expect 1 UnsafeDatabaseRoleException -e OSTROM_DATABASE_URL=postgresql://ostrom:ostrom@localhost:5432/ostrom \
             ostrom-server:ci
           expect 1 UnsafeDatabaseRoleException -e OSTROM_DATABASE_URL="$OWNER_URL" ostrom-server:ci
@@ -170,20 +386,28 @@ jobs:
           test "$status" = 1
           grep -q 'The license key is malformed' license.log
           if grep -q 'not-a-license' license.log; then echo "The key was logged." >&2; exit 1; fi
+      - name: Telemetry reaches an OpenTelemetry collector (traces, metrics, logs)
+        timeout-minutes: 5
+        env:
+          OSTROM_SMOKE_DATABASE_URL: postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
+        run: ci/otel-smoke.sh
       - name: Server logs on failure
         if: failure()
-        run: docker logs ostrom || true
+        run: |
+          docker logs ostrom || true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ostrom-server-linux
+          # The linuxArm64 binary is only there after a full validation.
           path: |
             dist/ostrom-server
             app/build/bin/linuxArm64/releaseExecutable/ostrom-server.kexe
+          if-no-files-found: error
           retention-days: 7
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: reports
+          name: reports-image
           path: '**/build/reports/**'
           retention-days: 7
       # Last, because it deletes ee/ from the checkout: the AGPL build must compile without the enterprise code, and
@@ -203,3 +427,41 @@ jobs:
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Gradle's build cache, saved from main only (a pull request restores, never writes)
+        if: success() && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.gradle/caches/build-cache-1
+          key: gradle-build-cache-image-${{ github.sha }}
+
+  # ostrom-e2e main (the isolation sweep, every scenario but the TeamCode import, a short k6 of the gates) against the
+  # image ci-image built: a pull request that changes an answer fails here, before the merge, and brings its e2e fix
+  # along, or an e2e pull request merged first (AGENTS.md, « End-to-end before the merge »).
+  ci-e2e:
+    needs: [ci-image]
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/e2e-journey.yml
+    with:
+      image_artifact: ostrom-server-image
+      e2e_ref: ${{ inputs.e2e_ref || 'main' }}
+    secrets: inherit
+
+  # The required check of main, still named `ci` (branch protection, .coord/squash.sh).
+  ci:
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    needs: [ci-jvm, ci-native, ci-image, ci-e2e]
+    timeout-minutes: 5
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Every part of the build passed
+        env:
+          JVM: ${{ needs.ci-jvm.result }}
+          NATIVE: ${{ needs.ci-native.result }}
+          IMAGE: ${{ needs.ci-image.result }}
+          E2E: ${{ needs.ci-e2e.result }}
+        run: |
+          echo "JVM tests and Kover: $JVM; native tests: $NATIVE; binary, images and smoke tests: $IMAGE; e2e: $E2E"
+          test "$JVM" = success && test "$NATIVE" = success && test "$IMAGE" = success && test "$E2E" = success

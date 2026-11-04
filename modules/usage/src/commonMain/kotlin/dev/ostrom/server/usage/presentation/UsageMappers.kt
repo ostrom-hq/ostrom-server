@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.usage.presentation
 
+import dev.ostrom.server.kernel.database.storableInstantOrNull
 import dev.ostrom.server.usage.domain.ClientUsageEvent
 import dev.ostrom.server.usage.domain.InvalidUsageEventException
 import dev.ostrom.server.usage.domain.InvalidUsageQueryException
@@ -47,7 +48,7 @@ fun String.toGroupBy(): UsageGroupBy = UsageGroupBy.entries.firstOrNull { it.nam
 fun String.toUsageCursor(): UsageCursor {
     val separator = indexOf(CURSOR_SEPARATOR)
     val time = if (separator < 0) this else substring(0, separator)
-    val at = Instant.parseOrNull(time) ?: throw invalidCursor()
+    val at = storableInstantOrNull(time) ?: throw invalidCursor()
     if (separator < 0) return UsageCursor(at, null)
     val id = Uuid.parseOrNull(substring(separator + 1)) ?: throw invalidCursor()
     return UsageCursor(at, id)
@@ -67,6 +68,7 @@ fun UsageEvent.toResponse() = UsageEventResponse(
     provider = provider,
     accountId = accountId?.toString(),
     sessionId = sessionId,
+    launchId = launchId,
     inputTokens = inputTokens,
     outputTokens = outputTokens,
     cacheReadTokens = cacheReadTokens,

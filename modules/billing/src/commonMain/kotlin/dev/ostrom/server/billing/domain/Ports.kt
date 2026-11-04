@@ -24,6 +24,7 @@ enum class Proration(val stripe: String) {
 }
 
 /** The Stripe calls of billing. Implemented over Stripe's HTTP API in the infrastructure; faked in tests. */
+@Suppress("TooManyFunctions") // Stripe's one port: each call billing makes to it.
 interface StripeGateway {
     /**
      * Creates the customer of an organization, once: a second call within 24 hours returns the same customer. Call
@@ -33,6 +34,12 @@ interface StripeGateway {
      * @return Its id.
      */
     suspend fun createCustomer(orgId: Uuid, name: String?, email: String?): String
+
+    /** The e-mail Stripe holds for a customer (set at creation, at Checkout or in the portal), null when none. */
+    suspend fun customerEmail(customerId: String): String?
+
+    /** Sets the e-mail of a customer: Checkout then shows it instead of asking it, and receipts go to it. */
+    suspend fun updateCustomerEmail(customerId: String, email: String)
 
     /** Resolves a price from its lookup key (cached). @throws BillingNotConfiguredException When it does not exist. */
     suspend fun priceId(lookupKey: String): String
@@ -57,6 +64,12 @@ interface StripeGateway {
 
     /** Schedules the end of the subscription at the period end, or cancels that schedule. */
     suspend fun setCancelAtPeriodEnd(subscriptionId: String, cancel: Boolean)
+
+    /**
+     * Ends the subscription now, without a refund of the period already paid nor a last invoice: what an
+     * organization's deletion does.
+     */
+    suspend fun cancelNow(subscriptionId: String)
 
     /** Raises the quantity of a yearly item and invoices the prorated difference now. */
     suspend fun setQuantity(subscriptionId: String, itemId: String, quantity: Int)
@@ -174,6 +187,9 @@ interface BillingNotifier {
  * @property consoleUrl The console, for Checkout and portal return pages (`https://app.ostrom.run`).
  */
 data class BillingSettings(val stripeEnabled: Boolean, val consoleUrl: String) {
-    /** The billing page of the console, where limit messages send people. */
-    val billingPageUrl: String get() = "${consoleUrl.trimEnd('/')}/settings/billing"
+    /**
+     * The billing page of the console (its route `/billing`), where Checkout and the portal bring people back and limit
+     * messages send them.
+     */
+    val billingPageUrl: String get() = "${consoleUrl.trimEnd('/')}/billing"
 }

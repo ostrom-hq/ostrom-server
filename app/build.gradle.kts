@@ -71,6 +71,11 @@ kotlin {
         }
         nativeMain.dependencies {
             implementation(libs.ktor.server.cio)
+            // The binary's only HTTP client engine: telemetry's client and every module's engine-less HttpClient { }
+            // (Stripe, GitHub, the gateway's providers, the MCP relay, sharing) get Curl. Never CIO here: its client has
+            // no TLS on Kotlin/Native ("TLS sessions are not supported on Native platform"), and with both engines
+            // linked Ktor picks CIO for the engine-less clients, so every https call failed.
+            implementation(libs.ktor.client.curl)
         }
         commonTest.dependencies {
             implementation(project(":testing"))

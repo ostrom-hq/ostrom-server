@@ -1,0 +1,366 @@
+name: Console journeys
+
+# The console's journeys against the real server (ostrom-web e2e-real/, Playwright, desktop and mobile) against a
+# PUBLISHED image of this server: by default the newest `sha-<7>` of main's last commits, never `edge`, which a
+# slower run of an older commit may still hold. The console is built here from ostrom-web, without mocks, and served by `vite preview`, which
+# proxies /api to the server, as in ostrom-web's own CI. It runs in this repository because its token reads its own
+# GHCR packages, which ostrom-web's cannot yet (the journeys are skipped there, "package Actions access"); the same
+# reason, and the same shape, as cli-journey.yml. On demand, and, off the org's one-`ci`-job rule on purpose (as
+# demo-stack.yml), on a pull request only when the pull request changes this file.
+on:
+  # Each hour, the console of ostrom-web main against the newest server image, with the journeys a console change
+  # breaks first: sign-in, /auth/me in the top bar, a gate and its yes. ostrom-web's own CI runs every journey once its
+  # token may pull the server image (package Actions access); until then, this is what sees a console regression on
+  # its main (ostrom-web#78 was found by hand).
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+    inputs:
+      server_image:
+        description: Server image (empty = the newest ghcr.io/ostrom-hq/ostrom-server:sha-<7> of main published)
+        default: ""
+      runner_image:
+        description: Cloud session image the server starts on this runner's Docker (empty = latest)
+        default: ""
+      web_ref:
+        description: ostrom-web ref whose console and journeys run
+        default: main
+      specs:
+        description: Journeys to run, as Playwright file filters (empty = all of e2e-real/)
+        default: ""
+      stripe:
+        description: >-
+          Stripe for the journeys: mock (stripe-mock) or test (Stripe's TEST mode with the STRIPE_TEST_KEY secret,
+          refused unless it starts with sk_test_; the Stripe CLI forwards the account's events to /webhooks/stripe)
+        type: choice
+        options: [mock, test]
+        default: mock
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths: [.github/workflows/console-journey.yml]
+  # ostrom-web calls the same journeys on each push to its main and each pull request (its real-journeys.yml): a
+  # console change that breaks a journey against the real server is seen there, not after the merge. The caller grants
+  # packages: read; its token must be allowed to read the server and runner images on GHCR.
+  workflow_call:
+    inputs:
+      server_image:
+        type: string
+        default: ""
+      runner_image:
+        type: string
+        default: ""
+      web_ref:
+        type: string
+        default: main
+      specs:
+        type: string
+        default: ""
+    secrets:
+      # Only while ostrom-web is private; a public console is read with the job's token.
+      DEPLOY_KEY_WEB:
+        required: false
+      # Declared because the job names it (actionlint checks a called workflow's secrets); a call always runs on
+      # stripe-mock (STRIPE_MODE is mock for any event but a dispatch), so a caller passing it changes nothing.
+      STRIPE_TEST_KEY:
+        required: false
+
+concurrency:
+  # Each dispatch is its own run (it names its own image, console and journeys); a pull request's newer push cancels.
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  journeys:
+    # A pull request from a fork has no deploy key to read the console with.
+    if: >-
+      github.event_name != 'pull_request' ||
+      (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: read
+    # The database is `ostrom_ci`: ci/database-roles.sql creates `ostrom` itself, owned by its owner role. Stripe is
+    # stripe-mock, as in this repository's tests.
+    services:
+      postgres:
+        image: postgres:18@sha256:979bccfde35445db618c65107d27d08c6c21339d8dc3ad4c830c6633947be0e4
+        env: { POSTGRES_USER: ostrom, POSTGRES_PASSWORD: ostrom, POSTGRES_DB: ostrom_ci }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ostrom -d ostrom_ci" --health-interval 5s --health-timeout 5s --health-retries 20
+      stripe-mock:
+        image: stripe/stripe-mock@sha256:aeb96b83e87a893d2ac005e363ac01ffa6e59a5ad85b49c155dfc9129de02e78
+        ports: ['12111:12111']
+    env:
+      # The console of ostrom-web main, unless a dispatch names another ref.
+      WEB_REF: ${{ inputs.web_ref || 'main' }}
+      WANTED_IMAGE: ${{ inputs.server_image }}
+      # Stripe's test mode only on a dispatch that asks for it: a schedule, a pull request or a call keeps stripe-mock.
+      STRIPE_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.stripe || 'mock' }}
+      RUNNER_IMAGE: ${{ inputs.runner_image || 'ghcr.io/ostrom-hq/ostrom-runner:latest' }}
+      # A pull request that changes this file proves it with the /me journey (ostrom-web#42, on main) and the cloud
+      # sessions on registered runners (line 6.2, ostrom-web#84); a dispatch or a call from ostrom-web runs what it
+      # names, or all of e2e-real.
+      # A dispatch in Stripe's test mode that names no journey runs payment.spec.ts only: the others are written
+      # against stripe-mock.
+      SPECS: >-
+        ${{ github.event_name == 'workflow_dispatch' && inputs.stripe == 'test' && inputs.specs == '' && 'payment.spec.ts' ||
+        github.event_name == 'schedule' && 'me.spec.ts signin.spec.ts gates.spec.ts' ||
+        github.event_name == 'pull_request' && github.repository == 'ostrom-hq/ostrom-server' && 'me.spec.ts cloud.spec.ts' ||
+        inputs.specs }}
+    steps:
+      # Stripe's TEST mode only, never a live key: checked before anything is pulled or built.
+      - name: Stripe test key (sk_test_ only)
+        if: env.STRIPE_MODE == 'test'
+        env:
+          STRIPE_TEST_KEY: ${{ secrets.STRIPE_TEST_KEY }}
+        run: |
+          case "$STRIPE_TEST_KEY" in
+            '') echo "::error::the STRIPE_TEST_KEY secret is not set: nothing runs"; exit 1 ;;
+            sk_test_?*) ;;
+            *) echo "::error::STRIPE_TEST_KEY is not a Stripe test-mode secret key (sk_test_): nothing runs"; exit 1 ;;
+          esac
+      # The whole history: main's head names the image, and the image's own commit gives its database roles.
+      # Called from ostrom-web, the default repository is the caller's: the server is named, at its main.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-server
+          ref: ${{ github.repository == 'ostrom-hq/ostrom-server' && github.sha || 'main' }}
+          path: server
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-web
+          ref: ${{ env.WEB_REF }}
+          ssh-key: ${{ secrets.DEPLOY_KEY_WEB }}
+          path: web
+          persist-credentials: false
+      - name: The server image (the newest sha-<7> of main published, unless named)
+        id: server
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          # The oldest server the console's journeys need: cloud sessions on registered runners (server#223), which
+          # comes after /auth/me with Ostrom-Org (server#92).
+          MIN_SERVER: b091032
+        run: |
+          main=$(git -C server rev-parse origin/main)
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          image=$WANTED_IMAGE
+          if [ -z "$image" ]; then
+            # main's head is published a few minutes after its merge: the newest of its last commits that is.
+            # Only an image not published yet is skipped; any other pull error stops the job.
+            for commit in $(git -C server rev-list --first-parent --max-count=10 origin/main); do
+              candidate=ghcr.io/ostrom-hq/ostrom-server:sha-${commit:0:7}
+              if error=$(docker pull --quiet "$candidate" 2>&1 >/dev/null); then
+                image=$candidate
+                break
+              fi
+              case "$error" in
+                *"manifest unknown"* | *"not found"*) echo "$candidate is not published yet" ;;
+                *) echo "::error::$candidate cannot be pulled: $error"; exit 1 ;;
+              esac
+            done
+            [ -n "$image" ] || { echo "::error::no sha-<7> image of main's last 10 commits can be pulled"; exit 1; }
+          else
+            docker pull --quiet "$image" || { echo "::error::$image cannot be pulled"; exit 1; }
+          fi
+          revision=$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")
+          [ -n "$revision" ] || { echo "::error::$image carries no org.opencontainers.image.revision label"; exit 1; }
+          git -C server cat-file -e "${revision}^{commit}" 2>/dev/null \
+            || { echo "::error::$image is ostrom-server@${revision:0:7}, a commit not in the history of main"; exit 1; }
+          git -C server merge-base --is-ancestor "$MIN_SERVER" "$revision" \
+            || { echo "::error::$image is ostrom-server@${revision:0:7}, older than $MIN_SERVER (server#223)"; exit 1; }
+          # The database roles of the image's own commit, not of a main that may have moved past it.
+          git -C server show "${revision}:ci/database-roles.sql" > "$RUNNER_TEMP/database-roles.sql"
+          # The cloud sessions' image, by digest: the server starts it on this runner's Docker (line 6.2).
+          docker pull --quiet "$RUNNER_IMAGE" || { echo "::error::$RUNNER_IMAGE cannot be pulled"; exit 1; }
+          runner=$(docker inspect -f '{{index .RepoDigests 0}}' "$RUNNER_IMAGE")
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "runner=$runner" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Images"
+            echo "- server: \`$image\` (ostrom-server@${revision:0:7}; main is at ${main:0:7})"
+            echo "- cloud session: \`$runner\`, on this runner's Docker"
+            echo "- console: ostrom-web $(git -C web rev-parse --short HEAD) ($WEB_REF), built here without mocks"
+          } >> "$GITHUB_STEP_SUMMARY"
+      # Stripe's TEST mode (line 6.5, the test card 4242 paid on Stripe's hosted Checkout). The Stripe CLI, pinned by
+      # checksum, prints the secret it signs the forwarded events with; the key and that secret go to a file of this
+      # runner only (umask 077) that the server step reads, never to $GITHUB_ENV, and the key goes to the CLI by its
+      # environment, never on a command line.
+      - name: Stripe test mode (the Stripe CLI and its webhook secret)
+        if: env.STRIPE_MODE == 'test'
+        env:
+          STRIPE_API_KEY: ${{ secrets.STRIPE_TEST_KEY }}
+          STRIPE_CLI_VERSION: 1.55.6
+          STRIPE_CLI_SHA256: 1759a13a0c48f15e11979696df7b5958a73a8e6c1b92bea2a3ccb73ea97d5854
+        run: |
+          umask 077
+          archive="stripe_${STRIPE_CLI_VERSION}_linux_x86_64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/stripe/stripe-cli/releases/download/v${STRIPE_CLI_VERSION}/$archive"
+          echo "$STRIPE_CLI_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/stripe-cli" && tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/stripe-cli" stripe
+          secret=$("$RUNNER_TEMP/stripe-cli/stripe" listen --print-secret 2>"$RUNNER_TEMP/stripe-secret.log") \
+            || { echo "::error::the Stripe CLI gave no webhook secret"; head -n 20 "$RUNNER_TEMP/stripe-secret.log"; exit 1; }
+          case "$secret" in whsec_?*) ;; *) echo "::error::the Stripe CLI gave no webhook secret"; exit 1 ;; esac
+          echo "::add-mask::$secret"
+          {
+            printf 'OSTROM_STRIPE_SECRET_KEY=%s\n' "$STRIPE_API_KEY"
+            printf 'OSTROM_STRIPE_WEBHOOK_SECRET=%s\n' "$secret"
+          } > "$RUNNER_TEMP/stripe.env"
+          echo "### Stripe: TEST mode (sk_test_), events forwarded by the Stripe CLI $STRIPE_CLI_VERSION" >> "$GITHUB_STEP_SUMMARY"
+      # The GitHub App of the journeys: a key made for this run only. The server points at the fake GitHub the journeys
+      # start on fixed ports (ostrom-web e2e-real/fakeGithub.ts, as ostrom-e2e's src/fake-github.ts): 4610 for the
+      # sign-in with GitHub, 4700 for the App's installations and repositories. Nothing reaches the real GitHub.
+      - name: Start the server (roles, migrate, serve as ostrom_app)
+        env:
+          IMAGE: ${{ steps.server.outputs.image }}
+          SESSION_IMAGE: ${{ steps.server.outputs.runner }}
+          PGPASSWORD: ostrom
+          OWNER_URL: postgresql://ostrom_owner:ostrom_owner@localhost:5432/ostrom
+        run: |
+          # server.env holds keys: readable by this runner's user only.
+          umask 077
+          psql -h localhost -U ostrom -d ostrom_ci -v ON_ERROR_STOP=1 -f "$RUNNER_TEMP/database-roles.sql"
+          docker run --rm --network host -e OSTROM_DATABASE_MIGRATION_URL="$OWNER_URL" "$IMAGE" migrate
+          # The server's non-root user writes the mails (0644); the journeys, as the runner's user, read them.
+          mkdir -p "$RUNNER_TEMP/ostrom-mail" && chmod 0777 "$RUNNER_TEMP/ostrom-mail"
+          # Test values only: sign-in mails are written to a directory, the console is `vite preview` on
+          # localhost:4173, which proxies /api to the server, so cookies and CSRF are first-party. That proxy, on this
+          # runner's loopback, is trusted for X-Forwarded-For: each person of the journeys signs in from an address of
+          # their own (ostrom-web e2e-real/real.ts, since ostrom-web#54), so sixty sign-ins from one machine do not trip the
+          # per-source limit. A console from before it sends no address of its own, and its sign-ins are limited again.
+          # Read limits (AUDIT-SECU-LECTURES M1) set explicitly: a journey reads in bursts, never a flood.
+          cat > "$RUNNER_TEMP/server.env" <<'ENV'
+          OSTROM_DATABASE_URL=postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
+          OSTROM_PORT=4600
+          OSTROM_MAIL_DIR=/var/lib/ostrom/mail
+          OSTROM_PUBLIC_URL=http://localhost:4173
+          OSTROM_CONSOLE_URL=http://localhost:4173
+          OSTROM_TRUSTED_PROXIES=127.0.0.1/32,::1/128
+          OSTROM_GITHUB_WEB_URL=http://127.0.0.1:4610
+          OSTROM_GITHUB_API_URL=http://127.0.0.1:4610
+          OSTROM_GITHUB_CLIENT_ID=Iv1.webjourney
+          OSTROM_GITHUB_CLIENT_SECRET=web-journey-fake-github
+          OSTROM_GITHUB_API=http://127.0.0.1:4700
+          OSTROM_GITHUB_WEB=http://127.0.0.1:4700
+          OSTROM_GITHUB_APP_ID=1
+          OSTROM_GITHUB_APP_SLUG=ostrom-web-journey
+          OSTROM_GITHUB_APP_CLIENT_ID=Iv1.fake
+          OSTROM_GITHUB_APP_CLIENT_SECRET=fake-client-secret
+          OSTROM_GITHUB_WEBHOOK_SECRET=whsec_github_web_journey
+          OSTROM_WEB_ORIGIN=http://localhost:4173
+          OSTROM_READS_PER_MINUTE=6000
+          OSTROM_READS_IN_FLIGHT=64
+          OSTROM_READ_WAITS_IN_FLIGHT=256
+          ENV
+          # The journeys' GitHub App gets a key made for this run, written straight to the env file: never to
+          # $GITHUB_ENV, whose values every later step prints. One line, its newlines as `\n`, as the server reads it.
+          openssl genrsa -traditional -out "$RUNNER_TEMP/github-app.pem" 2048
+          printf 'OSTROM_GITHUB_APP_PEM=%s\n' "$(awk '{printf "%s\\n", $0}' "$RUNNER_TEMP/github-app.pem")" \
+            >> "$RUNNER_TEMP/server.env"
+          rm "$RUNNER_TEMP/github-app.pem"
+          sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
+          # Stripe: the test mode's key and the CLI's secret (step above), or stripe-mock. stripe-mock refuses a key with
+          # another underscore after `sk_test_`: `sk_test_web_e2e` was refused (401), and every Checkout answered 500.
+          if [ "$STRIPE_MODE" = test ]; then
+            cat "$RUNNER_TEMP/stripe.env" >> "$RUNNER_TEMP/server.env"
+            rm "$RUNNER_TEMP/stripe.env"
+          else
+            printf '%s\n' OSTROM_STRIPE_SECRET_KEY=sk_test_webe2e OSTROM_STRIPE_WEBHOOK_SECRET=whsec_web_e2e \
+              OSTROM_STRIPE_API_BASE=http://127.0.0.1:12111 >> "$RUNNER_TEMP/server.env"
+          fi
+          # Cloud sessions (line 6.2: launch, stop, and the loss of a machine, from /cloud) on registered runners:
+          # the journeys register them and start `ostrom-runner machine` containers on this runner's Docker
+          # (ostrom-web e2e-real/machines.ts), which reach the Engine API through a socket proxy limited to
+          # containers, volumes and images, on loopback. The server only plans; the session's containers reach it,
+          # on the host network, through host.docker.internal (the plan adds it).
+          docker run -d --name docker-api -p 127.0.0.1:2375:2375 -v /var/run/docker.sock:/var/run/docker.sock:ro \
+            -e CONTAINERS=1 -e VOLUMES=1 -e IMAGES=1 -e POST=1 -e ALLOW_START=1 -e ALLOW_STOP=1 \
+            -e INFO=0 -e NETWORKS=0 -e EXEC=0 \
+            docker.io/tecnativa/docker-socket-proxy:v0.5.0@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
+          {
+            echo "OSTROM_RUNNERS_DRIVER=registered"
+            echo "OSTROM_RUNNERS_SERVER_URL=http://host.docker.internal:4600"
+            echo "OSTROM_RUNNERS_IMAGE=$SESSION_IMAGE"
+            echo "OSTROM_RUNNERS_ALLOWED_ORGS=*"
+          } >> "$RUNNER_TEMP/server.env"
+          docker run -d --name ostrom-server --network host -v "$RUNNER_TEMP/ostrom-mail:/var/lib/ostrom/mail" \
+            --env-file "$RUNNER_TEMP/server.env" "$IMAGE"
+          for _ in $(seq 1 60); do curl -fsS 127.0.0.1:4600/ready >/dev/null 2>&1 && exit 0; sleep 1; done
+          docker logs ostrom-server; exit 1
+      # The test account's events of the types the server applies (StripeEventUseCases; the CLI forwards nothing without
+      # a list), forwarded once the server is ready. Limits: the account is shared (another run's events reach this server, which answers unknown_org),
+      # and the CLI retries no forward, so an event the server misses is lost for this run.
+      - name: Stripe events forwarded to the server
+        if: env.STRIPE_MODE == 'test'
+        env:
+          STRIPE_API_KEY: ${{ secrets.STRIPE_TEST_KEY }}
+        run: |
+          events=checkout.session.completed,checkout.session.async_payment_succeeded
+          events=$events,checkout.session.async_payment_failed,customer.subscription.created
+          events=$events,customer.subscription.updated,customer.subscription.deleted,customer.subscription.paused
+          events=$events,customer.subscription.resumed,invoice.paid,invoice.payment_failed
+          events=$events,invoice.payment_action_required,invoice.finalized
+          nohup "$RUNNER_TEMP/stripe-cli/stripe" listen --skip-update --events "$events" \
+            --forward-to http://127.0.0.1:4600/webhooks/stripe > "$RUNNER_TEMP/stripe-listen.log" 2>&1 &
+          for _ in $(seq 1 30); do grep -q 'Ready!' "$RUNNER_TEMP/stripe-listen.log" && exit 0; sleep 1; done
+          echo "::error::stripe listen is not ready"; head -n 40 "$RUNNER_TEMP/stripe-listen.log"; exit 1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.nvmrc
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: The console, without mocks (real API, same origin)
+        working-directory: web
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec vite build --outDir dist-real
+          pnpm exec playwright install --with-deps chromium
+      - name: The console's journeys against the server (Playwright, desktop and mobile)
+        working-directory: web
+        env:
+          OSTROM_E2E_API_UPSTREAM: http://127.0.0.1:4600
+          OSTROM_E2E_MAIL_DIR: ${{ runner.temp }}/ostrom-mail
+          # The fake GitHub the server points at (its env in the step "Start the server"): the journeys start it.
+          OSTROM_E2E_FAKE_GITHUB_PORT: '4610'
+          OSTROM_E2E_GITHUB_PORT: '4700'
+          OSTROM_E2E_GITHUB_WEBHOOK_SECRET: whsec_github_web_journey
+          OSTROM_E2E_REQUIRE_ORGS: 'true'
+          # payment.spec.ts pays with the test card 4242 only against Stripe's test mode; it is skipped on stripe-mock.
+          OSTROM_E2E_STRIPE: ${{ env.STRIPE_MODE }}
+          # The machines the journeys start run the cloud sessions' image (machines.ts).
+          OSTROM_E2E_MACHINE_IMAGE: ${{ steps.server.outputs.runner }}
+          OSTROM_E2E_MACHINE_SERVER_URL: http://127.0.0.1:4600
+          OSTROM_E2E_MACHINE_DOCKER_API: http://127.0.0.1:2375
+        # SPECS is split on spaces on purpose, each word one Playwright file filter, and never expanded as a path.
+        run: |
+          set -f
+          pnpm exec playwright test --config playwright.real.config.ts $SPECS
+      - name: Server logs
+        if: always()
+        run: |
+          docker logs ostrom-server 2>&1 | tail -n 300 || true
+          echo "--- cloud session containers"
+          docker ps -a --filter label=ostrom.run/session --format '{{.Names}} {{.Status}}' || true
+          echo "--- machines (registered runners) left"
+          docker ps -a --filter name=ostrom-machine --format '{{.Names}} {{.Status}}' || true
+          if [ "$STRIPE_MODE" = test ]; then
+            echo "--- Stripe events forwarded (type, id, the server's status)"
+            grep -E -- '-->|<--' "$RUNNER_TEMP/stripe-listen.log" | tail -n 100 || true
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: console-journeys-report
+          path: web/playwright-report-real
+          if-no-files-found: ignore
+          retention-days: 7

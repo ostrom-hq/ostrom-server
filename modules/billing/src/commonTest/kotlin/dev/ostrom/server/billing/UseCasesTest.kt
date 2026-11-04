@@ -11,6 +11,7 @@ import dev.ostrom.server.billing.domain.BillingSessionRequiredException
 import dev.ostrom.server.billing.domain.Invoice
 import dev.ostrom.server.billing.domain.LicenseGrant
 import dev.ostrom.server.billing.domain.NoActiveSubscriptionException
+import dev.ostrom.server.billing.domain.NoMemberEmails
 import dev.ostrom.server.billing.domain.OrgBilling
 import dev.ostrom.server.billing.domain.PaymentIssue
 import dev.ostrom.server.billing.domain.PaymentIssueKind
@@ -28,13 +29,14 @@ import dev.ostrom.server.billing.fakes.stripeSubscription
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
-import kotlinx.coroutines.test.runTest
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.test.runTest
 
 class UseCasesTest {
     // Limits ------------------------------------------------------------------------------------------------------
@@ -157,11 +159,71 @@ class UseCasesTest {
         assertEquals("cus_1", request.customerId)
         assertEquals("price_ostrom_team_monthly", request.priceId)
         assertNull(request.quantity)
-        assertEquals("https://app.ostrom.run/settings/billing?checkout=success", request.successUrl)
-        assertEquals("https://app.ostrom.run/settings/billing?checkout=canceled", request.cancelUrl)
+        assertEquals("https://app.ostrom.run/billing?checkout=success", request.successUrl)
+        assertEquals("https://app.ostrom.run/billing?checkout=canceled", request.cancelUrl)
         assertEquals("cus_1", world.repository.get(world.org)?.stripeCustomerId)
         world.checkout(world.admin, world.org, Plan.TEAM, BillingInterval.MONTH)
         assertEquals(1, world.stripe.customers, "The customer is reused on a second checkout")
+    }
+
+    @Test
+    fun theCustomerCarriesTheVerifiedAddressOfWhoPays() = runTest {
+        val world = World()
+        world.emails.addresses[world.admin.memberId] = "ada@acme.dev"
+        world.checkout(world.admin, world.org, Plan.TEAM, BillingInterval.MONTH)
+        assertEquals(
+            "createCustomer ${world.org} null ada@acme.dev",
+            world.stripe.calls.first(),
+            "Checkout shows the payer's address instead of asking it",
+        )
+    }
+
+    @Test
+    fun anAddressAlreadySetIsKeptAndAMissingOneIsFilled() = runTest {
+        val world = World()
+        world.checkout(world.admin, world.org, Plan.TEAM, BillingInterval.MONTH)
+        world.emails.addresses[world.admin.memberId] = "ada@acme.dev"
+        world.checkout(world.admin, world.org, Plan.TEAM, BillingInterval.MONTH)
+        assertEquals(1, world.stripe.customers)
+        assertEquals(
+            "ada@acme.dev",
+            world.stripe.customerEmails["cus_1"],
+            "A customer without an address gets the payer's",
+        )
+        world.stripe.customerEmails["cus_1"] = "compta@acme.dev"
+        world.emails.addresses[world.admin.memberId] = "ada@new.acme.dev"
+        world.checkout(world.admin, world.org, Plan.TEAM, BillingInterval.MONTH)
+        assertEquals(
+            "compta@acme.dev",
+            world.stripe.customerEmails["cus_1"],
+            "An address set in the portal (an accounting mailbox) is never replaced by a member's",
+        )
+        assertEquals(1, world.stripe.calls.count { it.startsWith("updateCustomerEmail") })
+    }
+
+    @Test
+    fun aRefusedAddressUpdateNeverBlocksThePayment() = runTest {
+        val world = World()
+        world.checkout(world.admin, world.org, Plan.TEAM, BillingInterval.MONTH)
+        world.emails.addresses[world.admin.memberId] = "ada@acme.dev"
+        world.stripe.updateEmailFailure = IllegalStateException("customer deleted")
+        val url = world.checkout(world.admin, world.org, Plan.TEAM, BillingInterval.MONTH)
+        assertTrue(url.isNotEmpty(), "Checkout opens with the stored customer")
+        assertEquals(listOf("cus_1 IllegalStateException"), world.emailFailures)
+        world.stripe.updateEmailFailure = CancellationException("stop")
+        assertFailsWith<CancellationException> {
+            world.checkout(world.admin, world.org, Plan.TEAM, BillingInterval.MONTH)
+        }
+    }
+
+    @Test
+    fun aPayerWithoutAVerifiedAddressLeavesItToCheckout() = runTest {
+        val world = World()
+        world.checkout(world.admin, world.org, Plan.TEAM, BillingInterval.MONTH)
+        world.checkout(world.admin, world.org, Plan.TEAM, BillingInterval.MONTH)
+        assertEquals("createCustomer ${world.org} null null", world.stripe.calls.first())
+        assertTrue(world.stripe.calls.none { it.startsWith("updateCustomerEmail") })
+        assertNull(NoMemberEmails.emailOf(world.org, world.admin.memberId), "Unbound, nobody's address is known")
     }
 
     @Test
@@ -223,7 +285,7 @@ class UseCasesTest {
         assertFailsWith<NoActiveSubscriptionException> { world.portal(world.admin, world.org) }
         world.subscribe()
         assertEquals("https://billing.stripe.com/p/session/test_1", world.portal(world.admin, world.org))
-        assertEquals("portal cus_1 https://app.ostrom.run/settings/billing", world.stripe.calls.last())
+        assertEquals("portal cus_1 https://app.ostrom.run/billing", world.stripe.calls.last())
         assertFailsWith<BillingAdminRequiredException> { world.portal(world.member, world.org) }
         assertFailsWith<BillingNotConfiguredException> {
             World(stripeEnabled = false).let { it.portal(it.admin, it.org) }

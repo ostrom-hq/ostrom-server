@@ -6,6 +6,7 @@ import dev.ostrom.server.runners.domain.CloudSession
 import dev.ostrom.server.runners.domain.DesiredState
 import dev.ostrom.server.runners.domain.ExecutionStatus
 import dev.ostrom.server.runners.domain.ReconcileCloudSessionUseCaseImpl
+import dev.ostrom.server.runners.domain.RepositoryCloudUsageMeter
 import dev.ostrom.server.runners.domain.SessionFailure
 import dev.ostrom.server.runners.domain.SessionState
 import dev.ostrom.server.runners.fakes.FakeRunnerTokens
@@ -19,6 +20,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
@@ -28,7 +30,8 @@ class ReconcileCloudSessionUseCaseTest {
     private val tokens = FakeRunnerTokens()
     private val plans = FixedPlans()
     private val clock = SettableClock()
-    private val reconcile = ReconcileCloudSessionUseCaseImpl(repository, driver, tokens, plans, clock)
+    private val meter = RepositoryCloudUsageMeter(repository)
+    private val reconcile = ReconcileCloudSessionUseCaseImpl(repository, driver, tokens, plans, meter, clock)
     private val t0 = clock.now
 
     private fun put(session: CloudSession) = session.also { repository.put(it) }
@@ -125,6 +128,35 @@ class ReconcileCloudSessionUseCaseTest {
     }
 
     @Test
+    fun anExecutionQueuedForAMachineNeverTimesOutAndItsStartCountsFromItsTake() = runTest {
+        val queued = put(session().copy(epoch = 1, executionStartedAt = t0, phase = "starting_runner"))
+        driver.status = ExecutionStatus.QUEUED
+
+        // Waiting for a machine with room, as long as it takes: never failed for it, looked at less often.
+        clock.now = t0 + 10.seconds
+        assertEquals(clock.now + 15.seconds, reconcile(queued))
+        assertEquals("queued", stored(queued).phase)
+        clock.now = t0 + 2.hours
+        assertEquals(clock.now + 15.seconds, reconcile(stored(queued)))
+        assertEquals(SessionState.CREATING, stored(queued).state)
+        assertEquals(listOf("status", "status"), driver.calls)
+
+        // A machine takes it: its start is timed from now.
+        driver.status = ExecutionStatus.PENDING
+        assertEquals(clock.now + 2.seconds, reconcile(stored(queued)))
+        val taken = stored(queued)
+        assertEquals("starting_runner", taken.phase)
+        assertEquals(clock.now, taken.executionStartedAt)
+        val takenAt = clock.now
+        clock.now = takenAt + 14.minutes
+        reconcile(stored(queued))
+        assertEquals(SessionState.CREATING, stored(queued).state)
+        clock.now = takenAt + 16.minutes
+        reconcile(stored(queued))
+        assertEquals(SessionState.FAILED, stored(queued).state)
+    }
+
+    @Test
     fun aResumeThatFailsKeepsTheWorkspaceAndPauses() = runTest {
         val resuming = put(session(state = SessionState.RESUMING).copy(epoch = 2, executionStartedAt = t0))
         driver.status = ExecutionStatus.FAILED
@@ -196,6 +228,62 @@ class ReconcileCloudSessionUseCaseTest {
         clock.now = t0 + 91.seconds
         reconcile(silent)
         assertEquals("execution_lost", stored(silent).failure?.code)
+    }
+
+    @Test
+    fun aRunningSessionWhoseMachineDiedStartsAgainOnAnother() = runTest {
+        val running = runningSession()
+        driver.status = ExecutionStatus.HOST_LOST
+        clock.now = t0 + 30.seconds
+
+        assertEquals(clock.now, reconcile(running), "Looked at again at once")
+        val paused = stored(running)
+        assertEquals(SessionState.PAUSED, paused.state)
+        assertEquals(DesiredState.RUNNING, paused.desiredState, "Still wanted running")
+        assertEquals("runner_lost", paused.failure?.code)
+        assertEquals(listOf("status", "stop"), driver.calls)
+
+        reconcile(paused)
+        assertEquals(SessionState.RESUMING, stored(running).state)
+        reconcile(stored(running))
+        assertEquals(listOf("status", "stop", "ensureWorkspace", "start:2"), driver.calls)
+    }
+
+    @Test
+    fun onARuntimeThatRelocatesASilentRunnerMovesUnlessItsExecutionEnded() = runTest {
+        driver.relocates = true
+        driver.status = ExecutionStatus.RUNNING
+        val silent = runningSession()
+        clock.now = t0 + 91.seconds
+        reconcile(silent)
+        assertEquals("runner_lost", stored(silent).failure?.code)
+        assertEquals(DesiredState.RUNNING, stored(silent).desiredState)
+
+        driver.status = ExecutionStatus.ENDED
+        val ended = runningSession()
+        reconcile(ended)
+        assertEquals("execution_lost", stored(ended).failure?.code)
+        assertEquals(DesiredState.PAUSED, stored(ended).desiredState)
+
+        // Not silent: a running execution stays.
+        driver.status = ExecutionStatus.RUNNING
+        val healthy = put(runningSession().copy(lastHeartbeatAt = clock.now))
+        assertEquals(clock.now + 15.seconds, reconcile(healthy))
+    }
+
+    @Test
+    fun aStartWhoseMachineDiedStartsAgainAtOnce() = runTest {
+        val starting = put(session().copy(epoch = 1, executionStartedAt = t0, phase = "starting_runner"))
+        driver.status = ExecutionStatus.HOST_LOST
+        clock.now = t0 + 95.seconds
+
+        assertEquals(clock.now, reconcile(starting))
+        val after = stored(starting)
+        assertEquals(SessionState.CREATING, after.state)
+        assertNull(after.executionStartedAt)
+        assertEquals("scheduling", after.phase)
+        reconcile(after)
+        assertEquals(listOf("status", "stop", "ensureWorkspace", "start:2"), driver.calls)
     }
 
     @Test
@@ -390,6 +478,21 @@ class ReconcileCloudSessionUseCaseTest {
         assertEquals(t0, after.terminatedAt)
         assertNull(after.runnerTokenHash)
         assertEquals(listOf("stop", "deleteWorkspace", "stop", "deleteWorkspace"), driver.calls)
+    }
+
+    // The demo stack's journey (step D3, run 41471499629): the runner's last heartbeat, sent while its container
+    // stopped, won the row; the step dropped its lost write and the session stayed `running` for ever.
+    @Test
+    fun aDeletionThatLostItsWriteIsLookedAtAgain() = runTest {
+        val running = runningSession(desired = DesiredState.TERMINATED)
+        repository.loseNextRaces = 1
+        clock.now = t0 + 12.seconds
+
+        assertEquals(clock.now, reconcile(running))
+        assertEquals(SessionState.RUNNING, stored(running).state)
+
+        assertNull(reconcile(stored(running)))
+        assertEquals(SessionState.TERMINATED, stored(running).state)
     }
 
     @Test

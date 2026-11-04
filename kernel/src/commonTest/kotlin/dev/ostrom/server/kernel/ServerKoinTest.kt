@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel
 
+import dev.ostrom.server.kernel.audit.DiscardingOrgAuditTrail
+import dev.ostrom.server.kernel.audit.OrgAuditRecord
+import dev.ostrom.server.kernel.audit.OrgAuditTrail
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalKind
@@ -20,6 +23,7 @@ import kotlin.test.assertFails
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
@@ -76,10 +80,35 @@ class ServerKoinTest {
     }
 
     @Test
+    fun writesNoAuditUntilTheIdentityModuleBindsTheTrail() = runTest {
+        val trail = serverKoin(kernel, emptyList()).get<OrgAuditTrail>()
+        assertIs<DiscardingOrgAuditTrail>(trail)
+        val actor = AuthenticatedPrincipal("user-1", PrincipalKind.USER, emptySet())
+        trail.record(OrgAuditRecord(Uuid.random(), actor, "budget.changed", "budget", "org"))
+        val bound = OrgAuditTrail { }
+        val identity = ProbeModule("identity", module { single<OrgAuditTrail> { bound } })
+        assertSame(bound, serverKoin(kernel, listOf(identity)).get<OrgAuditTrail>())
+    }
+
+    @Test
     fun testOverridesReplaceARealBinding() {
         val identity = ProbeModule("identity", module { single<TokenAuthenticator> { RejectingTokenAuthenticator() } })
         val overrides = module { single<TokenAuthenticator> { FakeAuthenticator() } }
         assertIs<FakeAuthenticator>(serverKoin(kernel, listOf(identity), overrides).get<TokenAuthenticator>())
+    }
+
+    @Test
+    fun anOverriddenBindingIsNeverBuilt() {
+        var built = 0
+        val identity = ProbeModule(
+            "identity",
+            module { single<TokenAuthenticator> { built++; RejectingTokenAuthenticator() } },
+        )
+        val overrides = module { single<TokenAuthenticator> { FakeAuthenticator() } }
+        val koin = serverKoin(kernel, listOf(identity), overrides)
+        assertIs<FakeAuthenticator>(koin.get<TokenAuthenticator>())
+        koin.close()
+        assertEquals(0, built)
     }
 
     @Test

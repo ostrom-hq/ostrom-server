@@ -9,6 +9,12 @@ import kotlin.uuid.Uuid
  */
 interface RuntimeDriver {
     /**
+     * Whether a lost execution starts again elsewhere rather than pausing its session: true where executions run on
+     * machines that may die (registered runners), whose workspace is lost with them.
+     */
+    val relocates: Boolean get() = false
+
+    /**
      * Creates the session's workspace volume unless it exists.
      *
      * @param session The session.
@@ -30,6 +36,16 @@ interface RuntimeDriver {
      * @return The state.
      */
     suspend fun executionStatus(session: CloudSession): ExecutionStatus
+
+    /**
+     * The registered runner the session's current execution was handed to, or null: while it waits for one, and
+     * where executions run on the cluster or this server's Docker, which no registered runner holds.
+     *
+     * @param session The session.
+     *
+     * @return The runner's id, or null.
+     */
+    suspend fun holder(session: CloudSession): Uuid? = null
 
     /**
      * Stops and removes every execution of the session, whatever its epoch, and their credentials.
@@ -78,8 +94,24 @@ data class ExecutionSpec(
             "prompt=${if (prompt == null) "none" else "***"})"
 }
 
+/**
+ * The execution of a session's current epoch.
+ *
+ * @param runnerToken The execution's runner token.
+ *
+ * @return What to start; the first message goes to the first execution only.
+ */
+fun CloudSession.executionSpec(runnerToken: String): ExecutionSpec =
+    ExecutionSpec(id, orgId, epoch, agent, repository, runnerToken, limits, model, prompt.takeIf { epoch == 1L })
+
 /** The state of an execution as the runtime sees it. */
 enum class ExecutionStatus {
+    /**
+     * Waiting for a machine with room to take it (registered runners): it waits as long as it takes, and its start is
+     * timed from the moment a machine takes it.
+     */
+    QUEUED,
+
     /** Accepted, not started yet (image pull, scheduling). */
     PENDING,
 
@@ -94,6 +126,9 @@ enum class ExecutionStatus {
 
     /** The runtime has no such execution. */
     MISSING,
+
+    /** The machine that runs it stopped answering: it can start again on another one. */
+    HOST_LOST,
 }
 
 /** The names a driver gives to a session's objects, the same in every runtime. */

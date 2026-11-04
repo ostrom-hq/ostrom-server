@@ -66,6 +66,21 @@ class MissingWaitScopeException(scope: String) : OstromException(
 /** The credential acts for no organization. */
 class NoOrganizationException : OstromException(ErrorKind.NOT_FOUND, "Organization not found.")
 
+/** An agent token always runs in a session, and acts only inside it (audit A12): it names it with `?session=`. */
+class AgentSessionRequiredException : OstromException(
+    ErrorKind.INVALID_REQUEST,
+    "An agent token names the session it runs in: add ?session=<session id>.",
+)
+
+/** An agent token asks the person who launched it, never another member. */
+class AgentAssigneeRefusedException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "An agent asks only the person who launched it.",
+)
+
+/** An agent token's waits belong to its session: it never names a workflow run. */
+class AgentRunRefusedException : OstromException(ErrorKind.FORBIDDEN, "An agent token does not name a run.")
+
 /**
  * Throws an [InvalidWaitException] unless [condition] holds.
  *

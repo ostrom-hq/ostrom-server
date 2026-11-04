@@ -27,12 +27,14 @@ interface ReconcileCloudSessionUseCase {
  * [ReconcileCloudSessionUseCase] on the repository, the runtime and the plan.
  *
  * Timings, as in TeamCode's cloud sessions: a start must report ready within [START_TIMEOUT]; a runner silent for
- * [HEARTBEAT_LOSS] is lost; a pause drains for at most [PAUSE_DEADLINE].
+ * [HEARTBEAT_LOSS] is lost; a pause drains for at most [PAUSE_DEADLINE]. A lost execution pauses its session, except on
+ * a runtime that [relocates][RuntimeDriver.relocates]: there, it starts again on another machine.
  *
  * @param repository The sessions.
  * @param driver The runtime.
  * @param tokens Mints the runner tokens.
- * @param plans The organizations' plans, for the monthly hours.
+ * @param plans The organizations' plans, for their hours.
+ * @param usage The hours used.
  * @param clock The time.
  */
 // Each step is a decision table read top to bottom: an early return per outcome reads better than nested branches,
@@ -43,6 +45,7 @@ class ReconcileCloudSessionUseCaseImpl(
     private val driver: RuntimeDriver,
     private val tokens: RunnerTokens,
     private val plans: CloudPlanProvider,
+    private val usage: CloudUsageMeter,
     private val clock: Clock,
 ) : ReconcileCloudSessionUseCase {
     override suspend fun invoke(session: CloudSession): Instant? {
@@ -63,8 +66,8 @@ class ReconcileCloudSessionUseCaseImpl(
         if (!driver.deleteWorkspace(session)) return now + STEP_DELAY
         val terminated = session.moveTo(SessionState.TERMINATED, now)
             .copy(terminatedAt = now, runnerTokenHash = null, phase = "cleaned")
-        write(terminated, null)
-        return null
+        // A lost write (the runner's last heartbeat, sent while its container stopped) asks for a new look.
+        return write(terminated, null)
     }
 
     private suspend fun starting(session: CloudSession, now: Instant): Instant? {
@@ -74,6 +77,20 @@ class ReconcileCloudSessionUseCaseImpl(
         }
         val startedAt = session.executionStartedAt ?: return startExecution(session, now)
         val status = driver.executionStatus(session)
+        if (status == ExecutionStatus.HOST_LOST) {
+            // Its machine died before it was ready: a new execution, on another machine.
+            driver.stopExecutions(session)
+            return write(session.copy(executionStartedAt = null, phase = "scheduling", updatedAt = now), now)
+        }
+        // Waiting for a machine with room, as long as it takes; its start is timed once one takes it.
+        if (status == ExecutionStatus.QUEUED) {
+            if (session.phase == QUEUED_PHASE) return now + WATCH_DELAY
+            return write(session.copy(phase = QUEUED_PHASE, updatedAt = now), now + WATCH_DELAY)
+        }
+        if (session.phase == QUEUED_PHASE) {
+            val taken = session.copy(phase = STARTING_PHASE, executionStartedAt = now, updatedAt = now)
+            return write(taken, now + STEP_DELAY)
+        }
         val failed = status == ExecutionStatus.FAILED || status == ExecutionStatus.ENDED ||
             (status == ExecutionStatus.MISSING && now - startedAt > MISSING_GRACE) || now - startedAt > START_TIMEOUT
         if (!failed) return now + STEP_DELAY
@@ -105,29 +122,27 @@ class ReconcileCloudSessionUseCaseImpl(
             runnerTokenHash = tokens.hash(token),
             runnerStoppedAt = null,
             pausingSince = null,
-            phase = "starting_runner",
+            phase = STARTING_PHASE,
             updatedAt = now,
         )
         // The row commits first: an execution the runtime runs always has its row, never the reverse.
         val stored = repository.compareAndSet(next, now + STEP_DELAY) ?: return now
-        driver.startExecution(
-            ExecutionSpec(
-                stored.id,
-                stored.orgId,
-                stored.epoch,
-                stored.agent,
-                stored.repository,
-                token,
-                stored.limits,
-                stored.model,
-                stored.prompt.takeIf { stored.epoch == 1L },
-            ),
-        )
+        driver.startExecution(stored.executionSpec(token))
         return now + STEP_DELAY
     }
 
     private suspend fun running(session: CloudSession, now: Instant): Instant? {
-        if (executionLost(session, now)) {
+        val status = driver.executionStatus(session)
+        val silent = now - (session.lastHeartbeatAt ?: session.readyAt ?: now) > HEARTBEAT_LOSS
+        if (relocating(status, silent)) {
+            driver.stopExecutions(session)
+            val failure = SessionFailure(
+                "runner_lost",
+                "The machine running the session stopped answering; the session starts again on another runner.",
+            )
+            return write(session.toPaused(now, failure), now)
+        }
+        if (silent || status in LOST_STATUSES) {
             driver.stopExecutions(session)
             val failure = SessionFailure(
                 "execution_lost",
@@ -142,10 +157,12 @@ class ReconcileCloudSessionUseCaseImpl(
         return write(session.toPausing(now, reason).copy(desiredState = DesiredState.PAUSED), now + STEP_DELAY)
     }
 
-    private suspend fun executionLost(session: CloudSession, now: Instant): Boolean {
-        val lastSign = session.lastHeartbeatAt ?: session.readyAt ?: now
-        return now - lastSign > HEARTBEAT_LOSS || driver.executionStatus(session) in LOST_STATUSES
-    }
+    /**
+     * Whether a running execution starts again elsewhere: its machine died, or, on a runtime that relocates, its
+     * runner fell silent while the machine still answers for it (the machine's last word predates its death).
+     */
+    private fun relocating(status: ExecutionStatus, silent: Boolean): Boolean =
+        status == ExecutionStatus.HOST_LOST || (silent && driver.relocates && status !in ENDED_STATUSES)
 
     private fun limitReached(session: CloudSession, now: Instant): SessionFailure? {
         val idleSince = session.lastActivityAt ?: session.readyAt ?: now
@@ -186,8 +203,8 @@ class ReconcileCloudSessionUseCaseImpl(
         val hours = plan.monthlyHours?.let { it * SECONDS_PER_HOUR }
         return when {
             !plan.available -> SessionFailure("closed", "Cloud sessions are closed to this organization.")
-            hours != null && repository.usageSeconds(session.orgId, monthOf(now)) >= hours ->
-                SessionFailure("hours_exhausted", "The cloud hours of this month are used up.")
+            hours != null && usage.usedSeconds(session.orgId, now) >= hours ->
+                SessionFailure("hours_exhausted", "The cloud hours of this period are used up.")
             else -> null
         }
     }
@@ -222,11 +239,20 @@ class ReconcileCloudSessionUseCaseImpl(
         /** A start must report ready within this time, image pull and repository clone included. */
         private val START_TIMEOUT: Duration = 15.minutes
 
-        /** A runner silent for this long is lost. */
-        private val HEARTBEAT_LOSS: Duration = 90.seconds
+        /** The phase of an execution started, until its runner reports ready. */
+        private const val STARTING_PHASE = "starting_runner"
+
+        /** The phase of an execution that waits for a machine with room ([ExecutionStatus.QUEUED]). */
+        private const val QUEUED_PHASE = "queued"
+
+        /** A runner silent for this long is lost; the runners list shows it offline after the same time. */
+        internal val HEARTBEAT_LOSS: Duration = 90.seconds
 
         /** What the runtime reports for an execution that is no longer there. */
         private val LOST_STATUSES = setOf(ExecutionStatus.ENDED, ExecutionStatus.FAILED, ExecutionStatus.MISSING)
+
+        /** What the runtime reports for an execution that ended on a machine still there: it never moves. */
+        private val ENDED_STATUSES = setOf(ExecutionStatus.ENDED, ExecutionStatus.FAILED)
 
         /** A pause drains the agent for at most this long. */
         private val PAUSE_DEADLINE: Duration = 2.minutes

@@ -1,0 +1,6 @@
+# The operations the ostrom-core contract serves with a JSON answer that no server test observes, each with its
+# reason: `operationId  # why`. scripts/check-contract-coverage.py fails for any other unobserved one, and for a line
+# no longer needed. The goal is an empty list: add a case to the module's tests rather than a line here.
+inferenceMessages  # the gateway relays the provider's success as a stream (ReadChannelContent), which ContractObserver does not read; its errors are checked
+inferenceResponses  # the gateway relays the provider's success as a stream (ReadChannelContent), which ContractObserver does not read; its errors are checked
+inferenceChatCompletions  # the gateway relays the provider's success as a stream (ReadChannelContent), which ContractObserver does not read; its errors are checked

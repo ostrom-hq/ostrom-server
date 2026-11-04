@@ -19,16 +19,12 @@ import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonArray
-import kotlinx.serialization.json.putJsonObject
 
 /**
- * [RuntimeDriver] on a local Docker Engine, through its HTTP API, for tests and self-hosting: a named volume per
- * session and a container per execution, with the same labels, names and runner environment as on Kubernetes.
+ * [RuntimeDriver] on a local Docker Engine, through its HTTP API, for tests and self-hosting: it creates on the engine
+ * what [DockerExecutionPlan] describes (three volumes per session, three containers per execution, the token in the
+ * runner's container only, S2-49).
  *
  * The engine is reached over TCP ([DockerSettings.apiUrl]; for the local socket, expose it on the loopback, for
  * example with a socket proxy). The free plan's egress restriction is not enforced here: it is a Kubernetes
@@ -41,24 +37,26 @@ import kotlinx.serialization.json.putJsonObject
  */
 class DockerRuntimeDriver(
     private val client: HttpClient,
-    private val settings: DockerSettings,
-    private val serverUrl: String,
+    settings: DockerSettings,
+    serverUrl: String,
     private val runnerImage: String,
 ) : RuntimeDriver {
     private val base = settings.apiUrl.trimEnd('/')
+    private val plan = DockerExecutionPlan(settings.network, serverUrl, runnerImage)
 
     override suspend fun ensureWorkspace(session: CloudSession) {
-        val volume = buildJsonObject {
-            put("Name", RuntimeNames.workspace(session.id))
-            put("Labels", labels(session.id.toHexString(), null))
+        // Creating a volume that exists answers 201 with the existing volume. The socket's volume takes the owner and
+        // mode of the image's /run/ostrom when the agent's container first mounts it.
+        for (volume in plan.volumes(session.id)) {
+            call(HttpMethod.Post, "/volumes/create", volume.body).requireSuccess("create volume")
         }
-        // Creating a volume that exists answers 201 with the existing volume.
-        call(HttpMethod.Post, "/volumes/create", volume).requireSuccess("create volume")
     }
 
     override suspend fun startExecution(spec: ExecutionSpec) {
-        val name = RuntimeNames.execution(spec.sessionId, spec.epoch)
-        val body = containerManifest(spec)
+        for (container in plan.containers(spec)) createAndStart(container.name, container.body)
+    }
+
+    private suspend fun createAndStart(name: String, body: JsonObject) {
         var created = call(HttpMethod.Post, "/containers/create", body, mapOf("name" to name))
         if (created.status == HttpStatusCode.NotFound) {
             pullImage()
@@ -98,7 +96,15 @@ class DockerRuntimeDriver(
     }
 
     override suspend fun deleteWorkspace(session: CloudSession): Boolean {
-        val path = "/volumes/${RuntimeNames.workspace(session.id)}"
+        val socketGone = removeVolume(DockerExecutionPlan.socketVolume(session.id))
+        val checkGone = removeVolume(DockerExecutionPlan.checkVolume(session.id))
+        val workspaceGone = removeVolume(RuntimeNames.workspace(session.id))
+        return socketGone && checkGone && workspaceGone
+    }
+
+    /** Removes a volume; true once it is gone. */
+    private suspend fun removeVolume(name: String): Boolean {
+        val path = "/volumes/$name"
         val removed = call(HttpMethod.Delete, path)
         // 409: still used by a container being removed; the reconciler asks again.
         if (removed.status == HttpStatusCode.Conflict) return false
@@ -110,37 +116,6 @@ class DockerRuntimeDriver(
         val (image, tag) = splitImage(runnerImage)
         call(HttpMethod.Post, "/images/create", parameters = mapOf("fromImage" to image, "tag" to tag))
             .requireSuccess("pull image")
-    }
-
-    private fun containerManifest(spec: ExecutionSpec): JsonObject = buildJsonObject {
-        put("Image", runnerImage)
-        putJsonArray("Cmd") { add(JsonPrimitive(KubernetesRuntimeDriver.RUNNER_BINARY)) }
-        put("WorkingDir", KubernetesRuntimeDriver.WORKSPACE)
-        put("User", "${KubernetesRuntimeDriver.RUNNER_UID}:${KubernetesRuntimeDriver.RUNNER_UID}")
-        putJsonArray("Env") {
-            RunnerEnvironment.of(spec, serverUrl, null).forEach { (key, value) -> add(JsonPrimitive("$key=$value")) }
-        }
-        put(
-            "Labels",
-            JsonObject(
-                labels(spec.sessionId.toHexString(), spec.epoch) +
-                    (KubernetesRuntimeDriver.EGRESS_LABEL to JsonPrimitive(KubernetesRuntimeDriver.egress(spec))),
-            ),
-        )
-        putJsonObject("HostConfig") {
-            val bind = "${RuntimeNames.workspace(spec.sessionId)}:${KubernetesRuntimeDriver.WORKSPACE}"
-            putJsonArray("Binds") { add(JsonPrimitive(bind)) }
-            settings.network?.let { put("NetworkMode", it) }
-            putJsonArray("ExtraHosts") { add(JsonPrimitive("host.docker.internal:host-gateway")) }
-            putJsonObject("RestartPolicy") { put("Name", "no") }
-            putJsonArray("CapDrop") { add(JsonPrimitive("ALL")) }
-            putJsonArray("SecurityOpt") { add(JsonPrimitive("no-new-privileges")) }
-            put("ReadonlyRootfs", true)
-            putJsonObject("Tmpfs") { put("/tmp", "rw,nosuid,size=1g") }
-            put("PidsLimit", PIDS_LIMIT)
-            put("Memory", MEMORY_BYTES)
-            put("NanoCpus", NANO_CPUS)
-        }
     }
 
     private suspend fun call(
@@ -157,19 +132,9 @@ class DockerRuntimeDriver(
         }
     }
 
-    private fun labels(sessionHex: String, epoch: Long?): JsonObject = buildJsonObject {
-        put(KubernetesRuntimeDriver.MANAGED_BY_LABEL, KubernetesRuntimeDriver.MANAGED_BY)
-        put(KubernetesRuntimeDriver.SESSION_LABEL, sessionHex)
-        epoch?.let { put(KubernetesRuntimeDriver.EPOCH_LABEL, it.toString()) }
-    }
-
     /** Constants and readers of the enclosing type. */
     companion object {
         private val GONE_OR_DONE = setOf(HttpStatusCode.NotModified, HttpStatusCode.NotFound)
-        private const val MEMORY_BYTES = 4L * 1024 * 1024 * 1024
-        private const val NANO_CPUS = 2_000_000_000L
-        private const val PIDS_LIMIT = 4096
-
         /**
          * Splits an image reference into the name and the tag the engine's pull expects.
          *
