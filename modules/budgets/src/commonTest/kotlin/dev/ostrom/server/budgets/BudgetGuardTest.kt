@@ -465,6 +465,43 @@ class BudgetGuardTest {
     }
 
     @Test
+    fun aWorkflowsLimitsApplyToTheCallsOfItsLaunchesOnlyAndAreAuditedUnderIt() = runTest {
+        val audit = mutableListOf<OrgAuditRecord>()
+        val audited = AuditedBudgetAlerts(alerts, OrgAuditTrail { audit += it })
+        val guard = BudgetGuardImpl(repository, spend, audited, clock, logger)
+        repository.otherLimits[orgA to BudgetTarget.Workflow("review")] = listOf(BudgetLimit(2_000))
+        repository.otherLimits[orgA to BudgetTarget.Workflow("nightly")] =
+            listOf(BudgetLimit(1_000, BudgetWindow.DAY, BudgetAction.WARN))
+        spend.workflowSpent[orgA to "review"] = 2_000
+        spend.workflowSpent[orgA to "nightly"] = 1_000
+        spend.workflowSpent[TestCallers.orgB to "review"] = 0
+
+        assertEquals(BudgetDecision.Allowed(null), guard.check(orgA, member), "A call that plays no workflow")
+        assertEquals(emptyList(), spend.workflowReads, "Its workflows' spend is not read")
+        assertEquals(
+            BudgetDecision.Exhausted(BudgetScope.WORKFLOW, 2_000, TestCallers.nextMonth),
+            guard.check(orgA, member, "review"),
+        )
+        assertEquals(listOf(orgA to "review"), spend.workflowReads, "Read for its own workflow")
+        assertEquals(
+            BudgetDecision.Allowed(null),
+            guard.check(TestCallers.orgB, TestCallers.adminB.memberId, "review"),
+            "Org B's workflow of the same id has no limit",
+        )
+        val reached = alerts.alerts.last()
+        assertEquals(
+            listOf(BudgetScope.WORKFLOW, null, "review"),
+            listOf(reached.scope, reached.memberId, reached.workflowId),
+        )
+        assertEquals(emptyList(), audit, "A workflow budget that stops is refused, not audited")
+
+        assertEquals(BudgetDecision.Allowed(null), guard.check(orgA, member, "nightly"), "One that warns lets it go")
+        val line = audit.single()
+        assertEquals("budget.exceeded" to "nightly", line.event to line.subjectId)
+        assertEquals(listOf("workflow", "day", "warn"), listOf("scope", "period", "action").map { line.details[it] })
+    }
+
+    @Test
     fun anOverrunTheAuditLogCannotWriteIsNotSentEitherAndIsTriedAgainLater() = runTest {
         var down = true
         val audit = mutableListOf<OrgAuditRecord>()

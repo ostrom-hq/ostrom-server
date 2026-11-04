@@ -63,6 +63,8 @@ enum class Answer { YES, NO }
  *   recent (S2-54).
  * @property role The person's role in the organization, or null when unknown: changing what is decided (workflows,
  *   packages) needs an owner or an admin (second audit H4).
+ * @property phoneCredential The app's token the person answers with, when they answer from the phone app: a yes from
+ *   it needs the token's unlock bound to the request (Q-APP-STEPUP-RISK). Null from anywhere else.
  */
 data class GateActor(
     val id: String,
@@ -72,6 +74,7 @@ data class GateActor(
     val personId: String? = null,
     val authenticatedAt: Instant? = null,
     val role: OrgRole? = null,
+    val phoneCredential: String? = null,
 ) {
     /** The shared ways to build an actor, so that what a rule reads is always stated. */
     companion object {

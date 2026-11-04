@@ -25,10 +25,11 @@ interface BudgetGuard {
      *
      * @param orgId The org.
      * @param memberId The member.
+     * @param workflowId The workflow the call's launch plays, or null: its limits are checked after the member's.
      *
      * @return The decision.
      */
-    suspend fun check(orgId: Uuid, memberId: Uuid): BudgetDecision
+    suspend fun check(orgId: Uuid, memberId: Uuid, workflowId: String? = null): BudgetDecision
 }
 
 /** Forgets cached decisions when an org's limits change, so this replica applies them at once. */
@@ -73,14 +74,19 @@ class BudgetGuardImpl(
     private val cache: BudgetCacheSettings = BudgetCacheSettings(),
 ) : BudgetGuard,
     BudgetDecisionCache {
-    private data class MemberKey(val orgId: Uuid, val memberId: Uuid)
+    private data class MemberKey(val orgId: Uuid, val memberId: Uuid, val workflowId: String?)
 
     private data class SpendKey(val orgId: Uuid, val period: BudgetPeriod)
 
     private class Cached<T>(val value: T, val expiresAt: Instant)
 
-    /** Whose limit: the org's (no member) or a member's. */
-    private data class Subject(val orgId: Uuid, val memberId: Uuid?, val scope: BudgetScope)
+    /** Whose limit: the org's (no member), a member's, or a workflow's. */
+    private data class Subject(
+        val orgId: Uuid,
+        val memberId: Uuid?,
+        val scope: BudgetScope,
+        val workflowId: String? = null,
+    )
 
     private data class AlertKey(val subject: Subject, val threshold: Int, val limit: BudgetLimit, val period: Instant)
 
@@ -101,12 +107,12 @@ class BudgetGuardImpl(
      */
     private var generation = 0L
 
-    override suspend fun check(orgId: Uuid, memberId: Uuid): BudgetDecision {
+    override suspend fun check(orgId: Uuid, memberId: Uuid, workflowId: String?): BudgetDecision {
         val now = clock.now()
-        val key = MemberKey(orgId, memberId)
+        val key = MemberKey(orgId, memberId, workflowId)
         val (cached, readAt) = lock.withLock { decisions[key] to generation }
         if (cached != null && cached.expiresAt > now) return cached.value
-        val decision = evaluate(orgId, memberId, now, readAt)
+        val decision = evaluate(key, now, readAt)
         lock.withLock {
             if (generation == readAt) decisions.putBounded(key, Cached(decision, now + cache.ttl), now)
         }
@@ -121,8 +127,9 @@ class BudgetGuardImpl(
         }
     }
 
-    private suspend fun evaluate(orgId: Uuid, memberId: Uuid, now: Instant, readAt: Long): BudgetDecision {
-        val limits = repository.limits(orgId, memberId)
+    private suspend fun evaluate(key: MemberKey, now: Instant, readAt: Long): BudgetDecision {
+        val (orgId, memberId, workflowId) = key
+        val limits = repository.limits(orgId, memberId, workflowId)
         val org = Subject(orgId, null, BudgetScope.ORG)
         val member = Subject(orgId, memberId, BudgetScope.MEMBER)
         val measured = limits.org.map { limit ->
@@ -131,7 +138,7 @@ class BudgetGuardImpl(
         } + limits.member.map { limit ->
             val period = limit.window.periodOf(now)
             Measured(member, limit, period, spend.spentMicros(orgId, memberId, period.start))
-        }
+        } + workflowId?.let { measuredWorkflow(orgId, it, limits.workflow, now) }.orEmpty()
         val month = BudgetPeriod.of(now).start
         for (each in measured) alertCrossings(each, month, now)
         val stopping = measured.filter { it.limit.action == BudgetAction.BLOCK }
@@ -143,6 +150,20 @@ class BudgetGuardImpl(
             resetsAt = reached.period.end,
             window = reached.limit.window,
         )
+    }
+
+    /** A workflow's limits, measured on the spend of the calls of the launches that play it. */
+    private suspend fun measuredWorkflow(
+        orgId: Uuid,
+        workflowId: String,
+        limits: List<BudgetLimit>,
+        now: Instant,
+    ): List<Measured> {
+        val subject = Subject(orgId, null, BudgetScope.WORKFLOW, workflowId)
+        return limits.map { limit ->
+            val period = limit.window.periodOf(now)
+            Measured(subject, limit, period, spend.workflowSpentMicros(orgId, workflowId, period.start))
+        }
     }
 
     private suspend fun orgSpent(orgId: Uuid, period: BudgetPeriod, now: Instant, readAt: Long): Long {
@@ -177,6 +198,7 @@ class BudgetGuardImpl(
                 periodStart = measured.period.start,
                 window = measured.limit.window,
                 action = measured.limit.action,
+                workflowId = subject.workflowId,
             )
             // The decision does not depend on the alert: a failure is reported and a later check tries again.
             // Cancelled or failed: the memo must not claim an alert that was never sent.

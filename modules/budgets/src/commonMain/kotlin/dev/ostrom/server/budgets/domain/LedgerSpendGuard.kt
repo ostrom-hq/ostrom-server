@@ -40,14 +40,14 @@ class LedgerSpendGuard(
         val now = clock.now()
         val month = BudgetPeriod.of(now)
         val day = BudgetPeriod.day(now)
-        val answer = when (val cached = guard.check(request.orgId, request.memberId)) {
+        val answer = when (val cached = guard.check(request.orgId, request.memberId, request.workflowId)) {
             // No limit that stops applied when the guard last looked (its cache, forgotten when a limit changes here).
             BudgetDecision.Allowed(null) -> Admission.Admitted
             is BudgetDecision.Exhausted ->
                 Admission.Exhausted(cached.scope.toSpendScope(), cached.limitMicros, cached.window == BudgetWindow.DAY)
             else -> admission.admit(
-                SpendHold(request.orgId, request.memberId, request.callId, request.reserveMicros),
-                repository.limits(request.orgId, request.memberId).stopping(day.start),
+                SpendHold(request.orgId, request.memberId, request.callId, request.reserveMicros, request.workflowId),
+                repository.limits(request.orgId, request.memberId, request.workflowId).stopping(day.start),
                 month.start,
             )
         }
@@ -58,8 +58,15 @@ class LedgerSpendGuard(
     private fun BudgetLimits.stopping(dayStart: Instant): SpendLimits {
         val orgDay = org.stopping(BudgetWindow.DAY)
         val memberDay = member.stopping(BudgetWindow.DAY)
-        val daily = if (orgDay == null && memberDay == null) null else DailySpendLimits(dayStart, orgDay, memberDay)
-        return SpendLimits(org.stopping(BudgetWindow.MONTH), member.stopping(BudgetWindow.MONTH), daily)
+        val workflowDay = workflow.stopping(BudgetWindow.DAY)
+        val daily = DailySpendLimits(dayStart, orgDay, memberDay, workflowDay)
+            .takeUnless { orgDay == null && memberDay == null && workflowDay == null }
+        return SpendLimits(
+            org.stopping(BudgetWindow.MONTH),
+            member.stopping(BudgetWindow.MONTH),
+            daily,
+            workflow.stopping(BudgetWindow.MONTH),
+        )
     }
 
     private fun List<BudgetLimit>.stopping(window: BudgetWindow): Long? =
@@ -68,6 +75,7 @@ class LedgerSpendGuard(
     private fun BudgetScope.toSpendScope(): SpendScope = when (this) {
         BudgetScope.ORG -> SpendScope.ORG
         BudgetScope.MEMBER -> SpendScope.MEMBER
+        BudgetScope.WORKFLOW -> SpendScope.WORKFLOW
     }
 
     /** The refusals start with fixed words, so that an agent's CLI tells them apart. */
@@ -100,6 +108,7 @@ class LedgerSpendGuard(
     private fun SpendScope.owner(): String = when (this) {
         SpendScope.ORG -> "your organization's"
         SpendScope.MEMBER -> "your"
+        SpendScope.WORKFLOW -> "this workflow's"
     }
 
     /**

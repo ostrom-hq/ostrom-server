@@ -111,6 +111,47 @@ class SpendAdmissionTest {
     }
 
     @Test
+    fun aWorkflowsLimitsComeAfterTheMembersAndCountTheWorkflowsSumsOnly() {
+        val today = TestCallers.epoch - 12.hours
+        val workflow = SpendLimits(null, null, workflowMicros = 3_000)
+        assertTrue(workflow.any)
+        assertEquals(
+            Admission.Admitted,
+            workflow.admit(SpendTotals(orgSpent = 9_000, memberSpent = 9_000, workflowSpent = 2_000), 1_000),
+        )
+        assertEquals(
+            Admission.Exhausted(SpendScope.WORKFLOW, 3_000),
+            workflow.admit(SpendTotals(workflowSpent = 3_000), 0),
+        )
+        assertEquals(
+            Admission.Insufficient(SpendScope.WORKFLOW, 3_000, 500),
+            workflow.admit(SpendTotals(workflowSpent = 2_000, workflowHeld = 500, orgHeld = 9_000), 501),
+            "Its own calls in flight count, not the org's",
+        )
+        val day = SpendLimits(null, null, DailySpendLimits(today, null, null, workflowMicros = 100))
+        assertTrue(day.any)
+        assertEquals(
+            Admission.Exhausted(SpendScope.WORKFLOW, 100, daily = true),
+            day.admit(SpendTotals(workflowDaySpent = 100), 0),
+        )
+        assertEquals(
+            Admission.Insufficient(SpendScope.WORKFLOW, 100, 40, daily = true),
+            day.admit(SpendTotals(workflowDaySpent = 50, workflowHeld = 10), 41),
+        )
+        val all = SpendLimits(10_000, 5_000, workflowMicros = 3_000)
+        assertEquals(
+            Admission.Exhausted(SpendScope.MEMBER, 5_000),
+            all.admit(SpendTotals(memberSpent = 5_000, workflowSpent = 3_000), 0),
+            "The member's before the workflow's",
+        )
+        assertEquals(
+            Admission.Exhausted(SpendScope.WORKFLOW, 3_000),
+            all.admit(SpendTotals(orgSpent = 9_999, workflowSpent = 3_000), 2),
+            "A reached workflow answers before a short org",
+        )
+    }
+
+    @Test
     fun aDailyLimitCountsTheDaysSpendAndTheCallsInFlightAfterTheMonths() {
         val today = TestCallers.epoch - 12.hours
         val orgDay = SpendLimits(null, null, DailySpendLimits(today, orgMicros = 1_000, memberMicros = null))

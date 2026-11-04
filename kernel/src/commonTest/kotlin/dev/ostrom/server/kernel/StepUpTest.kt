@@ -3,8 +3,11 @@ package dev.ostrom.server.kernel
 
 import dev.ostrom.server.kernel.auth.ALL_USER_SCOPES
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.BOUND_UNLOCK_WITHIN
+import dev.ostrom.server.kernel.auth.PhoneUnlockProofs
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
+import dev.ostrom.server.kernel.auth.RejectingPhoneUnlockProofs
 import dev.ostrom.server.kernel.auth.STEP_UP_REQUIRED
 import dev.ostrom.server.kernel.auth.STEP_UP_WITHIN
 import dev.ostrom.server.kernel.auth.StepUpRequiredException
@@ -17,6 +20,7 @@ import dev.ostrom.server.kernel.logging.JsonLogger
 import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.kernel.module.ServerModule
+import dev.ostrom.server.kernel.module.serverKoin
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.post
 import io.ktor.client.statement.bodyAsText
@@ -28,6 +32,7 @@ import io.ktor.server.routing.Route
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.test.runTest
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.dsl.koinApplication
@@ -35,6 +40,9 @@ import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertIs
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
@@ -63,6 +71,26 @@ class StepUpTest {
                 assertEquals(message, refused.message)
             }
         }
+    }
+
+    // Without the identity module, which records the phone's unlocks, no unlock proves a yes from the app.
+    @Test
+    fun noPhoneUnlockProvesAYesWithoutTheModuleThatRecordsThem() = runTest {
+        val bound = serverKoin(module { single<Clock> { Clock.System } }, emptyList()).get<PhoneUnlockProofs>()
+        assertIs<RejectingPhoneUnlockProofs>(bound)
+        assertFalse(bound.consume("token", "request", now))
+    }
+
+    @Test
+    fun theProofsTheIdentityModuleBindsAreKeptAndAnUnlockServesAYesForAMinute() {
+        val proofs = PhoneUnlockProofs { _, _, _ -> true }
+        val identity = object : ServerModule {
+            override val name: String = "identity"
+            override val koinModule: Module = module { single<PhoneUnlockProofs> { proofs } }
+        }
+        val koin = serverKoin(module { single<Clock> { Clock.System } }, listOf(identity))
+        assertSame(proofs, koin.get<PhoneUnlockProofs>())
+        assertEquals(60.seconds, BOUND_UNLOCK_WITHIN)
     }
 
     @Test

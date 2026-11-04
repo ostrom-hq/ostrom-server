@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.launches.domain.usecases
 
+import dev.ostrom.server.kernel.workflows.WorkflowDirectory
 import dev.ostrom.server.launches.domain.models.CreatedLaunch
 import dev.ostrom.server.launches.domain.models.InvalidLaunchException
 import dev.ostrom.server.launches.domain.models.Launch
 import dev.ostrom.server.launches.domain.models.LaunchLimit
 import dev.ostrom.server.launches.domain.models.LaunchRateLimitedException
 import dev.ostrom.server.launches.domain.models.LaunchRefusedException
+import dev.ostrom.server.launches.domain.models.LaunchWorkflowNotFoundException
 import dev.ostrom.server.launches.domain.models.Launcher
 import dev.ostrom.server.launches.domain.models.NewLaunch
 import dev.ostrom.server.launches.domain.repositories.LaunchesRepository
@@ -33,6 +35,7 @@ interface CreateLaunchUseCase {
      * @throws InvalidLaunchException When the repository, the agent's name or the model's is malformed.
      * @throws LaunchRefusedException When the organization's policy refuses the person or the model.
      * @throws LaunchRateLimitedException When the person or the organization launched too many agents lately.
+     * @throws LaunchWorkflowNotFoundException When the workflow it names is not one of the organization's.
      */
     suspend operator fun invoke(launcher: Launcher, request: NewLaunch): CreatedLaunch
 }
@@ -45,6 +48,7 @@ interface CreateLaunchUseCase {
  * @param tokens Issues the agent token.
  * @param clock The clock.
  * @param limit How many launches a window takes, per person and per organization.
+ * @param workflows The organization's workflows, which a launch may name; null, none is known.
  */
 class CreateLaunchUseCaseImpl(
     private val repository: LaunchesRepository,
@@ -52,15 +56,24 @@ class CreateLaunchUseCaseImpl(
     private val tokens: AgentTokenService,
     private val clock: Clock,
     private val limit: LaunchLimit = LaunchLimit.DEFAULT,
+    private val workflows: WorkflowDirectory? = null,
 ) : CreateLaunchUseCase {
     override suspend fun invoke(launcher: Launcher, request: NewLaunch): CreatedLaunch {
         val repo = request.repo
-        if (repo != null && !wellFormed(repo)) {
+        if (repo != null && !wellFormed(repo, MAX_REPO)) {
             throw InvalidLaunchException("repo: 1 to $MAX_REPO characters, without control characters.")
+        }
+        val workflowId = request.workflowId
+        workflowId?.takeUnless { wellFormed(it, MAX_WORKFLOW_ID) }?.let {
+            throw InvalidLaunchException("workflowId: 1 to $MAX_WORKFLOW_ID characters, without control characters.")
         }
         // A malformed name is the client's mistake (400); a refusal, the organization's answer (403).
         policy.malformed(request.agent, request.model)?.let { throw InvalidLaunchException(it) }
         policy.refusal(launcher, request.agent, request.model)?.let { throw LaunchRefusedException(it) }
+        // A workflow of another organization is answered like none: nothing leaks.
+        workflowId?.takeIf { workflows?.name(launcher.orgId, it) == null }?.let {
+            throw LaunchWorkflowNotFoundException()
+        }
         val now = Instant.fromEpochMilliseconds(clock.now().toEpochMilliseconds())
         val launch = Launch(
             id = "lch_" + Uuid.random().toHexString(),
@@ -73,6 +86,7 @@ class CreateLaunchUseCaseImpl(
             createdAt = now,
             expiresAt = now + LIFETIME,
             cloudSessionId = request.cloudSessionId,
+            workflowId = workflowId,
         )
         // The launch first: its token never exists without the launch it is scoped to.
         // Counted before any token exists: a refused launch issues nothing.
@@ -80,7 +94,7 @@ class CreateLaunchUseCaseImpl(
         return CreatedLaunch(launch, tokens.issue(launcher, launch.id, LIFETIME))
     }
 
-    private fun wellFormed(repo: String) = repo.length in 1..MAX_REPO && repo.none { it.isISOControl() }
+    private fun wellFormed(value: String, max: Int) = value.length in 1..max && value.none { it.isISOControl() }
 
     /** The bounds of a launch. */
     companion object {
@@ -89,5 +103,8 @@ class CreateLaunchUseCaseImpl(
 
         /** The longest repository name. */
         const val MAX_REPO: Int = 200
+
+        /** The longest workflow id a launch names. */
+        const val MAX_WORKFLOW_ID: Int = 200
     }
 }

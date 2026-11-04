@@ -32,17 +32,29 @@ class InMemoryMobileCodesRepository : MobileCodesRepository {
 class InMemoryMobileTokensRepository(val tokens: InMemoryApiTokensRepository) : MobileTokensRepository {
     val unlockKeys = mutableMapOf<Uuid, String>()
 
+    /** The request each token's last unlock was for (Q-APP-STEPUP-RISK). */
+    val unlockedFor = mutableMapOf<Uuid, String?>()
+
     override suspend fun create(token: ApiToken, secretHash: String, unlockKeyHash: String) {
         tokens.create(token, secretHash)
         unlockKeys[token.id] = unlockKeyHash
     }
 
-    override suspend fun unlock(tokenId: Uuid, userId: Uuid, unlockKeyHash: String, at: Instant): Boolean {
+    override suspend fun unlock(
+        tokenId: Uuid,
+        userId: Uuid,
+        unlockKeyHash: String,
+        at: Instant,
+        requestId: String?,
+    ): Boolean {
         val entry = tokens.tokens.entries.firstOrNull { it.value.id == tokenId } ?: return false
         val token = entry.value
         val live = token.userId == userId && token.kind == TokenKind.MOBILE && token.revokedAt == null &&
             unlockKeys[tokenId] == unlockKeyHash && (token.expiresAt?.let { it > at } ?: true)
-        if (live) entry.setValue(token.copy(authenticatedAt = at))
+        if (live) {
+            entry.setValue(token.copy(authenticatedAt = at))
+            unlockedFor[tokenId] = requestId
+        }
         return live
     }
 }

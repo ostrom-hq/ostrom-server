@@ -448,4 +448,11 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
     ),
     SchemaMigration(version = 14, name = "purge_agent_tokens", sql = PURGE_AGENT_TOKENS_SQL),
     SchemaMigration(version = 15, name = "bound_agent_token_purge", sql = BOUND_PURGE_SQL),
+    // Q-APP-STEPUP-RISK: the approval request the app's last unlock was for. A yes from the app uses it once, within a
+    // minute (PhoneUnlockProofs); null when the last unlock named none, or once used.
+    SchemaMigration(
+        version = 16,
+        name = "api_tokens_unlock_request",
+        sql = "ALTER TABLE identity_api_tokens ADD COLUMN unlock_request_id TEXT",
+    ),
 )
