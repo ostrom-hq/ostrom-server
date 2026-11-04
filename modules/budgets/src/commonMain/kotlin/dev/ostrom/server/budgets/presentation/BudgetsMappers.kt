@@ -14,14 +14,19 @@ import kotlin.uuid.Uuid
 private const val MICROS_PER_USD = 1_000_000.0
 private const val ORGANIZATION = "organization"
 private const val MEMBER = "member"
+private const val WORKFLOW = "workflow"
 
 /** Which subject the request sets. */
 fun BudgetDto.toTarget(): BudgetTarget {
-    val member = subject
+    val id = subject
     return when (scope.lowercase()) {
         ORGANIZATION, "org" -> BudgetTarget.Org
-        MEMBER -> if (member == null) BudgetTarget.DefaultMember else BudgetTarget.Member(member.toMemberId())
-        else -> throw InvalidBudgetRequestException("The scope of a budget is organization or member.")
+        MEMBER -> if (id == null) BudgetTarget.DefaultMember else BudgetTarget.Member(id.toMemberId())
+        WORKFLOW -> BudgetTarget.Workflow(
+            id?.takeIf { it.isNotBlank() }
+                ?: throw InvalidBudgetRequestException("The subject of a workflow budget is the workflow's id."),
+        )
+        else -> throw InvalidBudgetRequestException("The scope of a budget is organization, member or workflow.")
     }
 }
 
@@ -46,7 +51,13 @@ private fun Double.toMicros(field: String): Long {
 }
 
 /** The budget as stored, scope spelled as the API lists it. */
-fun BudgetDto.normalized(): BudgetDto = copy(scope = if (toTarget() == BudgetTarget.Org) ORGANIZATION else MEMBER)
+fun BudgetDto.normalized(): BudgetDto = copy(
+    scope = when (toTarget()) {
+        BudgetTarget.Org -> ORGANIZATION
+        is BudgetTarget.Workflow -> WORKFLOW
+        else -> MEMBER
+    },
+)
 
 /** Maps an org's budgets to the API: one budget per subject, with its monthly and daily amounts. */
 fun BudgetOverview.toPage(): BudgetsPage {
@@ -56,8 +67,10 @@ fun BudgetOverview.toPage(): BudgetsPage {
     )
     val members = settings.overrides.groupBy { it.memberId }
         .map { (memberId, rows) -> rows.map { it.limit }.toDto(MEMBER, memberId.toString()) }
+    val workflows = settings.workflows.groupBy { it.workflowId }
+        .map { (workflowId, rows) -> rows.map { it.limit }.toDto(WORKFLOW, workflowId) }
     return BudgetsPage(
-        items = shared + members,
+        items = shared + members + workflows,
         orgSpentUsd = orgSpentMicros.toUsd(),
         periodStart = period.start.toString(),
         resetsAt = period.end.toString(),

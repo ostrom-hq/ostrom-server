@@ -13,6 +13,8 @@ import kotlin.uuid.Uuid
  * @property repository The repository to clone, if any.
  * @property model The model the agent starts with, if chosen.
  * @property prompt The agent's first message, if any.
+ * @property id The session's id, chosen by the server's caller (a run of a workflow keys its agent node's session by
+ *   its visit, so a start asked again finds the first one); a new random id when absent, always for an API request.
  */
 data class CreateCloudSessionPayload(
     val name: String?,
@@ -20,6 +22,7 @@ data class CreateCloudSessionPayload(
     val repository: RepositorySpec?,
     val model: String? = null,
     val prompt: String? = null,
+    val id: Uuid? = null,
 )
 
 /** Creates a cloud session for the caller, within their organization's plan. */
@@ -74,7 +77,7 @@ class CreateCloudSessionUseCaseImpl(
         val now = clock.now()
         requireHoursLeft(usage, plan, caller.orgId, now)
         val session = CloudSession(
-            id = Uuid.random(),
+            id = payload.id ?: Uuid.random(),
             orgId = caller.orgId,
             ownerId = caller.memberId,
             name = name,

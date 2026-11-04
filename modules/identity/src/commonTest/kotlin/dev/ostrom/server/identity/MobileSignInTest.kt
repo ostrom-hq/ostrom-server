@@ -269,6 +269,22 @@ class MobileSignInTest {
         assertFailsWith<RateLimitedException> { exchange("code", verifier, APP_REDIRECT_URI, "ip") }
     }
 
+    // Q-APP-STEPUP-RISK: the unlock names the request a yes is for; each unlock replaces the last one's request.
+    @Test
+    fun anUnlockRecordsTheRequestItIsForAndAnUnlockWithoutOneUnbinds() = runTest {
+        val state = startMobile()
+        val code = assertNotNull(completeMobile("github", state, state, "good", null).code)
+        val issued = exchange(code, verifier, APP_REDIRECT_URI, "ip")
+        val token = issued.token.token
+
+        unlock(token.userId, token.id, issued.unlockKey, "ip", "request-1")
+        assertEquals("request-1", mobileTokens.unlockedFor[token.id])
+        unlock(token.userId, token.id, issued.unlockKey, "ip", "r".repeat(500))
+        assertEquals("r".repeat(64), mobileTokens.unlockedFor[token.id], "an id no request has is cut, never stored")
+        unlock(token.userId, token.id, issued.unlockKey, "ip")
+        assertNull(mobileTokens.unlockedFor.getValue(token.id))
+    }
+
     @Test
     fun theAppTokenSaysYesOnlyAfterABiometricUnlock() = runTest {
         val state = startMobile()

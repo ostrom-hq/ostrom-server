@@ -243,4 +243,16 @@ val UsageMigrations: List<SchemaMigration> = listOf(
         """.trimIndent(),
     ),
     SchemaMigration(version = 7, name = "usage_daily_totals", sql = DAILY_TOTALS_SQL),
+    // A model call of a launch that plays a workflow names it, and so does its hold: the workflow's budgets sum them.
+    // The index reads a workflow's spend of a day or a month without the org's other calls.
+    SchemaMigration(
+        version = 8,
+        name = "usage_names_the_workflow",
+        sql = """
+            ALTER TABLE usage_events ADD COLUMN workflow_id TEXT;
+            CREATE INDEX usage_events_workflow ON usage_events (org_id, workflow_id, at) INCLUDE (cost_micros)
+                WHERE workflow_id IS NOT NULL;
+            ALTER TABLE usage_holds ADD COLUMN workflow_id TEXT;
+        """.trimIndent(),
+    ),
 )

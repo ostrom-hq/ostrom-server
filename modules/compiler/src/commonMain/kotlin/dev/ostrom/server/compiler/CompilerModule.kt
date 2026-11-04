@@ -65,7 +65,7 @@ object CompilerModule : ServerModule {
         single<GatesCatalogUseCase> { GatesCatalogUseCaseImpl(get(), get()) }
         single<GatePolicyUseCase> { GatePolicyUseCaseImpl(get(), get(), get()) }
         single<ApproversGraphUseCase> { ApproversGraphUseCaseImpl(get()) }
-        single<WorkflowsUseCase> { WorkflowsUseCaseImpl(get(), get(), get()) }
+        single<WorkflowsUseCase> { WorkflowsUseCaseImpl(get(), get(), get(), removals = getOrNull()) }
         single<WorkflowDirectory> { CompilerWorkflowDirectory(get<CompilerRepository>()) }
         single<GovernanceChange>(named("compiler")) { CompilerGovernanceChange(get(), get()) }
         // Created when the gates module looks for it, possibly before this module's initialize has bound the
