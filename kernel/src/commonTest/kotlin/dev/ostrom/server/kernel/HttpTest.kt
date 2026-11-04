@@ -139,9 +139,11 @@ class HttpTest {
                 throw SQLError(
                     SQLError.Code.Database,
                     "Key (email)=(alice@example.com) is locked",
+                    sqlState = "40P01",
                     kind = SQLError.Kind.Deadlock,
                 )
             }
+            route.get("/probe/pool") { throw SQLError(SQLError.Code.PoolTimedOut, "pool of alice@example.com") }
             route.get("/probe/origin") { call.respondText(call.request.origin.remoteAddress) }
             route.get("/probe/cancelled") { throw CancellationException("client gone") }
             route.get("/probe/unprotected-me") { call.respondText(call.requirePrincipal().subjectId) }
@@ -399,7 +401,15 @@ class HttpTest {
         val line = lines.single { "database failure" in it }
         assertTrue("\"error\":\"SQLError\"" in line, line)
         assertTrue("\"sql_kind\":\"Deadlock\"" in line, line)
+        assertTrue("\"sql_code\":\"Database\"" in line && "\"sql_state\":\"40P01\"" in line, line)
         assertFalse("alice@example.com" in line, "A database error message quotes row values: never logged")
+
+        // A failure of the driver itself, which PostgreSQL never saw: its code says which (OrgsReadsBenchTest's 500
+        // of server#283 logged only `Other`).
+        assertEquals(HttpStatusCode.InternalServerError, client.get("/probe/pool").status)
+        val pool = lines.last { "database failure" in it }
+        assertTrue("\"sql_code\":\"PoolTimedOut\"" in pool && "sql_state" !in pool, pool)
+        assertFalse("alice@example.com" in pool, pool)
     }
 
     @Test

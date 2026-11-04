@@ -106,6 +106,12 @@ fun CloudSession.executionSpec(runnerToken: String): ExecutionSpec =
 
 /** The state of an execution as the runtime sees it. */
 enum class ExecutionStatus {
+    /**
+     * Waiting for a machine with room to take it (registered runners): it waits as long as it takes, and its start is
+     * timed from the moment a machine takes it.
+     */
+    QUEUED,
+
     /** Accepted, not started yet (image pull, scheduling). */
     PENDING,
 

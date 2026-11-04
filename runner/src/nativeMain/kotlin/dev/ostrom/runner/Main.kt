@@ -269,10 +269,11 @@ private fun machine(environment: Map<String, String>): Nothing {
                 MachineSessions(
                     HttpDockerEngine(checkNotNull(engine), docker.apiUrl, config.runnerId),
                     PlanGuard(config.runnerId, docker.network, docker.image),
+                    docker.maxSessions,
                     ::log,
                 )
             }
-            MachineRunner(HttpMachineApi(client, config), config.interval, ::log, sessions).run()
+            MachineRunner(HttpMachineApi(client, config), config.interval, ::log, sessions, MachineRunner.WAIT).run()
         } finally {
             client.close()
             engine?.close()

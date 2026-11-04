@@ -10,6 +10,8 @@ import dev.ostrom.core.api.models.WorkflowStatus
 import dev.ostrom.server.compiler.domain.models.Authorship
 import dev.ostrom.server.compiler.domain.models.CompilerSettings
 import dev.ostrom.server.compiler.domain.models.PackagePin
+import dev.ostrom.server.compiler.domain.services.CompiledPackages
+import dev.ostrom.server.compiler.domain.services.JsText
 import dev.ostrom.server.compiler.domain.services.PackageCompiler
 import dev.ostrom.server.compiler.domain.usecases.CompileSourcesUseCaseImpl
 import dev.ostrom.server.compiler.domain.usecases.GatesCatalogUseCaseImpl
@@ -31,6 +33,7 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.minutes
 import kotlin.uuid.Uuid
 
@@ -97,6 +100,25 @@ class PackagesUseCasesTest {
         assertEquals(JsonPrimitive("acme-api"), audit.last().meta["repo"])
         assertEquals(JsonPrimitive(2), audit.last().meta["workflows"])
         assertTrue(audit.all { it.id.startsWith("aud_") && it.id.length == 16 })
+    }
+
+    @Test
+    fun aPackageServedAsPinnedReadsItsPinAndItsPackageOnce() = runTest {
+        // Every `ostrom <agent>` asks the current package: the pin and the package are read once each, never again
+        // to answer what the publication already knows (perf pass of the launch, 03/11/2026).
+        save(tests("w1"))
+        publish(org, "acme-api", "https://acme.example", "dev-a")
+        repository.reads = 0
+        val again = publish(org, "acme-api", "https://acme.example", "dev-a", byAgent = true)
+        assertTrue(again.pinned)
+        assertEquals(2, repository.reads, "one package by digest, one pin")
+
+        sources.settings = CompilerSettings(manualPin = true)
+        save(tests("w1", command = "make check"))
+        repository.reads = 0
+        val manual = publish(org, "acme-api", "https://acme.example", "dev-a", byAgent = true)
+        assertTrue(manual.pinned)
+        assertEquals(3, repository.reads, "the new content, the pin, the pinned package")
     }
 
     @Test
@@ -220,5 +242,34 @@ class PackagesUseCasesTest {
         assertEquals("w1", push.gate?.workflowId)
         assertEquals(listOf("lead"), push.gate?.approvers)
         assertTrue(GatesCatalogUseCaseImpl(repository, sources)(other, "acme-api").all { it.gate == null })
+    }
+
+    private fun publishing(compiler: CompileSourcesUseCaseImpl) =
+        PublishPackageUseCaseImpl(compiler, repository, sources, SeedSigner(ByteArray(32) { it.toByte() }), clock)
+
+    @Test
+    fun aPackageKeptAcrossTimeIsWhatAFreshCompilationGivesAndItsDatesAreTheCallers() = runTest {
+        save(tests("w1"))
+        sources.rules = listOf(rule("r1"))
+        sources.ruleDecisions = listOf(decision("r1", kind = "rule"))
+        val packages = CompiledPackages()
+        val kept = CompileSourcesUseCaseImpl(repository, sources, harness, clock, packages)
+        val url = "https://acme.example"
+        val before = PreviewPackageUseCaseImpl(kept)(org, "acme-api", url)
+        val published = publishing(kept)(org, "acme-api", url, "dev-a")
+
+        // Far past any lifetime: the compiled body carries no time, the dates are put after it, at each call.
+        clock.now += 400.days
+        val later = PreviewPackageUseCaseImpl(kept)(org, "acme-api", url)
+        val again = publishing(kept)(org, "acme-api", url, "dev-a")
+
+        assertEquals(1, packages.compilations, "the time is no input")
+        assertEquals(JsText.iso(clock.now), later.getValue("compiledAt").jsonPrimitive.content)
+        assertNotEquals(before.getValue("version"), later.getValue("version"))
+        val fresh = CompileSourcesUseCaseImpl(repository, sources, harness, clock, CompiledPackages())
+        assertEquals(PreviewPackageUseCaseImpl(fresh)(org, "acme-api", url), later)
+        assertEquals(publishing(fresh)(org, "acme-api", url, "dev-a").stored, again.stored)
+        assertEquals(published.stored, again.stored, "the package signed once is served, as without the cache")
+        assertEquals(1, harness.signed.size, "the harness of a digest keeps its signed version")
     }
 }

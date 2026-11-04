@@ -23,6 +23,12 @@ on:
         description: The ostrom-core commit (full SHA) whose contract the tests check, instead of main
         type: string
         default: ''
+      # A server change that an e2e scenario proves, while main's scenario still waits for it (a temporary skip):
+      # play the e2e branch that drops the skip against this pull request's image before the squash.
+      e2e_ref:
+        description: The ostrom-e2e ref whose scenarios ci-e2e runs, instead of main
+        type: string
+        default: ''
 env:
   KOTLIN_VERSION: '2.4.21'
 permissions:
@@ -107,6 +113,7 @@ jobs:
         with:
           core-deploy-key: ${{ secrets.DEPLOY_KEY_CORE }}
           kotlin-version: ${{ env.KOTLIN_VERSION }}
+          build-cache: jvm
       - run: python3 scripts/check-conventions.py
       # Ktor's CIO client has no TLS on Kotlin/Native, and with two engines linked Ktor gives CIO to every engine-less
       # HttpClient { }: one CIO in a shipped source set of the server and every https call fails (ostrom-server#89).
@@ -138,6 +145,12 @@ jobs:
         run: ./gradlew --continue detekt jvmTest koverXmlReport koverVerify
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Gradle's build cache, saved from main only (a pull request restores, never writes)
+        if: success() && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.gradle/caches/build-cache-1
+          key: gradle-build-cache-jvm-${{ github.sha }}
       - name: Lines and branches not covered
         if: failure()
         run: python3 scripts/uncovered.py
@@ -191,6 +204,7 @@ jobs:
         with:
           core-deploy-key: ${{ secrets.DEPLOY_KEY_CORE }}
           kotlin-version: ${{ env.KOTLIN_VERSION }}
+          build-cache: native
       # From here, two Gradle workers at a time: several Kotlin/Native compilations and links at once exhaust the
       # runner's memory (#13, exit 143 while linking linuxArm64).
       - name: Two Gradle workers for the native builds
@@ -201,6 +215,12 @@ jobs:
         run: ./gradlew --continue linuxX64Test
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Gradle's build cache, saved from main only (a pull request restores, never writes)
+        if: success() && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.gradle/caches/build-cache-1
+          key: gradle-build-cache-native-${{ github.sha }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -230,6 +250,7 @@ jobs:
         with:
           core-deploy-key: ${{ secrets.DEPLOY_KEY_CORE }}
           kotlin-version: ${{ env.KOTLIN_VERSION }}
+          build-cache: image
       # From here, two Gradle workers at a time: several Kotlin/Native compilations and links at once exhaust the
       # runner's memory (#13, exit 143 while linking linuxArm64).
       - name: Two Gradle workers for the native builds
@@ -406,6 +427,12 @@ jobs:
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Gradle's build cache, saved from main only (a pull request restores, never writes)
+        if: success() && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.gradle/caches/build-cache-1
+          key: gradle-build-cache-image-${{ github.sha }}
 
   # ostrom-e2e main (the isolation sweep, every scenario but the TeamCode import, a short k6 of the gates) against the
   # image ci-image built: a pull request that changes an answer fails here, before the merge, and brings its e2e fix
@@ -419,6 +446,7 @@ jobs:
     uses: ./.github/workflows/e2e-journey.yml
     with:
       image_artifact: ostrom-server-image
+      e2e_ref: ${{ inputs.e2e_ref || 'main' }}
     secrets: inherit
 
   # The required check of main, still named `ci` (branch protection, .coord/squash.sh).

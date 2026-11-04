@@ -104,6 +104,8 @@ data class ReceiptKeysResponse(val keys: List<PublicKeyResponse>)
  * @property digest The SHA-256 of the canonical body, recomputed.
  * @property kid The key that signed it.
  * @property reason Why it does not verify.
+ * @property orgBound True when the signed body names the caller's organization; false for a receipt signed before
+ * receipts named theirs, never shown as bound.
  */
 @Serializable
 data class VerificationResponse(
@@ -111,4 +113,5 @@ data class VerificationResponse(
     val digest: String? = null,
     val kid: String? = null,
     val reason: String? = null,
+    val orgBound: Boolean = false,
 )

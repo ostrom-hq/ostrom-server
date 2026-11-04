@@ -4,6 +4,7 @@ package dev.ostrom.server.launches.fakes
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
+import dev.ostrom.server.kernel.workflows.WorkflowDirectory
 import dev.ostrom.server.launches.domain.models.Launch
 import dev.ostrom.server.launches.domain.models.LaunchLimit
 import dev.ostrom.server.launches.domain.models.Launcher
@@ -47,6 +48,12 @@ class InMemoryLaunches : LaunchesRepository {
 
     override suspend fun find(orgId: Uuid, id: String): Launch? =
         launches.firstOrNull { it.orgId == orgId && it.id == id }
+
+    override suspend fun purge(before: Instant): Long {
+        val gone = launches.filter { it.expiresAt < before }
+        launches -= gone.toSet()
+        return gone.size.toLong()
+    }
 }
 
 /** The people of [launchers], by user id; [roles] their role now (the launcher's role when not set). */
@@ -98,5 +105,15 @@ class FakeModelRules(private val refused: Map<String, String> = emptyMap()) : La
     override suspend fun refusal(launcher: Launcher, model: String): String? {
         asked += Triple(launcher.orgId, launcher.login, model)
         return refused[model]
+    }
+}
+
+/** The organization's workflows by id, and every lookup asked of them. */
+class FakeWorkflows(private val names: Map<Pair<Uuid, String>, String>) : WorkflowDirectory {
+    val asked = mutableListOf<Pair<Uuid, String>>()
+
+    override suspend fun name(orgId: Uuid, workflowId: String): String? {
+        asked += orgId to workflowId
+        return names[orgId to workflowId]
     }
 }

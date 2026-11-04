@@ -25,10 +25,11 @@ class RunnersApi {
          * `POST /api/v1/runners/{id}/heartbeat` (`runnerHeartbeat`): a registered runner's sign of life, with its key.
          *
          * @property parent The runner.
+         * @property wait Seconds it may wait for an execution to hand over, 0 to 25; outside, the nearest bound.
          */
         @Serializable
         @Resource("heartbeat")
-        class Heartbeat(val parent: Id)
+        class Heartbeat(val parent: Id, val wait: Int? = null)
     }
 }
 
@@ -38,11 +39,13 @@ class RunnersApi {
  *
  * @property executions The executions it has.
  * @property workspaces The sessions whose workspace it holds.
+ * @property capacity The sessions it runs at once at most (0 to 256; 0 drains the machine); none for no limit.
  */
 @Serializable
 data class RegisteredRunnerHeartbeatRequest(
     val executions: List<ReportedExecutionDto> = emptyList(),
     val workspaces: List<String> = emptyList(),
+    val capacity: Int? = null,
 )
 
 /**

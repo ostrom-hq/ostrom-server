@@ -9,6 +9,7 @@ import dev.ostrom.server.compiler.domain.models.PackagePin
 import dev.ostrom.server.compiler.domain.models.StoredPackage
 import dev.ostrom.server.compiler.domain.repositories.CompilerRepository
 import dev.ostrom.server.compiler.domain.services.CompiledBody
+import dev.ostrom.server.compiler.domain.services.CompiledPackages
 import dev.ostrom.server.compiler.domain.services.CompilerSources
 import dev.ostrom.server.compiler.domain.services.GatesCatalog
 import dev.ostrom.server.compiler.domain.services.HarnessReceiptSigner
@@ -66,12 +67,14 @@ interface CompileSourcesUseCase {
  * @param sources Rules, repositories and settings.
  * @param harnessReceipts Signs a new harness version.
  * @param clock The time.
+ * @param packages The packages already compiled, by their inputs: the same inputs are compiled once.
  */
 class CompileSourcesUseCaseImpl(
     private val repository: CompilerRepository,
     private val sources: CompilerSources,
     private val harnessReceipts: HarnessReceiptSigner,
     private val clock: Clock,
+    private val packages: CompiledPackages = CompiledPackages(),
 ) : CompileSourcesUseCase {
     override suspend fun inputs(orgId: Uuid, repo: String?): CompileInputs {
         val settings = sources.settings(orgId)
@@ -90,12 +93,14 @@ class CompileSourcesUseCaseImpl(
     }
 
     override suspend fun compile(orgId: Uuid, inputs: CompileInputs): CompiledBody =
-        PackageCompiler.compile(inputs) { digest ->
-            repository.harness(orgId, inputs.repo, digest) ?: run {
-                val version = PackageSigner.harnessVersion(inputs.now, digest)
-                val rules = RulesHarness(inputs.rules, inputs.decisions, inputs.repos).rulesFor(inputs.repo)
-                val receipt = harnessReceipts.sign(orgId, version, digest, rules, inputs.now)
-                repository.saveHarness(orgId, inputs.repo, digest, HarnessStamp(version, receipt))
+        packages.of(orgId, inputs) {
+            PackageCompiler.compile(inputs) { digest ->
+                repository.harness(orgId, inputs.repo, digest) ?: run {
+                    val version = PackageSigner.harnessVersion(inputs.now, digest)
+                    val rules = RulesHarness(inputs.rules, inputs.decisions, inputs.repos).rulesFor(inputs.repo)
+                    val receipt = harnessReceipts.sign(orgId, version, digest, rules, inputs.now)
+                    repository.saveHarness(orgId, inputs.repo, digest, HarnessStamp(version, receipt))
+                }
             }
         }
 }
@@ -155,18 +160,25 @@ class PublishPackageUseCaseImpl(
             audit(orgId, "package.compiled", actor, saved, saved.counts.mapValues { JsonPrimitive(it.value) })
             saved
         }
-        val pin = repository.pin(orgId, repo)
+        val read = repository.pin(orgId, repo)
         val manual = sources.settings(orgId).manualPin
         // A manual pin is a person's choice: an agent starting a session reads it and never sets the first one.
-        val moves = if (manual) pin == null && !byAgent else pin?.contentDigest != stored.envelope.contentDigest
-        if (!stored.revoked && moves) {
+        val moves = if (manual) read == null && !byAgent else read?.contentDigest != stored.envelope.contentDigest
+        val pin = if (!stored.revoked && moves) {
             val by = if (manual) actor else AUTO_PIN
-            repository.setPin(orgId, repo, PackagePin(stored.envelope.contentDigest, by, clock.now()))
-            audit(orgId, "package.pinned", by, stored, emptyMap())
+            PackagePin(stored.envelope.contentDigest, by, clock.now()).also {
+                repository.setPin(orgId, repo, it)
+                audit(orgId, "package.pinned", by, stored, emptyMap())
+            }
+        } else {
+            read
         }
-        val current = repository.pin(orgId, repo)?.let { repository.findPackage(orgId, it.contentDigest) } ?: stored
-        val pinned = repository.pin(orgId, repo)?.contentDigest == current.envelope.contentDigest
-        return ServedPackage(current, pinned)
+        // The pin read once, and its package read only when it is not the one just compiled (perf pass of the launch).
+        val current = when (val digest = pin?.contentDigest) {
+            null, stored.envelope.contentDigest -> stored
+            else -> repository.findPackage(orgId, digest) ?: stored
+        }
+        return ServedPackage(current, pin?.contentDigest == current.envelope.contentDigest)
     }
 
     private suspend fun audit(

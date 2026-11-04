@@ -19,6 +19,9 @@ import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import kotlin.uuid.Uuid
 
+private val DETAILS = MapSerializer(String.serializer(), String.serializer())
+private val DETAILS_JSON = Json
+
 /**
  * [AuditRepository] on PostgreSQL. An organization's chain is written and read through
  * [dev.ostrom.server.kernel.database.inOrg], so row-level security confines it to that organization; the
@@ -31,40 +34,8 @@ class AuditRepositoryImpl(private val driver: Driver) : AuditRepository {
         orgId: Uuid?,
         build: suspend (previousHash: String?, sequence: Long) -> AuditEvent,
     ): AuditEvent {
-        val chain = if (orgId == null) ACCOUNT_CHAIN else orgId.toString()
-        val write: suspend Transaction.() -> AuditEvent = {
-            // Serializes the appends of one chain until the transaction ends: no two events get the same sequence.
-            val lock = Statement.create("SELECT pg_advisory_xact_lock(hashtext(:chain))").bind("chain", chain)
-            execute(lock).getOrThrow()
-            val last = fetchAll(
-                Statement.create(
-                    "SELECT sequence, hash FROM identity_audit_events WHERE chain = :chain ORDER BY sequence " +
-                        "DESC LIMIT 1",
-                ).bind("chain", chain),
-            ).getOrThrow().firstOrNull()
-            val event = if (last == null) {
-                build(null, 1L)
-            } else {
-                build(last.get("hash").asString(), last.get("sequence").asLong() + 1)
-            }
-            execute(
-                Statement.create(
-                    "INSERT INTO identity_audit_events (id, chain, sequence, org_id, actor_id, action, " +
-                        "target_type, target_id, " +
-                        "details, occurred_at, previous_hash, hash, signature, key_id) VALUES (:id, :chain, " +
-                        ":sequence, :org, " +
-                        ":actor, :action, :type, :target, :details, :at, :previous, :hash, :signature, :key)",
-                ).bind("id", event.id).bind("chain", chain).bind("sequence", event.sequence)
-                    .bind("org", event.entry.orgId)
-                    .bind("actor", event.entry.actorId).bind("action", event.entry.action)
-                    .bind("type", event.entry.targetType).bind("target", event.entry.targetId)
-                    .bind("details", DETAILS_JSON.encodeToString(DETAILS, event.entry.details))
-                    .bind("at", event.occurredAt).bind("previous", event.previousHash).bind("hash", event.hash)
-                    .bind("signature", event.signature).bind("key", event.keyId),
-            ).getOrThrow()
-            event
-        }
-        return if (orgId != null) driver.inOrg(orgId, write) else driver.transaction(write)
+        if (orgId == null) return driver.transaction { appendAudit(ACCOUNT_CHAIN, build) }
+        return driver.inOrg(orgId) { appendAudit(orgId.toString(), build) }
     }
 
     override suspend fun list(orgId: Uuid?, actorId: Uuid?, beforeSequence: Long?, limit: Int): List<AuditEvent> {
@@ -127,7 +98,48 @@ class AuditRepositoryImpl(private val driver: Driver) : AuditRepository {
         const val ACCOUNT_CHAIN = "account"
         const val COLUMNS = "id, sequence, org_id, actor_id, action, target_type, target_id, details, occurred_at, " +
             "previous_hash, hash, signature, key_id"
-        val DETAILS = MapSerializer(String.serializer(), String.serializer())
-        val DETAILS_JSON = Json
     }
+}
+
+/**
+ * Appends an event to [chain] inside this transaction: kept if and only if the transaction commits. Serializes the
+ * appends of one chain until the transaction ends.
+ *
+ * @param chain An organization's id, or the account-level chain.
+ * @param build Builds the event from the previous event's hash (null for the first) and the next sequence.
+ */
+internal suspend fun Transaction.appendAudit(
+    chain: String,
+    build: suspend (previousHash: String?, sequence: Long) -> AuditEvent,
+): AuditEvent {
+    // Serializes the appends of one chain until the transaction ends: no two events get the same sequence.
+    val lock = Statement.create("SELECT pg_advisory_xact_lock(hashtext(:chain))").bind("chain", chain)
+    execute(lock).getOrThrow()
+    val last = fetchAll(
+        Statement.create(
+            "SELECT sequence, hash FROM identity_audit_events WHERE chain = :chain ORDER BY sequence " +
+                "DESC LIMIT 1",
+        ).bind("chain", chain),
+    ).getOrThrow().firstOrNull()
+    val event = if (last == null) {
+        build(null, 1L)
+    } else {
+        build(last.get("hash").asString(), last.get("sequence").asLong() + 1)
+    }
+    execute(
+        Statement.create(
+            "INSERT INTO identity_audit_events (id, chain, sequence, org_id, actor_id, action, " +
+                "target_type, target_id, " +
+                "details, occurred_at, previous_hash, hash, signature, key_id) VALUES (:id, :chain, " +
+                ":sequence, :org, " +
+                ":actor, :action, :type, :target, :details, :at, :previous, :hash, :signature, :key)",
+        ).bind("id", event.id).bind("chain", chain).bind("sequence", event.sequence)
+            .bind("org", event.entry.orgId)
+            .bind("actor", event.entry.actorId).bind("action", event.entry.action)
+            .bind("type", event.entry.targetType).bind("target", event.entry.targetId)
+            .bind("details", DETAILS_JSON.encodeToString(DETAILS, event.entry.details))
+            .bind("at", event.occurredAt).bind("previous", event.previousHash).bind("hash", event.hash)
+            .bind("signature", event.signature).bind("key", event.keyId),
+    ).getOrThrow()
+    return event
 }

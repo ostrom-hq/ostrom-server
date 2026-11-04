@@ -35,6 +35,12 @@ interface StripeGateway {
      */
     suspend fun createCustomer(orgId: Uuid, name: String?, email: String?): String
 
+    /** The e-mail Stripe holds for a customer (set at creation, at Checkout or in the portal), null when none. */
+    suspend fun customerEmail(customerId: String): String?
+
+    /** Sets the e-mail of a customer: Checkout then shows it instead of asking it, and receipts go to it. */
+    suspend fun updateCustomerEmail(customerId: String, email: String)
+
     /** Resolves a price from its lookup key (cached). @throws BillingNotConfiguredException When it does not exist. */
     suspend fun priceId(lookupKey: String): String
 

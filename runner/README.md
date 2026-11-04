@@ -73,6 +73,12 @@ it holds and gets back what it must hold:
   containers and volumes the server no longer lists (a stopped or moved execution, a deleted workspace) and never
   touches anything else on the engine.
 
+A heartbeat with a report also asks the server to hold it up to 20 s for work (`?wait=20`): an execution queued for
+the organization is handed over within seconds, not at the next interval. The machine asks again at once after an
+answer held for the whole wait or one that hands an execution over, and after the interval otherwise, so a server that
+does not wait, or a machine without room, is heartbeated as before. A waiting heartbeat is allowed 30 s, its wait and
+the usual 10 s, so a lost one still stays inside the 90 s.
+
 When a machine stops heartbeating, the server gives its running sessions to another online runner of the
 organization after 90 s, as a new execution with a fresh workspace (the old one stays on the lost machine). A paused
 session resumes on the machine that holds its workspace while that machine is online. A machine whose engine cannot
@@ -91,6 +97,7 @@ docker run -d --name ostrom-machine --network host \
 | `OSTROM_DOCKER_API_URL` | the Docker Engine API, `http(s)://`; for the local socket, a socket proxy on the loopback that allows containers, volumes and images |
 | `OSTROM_DOCKER_NETWORK` | the network the sessions join (the engine's default when unset); their containers reach the server through `host.docker.internal` |
 | `OSTROM_RUNNER_SESSION_IMAGE` | the only image a session may run; the server's choice when unset |
+| `OSTROM_RUNNER_MAX_SESSIONS` | the sessions the machine runs at once at most, 0 to 256 (0 drains it); the server never hands it more, and a session with no room anywhere waits. When unset, what the machine holds, read from the engine's `/info`: 2 processors and 4.5 GiB a session, one at least. A socket proxy with `INFO=0` hides it: then no limit is declared, so set this variable |
 
 ## Checks run by the runner (`isolated_runner`)
 

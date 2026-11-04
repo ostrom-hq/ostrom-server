@@ -4,6 +4,7 @@ package dev.ostrom.server.gates
 import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.Answer
 import dev.ostrom.server.gates.domain.models.AnswerChannel
+import dev.ostrom.server.gates.domain.models.BoundUnlockRequiredException
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateAlreadyDecidedException
 import dev.ostrom.server.gates.domain.models.GateChangedException
@@ -63,6 +64,45 @@ class AnswerGateUseCaseTest {
         val no = other.requests.first { it.approverId == "rev-b" }.id
         val refused = bench.answer(user("rev-b"), no, Answer.NO, other.gate.shownDigest, AnswerChannel.CONSOLE)
         assertEquals(GateStatus.REJECTED, refused.gate.status, "saying no never needs a fresh sign-in")
+    }
+
+    // Q-APP-STEPUP-RISK: one biometric is one yes. The app's unlock names the request, serves within a minute, once.
+    @Test
+    fun aYesFromThePhoneTakesItsOwnUnlockForThisRequestRecentAndUsedOnce() = runTest {
+        val bench = GateBench()
+        val view = bench.open(bench.pushRequest())
+        val request = view.requests.first { it.approverId == "rev-b" }.id
+        val phone = user("rev-b").copy(authenticatedAt = bench.clock.now, phoneCredential = "osm-1")
+        suspend fun yes(shown: String = view.gate.shownDigest) =
+            bench.answer(phone, request, Answer.YES, shown, AnswerChannel.CONSOLE)
+
+        bench.unlocks.unlock("osm-1", Uuid.random().toString())
+        val refused = assertFailsWith<BoundUnlockRequiredException> { yes() }
+        assertEquals("step_up_required", refused.type)
+        assertEquals(true, refused.requestBound, "the app unlocks again for this very request")
+
+        bench.unlocks.unlock("osm-1", request.toString())
+        bench.clock.now += StepUp.BOUND_WITHIN + 1.seconds
+        assertFailsWith<BoundUnlockRequiredException>("an unlock more than a minute old") { yes() }
+
+        bench.unlocks.unlock("osm-1", request.toString())
+        assertFailsWith<GateChangedException> { yes(shown = "sha256:other") }
+        assertFailsWith<BoundUnlockRequiredException>("the unlock served the refused yes") { yes() }
+        assertEquals(GateStatus.PENDING, bench.repository.gates.values.single().status, "nothing written")
+
+        bench.unlocks.unlock("osm-1", request.toString())
+        assertEquals(GateStatus.APPROVED, yes().gate.status)
+    }
+
+    @Test
+    fun aNoFromThePhoneUsesNoUnlock() = runTest {
+        val bench = GateBench()
+        val view = bench.open(bench.pushRequest())
+        val request = view.requests.first { it.approverId == "rev-b" }.id
+        val phone = user("rev-b").copy(authenticatedAt = bench.clock.now, phoneCredential = "osm-1")
+        val answered = bench.answer(phone, request, Answer.NO, view.gate.shownDigest, AnswerChannel.CONSOLE)
+        assertEquals(GateStatus.REJECTED, answered.gate.status)
+        assertTrue(bench.unlocks.asked.isEmpty(), "a no keeps the five minutes of the unlock")
     }
 
     @Test

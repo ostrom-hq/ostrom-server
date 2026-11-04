@@ -93,6 +93,20 @@ jobs:
             umask 077
             printf %s "$STRIPE_TEST_KEY" > "$RUNNER_TEMP/stripe-test.key"
           fi
+      # H3 pays on Stripe's hosted test Checkout with the test card 4242, in a browser: Playwright (the version ostrom-web
+      # pins), only when the test key is there (otherwise Checkout does not open and there is nothing to pay).
+      - name: A browser to pay on Stripe's test Checkout (H3)
+        env:
+          STRIPE_TEST_KEY: ${{ secrets.STRIPE_TEST_KEY }}
+        run: |
+          if [ -n "$STRIPE_TEST_KEY" ]; then
+            mkdir -p "$RUNNER_TEMP/playwright"
+            cd "$RUNNER_TEMP/playwright"
+            npm init -y > /dev/null
+            npm install --save-exact --ignore-scripts playwright@1.64.1
+            npx playwright install --with-deps chromium
+            echo "OSTROM_DEMO_PLAYWRIGHT_DIR=$RUNNER_TEMP/playwright" >> "$GITHUB_ENV"
+          fi
       - name: The demo's names resolve to this machine
         run: echo "127.0.0.1 api.localhost app.localhost mail.localhost github.localtest.me" | sudo tee -a /etc/hosts > /dev/null
       - name: Up

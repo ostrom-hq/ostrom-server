@@ -76,6 +76,64 @@ private val TOKENS_OF_ORGANIZATIONS_SQL: String =
         .trimIndent()
 
 /**
+ * Version 15 (audit SERVEUR-3 B3): the purge function crosses row-level security for every organization, so it bounds
+ * the date it is given itself. No date, an infinite one or one in the future is refused; and it never deletes an agent
+ * token expired since less than the retention (`IdentityModule.AGENT_TOKEN_RETENTION`, 7 days), whatever the date. The
+ * function keeps its owner, its grants and its `search_path`.
+ */
+private val BOUND_PURGE_SQL: String =
+    """
+    CREATE OR REPLACE FUNCTION identity_purge_agent_tokens(p_before TIMESTAMPTZ) RETURNS BIGINT
+        LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        DECLARE
+            gone BIGINT;
+        BEGIN
+            IF p_before IS NULL OR NOT isfinite(p_before) OR p_before > now() THEN
+                RAISE EXCEPTION 'purge date refused: no date, an infinite one or one in the future'
+                    USING ERRCODE = '22023';
+            END IF;
+            DELETE FROM identity_api_tokens
+            WHERE kind = 'AGENT' AND expires_at < LEAST(p_before, now() - INTERVAL '7 days');
+            GET DIAGNOSTICS gone = ROW_COUNT;
+            RETURN gone;
+        END
+    $$;
+    """
+        .trimIndent()
+
+/** The purge of the agent tokens, the one more operation across organizations (version 14). */
+private const val PURGE_FUNCTION = "identity_purge_agent_tokens(TIMESTAMPTZ)"
+
+/**
+ * Version 14: the agent tokens long expired are deleted, across organizations (the launch path's load test, which
+ * found them kept for ever): one per launch, revoked when it ends (R2b) or expired a day after, a row per launch. A
+ * `SECURITY DEFINER` function owned by `ostrom_router`, as the version 6 functions, deletes only agent tokens expired
+ * before the date it is given, with an index on their expiry so that the hourly purge never reads the whole table.
+ */
+private val PURGE_AGENT_TOKENS_SQL: String =
+    """
+    CREATE INDEX identity_api_tokens_agent_expiry ON identity_api_tokens (expires_at) WHERE kind = 'AGENT';
+    GRANT DELETE ON identity_api_tokens TO ostrom_router;
+    CREATE FUNCTION identity_purge_agent_tokens(p_before TIMESTAMPTZ) RETURNS BIGINT
+        LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        WITH gone AS (
+            DELETE FROM identity_api_tokens WHERE kind = 'AGENT' AND expires_at < p_before RETURNING 1
+        )
+        SELECT count(*) FROM gone;
+    $$;
+    REVOKE EXECUTE ON FUNCTION $PURGE_FUNCTION FROM PUBLIC;
+    DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+            GRANT EXECUTE ON FUNCTION $PURGE_FUNCTION TO ostrom_app;
+        END IF;
+    END $$;
+    GRANT CREATE ON SCHEMA public TO ostrom_router;
+    ALTER FUNCTION $PURGE_FUNCTION OWNER TO ostrom_router;
+    REVOKE CREATE ON SCHEMA public FROM ostrom_router;
+    """
+        .trimIndent()
+
+/**
  * The schema of the identity module; its tables start with `identity_`.
  *
  * Version 1 also creates the `ostrom_tenant` role every organization-scoped query runs as
@@ -387,5 +445,14 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
         version = 13,
         name = "device_authorizations_requested_from",
         sql = "ALTER TABLE identity_device_authorizations ADD COLUMN requested_from TEXT",
+    ),
+    SchemaMigration(version = 14, name = "purge_agent_tokens", sql = PURGE_AGENT_TOKENS_SQL),
+    SchemaMigration(version = 15, name = "bound_agent_token_purge", sql = BOUND_PURGE_SQL),
+    // Q-APP-STEPUP-RISK: the approval request the app's last unlock was for. A yes from the app uses it once, within a
+    // minute (PhoneUnlockProofs); null when the last unlock named none, or once used.
+    SchemaMigration(
+        version = 16,
+        name = "api_tokens_unlock_request",
+        sql = "ALTER TABLE identity_api_tokens ADD COLUMN unlock_request_id TEXT",
     ),
 )

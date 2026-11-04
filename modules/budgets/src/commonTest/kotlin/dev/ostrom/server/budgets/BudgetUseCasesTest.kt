@@ -101,7 +101,8 @@ class BudgetUseCasesTest {
             ),
         )
         val guard = object : BudgetGuard {
-            override suspend fun check(orgId: Uuid, memberId: Uuid): BudgetDecision = decisions.removeFirst()
+            override suspend fun check(orgId: Uuid, memberId: Uuid, workflowId: String?): BudgetDecision =
+                decisions.removeFirst()
         }
         val mine = GetMyBudgetUseCaseImpl(repository, spend, guard, clock)
         repository.defaultLimits[TestCallers.orgA] = 1_000
@@ -130,7 +131,8 @@ class BudgetUseCasesTest {
     @Test
     fun aMemberWithoutLimitHasNoRemaining() = runTest {
         val guard = object : BudgetGuard {
-            override suspend fun check(orgId: Uuid, memberId: Uuid): BudgetDecision = BudgetDecision.Allowed(null)
+            override suspend fun check(orgId: Uuid, memberId: Uuid, workflowId: String?): BudgetDecision =
+                BudgetDecision.Allowed(null)
         }
         val budget = GetMyBudgetUseCaseImpl(repository, spend, guard, clock)(TestCallers.memberA)
 

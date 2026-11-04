@@ -29,8 +29,12 @@ fun SpendingReport.toDto() = SpendingDto(
 
 /** Maps a budget past its limit. */
 fun ExceededBudget.toDto() = ExceededBudgetDto(
-    scope = if (memberId == null) "organization" else "member",
-    subject = memberId?.toString(),
+    scope = when {
+        workflowId != null -> "workflow"
+        memberId != null -> "member"
+        else -> "organization"
+    },
+    subject = workflowId ?: memberId?.toString(),
     period = if (daily) "day" else "month",
     usd = usd(limitMicros),
     hardStop = stops,

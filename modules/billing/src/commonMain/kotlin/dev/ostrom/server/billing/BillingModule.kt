@@ -25,6 +25,7 @@ import dev.ostrom.server.billing.domain.LicenseProvider
 import dev.ostrom.server.billing.domain.ListInvoicesUseCase
 import dev.ostrom.server.billing.domain.ListInvoicesUseCaseImpl
 import dev.ostrom.server.billing.domain.NoLicenseProvider
+import dev.ostrom.server.billing.domain.NoMemberEmails
 import dev.ostrom.server.billing.domain.OpenCustomerPortalUseCase
 import dev.ostrom.server.billing.domain.OpenCustomerPortalUseCaseImpl
 import dev.ostrom.server.billing.domain.OutboxTask
@@ -52,6 +53,7 @@ import dev.ostrom.server.billing.infrastructure.StripeGatewayImpl
 import dev.ostrom.server.billing.infrastructure.StripeSignatureVerifier
 import dev.ostrom.server.billing.presentation.BillingRoutesDependencies
 import dev.ostrom.server.billing.presentation.billingRoutes
+import dev.ostrom.server.kernel.auth.MemberEmails
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.logging.Logger
@@ -68,9 +70,11 @@ import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.core.scope.Scope
 import org.koin.dsl.module
+import org.koin.dsl.onClose
 
 /** How long a Stripe call may take before it fails (and its outbox task is retried). */
 private const val STRIPE_TIMEOUT_MILLIS = 30_000L
+private val STRIPE_HTTP = named("billing.stripe.http")
 
 /**
  * The billing module: Stripe subscriptions per active person, plan limits enforced on the server, cloud agent usage
@@ -86,15 +90,28 @@ object BillingModule : ServerModule {
         single { BillingConfig.load(get<ConfigSource>()) }
         single { BillingSettings(get<BillingConfig>().stripeSecretKey != null, get<BillingConfig>().consoleUrl) }
         single<BillingRepository> { BillingRepositoryImpl(get()) }
+        // Its own definition, so that Koin closes it with the application: its selector holds a thread of
+        // Dispatchers.IO until then (StoppedApplicationsTest).
+        single(STRIPE_HTTP) {
+            HttpClient { install(HttpTimeout) { requestTimeoutMillis = STRIPE_TIMEOUT_MILLIS } }
+        } onClose { it?.close() }
         single<StripeGateway> {
             val config = get<BillingConfig>()
-            val client = HttpClient { install(HttpTimeout) { requestTimeoutMillis = STRIPE_TIMEOUT_MILLIS } }
-            StripeGatewayImpl(client, StripeConfig(config.stripeSecretKey.orEmpty(), config.stripeApiBase))
+            StripeGatewayImpl(get(STRIPE_HTTP), StripeConfig(config.stripeSecretKey.orEmpty(), config.stripeApiBase))
         }
         single { StripeSignatureVerifier(get<BillingConfig>().webhookSecrets, get<Clock>()) }
         single<GetPlanLimitsUseCase> { GetPlanLimitsUseCaseImpl(get(), licenses(), get(), get()) }
         single<GetBillingOverviewUseCase> { GetBillingOverviewUseCaseImpl(get(), get(), get(), get()) }
-        single<StartCheckoutUseCase> { StartCheckoutUseCaseImpl(get(), get(), get(), get()) }
+        single<StartCheckoutUseCase> {
+            StartCheckoutUseCaseImpl(
+                get(),
+                get(),
+                get(),
+                get(),
+                getOrNull<MemberEmails>() ?: NoMemberEmails,
+                customerEmailFailureLogger(get()),
+            )
+        }
         single<OpenCustomerPortalUseCase> { OpenCustomerPortalUseCaseImpl(get(), get(), get()) }
         single<SyncSubscriptionUseCase> {
             SyncSubscriptionUseCaseImpl(get(), get(), get(), unknownPriceLogger(get()))
@@ -142,6 +159,12 @@ object BillingModule : ServerModule {
 internal fun outboxFailureLogger(logger: Logger): (OutboxTask, Exception) -> Unit = { task, error ->
     val fields = mapOf("task_id" to task.id, "kind" to task.kind.key, "error" to error::class.simpleName)
     logger.warn("stripe task failed", fields)
+}
+
+/** Logs a customer whose address Stripe did not update, by its id and error class: Checkout goes on without it. */
+internal fun customerEmailFailureLogger(logger: Logger): (String, Exception) -> Unit = { customerId, error ->
+    val fields = mapOf("customer_id" to customerId, "error" to error::class.simpleName)
+    logger.warn("stripe customer email not updated", fields)
 }
 
 /** Logs a subscription whose price is not in the catalog: it keeps its previous plan until someone looks. */

@@ -11,6 +11,9 @@ interface SpendReader {
 
     /** Same, for one pooled account (per-account limits of personal account sharing). */
     suspend fun accountSpentMicros(orgId: Uuid, accountId: Uuid, since: Instant): Long
+
+    /** Same, for the model calls of the launches that play one workflow (its budgets). */
+    suspend fun workflowSpentMicros(orgId: Uuid, workflowId: String, since: Instant): Long
 }
 
 /**
@@ -24,4 +27,7 @@ class SpendReaderImpl(private val repository: UsageRepository) : SpendReader {
 
     override suspend fun accountSpentMicros(orgId: Uuid, accountId: Uuid, since: Instant): Long =
         repository.accountSpentMicros(orgId, accountId, since)
+
+    override suspend fun workflowSpentMicros(orgId: Uuid, workflowId: String, since: Instant): Long =
+        repository.workflowSpentMicros(orgId, workflowId, since)
 }

@@ -118,11 +118,13 @@ import dev.ostrom.server.identity.infrastructure.NotificationPreferencesReposito
 import dev.ostrom.server.identity.infrastructure.OAuthAttemptsRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.OidcEndpoints
 import dev.ostrom.server.identity.infrastructure.OidcProvider
+import dev.ostrom.server.identity.infrastructure.PhoneUnlockProofsImpl
 import dev.ostrom.server.identity.infrastructure.ResendMailSender
 import dev.ostrom.server.identity.infrastructure.SecureSecretGenerator
 import dev.ostrom.server.identity.infrastructure.ServiceKeysRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.Sha256SecretHasher
 import dev.ostrom.server.identity.infrastructure.SignInLinksRepositoryImpl
+import dev.ostrom.server.identity.infrastructure.TransactionalAuditLog
 import dev.ostrom.server.identity.infrastructure.UnconfiguredMailSender
 import dev.ostrom.server.identity.infrastructure.LinkedIdentitiesImpl
 import dev.ostrom.server.identity.infrastructure.UsersRepositoryImpl
@@ -146,15 +148,24 @@ import dev.ostrom.server.identity.presentation.sessionRoutes
 import dev.ostrom.server.identity.presentation.signInRoutes
 import dev.ostrom.server.kernel.audit.OrgAuditTrail
 import dev.ostrom.server.kernel.auth.GovernanceAudit
+import dev.ostrom.server.kernel.auth.PhoneUnlockProofs
 import dev.ostrom.server.kernel.auth.ServiceKeyAudit
 import dev.ostrom.server.kernel.auth.SignOutListener
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.database.SchemaMigration
+import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.kernel.module.ServerModule
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.server.routing.Route
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.time.Clock
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
@@ -185,13 +196,14 @@ object IdentityModule : ServerModule {
         single<UsersRepository> { UsersRepositoryImpl(get()) }
         single<LinkedIdentities> { LinkedIdentitiesImpl(get()) }
         single<WebSessionsRepository> { WebSessionsRepositoryImpl(get()) }
-        single<ApiTokensRepository> { ApiTokensRepositoryImpl(get()) }
+        single<ApiTokensRepository> { ApiTokensRepositoryImpl(get(), get()) }
         single<ServiceKeysRepository> { ServiceKeysRepositoryImpl(get()) }
         single<ElevatedTokensRepository> { ElevatedTokensRepositoryImpl(get()) }
         single<DeviceAuthorizationsRepository> { DeviceAuthorizationsRepositoryImpl(get()) }
         single<AuditRepository> { AuditRepositoryImpl(get()) }
 
         single<AuditLog> { AuditLogImpl(get(), get(), get(), get()) }
+        single { TransactionalAuditLog(get()) }
         single<ServiceKeyAudit> { ServiceKeyAuditImpl(get()) }
         single<GovernanceAudit> { AuditLogGovernanceAudit(get()) }
         single<OrgAuditTrail> { IdentityOrgAuditTrail(get()) }
@@ -257,6 +269,7 @@ object IdentityModule : ServerModule {
         single { SignInRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get()) }
         single<MobileCodesRepository> { MobileCodesRepositoryImpl(get()) }
         single<MobileTokensRepository> { MobileTokensRepositoryImpl(get()) }
+        single<PhoneUnlockProofs> { PhoneUnlockProofsImpl(get()) }
         single<NotificationPreferencesRepository> { NotificationPreferencesRepositoryImpl(get()) }
         single<CompleteMobileSignInUseCase> { CompleteMobileSignInUseCaseImpl(get(), get(), get(), get(), get()) }
         single<ExchangeMobileCodeUseCase> { ExchangeMobileCodeUseCaseImpl(get(), get(), get(), get(), get(), get()) }
@@ -278,6 +291,29 @@ object IdentityModule : ServerModule {
     }
 
     override val migrations: List<SchemaMigration> = IdentityMigrations
+
+    /** How long an agent token is kept once expired: it no longer acts, and nothing reads it after its launch. */
+    val AGENT_TOKEN_RETENTION: Duration = 7.days
+
+    // Every hour, the agent tokens expired more than AGENT_TOKEN_RETENTION ago are deleted: one per launch, they were
+    // kept for ever. A failed purge is logged and tried again the next hour; it never stops the server.
+    override fun start(scope: CoroutineScope, koin: Koin) {
+        val tokens = koin.get<ApiTokensRepository>()
+        val clock = koin.get<Clock>()
+        val logger = koin.get<Logger>()
+        scope.launch {
+            while (true) {
+                try {
+                    tokens.purgeAgentTokens(clock.now() - AGENT_TOKEN_RETENTION)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    logger.warn("agent token purge failed", mapOf("error" to error::class.simpleName))
+                }
+                delay(1.hours)
+            }
+        }
+    }
 
     override fun routes(route: Route, koin: Koin) {
         route.noStoreOnIdentityRoutes()

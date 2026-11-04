@@ -27,6 +27,7 @@ import dev.ostrom.server.runners.domain.RunnerRegistrationOutcome
 import dev.ostrom.server.runners.domain.RunnerUnauthenticatedException
 import dev.ostrom.server.runners.domain.constantTimeEquals
 import dev.ostrom.server.runners.fakes.FakeRunnerTokens
+import dev.ostrom.server.runners.fakes.FakeRunnerWorkSignals
 import dev.ostrom.server.runners.fakes.InMemoryCloudSessionsRepository
 import dev.ostrom.server.runners.fakes.InMemoryRunnerAssignments
 import dev.ostrom.server.runners.fakes.ORG_A
@@ -207,6 +208,7 @@ class RegisteredRunnersTest {
         clock,
         InMemoryRunnerAssignments(),
         InMemoryCloudSessionsRepository(),
+        FakeRunnerWorkSignals(),
     ) { error("No execution to plan") }
 
     private companion object {
@@ -288,10 +290,12 @@ internal class InMemoryRegisteredRunners : RegisteredRunnersRepository {
     override suspend fun keyOf(id: Uuid): RegisteredRunnerKey? =
         runners.firstOrNull { it.id == id }?.let { RegisteredRunnerKey(it.orgId, it.keyHash) }
 
-    override suspend fun touch(orgId: Uuid, id: Uuid, keyHash: String, at: Instant): Boolean {
+    override suspend fun touch(orgId: Uuid, id: Uuid, keyHash: String, at: Instant, capacity: Int?): Boolean {
         beforeTouch()
         val i = runners.indexOfFirst { it.orgId == orgId && it.id == id && it.keyHash == keyHash }
-        if (i >= 0) runners[i] = runners[i].copy(lastSeenAt = maxOf(runners[i].lastSeenAt ?: at, at))
+        if (i >= 0) {
+            runners[i] = runners[i].copy(lastSeenAt = maxOf(runners[i].lastSeenAt ?: at, at), capacity = capacity)
+        }
         return i >= 0
     }
 }

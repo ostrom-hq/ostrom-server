@@ -13,6 +13,7 @@ import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.Membership
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.SlugTakenException
+import dev.ostrom.server.orgs.fakes.orgDeleted
 import dev.ostrom.server.orgs.infrastructure.InvitationsRepositoryImpl
 import dev.ostrom.server.orgs.infrastructure.MembersRepositoryImpl
 import dev.ostrom.server.orgs.infrastructure.OrgDeletionsRepositoryImpl
@@ -24,6 +25,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
@@ -60,7 +62,7 @@ class OrgsServingRolePostgresTest {
                     .execute("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO $role")
                     .getOrThrow()
                 server.database.superuser.execute("GRANT ostrom_tenant TO $role").getOrThrow()
-                val orgs = OrgsRepositoryImpl(serving)
+                val orgs = OrgsRepositoryImpl(serving, server.koin.get())
                 // Without its own EXECUTE grant, a role cannot run them: PUBLIC has none (S2-60).
                 assertFails { orgs.slugTaken("acme") }
                 server.database.superuser
@@ -112,7 +114,7 @@ class OrgsServingRolePostgresTest {
                     .getOrThrow()
                 superuser.execute("GRANT ostrom_tenant TO $role").getOrThrow()
                 superuser.execute("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO $role").getOrThrow()
-                val orgs = OrgsRepositoryImpl(serving)
+                val orgs = OrgsRepositoryImpl(serving, server.koin.get())
                 val deletions = OrgDeletionsRepositoryImpl(serving)
                 val acme = org("acme")
                 assertNull(orgs.create(acme, owner(acme, ada)) { false })
@@ -123,7 +125,7 @@ class OrgsServingRolePostgresTest {
                 assertEquals(zoned, orgs.findBySlug("acme"))
                 assertEquals(listOf(zoned), orgs.listOfUser(ada.id).map { it.org })
 
-                orgs.delete(acme.id, now, now + 30.days)
+                orgs.delete(acme.id, now, orgDeleted(acme.id, ada.id), now + 30.days)
                 // Found with no organization set: only through the functions, which list ids and nothing else.
                 assertEquals(listOf(acme.id), deletions.deletionsToSettle(now, 10))
                 deletions.markSettled(acme.id, now)
@@ -134,7 +136,7 @@ class OrgsServingRolePostgresTest {
                 assertEquals(listOf(acme.id), deletions.duePurges(now + 31.days, 10))
                 deletions.erase(acme.id, now + 31.days)
                 assertEquals(emptyList(), deletions.duePurges(now + 32.days, 10))
-                assertTrue(orgs.slugTaken("acme"))
+                assertFalse(orgs.slugTaken("acme"), "Erased, it gives its short name back")
             }
         }
 
@@ -150,6 +152,7 @@ class OrgsServingRolePostgresTest {
                     .single()
                     .get("n")
                     .asLong()
-            assertEquals(8L, hardened)
+            // The router's eight, and the member search's (orgs migration 7, owned by ostrom_member_search).
+            assertEquals(9L, hardened)
         }
 }

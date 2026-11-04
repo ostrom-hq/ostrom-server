@@ -7,6 +7,7 @@ import dev.ostrom.core.api.models.Notification
 import dev.ostrom.core.api.models.NotificationStatus
 import dev.ostrom.core.api.models.PackageEnvelope
 import dev.ostrom.core.api.models.PackageMode
+import dev.ostrom.server.automations.AutomationsModule
 import dev.ostrom.server.compiler.CompilerModule
 import dev.ostrom.server.compiler.domain.models.PackagePin
 import dev.ostrom.server.compiler.domain.models.StoredPackage
@@ -34,6 +35,7 @@ import dev.ostrom.server.launches.presentation.LaunchResponse
 import dev.ostrom.server.orgs.OrgsModule
 import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.Org
+import dev.ostrom.server.orgs.domain.OrgEvent
 import dev.ostrom.server.orgs.domain.OrgsRepository
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.runners.RunnersModule
@@ -91,7 +93,7 @@ import kotlinx.serialization.json.jsonPrimitive
 class WorkflowRunsPostgresTest {
     private val modules = listOf(
         InstanceModule, IdentityModule, OrgsModule, ReceiptsModule, GatesModule, SessionsModule, CompilerModule,
-        RunnersModule, LaunchesModule, WorkflowRunsModule,
+        RunnersModule, LaunchesModule, AutomationsModule, WorkflowRunsModule,
     )
     private val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
 
@@ -456,7 +458,8 @@ class WorkflowRunsPostgresTest {
             val cliBundle = server.call(ada.cliToken, "/api/v1/receipts/rcpt_session_s-1/bundle")
             assertEquals(HttpStatusCode.NotFound, cliBundle.status, cliBundle.bodyAsText())
             // A credential of no organization: its person left it.
-            server.koin.get<OrgsRepository>().delete(ada.org.id, now)
+            val deleted = OrgEvent(ada.org.id, Uuid.random(), "org.deleted", "org", ada.org.id.toString())
+            server.koin.get<OrgsRepository>().delete(ada.org.id, now, deleted)
             assertEquals(HttpStatusCode.NotFound, server.call(ada.cliToken, "/api/v1/checks").status)
             assertEquals(
                 HttpStatusCode.NotFound,
