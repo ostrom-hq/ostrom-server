@@ -22,6 +22,8 @@ import kotlin.uuid.Uuid
  * @property expiresAt When its agent token expires.
  * @property cloudSessionId The cloud session whose runner opened it, or null for a launch of the CLI: only that
  *   runner reports the checks of its sessions as run by Ostrom.
+ * @property workflowId The workflow it plays (`createLaunch.workflowId`), or null: every model call of its sessions
+ *   counts under that workflow.
  */
 data class Launch(
     val id: String,
@@ -34,6 +36,7 @@ data class Launch(
     val createdAt: Instant,
     val expiresAt: Instant,
     val cloudSessionId: Uuid? = null,
+    val workflowId: String? = null,
 )
 
 /**
@@ -53,8 +56,15 @@ data class Launcher(val orgId: Uuid, val userId: Uuid, val login: String, val ro
  * @property agent The agent's name in Ostrom.
  * @property model The model, or null.
  * @property cloudSessionId The cloud session whose runner asks for it, or null for the CLI.
+ * @property workflowId The workflow it plays, one of the organization's, or null.
  */
-data class NewLaunch(val repo: String?, val agent: String, val model: String?, val cloudSessionId: Uuid? = null)
+data class NewLaunch(
+    val repo: String?,
+    val agent: String,
+    val model: String?,
+    val cloudSessionId: Uuid? = null,
+    val workflowId: String? = null,
+)
 
 /**
  * A launch and the secret of its agent token, given once to the CLI that asked for it.

@@ -100,6 +100,17 @@ interface UsageRepository {
     suspend fun accountSpentMicros(orgId: Uuid, accountId: Uuid, since: Instant): Long
 
     /**
+     * Sums the cost of the model calls of the launches that play one workflow of the org since a time.
+     *
+     * @param orgId The org.
+     * @param workflowId The workflow.
+     * @param since The start, included.
+     *
+     * @return USD millionths.
+     */
+    suspend fun workflowSpentMicros(orgId: Uuid, workflowId: String, since: Instant): Long
+
+    /**
      * Sums the cost one launch's agent token spent in a window (a session segment's receipt).
      *
      * @param orgId The org.

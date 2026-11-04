@@ -4,6 +4,7 @@ package dev.ostrom.server.gates.domain.usecases
 import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.Answer
 import dev.ostrom.server.gates.domain.models.AnswerChannel
+import dev.ostrom.server.gates.domain.models.BoundUnlockRequiredException
 import dev.ostrom.server.gates.domain.models.ApprovalRequest
 import dev.ostrom.server.gates.domain.models.Gate
 import dev.ostrom.server.gates.domain.models.GateActor
@@ -18,10 +19,13 @@ import dev.ostrom.server.gates.domain.models.RequestStatus
 import dev.ostrom.server.gates.domain.models.SelfApproval
 import dev.ostrom.server.gates.domain.models.SelfApprovalRefusedException
 import dev.ostrom.server.gates.domain.models.StepUp
+import dev.ostrom.server.gates.domain.models.StepUpRequiredException
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
 import dev.ostrom.server.gates.domain.services.GateChanges
+import dev.ostrom.server.gates.domain.services.GateGitHubAccounts
 import dev.ostrom.server.gates.domain.services.GateNotifier
 import dev.ostrom.server.gates.domain.services.GatePolicies
+import dev.ostrom.server.kernel.auth.PhoneUnlockProofs
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -44,6 +48,8 @@ interface AnswerGateUseCase {
      * @throws SelfApprovalRefusedException When the caller asked for the action and someone else must say yes.
      * @throws GateAlreadyDecidedException When the gate or the request was already answered.
      * @throws GateChangedException When what the gate covers is not what the approver was shown.
+     * @throws StepUpRequiredException When the person's sign-in is unknown or too old for a yes.
+     * @throws BoundUnlockRequiredException When a yes from the app comes without its unlock bound to this request.
      */
     suspend operator fun invoke(
         actor: GateActor,
@@ -63,7 +69,10 @@ interface AnswerGateUseCase {
  * @param notifier Tells the other approvers, the GitHub check and the waiting hooks; it never throws.
  * @param clock The clock.
  * @param changes Wakes the reads waiting on the gate.
+ * @param gitHub The GitHub account each approver linked (Q-GATES-G1).
+ * @param unlocks The app's unlocks bound to a request, the proof of a yes from the phone (Q-APP-STEPUP-RISK).
  */
+@Suppress("LongParameterList") // One port per owner: gates, policies, receipts, notifications, clock, GitHub, unlocks.
 class AnswerGateUseCaseImpl(
     private val repository: GatesRepository,
     private val policies: GatePolicies,
@@ -71,6 +80,8 @@ class AnswerGateUseCaseImpl(
     private val notifier: GateNotifier,
     private val clock: Clock,
     private val changes: GateChanges,
+    private val gitHub: GateGitHubAccounts,
+    private val unlocks: PhoneUnlockProofs,
 ) : AnswerGateUseCase {
     override suspend fun invoke(
         actor: GateActor,
@@ -83,6 +94,10 @@ class AnswerGateUseCaseImpl(
         val person = actor.personId
         if (actor.kind != ActorKind.USER || person == null) throw OnlyPeopleAnswerException()
         val orgId = actor.orgId
+        // The app's unlock for this request is used by the first yes sent with it, whatever that yes's outcome, and
+        // outside the gate's transaction, so that a refused yes cannot hand it back.
+        val bound = actor.phoneCredential?.takeIf { answer == Answer.YES }
+            ?.let { unlocks.consume(it, requestId.toString(), clock.now() - StepUp.BOUND_WITHIN) }
         val policy = policies.selfApproval(orgId)
         val decided = repository.transaction {
             val request = request(orgId, requestId) ?: throw GateNotFoundException()
@@ -94,8 +109,12 @@ class AnswerGateUseCaseImpl(
                 is SelfApproval.Verdict.Refused -> throw SelfApprovalRefusedException(verdict.others)
                 is SelfApproval.Verdict.Allowed -> verdict.selfApproved
             }
+            if (SelfApproval.needsLink(gate, answer, policy)) {
+                SelfApproval.linkRefusal(gate, requests.map { it.approverId }, person, gitHub.gitHubIdsOf(person))
+                    ?.let { throw it }
+            }
             val now = clock.now()
-            StepUp.check(answer, actor.authenticatedAt, now)
+            StepUp.check(answer, actor.authenticatedAt, now, bound)
             val answered = answered(requests, request.id, answer, channel, now)
             val next = gate.copy(
                 status = if (answer == Answer.YES) GateStatus.APPROVED else GateStatus.REJECTED,

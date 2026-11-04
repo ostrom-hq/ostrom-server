@@ -49,6 +49,7 @@ import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
+import org.koin.dsl.onClose
 import kotlin.time.Duration.Companion.milliseconds
 
 /**
@@ -80,7 +81,7 @@ object GatewayModule : ServerModule {
                     socketTimeoutMillis = SILENCE_MS
                 }
             }
-        }
+        } onClose { it?.close() } // Its selector holds a thread of Dispatchers.IO until then (StoppedApplicationsTest).
         single<GatewaySettingsRepository> { GatewaySettingsRepositoryImpl(get()) }
         single<InferenceUpstream> { KtorInferenceUpstream(get(HTTP_CLIENT), SILENCE_MS.milliseconds) }
         single { PriceTable() }

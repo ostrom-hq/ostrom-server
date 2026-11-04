@@ -3,6 +3,7 @@ package dev.ostrom.server.automations
 
 import dev.ostrom.server.automations.domain.WaitAgent
 import dev.ostrom.server.automations.domain.WaitAgentResolver
+import dev.ostrom.server.automations.fakes.ALICE
 import dev.ostrom.server.automations.fakes.BOB
 import dev.ostrom.server.automations.fakes.FOREIGN_SESSION
 import dev.ostrom.server.automations.fakes.FakeWaitAgents
@@ -38,13 +39,20 @@ import kotlin.test.assertTrue
  * its own launch's session only, and never reaches the REST waits routes.
  */
 class WaitsMcpAgentTest {
-    /** [FakeWaitAgents], counting its resolutions. */
+    /**
+     * [FakeWaitAgents], counting its resolutions; [reopened] is the segment the sessions module finds open, if set, and
+     * [segments] those of its launch (by default the first one and [reopened]).
+     */
     private class CountingWaitAgents : WaitAgentResolver {
         var resolutions = 0
+        var reopened: String? = null
+        var segments: List<String>? = null
 
         override suspend fun resolve(principal: AuthenticatedPrincipal, sessionId: String): WaitAgent? {
             resolutions++
-            return FakeWaitAgents.resolve(principal, sessionId)
+            val agent = FakeWaitAgents.resolve(principal, sessionId)
+            val open = reopened ?: return agent
+            return agent?.copy(sessionId = open, segments = segments ?: listOf(LAUNCH_SESSION, open))
         }
     }
 
@@ -97,6 +105,31 @@ class WaitsMcpAgentTest {
         }
 
     @Test
+    fun anAgentTokenAsksInTheSegmentTheServerFoundAndKeepsWhatItAskedBefore() =
+        serverTest(listOf(AutomationsModule), withAgents) { server ->
+            val client = server.client
+            val before = client.call("ask_human", """{"title":"Before the sleep"}""", OWN).text()
+                .substringAfter("wait ").substringBefore(" ")
+            // The launcher reopened the session while the machine slept; the relay still names its first id.
+            agents.reopened = "$LAUNCH_SESSION~r2"
+            val id = client.call("ask_human", """{"title":"Ship it?"}""", OWN).text()
+                .substringAfter("wait ").substringBefore(" ")
+            val read = Json.parseToJsonElement(client.call("get_wait", """{"wait":"$id"}""", OWN).text()).jsonObject
+            assertEquals("$LAUNCH_SESSION~r2", read.getValue("sessionId").jsonPrimitive.content, "The open segment")
+            val earlier = client.call("get_wait", """{"wait":"$before"}""", OWN)
+            assertFalse(earlier.isError(), "What it asked before the sleep is still its own: ${earlier.text()}")
+            val listed = client.call("list_waits", "{}", OWN).text().lines().map { it.substringBefore(" ") }
+            assertEquals(listOf(id, before), listed, "Both segments' waits: its launch opened both")
+            assertEquals("Cancelled wait $before.", client.call("cancel_wait", """{"wait":"$before"}""", OWN).text())
+
+            // Another launch resumed the session: what the first launch asked is not its own.
+            agents.reopened = "$LAUNCH_SESSION~r3"
+            agents.segments = listOf("$LAUNCH_SESSION~r3")
+            assertTrue(client.call("get_wait", """{"wait":"$id"}""", OWN).isError(), "The first launch's wait")
+            assertEquals("No waits.", client.call("list_waits", """{"status":"all"}""", OWN).text())
+        }
+
+    @Test
     fun anAgentTokenActsInNoOtherSessionAndNotOnceItsLaunchIsOver() =
         serverTest(listOf(AutomationsModule), withAgents) { server ->
             val client = server.client
@@ -138,6 +171,53 @@ class WaitsMcpAgentTest {
 
             val person = client.rpc(ping, UNBOUND, token = "agent")
             assertEquals(HttpStatusCode.OK, person.status, "A person's credential still asks outside a session")
+        }
+
+    @Test
+    fun anAgentTokenAsksOnlyThePersonWhoLaunchedIt() =
+        serverTest(listOf(AutomationsModule), withAgents) { server ->
+            val client = server.client
+            val other = client.call("ask_human", """{"title":"Ship it?","assignee":"$ALICE"}""", OWN)
+            assertTrue(other.isError(), other.text())
+            assertEquals("An agent asks only the person who launched it.", other.text())
+            val own = client.call("ask_human", """{"title":"Ship it?","assignee":"$BOB"}""", OWN)
+            assertFalse(own.isError(), own.text())
+        }
+
+    @Test
+    fun anAgentTokenNeitherSeesNorCancelsWhatSomeoneElseAskedItsPerson() =
+        serverTest(listOf(AutomationsModule), withAgents) { server ->
+            val client = server.client
+            // alice asks bob, the agent's person, about the agent's session
+            val asked = client.call("ask_human", """{"title":"Why this change?","assignee":"$BOB"}""", OWN, "alicekey")
+            assertFalse(asked.isError(), asked.text())
+            val id = asked.text().substringAfter("wait ").substringBefore(" ")
+
+            assertEquals("No waits.", client.call("list_waits", "{}", OWN).text(), "Not listed to the agent")
+            val read = client.call("get_wait", """{"wait":"$id"}""", OWN)
+            assertTrue(read.isError(), read.text())
+            val cancelled = client.call("cancel_wait", """{"wait":"$id"}""", OWN)
+            assertTrue(cancelled.isError(), cancelled.text())
+            val still = client.get("/api/v1/waits/$id") { bearerAuth("alicekey") }
+            val status = Json.parseToJsonElement(still.bodyAsText()).jsonObject.getValue("status").jsonPrimitive.content
+            assertEquals("open", status, "Still open")
+        }
+
+    @Test
+    fun anAgentTokenSeesAndCancelsWhatItsPersonAskedSomeoneElse() =
+        serverTest(listOf(AutomationsModule), withAgents) { server ->
+            val client = server.client
+            // bob, the agent's person, asks alice from the console about the agent's session; alice asks bob too
+            val asked = client.call("ask_human", """{"title":"Review it?","assignee":"$ALICE"}""", OWN, "bob")
+            val id = asked.text().substringAfter("wait ").substringBefore(" ")
+            client.call("ask_human", """{"title":"Why this change?","assignee":"$BOB"}""", OWN, "alicekey")
+
+            assertTrue(client.call("list_waits", "{}", OWN).text().startsWith("$id  open  Review it?"))
+            assertEquals(1, client.call("list_waits", "{}", OWN).text().lines().size, "Only what its person asked")
+            assertFalse(client.call("get_wait", """{"wait":"$id"}""", OWN).isError())
+            assertEquals("Cancelled wait $id.", client.call("cancel_wait", """{"wait":"$id"}""", OWN).text())
+            val person = client.call("list_waits", """{"status":"all"}""", OWN, "bob").text().lines()
+            assertEquals(2, person.size, "A person's credential still sees what it was asked: $person")
         }
 
     @Test

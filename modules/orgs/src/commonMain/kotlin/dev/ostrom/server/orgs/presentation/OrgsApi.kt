@@ -39,10 +39,13 @@ class OrgsApi {
          * The members.
          *
          * @property parent The organization.
+         * @property limit The most members of the page, 1 to 1000; 1000 without it.
+         * @property after The previous page's `next`.
+         * @property q Only the members whose login or name starts with it, whatever the case.
          */
         @Serializable
         @Resource("members")
-        class Members(val parent: Org) {
+        class Members(val parent: Org, val limit: Int? = null, val after: String? = null, val q: String? = null) {
             /**
              * One member, by login.
              *
@@ -120,7 +123,8 @@ class InvitationLinksApi {
  * Creates an organization.
  *
  * @property name The name.
- * @property slug The short name, or null to derive it from the name.
+ * @property slug The short name, or null to derive it from the name. One taken answers 409 `conflict`, whether a live
+ *   organization holds it or a deleted one in its 30 days of grace (it is freed when the deleted one is erased).
  */
 @Serializable data class CreateOrgRequest(val name: String, val slug: String? = null)
 
@@ -252,8 +256,9 @@ data class MemberResponse(
  * A list of members.
  *
  * @property items The members.
+ * @property next The `after` of the next page, absent when no member follows.
  */
-@Serializable data class MembersResponse(val items: List<MemberResponse>)
+@Serializable data class MembersResponse(val items: List<MemberResponse>, val next: String? = null)
 
 /**
  * A live invitation.

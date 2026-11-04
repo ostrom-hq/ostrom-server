@@ -44,7 +44,7 @@ data class AccountLimitsDto(
  * @property provider `claude` or `codex`, or the vendor's name (`anthropic`, `openai`).
  * @property label The name admins see.
  * @property credentialSecret The secret holding the token: the caller's own, or the org's for an admin.
- * @property sharedWith The members it is lent to, by login; empty for the whole org.
+ * @property sharedWith The members it is lent to, by login, and its groups as `group:<id>`; empty for the whole org.
  * @property dailyAllocationUsd What it may serve per UTC day, in USD, or null.
  */
 @Serializable

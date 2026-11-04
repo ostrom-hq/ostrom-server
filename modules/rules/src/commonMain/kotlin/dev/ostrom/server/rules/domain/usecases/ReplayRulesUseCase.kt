@@ -9,8 +9,11 @@ import dev.ostrom.server.rules.domain.repositories.AnalysisRepository
 import dev.ostrom.server.rules.domain.repositories.RulesRepository
 import dev.ostrom.server.rules.domain.services.EveryRule
 import dev.ostrom.server.rules.domain.services.GateReplay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.minutes
 
 /**
  * Runs one replay of an organization: its rules that gate boundary actions (proposed, accepted, or as the team edited
@@ -47,8 +50,12 @@ class ReplayRulesUseCaseImpl(
 ) : ReplayRulesUseCase {
     private val runs = RunRecorder(analyses, clock, logger)
 
+    // One replay at a time on a server: the engine's two workers may both take one, and a replay of 1 000 actions
+    // under 1 500 rules raises a pod's resident memory by tens of MiB (ReplayLoadPostgresTest), on a limit of 256 Mi.
+    private val oneAtATime = Mutex()
+
     override suspend fun invoke(run: AnalysisRun) {
-        runs.execute(run, "replay") { replay(run) }
+        oneAtATime.withLock { runs.execute(run, "replay", REPLAY_DEADLINE) { replay(run) } }
     }
 
     private suspend fun replay(run: AnalysisRun) {
@@ -58,7 +65,7 @@ class ReplayRulesUseCaseImpl(
         val policy = rules.selfApproval(run.orgId) ?: SelfApprovalPolicy.DEFAULT
         val actions = history.recent(run.orgId, clock.now() - REPLAY_WINDOW, MAX_ACTIONS)
         runs.advance(run, REPLAY, HALF)
-        runs.advance(run, AnalysisRun.READY, 1.0, actions.map { GateReplay.replay(it, replayed, policy) })
+        runs.advance(run, AnalysisRun.READY, 1.0, GateReplay.replayAll(actions, replayed, policy))
     }
 
     /** The bounds and words of a replay. */
@@ -82,3 +89,6 @@ class ReplayRulesUseCaseImpl(
 // How far back the history is replayed. Top-level: a companion property has a getter nothing calls, which Kover
 // counts.
 private val REPLAY_WINDOW = 30.days
+
+// How long a replay may take: the worst measured is 15 s (1,000 actions, 1,500 rules, ReplayLoadPostgresTest).
+private val REPLAY_DEADLINE = 5.minutes

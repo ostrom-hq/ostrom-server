@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.reports.domain
 
+import dev.ostrom.server.kernel.database.storableInstantOrNull
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import kotlin.time.Instant
@@ -38,7 +39,7 @@ enum class ActivityKind(val wire: String, val byAgent: Boolean) {
  *   or the id the source keeps when no login is known).
  * @property subject What it is about: the person who runs a session, the label of a gate, the id of a workflow.
  * @property outcome How a gate was decided: `approved` or `rejected`.
- * @property repo The repository, for a session.
+ * @property repo The repository (`owner/name`), for a session or a gate that has one.
  * @property costMicros What an ended session cost, as the server measured it.
  * @property sessionId The session, for a session item.
  * @property gateId The gate, for a gate item.
@@ -83,11 +84,7 @@ data class ActivityCursor(val at: Instant, val id: String) {
         fun of(wire: String): ActivityCursor {
             val at = wire.substringBefore(SEPARATOR, "")
             val id = wire.substringAfter(SEPARATOR, "")
-            val instant = try {
-                Instant.parse(at)
-            } catch (e: IllegalArgumentException) {
-                throw InvalidCursorException(e)
-            }
+            val instant = storableInstantOrNull(at) ?: throw InvalidCursorException(null)
             if (id.isEmpty()) throw InvalidCursorException(null)
             return ActivityCursor(instant, id)
         }

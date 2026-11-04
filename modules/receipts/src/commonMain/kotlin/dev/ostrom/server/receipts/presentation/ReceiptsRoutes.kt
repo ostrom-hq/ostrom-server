@@ -8,6 +8,7 @@ import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.http.ReadThrottle
 import dev.ostrom.server.kernel.http.throttledReads
 import dev.ostrom.server.receipts.domain.models.ReceiptQuery
+import dev.ostrom.server.receipts.domain.models.Verification
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.resources.get
 import io.ktor.server.response.respond
@@ -23,7 +24,11 @@ import kotlin.uuid.Uuid
  */
 fun Route.receiptsRoutes(dependencies: ReceiptsRoutesDependencies, throttle: ReadThrottle) = with(dependencies) {
     get<ReceiptsApi.Keys> {
-        call.respond(ReceiptKeysResponse(listKeys().map { PublicKeyResponse(it.kid, it.algorithm, it.publicKeyPem) }))
+        val keys = listKeys().map { key ->
+            val rotation = key.rotation?.let { KeyRotationResponse(it.kid, it.signature) }
+            PublicKeyResponse(key.kid, key.algorithm, key.publicKeyPem, rotation)
+        }
+        call.respond(ReceiptKeysResponse(keys))
     }
     authenticated {
         throttledReads(throttle) {
@@ -41,11 +46,13 @@ fun Route.receiptsRoutes(dependencies: ReceiptsRoutesDependencies, throttle: Rea
             }
             get<ReceiptsApi.Id.Verify> { params ->
                 val outcome = verifyReceipt(call.reader(orgs), params.parent.id)
-                call.respond(VerificationResponse(outcome.ok, outcome.digest, outcome.kid, outcome.reason))
+                call.respond(outcome.toResponse())
             }
         }
     }
 }
+
+private fun Verification.toResponse() = VerificationResponse(ok, digest, kid, reason, orgBound)
 
 // S2-47: a person with the receipts scope, then their organization.
 private suspend fun ApplicationCall.reader(orgs: PrincipalOrgResolver): Uuid {

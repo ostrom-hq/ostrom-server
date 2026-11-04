@@ -124,8 +124,9 @@ enum class TokenKind(val prefix: String) {
     CLI("osc"),
 
     /**
-     * Issued to the CLI by `ostrom login --admin`: the governance writes of one organization ([ADMIN_SCOPES]), approved
-     * in the browser by an owner or an admin of it, for [ADMIN_TOKEN_LIFETIME] at most, never rotated.
+     * Issued to the CLI by `ostrom login --admin`: the governance writes of one organization ([ADMIN_SCOPES]) and the
+     * reads they make first ([ADMIN_READ_SCOPES]), on top of the CLI's ([ADMIN_TOKEN_SCOPES]), approved in the browser
+     * by an owner or an admin of it, for [ADMIN_TOKEN_LIFETIME] at most, never rotated.
      */
     ADMIN("osg"),
 
@@ -236,8 +237,11 @@ enum class DeviceAuthorizationStatus { PENDING, APPROVED, DENIED, CONSUMED }
  * @property expiresAt When it stops being usable.
  * @property lastPolledAt When the CLI last polled, to enforce the interval.
  * @property scopes The governance write scopes `ostrom login --admin` asks for ([ADMIN_SCOPES]), shown before the
- *   yes; empty for the ordinary sign-in.
+ *   yes (its token also holds their reads, [ADMIN_READ_SCOPES]); empty for the ordinary sign-in.
  * @property approvingOrgId The organization whose owner or admin approved them, which the token is bound to.
+ * @property requestedFrom The network the CLI asked from ([approximateNetwork]), shown before the yes so that an
+ *   approval of someone else's code shows (web audit 2, W3); null when the address was not an IP address, or for a
+ *   request started before the server kept it.
  */
 data class DeviceAuthorization(
     val id: Uuid,
@@ -250,6 +254,7 @@ data class DeviceAuthorization(
     val lastPolledAt: Instant?,
     val scopes: Set<String> = emptySet(),
     val approvingOrgId: Uuid? = null,
+    val requestedFrom: String? = null,
 )
 
 /**

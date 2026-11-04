@@ -186,6 +186,22 @@ class ReceiptsGateSignerTest {
         }
     }
 
+    @Test
+    fun theReceiptNamesTheLaunchAndTheSessionThatAskedFirst() = runTest {
+        val bench = GateBench()
+        val sign = RecordingSign()
+        val decided = bench.answer(bench.open(bench.pushRequest()), "rev-b").gate
+        signer(bench, sign).sign(decided.copy(launchIds = listOf("launch-1", "launch-2"), sessionIds = listOf("s-1")))
+        val named = sign.drafts.last().first
+        assertEquals("launch-1", named.text("launchId"))
+        assertEquals("s-1", named.text("sessionId"))
+
+        signer(bench, sign).sign(decided.copy(launchIds = emptyList(), sessionIds = emptyList()))
+        val bare = sign.drafts.last().first
+        assertFalse("launchId" in bare, "No launch asked: none named")
+        assertFalse("sessionId" in bare, "No session asked: none named")
+    }
+
     private fun vectorGate(gate: Gate, node: GateNode, push: GatePush): Gate =
         gate.copy(
             node = node,

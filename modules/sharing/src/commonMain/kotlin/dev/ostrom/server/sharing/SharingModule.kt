@@ -7,12 +7,18 @@ import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.secrets.domain.CallerResolver
 import dev.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
+import dev.ostrom.server.sharing.domain.AccountGroups
 import dev.ostrom.server.sharing.domain.AccountSpendReader
 import dev.ostrom.server.sharing.domain.AccountTokenCipher
 import dev.ostrom.server.sharing.domain.AccountTokens
 import dev.ostrom.server.sharing.domain.CredentialSecrets
 import dev.ostrom.server.sharing.domain.EnrollSharedAccountUseCase
 import dev.ostrom.server.sharing.domain.EnrollSharedAccountUseCaseImpl
+import dev.ostrom.server.sharing.domain.GroupMembersUseCase
+import dev.ostrom.server.sharing.domain.GroupMembersUseCaseImpl
+import dev.ostrom.server.sharing.domain.GroupRepository
+import dev.ostrom.server.sharing.domain.GroupsUseCase
+import dev.ostrom.server.sharing.domain.GroupsUseCaseImpl
 import dev.ostrom.server.sharing.domain.ListSharedAccountsUseCase
 import dev.ostrom.server.sharing.domain.ListSharedAccountsUseCaseImpl
 import dev.ostrom.server.sharing.domain.MemberNames
@@ -31,13 +37,17 @@ import dev.ostrom.server.sharing.domain.UpdateSharedAccountUseCase
 import dev.ostrom.server.sharing.domain.UpdateSharedAccountUseCaseImpl
 import dev.ostrom.server.sharing.domain.ViewSharedAccountUseCase
 import dev.ostrom.server.sharing.domain.ViewSharedAccountUseCaseImpl
+import dev.ostrom.server.sharing.infrastructure.AccountGroupsImpl
+import dev.ostrom.server.sharing.infrastructure.GroupRepositoryImpl
 import dev.ostrom.server.sharing.infrastructure.HttpOAuthRefresher
 import dev.ostrom.server.sharing.infrastructure.ProviderQuotaHeaderParser
 import dev.ostrom.server.sharing.infrastructure.QuotaWindowRepositoryImpl
 import dev.ostrom.server.sharing.infrastructure.SecretsCredentialSecrets
 import dev.ostrom.server.sharing.infrastructure.SharedAccountRepositoryImpl
 import dev.ostrom.server.sharing.infrastructure.SharingMigrations
+import dev.ostrom.server.sharing.presentation.GroupRoutesDependencies
 import dev.ostrom.server.sharing.presentation.SharingRoutesDependencies
+import dev.ostrom.server.sharing.presentation.groupRoutes
 import dev.ostrom.server.sharing.presentation.sharingRoutes
 import io.ktor.client.HttpClient
 import io.ktor.server.routing.Route
@@ -46,6 +56,7 @@ import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.core.scope.Scope
 import org.koin.dsl.module
+import org.koin.dsl.onClose
 
 /**
  * The sharing module: members pool their personal subscriptions (Claude Pro/Max, ChatGPT for Codex), on by choice of
@@ -63,7 +74,7 @@ object SharingModule : ServerModule {
                 followRedirects = false
                 expectSuccess = false
             }
-        }
+        } onClose { it?.close() } // Its selector holds a thread of Dispatchers.IO until then (StoppedApplicationsTest).
         single<SharedAccountRepository> { SharedAccountRepositoryImpl(get()) }
         single<QuotaWindowRepository> { QuotaWindowRepositoryImpl(get()) }
         single { AccountTokenCipher(get()) }
@@ -72,9 +83,10 @@ object SharingModule : ServerModule {
         }
         single<QuotaHeaderParser> { ProviderQuotaHeaderParser() }
         single { AccountTokens(get(), get(), get(), get(), get()) }
-        single { SharedAccountPool(get(), get(), get(), get(), spend(), get()) }
+        single<AccountGroups> { AccountGroupsImpl(get()) }
+        single { SharedAccountPool(get(), get(), get(), get(), spend(), get(), get()) }
         single<ShareAccountUseCase> { ShareAccountUseCaseImpl(get(), get(), get()) }
-        single { MemberNames(getOrNull<MemberLogins>() ?: NoMemberLogins) }
+        single { MemberNames(logins(), get()) }
         single<ListSharedAccountsUseCase> {
             ListSharedAccountsUseCaseImpl(get(), get(), get(), spend(), get(), get())
         }
@@ -83,6 +95,12 @@ object SharingModule : ServerModule {
         single<CredentialSecrets> { SecretsCredentialSecrets(get(), get()) }
         single<EnrollSharedAccountUseCase> { EnrollSharedAccountUseCaseImpl(get(), get(), get(), get()) }
         single<RemoveSharedAccountUseCase> { RemoveSharedAccountUseCaseImpl(get()) }
+        single<GroupRepository> { GroupRepositoryImpl(get()) }
+        single<GroupsUseCase> { GroupsUseCaseImpl(get(), get(), logins(), get()) }
+        single<GroupMembersUseCase> { GroupMembersUseCaseImpl(get(), logins()) }
+        single {
+            GroupRoutesDependencies(getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get()), get(), get())
+        }
         single {
             SharingRoutesDependencies(
                 getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get()),
@@ -97,6 +115,9 @@ object SharingModule : ServerModule {
         }
     }
 
+    /** The orgs module's logins when it is loaded; none otherwise (people are then named by id). */
+    private fun Scope.logins(): MemberLogins = getOrNull<MemberLogins>() ?: NoMemberLogins
+
     /** The usage ledger's spend per account when the gateway binds it; none otherwise. */
     private fun Scope.spend(): AccountSpendReader = getOrNull<AccountSpendReader>() ?: NoAccountSpendReader()
 
@@ -109,5 +130,6 @@ object SharingModule : ServerModule {
 
     override fun routes(route: Route, koin: Koin) {
         route.sharingRoutes(koin.get())
+        route.groupRoutes(koin.get())
     }
 }

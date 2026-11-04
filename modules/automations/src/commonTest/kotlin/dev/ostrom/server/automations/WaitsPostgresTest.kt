@@ -110,8 +110,34 @@ class WaitsPostgresTest {
         assertEquals(all.drop(1), repository.list(WaitFilter(ORG_A), alone.id, 10))
         assertEquals(listOf(all[1].id), repository.list(open("s1"), null, 10).map { it.id })
         assertEquals(listOf(other.id), repository.list(WaitFilter(ORG_A, involving = "x"), null, 10).map { it.id })
+        assertEquals(listOf(other.id), repository.list(WaitFilter(ORG_A, createdBy = "x"), null, 10).map { it.id })
+        assertEquals(emptyList(), repository.list(WaitFilter(ORG_A, createdBy = ALICE.toString()), null, 10))
         assertEquals(4, repository.list(WaitFilter(ORG_A, assignee = ALICE.toString(), runId = "r1"), null, 10).size)
         assertEquals(emptyList(), repository.list(WaitFilter(ORG_A, assignee = "x"), null, 10))
+    }
+
+    @Test
+    fun aListingNamesTheSessionsItReads() = serverTest(listOf(AutomationsModule)) { server ->
+        val repository = server.koin.get<WaitsRepository>()
+        val first = wait(session = "s-1", at = t0)
+        val reopened = wait(session = "s-1~r2", at = t0 + 1.minutes)
+        val resumed = wait(session = "s-1~r3", at = t0 + 2.minutes)
+        for (wait in listOf(first, reopened, resumed)) {
+            assertEquals(CreateOutcome.CREATED, repository.createWithinLimit(wait, 5))
+        }
+
+        val listed = repository.list(WaitFilter(ORG_A, sessionIds = listOf("s-1", "s-1~r2")), null, 10).map { it.id }
+        assertEquals(listOf(reopened.id, first.id), listed, "Only the sessions named")
+        val one = repository.list(WaitFilter(ORG_A, sessionIds = listOf("s-1~r3")), null, 10).map { it.id }
+        assertEquals(listOf(resumed.id), one)
+        assertEquals(emptyList(), repository.list(WaitFilter(ORG_A, sessionIds = listOf("s-1~r")), null, 10))
+
+        // The limit counts the sessions named with the wait's own: a launch's segments, not another launch's.
+        val launch = listOf("s-1", "s-1~r2")
+        assertEquals(CreateOutcome.AT_LIMIT, repository.createWithinLimit(wait(session = "s-1~r2"), 2, launch))
+        assertEquals(CreateOutcome.AT_LIMIT, repository.createWithinLimit(wait(session = "s-1~r4"), 2, launch))
+        assertEquals(CreateOutcome.CREATED, repository.createWithinLimit(wait(session = "s-1~r4"), 2, listOf("s-1~r4")))
+        assertEquals(CreateOutcome.CREATED, repository.createWithinLimit(wait(session = "s-1~r3"), 2))
     }
 
     private fun open(session: String) = WaitFilter(ORG_A, status = WaitStatus.OPEN, sessionId = session)

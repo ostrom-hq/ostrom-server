@@ -3,6 +3,7 @@ package dev.ostrom.server.workflowruns
 
 import dev.ostrom.core.api.models.CheckRun
 import dev.ostrom.core.api.models.PackageEnvelope
+import dev.ostrom.server.automations.AutomationsModule
 import dev.ostrom.server.compiler.CompilerModule
 import dev.ostrom.server.compiler.domain.models.StoredPackage
 import dev.ostrom.server.compiler.domain.repositories.CompilerRepository
@@ -67,7 +68,7 @@ import kotlin.uuid.Uuid
 class ServiceKeyCiPostgresTest {
     private val modules = listOf(
         InstanceModule, IdentityModule, OrgsModule, ReceiptsModule, GatesModule, SessionsModule, CompilerModule,
-        RunnersModule, LaunchesModule, WorkflowRunsModule,
+        RunnersModule, LaunchesModule, AutomationsModule, WorkflowRunsModule,
     )
     private val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
 

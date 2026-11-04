@@ -85,18 +85,21 @@ functions (the owner, a member of `ostrom_router` to hand the functions over, do
 | `orgs_create_organization(…)` | orgs | inserts an organization and its owner | `OrgsServingRolePostgresTest` |
 | `orgs_claim_holders(claim)` | orgs | reads the live organizations holding a free-plan claim | `OrgsServingRolePostgresTest` |
 | `orgs_find_by_slug(slug)` | orgs | reads a live organization by short name | `OrgsServingRolePostgresTest` |
-| `orgs_slug_taken(slug)` | orgs | whether a short name was ever used | `OrgsServingRolePostgresTest` |
+| `orgs_slug_taken(slug)` | orgs | whether a short name is taken: by a live organization, or a deleted one in its 30 days of grace (an erased one gives it back) | `OrgsServingRolePostgresTest` |
 | `orgs_memberships_of(user)` | orgs | reads a user's memberships and their organizations | `OrgsServingRolePostgresTest` |
 | `orgs_live_invitation(hash, now)` | orgs | reads a live invitation by its token's hash | `OrgsServingRolePostgresTest` |
 | `identity_token_by_hash(hash)` | identity | reads an API token by its hash, to authenticate it | `IdentityTenancyPostgresTest` |
 | `identity_token_touch(id, at)` | identity | notes an API token's last use | `IdentityTenancyPostgresTest` |
 | `identity_revoke_agent_session_tokens(session, at)` | identity | revokes the agent tokens of one agent session | `IdentityTenancyPostgresTest` |
+| `identity_purge_agent_tokens(before)` | identity | deletes the agent tokens expired before the date, never one expired less than 7 days ago; no date, an infinite or a future one is refused | `IdentityTenancyPostgresTest` |
 | `automations_route_org(id)` | automations | an automation's organization, for its webhook | `AutomationsRoutesTenancyPostgresTest` |
 | `automations_due_routes(now, limit)` | automations | claims the due crons of every organization (`FOR UPDATE SKIP LOCKED`) | `AutomationsPostgresTest` |
 | `automations_organizations()` | automations | the organizations that have automations, for the retention jobs | `AutomationsPostgresTest` |
 | `sessions_stale(cutoff, limit)` | sessions | the open sessions of every organization last seen before the cutoff, for the sweep | `SessionsPostgresTest` |
 | `usage_purge(before, limit)` | usage | deletes one batch of events older than the retention | `UsagePostgresTest` |
+| `usage_daily_add()`, `usage_daily_remove()`, `usage_daily_change()`, `usage_daily_clear()` | usage | trigger functions of `usage_events` (no `EXECUTE` grant): keep the daily totals `usage_daily`, which an organization only reads, in the transaction of every write of the ledger | `UsageDailyTotalsPostgresTest` |
 | `mcp_relay_purge(before)` | mcp-relay | deletes the calls older than the retention | `McpRelayPostgresTest` |
+| `launches_purge(before)` | launches | deletes the launches expired before the date, never one expired less than 30 days ago; no date, an infinite or a future one is refused | `LaunchPurgeTest` |
 | `gates_pending_count()` | gates | counts the pending gates (sees `status` alone), for the `ostrom.gates.pending` gauge | `GatesPostgresTest` |
 | `sessions_active_count(since)` | sessions | counts the open sessions of every organization seen since, for `ostrom.sessions.active` | `SessionsPostgresTest` |
 | `artifacts_route_by_id(id)` | artifacts | an artifact's organization by its id, for the content origin | `ArtifactsRoutesTenancyPostgresTest` |
@@ -106,10 +109,22 @@ functions (the owner, a member of `ostrom_router` to hand the functions over, do
 | `runners_claim_due(owner, until, now, limit)` | runners | leases the due sessions of every organization to one reconciler (`FOR UPDATE SKIP LOCKED`) | `CloudSessionsPostgresTest` |
 | `runners_release(id, owner, has_next, next_at)` | runners | ends a reconciler's lease, keeping a look asked for meanwhile | `CloudSessionsPostgresTest` |
 | `runners_registered_key(id)` | runners | a registered runner's organization and key hash, for its heartbeat | `RegisteredRunnersHeartbeatPostgresTest` |
+| `workflow_runs_claim_due(owner, until, now, limit)` | workflow-runs | leases the runs of workflows due now, of every organization, to one engine replica (`FOR UPDATE SKIP LOCKED`); everything else of a run is read and written in its organization | `RunEnginePostgresTest` |
 | `billing_customer_org(customer)` | billing | an organization by its Stripe customer, for the webhook | `BillingPostgresTest` |
 | `billing_claim_due_tasks(now, lease, limit)` | billing | leases the due outbox tasks of every organization (`FOR UPDATE SKIP LOCKED`) | `BillingPostgresTest` |
 | `billing_complete_task(id, at)`, `billing_fail_task(id, retry)` | billing | ends or retries an outbox task | `BillingPostgresTest` |
 | `governance_expired_organizations(now, limit)` | governance | the organizations with confirmations past their 15 minutes, for the sweep | `GovernancePostgresTest` |
+
+One function is not the router's: the member search, `orgs_search_members(org, prefix, after, limit)` (orgs, version
+7; `MemberSearchPostgresTest`). It is owned by **`ostrom_member_search`** (`NOLOGIN`, no RLS bypass) and run by
+`ostrom_tenant` alone, inside a request's transaction. It reads three columns of `identity_users`, `id`, `login` and `display_name` (no e-mail, a column grant) and the members
+of one organization through a policy of its own bound to `ostrom.org_id` and to `current_user`; it refuses any other
+organization than the session's, and a session without one. It returns member ids only, in order and paged, under the
+`text_pattern_ops` indexes of `lower(login)` and `lower(display_name)`. Roles are global to the cluster. On a new cluster the
+migration creates the role itself (the owner has `CREATEROLE`, and administers the roles it creates), which is how
+`ci/database-roles.sql` and the Helm chart of main run it; a role created before by another role must be
+administered by the owner (`GRANT ostrom_member_search TO <owner> WITH ADMIN OPTION`, as the tests' `TestDatabase`
+and ostrom-helm#42 do), or the migration stops on `permission denied to grant role`, before any grant or function.
 
 ## The audit log is append-only
 

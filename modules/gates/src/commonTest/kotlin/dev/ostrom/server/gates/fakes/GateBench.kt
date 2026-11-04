@@ -31,6 +31,7 @@ class GateBench {
     val sessions = FakeSessions()
     // The prototype's tests model an organization that chose `sole-approver`; one that never chose is `never`.
     val policies = FakePolicies(SelfApprovalPolicy.SOLE_APPROVER)
+    val gitHub = FakeGitHubAccounts()
     val notifier = FakeNotifier()
     val signer = FakeSigner()
     val clock = SettableClock()
@@ -40,13 +41,14 @@ class GateBench {
     val proofs = FakeCheckProofs()
     val open = OpenGateUseCaseImpl(repository, sessions, policies, notifier, IdentityDigester(), clock, needs, proofs)
     val changes = InProcessGateChanges()
-    val answer = AnswerGateUseCaseImpl(repository, policies, receipts, notifier, clock, changes)
-    val use = UseGateUseCaseImpl(repository, receipts, clock)
+    val unlocks = FakePhoneUnlocks(clock)
+    val answer = AnswerGateUseCaseImpl(repository, policies, receipts, notifier, clock, changes, gitHub, unlocks)
+    val use = UseGateUseCaseImpl(repository, receipts, clock, sessions)
     val get = GetGateUseCaseImpl(repository, policies, receipts, changes)
     val approvals = ListApprovalsUseCaseImpl(repository)
     val approval = GetApprovalUseCaseImpl(repository)
-    val queue = GetApprovalQueueUseCaseImpl(repository, policies)
-    val view = GetApprovalViewUseCaseImpl(repository, policies)
+    val queue = GetApprovalQueueUseCaseImpl(repository, policies, gitHub)
+    val view = GetApprovalViewUseCaseImpl(repository, policies, gitHub)
 
     /** The gate node "Merge into main" of the workflow `ship`. */
     fun node(vararg approvers: String, enforced: Boolean = true) =

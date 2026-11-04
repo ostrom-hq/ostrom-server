@@ -7,8 +7,8 @@ import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
-/** Whose monthly limit: the whole org's, or one member's. */
-enum class SpendScope { ORG, MEMBER }
+/** Whose limit: the whole org's, one member's, or one workflow's (the calls of the launches that play it). */
+enum class SpendScope { ORG, MEMBER, WORKFLOW }
 
 /**
  * What a model call may cost at most, held against the limits until its cost is in the ledger.
@@ -17,8 +17,15 @@ enum class SpendScope { ORG, MEMBER }
  * @property memberId The member.
  * @property callId The call: the id of its ledger event, which settles the hold ([UsageRecorder.settle]).
  * @property micros USD millionths.
+ * @property workflowId The workflow the call's launch plays, or null: its hold counts against that workflow's limits.
  */
-data class SpendHold(val orgId: Uuid, val memberId: Uuid, val callId: Uuid, val micros: Long)
+data class SpendHold(
+    val orgId: Uuid,
+    val memberId: Uuid,
+    val callId: Uuid,
+    val micros: Long,
+    val workflowId: String? = null,
+)
 
 /**
  * What is spent and held when a call asks to spend, other calls only (a call asking again does not count its own hold).
@@ -27,12 +34,22 @@ data class SpendHold(val orgId: Uuid, val memberId: Uuid, val callId: Uuid, val 
  * @property orgHeld What the org's calls in flight hold.
  * @property memberSpent The member's spend this month.
  * @property memberHeld What the member's calls in flight hold.
+ * @property orgDaySpent The org's spend today (UTC), read only for a daily limit.
+ * @property memberDaySpent The member's spend today (UTC), read only for a daily limit.
+ * @property workflowSpent The workflow's spend this month.
+ * @property workflowHeld What the workflow's calls in flight hold.
+ * @property workflowDaySpent The workflow's spend today (UTC), read only for a daily limit.
  */
 data class SpendTotals(
     val orgSpent: Long = 0,
     val orgHeld: Long = 0,
     val memberSpent: Long = 0,
     val memberHeld: Long = 0,
+    val orgDaySpent: Long = 0,
+    val memberDaySpent: Long = 0,
+    val workflowSpent: Long = 0,
+    val workflowHeld: Long = 0,
+    val workflowDaySpent: Long = 0,
 )
 
 /** The answer to a call asking to spend. */
@@ -41,12 +58,13 @@ sealed interface Admission {
     data object Admitted : Admission
 
     /**
-     * A limit is reached: nothing more this month.
+     * A limit is reached: nothing more this month, or today for a daily limit.
      *
      * @property scope Which.
      * @property limitMicros Its value.
+     * @property daily Whether it is a daily limit.
      */
-    data class Exhausted(val scope: SpendScope, val limitMicros: Long) : Admission
+    data class Exhausted(val scope: SpendScope, val limitMicros: Long, val daily: Boolean = false) : Admission
 
     /**
      * What is left of a limit, once the calls in flight are counted, does not cover this call.
@@ -54,43 +72,98 @@ sealed interface Admission {
      * @property scope Which.
      * @property limitMicros Its value.
      * @property availableMicros What is left of it, never below 0.
+     * @property daily Whether it is a daily limit.
      */
-    data class Insufficient(val scope: SpendScope, val limitMicros: Long, val availableMicros: Long) : Admission
+    data class Insufficient(
+        val scope: SpendScope,
+        val limitMicros: Long,
+        val availableMicros: Long,
+        val daily: Boolean = false,
+    ) : Admission
 }
 
 /**
- * The monthly limits that apply to a call; null means none.
+ * The daily limits that apply to a call, counted from the start of the UTC day; at least one is set.
  *
+ * @property since The start of the day.
  * @property orgMicros The org's.
  * @property memberMicros The member's.
+ * @property workflowMicros The workflow's.
  */
-data class SpendLimits(val orgMicros: Long?, val memberMicros: Long?) {
+data class DailySpendLimits(
+    val since: Instant,
+    val orgMicros: Long?,
+    val memberMicros: Long?,
+    val workflowMicros: Long? = null,
+)
+
+/**
+ * The limits that apply to a call; null means none.
+ *
+ * @property orgMicros The org's monthly limit.
+ * @property memberMicros The member's monthly limit.
+ * @property daily The daily limits, null when there is none.
+ * @property workflowMicros The monthly limit of the workflow the call's launch plays.
+ */
+data class SpendLimits(
+    val orgMicros: Long?,
+    val memberMicros: Long?,
+    val daily: DailySpendLimits? = null,
+    val workflowMicros: Long? = null,
+) {
     /** Whether a limit applies at all. */
-    val any: Boolean get() = orgMicros != null || memberMicros != null
+    val any: Boolean get() = orgMicros != null || memberMicros != null || daily != null || workflowMicros != null
 
     /**
      * The rule: a limit is reached when what is spent meets it; a call goes only when what is spent, what the other
      * calls in flight hold and its own reserve stay within every limit. So the calls admitted never hold more than a
-     * limit leaves, however many ask at once. A reached limit answers first, the org's before the member's.
+     * limit leaves, however many ask at once. A reached limit answers first, the org's before the member's and the
+     * member's before the workflow's, the month's before the day's; the calls in flight count against the day as
+     * against the month.
      *
      * @param totals What is spent and held.
      * @param reserveMicros What the call may cost.
      *
      * @return The answer.
      */
-    fun admit(totals: SpendTotals, reserveMicros: Long): Admission =
-        reached(SpendScope.ORG, orgMicros, totals.orgSpent)
-            ?: reached(SpendScope.MEMBER, memberMicros, totals.memberSpent)
-            ?: short(SpendScope.ORG, orgMicros, totals.orgSpent + totals.orgHeld, reserveMicros)
-            ?: short(SpendScope.MEMBER, memberMicros, totals.memberSpent + totals.memberHeld, reserveMicros)
+    fun admit(totals: SpendTotals, reserveMicros: Long): Admission {
+        val sides = listOf(
+            Side(SpendScope.ORG, orgMicros, daily?.orgMicros, totals.orgSpent, totals.orgDaySpent, totals.orgHeld),
+            Side(
+                SpendScope.MEMBER, memberMicros, daily?.memberMicros,
+                totals.memberSpent, totals.memberDaySpent, totals.memberHeld,
+            ),
+            Side(
+                SpendScope.WORKFLOW, workflowMicros, daily?.workflowMicros,
+                totals.workflowSpent, totals.workflowDaySpent, totals.workflowHeld,
+            ),
+        )
+        return sides.firstNotNullOfOrNull { it.reached() }
+            ?: sides.firstNotNullOfOrNull { it.short(reserveMicros) }
             ?: Admission.Admitted
+    }
 
-    private fun reached(scope: SpendScope, limit: Long?, spent: Long): Admission? =
-        limit?.takeIf { spent >= it }?.let { Admission.Exhausted(scope, it) }
+    /** One subject's limits and sums: its month and its day, and what its calls in flight hold against both. */
+    private class Side(
+        val scope: SpendScope,
+        val month: Long?,
+        val day: Long?,
+        val spent: Long,
+        val daySpent: Long,
+        val held: Long,
+    ) {
+        fun reached(): Admission? = reached(month, spent, false) ?: reached(day, daySpent, true)
 
-    private fun short(scope: SpendScope, limit: Long?, committed: Long, reserve: Long): Admission? =
-        limit?.takeIf { committed + reserve > it }
-            ?.let { Admission.Insufficient(scope, it, (it - committed).coerceAtLeast(0)) }
+        fun short(reserve: Long): Admission? = short(month, spent + held, reserve, false)
+            ?: short(day, daySpent + held, reserve, true)
+
+        private fun reached(limit: Long?, sum: Long, daily: Boolean): Admission? =
+            limit?.takeIf { sum >= it }?.let { Admission.Exhausted(scope, it, daily) }
+
+        private fun short(limit: Long?, committed: Long, reserve: Long, daily: Boolean): Admission? =
+            limit?.takeIf { committed + reserve > it }
+                ?.let { Admission.Insufficient(scope, it, (it - committed).coerceAtLeast(0), daily) }
+    }
 }
 
 /** Admits a model call against the limits, on the ledger and the holds. Bound in Koin by the usage module. */
@@ -100,7 +173,7 @@ interface SpendAdmission {
      *
      * @param hold The call and its reserve.
      * @param limits The limits that apply.
-     * @param since The start of the month the limits count.
+     * @param since The start of the month the monthly limits count (the daily ones carry their day).
      *
      * @return The answer.
      */

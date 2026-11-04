@@ -1,13 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.budgets
 
+import dev.ostrom.server.budgets.domain.BUDGETS_ACTOR
+import dev.ostrom.server.budgets.domain.AuditedBudgetAlerts
+import dev.ostrom.server.budgets.domain.BudgetAction
 import dev.ostrom.server.budgets.domain.BudgetAlert
 import dev.ostrom.server.budgets.domain.BudgetCacheSettings
 import dev.ostrom.server.budgets.domain.BudgetDecision
 import dev.ostrom.server.budgets.domain.BudgetGuardImpl
+import dev.ostrom.server.budgets.domain.BudgetLimit
 import dev.ostrom.server.budgets.domain.BudgetPeriod
 import dev.ostrom.server.budgets.domain.BudgetScope
+import dev.ostrom.server.budgets.domain.BudgetTarget
+import dev.ostrom.server.budgets.domain.BudgetWindow
 import dev.ostrom.server.budgets.domain.MemberBudget
+import dev.ostrom.server.budgets.domain.monthlyMicros
+import dev.ostrom.server.kernel.audit.OrgAuditRecord
+import dev.ostrom.server.kernel.audit.OrgAuditTrail
 import dev.ostrom.server.kernel.logging.LogLevel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
@@ -105,6 +114,44 @@ class BudgetGuardTest {
 
         assertEquals(BudgetDecision.Exhausted(BudgetScope.MEMBER, 0, TestCallers.nextMonth), guard.check(orgA, member))
         assertEquals(emptyList(), alerts.alerts)
+    }
+
+    @Test
+    fun aZeroLimitThatWarnsAlertsAndIsAuditedFromTheFirstCent() = runTest {
+        val audit = mutableListOf<OrgAuditRecord>()
+        val audited = AuditedBudgetAlerts(alerts, OrgAuditTrail { audit += it })
+        val guard = BudgetGuardImpl(repository, spend, audited, clock, logger)
+        repository.otherLimits[orgA to BudgetTarget.Org] = listOf(BudgetLimit(0, action = BudgetAction.WARN))
+        assertEquals(BudgetDecision.Allowed(null), guard.check(orgA, member), "A limit that warns never refuses")
+        assertEquals(emptyList(), alerts.alerts, "Nothing spent, nothing to say")
+
+        spend.spent[orgA to null] = 10_000
+        clock.advance(5.seconds)
+        assertEquals(BudgetDecision.Allowed(null), guard.check(orgA, member))
+        assertEquals(listOf(80, 100), alerts.alerts.map { it.thresholdPercent }, "The first cent is past nothing")
+        assertEquals(listOf("0", "0.01"), audit.single().details.let { listOf(it["limit_usd"], it["spent_usd"]) })
+    }
+
+    @Test
+    fun aZeroLimitThatStopsAlertsWhatGotPastIt() = runTest {
+        overrideMember(0)
+        spend.spent[orgA to member] = 10_000
+
+        assertEquals(BudgetDecision.Exhausted(BudgetScope.MEMBER, 0, TestCallers.nextMonth), guard.check(orgA, member))
+        assertEquals(listOf(80, 100), alerts.alerts.map { it.thresholdPercent })
+        assertEquals(listOf(10_000L, 10_000L), alerts.alerts.map { it.spentMicros })
+    }
+
+    @Test
+    fun aLimitOfOneMillionthSaysNothingWhileNothingIsSpent() = runTest {
+        overrideMember(1)
+        assertEquals(BudgetDecision.Allowed(1), guard.check(orgA, member))
+        assertEquals(emptyList(), alerts.alerts, "80 % of one millionth rounds to 0, which nothing spent is not past")
+
+        spend.spent[orgA to member] = 1
+        clock.advance(5.seconds)
+        guard.check(orgA, member)
+        assertEquals(listOf(80, 100), alerts.alerts.map { it.thresholdPercent })
     }
 
     @Test
@@ -361,6 +408,126 @@ class BudgetGuardTest {
         // that reads the database instead of the cache takes milliseconds, two orders of magnitude above.
         assertTrue(elapsed < 200.milliseconds, "10 000 cached checks took $elapsed")
         assertEquals(1, repository.limitReads)
+    }
+
+    @Test
+    fun aDailyLimitThatStopsRefusesUntilTomorrowAndTheNearestLimitIsLeft() = runTest {
+        val today = Instant.parse("2026-10-30T00:00:00Z")
+        val tomorrow = Instant.parse("2026-10-31T00:00:00Z")
+        repository.defaultLimits[orgA] = 10_000
+        repository.otherLimits[orgA to BudgetTarget.DefaultMember] = listOf(BudgetLimit(1_000, BudgetWindow.DAY))
+        spend.spent[orgA to member] = 600
+        assertEquals(BudgetDecision.Allowed(400), guard.check(orgA, member), "The day leaves 400, the month 9 400")
+        assertEquals(listOf(TestCallers.monthStart, today), spend.sinces)
+
+        spend.spent[orgA to member] = 1_000
+        clock.advance(5.seconds)
+        assertEquals(
+            BudgetDecision.Exhausted(BudgetScope.MEMBER, 1_000, tomorrow, BudgetWindow.DAY),
+            guard.check(orgA, member),
+        )
+        assertEquals(today, alerts.alerts.last().periodStart)
+        assertEquals(BudgetWindow.DAY, alerts.alerts.last().window)
+    }
+
+    @Test
+    fun aLimitThatWarnsNeverRefusesAndIsAuditedOnceReached() = runTest {
+        val audit = mutableListOf<OrgAuditRecord>()
+        val audited = AuditedBudgetAlerts(alerts, OrgAuditTrail { audit += it })
+        val guard = BudgetGuardImpl(repository, spend, audited, clock, logger)
+        repository.otherLimits[orgA to BudgetTarget.Org] = listOf(BudgetLimit(1_000, action = BudgetAction.WARN))
+        spend.spent[orgA to null] = 900
+        assertEquals(BudgetDecision.Allowed(null), guard.check(orgA, member), "No limit that stops")
+        assertEquals(emptyList(), audit, "80 % is only an alert")
+
+        spend.spent[orgA to null] = 1_500
+        clock.advance(5.seconds)
+        assertEquals(BudgetDecision.Allowed(null), guard.check(orgA, member), "Past it, the call still goes")
+        clock.advance(5.seconds)
+        guard.check(orgA, admin)
+        val line = audit.single()
+        assertEquals(BUDGETS_ACTOR, line.actor)
+        assertEquals("budget.exceeded" to "organization", line.event to line.subjectId)
+        assertEquals(
+            mapOf(
+                "scope" to "organization", "period" to "month", "action" to "warn", "limit_usd" to "0.001",
+                "spent_usd" to "0.0015", "period_start" to "2026-10-01T00:00:00Z",
+            ),
+            line.details,
+        )
+        assertEquals(listOf(BudgetAction.WARN, BudgetAction.WARN), alerts.alerts.map { it.action })
+
+        // A limit that stops, reached, is refused by the gateway: no audit line.
+        audited.publish(alerts.alerts.last().copy(action = BudgetAction.BLOCK))
+        assertEquals(1, audit.size)
+    }
+
+    @Test
+    fun aWorkflowsLimitsApplyToTheCallsOfItsLaunchesOnlyAndAreAuditedUnderIt() = runTest {
+        val audit = mutableListOf<OrgAuditRecord>()
+        val audited = AuditedBudgetAlerts(alerts, OrgAuditTrail { audit += it })
+        val guard = BudgetGuardImpl(repository, spend, audited, clock, logger)
+        repository.otherLimits[orgA to BudgetTarget.Workflow("review")] = listOf(BudgetLimit(2_000))
+        repository.otherLimits[orgA to BudgetTarget.Workflow("nightly")] =
+            listOf(BudgetLimit(1_000, BudgetWindow.DAY, BudgetAction.WARN))
+        spend.workflowSpent[orgA to "review"] = 2_000
+        spend.workflowSpent[orgA to "nightly"] = 1_000
+        spend.workflowSpent[TestCallers.orgB to "review"] = 0
+
+        assertEquals(BudgetDecision.Allowed(null), guard.check(orgA, member), "A call that plays no workflow")
+        assertEquals(emptyList(), spend.workflowReads, "Its workflows' spend is not read")
+        assertEquals(
+            BudgetDecision.Exhausted(BudgetScope.WORKFLOW, 2_000, TestCallers.nextMonth),
+            guard.check(orgA, member, "review"),
+        )
+        assertEquals(listOf(orgA to "review"), spend.workflowReads, "Read for its own workflow")
+        assertEquals(
+            BudgetDecision.Allowed(null),
+            guard.check(TestCallers.orgB, TestCallers.adminB.memberId, "review"),
+            "Org B's workflow of the same id has no limit",
+        )
+        val reached = alerts.alerts.last()
+        assertEquals(
+            listOf(BudgetScope.WORKFLOW, null, "review"),
+            listOf(reached.scope, reached.memberId, reached.workflowId),
+        )
+        assertEquals(emptyList(), audit, "A workflow budget that stops is refused, not audited")
+
+        assertEquals(BudgetDecision.Allowed(null), guard.check(orgA, member, "nightly"), "One that warns lets it go")
+        val line = audit.single()
+        assertEquals("budget.exceeded" to "nightly", line.event to line.subjectId)
+        assertEquals(listOf("workflow", "day", "warn"), listOf("scope", "period", "action").map { line.details[it] })
+    }
+
+    @Test
+    fun anOverrunTheAuditLogCannotWriteIsNotSentEitherAndIsTriedAgainLater() = runTest {
+        var down = true
+        val audit = mutableListOf<OrgAuditRecord>()
+        val audited = AuditedBudgetAlerts(alerts, OrgAuditTrail { if (down) error("audit log down") else audit += it })
+        val guard = BudgetGuardImpl(repository, spend, audited, clock, logger)
+        repository.otherLimits[orgA to BudgetTarget.Org] = listOf(BudgetLimit(1_000, action = BudgetAction.WARN))
+        spend.spent[orgA to null] = 1_000
+        assertEquals(BudgetDecision.Allowed(null), guard.check(orgA, member))
+        assertEquals(emptyList(), alerts.alerts.filter { it.thresholdPercent == 100 }, "Nothing sent without its line")
+
+        down = false
+        clock.advance(5.seconds)
+        guard.check(orgA, member)
+        assertEquals("0.001", audit.single().details["limit_usd"])
+        assertEquals(1, alerts.alerts.count { it.thresholdPercent == 100 })
+
+        // A member's daily limit that warns is written under the member.
+        val daily = BudgetAlert(
+            orgA, member, BudgetScope.MEMBER, 100, 2_000_000, 2_500_000, TestCallers.monthStart,
+            BudgetWindow.DAY, BudgetAction.WARN,
+        )
+        audited.publish(daily)
+        val line = audit.last()
+        assertEquals(member.toString(), line.subjectId)
+        assertEquals(listOf("member", "day", "2", "2.5"), listOf("scope", "period", "limit_usd", "spent_usd").map {
+            line.details[it]
+        })
+        assertEquals(null, listOf(BudgetLimit(1, BudgetWindow.DAY)).monthlyMicros(), "No monthly amount")
     }
 
     @Test

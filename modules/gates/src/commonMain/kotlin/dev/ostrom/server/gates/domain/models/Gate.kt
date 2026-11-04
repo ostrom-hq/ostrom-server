@@ -38,6 +38,9 @@ import kotlin.uuid.Uuid
  * @property consumedAt When the action ran and the yes was used up.
  * @property releasedAt When its reservation was given back, the action not run: a yes is released once.
  * @property createdAt When the gate was opened.
+ * @property unlinkedAuthor The GitHub account id of a pull request's author whom no Ostrom person had linked when the
+ *   gate opened: under the `never` self-approval policy, only an approver who linked another GitHub account says yes
+ *   (Q-GATES-G1).
  */
 data class Gate(
     val id: Uuid,
@@ -63,6 +66,7 @@ data class Gate(
     val consumedAt: Instant? = null,
     val releasedAt: Instant? = null,
     val createdAt: Instant,
+    val unlinkedAuthor: Long? = null,
 ) {
     /**
      * Whether an approved yes outlived [YES_LIFETIME] without being reserved (SECURITY-AUDIT S2-29): it no longer
@@ -163,8 +167,8 @@ enum class GateStatus {
     UNGATED,
 }
 
-/** The path that asked for a gate. */
-enum class AskedVia { HOOK, CI, MCP }
+/** The path that asked for a gate: a workstation's hook, a GitHub check, the MCP, or a gate node of a server's run. */
+enum class AskedVia { HOOK, CI, MCP, WORKFLOW }
 
 /** Whether the person who asked may approve their own action. */
 enum class SelfApprovalPolicy {

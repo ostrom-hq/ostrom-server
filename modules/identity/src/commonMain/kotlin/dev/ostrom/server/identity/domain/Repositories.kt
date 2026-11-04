@@ -102,6 +102,7 @@ interface UsersRepository {
      * @return The issuers ([VerifiedIdentity.issuer]), sorted.
      */
     suspend fun listIssuers(userId: Uuid): List<String>
+
 }
 
 /** Browser sessions. */
@@ -266,6 +267,15 @@ interface ApiTokensRepository {
      * @return How many tokens were revoked.
      */
     suspend fun revokeOfAgentSession(agentSessionId: String, at: Instant): Long
+
+    /**
+     * Deletes the agent tokens expired before [before], of every organization: revoked or not, none acts any more.
+     *
+     * @param before The expiry before which an agent token is deleted.
+     *
+     * @return How many were deleted.
+     */
+    suspend fun purgeAgentTokens(before: Instant): Long
 }
 
 /**
@@ -433,4 +443,17 @@ interface AuditRepository {
      * @return The events.
      */
     suspend fun listOrg(orgId: Uuid, query: OrgAuditQuery): List<AuditEvent>
+}
+
+/** The accounts people linked at sign-in providers, by person. */
+fun interface LinkedIdentities {
+    /**
+     * Lists the accounts a user linked at one provider (the GitHub account ids of an approver, Q-GATES-G1).
+     *
+     * @param login The user's login, any case.
+     * @param issuer The provider ([VerifiedIdentity.issuer]).
+     *
+     * @return The subjects, sorted; empty when the user linked none or does not exist.
+     */
+    suspend fun subjectsOf(login: String, issuer: String): List<String>
 }

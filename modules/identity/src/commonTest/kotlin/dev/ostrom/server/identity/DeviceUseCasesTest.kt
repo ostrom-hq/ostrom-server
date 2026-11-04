@@ -2,6 +2,7 @@
 
 package dev.ostrom.server.identity
 
+import dev.ostrom.server.identity.domain.ADMIN_READ_SCOPES
 import dev.ostrom.server.identity.domain.ADMIN_SCOPES
 import dev.ostrom.server.identity.domain.AdminApprovalForbiddenException
 import dev.ostrom.server.identity.domain.AnswerDeviceAuthorizationUseCaseImpl
@@ -16,6 +17,7 @@ import dev.ostrom.server.identity.domain.InvalidScopesException
 import dev.ostrom.server.identity.domain.PollDeviceAuthorizationUseCaseImpl
 import dev.ostrom.server.identity.domain.RateLimitedException
 import dev.ostrom.server.identity.domain.StartDeviceAuthorizationUseCaseImpl
+import dev.ostrom.server.identity.domain.approximateNetwork
 import dev.ostrom.server.identity.domain.TokenKind
 import dev.ostrom.server.identity.domain.normalizeUserCode
 import dev.ostrom.server.identity.fakes.CountingSecretGenerator
@@ -72,10 +74,11 @@ class DeviceUseCasesTest {
         assertEquals(CLI_SCOPES, approved.token.token.scopes)
         // S2-04: the CLI token can neither answer a gate nor edit a workflow (an agent on the machine can read it);
         // it reads its organization's receipts (`ostrom receipts`, `verify`), approvals and gates (`ostrom inbox`,
-        // `ostrom logs`), MCP servers (`ostrom claude`) and rules (`ostrom init`, `ostrom rules list`), writing none.
+        // `ostrom logs`), MCP servers (`ostrom claude`) and rules (`ostrom init`, `ostrom rules list`), writing none;
+        // it starts, stops and attaches to its person's cloud sessions (`ostrom claude --cloud`, `ostrom attach`).
         val expected = setOf(
             "profile:read", "orgs:read", "workflows:read", "sessions:write", "receipts:read", "gates:read", "mcp:read",
-            "rules:read",
+            "rules:read", "cloud:write",
         )
         assertEquals(expected, approved.token.token.scopes)
         assertEquals("osc_secret2", approved.token.secret)
@@ -181,7 +184,7 @@ class DeviceUseCasesTest {
         assertEquals(TokenKind.ADMIN, token.kind)
         assertEquals("osg_secret2", approved.token.secret)
         assertEquals(orgId, token.orgId)
-        assertEquals(CLI_SCOPES + ADMIN_SCOPES, token.scopes)
+        assertEquals(CLI_SCOPES + ADMIN_SCOPES + ADMIN_READ_SCOPES, token.scopes)
         assertEquals(clock.now + 8.hours, token.expiresAt)
         val created = audit.entries.last()
         assertEquals(orgId, created.orgId)
@@ -207,6 +210,24 @@ class DeviceUseCasesTest {
         }
 
         assertFailsWith<IllegalStateException> { poll("secret1") }
+    }
+
+    @Test
+    fun aLoginKeepsTheNetworkItWasAskedFromNeverTheAddress() = runTest {
+        // Web audit 2, W3: the console shows where the request came from, so a yes to someone else's code shows.
+        assertEquals("203.0.113.0/24", start("laptop", "203.0.113.77").authorization.requestedFrom)
+        assertEquals("203.0.113.0/24", get(userId, "BCDF-GHJK").requestedFrom)
+        assertEquals("2001:db8:abcd::/48", start("laptop", "2001:db8:abcd:12::7").authorization.requestedFrom)
+        assertNull(start("laptop", "localhost").authorization.requestedFrom, "Not an IP address: nothing to show")
+    }
+
+    @Test
+    fun anAddressIsShownAsItsSiteNetwork() {
+        assertEquals("198.51.100.0/24", approximateNetwork("198.51.100.200"))
+        assertEquals("192.0.2.0/24", approximateNetwork("::ffff:192.0.2.9"))
+        assertEquals("2001:db8:1::/48", approximateNetwork("[2001:db8:1:ffff:1:2:3:4]"))
+        assertEquals("::/48", approximateNetwork("::1"))
+        assertNull(approximateNetwork("ci.example.com"))
     }
 
     @Test

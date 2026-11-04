@@ -4,10 +4,14 @@ package dev.ostrom.server.runners
 import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.runners.domain.AgentKind
 import dev.ostrom.server.runners.domain.CloudPlan
+import dev.ostrom.server.runners.domain.ExecutionPlan
 import dev.ostrom.server.runners.domain.ExecutionSpec
 import dev.ostrom.server.runners.domain.ExecutionStatus
 import dev.ostrom.server.runners.fakes.FakeApi
+import dev.ostrom.server.runners.fakes.FakeRunnerWorkSignals
+import dev.ostrom.server.runners.fakes.InMemoryRunnerAssignments
 import dev.ostrom.server.runners.fakes.ORG_A
+import dev.ostrom.server.runners.fakes.SettableClock
 import dev.ostrom.server.runners.fakes.session
 import dev.ostrom.server.runners.infrastructure.DisabledRuntimeDriver
 import dev.ostrom.server.runners.infrastructure.DockerApiException
@@ -15,6 +19,7 @@ import dev.ostrom.server.runners.infrastructure.DockerExecutionPlan
 import dev.ostrom.server.runners.infrastructure.DockerRuntimeDriver
 import dev.ostrom.server.runners.infrastructure.DockerSettings
 import dev.ostrom.server.runners.infrastructure.KubernetesRuntimeDriver
+import dev.ostrom.server.runners.infrastructure.RegisteredRuntimeDriver
 import dev.ostrom.server.runners.infrastructure.RunnersConfig
 import dev.ostrom.server.runners.infrastructure.RuntimeDrivers
 import io.ktor.http.HttpStatusCode
@@ -60,6 +65,12 @@ class DockerRuntimeDriverTest {
     )
 
     private fun body(index: Int): JsonObject = Json.parseToJsonElement(api.calls[index].body!!).jsonObject
+
+    @Test
+    fun aSessionOnThisDockerNamesNoRegisteredRunner() = runTest {
+        assertNull(driver.holder(session))
+        assertTrue(api.lines().isEmpty(), "Nothing asked of the engine")
+    }
 
     @Test
     fun aWorkspaceIsANamedVolumeWithItsSocketVolumes() = runTest {
@@ -177,7 +188,8 @@ class DockerRuntimeDriverTest {
         val env = kept.last().body["Env"]!!.jsonArray.map { it.jsonPrimitive.content }
         assertFalse(env.any { it.startsWith("OSTROM_RUNNER_TOKEN") || it.startsWith("OSTROM_AGENT_PROMPT") })
         assertTrue("OSTROM_SESSION_ID=${session.id}" in env)
-        assertEquals("DockerObject(name=$name)", plan.containers(spec).last().toString())
+        assertEquals("PlannedObject(name=$name)", plan.containers(spec).last().toString())
+        assertEquals(ExecutionPlan(plan.volumes(session.id), plan.containers(spec)), plan.plan(spec))
     }
 
     @Test
@@ -312,16 +324,23 @@ class DockerRuntimeDriverTest {
 
     @Test
     fun theConfigurationChoosesTheDriver() {
+        val registered = RegisteredRuntimeDriver(InMemoryRunnerAssignments(), SettableClock(), FakeRunnerWorkSignals())
         val none = RunnersConfig.from(MapConfigSource(emptyMap()))
-        assertIs<DisabledRuntimeDriver>(RuntimeDrivers.create(none))
+        assertIs<DisabledRuntimeDriver>(RuntimeDrivers.create(none, { registered }))
         val kubernetes = RunnersConfig.from(
             MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "kubernetes", "OSTROM_RUNNERS_SERVER_URL" to "http://s")),
         )
-        assertIs<KubernetesRuntimeDriver>(RuntimeDrivers.create(kubernetes) { "token" })
+        assertIs<KubernetesRuntimeDriver>(RuntimeDrivers.create(kubernetes, { registered }) { "token" })
         val docker = RunnersConfig.from(
             MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "docker", "OSTROM_RUNNERS_SERVER_URL" to "http://s")),
         )
-        assertIs<DockerRuntimeDriver>(RuntimeDrivers.create(docker))
+        assertIs<DockerRuntimeDriver>(RuntimeDrivers.create(docker, { registered }))
+        val machines = RunnersConfig.from(
+            MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "Registered", "OSTROM_RUNNERS_SERVER_URL" to "http://s")),
+        )
+        assertEquals(registered, RuntimeDrivers.create(machines, { registered }))
+        assertEquals("registered", machines.runtimeLabel)
+        assertFalse(RuntimeDrivers.create(docker, { registered }).relocates, "Only registered runners move")
     }
 
     @Test

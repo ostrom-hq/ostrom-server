@@ -10,6 +10,7 @@ import dev.ostrom.server.gates.domain.services.GateCheckProofs
 import dev.ostrom.server.gates.domain.services.GateChanges
 import dev.ostrom.server.gates.domain.services.GateChannel
 import dev.ostrom.server.gates.domain.services.GateDigester
+import dev.ostrom.server.gates.domain.services.GateGitHubAccounts
 import dev.ostrom.server.gates.domain.services.GateNodeResolver
 import dev.ostrom.server.gates.domain.services.GateNotifier
 import dev.ostrom.server.gates.domain.services.GatePolicies
@@ -47,6 +48,7 @@ import dev.ostrom.server.gates.infrastructure.NoCiChecks
 import dev.ostrom.server.gates.infrastructure.NoGateActors
 import dev.ostrom.server.gates.infrastructure.NoGateCheckNeeds
 import dev.ostrom.server.gates.infrastructure.NoGateCheckProofs
+import dev.ostrom.server.gates.infrastructure.NoGateGitHubAccounts
 import dev.ostrom.server.gates.infrastructure.NoGateNodes
 import dev.ostrom.server.gates.infrastructure.PendingGatesCount
 import dev.ostrom.server.gates.infrastructure.PostgresGatesRepository
@@ -86,13 +88,13 @@ object GatesModule : ServerModule {
         single<OpenGateUseCase> { OpenGateUseCaseImpl(get(), get(), get(), get(), get(), get(), get(), get()) }
         single<AskGateUseCase> { AskGateUseCaseImpl(get(), get(), get(), get()) }
         single<GateChanges> { InProcessGateChanges() }
-        single<AnswerGateUseCase> { AnswerGateUseCaseImpl(get(), get(), get(), get(), get(), get()) }
-        single<UseGateUseCase> { UseGateUseCaseImpl(get(), get(), get()) }
+        single<AnswerGateUseCase> { AnswerGateUseCaseImpl(get(), get(), get(), get(), get(), get(), get(), get()) }
+        single<UseGateUseCase> { UseGateUseCaseImpl(get(), get(), get(), get()) }
         single<GetGateUseCase> { GetGateUseCaseImpl(get(), get(), get(), get()) }
         single<ListApprovalsUseCase> { ListApprovalsUseCaseImpl(get()) }
         single<GetApprovalUseCase> { GetApprovalUseCaseImpl(get()) }
-        single<GetApprovalQueueUseCase> { GetApprovalQueueUseCaseImpl(get(), get()) }
-        single<GetApprovalViewUseCase> { GetApprovalViewUseCaseImpl(get(), get()) }
+        single<GetApprovalQueueUseCase> { GetApprovalQueueUseCaseImpl(get(), get(), get()) }
+        single<GetApprovalViewUseCase> { GetApprovalViewUseCaseImpl(get(), get(), get()) }
         single<ListSessionGatesUseCase> { ListSessionGatesUseCaseImpl(get()) }
         // Named: the channels of other modules (notifications, Slack, GitHub) bind theirs next to it.
         single<GateChannel>(named("metrics")) { MetricsGateChannel(get()) }
@@ -123,6 +125,7 @@ object GatesModule : ServerModule {
             single<GateNotifier> { ChannelsGateNotifier({ koin.getAll<GateChannel>() }, get()) }
         }
         if (koin.getOrNull<GateActorResolver>() == null) single<GateActorResolver> { NoGateActors() }
+        if (koin.getOrNull<GateGitHubAccounts>() == null) single<GateGitHubAccounts> { NoGateGitHubAccounts() }
     }
 
     override fun routes(route: Route, koin: Koin) {

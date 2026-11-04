@@ -105,6 +105,8 @@ class BudgetCheckTest {
         assertEquals(SpendDecision.Insufficient("Budget left too low for this call"), decision)
         val reserve = check.reserveMicros(InferenceProvider.ANTHROPIC, body(text))
         assertEquals(listOf(SpendRequest(Gw.orgA, Gw.memberA.memberId, callId, reserve)), asked)
+        guarded.check(Gw.memberA.copy(workflowId = "review"), callId, WireProtocol.MESSAGES, body(text))
+        assertEquals("review", asked.last().workflowId, "A launch's call is checked under the workflow it plays")
     }
 
     @Test

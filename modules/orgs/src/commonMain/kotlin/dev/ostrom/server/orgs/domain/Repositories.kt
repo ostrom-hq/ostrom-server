@@ -39,8 +39,9 @@ interface OrgsRepository {
     suspend fun findBySlug(slug: String): Org?
 
     /**
-     * Whether a short name is used, by a live or deleted organization (a deleted one keeps it, so
-     * links do not move to someone else).
+     * Whether a short name is used, by a live organization or a deleted one during its days of grace
+     * (kept so that it can be restored; one space for everybody, as on GitHub). An erased organization
+     * gave its short name back ([OrgDeletionsRepository.erase]).
      *
      * @param slug The short name.
      * @return True when taken.
@@ -49,7 +50,8 @@ interface OrgsRepository {
 
     /**
      * Changes an organization's settings, only the columns given: two people changing two
-     * different settings at once never undo each other.
+     * different settings at once never undo each other. A deleted organization is left as it is,
+     * even by a change that raced its deletion.
      *
      * @param id The organization.
      * @param name The new name, null to keep it.
@@ -58,14 +60,19 @@ interface OrgsRepository {
     suspend fun update(id: Uuid, name: String?, timeZone: String?)
 
     /**
-     * Deletes an organization logically: marks it deleted, releases its free claim, removes its
-     * members and invitations (nobody reaches it any more), and keeps the rest until [purgeAfter].
+     * Deletes a live organization logically: marks it deleted, releases its free claim, removes its
+     * members and invitations (nobody reaches it any more), keeps the rest until [purgeAfter], and
+     * records [event] in the audit log, all in one transaction. An organization already deleted, by
+     * a call that ran first or at the same time, is left as it is: nothing is written, its
+     * [purgeAfter] does not move, and no second event is recorded.
      *
      * @param id The organization.
      * @param at When.
+     * @param event The deletion, for the audit log.
      * @param purgeAfter When it may be erased for good: [DELETION_GRACE] after [at] unless said otherwise.
+     * @return Whether this call deleted it.
      */
-    suspend fun delete(id: Uuid, at: Instant, purgeAfter: Instant = at + DELETION_GRACE)
+    suspend fun delete(id: Uuid, at: Instant, event: OrgEvent, purgeAfter: Instant = at + DELETION_GRACE): Boolean
 
     /**
      * The live organizations a user belongs to, with their membership, by name.
@@ -103,6 +110,27 @@ interface MembersRepository {
      * @return The members.
      */
     suspend fun list(orgId: Uuid): List<Member>
+
+    /**
+     * A page of the members, oldest first.
+     *
+     * @param orgId The organization.
+     * @param after The member the page starts after; an unknown one gives an empty page.
+     * @param limit The most members.
+     * @return The members.
+     */
+    suspend fun page(orgId: Uuid, after: Uuid?, limit: Int): List<Member>
+
+    /**
+     * A page of the members whose login or name starts with [prefix], whatever the case, oldest first.
+     *
+     * @param orgId The organization.
+     * @param prefix The start of the login or name, a value: its own `%` and `_` match only themselves.
+     * @param after The member the page starts after; an unknown one gives an empty page.
+     * @param limit The most members.
+     * @return The members.
+     */
+    suspend fun search(orgId: Uuid, prefix: String, after: Uuid?, limit: Int): List<Member>
 
     /**
      * How many members the organization has.

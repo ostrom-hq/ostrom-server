@@ -8,9 +8,11 @@ import dev.ostrom.server.secrets.infrastructure.fetchInOrg
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
 import dev.ostrom.server.usage.domain.Admission
+import dev.ostrom.server.usage.domain.DailySpendLimits
 import dev.ostrom.server.usage.domain.SpendAdmission
 import dev.ostrom.server.usage.domain.SpendHold
 import dev.ostrom.server.usage.domain.SpendLimits
+import dev.ostrom.server.usage.domain.SpendReader
 import dev.ostrom.server.usage.domain.SpendScope
 import dev.ostrom.server.usage.domain.UsageRecorder
 import dev.ostrom.server.usage.domain.UsageRepository
@@ -26,6 +28,7 @@ import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.uuid.Uuid
 
@@ -52,7 +55,8 @@ class SpendHoldsPostgresTest {
 
     /** Records the call of [hold] at [costMicros], as the gateway does once it is answered. */
     private suspend fun TestServer.settle(hold: SpendHold, costMicros: Long) = koin.get<UsageRecorder>().settle(
-        modelEvent(costMicros, memberId = hold.memberId, orgId = hold.orgId).copy(id = hold.callId),
+        modelEvent(costMicros, memberId = hold.memberId, orgId = hold.orgId)
+            .copy(id = hold.callId, workflowId = hold.workflowId),
     )
 
     private suspend fun TestServer.holdRows(): Long =
@@ -114,6 +118,101 @@ class SpendHoldsPostgresTest {
         assertEquals(
             Admission.Insufficient(SpendScope.MEMBER, 2_000, 500),
             server.admit(hold(600, memberId = one), limits),
+        )
+    }
+
+    @Test
+    fun aCallThatPlaysAWorkflowWithoutALimitIsAdmittedOnTheOthersAlone() = serverTest(modules, overrides) { server ->
+        server.koin.get<UsageRecorder>().record(modelEvent(900, memberId = member).copy(workflowId = "review"))
+        assertEquals(900, server.koin.get<SpendReader>().workflowSpentMicros(TestCallers.orgA, "review", since))
+        val today = TestCallers.epoch - 1.hours
+        assertEquals(
+            Admission.Admitted,
+            server.admit(hold(100).copy(workflowId = "review"), SpendLimits(1_000, null)),
+            "The org's month alone: its 900 and this 100 fit",
+        )
+        assertEquals(
+            Admission.Insufficient(SpendScope.ORG, 1_000, 0, daily = true),
+            server.admit(
+                hold(1).copy(workflowId = "review"),
+                SpendLimits(null, null, DailySpendLimits(today, 1_000, null)),
+            ),
+            "The org's day alone: the 100 in flight fill it",
+        )
+    }
+
+    @Test
+    fun aWorkflowLimitCountsTheCallsAndHoldsOfItsLaunchesOnly() = serverTest(modules, overrides) { server ->
+        val recorder = server.koin.get<UsageRecorder>()
+        recorder.record(modelEvent(600, memberId = member).copy(workflowId = "review"))
+        recorder.record(modelEvent(5_000, memberId = member).copy(workflowId = "release"))
+        recorder.record(modelEvent(5_000, memberId = member))
+        recorder.record(modelEvent(9_000, memberId = member, orgId = TestCallers.orgB).copy(workflowId = "review"))
+        val repository = server.koin.get<UsageRepository>()
+        assertEquals(600, repository.workflowSpentMicros(TestCallers.orgA, "review", since))
+        assertEquals(9_000, repository.workflowSpentMicros(TestCallers.orgB, "review", since), "Org B's own")
+
+        val limits = SpendLimits(null, null, workflowMicros = 1_000)
+        val first = hold(300).copy(workflowId = "review")
+        assertEquals(Admission.Admitted, server.admit(first, limits))
+        assertEquals(
+            Admission.Insufficient(SpendScope.WORKFLOW, 1_000, 100),
+            server.admit(hold(101).copy(workflowId = "review"), limits),
+            "Its 600 spent and the 300 in flight leave 100",
+        )
+        assertEquals(
+            Admission.Exhausted(SpendScope.WORKFLOW, 1_000),
+            server.admit(hold(1).copy(workflowId = "release"), limits),
+            "Another workflow's spend is its own",
+        )
+        assertEquals(
+            Admission.Admitted,
+            server.admit(hold(900, orgId = TestCallers.orgB).copy(workflowId = "nightly"), limits),
+            "Org B's workflows are apart",
+        )
+        val read = Statement.create("SELECT workflow_id FROM usage_holds WHERE call_id = :call_id")
+            .bind("call_id", first.callId)
+        val stored = server.driver.fetchInOrg(TestCallers.orgA, read).getOrThrow().first()
+            .get("workflow_id").asStringOrNull()
+        assertEquals("review", stored, "The hold names its workflow")
+
+        val today = TestCallers.epoch - 1.hours
+        val daily = SpendLimits(null, null, DailySpendLimits(today, null, null, workflowMicros = 900))
+        assertEquals(
+            Admission.Insufficient(SpendScope.WORKFLOW, 900, 0, daily = true),
+            server.admit(hold(1).copy(workflowId = "review"), daily),
+            "Today's 600 and the 300 in flight fill the day",
+        )
+        server.settle(first, 300)
+        val settled = server.koin.get<UsageRepository>().workflowSpentMicros(TestCallers.orgA, "review", since)
+        assertEquals(900, settled, "The settled call counts under its workflow")
+        assertEquals(1, server.holdRows(), "Org B's hold is left; org A's call dropped its own")
+    }
+
+    @Test
+    fun aDailyLimitCountsTodaysSpendAndTheCallsInFlight() = serverTest(modules, overrides) { server ->
+        val today = TestCallers.epoch - 1.hours
+        // Spent before today: counts for the month, never for the day.
+        server.koin.get<UsageRecorder>().record(modelEvent(5_000, memberId = member, at = today - 1.minutes))
+        server.koin.get<UsageRecorder>().record(modelEvent(600, memberId = member))
+        val orgDay = SpendLimits(null, null, DailySpendLimits(today, orgMicros = 1_000, memberMicros = null))
+        assertEquals(Admission.Admitted, server.admit(hold(300), orgDay))
+        assertEquals(
+            Admission.Insufficient(SpendScope.ORG, 1_000, 100, daily = true),
+            server.admit(hold(101), orgDay),
+            "Today's 600 and the 300 in flight leave 100",
+        )
+
+        val memberDay = SpendLimits(null, null, DailySpendLimits(today, orgMicros = null, memberMicros = 600))
+        assertEquals(Admission.Exhausted(SpendScope.MEMBER, 600, daily = true), server.admit(hold(1), memberDay))
+        val other = Uuid.random()
+        assertEquals(Admission.Admitted, server.admit(hold(500, memberId = other), memberDay), "Another member's day")
+
+        val both = SpendLimits(10_000, null, DailySpendLimits(today, orgMicros = null, memberMicros = 2_000))
+        assertEquals(
+            Admission.Insufficient(SpendScope.ORG, 10_000, 3_600),
+            server.admit(hold(4_000), both),
+            "The month counts the 5 600 spent and the 800 in flight",
         )
     }
 }

@@ -9,6 +9,7 @@ import dev.ostrom.server.gates.domain.models.RequestStatus
 import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.gates.domain.usecases.GateUse
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.outsideOrganization
 import dev.ostrom.server.kernel.auth.requirePrincipal
@@ -73,9 +74,11 @@ fun Route.gatesRoutes(dependencies: GatesRoutesDependencies, throttle: ReadThrot
         post<ApprovalsApi.Id.Answer> { params ->
             val principal = call.requirePrincipal()
             principal.requireAnswering()
-            // S2-54: the sign-in's age comes from the identity module, never from the request.
+            // S2-54: the sign-in's age comes from the identity module, never from the request. From the phone, the
+            // app's token: a yes needs its unlock bound to this request (Q-APP-STEPUP-RISK).
+            val phone = principal.credentialId.orEmpty().takeIf { principal.channel == PrincipalChannel.MOBILE_APP }
             val actor = actors.actorOf(principal, GateScopes.answering)
-                .copy(authenticatedAt = principal.authenticatedAt)
+                .copy(authenticatedAt = principal.authenticatedAt, phoneCredential = phone)
             val body = call.receive<AnswerApprovalRequest>()
             val id = params.parent.id.toUuid()
             val choice = if (body.answer == ApprovalAnswer.APPROVE) Answer.YES else Answer.NO

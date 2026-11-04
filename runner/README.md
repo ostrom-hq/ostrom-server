@@ -54,7 +54,50 @@ docker run -d --name ostrom-machine \
 A heartbeat that fails (server unreachable, 5xx) is logged with its cause and retried at the next interval. When the
 server refuses the key three times in a row (401: the runner was removed, or its key replaced; a single 401 may come
 from a proxy), the process ends with code 3. A bad configuration, an unreadable key file included, ends it with code 2,
-a stop (SIGTERM) with 0. No session runs on a registered runner yet: the heartbeat's `sessions` is empty.
+a stop (SIGTERM) with 0.
+
+### Cloud sessions on a registered runner
+
+With a Docker Engine (`OSTROM_DOCKER_API_URL`) and a server whose sessions run on registered runners
+(`OSTROM_RUNNERS_DRIVER=registered`), the machine runs the organization's cloud sessions. Each heartbeat reports what
+it holds and gets back what it must hold:
+
+- an execution handed over comes with its plan, once: the volumes and the three containers (agent host, check host,
+  runner) that the server's Docker driver would create, with the execution's runner token. The machine checks the plan
+  before creating anything: the session's own named volumes only, never a host path, a privilege, a capability, a host
+  network or another image than `OSTROM_RUNNER_SESSION_IMAGE` when set, and as a non-root user. A refused plan is
+  logged and the execution reported missing, so the server moves the session on;
+- an execution being created (an image pull may take minutes) is reported `pending`, without holding up the
+  heartbeats; its runner's container then makes it `running`, and its end `ended`;
+- every object the machine creates carries the label `ostrom.run/runner=<id>`. The machine stops and deletes its own
+  containers and volumes the server no longer lists (a stopped or moved execution, a deleted workspace) and never
+  touches anything else on the engine.
+
+A heartbeat with a report also asks the server to hold it up to 20 s for work (`?wait=20`): an execution queued for
+the organization is handed over within seconds, not at the next interval. The machine asks again at once after an
+answer held for the whole wait or one that hands an execution over, and after the interval otherwise, so a server that
+does not wait, or a machine without room, is heartbeated as before. A waiting heartbeat is allowed 30 s, its wait and
+the usual 10 s, so a lost one still stays inside the 90 s.
+
+When a machine stops heartbeating, the server gives its running sessions to another online runner of the
+organization after 90 s, as a new execution with a fresh workspace (the old one stays on the lost machine). A paused
+session resumes on the machine that holds its workspace while that machine is online. A machine whose engine cannot
+be read heartbeats without a report, and is given nothing that time.
+
+```sh
+docker run -d --name ostrom-machine --network host \
+  -e OSTROM_SERVER_URL=https://ostrom.example.com \
+  -e OSTROM_RUNNER_ID=<id> -e OSTROM_RUNNER_KEY_FILE=/run/ostrom/key -v /etc/ostrom/key:/run/ostrom/key:ro \
+  -e OSTROM_DOCKER_API_URL=http://127.0.0.1:2375 \
+  ghcr.io/ostrom-hq/ostrom-runner machine
+```
+
+| Variable | |
+|---|---|
+| `OSTROM_DOCKER_API_URL` | the Docker Engine API, `http(s)://`; for the local socket, a socket proxy on the loopback that allows containers, volumes and images |
+| `OSTROM_DOCKER_NETWORK` | the network the sessions join (the engine's default when unset); their containers reach the server through `host.docker.internal` |
+| `OSTROM_RUNNER_SESSION_IMAGE` | the only image a session may run; the server's choice when unset |
+| `OSTROM_RUNNER_MAX_SESSIONS` | the sessions the machine runs at once at most, 0 to 256 (0 drains it); the server never hands it more, and a session with no room anywhere waits. When unset, what the machine holds, read from the engine's `/info`: 2 processors and 4.5 GiB a session, one at least. A socket proxy with `INFO=0` hides it: then no limit is declared, so set this variable |
 
 ## Checks run by the runner (`isolated_runner`)
 

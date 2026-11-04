@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.launches
 
+import dev.ostrom.core.api.models.Workflow
+import dev.ostrom.core.api.models.WorkflowNode
+import dev.ostrom.core.api.models.WorkflowNodeKind
+import dev.ostrom.core.api.models.WorkflowStatus
+import dev.ostrom.server.compiler.CompilerModule
+import dev.ostrom.server.compiler.domain.models.Authorship
+import dev.ostrom.server.compiler.domain.repositories.CompilerRepository
+import dev.ostrom.server.compiler.domain.services.PackageCompiler
 import dev.ostrom.server.identity.domain.ApiToken
 import dev.ostrom.server.identity.domain.ApiTokensRepository
 import dev.ostrom.server.identity.domain.CLI_SCOPES
@@ -24,6 +32,7 @@ import dev.ostrom.server.orgs.domain.Invitation
 import dev.ostrom.server.orgs.domain.InvitationsRepository
 import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.Org
+import dev.ostrom.server.orgs.domain.OrgEvent
 import dev.ostrom.server.orgs.domain.OrgsRepository
 import dev.ostrom.server.runners.domain.AgentKind
 import dev.ostrom.server.runners.domain.CloudSession
@@ -64,6 +73,7 @@ import kotlin.uuid.Uuid
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.serialization.json.jsonObject
 
 /**
  * `ostrom claude` up to its first session, on the real identity, orgs, gates and sessions modules and PostgreSQL: the
@@ -75,7 +85,9 @@ class LaunchesPostgresTest {
     private val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
 
     /** A person, a member of a new organization, and a CLI token of theirs bound to it. */
-    private class Person(val user: User, val org: Org, val memberId: Uuid, val cliToken: String)
+    private class Person(val user: User, val org: Org, val memberId: Uuid, val cliToken: String) {
+        fun deleted() = OrgEvent(org.id, user.id, "org.deleted", "org", org.id.toString())
+    }
 
     private suspend fun TestServer.person(login: String): Person {
         val user = koin.get<ResolveUserUseCase>()(
@@ -221,7 +233,7 @@ class LaunchesPostgresTest {
             val ada = server.person("ada")
             val running = server.launch(ada)
             assertEquals(HttpStatusCode.OK, server.call(running.agentToken, "/api/v1/sessions", SESSION).status)
-            server.koin.get<OrgsRepository>().delete(ada.org.id, now)
+            server.koin.get<OrgsRepository>().delete(ada.org.id, now, ada.deleted())
             val stopped = server.call(running.agentToken, "/api/v1/sessions/s-1/alive", "{}")
             assertEquals(HttpStatusCode.Forbidden, stopped.status, stopped.bodyAsText())
             val orphan = server.call(ada.cliToken, "/api/v1/launches", LAUNCH)
@@ -505,6 +517,49 @@ class LaunchesPostgresTest {
         }
 
     // Read in the organization, as the serving role: row level security keeps the other organizations out.
+    // A workflow of [org], as the console saves it: a launch may name it.
+    private suspend fun TestServer.workflow(org: Org, id: String) {
+        val workflow = Workflow(
+            id = id,
+            name = "Review",
+            domain = "acme",
+            nodes = listOf(WorkflowNode(id = "t", kind = WorkflowNodeKind.TRIGGER, label = "push")),
+            edges = emptyList(),
+            status = WorkflowStatus.ACCEPTED,
+            foundAt = "2026-11-01T00:00:00.000Z",
+        )
+        val raw = PackageCompiler.json.encodeToJsonElement(Workflow.serializer(), workflow).jsonObject
+        assertNotNull(koin.get<CompilerRepository>().saveWorkflow(org.id, id, raw, null, Authorship("lead", now)))
+    }
+
+    @Test
+    fun aLaunchPlaysOneOfItsOrganizationsWorkflowsAndKeepsIt() =
+        serverTest(launchModules(CompilerModule)) { server ->
+            val ada = server.person("ada")
+            server.workflow(ada.org, "review")
+            val launch = server.launch(ada, """{"agent":"claude-code","workflowId":"review"}""")
+            val launches = server.koin.get<LaunchesRepository>()
+            assertEquals("review", launches.find(ada.org.id, launch.launchId)?.workflowId)
+            val plain = server.launch(ada)
+            assertNull(launches.find(ada.org.id, plain.launchId)?.workflowId, "Without one, none")
+        }
+
+    @Test
+    fun aLaunchNamingAnotherOrganizationsWorkflowIsNotFoundAndNothingIsLaunched() =
+        serverTest(launchModules(CompilerModule)) { server ->
+            val ada = server.person("ada")
+            val bob = server.person("bob")
+            server.workflow(bob.org, "review")
+            val across = server.call(ada.cliToken, "/api/v1/launches", """{"agent":"codex","workflowId":"review"}""")
+            assertEquals(HttpStatusCode.NotFound, across.status, across.bodyAsText())
+            assertTrue("Workflow not found." in across.bodyAsText(), across.bodyAsText())
+            val none = server.call(ada.cliToken, "/api/v1/launches", """{"agent":"codex","workflowId":"nope"}""")
+            assertEquals(HttpStatusCode.NotFound, none.status, "The same answer for a workflow of nobody")
+            val malformed = server.call(ada.cliToken, "/api/v1/launches", """{"agent":"codex","workflowId":""}""")
+            assertEquals(HttpStatusCode.BadRequest, malformed.status, malformed.bodyAsText())
+            assertEquals(0, server.launchesSeenBy(ada.org.id))
+        }
+
     private suspend fun TestServer.launchesSeenBy(orgId: Uuid): Int = driver.withOrganization(orgId) { tx ->
         val count = Statement.create("SELECT COUNT(*) AS n FROM launches_launches WHERE org_id = :org_id")
             .bind("org_id", orgId)

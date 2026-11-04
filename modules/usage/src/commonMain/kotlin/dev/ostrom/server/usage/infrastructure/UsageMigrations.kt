@@ -52,6 +52,111 @@ private val RETENTION_THROUGH_THE_ROUTER_SQL: String =
     """
         .trimIndent()
 
+/** The daily totals of the whole ledger, as version 7 writes them for the calls recorded before it. */
+internal const val DAILY_TOTALS_OF_THE_LEDGER: String =
+    "INSERT INTO usage_daily (org_id, day, member_id, session_id, launch_id, cost_micros) " +
+        "SELECT org_id, CAST(at AT TIME ZONE 'UTC' AS DATE), member_id, session_id, launch_id, SUM(cost_micros) " +
+        "FROM usage_events WHERE cost_micros > 0 GROUP BY 1, 2, 3, 4, 5"
+
+/** The key of a daily total, in the order each statement locks the totals (see the migration's KDoc on deadlocks). */
+private const val DAILY_KEY = "org_id, day, member_id, session_id, launch_id"
+
+/** The calls of a transition table that cost something, by [DAILY_KEY], their cost signed. */
+private fun signedCalls(calls: String, sign: String) =
+    "SELECT c.org_id, CAST(c.at AT TIME ZONE 'UTC' AS DATE) AS day, c.member_id, c.session_id, c.launch_id, " +
+        "${sign}c.cost_micros AS cost_micros FROM $calls c WHERE c.cost_micros > 0"
+
+/**
+ * Adds the calls of [added] to their totals and takes those of [removed] away, in one upsert through the key's
+ * unique index, in key order; then drops the totals a removal brought to zero, among those of its days.
+ */
+private fun applyCalls(added: String?, removed: String?): String {
+    val signed = listOfNotNull(added?.let { signedCalls(it, "") }, removed?.let { signedCalls(it, "-") })
+    val upsert = "INSERT INTO usage_daily AS d ($DAILY_KEY, cost_micros) SELECT $DAILY_KEY, SUM(cost_micros) " +
+        "FROM (${signed.joinToString(" UNION ALL ")}) s GROUP BY 1, 2, 3, 4, 5 HAVING SUM(cost_micros) <> 0 " +
+        "ORDER BY 1, 2, 3, 4, 5 ON CONFLICT ($DAILY_KEY) " +
+        "DO UPDATE SET cost_micros = d.cost_micros + EXCLUDED.cost_micros;"
+    val drop = removed?.let {
+        " DELETE FROM usage_daily d WHERE d.cost_micros <= 0 AND (d.org_id, d.day) IN " +
+            "(SELECT c.org_id, CAST(c.at AT TIME ZONE 'UTC' AS DATE) FROM $it c);"
+    }.orEmpty()
+    return upsert + drop
+}
+
+/** A trigger function of the totals, run as `ostrom_router` whoever writes the ledger. */
+private fun dailyFunction(name: String, body: String) = """
+    CREATE FUNCTION $name() RETURNS trigger
+        LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+    BEGIN
+        $body
+        RETURN NULL;
+    END $$;
+""".trimIndent()
+
+/** The trigger functions of version 7, handed to `ostrom_router`. */
+private val DAILY_FUNCTIONS = listOf("usage_daily_add", "usage_daily_remove", "usage_daily_change", "usage_daily_clear")
+
+/**
+ * Version 7: the daily totals of the ledger, by organization, UTC day, member, session and launch, for the calls that
+ * cost something (`cost_micros > 0`), which the spending report reads instead of adding up a month of calls
+ * (ReportsQueries.spending). Statement triggers keep them in the transaction of every write of the ledger, whatever
+ * the role that writes: an insert adds its calls, a delete (the retention purge among others) takes them away, an
+ * update does both, a truncate empties them. Their functions run as `ostrom_router` (`SECURITY DEFINER`, the module's
+ * pattern since version 4), the only role that writes the totals: an organization reads its own and changes none.
+ * Every write, an update's old and new keys together, reaches the totals in one upsert in key order through their
+ * unique index, so two writers of one statement each never deadlock; calls of one session and day wait for each
+ * other's commit on their total. Two transactions that each write two keys in opposite statement orders could; no
+ * writer does today (each records or settles one call per transaction), and PostgreSQL would cancel one with 40P01.
+ * The ledger is locked against writes while the totals of the calls recorded before are written, by the
+ * router, which reads every organization's calls inside its role: writes wait for one pass over the ledger, short on
+ * the ledgers of today, and no call is counted twice or missed.
+ */
+private val DAILY_TOTALS_SQL: String = listOf(
+    """
+    LOCK TABLE usage_events IN SHARE ROW EXCLUSIVE MODE;
+    CREATE TABLE usage_daily (
+        org_id UUID NOT NULL,
+        day DATE NOT NULL,
+        member_id UUID,
+        session_id TEXT,
+        launch_id TEXT,
+        cost_micros BIGINT NOT NULL
+    );
+    CREATE UNIQUE INDEX usage_daily_key ON usage_daily ($DAILY_KEY) NULLS NOT DISTINCT;
+    ALTER TABLE usage_daily ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE usage_daily FORCE ROW LEVEL SECURITY;
+    CREATE POLICY usage_daily_tenant ON usage_daily FOR SELECT
+        USING (org_id = CAST(NULLIF(current_setting('ostrom.org_id', true), '') AS UUID));
+    GRANT SELECT ON usage_daily TO ostrom_tenant;
+    CREATE POLICY usage_daily_router ON usage_daily FOR ALL TO ostrom_router
+        USING (current_user = 'ostrom_router') WITH CHECK (current_user = 'ostrom_router');
+    GRANT SELECT, INSERT, UPDATE, DELETE ON usage_daily TO ostrom_router;
+    """.trimIndent(),
+    dailyFunction("usage_daily_add", applyCalls("usage_events_added", null)),
+    dailyFunction("usage_daily_remove", applyCalls(null, "usage_events_removed")),
+    dailyFunction("usage_daily_change", applyCalls("usage_events_added", "usage_events_removed")),
+    dailyFunction("usage_daily_clear", "DELETE FROM usage_daily;"),
+    "GRANT CREATE ON SCHEMA public TO ostrom_router;",
+    DAILY_FUNCTIONS.joinToString("\n") {
+        "REVOKE EXECUTE ON FUNCTION $it() FROM PUBLIC; ALTER FUNCTION $it() OWNER TO ostrom_router;"
+    },
+    "REVOKE CREATE ON SCHEMA public FROM ostrom_router;",
+    """
+    CREATE TRIGGER usage_daily_add AFTER INSERT ON usage_events
+        REFERENCING NEW TABLE AS usage_events_added FOR EACH STATEMENT EXECUTE FUNCTION usage_daily_add();
+    CREATE TRIGGER usage_daily_remove AFTER DELETE ON usage_events
+        REFERENCING OLD TABLE AS usage_events_removed FOR EACH STATEMENT EXECUTE FUNCTION usage_daily_remove();
+    CREATE TRIGGER usage_daily_change AFTER UPDATE ON usage_events
+        REFERENCING OLD TABLE AS usage_events_removed NEW TABLE AS usage_events_added
+        FOR EACH STATEMENT EXECUTE FUNCTION usage_daily_change();
+    CREATE TRIGGER usage_daily_clear AFTER TRUNCATE ON usage_events
+        FOR EACH STATEMENT EXECUTE FUNCTION usage_daily_clear();
+    SET LOCAL ROLE ostrom_router;
+    $DAILY_TOTALS_OF_THE_LEDGER;
+    RESET ROLE
+    """.trimIndent(),
+).joinToString("\n")
+
 /**
  * The schema of the usage module; its tables start with `usage_`. The spend indexes include `cost_micros` so that the
  * budget sums are index-only scans; `usage_events_at` serves the retention purge. `usage_holds` keeps the budget held
@@ -135,6 +240,19 @@ val UsageMigrations: List<SchemaMigration> = listOf(
         sql = """
             ALTER POLICY usage_events_router_read ON usage_events USING (current_user = 'ostrom_router');
             ALTER POLICY usage_events_router_purge ON usage_events USING (current_user = 'ostrom_router')
+        """.trimIndent(),
+    ),
+    SchemaMigration(version = 7, name = "usage_daily_totals", sql = DAILY_TOTALS_SQL),
+    // A model call of a launch that plays a workflow names it, and so does its hold: the workflow's budgets sum them.
+    // The index reads a workflow's spend of a day or a month without the org's other calls.
+    SchemaMigration(
+        version = 8,
+        name = "usage_names_the_workflow",
+        sql = """
+            ALTER TABLE usage_events ADD COLUMN workflow_id TEXT;
+            CREATE INDEX usage_events_workflow ON usage_events (org_id, workflow_id, at) INCLUDE (cost_micros)
+                WHERE workflow_id IS NOT NULL;
+            ALTER TABLE usage_holds ADD COLUMN workflow_id TEXT;
         """.trimIndent(),
     ),
 )

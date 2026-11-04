@@ -4,12 +4,17 @@ package dev.ostrom.runner
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
+import io.ktor.client.engine.mock.toByteArray
+import io.ktor.client.plugins.HttpTimeoutCapability
+import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -18,6 +23,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
@@ -43,6 +49,38 @@ class MachineRunnerTest {
         }
         assertEquals(key, fromFile.key)
         assertEquals(5.seconds, fromFile.interval)
+    }
+
+    @Test
+    fun aDockerEngineMakesTheRunnerRunSessions() {
+        val env = mapOf(
+            "OSTROM_SERVER_URL" to "http://s",
+            "OSTROM_RUNNER_ID" to id.toString(),
+            "OSTROM_RUNNER_KEY" to key,
+            "OSTROM_DOCKER_API_URL" to "http://127.0.0.1:2375/",
+        )
+        val plain = MachineConfig.from(env) { error("no file") }
+        assertEquals(MachineDocker("http://127.0.0.1:2375", null, null, null), plain.docker)
+        assertTrue("docker=MachineDocker(apiUrl=http://127.0.0.1:2375" in plain.toString())
+        val placed = MachineConfig.from(
+            env + ("OSTROM_DOCKER_NETWORK" to "sessions") + ("OSTROM_RUNNER_SESSION_IMAGE" to "img:1"),
+        ) { error("no file") }
+        assertEquals(MachineDocker("http://127.0.0.1:2375", "sessions", "img:1", null), placed.docker)
+        for (max in listOf(0, 256)) {
+            val capped = MachineConfig.from(env + ("OSTROM_RUNNER_MAX_SESSIONS" to "$max")) { error("no file") }
+            assertEquals(max, capped.docker?.maxSessions)
+        }
+        for (max in listOf("-1", "257", "two")) {
+            assertFailsWith<IllegalArgumentException> {
+                MachineConfig.from(env + ("OSTROM_RUNNER_MAX_SESSIONS" to max)) { error("no file") }
+            }
+        }
+        assertEquals(null, MachineConfig.from(env + ("OSTROM_DOCKER_API_URL" to " ")) { error("no file") }.docker)
+        val remote = MachineConfig.from(env + ("OSTROM_DOCKER_API_URL" to "https://docker.lan")) { error("no file") }
+        assertEquals("https://docker.lan", remote.docker?.apiUrl)
+        assertFailsWith<IllegalArgumentException> {
+            MachineConfig.from(env + ("OSTROM_DOCKER_API_URL" to "unix:///var/run/docker.sock")) { error("no file") }
+        }
     }
 
     @Test
@@ -79,12 +117,12 @@ class MachineRunnerTest {
         }
         val api = HttpMachineApi(HttpClient(engine) { expectSuccess = false }, MachineConfig("http://s", id, key))
 
-        api.heartbeat()
+        assertEquals(MachineWork(), api.heartbeat(null))
         assertEquals(listOf("${HttpMethod.Post.value} /api/v1/runners/$id/heartbeat Bearer $key"), seen)
         status = HttpStatusCode.Unauthorized
-        assertFailsWith<RunnerKeyRefusedException> { api.heartbeat() }
+        assertFailsWith<RunnerKeyRefusedException> { api.heartbeat(null) }
         status = HttpStatusCode.ServiceUnavailable
-        assertFailsWith<IllegalStateException> { api.heartbeat() }
+        assertFailsWith<IllegalStateException> { api.heartbeat(null) }
     }
 
     @Test
@@ -93,12 +131,14 @@ class MachineRunnerTest {
         val lines = mutableListOf<String>()
         var answer: () -> Unit = {}
         val api = object : MachineApi {
-            override suspend fun heartbeat() {
+            override suspend fun heartbeat(report: MachineReport?, wait: Duration): MachineWork {
+                assertEquals(null, report, "A runner without Docker reports nothing")
                 beats += testScheduler.currentTime
                 answer()
+                return MachineWork()
             }
         }
-        val machine = MachineRunner(api, 10.seconds) { lines += it }
+        val machine = MachineRunner(api, 10.seconds, { lines += it })
         val code = async { machine.run() }
 
         runCurrent()
@@ -129,4 +169,170 @@ class MachineRunnerTest {
         assertTrue(lines.any { "refused" in it }, lines.toString())
         assertFalse(lines.any { key in it })
     }
+
+    @Test
+    fun theReportIsTheBodyAndTheAnswerTheWork() = runTest {
+        var sent = ""
+        val engine = MockEngine { request ->
+            assertTrue(request.body.contentType!!.match(ContentType.Application.Json))
+            sent = request.body.toByteArray().decodeToString()
+            respond(
+                """{"sessions":[],"executions":[{"sessionId":"s","epoch":2}],"workspaces":["s"]}""",
+                HttpStatusCode.OK,
+                headersOf(HttpHeaders.ContentType, "application/json"),
+            )
+        }
+        val api = HttpMachineApi(HttpClient(engine) { expectSuccess = false }, MachineConfig("http://s", id, key))
+        val work = api.heartbeat(MachineReport(listOf(ReportedExecution("s", 2, "running")), listOf("s"), 3))
+        assertEquals(MachineWork(listOf(AssignedExecution("s", 2)), listOf("s")), work)
+        assertEquals(
+            """{"executions":[{"sessionId":"s","epoch":2,"state":"running"}],"workspaces":["s"],"capacity":3}""",
+            sent,
+        )
+        api.heartbeat(MachineReport(emptyList(), emptyList(), null))
+        assertEquals("""{"executions":[],"workspaces":[]}""", sent, "An unknown capacity is left out")
+    }
+
+    @Test
+    fun aLostWaitingHeartbeatStaysInsideTheNinetySecondsBeforeOffline() {
+        // Last sign of life at the start of a held heartbeat; the next one is lost after its whole timeout; the one
+        // after comes at the longest interval.
+        val worst = MachineRunner.WAIT + (MachineRunner.WAIT + HttpMachineApi.WAIT_SLACK) + 30.seconds
+        assertTrue(worst < 90.seconds, "$worst")
+    }
+
+    @Test
+    fun aWaitingHeartbeatAsksTheServerToHoldItAndAllowsItTheTime() = runTest {
+        val seen = mutableListOf<Pair<String?, Long?>>()
+        val engine = MockEngine { request ->
+            seen += request.url.parameters["wait"] to request.getCapabilityOrNull(HttpTimeoutCapability)
+                ?.requestTimeoutMillis
+            respond("{}", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        }
+        val api = HttpMachineApi(HttpClient(engine) { expectSuccess = false }, MachineConfig("http://s", id, key))
+
+        api.heartbeat(MachineReport(emptyList(), emptyList(), null), 20.seconds)
+        api.heartbeat(MachineReport(emptyList(), emptyList(), null))
+
+        assertEquals(listOf<Pair<String?, Long?>>("20" to 30_000L, null to null), seen)
+    }
+
+    @Test
+    fun aMachineThatWaitsAsksAgainAtOnceAfterAHeldOrFruitfulAnswerAndAtTheIntervalOtherwise() = runTest {
+        val session = Uuid.random()
+        val beats = mutableListOf<Pair<Long, Duration>>()
+        var answer: suspend () -> MachineWork = { MachineWork() }
+        val api = object : MachineApi {
+            override suspend fun heartbeat(report: MachineReport?, wait: Duration): MachineWork {
+                beats += testScheduler.currentTime to wait
+                return answer()
+            }
+        }
+        val sessions = MachineSessions(FakeDockerEngine(), PlanGuard(id, null, null), null) {}
+        val machine = MachineRunner(api, 10.seconds, {}, sessions, 20.seconds, testScheduler.timeSource)
+        val code = async { machine.run() }
+
+        runCurrent()
+        assertEquals(listOf(0L to 20.seconds), beats, "With a report, it may wait")
+        advanceTimeBy(9.seconds)
+        runCurrent()
+        assertEquals(1, beats.size, "Answered at once with nothing: a server that does not wait, at the interval")
+
+        answer = { delay(20.seconds); MachineWork() }
+        advanceTimeBy(1.seconds)
+        runCurrent()
+        advanceTimeBy(20.seconds)
+        runCurrent()
+        assertEquals(listOf(10_000L, 30_000L), beats.drop(1).map { it.first }, "Held for the whole wait: at once")
+
+        val once = mutableListOf(MachineWork(listOf(AssignedExecution(session.toString(), 1, plan(session, 1)))))
+        answer = { once.removeFirstOrNull() ?: MachineWork() }
+        advanceTimeBy(20.seconds)
+        runCurrent()
+        assertEquals(50_000L, beats[3].first)
+        assertEquals(50_000L, beats[4].first, "Handed an execution: at once")
+        advanceTimeBy(10.seconds)
+        runCurrent()
+        assertEquals(60_000L, beats[5].first, "Nothing, at once: at the interval")
+        code.cancel()
+    }
+
+    @Test
+    fun aMachineWithDockerReportsWhatItRunsAndAppliesTheAnswerInTheBackground() = runTest {
+        val session = Uuid.random()
+        val docker = FakeDockerEngine()
+        val lines = mutableListOf<String>()
+        val reports = mutableListOf<MachineReport?>()
+        val handed = AssignedExecution(session.toString(), 1, plan(session, 1))
+        var answer: () -> MachineWork = { MachineWork(listOf(handed)) }
+        val api = object : MachineApi {
+            override suspend fun heartbeat(report: MachineReport?, wait: Duration): MachineWork {
+                reports += report
+                return answer()
+            }
+        }
+        val sessions = MachineSessions(docker, PlanGuard(id, null, null), null) { lines += it }
+        val machine = MachineRunner(api, 10.seconds, { lines += it }, sessions)
+        val code = async { machine.run() }
+
+        runCurrent()
+        assertEquals(MachineReport(emptyList(), emptyList(), 1), reports.single())
+        assertEquals(3, docker.containers.size, "Applied after the beat, in the background")
+
+        answer = { MachineWork(listOf(AssignedExecution(session.toString(), 1))) }
+        advanceTimeBy(10.seconds)
+        runCurrent()
+        assertEquals("running", reports.last()!!.executions.single().state)
+
+        // The engine cannot be read: a beat without a report, and nothing applied.
+        val engineDown = object : DockerEngine by docker {
+            override suspend fun containers(): List<HeldContainer> = error("socket closed")
+        }
+        val unread = MachineSessions(engineDown, PlanGuard(id, null, null), null) {}
+        val blind = MachineRunner(api, 10.seconds, { lines += it }, unread)
+        val blindCode = async { blind.run() }
+        runCurrent()
+        assertEquals(null, reports.last())
+        assertTrue(lines.any { "docker unreadable, no session this time" in it }, lines.toString())
+        assertEquals(3, docker.containers.size, "An unread engine is never swept")
+
+        // An answer that cannot be applied is logged; the beats go on.
+        docker.failRemove = IllegalStateException("engine busy")
+        answer = { MachineWork() }
+        advanceTimeBy(10.seconds)
+        runCurrent()
+        assertTrue(lines.any { "sessions not applied: IllegalStateException: engine busy" in it }, lines.toString())
+
+        answer = { throw RunnerKeyRefusedException() }
+        advanceTimeBy(30.seconds)
+        runCurrent()
+        assertEquals(MachineRunner.EXIT_KEY_REFUSED, code.await())
+        assertEquals(MachineRunner.EXIT_KEY_REFUSED, blindCode.await())
+    }
+
+    @Test
+    fun aCancelledMachineStopsWhileReadingOrApplying() = runTest {
+        val api = object : MachineApi {
+            override suspend fun heartbeat(report: MachineReport?, wait: Duration) = MachineWork()
+        }
+        val reading = object : DockerEngine by FakeDockerEngine() {
+            override suspend fun containers(): List<HeldContainer> = throw CancellationException("stop")
+        }
+        assertFailsWith<CancellationException> {
+            MachineRunner(api, 10.seconds, {}, MachineSessions(reading, PlanGuard(id, null, null), null) {}).run()
+        }
+        var reads = 0
+        val applying = object : DockerEngine by FakeDockerEngine() {
+            // The report reads first, then the background pass.
+            override suspend fun containers(): List<HeldContainer> =
+                if (reads++ == 0) emptyList() else throw CancellationException("stop")
+        }
+        val stopped = async {
+            MachineRunner(api, 10.seconds, {}, MachineSessions(applying, PlanGuard(id, null, null), null) {}).run()
+        }
+        runCurrent()
+        stopped.cancel()
+        assertTrue(stopped.isCancelled)
+    }
 }
+

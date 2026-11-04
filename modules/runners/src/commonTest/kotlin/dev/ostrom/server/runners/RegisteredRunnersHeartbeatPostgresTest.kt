@@ -64,7 +64,10 @@ class RegisteredRunnersHeartbeatPostgresTest {
 
             val beat = server.heartbeat(runner.id, runner.token)
             assertEquals(HttpStatusCode.OK, beat.status)
-            assertEquals(RegisteredRunnerHeartbeatResponse(emptyList()), beat.body<RegisteredRunnerHeartbeatResponse>())
+            assertEquals(
+                RegisteredRunnerHeartbeatResponse(emptyList(), emptyList(), emptyList()),
+                beat.body<RegisteredRunnerHeartbeatResponse>(),
+            )
             assertEquals("online", server.status("alice"))
             val seen = server.client.get("/api/v1/runners") { bearerAuth("alice") }.body<RunnersPage>().items.single()
             assertEquals(clock.now.toString(), seen.lastSeenAt)
@@ -120,10 +123,11 @@ class RegisteredRunnersHeartbeatPostgresTest {
 
             // Written in its organization, with its key, only; an older sign of life never replaces a newer one.
             val later = clock.now + 30.seconds
-            assertTrue(repository.touch(ORG_A, id, hash, later))
-            assertTrue(repository.touch(ORG_A, id, hash, clock.now))
-            assertFalse(repository.touch(ORG_B, id, hash, later + 30.seconds))
-            assertFalse(repository.touch(ORG_A, id, "another-hash", later + 30.seconds))
+            assertTrue(repository.touch(ORG_A, id, hash, later, null))
+            assertTrue(repository.touch(ORG_A, id, hash, clock.now, 3))
+            assertFalse(repository.touch(ORG_B, id, hash, later + 30.seconds, 9))
+            assertFalse(repository.touch(ORG_A, id, "another-hash", later + 30.seconds, 9))
+            assertEquals(3, repository.list(ORG_A, 10).single().capacity, "The capacity of its last heartbeat")
             val seen = server.driver.inTenant(ORG_A) {
                 fetchAll(Statement.create("SELECT last_seen_at FROM runners_registered")).getOrThrow()
             }.single().get("last_seen_at").asInstant()
@@ -159,7 +163,7 @@ class RegisteredRunnersHeartbeatPostgresTest {
                 "SELECT r.org_id, r.key_hash FROM runners_registered r WHERE r.id = :id",
             ) { bind("id", id) },
             "sign of life" to server.plan(ORG_A, RegisteredRunnersRepositoryImpl.TOUCH_SQL) {
-                bind("at", clock.now).bind("org_id", ORG_A).bind("id", id).bind("key_hash", hash)
+                bind("at", clock.now).bind("capacity", 2).bind("org_id", ORG_A).bind("id", id).bind("key_hash", hash)
             },
         )
         val report = plans.entries.joinToString("\n\n") { (name, plan) -> "-- $name\n$plan" }

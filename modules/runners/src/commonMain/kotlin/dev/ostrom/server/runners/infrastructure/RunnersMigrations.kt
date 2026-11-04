@@ -128,7 +128,8 @@ private val REGISTERED_RUNNER_ORG_SQL: String =
  * row-level security like the other tables, and across organizations only through [ROUTER_FUNCTIONS]
  * (docs/tenancy.md). `runners_registered` (version 2) is a tenant table too: the machines an organization registered,
  * with the hash of their key; a heartbeat reads one runner's organization and key hash across organizations only
- * through [REGISTERED_ROUTER_FUNCTIONS] (version 4).
+ * through [REGISTERED_ROUTER_FUNCTIONS] (version 4). `runners_assignments` (version 6) is a tenant table: the
+ * executions handed to an organization's registered runners.
  */
 val RunnersMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -230,5 +231,45 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
                 WITH CHECK (current_user = 'ostrom_router');
             ALTER POLICY runners_registered_router ON runners_registered USING (current_user = 'ostrom_router')
         """.trimIndent(),
+    ),
+    // The executions handed to registered runners (RegisteredRuntimeDriver): a tenant table, never read across
+    // organizations. A runner is not a foreign key: a removed runner leaves its executions lost, then relocated.
+    SchemaMigration(
+        version = 6,
+        name = "create_runner_assignments",
+        sql = """
+            CREATE TABLE runners_assignments (
+                session_id UUID NOT NULL REFERENCES runners_sessions (id) ON DELETE CASCADE,
+                epoch BIGINT NOT NULL,
+                org_id UUID NOT NULL,
+                runner_id UUID,
+                created_at TIMESTAMPTZ NOT NULL,
+                delivered_at TIMESTAMPTZ,
+                stopped_at TIMESTAMPTZ,
+                dropped_at TIMESTAMPTZ,
+                state TEXT,
+                holds_workspace BOOLEAN NOT NULL DEFAULT FALSE,
+                PRIMARY KEY (session_id, epoch)
+            );
+            CREATE INDEX runners_assignments_runner ON runners_assignments (org_id, runner_id);
+            CREATE INDEX runners_assignments_waiting ON runners_assignments (org_id, created_at)
+                WHERE runner_id IS NULL AND stopped_at IS NULL;
+            ${tenantTableSql("runners_assignments")}
+        """.trimIndent(),
+    ),
+    // The sessions a registered runner runs at once at most, from its last heartbeat (null: no limit declared). An
+    // execution is never handed to a runner that already holds as many (RunnerAssignmentsRepositoryImpl).
+    SchemaMigration(
+        version = 7,
+        name = "registered_runner_capacity",
+        sql = "ALTER TABLE runners_registered ADD COLUMN capacity INTEGER",
+    ),
+    // What a waiting heartbeat's look reads, once a second per organization (InProcessRunnerWorkSignals): the
+    // executions not handed over yet, a handful at any time, whatever the history.
+    SchemaMigration(
+        version = 8,
+        name = "runner_assignments_undelivered",
+        sql = "CREATE INDEX runners_assignments_undelivered ON runners_assignments (org_id) " +
+            "WHERE delivered_at IS NULL AND stopped_at IS NULL",
     ),
 )

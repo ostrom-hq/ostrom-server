@@ -18,9 +18,12 @@ data class ApiError(val error: ErrorDetail)
  *
  * @property type A stable `snake_case` key clients switch on ([dev.ostrom.server.kernel.errors.ErrorKind.type]).
  * @property message A human-readable message, safe to display.
+ * @property requestBound On a `step_up_required`, true when the phone must unlock again for this very request
+ *   ([dev.ostrom.server.kernel.errors.OstromException.requestBound]); absent otherwise.
  */
 @Serializable
 data class ErrorDetail(
     val type: String,
     val message: String,
+    val requestBound: Boolean? = null,
 )

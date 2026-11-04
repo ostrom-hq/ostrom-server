@@ -2,6 +2,7 @@
 
 package dev.ostrom.server.identity
 
+import dev.ostrom.server.identity.domain.LinkedIdentities
 import dev.ostrom.server.identity.domain.ApiToken
 import dev.ostrom.server.identity.domain.ApiTokensRepository
 import dev.ostrom.server.identity.domain.AuditEntry
@@ -83,6 +84,9 @@ class IdentityPostgresTest {
         users.link(bob.id, github("2"), UserEmail("bob@example.com", false), now)
         assertEquals(listOf(UserEmail("bob@example.com", true)), users.listEmails(bob.id), "Verified stays verified")
         assertEquals(listOf("github", "google"), users.listIssuers(bob.id))
+        val linked = server.koin.get<LinkedIdentities>()
+        assertEquals(listOf("2"), linked.subjectsOf(bob.login.uppercase(), "github"), "the GitHub account Bob linked")
+        assertEquals(emptyList(), linked.subjectsOf("nobody", "github"))
         // Linking an identity of another user changes nothing and fails, so the caller retries.
         assertFailsWith<DuplicateIdentityException> { users.link(bob.id, github("1"), null, now) }
         // Any other database refusal (here, a user that does not exist) is not dressed up as a duplicate.
@@ -191,6 +195,7 @@ class IdentityPostgresTest {
         val ada = user().also { users.create(it, github("1"), null, now) }
         val pending = DeviceAuthorization(
             Uuid.random(), "BCDF-GHJK", "laptop", DeviceAuthorizationStatus.PENDING, null, now, now + 1.days, null,
+            requestedFrom = "203.0.113.0/24",
         )
         devices.create(pending, "device-hash")
 

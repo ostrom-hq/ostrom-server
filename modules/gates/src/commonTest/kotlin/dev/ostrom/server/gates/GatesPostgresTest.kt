@@ -49,6 +49,7 @@ import dev.ostrom.server.gates.presentation.GateResponse
 import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.gates.presentation.toAskGate
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PhoneUnlockProofs
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
@@ -73,8 +74,6 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.koin.dsl.module
@@ -118,6 +117,7 @@ class GatesPostgresTest {
                         token,
                         PrincipalKind.USER,
                         setOf(GateScopes.ANSWER),
+                        credentialId = "osm-$token",
                         channel = PrincipalChannel.MOBILE_APP,
                         authenticatedAt = Clock.System.now(),
                     )
@@ -146,6 +146,8 @@ class GatesPostgresTest {
                 }
             }
         }
+        // The app's unlock, bound to the request it answers: PhoneYesPostgresTest (app) plays the binding for real.
+        single<PhoneUnlockProofs> { PhoneUnlockProofs { credential, _, _ -> credential.startsWith("osm-app:") } }
         single<GateActorResolver> {
             object : GateActorResolver {
                 override suspend fun resolve(principal: AuthenticatedPrincipal): GateActor? {
@@ -185,9 +187,17 @@ class GatesPostgresTest {
             object : GateReceiptSigner {
                 override suspend fun sign(gate: Gate): String = "rcpt_${gate.id}"
 
-                // The receipts module is not loaded here: a stored receipt is its id.
-                override suspend fun read(orgId: Uuid, receiptId: String?) =
-                    receiptId?.let { JsonObject(mapOf("id" to JsonPrimitive(it))) }
+                // The receipts module is not loaded here: a stored receipt reads as a signed one, in the contract's
+                // `Receipt` shape (the answers are checked against it, ContractObserver).
+                override suspend fun read(orgId: Uuid, receiptId: String?) = receiptId?.let { id ->
+                    Json.parseToJsonElement(
+                        """
+                        {"id": "$id", "subject": {"kind": "gate", "id": "$id", "digest": "sha256:0"},
+                          "initiator": "dev", "rules": [], "decisions": [], "createdAt": "2026-11-03T00:00:00Z",
+                          "signature": "sig"}
+                        """,
+                    ).jsonObject
+                }
             }
         }
     }

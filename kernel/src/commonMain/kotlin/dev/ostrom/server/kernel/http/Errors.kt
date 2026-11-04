@@ -74,7 +74,8 @@ fun Application.configureErrors(logger: Logger) {
 private suspend fun ApplicationCall.answerFailure(cause: Throwable, logger: Logger) {
     val fields = mapOf("request_id" to callId)
     when (cause) {
-        is OstromException -> respond(cause.kind.httpStatus, ApiError(ErrorDetail(cause.type, cause.message)))
+        is OstromException ->
+            respond(cause.kind.httpStatus, ApiError(ErrorDetail(cause.type, cause.message, cause.requestBound)))
         is PayloadTooLargeException -> respondError(ErrorKind.PAYLOAD_TOO_LARGE, "The request body is too large.")
         // No converter for the request's Content-Type: `receive` throws CannotTransformContentToTypeException, a
         // sibling of UnsupportedMediaTypeException under this base (PayloadTooLargeException too, matched above).
@@ -89,8 +90,13 @@ private suspend fun ApplicationCall.answerFailure(cause: Throwable, logger: Logg
         is SQLError -> if (cause.kind == SQLError.Kind.UniqueViolation) {
             respondError(ErrorKind.CONFLICT, "The resource already exists.")
         } else {
-            // Never the message: PostgreSQL quotes row values in it (AGENTS.md rule 9).
-            logger.error("database failure", fields + mapOf("error" to "SQLError", "sql_kind" to cause.kind.name))
+            // Never the message: PostgreSQL quotes row values in it (AGENTS.md rule 9). The driver's code and the
+            // SQLSTATE carry none, and tell a failure PostgreSQL never saw (a pool, a decoding) from one it reported.
+            val codes = listOfNotNull("sql_code" to cause.code.name, cause.sqlState?.let { "sql_state" to it })
+            logger.error(
+                "database failure",
+                fields + mapOf("error" to "SQLError", "sql_kind" to cause.kind.name) + codes,
+            )
             respondError(ErrorKind.INTERNAL, "Internal error.")
         }
         else -> {

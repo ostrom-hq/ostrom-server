@@ -12,6 +12,7 @@ import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateKeys
 import dev.ostrom.server.gates.domain.models.GateMode
 import dev.ostrom.server.gates.domain.models.GateNode
+import dev.ostrom.server.gates.domain.models.GateSessionClosedException
 import dev.ostrom.server.gates.domain.models.GateStatus
 import dev.ostrom.server.gates.domain.models.GateSubject
 import dev.ostrom.server.gates.domain.models.GateView
@@ -48,6 +49,7 @@ import kotlin.uuid.Uuid
  * @property label The action label.
  * @property evidence What the approvers are shown.
  * @property redirected True when the command rewrites where git reads or sends (audit A6).
+ * @property unlinkedAuthor The GitHub account id of a pull request's author linked to no Ostrom person ([Gate]).
  */
 data class OpenGate(
     val actor: GateActor,
@@ -59,6 +61,7 @@ data class OpenGate(
     val label: String,
     val evidence: List<Evidence>,
     val redirected: Boolean = false,
+    val unlinkedAuthor: Long? = null,
 )
 
 /** Opens a gate, or joins the live one for the same action. */
@@ -73,6 +76,7 @@ interface OpenGateUseCase {
      * @throws CheckNotAttestedException When the enforced gate needs a check attested and its last run is not.
      * @throws GateWithoutApproverException When the enforced gate has nobody to say yes.
      * @throws NotYourGateException When an agent token asks for another session.
+     * @throws GateSessionClosedException When the session ended while the gate was asked.
      * @throws InvalidGateRequestException When a field is out of bounds.
      */
     suspend operator fun invoke(request: OpenGate): GateView
@@ -114,6 +118,9 @@ class OpenGateUseCaseImpl(
         if (mode == GateMode.ENFORCED && approvers.isEmpty()) throw GateWithoutApproverException()
         val key = digester.digest(GateKeys.keyPreimage(orgId.toString(), request.subject, node))
         val opened = repository.transaction {
+            // AUDIT-SERVEUR-3 B2: the session's lock first, then its end is read. An end that read the session's gates
+            // for its receipt refuses this one; an end that comes after this transaction reads it.
+            request.sessionId?.let { holdOpen(orgId, it) }
             lockKey(orgId, key)
             val same = byKey(orgId, key, SAME_KEY_LIMIT)
                 .filter { request.subject.push == null || it.subject.diffDigest == request.subject.diffDigest }
@@ -161,6 +168,8 @@ class OpenGateUseCaseImpl(
         val fresh = lockGate(live.orgId, live.id)
         if (fresh == null || fresh.status != GateStatus.APPROVED) return joined(request, listOfNotNull(fresh), mode)
         val joined = join(fresh, request)
+        // The taking session joins first: `addAskers` links it to the gate (`gates_sessions`), `updateGate` never does.
+        if (joined != fresh) addAskers(joined)
         updateGate(joined.copy(status = GateStatus.CONSUMED, consumedAt = clock.now()))
         return Opened(joined, requestsOf(joined.orgId, joined.id), created = false)
     }
@@ -201,6 +210,7 @@ class OpenGateUseCaseImpl(
         shownDigest = digester.digest(GateKeys.shownPreimage(request.label, request.subject, request.evidence)),
         evidence = request.evidence,
         createdAt = clock.now(),
+        unlinkedAuthor = request.unlinkedAuthor,
     )
 
     private fun validate(request: OpenGate) {
@@ -294,6 +304,12 @@ internal suspend fun viewOf(
     return GateView(gate, requests, waiting)
 }
 
+// Holds the session open until the transaction ends: its lock, then the mark of its end.
+private suspend fun GatesTransaction.holdOpen(orgId: Uuid, sessionId: String) {
+    lockSession(orgId, sessionId)
+    sessionEndedAt(orgId, sessionId)?.let { throw GateSessionClosedException(sessionId, it) }
+}
+
 // Out of the class: neither reads its state.
 private fun modeOf(node: GateNode?): Pair<GateMode, List<String>> = when {
     node == null -> GateMode.UNGATED to emptyList()
@@ -309,4 +325,6 @@ private fun join(gate: Gate, request: OpenGate): Gate = gate.copy(
     askedVia = gate.askedVia + request.via,
     sessionIds = (gate.sessionIds + listOfNotNull(request.sessionId)).distinct(),
     launchIds = (gate.launchIds + listOfNotNull(request.actor.launchId)).distinct(),
+    // The GitHub check joining a gate the hook opened brings the author's unlinked account; once known, it stays.
+    unlinkedAuthor = gate.unlinkedAuthor ?: request.unlinkedAuthor,
 )

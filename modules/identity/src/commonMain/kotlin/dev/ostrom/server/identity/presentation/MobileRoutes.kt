@@ -32,7 +32,8 @@ fun Route.mobileRoutes(dependencies: MobileRoutesDependencies) = with(dependenci
             // Only the app's own token unlocks: the CLI or a browser has no biometrics to prove.
             if (principal.channel != PrincipalChannel.MOBILE_APP) throw MobileUnlockRefusedException()
             val source = call.request.origin.remoteAddress
-            val at = unlock(principal.userId(), principal.credentialUuid(), request.unlockKey, source)
+            val at =
+                unlock(principal.userId(), principal.credentialUuid(), request.unlockKey, source, request.requestId)
             call.respond(MobileUnlockResponse(at.toString()))
         }
         get<MySettingsApi.Notifications> {

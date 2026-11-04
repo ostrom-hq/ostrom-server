@@ -17,6 +17,7 @@ import dev.ostrom.server.mcprelay.presentation.McpAssignmentResponse
 import dev.ostrom.server.mcprelay.presentation.McpAssignmentsPage
 import dev.ostrom.server.mcprelay.presentation.McpCallsPage
 import dev.ostrom.server.mcprelay.presentation.McpServerDto
+import dev.ostrom.server.mcprelay.presentation.McpServersPage
 import dev.ostrom.server.mcprelay.presentation.McpSettingsDto
 import dev.ostrom.server.mcprelay.presentation.McpUsageResponse
 import dev.ostrom.server.secrets.SecretsModule
@@ -38,13 +39,15 @@ import kotlin.test.assertTrue
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
+private const val SENTRY = "https://sentry.example.com/mcp"
+
 /** Assignments, policies, settings and the journal managed over HTTP, and the repository on its own. */
 class McpRelayManagementPostgresTest : RelayPostgresHarness() {
     @Test
     fun changingAnMcpServerFromTheConsoleNeedsASignInOfLessThanFiveMinutes() =
         serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
             with(server) {
-                val sentry = McpServerDto("sentry", "https://sentry.example.com/mcp", "http")
+                val sentry = McpServerDto("sentry", SENTRY, "http")
                 val path = "$admin/servers/sentry"
                 val stale = listOf(
                     sendJson(HttpMethod.Post, "$admin/servers", sentry, "stale-admin-a"),
@@ -73,6 +76,26 @@ class McpRelayManagementPostgresTest : RelayPostgresHarness() {
                 }
                 assertEquals(McpSettingsDto("ostrom"), client.get("$admin/settings") { bearerAuth("admin-a") }.body())
                 assertEquals(HttpStatusCode.NoContent, client.delete(path) { bearerAuth("admin-a") }.status)
+            }
+        }
+
+    @Test
+    fun noMcpServerIsNamedOstromWhateverItsCaseAndSpaces() =
+        serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
+            with(server) {
+                for (name in listOf("ostrom", "OSTROM", " ostrom ", "ostrom-workflow", "workflow")) {
+                    val created = sendJson(HttpMethod.Post, "$admin/servers", McpServerDto(name, SENTRY, "http"))
+                    assertEquals(HttpStatusCode.BadRequest, created.status, name)
+                    assertTrue("Ostrom's own MCP server" in created.bodyAsText(), created.bodyAsText())
+                }
+                assertEquals(
+                    HttpStatusCode.Created,
+                    sendJson(HttpMethod.Post, "$admin/servers", McpServerDto("sentry", SENTRY, "http")).status,
+                )
+                val put = sendJson(HttpMethod.Put, "$admin/servers/ostrom", McpServerDto("ostrom", SENTRY, "http"))
+                assertEquals(HttpStatusCode.BadRequest, put.status, "Nor created by a PUT")
+                val listed = client.get("$admin/servers") { bearerAuth("admin-a") }.body<McpServersPage>().items
+                assertEquals(listOf("sentry"), listed.map { it.name }, "Nothing of the refused names was stored")
             }
         }
 
@@ -136,7 +159,9 @@ class McpRelayManagementPostgresTest : RelayPostgresHarness() {
                 assertEquals(McpSettingsDto("ostrom"), settings)
                 val before = client.get("$admin/calls?before=2030-01-01T00:00:00Z") { bearerAuth("admin-a") }
                 assertEquals(emptyList(), before.body<McpCallsPage>().items)
-                for (cursor in listOf("yesterday", "2030-01-01T00:00:00Z/nope")) {
+                // The last two are instants the parser reads but PostgreSQL cannot store: a 400, not a 500.
+                val beyond = listOf("%2B300000-01-01T00:00:00Z", "-300000-01-01T00:00:00Z")
+                for (cursor in listOf("yesterday", "2030-01-01T00:00:00Z/nope") + beyond) {
                     assertEquals(
                         HttpStatusCode.BadRequest,
                         client.get("$admin/calls?before=$cursor") { bearerAuth("admin-a") }.status,

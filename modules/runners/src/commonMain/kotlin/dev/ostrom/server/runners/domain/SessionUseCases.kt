@@ -12,6 +12,8 @@ import kotlin.uuid.Uuid
  * @property repository The repository to clone, if any.
  * @property model The model the agent starts with, if chosen.
  * @property prompt The agent's first message, if any.
+ * @property id The session's id, chosen by the server's caller (a run of a workflow keys its agent node's session by
+ *   its visit, so a start asked again finds the first one); a new random id when absent, always for an API request.
  */
 data class CreateCloudSessionPayload(
     val name: String?,
@@ -19,6 +21,7 @@ data class CreateCloudSessionPayload(
     val repository: RepositorySpec?,
     val model: String? = null,
     val prompt: String? = null,
+    val id: Uuid? = null,
 )
 
 /** Creates a cloud session for the caller, within their organization's plan. */
@@ -73,7 +76,7 @@ class CreateCloudSessionUseCaseImpl(
         val now = clock.now()
         requireHoursLeft(usage, plan, caller.orgId, now)
         val session = CloudSession(
-            id = Uuid.random(),
+            id = payload.id ?: Uuid.random(),
             orgId = caller.orgId,
             ownerId = caller.memberId,
             name = name,
@@ -156,12 +159,22 @@ interface GetCloudSessionUseCase {
 }
 
 /**
- * [GetCloudSessionUseCase] on the repository.
+ * [GetCloudSessionUseCase] on the repository, the session named with the registered runner it runs on.
  *
  * @param repository The sessions.
+ * @param driver Where executions run: names the runner holding the current one.
  */
-class GetCloudSessionUseCaseImpl(private val repository: CloudSessionsRepository) : GetCloudSessionUseCase {
-    override suspend fun invoke(caller: Caller, id: Uuid): CloudSession = repository.ownedBy(caller, id)
+class GetCloudSessionUseCaseImpl(
+    private val repository: CloudSessionsRepository,
+    private val driver: RuntimeDriver,
+) : GetCloudSessionUseCase {
+    // a paused, terminated or failed session runs nowhere: no lookup
+    override suspend fun invoke(caller: Caller, id: Uuid): CloudSession = repository.ownedBy(caller, id).let {
+        when (it.state) {
+            SessionState.PAUSED, SessionState.TERMINATED, SessionState.FAILED -> it
+            else -> it.copy(runnerId = driver.holder(it))
+        }
+    }
 }
 
 /**

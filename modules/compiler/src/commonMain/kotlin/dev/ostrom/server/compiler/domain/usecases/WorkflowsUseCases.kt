@@ -9,11 +9,18 @@ import dev.ostrom.server.compiler.domain.models.Authorship
 import dev.ostrom.server.compiler.domain.models.CompileInputs
 import dev.ostrom.server.compiler.domain.models.DecisionDoc
 import dev.ostrom.server.compiler.domain.models.StoredWorkflow
+import dev.ostrom.server.compiler.domain.models.WorkflowDoc
 import dev.ostrom.server.compiler.domain.repositories.CompilerRepository
+import dev.ostrom.server.compiler.domain.repositories.MAX_WORKFLOWS
 import dev.ostrom.server.compiler.domain.services.JsText
+import dev.ostrom.server.compiler.domain.services.NodeConditions
 import dev.ostrom.server.compiler.domain.services.PackageCompiler
+import dev.ostrom.server.compiler.domain.services.WorkflowRepos
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
+import dev.ostrom.server.kernel.workflows.WorkflowRemovals
+import kotlin.time.Clock
+import kotlin.uuid.Uuid
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -21,8 +28,6 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
-import kotlin.time.Clock
-import kotlin.uuid.Uuid
 
 /** Signs the receipt of a decision on a workflow (`decisions.ts` `recordSigned`, receipt kind `workflow`). */
 interface WorkflowDecisionSigner {
@@ -105,11 +110,13 @@ interface WorkflowsUseCase {
  * @param repository The compiler's storage.
  * @param signer Signs the decisions.
  * @param clock The time.
+ * @param removals Told of a deleted workflow (its budgets go with it); null, nobody keeps anything about one.
  */
 class WorkflowsUseCaseImpl(
     private val repository: CompilerRepository,
     private val signer: WorkflowDecisionSigner,
     private val clock: Clock,
+    private val removals: WorkflowRemovals? = null,
 ) : WorkflowsUseCase {
     override suspend fun list(orgId: Uuid, repo: String?, status: WorkflowStatus?): List<StoredWorkflow> {
         val all = repository.workflows(orgId)
@@ -136,6 +143,7 @@ class WorkflowsUseCaseImpl(
         create: Boolean,
     ): StoredWorkflow {
         val workflow = decode(raw)
+        val repos = WorkflowRepos.of(raw)
         val before = repository.workflow(orgId, workflow.id)
         // An update names a workflow of the caller's organization: an unknown id (another organization's included,
         // which this one never sees) is not found, and never created. The write is conditional on what was read: an
@@ -143,6 +151,11 @@ class WorkflowsUseCaseImpl(
         // never a creation; a creation never replaces.
         val expected = when {
             create && before != null -> throw OstromException(ErrorKind.CONFLICT, "A workflow with this id exists.")
+            // Every read of the workflows loads them all: a creation beyond the limit is refused.
+            create && repository.workflowCount(orgId) >= MAX_WORKFLOWS -> throw OstromException(
+                ErrorKind.CONFLICT,
+                "workflow_limit: an organization keeps at most $MAX_WORKFLOWS workflows; delete one first.",
+            )
             create -> null
             before == null -> throw OstromException(ErrorKind.NOT_FOUND, "Workflow not found.")
             else -> expectedVersion ?: before.version
@@ -150,9 +163,8 @@ class WorkflowsUseCaseImpl(
         val author = Authorship(by, clock.now())
         val saved = repository.saveWorkflow(orgId, workflow.id, raw, expected, author)
             ?: throw OstromException(ErrorKind.CONFLICT, "workflow_conflict: someone saved this workflow in between.")
-        val previous = if (before == null) null else before.doc.workflow
-        val change = changeOf(previous, workflow)
-        if (change != null) record(orgId, workflow, previous, change, author)
+        val change = changeOf(before?.doc, workflow, repos)
+        if (change != null) record(orgId, WorkflowDoc(raw, workflow), before?.doc, change, author)
         return saved
     }
 
@@ -162,7 +174,7 @@ class WorkflowsUseCaseImpl(
 
     override suspend fun delete(orgId: Uuid, id: String) {
         get(orgId, id)
-        val pinned = repository.packages(orgId, null).filter { !it.revoked }.any { stored ->
+        val pinned = repository.packages(orgId).filter { !it.revoked }.any { stored ->
             val pin = repository.pin(orgId, stored.envelope.repo)
             pin?.contentDigest == stored.envelope.contentDigest && compiles(stored.envelope.payload, id)
         }
@@ -170,33 +182,42 @@ class WorkflowsUseCaseImpl(
             throw OstromException(ErrorKind.CONFLICT, "workflow_in_use: a pinned package compiles this workflow.")
         }
         repository.deleteWorkflow(orgId, id)
+        removals?.removed(orgId, id)
     }
 
     private fun compiles(payload: String, id: String): Boolean =
         (PackageCompiler.json.parseToJsonElement(payload).jsonObject["workflows"] as JsonArray)
             .any { (it.jsonObject["id"] as JsonPrimitive).content == id }
 
+    // The core model does not know `repos` yet (R6): it is checked here and kept in the saved JSON. A check node's
+    // condition is checked against the workflow's nodes and edges.
     private fun decode(raw: JsonObject): Workflow = try {
-        PackageCompiler.json.decodeFromJsonElement(Workflow.serializer(), raw)
+        WorkflowRepos.problem(raw)?.let { throw IllegalArgumentException(it) }
+        PackageCompiler.json.decodeFromJsonElement(Workflow.serializer(), WorkflowRepos.withoutField(raw))
+            .also(NodeConditions::check)
     } catch (e: IllegalArgumentException) {
         throw InvalidWorkflowException("Invalid workflow: ${e.message.toString().take(MAX_ERROR)}", e)
     }
 
     private suspend fun record(
         orgId: Uuid,
-        after: Workflow,
-        before: Workflow?,
+        after: WorkflowDoc,
+        before: WorkflowDoc?,
         action: String,
         author: Authorship,
     ) {
-        val decision = DecisionDoc("dec_${Uuid.random()}", "workflow", after.id, author.by, JsText.iso(author.at), null)
+        val id = after.workflow.id
+        val decision = DecisionDoc("dec_${Uuid.random()}", "workflow", id, author.by, JsText.iso(author.at), null)
         val receipt = signer.sign(orgId, decision, action, before?.let(::summary), summary(after))
         repository.addDecision(orgId, decision.copy(receiptId = receipt))
     }
 
-    // What the decision says: the status, the gates and their approvers, and what runs.
-    private fun summary(workflow: Workflow): JsonObject = buildJsonObject {
+    // What the decision says: the status, the repositories of a limited workflow, the gates and their approvers,
+    // and what runs.
+    private fun summary(doc: WorkflowDoc): JsonObject = buildJsonObject {
+        val workflow = doc.workflow
         put("status", workflow.status.name.lowercase())
+        doc.repos?.let { repos -> put(WorkflowRepos.FIELD, JsonArray(repos.map { JsonPrimitive(it) })) }
         put(
             "gates",
             JsonArray(
@@ -223,9 +244,10 @@ class WorkflowsUseCaseImpl(
 }
 
 // `accept` from proposed to accepted, `edit` otherwise; null when nothing that is decided changed.
-private fun changeOf(before: Workflow?, after: Workflow): String? {
-    val same = before != null && strip(before) == strip(after)
-    val accepted = before?.status == WorkflowStatus.PROPOSED && after.status == WorkflowStatus.ACCEPTED
+private fun changeOf(before: WorkflowDoc?, after: Workflow, repos: List<String>?): String? {
+    val same = before != null && strip(before.workflow) == strip(after) && before.repos == repos
+    val proposed = before != null && before.workflow.status == WorkflowStatus.PROPOSED
+    val accepted = proposed && after.status == WorkflowStatus.ACCEPTED
     return when {
         same -> null
         accepted -> "accept"

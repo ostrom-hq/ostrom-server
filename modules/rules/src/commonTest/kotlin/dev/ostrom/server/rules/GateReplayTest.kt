@@ -25,6 +25,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 /** [GateReplay]: what the rules would have done on each recorded boundary action, and why, without a model. */
 class GateReplayTest {
@@ -137,5 +139,71 @@ class GateReplayTest {
         assertEquals(listOf("push-main"), prepared.single().actions.map { it.action.cls })
         assertFalse(prepared.single().gate.approvers.isEmpty())
         assertEquals(ReplayFixtures.gated().gate, prepared.single().gate)
+    }
+
+    @Test
+    fun anActionManyRulesCoverListsAFewOfThemAndCountsThemAll() {
+        val rules = (1..1_500).map { n ->
+            gated(id = "rule_${n.toString().padStart(4, '0')}", approvers = listOf("rev-${n % 50}", "Lyes"))
+                .copy(statement = "x".repeat(2_000))
+        }
+        val item = replay(action(), rules)
+        assertEquals(GateReplay.ASKED, item.text("outcome"))
+        assertEquals("1500", item.text("ruleCount"))
+        val listed = item.getValue("rules").jsonArray.map { it.jsonObject }
+        assertEquals(GateReplay.MAX_LISTED, listed.size)
+        assertEquals("rule_0001", listed.first().text("id"))
+        val statement = listed.first().text("statement").orEmpty()
+        assertEquals(GateReplay.MAX_STATEMENT, statement.length)
+        assertTrue(statement.endsWith("…"), statement)
+        assertEquals("50", item.text("approverCount"), "The 50 reviewers, never the asker")
+        assertEquals((1..10).map { "rev-$it" }, item.texts("approvers"))
+        val why = item.text("why").orEmpty()
+        val named = "It would have waited for a yes from rev-1, rev-2, rev-3, 47 more (rule_0001: x"
+        assertTrue(why.startsWith(named), why)
+        assertTrue(why.endsWith("; 1497 more)."), why)
+        assertTrue(why.length < 1_000, "${why.length}")
+    }
+
+    @Test
+    fun aShortListIsCountedAndKeptWhole() {
+        val item = replay(action(), listOf(gated(approvers = listOf("bob"))))
+        assertEquals("1", item.text("ruleCount"))
+        assertEquals("1", item.text("approverCount"))
+        assertEquals("0", replay(action(), emptyList()).text("ruleCount"))
+    }
+
+    @Test
+    fun alikeActionsShareTheirRulesButEachKeepsItsIdAndItsAsker() {
+        val rules = GateReplay.prepare(listOf(gated(approvers = listOf("bob"))))
+        val byLyes = action()
+        val byBob = action(askedBy = listOf("bob"))
+        val merge = action(subject = push(cls = "merge"))
+        val items = GateReplay.replayAll(listOf(byLyes, byBob, merge), rules, SelfApprovalPolicy.NEVER)
+        assertEquals(listOf(byLyes, byBob, merge).map { it.id.toString() }, items.map { it.text("gateId") })
+        assertEquals(listOf(GateReplay.ASKED, GateReplay.BLOCKED, GateReplay.PASSED), items.map { it.text("outcome") })
+    }
+
+    @Test
+    fun aListedRuleNamesAFewOfItsApprovers() {
+        val item = replay(action(), listOf(gated(approvers = listOf("a1", "a2", "a3", "a4"))))
+        val rule = item.getValue("rules").jsonArray.single().jsonObject
+        assertEquals(listOf("a1", "a2", "a3"), rule.texts("approvers"))
+        assertEquals("4", item.text("approverCount"))
+    }
+
+    // AUDIT-SECU-ANALYSE R5: a pattern stored before it was checked never backtracks for minutes on the server's
+    // only replay lane, and a command is matched on its first 8 KiB.
+    @Test
+    fun aPatternThatCouldBacktrackCoversNothingAndALongCommandIsCut() {
+        fun outcome(pattern: String, command: String) = replay(
+            action(subject = push(cls = "shell", command = command)),
+            listOf(gated(cls = "deploy", patterns = listOf(pattern))),
+        ).text("outcome")
+        val start = TimeSource.Monotonic.markNow()
+        assertEquals(GateReplay.PASSED, outcome("(a+)+$", "a".repeat(30) + "!"))
+        assertTrue(start.elapsedNow() < 2.seconds, "Replayed in ${start.elapsedNow()}")
+        assertEquals(GateReplay.ASKED, outcome("secret", "x".repeat(8_000) + "secret"))
+        assertEquals(GateReplay.PASSED, outcome("secret", "x".repeat(8_200) + "secret"))
     }
 }

@@ -9,6 +9,9 @@ import dev.ostrom.server.gates.domain.models.GateNotUsableException
 import dev.ostrom.server.gates.domain.models.GateStatus
 import dev.ostrom.server.gates.domain.models.NotYourGateException
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
+import dev.ostrom.server.gates.domain.repositories.GatesTransaction
+import dev.ostrom.server.gates.domain.services.GateSessions
+import dev.ostrom.server.kernel.errors.OstromException
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -50,35 +53,61 @@ interface UseGateUseCase {
 
 /**
  * [UseGateUseCase] on the repository, under the gate's row lock. A yes is used only once its receipt is signed
- * (SECURITY-AUDIT S2-14): it is signed now if it was not yet, and refused while it cannot be (fail closed).
+ * (SECURITY-AUDIT S2-14): it is signed now if it was not yet, and refused while it cannot be (fail closed). An approved
+ * yes is taken up only while a session of the caller's launch that asked for it is open (AUDIT-SECU-GATES-2 G2): once
+ * the session has ended its receipt is signed, and an action it covers would be missing from it.
  *
  * @param repository The gates.
  * @param receipts Signs a decided gate's receipt.
  * @param clock The clock.
+ * @param sessions Whether a session that asked is still open.
  */
 class UseGateUseCaseImpl(
     private val repository: GatesRepository,
     private val receipts: EnsureGateReceiptUseCase,
     private val clock: Clock,
+    private val sessions: GateSessions,
 ) : UseGateUseCase {
     override suspend fun invoke(actor: GateActor, gateId: Uuid, use: GateUse): Gate {
-        // Signing never holds the row lock; the transaction below re-reads the gate with its receipt.
-        if (use != GateUse.RELEASE) repository.get(actor.orgId, gateId)?.let { receipts.ensureSigned(it) }
-        return move(actor, gateId, use)
+        // Signing and the sessions' check never hold the row lock; the transaction below re-reads the gate. A shadow or
+        // ungated gate never gets a yes: no session is read for it.
+        val before = if (use == GateUse.RELEASE) null else repository.get(actor.orgId, gateId)
+        before?.let { receipts.ensureSigned(it) }
+        val asked = when {
+            before == null -> null
+            before.status == GateStatus.SHADOW || before.status == GateStatus.UNGATED -> null
+            else -> openSessions(actor, before)
+        }
+        return move(actor, gateId, use, asked)
     }
 
-    private suspend fun move(actor: GateActor, gateId: Uuid, use: GateUse): Gate = repository.transaction {
-        val gate = lockGate(actor.orgId, gateId) ?: throw GateNotFoundException()
-        val launch = launchOf(actor, gate)
-        val now = clock.now()
-        val next = when (use) {
-            GateUse.RESERVE -> reserved(gate, launch, now)
-            GateUse.CONSUME -> consumed(gate, launch, now)
-            GateUse.RELEASE -> released(gate, launch, now)
+    // The sessions of the caller's launch that asked for the gate and that the sessions module says are open.
+    private suspend fun openSessions(actor: GateActor, gate: Gate): List<String> =
+        gate.sessionIds.filter { sessionId ->
+            try {
+                sessions.assertOpen(gate.orgId, sessionId, actor.launchId)
+                true
+            } catch (_: OstromException) {
+                false
+            }
         }
-        if (next != gate) updateGate(next)
-        next
-    }
+
+    // [asked]: the open sessions that asked, or null when no session is read. Each is held under its end's lock
+    // (AUDIT-SERVEUR-3 B2), in one order, before the gate's row: one whose end already read its gates is not open.
+    private suspend fun move(actor: GateActor, gateId: Uuid, use: GateUse, asked: List<String>?): Gate =
+        repository.transaction {
+            val open = asked == null || stillOpen(actor.orgId, asked)
+            val gate = lockGate(actor.orgId, gateId) ?: throw GateNotFoundException()
+            val launch = launchOf(actor, gate)
+            val now = clock.now()
+            val next = when (use) {
+                GateUse.RESERVE -> reserved(gate, launch, now, open)
+                GateUse.CONSUME -> consumed(gate, launch, now, open)
+                GateUse.RELEASE -> released(gate, launch, now)
+            }
+            if (next != gate) updateGate(next)
+            next
+        }
 
     // Only an agent session of a launch that asked for the gate moves its yes.
     private fun launchOf(actor: GateActor, gate: Gate): String {
@@ -89,27 +118,33 @@ class UseGateUseCaseImpl(
         return launch
     }
 
-    private fun reserved(gate: Gate, launch: String, now: Instant): Gate {
+    private fun reserved(gate: Gate, launch: String, now: Instant, open: Boolean): Gate {
         if (gate.status != GateStatus.APPROVED) throw GateNotUsableException(reserveRefusal(gate))
-        usable(gate, now)
+        usable(gate, now, open)
         return gate.copy(status = GateStatus.RESERVED, reservedBy = launch, reservedAt = now)
     }
 
-    // A shadow or ungated action has no yes to use: the gate stays as it is.
-    private fun consumed(gate: Gate, launch: String, now: Instant): Gate = when {
+    // A shadow or ungated action has no yes to use: the gate stays as it is. A yes reserved while the session was open
+    // is the action under way: it is used up even if the session has ended since.
+    private fun consumed(gate: Gate, launch: String, now: Instant, open: Boolean): Gate = when {
         gate.status == GateStatus.SHADOW || gate.status == GateStatus.UNGATED -> gate
-        gate.status == GateStatus.APPROVED -> usable(gate, now).copy(status = GateStatus.CONSUMED, consumedAt = now)
+        gate.status == GateStatus.APPROVED ->
+            usable(gate, now, open).copy(status = GateStatus.CONSUMED, consumedAt = now)
         else -> {
             heldBy(gate, launch)
             gate.copy(status = GateStatus.CONSUMED, consumedAt = now)
         }
     }
 
-    // An approved yes covers its action only signed and within its lifetime.
-    private fun usable(gate: Gate, now: Instant): Gate {
-        if (gate.receiptId == null) throw GateNotUsableException(UNSIGNED)
-        if (gate.yesExpired(now)) throw GateNotUsableException(EXPIRED)
-        return gate
+    // An approved yes covers its action only signed, within its lifetime, and in an open session that asked for it.
+    private fun usable(gate: Gate, now: Instant, open: Boolean): Gate {
+        val refusal = when {
+            gate.receiptId == null -> UNSIGNED
+            gate.yesExpired(now) -> EXPIRED
+            !open -> ENDED
+            else -> return gate
+        }
+        throw GateNotUsableException(refusal)
     }
 
     // A yes goes back in play once: a second release would let reserve, launch and release loop until it expires.
@@ -139,8 +174,16 @@ class UseGateUseCaseImpl(
     }
 
     private companion object {
+        const val ENDED = "The session that asked for this yes has ended. Ask again in an open session."
         const val EXPIRED = "This yes expired: it waits 15 minutes for its action. Ask again."
         const val RELEASED = "This yes was already released once: use it for this action, or ask again."
         const val UNSIGNED = "This yes has no signed receipt yet: it cannot be used. Try again in a moment."
     }
+}
+
+// Out of the class, which reads none of it: the sessions locked in one order, then whether one has not ended.
+private suspend fun GatesTransaction.stillOpen(orgId: Uuid, asked: List<String>): Boolean {
+    val held = asked.sorted()
+    held.forEach { lockSession(orgId, it) }
+    return held.any { sessionEndedAt(orgId, it) == null }
 }

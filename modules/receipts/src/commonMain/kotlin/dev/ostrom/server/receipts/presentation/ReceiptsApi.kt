@@ -69,9 +69,25 @@ data class ReceiptsPage(val items: List<JsonObject>, val next: String? = null)
  * @property kid The key id.
  * @property alg `ed25519`.
  * @property publicKeyPem The SPKI PEM.
+ * @property rotation How the key it replaced handed it over; absent for a key handed over by nobody.
  */
 @Serializable
-data class PublicKeyResponse(val kid: String, val alg: String, val publicKeyPem: String)
+data class PublicKeyResponse(
+    val kid: String,
+    val alg: String,
+    val publicKeyPem: String,
+    val rotation: KeyRotationResponse? = null,
+)
+
+/**
+ * How a receipt key was handed over (contract `KeyRotation`, docs/receipt-key-rotation.md).
+ *
+ * @property kid The id of the key it replaces.
+ * @property signature That key's Ed25519 signature, in base64, over `ostrom-receipt-key-rotation/v1\n` followed by
+ * the hex of the new key's 32 raw bytes.
+ */
+@Serializable
+data class KeyRotationResponse(val kid: String, val signature: String)
 
 /**
  * The public keys (contract `listReceiptKeys`).
@@ -88,6 +104,8 @@ data class ReceiptKeysResponse(val keys: List<PublicKeyResponse>)
  * @property digest The SHA-256 of the canonical body, recomputed.
  * @property kid The key that signed it.
  * @property reason Why it does not verify.
+ * @property orgBound True when the signed body names the caller's organization; false for a receipt signed before
+ * receipts named theirs, never shown as bound.
  */
 @Serializable
 data class VerificationResponse(
@@ -95,4 +113,5 @@ data class VerificationResponse(
     val digest: String? = null,
     val kid: String? = null,
     val reason: String? = null,
+    val orgBound: Boolean = false,
 )

@@ -4,6 +4,7 @@ package dev.ostrom.server.reports.presentation
 import dev.ostrom.server.reports.domain.ActivityItem
 import dev.ostrom.server.reports.domain.ActivityKind
 import dev.ostrom.server.reports.domain.ActivityPage
+import dev.ostrom.server.reports.domain.ExceededBudget
 import dev.ostrom.server.reports.domain.SpendingDay
 import dev.ostrom.server.reports.domain.SpendingLine
 import dev.ostrom.server.reports.domain.SpendingReport
@@ -23,6 +24,21 @@ fun SpendingReport.toDto() = SpendingDto(
     byRepo = totals.byRepo.map { it.toDto() },
     byPerson = totals.byPerson.map { it.toDto() },
     daily = daily.map { it.toDto() },
+    exceeded = exceeded.map { it.toDto() },
+)
+
+/** Maps a budget past its limit. */
+fun ExceededBudget.toDto() = ExceededBudgetDto(
+    scope = when {
+        workflowId != null -> "workflow"
+        memberId != null -> "member"
+        else -> "organization"
+    },
+    subject = workflowId ?: memberId?.toString(),
+    period = if (daily) "day" else "month",
+    usd = usd(limitMicros),
+    hardStop = stops,
+    since = since.toString(),
 )
 
 /** Maps a line. */

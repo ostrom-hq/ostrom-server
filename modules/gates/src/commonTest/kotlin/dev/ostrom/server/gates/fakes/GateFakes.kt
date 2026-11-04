@@ -12,6 +12,7 @@ import dev.ostrom.server.gates.domain.models.RequestStatus
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
 import dev.ostrom.server.gates.domain.repositories.GatesTransaction
+import dev.ostrom.server.gates.domain.services.GateGitHubAccounts
 import dev.ostrom.server.gates.domain.services.GateCheckNeed
 import dev.ostrom.server.gates.domain.services.GateCheckNeeds
 import dev.ostrom.server.gates.domain.services.GateCheckProof
@@ -34,6 +35,12 @@ import kotlin.uuid.Uuid
 /** Gates in memory; a transaction holds one mutex (like the row lock) and rolls back on an exception. */
 class InMemoryGatesRepository : GatesRepository {
     val gates = linkedMapOf<Uuid, Gate>()
+
+    /**
+     * The sessions linked to each gate, as `gates_sessions` holds them: written by `insertGate` and `addAskers` only,
+     * so a session written into a gate by `updateGate` alone is not found by `ofSession`, as on PostgreSQL.
+     */
+    val links = linkedSetOf<Pair<Uuid, String>>()
     val requests = linkedMapOf<Uuid, ApprovalRequest>()
     val lockedKeys = mutableListOf<String>()
     var gateUpdates = 0
@@ -44,17 +51,26 @@ class InMemoryGatesRepository : GatesRepository {
 
     /** When set, `lockGate` of this gate returns null once (the row vanished between two transactions). */
     var vanishOnLock: Uuid? = null
+    /** When each session's end read its gates, as `gates_session_ends` holds it. */
+    val sessionEnds = linkedMapOf<Pair<Uuid, String>, Instant>()
+
+    /** The sessions whose lock a transaction took, in order. */
+    val lockedSessions = mutableListOf<String>()
     private val mutex = Mutex()
 
     override suspend fun <T> transaction(block: suspend GatesTransaction.() -> T): T = mutex.withLock {
         transactions++
         val savedGates = LinkedHashMap(gates)
         val savedRequests = LinkedHashMap(requests)
+        val savedLinks = LinkedHashSet(links)
+        val savedEnds = LinkedHashMap(sessionEnds)
         try {
             Tx().block()
         } catch (error: Throwable) {
             gates.clear(); gates.putAll(savedGates)
             requests.clear(); requests.putAll(savedRequests)
+            links.clear(); links.addAll(savedLinks)
+            sessionEnds.clear(); sessionEnds.putAll(savedEnds)
             throw error
         }
     }
@@ -72,7 +88,7 @@ class InMemoryGatesRepository : GatesRepository {
     }
 
     override suspend fun ofSession(orgId: Uuid, sessionId: String): List<Gate> =
-        gates.values.filter { it.orgId == orgId && sessionId in it.sessionIds }.sortedBy { it.createdAt }
+        gates.values.filter { it.orgId == orgId && (it.id to sessionId) in links }.sortedBy { it.createdAt }
 
     override suspend fun approval(orgId: Uuid, id: Uuid): ApprovalView? =
 
@@ -101,6 +117,22 @@ class InMemoryGatesRepository : GatesRepository {
     }
 
     private inner class Tx : GatesTransaction {
+        override suspend fun lockSession(orgId: Uuid, sessionId: String) {
+            lockedSessions += sessionId
+        }
+
+        override suspend fun sessionEndedAt(orgId: Uuid, sessionId: String): Instant? = sessionEnds[orgId to sessionId]
+
+        override suspend fun markSessionEnded(orgId: Uuid, sessionId: String, at: Instant) {
+            sessionEnds.getOrPut(orgId to sessionId) { at }
+        }
+
+        override suspend fun gatesOfSession(orgId: Uuid, sessionId: String): List<Gate> = ofSession(orgId, sessionId)
+
+        // Not counted in `batchedRequestReads`: that counts the reads outside a transaction.
+        override suspend fun requestsOfGates(orgId: Uuid, gateIds: List<Uuid>): List<ApprovalRequest> =
+            requests.values.filter { it.gateId in gateIds && it.orgId == orgId }
+
         override suspend fun lockKey(orgId: Uuid, key: String) {
             lockedKeys += key
         }
@@ -116,7 +148,9 @@ class InMemoryGatesRepository : GatesRepository {
                 askedVia = gate.askedVia,
                 sessionIds = gate.sessionIds,
                 launchIds = gate.launchIds,
+                unlinkedAuthor = gate.unlinkedAuthor,
             )
+            gate.sessionIds.forEach { links += gate.id to it }
         }
 
         override suspend fun lockGate(orgId: Uuid, id: Uuid): Gate? {
@@ -135,6 +169,7 @@ class InMemoryGatesRepository : GatesRepository {
 
         override suspend fun insertGate(gate: Gate) {
             gates[gate.id] = gate
+            gate.sessionIds.forEach { links += gate.id to it }
         }
 
         override suspend fun updateGate(gate: Gate) {
@@ -155,6 +190,13 @@ class InMemoryGatesRepository : GatesRepository {
 /** The preimage itself stands for its digest: equal texts, equal digests. */
 class IdentityDigester : GateDigester {
     override fun digest(text: String): String = text
+}
+
+/** The GitHub accounts people linked, by Ostrom login. */
+class FakeGitHubAccounts : GateGitHubAccounts {
+    val ids = mutableMapOf<String, Long>()
+
+    override suspend fun gitHubIdsOf(login: String): List<Long> = listOfNotNull(ids[login])
 }
 
 class FakePolicies(var policy: SelfApprovalPolicy = SelfApprovalPolicy.DEFAULT) : GatePolicies {

@@ -57,10 +57,16 @@ val NEVER_ON_A_TOKEN: Set<String> = setOf(ANSWER_SCOPE, AGENT_SCOPE, ALL_USER_SC
  * of the console's administration, and neither [ANSWER_SCOPE] nor [WORKFLOWS_WRITE_SCOPE] (S2-04): `ostrom approve`
  * opens the console's page instead. `rules:read` only reads: a rule and the gate policy are written from the console
  * (H1). A CLI token issued before a scope joined this set does not get it: `ostrom login` again.
+ *
+ * One write besides `sessions:write`: `cloud:write` (which reads too), for `ostrom claude --cloud` and `ostrom
+ * attach`, which start, stop and attach to the person's own cloud sessions. An agent that reads this token can open
+ * one, as it can already open a launch: the session is the person's, bounded by the plan (hours, sessions at once),
+ * its agent launched under the organization's policy by the runner, and its clone has no credential to push with. It
+ * governs nothing (decided on 03/11/2026, line 6.2 of the demo journey).
  */
 val CLI_SCOPES: Set<String> = setOf(
     "profile:read", "orgs:read", "workflows:read", "sessions:write", "receipts:read", "gates:read", "mcp:read",
-    "rules:read",
+    "rules:read", "cloud:write",
 )
 
 /**
@@ -73,8 +79,17 @@ val ADMIN_SCOPES: Set<String> = GovernanceScopes.ALL
 /** How long the token of `ostrom login --admin` lives: a working day, after which `ostrom login --admin` again. */
 val ADMIN_TOKEN_LIFETIME: Duration = 8.hours
 
-/** What the token of `ostrom login --admin` grants: what the CLI does, plus the governance writes. */
-val ADMIN_TOKEN_SCOPES: Set<String> = CLI_SCOPES + ADMIN_SCOPES
+/**
+ * The reads the token of `ostrom login --admin` makes to write the governance, which the device's token lacks: the
+ * model policy `ostrom policy set models` reads before it writes it again (it keeps the default and the members'
+ * lists). Reads, not governance scopes: a personal token keeps them, and `ostrom login --admin` does not ask for them
+ * (the browser shows the writes it approves). Only a read of what [ADMIN_SCOPES] write belongs here: `inference:read`
+ * opens `GET /api/v1/policy/models` alone (the inference settings take `inference:admin`).
+ */
+val ADMIN_READ_SCOPES: Set<String> = setOf("inference:read")
+
+/** What the token of `ostrom login --admin` grants: what the CLI does, the governance writes and their reads. */
+val ADMIN_TOKEN_SCOPES: Set<String> = CLI_SCOPES + ADMIN_SCOPES + ADMIN_READ_SCOPES
 
 /** The scope that changes the caller's notification preferences (`PUT /api/v1/me/notifications`). */
 const val NOTIFICATIONS_WRITE_SCOPE = "notifications:write"
@@ -92,7 +107,9 @@ val MOBILE_SCOPES: Set<String> = setOf(
 /**
  * How long after the phone's biometric unlock the app's token may say yes (S2-54): the step-up window of a yes. The
  * identity module withholds [ANSWER_SCOPE] outside it, so no gate route can accept a yes from a token lifted from the
- * phone's keychain without its biometrics, whatever it checks itself.
+ * phone's keychain without its biometrics, whatever it checks itself. A yes also takes the unlock bound to its own
+ * request, at most a minute old and used once ([dev.ostrom.server.kernel.auth.PhoneUnlockProofs], Q-APP-STEPUP-RISK):
+ * the five minutes are a no's.
  */
 val MOBILE_UNLOCK_WINDOW: Duration = 5.minutes
 

@@ -5,34 +5,88 @@ import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * One member's own monthly limit, which replaces the default member limit.
+ * One of a member's own limits, which together replace the default member limits.
  *
  * @property memberId The member.
  * @property limitMicros The limit, USD millionths.
  * @property updatedAt Its last change.
+ * @property window Per day or per month.
+ * @property action Stops or warns.
  */
-data class MemberBudget(val memberId: Uuid, val limitMicros: Long, val updatedAt: Instant)
+data class MemberBudget(
+    val memberId: Uuid,
+    val limitMicros: Long,
+    val updatedAt: Instant,
+    val window: BudgetWindow = BudgetWindow.MONTH,
+    val action: BudgetAction = BudgetAction.BLOCK,
+) {
+    /** The limit. */
+    val limit: BudgetLimit get() = BudgetLimit(limitMicros, window, action)
+}
 
 /**
- * An org's monthly limits; a null limit means none.
+ * An org's limits, each subject with at most one per window.
  *
- * @property orgLimitMicros What the whole org may spend.
- * @property defaultMemberLimitMicros What each member may spend, unless overridden.
- * @property overrides Members with their own limit, by member id.
+ * @property org What the whole org may spend.
+ * @property defaultMember What each member may spend, unless they have limits of their own.
+ * @property overrides Members' own limits, by member id.
+ * @property workflows The workflows' limits, by workflow id: what the model calls of the launches that play each one
+ *   may spend; [BudgetRules.MAX_WORKFLOW_BUDGETS] workflows at most, each whole.
  */
 data class BudgetSettings(
-    val orgLimitMicros: Long?,
-    val defaultMemberLimitMicros: Long?,
+    val org: List<BudgetLimit>,
+    val defaultMember: List<BudgetLimit>,
     val overrides: List<MemberBudget>,
-)
+    val workflows: List<WorkflowBudget> = emptyList(),
+) {
+    /** The org's monthly amount, whatever it does; null without one. */
+    val orgLimitMicros: Long? get() = org.monthlyMicros()
+
+    /** The default member's monthly amount, whatever it does; null without one. */
+    val defaultMemberLimitMicros: Long? get() = defaultMember.monthlyMicros()
+}
 
 /**
- * The limits that apply to one member.
+ * One of a workflow's limits.
  *
- * @property orgLimitMicros The org's.
- * @property memberLimitMicros The member's own, or else the default member limit.
+ * @property workflowId The workflow.
+ * @property limit The limit.
+ * @property updatedAt Its last change.
  */
-data class BudgetLimits(val orgLimitMicros: Long?, val memberLimitMicros: Long?)
+data class WorkflowBudget(val workflowId: String, val limit: BudgetLimit, val updatedAt: Instant)
+
+/**
+ * The limits that apply to one member's call, the month's before the day's.
+ *
+ * @property org The org's.
+ * @property member The member's own, or else the default member limits.
+ * @property workflow The limits of the workflow the call's launch plays; empty without one.
+ */
+data class BudgetLimits(
+    val org: List<BudgetLimit>,
+    val member: List<BudgetLimit>,
+    val workflow: List<BudgetLimit> = emptyList(),
+) {
+    /** The member's monthly amount, whatever it does; null without one. */
+    val memberLimitMicros: Long? get() = member.monthlyMicros()
+}
+
+/**
+ * A limit spent to its end in its current day or month, as the guard saw it before a call.
+ *
+ * @property scope The org's limit, a member's (their own or the default) or a workflow's.
+ * @property memberId The member, for a [BudgetScope.MEMBER] limit.
+ * @property limit The limit.
+ * @property since When the guard saw it reached.
+ * @property workflowId The workflow, for a [BudgetScope.WORKFLOW] limit.
+ */
+data class ExceededBudget(
+    val scope: BudgetScope,
+    val memberId: Uuid?,
+    val limit: BudgetLimit,
+    val since: Instant,
+    val workflowId: String? = null,
+)
 
 /** The limits and the alerts already sent. Every read and write is scoped by org. */
 interface BudgetsRepository {
@@ -47,57 +101,34 @@ interface BudgetsRepository {
     suspend fun settings(orgId: Uuid, maxOverrides: Int): BudgetSettings
 
     /**
-     * Reads the limits of one member, in one query.
+     * Reads the limits of one member's call, in one query.
      *
      * @param orgId The org.
      * @param memberId The member.
+     * @param workflowId The workflow the call's launch plays, or null: its limits are read too.
      *
      * @return The limits.
      */
-    suspend fun limits(orgId: Uuid, memberId: Uuid): BudgetLimits
+    suspend fun limits(orgId: Uuid, memberId: Uuid, workflowId: String? = null): BudgetLimits
 
     /**
-     * Replaces the org limit and the default member limit together; a null removes it.
+     * Replaces a subject's limits whole, in one transaction: a window absent from [limits] has no limit afterwards.
+     * Only that subject's rows are written, so that two admins changing two subjects at once keep both changes.
      *
      * @param orgId The org.
-     * @param orgLimitMicros The org limit.
-     * @param defaultMemberLimitMicros The default member limit.
+     * @param target The subject.
+     * @param limits Its limits, at most one per window; empty removes them.
      * @param at The time of the change.
      */
-    suspend fun putOrgLimits(orgId: Uuid, orgLimitMicros: Long?, defaultMemberLimitMicros: Long?, at: Instant)
+    suspend fun replaceLimits(orgId: Uuid, target: BudgetTarget, limits: List<BudgetLimit>, at: Instant)
 
     /**
-     * Sets or removes one org-wide limit and leaves the other as it is, in one statement: two admins changing the two
-     * limits at once never undo each other's change.
+     * Forgets a deleted workflow's limits and alerts, so that a workflow created again under its id starts without.
      *
      * @param orgId The org.
-     * @param limit Which one.
-     * @param limitMicros The limit, or null to remove it.
-     * @param at The time of the change.
+     * @param workflowId The deleted workflow.
      */
-    suspend fun putSharedLimit(orgId: Uuid, limit: SharedLimit, limitMicros: Long?, at: Instant)
-
-    /**
-     * Sets a member's own limit.
-     *
-     * @param orgId The org.
-     * @param memberId The member.
-     * @param limitMicros The limit.
-     * @param at The time of the change.
-     *
-     * @return The stored override.
-     */
-    suspend fun putMemberLimit(orgId: Uuid, memberId: Uuid, limitMicros: Long, at: Instant): MemberBudget
-
-    /**
-     * Removes a member's own limit: the default applies again.
-     *
-     * @param orgId The org.
-     * @param memberId The member.
-     *
-     * @return True if there was one.
-     */
-    suspend fun deleteMemberLimit(orgId: Uuid, memberId: Uuid): Boolean
+    suspend fun removeWorkflow(orgId: Uuid, workflowId: String)
 
     /**
      * Records that an alert is being sent, once across replicas.
@@ -115,13 +146,18 @@ interface BudgetsRepository {
      * @param alert The alert [markAlerted] recorded.
      */
     suspend fun unmarkAlerted(alert: BudgetAlert)
-}
 
-/** The two limits that hold for a whole org rather than one member. */
-enum class SharedLimit {
-    /** The org's own limit. */
-    ORG,
-
-    /** The limit of every member without one of their own. */
-    DEFAULT_MEMBER,
+    /**
+     * The limits reached in their current period, as the guard marked them at 100 %, that still hold with the same
+     * amount and action.
+     *
+     * @param orgId The org.
+     * @param memberId Only this member's, or null for the whole org's (the workflows' included).
+     * @param day The start of the current day.
+     * @param month The start of the current month.
+     * @param max The most returned.
+     *
+     * @return The limits, the first reached first.
+     */
+    suspend fun exceeded(orgId: Uuid, memberId: Uuid?, day: Instant, month: Instant, max: Int): List<ExceededBudget>
 }

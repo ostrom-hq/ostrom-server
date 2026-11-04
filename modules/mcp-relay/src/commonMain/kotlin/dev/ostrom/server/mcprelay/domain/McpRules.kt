@@ -3,6 +3,7 @@ package dev.ostrom.server.mcprelay.domain
 
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
+import dev.ostrom.server.kernel.text.SafePattern
 
 /** Validation of what an admin declares; the MCP host checks the stdio rules again. */
 object McpRules {
@@ -66,6 +67,11 @@ object McpRules {
      * @throws InvalidMcpServerException On the first broken rule.
      */
     fun requireServer(server: McpServer) {
+        rule(
+            !OstromMcpServers.isOwn(server.name),
+            "Agents would see `${server.name.trim().lowercase()}` as `${OstromMcpServers.labelOf(server.name)}`, " +
+                "Ostrom's own MCP server, which every agent already has: choose another name.",
+        )
         rule(
             serverName.matches(server.name) && server.name !in RESERVED_NAMES,
             "A server name is 1 to 64 characters of a-z 0-9 . _ - and starts with a letter or digit (not `servers`).",

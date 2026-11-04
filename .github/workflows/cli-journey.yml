@@ -8,7 +8,12 @@ name: CLI journey
 # is skipped there, "package Actions access"). On demand, every night (main's CLI against the newest `sha-<7>` of main
 # published, named in the run's summary, so a red night points at a commit; the hook's latency budgets of step 5.8 live
 # in ostrom-cli's e2e/journey.py), and, off the org's one-`ci`-job rule on purpose (as demo-stack.yml), on a pull
-# request only when the pull request changes this file.
+# request only when the pull request changes this file. Cloud sessions (6.2: `ostrom claude --cloud`, `ostrom attach`)
+# run on this runner's Docker, with the session image ghcr.io/ostrom-hq/ostrom-runner: the token reads it too. Step 5.9
+# (the launch end to end, p50 and p95 by part, the server's share from `docker logs ostrom-server`) writes its tables
+# to the run's summary. A server pull request's own image, which is never published, is played with `server_run`: the
+# `ostrom-server-image` artifact its ci.yml run saved (ci-image), so that a pull request that changes what the CLI's
+# journey sees is proven here before it merges, with the CLI ref that goes with it.
 on:
   schedule:
     - cron: '17 3 * * *'
@@ -17,9 +22,20 @@ on:
       server_image:
         description: Server image (empty = the newest ghcr.io/ostrom-hq/ostrom-server:sha-<7> of main published)
         default: ""
+      server_run:
+        description: >-
+          Id of a ci.yml run of this repository (a pull request's), its ci-image job passed, whose ostrom-server-image
+          artifact is tested instead of a published image: the artifact is kept one day (empty = server_image; not
+          with server_image)
+        default: ""
       cli_ref:
-        description: ostrom-cli ref whose binary and journey run
+        description: >-
+          ostrom-cli ref whose binary and journey run (ostrom-cli#121 or later: the run fails without its 6.6, the
+          TeamCode import)
         default: main
+      runner_image:
+        description: Cloud session image the server starts on this runner's Docker (empty = latest)
+        default: ""
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths: [.github/workflows/cli-journey.yml]
@@ -38,9 +54,17 @@ env:
 jobs:
   journey:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    # 6.2 twice: the server starting cloud sessions on this runner's Docker itself (`docker`), and on a machine of the
+    # organisation that the journey registers and starts (`registered`, `ostrom-runner machine`), placed on it.
+    name: journey (${{ matrix.driver }} cloud sessions)
+    strategy:
+      fail-fast: false
+      matrix:
+        driver: [docker, registered]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
+      actions: read # the ostrom-server-image artifact of server_run's ci.yml run
       contents: read
       packages: read
     # The database is `ostrom_ci`: ci/database-roles.sql creates `ostrom` itself, owned by its owner role.
@@ -51,9 +75,19 @@ jobs:
         ports: ['5432:5432']
         options: >-
           --health-cmd "pg_isready -U ostrom -d ostrom_ci" --health-interval 5s --health-timeout 5s --health-retries 20
+      # 6.6 (ostrom import teamcode): the demo's fake TeamCode team (ostrom-helm compose/demo/teamcode), in the demo's
+      # MySQL 8.4, as e2e-journey.yml has it.
+      teamcode-db:
+        image: mysql:8.4@sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902
+        env: { MYSQL_ROOT_PASSWORD: teamcode-root, MYSQL_DATABASE: teamcode }
+        ports: ['3307:3306']
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -pteamcode-root" --health-interval 5s --health-timeout 5s --health-retries 30
     env:
       CLI_REF: ${{ inputs.cli_ref || 'main' }}
       WANTED_IMAGE: ${{ inputs.server_image }}
+      SERVER_RUN: ${{ inputs.server_run }}
+      RUNNER_IMAGE: ${{ inputs.runner_image || 'ghcr.io/ostrom-hq/ostrom-runner:latest' }}
     steps:
       # The whole history: main's head names the image, and the image's own commit gives its database roles.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -79,15 +113,89 @@ jobs:
           ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
           path: ostrom-core
           persist-credentials: false
-      - name: The server image (the newest sha-<7> of main published, unless named)
+      # The fake TeamCode team (helm#25): schema, rows, the read-only user `ostrom import teamcode` reads with, and its
+      # key file (fake, public). Pinned as e2e-journey.yml pins it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-helm
+          ref: 4f03cd375d7309da4f58388a533f704f883a0d49
+          ssh-key: ${{ secrets.DEPLOY_KEY_HELM }}
+          path: helm
+          sparse-checkout: compose/demo/teamcode
+          persist-credentials: false
+      - name: Fake TeamCode team in MySQL (helm compose/demo/teamcode)
+        env:
+          TEAMCODE_DIR: helm/compose/demo/teamcode
+          MYSQL_IMAGE: mysql:8.4@sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902
+        run: |
+          sql() { docker run --rm -i --network host -e MYSQL_PWD=teamcode-root "$MYSQL_IMAGE" mysql -h127.0.0.1 -P3307 -uroot "$@"; }
+          sql teamcode < "$TEAMCODE_DIR/01-schema.sql"
+          sql teamcode < "$TEAMCODE_DIR/02-seed.sql"
+          docker run --rm --network host -v "$PWD/$TEAMCODE_DIR:/teamcode:ro" -e MYSQL_HOST=127.0.0.1 -e MYSQL_TCP_PORT=3307 \
+            -e MYSQL_ROOT_PASSWORD=teamcode-root -e MYSQL_DATABASE=teamcode -e TEAMCODE_RO_PASSWORD=teamcode-ro \
+            "$MYSQL_IMAGE" sh /teamcode/03-readonly.sh
+          # `ostrom import teamcode` reads TeamCode with the mysql client on the PATH
+          command -v mysql || { sudo apt-get update -q && sudo apt-get install -yq mysql-client; }
+          # the team as 6.6 expects it, read by teamcode_ro (helm's check.sh, without its docker exec): members, MCP
+          # variants, assignments, tool policies, accounts
+          counts=$(MYSQL_PWD=teamcode-ro mysql -h127.0.0.1 -P3307 -uteamcode_ro teamcode -N -e "SELECT CONCAT_WS(' ',
+            (SELECT COUNT(*) FROM members WHERE team_id='default'),
+            (SELECT COUNT(*) FROM variants WHERE team_id='default' AND kind='MCP'),
+            (SELECT COUNT(*) FROM variant_assignments WHERE team_id='default' AND kind='MCP'),
+            (SELECT COUNT(*) FROM mcp_tool_policies WHERE team_id='default'),
+            (SELECT COUNT(*) FROM accounts WHERE team_id='default'))")
+          [ "$counts" = "3 4 5 2 3" ] || { echo "::error::fake TeamCode team: $counts, expected 3 4 5 2 3"; exit 1; }
+      # server_run: a ci.yml run of this repository, not a fork's, whose ci-image job passed (its image passed the smoke
+      # tests and was saved). Its roles are those of its head: a pull request whose base changed ci/database-roles.sql
+      # merges main first, as its ci.yml run built the image from that merge.
+      - name: server_run's ci.yml run
+        id: run
+        if: env.SERVER_RUN != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -z "$WANTED_IMAGE" ] || { echo "::error::server_image and server_run name two servers: give one"; exit 1; }
+          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SERVER_RUN" \
+            --jq '"\(.path) \(.head_repository.full_name) \(.head_sha) \(.pull_requests[0].number // "")"')
+          read -r path repository head pull <<< "$run"
+          case "$path" in
+            .github/workflows/ci.yml*) ;;
+            *) echo "::error::run $SERVER_RUN is not a ci.yml run ($path)"; exit 1 ;;
+          esac
+          [ "$repository" = "$GITHUB_REPOSITORY" ] \
+            || { echo "::error::run $SERVER_RUN built $repository's code, not this repository's"; exit 1; }
+          image_job=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SERVER_RUN/jobs?per_page=100" \
+            --jq '[.jobs[] | select(.name == "Binary, images and smoke tests") | .conclusion] | first // ""')
+          [ "$image_job" = success ] \
+            || { echo "::error::run $SERVER_RUN's ci-image job is '$image_job', not success: no image to test"; exit 1; }
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "pull=${pull:+#$pull}" >> "$GITHUB_OUTPUT"
+      - if: env.SERVER_RUN != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ostrom-server-image
+          path: ${{ runner.temp }}/image
+          run-id: ${{ env.SERVER_RUN }}
+          github-token: ${{ github.token }}
+      - name: The server image (server_run's, or the newest sha-<7> of main published, unless named)
         id: server
         env:
           GHCR_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ steps.run.outputs.head }}
+          PULL: ${{ steps.run.outputs.pull }}
         run: |
           main=$(git -C server rev-parse origin/main)
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           image=$WANTED_IMAGE
-          if [ -z "$image" ]; then
+          if [ -n "$SERVER_RUN" ]; then
+            # the image server_run's ci-image saved (a pull request's, never published); its head is a branch of this
+            # public repository, fetched by the checkout
+            revision=$HEAD_SHA
+            git -C server cat-file -e "${revision}^{commit}" 2>/dev/null || git -C server fetch --quiet origin "$revision"
+            gunzip -c "$RUNNER_TEMP/image/ostrom-server-image.tar.gz" | docker load
+            image=ostrom-server:ci
+            source="ci.yml run $SERVER_RUN${PULL:+ of $PULL}, not published"
+          elif [ -z "$image" ]; then
             # as console-journey.yml: the newest of main's last commits published (a head whose image failed or is
             # still building is skipped), never `edge`, which names no commit. Any other pull error stops the job.
             for commit in $(git -C server rev-list --first-parent --max-count=10 origin/main); do
@@ -105,18 +213,46 @@ jobs:
           else
             docker pull --quiet "$image" || { echo "::error::$image cannot be pulled"; exit 1; }
           fi
-          revision=$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")
-          [ -n "$revision" ] || { echo "::error::$image carries no org.opencontainers.image.revision label"; exit 1; }
-          git -C server cat-file -e "${revision}^{commit}" 2>/dev/null \
-            || { echo "::error::$image is ostrom-server@${revision:0:7}, a commit not in the history of main"; exit 1; }
+          if [ -z "$SERVER_RUN" ]; then
+            source="published"
+            revision=$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")
+            [ -n "$revision" ] || { echo "::error::$image carries no org.opencontainers.image.revision label"; exit 1; }
+            git -C server cat-file -e "${revision}^{commit}" 2>/dev/null \
+              || { echo "::error::$image is ostrom-server@${revision:0:7}, a commit not in the history of main"; exit 1; }
+          fi
           # The database roles of the image's own commit, not of a main that may have moved past it.
           git -C server show "${revision}:ci/database-roles.sql" > "$RUNNER_TEMP/database-roles.sql"
           echo "image=$image" >> "$GITHUB_OUTPUT"
           {
             echo "### Images"
-            echo "- server: \`$image\` (ostrom-server@${revision:0:7}; main is at ${main:0:7})"
+            echo "- server: \`$image\` (ostrom-server@${revision:0:7}, $source; main is at ${main:0:7})"
             echo "- CLI: ostrom-cli $(git -C cli rev-parse --short HEAD) ($CLI_REF), built here"
           } >> "$GITHUB_STEP_SUMMARY"
+      # Cloud sessions (line 6.2: ostrom claude --cloud and ostrom attach) on this runner's Docker, as in
+      # console-journey.yml: the Engine API through a socket proxy limited to what the driver calls, on loopback; the
+      # session's containers reach the server, on the host network, through host.docker.internal (the driver adds it).
+      # Their settings go to the server alone (runners.env), not to the seed run that shares server.env.
+      - name: The cloud sessions' runtime (this runner's Docker, the session image by digest)
+        env:
+          DRIVER: ${{ matrix.driver }}
+        run: |
+          docker pull --quiet "$RUNNER_IMAGE" || { echo "::error::$RUNNER_IMAGE cannot be pulled"; exit 1; }
+          session_image=$(docker inspect -f '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' "$RUNNER_IMAGE")
+          [ -n "$session_image" ] || { echo "::error::$RUNNER_IMAGE has no registry digest"; exit 1; }
+          docker run -d --name docker-api -p 127.0.0.1:2375:2375 -v /var/run/docker.sock:/var/run/docker.sock:ro \
+            -e CONTAINERS=1 -e VOLUMES=1 -e IMAGES=1 -e POST=1 -e ALLOW_START=1 -e ALLOW_STOP=1 \
+            -e INFO=0 -e NETWORKS=0 -e EXEC=0 \
+            docker.io/tecnativa/docker-socket-proxy:v0.5.0@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
+          # registered: the server only plans; the journey's machine creates the containers through the same proxy
+          {
+            echo "OSTROM_RUNNERS_DRIVER=$DRIVER"
+            [ "$DRIVER" = docker ] && echo "OSTROM_RUNNERS_DOCKER_API_URL=http://127.0.0.1:2375"
+            echo "OSTROM_RUNNERS_SERVER_URL=http://host.docker.internal:4600"
+            echo "OSTROM_RUNNERS_IMAGE=$session_image"
+            echo "OSTROM_RUNNERS_ALLOWED_ORGS=*"
+          } > "$RUNNER_TEMP/runners.env"
+          echo "SESSION_IMAGE=$session_image" >> "$GITHUB_ENV"
+          echo "- cloud session: \`$session_image\`, driver \`$DRIVER\`, this runner's Docker" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
@@ -142,18 +278,29 @@ jobs:
         run: |
           psql -h localhost -U ostrom -d ostrom_ci -v ON_ERROR_STOP=1 -f "$RUNNER_TEMP/database-roles.sql"
           docker run --rm --network host -e OSTROM_DATABASE_MIGRATION_URL="$OWNER_URL" "$IMAGE" migrate
+          # 2.9: the journey's fake MCP server is HTTPS on 127.0.0.1, with a certificate made here for this run only;
+          # the server trusts it (the system's authorities plus it, mounted over the image's bundle) and, in this
+          # workflow only, may reach a private address (OSTROM_MCP_ALLOW_PRIVATE_UPSTREAMS below, never a default).
+          mkdir -p "$RUNNER_TEMP/fake-mcp"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=127.0.0.1" \
+            -addext "subjectAltName=IP:127.0.0.1" -addext "basicConstraints=critical,CA:TRUE" \
+            -keyout "$RUNNER_TEMP/fake-mcp/key.pem" -out "$RUNNER_TEMP/fake-mcp/cert.pem"
+          { cat /etc/ssl/certs/ca-certificates.crt; echo; cat "$RUNNER_TEMP/fake-mcp/cert.pem"; } > "$RUNNER_TEMP/fake-mcp/bundle.pem"
+          openssl verify -CAfile "$RUNNER_TEMP/fake-mcp/bundle.pem" "$RUNNER_TEMP/fake-mcp/cert.pem"
+          chmod 0644 "$RUNNER_TEMP/fake-mcp/bundle.pem"
           # The server's non-root user writes the mails (0644); the journey, as the runner's user, reads them.
           mkdir -p "$RUNNER_TEMP/ostrom-mail" && chmod 0777 "$RUNNER_TEMP/ostrom-mail"
           # Test values only: sign-in mails are written to a directory, the console is the server's own origin (the
           # page of ostrom login's code), Stripe is never called by the journey.
           # Read limits (AUDIT-SECU-LECTURES M1) set explicitly: a journey reads in bursts, never a flood.
+          # stripe-mock refuses a key with another underscore after `sk_test_` (401, as console-journey.yml's did).
           cat > "$RUNNER_TEMP/server.env" <<'ENV'
           OSTROM_DATABASE_URL=postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
           OSTROM_PORT=4600
           OSTROM_MAIL_DIR=/var/lib/ostrom/mail
           OSTROM_PUBLIC_URL=http://127.0.0.1:4600
           OSTROM_CONSOLE_URL=http://127.0.0.1:4600
-          OSTROM_STRIPE_SECRET_KEY=sk_test_cli_e2e
+          OSTROM_STRIPE_SECRET_KEY=sk_test_clie2e
           OSTROM_STRIPE_WEBHOOK_SECRET=whsec_cli_e2e
           OSTROM_STRIPE_API_BASE=http://127.0.0.1:12111
           OSTROM_READS_PER_MINUTE=6000
@@ -161,26 +308,96 @@ jobs:
           OSTROM_READ_WAITS_IN_FLIGHT=256
           ENV
           sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
+          # The fake MCP server's two settings go to this server only, not to the seed run that shares server.env;
+          # SSL_CERT_FILE names the mounted bundle for the image's static curl, whatever its built-in default path.
           docker run -d --name ostrom-server --network host -v "$RUNNER_TEMP/ostrom-mail:/var/lib/ostrom/mail" \
-            --env-file "$RUNNER_TEMP/server.env" "$IMAGE"
+            -v "$RUNNER_TEMP/fake-mcp/bundle.pem:/etc/ssl/certs/ca-certificates.crt:ro" \
+            -e OSTROM_MCP_ALLOW_PRIVATE_UPSTREAMS=true -e SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+            --env-file "$RUNNER_TEMP/server.env" --env-file "$RUNNER_TEMP/runners.env" "$IMAGE"
           for _ in $(seq 1 60); do curl -fsS 127.0.0.1:4600/ready >/dev/null 2>&1 && exit 0; sleep 1; done
           docker logs ostrom-server; exit 1
-      - name: The CLI journey against the server (login to claude, the gate, the yes, the receipt)
+      - name: The CLI journey against the server (login to claude, the gate, the yes, the receipt, ostrom mcp)
+        id: journey
         working-directory: cli
         env:
           IMAGE: ${{ steps.server.outputs.image }}
-        run: >-
-          python3 e2e/journey.py --binary cli/build/bin/linuxX64/releaseExecutable/ostrom.kexe
-          --server http://127.0.0.1:4600 --mail-dir "$RUNNER_TEMP/ostrom-mail" --report "$RUNNER_TEMP/journey.json"
-          --seed "docker run --rm --network host --env-file $RUNNER_TEMP/server.env -e OSTROM_ALLOW_TEST_ACCOUNTS=true
-          $IMAGE seed-test-account"
+          DRIVER: ${{ matrix.driver }}
+          OSTROM_E2E_TEAMCODE_PASSWORD: teamcode-ro
+        # 6.2 runs with --cloud-sessions, which a CLI ref older than ostrom-cli's e2e/cloud.py does not know: said
+        run: |
+          cloud=()
+          if [ "$DRIVER" = registered ] && ! grep -q -e '"--cloud-machine-image"' e2e/journey.py; then
+            echo "- 6.2 on a registered runner: not played, ostrom-cli $CLI_REF has no --cloud-machine-image" \
+              >> "$GITHUB_STEP_SUMMARY"
+          elif grep -q -e '"--cloud-sessions"' e2e/journey.py; then
+            cloud=(--cloud-sessions)
+            [ "$DRIVER" = registered ] && cloud+=(--cloud-machine-image "$SESSION_IMAGE")
+          else
+            echo "- 6.2 cloud sessions: not played, ostrom-cli $CLI_REF has no --cloud-sessions" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # 5.9 times 20 launches end to end and reads the server's share in its own logs; an older CLI ref has neither flag
+          launch=()
+          if grep -q -e '"--launch-runs"' e2e/journey.py; then
+            launch=(--launch-runs 20 --server-log-command "docker logs ostrom-server")
+          else
+            echo "- 5.9 launch latency: not played, ostrom-cli $CLI_REF has no --launch-runs" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # 6.6 imports the fake TeamCode team; a CLI ref older than ostrom-cli's e2e/teamcode.py does not know it: said,
+          # and failed below
+          teamcode=()
+          if grep -q -e '"--teamcode-db"' e2e/journey.py; then
+            teamcode=(--teamcode-db mysql://teamcode_ro@127.0.0.1:3307/teamcode
+              --teamcode-key-file "$GITHUB_WORKSPACE/helm/compose/demo/teamcode/key.txt")
+          else
+            echo "- 6.6 ostrom import teamcode: not played, ostrom-cli $CLI_REF has no --teamcode-db" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          python3 e2e/journey.py --binary cli/build/bin/linuxX64/releaseExecutable/ostrom.kexe \
+            --server http://127.0.0.1:4600 --mail-dir "$RUNNER_TEMP/ostrom-mail" --report "$RUNNER_TEMP/journey.json" \
+            --fake-mcp-port 4630 --fake-mcp-cert "$RUNNER_TEMP/fake-mcp/cert.pem" \
+            --fake-mcp-key "$RUNNER_TEMP/fake-mcp/key.pem" \
+            "${cloud[@]}" "${launch[@]}" "${teamcode[@]}" \
+            --seed "docker run --rm --network host --env-file $RUNNER_TEMP/server.env -e OSTROM_ALLOW_TEST_ACCOUNTS=true
+            $IMAGE seed-test-account"
+      # 6.6 is part of the journey: a run that did not play it (an older CLI ref, a skip) is not a proof of the import
+      # Never optional (no continue-on-error, no condition, no input to turn it off): ostrom-cli's 6.6 skips itself
+      # without the TeamCode team, and only this step keeps such a run from being green.
+      - name: 6.6 ostrom import teamcode played and passed
+        # whenever the journey ran, passed or failed; a run stopped before it says its own error
+        if: ${{ !cancelled() && steps.journey.outcome != 'skipped' }}
+        run: |
+          python3 -I - "$RUNNER_TEMP/journey.json" <<'PY'
+          import json, sys
+          try:
+              steps = json.load(open(sys.argv[1]))["steps"]
+          except (OSError, ValueError, KeyError) as error:
+              sys.exit(f"::error::no journey report: {error}")
+          # exactly one 6.6, with checks, every one ok: a step that returned before its checks is no proof
+          found = [s for s in steps if s["step"] == "6.6"]
+          if len(found) != 1:
+              sys.exit(f"::error::6.6 ostrom import teamcode: {len(found)} steps in the journey, not one")
+          step = found[0]
+          checks = step.get("checks") or []
+          failed = [c["what"] for c in checks if not c.get("ok")]
+          if step["status"] != "ok" or not checks or failed:
+              sys.exit(f"::error::6.6 ostrom import teamcode: {step['status']}, {len(checks)} checks, failed: {failed}")
+          print(f"6.6 ostrom import teamcode: ok, {len(checks)} checks")
+          PY
       - name: Server logs
         if: always()
         run: docker logs ostrom-server 2>&1 | tail -n 300 || true
+      - name: Cloud session containers and the Docker proxy
+        if: always()
+        run: |
+          docker ps -a --format '{{.Names}} {{.Image}} {{.Status}}' || true
+          for name in $(docker ps -a --format '{{.Names}}' | grep -v -x -e ostrom-server -e docker-api); do
+            echo "::group::$name"; docker logs "$name" 2>&1 | tail -n 100; echo "::endgroup::"
+          done
+          docker logs docker-api 2>&1 | tail -n 50 || true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: cli-journey-report
+          # the docker leg keeps the report's historical name
+          name: cli-journey-report${{ matrix.driver == 'registered' && '-registered' || '' }}
           path: ${{ runner.temp }}/journey.json
           if-no-files-found: ignore
           retention-days: 7

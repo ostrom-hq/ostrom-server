@@ -9,6 +9,7 @@ import dev.ostrom.server.identity.domain.NotificationPreferences
 import dev.ostrom.server.identity.domain.NotificationPreferencesRepository
 import dev.ostrom.server.identity.domain.QuietHours
 import dev.ostrom.server.identity.domain.TokenKind
+import dev.ostrom.server.kernel.auth.PhoneUnlockProofs
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
@@ -61,15 +62,38 @@ class MobileTokensRepositoryImpl(private val driver: Driver) : MobileTokensRepos
     override suspend fun create(token: ApiToken, secretHash: String, unlockKeyHash: String) =
         insert(driver, token, secretHash, unlockKeyHash)
 
-    override suspend fun unlock(tokenId: Uuid, userId: Uuid, unlockKeyHash: String, at: Instant): Boolean =
-        driver.execute(
+    override suspend fun unlock(
+        tokenId: Uuid,
+        userId: Uuid,
+        unlockKeyHash: String,
+        at: Instant,
+        requestId: String?,
+    ): Boolean = driver.execute(
+        Statement.create(
+            "UPDATE identity_api_tokens SET authenticated_at = :at, unlock_request_id = :request WHERE id = :id " +
+                "AND user_id = :user AND kind = :kind AND unlock_key_hash = :unlock AND revoked_at IS NULL " +
+                "AND (expires_at IS NULL OR expires_at > :at)",
+        ).bind("at", at).bind("request", requestId).bind("id", tokenId).bind("user", userId)
+            .bind("kind", TokenKind.MOBILE.name).bind("unlock", unlockKeyHash),
+    ).getOrThrow() == 1L
+}
+
+/**
+ * [PhoneUnlockProofs] on the app's tokens (`identity_api_tokens.unlock_request_id`, migration 16): one statement
+ * checks and clears the binding, by the token's primary key, so two yeses sent at once cannot both use it.
+ *
+ * @param driver The database.
+ */
+class PhoneUnlockProofsImpl(private val driver: Driver) : PhoneUnlockProofs {
+    override suspend fun consume(credentialId: String, requestId: String, since: Instant): Boolean {
+        val id = Uuid.parseOrNull(credentialId) ?: return false
+        return driver.execute(
             Statement.create(
-                "UPDATE identity_api_tokens SET authenticated_at = :at WHERE id = :id AND user_id = :user " +
-                    "AND kind = :kind AND unlock_key_hash = :unlock AND revoked_at IS NULL " +
-                    "AND (expires_at IS NULL OR expires_at > :at)",
-            ).bind("at", at).bind("id", tokenId).bind("user", userId).bind("kind", TokenKind.MOBILE.name)
-                .bind("unlock", unlockKeyHash),
+                "UPDATE identity_api_tokens SET unlock_request_id = NULL WHERE id = :id AND kind = :kind " +
+                    "AND unlock_request_id = :request AND authenticated_at >= :since AND revoked_at IS NULL",
+            ).bind("id", id).bind("kind", TokenKind.MOBILE.name).bind("request", requestId).bind("since", since),
         ).getOrThrow() == 1L
+    }
 }
 
 /**

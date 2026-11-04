@@ -17,6 +17,7 @@ import dev.ostrom.server.gates.domain.models.RedirectedPushException
 import dev.ostrom.server.gates.domain.models.RequestStatus
 import dev.ostrom.server.gates.domain.usecases.GateUse
 import dev.ostrom.server.gates.fakes.GateBench
+import dev.ostrom.server.gates.fakes.ORG
 import dev.ostrom.server.gates.fakes.OTHER_SESSION
 import dev.ostrom.server.gates.fakes.SESSION
 import dev.ostrom.server.gates.fakes.SHA_A
@@ -223,6 +224,22 @@ class OpenGateUseCaseTest {
         val again = bench.open(bench.pushRequest())
         assertNotEquals(first.gate.id, again.gate.id, "second audit H1: one yes, one run")
         assertEquals(GateStatus.PENDING, again.gate.status)
+    }
+
+    // A merge's gate is shared by the sessions that ask it: the one that takes the yes another asked for finds the gate
+    // among its own (`gates_sessions`), so its end receipt and its reads cite it.
+    @Test
+    fun theSessionThatTakesAYesFindsTheGateAmongItsOwn() = runTest {
+        val bench = GateBench()
+        val first = bench.open(bench.mergeRequest())
+        bench.answer(first, "rev-b")
+
+        val taken = bench.open(bench.mergeRequest(session = OTHER_SESSION))
+
+        assertEquals(first.gate.id, taken.gate.id)
+        assertEquals(GateStatus.CONSUMED, bench.repository.gates.getValue(first.gate.id).status)
+        assertEquals(listOf(first.gate.id), bench.repository.ofSession(ORG, OTHER_SESSION).map { it.id })
+        assertEquals(listOf(first.gate.id), bench.repository.ofSession(ORG, SESSION).map { it.id })
     }
 
     @Test

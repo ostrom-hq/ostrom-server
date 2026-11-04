@@ -57,8 +57,23 @@ data class ReceiptQuery(
  * @property kid The key id, the first 16 hex characters of the SHA-256 of the SPKI DER.
  * @property algorithm `ed25519`.
  * @property publicKeyPem The SPKI PEM.
+ * @property rotation How the key it replaced handed it over, or null.
  */
-data class ReceiptKey(val kid: String, val algorithm: String, val publicKeyPem: String)
+data class ReceiptKey(
+    val kid: String,
+    val algorithm: String,
+    val publicKeyPem: String,
+    val rotation: ReceiptKeyRotation? = null,
+)
+
+/**
+ * A receipt key handed over by the key it replaces (docs/receipt-key-rotation.md).
+ *
+ * @property kid The previous key's id.
+ * @property signature The previous key's Ed25519 signature (base64) over `ostrom-receipt-key-rotation/v1\n` and the
+ * hex of the new key's 32 raw bytes.
+ */
+data class ReceiptKeyRotation(val kid: String, val signature: String)
 
 /**
  * The outcome of a verification, what `ostrom verify` would say offline with the same keys.
@@ -67,8 +82,16 @@ data class ReceiptKey(val kid: String, val algorithm: String, val publicKeyPem: 
  * @property digest The SHA-256 of the canonical body, recomputed.
  * @property kid The key that signed it, when verified.
  * @property reason Why it does not verify, when it does not.
+ * @property orgBound True when its signed body names the organization that verifies it; false for a receipt signed
+ * before receipts named their organization (valid, never shown as bound) and for one that does not verify.
  */
-data class Verification(val ok: Boolean, val digest: String?, val kid: String?, val reason: String?)
+data class Verification(
+    val ok: Boolean,
+    val digest: String?,
+    val kid: String?,
+    val reason: String?,
+    val orgBound: Boolean,
+)
 
 /** The receipt does not exist, or belongs to another organization (the same answer, so nothing leaks). */
 class ReceiptNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Receipt not found.")

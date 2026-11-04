@@ -123,6 +123,12 @@ class OrgSettingsPostgresTest {
                 json(CreateOrgRequest(name, null))
             }.body()
 
+    private suspend fun TestServer.createWithShortName(started: StartedSession, slug: String) =
+        client.post("/api/v1/orgs") {
+            session(started)
+            json(CreateOrgRequest("Acme", slug))
+        }
+
     // Bob joins Acme as a member through a link.
     private suspend fun TestServer.join(owner: StartedSession, slug: String, member: StartedSession) {
         val link =
@@ -250,6 +256,8 @@ class OrgSettingsPostgresTest {
             }
             assertEquals(listOf("deleted ${acme.id}"), told)
             assertEquals(DeletionPass(0, 0, 0), server.settle(), "Told once")
+            // Its short name stays taken while it may be restored: the same 409 as any name taken.
+            server.createWithShortName(again, "acme").assertRefused(HttpStatusCode.Conflict, "conflict")
             clock.now += 30.days
             assertEquals(DeletionPass(settled = 0, purged = 1, failed = 0), server.settle())
             assertEquals(DeletionPass(0, 0, 0), server.settle())
@@ -259,10 +267,13 @@ class OrgSettingsPostgresTest {
                 1L,
                 server.count(
                     "SELECT count(*) AS n FROM orgs_organizations WHERE id = '${acme.id}' " +
-                        "AND name = '' AND slug = 'acme' AND purged_at IS NOT NULL"
+                        "AND name = '' AND slug = '~${acme.id}' AND purged_at IS NOT NULL"
                 ),
-                "A tombstone keeps the short name taken",
+                "A tombstone keeps a name nobody can choose",
             )
+            val reborn = server.createWithShortName(server.signIn("ada"), "acme")
+            assertEquals(HttpStatusCode.Created, reborn.status, "Erased, it gives its short name back")
+            assertEquals("acme", reborn.body<OrgResponse>().slug)
             assertEquals(
                 1L,
                 server.count(

@@ -53,8 +53,9 @@ interface RegisteredRunnersRepository {
      * @param id The runner.
      * @param keyHash The hash of the key it presented.
      * @param at When.
+     * @param capacity The sessions it declares it runs at once at most; null when it declares none.
      *
      * @return False when that organization no longer has this runner with this key (removed meanwhile).
      */
-    suspend fun touch(orgId: Uuid, id: Uuid, keyHash: String, at: Instant): Boolean
+    suspend fun touch(orgId: Uuid, id: Uuid, keyHash: String, at: Instant, capacity: Int?): Boolean
 }

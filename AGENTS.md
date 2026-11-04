@@ -10,7 +10,16 @@ All repository content (code, comments, docs, commits, pull requests) is in Engl
 
 ## Specific to this repository
 
-Layers `domain`, `infrastructure`, `presentation`, `app`; the graph is checked by `scripts/check-conventions.py`. Every route declares who may call it and has its 401/404 tests (ENG-054). Every new request-path query comes with its EXPLAIN ANALYZE. Short k6 load test on every pull request, p95/p99 thresholds. Every customer table carries `org_id` under PostgreSQL Row-Level Security, with one end-to-end test per resource proving another organization cannot see or change it; console writes need a user session, agent tokens are scoped to their own session (CONVENTIONS.md section 16). Budgets tested in CI: start-up < 200 ms, API p95 < 50 ms under nominal load.
+Layers `domain`, `infrastructure`, `presentation`, `app`; the graph is checked by `scripts/check-conventions.py`. Every route declares who may call it and has its 401/404 tests. Every new request-path query comes with its EXPLAIN ANALYZE. Short k6 load test on every pull request, p95/p99 thresholds. Every customer table carries `org_id` under PostgreSQL Row-Level Security, with one end-to-end test per resource proving another organization cannot see or change it; console writes need a user session, agent tokens are scoped to their own session (CONVENTIONS.md section 16). Budgets tested in CI: start-up < 200 ms, API p95 < 50 ms under nominal load.
+
+**End-to-end before the merge.** `ci-e2e` (`ci.yml`, through `e2e-journey.yml`) plays ostrom-e2e main against the
+image the pull request builds: the isolation sweep, every scenario but the TeamCode import, and a short k6 of the gates.
+`ci` needs it. So a pull request that changes an answer, adds or removes a route, or changes a limit brings its e2e
+fix first: an ostrom-e2e pull request merged before it, as a contract change goes to ostrom-core first. A new route
+needs its sweep case in ostrom-e2e (`PARAM_KINDS` in `scenarios/sweep.e2e.ts`, and the resource organization A makes),
+or E2E-SWEEP-001 fails the server pull request. After the race, a burst guard (E2E-LOAD-012, `load/burst.js`) sends 100 requests
+without a credential then 100 authenticated asks, and checks that the container neither stops nor is OOM-killed and
+that its memory peak stays under the chart's limit (512Mi): a warning until #266 merges, blocking after.
 
 ## The 15 rules that matter most
 
@@ -19,11 +28,11 @@ Layers `domain`, `infrastructure`, `presentation`, `app`; the graph is checked b
 3. Interfaces `XxxRepository`, `XxxUseCase`, `XxxService`; implementations `XxxImpl` (never `IXxx`). One per file, grouped by feature.
 4. Business rules live in use cases (`suspend operator fun invoke`), never in routes or CLI commands. Constructor injection; Koin wired only in the composition root, no `koin-ktor` plugin.
 5. Ktor: typed `@Resource` classes from ostrom-core, one `Route.xxxRoutes(XxxRoutesDependencies)` per feature, mappers as extension functions.
-6. Expected refusals are domain exceptions extending one `OstromException(kind)` base, routed by type in the single StatusPages `Throwable` handler (on Kotlin/Native StatusPages matches exact classes only) to 400/401/403/404/409/402 with a stable `ApiError` key; 500 only for the unforeseen, never echoing its message (ENG-007).
-7. **Never swallow `CancellationException`**: rethrow it before any broad catch, no `runCatching` around suspend code, cleanup in `withContext(NonCancellable)`. `scripts/check-conventions.py` fails the build otherwise (INF-019).
-8. Contract changes are additive: new fields optional, removal only after the optional phase; every sealed subclass has a stable `@SerialName` (ENG-009).
+6. Expected refusals are domain exceptions extending one `OstromException(kind)` base, routed by type in the single StatusPages `Throwable` handler (on Kotlin/Native StatusPages matches exact classes only) to 400/401/403/404/409/402 with a stable `ApiError` key; 500 only for the unforeseen, never echoing its message.
+7. **Never swallow `CancellationException`**: rethrow it before any broad catch, no `runCatching` around suspend code, cleanup in `withContext(NonCancellable)`. `scripts/check-conventions.py` fails the build otherwise.
+8. Contract changes are additive: new fields optional, removal only after the optional phase; every sealed subclass has a stable `@SerialName`.
 9. Never log credentials, tokens, prompts, response bodies or raw provider errors.
-10. Configuration is read once from `OSTROM_*` variables into a typed object; no feature switch in an environment variable (ENG-050).
+10. Configuration is read once from `OSTROM_*` variables into a typed object; no feature switch in an environment variable.
 11. Tests: TDD (red first), `kotlin.test` + `runTest` + hand-written fakes in `commonTest` (no MockK), lowerCamelCase sentence names. 100 % lines and branches of commonMain via the test-only `jvm()` target (Kover), plus `linuxX64Test`; integration on real PostgreSQL, end-to-end on the real binary, load tests for the server.
 12. Kotlin/Native only in production: no JVM-only library (Exposed, JDBC, Netty, Logback, MockK). Ktor CIO server, Ktor engine-defaults client, sqlx4k, cryptography-kotlin + OpenSSL prebuilt, Okio, Clikt.
 13. Gradle: versions only in `gradle/libs.versions.toml` (same versions in every repository), convention plugin `ostrom.kmp` from `build-logic/`, module build files hold dependencies only. No heavy local build on the shared Mac: CI, or `~/git/ostrom-hq/.coord/build-lock.sh`.

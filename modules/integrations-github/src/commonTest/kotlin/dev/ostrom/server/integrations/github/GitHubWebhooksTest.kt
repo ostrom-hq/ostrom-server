@@ -48,7 +48,7 @@ class GitHubWebhooksTest {
         GitHubGateChecks(repository, api, "https://console.example", clock),
         logger,
         clock,
-        IdentityGitHubAccounts(LinkedGitHubUsers(mapOf(7L to "dev"))),
+        LinkedGitHubUsers(mapOf(7L to "dev")).let { IdentityGitHubAccounts(it, it) },
     )
     private var delivered = 0
 
@@ -90,6 +90,8 @@ class GitHubWebhooksTest {
         webhooks("pull_request", pull("opened", user = """{"login":"Dev-On-GitHub","id":7}"""))
         webhooks("pull_request", pull("synchronize", user = """{"login":"someone","id":8}"""))
         assertEquals(listOf("dev", "someone"), asked.map { it.first.personId })
+        // The one linked to nobody is named by GitHub account too: the gate waits for a linked approver (Q-GATES-G1).
+        assertEquals(listOf(null, 8L), asked.map { it.second.unlinkedAuthor })
     }
 
     @Test

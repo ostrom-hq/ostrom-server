@@ -1,13 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.budgets
 
+import dev.ostrom.server.budgets.domain.BudgetAction
 import dev.ostrom.server.budgets.domain.BudgetDecision
 import dev.ostrom.server.budgets.domain.BudgetGuard
+import dev.ostrom.server.budgets.domain.BudgetLimit
 import dev.ostrom.server.budgets.domain.BudgetScope
+import dev.ostrom.server.budgets.domain.BudgetTarget
+import dev.ostrom.server.budgets.domain.BudgetWindow
 import dev.ostrom.server.budgets.domain.LedgerSpendGuard
 import dev.ostrom.server.gateway.domain.SpendDecision
 import dev.ostrom.server.gateway.domain.SpendRequest
 import dev.ostrom.server.usage.domain.Admission
+import dev.ostrom.server.usage.domain.DailySpendLimits
 import dev.ostrom.server.usage.domain.SpendAdmission
 import dev.ostrom.server.usage.domain.SpendHold
 import dev.ostrom.server.usage.domain.SpendLimits
@@ -31,9 +36,11 @@ class LedgerSpendGuardTest {
 
     private var cached: BudgetDecision = BudgetDecision.Allowed(null)
     private val guardCalls = mutableListOf<Pair<Uuid, Uuid>>()
+    private val guardWorkflows = mutableListOf<String?>()
     private val guard = object : BudgetGuard {
-        override suspend fun check(orgId: Uuid, memberId: Uuid): BudgetDecision {
+        override suspend fun check(orgId: Uuid, memberId: Uuid, workflowId: String?): BudgetDecision {
             guardCalls += orgId to memberId
+            guardWorkflows += workflowId
             return cached
         }
     }
@@ -49,8 +56,8 @@ class LedgerSpendGuardTest {
 
     private val spendGuard = LedgerSpendGuard(repository, guard, admission, clock)
 
-    private suspend fun check(reserve: Long = 1_234_567) =
-        spendGuard.check(SpendRequest(orgA, member, callId, reserve))
+    private suspend fun check(reserve: Long = 1_234_567, workflowId: String? = null) =
+        spendGuard.check(SpendRequest(orgA, member, callId, reserve, workflowId))
 
     @Test
     fun withoutALimitACallGoesOnTheCachedDecisionAlone() = runTest {
@@ -126,6 +133,91 @@ class LedgerSpendGuardTest {
             "Budget left too low for this call: $0.009999 is left of your $1.00 monthly limit and this call may cost " +
                 "up to $0.01. Lower its max_tokens, or retry once the calls in flight finish.",
             (check(reserve = 10_000) as SpendDecision.Insufficient).message,
+        )
+    }
+
+    @Test
+    fun aCallOfALaunchThatPlaysAWorkflowIsAdmittedAgainstThatWorkflowsLimits() = runTest {
+        val today = Instant.parse("2026-10-30T00:00:00Z")
+        val tomorrow = Instant.parse("2026-10-31T00:00:00Z")
+        cached = BudgetDecision.Allowed(1)
+        repository.otherLimits[orgA to BudgetTarget.Workflow("review")] =
+            listOf(BudgetLimit(3_000_000), BudgetLimit(500_000, BudgetWindow.DAY))
+        repository.otherLimits[orgA to BudgetTarget.Workflow("release")] = listOf(BudgetLimit(1))
+        check(workflowId = "review")
+        assertEquals(listOf<String?>("review"), guardWorkflows, "The cached decision is the workflow's too")
+        assertEquals(
+            Triple(
+                SpendHold(orgA, member, callId, 1_234_567, "review"),
+                SpendLimits(null, null, DailySpendLimits(today, null, null, 500_000), 3_000_000),
+                monthStart,
+            ),
+            admitted.last(),
+            "Its own limits, not another workflow's",
+        )
+        check()
+        assertEquals(SpendLimits(null, null), admitted.last().second, "A call that plays no workflow has none")
+
+        repository.otherLimits[orgA to BudgetTarget.Workflow("review")] =
+            listOf(BudgetLimit(3_000_000, action = BudgetAction.WARN))
+        check(workflowId = "review")
+        assertEquals(SpendLimits(null, null), admitted.last().second, "A workflow budget that warns stops nothing")
+
+        answer = Admission.Exhausted(SpendScope.WORKFLOW, 3_000_000)
+        assertEquals(
+            SpendDecision.Exhausted(
+                "Monthly budget reached: this workflow's limit of $3.00 is spent; it resets on 2026-11-01.",
+                nextMonth,
+            ),
+            check(workflowId = "review"),
+        )
+        answer = Admission.Insufficient(SpendScope.WORKFLOW, 500_000, 100_000, daily = true)
+        val short = check(workflowId = "review") as SpendDecision.Insufficient
+        assertTrue("of this workflow's $0.50 daily limit" in short.message)
+        cached = BudgetDecision.Exhausted(BudgetScope.WORKFLOW, 500_000, tomorrow, BudgetWindow.DAY)
+        assertEquals(
+            SpendDecision.Exhausted(
+                "Daily budget reached: this workflow's limit of $0.50 a day is spent; it resets on 2026-10-31.",
+                tomorrow,
+            ),
+            check(workflowId = "review"),
+            "Known reached from the cache",
+        )
+    }
+
+    @Test
+    fun aDailyLimitThatStopsIsAdmittedOnTheDayAndOneThatWarnsIsLeftOut() = runTest {
+        val today = Instant.parse("2026-10-30T00:00:00Z")
+        val tomorrow = Instant.parse("2026-10-31T00:00:00Z")
+        cached = BudgetDecision.Allowed(1)
+        repository.otherLimits[orgA to BudgetTarget.Org] = listOf(BudgetLimit(900, BudgetWindow.DAY, BudgetAction.WARN))
+        repository.otherLimits[orgA to BudgetTarget.DefaultMember] = listOf(BudgetLimit(300, BudgetWindow.DAY))
+        check()
+        assertEquals(SpendLimits(null, null, DailySpendLimits(today, null, 300)), admitted.last().second)
+        repository.otherLimits[orgA to BudgetTarget.Org] = listOf(BudgetLimit(900, BudgetWindow.DAY))
+        repository.otherLimits.remove(orgA to BudgetTarget.DefaultMember)
+        check()
+        assertEquals(SpendLimits(null, null, DailySpendLimits(today, 900, null)), admitted.last().second)
+
+        answer = Admission.Exhausted(SpendScope.MEMBER, 300, daily = true)
+        assertEquals(
+            SpendDecision.Exhausted(
+                "Daily budget reached: your limit of $0.0003 a day is spent; it resets on 2026-10-31.",
+                tomorrow,
+            ),
+            check(),
+        )
+        answer = Admission.Insufficient(SpendScope.ORG, 1_000_000, 400_000, daily = true)
+        assertTrue("of your organization's $1.00 daily limit" in (check() as SpendDecision.Insufficient).message)
+
+        cached = BudgetDecision.Exhausted(BudgetScope.ORG, 2_000_000, tomorrow, BudgetWindow.DAY)
+        assertEquals(
+            SpendDecision.Exhausted(
+                "Daily budget reached: your organization's limit of $2.00 a day is spent; it resets on 2026-10-31.",
+                tomorrow,
+            ),
+            check(),
+            "Known reached from the cache",
         )
     }
 }

@@ -44,7 +44,7 @@ class WaitRulesTest {
             body = "b".repeat(WaitRules.MAX_BODY),
             refs = listOf(
                 WaitRef("artifact", id = "a-1", title = "t"),
-                WaitRef("session", id = "s:1"),
+                WaitRef("session", id = "s:1~r2"),
                 WaitRef("url", url = "https://example.com/x"),
             ),
             fields = listOf(

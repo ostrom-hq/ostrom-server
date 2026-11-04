@@ -61,7 +61,7 @@ class AutomationsApiTest {
         variables = listOf(AutomationVariable("ticket", "$.ticket.number")),
         overlap = "allow",
     )
-    private val body = """{"ticket":{"number":"SUP-7"}}"""
+    private val body = """{"ticket":{"number":"TKT-7"}}"""
 
     private suspend fun HttpClient.create(token: String, request: AutomationRequest): HttpResponse =
         post("/api/v1/automations") {
@@ -165,7 +165,7 @@ class AutomationsApiTest {
             assertEquals(HttpStatusCode.Accepted, first.status)
             val run = first.body<TriggerResponse>()
             assertEquals("started", run.status)
-            assertEquals("Fix SUP-7", launcher.launched.single().prompt)
+            assertEquals("Fix TKT-7", launcher.launched.single().prompt)
             // A delivery is accepted once: a retry or a replay answers 409 (S2-50).
             assertEquals(HttpStatusCode.Conflict, client.trigger(secrets, created.id, secret, key = "d1").status)
             assertEquals(HttpStatusCode.Unauthorized, client.trigger(secrets, created.id, "whsec_wrong").status)
@@ -183,7 +183,7 @@ class AutomationsApiTest {
             val keyed = client.trigger(secrets, created.id, rotated.secret, key = "idem:d3")
             assertEquals(HttpStatusCode.Conflict, keyed.status)
 
-            val test = TestRunRequest(buildJsonObject { putJsonObject("ticket") { put("number", "SUP-8") } })
+            val test = TestRunRequest(buildJsonObject { putJsonObject("ticket") { put("number", "TKT-8") } })
             val tested = client.run("alice", path, test, key = "t1")
             assertEquals(HttpStatusCode.Accepted, tested.status)
             assertEquals("test", tested.body<RunResponse>().source)

@@ -10,6 +10,7 @@ import dev.ostrom.server.kernel.database.withOrganization
 import dev.ostrom.server.orgs.OrgsModule
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.reports.infrastructure.ReportsQueries
+import dev.ostrom.server.reports.infrastructure.SpendingRanges
 import dev.ostrom.server.secrets.SecretsModule
 import dev.ostrom.server.sessions.SessionsModule
 import dev.ostrom.server.testing.TestServer
@@ -56,7 +57,11 @@ class ReportsQueryPlansTest {
                 "FROM generate_series(1, $scale) AS i",
             "INSERT INTO gates_gates (id, org_id, gate_key, subject, label, mode, status, asked_by, asked_via, " +
                 "session_ids, launch_ids, shown_digest, evidence, decided_by, decided_at, created_at) SELECT " +
-                "gen_random_uuid(), CAST('$org' AS uuid), 'merge', 'pr', 'Merge', 'ENFORCE', CASE WHEN i % 3 = 0 " +
+                "gen_random_uuid(), CAST('$org' AS uuid), 'merge', " +
+                // The subject as the gates module stores it, with the repository the feed reads.
+                "'{\"repo\":\"acme/r' || (i % 20) || '\",\"actionClass\":\"merge\",' || " +
+                "'\"command\":\"\",\"scope\":\"sha:0\"}', " +
+                "'Merge', 'ENFORCE', CASE WHEN i % 3 = 0 " +
                 "THEN 'PENDING' ELSE 'APPROVED' END, '[\"claude\"]', 'cli', '[]', '[]', 'd', '{}', CASE WHEN " +
                 "i % 3 = 0 THEN NULL ELSE 'rev' END, CASE WHEN i % 3 = 0 THEN NULL ELSE to_timestamp($epoch) - i * " +
                 "INTERVAL '1 hour' + INTERVAL '5 minutes' END, to_timestamp($epoch) - i * INTERVAL '1 hour' " +
@@ -78,10 +83,10 @@ class ReportsQueryPlansTest {
         val cursorAt = NOW - 10.days
         val plans = linkedMapOf(
             "spending of the organization, 30 days" to server.explain(ReportsQueries.spending(member = false)) {
-                bind("from", month).bind("to", NOW)
+                SpendingRanges.of(month, NOW).bindTo(this)
             },
             "spending of a member, 7 days" to server.explain(ReportsQueries.spending(member = true)) {
-                bind("from", NOW - 7.days).bind("to", NOW).bind("member_id", MIA.memberId)
+                SpendingRanges.of(NOW - 7.days, NOW).bindTo(bind("member_id", MIA.memberId))
             },
             "newest page of the feed" to server.explain(ReportsQueries.activity(cursor = false, repo = false)) {
                 bind("limit", 51)

@@ -41,10 +41,12 @@ class UsageQueryPlansTest {
         // No `::` cast and no colon at all: the driver would read `:x` as a named parameter.
         return "INSERT INTO usage_events (id, org_id, member_id, kind, name, provider, account_id, session_id, " +
             "input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_micros, duration_ms, outcome, " +
-            "at) SELECT gen_random_uuid(), CAST('$org' AS uuid), CASE WHEN i % 30 = 0 THEN CAST('$member' AS uuid) " +
+            "at, workflow_id) " +
+            "SELECT gen_random_uuid(), CAST('$org' AS uuid), CASE WHEN i % 30 = 0 THEN CAST('$member' AS uuid) " +
             "ELSE CAST(md5('m' || (i % 30)) AS uuid) END, 'MODEL', 'claude', 'anthropic', " +
             "CASE WHEN i % 3 = 0 THEN CAST('$account' AS uuid) END, NULL, 10, 10, 0, 0, i % 1000, 5, 'ok', " +
-            "to_timestamp(${TestCallers.epoch.epochSeconds}) - (i % 1440) * INTERVAL '1 hour' " +
+            "to_timestamp(${TestCallers.epoch.epochSeconds}) - (i % 1440) * INTERVAL '1 hour', " +
+            "CASE WHEN i % 7 = 0 THEN 'review' WHEN i % 7 = 1 THEN 'w' || (i % 50) END " +
             "FROM generate_series(1, $count) AS i"
     }
 
@@ -83,10 +85,20 @@ class UsageQueryPlansTest {
                             "lch_1",
                         ).bind("from", TestCallers.epoch - 2.hours).bind("to", TestCallers.epoch)
                     },
-                "spend and holds of the org and a member (gateway admission, under the org's lock)" to
-                    driver.explain(UsageQueries.holdTotals(org = true, member = true)) {
+                "spend and holds of the org and a member, by the month and the day (gateway admission)" to
+                    driver.explain(UsageQueries.holdTotals(true, member = true, orgDay = true, memberDay = true)) {
                         bind("since", since).bind("now", TestCallers.epoch).bind("call_id", Uuid.random())
-                            .bind("member_id", member)
+                            .bind("member_id", member).bind("day_since", TestCallers.epoch - 1.hours)
+                    },
+                "spend of a workflow (its budgets)" to driver.explain(UsageQueries.WORKFLOW_SPENT) {
+                    bind("since", since).bind("workflow_id", "review")
+                },
+                "spend and holds of a workflow, by the month and the day (gateway admission)" to
+                    driver.explain(
+                        UsageQueries.holdTotals(false, false, false, false, workflow = true, workflowDay = true),
+                    ) {
+                        bind("since", since).bind("now", TestCallers.epoch).bind("call_id", Uuid.random())
+                            .bind("workflow_id", "review").bind("day_since", TestCallers.epoch - 1.hours)
                     },
                 "summary of 30 days by model" to
                     driver.explain(UsageQueries.summary(UsageGroupBy.MODEL, false, false)) {

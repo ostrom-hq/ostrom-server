@@ -2,6 +2,8 @@
 # CONVENTIONS section 11). Pull requests and main, Linux only. Not on version tags: releases are built by the release
 # workflow without these caches, which a tag build must never restore (zizmor cache-poisoning).
 name: Build
+# A run against an ostrom-core branch says so, for squash.sh to find before it squashes a core PR that touches an answer.
+run-name: ${{ inputs.core_ref && format('Build against ostrom-core {0}', inputs.core_ref) || '' }}
 on:
   push:
     branches: [main]
@@ -15,6 +17,18 @@ on:
         description: Also link the linuxArm64 release binary
         type: boolean
         default: false
+      # A core PR that touches an answer (schema, status, enum) is squashed only after this server's strict contract
+      # test ran green against it: core#96 turned every server PR red with three drifts (JOURNAL 03/11 15:1x).
+      core_ref:
+        description: The ostrom-core commit (full SHA) whose contract the tests check, instead of main
+        type: string
+        default: ''
+      # A server change that an e2e scenario proves, while main's scenario still waits for it (a temporary skip):
+      # play the e2e branch that drops the skip against this pull request's image before the squash.
+      e2e_ref:
+        description: The ostrom-e2e ref whose scenarios ci-e2e runs, instead of main
+        type: string
+        default: ''
 env:
   KOTLIN_VERSION: '2.4.21'
 permissions:
@@ -22,11 +36,12 @@ permissions:
   packages: read # dev.ostrom artifacts of ostrom-core on GitHub Packages
 # One run per workflow and ref; a new push cancels the previous run, except on main (org CI rules, JOURNAL 03:10).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.core_ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
-  # The build in three jobs side by side (the single 40-minute job timed out on #135, with every test green), and
-  # `ci`, the required check of main, green only when all three are. A draft pull request runs no CI: mark it ready.
+  # The build in three jobs side by side (the single 40-minute job timed out on #135, with every test green), ci-e2e
+  # after ci-image, and `ci`, the required check of main, green only when all four are. A draft pull request runs no
+  # CI: mark it ready.
   ci-jvm:
     name: JVM tests, Kover 100 %, detekt, docs and conventions
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
@@ -56,6 +71,9 @@ jobs:
       OSTROM_STRIPE_MOCK_REQUIRED: 'true'
       OSTROM_STRIPE_E2E_KEY: ${{ secrets.STRIPE_TEST_KEY }}
       OSTROM_STRIPE_E2E_REQUIRED: 'true'
+      # The contract tests (ContractSchema) compare real answers with ostrom-core main's schemas, written as JSON by
+      # the contract step below; they fail instead of being skipped here.
+      OSTROM_CONTRACT_REQUIRED: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # docs-truth (ostrom-core's tools/docs-truth) at a pinned commit, whose api/contract/served-routes.txt says what
@@ -79,6 +97,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ostrom-hq/ostrom-core
+          ref: ${{ inputs.core_ref }}
           ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
           path: contract-core
           persist-credentials: false
@@ -87,10 +106,14 @@ jobs:
           mv contract-core "$RUNNER_TEMP/contract-core"
           python3 scripts/check-contract.py --self-test
           python3 scripts/check-contract.py "$RUNNER_TEMP/contract-core"
+          # The same contract as JSON, for the tests that check real answers against its schemas (ContractSchema).
+          yq -o=json "$RUNNER_TEMP/contract-core/api/openapi.yaml" > "$RUNNER_TEMP/openapi.json"
+          echo "OSTROM_CONTRACT_OPENAPI=$RUNNER_TEMP/openapi.json" >> "$GITHUB_ENV"
       - uses: ./.github/actions/build-setup
         with:
           core-deploy-key: ${{ secrets.DEPLOY_KEY_CORE }}
           kotlin-version: ${{ env.KOTLIN_VERSION }}
+          build-cache: jvm
       - run: python3 scripts/check-conventions.py
       # Ktor's CIO client has no TLS on Kotlin/Native, and with two engines linked Ktor gives CIO to every engine-less
       # HttpClient { }: one CIO in a shipped source set of the server and every https call fails (ostrom-server#89).
@@ -122,9 +145,23 @@ jobs:
         run: ./gradlew --continue detekt jvmTest koverXmlReport koverVerify
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Gradle's build cache, saved from main only (a pull request restores, never writes)
+        if: success() && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.gradle/caches/build-cache-1
+          key: gradle-build-cache-jvm-${{ github.sha }}
       - name: Lines and branches not covered
         if: failure()
         run: python3 scripts/uncovered.py
+      # Every served operation that answers JSON was seen answering by a test, so ContractObserver checked it against
+      # the contract (or contract/unobserved-operations.txt says why not); prints the drifts the tests met.
+      - name: Every served operation's answer was checked against the contract
+        if: success() || failure()
+        run: |
+          python3 scripts/check-contract-coverage.py --self-test
+          python3 scripts/check-contract-coverage.py "$RUNNER_TEMP/openapi.json" contract/unobserved-operations.txt \
+            testing/src/commonMain/kotlin/dev/ostrom/server/testing/KnownDrifts.kt .
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -167,6 +204,7 @@ jobs:
         with:
           core-deploy-key: ${{ secrets.DEPLOY_KEY_CORE }}
           kotlin-version: ${{ env.KOTLIN_VERSION }}
+          build-cache: native
       # From here, two Gradle workers at a time: several Kotlin/Native compilations and links at once exhaust the
       # runner's memory (#13, exit 143 while linking linuxArm64).
       - name: Two Gradle workers for the native builds
@@ -177,6 +215,12 @@ jobs:
         run: ./gradlew --continue linuxX64Test
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Gradle's build cache, saved from main only (a pull request restores, never writes)
+        if: success() && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.gradle/caches/build-cache-1
+          key: gradle-build-cache-native-${{ github.sha }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -206,6 +250,7 @@ jobs:
         with:
           core-deploy-key: ${{ secrets.DEPLOY_KEY_CORE }}
           kotlin-version: ${{ env.KOTLIN_VERSION }}
+          build-cache: image
       # From here, two Gradle workers at a time: several Kotlin/Native compilations and links at once exhaust the
       # runner's memory (#13, exit 143 while linking linuxArm64).
       - name: Two Gradle workers for the native builds
@@ -269,6 +314,18 @@ jobs:
         run: |
           docker build -t ostrom-server:ci .
           docker images ostrom-server:ci --format '{{.Size}}'
+      # The image this pull request builds, for ci-e2e: ostrom-e2e main runs against it before the merge, not after.
+      - name: Save the image for ci-e2e
+        run: |
+          docker save ostrom-server:ci | gzip -1 > "$RUNNER_TEMP/ostrom-server-image.tar.gz"
+          ls -lh "$RUNNER_TEMP/ostrom-server-image.tar.gz"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ostrom-server-image
+          path: ${{ runner.temp }}/ostrom-server-image.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
       # As deployed: the owner migrates, the server serves as a role that owns nothing (ci/database-roles.sql).
       - name: Smoke test of the image (roles, migrate, /ready, /api/v1/instance, graceful SIGTERM)
         env:
@@ -370,11 +427,32 @@ jobs:
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Gradle's build cache, saved from main only (a pull request restores, never writes)
+        if: success() && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.gradle/caches/build-cache-1
+          key: gradle-build-cache-image-${{ github.sha }}
+
+  # ostrom-e2e main (the isolation sweep, every scenario but the TeamCode import, a short k6 of the gates) against the
+  # image ci-image built: a pull request that changes an answer fails here, before the merge, and brings its e2e fix
+  # along, or an e2e pull request merged first (AGENTS.md, « End-to-end before the merge »).
+  ci-e2e:
+    needs: [ci-image]
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/e2e-journey.yml
+    with:
+      image_artifact: ostrom-server-image
+      e2e_ref: ${{ inputs.e2e_ref || 'main' }}
+    secrets: inherit
 
   # The required check of main, still named `ci` (branch protection, .coord/squash.sh).
   ci:
     if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
-    needs: [ci-jvm, ci-native, ci-image]
+    needs: [ci-jvm, ci-native, ci-image, ci-e2e]
     timeout-minutes: 5
     runs-on: ubuntu-24.04
     steps:
@@ -383,6 +461,7 @@ jobs:
           JVM: ${{ needs.ci-jvm.result }}
           NATIVE: ${{ needs.ci-native.result }}
           IMAGE: ${{ needs.ci-image.result }}
+          E2E: ${{ needs.ci-e2e.result }}
         run: |
-          echo "JVM tests and Kover: $JVM; native tests: $NATIVE; binary, images and smoke tests: $IMAGE"
-          test "$JVM" = success && test "$NATIVE" = success && test "$IMAGE" = success
+          echo "JVM tests and Kover: $JVM; native tests: $NATIVE; binary, images and smoke tests: $IMAGE; e2e: $E2E"
+          test "$JVM" = success && test "$NATIVE" = success && test "$IMAGE" = success && test "$E2E" = success

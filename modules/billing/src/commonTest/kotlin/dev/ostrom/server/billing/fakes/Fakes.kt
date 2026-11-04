@@ -16,6 +16,7 @@ import dev.ostrom.server.billing.domain.StripeSubscription
 import dev.ostrom.server.billing.domain.SubscriptionStatus
 import dev.ostrom.server.billing.domain.Usage
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.MemberEmails
 import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
@@ -130,6 +131,13 @@ class FakeBillingRepository : BillingRepository {
     }
 }
 
+/** The verified addresses of the members, as the orgs module would give them. */
+class FakeMemberEmails : MemberEmails {
+    val addresses = mutableMapOf<Uuid, String>()
+
+    override suspend fun emailOf(orgId: Uuid, memberId: Uuid): String? = addresses[memberId]
+}
+
 /** A [StripeGateway] that records calls and answers what the test set. */
 class FakeStripeGateway : StripeGateway {
     val calls = mutableListOf<String>()
@@ -148,10 +156,27 @@ class FakeStripeGateway : StripeGateway {
         failure?.let { throw it }
     }
 
+    /** Each customer's e-mail, as Stripe holds it (the portal may change it). */
+    val customerEmails = mutableMapOf<String, String?>()
+
     override suspend fun createCustomer(orgId: Uuid, name: String?, email: String?): String {
         record("createCustomer $orgId $name $email")
         customers++
-        return "cus_$customers"
+        return "cus_$customers".also { customerEmails[it] = email }
+    }
+
+    override suspend fun customerEmail(customerId: String): String? {
+        record("customerEmail $customerId")
+        return customerEmails[customerId]
+    }
+
+    /** Thrown by the address update alone, after it is recorded. */
+    var updateEmailFailure: Exception? = null
+
+    override suspend fun updateCustomerEmail(customerId: String, email: String) {
+        record("updateCustomerEmail $customerId $email")
+        updateEmailFailure?.let { throw it }
+        customerEmails[customerId] = email
     }
 
     override suspend fun priceId(lookupKey: String): String {

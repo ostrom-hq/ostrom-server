@@ -55,6 +55,7 @@ data class SpendingDayDto(val date: String, val usd: Double)
  * @property byRepo By repository.
  * @property byPerson By person.
  * @property daily Every day of the period, zero included.
+ * @property exceeded The budgets the reader sees spent past their limit today or this month (empty: none).
  */
 @Serializable
 data class SpendingDto(
@@ -67,6 +68,27 @@ data class SpendingDto(
     val byRepo: List<SpendingLineDto>,
     val byPerson: List<SpendingLineDto>,
     val daily: List<SpendingDayDto>,
+    val exceeded: List<ExceededBudgetDto> = emptyList(),
+)
+
+/**
+ * The contract's `ExceededBudget`: a budget spent past its limit in its current day or month.
+ *
+ * @property scope `organization`, `member` or `workflow`.
+ * @property subject For `member`: the member's id; for `workflow`: the workflow's id.
+ * @property period `day` or `month`.
+ * @property usd The limit, US dollars.
+ * @property hardStop Whether it stops the calls; false, it only warns and the calls go on.
+ * @property since When the server saw it reached (ISO 8601).
+ */
+@Serializable
+data class ExceededBudgetDto(
+    val scope: String,
+    val subject: String? = null,
+    val period: String,
+    val usd: Double,
+    val hardStop: Boolean,
+    val since: String,
 )
 
 /**

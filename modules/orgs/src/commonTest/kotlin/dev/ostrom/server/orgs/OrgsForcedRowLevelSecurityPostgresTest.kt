@@ -56,7 +56,7 @@ class OrgsForcedRowLevelSecurityPostgresTest {
         serverTest(listOf(IdentityModule, OrgsModule)) { server ->
             val ada = server.user("ada")
             val bob = server.user("bob")
-            val orgs = OrgsRepositoryImpl(server.driver)
+            val orgs = OrgsRepositoryImpl(server.driver, server.koin.get())
             val acme = org("acme")
             val adaOwner = Member(Uuid.random(), acme.id, ada.id, OrgRole.OWNER, now)
             assertNull(orgs.create(acme, adaOwner) { false })

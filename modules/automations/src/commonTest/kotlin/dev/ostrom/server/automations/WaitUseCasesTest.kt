@@ -86,6 +86,22 @@ class WaitUseCasesTest {
     }
 
     @Test
+    fun aResumedSessionsSegmentIsAsked() = runTest {
+        // a session resumed by another launch is the segment `<id>~r<n>` the sessions module opened
+        val asked = ask.ask(bob, AskWait(review, sessionId = "claude-session-1~r3"), null).wait
+        assertEquals("claude-session-1~r3", asked.sessionId)
+    }
+
+    @Test
+    fun anAgentNeverAnswersEvenTheQuestionItAskedItsPerson() = runTest {
+        val agent = bob.copy(interactive = false, agent = true)
+        val asked = ask.ask(agent, AskWait(review), null).wait
+        val refused = assertFailsWith<WaitForbiddenException> { answers.answer(agent, asked.id, "done", emptyMap()) }
+        assertEquals("An agent never answers a wait: its person does.", refused.message)
+        assertEquals(WaitStatus.OPEN, repository.waits.getValue(asked.id).status)
+    }
+
+    @Test
     fun malformedAsksAreRefused() = runTest {
         assertFailsWith<InvalidWaitException> { ask.ask(bob, AskWait(review, kind = "turn_failed"), null) }
         assertFailsWith<InvalidWaitException> { ask.ask(bob, AskWait(review, sessionId = "a b"), null) }
