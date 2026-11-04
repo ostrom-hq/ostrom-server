@@ -55,6 +55,8 @@ class OrgAuditQueryPlansTest {
         for ((name, plan) in plans) {
             assertFalse("Seq Scan on identity_audit_events" in plan, "$name scans the table:\n$plan")
             assertTrue("identity_audit_events_chain_sequence_key" in plan, "$name skips the chain's index:\n$plan")
+            // The line before each one is looked up for the page's lines only, never the chain read whole.
+            assertFalse("Materialize" in plan || "Join Filter" in plan, "$name reads the whole chain:\n$plan")
         }
     }
 

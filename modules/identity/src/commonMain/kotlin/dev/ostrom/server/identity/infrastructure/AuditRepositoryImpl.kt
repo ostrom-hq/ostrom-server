@@ -143,9 +143,11 @@ internal suspend fun Transaction.appendAudit(
 }
 
 /**
- * The read of `GET /api/v1/audit`: an organization's lines, newest first, each joined to the line before it in the
- * chain (`sequence - 1`, the unique index `(chain, sequence)`) whatever the filters, so its link can be checked. Only
- * the filters asked for are in the SQL, each value bound, never spliced.
+ * The read of `GET /api/v1/audit`: an organization's lines, newest first, each with the hash of the line before it in
+ * the chain (`sequence - 1`) whatever the filters, so its link can be checked. That hash is a scalar subquery, run only
+ * for the lines of the page, each one lookup in the unique index `(chain, sequence)`: a join let the planner read and
+ * materialize the whole chain for every page (1.5 s at p95 over 10 000 lines, IdentityReadsBenchTest). Only the
+ * filters asked for are in the SQL, each value bound, never spliced.
  *
  * @param byActor Whether the read keeps one person's lines (`:actor`).
  * @param byAction Whether the read keeps one event name (`:action`).
@@ -158,8 +160,8 @@ internal fun orgAuditSql(byActor: Boolean, byAction: Boolean): String {
         "AND e.action = :action".takeIf { byAction },
     ).joinToString(" ")
     return "SELECT e.id, e.sequence, e.org_id, e.actor_id, e.action, e.target_type, e.target_id, e.details, " +
-        "e.occurred_at, e.previous_hash, e.hash, e.signature, e.key_id, p.hash AS predecessor_hash " +
-        "FROM identity_audit_events e LEFT JOIN identity_audit_events p " +
-        "ON p.chain = e.chain AND p.sequence = e.sequence - 1 " +
+        "e.occurred_at, e.previous_hash, e.hash, e.signature, e.key_id, " +
+        "(SELECT p.hash FROM identity_audit_events p WHERE p.chain = e.chain AND p.sequence = e.sequence - 1) " +
+        "AS predecessor_hash FROM identity_audit_events e " +
         "WHERE e.chain = :chain AND e.sequence < :before $filters ORDER BY e.sequence DESC LIMIT :limit"
 }

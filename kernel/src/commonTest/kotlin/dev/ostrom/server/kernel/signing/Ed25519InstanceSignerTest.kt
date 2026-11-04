@@ -38,6 +38,7 @@ class Ed25519InstanceSignerTest {
         assertEquals(64, signature.size)
         assertTrue(signer.verify(data, signature))
         assertFalse(signer.verify("tampered".encodeToByteArray(), signature))
+        assertFalse(signer.verify(data, signature.copyOf(SIGNATURE_SIZE - 1)), "A short signature is a no, not a throw")
         assertEquals("ed25519", signer.algorithm)
         assertTrue(Regex("[0-9a-f]{16}").matches(signer.keyId))
         assertTrue(signer.publicKeyPem.startsWith("-----BEGIN PUBLIC KEY-----"))

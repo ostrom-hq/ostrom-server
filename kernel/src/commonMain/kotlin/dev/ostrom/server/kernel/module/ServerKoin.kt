@@ -23,8 +23,8 @@ import org.koin.dsl.module
  * fail the start instead of one silently replacing the other). The only defaults a module may replace are the
  * [TokenAuthenticator], the [PrincipalOrgResolver], the [OrgAuditTrail], the [ServiceKeyAudit], the
  * [PhoneUnlockProofs] and the [InstanceKeyring]: when no module binds them (before the identity, orgs and instance
- * modules exist, or in a module's own tests), every token is rejected, no one is a member of any organization, the audit
- * trail writes nothing, no service key acts, no phone unlock proves a yes and only the current key verifies.
+ * modules exist, or in a module's own tests), every token is rejected, no one is a member of any organization, the
+ * audit trail writes nothing, no service key acts, no phone unlock proves a yes and only the current key verifies.
  *
  * @param kernel The kernel definitions ([kernelModule]).
  * @param modules The functional modules.
