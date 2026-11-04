@@ -61,7 +61,7 @@ class SupportTest {
         }
         val listed = ListAuditEventsUseCaseImpl(repository)(orgId, null, null, 500)
         assertEquals(listOf(second, first), listed)
-        assertEquals(listOf(first), ListAuditEventsUseCaseImpl(repository)(orgId, null, 2, 0))
+        assertEquals(listOf(first), ListAuditEventsUseCaseImpl(repository)(orgId, null, 2, 1))
     }
 
     @Test

@@ -18,6 +18,7 @@ import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgsRepository
 import dev.ostrom.server.testing.Contract
+import dev.ostrom.server.testing.SentStatement
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
 import io.ktor.client.request.HttpRequestBuilder
@@ -119,21 +120,21 @@ class ListBoundsPostgresTest {
         var huge: HttpResponse? = null
         val sent = driver.record { huge = read(ada, path, "limit=$HUGE") }
         val answer = checkNotNull(huge)
-        val whole = sent.any { statement ->
-            // The size asked, or one more (the row that says another page follows); not a sentinel such as the
-            // audit's `Long.MAX_VALUE` for "no cursor".
-            HUGE.toString() in statement.sql || statement.statement?.namedParametersValues.orEmpty().values.any {
-                (it as? Number)?.toLong()?.let { value -> value == HUGE.toLong() || value == HUGE + 1L } == true
-            }
-        }
         if (answer.status.value >= SERVER_ERROR) f.broken += "$id limit=$HUGE: ${answer.status}"
-        if (whole) f.broken += "$id limit=$HUGE: the database was asked for $HUGE rows"
+        if (sent.any { asksHuge(it) }) f.broken += "$id limit=$HUGE: the database was asked for $HUGE rows"
         val count = if (answer.status == HttpStatusCode.OK) items(answer)?.size else null
-        val maximum = list.maximum
-        if (list.paged && count != null && maximum != null && count > maximum) {
+        val maximum = list.maximum.takeIf { list.paged }
+        if (count != null && maximum != null && count > maximum) {
             f.broken += "$id limit=$HUGE: $count items, above the maximum $maximum"
         }
     }
+
+    // The size asked, or one more (the row that says another page follows); not a sentinel such as the audit's
+    // `Long.MAX_VALUE` for "no cursor".
+    private fun asksHuge(statement: SentStatement): Boolean =
+        HUGE.toString() in statement.sql || statement.statement?.namedParametersValues.orEmpty().values.any {
+            (it as? Number)?.toLong()?.let { value -> value == HUGE.toLong() || value == HUGE + 1L } == true
+        }
 
     // Garbage and forged cursors from A, then A's own cursor replayed by B.
     private suspend fun TestServer.cursors(list: ListOperation, ada: Person, bob: Person, path: String, f: Findings) {

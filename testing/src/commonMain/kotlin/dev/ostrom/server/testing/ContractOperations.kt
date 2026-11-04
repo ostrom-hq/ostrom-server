@@ -109,13 +109,19 @@ class ContractOperations(schema: ContractSchema, document: JsonObject) {
 
     // The query parameters by name, each reference resolved; the operation's own come last and win.
     private fun query(schema: ContractSchema, parameters: List<JsonElement>): Map<String, JsonObject> =
-        parameters.map { element ->
-            element.jsonObject[REF]?.let { schema.resolve(it.jsonPrimitive.content) } ?: element.jsonObject
-        }.filter { it.getValue("in").jsonPrimitive.content == "query" }.associate { parameter ->
-            val declared = parameter["schema"]?.jsonObject ?: JsonObject(emptyMap())
-            val resolved = declared[REF]?.let { schema.resolve(it.jsonPrimitive.content) } ?: declared
-            parameter.getValue("name").jsonPrimitive.content to resolved
-        }
+        parameters.map { resolved(schema, it.jsonObject) }
+            .filter { it.getValue("in").jsonPrimitive.content == "query" }
+            .associate { parameter ->
+                val declared = parameter["schema"]
+                val schemaOf = if (declared == null) JsonObject(emptyMap()) else resolved(schema, declared.jsonObject)
+                parameter.getValue("name").jsonPrimitive.content to schemaOf
+            }
+
+    // The object a `$ref` names, or the object itself (one null check per branch, as Kover counts them).
+    private fun resolved(schema: ContractSchema, element: JsonObject): JsonObject {
+        val reference = element[REF] ?: return element
+        return schema.resolve(reference.jsonPrimitive.content)
+    }
 
     private fun segments(path: String) = path.trim('/').split('/')
 

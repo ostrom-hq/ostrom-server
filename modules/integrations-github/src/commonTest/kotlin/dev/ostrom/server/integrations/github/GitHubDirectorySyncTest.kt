@@ -197,6 +197,8 @@ class GitHubDirectorySyncTest {
             assertFailsWith<InvalidPageException> { teams(ORG, null, limit) }
         }
         assertFailsWith<InvalidPageException> { repos(ORG, "x".repeat(201), null) }
-        assertEquals(emptyList(), repos(ORG, "x".repeat(200), 100).items, "A cursor past every name")
+        // A cursor no page gave (here past every name) is refused; the last name of the list reads an empty page.
+        assertFailsWith<InvalidPageException> { repos(ORG, "x".repeat(200), 100) }
+        assertEquals(emptyList(), repos(ORG, "web", 100).items)
     }
 }
