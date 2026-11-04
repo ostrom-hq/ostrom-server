@@ -4,8 +4,10 @@ package dev.ostrom.server.workflowruns
 import dev.ostrom.server.gates.domain.services.GateCheckProofs
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
+import dev.ostrom.server.workflowruns.domain.engine.NodePlayers
 import dev.ostrom.server.workflowruns.domain.engine.PlayRunUseCase
 import dev.ostrom.server.workflowruns.domain.engine.PlayRunUseCaseImpl
+import dev.ostrom.server.workflowruns.domain.engine.StartedRunChildren
 import dev.ostrom.server.workflowruns.domain.engine.TickRunsUseCase
 import dev.ostrom.server.workflowruns.domain.engine.TickRunsUseCaseImpl
 import dev.ostrom.server.workflowruns.domain.repositories.RunEngineRepository
@@ -13,10 +15,12 @@ import dev.ostrom.server.workflowruns.domain.repositories.StartedRunsRepository
 import dev.ostrom.server.workflowruns.domain.repositories.WorkflowRunsRepository
 import dev.ostrom.server.workflowruns.domain.services.NotificationChannels
 import dev.ostrom.server.workflowruns.domain.services.RunAgents
+import dev.ostrom.server.workflowruns.domain.services.RunChildren
 import dev.ostrom.server.workflowruns.domain.services.RunGates
 import dev.ostrom.server.workflowruns.domain.services.RunLaunches
 import dev.ostrom.server.workflowruns.domain.services.RunPackages
 import dev.ostrom.server.workflowruns.domain.services.RunSessions
+import dev.ostrom.server.workflowruns.domain.services.RunWaits
 import dev.ostrom.server.workflowruns.domain.services.RunWorkflows
 import dev.ostrom.server.workflowruns.domain.usecases.CancelWorkflowRunUseCase
 import dev.ostrom.server.workflowruns.domain.usecases.CancelWorkflowRunUseCaseImpl
@@ -41,6 +45,7 @@ import dev.ostrom.server.workflowruns.domain.usecases.SignWorkflowReceiptUseCase
 import dev.ostrom.server.workflowruns.domain.usecases.SignWorkflowReceiptUseCaseImpl
 import dev.ostrom.server.workflowruns.domain.usecases.StartWorkflowRunUseCase
 import dev.ostrom.server.workflowruns.domain.usecases.StartWorkflowRunUseCaseImpl
+import dev.ostrom.server.workflowruns.infrastructure.AutomationsRunWaits
 import dev.ostrom.server.workflowruns.infrastructure.CloudRunAgents
 import dev.ostrom.server.workflowruns.infrastructure.CompilerRunPackages
 import dev.ostrom.server.workflowruns.infrastructure.CompilerRunWorkflows
@@ -70,8 +75,9 @@ import org.koin.dsl.module
  * [dev.ostrom.server.gates.domain.services.GateActorResolver] and the cloud session of a launch) and the runners module
  * (the runner token of a check run the runner reports itself, `isolated_runner`). It also starts, lists, reads and
  * cancels the runs of the workflows, read from the compiler module, and plays them: an engine on every replica leases
- * each run due to one replica, starts an agent node's cloud session through the runners module and opens a gate
- * node's gate through the gates module, and writes each step with its audit line (the identity module's log).
+ * each run due to one replica, starts an agent node's cloud session through the runners module, opens a gate node's
+ * gate through the gates module, asks a wait node's question through the automations module's waits, starts a
+ * workflow node's child run, and writes each step with its audit line (the identity module's log).
  */
 object WorkflowRunsModule : ServerModule {
     override val name: String = "workflow-runs"
@@ -94,7 +100,10 @@ object WorkflowRunsModule : ServerModule {
         single<RunEngineRepository> { PostgresRunEngineRepository(get(), get()) }
         single<RunAgents> { CloudRunAgents(get(), get(), get(), get()) }
         single<RunGates> { GatesRunGates(get(), get()) }
-        single<PlayRunUseCase> { PlayRunUseCaseImpl(get(), get(), get(), get()) }
+        single<RunWaits> { AutomationsRunWaits(get(), get(), get(), get()) }
+        single<RunChildren> { StartedRunChildren(get(), get(), get(), get()) }
+        single { NodePlayers(get(), get(), get(), get()) }
+        single<PlayRunUseCase> { PlayRunUseCaseImpl(get(), get(), get()) }
         single<TickRunsUseCase> { TickRunsUseCaseImpl(get(), get(), get(), get()) }
         single<GetWorkflowRunUseCase> { GetWorkflowRunUseCaseImpl(get()) }
         single<CancelWorkflowRunUseCase> { CancelWorkflowRunUseCaseImpl(get(), get(), get()) }

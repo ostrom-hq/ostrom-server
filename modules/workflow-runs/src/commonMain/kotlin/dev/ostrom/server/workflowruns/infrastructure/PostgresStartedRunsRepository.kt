@@ -38,6 +38,24 @@ class PostgresStartedRunsRepository(
         }
     }
 
+    override suspend fun addChild(orgId: Uuid, child: WorkflowRun, seq: Int, graph: RunGraph, audit: RunAudit): String =
+        driver.withOrganization(orgId) { tx ->
+            val startedAt = Instant.parse(child.startedAt)
+            val stored = tx.fetchAll(
+                Statement.create(StartedRunQueries.INSERT_CHILD).bind("org_id", orgId).bind("id", child.id)
+                    .bind("workflow_id", child.workflowId).bind("status", child.status.value)
+                    .bind("started_at", startedAt).bind("due_at", startedAt)
+                    .bind("body", OstromJson.encodeToString(WorkflowRun.serializer(), child))
+                    .bind("graph", OstromJson.encodeToString(RunGraph.serializer(), graph))
+                    .bind("parent_run_id", "${child.parentRunId}").bind("parent_seq", seq),
+            ).getOrThrow().firstOrNull() != null
+            if (stored) this.audit.recordRun(tx, orgId, child.id, audit)
+            tx.fetchAll(
+                Statement.create(StartedRunQueries.CHILD).bind("org_id", orgId)
+                    .bind("parent_run_id", "${child.parentRunId}").bind("parent_seq", seq),
+            ).getOrThrow().first().get("id").asString()
+        }
+
     override suspend fun find(orgId: Uuid, id: String): WorkflowRun? = driver.withOrganization(orgId) { tx ->
         tx.fetchAll(Statement.create(StartedRunQueries.FIND).bind("org_id", orgId).bind("id", id)).getOrThrow()
             .firstOrNull()?.let { OstromJson.decodeFromString(WorkflowRun.serializer(), it.get("body").asString()) }
@@ -61,6 +79,18 @@ object StartedRunQueries {
         "INSERT INTO workflow_runs_started (org_id, id, workflow_id, status, started_at, body, graph, next_step_at) " +
             "VALUES (:org_id, :id, :workflow_id, :status, :started_at, CAST(:body AS JSONB), CAST(:graph AS JSONB), " +
             ":due_at)"
+
+    /** Stores a child run unless its parent's visit already has one: a row back when stored. */
+    const val INSERT_CHILD: String =
+        "INSERT INTO workflow_runs_started (org_id, id, workflow_id, status, started_at, body, graph, next_step_at, " +
+            "parent_run_id, parent_seq) VALUES (:org_id, :id, :workflow_id, :status, :started_at, " +
+            "CAST(:body AS JSONB), CAST(:graph AS JSONB), :due_at, :parent_run_id, :parent_seq) " +
+            "ON CONFLICT (org_id, parent_run_id, parent_seq) DO NOTHING RETURNING id"
+
+    /** The child run of a parent's visit. */
+    const val CHILD: String =
+        "SELECT id FROM workflow_runs_started WHERE org_id = :org_id AND parent_run_id = :parent_run_id " +
+            "AND parent_seq = :parent_seq"
 
     /** One run. */
     const val FIND: String = "SELECT body FROM workflow_runs_started WHERE org_id = :org_id AND id = :id"

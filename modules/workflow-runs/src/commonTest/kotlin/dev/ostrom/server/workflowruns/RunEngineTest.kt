@@ -14,6 +14,7 @@ import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.workflowruns.domain.engine.AgentRequests
+import dev.ostrom.server.workflowruns.domain.engine.NodePlayers
 import dev.ostrom.server.workflowruns.domain.engine.PlayRunUseCase
 import dev.ostrom.server.workflowruns.domain.engine.PlayRunUseCaseImpl
 import dev.ostrom.server.workflowruns.domain.engine.RunMoves
@@ -41,6 +42,8 @@ import dev.ostrom.server.workflowruns.domain.services.RunAgents
 import dev.ostrom.server.workflowruns.domain.services.RunGates
 import dev.ostrom.server.workflowruns.domain.usecases.CancelWorkflowRunUseCaseImpl
 import dev.ostrom.server.workflowruns.domain.usecases.GetWorkflowRunUseCaseImpl
+import dev.ostrom.server.workflowruns.fakes.FakeChildren
+import dev.ostrom.server.workflowruns.fakes.FakeWaits
 import dev.ostrom.server.workflowruns.fakes.FixedClock
 import dev.ostrom.server.workflowruns.fakes.ORG
 import dev.ostrom.server.workflowruns.infrastructure.RunEngineWorker
@@ -88,6 +91,9 @@ class RunEngineTest {
             rows[run.id] = PlayedRun(run, graph)
         }
 
+        override suspend fun addChild(orgId: Uuid, child: WorkflowRun, seq: Int, graph: RunGraph, audit: RunAudit) =
+            error("The engine's fakes start no child run.")
+
         override suspend fun find(orgId: Uuid, id: String): WorkflowRun? = rows[id]?.run
 
         override suspend fun runs(orgId: Uuid, query: RunsQuery): List<WorkflowRun> = rows.values.map { it.run }
@@ -128,7 +134,7 @@ class RunEngineTest {
     private val runs = Runs()
     private val agents = Agents()
     private val gates = Gates()
-    private val play = PlayRunUseCaseImpl(runs, agents, gates, clock)
+    private val play = PlayRunUseCaseImpl(runs, NodePlayers(agents, gates, FakeWaits(), FakeChildren()), clock)
 
     private fun run(id: String = RUN, status: RunStatus = RunStatus.QUEUED, visits: List<NodeVisit> = emptyList()) =
         WorkflowRun(
@@ -195,16 +201,21 @@ class RunEngineTest {
     fun aCancelledRunEndsOnlyTheSessionOfAnAgentVisit() = runTest {
         val agent = visit(1, "a", WorkflowNodeKind.AGENT, RunMoves.FAILED, "cancelled")
         val gate = visit(1, "g", WorkflowNodeKind.GATE, RunMoves.FAILED, "cancelled")
+        // A node kind the server does not play started nothing; a trigger starts nothing.
+        val check = visit(1, "c", WorkflowNodeKind.CHECK, RunMoves.FAILED, "cancelled")
+        val trigger = visit(1, "t", WorkflowNodeKind.TRIGGER, RunMoves.FAILED, "cancelled")
         listOf(
             run("wfr_${"1".repeat(32)}", RunStatus.CANCELLED, listOf(agent)),
             run("wfr_${"2".repeat(32)}", RunStatus.CANCELLED, listOf(gate)),
             run("wfr_${"3".repeat(32)}", RunStatus.CANCELLED),
             run("wfr_${"4".repeat(32)}", RunStatus.SUCCEEDED, listOf(agent)),
+            run("wfr_${"5".repeat(32)}", RunStatus.CANCELLED, listOf(check)),
+            run("wfr_${"6".repeat(32)}", RunStatus.CANCELLED, listOf(trigger)),
         ).forEach { stored(RunGraph(), it) }
 
         val next = runs.rows.keys.map { play.play(RunRef(ORG, it), OWNER) }
 
-        assertEquals(listOf(null, null, null, null), next)
+        assertEquals(List(6) { null }, next)
         assertEquals(listOf(sessionOf("wfr_${"1".repeat(32)}", 1)), agents.stopped)
     }
 

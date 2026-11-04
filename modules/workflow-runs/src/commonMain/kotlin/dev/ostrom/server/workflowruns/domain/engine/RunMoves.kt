@@ -94,25 +94,27 @@ class RunMoves(private val owner: String, now: Instant) {
     }
 
     /**
-     * Marks the visit under way as waiting for the gate it opened: the run is `waiting`.
+     * Marks the visit under way as holding what it started: a gate or a wait (the visit is `waiting`, and the run
+     * too), or a child run (the visit stays `running`, and the run too).
      *
      * @param run The run.
-     * @param gateId The gate.
+     * @param held The visit, with the gate, the wait or the child run it holds.
+     * @param event The audit event (`gate_opened`, `wait_asked`, `child_started`).
+     * @param detail The audit fact that names what it holds.
      *
      * @return The change.
      */
-    fun waiting(run: WorkflowRun, gateId: Uuid): RunChange {
-        val last = run.visits.last()
-        val waiting = last.copy(status = WAITING, gateId = gateId.toString())
-        val next = run.copy(status = RunStatus.WAITING, visits = run.visits.dropLast(1) + waiting)
-        val details = auditDetails("node" to last.nodeId, "seq" to last.seq, "gate" to gateId)
-        return RunChange(run, next, owner, audit = listOf(RunAudit("gate_opened", details)))
+    fun held(run: WorkflowRun, held: NodeVisit, event: String, detail: Pair<String, Any?>): RunChange {
+        val status = if (held.status == WAITING) RunStatus.WAITING else RunStatus.RUNNING
+        val next = run.copy(status = status, visits = run.visits.dropLast(1) + held)
+        val details = auditDetails("node" to held.nodeId, "seq" to held.seq, detail)
+        return RunChange(run, next, owner, audit = listOf(RunAudit(event, details)))
     }
 
     /**
      * Follows the edge the last visit's outcome takes: its own `on`, else, for a positive outcome (`next`,
-     * `approved`), an edge without `on`. A node without any edge ends the run on a positive outcome; an outcome no
-     * edge takes fails it.
+     * `approved`, or any answer of a wait: the action its person chose), an edge without `on`. A node without any edge
+     * ends the run on a positive outcome; an outcome no edge takes fails it.
      *
      * @param run The run, its last visit finished.
      * @param graph The graph it copied.
@@ -123,10 +125,10 @@ class RunMoves(private val owner: String, now: Instant) {
         val last = run.visits.last()
         val out = graph.edges.filter { it.from == last.nodeId }
         val edge = out.firstOrNull { it.on == last.outcome }
-            ?: out.firstOrNull { it.on in DEFAULT_ON && last.outcome in POSITIVE }
+            ?: out.firstOrNull { it.on in DEFAULT_ON && positive(last) }
         val to = edge?.to
         return when {
-            edge == null && out.isEmpty() && last.outcome in POSITIVE -> end(run, RunStatus.SUCCEEDED, null)
+            edge == null && out.isEmpty() && positive(last) -> end(run, RunStatus.SUCCEEDED, null)
             edge == null -> end(run, RunStatus.FAILED, "Node ${last.nodeId}: ${last.outcome}${detail(last.output)}")
             to == null -> end(run, RunStatus.SUCCEEDED, null)
             else -> begin(run, graph, to)
@@ -148,6 +150,10 @@ class RunMoves(private val owner: String, now: Instant) {
         return RunChange(run, next, owner, audit = listOf(RunAudit("ended", details)))
     }
 
+    // A wait's answer is positive whatever its action: its person answered.
+    private fun positive(last: NodeVisit): Boolean =
+        last.outcome in POSITIVE || last.kind == WorkflowNodeKind.WAIT && last.status == DONE
+
     private fun detail(output: String?): String = if (output == null) "." else " ($output)."
 
     /** The vocabulary of a run's visits and outcomes. */
@@ -155,7 +161,7 @@ class RunMoves(private val owner: String, now: Instant) {
         /** A visit under way. */
         const val RUNNING: String = "running"
 
-        /** A visit waiting for a person (a gate). */
+        /** A visit waiting for a person (a gate, a wait). */
         const val WAITING: String = "waiting"
 
         /** A visit finished. */

@@ -154,4 +154,15 @@ val WorkflowRunsMigrations: List<SchemaMigration> = listOf(
         """.trimIndent(),
     ),
     SchemaMigration(4, "play_runs", ENGINE_SQL),
+    // A child run, started by a workflow node, names its parent run and the parent's visit: one child per visit, so a
+    // visit played again after a restart finds the child its first play started instead of starting a second.
+    SchemaMigration(
+        5,
+        "child_runs",
+        """
+        ALTER TABLE workflow_runs_started ADD COLUMN parent_run_id TEXT;
+        ALTER TABLE workflow_runs_started ADD COLUMN parent_seq INTEGER;
+        CREATE UNIQUE INDEX workflow_runs_started_child ON workflow_runs_started (org_id, parent_run_id, parent_seq);
+        """.trimIndent(),
+    ),
 )
