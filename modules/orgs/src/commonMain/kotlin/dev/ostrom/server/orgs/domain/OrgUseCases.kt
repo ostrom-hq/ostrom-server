@@ -198,7 +198,7 @@ interface UpdateOrgUseCase {
      * @param change What changes.
      * @return The organization and the caller's membership.
      * @throws NotAllowedException When the caller is neither owner nor admin.
-     * @throws InvalidOrgRequestException For an invalid name or time zone, or another short name.
+     * @throws InvalidOrgRequestException For an invalid name, time zone or hooks deadline, or another short name.
      */
     suspend operator fun invoke(orgId: Uuid, userId: Uuid, change: OrgChange): Membership
 }
@@ -223,18 +223,24 @@ class UpdateOrgUseCaseImpl(
         }
         val name = change.name?.let(::validOrgName)
         val timeZone = change.timeZone?.let(::validTimeZone)
+        val hooksDeadline = change.hooksDeadlineSeconds?.let(::validHooksDeadline)
         val org = caller.org
         ensure(change.slug == null || change.slug == org.slug) {
             InvalidOrgRequestException(
                 "The short name never changes: links and the Ostrom-Org header name it."
             )
         }
-        val updated = org.copy(name = name ?: org.name, timeZone = timeZone ?: org.timeZone)
+        val updated = org.copy(
+            name = name ?: org.name,
+            timeZone = timeZone ?: org.timeZone,
+            hooksDeadlineSeconds = hooksDeadline ?: org.hooksDeadlineSeconds,
+        )
         if (updated != org) {
             orgs.update(
                 orgId,
                 updated.name.takeIf { it != org.name },
                 updated.timeZone.takeIf { it != org.timeZone },
+                updated.hooksDeadlineSeconds.takeIf { it != org.hooksDeadlineSeconds },
             )
         }
         if (updated.name != org.name) {
@@ -245,6 +251,13 @@ class UpdateOrgUseCaseImpl(
             val details = mapOf("from" to org.timeZone, "to" to updated.timeZone)
             audit.record(
                 OrgEvent(orgId, userId, "org.time_zone.changed", "org", orgId.toString(), details)
+            )
+        }
+        if (updated.hooksDeadlineSeconds != org.hooksDeadlineSeconds) {
+            val details =
+                mapOf("from" to "${org.hooksDeadlineSeconds}", "to" to "${updated.hooksDeadlineSeconds}")
+            audit.record(
+                OrgEvent(orgId, userId, "org.hooks_deadline.changed", "org", orgId.toString(), details)
             )
         }
         return caller.copy(org = updated)

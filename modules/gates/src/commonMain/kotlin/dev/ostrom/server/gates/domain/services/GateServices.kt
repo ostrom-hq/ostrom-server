@@ -191,6 +191,28 @@ interface GateNodeResolver {
      * @return The gate node of an action class, or null when no workflow gates it.
      */
     suspend fun resolver(orgId: Uuid, repo: String?): suspend (String) -> GateNode? = { resolve(orgId, repo, it) }
+
+    /**
+     * Tells whether the organization has a gate it enforces for a repository, one a workflow decided and not only
+     * proposed: the launcher stops an agent without hooks only where such a gate would be skipped. By default none:
+     * a source that compiles no workflows enforces nothing.
+     *
+     * @param orgId The organization.
+     * @param repo The repository, or null outside one.
+     * @return True when at least one gate is enforced.
+     */
+    suspend fun enforcesAny(orgId: Uuid, repo: String?): Boolean = false
+
+    /**
+     * Names the policy the sessions of a repository run under, so that an answer read from it (like [enforcesAny]) is
+     * kept for as long as the name is the same and never on a timer: the digest of the pinned package, which a new
+     * package changes. By default none: nothing can be kept.
+     *
+     * @param orgId The organization.
+     * @param repo The repository, or null outside one.
+     * @return The stamp, or null when there is no pinned package.
+     */
+    suspend fun policyStamp(orgId: Uuid, repo: String?): String? = null
 }
 
 /** Reads pull requests from GitHub (integrations-github), never from a ref the agent can move. */

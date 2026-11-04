@@ -56,8 +56,9 @@ interface OrgsRepository {
      * @param id The organization.
      * @param name The new name, null to keep it.
      * @param timeZone The new time zone, null to keep it.
+     * @param hooksDeadlineSeconds The new wait for the hooks, null to keep it.
      */
-    suspend fun update(id: Uuid, name: String?, timeZone: String?)
+    suspend fun update(id: Uuid, name: String?, timeZone: String?, hooksDeadlineSeconds: Int? = null)
 
     /**
      * Deletes a live organization logically: marks it deleted, releases its free claim, removes its
