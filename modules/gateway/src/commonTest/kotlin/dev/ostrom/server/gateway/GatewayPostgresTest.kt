@@ -27,6 +27,9 @@ import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.kernel.errors.OstromException
+import dev.ostrom.server.kernel.http.CallCeilingSettings
+import dev.ostrom.server.kernel.http.CallKind
+import dev.ostrom.server.kernel.http.CallsInProgress
 import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.secrets.SecretsModule
 import dev.ostrom.server.secrets.domain.Caller
@@ -223,6 +226,14 @@ class GatewayPostgresTest {
             }
         }
         single(GatewayModule.HTTP_CLIENT) { HttpClient(MockEngine { request -> provider(request) }) }
+    }
+
+    /** One held place (`OSTROM_MAX_HELD_CALLS`), taken in a test by another call; nothing waits for it. */
+    private val oneHeldPlace = CallsInProgress(CallCeilingSettings(held = 1, queueWait = ZERO), { null })
+
+    private val oneHeldPlaceOnly: Module = module {
+        includes(overrides)
+        single { oneHeldPlace }
     }
 
     private val events = """
@@ -574,6 +585,32 @@ class GatewayPostgresTest {
     private suspend fun errorField(response: HttpResponse, field: String): String =
         Json.parseToJsonElement(response.bodyAsText()).jsonObject.getValue("error").jsonObject.getValue(field)
             .jsonPrimitive.content
+
+    /**
+     * Past the replica's ceiling of held calls (`OSTROM_MAX_HELD_CALLS`), a model call is refused as an overloaded
+     * provider refuses, in the agent's API: an agent retries it as it would the provider's 503, and the load pass
+     * (ostrom-e2e `load/streams.js`) counts it as refused, never as a cut. The kernel's own `unavailable` body is an
+     * Ostrom error that no Anthropic or OpenAI client reads (chart-load 41874269604: 126 of 200 streams).
+     */
+    @Test
+    fun pastTheHeldCeilingAModelCallIsRefusedAsAnOverloadedProviderDoes() =
+        serverTest(modules, oneHeldPlaceOnly) { server ->
+            with(server) {
+                shareClaude()
+                // Another call holds the replica's only held place.
+                val other = assertNotNull(oneHeldPlace.enter(CallKind.HELD))
+                val shapes = listOf("messages" to "overloaded_error", "chat/completions" to "server_error")
+                for ((path, type) in shapes) {
+                    val refused = infer(path, """{"model":"claude-opus-5","stream":true}""")
+                    assertEquals(HttpStatusCode.ServiceUnavailable, refused.status, path)
+                    assertEquals(type, errorField(refused, "type"), path)
+                    assertEquals("1", refused.headers["retry-after"], path)
+                }
+                assertTrue(received.isEmpty(), "A refused call never reaches the provider")
+                other.leave()
+                assertEquals(events, infer("messages", """{"model":"claude-opus-5","stream":true}""").bodyAsText())
+            }
+        }
 
     @Test
     fun refusalsTakeTheProviderShape() = serverTest(modules, overrides) { server ->

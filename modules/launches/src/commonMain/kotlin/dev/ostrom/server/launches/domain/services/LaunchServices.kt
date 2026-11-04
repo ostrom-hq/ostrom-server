@@ -3,6 +3,7 @@ package dev.ostrom.server.launches.domain.services
 
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.OrgPrincipal
+import dev.ostrom.server.launches.domain.models.HooksCheck
 import dev.ostrom.server.launches.domain.models.Launcher
 import kotlin.time.Duration
 import kotlin.time.Instant
@@ -71,6 +72,22 @@ interface AgentTokenService {
      * @return How many were revoked: 0 when already revoked.
      */
     suspend fun revoke(launchId: String): Long
+}
+
+/**
+ * What the launcher is told about the hooks of a launch: the organization's wait (the orgs module's setting) and
+ * whether a gate it enforces would be skipped by an agent without hooks (the gates module's catalogue).
+ */
+fun interface HooksCheckRules {
+    /**
+     * Reads the rules for a launch.
+     *
+     * @param orgId The launch's organization.
+     * @param repo The launch's repository, or null.
+     *
+     * @return How long to wait for the first hook, and whether to stop the agent when none came.
+     */
+    suspend fun check(orgId: Uuid, repo: String?): HooksCheck
 }
 
 /**

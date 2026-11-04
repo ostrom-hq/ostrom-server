@@ -7,12 +7,14 @@ import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.kernel.http.openConnections
 import dev.ostrom.server.runners.domain.Caller
 import dev.ostrom.server.runners.domain.CloudSessionNotFoundException
+import dev.ostrom.server.runners.domain.InvalidCloudSessionRequestException
 import dev.ostrom.server.runners.infrastructure.TerminalRelay
 import io.ktor.http.HttpHeaders
 import io.ktor.server.resources.post
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.application
+import io.ktor.server.routing.get
 import io.ktor.server.util.getOrFail
 import io.ktor.server.websocket.DefaultWebSocketServerSession
 import io.ktor.server.websocket.WebSockets
@@ -81,7 +83,8 @@ private const val MAX_SIZE = 1000
  *   terminal's bytes both ways, text frames are [TerminalControl];
  * - `WS /api/v1/cloud/runner/terminal?sessionId=&epoch=`: the runner's PTY, authenticated by its runner token.
  *
- * Refusals close the socket with [TerminalCloseCodes].
+ * Refusals close the socket with [TerminalCloseCodes]. A GET that does not ask for the upgrade is always the same bad
+ * request (`invalid_request`), before any credential is read: the socket's route only takes an upgrade.
  *
  * @param dependencies The relay and use cases.
  */
@@ -132,6 +135,8 @@ fun Route.terminalRoutes(dependencies: TerminalRoutesDependencies) = with(depend
             attachRunner(relay, id, link)
         }
     }
+    get("/api/v1/cloud/sessions/{id}/terminal") { throw InvalidCloudSessionRequestException(NEED_UPGRADE) }
+    get("/api/v1/cloud/runner/terminal") { throw InvalidCloudSessionRequestException(NEED_UPGRADE) }
 }
 
 /** Pumps a runner's PTY: its output to the relay, the clients' input and resizes to it. */
@@ -155,6 +160,7 @@ private suspend fun DefaultWebSocketServerSession.attachRunner(
 
 private const val NEED_MEMBER_CREDENTIAL = "A valid bearer token or ticket is required."
 private const val NEED_RUNNER_CREDENTIAL = "A runner token, sessionId and epoch are required."
+private const val NEED_UPGRADE = "A terminal is a WebSocket: ask for the upgrade."
 private suspend fun DefaultWebSocketServerSession.clientCaller(
     dependencies: TerminalRoutesDependencies,
     id: Uuid,

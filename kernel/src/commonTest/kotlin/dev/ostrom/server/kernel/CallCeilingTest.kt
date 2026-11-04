@@ -24,6 +24,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
@@ -212,6 +213,13 @@ class CallCeilingTest {
                     call.respondText("held")
                 }
             }
+            // A route that speaks another API answers its own refusal past the same ceiling (the gateway's).
+            val ownRefusal: suspend (ApplicationCall) -> Unit = { call ->
+                call.respondText("own refusal", status = HttpStatusCode.TooManyRequests)
+            }
+            route.heldCalls(refuse = ownRefusal) {
+                get("/probe/held-own") { call.respondText("held own") }
+            }
             route.openConnections {
                 get("/probe/open") {
                     openIn.complete(Unit)
@@ -309,6 +317,20 @@ class CallCeilingTest {
             assertBusy(secondHeld, secondHeld.bodyAsText())
             release.complete(Unit)
             assertEquals("served", served.await())
+            assertEquals("held", held.await())
+        }
+    }
+
+    @Test
+    fun aHeldRouteWithItsOwnRefusalAnswersItPastTheCeiling() = ceilingTest { probe, release ->
+        assertEquals("held own", client.get("/probe/held-own").bodyAsText(), "under the ceiling, served")
+        coroutineScope {
+            val held = async { client.get("/probe/held").bodyAsText() }
+            probe.heldIn.await()
+            val refused = client.get("/probe/held-own")
+            assertEquals(HttpStatusCode.TooManyRequests, refused.status)
+            assertEquals("own refusal", refused.bodyAsText())
+            release.complete(Unit)
             assertEquals("held", held.await())
         }
     }
