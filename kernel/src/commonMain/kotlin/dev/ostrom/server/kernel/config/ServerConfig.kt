@@ -2,6 +2,7 @@
 package dev.ostrom.server.kernel.config
 
 import dev.ostrom.core.telemetry.TelemetrySettings
+import dev.ostrom.server.kernel.http.CallCeilingSettings
 import dev.ostrom.server.kernel.http.ReadLimits
 import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.kernel.network.TrustedProxies
@@ -29,6 +30,10 @@ import kotlin.time.Duration.Companion.seconds
  *   period to close the pool and the workers.
  * @property readLimits How much one subject may read of the costly routes (`OSTROM_READS_PER_MINUTE`,
  *   `OSTROM_READS_IN_FLIGHT`, `OSTROM_READ_WAITS_IN_FLIGHT`).
+ * @property callCeilings The calls one replica runs at once (`OSTROM_MAX_CALLS_IN_PROGRESS`, `OSTROM_MAX_HELD_CALLS`,
+ *   `OSTROM_MAX_OPEN_CONNECTIONS`),
+ *   derived from the container's memory limit when unset, and how long a call waits for a place
+ *   (`OSTROM_CALL_QUEUE_SECONDS`).
  */
 data class ServerConfig(
     val host: String,
@@ -42,10 +47,13 @@ data class ServerConfig(
     val drainDelay: Duration = DEFAULT_DRAIN_DELAY_SECONDS.seconds,
     val readLimits: ReadLimits =
         ReadLimits(ReadLimits.DEFAULT_PER_MINUTE, ReadLimits.DEFAULT_IN_FLIGHT, ReadLimits.DEFAULT_WAITS_IN_FLIGHT),
+    val callCeilings: CallCeilingSettings = CallCeilingSettings(),
 ) {
     /** Reading the configuration. */
     companion object {
         private const val DEFAULT_PORT = 8080
+        private const val MAX_CALL_CEILING = 100_000
+        private const val MAX_CALL_QUEUE_SECONDS = 60
         private const val MAX_PORT = 65535
         private const val DEFAULT_MAX_CONNECTIONS = 10
         private const val MAX_CONNECTIONS = 1000
@@ -97,6 +105,30 @@ data class ServerConfig(
                 0..MAX_DRAIN_DELAY_SECONDS,
             ).seconds,
             readLimits = readLimits(source),
+            callCeilings = callCeilings(source),
+        )
+
+        /**
+         * The ceilings of the calls one replica runs at once: `OSTROM_MAX_CALLS_IN_PROGRESS`, `OSTROM_MAX_HELD_CALLS`
+         * and `OSTROM_MAX_OPEN_CONNECTIONS`, 1 to 100 000 each, unset to derive them from the container's memory
+         * limit, and `OSTROM_CALL_QUEUE_SECONDS`, 0 to 60 (5 by default), how long a call past its ceiling waits for a
+         * place.
+         *
+         * @param source Where values are read from.
+         *
+         * @return The ceilings set.
+         *
+         * @throws InvalidConfigException When a value is not an integer in its range.
+         */
+        fun callCeilings(source: ConfigSource): CallCeilingSettings = CallCeilingSettings(
+            served = source.optionalInt("OSTROM_MAX_CALLS_IN_PROGRESS", 1..MAX_CALL_CEILING),
+            held = source.optionalInt("OSTROM_MAX_HELD_CALLS", 1..MAX_CALL_CEILING),
+            open = source.optionalInt("OSTROM_MAX_OPEN_CONNECTIONS", 1..MAX_CALL_CEILING),
+            queueWait = source.int(
+                "OSTROM_CALL_QUEUE_SECONDS",
+                CallCeilingSettings.DEFAULT_QUEUE_WAIT.inWholeSeconds.toInt(),
+                0..MAX_CALL_QUEUE_SECONDS,
+            ).seconds,
         )
 
         /**
@@ -176,8 +208,11 @@ data class ServerConfig(
                 ?: throw InvalidConfigException("OSTROM_LOG_LEVEL must be one of ${LogLevel.entries.joinToString()}.")
         }
 
-        private fun ConfigSource.int(key: String, default: Int, range: IntRange): Int {
-            val raw = this[key] ?: return default
+        private fun ConfigSource.int(key: String, default: Int, range: IntRange): Int =
+            optionalInt(key, range) ?: default
+
+        private fun ConfigSource.optionalInt(key: String, range: IntRange): Int? {
+            val raw = this[key] ?: return null
             val value = raw.toIntOrNull() ?: throw InvalidConfigException("$key must be an integer.")
             if (value !in range) throw InvalidConfigException("$key must be between ${range.first} and ${range.last}.")
             return value

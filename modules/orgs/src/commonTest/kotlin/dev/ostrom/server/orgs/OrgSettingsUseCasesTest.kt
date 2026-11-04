@@ -10,6 +10,8 @@ import dev.ostrom.server.orgs.domain.DELETION_GRACE
 import dev.ostrom.server.orgs.domain.DeleteOrgUseCaseImpl
 import dev.ostrom.server.orgs.domain.DeletionPass
 import dev.ostrom.server.orgs.domain.InvalidOrgRequestException
+import dev.ostrom.server.orgs.domain.MAX_HOOKS_DEADLINE
+import dev.ostrom.server.orgs.domain.MIN_HOOKS_DEADLINE
 import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.Membership
 import dev.ostrom.server.orgs.domain.NotAllowedException
@@ -127,6 +129,52 @@ class OrgSettingsUseCasesTest {
 
         assertEquals(0, world.orgs.updates)
         assertEquals(events, world.audit.events.size)
+    }
+
+    @Test
+    fun ownersAndAdminsSetHowLongTheLauncherWaitsForTheHooksAndItIsAudited() = runTest {
+        val ada = world.people.add("ada", null)
+        val acme = create(ada.id, "Acme", null)
+        val bob = world.people.add("bob", null)
+        join(acme, bob.id, OrgRole.ADMIN)
+        assertEquals(15, acme.org.hooksDeadlineSeconds, "15 seconds until set")
+
+        val slower = update(acme.org.id, ada.id, OrgChange(hooksDeadlineSeconds = 30))
+        assertEquals(30, slower.org.hooksDeadlineSeconds)
+        assertEquals(30, world.orgs.get(acme.org.id)?.hooksDeadlineSeconds)
+        assertEquals("Acme", slower.org.name, "Only the deadline changed")
+        assertEquals(
+            "org.hooks_deadline.changed" to mapOf("from" to "15", "to" to "30"),
+            world.audit.events.last(),
+        )
+
+        val bounds = listOf(MIN_HOOKS_DEADLINE, MAX_HOOKS_DEADLINE).map {
+            update(acme.org.id, bob.id, OrgChange(hooksDeadlineSeconds = it)).org.hooksDeadlineSeconds
+        }
+        assertEquals(listOf(5, 300), bounds, "Both ends are allowed")
+
+        val updates = world.orgs.updates
+        val events = world.audit.events.size
+        update(acme.org.id, ada.id, OrgChange(hooksDeadlineSeconds = 300))
+        assertEquals(updates, world.orgs.updates, "The same value writes nothing")
+        assertEquals(events, world.audit.events.size)
+    }
+
+    @Test
+    fun aHooksDeadlineOutsideFiveToThreeHundredSecondsIsRefusedAndOnlyManagersSetIt() = runTest {
+        val ada = world.people.add("ada", null)
+        val acme = create(ada.id, "Acme", null)
+        val bob = world.people.add("bob", null)
+        join(acme, bob.id, OrgRole.MEMBER)
+
+        for (seconds in listOf(-1, 0, 4, 301, 3600)) {
+            assertFailsWith<InvalidOrgRequestException>("$seconds") {
+                update(acme.org.id, ada.id, OrgChange(hooksDeadlineSeconds = seconds))
+            }
+        }
+        assertFailsWith<NotAllowedException> { update(acme.org.id, bob.id, OrgChange(hooksDeadlineSeconds = 20)) }
+        assertEquals(acme.org, world.orgs.get(acme.org.id))
+        assertEquals(0, world.orgs.updates)
     }
 
     @Test

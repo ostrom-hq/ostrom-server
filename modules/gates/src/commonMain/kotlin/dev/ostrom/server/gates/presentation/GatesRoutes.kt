@@ -16,6 +16,7 @@ import dev.ostrom.server.kernel.auth.outsideOrganization
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.errors.Pages
 import dev.ostrom.server.kernel.http.ReadThrottle
+import dev.ostrom.server.kernel.http.heldCalls
 import dev.ostrom.server.kernel.http.throttledReads
 import dev.ostrom.server.kernel.http.throttledWaits
 import io.ktor.server.request.receive
@@ -35,18 +36,23 @@ import kotlin.uuid.Uuid
  * @param throttle Bounds the reads that cost the most per caller: a gate and its wait, the approvals.
  */
 fun Route.gatesRoutes(dependencies: GatesRoutesDependencies, throttle: ReadThrottle) = with(dependencies) {
+    // A hook waits here for its answer, at most 30 s, instead of asking again every second. Its waits are counted apart
+    // from the reads: an agent waiting on many gates keeps its reads (AUDIT-SECU-LECTURES M1). They are held calls,
+    // counted apart from the server's other calls from before authentication on (P1 memory).
+    heldCalls {
+        authenticated {
+            throttledWaits(throttle) {
+                get<GatesApi.Id> { params ->
+                    val actor = actors.actorOf(call.requirePrincipal(), GateScopes.readingGates)
+                    call.respond(gate(actor, params.id.toUuid(), (params.wait ?: 0).seconds).toResponse(actor))
+                }
+            }
+        }
+    }
     authenticated {
         post<GatesApi> {
             val actor = actors.actorOf(call.requirePrincipal(), GateScopes.asking)
             call.respond(ask(actor, call.receive<GateAskRequest>().toAskGate()).toResponse(actor))
-        }
-        // A hook waits here for its answer, at most 30 s, instead of asking again every second. Its waits are counted
-        // apart from the reads: an agent waiting on many gates keeps its reads (AUDIT-SECU-LECTURES M1).
-        throttledWaits(throttle) {
-            get<GatesApi.Id> { params ->
-                val actor = actors.actorOf(call.requirePrincipal(), GateScopes.readingGates)
-                call.respond(gate(actor, params.id.toUuid(), (params.wait ?: 0).seconds).toResponse(actor))
-            }
         }
         throttledReads(throttle) {
             get<ApprovalsApi> { params ->

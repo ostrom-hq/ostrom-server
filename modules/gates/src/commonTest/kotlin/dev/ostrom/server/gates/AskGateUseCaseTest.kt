@@ -440,6 +440,8 @@ class AskGateUseCaseTest {
         }
         assertEquals(ErrorKind.UNAVAILABLE, sessions.kind)
         assertNull(NoGateNodes().resolve(gate.orgId, "o/r", "push-main"))
+        assertEquals(false, NoGateNodes().enforcesAny(gate.orgId, "o/r"), "No workflow, no enforced gate")
+        assertNull(NoGateNodes().policyStamp(gate.orgId, "o/r"), "No policy, no stamp")
         assertNull(UnknownPullRequestHeads().head(gate.orgId, "o/r", 6))
         assertNull(UnavailableGateSessions().agentOf(gate.orgId, SESSION))
         val segment = assertFailsWith<OstromException> {

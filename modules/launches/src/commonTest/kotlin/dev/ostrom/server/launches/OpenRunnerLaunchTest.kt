@@ -2,6 +2,7 @@
 package dev.ostrom.server.launches
 
 import dev.ostrom.server.kernel.errors.ErrorKind
+import dev.ostrom.server.launches.domain.models.HooksCheck
 import dev.ostrom.server.launches.domain.models.InvalidLaunchException
 import dev.ostrom.server.launches.domain.models.LaunchRefusedException
 import dev.ostrom.server.launches.domain.models.NoLaunchOrganizationException
@@ -9,6 +10,7 @@ import dev.ostrom.server.launches.domain.usecases.CreateLaunchUseCaseImpl
 import dev.ostrom.server.launches.domain.usecases.LaunchPolicy
 import dev.ostrom.server.launches.domain.usecases.OpenRunnerLaunchUseCaseImpl
 import dev.ostrom.server.launches.fakes.ADA
+import dev.ostrom.server.launches.fakes.FakeHooksCheckRules
 import dev.ostrom.server.launches.fakes.FakeLaunchers
 import dev.ostrom.server.launches.fakes.FakeModelRules
 import dev.ostrom.server.launches.fakes.FixedClock
@@ -34,6 +36,7 @@ class OpenRunnerLaunchTest {
     private val adaMember = Uuid.parse("0000a0ad-0000-0000-0000-000000000000")
     private val launches = InMemoryLaunches()
     private val tokens = RecordingTokens()
+    private val hooks = FakeHooksCheckRules(afterSeconds = 25, stopAgent = true)
     private val open = OpenRunnerLaunchUseCaseImpl(
         FakeLaunchers(mapOf(adaMember.toString() to ADA)),
         CreateLaunchUseCaseImpl(
@@ -41,6 +44,7 @@ class OpenRunnerLaunchTest {
             LaunchPolicy(FakeModelRules(mapOf("gpt-5" to "gpt-5 is not on the allowlist."))),
             tokens,
             FixedClock(),
+            hooks,
         ),
     )
 
@@ -85,6 +89,7 @@ class OpenRunnerLaunchTest {
         assertEquals(session.id, launch.cloudSessionId)
         assertEquals(listOf(launch), launches.launches)
         assertEquals("osa_${launch.id}", created.agentToken)
+        assertEquals(HooksCheck(25, true), created.hooksCheck, "The runner's launch is checked like the CLI's")
     }
 
     @Test
