@@ -125,6 +125,18 @@ class ConfirmationUseCasesTest {
         assertEquals(JsonPrimitive("sole-approver"), change.current, "Nothing written")
         val device = open(request("olga", principal = token("olga", setOf("rules:read"))))
         assertEquals(ConfirmationCredential.DEVICE, device.credential)
+        assertNull(device.tokenName)
+    }
+
+    @Test
+    fun aPersonalTokenIsNamedWhateverItsScopesAndNeverPassesForTheClis() = runTest {
+        val governing = token("ada").copy(personalTokenName = "deploy bot")
+        val opened = open(request("ada", principal = governing))
+        assertEquals(ConfirmationCredential.API_TOKEN, opened.credential)
+        assertEquals("tok_ada" to "deploy bot", opened.tokenId to opened.tokenName)
+        val reader = token("olga", setOf("rules:read")).copy(personalTokenName = "laptop")
+        val plain = open(request("olga", principal = reader))
+        assertEquals(ConfirmationCredential.API_TOKEN to "laptop", plain.credential to plain.tokenName)
     }
 
     @Test

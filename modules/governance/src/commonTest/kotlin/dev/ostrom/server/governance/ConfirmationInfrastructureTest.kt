@@ -4,15 +4,18 @@ package dev.ostrom.server.governance
 import dev.ostrom.server.governance.domain.Confirmation
 import dev.ostrom.server.governance.domain.ConfirmationAnswer
 import dev.ostrom.server.governance.domain.ConfirmationCredential
+import dev.ostrom.server.governance.domain.ConfirmationPeople
 import dev.ostrom.server.governance.domain.ConfirmationPerson
 import dev.ostrom.server.governance.domain.ConfirmationStatus
 import dev.ostrom.server.governance.domain.ExpireConfirmationsUseCase
 import dev.ostrom.server.governance.domain.OpenConfirmationUseCase
+import dev.ostrom.server.governance.domain.PersonName
 import dev.ostrom.server.governance.infrastructure.ConfirmationSweeper
 import dev.ostrom.server.governance.infrastructure.GovernanceConfirmationsImpl
 import dev.ostrom.server.governance.infrastructure.LocalConfirmationWaits
 import dev.ostrom.server.governance.presentation.AnswerConfirmationRequest
 import dev.ostrom.server.governance.presentation.toAnswer
+import dev.ostrom.server.governance.presentation.toDto
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.GovernanceRequest
 import dev.ostrom.server.kernel.auth.GovernanceWrite
@@ -27,6 +30,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -103,6 +107,27 @@ class ConfirmationInfrastructureTest {
         assertEquals("gcf_1", pending.confirmationId)
         assertEquals("https://app.ostrom.run/confirm/gcf_1", pending.confirmUrl)
         assertEquals("2026-11-02T20:15:00Z", pending.expiresAt)
+    }
+
+    @Test
+    fun aPersonalTokensConfirmationIsNeverShownWithoutItsToken() = runTest {
+        val expires = Instant.parse("2026-11-02T20:15:00Z")
+        val people = object : ConfirmationPeople {
+            override suspend fun nameOf(userId: String): PersonName? = null
+        }
+        val asked = Confirmation(
+            "gcf_1", Uuid.random(), GovernanceWrite("gates.policy", JsonObject(emptyMap())), "gates:policy", "PUT",
+            "/api/v1/gates/policy", "Set it", null, null, ConfirmationPerson("ada", Uuid.random()),
+            ConfirmationCredential.API_TOKEN, "tok_1", ConfirmationStatus.PENDING, expires - 15.seconds, expires,
+            tokenName = "ci",
+        )
+        val now = expires - 10.seconds
+        val token = asked.toDto(people, now).token
+        assertEquals("tok_1" to "ci", token?.id to token?.name)
+        // A row that lost its token id or name is a broken invariant: it fails loudly, never shown as tokenless.
+        assertFailsWith<IllegalStateException> { asked.copy(tokenId = null).toDto(people, now) }
+        assertFailsWith<IllegalStateException> { asked.copy(tokenName = null).toDto(people, now) }
+        assertNull(asked.copy(credential = ConfirmationCredential.DEVICE).toDto(people, now).token)
     }
 
     @Test
