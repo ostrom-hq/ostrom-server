@@ -245,28 +245,32 @@ internal val callsInProgressKey = AttributeKey<CallsInProgress>("ostrom.calls.in
 class CallCeilingConfig {
     /** How the calls of the routes it is installed on count. */
     var kind: CallKind = CallKind.SERVED
+
+    /**
+     * Answers a call refused past the ceiling, `Retry-After` included; null for the server's own 503 `unavailable`.
+     * A route that speaks another API (the gateway speaks the providers') answers in that API's shape.
+     */
+    var refuse: (suspend (ApplicationCall) -> Unit)? = null
 }
 
 /**
  * Counts each call against the replica's ceiling for its kind, before the body is read; past it, the call waits in
- * line for a place, then is refused: 503 `unavailable` with `Retry-After: 1`. Installed on the routing root by
- * [configureHttp] for [CallKind.SERVED]; [heldCalls] and [uncountedCalls] install it again on their routes, and the
- * closest installation counts the call, once. Routes built without [configureHttp] (a module's own test) are not
- * counted.
+ * line for a place, then is refused: 503 `unavailable` with `Retry-After: 1`, or the route's own refusal
+ * ([CallCeilingConfig.refuse]). Installed on the routing root by [configureHttp] for [CallKind.SERVED]; [heldCalls]
+ * and [uncountedCalls] install it again on their routes, and the closest installation counts the call, once. Routes
+ * built without [configureHttp] (a module's own test) are not counted.
  */
 val CallCeiling = createRouteScopedPlugin("CallCeiling", ::CallCeilingConfig) {
     val calls = application.attributes.getOrNull(callsInProgressKey)
     val kind = pluginConfig.kind
+    val refuse = pluginConfig.refuse ?: ::refuseAsBusy
     on(AroundEveryPlugin) { call, proceed ->
         if (calls == null) {
             proceed()
         } else {
             val place = calls.enter(kind)
             if (place == null) {
-                call.response.header(HttpHeaders.RetryAfter, RETRY_AFTER_SECONDS)
-                // Written as is, never through content negotiation: a stream's client asks `text/event-stream`, for
-                // which no converter exists, and the ApiError went out as a 406 (CHARGE 41672759077).
-                call.respondText(BUSY_BODY, ContentType.Application.Json, HttpStatusCode.ServiceUnavailable)
+                refuse(call)
                 return@on
             }
             try {
@@ -276,6 +280,14 @@ val CallCeiling = createRouteScopedPlugin("CallCeiling", ::CallCeilingConfig) {
             }
         }
     }
+}
+
+/** The server's own refusal past a ceiling. */
+private suspend fun refuseAsBusy(call: ApplicationCall) {
+    call.response.header(HttpHeaders.RetryAfter, RETRY_AFTER_SECONDS)
+    // Written as is, never through content negotiation: a stream's client asks `text/event-stream`, for which no
+    // converter exists, and the ApiError went out as a 406 (CHARGE 41672759077).
+    call.respondText(BUSY_BODY, ContentType.Application.Json, HttpStatusCode.ServiceUnavailable)
 }
 
 private const val RETRY_AFTER_SECONDS = "1"
@@ -294,11 +306,13 @@ private val BUSY_BODY = OstromJson.encodeToString(
  * Routes whose calls stay open (a wait, a WebSocket, a stream): counted under [CallKind.HELD], apart from the
  * ordinary calls, so that they neither take the ordinary calls' places nor escape a ceiling.
  *
+ * @param refuse Answers a call refused past the ceiling, `Retry-After` included; null for the server's own 503.
  * @param build The routes.
  *
  * @return The route holding them.
  */
-fun Route.heldCalls(build: Route.() -> Unit): Route = counted(CallKind.HELD, build)
+fun Route.heldCalls(refuse: (suspend (ApplicationCall) -> Unit)? = null, build: Route.() -> Unit): Route =
+    counted(CallKind.HELD, refuse, build)
 
 /**
  * Routes whose connections stay open as long as their client keeps them (a terminal's WebSocket, the live usage
@@ -309,7 +323,7 @@ fun Route.heldCalls(build: Route.() -> Unit): Route = counted(CallKind.HELD, bui
  *
  * @return The route holding them.
  */
-fun Route.openConnections(build: Route.() -> Unit): Route = counted(CallKind.OPEN, build)
+fun Route.openConnections(build: Route.() -> Unit): Route = counted(CallKind.OPEN, build = build)
 
 /**
  * Routes never counted: `/health` and `/ready`.
@@ -318,11 +332,18 @@ fun Route.openConnections(build: Route.() -> Unit): Route = counted(CallKind.OPE
  *
  * @return The route holding them.
  */
-fun Route.uncountedCalls(build: Route.() -> Unit): Route = counted(CallKind.FREE, build)
+fun Route.uncountedCalls(build: Route.() -> Unit): Route = counted(CallKind.FREE, build = build)
 
-private fun Route.counted(kind: CallKind, build: Route.() -> Unit): Route {
+private fun Route.counted(
+    kind: CallKind,
+    refuse: (suspend (ApplicationCall) -> Unit)? = null,
+    build: Route.() -> Unit,
+): Route {
     val counted = createChild(CallKindSelector(kind))
-    counted.install(CallCeiling) { this.kind = kind }
+    counted.install(CallCeiling) {
+        this.kind = kind
+        this.refuse = refuse
+    }
     counted.build()
     return counted
 }
