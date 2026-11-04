@@ -37,6 +37,21 @@ class Ed25519InstanceSigner private constructor(
         private val edDsa get() = CryptographyProvider.Default.get(EdDSA)
 
         /**
+         * Verifies an Ed25519 signature with a public key the instance published (PEM, SPKI): a past key of the
+         * instance, kept to verify what it signed.
+         *
+         * @param publicKeyPem The public key, as [publicKeyPem] writes it.
+         * @param data The signed bytes.
+         * @param signature The signature.
+         *
+         * @return Whether it verifies.
+         */
+        suspend fun verifyWith(publicKeyPem: String, data: ByteArray, signature: ByteArray): Boolean =
+            edDsa.publicKeyDecoder(EdDSA.Curve.Ed25519)
+                .decodeFromByteArray(EdDSA.PublicKey.Format.PEM, publicKeyPem.encodeToByteArray())
+                .signatureVerifier().tryVerifySignature(data, signature)
+
+        /**
          * Generates a new key, in memory only (tests).
          *
          * @return The signer.
