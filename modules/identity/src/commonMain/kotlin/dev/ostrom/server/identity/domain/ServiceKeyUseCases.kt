@@ -77,8 +77,7 @@ class CreateServiceKeyUseCaseImpl(
         lifetime: Duration?,
     ): IssuedToken {
         val orgId = member.requireKeyAdmin().orgId
-        val label = name.trim()
-        if (label.isEmpty() || label.length > MAX_NAME) throw InvalidTokenNameException()
+        val label = tokenName(name)
         val validScopes = scopes.toSet()
         if (validScopes.isEmpty() || !SERVICE_KEY_SCOPES.containsAll(validScopes)) {
             throw InvalidServiceKeyScopesException()
@@ -98,10 +97,6 @@ class CreateServiceKeyUseCaseImpl(
         val keyId = issued.token.id.toString()
         audit.record(AuditEntry(orgId, userId, "service_key.created", "service_key", keyId, details))
         return issued
-    }
-
-    private companion object {
-        const val MAX_NAME = 100
     }
 }
 
