@@ -87,6 +87,14 @@ class SessionUseCasesTest {
     }
 
     @Test
+    fun aSessionKeepsTheIdItsServerCallerChose() = runTest {
+        val id = Uuid.parse("0f8a2d3c-1111-4222-8333-444455556666")
+        val created = create(alice, CreateCloudSessionPayload("x", "claude", null, id = id))
+        assertEquals(id, created.id)
+        assertEquals(id, repository.get(created.orgId, id)?.id)
+    }
+
+    @Test
     fun theModelAndPromptAreKeptWithinBounds() = runTest {
         val created = create(
             alice,

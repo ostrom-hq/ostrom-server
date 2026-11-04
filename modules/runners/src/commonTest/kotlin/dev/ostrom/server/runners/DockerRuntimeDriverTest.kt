@@ -8,6 +8,7 @@ import dev.ostrom.server.runners.domain.ExecutionPlan
 import dev.ostrom.server.runners.domain.ExecutionSpec
 import dev.ostrom.server.runners.domain.ExecutionStatus
 import dev.ostrom.server.runners.fakes.FakeApi
+import dev.ostrom.server.runners.fakes.FakeRunnerWorkSignals
 import dev.ostrom.server.runners.fakes.InMemoryRunnerAssignments
 import dev.ostrom.server.runners.fakes.ORG_A
 import dev.ostrom.server.runners.fakes.SettableClock
@@ -323,7 +324,7 @@ class DockerRuntimeDriverTest {
 
     @Test
     fun theConfigurationChoosesTheDriver() {
-        val registered = RegisteredRuntimeDriver(InMemoryRunnerAssignments(), SettableClock())
+        val registered = RegisteredRuntimeDriver(InMemoryRunnerAssignments(), SettableClock(), FakeRunnerWorkSignals())
         val none = RunnersConfig.from(MapConfigSource(emptyMap()))
         assertIs<DisabledRuntimeDriver>(RuntimeDrivers.create(none, { registered }))
         val kubernetes = RunnersConfig.from(

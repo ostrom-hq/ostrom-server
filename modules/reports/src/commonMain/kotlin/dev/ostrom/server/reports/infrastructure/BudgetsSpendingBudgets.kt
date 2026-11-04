@@ -36,11 +36,12 @@ class BudgetsSpendingBudgets(private val budgets: BudgetsRepository) : SpendingB
             stops = it.limit.action == BudgetAction.BLOCK,
             limitMicros = it.limit.micros,
             since = it.since,
+            workflowId = it.workflowId,
         )
     }
 
     private companion object {
-        /** More than an organization's budgets ever reach at once: the org's and the members' two windows. */
+        /** More than an organization's budgets ever reach at once: the org's, the members' and the workflows'. */
         const val MAX_EXCEEDED = 200
     }
 }

@@ -14,6 +14,7 @@ import dev.ostrom.server.sessions.domain.usecases.CloseSessionUseCaseImpl
 import dev.ostrom.server.sessions.fakes.ORG
 import dev.ostrom.server.sessions.fakes.SessionBench
 import dev.ostrom.server.sessions.fakes.agent
+import dev.ostrom.server.sessions.fakes.user
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
@@ -23,6 +24,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
@@ -113,6 +115,7 @@ class CloseSessionTest {
 
         val draft = bench.sign.signed.getValue("rcpt_session_s-1")
         assertReceiptDraft(draft)
+        assertEquals("launch-1" to "s-1", draft.text("launchId") to draft.text("sessionId"), "Its launch and segment")
         assertGatesPreimage(bench, session, ended, gateA to gateB, draft)
     }
 
@@ -173,6 +176,16 @@ class CloseSessionTest {
     }
 
     @Test
+    fun aSegmentOutsideALaunchNamesNoLaunch() = runTest {
+        val bench = SessionBench()
+        val session = bench.start(user(), StartSession(id = "s-1", agent = "codex"))
+        bench.close(ORG, session.id, EndSession())
+        val draft = bench.sign.signed.getValue("rcpt_session_s-1")
+        assertFalse("launchId" in draft, "No launch: none named")
+        assertEquals("s-1", draft.text("sessionId"))
+    }
+
+    @Test
     fun aStartingModelIsTheReceiptsUnlessTheEndSaysOtherwise() = runTest {
         val bench = SessionBench()
         val session = bench.start(agent(), StartSession(id = "s-1", agent = "codex", model = "gpt", cwd = "/w"))
@@ -225,6 +238,28 @@ class CloseSessionTest {
         bench.costs.meanwhile = { bench.repository.rows.remove(ORG to session.id) }
         assertFailsWith<SessionNotFoundException> { bench.close(ORG, session.id, EndSession()) }
         assertEquals(emptyMap(), bench.sign.signed, "Nothing signed for a segment that is gone")
+    }
+
+    // AUDIT-SERVEUR-3 B2: a gate the session takes while its end reads the costs and the rules is in its receipt: the
+    // gates are read once the end is written, by the gates' own end of the session.
+    @Test
+    fun theGatesAreReadOnceTheEndIsWritten() = runTest {
+        val bench = SessionBench()
+        val session = bench.start(agent(), StartSession(id = "s-1", agent = "claude-code"))
+        val late = SessionGate(Uuid.random(), "push-main", GateMode.ENFORCED, GateStatus.PENDING, null, emptyList())
+        bench.rules.meanwhile = {
+            assertNull(bench.repository.get(ORG, "s-1")?.endedAt, "The rules are read before the end is written")
+            bench.gates.gates["s-1"] = listOf(late)
+        }
+        val ended = bench.close(ORG, session.id, EndSession())
+
+        val endedAt = assertNotNull(ended.endedAt)
+        assertEquals(listOf("s-1" to endedAt), bench.gates.closed, "The gates' side ends at the written time")
+        val preimage = CloseSessionUseCaseImpl.preimage(session, endedAt, null, listOf(late))
+        val draft = bench.sign.signed.getValue("rcpt_session_s-1")
+        assertEquals(Digests.digestOf(preimage), draft.getValue("subject").jsonObject.text("digest"))
+        bench.close(ORG, session.id, EndSession(exitCode = 2))
+        assertEquals(1, bench.gates.closed.size, "A signed segment does not read its gates again")
     }
 
     private fun JsonObject.text(name: String): String = getValue(name).jsonPrimitive.content

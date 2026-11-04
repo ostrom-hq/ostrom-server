@@ -111,6 +111,10 @@ class RunnerAssignmentsRepositoryImpl(private val driver: Driver) : RunnerAssign
         }
     }
 
+    override suspend fun hasWork(orgId: Uuid): Boolean = driver.inTenant(orgId) {
+        fetchAll(Statement.create(WORK_SQL).bind("org_id", orgId)).getOrThrow().firstOrNull() != null
+    }
+
     private fun heldBy(orgId: Uuid, runnerId: Uuid) =
         Statement.create("$SELECT_SQL WHERE a.org_id = :org_id AND a.runner_id = :runner_id ORDER BY a.created_at")
             .bind("org_id", orgId).bind("runner_id", runnerId)
@@ -192,6 +196,11 @@ class RunnerAssignmentsRepositoryImpl(private val driver: Driver) : RunnerAssign
                 "AND $ROOM_SQL) ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED) " +
                 "UPDATE runners_assignments a SET runner_id = :runner_id FROM pick " +
                 "WHERE a.session_id = pick.session_id AND a.epoch = pick.epoch"
+
+        /** An execution not stopped and not handed over yet, through `runners_assignments_undelivered`. */
+        const val WORK_SQL: String =
+            "SELECT 1 FROM runners_assignments WHERE org_id = :org_id AND delivered_at IS NULL " +
+                "AND stopped_at IS NULL LIMIT 1"
 
         /** The online runners that still hold a session's workspace. */
         const val HOLDERS_SQL: String =

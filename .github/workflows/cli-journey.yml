@@ -29,7 +29,9 @@ on:
           with server_image)
         default: ""
       cli_ref:
-        description: ostrom-cli ref whose binary and journey run (ostrom-cli#85 or later, for the --fake-mcp-* flags)
+        description: >-
+          ostrom-cli ref whose binary and journey run (ostrom-cli#121 or later: the run fails without its 6.6, the
+          TeamCode import)
         default: main
       runner_image:
         description: Cloud session image the server starts on this runner's Docker (empty = latest)
@@ -73,6 +75,14 @@ jobs:
         ports: ['5432:5432']
         options: >-
           --health-cmd "pg_isready -U ostrom -d ostrom_ci" --health-interval 5s --health-timeout 5s --health-retries 20
+      # 6.6 (ostrom import teamcode): the demo's fake TeamCode team (ostrom-helm compose/demo/teamcode), in the demo's
+      # MySQL 8.4, as e2e-journey.yml has it.
+      teamcode-db:
+        image: mysql:8.4@sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902
+        env: { MYSQL_ROOT_PASSWORD: teamcode-root, MYSQL_DATABASE: teamcode }
+        ports: ['3307:3306']
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -pteamcode-root" --health-interval 5s --health-timeout 5s --health-retries 30
     env:
       CLI_REF: ${{ inputs.cli_ref || 'main' }}
       WANTED_IMAGE: ${{ inputs.server_image }}
@@ -103,6 +113,38 @@ jobs:
           ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
           path: ostrom-core
           persist-credentials: false
+      # The fake TeamCode team (helm#25): schema, rows, the read-only user `ostrom import teamcode` reads with, and its
+      # key file (fake, public). Pinned as e2e-journey.yml pins it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-helm
+          ref: 4f03cd375d7309da4f58388a533f704f883a0d49
+          ssh-key: ${{ secrets.DEPLOY_KEY_HELM }}
+          path: helm
+          sparse-checkout: compose/demo/teamcode
+          persist-credentials: false
+      - name: Fake TeamCode team in MySQL (helm compose/demo/teamcode)
+        env:
+          TEAMCODE_DIR: helm/compose/demo/teamcode
+          MYSQL_IMAGE: mysql:8.4@sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902
+        run: |
+          sql() { docker run --rm -i --network host -e MYSQL_PWD=teamcode-root "$MYSQL_IMAGE" mysql -h127.0.0.1 -P3307 -uroot "$@"; }
+          sql teamcode < "$TEAMCODE_DIR/01-schema.sql"
+          sql teamcode < "$TEAMCODE_DIR/02-seed.sql"
+          docker run --rm --network host -v "$PWD/$TEAMCODE_DIR:/teamcode:ro" -e MYSQL_HOST=127.0.0.1 -e MYSQL_TCP_PORT=3307 \
+            -e MYSQL_ROOT_PASSWORD=teamcode-root -e MYSQL_DATABASE=teamcode -e TEAMCODE_RO_PASSWORD=teamcode-ro \
+            "$MYSQL_IMAGE" sh /teamcode/03-readonly.sh
+          # `ostrom import teamcode` reads TeamCode with the mysql client on the PATH
+          command -v mysql || { sudo apt-get update -q && sudo apt-get install -yq mysql-client; }
+          # the team as 6.6 expects it, read by teamcode_ro (helm's check.sh, without its docker exec): members, MCP
+          # variants, assignments, tool policies, accounts
+          counts=$(MYSQL_PWD=teamcode-ro mysql -h127.0.0.1 -P3307 -uteamcode_ro teamcode -N -e "SELECT CONCAT_WS(' ',
+            (SELECT COUNT(*) FROM members WHERE team_id='default'),
+            (SELECT COUNT(*) FROM variants WHERE team_id='default' AND kind='MCP'),
+            (SELECT COUNT(*) FROM variant_assignments WHERE team_id='default' AND kind='MCP'),
+            (SELECT COUNT(*) FROM mcp_tool_policies WHERE team_id='default'),
+            (SELECT COUNT(*) FROM accounts WHERE team_id='default'))")
+          [ "$counts" = "3 4 5 2 3" ] || { echo "::error::fake TeamCode team: $counts, expected 3 4 5 2 3"; exit 1; }
       # server_run: a ci.yml run of this repository, not a fork's, whose ci-image job passed (its image passed the smoke
       # tests and was saved). Its roles are those of its head: a pull request whose base changed ci/database-roles.sql
       # merges main first, as its ci.yml run built the image from that merge.
@@ -275,10 +317,12 @@ jobs:
           for _ in $(seq 1 60); do curl -fsS 127.0.0.1:4600/ready >/dev/null 2>&1 && exit 0; sleep 1; done
           docker logs ostrom-server; exit 1
       - name: The CLI journey against the server (login to claude, the gate, the yes, the receipt, ostrom mcp)
+        id: journey
         working-directory: cli
         env:
           IMAGE: ${{ steps.server.outputs.image }}
           DRIVER: ${{ matrix.driver }}
+          OSTROM_E2E_TEAMCODE_PASSWORD: teamcode-ro
         # 6.2 runs with --cloud-sessions, which a CLI ref older than ostrom-cli's e2e/cloud.py does not know: said
         run: |
           cloud=()
@@ -298,13 +342,46 @@ jobs:
           else
             echo "- 5.9 launch latency: not played, ostrom-cli $CLI_REF has no --launch-runs" >> "$GITHUB_STEP_SUMMARY"
           fi
+          # 6.6 imports the fake TeamCode team; a CLI ref older than ostrom-cli's e2e/teamcode.py does not know it: said,
+          # and failed below
+          teamcode=()
+          if grep -q -e '"--teamcode-db"' e2e/journey.py; then
+            teamcode=(--teamcode-db mysql://teamcode_ro@127.0.0.1:3307/teamcode
+              --teamcode-key-file "$GITHUB_WORKSPACE/helm/compose/demo/teamcode/key.txt")
+          else
+            echo "- 6.6 ostrom import teamcode: not played, ostrom-cli $CLI_REF has no --teamcode-db" >> "$GITHUB_STEP_SUMMARY"
+          fi
           python3 e2e/journey.py --binary cli/build/bin/linuxX64/releaseExecutable/ostrom.kexe \
             --server http://127.0.0.1:4600 --mail-dir "$RUNNER_TEMP/ostrom-mail" --report "$RUNNER_TEMP/journey.json" \
             --fake-mcp-port 4630 --fake-mcp-cert "$RUNNER_TEMP/fake-mcp/cert.pem" \
             --fake-mcp-key "$RUNNER_TEMP/fake-mcp/key.pem" \
-            "${cloud[@]}" "${launch[@]}" \
+            "${cloud[@]}" "${launch[@]}" "${teamcode[@]}" \
             --seed "docker run --rm --network host --env-file $RUNNER_TEMP/server.env -e OSTROM_ALLOW_TEST_ACCOUNTS=true
             $IMAGE seed-test-account"
+      # 6.6 is part of the journey: a run that did not play it (an older CLI ref, a skip) is not a proof of the import
+      # Never optional (no continue-on-error, no condition, no input to turn it off): ostrom-cli's 6.6 skips itself
+      # without the TeamCode team, and only this step keeps such a run from being green.
+      - name: 6.6 ostrom import teamcode played and passed
+        # whenever the journey ran, passed or failed; a run stopped before it says its own error
+        if: ${{ !cancelled() && steps.journey.outcome != 'skipped' }}
+        run: |
+          python3 -I - "$RUNNER_TEMP/journey.json" <<'PY'
+          import json, sys
+          try:
+              steps = json.load(open(sys.argv[1]))["steps"]
+          except (OSError, ValueError, KeyError) as error:
+              sys.exit(f"::error::no journey report: {error}")
+          # exactly one 6.6, with checks, every one ok: a step that returned before its checks is no proof
+          found = [s for s in steps if s["step"] == "6.6"]
+          if len(found) != 1:
+              sys.exit(f"::error::6.6 ostrom import teamcode: {len(found)} steps in the journey, not one")
+          step = found[0]
+          checks = step.get("checks") or []
+          failed = [c["what"] for c in checks if not c.get("ok")]
+          if step["status"] != "ok" or not checks or failed:
+              sys.exit(f"::error::6.6 ostrom import teamcode: {step['status']}, {len(checks)} checks, failed: {failed}")
+          print(f"6.6 ostrom import teamcode: ok, {len(checks)} checks")
+          PY
       - name: Server logs
         if: always()
         run: docker logs ostrom-server 2>&1 | tail -n 300 || true

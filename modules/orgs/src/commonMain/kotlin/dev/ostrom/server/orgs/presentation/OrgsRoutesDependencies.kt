@@ -4,6 +4,7 @@ package dev.ostrom.server.orgs.presentation
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.orgs.domain.AcceptInvitationUseCase
 import dev.ostrom.server.orgs.domain.ChangeRoleUseCase
+import dev.ostrom.server.orgs.domain.CheckMemberWriteUseCase
 import dev.ostrom.server.orgs.domain.CreateInviteLinkUseCase
 import dev.ostrom.server.orgs.domain.CreateOrgUseCase
 import dev.ostrom.server.orgs.domain.DeleteOrgUseCase
@@ -65,6 +66,7 @@ data class OrgCommands(
  * @property changeRole Changes a role.
  * @property remove Removes one.
  * @property leave The caller leaves.
+ * @property check Checks a write as its asker's before it is held for the console.
  */
 data class MemberCommands(
     val list: ListMembersUseCase,
@@ -72,6 +74,7 @@ data class MemberCommands(
     val changeRole: ChangeRoleUseCase,
     val remove: RemoveMemberUseCase,
     val leave: LeaveOrgUseCase,
+    val check: CheckMemberWriteUseCase,
 )
 
 /**

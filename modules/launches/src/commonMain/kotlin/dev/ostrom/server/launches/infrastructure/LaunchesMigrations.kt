@@ -47,6 +47,31 @@ private val PURGE_LAUNCHES_SQL: String =
         .trimIndent()
 
 /**
+ * Version 5 (audit SERVEUR-3 B3): the purge function crosses row-level security for every organization, so it bounds
+ * the date it is given itself. No date, an infinite one or one in the future is refused; and it never deletes a launch
+ * expired since less than the retention (`LaunchesModule.LAUNCH_RETENTION`, 30 days), whatever the date. The function
+ * keeps its owner, its grants and its `search_path`.
+ */
+private val BOUND_PURGE_SQL: String =
+    """
+    CREATE OR REPLACE FUNCTION launches_purge(p_before TIMESTAMPTZ) RETURNS BIGINT
+        LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        DECLARE
+            gone BIGINT;
+        BEGIN
+            IF p_before IS NULL OR NOT isfinite(p_before) OR p_before > now() THEN
+                RAISE EXCEPTION 'purge date refused: no date, an infinite one or one in the future'
+                    USING ERRCODE = '22023';
+            END IF;
+            DELETE FROM launches_launches WHERE expires_at < LEAST(p_before, now() - INTERVAL '30 days');
+            GET DIAGNOSTICS gone = ROW_COUNT;
+            RETURN gone;
+        END
+    $$;
+    """
+        .trimIndent()
+
+/**
  * The launches schema. Rows are isolated by organization in the database itself: row level security is forced (the
  * owner included) and every query runs in a transaction that first sets `ostrom.org_id` (`withOrganization`). An agent
  * token names its organization, so even resolving it reads within that organization only.
@@ -91,4 +116,7 @@ val LaunchesMigrations: List<SchemaMigration> = listOf(
         """.trimIndent(),
     ),
     SchemaMigration(4, "purge_launches", PURGE_LAUNCHES_SQL),
+    SchemaMigration(5, "bound_launch_purge", BOUND_PURGE_SQL),
+    // A launch names the workflow it plays (`createLaunch.workflowId`): its model calls count under it.
+    SchemaMigration(6, "launch_workflow", "ALTER TABLE launches_launches ADD COLUMN workflow_id TEXT"),
 )

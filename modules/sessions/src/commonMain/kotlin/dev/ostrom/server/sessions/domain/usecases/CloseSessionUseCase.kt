@@ -76,8 +76,9 @@ class CloseSessionUseCaseImpl(
     // Never a connection held while asking the pool for another: ending a segment under its lock used to read the
     // costs, the gates and the rules and sign the receipt from inside the transaction, so that as many ends at once as
     // the pool has connections waited for each other until the pool gave up (perf pass of the launch, 03/11/2026). The
-    // reads come first, the end is written under the lock, the receipt is signed after, and its id written last: an
-    // end that fails in between leaves a segment ended without its receipt, which the next end signs.
+    // reads come first, the end is written under the lock, the gates are read once it is written (each in a short
+    // transaction of their own), the receipt is signed after, and its id written last: an end that fails in between
+    // leaves a segment ended without its receipt, which the next end signs.
     override suspend fun invoke(orgId: Uuid, id: String, end: EndSession): Session {
         val seen = repository.get(orgId, id) ?: throw SessionNotFoundException()
         return if (seen.receiptId != null) {
@@ -98,7 +99,6 @@ class CloseSessionUseCaseImpl(
                 seen.costUsd
             },
         )
-        val gates = sessionGates(orgId, id)
         val inForce = rules.rulesFor(orgId, seen.repo)
         val (claimed, told) = locked(orgId, id) { session ->
             val written = session.endedAt
@@ -111,6 +111,9 @@ class CloseSessionUseCaseImpl(
         }
         // Not `told?.let { … } ?: return`: Kover counts the null of a draft that is never null.
         if (told == null) return claimed
+        // The gates once the end is written, under the session's lock on the gates' side (AUDIT-SERVEUR-3 B2): a gate
+        // the gates accepted is read here, and the gates refuse any later one.
+        val gates = sessionGates.close(orgId, id, told.endedAt)
         val draft = draft(claimed, told.endedAt, told.end, gates, inForce)
         val receiptId = (sign(orgId, draft, receiptIdOf(id)).getValue("id") as JsonPrimitive).content
         // The receipt's id is the segment's: another end that wrote it first wrote the same.
@@ -137,7 +140,8 @@ class CloseSessionUseCaseImpl(
         val id = session.id
         val endedAt = now()
         val measured = end.copy(costUsd = costs.costOf(orgId, session.launchId, session.startedAt, endedAt))
-        val draft = draft(session, endedAt, measured, sessionGates(orgId, id), rules.rulesFor(orgId, session.repo))
+        val inForce = rules.rulesFor(orgId, session.repo)
+        val draft = draft(session, endedAt, measured, sessionGates.close(orgId, id, endedAt), inForce)
         val receipt = sign(orgId, draft, receiptIdOf(id))
         val ended = endedOf(session, endedAt, measured, end)
             .copy(receiptId = (receipt.getValue("id") as JsonPrimitive).content)
@@ -194,6 +198,8 @@ class CloseSessionUseCaseImpl(
                 },
             )
             put("initiator", session.dev)
+            session.launchId?.let { put("launchId", it) }
+            put("sessionId", session.id)
             put("agent", session.agent)
             (end.model ?: session.model)?.let { put("model", it) }
             end.costUsd?.let { put("costUsd", it) }

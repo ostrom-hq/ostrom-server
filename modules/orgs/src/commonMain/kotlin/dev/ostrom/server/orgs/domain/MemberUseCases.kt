@@ -62,6 +62,43 @@ fun canManage(caller: OrgRole, target: OrgRole): Boolean =
         else -> caller in MANAGER_ROLES
     }
 
+/**
+ * Checks that [caller] may give [target] the role [role], without changing anything.
+ *
+ * @param caller The caller's membership.
+ * @param target The member.
+ * @param role Their new role.
+ * @throws InvalidOrgRequestException For the owner role: the ownership moves by a transfer.
+ * @throws NotAllowedException For the caller's own role, or a role or a member beyond what the caller manages.
+ */
+internal fun requireRoleChange(caller: Membership, target: MemberProfile, role: OrgRole) {
+    ensure(role != OrgRole.OWNER) {
+        InvalidOrgRequestException("Transfer the ownership to make someone owner.")
+    }
+    ensure(target.member.id != caller.member.id) {
+        NotAllowedException("You cannot change your own role.")
+    }
+    ensure(canManage(caller.member.role, target.member.role) && canManage(caller.member.role, role)) {
+        NotAllowedException("Your role does not allow this change.")
+    }
+}
+
+/**
+ * Checks that [caller] may remove [target], without changing anything.
+ *
+ * @param caller The caller's membership.
+ * @param target The member.
+ * @throws NotAllowedException For the caller themselves (they leave instead), or a member beyond what they manage.
+ */
+internal fun requireRemoval(caller: Membership, target: MemberProfile) {
+    ensure(target.member.id != caller.member.id) {
+        NotAllowedException("Leave the organization instead.")
+    }
+    ensure(canManage(caller.member.role, target.member.role)) {
+        NotAllowedException("Your role does not allow this.")
+    }
+}
+
 /** The members of an organization. */
 interface ListMembersUseCase {
     /**
@@ -71,9 +108,11 @@ interface ListMembersUseCase {
      * @param userId The caller, a member.
      * @param after The member the page starts after, the previous page's `next`.
      * @param limit The most members, 1 to [MAX_MEMBER_PAGE].
+     * @param query Only the members whose login or name starts with it, whatever the case; 1 to [MAX_MEMBER_QUERY]
+     *   characters.
      * @return The members, oldest first.
      */
-    suspend operator fun invoke(orgId: Uuid, userId: Uuid, after: Uuid?, limit: Int): MemberPage
+    suspend operator fun invoke(orgId: Uuid, userId: Uuid, after: Uuid?, limit: Int, query: String? = null): MemberPage
 }
 
 /**
@@ -88,11 +127,19 @@ class ListMembersUseCaseImpl(
     private val members: MembersRepository,
     private val people: People,
 ) : ListMembersUseCase {
-    override suspend fun invoke(orgId: Uuid, userId: Uuid, after: Uuid?, limit: Int): MemberPage {
+    override suspend fun invoke(orgId: Uuid, userId: Uuid, after: Uuid?, limit: Int, query: String?): MemberPage {
         val viewer = requireMembership(orgs, members, orgId, userId).member
         if (limit !in 1..MAX_MEMBER_PAGE) throw InvalidOrgRequestException("limit is 1 to $MAX_MEMBER_PAGE.")
-        // One more than the page says whether another follows.
-        val read = members.page(orgId, after, limit + 1)
+        if (query != null && query.length !in 1..MAX_MEMBER_QUERY) {
+            throw InvalidOrgRequestException("q is 1 to $MAX_MEMBER_QUERY characters.")
+        }
+        // One more than the page says whether another follows. The search runs under its indexes in the database
+        // (OrgsMigrations version 7; 10 teams of 5 000 in OrgsReadsBenchTest): only the page is read either way.
+        val read = if (query == null) {
+            members.page(orgId, after, limit + 1)
+        } else {
+            members.search(orgId, query, after, limit + 1)
+        }
         val list = read.take(limit)
         val byId = people.getMany(list.map { it.userId }).associateBy { it.id }
         val items = list.mapNotNull { member -> byId[member.userId]?.let { profileOf(member, it).seenBy(viewer) } }
@@ -171,19 +218,9 @@ class ChangeRoleUseCaseImpl(
         login: String,
         role: OrgRole,
     ): MemberProfile {
-        ensure(role != OrgRole.OWNER) {
-            InvalidOrgRequestException("Transfer the ownership to make someone owner.")
-        }
         val caller = requireMembership(orgs, members, orgId, userId)
         val target = findMember(members, people, orgId, login)
-        ensure(target.member.id != caller.member.id) {
-            NotAllowedException("You cannot change your own role.")
-        }
-        ensure(
-            canManage(caller.member.role, target.member.role) && canManage(caller.member.role, role)
-        ) {
-            NotAllowedException("Your role does not allow this change.")
-        }
+        requireRoleChange(caller, target, role)
         if (target.member.role == role) return target
         members.changeRole(orgId, target.member.id, role)
         val details =
@@ -237,12 +274,7 @@ class RemoveMemberUseCaseImpl(
     override suspend fun invoke(orgId: Uuid, userId: Uuid, login: String) {
         val caller = requireMembership(orgs, members, orgId, userId)
         val target = findMember(members, people, orgId, login)
-        ensure(target.member.id != caller.member.id) {
-            NotAllowedException("Leave the organization instead.")
-        }
-        ensure(canManage(caller.member.role, target.member.role)) {
-            NotAllowedException("Your role does not allow this.")
-        }
+        requireRemoval(caller, target)
         members.remove(orgId, target.member.id)
         val details = mapOf("login" to target.login)
         audit.record(

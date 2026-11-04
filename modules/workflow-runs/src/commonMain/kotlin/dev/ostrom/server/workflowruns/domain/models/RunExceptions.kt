@@ -42,3 +42,33 @@ class InvalidRunException(reason: String) : OstromException(ErrorKind.INVALID_RE
 
 // The most of an id a message shows.
 private const val ID_SHOWN = 200
+
+/** No workflow of the organization has this id. */
+class RunWorkflowNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Workflow not found.")
+
+/** The workflow is a proposal: a person accepts it before anything runs it. */
+class WorkflowNotAcceptedException : OstromException(
+    ErrorKind.CONFLICT,
+    "workflow_not_accepted: accept the workflow before running it.",
+)
+
+/** Only an owner or an admin of the organization starts a run, with a person's credential. */
+class StartRunForbiddenException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "Only an owner or an admin of the organization starts a workflow run.",
+)
+
+/** No run of the organization has this id. */
+class RunNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Run not found.")
+
+/** Only an owner or an admin of the organization cancels a run, with a person's credential. */
+class CancelRunForbiddenException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "Only an owner or an admin of the organization cancels a workflow run.",
+)
+
+/** The run already ended: succeeded, failed or cancelled. */
+class RunEndedException : OstromException(ErrorKind.CONFLICT, "run_ended: the run already ended.")
+
+/** The run kept changing while it was cancelled (the engine played it meanwhile). */
+class RunBusyException : OstromException(ErrorKind.CONFLICT, "run_busy: the run changed meanwhile, try again.")

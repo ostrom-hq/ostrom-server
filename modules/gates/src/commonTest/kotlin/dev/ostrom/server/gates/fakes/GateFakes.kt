@@ -51,6 +51,11 @@ class InMemoryGatesRepository : GatesRepository {
 
     /** When set, `lockGate` of this gate returns null once (the row vanished between two transactions). */
     var vanishOnLock: Uuid? = null
+    /** When each session's end read its gates, as `gates_session_ends` holds it. */
+    val sessionEnds = linkedMapOf<Pair<Uuid, String>, Instant>()
+
+    /** The sessions whose lock a transaction took, in order. */
+    val lockedSessions = mutableListOf<String>()
     private val mutex = Mutex()
 
     override suspend fun <T> transaction(block: suspend GatesTransaction.() -> T): T = mutex.withLock {
@@ -58,12 +63,14 @@ class InMemoryGatesRepository : GatesRepository {
         val savedGates = LinkedHashMap(gates)
         val savedRequests = LinkedHashMap(requests)
         val savedLinks = LinkedHashSet(links)
+        val savedEnds = LinkedHashMap(sessionEnds)
         try {
             Tx().block()
         } catch (error: Throwable) {
             gates.clear(); gates.putAll(savedGates)
             requests.clear(); requests.putAll(savedRequests)
             links.clear(); links.addAll(savedLinks)
+            sessionEnds.clear(); sessionEnds.putAll(savedEnds)
             throw error
         }
     }
@@ -110,6 +117,22 @@ class InMemoryGatesRepository : GatesRepository {
     }
 
     private inner class Tx : GatesTransaction {
+        override suspend fun lockSession(orgId: Uuid, sessionId: String) {
+            lockedSessions += sessionId
+        }
+
+        override suspend fun sessionEndedAt(orgId: Uuid, sessionId: String): Instant? = sessionEnds[orgId to sessionId]
+
+        override suspend fun markSessionEnded(orgId: Uuid, sessionId: String, at: Instant) {
+            sessionEnds.getOrPut(orgId to sessionId) { at }
+        }
+
+        override suspend fun gatesOfSession(orgId: Uuid, sessionId: String): List<Gate> = ofSession(orgId, sessionId)
+
+        // Not counted in `batchedRequestReads`: that counts the reads outside a transaction.
+        override suspend fun requestsOfGates(orgId: Uuid, gateIds: List<Uuid>): List<ApprovalRequest> =
+            requests.values.filter { it.gateId in gateIds && it.orgId == orgId }
+
         override suspend fun lockKey(orgId: Uuid, key: String) {
             lockedKeys += key
         }

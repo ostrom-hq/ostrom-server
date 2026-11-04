@@ -118,6 +118,7 @@ import dev.ostrom.server.identity.infrastructure.NotificationPreferencesReposito
 import dev.ostrom.server.identity.infrastructure.OAuthAttemptsRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.OidcEndpoints
 import dev.ostrom.server.identity.infrastructure.OidcProvider
+import dev.ostrom.server.identity.infrastructure.PhoneUnlockProofsImpl
 import dev.ostrom.server.identity.infrastructure.ResendMailSender
 import dev.ostrom.server.identity.infrastructure.SecureSecretGenerator
 import dev.ostrom.server.identity.infrastructure.ServiceKeysRepositoryImpl
@@ -147,6 +148,7 @@ import dev.ostrom.server.identity.presentation.sessionRoutes
 import dev.ostrom.server.identity.presentation.signInRoutes
 import dev.ostrom.server.kernel.audit.OrgAuditTrail
 import dev.ostrom.server.kernel.auth.GovernanceAudit
+import dev.ostrom.server.kernel.auth.PhoneUnlockProofs
 import dev.ostrom.server.kernel.auth.ServiceKeyAudit
 import dev.ostrom.server.kernel.auth.SignOutListener
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
@@ -194,7 +196,7 @@ object IdentityModule : ServerModule {
         single<UsersRepository> { UsersRepositoryImpl(get()) }
         single<LinkedIdentities> { LinkedIdentitiesImpl(get()) }
         single<WebSessionsRepository> { WebSessionsRepositoryImpl(get()) }
-        single<ApiTokensRepository> { ApiTokensRepositoryImpl(get()) }
+        single<ApiTokensRepository> { ApiTokensRepositoryImpl(get(), get()) }
         single<ServiceKeysRepository> { ServiceKeysRepositoryImpl(get()) }
         single<ElevatedTokensRepository> { ElevatedTokensRepositoryImpl(get()) }
         single<DeviceAuthorizationsRepository> { DeviceAuthorizationsRepositoryImpl(get()) }
@@ -267,6 +269,7 @@ object IdentityModule : ServerModule {
         single { SignInRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get()) }
         single<MobileCodesRepository> { MobileCodesRepositoryImpl(get()) }
         single<MobileTokensRepository> { MobileTokensRepositoryImpl(get()) }
+        single<PhoneUnlockProofs> { PhoneUnlockProofsImpl(get()) }
         single<NotificationPreferencesRepository> { NotificationPreferencesRepositoryImpl(get()) }
         single<CompleteMobileSignInUseCase> { CompleteMobileSignInUseCaseImpl(get(), get(), get(), get(), get()) }
         single<ExchangeMobileCodeUseCase> { ExchangeMobileCodeUseCaseImpl(get(), get(), get(), get(), get(), get()) }

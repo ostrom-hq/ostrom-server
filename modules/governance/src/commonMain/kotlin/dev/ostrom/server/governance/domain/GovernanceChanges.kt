@@ -27,5 +27,14 @@ class GovernanceChanges(changes: List<GovernanceChange>) {
      * @throws IllegalStateException When no module owns it: a route held a write no module makes.
      */
     fun of(kind: String): GovernanceChange =
-        checkNotNull(byKind[kind]) { "No module makes the governance write $kind." }
+        checkNotNull(ownerOf(kind)) { "No module makes the governance write $kind." }
+
+    /**
+     * The module that owns [kind], if one is bound here.
+     *
+     * @param kind A [dev.ostrom.server.kernel.auth.GovernanceWrite.kind].
+     *
+     * @return Its [GovernanceChange], or null when no module of this server owns it (a module turned off since).
+     */
+    fun ownerOf(kind: String): GovernanceChange? = byKind[kind]
 }

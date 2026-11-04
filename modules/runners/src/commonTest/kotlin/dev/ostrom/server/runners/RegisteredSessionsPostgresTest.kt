@@ -6,6 +6,7 @@ import dev.ostrom.server.runners.domain.DesiredState
 import dev.ostrom.server.runners.domain.ExecutionStatus
 import dev.ostrom.server.runners.domain.MachineReport
 import dev.ostrom.server.runners.domain.ReconcileCloudSessionUseCase
+import dev.ostrom.server.runners.domain.RegisteredRunnerHeartbeatUseCase
 import dev.ostrom.server.runners.domain.RunnerAssignmentsRepository
 import dev.ostrom.server.runners.domain.RunnerTokens
 import dev.ostrom.server.runners.domain.RuntimeDriver
@@ -34,18 +35,26 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 import kotlin.uuid.Uuid
 
 /**
@@ -171,6 +180,72 @@ class RegisteredSessionsPostgresTest {
             val (p50, p95) = rounds[ASKED / 2] to rounds[ASKED * 95 / 100 - 1]
             println("placement: heartbeats until taken p50 $p50, p95 $p95; held per machine $held")
         }
+
+    /**
+     * PERF-RUNNERS, case 2, timed: 50 sessions queued for 10 machines that wait for work (`?wait=`), as the runner
+     * does, each asking again at once after a held or fruitful answer and at its 20 s interval otherwise. Every session
+     * is handed over within seconds of being queued, not at the machines' next heartbeat.
+     */
+    @Test
+    fun waitingMachinesAreHandedFiftySessionsWithinSeconds() = serverTest(listOf(RunnersModule), overrides) { server ->
+        val sessions = server.koin.get<CloudSessionsRepository>()
+        val reconcile = server.koin.get<ReconcileCloudSessionUseCase>()
+        val heartbeat = server.koin.get<RegisteredRunnerHeartbeatUseCase>()
+        val machines = List(MACHINES) { server.register("dana", "machine-$it") }
+        val handed = Channel<Pair<String, TimeSource.Monotonic.ValueTimeMark>>(Channel.UNLIMITED)
+        val delays = mutableListOf<Duration>()
+        coroutineScope {
+            val loops = machines.map { machine -> launch { waitForWork(heartbeat, machine, handed) } }
+            delay(SETTLE)
+            val queued = List(ASKED) {
+                val asked = session()
+                assertTrue(sessions.createWithinCap(asked, ASKED))
+                val at = TimeSource.Monotonic.markNow()
+                reconcile(sessions.getById(asked.id)!!)
+                asked.id.toString() to at
+            }.toMap()
+            withTimeoutOrNull(HANDOVER_BOUND) {
+                while (delays.size < ASKED) {
+                    val (id, at) = handed.receive()
+                    delays += at - queued.getValue(id)
+                }
+            }
+            loops.forEach { it.cancel() }
+        }
+        assertEquals(ASKED, delays.size, "Handed over within $HANDOVER_BOUND")
+        val sorted = delays.sorted()
+        val (p50, p95) = sorted[ASKED / 2] to sorted[ASKED * 95 / 100 - 1]
+        println("placement, waiting machines: queued until handed over p50 $p50, p95 $p95")
+        assertTrue(p95 < P95_BOUND, "p95 $p95")
+    }
+
+    @Test
+    fun aHeartbeatWaitsWhatItAsksWithinTheBoundsThenAnswers() = serverTest(listOf(RunnersModule), overrides) { server ->
+        val machine = server.register("dana", "machine")
+        val report = RegisteredRunnerHeartbeatRequest()
+        suspend fun timed(wait: Int?): Duration {
+            val mark = TimeSource.Monotonic.markNow()
+            val response = server.beat(machine.id, machine.token, report, wait)
+            assertEquals(HttpStatusCode.OK, response.status)
+            return mark.elapsedNow()
+        }
+        assertTrue(timed(-5) < 1.seconds, "Below the bounds: no wait")
+        assertTrue(timed(1) >= 1.seconds, "Nothing to hand over: it waits")
+        assertTrue(timed(null) < 1.seconds, "Absent: no wait")
+    }
+
+    @Test
+    fun hasWorkUntilTheExecutionIsHandedOver() = serverTest(listOf(RunnersModule), overrides) { server ->
+        val sessions = server.koin.get<CloudSessionsRepository>()
+        val assignments = server.koin.get<RunnerAssignmentsRepository>()
+        val machine = server.register("dana", "machine")
+        assertFalse(assignments.hasWork(ORG_A))
+        val asked = session().also { assertTrue(sessions.createWithinCap(it, 1)) }
+        server.koin.get<ReconcileCloudSessionUseCase>()(sessions.getById(asked.id)!!)
+        assertTrue(assignments.hasWork(ORG_A), "Queued")
+        assertEquals(1, server.work(machine.id, machine.token).executions.size)
+        assertFalse(assignments.hasWork(ORG_A), "Handed over")
+    }
 
     @Test
     fun runnersAskingAtOnceNeverTakeTheSameExecution() = serverTest(listOf(RunnersModule), overrides) { server ->
@@ -298,6 +373,26 @@ class RegisteredSessionsPostgresTest {
         const val ASKED = 50
         const val RACERS = 10
         const val WAITING = 3
+        val WAIT = 20.seconds
+        val INTERVAL = 20.seconds
+        val SETTLE = 1.seconds
+        val HANDOVER_BOUND = 10.seconds
+        val P95_BOUND = 5.seconds
+    }
+
+    /** A machine as the runner drives it: a heartbeat that may wait, again at once after a held or fruitful one. */
+    private suspend fun waitForWork(
+        heartbeat: RegisteredRunnerHeartbeatUseCase,
+        machine: RegisteredRunnerDto,
+        handed: SendChannel<Pair<String, TimeSource.Monotonic.ValueTimeMark>>,
+    ) {
+        while (true) {
+            val asked = TimeSource.Monotonic.markNow()
+            val work = heartbeat(Uuid.parse(machine.id), machine.token, MachineReport(), WAIT)
+            val fresh = work.executions.filter { it.plan != null }
+            fresh.forEach { handed.send(it.sessionId.toString() to TimeSource.Monotonic.markNow()) }
+            if (fresh.isEmpty() && asked.elapsedNow() < WAIT) delay(INTERVAL)
+        }
     }
 
     private suspend fun TestServer.register(token: String, name: String): RegisteredRunnerDto {
@@ -315,7 +410,8 @@ class RegisteredSessionsPostgresTest {
         id: String,
         key: String,
         report: RegisteredRunnerHeartbeatRequest? = null,
-    ): HttpResponse = client.post("/api/v1/runners/$id/heartbeat") {
+        wait: Int? = null,
+    ): HttpResponse = client.post("/api/v1/runners/$id/heartbeat" + (wait?.let { "?wait=$it" } ?: "")) {
         bearerAuth(key)
         if (report != null) {
             contentType(ContentType.Application.Json)
