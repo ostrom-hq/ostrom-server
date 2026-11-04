@@ -276,6 +276,8 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/policy/agents" to Case.Target(),
     "POST /api/v1/launches" to Case.Target(body = """{"repo": "acme/api", "agent": "claude-code"}"""),
     "DELETE /api/v1/launches/{launchId}" to target("launchId" to LAUNCH),
+    "POST /api/v1/launches/{launchId}/hooks-missing" to
+        target("launchId" to LAUNCH, body = """{"waitedSeconds": 30, "stopped": false}"""),
     "GET /api/v1/sessions" to Case.Target(),
     "POST /api/v1/sessions" to
         Case.Target(body = """{"id": "{{SESSION}}", "agent": "claude-code", "repo": "acme/api"}"""),
