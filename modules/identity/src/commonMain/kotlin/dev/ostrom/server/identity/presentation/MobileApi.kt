@@ -87,14 +87,16 @@ data class MobileTokenResponse(
  * Body of `POST /api/v1/auth/mobile/unlock`.
  *
  * @property unlockKey The key from the token exchange.
+ * @property requestId The approval request the unlock is for: a yes from the app needs it (Q-APP-STEPUP-RISK).
  */
 @Serializable
-data class MobileUnlockRequest(val unlockKey: String)
+data class MobileUnlockRequest(val unlockKey: String, val requestId: String? = null)
 
 /**
  * A recorded unlock.
  *
- * @property authenticatedAt When (ISO 8601): a yes from the app is accepted for five minutes after it.
+ * @property authenticatedAt When (ISO 8601): a no from the app is accepted for five minutes after it, a yes within a
+ *   minute and once, to the request the unlock named.
  */
 @Serializable
 data class MobileUnlockResponse(val authenticatedAt: String)

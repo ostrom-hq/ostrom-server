@@ -18,7 +18,9 @@ import dev.ostrom.server.identity.presentation.NotificationPreferencesBody
 import dev.ostrom.server.identity.presentation.OAUTH_STATE_COOKIE
 import dev.ostrom.server.identity.presentation.QuietHoursBody
 import dev.ostrom.server.kernel.auth.CSRF_COOKIE
+import dev.ostrom.server.kernel.auth.PhoneUnlockProofs
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
+import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.testing.serverTest
 import io.ktor.client.HttpClient
@@ -42,9 +44,12 @@ import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.testing.ApplicationTestBuilder
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import org.koin.dsl.module
 
@@ -303,5 +308,35 @@ class MobileRoutesPostgresTest {
         }
         assertEquals(HttpStatusCode.BadRequest, invalid.status)
         assertEquals(chosen, phone.preferences(ada))
+    }
+
+    // Q-APP-STEPUP-RISK: the unlock names the request; the yes to it takes it once, recent enough, never for another.
+    @Test
+    fun theUnlockBoundToARequestServesOneYesToItOnly() = serverTest(listOf(IdentityModule), overrides) { server ->
+        val phone = browser()
+        val code = assertNotNull(phone.signInOnThePhone().parameters["code"])
+        val token = phone.exchange(code).body<MobileTokenResponse>()
+        val credential = assertNotNull(server.koin.get<TokenAuthenticator>().authenticate(token.token)?.credentialId)
+        val proofs = server.koin.get<PhoneUnlockProofs>()
+        suspend fun unlock(requestId: String?) = assertEquals(
+            HttpStatusCode.OK,
+            phone.post("/api/v1/auth/mobile/unlock") {
+                bearerAuth(token.token)
+                contentType(ContentType.Application.Json)
+                setBody(MobileUnlockRequest(token.unlockKey, requestId))
+            }.status,
+        )
+        val longAgo = Clock.System.now() - 1.minutes
+
+        unlock("request-1")
+        assertFalse(proofs.consume(credential, "request-2", longAgo), "an unlock for another request")
+        assertFalse(proofs.consume(credential, "request-1", Clock.System.now() + 1.minutes), "an unlock too old")
+        assertFalse(proofs.consume("not-a-token", "request-1", longAgo), "a credential that is no token")
+        assertTrue(proofs.consume(credential, "request-1", longAgo))
+        assertFalse(proofs.consume(credential, "request-1", longAgo), "the unlock served its yes")
+
+        unlock("request-1")
+        unlock(null)
+        assertFalse(proofs.consume(credential, "request-1", longAgo), "a later unlock for no request unbinds it")
     }
 }
