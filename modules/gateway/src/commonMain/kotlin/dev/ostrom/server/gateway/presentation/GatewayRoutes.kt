@@ -46,6 +46,8 @@ import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.seconds
 import io.ktor.server.routing.get as routeGet
 import io.ktor.server.routing.post as routePost
 
@@ -70,6 +72,23 @@ private val POLICY_WRITERS = WriteAccess.tokens(PrincipalKind.SERVICE)
 private const val MAX_SESSION = 128
 private const val BEARER = "Bearer "
 
+/** The inference endpoints, each in the API it speaks. */
+private val INFERENCE_ROUTES = listOf(
+    "/v1/messages" to WireProtocol.MESSAGES,
+    "/v1/responses" to WireProtocol.RESPONSES,
+    "/v1/chat/completions" to WireProtocol.CHAT,
+)
+
+/** When an agent refused for [RefusalKind.OVERLOADED] may retry. */
+private val OVERLOADED_RETRY = 1.seconds
+
+/** The refusal of a model call past the replica's ceiling of held calls. */
+private fun overloaded(clock: Clock) = InferenceRefusal(
+    RefusalKind.OVERLOADED,
+    "This Ostrom server is relaying as many model calls as it can hold; retry shortly.",
+    clock.now() + OVERLOADED_RETRY,
+)
+
 /** The agent headers never passed down, not even to the planner: its credentials. */
 private val CREDENTIAL_HEADERS = setOf("authorization", "x-api-key", "cookie")
 
@@ -85,13 +104,14 @@ private val CREDENTIAL_HEADERS = setOf("authorization", "x-api-key", "cookie")
  */
 fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependencies) {
     // A model call carries the whole context: up to 32 MiB instead of the kernel's 1 MiB (S2-46). It lasts as long as
-    // the provider streams: a held call, counted apart from the server's other calls (P1 memory), on top of the
-    // gateway's own ceiling of open calls.
-    heldCalls {
-        bodyLimit(MAX_INFERENCE_REQUEST_BYTES) {
-            routePost("$INFERENCE_BASE/v1/messages") { infer(dependencies, WireProtocol.MESSAGES) }
-            routePost("$INFERENCE_BASE/v1/responses") { infer(dependencies, WireProtocol.RESPONSES) }
-            routePost("$INFERENCE_BASE/v1/chat/completions") { infer(dependencies, WireProtocol.CHAT) }
+    // the provider streams: a held call, counted apart from the server's other calls (P1 memory) under the replica's
+    // ceiling of held calls (OSTROM_MAX_HELD_CALLS). Past it, the call is refused as an overloaded provider refuses,
+    // in the agent's API, so that the agent retries it as it would the provider's 503.
+    for ((path, protocol) in INFERENCE_ROUTES) {
+        heldCalls(refuse = { call -> KtorInferenceResponder(call, clock).refuse(protocol, overloaded(clock)) }) {
+            bodyLimit(MAX_INFERENCE_REQUEST_BYTES) {
+                routePost("$INFERENCE_BASE$path") { infer(dependencies, protocol) }
+            }
         }
     }
     routeGet("$INFERENCE_BASE/v1/models") {
