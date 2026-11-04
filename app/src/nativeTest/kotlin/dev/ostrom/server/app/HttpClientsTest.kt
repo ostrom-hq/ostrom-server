@@ -57,7 +57,7 @@ class HttpClientsTest {
                     release.complete(Unit)
                     assertEquals("held", held.await())
                     // Ktor's default poll alone costs 100 ms a call here; a few milliseconds each are expected.
-                    assertTrue(took < CALLS * 25.milliseconds, "$CALLS calls took $took while another call was open")
+                    assertTrue(took < 25.milliseconds * CALLS, "$CALLS calls took $took while another call was open")
                 }
             }
         } finally {
