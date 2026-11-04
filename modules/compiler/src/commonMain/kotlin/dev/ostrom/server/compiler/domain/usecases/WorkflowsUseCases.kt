@@ -13,6 +13,7 @@ import dev.ostrom.server.compiler.domain.models.WorkflowDoc
 import dev.ostrom.server.compiler.domain.repositories.CompilerRepository
 import dev.ostrom.server.compiler.domain.repositories.MAX_WORKFLOWS
 import dev.ostrom.server.compiler.domain.services.JsText
+import dev.ostrom.server.compiler.domain.services.NodeConditions
 import dev.ostrom.server.compiler.domain.services.PackageCompiler
 import dev.ostrom.server.compiler.domain.services.WorkflowRepos
 import dev.ostrom.server.kernel.errors.ErrorKind
@@ -188,10 +189,12 @@ class WorkflowsUseCaseImpl(
         (PackageCompiler.json.parseToJsonElement(payload).jsonObject["workflows"] as JsonArray)
             .any { (it.jsonObject["id"] as JsonPrimitive).content == id }
 
-    // The core model does not know `repos` yet (R6): it is checked here and kept in the saved JSON.
+    // The core model does not know `repos` yet (R6): it is checked here and kept in the saved JSON. A check node's
+    // condition is checked against the workflow's nodes and edges.
     private fun decode(raw: JsonObject): Workflow = try {
         WorkflowRepos.problem(raw)?.let { throw IllegalArgumentException(it) }
         PackageCompiler.json.decodeFromJsonElement(Workflow.serializer(), WorkflowRepos.withoutField(raw))
+            .also(NodeConditions::check)
     } catch (e: IllegalArgumentException) {
         throw InvalidWorkflowException("Invalid workflow: ${e.message.toString().take(MAX_ERROR)}", e)
     }

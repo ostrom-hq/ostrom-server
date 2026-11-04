@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.workflowruns
 
+import dev.ostrom.core.api.models.NodeCondition
+import dev.ostrom.core.api.models.NodeConditionOp
 import dev.ostrom.core.api.models.NodeVisit
 import dev.ostrom.core.api.models.RunStatus
 import dev.ostrom.core.api.models.WaitAction
@@ -203,6 +205,40 @@ class RunNodesTest {
         assertEquals("Node w: failed (The wait was cancelled.).", failure())
         waits.result = null
         assertEquals("Node w: failed (The wait is gone.).", failure())
+    }
+
+    @Test
+    fun aCheckNodeFollowsTheBranchItsConditionChoosesAndFailsTheRunWhenItDoesNotEvaluate() = runTest {
+        val condition = NodeCondition("w", "output.note", NodeConditionOp.EQUALS, "go")
+        val check = WorkflowNode("c", WorkflowNodeKind.CHECK, "Go?", condition = condition)
+        val edges = listOf(
+            WorkflowEdge("w", "c", on = "ship"),
+            WorkflowEdge("c", "t", on = "true"),
+            WorkflowEdge("c", null, on = "false"),
+        )
+        suspend fun ended(note: String, node: WorkflowNode = check): WorkflowRun {
+            stored(RunGraph("w", listOf(WAIT_NODE, node, TRIGGER), edges), run())
+            waits.result = WaitResult(WaitState.ANSWERED, "ship", """{"note":"$note"}""")
+            play.play(RunRef(ORG, RUN), OWNER)
+            return played()
+        }
+
+        val yes = ended("go")
+        val no = ended("stop")
+
+        assertEquals(listOf("ship", "true", "next"), yes.visits.map { it.outcome })
+        assertEquals(listOf(RunStatus.SUCCEEDED, RunStatus.SUCCEEDED), listOf(yes.status, no.status))
+        assertEquals(listOf("ship", "false"), no.visits.map { it.outcome })
+        // A value the step does not have, or no condition at all: the run fails, never a branch by default.
+        val missing = check.copy(condition = condition.copy(path = "output.missing"))
+        assertEquals(
+            "Node c: failed (The condition reads output.missing of step w, which has no value.).",
+            ended("go", missing).failure,
+        )
+        assertEquals(
+            "Node c: failed (The check node has no condition: the server plays a check node by its condition only.).",
+            ended("go", check.copy(condition = null)).failure,
+        )
     }
 
     @Test

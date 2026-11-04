@@ -23,6 +23,8 @@ import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.database.withOrganization
+import dev.ostrom.server.kernel.errors.ErrorKind
+import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.launches.LaunchesModule
 import dev.ostrom.server.launches.domain.services.LauncherResolver
@@ -61,6 +63,7 @@ import kotlinx.serialization.json.jsonObject
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -111,8 +114,16 @@ class RunNodesPostgresTest {
     }
 
     /** Saves an accepted workflow of [team]'s organization. */
-    private suspend fun TestServer.workflow(team: Team, id: String, nodes: String, start: String, inputs: String) {
-        val document = """{"id":"$id","name":"$id","domain":"git","nodes":$nodes,"edges":[],"start":"$start",""" +
+    @Suppress("LongParameterList") // A workflow document: its team, id, nodes, start, inputs and edges.
+    private suspend fun TestServer.workflow(
+        team: Team,
+        id: String,
+        nodes: String,
+        start: String,
+        inputs: String,
+        edges: String = "[]",
+    ) {
+        val document = """{"id":"$id","name":"$id","domain":"git","nodes":$nodes,"edges":$edges,"start":"$start",""" +
             """"status":"accepted","foundAt":"2026-11-03T10:00:00Z","inputs":$inputs}"""
         val raw = OstromJson.parseToJsonElement(document).jsonObject
         koin.get<WorkflowsUseCase>().save(team.org.id, raw, null, OWNER, true)
@@ -182,6 +193,29 @@ class RunNodesPostgresTest {
             ),
             server.audit(team.org.id, run.id),
         )
+    }
+
+    @Test
+    fun aCheckNodeChoosesItsBranchOnTheAnswerOfAWaitAndAMalformedConditionIsRefusedWhenSaved() = nodesTest { server ->
+        val team = server.team("ada")
+        val bad = CHECK_NODES.replace(""""step":"ask"""", """"step":"gone"""")
+        val refused = assertFailsWith<OstromException> { server.workflow(team, "bad", bad, "ask", BRANCH, CHECK_EDGES) }
+        assertEquals(ErrorKind.INVALID_REQUEST, refused.kind)
+        assertEquals("Invalid workflow: node go: condition.step: gone is not a node of the workflow.", refused.message)
+        server.workflow(team, SHIP, CHECK_NODES, "ask", BRANCH, CHECK_EDGES)
+        val run = server.start(team, SHIP)
+        val engine = server.engine()
+        engine.next()
+        val waitId = Uuid.parse(assertNotNull(server.stored(team, run.id).visits.single().waitId))
+        val caller = WaitCaller(team.org.id, team.approver.toString(), admin = false, interactive = true)
+        server.koin.get<AnswerWaitUseCase>().answer(caller, waitId, "ship", mapOf("note" to JsonPrimitive("go")))
+
+        engine.next()
+
+        val ended = server.stored(team, run.id)
+        assertEquals(RunStatus.SUCCEEDED, ended.status)
+        val visits = ended.visits.map { it.nodeId to it.outcome }
+        assertEquals(listOf("ask" to "ship", "go" to "true", "t" to "next"), visits)
     }
 
     @Test
@@ -334,5 +368,10 @@ class RunNodesPostgresTest {
         const val CALL_ASK = """[{"id":"call","kind":"workflow","label":"Call","workflowId":"ask",""" +
             """"arguments":{"branch":"{{inputs.branch}}"}}]"""
         val QUESTION = WaitSpec("Ship it?", actions = listOf(WaitAction("ship", "Ship")))
+        val CHECK_NODES = ASK_NODES.removeSuffix("]") + """,{"id":"go","kind":"check","label":"Go?",""" +
+            """"condition":{"step":"ask","path":"output.note","op":"equals","value":"go"}},""" +
+            """{"id":"t","kind":"trigger","label":"Shipped"}]"""
+        const val CHECK_EDGES = """[{"from":"ask","to":"go","on":"ship"},{"from":"go","to":"t","on":"true"},""" +
+            """{"from":"go","to":null,"on":"false"}]"""
     }
 }
