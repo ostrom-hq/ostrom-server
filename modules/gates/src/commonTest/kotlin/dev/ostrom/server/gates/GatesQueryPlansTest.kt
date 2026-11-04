@@ -12,7 +12,7 @@ import dev.ostrom.server.gates.domain.services.GateReceiptSigner
 import dev.ostrom.server.gates.infrastructure.GatesQueries
 import dev.ostrom.server.gates.infrastructure.PostgresGatesRepository
 import dev.ostrom.server.gates.infrastructure.approversSql
-import dev.ostrom.server.testing.serverTest
+import dev.ostrom.server.testing.benchTest
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
 import kotlinx.io.buffered
@@ -32,7 +32,8 @@ import kotlin.uuid.Uuid
  * level security applies), over 50 organizations and 10 000 gates with two approval requests each, 2 000 of the gates
  * in the organization read. Each read goes through an index to the rows it serves: never a scan of a table, never the
  * organization's rows filtered one by one. The plans are written to `build/reports/explain/gates.txt`, uploaded with
- * the CI's reports.
+ * the CI's reports. It fills its tables row by row through the repository, which took over the minute of a
+ * `serverTest` on a loaded runner (Build 41717982170, attempt 1): it runs within a bench's timeout.
  */
 class GatesQueryPlansTest {
     private val orgA = Uuid.parse("0000000a-0000-0000-0000-000000000000")
@@ -49,7 +50,7 @@ class GatesQueryPlansTest {
     }
 
     @Test
-    fun theGatesRequestPathReadsOnlyTheRowsItServes() = serverTest(listOf(GatesModule), signer) { server ->
+    fun theGatesRequestPathReadsOnlyTheRowsItServes() = benchTest(listOf(GatesModule), signer) { server ->
         val repository = PostgresGatesRepository(server.driver)
         val ofA = seed(repository, orgA, (0 until GATES_OF_A).toList())
         for ((index, org) in others.withIndex()) {

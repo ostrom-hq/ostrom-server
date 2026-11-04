@@ -3,6 +3,7 @@ package dev.ostrom.server.identity
 
 import dev.ostrom.server.identity.presentation.AuditEventResponse
 import dev.ostrom.server.identity.presentation.AuditEventsResponse
+import dev.ostrom.server.identity.presentation.OrgAuditEventResponse
 import dev.ostrom.server.identity.presentation.TokenResponse
 import dev.ostrom.server.kernel.http.OstromJson
 import kotlinx.serialization.json.JsonNull
@@ -33,5 +34,15 @@ class ContractNullsTest {
         val page = OstromJson.encodeToJsonElement(AuditEventsResponse.serializer(), last)
         page.jsonObject.nulls("nextBefore")
         page.jsonObject.getValue("events").jsonArray.single().jsonObject.nulls("orgId", "actorId", "previousHash")
+    }
+
+    @Test
+    fun anOrganizationsFirstLineByTheServerWritesItsNulls() {
+        val line = OrgAuditEventResponse(
+            "e1", "2026-11-02", "org.purged", "server:ostrom", "org:o1", emptyMap(), 1, null, null, "h", "s", "k",
+            "verified",
+        )
+        val written = OstromJson.encodeToJsonElement(OrgAuditEventResponse.serializer(), line).jsonObject
+        written.nulls("actorId", "previousHash")
     }
 }

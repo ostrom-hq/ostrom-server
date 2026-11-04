@@ -58,7 +58,7 @@ class RulesAuditPostgresTest {
     }
 
     private suspend fun TestServer.lines(orgId: Uuid): List<AuditEvent> =
-        koin.get<AuditRepository>().listOrg(orgId, OrgAuditQuery()).reversed()
+        koin.get<AuditRepository>().listOrg(orgId, OrgAuditQuery()).map { it.event }.reversed()
 
     @Test
     fun everyRuleChangeAndAnalysisLeavesASignedLineInItsAuthorsNameInItsOwnOrganization() =

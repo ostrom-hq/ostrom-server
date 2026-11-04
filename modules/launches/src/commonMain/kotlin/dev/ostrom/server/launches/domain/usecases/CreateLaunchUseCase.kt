@@ -13,6 +13,7 @@ import dev.ostrom.server.launches.domain.models.Launcher
 import dev.ostrom.server.launches.domain.models.NewLaunch
 import dev.ostrom.server.launches.domain.repositories.LaunchesRepository
 import dev.ostrom.server.launches.domain.services.AgentTokenService
+import dev.ostrom.server.launches.domain.services.HooksCheckRules
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
@@ -47,14 +48,17 @@ interface CreateLaunchUseCase {
  * @param policy The organization's policy, checked again here.
  * @param tokens Issues the agent token.
  * @param clock The clock.
+ * @param hooks The wait for the hooks and whether to stop an agent without them, told to the CLI.
  * @param limit How many launches a window takes, per person and per organization.
  * @param workflows The organization's workflows, which a launch may name; null, none is known.
  */
+@Suppress("LongParameterList") // One parameter per port a launch reads; the limit and the workflows have defaults.
 class CreateLaunchUseCaseImpl(
     private val repository: LaunchesRepository,
     private val policy: LaunchPolicy,
     private val tokens: AgentTokenService,
     private val clock: Clock,
+    private val hooks: HooksCheckRules,
     private val limit: LaunchLimit = LaunchLimit.DEFAULT,
     private val workflows: WorkflowDirectory? = null,
 ) : CreateLaunchUseCase {
@@ -91,7 +95,8 @@ class CreateLaunchUseCaseImpl(
         // The launch first: its token never exists without the launch it is scoped to.
         // Counted before any token exists: a refused launch issues nothing.
         repository.create(launch, limit)?.let { throw LaunchRateLimitedException(it) }
-        return CreatedLaunch(launch, tokens.issue(launcher, launch.id, LIFETIME))
+        val hooksCheck = hooks.check(launcher.orgId, repo)
+        return CreatedLaunch(launch, tokens.issue(launcher, launch.id, LIFETIME), hooksCheck)
     }
 
     private fun wellFormed(value: String, max: Int) = value.length in 1..max && value.none { it.isISOControl() }

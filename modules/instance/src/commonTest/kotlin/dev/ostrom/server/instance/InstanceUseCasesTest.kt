@@ -4,6 +4,7 @@ package dev.ostrom.server.instance
 import dev.ostrom.server.instance.domain.GetCurrentSigningKeyUseCaseImpl
 import dev.ostrom.server.instance.domain.GetOrCreateInstanceUseCaseImpl
 import dev.ostrom.server.instance.domain.Instance
+import dev.ostrom.server.instance.domain.InstanceKeyringImpl
 import dev.ostrom.server.instance.domain.InstanceRepository
 import dev.ostrom.server.instance.domain.KeyRotation
 import dev.ostrom.server.instance.domain.ListSigningKeysUseCaseImpl
@@ -160,5 +161,27 @@ class InstanceUseCasesTest {
             GetCurrentSigningKeyUseCaseImpl(InMemoryInstanceRepository(), Ed25519InstanceSigner.generate())()
         }
         assertEquals(ErrorKind.UNAVAILABLE, error.kind)
+    }
+
+    @Test
+    fun theKeyringVerifiesWithTheCurrentKeyAndEveryPastOneButNoOther() = runTest {
+        val repository = InMemoryInstanceRepository()
+        val past = Ed25519InstanceSigner.generate()
+        val current = Ed25519InstanceSigner.generate()
+        val clock = SettableClock(Instant.parse("2026-10-30T01:00:00Z"))
+        RegisterCurrentSigningKeyUseCaseImpl(repository, past, clock, noPrevious, logger)()
+        val ring = InstanceKeyringImpl(ListSigningKeysUseCaseImpl(repository), current)
+        val data = "line".encodeToByteArray()
+
+        assertEquals(true, ring.verify(current.keyId, data, current.sign(data)))
+        assertEquals(true, ring.verify(past.keyId, data, past.sign(data)), "A key is never forgotten")
+        assertEquals(false, ring.verify(past.keyId, data, current.sign(data)))
+        assertEquals(null, ring.verify("0000000000000000", data, past.sign(data)), "Never a key of the instance")
+
+        // A key another replica started with after this one read the list: read again, then known.
+        val newer = Ed25519InstanceSigner.generate()
+        RegisterCurrentSigningKeyUseCaseImpl(repository, newer, clock, noPrevious, logger)()
+        assertEquals(true, ring.verify(newer.keyId, data, newer.sign(data)))
+        assertEquals(true, ring.verify(past.keyId, data, past.sign(data)))
     }
 }

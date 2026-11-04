@@ -71,8 +71,28 @@ data class NewLaunch(
  *
  * @property launch The launch.
  * @property agentToken The agent token's secret.
+ * @property hooksCheck What the CLI does when no hook of Ostrom ran in the agent's session.
  */
-data class CreatedLaunch(val launch: Launch, val agentToken: String)
+data class CreatedLaunch(val launch: Launch, val agentToken: String, val hooksCheck: HooksCheck)
+
+/**
+ * What the launcher does when none of Ostrom's hooks ran in an agent session (audit CLI n°2, M3): the agent then works
+ * without gate and without session, and nobody would know.
+ *
+ * @property afterSeconds How long the CLI waits for the first hook before it concludes none runs: the organization's
+ *   setting, 15 by default.
+ * @property stopAgent Whether it then stops the agent: true when the organization enforces at least one gate, which an
+ *   agent without hooks would skip (the gate policy's `failMode` is `closed` for every organization).
+ */
+data class HooksCheck(val afterSeconds: Int, val stopAgent: Boolean)
+
+/**
+ * The CLI's report that no hook ran in the session of a launch.
+ *
+ * @property waitedSeconds How long it waited, from `0` to `3600`.
+ * @property stopped Whether it stopped the agent.
+ */
+data class HooksMissingReport(val waitedSeconds: Int, val stopped: Boolean)
 
 /**
  * The organization's answer to "may this person run this agent with this model" (contract `checkAgentPolicy`).
