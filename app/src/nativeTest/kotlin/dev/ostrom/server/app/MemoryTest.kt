@@ -39,7 +39,10 @@ class MemoryTest {
         try {
             var held: List<Any> = emptyList()
             repeat(ROUNDS) { round ->
-                held = (0 until THREADS).map { thread -> async(pool) { calls(thread * PRIME + round) } }.awaitAll().flatten()
+                held = (0 until THREADS)
+                    .map { thread -> async(pool) { calls(thread * PRIME + round) } }
+                    .awaitAll()
+                    .flatten()
                 GC.collect()
                 afterCollection += rssMiB()!!
             }
@@ -50,7 +53,8 @@ class MemoryTest {
         val growth = afterCollection.last() - afterCollection[WARM_ROUNDS - 1]
         assertTrue(
             growth <= TOLERANCE_MIB,
-            "resident memory after each round's collection (MiB): $afterCollection, +$growth MiB past round $WARM_ROUNDS",
+            "resident memory after each round's collection (MiB): $afterCollection, " +
+                "+$growth MiB past round $WARM_ROUNDS",
         )
     }
 
@@ -61,7 +65,7 @@ class MemoryTest {
             val objects = ArrayList<Any>(BUFFERS + TEXTS)
             for (i in 0 until BUFFERS) objects += ByteArray(SIZES[(i * STRIDE + seed + call) % SIZES.size])
             for (i in 0 until TEXTS) objects += "call $seed-$call-$i".repeat(1 + i % REPEATS)
-            if (call % HELD_EVERY == 0) held += objects
+            if (call % HELD_EVERY == 0) held.add(objects)
         }
         return held
     }
