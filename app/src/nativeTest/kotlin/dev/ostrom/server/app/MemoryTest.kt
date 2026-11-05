@@ -90,8 +90,8 @@ class MemoryTest {
 
     private companion object {
         const val THREADS = 64
-        const val ROUNDS = 6
-        const val WARM_ROUNDS = 2
+        const val ROUNDS = 8
+        const val WARM_ROUNDS = 3
         const val TOLERANCE_MIB = 16
         const val CALLS = 400
         const val HELD_EVERY = 50

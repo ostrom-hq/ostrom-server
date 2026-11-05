@@ -92,3 +92,9 @@ kotlin {
         }
     }
 }
+
+// The tests run under the image's malloc (Dockerfile: MALLOC_ARENA_MAX=2), so that MemoryTest measures what the server
+// keeps in production, not glibc's arenas per thread.
+tasks.withType<org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeTest>().configureEach {
+    environment("MALLOC_ARENA_MAX", "2")
+}
