@@ -41,6 +41,11 @@ class GatesApi {
         @Resource("release")
         class Release(val parent: Id)
     }
+
+    /** A refusal the hook made on the workstation (contract `reportLocalGateDenial`, audit A6). */
+    @Serializable
+    @Resource("local-denials")
+    class LocalDenials(val parent: GatesApi = GatesApi())
 }
 
 /** The approvals of the caller's organization; `before` is the `next` of the previous page. */
@@ -144,6 +149,25 @@ data class GateAskRequest(
     val diff: String? = null,
     val push: GatePush? = null,
     val pr: GatePullRequest? = null,
+)
+
+/**
+ * A gated action the hook refused on the workstation without asking the server (contract `GateLocalDenial`).
+ *
+ * @property sessionId The session segment the agent ran in.
+ * @property cls The action class of the gate.
+ * @property reason Why the hook refused (`redirected`, `unreadable`, `unknown_landing`, `dynamic_command`,
+ *   `git_setting`, `foreign_repository`, `policy_held`).
+ * @property command The command as the hook normalized it, secrets removed.
+ * @property repo The repository of the session, `owner/name`.
+ */
+@Serializable
+data class GateLocalDenial(
+    val sessionId: String,
+    @SerialName("class") val cls: String,
+    val reason: String,
+    val command: String,
+    val repo: String? = null,
 )
 
 /**

@@ -37,6 +37,8 @@ import dev.ostrom.server.gates.domain.usecases.ListSessionGatesUseCase
 import dev.ostrom.server.gates.domain.usecases.ListSessionGatesUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.OpenGateUseCase
 import dev.ostrom.server.gates.domain.usecases.OpenGateUseCaseImpl
+import dev.ostrom.server.gates.domain.usecases.ReportLocalDenialUseCase
+import dev.ostrom.server.gates.domain.usecases.ReportLocalDenialUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.UseGateUseCase
 import dev.ostrom.server.gates.domain.usecases.UseGateUseCaseImpl
 import dev.ostrom.server.gates.infrastructure.ChannelsGateNotifier
@@ -96,10 +98,13 @@ object GatesModule : ServerModule {
         single<GetApprovalQueueUseCase> { GetApprovalQueueUseCaseImpl(get(), get(), get()) }
         single<GetApprovalViewUseCase> { GetApprovalViewUseCaseImpl(get(), get(), get()) }
         single<ListSessionGatesUseCase> { ListSessionGatesUseCaseImpl(get()) }
+        single<ReportLocalDenialUseCase> { ReportLocalDenialUseCaseImpl(get(), get()) }
         // Named: the channels of other modules (notifications, Slack, GitHub) bind theirs next to it.
         single<GateChannel>(named("metrics")) { MetricsGateChannel(get()) }
 
-        single { GatesRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single {
+            GatesRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
+        }
     }
 
     override val migrations: List<SchemaMigration> = GatesMigrations

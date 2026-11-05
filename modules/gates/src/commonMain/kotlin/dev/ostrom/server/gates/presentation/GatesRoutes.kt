@@ -19,6 +19,7 @@ import dev.ostrom.server.kernel.http.ReadThrottle
 import dev.ostrom.server.kernel.http.heldCalls
 import dev.ostrom.server.kernel.http.throttledReads
 import dev.ostrom.server.kernel.http.throttledWaits
+import io.ktor.http.HttpStatusCode
 import io.ktor.server.request.receive
 import io.ktor.server.resources.get
 import io.ktor.server.resources.post
@@ -54,6 +55,7 @@ fun Route.gatesRoutes(dependencies: GatesRoutesDependencies, throttle: ReadThrot
             val actor = actors.actorOf(call.requirePrincipal(), GateScopes.asking)
             call.respond(ask(actor, call.receive<GateAskRequest>().toAskGate()).toResponse(actor))
         }
+        post<GatesApi.LocalDenials> { respondLocalDenial(dependencies) }
         throttledReads(throttle) {
             get<ApprovalsApi> { params ->
                 val actor = actors.actorOf(call.requirePrincipal(), GateScopes.readingApprovals)
@@ -82,23 +84,7 @@ fun Route.gatesRoutes(dependencies: GatesRoutesDependencies, throttle: ReadThrot
             val actor = actors.actorOf(principal, GateScopes.readingApprovals)
             call.respond(view(actor, principal.toViewer(), params.parent.id.toUuid()).toViewResponse())
         }
-        post<ApprovalsApi.Id.Answer> { params ->
-            val principal = call.requirePrincipal()
-            principal.requireAnswering()
-            // S2-54: the sign-in's age comes from the identity module, never from the request. From the phone, the
-            // app's token: a yes needs its unlock bound to this request (Q-APP-STEPUP-RISK).
-            val phone = principal.credentialId.orEmpty().takeIf { principal.channel == PrincipalChannel.MOBILE_APP }
-            val actor = actors.actorOf(principal, GateScopes.answering)
-                .copy(authenticatedAt = principal.authenticatedAt, phoneCredential = phone)
-            val body = call.receive<AnswerApprovalRequest>()
-            val id = params.parent.id.toUuid()
-            val choice = if (body.answer == ApprovalAnswer.APPROVE) Answer.YES else Answer.NO
-            val answered = answer(actor, id, choice, body.shownDigest, AnswerChannel.CONSOLE)
-            // The contract's 200 is the approval as the console and the app show it, answered, with the signed
-            // receipt of the decision (a no's included).
-            val receipt = receipts.read(answered.gate.orgId, answered.gate.receiptId)
-            call.respond(view(actor, principal.toViewer(), id).toViewResponse().copy(receipt = receipt))
-        }
+        answerRoute(dependencies)
     }
 }
 
@@ -107,6 +93,14 @@ private suspend fun RoutingContext.respondUse(dependencies: GatesRoutesDependenc
     val gateId = id.toUuid()
     dependencies.use(actor, gateId, move)
     call.respond(dependencies.gate(actor, gateId).toResponse(actor))
+}
+
+// Audit A6: the hook refused on the workstation and says so after the fact; the refusal stands whatever this answers.
+private suspend fun RoutingContext.respondLocalDenial(dependencies: GatesRoutesDependencies) {
+    val principal = call.requirePrincipal()
+    val actor = dependencies.actors.actorOf(principal, GateScopes.asking)
+    dependencies.localDenial(actor, principal, call.receive<GateLocalDenial>().toLocalDenial())
+    call.respond(HttpStatusCode.Accepted)
 }
 
 // The scope first: a credential that may not use the route learns nothing about its organization.
@@ -127,3 +121,23 @@ private fun statusOf(value: String): RequestStatus = when (value.lowercase()) {
 }
 
 private const val DEFAULT_PAGE = 50
+
+private fun Route.answerRoute(dependencies: GatesRoutesDependencies) = with(dependencies) {
+    post<ApprovalsApi.Id.Answer> { params ->
+        val principal = call.requirePrincipal()
+        principal.requireAnswering()
+        // S2-54: the sign-in's age comes from the identity module, never from the request. From the phone, the
+        // app's token: a yes needs its unlock bound to this request (Q-APP-STEPUP-RISK).
+        val phone = principal.credentialId.orEmpty().takeIf { principal.channel == PrincipalChannel.MOBILE_APP }
+        val actor = actors.actorOf(principal, GateScopes.answering)
+            .copy(authenticatedAt = principal.authenticatedAt, phoneCredential = phone)
+        val body = call.receive<AnswerApprovalRequest>()
+        val id = params.parent.id.toUuid()
+        val choice = if (body.answer == ApprovalAnswer.APPROVE) Answer.YES else Answer.NO
+        val answered = answer(actor, id, choice, body.shownDigest, AnswerChannel.CONSOLE)
+        // The contract's 200 is the approval as the console and the app show it, answered, with the signed
+        // receipt of the decision (a no's included).
+        val receipt = receipts.read(answered.gate.orgId, answered.gate.receiptId)
+        call.respond(view(actor, principal.toViewer(), id).toViewResponse().copy(receipt = receipt))
+    }
+}

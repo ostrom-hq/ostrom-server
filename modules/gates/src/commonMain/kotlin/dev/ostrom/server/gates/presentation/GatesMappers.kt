@@ -15,7 +15,11 @@ import dev.ostrom.server.gates.domain.models.PushRef
 import dev.ostrom.server.gates.domain.models.RequestStatus
 import dev.ostrom.server.gates.domain.models.SelfApproval
 import dev.ostrom.server.gates.domain.usecases.AskGate
+import dev.ostrom.server.gates.domain.usecases.LocalDenial
 import dev.ostrom.server.gates.domain.models.GatePush as DomainPush
+
+/** Maps a refusal the hook made on the workstation. */
+internal fun GateLocalDenial.toLocalDenial() = LocalDenial(sessionId, cls, reason, command, repo)
 
 /** Maps the hook's request; `dev` is ignored, the asker is the credential's person. */
 internal fun GateAskRequest.toAskGate() = AskGate(

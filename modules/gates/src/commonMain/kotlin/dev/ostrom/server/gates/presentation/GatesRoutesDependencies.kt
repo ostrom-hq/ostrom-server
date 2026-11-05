@@ -10,6 +10,7 @@ import dev.ostrom.server.gates.domain.usecases.GetApprovalUseCase
 import dev.ostrom.server.gates.domain.usecases.GetApprovalViewUseCase
 import dev.ostrom.server.gates.domain.usecases.GetGateUseCase
 import dev.ostrom.server.gates.domain.usecases.ListApprovalsUseCase
+import dev.ostrom.server.gates.domain.usecases.ReportLocalDenialUseCase
 import dev.ostrom.server.gates.domain.usecases.UseGateUseCase
 
 /**
@@ -25,6 +26,7 @@ import dev.ostrom.server.gates.domain.usecases.UseGateUseCase
  * @property queue Reads the caller's yes queue.
  * @property view Reads an approval as the console and the app show it.
  * @property receipts Reads the signed receipt an answer returns.
+ * @property localDenial Audits a refusal the hook made on the workstation.
  */
 data class GatesRoutesDependencies(
     val actors: GateActorResolver,
@@ -37,4 +39,5 @@ data class GatesRoutesDependencies(
     val queue: GetApprovalQueueUseCase,
     val view: GetApprovalViewUseCase,
     val receipts: GateReceiptSigner,
+    val localDenial: ReportLocalDenialUseCase,
 )
