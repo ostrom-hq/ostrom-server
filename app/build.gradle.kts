@@ -60,6 +60,14 @@ kotlin {
             baseName = "ostrom-server"
             entryPoint = "dev.ostrom.server.app.main"
         }
+        // Kotlin/Native's allocator without pages: objects come from malloc (two arenas, MALLOC_ARENA_MAX in the
+        // Dockerfile) and go back to it once collected. With its default pages, the server kept what each burst of
+        // calls on CIO's 64 Dispatchers.IO threads had touched: at the chart's 256 Mi and the same 37 held streams it
+        // climbed phase after phase to 252-269 MiB and was OOMKilled (ostrom-e2e Chart load 41957078621,
+        // 42085793965); without pages it stayed at 69 MiB at rest and 88 at the peak of 300 streams (42087325520),
+        // for about 3 ms more of gateway overhead at p95 (9.6 against 6.0, under the 15 ms the load pass checks).
+        // Every binary of the module, the tests' too (MemoryTest).
+        binaries.all { binaryOptions["pagedAllocator"] = "false" }
     }
 
     sourceSets {
