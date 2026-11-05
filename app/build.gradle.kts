@@ -66,7 +66,7 @@ kotlin {
         // climbed phase after phase to 252-269 MiB and was OOMKilled (ostrom-e2e Chart load 41957078621,
         // 42085793965); without pages it stayed at 69 MiB at rest and 88 at the peak of 300 streams (42087325520),
         // for about 3 ms more of gateway overhead at p95 (9.6 against 6.0, under the 15 ms the load pass checks).
-        // Every binary of the module, the tests' too (MemoryTest).
+        // Every binary of the module, its tests' too.
         binaries.all { binaryOptions["pagedAllocator"] = "false" }
     }
 
@@ -91,10 +91,4 @@ kotlin {
             implementation(project(":testing"))
         }
     }
-}
-
-// The tests run under the image's malloc (Dockerfile: MALLOC_ARENA_MAX=2), so that MemoryTest measures what the server
-// keeps in production, not glibc's arenas per thread.
-tasks.withType<org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeTest>().configureEach {
-    environment("MALLOC_ARENA_MAX", "2")
 }
