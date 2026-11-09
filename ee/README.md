@@ -25,7 +25,7 @@ ee/
 - **AGPL build**: delete `ee/`. Nothing is discovered, `eeModules()` is empty, and the server builds and runs with
   AGPL code only. Nothing outside `ee/` may reference `ee/`: AGPL modules expose ports (billing's `LicenseProvider`)
   that an enterprise module binds in Koin, and resolve them with `getOrNull()` and an AGPL default. CI proves it on
-  every pull request: a lexical check that no file outside `ee/` names `dev.ostrom.server.ee`, then
+  every pull request: a lexical check that no file outside `ee/` names `run.ostrom.server.ee`, then
   `rm -rf ee && ./gradlew :app:compileKotlinLinuxX64`.
 
 Enterprise features are switched on by the license key, in code, never by an environment flag (CONVENTIONS § 6.2).

@@ -33,7 +33,7 @@ env:
   KOTLIN_VERSION: '2.4.21'
 permissions:
   contents: read
-  packages: read # dev.ostrom artifacts of ostrom-core on GitHub Packages
+  packages: read # run.ostrom artifacts of ostrom-core on GitHub Packages
 # One run per workflow and ref; a new push cancels the previous run, except on main (org CI rules, JOURNAL 03:10).
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.core_ref }}
@@ -170,7 +170,7 @@ jobs:
         run: |
           python3 scripts/check-contract-coverage.py --self-test
           python3 scripts/check-contract-coverage.py "$RUNNER_TEMP/openapi.json" contract/unobserved-operations.txt \
-            testing/src/commonMain/kotlin/dev/ostrom/server/testing/KnownDrifts.kt .
+            testing/src/commonMain/kotlin/run/ostrom/server/testing/KnownDrifts.kt .
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -439,8 +439,8 @@ jobs:
           fi
           rm -rf ee
           ./gradlew :app:compileKotlinLinuxX64
-          grep -q 'listOf<ServerModule>($' app/build/generated/ee-modules/kotlin/dev/ostrom/server/app/EeModules.kt
-          if grep -q 'LicenseModule' app/build/generated/ee-modules/kotlin/dev/ostrom/server/app/EeModules.kt; then
+          grep -q 'listOf<ServerModule>($' app/build/generated/ee-modules/kotlin/run/ostrom/server/app/EeModules.kt
+          if grep -q 'LicenseModule' app/build/generated/ee-modules/kotlin/run/ostrom/server/app/EeModules.kt; then
             echo "The AGPL build still registers an enterprise module." >&2
             exit 1
           fi

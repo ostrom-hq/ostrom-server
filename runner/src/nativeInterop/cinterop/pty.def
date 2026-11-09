@@ -1,4 +1,4 @@
-package = dev.ostrom.runner.pty
+package = run.ostrom.runner.pty
 headers = stdlib.h
 linkerOpts.linux = -lutil
 ---

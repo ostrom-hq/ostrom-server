@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+package run.ostrom.server.integrations.github.presentation
+
+import run.ostrom.server.gates.domain.services.GateActorResolver
+import run.ostrom.server.integrations.github.domain.GitHubAppSource
+import run.ostrom.server.integrations.github.domain.GitHubInstalls
+import run.ostrom.server.integrations.github.domain.GitHubRepository
+import run.ostrom.server.integrations.github.domain.HandleWebhookUseCase
+import run.ostrom.server.integrations.github.domain.OrgReferences
+import run.ostrom.server.integrations.github.infrastructure.GitHubSettings
+import run.ostrom.server.integrations.github.infrastructure.WebhookSignature
+import run.ostrom.server.kernel.auth.PrincipalOrgResolver
+
+/**
+ * What the GitHub routes need.
+ *
+ * @property actors Resolves callers (the organization comes from the credential).
+ * @property members The caller's role in the organization: only an owner or admin installs the App.
+ * @property repository Installations.
+ * @property installs The install flow.
+ * @property webhooks Handles a verified webhook.
+ * @property signature Verifies a webhook.
+ * @property settings The App's environment (GitHub's web address, the console).
+ * @property apps The App in use: the environment's, or the one the manifest flow created.
+ * @property orgs Reads the organization an install start names (`?org=`).
+ */
+data class GitHubRoutesDependencies(
+    val actors: GateActorResolver,
+    val members: PrincipalOrgResolver,
+    val repository: GitHubRepository,
+    val installs: GitHubInstalls,
+    val webhooks: HandleWebhookUseCase,
+    val signature: WebhookSignature,
+    val settings: GitHubSettings,
+    val apps: GitHubAppSource,
+    val orgs: OrgReferences,
+)

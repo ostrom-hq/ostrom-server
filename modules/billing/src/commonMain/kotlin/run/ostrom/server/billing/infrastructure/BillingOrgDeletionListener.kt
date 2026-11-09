@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+package run.ostrom.server.billing.infrastructure
+
+import run.ostrom.server.billing.domain.EndDeletedOrgSubscriptionUseCase
+import run.ostrom.server.kernel.module.OrgDeletionListener
+import kotlin.uuid.Uuid
+
+/**
+ * Billing's part of an organization's deletion: the subscription ends at once, and once more at the purge in case one
+ * started in between (a checkout paid after the deletion). Nothing is erased: the billing row and the invoices are
+ * accounting records, kept as the law asks.
+ *
+ * @param endSubscription Ends the subscription.
+ */
+class BillingOrgDeletionListener(private val endSubscription: EndDeletedOrgSubscriptionUseCase) : OrgDeletionListener {
+    override suspend fun deleted(orgId: Uuid) {
+        endSubscription(orgId)
+    }
+
+    override suspend fun purge(orgId: Uuid) {
+        endSubscription(orgId)
+    }
+}

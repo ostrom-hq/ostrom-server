@@ -1,0 +1,119 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+package run.ostrom.server.kernel.http
+
+import io.ktor.http.Headers
+import io.ktor.http.HttpHeaders
+import io.ktor.server.application.ApplicationCall
+import io.ktor.server.application.ApplicationCallPipeline
+import io.ktor.server.application.Hook
+import io.ktor.server.application.call
+import io.ktor.server.application.createApplicationPlugin
+import io.ktor.server.application.createRouteScopedPlugin
+import io.ktor.server.plugins.PayloadTooLargeException
+import io.ktor.server.request.ApplicationReceivePipeline
+import io.ktor.server.routing.Route
+import io.ktor.server.routing.RouteSelector
+import io.ktor.server.routing.RouteSelectorEvaluation
+import io.ktor.server.routing.RoutingResolveContext
+import io.ktor.util.AttributeKey
+import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.readRemaining
+import kotlinx.io.readByteArray
+
+/** The largest request body a route reads unless it declares another limit with [bodyLimit]: 1 MiB. */
+const val DEFAULT_BODY_LIMIT: Long = 1L shl 20
+
+private val bodyLimitKey = AttributeKey<Long>("ostrom.body.limit")
+
+/**
+ * Caps every request body the server reads (SECURITY-AUDIT S2-46): [DEFAULT_BODY_LIMIT], or the limit the matched
+ * route declares with [bodyLimit]. A declared `Content-Length` over the limit is refused before a byte is read; a body
+ * without one (chunked) is read up to one byte past the limit, never further. Either way the route's `receive` fails
+ * with a [PayloadTooLargeException], answered 413 `payload_too_large` by [configureErrors], ahead of the 415 of a body
+ * that is not JSON. The limit applies when a route reads the body: a route that must check a credential first does so
+ * before calling `receive`. A protocol upgrade without a body (a WebSocket) keeps its raw stream: the engine reads it
+ * through `receive`, and its frames are bounded by the WebSockets plugin. Installed by [configureHttp].
+ */
+val BodyLimit = createApplicationPlugin("BodyLimit") {
+    on(ReceiveBody) { call, body ->
+        limitedBody(body, call.attributes.getOrNull(bodyLimitKey) ?: DEFAULT_BODY_LIMIT, call.request.headers)
+    }
+}
+
+/**
+ * Whether a request asks for a protocol upgrade and carries no HTTP body: no `Content-Length` and no
+ * `Transfer-Encoding`, so by HTTP framing its body is empty and what follows the head is the upgraded stream. A body
+ * sent with an `Upgrade` header is still capped.
+ *
+ * @param headers The request headers.
+ *
+ * @return True for a bodiless upgrade.
+ */
+internal fun isBodilessUpgrade(headers: Headers): Boolean =
+    HttpHeaders.Upgrade in headers && HttpHeaders.ContentLength !in headers && HttpHeaders.TransferEncoding !in headers
+
+/**
+ * The body a route is given: [body] itself when it is not the raw request channel or when the request is a bodiless
+ * upgrade ([isBodilessUpgrade]), otherwise the channel read up to [limit] bytes.
+ *
+ * @param body The body as the receive pipeline has it.
+ * @param limit The most bytes accepted.
+ * @param headers The request headers.
+ *
+ * @return The body, at most [limit] bytes.
+ *
+ * @throws PayloadTooLargeException When the declared or the actual length is over [limit].
+ */
+internal suspend fun limitedBody(body: Any, limit: Long, headers: Headers): Any {
+    if (body !is ByteReadChannel || isBodilessUpgrade(headers)) return body
+    val declaredLength = headers[HttpHeaders.ContentLength]?.toLongOrNull()
+    if (declaredLength != null && declaredLength > limit) throw PayloadTooLargeException(limit)
+    val bytes = body.readRemaining(limit + 1).readByteArray()
+    if (bytes.size > limit) throw PayloadTooLargeException(limit)
+    return ByteReadChannel(bytes)
+}
+
+/**
+ * Routes whose bodies may be up to [bytes] long instead of [DEFAULT_BODY_LIMIT]: larger for a route that takes files,
+ * smaller for one that takes a few fields. The innermost declaration wins.
+ *
+ * @param bytes The most bytes a body of these routes may hold.
+ * @param build The routes.
+ *
+ * @return The route holding them.
+ */
+fun Route.bodyLimit(bytes: Long, build: Route.() -> Unit): Route {
+    require(bytes > 0) { "A body limit is positive." }
+    val limited = createChild(BodyLimitSelector(bytes))
+    limited.install(RouteBodyLimit) { this.bytes = bytes }
+    limited.build()
+    return limited
+}
+
+/** Configuration of [RouteBodyLimit]. */
+private class RouteBodyLimitConfig {
+    var bytes: Long = DEFAULT_BODY_LIMIT
+}
+
+/** Records the limit declared by [bodyLimit] on the calls of its routes, for [BodyLimit]. */
+private val RouteBodyLimit = createRouteScopedPlugin("RouteBodyLimit", ::RouteBodyLimitConfig) {
+    val bytes = pluginConfig.bytes
+    onCall { call -> call.attributes.put(bodyLimitKey, bytes) }
+}
+
+/** Matches like its parent; parenthesized so that route templates leave it out. */
+private class BodyLimitSelector(private val bytes: Long) : RouteSelector() {
+    override suspend fun evaluate(context: RoutingResolveContext, segmentIndex: Int): RouteSelectorEvaluation =
+        RouteSelectorEvaluation.Transparent
+
+    override fun toString(): String = "(body limit $bytes)"
+}
+
+/** The receive pipeline's first phase, where the body is still the request's raw channel. */
+private object ReceiveBody : Hook<suspend (ApplicationCall, Any) -> Any> {
+    override fun install(pipeline: ApplicationCallPipeline, handler: suspend (ApplicationCall, Any) -> Any) {
+        pipeline.receivePipeline.intercept(ApplicationReceivePipeline.Before) { body ->
+            proceedWith(handler(call, body))
+        }
+    }
+}

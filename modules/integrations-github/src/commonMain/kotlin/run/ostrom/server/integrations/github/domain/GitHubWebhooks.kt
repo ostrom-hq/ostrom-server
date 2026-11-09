@@ -1,0 +1,207 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+package run.ostrom.server.integrations.github.domain
+
+import run.ostrom.server.gates.domain.models.ActorKind
+import run.ostrom.server.gates.domain.models.AskedVia
+import run.ostrom.server.gates.domain.models.GateActor
+import run.ostrom.server.gates.domain.models.GateView
+import run.ostrom.server.gates.domain.usecases.AskGate
+import run.ostrom.server.gates.domain.usecases.AskGateUseCase
+import run.ostrom.server.kernel.errors.ErrorKind
+import run.ostrom.server.kernel.errors.OstromException
+import run.ostrom.server.kernel.logging.Logger
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.Json
+import kotlin.time.Clock
+
+/** What a verified webhook did. */
+enum class WebhookOutcome {
+    /** A pull request's gate was asked and its check published. */
+    CHECKED,
+
+    /** An installation was forgotten. */
+    UNINSTALLED,
+
+    /** Who installed the App was recorded, for the install callback to check (AUDIT-SECU-2 M1). */
+    RECORDED,
+
+    /** A delivery already handled: a replay, ignored (AUDIT-SECU-2 B3). */
+    REPLAYED,
+
+    /** Nothing to do: another event or action, or an installation no organization owns. */
+    IGNORED,
+}
+
+/** Handles a webhook whose signature is already verified. */
+interface HandleWebhookUseCase {
+    /**
+     * @param event The `X-GitHub-Event` header.
+     * @param delivery The `X-GitHub-Delivery` header, GitHub's id of this delivery (kept by a redelivery).
+     * @param body The body.
+     * @return What was done.
+     * @throws OstromException 400 without a delivery id.
+     */
+    suspend operator fun invoke(event: String?, delivery: String?, body: String): WebhookOutcome
+}
+
+/**
+ * [HandleWebhookUseCase]: a pull request opened, updated or reopened asks the gate of its merge (as the CI, for the
+ * organization that installed the App, the author being who asks: the Ostrom person linked to their GitHub account,
+ * else their GitHub login) and publishes `ostrom-gate` on its head; the same
+ * request as the agent's `gh pr merge` when the head, base and gate match (gates module, APPROBATION). An
+ * installation created on GitHub records who installed it, which the install callback checks (AUDIT-SECU-2 M1); one
+ * deleted is forgotten, linked or not. Each delivery is handled once (AUDIT-SECU-2 B3): a replay of a captured
+ * delivery is ignored, and a delivery whose handling failed is released, so that GitHub's redelivery is handled.
+ *
+ * @param repository Installations.
+ * @param origins Who installed each installation, and the deliveries handled.
+ * @param ask Asks gates.
+ * @param checks Publishes the check.
+ * @param logger Logs a refused gate.
+ * @param clock The clock.
+ * @param accounts Who a pull request's author is in Ostrom.
+ */
+@Suppress("LongParameterList") // One port per owner: GitHub's records, the gates, the clock, the identity of authors.
+class HandleWebhookUseCaseImpl(
+    private val repository: GitHubRepository,
+    private val origins: GitHubOriginsRepository,
+    private val ask: AskGateUseCase,
+    private val checks: GitHubGateChecks,
+    private val logger: Logger,
+    private val clock: Clock,
+    private val accounts: GitHubAccounts,
+) : HandleWebhookUseCase {
+    override suspend fun invoke(event: String?, delivery: String?, body: String): WebhookOutcome {
+        val id = delivery?.takeIf { DELIVERY.matches(it) }
+            ?: throw OstromException(ErrorKind.INVALID_REQUEST, "This webhook has no X-GitHub-Delivery id.")
+        if (!origins.claimDelivery(id, clock.now())) return WebhookOutcome.REPLAYED
+        // A failure (GitHub down while the check is published, the server stopping) leaves the delivery to GitHub's
+        // redelivery.
+        return try {
+            handle(event, body)
+        } catch (error: CancellationException) {
+            withContext(NonCancellable) { origins.releaseDelivery(id) }
+            throw error
+        } catch (error: Exception) {
+            origins.releaseDelivery(id)
+            throw error
+        }
+    }
+
+    private suspend fun handle(event: String?, body: String): WebhookOutcome {
+        val payload = parse(event, body)
+        val installation = payload?.installation
+        return when {
+            payload == null || installation == null -> WebhookOutcome.IGNORED
+            event == INSTALLATION -> installation(payload.action, installation, payload.sender?.login)
+            event == "pull_request" && payload.action in GATED_ACTIONS -> pullRequest(installation.id, payload)
+            else -> WebhookOutcome.IGNORED
+        }
+    }
+
+    // Created: who installed it is recorded (AUDIT-SECU-2 M1). Deleted: forgotten, linked or not.
+    private suspend fun installation(action: String?, installation: Installation, sender: String?): WebhookOutcome {
+        val account = installation.account
+        return when {
+            action == "deleted" -> {
+                repository.forgetInstallation(installation.id)
+                WebhookOutcome.UNINSTALLED
+            }
+            action != "created" || sender == null || account == null -> WebhookOutcome.IGNORED
+            else -> {
+                val origin = GitHubInstallationOrigin(installation.id, sender, account.login, account.type)
+                origins.saveOrigin(origin, clock.now())
+                WebhookOutcome.RECORDED
+            }
+        }
+    }
+
+    private fun parse(event: String?, body: String): Payload? = try {
+        json.decodeFromString(Payload.serializer(), body)
+    } catch (error: SerializationException) {
+        logger.warn("github webhook not understood", mapOf("event" to event), error)
+        null
+    }
+
+    private suspend fun pullRequest(installationId: Long, payload: Payload): WebhookOutcome {
+        val installation = repository.installationById(installationId)
+        val pull = payload.pullRequest?.takeIf { it.state == "open" }
+        val repo = payload.repository?.fullName
+        val view = if (installation == null || pull == null || repo == null) null else askFor(installation, repo, pull)
+        if (view == null) return WebhookOutcome.IGNORED
+        checks.publish(view.gate, view.requests)
+        return WebhookOutcome.CHECKED
+    }
+
+    private suspend fun askFor(installation: GitHubInstallation, repo: String, pull: Pull): GateView? {
+        // The author as their approvers are named: by their Ostrom login, never only their GitHub one, which may differ
+        // (an account opened by e-mail, a login taken): else they would say yes to their own merge (G1).
+        val linked = pull.user.id?.let { accounts.loginOf(it) }
+        val author = linked ?: pull.user.login
+        val actor = GateActor("github", installation.orgId, ActorKind.SERVICE, personId = author)
+        val asked = AskGate(
+            sessionId = null,
+            runId = null,
+            repo = repo,
+            realRepo = null,
+            actionClass = if (pull.base.ref in MAIN_BRANCHES) "push-main" else "merge",
+            tool = "GitHub",
+            command = "gh pr merge ${pull.number}",
+            harnessVersion = null,
+            push = null,
+            pullRequest = pull.number,
+            diff = null,
+            via = AskedVia.CI,
+            // Linked to nobody: under the never policy, only an approver who linked another GitHub account says yes.
+            unlinkedAuthor = pull.user.id.takeIf { linked == null },
+        )
+        return try {
+            ask(actor, asked)
+        } catch (error: OstromException) {
+            // GitHub did not describe the pull request (closed meanwhile, or not answering): no check, no yes.
+            logger.warn("pull request gate refused", mapOf("repo" to repo, "pr" to pull.number), error)
+            null
+        }
+    }
+
+    @Serializable
+    private data class Payload(
+        val action: String? = null,
+        val installation: Installation? = null,
+        val sender: Login? = null,
+        val repository: Repository? = null,
+        @SerialName("pull_request") val pullRequest: Pull? = null,
+    )
+
+    @Serializable
+    private data class Installation(val id: Long, val account: Account? = null)
+
+    @Serializable
+    private data class Account(val login: String, val type: String)
+
+    @Serializable
+    private data class Repository(@SerialName("full_name") val fullName: String)
+
+    @Serializable
+    private data class Pull(val number: Int, val state: String, val base: Ref, val user: Login)
+
+    @Serializable
+    private data class Ref(val ref: String)
+
+    @Serializable
+    private data class Login(val login: String, val id: Long? = null)
+}
+
+// Top-level, not in the private companion: a companion property has a getter nothing calls, which Kover counts.
+private val json = Json { ignoreUnknownKeys = true }
+private val GATED_ACTIONS = setOf("opened", "reopened", "synchronize", "ready_for_review", "edited")
+private val MAIN_BRANCHES = setOf("main", "master")
+private const val INSTALLATION = "installation"
+
+// GitHub's delivery ids are GUIDs; bounded so that a forged header never grows the table's key.
+private val DELIVERY = Regex("^[0-9A-Fa-f-]{1,64}$")

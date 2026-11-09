@@ -13,7 +13,7 @@ kotlin {
         }
         binaries.executable {
             baseName = "ostrom-runner"
-            entryPoint = "dev.ostrom.runner.main"
+            entryPoint = "run.ostrom.runner.main"
         }
     }
 

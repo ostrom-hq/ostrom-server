@@ -15,7 +15,7 @@ on:
     - cron: '41 3 * * *'
 permissions:
   contents: read
-  packages: read # dev.ostrom artifacts of ostrom-core on GitHub Packages
+  packages: read # run.ostrom artifacts of ostrom-core on GitHub Packages
 # One at a time: two runs of the benches on the same night would only measure each other's runners less often.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

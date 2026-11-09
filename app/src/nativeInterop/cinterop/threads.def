@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Names the calling thread, so that /proc/<pid>/task/*/comm tells the server's pools apart: Kotlin/Native starts its
 # workers without a name, and every one of them showed as the process's own name.
-package = dev.ostrom.server.app.threads
+package = run.ostrom.server.app.threads
 ---
 #ifndef __APPLE__
 #define _GNU_SOURCE
