@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.billing
 
+import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.billing.domain.BackfillActivePeopleUseCase
 import run.ostrom.server.billing.domain.BackfillActivePeopleUseCaseImpl
 import run.ostrom.server.billing.domain.BillingMetrics
@@ -143,6 +144,10 @@ object BillingModule : ServerModule {
     override fun routes(route: Route, koin: Koin) {
         route.billingRoutes(koin.get())
     }
+
+    /** Billing, only with Stripe configured: without a key the routes answer that nothing can be bought. */
+    override suspend fun features(koin: Koin): Set<String> =
+        if (koin.get<BillingSettings>().stripeEnabled) setOf(ServerFeatures.BILLING) else emptySet()
 
     override fun start(scope: CoroutineScope, koin: Koin) {
         if (!koin.get<BillingSettings>().stripeEnabled) return

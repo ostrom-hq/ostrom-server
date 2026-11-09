@@ -40,6 +40,19 @@ interface ServerModule {
     fun routes(route: Route, koin: Koin) = Unit
 
     /**
+     * The features this module serves **and** that are configured on this instance, as keys of ostrom-core's
+     * `ServerFeatures` (`billing.v1` only with Stripe configured, `github.v1` only with a GitHub App…). The kernel
+     * answers their union in `GET /api/v1/capabilities`, which clients read to show or hide a feature. Never a key
+     * for a planned operation, nor one whose configuration is missing: a client would offer what the server refuses.
+     * Read at every call of the route, after [initialize]: keep it cheap.
+     *
+     * @param koin Resolves the module's configuration.
+     *
+     * @return The feature keys; none by default.
+     */
+    suspend fun features(koin: Koin): Set<String> = emptySet()
+
+    /**
      * Starts the module's background work (schedulers, listeners) once migrations have run. Work is launched in
      * [scope], which is cancelled when the server stops; never block here.
      *

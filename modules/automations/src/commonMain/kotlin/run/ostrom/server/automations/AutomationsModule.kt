@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.automations
 
+import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.automations.domain.AnswerWaitUseCase
 import run.ostrom.server.automations.domain.AutomationLauncher
 import run.ostrom.server.automations.domain.AutomationsRepository
@@ -91,6 +92,9 @@ object AutomationsModule : ServerModule {
         route.waitsRoutes(koin.get())
         route.automationsRoutes(koin.get())
     }
+
+    /** Automations, and the waits (`/api/v1/waits`) it serves. */
+    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.AUTOMATIONS, ServerFeatures.WAITS)
 
     override fun start(scope: CoroutineScope, koin: Koin) {
         val scheduler = koin.get<AutomationScheduler>()

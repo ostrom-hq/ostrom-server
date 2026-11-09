@@ -226,7 +226,7 @@ class HttpTest {
         val response = client.get("/health")
         assertEquals(HttpStatusCode.OK, response.status)
         val health = OstromJson.decodeFromString<HealthResponse>(response.bodyAsText())
-        assertEquals(HealthResponse("ok", "0.1.0-dev", mapOf("database" to "ok")), health)
+        assertEquals(HealthResponse("ok", SERVER_VERSION, mapOf("database" to "ok")), health)
     }
 
     @Test
@@ -242,7 +242,7 @@ class HttpTest {
             val response = client.get("/health")
             assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
             val health = OstromJson.decodeFromString<HealthResponse>(response.bodyAsText())
-            val expected = HealthResponse("degraded", "0.1.0-dev", mapOf("database" to "down", "cache" to "down"))
+            val expected = HealthResponse("degraded", SERVER_VERSION, mapOf("database" to "down", "cache" to "down"))
             assertEquals(expected, health)
         }
 
@@ -251,7 +251,7 @@ class HttpTest {
         val response = client.get("/ready")
         assertEquals(HttpStatusCode.OK, response.status)
         val ready = OstromJson.decodeFromString<HealthResponse>(response.bodyAsText())
-        assertEquals(HealthResponse("ready", "0.1.0-dev", mapOf("database" to "ok")), ready)
+        assertEquals(HealthResponse("ready", SERVER_VERSION, mapOf("database" to "ok")), ready)
     }
 
     @Test
@@ -272,7 +272,7 @@ class HttpTest {
             val response = client.get("/ready")
             assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
             val draining = OstromJson.decodeFromString<HealthResponse>(response.bodyAsText())
-            assertEquals(HealthResponse("draining", "0.1.0-dev", emptyMap()), draining)
+            assertEquals(HealthResponse("draining", SERVER_VERSION, emptyMap()), draining)
             assertEquals(HttpStatusCode.OK, client.get("/health").status, "Draining is not a failure")
         }
     }

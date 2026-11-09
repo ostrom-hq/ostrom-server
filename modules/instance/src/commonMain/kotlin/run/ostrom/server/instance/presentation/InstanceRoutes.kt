@@ -3,7 +3,7 @@ package run.ostrom.server.instance.presentation
 
 import run.ostrom.server.instance.domain.Instance
 import run.ostrom.server.instance.domain.SigningKey
-import run.ostrom.server.kernel.http.SERVER_VERSION
+import run.ostrom.server.kernel.SERVER_VERSION
 import io.ktor.server.resources.get
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route

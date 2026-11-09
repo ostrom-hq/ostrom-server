@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.receipts
 
+import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.receipts.domain.repositories.ReceiptsRepository
@@ -62,4 +63,7 @@ object ReceiptsModule : ServerModule {
     override fun routes(route: Route, koin: Koin) {
         route.receiptsRoutes(koin.get(), koin.get())
     }
+
+    /** Signed receipts. */
+    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.RECEIPTS)
 }

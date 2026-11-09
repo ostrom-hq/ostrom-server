@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.integrations.github
 
+import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.gates.domain.services.CiChecks
 import run.ostrom.server.gates.domain.services.GateChannel
 import run.ostrom.server.gates.domain.services.GateGitHubAccounts
@@ -174,6 +175,13 @@ object GitHubIntegrationModule : ServerModule {
         route.gitHubDirectoryRoutes(koin.get())
         route.gitHubManifestRoutes(koin.get())
     }
+
+    /**
+     * The GitHub App integration, only once the instance has an App: the environment's, or the one the
+     * manifest flow created (read again at each call, so an App created by the console counts at once).
+     */
+    override suspend fun features(koin: Koin): Set<String> =
+        if (koin.get<GitHubAppSource>().current().named) setOf(ServerFeatures.GITHUB) else emptySet()
 
     override fun start(scope: CoroutineScope, koin: Koin) {
         val sync = koin.get<GitHubDirectorySync>()

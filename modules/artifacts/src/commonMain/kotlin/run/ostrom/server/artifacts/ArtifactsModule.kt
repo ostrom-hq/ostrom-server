@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.artifacts
 
+import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.artifacts.domain.ArtifactLocations
 import run.ostrom.server.artifacts.domain.ArtifactsRepository
 import run.ostrom.server.artifacts.domain.ContentDigest
@@ -54,4 +55,7 @@ object ArtifactsModule : ServerModule {
         route.artifactsRoutes(dependencies)
         route.artifactContentRoutes(dependencies.view, dependencies.locations)
     }
+
+    /** Shared artifacts, their viewer and their MCP server. */
+    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.ARTIFACTS)
 }

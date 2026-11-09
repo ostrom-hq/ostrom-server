@@ -8,7 +8,8 @@ import org.koin.dsl.module
 /**
  * The integrations-slack module: the Slack integration: app installation, events, messages.
  *
- * Empty skeleton registered in the app so that its owner only edits this directory (docs/MODULES.md).
+ * Empty skeleton registered in the app so that its owner only edits this directory (docs/MODULES.md). It lists no
+ * feature in `/api/v1/capabilities` (`slack.v1` comes with its first served route and its configuration).
  */
 object SlackIntegrationModule : ServerModule {
     override val name: String = "integrations-slack"

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.usage
 
+import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.gateway.domain.ModelUsageSink
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.EnvironmentConfigSource
@@ -121,6 +122,9 @@ object UsageModule : ServerModule {
     override fun routes(route: Route, koin: Koin) {
         route.usageRoutes(koin.get())
     }
+
+    /** Usage metering and its events. */
+    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.USAGE)
 
     override fun start(scope: CoroutineScope, koin: Koin) {
         val purge = koin.get<PurgeUsageUseCase>()

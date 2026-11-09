@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.rules
 
+import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.compiler.domain.services.CompilerSources
 import run.ostrom.server.compiler.infrastructure.DefaultCompilerSources
 import run.ostrom.server.gates.domain.services.GateCheckNeeds
@@ -152,6 +153,9 @@ object RulesModule : ServerModule {
         route.rulesRoutes(koin.get())
         route.analysisRoutes(koin.get())
     }
+
+    /** Rules, and the analysis of the repositories (`/api/v1/analysis`), a report. */
+    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.RULES, ServerFeatures.REPORTS)
 }
 
 /**

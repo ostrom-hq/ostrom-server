@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.importer
 
+import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.identity.domain.AuditLog
 import run.ostrom.server.importer.domain.AccountImporter
 import run.ostrom.server.importer.domain.ImportProvenanceRepository
@@ -58,4 +59,7 @@ object ImportModule : ServerModule {
     override fun routes(route: Route, koin: Koin) {
         route.importRoutes(koin.get())
     }
+
+    /** The import of a TeamCode instance. */
+    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.IMPORT_TEAMCODE)
 }
