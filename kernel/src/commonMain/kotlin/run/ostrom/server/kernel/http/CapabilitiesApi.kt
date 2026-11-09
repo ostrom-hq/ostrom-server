@@ -49,5 +49,5 @@ internal suspend fun serverCapabilities(koin: Koin, modules: List<ServerModule>,
     Capabilities(
         apiVersion = ServerFeatures.API_VERSION,
         serverVersion = version,
-        features = modules.flatMap { it.features(koin) }.toSortedSet().toList(),
+        features = modules.flatMap { it.features(koin) }.distinct().sorted(),
     )
