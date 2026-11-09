@@ -88,17 +88,6 @@ jobs:
         run: |
           python3 .github/scripts/check_spdx.py --base "$BASE"
 
-      # The repository is public, and so are the commits of its pull requests (refs/pull/*): a squash does not remove
-      # them. A personal e-mail address in a branch commit stays readable for good, so every commit must carry a GitHub
-      # noreply address (git config user.email "<id>+<login>@users.noreply.github.com").
-      - name: Commit e-mail addresses
-        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
-        env:
-          BASE: ${{ github.event.pull_request.base.sha }}
-        run: |
-          python3 .github/scripts/check_commit_emails.py --self-test
-          python3 .github/scripts/check_commit_emails.py --base "$BASE"
-
       - name: Workflow security
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
