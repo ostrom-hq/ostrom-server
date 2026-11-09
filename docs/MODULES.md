@@ -334,13 +334,12 @@ A fake token endpoint must therefore name the account's own id, or none.
 The probes: `GET /health` (liveness: 200 while the dependencies answer, also while draining) and `GET /ready`
 (readiness: 200 `ready`, 503 `degraded` or `draining`), both unauthenticated.
 
-The contract's `capabilities` operation (`Capabilities` and `ServerFeatures` in ostrom-core), served by the kernel,
-answers what clients read after signing in: `apiVersion` (the contract version of the ostrom-core the server is built
-on, `ServerFeatures.API_VERSION`), `serverVersion` (the build's `ostromVersion`, `0.0.0-dev` outside CI) and
-`features`, the sorted union of every module's
-`ServerModule.features(koin)`. Any credential reads it, with no organization or scope; an anonymous call gets 401
-`unauthorized`. A module lists a key of ostrom-core's `ServerFeatures` only for what it serves **and** what is
-configured on this instance, never for a planned operation:
+`GET /api/v1/capabilities` (`Capabilities` and `ServerFeatures` in ostrom-core), served by the kernel, answers what
+clients read after signing in: `apiVersion` (the contract version of the ostrom-core the server is built on,
+`ServerFeatures.API_VERSION`), `serverVersion` (the build's `ostromVersion`, `0.0.0-dev` outside CI) and `features`, the
+sorted union of every module's `ServerModule.features(koin)`. Any credential reads it, with no organization or scope; an
+anonymous call gets 401 `unauthorized`. A module lists a key of ostrom-core's `ServerFeatures` only for what it serves
+**and** what is configured on this instance, never for a planned operation:
 
 | Module | Keys | Condition |
 |---|---|---|
