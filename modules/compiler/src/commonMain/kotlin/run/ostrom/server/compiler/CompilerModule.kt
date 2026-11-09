@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.compiler
 
+import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.compiler.domain.repositories.CompilerRepository
 import run.ostrom.server.compiler.domain.services.CompiledPackages
 import run.ostrom.server.compiler.domain.services.CompilerSources
@@ -94,4 +95,7 @@ object CompilerModule : ServerModule {
     override fun routes(route: Route, koin: Koin) {
         route.compilerRoutes(koin.get())
     }
+
+    /** Session packages and the workflows it compiles (`/api/v1/packages`, `/api/v1/workflows`). */
+    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.PACKAGES, ServerFeatures.WORKFLOWS)
 }

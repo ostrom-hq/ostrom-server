@@ -56,6 +56,8 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/health" to Case.Target(),
     "GET /api/v1/instance" to Case.Target(),
     "GET /api/v1/instance/keys" to Case.Target(),
+    // What the server speaks and serves: the same answer for every caller, nothing of an organization's.
+    "GET /api/v1/capabilities" to Case.Target(),
     "GET /api/v1/auth/providers" to Case.Target(),
     "GET /api/v1/tokens/scopes" to Case.Target(),
 

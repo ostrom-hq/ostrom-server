@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.gateway
 
+import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.core.telemetry.Telemetry
 import run.ostrom.server.gateway.domain.AllowAllSpend
 import run.ostrom.server.gateway.domain.BudgetCheck
@@ -138,4 +139,7 @@ object GatewayModule : ServerModule {
     override fun routes(route: Route, koin: Koin) {
         route.gatewayRoutes(koin.get())
     }
+
+    /** The inference gateway: an org configures its own provider keys, so it is always served. */
+    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.INFERENCE)
 }

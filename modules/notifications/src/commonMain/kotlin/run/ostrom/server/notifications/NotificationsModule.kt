@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.notifications
 
+import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.gates.domain.services.GateChannel
 import run.ostrom.server.identity.presentation.SignInConfig
 import run.ostrom.server.kernel.auth.SignOutListener
@@ -101,6 +102,13 @@ object NotificationsModule : ServerModule {
     override fun routes(route: Route, koin: Koin) {
         route.pushDevicesRoutes(koin.get())
     }
+
+    /**
+     * Approval notifications, and push to the phones: the Expo push service needs no configuration (its URL has a
+     * default, `OSTROM_EXPO_ACCESS_TOKEN` only for a project that requires one), so a push sender is always there.
+     */
+    override suspend fun features(koin: Koin): Set<String> =
+        setOf(ServerFeatures.NOTIFICATIONS, ServerFeatures.NOTIFICATIONS_PUSH)
 
     /** Sends the queued notifications until the server stops. */
     override fun start(scope: CoroutineScope, koin: Koin) {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.sharing
 
+import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.database.SchemaMigration
@@ -132,4 +133,7 @@ object SharingModule : ServerModule {
         route.sharingRoutes(koin.get())
         route.groupRoutes(koin.get())
     }
+
+    /** Shared accounts, their capacity and the groups they are shared with. */
+    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.SHARING)
 }

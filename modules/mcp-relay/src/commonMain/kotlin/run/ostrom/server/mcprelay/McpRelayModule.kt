@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.mcprelay
 
+import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.InvalidConfigException
 import run.ostrom.server.kernel.database.SchemaMigration
@@ -189,6 +190,9 @@ object McpRelayModule : ServerModule {
     override fun routes(route: Route, koin: Koin) {
         route.mcpRelayRoutes(koin.get())
     }
+
+    /** The MCP relay. */
+    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.MCP)
 
     override fun start(scope: CoroutineScope, koin: Koin) {
         val repository = koin.get<McpRelayRepository>()

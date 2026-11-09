@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.identity
 
+import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.identity.domain.AnswerDeviceAuthorizationUseCase
 import run.ostrom.server.identity.domain.AnswerDeviceAuthorizationUseCaseImpl
 import run.ostrom.server.identity.domain.ApiTokensRepository
@@ -327,6 +328,9 @@ object IdentityModule : ServerModule {
         route.orgAuditRoutes(koin.get(), koin.get())
         route.keysAndDevicesRoutes(koin.get())
     }
+
+    /** The audit log (`/api/v1/audit`, `/api/v1/auth/me/audit`). */
+    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.AUDIT)
 
     private fun signInMethods(config: SignInConfig, http: HttpClient, clock: Clock): SignInMethods {
         val oauth = buildMap<IdentityProvider, OAuthProvider> {

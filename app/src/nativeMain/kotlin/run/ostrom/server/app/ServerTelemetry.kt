@@ -3,8 +3,8 @@ package run.ostrom.server.app
 
 import run.ostrom.core.telemetry.Telemetry
 import run.ostrom.core.telemetry.otlp.Resource
+import run.ostrom.server.kernel.SERVER_VERSION
 import run.ostrom.server.kernel.config.ServerConfig
-import run.ostrom.server.kernel.http.SERVER_VERSION
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.curl.Curl
 import kotlinx.coroutines.CoroutineScope

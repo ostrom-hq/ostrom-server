@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.workflowruns
 
+import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.gates.domain.services.GateCheckProofs
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
@@ -136,4 +137,8 @@ object WorkflowRunsModule : ServerModule {
     override fun routes(route: Route, koin: Koin) {
         route.workflowRunsRoutes(koin.get())
     }
+
+    /** Workflow runs, and the notifications the hooks ask for (`/api/v1/notifications`). */
+    override suspend fun features(koin: Koin): Set<String> =
+        setOf(ServerFeatures.WORKFLOWS, ServerFeatures.NOTIFICATIONS)
 }

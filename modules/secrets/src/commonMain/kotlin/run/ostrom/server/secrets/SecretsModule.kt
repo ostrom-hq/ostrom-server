@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.secrets
 
+import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
@@ -74,4 +75,7 @@ object SecretsModule : ServerModule {
     override fun routes(route: Route, koin: Koin) {
         route.secretsRoutes(koin.get())
     }
+
+    /** Organization secrets. */
+    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.SECRETS)
 }

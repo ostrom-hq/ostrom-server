@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.governance
 
+import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.governance.domain.AnswerConfirmationUseCase
 import run.ostrom.server.governance.domain.AnswerConfirmationUseCaseImpl
 import run.ostrom.server.governance.domain.ConfirmationAudit
@@ -68,6 +69,9 @@ object GovernanceModule : ServerModule {
     override fun routes(route: Route, koin: Koin) {
         route.confirmationsRoutes(koin.get())
     }
+
+    /** The confirmations of governance writes. */
+    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.GOVERNANCE)
 
     override fun start(scope: CoroutineScope, koin: Koin) {
         val sweeper = ConfirmationSweeper(koin.get(), koin.get())

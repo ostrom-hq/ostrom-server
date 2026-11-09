@@ -334,6 +334,42 @@ A fake token endpoint must therefore name the account's own id, or none.
 The probes: `GET /health` (liveness: 200 while the dependencies answer, also while draining) and `GET /ready`
 (readiness: 200 `ready`, 503 `degraded` or `draining`), both unauthenticated.
 
+The contract's `capabilities` operation (`Capabilities` and `ServerFeatures` in ostrom-core), served by the kernel,
+answers what clients read after signing in: `apiVersion` (the contract version of the ostrom-core the server is built
+on, `ServerFeatures.API_VERSION`), `serverVersion` (the build's `ostromVersion`, `0.0.0-dev` outside CI) and
+`features`, the sorted union of every module's
+`ServerModule.features(koin)`. Any credential reads it, with no organization or scope; an anonymous call gets 401
+`unauthorized`. A module lists a key of ostrom-core's `ServerFeatures` only for what it serves **and** what is
+configured on this instance, never for a planned operation:
+
+| Module | Keys | Condition |
+|---|---|---|
+| `artifacts` | `artifacts.v1` | — |
+| `automations` | `automations.v1`, `waits.v1` | — |
+| `billing` | `billing.v1` | Stripe configured (`OSTROM_STRIPE_SECRET_KEY`) |
+| `budgets` | `budgets.v1` | — |
+| `compiler` | `packages.v1`, `workflows.v1` | — |
+| `gates` | `gates.v1` | — |
+| `gateway` | `inference.v1` | — (an organization can set its own provider keys) |
+| `governance` | `governance.v1` | — |
+| `identity` | `audit.v1` | — |
+| `import` | `import.teamcode.v1` | — |
+| `integrations-github` | `github.v1` | a GitHub App: the environment's (`OSTROM_GITHUB_APP_ID` or `_SLUG`) or the manifest flow's |
+| `mcp-relay` | `mcp.v1` | — |
+| `notifications` | `notifications.v1`, `notifications.push.v1` | — (Expo's push service needs no key; `OSTROM_EXPO_ACCESS_TOKEN` only when the project requires one) |
+| `receipts` | `receipts.v1` | — |
+| `reports` | `reports.v1` | — |
+| `rules` | `rules.v1`, `reports.v1` (the analysis) | — |
+| `runners` | `runners.v1`; `runners.cloud.v1` | the latter with a runtime driver (`OSTROM_RUNNERS_DRIVER` not `none`) |
+| `secrets` | `secrets.v1` | — |
+| `sessions` | `sessions.v1` | — |
+| `sharing` | `sharing.v1` | — |
+| `usage` | `usage.v1` | — |
+| `workflow-runs` | `workflows.v1`, `notifications.v1` (the hooks' notifications) | — |
+
+`slack.v1` and `license.v1` are not listed: the Slack module is an empty skeleton and the `ee/` license module serves
+no route yet. A module that adds a feature, or a route behind a configuration, updates its `features` and this table.
+
 The database roles of a deployment (the Helm chart creates them): an **owner**, which owns the schema and runs
 `migrate`, and a **serving role** that owns nothing, `NOSUPERUSER NOBYPASSRLS`, granted `USAGE` on the schema and,
 through `ALTER DEFAULT PRIVILEGES FOR ROLE <owner>`, `SELECT, INSERT, UPDATE, DELETE` on its tables and `USAGE, SELECT`

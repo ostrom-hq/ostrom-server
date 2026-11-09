@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.gates
 
+import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.gates.domain.repositories.GateHistory
 import run.ostrom.server.gates.domain.repositories.GatesRepository
 import run.ostrom.server.gates.domain.services.CiChecks
@@ -136,6 +137,9 @@ object GatesModule : ServerModule {
     override fun routes(route: Route, koin: Koin) {
         route.gatesRoutes(koin.get(), koin.get())
     }
+
+    /** Gates and approvals. */
+    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.GATES)
 
     /** Keeps the `ostrom.gates.pending` gauge's count, read every 30 s across organizations. */
     override fun start(scope: CoroutineScope, koin: Koin) {

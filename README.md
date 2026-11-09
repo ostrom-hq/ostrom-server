@@ -100,7 +100,11 @@ ci/build-linux.sh                                                   # dist/ostro
 docker build -t ostrom-server .                                     # distroless image, smoke-tested in CI
 ```
 
-The JVM target only runs the tests and measures coverage; nothing JVM is shipped. Locally (macOS arm64):
+The JVM target only runs the tests and measures coverage; nothing JVM is shipped. The version the server reports
+(`/health`, `/api/v1/instance`, the contract's `capabilities` operation, its logs and traces) is the Gradle property
+`ostromVersion`, written into the kernel's generated `BuildInfo.kt`: CI passes the tag for a release (`release-binaries.yml`,
+`image.yml`) and `0.0.0-edge.<time>.<sha7>` for an image of main; any other build reports `0.0.0-dev`
+(`./gradlew -PostromVersion=1.2.3 …` to set it, a semantic version only). Locally (macOS arm64):
 
 ```sh
 docker compose up -d postgres            # PostgreSQL on localhost:5432

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.runners
 
+import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.automations.domain.AutomationLauncher
 import run.ostrom.server.billing.domain.GetAgentUsageUseCase
 import run.ostrom.server.billing.domain.GetPlanLimitsUseCase
@@ -162,6 +163,14 @@ object RunnersModule : ServerModule {
         route.runnersRoutes(koin.get())
         route.terminalRoutes(koin.get())
     }
+
+    /** Registered runners; cloud runners only with a runtime driver configured (`OSTROM_RUNNERS_DRIVER`). */
+    override suspend fun features(koin: Koin): Set<String> =
+        if (koin.get<RunnersConfig>().driver == RunnersConfig.DriverKind.NONE) {
+            setOf(ServerFeatures.RUNNERS)
+        } else {
+            setOf(ServerFeatures.RUNNERS, ServerFeatures.RUNNERS_CLOUD)
+        }
 
     override fun start(scope: CoroutineScope, koin: Koin) {
         val worker = koin.get<ReconcilerWorker>()

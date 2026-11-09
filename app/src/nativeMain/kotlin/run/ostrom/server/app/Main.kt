@@ -5,6 +5,7 @@ package run.ostrom.server.app
 
 import run.ostrom.server.app.signals.ostrom_await_signal
 import run.ostrom.server.app.signals.ostrom_install_signal_handlers
+import run.ostrom.server.kernel.SERVER_VERSION
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.InvalidConfigException
 import run.ostrom.server.kernel.config.ServerConfig
@@ -16,7 +17,6 @@ import run.ostrom.server.kernel.database.connectPostgres
 import run.ostrom.server.kernel.database.migrateUnderLock
 import run.ostrom.server.kernel.database.requireRowLevelSecurity
 import run.ostrom.server.kernel.http.Readiness
-import run.ostrom.server.kernel.http.SERVER_VERSION
 import run.ostrom.server.kernel.http.configureHttp
 import run.ostrom.server.kernel.logging.JsonLogger
 import run.ostrom.server.kernel.logging.LogLevel

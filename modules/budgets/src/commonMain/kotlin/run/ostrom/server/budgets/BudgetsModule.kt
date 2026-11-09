@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.budgets
 
+import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.budgets.domain.AuditedBudgetAlerts
 import run.ostrom.server.budgets.domain.BudgetAlerts
 import run.ostrom.server.budgets.domain.BudgetDecisionCache
@@ -63,6 +64,9 @@ object BudgetsModule : ServerModule {
     override fun routes(route: Route, koin: Koin) {
         route.budgetsRoutes(koin.get())
     }
+
+    /** Spend budgets. */
+    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.BUDGETS)
 }
 
 /**

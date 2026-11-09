@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.sessions
 
+import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.gates.domain.services.GateSessions
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
@@ -77,6 +78,9 @@ object SessionsModule : ServerModule {
     override fun routes(route: Route, koin: Koin) {
         route.sessionsRoutes(koin.get(), koin.get())
     }
+
+    /** Agent sessions. */
+    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.SESSIONS)
 
     /**
      * Closes the lost sessions every 30 s; a failing run is logged by the server's scope and the next one runs. Keeps
