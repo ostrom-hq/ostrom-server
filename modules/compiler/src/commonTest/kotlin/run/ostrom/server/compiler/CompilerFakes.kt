@@ -1,0 +1,158 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+package run.ostrom.server.compiler
+
+import run.ostrom.server.compiler.domain.models.Authorship
+import run.ostrom.server.compiler.domain.models.CompilerSettings
+import run.ostrom.server.compiler.domain.models.DecisionDoc
+import run.ostrom.server.compiler.domain.models.ListedPackage
+import run.ostrom.server.compiler.domain.models.PackageAudit
+import run.ostrom.server.compiler.domain.models.PackagePin
+import run.ostrom.server.compiler.domain.models.RuleDoc
+import run.ostrom.server.compiler.domain.models.StoredPackage
+import run.ostrom.server.compiler.domain.models.StoredWorkflow
+import run.ostrom.server.compiler.domain.repositories.CompilerRepository
+import run.ostrom.server.compiler.domain.services.CompilerDocs
+import run.ostrom.server.compiler.domain.services.CompilerSources
+import run.ostrom.server.compiler.domain.services.HarnessReceiptSigner
+import run.ostrom.server.compiler.domain.services.HarnessRule
+import run.ostrom.server.compiler.domain.services.HarnessStamp
+import run.ostrom.server.compiler.domain.usecases.WorkflowDecisionSigner
+import kotlinx.serialization.json.JsonObject
+import kotlin.time.Clock
+import kotlin.time.Instant
+import kotlin.uuid.Uuid
+
+internal class SettableClock(var now: Instant = NOW) : Clock {
+    override fun now(): Instant = now
+}
+
+/** The compiler's storage in memory, one map per organization. */
+internal class MemoryCompilerRepository : CompilerRepository {
+    val workflows = mutableMapOf<Pair<Uuid, String>, StoredWorkflow>()
+    val decisions = mutableMapOf<Uuid, MutableList<DecisionDoc>>()
+    val harnesses = mutableMapOf<Triple<Uuid, String?, String>, HarnessStamp>()
+    val packages = mutableMapOf<Pair<Uuid, String>, StoredPackage>()
+    val pins = mutableMapOf<Pair<Uuid, String?>, PackagePin>()
+    val audits = mutableMapOf<Uuid, MutableList<PackageAudit>>()
+
+    override suspend fun workflows(orgId: Uuid): List<StoredWorkflow> =
+        workflows.filterKeys { it.first == orgId }.values.toList()
+
+    override suspend fun workflow(orgId: Uuid, id: String): StoredWorkflow? = workflows[orgId to id]
+
+    override suspend fun saveWorkflow(
+        orgId: Uuid,
+        id: String,
+        raw: JsonObject,
+        expectedVersion: Int?,
+        author: Authorship,
+    ): StoredWorkflow? {
+        val current = workflows[orgId to id]
+        if (current?.version != expectedVersion) return null
+        val saved = StoredWorkflow(CompilerDocs.workflow(raw), (current?.version ?: 0) + 1, author.by, author.at)
+        workflows[orgId to id] = saved
+        return saved
+    }
+
+    override suspend fun deleteWorkflow(orgId: Uuid, id: String): Boolean = workflows.remove(orgId to id) != null
+
+    override suspend fun workflowCount(orgId: Uuid): Int = workflows.keys.count { it.first == orgId }
+
+    override suspend fun lastDecisions(orgId: Uuid): List<DecisionDoc> = decisions[orgId].orEmpty()
+        .filter { (orgId to it.subjectId) in workflows }
+        .groupBy { it.subjectId }
+        .map { (_, taken) -> taken.maxBy { it.at } }
+
+    override suspend fun addDecision(orgId: Uuid, decision: DecisionDoc) {
+        decisions.getOrPut(orgId) { mutableListOf() } += decision
+    }
+
+    override suspend fun harness(orgId: Uuid, repo: String?, digest: String): HarnessStamp? =
+        harnesses[Triple(orgId, repo, digest)]
+
+    override suspend fun saveHarness(orgId: Uuid, repo: String?, digest: String, stamp: HarnessStamp): HarnessStamp =
+        harnesses.getOrPut(Triple(orgId, repo, digest)) { stamp }
+
+    /** The reads of a package by digest and of a pin, as the database would count them. */
+    var reads = 0
+
+    override suspend fun findPackage(orgId: Uuid, digest: String): StoredPackage? =
+        packages.filterKeys { it.first == orgId }.values
+            .firstOrNull { it.envelope.digest == digest || it.envelope.contentDigest == digest }
+            .also { reads++ }
+
+    override suspend fun packages(orgId: Uuid): List<StoredPackage> =
+        packages.filterKeys { it.first == orgId }.values.sortedByDescending { it.compiledAt }
+
+    override suspend fun listPackages(orgId: Uuid, repo: String?): List<ListedPackage> =
+        packages(orgId).filter { repo == null || it.envelope.repo == repo }.map { stored ->
+            val envelope = stored.envelope
+            ListedPackage(
+                envelope.version, envelope.digest, envelope.contentDigest, envelope.repo, stored.compiledAt,
+                stored.counts, stored.revoked, stored.revokedBy, stored.revokeReason,
+                pinned = pins[orgId to envelope.repo]?.contentDigest == envelope.contentDigest,
+            )
+        }
+
+    override suspend fun savePackage(orgId: Uuid, stored: StoredPackage): StoredPackage =
+        packages.getOrPut(orgId to stored.envelope.contentDigest) { stored }
+
+    override suspend fun updatePackage(orgId: Uuid, stored: StoredPackage) {
+        packages[orgId to stored.envelope.contentDigest] = stored
+    }
+
+    override suspend fun pin(orgId: Uuid, repo: String?): PackagePin? = pins[orgId to repo].also { reads++ }
+
+    override suspend fun setPin(orgId: Uuid, repo: String?, pin: PackagePin?) {
+        if (pin == null) pins.remove(orgId to repo) else pins[orgId to repo] = pin
+    }
+
+    override suspend fun audit(orgId: Uuid, line: PackageAudit) {
+        audits.getOrPut(orgId) { mutableListOf() } += line
+    }
+
+    override suspend fun auditLog(orgId: Uuid, limit: Int): List<PackageAudit> =
+        audits[orgId].orEmpty().reversed().take(limit)
+}
+
+internal class FixedSources(
+    var rules: List<RuleDoc> = emptyList(),
+    var ruleDecisions: List<DecisionDoc> = emptyList(),
+    var repos: List<String> = listOf("acme-api"),
+    var settings: CompilerSettings = CompilerSettings(),
+) : CompilerSources {
+    override suspend fun rules(orgId: Uuid): List<RuleDoc> = rules
+    override suspend fun ruleDecisions(orgId: Uuid): List<DecisionDoc> = ruleDecisions
+    override suspend fun repos(orgId: Uuid): List<String> = repos
+    override suspend fun settings(orgId: Uuid): CompilerSettings = settings
+}
+
+internal class CountingHarnessSigner : HarnessReceiptSigner {
+    val signed = mutableListOf<Pair<String, List<HarnessRule>>>()
+
+    override suspend fun sign(
+        orgId: Uuid,
+        version: String,
+        digest: String,
+        rules: List<HarnessRule>,
+        at: Instant,
+    ): String {
+        signed += version to rules
+        return "rcpt_harness_${signed.size}"
+    }
+}
+
+internal class RecordingDecisionSigner : WorkflowDecisionSigner {
+    val signed = mutableListOf<Triple<String, JsonObject?, JsonObject>>()
+
+    override suspend fun sign(
+        orgId: Uuid,
+        decision: DecisionDoc,
+        action: String,
+        before: JsonObject?,
+        after: JsonObject,
+    ): String {
+        signed += Triple(action, before, after)
+        return "rcpt_wf_${signed.size}"
+    }
+}

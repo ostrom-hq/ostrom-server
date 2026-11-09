@@ -15,12 +15,12 @@ first: it wins over this page wherever they differ.
 ```
 modules/<name>/
   build.gradle.kts                      # plugins { id("ostrom.native-module") } (= ostrom.kmp) + project(":kernel")
-  src/commonMain/kotlin/dev/ostrom/server/<pkg>/
+  src/commonMain/kotlin/run/ostrom/server/<pkg>/
     <Name>Module.kt                     # object <Name>Module : ServerModule
     domain/                             # models, repository interfaces, use cases (XXX + XXXImpl)
     infrastructure/                     # repository implementations (sqlx4k), <Name>Migrations.kt
     presentation/                       # @Resource API classes, DTOs, routes, mappers
-  src/commonTest/kotlin/dev/ostrom/server/<pkg>/
+  src/commonTest/kotlin/run/ostrom/server/<pkg>/
     *Test.kt                            # unit tests with hand-written fakes, *PostgresTest.kt with serverTest
 ```
 
@@ -359,8 +359,8 @@ caller's `traceparent`, named after the route template, returned in `tracerespon
 traced. A module adds its own work to the current trace and the server's metrics through Koin:
 
 ```kotlin
-val telemetry = koin.get<Telemetry>()      // dev.ostrom.core.telemetry
-val metrics = koin.get<OstromMetrics>()    // dev.ostrom.server.kernel.observability
+val telemetry = koin.get<Telemetry>()      // run.ostrom.core.telemetry
+val metrics = koin.get<OstromMetrics>()    // run.ostrom.server.kernel.observability
 
 telemetry.tracer.inSpan("gates.compile") { compile(request) }        // nested under the request's span
 metrics.gateRequested(GateKind.MERGE.wire)

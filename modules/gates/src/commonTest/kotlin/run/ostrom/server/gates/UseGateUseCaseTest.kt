@@ -1,0 +1,231 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+package run.ostrom.server.gates
+
+import run.ostrom.server.gates.domain.models.ActorKind
+import run.ostrom.server.gates.domain.models.Answer
+import run.ostrom.server.gates.domain.models.GateActor
+import run.ostrom.server.gates.domain.models.GateNotFoundException
+import run.ostrom.server.gates.domain.models.GateNotUsableException
+import run.ostrom.server.gates.domain.models.GateStatus
+import run.ostrom.server.gates.domain.models.NotYourGateException
+import run.ostrom.server.gates.domain.usecases.GateUse
+import run.ostrom.server.gates.fakes.GateBench
+import run.ostrom.server.gates.fakes.OTHER_ORG
+import run.ostrom.server.gates.fakes.OTHER_SESSION
+import run.ostrom.server.gates.fakes.SESSION
+import run.ostrom.server.gates.fakes.SHA_B
+import run.ostrom.server.gates.fakes.agent
+import run.ostrom.server.gates.fakes.device
+import run.ostrom.server.gates.fakes.user
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.test.runTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlin.uuid.Uuid
+
+class UseGateUseCaseTest {
+    private suspend fun approved(bench: GateBench) = bench.open(bench.pushRequest()).also { bench.answer(it, "rev-b") }
+
+    @Test
+    fun s214AYesIsUsedOnlyWithItsSignedReceipt() = runTest {
+        val bench = GateBench()
+        bench.signer.failure = IllegalStateException("receipts down")
+        val view = approved(bench)
+        assertNull(bench.repository.gates.getValue(view.gate.id).receiptId)
+        val reserve = assertFailsWith<GateNotUsableException> { bench.use(agent(), view.gate.id, GateUse.RESERVE) }
+        assertTrue("receipt" in reserve.message.orEmpty())
+        assertFailsWith<GateNotUsableException> { bench.use(agent(), view.gate.id, GateUse.CONSUME) }
+
+        bench.signer.failure = null
+        val reserved = bench.use(agent(), view.gate.id, GateUse.RESERVE)
+        assertEquals(GateStatus.RESERVED, reserved.status, "signed at reserve time, then usable")
+        assertNotNull(reserved.receiptId)
+    }
+
+    @Test
+    fun aYesIsReservedThenConsumedOnce() = runTest {
+        val bench = GateBench()
+        val view = approved(bench)
+        val reserved = bench.use(agent(), view.gate.id, GateUse.RESERVE)
+        assertEquals(GateStatus.RESERVED, reserved.status)
+        assertEquals("launch-$SESSION", reserved.reservedBy)
+
+        val consumed = bench.use(agent(), view.gate.id, GateUse.CONSUME)
+        assertEquals(GateStatus.CONSUMED, consumed.status)
+        assertEquals(bench.clock.now, consumed.consumedAt)
+
+        val again = assertFailsWith<GateNotUsableException> { bench.use(agent(), view.gate.id, GateUse.RESERVE) }
+        assertEquals("This yes was already used. Ask again: one yes covers one action.", again.message)
+    }
+
+    @Test
+    fun twoParallelToolCallsCannotBothUseTheYes() = runTest {
+        val bench = GateBench()
+        val view = approved(bench)
+        val outcomes = List(2) {
+            async {
+                try {
+                    bench.use(agent(), view.gate.id, GateUse.RESERVE).status
+                } catch (error: GateNotUsableException) {
+                    error.message
+                }
+            }
+        }.awaitAll()
+
+        assertEquals(
+            setOf<String?>("RESERVED", "This yes is already in use by another action. Ask again for this one."),
+            outcomes.map { it.toString() }.toSet(),
+        )
+    }
+
+    @Test
+    fun aReleasedYesCanBeReservedAgain() = runTest {
+        val bench = GateBench()
+        val view = approved(bench)
+        bench.use(agent(), view.gate.id, GateUse.RESERVE)
+        val released = bench.use(agent(), view.gate.id, GateUse.RELEASE)
+
+        assertEquals(GateStatus.APPROVED, released.status)
+        assertNull(released.reservedBy)
+        assertNull(released.reservedAt)
+        assertEquals(GateStatus.RESERVED, bench.use(agent(), view.gate.id, GateUse.RESERVE).status)
+    }
+
+    @Test
+    fun aYesIsReleasedOnlyOnce() = runTest {
+        val bench = GateBench()
+        val view = approved(bench)
+        bench.use(agent(), view.gate.id, GateUse.RESERVE)
+        bench.use(agent(), view.gate.id, GateUse.RELEASE)
+        bench.use(agent(), view.gate.id, GateUse.RESERVE)
+
+        // Reserve, launch, release, relaunch: a second release would put the yes back in play again and again.
+        val error = assertFailsWith<GateNotUsableException> { bench.use(agent(), view.gate.id, GateUse.RELEASE) }
+        assertEquals("This yes was already released once: use it for this action, or ask again.", error.message)
+        assertEquals(GateStatus.CONSUMED, bench.use(agent(), view.gate.id, GateUse.CONSUME).status, "Still usable")
+    }
+
+    @Test
+    fun releasingNeedsTheReservation() = runTest {
+        val bench = GateBench()
+        val view = approved(bench)
+        val error = assertFailsWith<GateNotUsableException> { bench.use(agent(), view.gate.id, GateUse.RELEASE) }
+        assertEquals("This yes is not reserved by your session: reserve it before the action.", error.message)
+    }
+
+    @Test
+    fun aHookThatDidNotReserveConsumesTheYesOnce() = runTest {
+        val bench = GateBench()
+        val view = approved(bench)
+        assertEquals(GateStatus.CONSUMED, bench.use(agent(), view.gate.id, GateUse.CONSUME).status)
+        val again = assertFailsWith<GateNotUsableException> { bench.use(agent(), view.gate.id, GateUse.CONSUME) }
+        assertEquals("This yes was already used. Ask again: one yes covers one action.", again.message)
+    }
+
+    @Test
+    fun twoParallelConsumesUseTheYesOnce() = runTest {
+        val bench = GateBench()
+        val view = approved(bench)
+        val outcomes = List(2) {
+            async {
+                try {
+                    bench.use(agent(), view.gate.id, GateUse.CONSUME).status.name
+                } catch (error: GateNotUsableException) {
+                    error.message
+                }
+            }
+        }.awaitAll()
+        assertEquals(
+            setOf<String?>("CONSUMED", "This yes was already used. Ask again: one yes covers one action."),
+            outcomes.toSet(),
+        )
+    }
+
+    @Test
+    fun consumingAShadowOrUngatedGateChangesNothing() = runTest {
+        val bench = GateBench()
+        val shadow = bench.open(bench.pushRequest(node = bench.node("rev-b", enforced = false)))
+        val ungated = bench.open(bench.pushRequest(sha = SHA_B, node = null))
+        val updates = bench.repository.gateUpdates
+        assertEquals(GateStatus.SHADOW, bench.use(agent(), shadow.gate.id, GateUse.CONSUME).status)
+        assertEquals(GateStatus.UNGATED, bench.use(agent(), ungated.gate.id, GateUse.CONSUME).status)
+        assertEquals(updates, bench.repository.gateUpdates)
+    }
+
+    @Test
+    fun aReservationHeldByAnotherSessionCannotBeConsumed() = runTest {
+        val bench = GateBench()
+        bench.open(bench.mergeRequest(session = OTHER_SESSION))
+        val view = bench.open(bench.mergeRequest(session = SESSION))
+        bench.answer(view, "rev-b")
+        bench.use(agent(OTHER_SESSION), view.gate.id, GateUse.RESERVE)
+
+        val consume = assertFailsWith<GateNotUsableException> {
+            bench.use(agent(SESSION), view.gate.id, GateUse.CONSUME)
+        }
+
+        assertEquals("This yes is already in use by another action. Ask again for this one.", consume.message)
+        val pending = bench.open(bench.pushRequest(sha = "d".repeat(40)))
+        val early = assertFailsWith<GateNotUsableException> { bench.use(agent(), pending.gate.id, GateUse.CONSUME) }
+        assertEquals("This gate is still waiting for a yes.", early.message)
+    }
+
+    @Test
+    fun onlyASessionThatAskedUsesTheYes() = runTest {
+        val bench = GateBench()
+        val view = approved(bench)
+        val strangers = listOf(
+            agent(OTHER_SESSION),
+            device(),
+            user("rev-b"),
+            GateActor("agent", run.ostrom.server.gates.fakes.ORG, ActorKind.AGENT_SESSION, null),
+        )
+        for (actor in strangers) {
+            assertFailsWith<NotYourGateException> { bench.use(actor, view.gate.id, GateUse.RESERVE) }
+        }
+        assertFailsWith<GateNotFoundException> { bench.use(agent(org = OTHER_ORG), view.gate.id, GateUse.RESERVE) }
+        assertFailsWith<GateNotFoundException> { bench.use(agent(), Uuid.random(), GateUse.RESERVE) }
+    }
+
+    // G2: once the session that asked has ended (its receipt is signed), its launch's token no longer takes up the
+    // yes; an action already under way finishes. Another launch's open session does not count.
+    @Test
+    fun aYesIsNotTakenUpOnceItsSessionHasEnded() = runTest {
+        val bench = GateBench()
+        bench.open(bench.mergeRequest(session = OTHER_SESSION))
+        val idle = bench.open(bench.mergeRequest(session = SESSION)).also { bench.answer(it, "rev-b") }
+        val running = approved(bench)
+        bench.use(agent(), running.gate.id, GateUse.RESERVE)
+        bench.sessions.closed += SESSION
+
+        for (use in listOf(GateUse.RESERVE, GateUse.CONSUME)) {
+            val error = assertFailsWith<GateNotUsableException> { bench.use(agent(), idle.gate.id, use) }
+            assertEquals("The session that asked for this yes has ended. Ask again in an open session.", error.message)
+        }
+        assertEquals(GateStatus.APPROVED, bench.repository.gates.getValue(idle.gate.id).status)
+        assertEquals(GateStatus.CONSUMED, bench.use(agent(), running.gate.id, GateUse.CONSUME).status)
+        assertEquals(GateStatus.RESERVED, bench.use(agent(OTHER_SESSION), idle.gate.id, GateUse.RESERVE).status)
+    }
+
+    @Test
+    fun aGateThatWasNotApprovedHasNoYesToReserve() = runTest {
+        val bench = GateBench()
+        val pending = bench.open(bench.pushRequest())
+        val rejected = bench.open(bench.pushRequest(sha = SHA_B)).also { bench.answer(it, "rev-b", Answer.NO) }
+        val shadow = bench.open(bench.pushRequest(sha = "c".repeat(40), node = bench.node("rev-b", enforced = false)))
+        val expected = mapOf(
+            pending.gate.id to "This gate is still waiting for a yes.",
+            rejected.gate.id to "This gate was refused.",
+            shadow.gate.id to "This action is not gated: there is no yes to reserve.",
+        )
+        for ((id, message) in expected) {
+            val error = assertFailsWith<GateNotUsableException> { bench.use(agent(), id, GateUse.RESERVE) }
+            assertEquals(message, error.message)
+        }
+    }
+}

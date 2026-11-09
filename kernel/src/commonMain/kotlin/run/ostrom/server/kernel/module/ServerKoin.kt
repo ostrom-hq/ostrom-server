@@ -1,0 +1,62 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+package run.ostrom.server.kernel.module
+
+import run.ostrom.server.kernel.audit.DiscardingOrgAuditTrail
+import run.ostrom.server.kernel.audit.OrgAuditTrail
+import run.ostrom.server.kernel.auth.PhoneUnlockProofs
+import run.ostrom.server.kernel.auth.PrincipalOrgResolver
+import run.ostrom.server.kernel.auth.RejectingPhoneUnlockProofs
+import run.ostrom.server.kernel.auth.RejectingPrincipalOrgResolver
+import run.ostrom.server.kernel.auth.RejectingServiceKeyAudit
+import run.ostrom.server.kernel.auth.RejectingTokenAuthenticator
+import run.ostrom.server.kernel.auth.ServiceKeyAudit
+import run.ostrom.server.kernel.auth.TokenAuthenticator
+import run.ostrom.server.kernel.signing.CurrentKeyring
+import run.ostrom.server.kernel.signing.InstanceKeyring
+import org.koin.core.Koin
+import org.koin.core.module.Module
+import org.koin.dsl.koinApplication
+import org.koin.dsl.module
+
+/**
+ * Builds the server's Koin: the kernel, then every module, **without overrides** (two modules binding the same type
+ * fail the start instead of one silently replacing the other). The only defaults a module may replace are the
+ * [TokenAuthenticator], the [PrincipalOrgResolver], the [OrgAuditTrail], the [ServiceKeyAudit], the
+ * [PhoneUnlockProofs] and the [InstanceKeyring]: when no module binds them (before the identity, orgs and instance
+ * modules exist, or in a module's own tests), every token is rejected, no one is a member of any organization, the
+ * audit trail writes nothing, no service key acts, no phone unlock proves a yes and only the current key verifies.
+ *
+ * @param kernel The kernel definitions ([kernelModule]).
+ * @param modules The functional modules.
+ * @param overrides Test-only replacements (fakes), loaded before anything is built, with overrides allowed.
+ *
+ * @return The Koin instance; close it when the server stops.
+ */
+fun serverKoin(kernel: Module, modules: List<ServerModule>, overrides: Module? = null): Koin {
+    val koin = koinApplication {
+        allowOverride(false)
+        modules(listOf(kernel) + modules.map { it.koinModule })
+    }.koin
+    // Overrides first: the checks below build what they find, and a real binding built and then overridden is never
+    // dropped when Koin closes, so the next test of the same module would reuse it (and its closed pool).
+    if (overrides != null) koin.loadModules(listOf(overrides), allowOverride = true)
+    if (koin.getOrNull<TokenAuthenticator>() == null) {
+        koin.loadModules(listOf(module { single<TokenAuthenticator> { RejectingTokenAuthenticator() } }))
+    }
+    if (koin.getOrNull<PrincipalOrgResolver>() == null) {
+        koin.loadModules(listOf(module { single<PrincipalOrgResolver> { RejectingPrincipalOrgResolver() } }))
+    }
+    if (koin.getOrNull<OrgAuditTrail>() == null) {
+        koin.loadModules(listOf(module { single<OrgAuditTrail> { DiscardingOrgAuditTrail() } }))
+    }
+    if (koin.getOrNull<ServiceKeyAudit>() == null) {
+        koin.loadModules(listOf(module { single<ServiceKeyAudit> { RejectingServiceKeyAudit() } }))
+    }
+    if (koin.getOrNull<PhoneUnlockProofs>() == null) {
+        koin.loadModules(listOf(module { single<PhoneUnlockProofs> { RejectingPhoneUnlockProofs() } }))
+    }
+    if (koin.getOrNull<InstanceKeyring>() == null) {
+        koin.loadModules(listOf(module { single<InstanceKeyring> { CurrentKeyring(get()) } }))
+    }
+    return koin
+}

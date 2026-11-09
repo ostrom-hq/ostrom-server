@@ -16,14 +16,14 @@ dependencyResolutionManagement {
     repositories {
         mavenCentral()
         // ostrom-core is published to GitHub Packages (private): token from GITHUB_ACTOR / GITHUB_TOKEN in CI,
-        // or gpr.user / gpr.key in ~/.gradle/gradle.properties locally. Only dev.ostrom is looked up there.
+        // or gpr.user / gpr.key in ~/.gradle/gradle.properties locally. Only run.ostrom is looked up there.
         maven("https://maven.pkg.github.com/ostrom-hq/ostrom-core") {
             name = "ostromCore"
             credentials {
                 username = providers.gradleProperty("gpr.user").orElse(providers.environmentVariable("GITHUB_ACTOR")).orNull
                 password = providers.gradleProperty("gpr.key").orElse(providers.environmentVariable("GITHUB_TOKEN")).orNull
             }
-            content { includeGroupAndSubgroups("dev.ostrom") }
+            content { includeGroupAndSubgroups("run.ostrom") }
         }
     }
 }
@@ -36,7 +36,7 @@ if (providers.gradleProperty("ostrom.core.local").orNull == "true") {
     includeBuild("../ostrom-core") {
         dependencySubstitution {
             for (module in listOf("api", "receipts", "telemetry")) {
-                substitute(module("dev.ostrom:ostrom-$module")).using(project(":$module"))
+                substitute(module("run.ostrom:ostrom-$module")).using(project(":$module"))
             }
         }
     }

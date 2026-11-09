@@ -1,0 +1,183 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+package run.ostrom.server.orgs
+
+import run.ostrom.server.kernel.auth.OrgRole
+import run.ostrom.server.orgs.domain.ChangeRoleUseCaseImpl
+import run.ostrom.server.orgs.domain.CountMembersUseCaseImpl
+import run.ostrom.server.orgs.domain.GetMemberUseCaseImpl
+import run.ostrom.server.orgs.domain.InvalidOrgRequestException
+import run.ostrom.server.orgs.domain.LeaveOrgUseCaseImpl
+import run.ostrom.server.orgs.domain.ListMembersUseCaseImpl
+import run.ostrom.server.orgs.domain.MAX_MEMBER_PAGE
+import run.ostrom.server.orgs.domain.MAX_MEMBER_QUERY
+import run.ostrom.server.orgs.domain.Member
+import run.ostrom.server.orgs.domain.MemberNotFoundException
+import run.ostrom.server.orgs.domain.MembersRepository
+import run.ostrom.server.orgs.domain.NotAllowedException
+import run.ostrom.server.orgs.domain.Org
+import run.ostrom.server.orgs.domain.OrgNotFoundException
+import run.ostrom.server.orgs.domain.Person
+import run.ostrom.server.orgs.domain.RemoveMemberUseCaseImpl
+import run.ostrom.server.orgs.fakes.OrgsWorld
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.minutes
+import kotlin.uuid.Uuid
+import kotlinx.coroutines.test.runTest
+
+class MemberUseCasesTest {
+    private val world = OrgsWorld()
+    private val org =
+        Org(Uuid.random(), "acme", "Acme", null, null, world.clock.now).also {
+            world.store.orgs[it.id] = it
+        }
+    private val ada = world.people.add("ada")
+    private val bob = world.people.add("bob")
+    private val carl = world.people.add("carl")
+    private val dana = world.people.add("dana")
+
+    init {
+        join(ada, OrgRole.OWNER)
+        join(bob, OrgRole.ADMIN)
+        join(carl, OrgRole.MEMBER)
+        join(dana, OrgRole.ADMIN)
+    }
+
+    private fun join(person: Person, role: OrgRole): Member {
+        world.clock.now += 1.minutes
+        val member = Member(Uuid.random(), org.id, person.id, role, world.clock.now)
+        world.store.members[member.id] = member
+        return member
+    }
+
+    private suspend fun roleOf(person: Person) = world.members.findByUser(org.id, person.id)?.role
+
+    @Test
+    fun membersSeeEveryoneOldestFirstWithTheirProfile() = runTest {
+        // A user deleted from the identity module is no longer shown.
+        val ghost =
+            Member(
+                Uuid.random(),
+                org.id,
+                Uuid.random(),
+                OrgRole.MEMBER,
+                world.clock.now + 5.minutes,
+            )
+        world.store.members[ghost.id] = ghost
+        val list = ListMembersUseCaseImpl(world.orgs, world.members, world.people)
+
+        val whole = list(org.id, carl.id, null, MAX_MEMBER_PAGE)
+        val members = whole.items
+
+        assertEquals(listOf("ada", "bob", "carl", "dana"), members.map { it.login })
+        assertNull(whole.next)
+        assertEquals("ada@example.com", list(org.id, bob.id, null, MAX_MEMBER_PAGE).items.first().email)
+        assertFailsWith<OrgNotFoundException> { list(org.id, Uuid.random(), null, MAX_MEMBER_PAGE) }
+        // Two at a time, each page after the previous one's next; the ghost (no person) is read, not shown.
+        val first = list(org.id, carl.id, null, 2)
+        assertEquals(listOf("ada", "bob"), first.items.map { it.login })
+        val second = list(org.id, carl.id, first.next, 2)
+        assertEquals(listOf("carl", "dana"), second.items.map { it.login })
+        val third = list(org.id, carl.id, second.next, 2)
+        assertTrue(third.items.isEmpty())
+        assertNull(third.next)
+        assertFailsWith<InvalidOrgRequestException> { list(org.id, carl.id, Uuid.random(), 2) }
+        // The last member as the cursor names a member: an empty page, not a refusal.
+        assertTrue(list(org.id, carl.id, ghost.id, 2).items.isEmpty())
+        // The search: a prefix of the login or name, any case, after a member; the ghost is never found.
+        assertEquals(listOf("bob"), list(org.id, carl.id, null, 2, "B").items.map { it.login })
+        val afterBob = list(org.id, carl.id, whole.items[1].member.id, 2, "d")
+        assertEquals(listOf("dana"), afterBob.items.map { it.login })
+        assertNull(afterBob.next)
+        assertFailsWith<InvalidOrgRequestException> { list(org.id, carl.id, Uuid.random(), 2, "d") }
+        // A person deleted between the search and the read of the page is not shown.
+        val vanished = object : MembersRepository by world.members {
+            override suspend fun search(orgId: Uuid, prefix: String, after: Uuid?, limit: Int) =
+                world.members.page(orgId, after, limit)
+        }
+        val listWithAVanished = ListMembersUseCaseImpl(world.orgs, vanished, world.people)
+        assertEquals(4, listWithAVanished(org.id, carl.id, null, 10, "z").items.size)
+        for (query in listOf("", "x".repeat(MAX_MEMBER_QUERY + 1))) {
+            assertFailsWith<InvalidOrgRequestException> { list(org.id, carl.id, null, 2, query) }
+        }
+        for (limit in listOf(0, MAX_MEMBER_PAGE + 1)) {
+            assertFailsWith<InvalidOrgRequestException> { list(org.id, carl.id, null, limit) }
+        }
+        val get = GetMemberUseCaseImpl(world.orgs, world.members, world.people)
+        assertEquals(OrgRole.ADMIN, get(org.id, carl.id, "bob").member.role)
+        assertFailsWith<MemberNotFoundException> { get(org.id, carl.id, "nobody") }
+        assertEquals(5, CountMembersUseCaseImpl(world.members)(org.id))
+    }
+
+    @Test
+    fun onlyAnOwnerOrAnAdminSeesTheOtherMembersAddresses() = runTest {
+        val list = ListMembersUseCaseImpl(world.orgs, world.members, world.people)
+        val get = GetMemberUseCaseImpl(world.orgs, world.members, world.people)
+
+        // A member (or a token of theirs: the CLI's, the app's) sees their own address, never the others'.
+        val seenByMember = list(org.id, carl.id, null, MAX_MEMBER_PAGE).items.associate { it.login to it.email }
+
+        assertEquals(mapOf("ada" to null, "bob" to null, "carl" to "carl@example.com", "dana" to null), seenByMember)
+        assertNull(get(org.id, carl.id, "ada").email)
+        assertEquals("carl@example.com", get(org.id, carl.id, "carl").email)
+        assertEquals(
+            listOf("ada@example.com", "bob@example.com", "carl@example.com", "dana@example.com"),
+            list(org.id, ada.id, null, MAX_MEMBER_PAGE).items.map { it.email },
+        )
+        assertEquals("carl@example.com", get(org.id, bob.id, "carl").email)
+    }
+
+    @Test
+    fun rolesChangeWithinWhatTheCallerManages() = runTest {
+        val change = ChangeRoleUseCaseImpl(world.orgs, world.members, world.people, world.audit)
+
+        assertEquals(OrgRole.APPROVER, change(org.id, bob.id, "carl", OrgRole.APPROVER).member.role)
+        assertEquals(OrgRole.APPROVER, roleOf(carl))
+        assertEquals(
+            "org.member.role_changed" to
+                mapOf("login" to "carl", "from" to "member", "to" to "approver"),
+            world.audit.events.single(),
+        )
+        assertEquals(OrgRole.APPROVER, change(org.id, bob.id, "carl", OrgRole.APPROVER).member.role)
+        assertEquals(1, world.audit.events.size, "An unchanged role records nothing")
+
+        assertFailsWith<InvalidOrgRequestException> { change(org.id, ada.id, "bob", OrgRole.OWNER) }
+        assertFailsWith<NotAllowedException> { change(org.id, bob.id, "bob", OrgRole.MEMBER) }
+        assertFailsWith<NotAllowedException> { change(org.id, bob.id, "dana", OrgRole.MEMBER) }
+        assertFailsWith<NotAllowedException> { change(org.id, bob.id, "carl", OrgRole.ADMIN) }
+        assertFailsWith<NotAllowedException> { change(org.id, carl.id, "dana", OrgRole.MEMBER) }
+        assertFailsWith<NotAllowedException> { change(org.id, bob.id, "ada", OrgRole.MEMBER) }
+        assertEquals(OrgRole.BILLING, change(org.id, ada.id, "dana", OrgRole.BILLING).member.role)
+    }
+
+    @Test
+    fun membersAreRemovedWithinWhatTheCallerManages() = runTest {
+        val remove = RemoveMemberUseCaseImpl(world.orgs, world.members, world.people, world.audit)
+
+        assertFailsWith<NotAllowedException> { remove(org.id, bob.id, "bob") }
+        assertFailsWith<NotAllowedException> { remove(org.id, bob.id, "dana") }
+        assertFailsWith<NotAllowedException> { remove(org.id, bob.id, "ada") }
+        remove(org.id, bob.id, "carl")
+        assertNull(roleOf(carl))
+        assertEquals("org.member.removed" to mapOf("login" to "carl"), world.audit.events.single())
+        remove(org.id, ada.id, "dana")
+        assertNull(roleOf(dana))
+    }
+
+    @Test
+    fun anyoneButTheOwnerLeaves() = runTest {
+        val leave = LeaveOrgUseCaseImpl(world.orgs, world.members, world.audit)
+
+        assertEquals(
+            "Transfer the ownership or delete the organization before leaving.",
+            assertFailsWith<NotAllowedException> { leave(org.id, ada.id) }.message,
+        )
+        leave(org.id, carl.id)
+        assertNull(roleOf(carl))
+        assertEquals("org.member.left", world.audit.events.single().first)
+        assertFailsWith<OrgNotFoundException> { leave(org.id, carl.id) }
+    }
+}

@@ -1,0 +1,210 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+package run.ostrom.server.mcprelay
+
+import run.ostrom.server.kernel.config.ConfigSource
+import run.ostrom.server.kernel.config.InvalidConfigException
+import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.logging.Logger
+import run.ostrom.server.kernel.module.ServerModule
+import run.ostrom.server.mcprelay.domain.ApprovalRequester
+import run.ostrom.server.mcprelay.domain.AssignMcpServerUseCase
+import run.ostrom.server.mcprelay.domain.AssignMcpServerUseCaseImpl
+import run.ostrom.server.mcprelay.domain.CreateArgumentPolicyUseCase
+import run.ostrom.server.mcprelay.domain.CreateArgumentPolicyUseCaseImpl
+import run.ostrom.server.mcprelay.domain.CreateMcpServerUseCase
+import run.ostrom.server.mcprelay.domain.CreateMcpServerUseCaseImpl
+import run.ostrom.server.mcprelay.domain.DeleteArgumentPolicyUseCase
+import run.ostrom.server.mcprelay.domain.DeleteArgumentPolicyUseCaseImpl
+import run.ostrom.server.mcprelay.domain.DeleteMcpServerUseCase
+import run.ostrom.server.mcprelay.domain.DeleteMcpServerUseCaseImpl
+import run.ostrom.server.mcprelay.domain.GetMcpSettingsUseCase
+import run.ostrom.server.mcprelay.domain.GetMcpSettingsUseCaseImpl
+import run.ostrom.server.mcprelay.domain.ListArgumentPoliciesUseCase
+import run.ostrom.server.mcprelay.domain.ListArgumentPoliciesUseCaseImpl
+import run.ostrom.server.mcprelay.domain.ListMcpAssignmentsUseCase
+import run.ostrom.server.mcprelay.domain.ListMcpAssignmentsUseCaseImpl
+import run.ostrom.server.mcprelay.domain.ListMcpCallsUseCase
+import run.ostrom.server.mcprelay.domain.ListMcpCallsUseCaseImpl
+import run.ostrom.server.mcprelay.domain.ListMcpServersUseCase
+import run.ostrom.server.mcprelay.domain.ListMcpServersUseCaseImpl
+import run.ostrom.server.mcprelay.domain.ListMemberServersUseCase
+import run.ostrom.server.mcprelay.domain.ListMemberServersUseCaseImpl
+import run.ostrom.server.mcprelay.domain.McpCallLimiter
+import run.ostrom.server.mcprelay.domain.McpHostAvailability
+import run.ostrom.server.mcprelay.domain.McpLimits
+import run.ostrom.server.mcprelay.domain.McpRelayRepository
+import run.ostrom.server.mcprelay.domain.McpServerAdministration
+import run.ostrom.server.mcprelay.domain.McpUpstream
+import run.ostrom.server.mcprelay.domain.McpUsageUseCase
+import run.ostrom.server.mcprelay.domain.McpUsageUseCaseImpl
+import run.ostrom.server.mcprelay.domain.NoApprovalRequester
+import run.ostrom.server.mcprelay.domain.PutMcpSettingsUseCase
+import run.ostrom.server.mcprelay.domain.PutMcpSettingsUseCaseImpl
+import run.ostrom.server.mcprelay.domain.RelayDeadlines
+import run.ostrom.server.mcprelay.domain.RelayLimits
+import run.ostrom.server.mcprelay.domain.RelayMcpMessageUseCase
+import run.ostrom.server.mcprelay.domain.RelayMcpMessageUseCaseImpl
+import run.ostrom.server.mcprelay.domain.UnassignMcpServerUseCase
+import run.ostrom.server.mcprelay.domain.UnassignMcpServerUseCaseImpl
+import run.ostrom.server.mcprelay.domain.UpdateMcpServerUseCase
+import run.ostrom.server.mcprelay.domain.UpdateMcpServerUseCaseImpl
+import run.ostrom.server.mcprelay.infrastructure.HostMcpUpstream
+import run.ostrom.server.mcprelay.infrastructure.HttpMcpUpstream
+import run.ostrom.server.mcprelay.infrastructure.McpHostConfig
+import run.ostrom.server.mcprelay.infrastructure.McpRelayMigrations
+import run.ostrom.server.mcprelay.infrastructure.McpRelayRepositoryImpl
+import run.ostrom.server.mcprelay.infrastructure.TransportMcpUpstream
+import run.ostrom.server.mcprelay.infrastructure.UpstreamAddressGuard
+import run.ostrom.server.mcprelay.presentation.McpRelayRoutesDependencies
+import run.ostrom.server.mcprelay.presentation.mcpRelayRoutes
+import run.ostrom.server.secrets.domain.CallerResolver
+import run.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
+import io.ktor.client.HttpClient
+import io.ktor.server.routing.Route
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import org.koin.core.Koin
+import org.koin.core.module.Module
+import org.koin.core.qualifier.named
+import org.koin.dsl.module
+import org.koin.dsl.onClose
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.milliseconds
+
+/**
+ * The relay's configuration, read once (`OSTROM_MCP_*`).
+ *
+ * @property host The MCP host running stdio servers, or null.
+ * @property allowPrivateUpstreams Whether HTTP servers may be on the private network (self-hosted).
+ * @property deadlines List and call deadlines.
+ */
+data class McpRelayConfig(val host: McpHostConfig?, val allowPrivateUpstreams: Boolean, val deadlines: RelayDeadlines) {
+    /** Reading the configuration. */
+    companion object {
+        private val DEADLINE_MILLIS = 1_000L..600_000L
+        private const val LIST_MILLIS = 15_000L
+        private const val CALL_MILLIS = 60_000L
+
+        /**
+         * Reads it.
+         *
+         * @throws InvalidConfigException When a value is malformed.
+         */
+        fun from(source: ConfigSource): McpRelayConfig {
+            val url = source["OSTROM_MCP_HOST_URL"]?.takeIf { it.isNotBlank() }
+            val token = source["OSTROM_MCP_HOST_TOKEN"]?.takeIf { it.isNotBlank() }
+            val host = when {
+                url == null && token == null -> null
+                url != null && token != null -> McpHostConfig(url, token)
+                else -> throw InvalidConfigException("OSTROM_MCP_HOST_URL and OSTROM_MCP_HOST_TOKEN go together.")
+            }
+            fun millis(key: String, default: Long): Long {
+                val value = source[key] ?: return default
+                return value.toLongOrNull()?.takeIf { it in DEADLINE_MILLIS }
+                    ?: throw InvalidConfigException("$key is 1000 to 600000 ms.")
+            }
+            return McpRelayConfig(
+                host = host,
+                allowPrivateUpstreams = source["OSTROM_MCP_ALLOW_PRIVATE_UPSTREAMS"] == "true",
+                deadlines = RelayDeadlines(
+                    list = millis("OSTROM_MCP_LIST_TIMEOUT_MS", LIST_MILLIS).milliseconds,
+                    call = millis("OSTROM_MCP_CALL_TIMEOUT_MS", CALL_MILLIS).milliseconds,
+                ),
+            )
+        }
+    }
+}
+
+/** The MCP relay module. */
+object McpRelayModule : ServerModule {
+    override val name: String = "mcp-relay"
+
+    /** The Koin name of the relay's HTTP client (redirects off), replaced by tests. */
+    val HTTP_CLIENT = named("mcpRelayHttpClient")
+
+    override val koinModule: Module = module {
+        single { McpRelayConfig.from(get()) }
+        single(HTTP_CLIENT) {
+            HttpClient {
+                followRedirects = false
+                expectSuccess = false
+            }
+        } onClose { it?.close() } // Its selector holds a thread of Dispatchers.IO until then (StoppedApplicationsTest).
+        single<McpRelayRepository> { McpRelayRepositoryImpl(get()) }
+        single<McpUpstream> {
+            val config = get<McpRelayConfig>()
+            val client = get<HttpClient>(HTTP_CLIENT)
+            TransportMcpUpstream(
+                http = HttpMcpUpstream(client, UpstreamAddressGuard(config.allowPrivateUpstreams)),
+                host = config.host?.let { HostMcpUpstream(client, it) },
+            )
+        }
+        single { McpHostAvailability { get<McpRelayConfig>().host != null } }
+        single { McpCallLimiter(McpLimits(), get()) }
+        single { McpServerAdministration(get(), get(), get(), get()) }
+        single<CreateMcpServerUseCase> { CreateMcpServerUseCaseImpl(get()) }
+        single<UpdateMcpServerUseCase> { UpdateMcpServerUseCaseImpl(get()) }
+        single<DeleteMcpServerUseCase> { DeleteMcpServerUseCaseImpl(get()) }
+        single<ListMcpServersUseCase> { ListMcpServersUseCaseImpl(get()) }
+        single<AssignMcpServerUseCase> { AssignMcpServerUseCaseImpl(get(), get(), get()) }
+        single<UnassignMcpServerUseCase> { UnassignMcpServerUseCaseImpl(get()) }
+        single<ListMcpAssignmentsUseCase> { ListMcpAssignmentsUseCaseImpl(get()) }
+        single<CreateArgumentPolicyUseCase> { CreateArgumentPolicyUseCaseImpl(get(), get()) }
+        single<DeleteArgumentPolicyUseCase> { DeleteArgumentPolicyUseCaseImpl(get()) }
+        single<ListArgumentPoliciesUseCase> { ListArgumentPoliciesUseCaseImpl(get()) }
+        single<GetMcpSettingsUseCase> { GetMcpSettingsUseCaseImpl(get()) }
+        single<PutMcpSettingsUseCase> { PutMcpSettingsUseCaseImpl(get()) }
+        single<ListMcpCallsUseCase> { ListMcpCallsUseCaseImpl(get()) }
+        single<McpUsageUseCase> { McpUsageUseCaseImpl(get(), get()) }
+        single<ListMemberServersUseCase> { ListMemberServersUseCaseImpl(get()) }
+        single<RelayMcpMessageUseCase> {
+            RelayMcpMessageUseCaseImpl(
+                repository = get(),
+                revealSecrets = get(),
+                upstream = get(),
+                approvals = getOrNull<ApprovalRequester>() ?: NoApprovalRequester(),
+                limits = RelayLimits(get(), get<McpRelayConfig>().deadlines),
+                clock = get(),
+            )
+        }
+        single {
+            McpRelayRoutesDependencies(
+                getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get()),
+                get(), get(), get(), get(), get(), get(), get(), get(), get(),
+                get(), get(), get(), get(), get(), get(), get(), get(), get(),
+            )
+        }
+    }
+
+    override val migrations: List<SchemaMigration> = McpRelayMigrations
+
+    override suspend fun initialize(koin: Koin) {
+        koin.get<McpRelayConfig>()
+    }
+
+    override fun routes(route: Route, koin: Koin) {
+        route.mcpRelayRoutes(koin.get())
+    }
+
+    override fun start(scope: CoroutineScope, koin: Koin) {
+        val repository = koin.get<McpRelayRepository>()
+        val clock = koin.get<Clock>()
+        val logger = koin.get<Logger>()
+        scope.launch {
+            while (true) {
+                try {
+                    repository.purgeCalls(clock.now() - 30.days)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    logger.warn("mcp journal purge failed", mapOf("error" to error::class.simpleName))
+                }
+                delay(1.hours)
+            }
+        }
+    }
+}
