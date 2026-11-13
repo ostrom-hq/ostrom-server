@@ -137,15 +137,14 @@ class ArtifactAdministrationTest {
     @Test
     fun eachFailedReadBackIsNamedByItsCode() = runTest {
         configured()
-        val cases = listOf<Pair<InMemoryBucket.() -> Unit, StorageTestStep>>(
-            { forget = true } to StorageTestStep("get", false, null, "missing"),
-            { corrupt = true } to StorageTestStep("get", false, null, "digest_mismatch"),
-            { hideListing = true } to StorageTestStep("list", false, null, "not_listed"),
-            { refuseDelete = true } to StorageTestStep("delete", false, null, "not_deleted"),
-            { keepDeleted = true } to StorageTestStep("delete", false, null, "still_present"),
+        val cases = listOf(
+            InMemoryBucket().apply { forget = true } to StorageTestStep("get", false, null, "missing"),
+            InMemoryBucket().apply { corrupt = true } to StorageTestStep("get", false, null, "digest_mismatch"),
+            InMemoryBucket().apply { hideListing = true } to StorageTestStep("list", false, null, "not_listed"),
+            InMemoryBucket().apply { refuseDelete = true } to StorageTestStep("delete", false, null, "not_deleted"),
+            InMemoryBucket().apply { keepDeleted = true } to StorageTestStep("delete", false, null, "still_present"),
         )
-        for ((setUp, failed) in cases) {
-            val faulty = InMemoryBucket().apply(setUp)
+        for ((faulty, failed) in cases) {
             val result = ArtifactAdministrationUseCaseImpl(storage, faulty, { it.contentHashCode().toString() }, clock)
                 .testStorage(admin)
             assertFalse(result.ok)
