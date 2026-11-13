@@ -72,6 +72,9 @@ jib {
         user = "65532:65532"
         workingDirectory = "/var/lib/ostrom"
         entrypoint = listOf("/usr/local/bin/ostrom-server")
+        // Written to /app/jib-main-class-file, read by the launcher: with a custom entrypoint jib does not take it
+        // from `application` and would write `could-not-infer-a-main-class`.
+        mainClass = "run.ostrom.server.app.MainKt"
         environment = mapOf(
             "OSTROM_SIGNING_KEY_FILE" to "/var/lib/ostrom/instance-key.pem",
             // TeamCode's options (helm values.yaml:110): the heap follows the container's limit, and an
