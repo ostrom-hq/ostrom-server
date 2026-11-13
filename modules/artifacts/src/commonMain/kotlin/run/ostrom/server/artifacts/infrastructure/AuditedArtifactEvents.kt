@@ -3,9 +3,9 @@ package run.ostrom.server.artifacts.infrastructure
 
 import run.ostrom.server.artifacts.domain.ArtifactCaller
 import run.ostrom.server.artifacts.domain.ArtifactEvents
+import run.ostrom.server.kernel.audit.MAX_AUDIT_DETAIL
 import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.audit.OrgAuditTrail
-import run.ostrom.server.kernel.audit.auditDetails
 import kotlin.uuid.Uuid
 
 /**
@@ -22,8 +22,8 @@ internal class AuditedArtifactEvents(private val trail: OrgAuditTrail) : Artifac
         details: Map<String, String?>,
     ) {
         val principal = caller.principal ?: return
-        val subject = artifactId?.toString() ?: NONE
-        val facts = auditDetails(*details.toList().toTypedArray())
+        val subject = if (artifactId == null) NONE else artifactId.toString()
+        val facts = details.mapNotNull { (key, value) -> value?.let { key to it.take(MAX_AUDIT_DETAIL) } }.toMap()
         trail.record(OrgAuditRecord(caller.orgId, principal, "artifact.$event", "artifact", subject, facts))
     }
 
