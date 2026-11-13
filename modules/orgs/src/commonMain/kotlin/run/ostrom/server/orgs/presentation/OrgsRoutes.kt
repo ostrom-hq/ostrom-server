@@ -226,12 +226,9 @@ private suspend fun OrgsRoutesDependencies.member(
  */
 internal fun AuthenticatedPrincipal.userId(): Uuid {
     // A service key of member scopes acts as the person who created it; any other key or agent is nobody here.
-    val person = when (kind) {
-        PrincipalKind.USER -> subjectId
-        PrincipalKind.SERVICE -> onBehalfOf
-        else -> null
-    }
-    val id = Uuid.parseOrNull(person.orEmpty())
+    val service = kind == PrincipalKind.SERVICE
+    val person = if (service) onBehalfOf else subjectId
+    val id = Uuid.parseOrNull(person.orEmpty()).takeIf { service || kind == PrincipalKind.USER }
     return id
         ?: throw OstromException(
             ErrorKind.FORBIDDEN,
