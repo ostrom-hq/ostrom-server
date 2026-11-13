@@ -7,7 +7,6 @@ import run.ostrom.server.gates.domain.services.GateChannel
 import run.ostrom.server.gates.domain.services.GateGitHubAccounts
 import run.ostrom.server.gates.domain.services.PullRequestHeads
 import run.ostrom.server.integrations.github.domain.CloudSessionsSwitch
-import run.ostrom.server.integrations.github.domain.ConfiguredInstanceAdmins
 import run.ostrom.server.integrations.github.domain.GitHubAccessResolver
 import run.ostrom.server.integrations.github.domain.GitHubAccounts
 import run.ostrom.server.integrations.github.domain.GitHubApi
@@ -40,6 +39,7 @@ import run.ostrom.server.integrations.github.domain.ListGitHubReposUseCaseImpl
 import run.ostrom.server.integrations.github.domain.ListGitHubTeamsUseCase
 import run.ostrom.server.integrations.github.domain.ListGitHubTeamsUseCaseImpl
 import run.ostrom.server.integrations.github.domain.OrgReferences
+import run.ostrom.server.integrations.github.domain.StoredInstanceAdmins
 import run.ostrom.server.integrations.github.domain.installPage
 import run.ostrom.server.integrations.github.domain.oauthApp
 import run.ostrom.server.integrations.github.infrastructure.AppJwts
@@ -98,7 +98,7 @@ val GITHUB_HTTP = named("github-http")
  * [RepositoryReader], which reads the files, CODEOWNERS and branch protection of the installation's
  * repositories; and the members' GitHub links, which give each member's cloud sessions their own Git and `gh` access
  * (device flow, web flow, refresh, unlink). Its settings come from the
- * environment (`OSTROM_GITHUB_*`, `OSTROM_PUBLIC_URL`, `OSTROM_INSTANCE_ADMINS`).
+ * environment (`OSTROM_GITHUB_*`, `OSTROM_PUBLIC_URL`; the instance's administrators are the admin module's).
  */
 object GitHubIntegrationModule : ServerModule {
     override val name: String = "integrations-github"
@@ -147,7 +147,7 @@ object GitHubIntegrationModule : ServerModule {
         single { GitHubDirectorySync(get(), get(), get(), get(), get()) }
         single<ListGitHubReposUseCase> { ListGitHubReposUseCaseImpl(get(), get()) }
         single<ListGitHubTeamsUseCase> { ListGitHubTeamsUseCaseImpl(get(), get()) }
-        single<InstanceAdmins> { ConfiguredInstanceAdmins(get<GitHubAppSetup>().instanceAdmins) }
+        single<InstanceAdmins> { StoredInstanceAdmins(get()) }
         single {
             val settings = get<GitHubSettings>()
             val setup = get<GitHubAppSetup>()

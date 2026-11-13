@@ -5,6 +5,7 @@ import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
+import run.ostrom.server.kernel.settings.InstanceAdministrators
 import dev.whyoleg.cryptography.CryptographyProvider
 import dev.whyoleg.cryptography.algorithms.SHA256
 import kotlinx.coroutines.CancellationException
@@ -46,14 +47,16 @@ interface InstanceAdmins {
 }
 
 /**
- * [InstanceAdmins] from the configuration (`OSTROM_INSTANCE_ADMINS`, the user ids of the administrators): a person,
- * never a token of an agent, a device or a service. Nobody without the setting.
+ * [InstanceAdmins] on the instance's stored administrators (the admin module, Admin → Administrators in the console):
+ * a person, never a token of an agent, a device or a service.
  *
- * @param userIds The administrators' user ids.
+ * @param administrators The instance's administrators.
  */
-class ConfiguredInstanceAdmins(private val userIds: Set<String>) : InstanceAdmins {
-    override suspend fun isAdmin(principal: AuthenticatedPrincipal): Boolean =
-        principal.kind == PrincipalKind.USER && principal.subjectId in userIds
+class StoredInstanceAdmins(private val administrators: InstanceAdministrators) : InstanceAdmins {
+    override suspend fun isAdmin(principal: AuthenticatedPrincipal): Boolean {
+        val person = Uuid.parseOrNull(principal.subjectId)?.takeIf { principal.kind == PrincipalKind.USER }
+        return person != null && administrators.isAdmin(person)
+    }
 }
 
 /**

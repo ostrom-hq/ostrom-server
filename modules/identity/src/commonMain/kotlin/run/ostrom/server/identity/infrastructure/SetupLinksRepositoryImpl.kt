@@ -5,6 +5,8 @@ import run.ostrom.server.identity.domain.SetupLink
 import run.ostrom.server.identity.domain.SetupLinksRepository
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -51,4 +53,8 @@ class SetupLinksRepositoryImpl(private val driver: Driver) : SetupLinksRepositor
     override suspend fun anyAccount(): Boolean = driver.fetchAll(
         Statement.create("SELECT 1 FROM identity_users LIMIT 1"),
     ).getOrThrow().firstOrNull() != null
+
+    override suspend fun owners(): Map<Uuid, Instant> = driver.fetchAll(
+        "SELECT used_by, used_at FROM identity_setup_links WHERE used_by IS NOT NULL ORDER BY used_at",
+    ).getOrThrow().associate { it.get("used_by").asUuid() to it.get("used_at").asInstant() }
 }

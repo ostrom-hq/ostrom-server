@@ -40,7 +40,7 @@ that its memory peak stays under the chart's limit (512Mi): a warning until #266
 7. **Never swallow `CancellationException`**: rethrow it before any broad catch, no `runCatching` around suspend code, cleanup in `withContext(NonCancellable)`. `scripts/check-conventions.py` fails the build otherwise.
 8. Contract changes are additive: new fields optional, removal only after the optional phase; every sealed subclass has a stable `@SerialName`.
 9. Never log credentials, tokens, prompts, response bodies or raw provider errors.
-10. Configuration is read once from `OSTROM_*` variables into a typed object; no feature switch in an environment variable.
+10. Only what the server needs to start is read from `OSTROM_*` variables, once, into a typed object; every other setting is an administrator's, in the console, stored in PostgreSQL with its secrets sealed (`SettingsSection`, docs/MODULES.md "Settings in the console"). No feature switch in an environment variable.
 11. Tests: TDD (red first), `kotlin.test` + `runTest` + hand-written fakes in `commonTest` (no MockK), lowerCamelCase sentence names. 100 % lines and branches of commonMain via the test-only `jvm()` target (Kover), plus `linuxX64Test`; integration on real PostgreSQL, end-to-end on the real binary, load tests for the server.
 12. Kotlin/Native only in production: no JVM-only library (Exposed, JDBC, Netty, Logback, MockK). Ktor CIO server, Ktor engine-defaults client, sqlx4k, cryptography-kotlin + OpenSSL prebuilt, Okio, Clikt.
 13. Gradle: versions only in `gradle/libs.versions.toml` (same versions in every repository), convention plugin `ostrom.kmp` from `build-logic/`, module build files hold dependencies only. No heavy local build on the shared Mac: CI, or `~/git/ostrom-hq/.coord/build-lock.sh`.

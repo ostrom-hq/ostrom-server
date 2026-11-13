@@ -44,6 +44,8 @@ admitted by their prefix: the owner role writes them when it migrates.
 
 | Table | Module | Reached by | Why no organization |
 |---|---|---|---|
+| `admin_instance_admins` | admin | serving role | the instance's administrators, who configure what serves every organization (removed ones kept, so no import brings them back) |
+| `admin_settings` | admin | serving role | the instance's settings sections (mail, push, sign-in providers...), their secrets sealed with the secrets key |
 | `billing_stripe_events` | billing | serving role, Stripe webhook | the Stripe events already handled, by Stripe's id, before the organization is known |
 | `github_apps` | integrations-github | serving role | the instance's one GitHub App, its secrets sealed |
 | `github_installation_origins` | integrations-github | serving role, GitHub webhook | who installed an installation, read before its organization is known; row-level security forced, one row opened by `ostrom.github_installation` (R7) |

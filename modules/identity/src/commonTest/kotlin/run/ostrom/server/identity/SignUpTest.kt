@@ -32,6 +32,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** TC-CODE-AUTH-2: an invite-only instance, its setup link and who may get an account or create organizations. */
@@ -106,6 +107,23 @@ class SignUpTest {
         val withoutOrgs = SignUpPolicyImpl(SignUpMode.INVITE, links, null, hasher, clock)
         assertFalse(withoutOrgs.admits(github, SignUpGrant.Presented("invite-token")))
         assertFalse(withoutOrgs.accepts("invite-token"))
+    }
+
+    @Test
+    fun theSetupLinksPersonIsMadeAnAdministratorOfTheInstanceOnlyWhenTheLinkIsSpent() = runTest {
+        val granted = mutableListOf<Pair<Uuid, Instant>>()
+        val policy = SignUpPolicyImpl(SignUpMode.INVITE, links, invitations, hasher, clock) { userId, at ->
+            granted += userId to at
+        }
+        val link = assertNotNull(bootstrap())
+        val ada = Uuid.random()
+
+        policy.claim(SignUpGrant.Presented("invite-token"), ada)
+        policy.claim(SignUpGrant.Presented(link.token), ada)
+        policy.claim(SignUpGrant.Presented(link.token), Uuid.random())
+
+        assertEquals(listOf(ada to clock.now), granted)
+        assertEquals(mapOf(ada to clock.now), links.owners())
     }
 
     @Test

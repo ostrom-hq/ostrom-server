@@ -245,6 +245,36 @@ A module that needs its own keys reads them from the `ConfigSource` bound in Koi
 environment, then `OSTROM_CONFIG_FILE`), with the `OSTROM_<MODULE>_…` prefix, and adds them to this table. In a
 `serverTest`, give it values with `overrides = module { single<ConfigSource> { MapConfigSource(mapOf(…)) } }`.
 
+### Settings in the console
+
+The environment holds only what the server needs to start (the table above: address, database, keys, public URLs,
+proxies, per-replica ceilings, OpenTelemetry). Everything else is set by an administrator of the instance in the
+console (**Admin → Settings**, `/api/v1/admin/settings`) and stored in PostgreSQL by the `admin` module, as TeamCode
+keeps its dashboard settings: plain values in `admin_settings.plain_values`, secrets sealed with the secrets key and
+bound to their section and field (`instance-setting:<section>:<field>`), never returned, only whether they are set.
+Every save is checked against the version read (a `409 settings_conflict` when another came first) and written to the
+instance's audit chain with the names of the fields it changed, never a value. A replica reads a section at most every
+30 seconds; the replica that saved it at once.
+
+A module declares a section by binding a `SettingsSection` in Koin (`kernel/settings`), and reads it through
+`InstanceSettings.read(section)`. A field that replaces a former variable names it (`legacyVariable`): at the first
+start where nothing is stored for the section, the variables set are imported once (secrets sealed), with a warning
+that they are deprecated; afterwards a variable still set is ignored with a warning. The pull request that moves a
+setting removes its variable from the table above and from the chart once the import has shipped.
+
+The administrators of the instance (**Admin → Administrators**, `/api/v1/admin/instance-admins`) are stored too: the
+person who used the setup link is the first, and an administrator adds another by a verified e-mail of their account
+or removes one (never the last). Only a person signed in (a browser session or the unlocked app) who administers the
+instance reaches the admin routes, never a key whatever its scopes. `GET /auth/me` answers `instanceAdmin: true` for
+them. `OSTROM_INSTANCE_ADMINS` is deprecated: its user ids are imported once, and a person an administrator removed is
+never brought back by it.
+
+What lives in the console so far:
+
+| Section | Moved from | Since |
+|---|---|---|
+| Administrators | `OSTROM_INSTANCE_ADMINS` | the `admin` module |
+
 ### Memory under the container limit
 
 The server reads its container's memory limit (cgroup v2 `memory.max`, else v1) and holds itself under it, with no
@@ -406,6 +436,7 @@ anonymous call gets 401 `unauthorized`. A module lists a key of ostrom-core's `S
 
 | Module | Keys | Condition |
 |---|---|---|
+| `admin` | `admin.settings.v1` | — |
 | `artifacts` | `artifacts.v1` | — |
 | `automations` | `automations.v1`, `waits.v1` | — |
 | `billing` | `billing.v1` | Stripe configured (`OSTROM_STRIPE_SECRET_KEY`) |

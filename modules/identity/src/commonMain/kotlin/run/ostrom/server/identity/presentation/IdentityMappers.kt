@@ -32,11 +32,13 @@ fun Profile.toAccountResponse() = AccountResponse(
  * @param scopes What the credential may do.
  * @param csrfToken Only for a browser session.
  * @param current The membership and organization the request named in `Ostrom-Org`, if any.
+ * @param instanceAdmin Whether the person administers the instance; `instanceAdmin` is only sent when so.
  */
 fun Profile.toMeResponse(
     scopes: Set<String>,
     csrfToken: String?,
     current: Pair<OrgPrincipal, OrgProfile>?,
+    instanceAdmin: Boolean = false,
 ) = MeResponse(
     dev = MeDevResponse(
         login = user.login,
@@ -60,6 +62,7 @@ fun Profile.toMeResponse(
     },
     capabilities = scopes.sorted(),
     csrfToken = csrfToken,
+    instanceAdmin = true.takeIf { instanceAdmin },
 )
 
 // How the server connects an organization to GitHub (the contract's `GitHubConnection`); none when it is not linked.

@@ -16,6 +16,8 @@ import run.ostrom.server.identity.domain.StartDeviceAuthorizationUseCase
 import run.ostrom.server.identity.domain.WebSessionsOfUserUseCase
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.SignOutListener
+import run.ostrom.server.kernel.settings.InstanceAdministrators
+import run.ostrom.server.kernel.settings.NoInstanceAdministrators
 
 /**
  * What the identity routes need.
@@ -36,6 +38,7 @@ import run.ostrom.server.kernel.auth.SignOutListener
  * @property webSessions Lists and ends the person's browser sessions.
  * @property signOutListeners Told after a sign-out (the phones registered with the credential are dropped).
  * @property orgResolver The organization `/me` shows when the request names one in `Ostrom-Org`.
+ * @property instanceAdmins Whether `/me`'s person administers the instance (the admin module's).
  */
 data class IdentityRoutesDependencies(
     val config: IdentityConfig,
@@ -54,4 +57,5 @@ data class IdentityRoutesDependencies(
     val webSessions: WebSessionsOfUserUseCase,
     val signOutListeners: List<SignOutListener>,
     val orgResolver: PrincipalOrgResolver,
+    val instanceAdmins: InstanceAdministrators = NoInstanceAdministrators(),
 )

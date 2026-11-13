@@ -39,6 +39,9 @@ class InMemorySetupLinks(private val users: InMemoryUsersRepository? = null) : S
     override suspend fun usedBy(userId: Uuid): Boolean = links.values.any { it.third == userId }
 
     override suspend fun anyAccount(): Boolean = users?.users?.isNotEmpty() == true
+
+    override suspend fun owners(): Map<Uuid, Instant> =
+        links.values.mapNotNull { (_, at, by) -> if (at != null && by != null) by to at else null }.toMap()
 }
 
 /** The organizations' live invitation tokens. */

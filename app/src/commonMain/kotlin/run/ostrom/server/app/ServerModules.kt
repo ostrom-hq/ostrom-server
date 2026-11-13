@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.app
 
+import run.ostrom.server.admin.AdminModule
 import run.ostrom.server.artifacts.ArtifactsModule
 import run.ostrom.server.automations.AutomationsModule
 import run.ostrom.server.billing.BillingModule
@@ -50,6 +51,8 @@ fun serverModules(): List<ServerModule> = listOf(
     WorkflowRunsModule,
     McpRelayModule,
     SecretsModule,
+    // After secrets (it seals the settings with the secrets key) and identity (the setup link's person, the audit).
+    AdminModule,
     UsageModule,
     GatewayModule,
     BudgetsModule,
