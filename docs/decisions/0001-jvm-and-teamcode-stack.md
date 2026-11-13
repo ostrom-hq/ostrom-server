@@ -105,9 +105,21 @@ slower, in all three runs. That is regular expressions and allocations, the work
    and **HikariCP**, **Flyway** migrations, **koin-ktor**, **logback**, and `ktor-server-routing-openapi` where it
    fits. Every other server-side library follows TeamCode's `gradle/libs.versions.toml` wherever it has an
    equivalent. ostrom-core's `api/openapi.yaml` stays the contract the clients use.
-3. **PostgreSQL stays** (TeamCode is on MySQL). The owner/serving role split stays. Row-level security stays until
-   Nathan decides on it (audit SD-08): the Exposed layer sets the organization on every transaction (`set_config`)
-   whatever he decides.
+3. **PostgreSQL stays** (TeamCode is on MySQL). **Typed Exposed only, no hand-written SQL anywhere**, decided by
+   Nathan on 2026-11-13 (audit SD-08). Row-level security policies, `SECURITY DEFINER` functions, triggers and
+   `set_config` all need raw SQL, so row-level security is removed. In its place, as in TeamCode:
+   - every org-scoped query filters on `org_id` in the Exposed DSL through one small typed helper (an org-scoped
+     table or repository base, like TeamCode's `CurrentPrincipal` and team scoping), so that a missing filter is
+     hard to write;
+   - the about 35 definer functions become Exposed code: claims with
+     `forUpdate(ForUpdateOption.PostgreSQL.ForUpdate(mode = SKIP_LOCKED))`, purges, counts, token and slug lookups.
+     The `usage_daily` triggers become explicit writes in the same transaction;
+   - tests guard the isolation instead of the database: a cross-organization test per repository (organization B
+     never sees organization A's rows), and a CI check, like TeamCode's `check-module-graph.py`, that fails on raw
+     SQL and `exec` strings;
+   - the owner/serving role split stays if it can be done without raw SQL; otherwise TeamCode's setup is followed.
+   Row-level security is removed module by module, in the pull request that moves each module to Exposed. No module
+   is ever left with neither row-level security nor organization filters.
 4. TeamCode's database rules replace AGENTS.md rule 12, adapted to PostgreSQL, in the step that lands each part.
    Exposed DSL only, no SQL strings. Flyway migrations generated from the Exposed tables. `EXPLAIN (ANALYZE, BUFFERS)`
    on production-scale data for every new or changed query on a request path. No N+1. Indexes in filter order. Tests
@@ -128,8 +140,8 @@ Each step keeps `main` green and is one or more reviewable pull requests. About 
 the same time, so build and kernel changes land first and module conversions go one module per pull request.
 
 1. **Kernel database layer, next to sqlx4k** (kernel `jvmMain`): HikariCP + PostgreSQL JDBC + Exposed + Flyway.
-   One transaction entry point sets the organization (`set_config('ostrom.org_id', …, true)`) and the role, as
-   `inOrg`/`withOrganization` do now. Pool and session timeouts as in TeamCode (connection 5 s, lock wait 5 s,
+   One typed entry point for organization-scoped work (the org filter helper of decision 3). While a module still
+   has its row-level security, its sqlx4k code keeps setting the organization as now. Pool and session timeouts as in TeamCode (connection 5 s, lock wait 5 s,
    statement timeout; audit SD-03). Flyway with the owner/serving role split and a check at start that every
    migration is applied. One Flyway baseline squashes the current schema (audit SD-06: no customer data yet).
    sqlx4k keeps working until the last module moves.
@@ -150,9 +162,9 @@ the same time, so build and kernel changes land first and module conversions go 
    cinterop files and the Native-only rules of AGENTS.md and docs/MODULES.md go too. The outbound clients move to the
    JVM's engine, and the SSRF guard moves to the client's DNS hook as in TeamCode.
 
-Risks: conflicts with the modules being edited (mitigated by the order above and one module per pull request). RLS
-under Exposed: the decision on the SECURITY DEFINER functions is Nathan's (SD-08); until then they stay as Flyway SQL
-and the kernel sets the organization on every transaction. The production database's migration history: squashed
+Risks: conflicts with the modules being edited (mitigated by the order above and one module per pull request). Tenant
+isolation moves from the database to the code (decision 3): every converted module comes with its cross-organization
+tests in the same pull request, and the raw-SQL check runs from the first conversion on. The production database's migration history: squashed
 into one baseline while there is no customer data (SD-06).
 
 ## Consequences
