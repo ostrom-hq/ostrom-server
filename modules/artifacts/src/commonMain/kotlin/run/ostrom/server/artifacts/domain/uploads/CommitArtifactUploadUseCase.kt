@@ -13,6 +13,7 @@ import run.ostrom.server.artifacts.domain.ArtifactRules
 import run.ostrom.server.artifacts.domain.ArtifactVersion
 import run.ostrom.server.artifacts.domain.ArtifactsRepository
 import run.ostrom.server.artifacts.domain.ContentDigest
+import run.ostrom.server.artifacts.domain.InvalidArtifactRequestException
 import run.ostrom.server.artifacts.domain.ensureValid
 import run.ostrom.server.artifacts.domain.linkSlugFor
 import run.ostrom.server.artifacts.domain.parseAccess
@@ -171,14 +172,14 @@ internal class CommitArtifactUploadUseCaseImpl(
             }
             return artifact.copy(title = title ?: artifact.title)
         }
-        ensureValid(title != null) { "A new artifact needs a title." }
+        val named = title ?: throw InvalidArtifactRequestException("A new artifact needs a title.")
         val access = parseAccess(commit.access ?: ArtifactAccess.PERSONAL.wire)
         if (access == ArtifactAccess.LINK && !caller.person) {
             val refusal = mapOf("access" to access.wire, "reason" to "person_required")
             events.record(caller, "publish_refused", artifact.id, refusal)
             throw ArtifactPersonRequiredException()
         }
-        return artifact.copy(title = checkNotNull(title), access = access, linkSlug = linkSlugFor(access))
+        return artifact.copy(title = named, access = access, linkSlug = linkSlugFor(access))
     }
 }
 

@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.artifacts
 
+import run.ostrom.server.artifacts.domain.Artifact
 import run.ostrom.server.artifacts.domain.ArtifactAccess
 import run.ostrom.server.artifacts.domain.ArtifactCaller
 import run.ostrom.server.artifacts.domain.ArtifactConflictException
 import run.ostrom.server.artifacts.domain.ArtifactEvents
+import run.ostrom.server.artifacts.domain.ArtifactFile
 import run.ostrom.server.artifacts.domain.ArtifactNotWritableException
 import run.ostrom.server.artifacts.domain.ArtifactPersonRequiredException
+import run.ostrom.server.artifacts.domain.ArtifactVersion
 import run.ostrom.server.artifacts.domain.InvalidArtifactRequestException
 import run.ostrom.server.artifacts.domain.ReadArtifactsUseCaseImpl
 import run.ostrom.server.artifacts.domain.storage.ArtifactsInactiveException
@@ -139,6 +142,18 @@ class CommitArtifactUploadUseCaseTest {
         val same = UploadCommit(third, listOf(file("index.html", page)), access = "team")
         assertFailsWith<InvalidArtifactRequestException> { use.commit(alice, draft, same.copy(access = "personal")) }
         assertEquals(3, use.commit(alice, draft, same).version.number)
+    }
+
+    @Test
+    fun anArtifactPublishedInlineTakesAnUploadAsItsNextVersion() = runTest {
+        val id = Uuid.random()
+        val at = clock.now
+        val files = listOf(ArtifactFile("index.html", "a".repeat(64), 1, "text/html"))
+        val inline = ArtifactVersion(id, 1, "index.html", files, at, alice.memberId)
+        artifacts.create(Artifact(id, ORG_A, alice.memberId, "Inline", ArtifactAccess.TEAM, 1, null, at, at), inline)
+        val (uploadId, _) = sent(alice, id, page)
+        val next = use.commit(alice, id, UploadCommit(uploadId, listOf(file("index.html", page))))
+        assertEquals(2 to 1, next.version.number to next.version.baseVersion)
     }
 
     @Test
