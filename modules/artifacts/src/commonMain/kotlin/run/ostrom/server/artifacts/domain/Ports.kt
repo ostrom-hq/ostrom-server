@@ -4,35 +4,31 @@ package run.ostrom.server.artifacts.domain
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
-/** The artifacts' storage: rows, versions, members and the files' bytes, one artifact per folder of blobs. */
+/**
+ * The artifacts' metadata: rows, versions, members and each distinct content's size. The bytes are in the
+ * organization's bucket ([run.ostrom.server.artifacts.domain.storage.ArtifactContents]), never here.
+ */
 // One port per aggregate: splitting it would only spread the same tables over several classes.
 @Suppress("TooManyFunctions")
 interface ArtifactsRepository {
     /**
-     * Stores a new artifact with its first version and the bytes of its files.
+     * Stores a new artifact with its first version, its files' contents already in the bucket.
      *
      * @param artifact The artifact, at version 1.
      * @param version Its first version.
-     * @param blobs The files' bytes by SHA-256.
      */
-    suspend fun create(artifact: Artifact, version: ArtifactVersion, blobs: Map<String, ByteArray>)
+    suspend fun create(artifact: Artifact, version: ArtifactVersion)
 
     /**
      * Adds a version if the artifact's latest is still the one the publisher saw.
      *
      * @param orgId The organization.
-     * @param version The new version (number = the latest seen + 1).
-     * @param blobs The bytes of the files the artifact does not hold yet, by SHA-256.
+     * @param version The new version (number = the latest seen + 1), its new contents already in the bucket.
      * @param now The publication time.
      *
      * @return The updated artifact, or null when another version was published first.
      */
-    suspend fun addVersion(
-        orgId: Uuid,
-        version: ArtifactVersion,
-        blobs: Map<String, ByteArray>,
-        now: Instant,
-    ): Artifact?
+    suspend fun addVersion(orgId: Uuid, version: ArtifactVersion, now: Instant): Artifact?
 
     /**
      * Writes an artifact's title, access and public link.
@@ -89,11 +85,18 @@ interface ArtifactsRepository {
     suspend fun version(orgId: Uuid, artifactId: Uuid, number: Int): ArtifactVersion?
 
     /**
-     * Reads the bytes of a file.
+     * Contents stored in PostgreSQL before artifacts moved to the bucket, still to move.
      *
-     * @return The bytes, or null.
+     * @param limit The most returned.
+     *
+     * @return Some of them.
      */
-    suspend fun blob(orgId: Uuid, artifactId: Uuid, sha256: String): ByteArray?
+    suspend fun legacyBlobs(orgId: Uuid, limit: Int): List<LegacyBlob>
+
+    /**
+     * Forgets a content's bytes once the bucket holds them, verified.
+     */
+    suspend fun releaseLegacyBlob(orgId: Uuid, artifactId: Uuid, sha256: String)
 
     /**
      * The digests the artifact already holds.
@@ -123,6 +126,15 @@ interface ArtifactsRepository {
      */
     suspend fun delete(orgId: Uuid, id: Uuid): Boolean
 }
+
+/**
+ * A content stored in PostgreSQL before artifacts moved to the bucket.
+ *
+ * @property artifactId Its artifact.
+ * @property sha256 Its digest, which the bucket's copy must match.
+ * @property bytes Its bytes.
+ */
+class LegacyBlob(val artifactId: Uuid, val sha256: String, val bytes: ByteArray)
 
 /** SHA-256 of a file's bytes. */
 fun interface ContentDigest {

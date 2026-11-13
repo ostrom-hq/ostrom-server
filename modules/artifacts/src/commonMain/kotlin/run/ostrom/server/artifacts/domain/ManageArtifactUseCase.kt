@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.artifacts.domain
 
+import run.ostrom.server.artifacts.domain.storage.ArtifactContents
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
 
-/** Changes an artifact's title and access, its shares, or deletes it. */
+/**
+ * Changes an artifact's title and access, its shares, or deletes it. Every action but deletion needs artifacts active
+ * ([run.ostrom.server.artifacts.domain.storage.ArtifactsInactiveException] otherwise).
+ */
 interface ManageArtifactUseCase {
     /**
      * Changes the title, the access, or both; the owner only. Turning to `link` mints a new public link; leaving it
@@ -43,12 +47,14 @@ interface ManageArtifactUseCase {
 /** [ManageArtifactUseCase]; the audit log is told of each change of access, reader and deletion. */
 internal class ManageArtifactUseCaseImpl(
     private val repository: ArtifactsRepository,
+    private val contents: ArtifactContents,
     private val clock: Clock,
     private val events: ArtifactEvents,
 ) : ManageArtifactUseCase {
     private val rules = ArtifactAccessRules(repository)
 
     override suspend fun update(caller: ArtifactCaller, id: Uuid, title: String?, access: String?): Artifact {
+        contents.requireActive(caller.orgId)
         val artifact = rules.owned(caller, id)
         val newAccess = if (access == null) artifact.access else parseAccess(access)
         if (newAccess != artifact.access && !caller.person) throw ArtifactPersonRequiredException()
@@ -71,11 +77,13 @@ internal class ManageArtifactUseCaseImpl(
     }
 
     override suspend fun members(caller: ArtifactCaller, id: Uuid): List<String> {
+        contents.requireActive(caller.orgId)
         rules.readable(caller, id)
         return repository.members(caller.orgId, id)
     }
 
     override suspend fun share(caller: ArtifactCaller, id: Uuid, member: String, share: Boolean) {
+        contents.requireActive(caller.orgId)
         rules.owned(caller, id)
         ensureValid(Uuid.parseOrNull(member) != null) { "Name the member by their id." }
         repository.setMember(caller.orgId, id, member, share)
@@ -85,7 +93,9 @@ internal class ManageArtifactUseCaseImpl(
     override suspend fun delete(caller: ArtifactCaller, id: Uuid) {
         rules.owned(caller, id)
         if (!caller.person) throw ArtifactPersonRequiredException()
+        // Deletion works while artifacts are inactive, so an artifact can always be removed (TeamCode).
         repository.delete(caller.orgId, id)
+        contents.remove(caller.orgId, id)
         events.record(caller, "deleted", id, emptyMap())
     }
 }

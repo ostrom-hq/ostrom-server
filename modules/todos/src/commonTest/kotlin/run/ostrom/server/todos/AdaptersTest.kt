@@ -6,6 +6,7 @@ import run.ostrom.server.artifacts.domain.ArtifactAccess
 import run.ostrom.server.artifacts.domain.ArtifactCaller
 import run.ostrom.server.artifacts.domain.ArtifactVersion
 import run.ostrom.server.artifacts.domain.ArtifactsRepository
+import run.ostrom.server.artifacts.domain.LegacyBlob
 import run.ostrom.server.automations.domain.AnswerWaitUseCase
 import run.ostrom.server.automations.domain.AskWait
 import run.ostrom.server.automations.domain.AskWaitUseCase
@@ -191,14 +192,8 @@ class AdaptersTest {
     }
 
     private class Artifacts(private val byId: Map<Uuid, Artifact>) : ArtifactsRepository {
-        override suspend fun create(artifact: Artifact, version: ArtifactVersion, blobs: Map<String, ByteArray>) =
-            unused<Unit>()
-        override suspend fun addVersion(
-            orgId: Uuid,
-            version: ArtifactVersion,
-            blobs: Map<String, ByteArray>,
-            now: Instant,
-        ): Artifact? = unused()
+        override suspend fun create(artifact: Artifact, version: ArtifactVersion) = unused<Unit>()
+        override suspend fun addVersion(orgId: Uuid, version: ArtifactVersion, now: Instant): Artifact? = unused()
         override suspend fun updateSettings(artifact: Artifact) = unused<Unit>()
         override suspend fun get(orgId: Uuid, id: Uuid): Artifact? = byId[id]?.takeIf { it.orgId == orgId }
         override suspend fun getById(id: Uuid): Artifact? = unused()
@@ -206,7 +201,8 @@ class AdaptersTest {
         override suspend fun listReadable(caller: ArtifactCaller, before: Uuid?, limit: Int): List<Artifact> = unused()
         override suspend fun versions(orgId: Uuid, artifactId: Uuid): List<ArtifactVersion> = unused()
         override suspend fun version(orgId: Uuid, artifactId: Uuid, number: Int): ArtifactVersion? = unused()
-        override suspend fun blob(orgId: Uuid, artifactId: Uuid, sha256: String): ByteArray? = unused()
+        override suspend fun legacyBlobs(orgId: Uuid, limit: Int): List<LegacyBlob> = unused()
+        override suspend fun releaseLegacyBlob(orgId: Uuid, artifactId: Uuid, sha256: String) = unused<Unit>()
         override suspend fun blobDigests(orgId: Uuid, artifactId: Uuid): Set<String> = unused()
         override suspend fun members(orgId: Uuid, artifactId: Uuid): List<String> = unused()
         override suspend fun setMember(orgId: Uuid, artifactId: Uuid, memberId: String, share: Boolean) =

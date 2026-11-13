@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.artifacts.domain
 
+import run.ostrom.server.artifacts.domain.storage.ArtifactContents
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.time.Clock
@@ -81,6 +82,7 @@ interface ViewArtifactUseCase {
 @Suppress("LongParameterList") // The ports a page needs, and two bounds the tests shorten.
 internal class ViewArtifactUseCaseImpl(
     private val repository: ArtifactsRepository,
+    private val contents: ArtifactContents,
     private val seal: ViewTicketSeal,
     private val viewers: ViewerChecks,
     private val locations: ArtifactLocations,
@@ -99,6 +101,7 @@ internal class ViewArtifactUseCaseImpl(
         if (!caller.person || credential == null || subject == null) {
             throw ArtifactPersonRequiredException(PAGES_FOR_PEOPLE)
         }
+        contents.requireActive(caller.orgId)
         val origin = locations.contentOrigin ?: throw ArtifactPagesUnavailableException()
         admit(credential)
         val artifact = rules.readable(caller, id)
@@ -111,13 +114,14 @@ internal class ViewArtifactUseCaseImpl(
 
     override suspend fun byTicket(id: Uuid, ticket: String, path: String): ServedFile? {
         val opened = seal.open(id, ticket)?.takeIf { it.expiresAt > clock.now().epochSeconds } ?: return null
-        val artifact = repository.getById(id)?.takeIf { granted(ticket, it, opened) }
-        return artifact?.let { serveFile(repository, it, opened.version, path) }
+        val artifact = repository.getById(id)?.takeIf { contents.active(it.orgId) && granted(ticket, it, opened) }
+        return artifact?.let { serveFile(repository, contents, it, opened.version, path) }
     }
 
     override suspend fun byLink(slug: String, path: String): ServedFile? {
-        val artifact = repository.getByLinkSlug(slug)?.takeIf { it.access == ArtifactAccess.LINK } ?: return null
-        return serveFile(repository, artifact, artifact.latestVersion, path)
+        val artifact = repository.getByLinkSlug(slug)
+            ?.takeIf { it.access == ArtifactAccess.LINK && contents.active(it.orgId) } ?: return null
+        return serveFile(repository, contents, artifact, artifact.latestVersion, path)
     }
 
     override fun publicUrl(artifact: Artifact): String? {

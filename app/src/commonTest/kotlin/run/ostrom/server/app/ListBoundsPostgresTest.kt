@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.app
 
+import run.ostrom.server.app.isolation.MatrixBucket
+import run.ostrom.server.app.isolation.activateArtifacts
+import run.ostrom.server.artifacts.domain.storage.ArtifactObjectStore
 import run.ostrom.server.identity.domain.IdentityProvider
 import run.ostrom.server.identity.domain.ResolveUserUseCase
 import run.ostrom.server.identity.domain.StartWebSessionUseCase
@@ -67,6 +70,8 @@ class ListBoundsPostgresTest {
     // Many reads from one person: the read throttle of the costly routes is not under test here.
     private val unthrottled = module {
         single { ReadThrottle(Clock.System, ReadLimits(MANY, MANY, MANY), ReadThrottle.MAX_SUBJECTS) }
+        // Artifacts are on with a bucket only: an in-memory one.
+        single<ArtifactObjectStore> { MatrixBucket() }
     }
 
     @Test
@@ -178,6 +183,7 @@ class ListBoundsPostgresTest {
         val now = Clock.System.now()
         val org = Org(Uuid.random(), "$login-lists", "$login lists", null, null, now)
         koin.get<OrgsRepository>().create(org, Member(Uuid.random(), org.id, user.id, OrgRole.OWNER, now)) { false }
+        check(activateArtifacts(org.id, login)) { "The artifacts of $login are not on." }
         return Person(org.id, koin.get<StartWebSessionUseCase>()(user.id))
     }
 

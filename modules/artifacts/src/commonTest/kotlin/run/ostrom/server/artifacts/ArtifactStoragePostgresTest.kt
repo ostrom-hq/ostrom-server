@@ -135,7 +135,6 @@ class ArtifactStoragePostgresTest {
         server.koin.get<ArtifactsRepository>().create(
             artifact,
             ArtifactVersion(artifact.id, 1, "a.txt", listOf(file), t0, artifact.ownerId),
-            mapOf("sha-a" to byteArrayOf(0, 1, 2)),
         )
         assertTrue(repository.overview(ORG_A).inUse)
         assertTrue(repository.deleteStorage(ORG_A, t0))

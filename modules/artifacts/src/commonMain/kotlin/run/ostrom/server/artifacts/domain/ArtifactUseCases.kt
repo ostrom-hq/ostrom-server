@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.artifacts.domain
 
+import run.ostrom.server.artifacts.domain.storage.ArtifactContents
 import run.ostrom.server.kernel.errors.Pages
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
 
-/** Publishes artifacts and their versions. */
+/**
+ * Publishes artifacts and their versions, while artifacts are active (otherwise
+ * [run.ostrom.server.artifacts.domain.storage.ArtifactsInactiveException], with TeamCode's reason).
+ */
 interface PublishArtifactUseCase {
     /**
      * Publishes a new artifact, owned by the caller, at version 1.
@@ -38,6 +42,7 @@ interface PublishArtifactUseCase {
  */
 internal class PublishArtifactUseCaseImpl(
     private val repository: ArtifactsRepository,
+    private val contents: ArtifactContents,
     private val digest: ContentDigest,
     private val clock: Clock,
     private val events: ArtifactEvents,
@@ -50,6 +55,7 @@ internal class PublishArtifactUseCaseImpl(
         access: String,
         files: List<UploadedFile>,
     ): Artifact {
+        contents.requireActive(caller.orgId)
         val checkedTitle = ArtifactRules.title(title)
         val checkedAccess = parseAccess(access)
         if (checkedAccess == ArtifactAccess.LINK && !caller.person) {
@@ -72,12 +78,14 @@ internal class PublishArtifactUseCaseImpl(
             updatedAt = now,
         )
         val version = ArtifactVersion(id, 1, ArtifactRules.entry(files.map { it.path }), recorded, now, caller.memberId)
-        repository.create(artifact, version, blobs)
+        contents.write(caller.orgId, id, blobs)
+        repository.create(artifact, version)
         events.record(caller, "created", id, mapOf("title" to checkedTitle, "access" to checkedAccess.wire))
         return artifact
     }
 
     override suspend fun addVersion(caller: ArtifactCaller, id: Uuid, files: List<UploadedFile>): ArtifactVersion {
+        contents.requireActive(caller.orgId)
         val artifact = rules.owned(caller, id)
         checked(caller, id, files)
         val (recorded, blobs) = record(files)
@@ -91,7 +99,10 @@ internal class PublishArtifactUseCaseImpl(
             createdAt = now,
             createdBy = caller.memberId,
         )
-        repository.addVersion(caller.orgId, version, blobs - known, now) ?: throw ArtifactConflictException()
+        // The contents go to the bucket first: a version is never recorded without them (a lost race leaves objects
+        // the artifact's folder already holds, or that the collection removes).
+        contents.write(caller.orgId, id, blobs - known)
+        repository.addVersion(caller.orgId, version, now) ?: throw ArtifactConflictException()
         events.record(caller, "version_published", id, mapOf("version" to version.number.toString()))
         return version
     }
@@ -116,7 +127,10 @@ internal class PublishArtifactUseCaseImpl(
     }
 }
 
-/** Reads artifacts, their versions and files. */
+/**
+ * Reads artifacts, their versions and files, while artifacts are active (otherwise
+ * [run.ostrom.server.artifacts.domain.storage.ArtifactsInactiveException], with TeamCode's reason).
+ */
 interface ReadArtifactsUseCase {
     /**
      * Lists what the caller reads, most recently changed first.
@@ -156,10 +170,14 @@ interface ReadArtifactsUseCase {
 }
 
 /** [ReadArtifactsUseCase]. */
-internal class ReadArtifactsUseCaseImpl(private val repository: ArtifactsRepository) : ReadArtifactsUseCase {
+internal class ReadArtifactsUseCaseImpl(
+    private val repository: ArtifactsRepository,
+    private val contents: ArtifactContents,
+) : ReadArtifactsUseCase {
     private val rules = ArtifactAccessRules(repository)
 
     override suspend fun list(caller: ArtifactCaller, before: Uuid?, limit: Int?): List<Artifact> {
+        contents.requireActive(caller.orgId)
         val size = limit ?: DEFAULT_PAGE
         ensureValid(size in 1..MAX_PAGE) { "limit must be between 1 and $MAX_PAGE." }
         // A `before` that names no artifact of the organization (forged, or another's) is a 400, not an empty page.
@@ -168,16 +186,21 @@ internal class ReadArtifactsUseCaseImpl(private val repository: ArtifactsReposit
         }
     }
 
-    override suspend fun get(caller: ArtifactCaller, id: Uuid): Artifact = rules.readable(caller, id)
+    override suspend fun get(caller: ArtifactCaller, id: Uuid): Artifact {
+        contents.requireActive(caller.orgId)
+        return rules.readable(caller, id)
+    }
 
     override suspend fun versions(caller: ArtifactCaller, id: Uuid): List<ArtifactVersion> {
+        contents.requireActive(caller.orgId)
         rules.readable(caller, id)
         return repository.versions(caller.orgId, id)
     }
 
     override suspend fun file(caller: ArtifactCaller, id: Uuid, number: Int?, path: String?): ServedFile {
+        contents.requireActive(caller.orgId)
         val artifact = rules.readable(caller, id)
-        return serveFile(repository, artifact, number ?: artifact.latestVersion, path)
+        return serveFile(repository, contents, artifact, number ?: artifact.latestVersion, path)
             ?: throw ArtifactNotFoundException()
     }
 
@@ -188,24 +211,25 @@ internal class ReadArtifactsUseCaseImpl(private val repository: ArtifactsReposit
 }
 
 /**
- * Reads a file of a version from the storage.
+ * Reads a file of a version: its row here, its content from the organization's bucket.
  *
  * @param path The file; the entry page when null or empty.
  *
  * @return The file, or null when the version or the file does not exist.
+ *
+ * @throws run.ostrom.server.artifacts.domain.storage.ArtifactStorageUnavailableException When the bucket fails.
  */
 internal suspend fun serveFile(
     repository: ArtifactsRepository,
+    contents: ArtifactContents,
     artifact: Artifact,
     number: Int,
     path: String?,
 ): ServedFile? {
-    val version = repository.version(artifact.orgId, artifact.id, number) ?: return null
-    val wanted = path?.takeIf { it.isNotEmpty() } ?: version.entry
-    return version.files.firstOrNull { it.path == wanted }
-        ?.let { file ->
-            repository.blob(artifact.orgId, artifact.id, file.sha256)?.let { ServedFile(it, file.contentType) }
-        }
+    val version = repository.version(artifact.orgId, artifact.id, number)
+    val wanted = path?.takeIf { it.isNotEmpty() } ?: version?.entry
+    val file = version?.files.orEmpty().firstOrNull { it.path == wanted } ?: return null
+    return ServedFile(contents.read(artifact.orgId, artifact.id, file), file.contentType)
 }
 
 /**

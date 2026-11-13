@@ -26,6 +26,7 @@ internal suspend fun TestServer.seed(party: Party, spends: Boolean) {
     val seeder = Seeder(this, party)
     seeder.agents(party)
     seeder.sharing(party)
+    activateArtifacts(party)
     seeder.content(party)
     seeder.governance(party)
     seeder.gate(party)
@@ -216,6 +217,13 @@ private suspend fun Seeder.administration(party: Party) {
             """ "locale": "fr"}""",
     )
     keep(Seed.PUSH_DEVICE, device, "id")
+}
+
+// A tested bucket with artifacts on: the matrix's bucket is in memory (MatrixBucket).
+private suspend fun TestServer.activateArtifacts(party: Party) {
+    if (!activateArtifacts(party.org.id, party.marker)) {
+        party.problems += "seed ${party.marker} artifact storage: not saved"
+    }
 }
 
 // A cloud session, written as the runners tests write it: the API keeps them closed without a runtime.

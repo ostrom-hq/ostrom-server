@@ -68,6 +68,7 @@ interface ArtifactAdministrationUseCase {
      * @throws ArtifactAdministratorRequiredException When the caller is not a person who administers.
      * @throws InvalidArtifactSettingsException When one is out of its range.
      * @throws ArtifactsInactiveException When turning artifacts on without a bucket, or without a passed test.
+     * @throws ArtifactStorageUnavailableException When the contents published before the bucket cannot move there.
      * @throws ArtifactSettingsConflictException When their version is not the current one.
      */
     suspend fun saveSettings(caller: StorageCaller, settings: ArtifactSettings): ArtifactSettings
@@ -86,18 +87,18 @@ interface ArtifactAdministrationUseCase {
  *
  * @param repository The bucket and the settings.
  * @param objects The bucket's operations.
+ * @param legacy Moves the contents published before the bucket into it when artifacts are turned on.
  * @param digest SHA-256, to compare the probe read back.
  * @param clock The time of saves and tests.
  * @param probeId The probe object's name.
- * @param deadline The whole test's bound.
  */
 class ArtifactAdministrationUseCaseImpl(
     private val repository: ArtifactStorageRepository,
     private val objects: ArtifactObjectStore,
+    private val legacy: LegacyContents,
     private val digest: suspend (ByteArray) -> String,
     private val clock: Clock = Clock.System,
     private val probeId: () -> String = { Uuid.random().toString() },
-    private val deadline: Duration = TEST_DEADLINE,
 ) : ArtifactAdministrationUseCase {
     private val testing = Mutex()
 
@@ -162,6 +163,8 @@ class ArtifactAdministrationUseCaseImpl(
             val storage = repository.overview(caller.orgId).storage
                 ?: throw ArtifactsInactiveException(InactiveReason.STORAGE_MISSING)
             if (storage.verifiedAt == null) throw ArtifactsInactiveException(InactiveReason.STORAGE_UNVERIFIED)
+            // What was published before the bucket moves there first, so no file is ever read from PostgreSQL.
+            legacy.moveToBucket(caller.orgId)
         }
         return repository.saveSettings(caller.orgId, settings, clock.now()) ?: throw ArtifactSettingsConflictException()
     }
@@ -183,12 +186,12 @@ class ArtifactAdministrationUseCaseImpl(
         if (!administrator || !person) throw ArtifactAdministratorRequiredException()
     }
 
-    /** The probe sequence of one test, every step bounded by what remains of [deadline]. */
+    /** The probe sequence of one test, every step bounded by what remains of [TEST_DEADLINE]. */
     private inner class Probe(private val connection: ArtifactStorageConnection, root: String) {
         private val key = root + ".ostrom-probe-" + probeId()
         private val body = "Ostrom artifact storage probe $key".encodeToByteArray()
         private val steps = mutableListOf<StorageTestStep>()
-        private val endsAt = clock.now() + deadline
+        private val endsAt = clock.now() + TEST_DEADLINE
 
         suspend fun run(): List<StorageTestStep> {
             val written = step("put") {

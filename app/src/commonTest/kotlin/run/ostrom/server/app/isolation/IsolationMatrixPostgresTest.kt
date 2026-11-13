@@ -2,6 +2,7 @@
 package run.ostrom.server.app.isolation
 
 import run.ostrom.server.app.serverModules
+import run.ostrom.server.artifacts.domain.storage.ArtifactObjectStore
 import run.ostrom.server.identity.domain.TokenKind
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.EnvironmentConfigSource
@@ -36,6 +37,8 @@ class IsolationMatrixPostgresTest {
             )
             LayeredConfigSource(listOf(matrix, EnvironmentConfigSource()))
         }
+        // The organizations' buckets, in memory.
+        single<ArtifactObjectStore> { MatrixBucket() }
     }
 
     @Test

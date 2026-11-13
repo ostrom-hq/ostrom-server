@@ -13,10 +13,12 @@ import run.ostrom.server.artifacts.fakes.DAVE
 import run.ostrom.server.artifacts.fakes.ORG_A
 import run.ostrom.server.artifacts.fakes.ORG_B
 import run.ostrom.server.artifacts.fakes.VIEWER
+import run.ostrom.server.artifacts.fakes.activateArtifacts
 import run.ostrom.server.artifacts.fakes.alice
 import run.ostrom.server.artifacts.fakes.bob
 import run.ostrom.server.artifacts.fakes.dave
 import run.ostrom.server.artifacts.fakes.testIdentities
+import run.ostrom.server.artifacts.infrastructure.inTenant
 import run.ostrom.server.artifacts.presentation.ArtifactMembersResponse
 import run.ostrom.server.artifacts.presentation.ArtifactResponse
 import run.ostrom.server.artifacts.presentation.ArtifactTicketResponse
@@ -27,7 +29,6 @@ import run.ostrom.server.artifacts.presentation.FileDto
 import run.ostrom.server.artifacts.presentation.PublishArtifactRequest
 import run.ostrom.server.artifacts.presentation.PublishVersionRequest
 import run.ostrom.server.artifacts.presentation.UpdateArtifactRequest
-import run.ostrom.server.artifacts.infrastructure.inTenant
 import run.ostrom.server.kernel.logging.JsonLogger
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.logging.Logger
@@ -89,23 +90,23 @@ class ArtifactsPostgresTest {
     fun repositoryStoresVersionsBlobsAndShares() = serverTest(listOf(ArtifactsModule)) { server ->
         val repository = server.koin.get<ArtifactsRepository>()
         val mine = artifact().copy(linkSlug = "slug-1", access = ArtifactAccess.LINK)
-        repository.create(mine, version(mine, 1, "a.txt" to "sha-a"), mapOf("sha-a" to byteArrayOf(0, 1, 2)))
+        repository.create(mine, version(mine, 1, "a.txt" to "sha-a"))
         assertEquals(mine, repository.get(ORG_A, mine.id))
         assertNull(repository.get(ORG_B, mine.id))
         assertEquals(mine, repository.getById(mine.id))
         assertEquals(mine, repository.getByLinkSlug("slug-1"))
         assertNull(repository.getByLinkSlug("nope"))
-        assertContentEquals(byteArrayOf(0, 1, 2), repository.blob(ORG_A, mine.id, "sha-a"))
-        assertNull(repository.blob(ORG_A, mine.id, "sha-z"))
+        // The contents' sizes only: their bytes are in the bucket.
+        assertEquals(emptyList(), repository.legacyBlobs(ORG_A, 10))
 
         val second = version(mine, 2, "a.txt" to "sha-a", "b.txt" to "sha-b")
         val updated = assertNotNull(
-            repository.addVersion(ORG_A, second, mapOf("sha-b" to byteArrayOf(9)), t0 + 1.minutes),
+            repository.addVersion(ORG_A, second, t0 + 1.minutes),
         )
         assertEquals(2, updated.latestVersion)
         assertEquals(t0 + 1.minutes, updated.updatedAt)
-        assertNull(repository.addVersion(ORG_A, second, emptyMap(), t0))
-        assertNull(repository.addVersion(ORG_B, version(mine, 3, "a.txt" to "sha-a"), emptyMap(), t0))
+        assertNull(repository.addVersion(ORG_A, second, t0))
+        assertNull(repository.addVersion(ORG_B, version(mine, 3, "a.txt" to "sha-a"), t0))
         assertEquals(setOf("sha-a", "sha-b"), repository.blobDigests(ORG_A, mine.id))
         assertEquals(listOf(2, 1), repository.versions(ORG_A, mine.id).map { it.number })
         assertEquals(second, repository.version(ORG_A, mine.id, 2))
@@ -126,7 +127,7 @@ class ArtifactsPostgresTest {
         repository.setMember(ORG_A, mine.id, BOB.toString(), share = false)
         assertEquals(emptyList(), repository.members(ORG_A, mine.id))
         assertTrue(repository.delete(ORG_A, mine.id))
-        assertNull(repository.blob(ORG_A, mine.id, "sha-a"))
+        assertEquals(emptySet(), repository.blobDigests(ORG_A, mine.id))
         assertEquals(emptyList(), repository.versions(ORG_A, mine.id))
     }
 
@@ -134,7 +135,7 @@ class ArtifactsPostgresTest {
     fun anotherOrganizationsRowsAreNeitherSeenNorWritten() = serverTest(listOf(ArtifactsModule)) { server ->
         val repository = server.koin.get<ArtifactsRepository>()
         val mine = artifact()
-        repository.create(mine, version(mine, 1, "a.txt" to "sha-a"), mapOf("sha-a" to byteArrayOf(1)))
+        repository.create(mine, version(mine, 1, "a.txt" to "sha-a"))
         repository.setMember(ORG_A, mine.id, BOB.toString(), share = true)
         suspend fun count(org: Uuid, table: String) = server.driver.inTenant(org) {
             fetchAll(Statement.create("SELECT COUNT(*) AS n FROM $table")).getOrThrow().first().get("n").asLong()
@@ -150,15 +151,38 @@ class ArtifactsPostgresTest {
                 server.driver.inTenant(ORG_B) {
                     execute(
                         Statement.create(
-                            "INSERT INTO artifacts_blobs (artifact_id, org_id, sha256, bytes) VALUES (:id, :org, " +
-                                "'sha-x', CAST('' AS BYTEA))",
+                            "INSERT INTO artifacts_blobs (artifact_id, org_id, sha256, size) VALUES (:id, :org, " +
+                                "'sha-x', 0)",
                         ).bind("id", mine.id).bind("org", org),
                     ).getOrThrow()
                 }
             }
         }
         assertEquals(emptyList(), repository.members(ORG_B, mine.id))
-        assertNull(repository.blob(ORG_B, mine.id, "sha-a"))
+        assertEquals(emptySet(), repository.blobDigests(ORG_B, mine.id))
+    }
+
+    @Test
+    fun contentsStoredBeforeTheBucketAreReadOnceThenForgotten() = serverTest(listOf(ArtifactsModule)) { server ->
+        val repository = server.koin.get<ArtifactsRepository>()
+        val mine = artifact()
+        repository.create(mine, version(mine, 1, "a.txt" to "sha-a", "b.txt" to "sha-b"))
+        // As a row published before the bucket holds it: its bytes are still here.
+        server.driver.inTenant(ORG_A) {
+            execute(
+                Statement.create("UPDATE artifacts_blobs SET bytes = CAST(:bytes AS BYTEA) WHERE sha256 = 'sha-a'")
+                    .bind("bytes", byteArrayOf(0, 1, 2)),
+            ).getOrThrow()
+        }
+        assertEquals(emptyList(), repository.legacyBlobs(ORG_B, 10))
+        val legacy = repository.legacyBlobs(ORG_A, 10).single()
+        assertEquals(mine.id to "sha-a", legacy.artifactId to legacy.sha256)
+        assertContentEquals(byteArrayOf(0, 1, 2), legacy.bytes)
+        repository.releaseLegacyBlob(ORG_B, mine.id, "sha-a")
+        assertEquals(1, repository.legacyBlobs(ORG_A, 10).size)
+        repository.releaseLegacyBlob(ORG_A, mine.id, "sha-a")
+        assertEquals(emptyList(), repository.legacyBlobs(ORG_A, 10))
+        assertEquals(setOf("sha-a", "sha-b"), repository.blobDigests(ORG_A, mine.id))
     }
 
     @Test
@@ -173,7 +197,7 @@ class ArtifactsPostgresTest {
             shared,
             team,
             elsewhere,
-        ).forEach { repository.create(it, version(it, 1, "a" to "s"), emptyMap()) }
+        ).forEach { repository.create(it, version(it, 1, "a" to "s")) }
         repository.setMember(ORG_A, shared.id, BOB.toString(), share = true)
 
         assertEquals(setOf(team.id, shared.id), repository.listReadable(bob, null, 10).map { it.id }.toSet())
@@ -208,6 +232,7 @@ class ArtifactsPostgresTest {
 
     @Test
     fun theApiPublishesReadsSharesAndDeletes() = serverTest(listOf(ArtifactsModule), testIdentities) { server ->
+        server.koin.activateArtifacts()
         val client = server.client
         val created = client.publish("alice", "Report", "personal", "<h1>v1</h1>").also {
             assertEquals(HttpStatusCode.Created, it.status)
@@ -245,6 +270,7 @@ class ArtifactsPostgresTest {
 
     @Test
     fun theApiSharesListsAndDeletes() = serverTest(listOf(ArtifactsModule), testIdentities) { server ->
+        server.koin.activateArtifacts()
         val client = server.client
         val created = client.publish("alice", "Report", "personal", "<h1>v1</h1>").body<ArtifactResponse>()
         assertEquals(
@@ -293,6 +319,7 @@ class ArtifactsPostgresTest {
 
     @Test
     fun refusalsMapToStatuses() = serverTest(listOf(ArtifactsModule), testIdentities) { server ->
+        server.koin.activateArtifacts()
         val client = server.client
         val team = client.publish("alice", "Team", "team", "<p>x</p>").body<ArtifactResponse>()
         assertEquals(HttpStatusCode.Unauthorized, client.get("/api/v1/artifacts").status)
@@ -351,6 +378,7 @@ class ArtifactsPostgresTest {
     @Test
     fun anAdministratorsAgentReadsNoOtherMembersPersonalArtifact() =
         serverTest(listOf(ArtifactsModule), testIdentities) { server ->
+            server.koin.activateArtifacts()
             val client = server.client
             val personal = client.publish("alice", "Mine", "personal", "<p>x</p>").body<ArtifactResponse>()
             listOf("dave", "dave-agent").forEach { token ->
@@ -382,6 +410,7 @@ class ArtifactsPostgresTest {
     @Test
     @Suppress("LongMethod") // One page's life on both origins, read top to bottom.
     fun pagesAreServedOnTheContentOriginOnly() = serverTest(listOf(ArtifactsModule), testIdentities) { server ->
+        server.koin.activateArtifacts()
         val client = server.client
         val created = client.publish("alice", "Report", "personal", "<h1>page</h1>").body<ArtifactResponse>()
         val ticketCall = client.post("/api/v1/artifacts/${created.id}/tickets") { bearerAuth("alice") }
@@ -467,6 +496,7 @@ class ArtifactsPostgresTest {
             }
         }
         serverTest(listOf(ArtifactsModule), overrides) { server ->
+            server.koin.activateArtifacts()
             val client = server.client
             // S2-46: publishing declares its own body limit, over the kernel's 1 MiB default.
             val large = client.publish("alice", "Large", "link", "<p>${"x".repeat(1_200_000)}</p>")

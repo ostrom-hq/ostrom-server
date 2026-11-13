@@ -36,7 +36,7 @@ class ArtifactsRoutesTenancyPostgresTest {
     fun anotherOrganizationNeitherReadsNorRewritesARoute() = serverTest(listOf(ArtifactsModule)) { server ->
         val repository = server.koin.get<ArtifactsRepository>()
         val (artifact, version) = published("slug-a")
-        repository.create(artifact, version, mapOf("sha-a" to byteArrayOf(1)))
+        repository.create(artifact, version)
         val count = Statement.create("SELECT COUNT(*) AS n FROM artifacts_routes")
 
         // The test server's driver is the serving role: without an organization, no route at all.

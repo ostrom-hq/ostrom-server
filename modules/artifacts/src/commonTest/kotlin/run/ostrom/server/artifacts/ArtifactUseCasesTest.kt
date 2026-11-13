@@ -19,11 +19,18 @@ import run.ostrom.server.artifacts.domain.PublishArtifactUseCaseImpl
 import run.ostrom.server.artifacts.domain.ReadArtifactsUseCaseImpl
 import run.ostrom.server.artifacts.domain.UploadedFile
 import run.ostrom.server.artifacts.domain.ViewArtifactUseCaseImpl
+import run.ostrom.server.artifacts.domain.storage.ArtifactStorageUnavailableException
+import run.ostrom.server.artifacts.domain.storage.BucketArtifactContents
 import run.ostrom.server.artifacts.fakes.CONTENT_ORIGIN
 import run.ostrom.server.artifacts.fakes.InMemoryArtifacts
+import run.ostrom.server.artifacts.fakes.InMemoryBucket
+import run.ostrom.server.artifacts.fakes.InMemoryStorage
+import run.ostrom.server.artifacts.fakes.ORG_A
+import run.ostrom.server.artifacts.fakes.ORG_B
 import run.ostrom.server.artifacts.fakes.TestClock
 import run.ostrom.server.artifacts.fakes.TestViewers
 import run.ostrom.server.artifacts.fakes.VIEWER
+import run.ostrom.server.artifacts.fakes.active
 import run.ostrom.server.artifacts.fakes.alice
 import run.ostrom.server.artifacts.fakes.aliceAgent
 import run.ostrom.server.artifacts.fakes.bob
@@ -57,9 +64,12 @@ class ArtifactUseCasesTest {
     private val recorder = ArtifactEvents { caller, event, id, details ->
         events += "${caller.memberId} $event ${id != null} ${details.entries.joinToString(",")}"
     }
-    private val publish = PublishArtifactUseCaseImpl(repository, digest, clock, recorder)
-    private val read = ReadArtifactsUseCaseImpl(repository)
-    private val manage = ManageArtifactUseCaseImpl(repository, clock, recorder)
+    private val storage = InMemoryStorage().active(ORG_A, ORG_B)
+    private val bucket = InMemoryBucket()
+    private val contents = BucketArtifactContents(storage, bucket)
+    private val publish = PublishArtifactUseCaseImpl(repository, contents, digest, clock, recorder)
+    private val read = ReadArtifactsUseCaseImpl(repository, contents)
+    private val manage = ManageArtifactUseCaseImpl(repository, contents, clock, recorder)
     private var signer: InstanceSigner? = null
 
     private suspend fun signer(): InstanceSigner = signer ?: Ed25519InstanceSigner.generate().also { signer = it }
@@ -134,8 +144,10 @@ class ArtifactUseCasesTest {
         assertEquals("<h1>Report</h1>", read.file(alice, created.id, 1, "").bytes.decodeToString())
         assertFailsWith<ArtifactNotFoundException> { read.file(alice, created.id, 3, null) }
         assertFailsWith<ArtifactNotFoundException> { read.file(alice, created.id, 1, "missing.css") }
-        repository.blobs.clear()
-        assertFailsWith<ArtifactNotFoundException> { read.file(alice, created.id, 1, null) }
+        // Three objects in the bucket, none in PostgreSQL.
+        assertEquals(3, bucket.objects.size)
+        bucket.objects.clear()
+        assertFailsWith<ArtifactStorageUnavailableException> { read.file(alice, created.id, 1, null) }
     }
 
     @Test
@@ -256,6 +268,7 @@ class ArtifactUseCasesTest {
 
     private suspend fun viewing(maxCached: Int = 10_000, origin: String? = CONTENT_ORIGIN) = ViewArtifactUseCaseImpl(
         repository,
+        contents,
         SealedViewTickets(signer()),
         viewers,
         ArtifactLocations(VIEWER, origin),
