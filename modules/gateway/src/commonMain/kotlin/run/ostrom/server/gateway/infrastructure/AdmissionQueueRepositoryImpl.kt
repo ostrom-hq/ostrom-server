@@ -39,6 +39,7 @@ class AdmissionQueueRepositoryImpl(private val driver: Driver) : AdmissionQueueR
         fetchAll(Statement.create(ADMISSION_LOCK_SQL).bind("key", "gateway_admissions:${request.orgId}")).getOrThrow()
         execute(sql(ADMISSION_PURGE_SQL)).getOrThrow()
         val waited = if (first) {
+            bound(request)
             0L
         } else {
             fetchAll(sql(ADMISSION_WAITED_SQL).bind("id", request.id)).getOrThrow().firstOrNull()
@@ -59,7 +60,7 @@ class AdmissionQueueRepositoryImpl(private val driver: Driver) : AdmissionQueueR
             waited.milliseconds,
             turns.get("mine").asLong(),
         )
-        val entry = QueueTurns.decide(me, others, running, request.limit)
+        val entry = QueueTurns.decide(me, others, running, request.limit, request.limitedMembers)
         when (entry) {
             AdmissionEntry.Admitted -> admit(request, first, turns.get("mine").asLong(), turns.get("top").asLong() + 1)
             is AdmissionEntry.Waiting -> wait(request, first, entry.blocked)
@@ -80,16 +81,6 @@ class AdmissionQueueRepositoryImpl(private val driver: Driver) : AdmissionQueueR
     private suspend fun Transaction.wait(request: AdmissionRequest, first: Boolean, blocked: Boolean) {
         // A call blocked by its own member's limit leaves the next turn to the others until its member has room.
         val readyIn = if (blocked) AdmissionQueueRepository.WAITING_LEASE.inWholeSeconds else 0
-        if (first) {
-            val bounds = Statement.create(ADMISSION_WAITING_SQL).bind("org_id", request.orgId)
-                .bind("member_id", request.memberId)
-            val row = fetchAll(bounds).getOrThrow().first()
-            val memberFull = request.limit != null &&
-                row.get("member_waiting").asLong() >= AdmissionQueueRepository.MEMBER_BOUND
-            if (memberFull || row.get("org_waiting").asLong() >= AdmissionQueueRepository.ORG_BOUND) {
-                throw QueueRefusedException(RefusalKind.QUEUE_FULL)
-            }
-        }
         val write = if (first) request.inserted(ADMISSION_WAIT_SQL) else Statement.create(ADMISSION_POLL_SQL)
         execute(write.bind("org_id", request.orgId).bind("id", request.id).bind("ready_in", readyIn)).getOrThrow()
     }
@@ -129,6 +120,21 @@ class AdmissionQueueRepositoryImpl(private val driver: Driver) : AdmissionQueueR
         waited = row.get("waited_ms").asLong().milliseconds,
         lastTurn = row.get("last_turn").asLong(),
     )
+}
+
+/**
+ * The bounds, as a call arrives: checked whether it waits or not, since a call admitted without a turn (no limit
+ * among the waiting calls) goes back to wait when the accounts are busy, as TeamCode bounds every arrival.
+ */
+private suspend fun Transaction.bound(request: AdmissionRequest) {
+    val bounds = Statement.create(ADMISSION_WAITING_SQL).bind("org_id", request.orgId)
+        .bind("member_id", request.memberId)
+    val row = fetchAll(bounds).getOrThrow().first()
+    val memberFull = request.limit != null &&
+        row.get("member_waiting").asLong() >= AdmissionQueueRepository.MEMBER_BOUND
+    if (memberFull || row.get("org_waiting").asLong() >= AdmissionQueueRepository.ORG_BOUND) {
+        throw QueueRefusedException(RefusalKind.QUEUE_FULL)
+    }
 }
 
 private val WAITING_SECONDS = AdmissionQueueRepository.WAITING_LEASE.inWholeSeconds

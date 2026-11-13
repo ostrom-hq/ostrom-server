@@ -152,6 +152,7 @@ class RelayInferenceUseCaseImpl(
             },
             workload = call.workload,
             limit = org.settings.memberConcurrency[caller.memberId.toString()],
+            limitedMembers = org.settings.memberConcurrency.keys,
         )
 
         /** Whether the call is recorded: a failure after its record must not record it again. */

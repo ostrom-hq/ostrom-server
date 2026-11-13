@@ -291,8 +291,10 @@ A model call waits for its turn in the org's admission queue (TeamCode's admissi
 PostgreSQL (`gateway_admissions`, `gateway_admission_turns`, under an advisory lock of the org): while every shared
 account it may use is busy, or while its member already runs as many calls as their limit (`memberConcurrency` in
 the inference settings, 1 to 32). Interactive calls go first and a background one (`x-ostrom-workload: background`)
-joins them after 30 s; then the member served longest ago, then arrival order. A call waits 90 s at most (503
-`queue_timeout`); 128 calls wait per org and 8 per limited member (503 `queue_full`); a call whose replica stops
+joins them after 30 s; then the member served longest ago, then arrival order. Those turns are taken only while a
+waiting call's member has a limit: otherwise every waiting call tries the accounts as it polls, and a free account
+takes them all in one round (TeamCode #87). A call waits 90 s at most (503
+`queue_timeout`); 128 calls wait per org and 8 per limited member (503 `queue_full`, checked as a call arrives, whether it waits or not); a call whose replica stops
 polling loses its turn within 5 s and its place within 15 s, and a running call's place lasts 15 minutes, renewed
 every 5. Waiting holds no account, no budget and no database connection. The inference API's queue route counts the
 waiting calls; every gateway refusal carries its code in `x-ostrom-error`.

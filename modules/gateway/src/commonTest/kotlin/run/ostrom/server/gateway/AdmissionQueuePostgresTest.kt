@@ -58,8 +58,14 @@ class AdmissionQueuePostgresTest {
     private val ada = Uuid.random()
     private val bob = Uuid.random()
 
-    private fun call(member: Uuid, workload: Workload = Workload.INTERACTIVE, limit: Int? = null, org: Uuid = Gw.orgA) =
-        AdmissionRequest(Uuid.random(), org, member, "claude", workload, limit)
+    /** A call of [member]; Ada and Bob have a limit (turns are taken) unless [limited] is empty. */
+    private fun call(
+        member: Uuid,
+        workload: Workload = Workload.INTERACTIVE,
+        limit: Int? = null,
+        org: Uuid = Gw.orgA,
+        limited: Set<String> = setOf(ada.toString(), bob.toString()),
+    ) = AdmissionRequest(Uuid.random(), org, member, "claude", workload, limit, limited)
 
     private fun TestServer.replicas(): List<AdmissionQueueRepository> =
         listOf(koin.get<AdmissionQueueRepository>(), AdmissionQueueRepositoryImpl(driver))
@@ -110,6 +116,23 @@ class AdmissionQueuePostgresTest {
         assertEquals(RefusalKind.QUEUE_FULL, full.kind)
         val expired = assertFailsWith<QueueRefusedException> { one.enter(call(ada), first = false) }
         assertEquals(RefusalKind.QUEUE_EXPIRED, expired.kind, "A place never written, or gone, is lost")
+    }
+
+    @Test
+    fun withoutALimitAmongTheWaitingCallsEveryArrivalRunsButTheBoundsHold() = serverTest(modules, overrides) { server ->
+        // TeamCode #87: with 0 (unlimited) the default, taking turns let one waiting call through per poll.
+        val (one, two) = server.replicas()
+        val bobs = List(3) { call(bob, limited = emptySet()) }
+        for (waiting in bobs) {
+            assertEquals(AdmissionEntry.Admitted, one.enter(waiting, first = true))
+            one.requeue(Gw.orgA, waiting.id)
+        }
+        assertEquals(AdmissionEntry.Admitted, two.enter(call(ada, limited = emptySet()), first = true))
+        assertTrue(bobs.all { two.enter(it, first = false) == AdmissionEntry.Admitted }, "Every waiting call runs")
+
+        server.database.superuser.execute(waiting(Gw.orgA, count = 128, polledSecondsAgo = 0)).getOrThrow()
+        val full = assertFailsWith<QueueRefusedException> { one.enter(call(ada, limited = emptySet()), first = true) }
+        assertEquals(RefusalKind.QUEUE_FULL, full.kind, "An arrival is bounded even when it would run")
     }
 
     @Test
