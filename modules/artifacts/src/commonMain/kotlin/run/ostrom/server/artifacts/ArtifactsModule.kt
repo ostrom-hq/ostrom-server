@@ -2,6 +2,7 @@
 package run.ostrom.server.artifacts
 
 import run.ostrom.core.api.models.ServerFeatures
+import run.ostrom.server.artifacts.domain.ArtifactEvents
 import run.ostrom.server.artifacts.domain.ArtifactLocations
 import run.ostrom.server.artifacts.domain.ArtifactsRepository
 import run.ostrom.server.artifacts.domain.ContentDigest
@@ -18,6 +19,7 @@ import run.ostrom.server.artifacts.domain.ViewerChecks
 import run.ostrom.server.artifacts.infrastructure.ArtifactsConfig
 import run.ostrom.server.artifacts.infrastructure.ArtifactsMigrations
 import run.ostrom.server.artifacts.infrastructure.ArtifactsRepositoryImpl
+import run.ostrom.server.artifacts.infrastructure.AuditedArtifactEvents
 import run.ostrom.server.artifacts.infrastructure.KernelViewerChecks
 import run.ostrom.server.artifacts.infrastructure.SealedViewTickets
 import run.ostrom.server.artifacts.infrastructure.Sha256ContentDigest
@@ -45,9 +47,10 @@ object ArtifactsModule : ServerModule {
         single<ArtifactLocations> { ArtifactsConfig.from(get<ConfigSource>()) }
         single<ArtifactsRepository> { ArtifactsRepositoryImpl(get()) }
         single<ContentDigest> { Sha256ContentDigest() }
-        single<PublishArtifactUseCase> { PublishArtifactUseCaseImpl(get(), get(), get()) }
+        single<ArtifactEvents> { AuditedArtifactEvents(get()) }
+        single<PublishArtifactUseCase> { PublishArtifactUseCaseImpl(get(), get(), get(), get()) }
         single<ReadArtifactsUseCase> { ReadArtifactsUseCaseImpl(get()) }
-        single<ManageArtifactUseCase> { ManageArtifactUseCaseImpl(get(), get()) }
+        single<ManageArtifactUseCase> { ManageArtifactUseCaseImpl(get(), get(), get()) }
         single<ViewTicketSeal> { SealedViewTickets(get()) }
         single<ViewerChecks> { KernelViewerChecks(get(), getOrNull()) }
         single<ViewArtifactUseCase> { ViewArtifactUseCaseImpl(get(), get(), get(), get(), get()) }

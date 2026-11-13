@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.artifacts.domain
 
+import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -115,6 +116,7 @@ class UploadedFile(val path: String, val bytes: ByteArray)
  * @property credentialId The credential the request presented, which a reading ticket is bound to; null when unknown.
  * @property subjectId The person behind the credential (the principal's `subjectId`), whose credential a reading
  *   ticket checks is still live; null when unknown.
+ * @property principal The credential itself, named as the actor of the audit log's lines; null when unknown.
  */
 data class ArtifactCaller(
     val orgId: Uuid,
@@ -122,6 +124,7 @@ data class ArtifactCaller(
     val person: Boolean,
     val credentialId: String? = null,
     val subjectId: String? = null,
+    val principal: AuthenticatedPrincipal? = null,
 )
 
 /**

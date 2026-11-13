@@ -33,12 +33,14 @@ interface PublishArtifactUseCase {
 
 /**
  * [PublishArtifactUseCase]: the files are checked (paths, sizes, secrets) before anything is stored, and each
- * distinct content is stored once per artifact.
+ * distinct content is stored once per artifact. The audit log is told of each artifact created, each version published,
+ * and each publication refused (a file that holds a secret, or a public one asked by a program).
  */
 internal class PublishArtifactUseCaseImpl(
     private val repository: ArtifactsRepository,
     private val digest: ContentDigest,
     private val clock: Clock,
+    private val events: ArtifactEvents,
 ) : PublishArtifactUseCase {
     private val rules = ArtifactAccessRules(repository)
 
@@ -50,8 +52,11 @@ internal class PublishArtifactUseCaseImpl(
     ): Artifact {
         val checkedTitle = ArtifactRules.title(title)
         val checkedAccess = parseAccess(access)
-        if (checkedAccess == ArtifactAccess.LINK && !caller.person) throw ArtifactPersonRequiredException()
-        ArtifactRules.check(files)
+        if (checkedAccess == ArtifactAccess.LINK && !caller.person) {
+            events.record(caller, PUBLISH_REFUSED, null, mapOf("access" to access, "reason" to "person_required"))
+            throw ArtifactPersonRequiredException()
+        }
+        checked(caller, null, files)
         val now = clock.now()
         val id = Uuid.random()
         val (recorded, blobs) = record(files)
@@ -68,12 +73,13 @@ internal class PublishArtifactUseCaseImpl(
         )
         val version = ArtifactVersion(id, 1, ArtifactRules.entry(files.map { it.path }), recorded, now, caller.memberId)
         repository.create(artifact, version, blobs)
+        events.record(caller, "created", id, mapOf("title" to checkedTitle, "access" to checkedAccess.wire))
         return artifact
     }
 
     override suspend fun addVersion(caller: ArtifactCaller, id: Uuid, files: List<UploadedFile>): ArtifactVersion {
         val artifact = rules.owned(caller, id)
-        ArtifactRules.check(files)
+        checked(caller, id, files)
         val (recorded, blobs) = record(files)
         val known = repository.blobDigests(artifact.orgId, id)
         val now = clock.now()
@@ -86,7 +92,17 @@ internal class PublishArtifactUseCaseImpl(
             createdBy = caller.memberId,
         )
         repository.addVersion(caller.orgId, version, blobs - known, now) ?: throw ArtifactConflictException()
+        events.record(caller, "version_published", id, mapOf("version" to version.number.toString()))
         return version
+    }
+
+    private suspend fun checked(caller: ArtifactCaller, id: Uuid?, files: List<UploadedFile>) {
+        try {
+            ArtifactRules.check(files)
+        } catch (refused: ArtifactSecretException) {
+            events.record(caller, PUBLISH_REFUSED, id, mapOf("reason" to "secret"))
+            throw refused
+        }
     }
 
     private suspend fun record(files: List<UploadedFile>): Pair<List<ArtifactFile>, Map<String, ByteArray>> {
@@ -203,3 +219,6 @@ internal fun parseAccess(access: String): ArtifactAccess =
 /** A new public link's secret for [ArtifactAccess.LINK], null otherwise. */
 internal fun linkSlugFor(access: ArtifactAccess): String? =
     if (access == ArtifactAccess.LINK) Uuid.random().toHexString() + Uuid.random().toHexString() else null
+
+/** The event of a publication refused. */
+private const val PUBLISH_REFUSED = "publish_refused"

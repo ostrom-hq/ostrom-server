@@ -48,6 +48,7 @@ suspend fun PrincipalOrgResolver.artifactCallerOf(principal: AuthenticatedPrinci
         person = principal.mayWrite(WriteAccess.PERSON),
         credentialId = principal.credentialId,
         subjectId = principal.subjectId,
+        principal = principal,
     )
 }
 

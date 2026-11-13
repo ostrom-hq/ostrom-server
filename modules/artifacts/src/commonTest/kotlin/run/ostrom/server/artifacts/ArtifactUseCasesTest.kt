@@ -3,11 +3,13 @@ package run.ostrom.server.artifacts
 
 import run.ostrom.server.artifacts.domain.ArtifactAccess
 import run.ostrom.server.artifacts.domain.ArtifactConflictException
+import run.ostrom.server.artifacts.domain.ArtifactEvents
 import run.ostrom.server.artifacts.domain.ArtifactLocations
 import run.ostrom.server.artifacts.domain.ArtifactNotFoundException
 import run.ostrom.server.artifacts.domain.ArtifactNotWritableException
 import run.ostrom.server.artifacts.domain.ArtifactPagesUnavailableException
 import run.ostrom.server.artifacts.domain.ArtifactPersonRequiredException
+import run.ostrom.server.artifacts.domain.ArtifactSecretException
 import run.ostrom.server.artifacts.domain.ArtifactTicket
 import run.ostrom.server.artifacts.domain.ArtifactTicketsRateLimitedException
 import run.ostrom.server.artifacts.domain.ContentDigest
@@ -51,9 +53,13 @@ class ArtifactUseCasesTest {
     private val repository = InMemoryArtifacts()
     private val clock = TestClock()
     private val digest: ContentDigest = Sha256ContentDigest()
-    private val publish = PublishArtifactUseCaseImpl(repository, digest, clock)
+    private val events = mutableListOf<String>()
+    private val recorder = ArtifactEvents { caller, event, id, details ->
+        events += "${caller.memberId} $event ${id != null} ${details.entries.joinToString(",")}"
+    }
+    private val publish = PublishArtifactUseCaseImpl(repository, digest, clock, recorder)
     private val read = ReadArtifactsUseCaseImpl(repository)
-    private val manage = ManageArtifactUseCaseImpl(repository, clock)
+    private val manage = ManageArtifactUseCaseImpl(repository, clock, recorder)
     private var signer: InstanceSigner? = null
 
     private suspend fun signer(): InstanceSigner = signer ?: Ed25519InstanceSigner.generate().also { signer = it }
@@ -68,6 +74,39 @@ class ArtifactUseCasesTest {
         assertEquals(
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
             digest.sha256("abc".encodeToByteArray()),
+        )
+    }
+
+    @Test
+    fun theAuditLogIsToldOfEachChangeAndEachRefusalNeverOfAReading() = runTest {
+        val leaked = listOf(UploadedFile("notes.md", ("token: ghp_" + "a".repeat(36)).encodeToByteArray()))
+        assertFailsWith<ArtifactPersonRequiredException> { publish.create(aliceAgent, "Leak", "link", page()) }
+        assertFailsWith<ArtifactSecretException> { publish.create(alice, "Leak", "team", leaked) }
+        val artifact = publish.create(alice, "Report", "personal", page())
+        assertFailsWith<ArtifactSecretException> { publish.addVersion(alice, artifact.id, leaked) }
+        publish.addVersion(alice, artifact.id, page("<h1>Two</h1>"))
+        manage.update(alice, artifact.id, "Renamed", null)
+        manage.update(alice, artifact.id, null, "personal")
+        manage.update(alice, artifact.id, null, "link")
+        manage.share(alice, artifact.id, bob.memberId, share = true)
+        read.get(bob, artifact.id)
+        read.list(bob, null, null)
+        manage.share(alice, artifact.id, bob.memberId, share = false)
+        manage.delete(alice, artifact.id)
+        val a = alice.memberId
+        assertEquals(
+            listOf(
+                "$a publish_refused false access=link,reason=person_required",
+                "$a publish_refused false reason=secret",
+                "$a created true title=Report,access=personal",
+                "$a publish_refused true reason=secret",
+                "$a version_published true version=2",
+                "$a access_changed true from=personal,to=link",
+                "$a member_added true member=${bob.memberId}",
+                "$a member_removed true member=${bob.memberId}",
+                "$a deleted true ",
+            ),
+            events,
         )
     }
 
