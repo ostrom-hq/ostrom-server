@@ -9,7 +9,10 @@ import kotlin.test.assertTrue
 class ServiceKeyScopesTest {
     @Test
     fun theReservedScopesAreTheAdministratorsAndNeverACiScope() {
-        assertEquals(setOf("team:read", "cloud:admin"), ServiceKeyScopes.RESERVED)
+        assertEquals(
+            setOf("team:read", "cloud:admin", "skills:publish", "skills:pin", "skills:assign"),
+            ServiceKeyScopes.RESERVED,
+        )
         assertEquals(setOf("sessions:write", "rules:read"), ServiceKeyScopes.CI)
         assertTrue(ServiceKeyScopes.RESERVED.none { it in ServiceKeyScopes.CI })
     }

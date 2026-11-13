@@ -158,7 +158,10 @@ class ServiceKeysAndDevicesTest {
             assertFailsWith<InvalidServiceKeyScopesException> { create(owner, ada, "mixed", mixed, null) }
         }
         assertEquals(setOf("sessions:write", "rules:read"), CI_SERVICE_KEY_SCOPES)
-        assertEquals(setOf("team:read", "cloud:admin"), RESERVED_SERVICE_KEY_SCOPES)
+        assertEquals(
+            setOf("team:read", "cloud:admin", "skills:publish", "skills:pin", "skills:assign"),
+            RESERVED_SERVICE_KEY_SCOPES,
+        )
     }
 
     @Test

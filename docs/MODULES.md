@@ -2,9 +2,9 @@
 
 Every functional domain of the server (`identity`, `orgs`, `sessions`, `launches`, `gates`, `receipts`, `compiler`,
 `workflow-runs`, `mcp-relay`, `secrets`, `events`, `usage`, `gateway`, `budgets`, `runners`, `automations`,
-`artifacts`, `integrations-github`, `integrations-slack`, `sharing`, `governance`, `todos`) is a Gradle module under
-`modules/<name>/`. Each one already exists as an empty skeleton, registered in the app: **the owner of a module only
-edits its own directory**, plus its single line in `app/.../ServerModules.kt` if the order must change.
+`artifacts`, `integrations-github`, `integrations-slack`, `sharing`, `governance`, `todos`, `skills`) is a Gradle module
+under `modules/<name>/`. Each one already exists as an empty skeleton, registered in the app: **the owner of a module
+only edits its own directory**, plus its single line in `app/.../ServerModules.kt` if the order must change.
 `modules/instance` is the complete reference example: copy its shape.
 
 Read [`ostrom-core/docs/CONVENTIONS.md`](https://github.com/ostrom-hq/ostrom-core/blob/main/docs/CONVENTIONS.md)
@@ -425,6 +425,28 @@ refresh intent is on the row, in flight or left by a failure: new tokens clear i
 | `OSTROM_SHARING_CLAUDE_TOKEN_URL` | `https://platform.claude.com/v1/oauth/token` | Token endpoint of shared Claude accounts |
 | `OSTROM_SHARING_CODEX_TOKEN_URL` | `https://auth.openai.com/oauth/token` | Token endpoint of shared ChatGPT (Codex) accounts |
 
+### Module `skills`
+
+The organization's skill catalog, ported from TeamCode (`docs/skills.md`, and #268 for personal skills). A version is
+immutable: its files (1 to 200, at most 5 MiB, `SKILL.md` at the root, stored in PostgreSQL) and its digest never
+change, and the same label published again answers 200 `created: false` with the same content, 409
+`skill_version_conflict` with another. The digest is `sha256:` over one line per file sorted by path,
+`<path>\0<mode>\0<size>\0<sha256 hex>\n`, which the CLI recomputes before it installs anything.
+
+Only the pinned version is delivered, to every member (`allMembers`) or to the members set to yes; an explicit no
+always wins. Owners and admins manage the catalog from the console only (a browser session). A CI publishes with a
+service key holding `skills:publish`, which pins with `skills:pin` and opens to all members with `skills:assign`
+(reserved scopes: the key works only while its creator is an owner or an admin); each of its changes is audited with
+the key's id. A member publishes personal skills, which only they receive, from the console or the CLI
+(`skills:write`); an owner or an admin promotes one to the team, which clears its owner, its pin and its audience.
+A skill name is unique in the organization, team and personal alike. Limits: 500 team skills, 50 personal skills per
+member, 200 versions per skill.
+
+Every write takes the organization's catalog lock (a transaction-scoped advisory lock), so writes of one organization
+run one after the other on any replica, and the audit events are written once the change committed. The CLI's token
+is the workstation (`GET /api/v1/devices`): it alone reports what it installed (`PUT
+/api/v1/skill-delivery/installations`), a report never grants nor revokes anything, and the rows go with the skill.
+
 ## Commands
 
 | Command | What it does | Exit |
@@ -469,6 +491,7 @@ anonymous call gets 401 `unauthorized`. A module lists a key of ostrom-core's `S
 | `secrets` | `secrets.v1`, `environment.v1` (environment variants) | — |
 | `sessions` | `sessions.v1` | — |
 | `sharing` | `sharing.v1` | — |
+| `skills` | `skills.v1` | — |
 | `todos` | `todos.v1` | — |
 | `usage` | `usage.v1` | — |
 | `workflow-runs` | `workflows.v1`, `notifications.v1` (the hooks' notifications) | — |

@@ -19,11 +19,20 @@ object ServiceKeyScopes {
     /** `cloud:write` with an administrator's rights over every cloud session of the organization. */
     const val CLOUD_ADMIN: String = "cloud:admin"
 
+    /** Publishes team skill versions (a CI's publication, TeamCode's `skills:publish`). */
+    const val SKILLS_PUBLISH: String = "skills:publish"
+
+    /** With [SKILLS_PUBLISH]: pins a skill version, at publication or afterwards. */
+    const val SKILLS_PIN: String = "skills:pin"
+
+    /** With [SKILLS_PUBLISH]: delivers a skill to all members at publication. */
+    const val SKILLS_ASSIGN: String = "skills:assign"
+
     /**
      * The scopes reserved to an owner or an admin: only they create a key with one, and the key stops at once when its
      * creator is no longer one.
      */
-    val RESERVED: Set<String> = setOf(TEAM_READ, CLOUD_ADMIN)
+    val RESERVED: Set<String> = setOf(TEAM_READ, CLOUD_ADMIN, SKILLS_PUBLISH, SKILLS_PIN, SKILLS_ASSIGN)
 
     /** What a CI calls: the key acts for its organization, audited, and never as a person. */
     val CI: Set<String> = setOf("sessions:write", "rules:read")

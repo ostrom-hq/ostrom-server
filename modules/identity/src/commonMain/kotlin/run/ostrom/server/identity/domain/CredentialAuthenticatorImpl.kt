@@ -89,6 +89,8 @@ class CredentialAuthenticatorImpl(
                 personalTokenName = shownTokenName(stored.name).takeIf { stored.kind == TokenKind.PERSONAL },
                 // TeamCode's interactive login: the person signed in on this workstation, not a token made to hand out.
                 signedIn = stored.kind != TokenKind.PERSONAL,
+                // The CLI's token is its workstation (`GET /api/v1/devices`): the skills it reports are this one's.
+                workstation = shownTokenName(stored.name).takeIf { stored.kind == TokenKind.CLI },
             )
         }
     }

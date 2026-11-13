@@ -29,6 +29,8 @@ import kotlin.time.Instant
  * @property signedIn Whether the token is a person's sign-in on a workstation (the token of `ostrom login`, or of
  *   `ostrom login --admin`), as TeamCode's interactive login: a person, as a browser session or the unlocked app is,
  *   never a personal token made in the console, a service key, an agent's or a device's token.
+ * @property workstation The name of the workstation the CLI's token was approved for (`ostrom login`): its
+ *   [credentialId] is the workstation's id (`GET /api/v1/devices`). Null for every other credential.
  */
 data class AuthenticatedPrincipal(
     val subjectId: String,
@@ -42,6 +44,7 @@ data class AuthenticatedPrincipal(
     val personalTokenName: String? = null,
     val onBehalfOf: String? = null,
     val signedIn: Boolean = false,
+    val workstation: String? = null,
 ) {
     /**
      * Whether the principal may do what [scope] names: the scope is listed, or the principal is a user's browser

@@ -40,6 +40,8 @@ val PERSONAL_TOKEN_SCOPES: List<TokenScope> = listOf(
         "artifacts:write",
         "Publish and share artifacts; making one public or deleting one stays in the console.",
     ),
+    TokenScope("skills:read", "Read and download the skills delivered to you."),
+    TokenScope("skills:write", "Publish and manage your personal skills; the team's catalog stays in the console."),
     TokenScope("secrets:read", "List the secrets, never their values."),
     TokenScope("secrets:write", "Save and delete secrets."),
     TokenScope("environment:read", "Read your own environment values, as `ostrom claude` does before an agent."),
