@@ -549,6 +549,8 @@ class EnvironmentPostgresTest {
         )
         assertEquals(HttpStatusCode.NotFound, stolen.status)
         assertEquals(HttpStatusCode.NotFound, server.send("PUT", "$exclusions/$memberA/TOKEN", "admin-b").status)
+        assertEquals(HttpStatusCode.NotFound, server.send("DELETE", "$exclusions/$memberA/TOKEN", "admin-b").status)
+        assertEquals(HttpStatusCode.NotFound, server.send("DELETE", "$assignments/$memberA/TOKEN", "admin-b").status)
         assertEquals(emptyMap(), server.values("admin-b").variables)
         assertEquals(mapOf("MINE" to "value-m", "TOKEN" to "value-a"), server.values("member-a").variables)
     }

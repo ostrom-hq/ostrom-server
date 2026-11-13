@@ -275,6 +275,7 @@ class ManageEnvironmentAssignmentsUseCaseImpl(
     override suspend fun unassign(actor: EnvironmentActor, memberId: Uuid, variable: String) {
         actor.caller.requireAdmin()
         EnvironmentRules.requireVariable(variable)
+        requireMember(members, actor.caller.orgId, memberId)
         if (repository.unassign(actor.caller.orgId, memberId, variable)) {
             recordMember(audit, actor, "environment.unassigned", memberId, variable)
         }
@@ -292,6 +293,7 @@ class ManageEnvironmentAssignmentsUseCaseImpl(
     override suspend fun include(actor: EnvironmentActor, memberId: Uuid, variable: String) {
         actor.caller.requireAdmin()
         EnvironmentRules.requireVariable(variable)
+        requireMember(members, actor.caller.orgId, memberId)
         if (repository.include(actor.caller.orgId, memberId, variable)) {
             recordMember(audit, actor, "environment.included", memberId, variable)
         }
