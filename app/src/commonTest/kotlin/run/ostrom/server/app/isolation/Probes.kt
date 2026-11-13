@@ -18,7 +18,7 @@ private val CLOUD_WRITES = CLOUD_READS + setOf(
 private val ARTIFACT_READS = setOf(
     "GET /api/v1/artifacts", "GET /api/v1/artifacts/{id}", "GET /api/v1/artifacts/{id}/versions",
     "GET /api/v1/artifacts/{id}/versions/{number}/file", "GET /api/v1/artifacts/{id}/members",
-    "POST /api/v1/artifacts/{id}/tickets", "POST /api/v1/artifacts/mcp",
+    "POST /api/v1/artifacts/{id}/tickets", "POST /api/v1/artifacts/mcp", "GET /api/v1/artifacts/policy",
 )
 
 /**
