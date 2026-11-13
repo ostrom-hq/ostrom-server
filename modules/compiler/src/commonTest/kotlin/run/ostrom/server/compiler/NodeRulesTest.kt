@@ -149,7 +149,10 @@ class NodeRulesTest {
             node("k", CHECK, label = "y", run = NodeRun(command = "make")),
             node("t", TRIGGER),
         )
-        val (step, agent, bare, scripted, trigger) = produced(*nodes, status = WorkflowStatus.PROPOSED)
+        val proposed = produced(*nodes, status = WorkflowStatus.PROPOSED)
+        val (step, agent, bare) = proposed
+        val scripted = proposed[3]
+        val trigger = proposed[4]
         assertEquals(emptyList(), step)
         assertEquals(emptyList(), agent)
         assertEquals(emptyList(), bare, "A check with no command only asks for a skill")

@@ -131,9 +131,19 @@ class RunNodesPostgresTest {
         koin.get<WorkflowsUseCase>().save(team.org.id, raw, null, OWNER, true)
     }
 
-    /** Stores an accepted workflow of [team]'s organization without the checks of a save. */
-    private suspend fun TestServer.unchecked(team: Team, id: String, nodes: String, start: String, inputs: String) {
-        val document = """{"id":"$id","name":"$id","domain":"git","nodes":$nodes,"edges":[],"start":"$start",""" +
+    /**
+     * Stores an accepted workflow of [team]'s organization without the checks of a save: a save refuses a wait as the
+     * start node, and these tests play the wait node itself.
+     */
+    private suspend fun TestServer.unchecked(
+        team: Team,
+        id: String,
+        nodes: String,
+        start: String,
+        inputs: String,
+        edges: String = "[]",
+    ) {
+        val document = """{"id":"$id","name":"$id","domain":"git","nodes":$nodes,"edges":$edges,"start":"$start",""" +
             """"status":"accepted","foundAt":"2026-11-03T10:00:00Z","inputs":$inputs}"""
         val raw = OstromJson.parseToJsonElement(document).jsonObject
         val author = Authorship(OWNER, clock.now())
@@ -171,7 +181,7 @@ class RunNodesPostgresTest {
     @Test
     fun aWaitNodeAsksItsApproverAndTheRunGoesOnWithTheAnswerAlsoOnAnotherReplicaAfterARestart() = nodesTest { server ->
         val team = server.team("ada")
-        server.workflow(team, SHIP, ASK_NODES, "ask", BRANCH)
+        server.unchecked(team, SHIP, ASK_NODES, "ask", BRANCH)
         val run = server.start(team, SHIP)
 
         assertEquals(1, server.engine().next())
@@ -213,7 +223,7 @@ class RunNodesPostgresTest {
         val refused = assertFailsWith<OstromException> { server.workflow(team, "bad", bad, "ask", BRANCH, CHECK_EDGES) }
         assertEquals(ErrorKind.INVALID_REQUEST, refused.kind)
         assertEquals("Invalid workflow: node go: condition.step: gone is not a node of the workflow.", refused.message)
-        server.workflow(team, SHIP, CHECK_NODES, "ask", BRANCH, CHECK_EDGES)
+        server.unchecked(team, SHIP, CHECK_NODES, "ask", BRANCH, CHECK_EDGES)
         val run = server.start(team, SHIP)
         val engine = server.engine()
         engine.next()
@@ -292,7 +302,7 @@ class RunNodesPostgresTest {
         // A save refuses a workflow that calls itself: it is stored as an older version could have been.
         server.unchecked(team, LOOP, """[{"id":"again","kind":"workflow","label":"Again","workflowId":"$LOOP"}]""",
             "again", BRANCH)
-        server.workflow(team, ASK, ASK_NODES, "ask", BRANCH)
+        server.unchecked(team, ASK, ASK_NODES, "ask", BRANCH)
         server.workflow(team, SHIP, CALL_ASK, "call", BRANCH)
         val loop = server.start(team, LOOP)
         val ship = server.start(team, SHIP)

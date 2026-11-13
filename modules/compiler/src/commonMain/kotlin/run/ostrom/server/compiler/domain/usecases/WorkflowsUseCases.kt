@@ -201,22 +201,6 @@ class WorkflowsUseCaseImpl(
         requireCalls(workflow, others)
     }
 
-    private fun requireFreeName(workflow: Workflow, others: List<Workflow>) {
-        val name = workflow.name.trim()
-        if (others.none { it.name.trim().equals(name, ignoreCase = true) }) return
-        throw OstromException(
-            ErrorKind.CONFLICT,
-            "workflow_name_taken: another workflow of the organization has this name.",
-            type = "workflow_name_taken",
-        )
-    }
-
-    private fun requireCalls(workflow: Workflow, others: List<Workflow>) = try {
-        CallChecks.check(workflow, others.associateBy { it.id })
-    } catch (e: IllegalArgumentException) {
-        throw InvalidWorkflowException("Invalid workflow: ${e.message.toString().take(MAX_ERROR)}", e)
-    }
-
     override fun check(raw: JsonObject) {
         decode(raw)
     }
@@ -242,24 +226,6 @@ class WorkflowsUseCaseImpl(
         removals?.removed(orgId, id)
     }
 
-    private fun inUse(reason: String) =
-        OstromException(ErrorKind.CONFLICT, "workflow_in_use: $reason", type = "workflow_in_use")
-
-    private fun compiles(payload: String, id: String): Boolean =
-        (PackageCompiler.json.parseToJsonElement(payload).jsonObject["workflows"] as JsonArray)
-            .any { (it.jsonObject["id"] as JsonPrimitive).content == id }
-
-    // The core model does not know `repos` yet (R6): it is checked here and kept in the saved JSON. A check node's
-    // condition is checked against the workflow's nodes and edges.
-    private fun decode(raw: JsonObject): Workflow = try {
-        WorkflowRepos.problem(raw)?.let { throw IllegalArgumentException(it) }
-        PackageCompiler.json.decodeFromJsonElement(Workflow.serializer(), WorkflowRepos.withoutField(raw))
-            .also(NodeConditions::check)
-            .also(WorkflowChecks::check)
-    } catch (e: IllegalArgumentException) {
-        throw InvalidWorkflowException("Invalid workflow: ${e.message.toString().take(MAX_ERROR)}", e)
-    }
-
     private suspend fun record(
         orgId: Uuid,
         after: WorkflowDoc,
@@ -272,37 +238,69 @@ class WorkflowsUseCaseImpl(
         val receipt = signer.sign(orgId, decision, action, before?.let(::summary), summary(after))
         repository.addDecision(orgId, decision.copy(receiptId = receipt))
     }
-
-    // What the decision says: the status, the repositories of a limited workflow, the gates and their approvers,
-    // and what runs.
-    private fun summary(doc: WorkflowDoc): JsonObject = buildJsonObject {
-        val workflow = doc.workflow
-        put("status", workflow.status.name.lowercase())
-        doc.repos?.let { repos -> put(WorkflowRepos.FIELD, JsonArray(repos.map { JsonPrimitive(it) })) }
-        put(
-            "gates",
-            JsonArray(
-                workflow.nodes.filter { it.kind == WorkflowNodeKind.GATE }.map { node ->
-                    val approvers = node.approvers.orEmpty().joinToString(", ").ifEmpty { "nobody" }
-                    JsonPrimitive("${node.label}: $approvers")
-                },
-            ),
-        )
-        put("runs", JsonArray(workflow.nodes.mapNotNull(::runOf)))
-    }
-
-    private fun runOf(node: WorkflowNode): JsonElement? {
-        val command = node.run?.command.orEmpty()
-        val channel = node.run?.channel.orEmpty()
-        val runs = if (command.isEmpty()) "" else "runs `$command`"
-        val tells = if (channel.isEmpty()) "" else "tells $channel"
-        return if (command.isEmpty() && channel.isEmpty()) null else JsonPrimitive("${node.label}: $runs$tells")
-    }
-
-    private companion object {
-        const val MAX_ERROR = 200
-    }
 }
+
+private fun requireFreeName(workflow: Workflow, others: List<Workflow>) {
+    val name = workflow.name.trim()
+    if (others.none { it.name.trim().equals(name, ignoreCase = true) }) return
+    throw OstromException(
+        ErrorKind.CONFLICT,
+        "workflow_name_taken: another workflow of the organization has this name.",
+        type = "workflow_name_taken",
+    )
+}
+
+private fun requireCalls(workflow: Workflow, others: List<Workflow>) = try {
+    CallChecks.check(workflow, others.associateBy { it.id })
+} catch (e: IllegalArgumentException) {
+    throw InvalidWorkflowException("Invalid workflow: ${e.message.toString().take(MAX_ERROR)}", e)
+}
+
+private fun inUse(reason: String) =
+    OstromException(ErrorKind.CONFLICT, "workflow_in_use: $reason", type = "workflow_in_use")
+
+private fun compiles(payload: String, id: String): Boolean =
+    (PackageCompiler.json.parseToJsonElement(payload).jsonObject["workflows"] as JsonArray)
+        .any { (it.jsonObject["id"] as JsonPrimitive).content == id }
+
+// The core model does not know `repos` yet (R6): it is checked here and kept in the saved JSON. A check node's
+// condition is checked against the workflow's nodes and edges.
+private fun decode(raw: JsonObject): Workflow = try {
+    WorkflowRepos.problem(raw)?.let { throw IllegalArgumentException(it) }
+    PackageCompiler.json.decodeFromJsonElement(Workflow.serializer(), WorkflowRepos.withoutField(raw))
+        .also(NodeConditions::check)
+        .also(WorkflowChecks::check)
+} catch (e: IllegalArgumentException) {
+    throw InvalidWorkflowException("Invalid workflow: ${e.message.toString().take(MAX_ERROR)}", e)
+}
+
+// What the decision says: the status, the repositories of a limited workflow, the gates and their approvers,
+// and what runs.
+private fun summary(doc: WorkflowDoc): JsonObject = buildJsonObject {
+    val workflow = doc.workflow
+    put("status", workflow.status.name.lowercase())
+    doc.repos?.let { repos -> put(WorkflowRepos.FIELD, JsonArray(repos.map { JsonPrimitive(it) })) }
+    put(
+        "gates",
+        JsonArray(
+            workflow.nodes.filter { it.kind == WorkflowNodeKind.GATE }.map { node ->
+                val approvers = node.approvers.orEmpty().joinToString(", ").ifEmpty { "nobody" }
+                JsonPrimitive("${node.label}: $approvers")
+            },
+        ),
+    )
+    put("runs", JsonArray(workflow.nodes.mapNotNull(::runOf)))
+}
+
+private fun runOf(node: WorkflowNode): JsonElement? {
+    val command = node.run?.command.orEmpty()
+    val channel = node.run?.channel.orEmpty()
+    val runs = if (command.isEmpty()) "" else "runs `$command`"
+    val tells = if (channel.isEmpty()) "" else "tells $channel"
+    return if (command.isEmpty() && channel.isEmpty()) null else JsonPrimitive("${node.label}: $runs$tells")
+}
+
+private const val MAX_ERROR = 200
 
 // `accept` from proposed to accepted, `edit` otherwise; null when nothing that is decided changed.
 private fun changeOf(before: WorkflowDoc?, after: Workflow, repos: List<String>?): String? {

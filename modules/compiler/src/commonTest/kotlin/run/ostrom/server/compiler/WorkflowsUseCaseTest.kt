@@ -20,6 +20,7 @@ import run.ostrom.server.compiler.domain.usecases.RevokePackageUseCaseImpl
 import run.ostrom.server.compiler.domain.usecases.WorkflowsUseCaseImpl
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
+import run.ostrom.server.kernel.http.withNulls
 import run.ostrom.server.kernel.workflows.AutomationUsage
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonArray
@@ -42,7 +43,7 @@ class WorkflowsUseCaseTest {
     private val workflows = WorkflowsUseCaseImpl(repository, signer, clock, removals = { o, i -> removed += o to i })
 
     private fun raw(workflow: Workflow): JsonObject =
-        PackageCompiler.json.encodeToJsonElement(Workflow.serializer(), workflow).jsonObject
+        PackageCompiler.json.encodeToJsonElement(Workflow.serializer(), workflow).withNulls("edges.*.to").jsonObject
 
     private fun release(status: WorkflowStatus = WorkflowStatus.PROPOSED, x: Double = 0.0) = workflow(
         "release",

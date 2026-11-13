@@ -139,19 +139,24 @@ class WorkflowChecksTest {
         refused(flow(limits = WorkflowLimits(maxDepth = 6)), "limits.maxDepth is 0 to 5.")
     }
 
+    // An agent that names no input, so only the inputs under test are judged.
+    private fun withInputs(inputs: List<WorkflowInput>) = flow(listOf(agent(instructions = "Fix it")), inputs = inputs)
+
     @Test
     fun theInputsAreBounded() {
         fun inputs(n: Int) = (1..n).map { WorkflowInput("i$it", "Input $it") }
-        WorkflowChecks.check(flow(inputs = inputs(16)))
-        refused(flow(inputs = inputs(17)), "At most 16 inputs.")
-        refused(flow(inputs = listOf(WorkflowInput("a", "A"), WorkflowInput("a", "B"))), "Input ids are unique.")
-        refused(flow(inputs = listOf(WorkflowInput("1a", "A"))), "Input 1a: an id starts with a letter")
-        refused(flow(inputs = listOf(WorkflowInput("a-b", "A"))), "Input a-b")
-        refused(flow(inputs = listOf(WorkflowInput("a", " "))), "Input a: a label of 1 to 200.")
-        refused(flow(inputs = listOf(WorkflowInput("a", "A", maxLength = 0))), "Input a: maxLength is 1 to 32000.")
-        refused(flow(inputs = listOf(WorkflowInput("a", "A", maxLength = 32_001))), "maxLength is 1 to 32000.")
-        refused(flow(inputs = listOf(WorkflowInput("a", "A", default = "xxx", maxLength = 2))), "default is longer")
-        WorkflowChecks.check(flow(inputs = listOf(WorkflowInput("a", "A", default = "xx", maxLength = 2))))
+        WorkflowChecks.check(withInputs(inputs(16)))
+        refused(withInputs(inputs(17)), "At most 16 inputs.")
+        refused(withInputs(listOf(WorkflowInput("a", "A"), WorkflowInput("a", "B"))), "Input ids are unique.")
+        refused(withInputs(listOf(WorkflowInput("1a", "A"))), "Input 1a: an id starts with a letter")
+        refused(withInputs(listOf(WorkflowInput("a-b", "A"))), "Input a-b")
+        refused(withInputs(listOf(WorkflowInput("a", " "))), "Input a: a label of 1 to 200.")
+        refused(withInputs(listOf(WorkflowInput("a", "A", maxLength = 0))), "Input a: maxLength is 1 to 32000.")
+        val wide = WorkflowInput("a", "A", maxLength = 32_001)
+        refused(withInputs(listOf(wide)), "maxLength is 1 to 32000.")
+        val long = WorkflowInput("a", "A", default = "xxx", maxLength = 2)
+        refused(withInputs(listOf(long)), "default is longer")
+        WorkflowChecks.check(withInputs(listOf(WorkflowInput("a", "A", default = "xx", maxLength = 2))))
     }
 
     @Test
