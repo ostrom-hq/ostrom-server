@@ -156,5 +156,6 @@ class GitHubTokenRejectedException :
 /** No Ostrom user signs in with the GitHub account of the token. */
 class LauncherAccountNotFoundException : OstromException(
     ErrorKind.NOT_FOUND,
-    "No Ostrom account signs in with this GitHub account. Sign up in the console first, then run `ostrom login` again.",
+    "No Ostrom account signs in with this GitHub account. Sign up in the console first (on an invite-only instance, " +
+        "from your invitation), then run `ostrom login` again.",
 )
