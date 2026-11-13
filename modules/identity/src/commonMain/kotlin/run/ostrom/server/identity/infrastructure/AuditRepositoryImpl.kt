@@ -151,8 +151,8 @@ internal suspend fun Transaction.appendAudit(
  * chain for every page (1.5 s at p95 over 10 000 lines, IdentityReadsBenchTest). An equality on `e.sequence - 1`
  * reached the index on the PostgreSQL 17 image of 2026-11-09 only: under row-level security, 17.12 (image of
  * 2026-11-13) leaves that computed comparison out of the index condition and scans the table for each line of the
- * page, while a plain `<` between the two columns stays an index condition. Only the filters asked for are in the SQL, each value
- * bound, never spliced.
+ * page, while a plain `<` between the two columns stays an index condition. Only the filters asked for are in the
+ * SQL, each value bound, never spliced.
  *
  * @param byActor Whether the read keeps one person's lines (`:actor`).
  * @param byAction Whether the read keeps one event name (`:action`).
