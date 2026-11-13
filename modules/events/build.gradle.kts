@@ -11,9 +11,18 @@ kotlin {
             implementation(project(":kernel"))
             // TENANT_ROLE_SQL and tenantTableSql: the grants of the tenant role its tables share with every module.
             implementation(project(":modules:secrets"))
+            // The webhooks' signatures and secrets.
+            implementation(libs.cryptography.core)
+        }
+        nativeMain.dependencies {
+            implementation(libs.cryptography.openssl3.prebuilt)
+        }
+        jvmMain.dependencies {
+            implementation(libs.cryptography.jdk)
         }
         commonTest.dependencies {
             implementation(project(":testing"))
+            implementation(libs.ktor.client.mock)
         }
     }
 }
