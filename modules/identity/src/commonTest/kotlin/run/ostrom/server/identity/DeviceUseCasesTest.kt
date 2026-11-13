@@ -109,8 +109,7 @@ class DeviceUseCasesTest {
         assertEquals(50, live.size, "Fifty workstations at most")
         assertTrue(approved.token.token in live, "The new login works")
         assertNull(live.firstOrNull { it.id == previous.first().id }, "The oldest login is signed out")
-        val revoked = audit.entries.last()
-        assertEquals("token.revoked", revoked.action)
+        val revoked = audit.entries.single { it.action == "token.revoked" }
         assertEquals(previous.first().id.toString(), revoked.targetId)
         assertEquals(mapOf("kind" to "cli", "reason" to "device_limit"), revoked.details)
     }

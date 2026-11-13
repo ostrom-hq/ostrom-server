@@ -165,7 +165,8 @@ class LauncherLoginTest {
         assertEquals(50, live.size, "Fifty workstations at most, the new one never refused")
         assertEquals(latest, live.first())
         assertNull(live.firstOrNull { it.id == oldest.id }, "The oldest login is signed out")
-        assertEquals(mapOf("kind" to "cli", "reason" to "device_limit"), audit.entries.last().details)
+        val revoked = audit.entries.single { it.action == "token.revoked" }
+        assertEquals(mapOf("kind" to "cli", "reason" to "device_limit"), revoked.details)
     }
 
     @Test

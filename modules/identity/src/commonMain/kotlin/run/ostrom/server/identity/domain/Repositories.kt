@@ -209,7 +209,7 @@ interface ApiTokensRepository {
      * @param kinds The kinds to list.
      * @param now The current time, for expiry.
      *
-     * @return At most [MAX_TOKENS_PER_USER] tokens, newest first.
+     * @return At most [MAX_LISTED_TOKENS] tokens, newest first.
      */
     suspend fun listLive(userId: Uuid, kinds: Set<TokenKind>, now: Instant): List<ApiToken>
 

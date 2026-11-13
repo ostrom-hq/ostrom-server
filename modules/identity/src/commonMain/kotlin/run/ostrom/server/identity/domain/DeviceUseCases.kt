@@ -310,13 +310,14 @@ class PollDeviceAuthorizationUseCaseImpl(
             val scopes = if (admin) ADMIN_TOKEN_SCOPES else CLI_SCOPES
             ApiToken(id, userId, orgId, authorization.clientName, kind, scopes, hint, null, now, expiresAt, null, null)
         }
+        // An admin token lasts a working day and is approved each time from the console: it takes no workstation.
+        if (!admin) makeRoomForDevice(tokens, audit, userId, now)
         if (!authorizations.consume(authorization.id, issued.token, hasher.hash(issued.secret))) {
             return DevicePollResult.Expired
         }
         val tokenId = issued.token.id.toString()
         val details = mapOf("kind" to kind.name.lowercase())
         audit.record(AuditEntry(orgId, userId, "token.created", "token", tokenId, details))
-        if (!admin) evictOldestDevices(tokens, audit, userId, now)
         return DevicePollResult.Approved(issued)
     }
 

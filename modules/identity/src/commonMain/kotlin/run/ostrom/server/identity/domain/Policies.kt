@@ -173,6 +173,9 @@ const val MAX_SCOPES = 32
  */
 const val MAX_TOKENS_PER_USER = 100
 
+/** At most this many of a user's live tokens in one listing: every personal token, workstation and phone. */
+const val MAX_LISTED_TOKENS = MAX_TOKENS_PER_USER + MAX_DEVICES_PER_USER + MAX_PHONES_PER_USER
+
 /** At most this many live service keys per organization, for the same reasons. */
 const val MAX_SERVICE_KEYS_PER_ORG = 100
 

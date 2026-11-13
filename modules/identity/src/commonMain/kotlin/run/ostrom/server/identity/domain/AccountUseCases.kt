@@ -277,11 +277,13 @@ class StartWebSessionUseCaseImpl(
         val now = clock.nowMillis()
         val secret = SESSION_PREFIX + "_" + secrets.secret()
         val session = WebSession(Uuid.random(), userId, now, now + SESSION_LIFETIME, now, null)
+        // Room for this one first (so it is never the one ended): listLive is the last seen first (`last_seen_at`,
+        // written every SESSION_TOUCH_INTERVAL), so beyond the cap the least recently used ones end.
+        do {
+            val beyond = sessions.listLive(userId, now, MAX_WEB_SESSIONS_LISTED).drop(MAX_WEB_SESSIONS_PER_USER - 1)
+            beyond.forEach { sessions.revoke(it.id, now) }
+        } while (beyond.isNotEmpty())
         sessions.create(session, hasher.hash(secret))
-        // listLive is the last used first, this new session included: beyond the cap, the least used ones end.
-        sessions.listLive(userId, now, MAX_WEB_SESSIONS_LISTED).drop(MAX_WEB_SESSIONS_PER_USER).forEach {
-            sessions.revoke(it.id, now)
-        }
         return StartedSession(session, secret, hasher.csrfToken(secret))
     }
 }

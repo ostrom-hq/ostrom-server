@@ -151,6 +151,18 @@ class TokenUseCasesTest {
     }
 
     @Test
+    fun aCliTokenOfTheNinetyDaysRotatesIntoOneOfThirty() = runTest {
+        val legacy = ApiToken(
+            Uuid.random(), userId, null, "laptop", TokenKind.CLI, setOf("orgs:read"), "osc_hint", null,
+            clock.now, clock.now + 90.days, null, null,
+        )
+        tokens.create(legacy, "legacy")
+        clock.now += 1.days
+
+        assertEquals(clock.now + 30.days, rotate(userId, legacy.id).token.expiresAt)
+    }
+
+    @Test
     fun aTokenWithoutExpiryRotatesWithoutExpiry() = runTest {
         val old = create(userId, "t", listOf("orgs:read"), null)
 

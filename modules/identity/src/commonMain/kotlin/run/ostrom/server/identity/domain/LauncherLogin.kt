@@ -76,13 +76,13 @@ class IssueCliTokenUseCaseImpl(
         val now = clock.nowMillis()
         val name = trimmedOrNull(via, MAX_NAME) ?: DEFAULT_NAME
         val expiresAt = now + CLI_TOKEN_LIFETIME
+        makeRoomForDevice(tokens, audit, userId, now)
         val issued = issue(secrets, TokenKind.CLI) { id, hint ->
             ApiToken(id, userId, null, name, TokenKind.CLI, CLI_SCOPES, hint, null, now, expiresAt, null, null)
         }
         tokens.create(issued.token, hasher.hash(issued.secret))
         val details = mapOf("kind" to "cli", "via" to "launcher")
         audit.record(AuditEntry(null, userId, "token.created", "token", issued.token.id.toString(), details))
-        evictOldestDevices(tokens, audit, userId, now)
         return issued
     }
 
