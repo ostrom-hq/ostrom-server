@@ -35,6 +35,7 @@ import run.ostrom.server.runners.domain.ListRegisteredRunnersUseCaseImpl
 import run.ostrom.server.runners.domain.ListRunnersUseCase
 import run.ostrom.server.runners.domain.ListRunnersUseCaseImpl
 import run.ostrom.server.runners.domain.MeteredCreateCloudSession
+import run.ostrom.server.runners.domain.NoRunnerGitHubTokens
 import run.ostrom.server.runners.domain.OpenTerminalUseCase
 import run.ostrom.server.runners.domain.OpenTerminalUseCaseImpl
 import run.ostrom.server.runners.domain.ReconcileCloudSessionUseCase
@@ -48,11 +49,16 @@ import run.ostrom.server.runners.domain.RegisteredRunnerHeartbeatUseCaseImpl
 import run.ostrom.server.runners.domain.RegisteredRunnersRepository
 import run.ostrom.server.runners.domain.RepositoryCloudUsageMeter
 import run.ostrom.server.runners.domain.RunnerAssignmentsRepository
+import run.ostrom.server.runners.domain.RunnerGitHubTokenUseCase
+import run.ostrom.server.runners.domain.RunnerGitHubTokenUseCaseImpl
+import run.ostrom.server.runners.domain.RunnerGitHubTokens
 import run.ostrom.server.runners.domain.RunnerHeartbeatUseCase
 import run.ostrom.server.runners.domain.RunnerHeartbeatUseCaseImpl
 import run.ostrom.server.runners.domain.RunnerTokens
 import run.ostrom.server.runners.domain.RunnerWorkSignals
 import run.ostrom.server.runners.domain.RuntimeDriver
+import run.ostrom.server.runners.domain.SetCloudSessionGitHubAccessUseCase
+import run.ostrom.server.runners.domain.SetCloudSessionGitHubAccessUseCaseImpl
 import run.ostrom.server.runners.domain.TerminalActivity
 import run.ostrom.server.runners.domain.TerminalTickets
 import run.ostrom.server.runners.infrastructure.BillingCloudPlanProvider
@@ -132,7 +138,12 @@ object RunnersModule : ServerModule {
             ReconcileCloudSessionUseCaseImpl(get(), get(), get(), get(), get(), get())
         }
         single { ReconcilerWorker(get(), get(), get(), get()) }
-        single { CloudSessionsRoutesDependencies(get(), get(), get(), get(), get(), get(), get()) }
+        // The members' GitHub access when the GitHub integration is there (always on a full server).
+        single<SetCloudSessionGitHubAccessUseCase> { SetCloudSessionGitHubAccessUseCaseImpl(get(), get(), get()) }
+        single<RunnerGitHubTokenUseCase> {
+            RunnerGitHubTokenUseCaseImpl(get(), get(), getOrNull<RunnerGitHubTokens>() ?: NoRunnerGitHubTokens)
+        }
+        single { CloudSessionsRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single<ListRunnersUseCase> { ListRunnersUseCaseImpl(get(), get()) }
         single<RegisteredRunnersRepository> { RegisteredRunnersRepositoryImpl(get()) }
         single<ListRegisteredRunnersUseCase> { ListRegisteredRunnersUseCaseImpl(get(), get()) }
@@ -164,13 +175,19 @@ object RunnersModule : ServerModule {
         route.terminalRoutes(koin.get())
     }
 
-    /** Registered runners; cloud runners only with a runtime driver configured (`OSTROM_RUNNERS_DRIVER`). */
-    override suspend fun features(koin: Koin): Set<String> =
-        if (koin.get<RunnersConfig>().driver == RunnersConfig.DriverKind.NONE) {
-            setOf(ServerFeatures.RUNNERS)
-        } else {
-            setOf(ServerFeatures.RUNNERS, ServerFeatures.RUNNERS_CLOUD)
-        }
+    /**
+     * Registered runners; cloud runners only with a runtime driver configured (`OSTROM_RUNNERS_DRIVER`); their GitHub
+     * access once members can link a GitHub account.
+     */
+    override suspend fun features(koin: Koin): Set<String> {
+        if (koin.get<RunnersConfig>().driver == RunnersConfig.DriverKind.NONE) return setOf(ServerFeatures.RUNNERS)
+        val github = koin.getOrNull<RunnerGitHubTokens>()?.available() == true
+        return setOfNotNull(
+            ServerFeatures.RUNNERS,
+            ServerFeatures.RUNNERS_CLOUD,
+            ServerFeatures.RUNNERS_CLOUD_GITHUB.takeIf { github },
+        )
+    }
 
     override fun start(scope: CoroutineScope, koin: Koin) {
         val worker = koin.get<ReconcilerWorker>()

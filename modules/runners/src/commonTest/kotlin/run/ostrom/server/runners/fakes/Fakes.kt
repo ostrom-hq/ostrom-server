@@ -7,6 +7,7 @@ import run.ostrom.server.runners.domain.CloudPlanProvider
 import run.ostrom.server.runners.domain.CloudSession
 import run.ostrom.server.runners.domain.CloudSessionsRepository
 import run.ostrom.server.runners.domain.DesiredState
+import run.ostrom.server.runners.domain.GitHubAccessMode
 import run.ostrom.server.runners.domain.ExecutionSpec
 import run.ostrom.server.runners.domain.ExecutionStatus
 import run.ostrom.server.runners.domain.ResumeOutcome
@@ -157,6 +158,18 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
         val updated = current.copy(desiredState = desiredState, generation = current.generation + 1, updatedAt = now)
         sessions[id] = updated
         next[id] = now
+        return updated
+    }
+
+    override suspend fun setGitHubAccess(
+        orgId: Uuid,
+        id: Uuid,
+        access: GitHubAccessMode,
+        now: Instant,
+    ): CloudSession? {
+        val current = get(orgId, id)?.takeUnless { it.state.isFinal } ?: return null
+        val updated = current.copy(githubAccess = access, generation = current.generation + 1, updatedAt = now)
+        sessions[id] = updated
         return updated
     }
 

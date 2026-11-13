@@ -40,6 +40,7 @@ import kotlin.uuid.Uuid
  * @property prompt The first message the agent receives at the first start, if any.
  * @property runnerId The registered runner its current execution was handed to: named on a read of the session
  *   ([GetCloudSessionUseCase]), never stored with it; null on the cluster's or this server's Docker.
+ * @property githubAccess Whose GitHub access the session's Git and `gh` use.
  */
 data class CloudSession(
     val id: Uuid,
@@ -69,7 +70,36 @@ data class CloudSession(
     val model: String? = null,
     val prompt: String? = null,
     val runnerId: Uuid? = null,
+    val githubAccess: GitHubAccessMode = GitHubAccessMode.OWNER,
 )
+
+/**
+ * Whose GitHub access a session's Git and `gh` use, through the runner's credential socket (the agent never holds a
+ * token). A session runs for its owner only, so [OWNER] and [SHARED] hand out the same link today; [SHARED] says the
+ * owner accepts that whoever shares the session's terminal acts with it.
+ *
+ * @property wire The stable name in the API and the database.
+ */
+enum class GitHubAccessMode(val wire: String) {
+    /** The owner's linked account (the default). */
+    OWNER("owner"),
+
+    /** The owner's linked account, the terminal shared. */
+    SHARED("shared"),
+
+    /** No GitHub credential: public repositories only. */
+    NONE("none"),
+    ;
+
+    /** Constants and readers of the enclosing type. */
+    companion object {
+        /**
+         * @param wire A stored or requested name.
+         * @return The mode, or null when the name is unknown.
+         */
+        fun fromWire(wire: String): GitHubAccessMode? = entries.firstOrNull { it.wire == wire }
+    }
+}
 
 /**
  * The states of a session. The reconciler alone moves a session between them, checked by [SessionStateMachine].

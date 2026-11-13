@@ -97,3 +97,10 @@ class RunnerLimitException(max: Int) : OstromException(
     ErrorKind.CONFLICT,
     "An organization registers at most $max runners.",
 )
+
+/** Removing a session's GitHub access needs it paused: a running execution may hold a token already. */
+class SessionNotPausedException : OstromException(
+    ErrorKind.CONFLICT,
+    "Pause the session before removing its GitHub access.",
+    "session_not_paused",
+)

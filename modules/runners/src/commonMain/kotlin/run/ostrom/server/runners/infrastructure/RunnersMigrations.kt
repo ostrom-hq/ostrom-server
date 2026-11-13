@@ -290,4 +290,10 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
             ${tenantTableSql("runners_terminal_tickets")}
         """.trimIndent(),
     ),
+    // Whose GitHub access a session's Git and `gh` use: its owner's link by default.
+    SchemaMigration(
+        version = 10,
+        name = "session_github_access",
+        sql = "ALTER TABLE runners_sessions ADD COLUMN github_access TEXT NOT NULL DEFAULT 'owner'",
+    ),
 )
