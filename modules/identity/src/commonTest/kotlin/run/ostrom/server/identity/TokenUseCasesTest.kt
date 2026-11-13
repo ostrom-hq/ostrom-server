@@ -186,13 +186,13 @@ class TokenUseCasesTest {
     }
 
     @Test
-    fun anAgentTokenHasOnlyTheAgentScopeAndItsSession() = runTest {
+    fun anAgentTokenHasOnlyTheAgentScopesAndItsSession() = runTest {
         val orgId = Uuid.random()
         val issued = issueAgent(userId, orgId, "run-1", 2.hours)
 
         assertEquals(TokenKind.AGENT, issued.token.kind)
         assertEquals("osa_secret1", issued.secret)
-        assertEquals(setOf(AGENT_SCOPE), issued.token.scopes)
+        assertEquals(setOf(AGENT_SCOPE, "workflow:session"), issued.token.scopes, "Its session, and its workflow step")
         assertEquals("run-1", issued.token.agentSessionId)
         assertEquals(orgId, issued.token.orgId)
         assertEquals(clock.now + 2.hours, issued.token.expiresAt)

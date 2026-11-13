@@ -41,6 +41,7 @@ import run.ostrom.server.workflowruns.domain.services.WaitResult
 import run.ostrom.server.workflowruns.domain.services.WaitState
 import run.ostrom.server.workflowruns.fakes.CHILD
 import run.ostrom.server.workflowruns.fakes.FakeChildren
+import run.ostrom.server.workflowruns.fakes.FakeSteps
 import run.ostrom.server.workflowruns.fakes.FakeWaits
 import run.ostrom.server.workflowruns.fakes.FixedClock
 import run.ostrom.server.workflowruns.fakes.ORG
@@ -66,6 +67,8 @@ class RunNodesTest {
             rows.keys.map { RunRef(ORG, it) }
 
         override suspend fun played(orgId: Uuid, id: String): PlayedRun? = rows[id]
+
+        override suspend fun ofSession(orgId: Uuid, sessionId: Uuid): PlayedRun? = null
 
         override suspend fun write(orgId: Uuid, change: RunChange): Boolean {
             val stored = rows[change.next.id]?.takeIf { writes && it.run == change.expected }
@@ -117,7 +120,7 @@ class RunNodesTest {
     private val runs = Runs()
     private val waits = FakeWaits()
     private val children = FakeChildren()
-    private val play = PlayRunUseCaseImpl(runs, NodePlayers(NoAgents, NoGates, waits, children), clock)
+    private val play = PlayRunUseCaseImpl(runs, NodePlayers(NoAgents, NoGates, waits, children, FakeSteps()), clock)
 
     private fun run(
         id: String = RUN,

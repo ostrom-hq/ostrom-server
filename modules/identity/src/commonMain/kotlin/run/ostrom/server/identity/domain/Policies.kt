@@ -49,8 +49,18 @@ val DEVICE_CODE_LIFETIME: Duration = 10.minutes
 /** How often the CLI may poll (RFC 8628 `interval`). */
 val DEVICE_POLL_INTERVAL: Duration = 5.seconds
 
-/** The only scope of an agent token: acting on its own agent session. */
+/** The scope every agent token holds: acting on its own agent session. */
 const val AGENT_SCOPE = "agent:session"
+
+/**
+ * The scope an agent token issued since workflow deliveries holds besides [AGENT_SCOPE]: delivering the workflow step
+ * its launch's cloud session works on, and asking whether it still waits (`deliverWorkflowSession`,
+ * `pendingWorkflowSession`, the `ostrom-workflow` MCP server), nothing else. No other token holds it.
+ */
+const val WORKFLOW_SESSION_SCOPE = "workflow:session"
+
+/** The scopes an agent token is issued with. */
+val AGENT_SCOPES: Set<String> = setOf(AGENT_SCOPE, WORKFLOW_SESSION_SCOPE)
 
 /**
  * The scope that answers a gate. No token the person can create or the CLI holds has it (audit S2-04, S2-31): such a
@@ -64,7 +74,7 @@ const val ANSWER_SCOPE = "gates:answer"
 const val WORKFLOWS_WRITE_SCOPE = "workflows:write"
 
 /** Scopes no token holds, whatever was asked or a stored row says: answering, an agent's, a browser session's. */
-val NEVER_ON_A_TOKEN: Set<String> = setOf(ANSWER_SCOPE, AGENT_SCOPE, ALL_USER_SCOPES)
+val NEVER_ON_A_TOKEN: Set<String> = setOf(ANSWER_SCOPE, AGENT_SCOPE, WORKFLOW_SESSION_SCOPE, ALL_USER_SCOPES)
 
 /**
  * The scopes the CLI token gets: what `ostrom` does for its user (`ostrom receipts` and `verify` read the receipts of
@@ -156,7 +166,8 @@ fun mobileScopes(stored: ApiToken, now: Instant): Set<String> {
 
 /**
  * The scopes a stored token grants when it is used, checked again at each request (defense in depth: a row written
- * before S2-04, or by hand, cannot grant more): an agent token only [AGENT_SCOPE], a CLI token at most [CLI_SCOPES],
+ * before S2-04, or by hand, cannot grant more): an agent token [AGENT_SCOPE] and, when its row lists it,
+ * [WORKFLOW_SESSION_SCOPE] (a token issued before it existed does not deliver), a CLI token at most [CLI_SCOPES],
  * the token of `ostrom login --admin` at most [ADMIN_TOKEN_SCOPES], the app's token at most [MOBILE_SCOPES], a
  * personal token what it lists minus [NEVER_ON_A_TOKEN] and [ADMIN_SCOPES], a service key at most
  * [SERVICE_KEY_SCOPES] (none of which is a governance scope).
@@ -167,7 +178,7 @@ fun mobileScopes(stored: ApiToken, now: Instant): Set<String> {
  * @return The scopes it grants.
  */
 fun grantedScopes(kind: TokenKind, stored: Set<String>): Set<String> = when (kind) {
-    TokenKind.AGENT -> setOf(AGENT_SCOPE)
+    TokenKind.AGENT -> setOf(AGENT_SCOPE) + (stored intersect AGENT_SCOPES)
     TokenKind.CLI -> stored intersect CLI_SCOPES
     TokenKind.ADMIN -> stored intersect ADMIN_TOKEN_SCOPES
     TokenKind.MOBILE -> stored intersect MOBILE_SCOPES

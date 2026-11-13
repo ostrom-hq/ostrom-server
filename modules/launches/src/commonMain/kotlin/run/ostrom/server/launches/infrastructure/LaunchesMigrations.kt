@@ -119,4 +119,11 @@ val LaunchesMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(5, "bound_launch_purge", BOUND_PURGE_SQL),
     // A launch names the workflow it plays (`createLaunch.workflowId`): its model calls count under it.
     SchemaMigration(6, "launch_workflow", "ALTER TABLE launches_launches ADD COLUMN workflow_id TEXT"),
+    // The launches of a cloud session: whether its agent asked a person (a workflow step's pending delivery).
+    SchemaMigration(
+        7,
+        "launch_cloud_session_index",
+        "CREATE INDEX launches_launches_cloud_session ON launches_launches (org_id, cloud_session_id, created_at) " +
+            "WHERE cloud_session_id IS NOT NULL",
+    ),
 )

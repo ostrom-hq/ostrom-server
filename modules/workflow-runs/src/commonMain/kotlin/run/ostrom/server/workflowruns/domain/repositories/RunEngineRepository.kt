@@ -33,6 +33,16 @@ interface RunEngineRepository {
     suspend fun played(orgId: Uuid, id: String): PlayedRun?
 
     /**
+     * Reads the run one of whose agent visits works in a cloud session, and the graph it plays.
+     *
+     * @param orgId The organization.
+     * @param sessionId The cloud session.
+     *
+     * @return The run, or null when no visit of the organization's runs worked in it.
+     */
+    suspend fun ofSession(orgId: Uuid, sessionId: Uuid): PlayedRun?
+
+    /**
      * Writes a change of a run ([RunChange]), with its audit lines, in one transaction of its organization.
      *
      * @param orgId The organization.

@@ -40,6 +40,11 @@ class PostgresRunEngineRepository(
             .firstOrNull()?.let { PlayedRun(it.run(), it.graph()) }
     }
 
+    override suspend fun ofSession(orgId: Uuid, sessionId: Uuid): PlayedRun? = driver.withOrganization(orgId) { tx ->
+        tx.fetchAll(Statement.create(EngineQueries.OF_SESSION).bind("org_id", orgId).bind("session_id", sessionId))
+            .getOrThrow().firstOrNull()?.let { PlayedRun(it.run(), it.graph()) }
+    }
+
     override suspend fun write(orgId: Uuid, change: RunChange): Boolean = driver.withOrganization(orgId) { tx ->
         val row = tx.fetchAll(Statement.create(EngineQueries.LOCK).bind("org_id", orgId).bind("id", change.next.id))
             .getOrThrow().firstOrNull()
@@ -62,10 +67,10 @@ class PostgresRunEngineRepository(
     // The visit's key, inserted once: a second insert finds it and the change is dropped.
     private suspend fun begun(tx: Transaction, orgId: Uuid, change: RunChange): Boolean {
         val visit = change.visit ?: return true
-        return tx.fetchAll(
-            Statement.create(EngineQueries.BEGIN).bind("org_id", orgId).bind("run_id", change.next.id)
-                .bind("seq", visit.seq).bind("node_id", visit.nodeId).bind("at", Instant.parse(visit.startedAt)),
-        ).getOrThrow().any()
+        val session = visit.sessionId?.let(Uuid::parseOrNull)
+        val begin = Statement.create(EngineQueries.BEGIN).bind("org_id", orgId).bind("run_id", change.next.id)
+            .bind("seq", visit.seq).bind("node_id", visit.nodeId).bind("at", Instant.parse(visit.startedAt))
+        return tx.fetchAll(begin.uuid("session_id", session)).getOrThrow().any()
     }
 
     private suspend fun apply(tx: Transaction, orgId: Uuid, change: RunChange) {
@@ -87,9 +92,14 @@ class PostgresRunEngineRepository(
         return if (raw == null) RunGraph() else OstromJson.decodeFromString(RunGraph.serializer(), raw)
     }
 
-    private fun Statement.instant(name: String, value: Instant?): Statement =
-        if (value == null) bindNull(name, Instant::class) else bind(name, value)
 }
+
+// A value or SQL NULL. Top-level, not in the class: its count of functions stays within detekt's bound.
+private fun Statement.uuid(name: String, value: Uuid?): Statement =
+    if (value == null) bindNull(name, Uuid::class) else bind(name, value)
+
+private fun Statement.instant(name: String, value: Instant?): Statement =
+    if (value == null) bindNull(name, Instant::class) else bind(name, value)
 
 /** The engine's SQL. */
 internal object EngineQueries {
@@ -108,8 +118,14 @@ internal object EngineQueries {
 
     /** A visit's key. */
     const val BEGIN: String =
-        "INSERT INTO workflow_runs_visits (org_id, run_id, seq, node_id, at) VALUES (:org_id, :run_id, :seq, " +
-            ":node_id, :at) ON CONFLICT DO NOTHING RETURNING seq"
+        "INSERT INTO workflow_runs_visits (org_id, run_id, seq, node_id, at, session_id) VALUES (:org_id, :run_id, " +
+            ":seq, :node_id, :at, :session_id) ON CONFLICT DO NOTHING RETURNING seq"
+
+    /** The run of an agent visit's cloud session, and its graph: the index on the visits' sessions. */
+    const val OF_SESSION: String =
+        "SELECT r.body, CAST(r.graph AS TEXT) AS graph FROM workflow_runs_visits v JOIN workflow_runs_started r " +
+            "ON r.org_id = v.org_id AND r.id = v.run_id WHERE v.org_id = :org_id AND v.session_id = :session_id " +
+            "ORDER BY v.seq DESC LIMIT 1"
 
     /** A run's change. */
     const val UPDATE: String =

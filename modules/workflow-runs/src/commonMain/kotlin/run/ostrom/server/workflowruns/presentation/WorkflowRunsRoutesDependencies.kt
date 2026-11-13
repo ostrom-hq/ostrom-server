@@ -7,11 +7,13 @@ import run.ostrom.server.runners.domain.AuthenticateRunnerUseCase
 import run.ostrom.server.runners.domain.CheckRunnerTokenUseCase
 import run.ostrom.server.workflowruns.domain.usecases.CancelWorkflowRunUseCase
 import run.ostrom.server.workflowruns.domain.usecases.DeliverRunUseCase
+import run.ostrom.server.workflowruns.domain.usecases.DeliverWorkflowSessionUseCase
 import run.ostrom.server.workflowruns.domain.usecases.GetReceiptBundleUseCase
 import run.ostrom.server.workflowruns.domain.usecases.GetWorkflowRunUseCase
 import run.ostrom.server.workflowruns.domain.usecases.ListChecksUseCase
 import run.ostrom.server.workflowruns.domain.usecases.ListNotificationsUseCase
 import run.ostrom.server.workflowruns.domain.usecases.ListWorkflowRunsUseCase
+import run.ostrom.server.workflowruns.domain.usecases.PendingWorkflowSessionUseCase
 import run.ostrom.server.workflowruns.domain.usecases.ReportCheckUseCase
 import run.ostrom.server.workflowruns.domain.usecases.ReportRunnerCheckUseCase
 import run.ostrom.server.workflowruns.domain.usecases.SendNotificationUseCase
@@ -37,6 +39,8 @@ import run.ostrom.server.workflowruns.domain.usecases.StartWorkflowRunUseCase
  * @property getRun Reads a run of a workflow.
  * @property cancelRun Cancels a run of a workflow.
  * @property deliverRun Hands in what a run's current agent node asks for.
+ * @property deliverSession Hands in what the agent step a session works on asks for.
+ * @property pendingSession Whether a session's agent step still waits for its delivery.
  */
 data class WorkflowRunsRoutesDependencies(
     val actors: GateActorResolver,
@@ -55,4 +59,6 @@ data class WorkflowRunsRoutesDependencies(
     val getRun: GetWorkflowRunUseCase,
     val cancelRun: CancelWorkflowRunUseCase,
     val deliverRun: DeliverRunUseCase,
+    val deliverSession: DeliverWorkflowSessionUseCase,
+    val pendingSession: PendingWorkflowSessionUseCase,
 )

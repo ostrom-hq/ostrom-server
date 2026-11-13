@@ -178,4 +178,15 @@ val WorkflowRunsMigrations: List<SchemaMigration> = listOf(
         CREATE INDEX workflow_runs_notifications_dev ON workflow_runs_notifications (org_id, dev, at DESC, id DESC)
         """.trimIndent(),
     ),
+    // An agent visit keeps the cloud session it works in, so a delivery by session (`deliverWorkflowSession`) finds
+    // its run. The visits begun before have none: their sessions deliver by run only.
+    SchemaMigration(
+        7,
+        "visit_sessions",
+        """
+        ALTER TABLE workflow_runs_visits ADD COLUMN session_id UUID;
+        CREATE INDEX workflow_runs_visits_session ON workflow_runs_visits (org_id, session_id)
+            WHERE session_id IS NOT NULL;
+        """.trimIndent(),
+    ),
 )

@@ -53,6 +53,10 @@ class InMemoryLaunches : LaunchesRepository {
     override suspend fun find(orgId: Uuid, id: String): Launch? =
         launches.firstOrNull { it.orgId == orgId && it.id == id }
 
+    override suspend fun ofCloudSession(orgId: Uuid, cloudSessionId: Uuid, limit: Int): List<String> =
+        launches.filter { it.orgId == orgId && it.cloudSessionId == cloudSessionId }.sortedByDescending { it.createdAt }
+            .take(limit).map { it.id }
+
     override suspend fun purge(before: Instant): Long {
         val gone = launches.filter { it.expiresAt < before }
         launches -= gone.toSet()

@@ -6,6 +6,7 @@ import run.ostrom.server.workflowruns.domain.services.ChildRequest
 import run.ostrom.server.workflowruns.domain.services.ChildResult
 import run.ostrom.server.workflowruns.domain.services.RunChildren
 import run.ostrom.server.workflowruns.domain.services.RunWaits
+import run.ostrom.server.workflowruns.domain.services.StepSessions
 import run.ostrom.server.workflowruns.domain.services.WaitOpening
 import run.ostrom.server.workflowruns.domain.services.WaitRequest
 import run.ostrom.server.workflowruns.domain.services.WaitResult
@@ -50,4 +51,11 @@ class FakeChildren(var result: ChildResult? = null, var refusal: String? = null)
     override suspend fun cancel(orgId: Uuid, runId: String) {
         cancelled += runId
     }
+}
+
+/** No step's agent asked anyone anything, unless [asked] says so; no session is anyone's. */
+class FakeSteps(var asked: Boolean = false) : StepSessions {
+    override suspend fun ownedBy(orgId: Uuid, sessionId: Uuid, login: String): Boolean = false
+
+    override suspend fun asked(orgId: Uuid, sessionId: Uuid): Boolean = asked
 }

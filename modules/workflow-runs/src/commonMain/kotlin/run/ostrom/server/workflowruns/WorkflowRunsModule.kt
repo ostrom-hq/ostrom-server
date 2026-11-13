@@ -24,10 +24,13 @@ import run.ostrom.server.workflowruns.domain.services.RunSessions
 import run.ostrom.server.workflowruns.domain.services.RunTodos
 import run.ostrom.server.workflowruns.domain.services.RunWaits
 import run.ostrom.server.workflowruns.domain.services.RunWorkflows
+import run.ostrom.server.workflowruns.domain.services.StepSessions
 import run.ostrom.server.workflowruns.domain.usecases.CancelWorkflowRunUseCase
 import run.ostrom.server.workflowruns.domain.usecases.CancelWorkflowRunUseCaseImpl
 import run.ostrom.server.workflowruns.domain.usecases.DeliverRunUseCase
 import run.ostrom.server.workflowruns.domain.usecases.DeliverRunUseCaseImpl
+import run.ostrom.server.workflowruns.domain.usecases.DeliverWorkflowSessionUseCase
+import run.ostrom.server.workflowruns.domain.usecases.DeliverWorkflowSessionUseCaseImpl
 import run.ostrom.server.workflowruns.domain.usecases.GetReceiptBundleUseCase
 import run.ostrom.server.workflowruns.domain.usecases.GetReceiptBundleUseCaseImpl
 import run.ostrom.server.workflowruns.domain.usecases.GetWorkflowRunUseCase
@@ -38,19 +41,24 @@ import run.ostrom.server.workflowruns.domain.usecases.ListNotificationsUseCase
 import run.ostrom.server.workflowruns.domain.usecases.ListNotificationsUseCaseImpl
 import run.ostrom.server.workflowruns.domain.usecases.ListWorkflowRunsUseCase
 import run.ostrom.server.workflowruns.domain.usecases.ListWorkflowRunsUseCaseImpl
+import run.ostrom.server.workflowruns.domain.usecases.PendingWorkflowSessionUseCase
+import run.ostrom.server.workflowruns.domain.usecases.PendingWorkflowSessionUseCaseImpl
 import run.ostrom.server.workflowruns.domain.usecases.ReportCheckUseCase
 import run.ostrom.server.workflowruns.domain.usecases.ReportCheckUseCaseImpl
 import run.ostrom.server.workflowruns.domain.usecases.ReportRunnerCheckUseCase
 import run.ostrom.server.workflowruns.domain.usecases.ReportRunnerCheckUseCaseImpl
 import run.ostrom.server.workflowruns.domain.usecases.RunAccess
+import run.ostrom.server.workflowruns.domain.usecases.RunDeliveries
 import run.ostrom.server.workflowruns.domain.usecases.SendNotificationUseCase
 import run.ostrom.server.workflowruns.domain.usecases.SendNotificationUseCaseImpl
+import run.ostrom.server.workflowruns.domain.usecases.SessionRuns
 import run.ostrom.server.workflowruns.domain.usecases.SignWorkflowReceiptUseCase
 import run.ostrom.server.workflowruns.domain.usecases.SignWorkflowReceiptUseCaseImpl
 import run.ostrom.server.workflowruns.domain.usecases.StartWorkflowRunUseCase
 import run.ostrom.server.workflowruns.domain.usecases.StartWorkflowRunUseCaseImpl
 import run.ostrom.server.workflowruns.infrastructure.AutomationsRunWaits
 import run.ostrom.server.workflowruns.infrastructure.CloudRunAgents
+import run.ostrom.server.workflowruns.infrastructure.CloudStepSessions
 import run.ostrom.server.workflowruns.infrastructure.CompilerRunPackages
 import run.ostrom.server.workflowruns.infrastructure.CompilerRunWorkflows
 import run.ostrom.server.workflowruns.infrastructure.GatesRunGates
@@ -106,7 +114,7 @@ object WorkflowRunsModule : ServerModule {
         single<RunGates> { GatesRunGates(get(), get()) }
         single<RunWaits> { AutomationsRunWaits(get(), get(), get(), get()) }
         single<RunChildren> { StartedRunChildren(get(), get(), get(), get()) }
-        single { NodePlayers(get(), get(), get(), get()) }
+        single { NodePlayers(get(), get(), get(), get(), get()) }
         single<PlayRunUseCase> { PlayRunUseCaseImpl(get(), get(), get()) }
         single<TickRunsUseCase> { TickRunsUseCaseImpl(get(), get(), get(), get()) }
         single<GetWorkflowRunUseCase> { GetWorkflowRunUseCaseImpl(get()) }
@@ -115,11 +123,16 @@ object WorkflowRunsModule : ServerModule {
         single<StartWorkflowRunUseCase> { StartWorkflowRunUseCaseImpl(get(), get(), get()) }
         single<ListWorkflowRunsUseCase> { ListWorkflowRunsUseCaseImpl(get(), get()) }
         // No module keeps the sessions' todos yet: no RunTodos is bound, and a delivery is never refused `todo_open`.
-        single<DeliverRunUseCase> { DeliverRunUseCaseImpl(get(), get(), getOrNull<RunTodos>(), get()) }
+        single { RunDeliveries(get(), get(), getOrNull<RunTodos>(), get()) }
+        single<DeliverRunUseCase> { DeliverRunUseCaseImpl(get(), get()) }
+        single<StepSessions> { CloudStepSessions(get(), get(), get(), get(), get()) }
+        single { SessionRuns(get(), get(), get()) }
+        single<DeliverWorkflowSessionUseCase> { DeliverWorkflowSessionUseCaseImpl(get(), get()) }
+        single<PendingWorkflowSessionUseCase> { PendingWorkflowSessionUseCaseImpl(get(), get()) }
         single {
             WorkflowRunsRoutesDependencies(
                 get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
-                get(), get(),
+                get(), get(), get(), get(),
             )
         }
     }

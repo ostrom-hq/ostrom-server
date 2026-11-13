@@ -48,7 +48,8 @@ import kotlin.uuid.Uuid
  * receipt's session's launch (`ostrom <agent>` keeps it at the end). Outside the contract, the runner of a cloud
  * session reports the checks it ran itself on `/api/v1/cloud/runner/checks`, with its runner token. A service key with
  * `sessions:write` (the organization's CI) also reports a check and signs an ended session's receipt, in its own
- * organization; it reads nothing here. The runs of workflows are in [startedRunsRoutes].
+ * organization; it reads nothing here. The runs of workflows are in [startedRunsRoutes], the agent step of a session
+ * in [workflowSessionRoutes].
  *
  * @param dependencies The use cases.
  */
@@ -88,6 +89,7 @@ fun Route.workflowRunsRoutes(dependencies: WorkflowRunsRoutesDependencies) = wit
             call.respond(bundle(bundleReader(call), params.id).toJson())
         }
         startedRunsRoutes(dependencies)
+        workflowSessionRoutes(dependencies)
     }
     // The runner channel: the execution's runner token, checked before the body is read (S2-46), never a member's.
     post<RunnerChecksApi> {
