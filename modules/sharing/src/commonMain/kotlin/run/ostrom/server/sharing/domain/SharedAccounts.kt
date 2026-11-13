@@ -239,6 +239,16 @@ class AccountNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Account n
 class AccountChangedException :
     OstromException(ErrorKind.CONFLICT, "The account changed meanwhile: nothing was overwritten. Try again.")
 
+/**
+ * The account's tokens are being renewed right now by a replica: new tokens would be overwritten by the renewed pair,
+ * or retired with it (TeamCode's import and sign-in conflict).
+ */
+class AccountRefreshingException :
+    OstromException(
+        ErrorKind.CONFLICT,
+        "The account's tokens are being renewed right now: nothing was overwritten. Try again in a minute.",
+    )
+
 /** Too many accounts. */
 class TooManyAccountsException :
     OstromException(ErrorKind.CONFLICT, "An organization shares at most ${SharingRules.MAX_ACCOUNTS} accounts.")

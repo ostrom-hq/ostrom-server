@@ -5,8 +5,10 @@ import run.ostrom.server.secrets.infrastructure.executeInOrg
 import run.ostrom.server.secrets.infrastructure.fetchInOrg
 import run.ostrom.server.sharing.domain.AccountChangedException
 import run.ostrom.server.sharing.domain.AccountOwnedByAnotherMemberException
+import run.ostrom.server.sharing.domain.AccountRefreshingException
 import run.ostrom.server.sharing.domain.AccountProvider
 import run.ostrom.server.sharing.domain.AccountStatus
+import run.ostrom.server.sharing.domain.AccountTokens
 import run.ostrom.server.sharing.domain.SharedAccount
 import run.ostrom.server.sharing.domain.SharedAccountRepository
 import io.github.smyrgeorge.sqlx4k.Driver
@@ -52,9 +54,24 @@ class SharedAccountRepositoryImpl(private val driver: Driver) : SharedAccountRep
                 .bind("status", account.status.name)
                 .bind("envelope", envelope),
         ).getOrThrow().singleOrNull()
-            ?: throw if (expectedVersion == null) AccountOwnedByAnotherMemberException() else AccountChangedException()
-        return row.toAccount()
+        return row?.toAccount() ?: throw when {
+            refreshing(account) -> AccountRefreshingException()
+            expectedVersion == null -> AccountOwnedByAnotherMemberException()
+            else -> AccountChangedException()
+        }
     }
+
+    /** Whether the org's row of [account]'s provider account is being refreshed now. */
+    private suspend fun refreshing(account: SharedAccount): Boolean = driver.fetchInOrg(
+        account.orgId,
+        Statement.create(
+            "SELECT 1 FROM sharing_accounts WHERE org_id = :org_id AND provider = :provider " +
+                "AND provider_account_id = :provider_account_id AND ${refreshing("sharing_accounts")}",
+        )
+            .bind("org_id", account.orgId)
+            .bind("provider", account.provider.name)
+            .bind("provider_account_id", account.providerAccountId),
+    ).getOrThrow().isNotEmpty()
 
     override suspend fun get(orgId: Uuid, id: Uuid): SharedAccount? = driver.fetchInOrg(
         orgId,
@@ -114,10 +131,6 @@ class SharedAccountRepositoryImpl(private val driver: Driver) : SharedAccountRep
             .bind("id", id),
     ).getOrThrow().firstOrNull()?.let { it.get("envelope").asString() }
 
-    override suspend fun putEnvelope(orgId: Uuid, id: Uuid, envelope: String) {
-        driver.setColumn(orgId, id, "envelope = :value", bump = false) { bind("value", envelope) }
-    }
-
     override suspend fun setStatus(orgId: Uuid, id: Uuid, status: AccountStatus) {
         driver.setColumn(orgId, id, "status = :value", bump = true) { bind("value", status.name) }
     }
@@ -127,17 +140,29 @@ class SharedAccountRepositoryImpl(private val driver: Driver) : SharedAccountRep
     }
 
     private companion object {
+        /**
+         * Whether [table]'s row is being refreshed now: an intent younger than [AccountTokens.PENDING_LIMIT] by the
+         * database's clock on an account that serves. New tokens then wait for the refresh (TeamCode's import and
+         * sign-in conflict): the refresh would store its pair over them, or fail and retire the account. An older
+         * intent, or one on an account that waits for a sign-in, is uncertain: new tokens are what clears it.
+         */
+        fun refreshing(table: String) =
+            "$table.refresh_pending AND $table.status NOT IN ($AWAITING_SIGN_IN) AND $table.refresh_started_at > " +
+                "now() - INTERVAL '${AccountTokens.PENDING_LIMIT.inWholeSeconds} seconds'"
+
         // Sharing again keeps the limits. Two shares racing on a new account both insert: the second keeps the first
         // row's id, so its envelope (sealed for its own id) would not open; the first's stays. An account another
         // member owns is never taken over, nor a row past the expected version (no row comes back).
-        const val SHARE_AGAIN =
+        val SHARE_AGAIN =
             "UPDATE sharing_accounts SET label = :label, email = :email, status = :status, cooldown_until = NULL, " +
-                "envelope = :envelope, version = version + 1 " +
+                "envelope = :envelope, version = version + 1, refresh_pending = FALSE, refresh_started_at = NULL, " +
+                "credential_version = credential_version + 1 " +
                 "WHERE org_id = :org_id AND provider = :provider AND provider_account_id = :provider_account_id " +
                 "AND id = :id AND version = :expected " +
                 "AND (owner_member_id IS NULL OR owner_member_id = :owner) " +
+                "AND NOT (${refreshing("sharing_accounts")}) " +
                 "RETURNING $ACCOUNT_COLUMNS"
-        const val UPSERT =
+        val UPSERT =
             "INSERT INTO sharing_accounts (id, org_id, provider, label, email, provider_account_id, " +
                 "owner_member_id, priority, status, max_concurrent, utilization_ceiling, monthly_budget_micros, " +
                 "daily_budget_micros, allowed_members, cooldown_until, envelope, created_at, version) " +
@@ -146,10 +171,13 @@ class SharedAccountRepositoryImpl(private val driver: Driver) : SharedAccountRep
                 "ON CONFLICT (org_id, provider, provider_account_id) DO UPDATE SET label = EXCLUDED.label, " +
                 "email = EXCLUDED.email, status = EXCLUDED.status, cooldown_until = NULL, " +
                 "envelope = CASE WHEN sharing_accounts.id = EXCLUDED.id THEN EXCLUDED.envelope " +
-                "ELSE sharing_accounts.envelope END, version = sharing_accounts.version + 1 " +
+                "ELSE sharing_accounts.envelope END, version = sharing_accounts.version + 1, " +
+                "refresh_pending = FALSE, refresh_started_at = NULL, " +
+                "credential_version = sharing_accounts.credential_version + 1 " +
                 "WHERE (sharing_accounts.owner_member_id IS NULL " +
                 "OR sharing_accounts.owner_member_id = EXCLUDED.owner_member_id) " +
                 "AND sharing_accounts.version = COALESCE(:expected, sharing_accounts.version) " +
+                "AND NOT (${refreshing("sharing_accounts")}) " +
                 "RETURNING $ACCOUNT_COLUMNS"
     }
 }

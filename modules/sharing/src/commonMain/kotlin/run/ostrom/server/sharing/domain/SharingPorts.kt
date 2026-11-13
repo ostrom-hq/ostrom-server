@@ -15,6 +15,8 @@ interface SharedAccountRepository {
      *
      * @throws AccountOwnedByAnotherMemberException When another member owns that provider account meanwhile.
      * @throws AccountChangedException When [expectedVersion] is set and the row is no longer at it.
+     * @throws AccountRefreshingException When a replica is renewing that account's tokens now: new tokens never
+     *   replace a pair whose refresh is in flight; they clear an intent older than [AccountTokens.PENDING_LIMIT].
      */
     suspend fun upsert(account: SharedAccount, envelope: String, expectedVersion: Long? = null): SharedAccount
 
@@ -38,14 +40,75 @@ interface SharedAccountRepository {
     /** The sealed tokens. */
     suspend fun envelope(orgId: Uuid, id: Uuid): String?
 
-    /** Replaces the sealed tokens after a refresh. */
-    suspend fun putEnvelope(orgId: Uuid, id: Uuid, envelope: String)
-
     /** Sets the status. */
     suspend fun setStatus(orgId: Uuid, id: Uuid, status: AccountStatus)
 
     /** Sets the cool-down: no request before [until]. */
     suspend fun setCooldown(orgId: Uuid, id: Uuid, until: Instant)
+}
+
+/**
+ * An account's tokens as its row holds them, read under the row's lock.
+ *
+ * @property status Whether it serves.
+ * @property envelope The sealed tokens.
+ * @property pending Whether a refresh was committed and has not ended: some replica sent, or is about to send, the
+ *   refresh token to the provider.
+ * @property stale Whether that refresh began more than [AccountTokens.PENDING_LIMIT] ago by the database's clock: its
+ *   owner died or hung, and whether the provider rotated the token is unknown.
+ * @property credentialVersion Bumped each time the tokens change (a refresh saved, a share).
+ */
+data class RefreshState(
+    val status: AccountStatus,
+    val envelope: String,
+    val pending: Boolean,
+    val stale: Boolean,
+    val credentialVersion: Long,
+)
+
+/** What a look at a [RefreshState] writes, in the transaction that holds the row's lock. */
+sealed interface RefreshWrite {
+    /** Nothing. */
+    data object Keep : RefreshWrite
+
+    /** Commits the refresh intent (`refresh_pending`, its start by the database's clock): the caller owns it. */
+    data object Claim : RefreshWrite
+
+    /** Marks the account RECONNECT_REQUIRED, the intent kept: only new tokens (a share) clear it. */
+    data object Retire : RefreshWrite
+
+    /** Replaces the sealed tokens, their version unchanged (an access token the provider refused, marked expired). */
+    data class Reseal(val envelope: String) : RefreshWrite
+}
+
+/**
+ * The refresh coordination of the accounts, in the database so that every replica sees it (TeamCode's
+ * `SqlCredentialSource`). Every call is confined to one org.
+ */
+interface AccountRefreshRepository {
+    /**
+     * Locks the account's row (`FOR UPDATE`), gives its state to [decide] (null when the account is gone), writes what
+     * it answers, and commits.
+     *
+     * @return What [decide] returned beside its write.
+     */
+    suspend fun <T> locked(orgId: Uuid, id: Uuid, decide: suspend (RefreshState?) -> Pair<RefreshWrite, T>): T
+
+    /**
+     * Stores renewed tokens and ends the intent, only while the intent is still the one taken at [credentialVersion]
+     * (a share meanwhile replaced the tokens and cleared it).
+     *
+     * @return Whether they were stored.
+     */
+    suspend fun save(orgId: Uuid, id: Uuid, credentialVersion: Long, envelope: String): Boolean
+
+    /**
+     * Sets [status] on an account whose refresh failed, the intent kept, only while it is still the one taken at
+     * [credentialVersion].
+     *
+     * @return Whether it was set.
+     */
+    suspend fun fail(orgId: Uuid, id: Uuid, credentialVersion: Long, status: AccountStatus): Boolean
 }
 
 /** The provider quota windows last observed on each account; scoped by org like the accounts. */

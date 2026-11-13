@@ -97,4 +97,16 @@ val SharingMigrations: List<SchemaMigration> = listOf(
         name = "sharing_group_members_by_member",
         sql = "CREATE INDEX sharing_group_members_member ON sharing_group_members (org_id, member_id)",
     ),
+    // The refresh intent every replica sees (TeamCode's `refresh_pending`): committed under the row's lock before the
+    // provider is called, so two replicas or a killed pod never spend a rotating refresh token twice.
+    // `credential_version` changes with the tokens only (a refresh, a share), unlike `version`, which an edit bumps.
+    SchemaMigration(
+        version = 7,
+        name = "sharing_refresh_intent",
+        sql = """
+            ALTER TABLE sharing_accounts ADD COLUMN refresh_pending BOOLEAN NOT NULL DEFAULT FALSE;
+            ALTER TABLE sharing_accounts ADD COLUMN refresh_started_at TIMESTAMPTZ;
+            ALTER TABLE sharing_accounts ADD COLUMN credential_version BIGINT NOT NULL DEFAULT 1
+        """.trimIndent(),
+    ),
 )
