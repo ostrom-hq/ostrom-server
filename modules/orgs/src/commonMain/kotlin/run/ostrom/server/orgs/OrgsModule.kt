@@ -22,6 +22,7 @@ import run.ostrom.server.orgs.domain.CreateInviteLinkUseCase
 import run.ostrom.server.orgs.domain.CreateInviteLinkUseCaseImpl
 import run.ostrom.server.orgs.domain.CreateOrgUseCase
 import run.ostrom.server.orgs.domain.OrgCreationGate
+import run.ostrom.server.orgs.domain.OrgCreationGuards
 import run.ostrom.server.orgs.infrastructure.OrgSignUpInvitations
 import run.ostrom.server.orgs.infrastructure.SignUpOrgCreationGate
 import run.ostrom.server.identity.domain.SignUpInvitations
@@ -142,7 +143,9 @@ object OrgsModule : ServerModule {
         single<OrgCreationGate> { SignUpOrgCreationGate(get()) }
         // An invitation's person may get an account on an invite-only instance (identity's SignUpPolicy).
         single<SignUpInvitations> { OrgSignUpInvitations(get(), get(), get()) }
-        single<CreateOrgUseCase> { CreateOrgUseCaseImpl(get(), get(), get(), get(), get(), get(), get()) }
+        single<CreateOrgUseCase> {
+            CreateOrgUseCaseImpl(get(), get(), OrgCreationGuards(get(), get()), get(), get(), get())
+        }
         single<GetOrgUseCase> { GetOrgUseCaseImpl(get(), get()) }
         single<UpdateOrgUseCase> { UpdateOrgUseCaseImpl(get(), get(), get()) }
         single<DeleteOrgUseCase> { DeleteOrgUseCaseImpl(get(), get(), get()) }

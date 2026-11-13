@@ -64,8 +64,13 @@ fun main(args: Array<String>) {
     when (command) {
         Command.Serve -> serve()
         Command.Migrate -> migrate()
-        is Command.SeedTestAccount -> seed(command.email)
-        Command.Bootstrap -> bootstrap()
+        // A QA account, as one JSON line.
+        is Command.SeedTestAccount -> oneShot("test account not created") { koin, source ->
+            requireTestAccountsAllowed(source, command.email)
+            seedTestAccount(koin, source, command.email)
+        }
+        // The first owner's one-time setup link.
+        Command.Bootstrap -> oneShot("setup link not made") { koin, _ -> bootstrapInstance(koin) }
     }
 }
 
@@ -160,8 +165,14 @@ private fun migrate() {
     runBlocking { driver?.close() }
 }
 
-/** Prints the first owner's one-time setup link on stdout (never in a log). */
-private fun bootstrap() {
+/**
+ * Runs one command against the database and prints what it returns on stdout (never in a log): a refusal exits 2 with
+ * its usage, a failure 1.
+ *
+ * @param failure What the log says when it fails.
+ * @param work The command, given the server's Koin and configuration once every module's migrations are checked.
+ */
+private fun oneShot(failure: String, work: suspend (Koin, ConfigSource) -> String) {
     val (source, config) = loadConfig()
     val logger = JsonLogger(config.logLevel)
     val modules = serverModules()
@@ -170,56 +181,20 @@ private fun bootstrap() {
     val workers = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     try {
         val database = connectPostgres(config.database).also { driver = it }
-        runBlocking { database.requireRowLevelSecurity() }
         val signer = runBlocking { Ed25519InstanceSigner.loadOrCreate(config.signingKeyFile) }
         val server = serverKoin(kernelModule(logger, database, signer, source), modules).also { koin = it }
         val text = runBlocking {
             val migrations = server.get<MigrationRunner>()
             modules.forEach { migrations.verify(it.name, it.migrations) }
             modules.forEach { it.initialize(server) }
-            bootstrapInstance(server)
+            work(server, source)
         }
         println(text)
     } catch (error: UsageException) {
         shutDown(workers, koin, driver)
         usage(error)
     } catch (error: Throwable) { // not coroutine-reachable: the process entry point, outside any coroutine.
-        failed(logger, "setup link not made", error)
-        shutDown(workers, koin, driver)
-        exitProcess(EXIT_FAILURE)
-    }
-    shutDown(workers, koin, driver)
-}
-
-/** Creates a QA account and prints it as one JSON line on stdout. */
-private fun seed(email: String) {
-    val (source, config) = loadConfig()
-    try {
-        requireTestAccountsAllowed(source, email)
-    } catch (error: UsageException) {
-        usage(error)
-    }
-    val logger = JsonLogger(config.logLevel)
-    val modules = serverModules()
-    var driver: Driver? = null
-    var koin: Koin? = null
-    val workers = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    try {
-        val database = connectPostgres(config.database).also { driver = it }
-        val signer = runBlocking { Ed25519InstanceSigner.loadOrCreate(config.signingKeyFile) }
-        val server = serverKoin(kernelModule(logger, database, signer, source), modules).also { koin = it }
-        val account = runBlocking {
-            val migrations = server.get<MigrationRunner>()
-            modules.forEach { migrations.verify(it.name, it.migrations) }
-            modules.forEach { it.initialize(server) }
-            seedTestAccount(server, source, email)
-        }
-        println(account)
-    } catch (error: UsageException) {
-        shutDown(workers, koin, driver)
-        usage(error)
-    } catch (error: Throwable) { // not coroutine-reachable: the process entry point, outside any coroutine.
-        failed(logger, "test account not created", error)
+        failed(logger, failure, error)
         shutDown(workers, koin, driver)
         exitProcess(EXIT_FAILURE)
     }

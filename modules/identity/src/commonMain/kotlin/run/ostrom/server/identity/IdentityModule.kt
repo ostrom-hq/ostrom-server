@@ -234,7 +234,7 @@ object IdentityModule : ServerModule {
             // The orgs module binds the invitations: absent (a server without it), only the setup link admits.
             SignUpPolicyImpl(get<IdentityConfig>().signUp, get(), getOrNull<SignUpInvitations>(), get(), get())
         }
-        single<BootstrapInstanceUseCase> { BootstrapInstanceUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<BootstrapInstanceUseCase> { BootstrapInstanceUseCaseImpl(get(), get(), get(), get()) }
         single<InstanceBootstrapper> {
             IdentityInstanceBootstrapper(get(), get<IdentityConfig>()::setupUrl)
         }
@@ -350,11 +350,11 @@ object IdentityModule : ServerModule {
      */
     private fun warnWhenNobodyCanSignUp(scope: CoroutineScope, koin: Koin) {
         if (koin.get<IdentityConfig>().signUp != SignUpMode.INVITE) return
-        val users = koin.get<UsersRepository>()
+        val setupLinks = koin.get<SetupLinksRepository>()
         val logger = koin.get<Logger>()
         scope.launch {
             try {
-                if (!users.any()) logger.warn(BOOTSTRAP_HINT)
+                if (!setupLinks.anyAccount()) logger.warn(BOOTSTRAP_HINT)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {

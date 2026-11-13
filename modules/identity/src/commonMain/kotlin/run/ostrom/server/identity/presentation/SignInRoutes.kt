@@ -143,13 +143,7 @@ fun Route.signInRoutes(dependencies: SignInRoutesDependencies) = with(dependenci
         call.respondRedirect(config.consoleUrl + signedIn.redirectPath)
     }
     emailRoutes(dependencies)
-    post<SignInApi.SignUpGrant, SignUpGrantRequest> { _, request ->
-        // Like the other unauthenticated starts of a session: only the console's own pages give a grant.
-        if (call.request.headers[HttpHeaders.Origin] !in config.allowedOrigins) throw OriginNotAllowedException()
-        grantSignUp(request.token, call.request.origin.remoteAddress)
-        call.response.cookies.append(stateCookie(request.token, SIGN_UP_COOKIE_SECONDS, config, SIGN_UP_COOKIE))
-        call.respond(HttpStatusCode.NoContent)
-    }
+    signUpGrantRoute(dependencies)
     post<LauncherApi.Login, LauncherLoginRequest> { _, request ->
         val login = launcherLogin(request.githubToken, request.via, call.request.origin.remoteAddress)
         val token = login.token
@@ -170,6 +164,17 @@ fun Route.signInRoutes(dependencies: SignInRoutesDependencies) = with(dependenci
 
 
 /** The e-mailed link: asked for by a browser, which keeps a nonce (a cookie) that the link needs to sign in (M4). */
+/** `grantSignUp`: the token a browser gives before signing in on an invite-only instance, kept in a cookie. */
+private fun Route.signUpGrantRoute(dependencies: SignInRoutesDependencies) = with(dependencies) {
+    post<SignInApi.SignUpGrant, SignUpGrantRequest> { _, request ->
+        // Like the other unauthenticated starts of a session: only the console's own pages give a grant.
+        if (call.request.headers[HttpHeaders.Origin] !in config.allowedOrigins) throw OriginNotAllowedException()
+        grantSignUp(request.token, call.request.origin.remoteAddress)
+        call.response.cookies.append(stateCookie(request.token, SIGN_UP_COOKIE_SECONDS, config, SIGN_UP_COOKIE))
+        call.respond(HttpStatusCode.NoContent)
+    }
+}
+
 private fun Route.emailRoutes(dependencies: SignInRoutesDependencies) = with(dependencies) {
     post<SignInApi.Email, MagicLinkRequest> { _, request ->
         val source = call.request.origin.remoteAddress

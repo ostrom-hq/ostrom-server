@@ -130,7 +130,6 @@ class IdentityLauncherResolverTest {
 
         override suspend fun loginTaken(login: String): Boolean = unused()
 
-        override suspend fun any(): Boolean = unused()
 
         override suspend fun findByLogin(login: String): User? = ada.takeIf { login.lowercase() == it.login }
 

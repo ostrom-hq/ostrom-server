@@ -3,6 +3,7 @@ package run.ostrom.server.orgs
 
 import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.orgs.domain.CreateOrgUseCaseImpl
+import run.ostrom.server.orgs.domain.OrgCreationGuards
 import run.ostrom.server.orgs.domain.FindOrgUseCaseImpl
 import run.ostrom.server.orgs.domain.FreeTeamTakenException
 import run.ostrom.server.orgs.domain.GetOrgUseCaseImpl
@@ -31,9 +32,8 @@ class OrgUseCasesTest {
         CreateOrgUseCaseImpl(
             world.orgs,
             world.people,
-            world.creation,
+            OrgCreationGuards(world.creation, world.limiter),
             world.seats,
-            world.limiter,
             world.audit,
             world.clock,
         )

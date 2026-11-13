@@ -67,18 +67,16 @@ interface CreateOrgUseCase {
  *
  * @param orgs The organizations.
  * @param people The people.
- * @param creation Whether the instance lets a person create organizations whatever their roles.
+ * @param guards Who may create organizations, and how often.
  * @param seats The plan lookup.
- * @param limiter Limits creations per person.
  * @param audit The audit log.
  * @param clock The clock.
  */
 class CreateOrgUseCaseImpl(
     private val orgs: OrgsRepository,
     private val people: People,
-    private val creation: OrgCreationGate,
+    private val guards: OrgCreationGuards,
     private val seats: SeatPolicy,
-    private val limiter: OrgRateLimiter,
     private val audit: OrgAudit,
     private val clock: Clock,
 ) : CreateOrgUseCase {
@@ -87,7 +85,7 @@ class CreateOrgUseCaseImpl(
         val chosen = slug?.let(::validSlug)
         // An invite-only instance (TC-CODE-AUTH-2): its organizations are made by those who already run one.
         ensure(operator || mayCreate(userId)) { OrgCreationClosedException() }
-        ensure(limiter.tryAcquire("org-create:$userId", CREATIONS_PER_HOUR, HOUR_MINUTES)) {
+        ensure(guards.limiter.tryAcquire("org-create:$userId", CREATIONS_PER_HOUR, HOUR_MINUTES)) {
             OrgRateLimitedException()
         }
         ensure(chosen == null || !orgs.slugTaken(chosen)) { SlugTakenException() }
@@ -121,8 +119,16 @@ class CreateOrgUseCaseImpl(
     }
 
     private suspend fun mayCreate(userId: Uuid): Boolean =
-        creation.opensTo(userId) || orgs.listOfUser(userId).any { it.member.role in MANAGER_ROLES }
+        guards.gate.opensTo(userId) || orgs.listOfUser(userId).any { it.member.role in MANAGER_ROLES }
 }
+
+/**
+ * What stands before a new organization.
+ *
+ * @property gate Whether the instance lets a person create organizations whatever their roles.
+ * @property limiter Limits creations per person.
+ */
+data class OrgCreationGuards(val gate: OrgCreationGate, val limiter: OrgRateLimiter)
 
 /** The organizations of the caller. */
 interface ListMyOrgsUseCase {

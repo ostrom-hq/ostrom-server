@@ -96,8 +96,6 @@ class InMemoryUsersRepository : UsersRepository {
 
     override suspend fun loginTaken(login: String): Boolean = users.values.any { it.login == login }
 
-    override suspend fun any(): Boolean = users.isNotEmpty()
-
     override suspend fun findByLogin(login: String): User? = users.values.firstOrNull { it.login == login.lowercase() }
 
     override suspend fun getMany(ids: Collection<Uuid>): List<User> = ids.distinct().mapNotNull { users[it] }

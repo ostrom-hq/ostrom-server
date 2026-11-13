@@ -118,6 +118,13 @@ interface SetupLinksRepository {
      * @return True when so.
      */
     suspend fun usedBy(userId: Uuid): Boolean
+
+    /**
+     * Whether the instance has an account yet: until it has, `ostrom-server bootstrap` makes setup links.
+     *
+     * @return True once anyone signed up.
+     */
+    suspend fun anyAccount(): Boolean
 }
 
 /** The organizations' invitations (the orgs module): a live one lets its person get an account. */
@@ -186,13 +193,13 @@ class SignUpPolicyImpl(
     private val clock: Clock,
 ) : SignUpPolicy {
     override suspend fun admits(identity: VerifiedIdentity, grant: SignUpGrant, userId: Uuid): Boolean {
-        // An organization's SSO provisions its own people: its administrators configured it.
-        if (mode == SignUpMode.OPEN || grant == SignUpGrant.Operator || identity.connectionId != null) return true
-        val token = (grant as SignUpGrant.Presented).token?.takeIf { it.length in 1..MAX_GRANT_LENGTH } ?: return false
-        return if (isSetupToken(token)) {
-            setupLinks.consume(hasher.hash(token), userId, clock.nowMillis())
-        } else {
-            invitations?.isLive(token) == true
+        val token = (grant as? SignUpGrant.Presented)?.token?.takeIf { it.length in 1..MAX_GRANT_LENGTH }
+        return when {
+            // An organization's SSO provisions its own people: its administrators configured it.
+            mode == SignUpMode.OPEN || grant == SignUpGrant.Operator || identity.connectionId != null -> true
+            token == null -> false
+            isSetupToken(token) -> setupLinks.consume(hasher.hash(token), userId, clock.nowMillis())
+            else -> invitations?.isLive(token) == true
         }
     }
 
@@ -247,31 +254,28 @@ interface BootstrapInstanceUseCase {
     /**
      * Makes a new setup link, valid [SETUP_LINK_LIFETIME] and once; an earlier one stops working.
      *
-     * @return The link and its token, shown once.
-     *
-     * @throws InstanceAlreadyBootstrappedException When the instance already has an account.
+     * @return The link and its token, shown once; null when the instance already has an account (its owners and
+     *   admins invite people instead).
      */
-    suspend operator fun invoke(): IssuedSetupLink
+    suspend operator fun invoke(): IssuedSetupLink?
 }
 
 /**
  * [BootstrapInstanceUseCase].
  *
- * @param users The accounts.
- * @param setupLinks The setup links.
+ * @param setupLinks The setup links, and whether the instance has an account.
  * @param secrets Makes the token.
  * @param hasher Hashes it.
  * @param clock The clock.
  */
 class BootstrapInstanceUseCaseImpl(
-    private val users: UsersRepository,
     private val setupLinks: SetupLinksRepository,
     private val secrets: SecretGenerator,
     private val hasher: SecretHasher,
     private val clock: Clock,
 ) : BootstrapInstanceUseCase {
-    override suspend fun invoke(): IssuedSetupLink {
-        if (users.any()) throw InstanceAlreadyBootstrappedException()
+    override suspend fun invoke(): IssuedSetupLink? {
+        if (setupLinks.anyAccount()) return null
         val token = SETUP_TOKEN_PREFIX + "_" + secrets.secret()
         val now = clock.nowMillis()
         val link = SetupLink(Uuid.random(), now, now + SETUP_LINK_LIFETIME)
@@ -291,9 +295,4 @@ class SignUpClosedException : OstromException(
 class SignUpGrantNotFoundException : OstromException(
     ErrorKind.NOT_FOUND,
     "This setup link or invitation is unknown, used or expired. Ask for a new one.",
-)
-
-/** `ostrom-server bootstrap` on an instance that already has an account: owners invite people instead. */
-class InstanceAlreadyBootstrappedException : IllegalStateException(
-    "This instance already has an account: an owner or an admin invites people from the console.",
 )

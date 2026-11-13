@@ -10,11 +10,10 @@ interface InstanceBootstrapper {
     /**
      * Makes a new setup link; an earlier one stops working.
      *
-     * @return The console URL that carries it, shown once.
-     *
-     * @throws IllegalStateException When the instance already has an account, with what to do instead.
+     * @return The console URL that carries it, shown once; null when the instance already has an account (its owners
+     *   and admins invite people instead).
      */
-    suspend fun setupLink(): SetupLinkOutput
+    suspend fun setupLink(): SetupLinkOutput?
 }
 
 /**

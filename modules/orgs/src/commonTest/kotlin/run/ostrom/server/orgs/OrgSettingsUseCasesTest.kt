@@ -6,6 +6,7 @@ import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.OrgDeletionListener
 import run.ostrom.server.orgs.domain.CreateOrgUseCaseImpl
+import run.ostrom.server.orgs.domain.OrgCreationGuards
 import run.ostrom.server.orgs.domain.DELETION_GRACE
 import run.ostrom.server.orgs.domain.DeleteOrgUseCaseImpl
 import run.ostrom.server.orgs.domain.DeletionPass
@@ -67,7 +68,8 @@ class OrgSettingsUseCasesTest {
     private val world = OrgsWorld()
     private val create =
         CreateOrgUseCaseImpl(
-            world.orgs, world.people, world.creation, world.seats, world.limiter, world.audit, world.clock,
+            world.orgs, world.people, OrgCreationGuards(world.creation, world.limiter), world.seats, world.audit,
+            world.clock,
         )
     private val update = UpdateOrgUseCaseImpl(world.orgs, world.members, world.audit)
     private val delete = DeleteOrgUseCaseImpl(world.orgs, world.members, world.clock)

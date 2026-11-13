@@ -47,4 +47,8 @@ class SetupLinksRepositoryImpl(private val driver: Driver) : SetupLinksRepositor
     override suspend fun usedBy(userId: Uuid): Boolean = driver.fetchAll(
         Statement.create("SELECT 1 FROM identity_setup_links WHERE used_by = :user LIMIT 1").bind("user", userId),
     ).getOrThrow().firstOrNull() != null
+
+    override suspend fun anyAccount(): Boolean = driver.fetchAll(
+        Statement.create("SELECT 1 FROM identity_users LIMIT 1"),
+    ).getOrThrow().firstOrNull() != null
 }

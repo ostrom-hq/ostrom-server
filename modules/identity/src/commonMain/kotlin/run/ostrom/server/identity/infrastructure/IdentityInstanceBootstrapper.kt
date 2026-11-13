@@ -15,8 +15,6 @@ class IdentityInstanceBootstrapper(
     private val bootstrap: BootstrapInstanceUseCase,
     private val setupUrl: (String) -> String,
 ) : InstanceBootstrapper {
-    override suspend fun setupLink(): SetupLinkOutput {
-        val issued = bootstrap()
-        return SetupLinkOutput(setupUrl(issued.token), issued.link.expiresAt.toString())
-    }
+    override suspend fun setupLink(): SetupLinkOutput? =
+        bootstrap()?.let { SetupLinkOutput(setupUrl(it.token), it.link.expiresAt.toString()) }
 }

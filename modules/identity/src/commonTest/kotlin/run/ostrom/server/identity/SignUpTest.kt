@@ -4,7 +4,6 @@ package run.ostrom.server.identity
 import run.ostrom.server.identity.domain.BootstrapInstanceUseCaseImpl
 import run.ostrom.server.identity.domain.GrantSignUpUseCaseImpl
 import run.ostrom.server.identity.domain.IdentityProvider
-import run.ostrom.server.identity.domain.InstanceAlreadyBootstrappedException
 import run.ostrom.server.identity.domain.RateLimitedException
 import run.ostrom.server.identity.domain.ResolveUserUseCaseImpl
 import run.ostrom.server.identity.domain.SignUpClosedException
@@ -28,6 +27,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
@@ -38,11 +38,11 @@ import kotlin.uuid.Uuid
 class SignUpTest {
     private val clock = SettableClock()
     private val users = InMemoryUsersRepository()
-    private val links = InMemorySetupLinks()
+    private val links = InMemorySetupLinks(users)
     private val invitations = FakeSignUpInvitations(mutableSetOf("invite-token"))
     private val hasher = FakeHasher()
     private val invite = SignUpPolicyImpl(SignUpMode.INVITE, links, invitations, hasher, clock)
-    private val bootstrap = BootstrapInstanceUseCaseImpl(users, links, CountingSecretGenerator(), hasher, clock)
+    private val bootstrap = BootstrapInstanceUseCaseImpl(links, CountingSecretGenerator(), hasher, clock)
     private val github = VerifiedIdentity(IdentityProvider.GITHUB, "583231", "ada@example.com", true, login = "ada")
 
     @Test
@@ -55,10 +55,10 @@ class SignUpTest {
 
     @Test
     fun theSetupLinkWorksOnceForAnHourAndOnlyBeforeTheFirstAccount() = runTest {
-        val first = bootstrap()
+        val first = assertNotNull(bootstrap())
         assertEquals("osb_secret1", first.token)
         assertEquals(clock.now + 1.hours, first.link.expiresAt)
-        val second = bootstrap()
+        val second = assertNotNull(bootstrap())
         assertFalse(invite.accepts(first.token), "A new link stops the earlier one")
         assertTrue(invite.accepts(second.token))
 
@@ -69,12 +69,12 @@ class SignUpTest {
         assertTrue(invite.mayCreateOrgs(ada), "The setup link's person creates the organizations")
         assertFalse(invite.mayCreateOrgs(Uuid.random()))
 
-        val third = bootstrap()
+        val third = assertNotNull(bootstrap())
         clock.now += 61.minutes
         assertFalse(invite.accepts(third.token), "Expired after an hour")
 
         users.users[ada] = User(ada, "ada", "Ada", null, null, clock.now)
-        assertFailsWith<InstanceAlreadyBootstrappedException> { bootstrap() }
+        assertNull(bootstrap(), "Once someone signed up, owners invite people instead")
     }
 
     @Test
@@ -136,11 +136,14 @@ class SignUpTest {
     fun theBootstrapCommandGetsTheConsoleSetupPage() = runTest {
         val bootstrapper = IdentityInstanceBootstrapper(bootstrap) { "https://app.example.com/setup#token=$it" }
 
-        val output = bootstrapper.setupLink()
+        val output = assertNotNull(bootstrapper.setupLink())
 
         assertEquals("https://app.example.com/setup#token=osb_secret1", output.url)
         assertEquals("2026-10-30T11:00:00Z", output.expiresAt)
         assertEquals(1, links.links.size, "One link stored, by its hash")
         assertTrue("h(osb_secret1)" in links.links)
+        val ada = Uuid.random()
+        users.users[ada] = User(ada, "ada", "Ada", null, null, clock.now)
+        assertNull(bootstrapper.setupLink(), "No link once the instance has an account")
     }
 }

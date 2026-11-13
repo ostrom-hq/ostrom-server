@@ -4,7 +4,6 @@ package run.ostrom.server.identity
 
 import run.ostrom.server.identity.domain.BootstrapInstanceUseCase
 import run.ostrom.server.identity.domain.IdentityProvider
-import run.ostrom.server.identity.domain.InstanceAlreadyBootstrappedException
 import run.ostrom.server.identity.domain.MailSender
 import run.ostrom.server.identity.domain.SecretHasher
 import run.ostrom.server.identity.domain.SetupLinksRepository
@@ -41,7 +40,6 @@ import io.ktor.http.contentType
 import io.ktor.http.parseServerSetCookieHeader
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -88,7 +86,7 @@ class SignUpRoutesPostgresTest {
         assertEquals("http://localhost:5173/login?error=signup_closed", refused.headers[HttpHeaders.Location])
         assertNull(refused.cookie(SESSION_COOKIE), "No session for a stranger")
 
-        val link = server.koin.get<InstanceBootstrapper>().setupLink()
+        val link = assertNotNull(server.koin.get<InstanceBootstrapper>().setupLink())
         assertTrue(link.url.startsWith("http://localhost:5173/setup#token=osb_"), link.url)
         val token = link.url.substringAfter("#token=")
         assertEquals(HttpStatusCode.Forbidden, server.client.grant(token, origin = null).status, "The console only")
@@ -111,10 +109,12 @@ class SignUpRoutesPostgresTest {
         assertEquals("Ada", ada.displayName)
         val users = server.koin.get<UsersRepository>()
         val adaId = assertNotNull(users.findByIdentity(IdentityProvider.GITHUB.key, "42")).id
-        assertTrue(server.koin.get<SetupLinksRepository>().usedBy(adaId), "Ada may create the organizations")
+        val links = server.koin.get<SetupLinksRepository>()
+        assertTrue(links.usedBy(adaId), "Ada may create the organizations")
+        assertTrue(links.anyAccount())
 
         assertEquals(HttpStatusCode.NotFound, server.client.grant(token).status, "The setup link works once")
-        assertFailsWith<InstanceAlreadyBootstrappedException> { server.koin.get<BootstrapInstanceUseCase>()() }
+        assertNull(server.koin.get<BootstrapInstanceUseCase>()(), "Owners invite people now")
         val again = browser.gitHubCallback()
         assertNotNull(again.cookie(SESSION_COOKIE), "Ada signs in again without any grant")
     }
@@ -143,10 +143,9 @@ class SignUpRoutesPostgresTest {
     @Test
     fun theSetupLinksAreStoredHashedAndUsedOnce() = serverTest(listOf(IdentityModule), inviteOnly) { server ->
         val links = server.koin.get<SetupLinksRepository>()
-        val users = server.koin.get<UsersRepository>()
-        assertFalse(users.any(), "A new instance has no account")
-        val first = server.koin.get<BootstrapInstanceUseCase>()()
-        val second = server.koin.get<BootstrapInstanceUseCase>()()
+        assertFalse(links.anyAccount(), "A new instance has no account")
+        val first = assertNotNull(server.koin.get<BootstrapInstanceUseCase>()())
+        val second = assertNotNull(server.koin.get<BootstrapInstanceUseCase>()())
         val now = second.link.createdAt
         assertFalse(links.pending("h-unknown", now))
         val hasher = server.koin.get<SecretHasher>()

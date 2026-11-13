@@ -45,10 +45,6 @@ class UsersRepositoryImpl(private val driver: Driver) : UsersRepository {
         Statement.create("SELECT 1 FROM identity_users WHERE login = :login").bind("login", login),
     ).getOrThrow().firstOrNull() != null
 
-    override suspend fun any(): Boolean = driver.fetchAll(
-        Statement.create("SELECT 1 FROM identity_users LIMIT 1"),
-    ).getOrThrow().firstOrNull() != null
-
     override suspend fun findByLogin(login: String): User? = driver.fetchAll(
         Statement.create("SELECT $USER_COLUMNS FROM identity_users u WHERE u.login = :login")
             .bind("login", login.lowercase()),

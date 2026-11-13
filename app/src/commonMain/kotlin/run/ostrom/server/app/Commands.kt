@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.app
 
-import kotlin.coroutines.cancellation.CancellationException
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.http.OstromJson
 import run.ostrom.server.kernel.module.InstanceBootstrapper
@@ -104,13 +103,9 @@ suspend fun seedTestAccount(koin: Koin, source: ConfigSource, email: String): St
 suspend fun bootstrapInstance(koin: Koin): String {
     val bootstrapper = koin.getOrNull<InstanceBootstrapper>()
         ?: throw UsageException("No module makes setup links: the identity module binds InstanceBootstrapper.")
-    val link = try {
-        bootstrapper.setupLink()
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (error: IllegalStateException) {
-        throw UsageException(error.message ?: "This instance cannot be bootstrapped.")
-    }
+    val link = bootstrapper.setupLink() ?: throw UsageException(
+        "This instance already has an account: an owner or an admin invites people from the console.",
+    )
     return "Open this link to become the first owner of this Ostrom instance. " +
         "It works once, until ${link.expiresAt}:\n" +
         link.url

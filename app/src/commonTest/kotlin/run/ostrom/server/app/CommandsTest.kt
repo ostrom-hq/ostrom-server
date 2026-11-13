@@ -7,7 +7,6 @@ import run.ostrom.server.kernel.module.SetupLinkOutput
 import run.ostrom.server.kernel.module.TestAccount
 import run.ostrom.server.kernel.module.TestAccountSeeder
 import kotlinx.coroutines.test.runTest
-import kotlin.coroutines.cancellation.CancellationException
 import org.koin.dsl.koinApplication
 import org.koin.dsl.module
 import kotlin.test.Test
@@ -84,10 +83,11 @@ class CommandsTest {
         )
     }
 
-    private class Bootstrapper(private val refusal: IllegalStateException? = null) : InstanceBootstrapper {
-        override suspend fun setupLink(): SetupLinkOutput {
-            refusal?.let { throw it }
-            return SetupLinkOutput("https://app.example.com/setup#token=osb_abc", "2026-11-13T11:00:00Z")
+    private class Bootstrapper(private val hasAccount: Boolean = false) : InstanceBootstrapper {
+        override suspend fun setupLink(): SetupLinkOutput? = if (hasAccount) {
+            null
+        } else {
+            SetupLinkOutput("https://app.example.com/setup#token=osb_abc", "2026-11-13T11:00:00Z")
         }
     }
 
@@ -105,22 +105,13 @@ class CommandsTest {
 
     @Test
     fun bootstrapRefusesAnInstanceThatHasAnAccountOrNoIdentityModule() = runTest {
-        val refused = Bootstrapper(IllegalStateException("This instance already has an account."))
         assertEquals(
-            "This instance already has an account.",
-            assertFailsWith<UsageException> { bootstrapInstance(koinWith(refused)) }.message,
-        )
-        assertEquals(
-            "This instance cannot be bootstrapped.",
-            assertFailsWith<UsageException> { bootstrapInstance(koinWith(Bootstrapper(IllegalStateException()))) }
-                .message,
+            "This instance already has an account: an owner or an admin invites people from the console.",
+            assertFailsWith<UsageException> { bootstrapInstance(koinWith(Bootstrapper(hasAccount = true))) }.message,
         )
         assertEquals(
             "No module makes setup links: the identity module binds InstanceBootstrapper.",
             assertFailsWith<UsageException> { bootstrapInstance(koinApplication {}.koin) }.message,
         )
-        assertFailsWith<CancellationException>("A cancellation is not a refusal") {
-            bootstrapInstance(koinWith(Bootstrapper(CancellationException("stopped"))))
-        }
     }
 }

@@ -30,6 +30,8 @@ class IsolationMatrixPostgresTest {
                 mapOf(
                     "OSTROM_ARTIFACTS_CONTENT_ORIGIN" to "http://$CONTENT_HOST",
                     "OSTROM_SECRETS_KEY" to "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+                    // The organizations' people sign up as on ostrom.run (serverTest's default, replaced here).
+                    "OSTROM_SIGNUP" to "open",
                 ),
             )
             LayeredConfigSource(listOf(matrix, EnvironmentConfigSource()))

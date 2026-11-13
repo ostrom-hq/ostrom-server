@@ -9,8 +9,12 @@ import run.ostrom.server.identity.domain.SignUpPolicyImpl
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
-/** The setup links in memory, as `identity_setup_links` keeps them. */
-class InMemorySetupLinks : SetupLinksRepository {
+/**
+ * The setup links in memory, as `identity_setup_links` keeps them.
+ *
+ * @param users The instance's accounts, or none.
+ */
+class InMemorySetupLinks(private val users: InMemoryUsersRepository? = null) : SetupLinksRepository {
     /** The stored links by token hash, with when they were used and by whom. */
     val links = mutableMapOf<String, Triple<SetupLink, Instant?, Uuid?>>()
 
@@ -32,6 +36,8 @@ class InMemorySetupLinks : SetupLinksRepository {
         links[tokenHash]?.let { (link, usedAt, _) -> usedAt == null && link.expiresAt > now } == true
 
     override suspend fun usedBy(userId: Uuid): Boolean = links.values.any { it.third == userId }
+
+    override suspend fun anyAccount(): Boolean = users?.users?.isNotEmpty() == true
 }
 
 /** The organizations' live invitation tokens. */

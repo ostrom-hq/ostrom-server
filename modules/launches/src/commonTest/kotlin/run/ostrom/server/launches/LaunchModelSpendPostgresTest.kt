@@ -98,6 +98,8 @@ class LaunchModelSpendPostgresTest {
         private val gateway = mapOf(
             "OSTROM_GATEWAY_ANTHROPIC_URL" to "https://anthropic.test",
             "OSTROM_GATEWAY_ANTHROPIC_API_KEY" to "sk-ant-api03-instance",
+            // Its owners sign up as on ostrom.run (serverTest's default, which this source replaces).
+            "OSTROM_SIGNUP" to "open",
         )
 
         override fun get(key: String): String? = gateway[key] ?: environment[key]
