@@ -81,8 +81,12 @@ class AskWaitUseCaseImpl(
         requireWait(idempotencyKey == null || KEY.matches(idempotencyKey)) {
             "Idempotency-Key is 1 to 200 visible characters."
         }
-        earlier(caller, idempotencyKey)?.let { return AskedWait(it, replayed = true) }
         val resolver = TimedWaitRules.resolver(request.resolver)
+        // Its address is shown once, its secret kept as a hash: a replay could not show it again.
+        requireWait(idempotencyKey == null || resolver != WaitResolver.EVENT) {
+            "A wait for an event takes no Idempotency-Key: its address is shown once."
+        }
+        earlier(caller, idempotencyKey)?.let { return AskedWait(it, replayed = true) }
         val secret = secrets.mint().takeIf { resolver == WaitResolver.EVENT }
         val wait = if (resolver == WaitResolver.HUMAN) {
             requireWait(request.schedule.empty) {

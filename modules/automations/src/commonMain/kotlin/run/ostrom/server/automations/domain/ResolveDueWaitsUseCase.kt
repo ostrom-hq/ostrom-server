@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.automations.domain
 
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
 import kotlin.time.Instant
 
@@ -37,12 +38,27 @@ class ResolveDueWaitsUseCaseImpl(
 ) : ResolveDueWaitsUseCase {
     override suspend fun pass(): Int {
         val now = Instant.fromEpochMilliseconds(clock.now().toEpochMilliseconds())
-        return repository.due(now, ResolveDueWaitsUseCase.BATCH).count { due ->
-            val timedOut = due.resolver == WaitResolver.EVENT
-            val action = if (timedOut) TimedWaitRules.TIMED_OUT else TimedWaitRules.TIME_REACHED
-            val answer = WaitAnswer(action, emptyMap(), TimedWaitRules.SYSTEM, now)
-            val resolved = repository.settle(due.orgId, due.id, answer, due = true)
-            resolved?.also { events.resolved(it) } != null
+        var failure: Exception? = null
+        // One wait that fails stops none of the others; the first failure is thrown after the pass, to be logged.
+        val resolved = repository.due(now, ResolveDueWaitsUseCase.BATCH).count { due ->
+            try {
+                settle(due, now)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                failure = failure ?: error
+                false
+            }
         }
+        failure?.let { throw it }
+        return resolved
+    }
+
+    private suspend fun settle(due: DueWait, now: Instant): Boolean {
+        val timedOut = due.resolver == WaitResolver.EVENT
+        val action = if (timedOut) TimedWaitRules.TIMED_OUT else TimedWaitRules.TIME_REACHED
+        val answer = WaitAnswer(action, emptyMap(), TimedWaitRules.SYSTEM, now)
+        val resolved = repository.settle(due.orgId, due.id, answer, due = true)
+        return resolved?.also { events.resolved(it) } != null
     }
 }

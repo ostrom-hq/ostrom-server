@@ -8,6 +8,7 @@ import run.ostrom.server.automations.domain.InvalidWaitException
 import run.ostrom.server.automations.domain.ReadWaitsUseCaseImpl
 import run.ostrom.server.automations.domain.ReceiveWaitEventUseCaseImpl
 import run.ostrom.server.automations.domain.ResolveDueWaitsUseCaseImpl
+import run.ostrom.server.automations.domain.TimedWaitsRepository
 import run.ostrom.server.automations.domain.Wait
 import run.ostrom.server.automations.domain.WaitAnswer
 import run.ostrom.server.automations.domain.WaitCaller
@@ -39,6 +40,7 @@ import run.ostrom.server.automations.fakes.TestMembers
 import run.ostrom.server.automations.fakes.bob
 import run.ostrom.server.automations.fakes.dave
 import run.ostrom.server.automations.fakes.testWaitSessions
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.Test
@@ -103,13 +105,17 @@ class TimedWaitsTest {
 
     @Test
     fun anEventCarriesItsSecretOnceAndKeepsOnlyItsHash() = runTest {
-        val asked = timed("event", WaitSchedule(timeoutSeconds = 3_600), key = "k")
+        val asked = timed("event", WaitSchedule(timeoutSeconds = 3_600))
         assertEquals("wev_1", asked.secret)
         val timer = WaitTimer(WaitResolver.EVENT, clock.now + 3_600.seconds, "webhook", null, "hash:wev_1")
         assertEquals(timer, asked.wait.timer)
-        val replay = timed("event", WaitSchedule(), key = "k")
+        // A replay could not show the address again: an event takes no key; a time does.
+        val keyed = assertFailsWith<InvalidWaitException> { timed("event", WaitSchedule(), key = "k") }
+        assertEquals("A wait for an event takes no Idempotency-Key: its address is shown once.", keyed.message)
+        val time = timed("time", WaitSchedule(after = 60), key = "k")
+        val replay = timed("time", WaitSchedule(after = 60), key = "k")
         assertTrue(replay.replayed)
-        assertNull(replay.secret, "A replay never shows the secret again")
+        assertEquals(time.wait.id, replay.wait.id)
     }
 
     @Test
@@ -201,6 +207,29 @@ class TimedWaitsTest {
         repository.loseNextAnswer = true
         assertEquals(0, due.pass())
         assertEquals(WaitStatus.CANCELLED, repository.waits.getValue(wait.id).status)
+    }
+
+    @Test
+    fun oneWaitThatFailsStopsNoneOfTheOthersAndIsThrownAfterThePass() = runTest {
+        val first = timeWait(after = 30)
+        val second = timeWait(after = 40)
+        val third = timeWait(after = 50)
+        clock.now += 2.minutes
+        var failing = setOf(first.id, second.id)
+        var failure: Exception = IllegalStateException("first")
+        val flaky = object : TimedWaitsRepository by timedWaits {
+            override suspend fun settle(orgId: Uuid, id: Uuid, answer: WaitAnswer, due: Boolean): Wait? {
+                if (id in failing) throw failure.also { failure = IllegalStateException("next") }
+                return timedWaits.settle(orgId, id, answer, due)
+            }
+        }
+        val pass = ResolveDueWaitsUseCaseImpl(flaky, events, clock)
+        assertEquals("first", assertFailsWith<IllegalStateException> { pass.pass() }.message)
+        assertEquals(WaitStatus.RESOLVED, repository.waits.getValue(third.id).status, "The others are resolved")
+        failing = setOf(first.id)
+        failure = CancellationException("stop")
+        assertFailsWith<CancellationException> { pass.pass() }
+        assertEquals(WaitStatus.OPEN, repository.waits.getValue(second.id).status, "A cancelled pass stops")
     }
 
     @Test
@@ -300,6 +329,9 @@ class TimedWaitsTest {
         val long = wait.copy(answer = WaitAnswer("event_received", values, "ostrom", clock.now))
         val message = WaitMessages.resolved(long)
         assertTrue("result: ${"x".repeat(2_000)}\n" in message + "\n", "A value is capped")
+        val emoji = mapOf("result" to JsonPrimitive("x".repeat(1_999) + "\uD83D\uDE00"))
+        val split = WaitMessages.resolved(wait.copy(answer = WaitAnswer("event_received", emoji, "ostrom", clock.now)))
+        assertTrue("result: ${"x".repeat(1_999)}\n" in split + "\n", "Never half of a character")
         assertFalse("url:" in message)
         val huge = long.copy(timer = timer.copy(resumeMessage = "y".repeat(40_000)))
         assertEquals(WaitMessages.MAX_LENGTH, WaitMessages.resolved(huge).length)

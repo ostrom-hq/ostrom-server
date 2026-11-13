@@ -147,6 +147,7 @@ internal object TimedWaitRules {
         val at = instant(text)
             ?: throw InvalidWaitException("at is an ISO-8601 instant in UTC, such as 2026-11-02T09:00:00Z.")
         requireWait(at > now) { "at must be in the future." }
+        requireWait(at >= now + MIN_SECONDS.seconds) { "at is at least $MIN_SECONDS seconds from now." }
         requireWait(at <= now + MAX_AFTER_SECONDS.seconds) { "at is at most 30 days from now." }
         // To the millisecond, as stored.
         return Instant.fromEpochMilliseconds(at.toEpochMilliseconds())

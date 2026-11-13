@@ -65,6 +65,7 @@ class TimedWaitRulesTest {
         invalid("after is 30 seconds to 30 days (2592000 seconds).") { time(WaitSchedule(after = 2_592_001)) }
         invalid("at is an ISO-8601 instant in UTC, such as 2026-11-02T09:00:00Z.") { time(WaitSchedule(at = "soon")) }
         invalid("at must be in the future.") { time(WaitSchedule(at = "2026-11-13T10:00:00Z")) }
+        invalid("at is at least 30 seconds from now.") { time(WaitSchedule(at = "2026-11-13T10:00:29Z")) }
         invalid("at is at most 30 days from now.") { time(WaitSchedule(at = "2026-12-13T10:00:01Z")) }
         invalid("source and timeoutSeconds belong to waits for an event.") {
             time(WaitSchedule(after = 60, source = "webhook"))
