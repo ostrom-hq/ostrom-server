@@ -4,8 +4,10 @@ package run.ostrom.server.kernel.module
 import run.ostrom.core.telemetry.Telemetry
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.ServerConfig
+import run.ostrom.server.kernel.database.DatabaseNotifications
 import run.ostrom.server.kernel.database.MigrationRunner
 import run.ostrom.server.kernel.database.MigrationRunnerImpl
+import run.ostrom.server.kernel.database.databaseNotifications
 import run.ostrom.server.kernel.http.CallsInProgress
 import run.ostrom.server.kernel.http.DatabaseHealthCheck
 import run.ostrom.server.kernel.http.HealthCheck
@@ -32,6 +34,8 @@ import kotlin.time.Clock
  * @param clock The clock use cases read; tests inject a fixed one.
  * @param telemetry Traces, metrics, logs and product events; disabled (nothing sent) unless configured.
  * @param metrics The server's instruments, created on [telemetry]'s meter.
+ * @param notifications What the replicas tell each other through the database ([DatabaseNotifications]); a test
+ *   whose [driver] wraps the pool gives the pool's.
  *
  * @return The module.
  */
@@ -44,12 +48,14 @@ fun kernelModule(
     clock: Clock = Clock.System,
     telemetry: Telemetry = Telemetry.disabled(clock),
     metrics: OstromMetrics = OstromMetrics(telemetry.meter),
+    notifications: DatabaseNotifications = databaseNotifications(driver),
 ): Module = module {
     single { logger }
     single { config }
     single { telemetry }
     single { metrics }
     single { driver }
+    single { notifications }
     single { signer }
     single { clock }
     // Validated at start by ServerConfig.from: read again here so that tests set it through the ConfigSource.

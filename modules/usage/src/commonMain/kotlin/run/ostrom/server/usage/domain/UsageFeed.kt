@@ -5,12 +5,12 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlin.uuid.Uuid
 
 /**
- * The live feed of each org's new usage events, in process: what the "live spending map" shows. A replica only sees
- * the events it recorded itself; a slow subscriber loses the oldest events rather than slowing the recorder down.
+ * The live feed of each org's new usage events: what the "live spending map" shows. A subscriber on one replica sees
+ * the events every replica records; a slow subscriber loses the oldest events rather than slowing the recorder down.
  */
 interface UsageFeed {
     /**
-     * Publishes an event to the subscribers of its org; never suspends on a subscriber.
+     * Publishes an event to the subscribers of its org, on every replica; never suspends on a subscriber.
      *
      * @param event The event.
      */

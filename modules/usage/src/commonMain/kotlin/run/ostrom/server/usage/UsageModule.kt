@@ -34,7 +34,9 @@ import run.ostrom.server.usage.domain.WatchUsageUseCase
 import run.ostrom.server.usage.domain.WatchUsageUseCaseImpl
 import run.ostrom.server.usage.infrastructure.LedgerModelUsageSink
 import run.ostrom.server.usage.infrastructure.LedgerSessionCosts
+import run.ostrom.server.usage.infrastructure.ReplicatedUsageFeed
 import run.ostrom.server.usage.infrastructure.UsageFeedImpl
+import run.ostrom.server.usage.infrastructure.UsageFeedReadsImpl
 import run.ostrom.server.usage.infrastructure.UsageMigrations
 import run.ostrom.server.usage.infrastructure.UsageRepositoryImpl
 import run.ostrom.server.usage.presentation.UsageRoutesDependencies
@@ -94,7 +96,9 @@ object UsageModule : ServerModule {
     override val koinModule: Module = module {
         single { UsageConfig.from(getOrNull<ConfigSource>() ?: EnvironmentConfigSource()) }
         single<UsageRepository> { UsageRepositoryImpl(get()) }
-        single<UsageFeed> { UsageFeedImpl() }
+        single { UsageFeedImpl() }
+        single { ReplicatedUsageFeed(get(), get(), UsageFeedReadsImpl(get()), get()) }
+        single<UsageFeed> { get<ReplicatedUsageFeed>() }
         single<UsageRecorder> { UsageRecorderImpl(get(), get(), get()) }
         // The ports of the gateway and the sessions, which fall back to dropping everything without this module.
         single<ModelUsageSink> { LedgerModelUsageSink(get()) }
@@ -129,7 +133,10 @@ object UsageModule : ServerModule {
     override fun start(scope: CoroutineScope, koin: Koin) {
         val purge = koin.get<PurgeUsageUseCase>()
         val logger = koin.get<Logger>()
+        val feed = koin.get<ReplicatedUsageFeed>()
         scope.launch { purgeHourly(purge, logger) }
+        // The live feed of the other replicas' events, and this one's told to them.
+        scope.launch { feed.run() }
     }
 
     /**

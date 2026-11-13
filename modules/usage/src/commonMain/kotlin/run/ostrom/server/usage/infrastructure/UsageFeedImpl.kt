@@ -12,8 +12,9 @@ import kotlinx.coroutines.sync.withLock
 import kotlin.uuid.Uuid
 
 /**
- * [UsageFeed] in memory: one [MutableSharedFlow] per org that has had a subscriber. An org nobody watches costs one
- * map lookup per event; its flow is created by the first subscriber and kept (one per org, bounded by the orgs).
+ * [UsageFeed] within this replica: one [MutableSharedFlow] per org that has had a subscriber here. An org nobody
+ * watches costs one map lookup per event; its flow is created by the first subscriber and kept (one per org, bounded
+ * by the orgs). [ReplicatedUsageFeed] carries the events to the other replicas' feeds.
  *
  * @param buffer Events kept per org for a slow subscriber before the oldest are dropped.
  */
@@ -30,4 +31,16 @@ class UsageFeedImpl(private val buffer: Int = 256) : UsageFeed {
             MutableSharedFlow(extraBufferCapacity = buffer, onBufferOverflow = BufferOverflow.DROP_OLDEST)
         }
     }.asSharedFlow()
+
+    /**
+     * Whether someone follows the org's feed on this replica now.
+     *
+     * @param orgId The org.
+     *
+     * @return True while it has a subscriber here.
+     */
+    suspend fun watched(orgId: Uuid): Boolean {
+        val flow = lock.withLock { flows[orgId] } ?: return false
+        return flow.subscriptionCount.value > 0
+    }
 }

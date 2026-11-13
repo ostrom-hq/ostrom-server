@@ -187,7 +187,7 @@ private fun Statement.bindEvent(prefix: String, event: UsageEvent): Statement = 
 private fun Statement.bindNullable(name: String, value: Any?, type: KClass<*>): Statement =
     if (value == null) bindNull(name, type) else bind(name, value)
 
-private fun ResultSet.Row.toEvent() = UsageEvent(
+internal fun ResultSet.Row.toEvent() = UsageEvent(
     id = get("id").asUuid(),
     orgId = get("org_id").asUuid(),
     memberId = get("member_id").asUuidOrNull(),
