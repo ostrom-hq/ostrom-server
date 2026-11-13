@@ -53,10 +53,11 @@ class ListMemberServersUseCaseImpl(
         val prefix = repository.settings(caller.orgId).agentPrefix
         val servers = repository.effectiveServers(caller.orgId, caller.memberId, McpRules.MAX_SERVERS)
         val agentNames = servers.groupBy { McpRules.agentName(prefix, it.server.name) }
-        val hosted = servers.filter { it.server.transport == McpTransport.STDIO }
-        if (hosted.isNotEmpty()) warmup?.warm(caller, hosted)
         // Two servers that would get the same agent name (`a.b` and `a_b`) are both left out rather than one hidden.
-        return servers.filter { agentNames.getValue(McpRules.agentName(prefix, it.server.name)).size == 1 }.map {
+        val listed = servers.filter { agentNames.getValue(McpRules.agentName(prefix, it.server.name)).size == 1 }
+        val hosted = listed.filter { it.server.transport == McpTransport.STDIO }
+        if (hosted.isNotEmpty()) warmup?.warm(caller, hosted)
+        return listed.map {
             MemberServer(
                 it.server.name,
                 McpRules.agentName(prefix, it.server.name),

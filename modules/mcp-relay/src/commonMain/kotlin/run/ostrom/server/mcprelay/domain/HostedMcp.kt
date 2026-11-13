@@ -6,7 +6,16 @@ import run.ostrom.server.secrets.domain.Caller
 import run.ostrom.server.secrets.domain.RevealSecretsUseCase
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlin.time.Clock
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -34,17 +43,24 @@ interface McpHostControl {
 
 /**
  * Starts a member's stdio processes on the MCP host in the background, when the member lists its servers: the
- * agent's first tools/list then finds them ready instead of waiting for a download (TeamCode's warm-up).
+ * agent's first tools/list then finds them ready instead of waiting for a download (TeamCode's warm-up). A key is
+ * warmed at most once a minute, so a client that lists often neither decrypts the secrets nor calls the host each
+ * time; a warm-up that fails leaves the key free for the next listing.
  *
  * @param revealSecrets Decrypts the secret variables, as for a call.
  * @param host The MCP host.
  * @param scope Where the warm-ups run, outside the listing request.
+ * @param clock When a key was last warmed.
  */
 class HostedWarmup(
     private val revealSecrets: RevealSecretsUseCase,
     private val host: McpHostControl,
     private val scope: CoroutineScope,
+    private val clock: Clock,
 ) {
+    private val lock = Mutex()
+    private val warmed = HashMap<String, Instant>()
+
     /**
      * Warms each server, one after the other, without waiting.
      *
@@ -54,16 +70,44 @@ class HostedWarmup(
     fun warm(caller: Caller, servers: List<EffectiveServer>) {
         scope.launch {
             for (effective in servers) {
+                val key = StdioProcessKey.of(effective.server, caller.memberId, effective.assignment.assignedAt)
+                if (!claim(key)) continue
                 try {
-                    host.warm(revealSecrets.target(caller, effective))
+                    withTimeout(WARM_TIMEOUT) { host.warm(revealSecrets.target(caller, effective)) }
                 } catch (error: CancellationException) {
+                    release(key)
                     throw error
                 } catch (_: Exception) {
                     // A missing secret or an unreachable host: the first operation reports it to the agent.
-                    Unit
+                    release(key)
                 }
             }
         }
+    }
+
+    private suspend fun claim(key: String): Boolean = lock.withLock {
+        val now = clock.now()
+        if (warmed.size > MAX_WARMED_KEYS) warmed.values.removeAll { now - it >= WARM_INTERVAL }
+        val free = warmed[key]?.let { now - it >= WARM_INTERVAL } ?: true
+        if (free) warmed[key] = now
+        free
+    }
+
+    // The warm-up lasts less than the interval, so the key is still this warm-up's own.
+    private suspend fun release(key: String) = withContext(NonCancellable) {
+        lock.withLock { warmed.remove(key) }
+    }
+
+    /** TeamCode's warm-up bounds. */
+    companion object {
+        /** A key is warmed at most once in this interval. */
+        val WARM_INTERVAL: Duration = 1.minutes
+
+        /** How long one warm-up may wait for the host. */
+        val WARM_TIMEOUT: Duration = 10.seconds
+
+        /** Past this many remembered keys, the expired ones are forgotten. */
+        const val MAX_WARMED_KEYS: Int = 4_096
     }
 }
 
@@ -80,6 +124,15 @@ object StdioProcessKey {
      */
     fun of(server: McpServer, memberId: Uuid, assignedAt: Instant): String =
         of(server.orgId, server.id, server.version, server.sharing, memberId, assignedAt)
+
+    /**
+     * The key of a shared server's one process.
+     *
+     * @param orgId The org.
+     * @param serverId The server.
+     * @param version The server's version.
+     */
+    fun shared(orgId: Uuid, serverId: Uuid, version: Int): String = "$orgId:$serverId:$version"
 
     /**
      * The same from the stored columns.
@@ -100,7 +153,7 @@ object StdioProcessKey {
         memberId: Uuid,
         assignedAt: Instant,
     ): String {
-        val shared = "$orgId:$serverId:$version"
+        val shared = shared(orgId, serverId, version)
         return when (sharing) {
             McpSharing.SHARED -> shared
             McpSharing.PER_MEMBER -> "$shared:$memberId:$assignedAt"
@@ -170,8 +223,7 @@ class RetainHostedMcpProcessesUseCaseImpl(
 ) : RetainHostedMcpProcessesUseCase {
     override suspend fun invoke(): HostedSweep {
         // A truncated list would stop processes that are still assigned: rather keep everything until it fits.
-        val keys = repository.hostedAssignments(MAX_KEYS)?.let { keys(it) }?.takeIf { it.size <= MAX_KEYS }
-            ?: return HostedSweep.Incomplete
+        val keys = repository.hostedAssignments(MAX_KEYS)?.let { keys(it) } ?: return HostedSweep.Incomplete
         return try {
             HostedSweep.Done(keys.size, host.retain(keys))
         } catch (error: CancellationException) {
@@ -183,32 +235,42 @@ class RetainHostedMcpProcessesUseCaseImpl(
 
     private suspend fun keys(assignments: List<HostedAssignment>): Set<String>? {
         val keys = HashSet<String>()
+        val rosters = HashMap<Uuid, Set<Uuid>?>()
+        // Past the bound the sweep sends nothing anyway: stop building keys.
         for (rows in assignments.groupBy { it.serverId }.values) {
             val first = rows.first()
-            keys += if (first.sharing == McpSharing.SHARED) {
-                listOf(first.key(first.orgId, first.assignedAt))
+            val serverKeys = if (first.sharing == McpSharing.SHARED) {
+                listOf(StdioProcessKey.shared(first.orgId, first.serverId, first.version))
             } else {
-                perMemberKeys(rows) ?: return null
+                perMemberKeys(rows, rosters.getOrPut(first.orgId) { roster(first.orgId) })
             }
+            if (serverKeys == null || keys.size + serverKeys.size > MAX_KEYS) return null
+            keys += serverKeys
         }
         return keys
     }
 
-    // A member's own row wins over the org-wide one, which applies to every other member of the org.
-    private suspend fun perMemberKeys(rows: List<HostedAssignment>): List<String>? {
+    // The org's members, once per org and sweep; null without a directory or past the bound.
+    private suspend fun roster(orgId: Uuid): Set<Uuid>? =
+        members?.memberIds(orgId, MAX_KEYS)?.mapNotNullTo(HashSet()) { Uuid.parseOrNull(it) }
+
+    // A member's own row wins over the org-wide one, which applies to every other member of the org. A member who
+    // left the org keeps no process; without the member list, the own rows are all kept and the org-wide one cannot be
+    // expanded.
+    private fun perMemberKeys(rows: List<HostedAssignment>, roster: Set<Uuid>?): List<String>? {
         val first = rows.first()
-        val own = rows.mapNotNull { row -> row.memberId?.let { it to row.assignedAt } }.toMap()
+        val own = rows.mapNotNull { row -> row.memberId?.takeIf { roster == null || it in roster }?.let { it to row } }
+            .toMap()
         val everyone = rows.firstOrNull { it.memberId == null }
         val others = if (everyone == null) {
             emptyList()
         } else {
-            val ids = members?.memberIds(first.orgId, MAX_KEYS) ?: return null
-            ids.mapNotNull { Uuid.parseOrNull(it) }.filter { it !in own }.map { first.key(it, everyone.assignedAt) }
+            (roster ?: return null).filter { it !in own }.map { everyone.key(it) }
         }
-        return own.map { (memberId, assignedAt) -> first.key(memberId, assignedAt) } + others
+        return own.map { (memberId, row) -> row.key(memberId) } + others
     }
 
-    private fun HostedAssignment.key(memberId: Uuid, assignedAt: Instant) =
+    private fun HostedAssignment.key(memberId: Uuid) =
         StdioProcessKey.of(orgId, serverId, version, sharing, memberId, assignedAt)
 
     /** The sweep's bounds. */

@@ -18,6 +18,7 @@ import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.http.isSuccess
 import io.ktor.utils.io.readRemaining
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withTimeout
@@ -141,14 +142,8 @@ class HostMcpUpstream(
             put("key", processKey(target.processKey))
             put("spec", spec(target, spec))
         }
-        // Best effort: the first operation starts the process anyway, and reports what went wrong.
-        try {
-            control("/v1/warm", body)
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Exception) {
-            Unit
-        }
+        val (status, _) = control("/v1/warm", body)
+        check(status.isSuccess()) { "The MCP host refused the warm-up." }
     }
 
     override suspend fun retain(keys: Collection<String>): Int {

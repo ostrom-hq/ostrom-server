@@ -508,20 +508,27 @@ class UpstreamsTest {
     fun theHostIsWarmedAndToldTheKeysToKeep() = realTime {
         var answer = """{"stopped":2}"""
         var status = HttpStatusCode.OK
+        var warmStatus = HttpStatusCode.Unauthorized
         val upstream = HostMcpUpstream(
             client { request, _ ->
-                if (request.url.encodedPath.endsWith("/v1/warm")) error("connection refused")
-                respond(answer, status)
+                if (request.url.encodedPath.endsWith("/v1/warm")) {
+                    respond("""{"state":"starting"}""", warmStatus)
+                } else {
+                    respond(answer, status)
+                }
             },
             McpHostConfig("http://mcp-host:8080/", "host_token"),
         )
-        // A warm-up is best effort: an unreachable host, or an HTTP server, is no failure.
+        // A refused warm-up fails, which leaves its key free for the next listing.
+        assertFailsWith<IllegalStateException> { upstream.warm(stdioTarget()) }
+        warmStatus = HttpStatusCode.Accepted
         upstream.warm(stdioTarget())
         val (warm, warmBody) = requests.last()
         assertEquals("http://mcp-host:8080/v1/warm", warm.url.toString())
         assertEquals(HostMcpUpstream.processKey("org:server:1"), warmBody!!["key"]!!.jsonPrimitive.content)
         assertEquals("npm", warmBody["spec"]!!.jsonObject["launcher"]!!.jsonPrimitive.content)
         requests.clear()
+        // An HTTP server has nothing to warm.
         upstream.warm(stdioTarget().copy(server = stdioTarget().server.copy(stdio = null)))
         assertTrue(requests.isEmpty())
         assertEquals(2, upstream.retain(listOf("org:server:1")))

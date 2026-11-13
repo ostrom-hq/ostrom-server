@@ -199,14 +199,15 @@ The relay (`modules/mcp-relay`, `HostedMcp.kt`) keeps the host's processes in st
 TeamCode's `RetainHostedMcpProcessesUseCase` does. Both run only when `OSTROM_MCP_HOST_URL` is set.
 
 - **Warm-up.** When a member lists its servers, the relay sends `POST /v1/warm` in the background for each of its
-  stdio servers, so the agent's first `tools/list` finds the process ready. A missing secret or an unreachable host
-  is skipped: the first operation reports it.
+  stdio servers, so the agent's first `tools/list` finds the process ready. As in TeamCode, a key is warmed at most
+  once a minute (4,096 keys remembered), with a 10 s deadline. A missing secret, a refusal or an unreachable host
+  leaves the key free for the next listing, and the first operation reports the failure.
 - **Retain sweep.** Each minute, every server replica reads the stdio assignments of every organization, computes
   their keys, and sends them to `POST /v1/retain`. A deleted server, a new version, a removed assignment or a
   removed member stops its process within a minute; the relay refuses their calls at once anyway.
   - The keys hold no secret, so the sweep decrypts nothing: it reads ids, versions and assignment dates only.
   - A per-member server assigned to the whole organization yields one key per member, from the organization's
-    member list.
+    member list. A member who left the organization keeps no key, even if its own assignment row remains.
   - At most 10,000 keys (TeamCode's bound, about 650 KiB). When the list is longer or cannot be read completely,
     nothing is sent, so no assigned process is stopped.
   - The relay logs one warning per change of outcome (`Incomplete`, `HostUnavailable`), never the keys.

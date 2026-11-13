@@ -2,14 +2,8 @@
 package run.ostrom.server.mcprelay
 
 import run.ostrom.core.api.models.ServerFeatures
-import run.ostrom.server.kernel.config.ConfigSource
-import kotlin.time.Duration.Companion.minutes
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.SupervisorJob
-import run.ostrom.server.mcprelay.domain.RetainHostedMcpProcessesUseCaseImpl
-import run.ostrom.server.mcprelay.domain.HostedWarmup
-import run.ostrom.server.mcprelay.domain.HostedSweep
 import run.ostrom.server.kernel.auth.MemberDirectory
+import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.InvalidConfigException
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.logging.Logger
@@ -28,6 +22,8 @@ import run.ostrom.server.mcprelay.domain.DeleteMcpServerUseCase
 import run.ostrom.server.mcprelay.domain.DeleteMcpServerUseCaseImpl
 import run.ostrom.server.mcprelay.domain.GetMcpSettingsUseCase
 import run.ostrom.server.mcprelay.domain.GetMcpSettingsUseCaseImpl
+import run.ostrom.server.mcprelay.domain.HostedSweep
+import run.ostrom.server.mcprelay.domain.HostedWarmup
 import run.ostrom.server.mcprelay.domain.ListArgumentPoliciesUseCase
 import run.ostrom.server.mcprelay.domain.ListArgumentPoliciesUseCaseImpl
 import run.ostrom.server.mcprelay.domain.ListMcpAssignmentsUseCase
@@ -54,6 +50,7 @@ import run.ostrom.server.mcprelay.domain.RelayDeadlines
 import run.ostrom.server.mcprelay.domain.RelayLimits
 import run.ostrom.server.mcprelay.domain.RelayMcpMessageUseCase
 import run.ostrom.server.mcprelay.domain.RelayMcpMessageUseCaseImpl
+import run.ostrom.server.mcprelay.domain.RetainHostedMcpProcessesUseCaseImpl
 import run.ostrom.server.mcprelay.domain.UnassignMcpServerUseCase
 import run.ostrom.server.mcprelay.domain.UnassignMcpServerUseCaseImpl
 import run.ostrom.server.mcprelay.domain.UpdateMcpServerUseCase
@@ -74,6 +71,8 @@ import io.ktor.client.HttpClient
 import io.ktor.server.routing.Route
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.koin.core.Koin
@@ -85,6 +84,7 @@ import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
 
 /**
  * The relay's configuration, read once (`OSTROM_MCP_*`).
@@ -193,7 +193,7 @@ object McpRelayModule : ServerModule {
         single<ListMemberServersUseCase> {
             ListMemberServersUseCaseImpl(
                 get(),
-                get<HostedRuntime>().host?.let { HostedWarmup(get(), it, get(WARMUP_SCOPE)) },
+                get<HostedRuntime>().host?.let { HostedWarmup(get(), it, get(WARMUP_SCOPE), get()) },
             )
         }
         single<RelayMcpMessageUseCase> {
