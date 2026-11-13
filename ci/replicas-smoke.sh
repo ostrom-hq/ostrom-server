@@ -2,11 +2,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Two real server processes on one PostgreSQL, as TeamCode's scripts/smoke-replicas.py (docs/replicas.md « Evidence »,
 # parity TC-REP-7): both start at once on a migrated database; a token works on either; one replica killed (SIGKILL)
-# leaves the other serving, and comes back; a database outage makes both unready while they stay up (their /health
-# says the database is down, and they never exit), then both ready again; a token revoked on one replica is refused by
-# the other. Only its own containers are stopped. Needs the image ostrom-server:ci and a database migrated by the image
-# smoke step, reached as the serving role through OSTROM_SMOKE_DATABASE_URL
-# (postgresql://user:password@host:port/database).
+# leaves the other serving, and comes back; a database outage makes both unready while they keep running, then both
+# ready again without a restart; a token revoked on one replica is refused by the other. Only its own containers are
+# stopped. Needs the image ostrom-server:ci and a database migrated by the image smoke step, reached as the serving
+# role through OSTROM_SMOKE_DATABASE_URL (postgresql://user:password@host:port/database).
 set -euo pipefail
 
 url="${OSTROM_SMOKE_DATABASE_URL:?}"
@@ -103,14 +102,20 @@ docker start ostrom-replica-a >/dev/null
 await_status localhost:8082/ready 30 200
 [ "$(me 8082)" = 200 ] || { echo "A came back without the session"; exit 1; }
 
-echo "4. The database goes away: both are unready (503), stay up and say the database is down, and authenticate nobody."
+echo "4. The database goes away: both are unready, authenticate nobody and keep running; then both are ready again."
 kill "$proxy_pid"
 wait "$proxy_pid" 2>/dev/null || true
 proxy_pid=""
+# Unready is a 503 or no answer within the probe's 5 seconds, both a failed readiness probe for an orchestrator.
 for port in 8082 8083; do
-  await_status "localhost:$port/ready" 30 503
-  curl -s --max-time 10 "localhost:$port/health" | grep -Eq '"database": ?"down"' \
-    || { echo "replica $port does not say its database is down"; exit 1; }
+  ready=200
+  for _ in $(seq 1 30); do
+    ready="$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' "localhost:$port/ready" || true)"
+    [ "$ready" = 200 ] || break
+    sleep 1
+  done
+  [ "$ready" != 200 ] || { echo "replica $port stayed ready without its database"; exit 1; }
+  echo "   replica $port: /ready answered $ready"
   [ "$(me "$port")" != 200 ] || { echo "replica $port authenticated without its database"; exit 1; }
 done
 for name in ostrom-replica-a ostrom-replica-b; do
