@@ -30,6 +30,7 @@ internal suspend fun TestServer.seed(party: Party, spends: Boolean) {
     seeder.environment(party)
     seeder.content(party)
     seeder.skills(party)
+    seeder.hooks(party)
     seeder.governance(party)
     seeder.gate(party)
     seeder.administration(party)
@@ -189,6 +190,25 @@ private suspend fun Seeder.skills(party: Party) {
     )
     val report = """{"installations": [{"name": "$name", "version": "1.0.0", "status": "installed"}]}"""
     send("skill report", "PUT /api/v1/skill-delivery/installations", party.cli(), report, expected = NO_CONTENT)
+}
+
+// A team hook published, then pinned for all members by the owner in the console (a publication never pins), and the
+// member set to yes.
+private suspend fun Seeder.hooks(party: Party) {
+    val owner = party.browser
+    val name = "${party.marker}-hook"
+    val body = HOOK_BODY.replace(""""version": "1.0.0",""", """"version": "1.0.0", "allMembers": true,""")
+    val published = send("hook", "POST /api/v1/hooks/$name/versions", owner, body)
+    if (published == null) return
+    val pinned = send("hook pin", "PUT /api/v1/hooks/$name/pin", owner, """{"version": "1.0.0"}""", expected = OK)
+    keep(Seed.HOOK, name, pinned)
+    send(
+        "hook decision",
+        "PUT /api/v1/hooks/$name/assignments/${party.member.memberId}",
+        owner,
+        """{"decision": "allow"}""",
+        expected = OK,
+    )
 }
 
 private fun artifact(party: Party, access: String) =

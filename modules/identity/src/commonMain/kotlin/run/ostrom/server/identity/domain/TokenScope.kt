@@ -42,6 +42,7 @@ val PERSONAL_TOKEN_SCOPES: List<TokenScope> = listOf(
     ),
     TokenScope("skills:read", "Read and download the skills delivered to you."),
     TokenScope("skills:write", "Publish and manage your personal skills; the team's catalog stays in the console."),
+    TokenScope("hooks:read", "Read and download the hooks delivered to you; each version still needs your approval."),
     TokenScope("secrets:read", "List the secrets, never their values."),
     TokenScope("secrets:write", "Save and delete secrets."),
     TokenScope("environment:read", "Read your own environment values, as `ostrom claude` does before an agent."),

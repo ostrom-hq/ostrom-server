@@ -48,7 +48,7 @@ data class CatalogEvent(val event: String, val subjectType: String, val subjectI
  * Writes [events] in [caller]'s name; a service key's events name the key (`credentialId`), so the journal tells a CI
  * write from an administrator's.
  */
-internal suspend fun OrgAuditTrail.recordAll(caller: CatalogCaller, events: List<CatalogEvent>) {
+suspend fun OrgAuditTrail.recordAll(caller: CatalogCaller, events: List<CatalogEvent>) {
     events.forEach { event ->
         record(
             OrgAuditRecord(
