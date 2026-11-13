@@ -9,6 +9,7 @@ import run.ostrom.server.gates.domain.services.OpenSegment
 import run.ostrom.server.gates.domain.usecases.SessionGate
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.InvalidPageException
+import run.ostrom.server.kernel.sessions.AgentSession
 import run.ostrom.server.sessions.domain.models.EndSession
 import run.ostrom.server.sessions.domain.models.NotYourSessionException
 import run.ostrom.server.sessions.domain.models.Session
@@ -20,12 +21,14 @@ import run.ostrom.server.sessions.domain.models.StartSession
 import run.ostrom.server.sessions.domain.repositories.SessionsTransaction
 import run.ostrom.server.sessions.domain.services.NoSessionCosts
 import run.ostrom.server.sessions.domain.usecases.CloseSessionUseCase
+import run.ostrom.server.sessions.domain.usecases.EndSessionUseCaseImpl
 import run.ostrom.server.sessions.domain.usecases.SweepStaleSessionsUseCaseImpl
 import run.ostrom.server.sessions.fakes.ORG
 import run.ostrom.server.sessions.fakes.OTHER_ORG
 import run.ostrom.server.sessions.fakes.SessionBench
 import run.ostrom.server.sessions.fakes.agent
 import run.ostrom.server.sessions.fakes.user
+import run.ostrom.server.sessions.infrastructure.SessionsAgentDirectory
 import run.ostrom.server.sessions.infrastructure.SessionsGateGuard
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -113,6 +116,7 @@ class SessionLifecycleTest {
         bench.alive(agent(), session.id)
         bench.clock.now += 3.minutes
         bench.sweep()
+        assertTrue(bench.endings.isEmpty(), "A lost launcher reopens: its session has not ended")
         val reopened = bench.reopen(agent(), session.id)
         assertTrue(reopened.reopened)
         val next = reopened.session
@@ -284,5 +288,42 @@ class SessionLifecycleTest {
         assertFailsWith<NotYourSessionException> { guard.openSegment(ORG, "s-1", "launch-1") }
         assertFailsWith<SessionNotFoundException> { guard.openSegment(OTHER_ORG, "s-1", "launch-2") }
         assertFailsWith<SessionNotFoundException> { guard.openSegment(ORG, "s-9", "launch-2") }
+    }
+
+    @Test
+    fun theSessionEndsForItsListenersOnlyOnceNoSegmentIsOpen() = runTest {
+        val bench = SessionBench()
+        val session = bench.start(agent(), start)
+        bench.end(agent(), session.id, EndSession())
+        assertEquals(listOf(ORG to listOf("s-1")), bench.endings)
+        bench.reopen(agent(), session.id)
+        // The first segment's end sent again while the second is open: the session goes on.
+        bench.end(agent(), "s-1", EndSession())
+        assertEquals(1, bench.endings.size)
+        bench.end(agent(), "s-1~r2", EndSession())
+        assertEquals(ORG to listOf("s-1", "s-1~r2"), bench.endings.last())
+    }
+
+    @Test
+    fun withoutListenersAnEndReadsNoSegment() = runTest {
+        val bench = SessionBench()
+        val session = bench.start(agent(), start)
+        val end = EndSessionUseCaseImpl(bench.repository, bench.close)
+        assertEquals("rcpt_session_s-1", end(agent(), session.id, EndSession()).receiptId)
+    }
+
+    @Test
+    fun anAgentSessionIsFoundWithItsOwnerFromAnyOfItsSegments() = runTest {
+        val bench = SessionBench()
+        val directory = SessionsAgentDirectory(bench.repository)
+        assertNull(directory.find(ORG, "s-1"))
+        val session = bench.start(agent(), start)
+        assertEquals(AgentSession(session.dev, true, listOf("s-1")), directory.find(ORG, "s-1"))
+        bench.end(agent(), session.id, EndSession())
+        bench.reopen(agent(), session.id)
+        assertEquals(AgentSession(session.dev, true, listOf("s-1", "s-1~r2")), directory.find(ORG, "s-1"))
+        bench.end(agent(), "s-1~r2", EndSession())
+        assertEquals(false, directory.find(ORG, "s-1~r2")?.open)
+        assertNull(directory.find(OTHER_ORG, "s-1"))
     }
 }

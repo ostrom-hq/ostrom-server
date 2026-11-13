@@ -2,6 +2,7 @@
 package run.ostrom.server.sessions.domain.usecases
 
 import run.ostrom.server.gates.domain.models.GateActor
+import run.ostrom.server.kernel.sessions.SessionEndListener
 import run.ostrom.server.sessions.domain.models.EndSession
 import run.ostrom.server.sessions.domain.models.Opening
 import run.ostrom.server.sessions.domain.models.Reopened
@@ -62,19 +63,29 @@ interface EndSessionUseCase {
 }
 
 /**
- * [EndSessionUseCase]: the owner check, then [CloseSessionUseCase].
+ * [EndSessionUseCase]: the owner check, then [CloseSessionUseCase]; once no segment of the session is open, the
+ * [listeners] are told it ended (its open waits are cancelled). A segment a resume replaced, or one the sweep closed
+ * for a launcher lost while the machine slept, does not end the session: its launcher reopens one.
  *
  * @param repository The sessions.
  * @param close Ends and signs.
+ * @param listeners Told when the session ended.
  */
 class EndSessionUseCaseImpl(
     private val repository: SessionsRepository,
     private val close: CloseSessionUseCase,
+    private val listeners: List<SessionEndListener> = emptyList(),
 ) : EndSessionUseCase {
     override suspend fun invoke(actor: GateActor, id: String, end: EndSession): Session {
         val session = repository.get(actor.orgId, id) ?: throw SessionNotFoundException()
         SessionAccess.ensureOwner(actor, session)
-        return close(actor.orgId, id, end)
+        val ended = close(actor.orgId, id, end)
+        if (listeners.isNotEmpty()) {
+            val segments = repository.segmentsOf(actor.orgId, id)
+            val ids = segments.map { it.id }
+            if (segments.none { it.endedAt == null }) listeners.forEach { it.ended(actor.orgId, ids) }
+        }
+        return ended
     }
 }
 

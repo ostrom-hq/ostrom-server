@@ -10,6 +10,9 @@ import run.ostrom.server.automations.domain.WaitAgentResolver
 import run.ostrom.server.automations.domain.WaitEvents
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.MemberDirectory
+import run.ostrom.server.kernel.auth.MemberLogins
+import run.ostrom.server.kernel.sessions.AgentSession
+import run.ostrom.server.kernel.sessions.AgentSessions
 import kotlin.uuid.Uuid
 
 /**
@@ -18,6 +21,18 @@ import kotlin.uuid.Uuid
  */
 internal object NoOtherMembers : MemberDirectory {
     override suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean = false
+}
+
+/** No login names a member until the orgs module binds its [MemberLogins]: a wait is asked by member id only. */
+internal object NoMemberLogins : MemberLogins {
+    override suspend fun idsOf(orgId: Uuid, logins: Collection<String>): Map<String, Uuid> = emptyMap()
+
+    override suspend fun loginsOf(orgId: Uuid, memberIds: Collection<Uuid>): Map<Uuid, String> = emptyMap()
+}
+
+/** No session is known until the sessions module binds its [AgentSessions]: a member asks a wait in none. */
+internal object NoAgentSessions : AgentSessions {
+    override suspend fun find(orgId: Uuid, sessionId: String): AgentSession? = null
 }
 
 /** No agent token is anyone until the launches module binds its [WaitAgentResolver]: the waits MCP refuses it. */

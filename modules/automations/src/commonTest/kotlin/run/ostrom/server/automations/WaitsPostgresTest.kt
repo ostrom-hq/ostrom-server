@@ -13,6 +13,7 @@ import run.ostrom.server.automations.domain.WaitEvents
 import run.ostrom.server.automations.domain.WaitField
 import run.ostrom.server.automations.domain.WaitFieldType
 import run.ostrom.server.automations.domain.WaitFilter
+import run.ostrom.server.automations.domain.WaitSessionNotFoundException
 import run.ostrom.server.automations.domain.WaitSpec
 import run.ostrom.server.automations.domain.WaitStatus
 import run.ostrom.server.automations.domain.WaitsRepository
@@ -24,12 +25,14 @@ import run.ostrom.server.automations.fakes.RecordingEvents
 import run.ostrom.server.automations.fakes.alice
 import run.ostrom.server.automations.fakes.bob
 import run.ostrom.server.automations.fakes.testIdentities
+import run.ostrom.server.automations.infrastructure.NoMemberLogins
 import run.ostrom.server.automations.infrastructure.inTenant
 import run.ostrom.server.automations.presentation.AnswerWaitRequest
 import run.ostrom.server.automations.presentation.CreateWaitRequest
 import run.ostrom.server.automations.presentation.WaitResponse
 import run.ostrom.server.automations.presentation.WaitsResponse
 import run.ostrom.server.kernel.http.ApiError
+import run.ostrom.server.kernel.sessions.SessionEndListener
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
@@ -140,6 +143,27 @@ class WaitsPostgresTest {
         assertEquals(CreateOutcome.CREATED, repository.createWithinLimit(wait(session = "s-1~r3"), 2))
     }
 
+    @Test
+    fun aSessionThatEndsCancelsItsOpenWaitsInOneUpdate() = serverTest(listOf(AutomationsModule)) { server ->
+        val repository = server.koin.get<WaitsRepository>()
+        val first = wait(session = "s-1")
+        val reopened = wait(session = "s-1~r2", at = t0 + 1.minutes)
+        val answered = wait(session = "s-1~r2", at = t0 + 2.minutes)
+        val other = wait(session = "s-2")
+        val elsewhere = wait(session = "s-1", org = ORG_B)
+        for (wait in listOf(first, reopened, answered, other, elsewhere)) repository.createWithinLimit(wait, 5)
+        repository.resolve(ORG_A, answered.id, WaitAnswer("approve", emptyMap(), ALICE.toString(), t0))
+
+        server.koin.get<SessionEndListener>().ended(ORG_A, listOf("s-1", "s-1~r2"))
+        val cancelled = repository.list(WaitFilter(ORG_A, status = WaitStatus.CANCELLED), null, 10)
+        assertEquals(setOf(first.id, reopened.id), cancelled.map { it.id }.toSet())
+        assertTrue(cancelled.all { it.resolvedAt != null && it.answer == null })
+        assertEquals(WaitStatus.RESOLVED, repository.get(ORG_A, answered.id)?.status)
+        assertEquals(WaitStatus.OPEN, repository.get(ORG_A, other.id)?.status)
+        assertEquals(WaitStatus.OPEN, repository.get(ORG_B, elsewhere.id)?.status)
+        assertEquals(emptyList(), repository.cancelOpenOfSessions(ORG_A, listOf("s-1", "s-1~r2"), t0), "Once")
+    }
+
     private fun open(session: String) = WaitFilter(ORG_A, status = WaitStatus.OPEN, sessionId = session)
 
     @Test
@@ -152,6 +176,10 @@ class WaitsPostgresTest {
         assertEquals(WaitStatus.RESOLVED, answers.answer(bob, own.id, "approve", emptyMap()).status)
         val other = ask.ask(bob, AskWait(question), null).wait
         assertEquals(WaitStatus.CANCELLED, answers.cancel(bob, other.id).status)
+        // Nor by username, nor in a session: without the orgs and sessions modules no one is named nor known.
+        assertFailsWith<InvalidAssigneeException> { ask.ask(bob, AskWait(question, assignee = "alice"), null) }
+        assertFailsWith<WaitSessionNotFoundException> { ask.ask(bob, AskWait(question, sessionId = "s1"), null) }
+        assertEquals(emptyMap(), NoMemberLogins.loginsOf(ORG_A, listOf(BOB)))
     }
 
     private suspend fun HttpClient.ask(token: String, request: CreateWaitRequest, key: String? = null): HttpResponse =

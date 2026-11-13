@@ -14,7 +14,8 @@ import kotlin.uuid.Uuid
  * @property question The question.
  * @property sessionId The session that waits, if any.
  * @property runId The workflow run that waits, if any.
- * @property assignee The member asked; the caller when null.
+ * @property assignee The member asked, by id or username (an id wins over a username that spells it); the caller when
+ *   null.
  * @property kind `human_request`, the only kind a caller asks.
  */
 data class AskWait(
@@ -40,25 +41,32 @@ interface AskWaitUseCase {
      *
      * @throws InvalidWaitException When the question, its session or the key is malformed.
      * @throws InvalidAssigneeException When the assignee is not an active member.
-     * @throws AgentAssigneeRefusedException When an agent token asks someone other than its person.
+     * @throws WaitSessionNotFoundException When a member names a session the organization does not have.
+     * @throws WaitSessionOwnerOnlyException When a member names a session someone else runs.
+     * @throws SessionNotRunningException When the session ended.
      * @throws WaitLimitException When too many waits are open for the session or the caller.
      */
     suspend fun ask(caller: WaitCaller, request: AskWait, idempotencyKey: String?): AskedWait
 }
 
 /**
- * [AskWaitUseCase].
+ * [AskWaitUseCase]. Anyone may be asked who is an active member of the organization, an agent's person or a colleague
+ * (a product question goes to the product owner while the session stays with the developer). A member asks in a
+ * session only when it is theirs and running; an agent token asks in its launch's open segment, which the server
+ * found.
  *
  * @param repository Where waits are stored.
  * @param members Who the members are.
  * @param events Told of the new wait.
  * @param clock The time.
+ * @param sessions Whose the sessions are.
  */
 class AskWaitUseCaseImpl(
     private val repository: WaitsRepository,
     private val members: MemberDirectory,
     private val events: WaitEvents,
     private val clock: Clock,
+    private val sessions: WaitSessions,
 ) : AskWaitUseCase {
     override suspend fun ask(caller: WaitCaller, request: AskWait, idempotencyKey: String?): AskedWait {
         requireWait(idempotencyKey == null || KEY.matches(idempotencyKey)) {
@@ -85,10 +93,11 @@ class AskWaitUseCaseImpl(
         val reference = WaitRules.REFERENCE
         requireWait(request.sessionId == null || reference.matches(request.sessionId)) { "sessionId is malformed." }
         requireWait(request.runId == null || reference.matches(request.runId)) { "runId is malformed." }
-        val assignee = request.assignee ?: caller.memberId
-        if (caller.agent && assignee != caller.memberId) throw AgentAssigneeRefusedException()
-        if (assignee != caller.memberId && !members.isActiveMember(caller.orgId, assignee)) {
-            throw InvalidAssigneeException()
+        val assignee = assigneeOf(caller, request.assignee)
+        // An agent token's session is the open segment the server found; a member's is checked here.
+        if (request.sessionId != null && !caller.agent) {
+            val session = sessions.owned(caller, request.sessionId) { WaitSessionOwnerOnlyException() }
+            if (!session.open) throw SessionNotRunningException()
         }
         // To the millisecond, as stored: the wait returned now equals the one read back later.
         val now = Instant.fromEpochMilliseconds(clock.now().toEpochMilliseconds())
@@ -109,7 +118,16 @@ class AskWaitUseCaseImpl(
         )
     }
 
+    /** The member [reference] names: an id first, then a username. */
+    private suspend fun assigneeOf(caller: WaitCaller, reference: String?): String {
+        if (reference == null || reference == caller.memberId) return caller.memberId
+        if (reference.length > MAX_REFERENCE) throw InvalidAssigneeException()
+        if (members.isActiveMember(caller.orgId, reference)) return reference
+        return sessions.memberNamed(caller.orgId, reference) ?: throw InvalidAssigneeException()
+    }
+
     private companion object {
+        const val MAX_REFERENCE = 64
         const val HUMAN_REQUEST = "human_request"
         const val MAX_OPEN = 20
         const val MAX_OPEN_ALONE = 100
@@ -163,16 +181,22 @@ interface ReadWaitsUseCase {
      *
      * @throws InvalidWaitException When the query is malformed.
      * @throws WaitForbiddenException When a member who is no administrator lists someone else's.
+     * @throws WaitSessionNotFoundException When a member names a session that is not theirs.
      */
     suspend fun list(caller: WaitCaller, query: WaitQuery): WaitPage
 }
 
 /**
- * [ReadWaitsUseCase].
+ * [ReadWaitsUseCase]. The waits of one session (`sessionId`) are listed for the person who runs it only, an
+ * administrator included: anyone else is told it does not exist (an administrator still lists every wait by assignee).
  *
  * @param repository Where waits are stored.
+ * @param sessions Whose the sessions are.
  */
-class ReadWaitsUseCaseImpl(private val repository: WaitsRepository) : ReadWaitsUseCase {
+class ReadWaitsUseCaseImpl(
+    private val repository: WaitsRepository,
+    private val sessions: WaitSessions,
+) : ReadWaitsUseCase {
     override suspend fun get(caller: WaitCaller, id: Uuid): Wait = visibleWait(repository, caller, id)
 
     override suspend fun list(caller: WaitCaller, query: WaitQuery): WaitPage {
@@ -184,6 +208,9 @@ class ReadWaitsUseCaseImpl(private val repository: WaitsRepository) : ReadWaitsU
         } else {
             WaitStatus.entries.firstOrNull { it.wire == wire }
                 ?: throw InvalidWaitException("status is open, resolved, cancelled or all.")
+        }
+        if (query.sessionId != null && !caller.agent) {
+            sessions.owned(caller, query.sessionId) { WaitSessionNotFoundException() }
         }
         val filter = scope(caller, query).copy(
             status = status,

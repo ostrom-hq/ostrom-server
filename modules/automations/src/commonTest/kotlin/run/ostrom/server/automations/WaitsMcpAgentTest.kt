@@ -174,22 +174,30 @@ class WaitsMcpAgentTest {
         }
 
     @Test
-    fun anAgentTokenAsksOnlyThePersonWhoLaunchedIt() =
+    fun anAgentTokenAsksAnyActiveMemberByIdOrUsername() =
         serverTest(listOf(AutomationsModule), withAgents) { server ->
             val client = server.client
             val other = client.call("ask_human", """{"title":"Ship it?","assignee":"$ALICE"}""", OWN)
-            assertTrue(other.isError(), other.text())
-            assertEquals("An agent asks only the person who launched it.", other.text())
+            assertFalse(other.isError(), other.text())
+            assertTrue("for member $ALICE." in other.text(), other.text())
+            val named = client.call("ask_human", """{"title":"Ship it?","assignee":"alice"}""", OWN)
+            assertTrue("for member $ALICE." in named.text(), named.text())
             val own = client.call("ask_human", """{"title":"Ship it?","assignee":"$BOB"}""", OWN)
             assertFalse(own.isError(), own.text())
+            val stranger = client.call("ask_human", """{"title":"Ship it?","assignee":"carol"}""", OWN)
+            assertTrue(stranger.isError(), stranger.text())
+            assertTrue("member id or a username" in stranger.text(), stranger.text())
         }
 
     @Test
     fun anAgentTokenNeitherSeesNorCancelsWhatSomeoneElseAskedItsPerson() =
         serverTest(listOf(AutomationsModule), withAgents) { server ->
             val client = server.client
-            // alice asks bob, the agent's person, about the agent's session
-            val asked = client.call("ask_human", """{"title":"Why this change?","assignee":"$BOB"}""", OWN, "alicekey")
+            // alice may not ask in bob's session (her answer would reach his agent); she asks bob in hers
+            val toBob = """{"title":"Why this change?","assignee":"$BOB"}"""
+            val refused = client.call("ask_human", toBob, OWN, "alicekey")
+            assertEquals("Only the person who runs this session asks a wait in it.", refused.text())
+            val asked = client.call("ask_human", toBob, ALICES, "alicekey")
             assertFalse(asked.isError(), asked.text())
             val id = asked.text().substringAfter("wait ").substringBefore(" ")
 
@@ -210,14 +218,14 @@ class WaitsMcpAgentTest {
             // bob, the agent's person, asks alice from the console about the agent's session; alice asks bob too
             val asked = client.call("ask_human", """{"title":"Review it?","assignee":"$ALICE"}""", OWN, "bob")
             val id = asked.text().substringAfter("wait ").substringBefore(" ")
-            client.call("ask_human", """{"title":"Why this change?","assignee":"$BOB"}""", OWN, "alicekey")
+            client.call("ask_human", """{"title":"Why this change?","assignee":"$BOB"}""", ALICES, "alicekey")
 
             assertTrue(client.call("list_waits", "{}", OWN).text().startsWith("$id  open  Review it?"))
             assertEquals(1, client.call("list_waits", "{}", OWN).text().lines().size, "Only what its person asked")
             assertFalse(client.call("get_wait", """{"wait":"$id"}""", OWN).isError())
             assertEquals("Cancelled wait $id.", client.call("cancel_wait", """{"wait":"$id"}""", OWN).text())
             val person = client.call("list_waits", """{"status":"all"}""", OWN, "bob").text().lines()
-            assertEquals(2, person.size, "A person's credential still sees what it was asked: $person")
+            assertEquals(1, person.size, "Only this session's waits, not what alice asked in hers: $person")
         }
 
     @Test
@@ -252,6 +260,7 @@ class WaitsMcpAgentTest {
     private companion object {
         const val UNBOUND = "/api/v1/waits/mcp"
         const val OWN = "/api/v1/waits/mcp?session=$LAUNCH_SESSION"
+        const val ALICES = "/api/v1/waits/mcp?session=alice-1"
         const val FOREIGN = "/api/v1/waits/mcp?session=$FOREIGN_SESSION"
     }
 }

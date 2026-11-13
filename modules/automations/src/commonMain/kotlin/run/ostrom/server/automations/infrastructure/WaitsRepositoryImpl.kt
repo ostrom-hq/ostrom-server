@@ -157,6 +157,18 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
         ).bind("now", now).bind("id", id).bind("org_id", orgId),
     ).getOrThrow().firstOrNull()?.toWait()
 
+    override suspend fun cancelOpenOfSessions(orgId: Uuid, sessions: List<String>, now: Instant): List<Wait> =
+        driver.fetchInOrg(
+            orgId,
+            // A session id never holds a comma (`SESSION_ID` of the sessions module, `REFERENCE` of the waits).
+            Statement.create(
+                """
+                UPDATE automations_waits SET status = 'cancelled', resolved_at = :now WHERE org_id = :org_id AND
+                session_id = ANY(string_to_array(:session_ids, ',')) AND status = 'open' RETURNING $COLUMNS
+                """,
+            ).bind("now", now).bind("org_id", orgId).bind("session_ids", sessions.joinToString(",")),
+        ).getOrThrow().map { it.toWait() }
+
     private fun ResultSet.Row.toWait(): Wait = Wait(
         id = get("id").asUuid(),
         orgId = get("org_id").asUuid(),
