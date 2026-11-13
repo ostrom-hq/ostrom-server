@@ -127,6 +127,7 @@ abstract class RelayPostgresHarness {
             }
         }
         single(McpRelayModule.HTTP_CLIENT) { fakeMcp }
+        single(McpRelayModule.UPSTREAM_CLIENT) { fakeMcp }
     }
 
     protected val admin = "/api/v1/mcp"

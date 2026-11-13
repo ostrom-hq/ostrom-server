@@ -190,6 +190,24 @@ class ModelTest {
     }
 
     @Test
+    fun theKubernetesApiUrlIsHttpsAndNeverALinkLocalOrMetadataHost() {
+        fun config(url: String) = RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_KUBERNETES_API_URL" to url)))
+        listOf("https://127.0.0.1:6443", "https://10.0.0.1:6443", "https://[::1]:6443", "https://k8s.internal:6443")
+            .forEach { assertEquals(it, config(it).kubernetes.apiUrl) }
+        listOf(
+            "http://k8s:6443", "https://169.254.169.254", "https://0xa9fea9fe", "https://2852039166", "https://0.0.0.0",
+            "https://[fe80::1]:6443", "https://[::ffff:169.254.169.254]", "https://metadata.google.internal",
+        ).forEach {
+            val refusal = assertFailsWith<InvalidConfigException>(it) { config(it) }
+            assertEquals(
+                "OSTROM_RUNNERS_KUBERNETES_API_URL must be an https URL that is not a link-local, unspecified or " +
+                    "cloud metadata address.",
+                refusal.message,
+            )
+        }
+    }
+
+    @Test
     fun theConfigurationReadsEveryKey() {
         val config = RunnersConfig.from(
             MapConfigSource(

@@ -3,6 +3,7 @@ package run.ostrom.server.runners.infrastructure
 
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.InvalidConfigException
+import run.ostrom.server.kernel.network.isReachableUrl
 import run.ostrom.server.runners.domain.AllowedOrgs
 import kotlin.uuid.Uuid
 
@@ -60,7 +61,7 @@ data class RunnersConfig(
                 serverUrl = serverUrl,
                 runnerImage = source["OSTROM_RUNNERS_IMAGE"] ?: DEFAULT_RUNNER_IMAGE,
                 kubernetes = KubernetesSettings(
-                    apiUrl = source["OSTROM_RUNNERS_KUBERNETES_API_URL"] ?: KubernetesSettings.IN_CLUSTER_API_URL,
+                    apiUrl = kubernetesApiUrl(source["OSTROM_RUNNERS_KUBERNETES_API_URL"]),
                     namespace = source["OSTROM_RUNNERS_KUBERNETES_NAMESPACE"] ?: "ostrom",
                     tokenFile = source["OSTROM_RUNNERS_KUBERNETES_TOKEN_FILE"]
                         ?: KubernetesSettings.IN_CLUSTER_TOKEN_FILE,
@@ -77,6 +78,23 @@ data class RunnersConfig(
                 ),
                 allowedOrgs = allowedOrgs(source["OSTROM_RUNNERS_ALLOWED_ORGS"].orEmpty()),
             )
+        }
+
+        /**
+         * The API server URL: https, and never a link-local, unspecified or cloud metadata host in any numeric
+         * spelling, so the server's own instance credentials are never a cluster target (TC-CLN-1). Loopback and
+         * private addresses pass (a local `kind` cluster, a private control plane). The URL is the operator's, not a
+         * member's: the name is not resolved again at each connection.
+         */
+        private fun kubernetesApiUrl(raw: String?): String {
+            val url = raw ?: KubernetesSettings.IN_CLUSTER_API_URL
+            if (!isReachableUrl(url)) {
+                throw InvalidConfigException(
+                    "OSTROM_RUNNERS_KUBERNETES_API_URL must be an https URL that is not a link-local, " +
+                        "unspecified or cloud metadata address.",
+                )
+            }
+            return url
         }
 
         /** `key=value` labels separated by commas; the chart's server labels when unset. */

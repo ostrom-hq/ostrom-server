@@ -5,12 +5,14 @@ import io.ktor.http.parseUrl
 
 /**
  * Refuses upstream URLs that name the server's own network: loopback, private, link-local (cloud metadata),
- * carrier-grade NAT, unspecified and multicast literals, and the internal host names of a cluster. The check is on
- * the URL; a public name that resolves to a private address is stopped by the network policy of the namespace
- * (documented in docs/MODULES.md), not here.
+ * carrier-grade NAT, unspecified and multicast literals, and the internal host names of a cluster. This is the first
+ * line, on the URL's shape, for a clear refusal before any call. It is not the barrier: a public name that resolves
+ * to a private address, or that answers differently the second time (DNS rebinding), is stopped where the connection
+ * is made, by the pinned resolution of the relay's client (`outboundHttpClient`: one lookup, every answer checked,
+ * the checked address dialled).
  *
  * @param allowPrivate True for a self-hosted instance whose MCP servers live on its private network
- *   (`OSTROM_MCP_ALLOW_PRIVATE_UPSTREAMS=true`).
+ *   (`OSTROM_MCP_ALLOW_PRIVATE_UPSTREAMS=true`); link-local and metadata addresses stay refused at the connection.
  */
 class UpstreamAddressGuard(private val allowPrivate: Boolean = false) {
     /**

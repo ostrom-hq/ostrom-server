@@ -7,6 +7,7 @@ import run.ostrom.server.kernel.config.InvalidConfigException
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.ServerModule
+import run.ostrom.server.kernel.network.outboundHttpClient
 import run.ostrom.server.mcprelay.domain.ApprovalRequester
 import run.ostrom.server.mcprelay.domain.AssignMcpServerUseCase
 import run.ostrom.server.mcprelay.domain.AssignMcpServerUseCaseImpl
@@ -129,6 +130,12 @@ object McpRelayModule : ServerModule {
     /** The Koin name of the relay's HTTP client (redirects off), replaced by tests. */
     val HTTP_CLIENT = named("mcpRelayHttpClient")
 
+    /**
+     * The Koin name of the client of the org's upstream MCP servers (a URL a member supplied): every connection is
+     * resolved once and checked, replaced by tests.
+     */
+    val UPSTREAM_CLIENT = named("mcpRelayUpstreamClient")
+
     override val koinModule: Module = module {
         single { McpRelayConfig.from(get()) }
         single(HTTP_CLIENT) {
@@ -137,13 +144,20 @@ object McpRelayModule : ServerModule {
                 expectSuccess = false
             }
         } onClose { it?.close() } // Its selector holds a thread of Dispatchers.IO until then (StoppedApplicationsTest).
+        // A destination the org's admins typed: public addresses only, checked where the connection is made, so that
+        // neither a name that resolves to a private address nor DNS rebinding reaches the server's own network.
+        single(UPSTREAM_CLIENT) {
+            outboundHttpClient(allowPrivate = get<McpRelayConfig>().allowPrivateUpstreams)
+        } onClose { it?.close() }
         single<McpRelayRepository> { McpRelayRepositoryImpl(get()) }
         single<McpUpstream> {
             val config = get<McpRelayConfig>()
-            val client = get<HttpClient>(HTTP_CLIENT)
             TransportMcpUpstream(
-                http = HttpMcpUpstream(client, UpstreamAddressGuard(config.allowPrivateUpstreams)),
-                host = config.host?.let { HostMcpUpstream(client, it) },
+                http = HttpMcpUpstream(
+                    get<HttpClient>(UPSTREAM_CLIENT),
+                    UpstreamAddressGuard(config.allowPrivateUpstreams),
+                ),
+                host = config.host?.let { HostMcpUpstream(get<HttpClient>(HTTP_CLIENT), it) },
             )
         }
         single { McpHostAvailability { get<McpRelayConfig>().host != null } }
