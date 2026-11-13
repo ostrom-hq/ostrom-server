@@ -11,5 +11,5 @@ import run.ostrom.server.runners.infrastructure.RunnersConfig
  */
 class RunnersCloudSwitch(private val config: RunnersConfig?) : CloudSessionsSwitch {
     override suspend fun enabled(): Boolean =
-        (config?.driver ?: RunnersConfig.DriverKind.NONE) != RunnersConfig.DriverKind.NONE
+        config != null && config.driver != RunnersConfig.DriverKind.NONE
 }

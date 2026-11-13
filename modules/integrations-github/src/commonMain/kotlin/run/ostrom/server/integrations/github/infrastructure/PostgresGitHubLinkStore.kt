@@ -87,8 +87,9 @@ class PostgresGitHubLinkStore(private val driver: Driver, private val cipher: Se
         } ?: return null
         val memberId = row.get("member_id").asUuid()
         val kind = GitHubLinkKind.entries.firstOrNull { it.wire == row.get("kind").asString() } ?: return null
-        val secret = cipher.open(row.get("secret_sealed").asString(), attemptContext(orgId, id, memberId))
-            ?.decodeToString() ?: return null
+        val context = attemptContext(orgId, id, memberId)
+        val opened = cipher.open(row.get("secret_sealed").asString(), context) ?: return null
+        val secret = opened.decodeToString()
         return GitHubLinkAttempt(
             id, orgId, memberId, kind, secret, row.get("binding").asStringOrNull(), row.get("poll_interval").asInt(),
             row.get("next_poll_at").asInstant(), row.get("expires_at").asInstant(),
@@ -140,7 +141,7 @@ class PostgresGitHubLinkStore(private val driver: Driver, private val cipher: Se
             val holder = fetch(
                 Statement.create("SELECT member_id FROM github_links WHERE org_id = :org AND github_user_id = :user")
                     .bind("org", orgId).bind("user", identity.userId),
-            ).firstOrNull()?.get("member_id")?.asUuid()
+            ).firstOrNull()?.let { it.get("member_id").asUuid() }
             if (holder != null && holder != memberId) throw GitHubAccountInUseException()
             val old = fetch(
                 Statement.create(
@@ -148,7 +149,7 @@ class PostgresGitHubLinkStore(private val driver: Driver, private val cipher: Se
                         "WHERE org_id = :org AND member_id = :member",
                 ).bind("org", orgId).bind("member", memberId),
             ).firstOrNull()
-            val version = old?.get("token_version")?.asInt() ?: 0
+            val version = old?.let { it.get("token_version").asInt() } ?: 0
             execute(
                 Statement.create("DELETE FROM github_links WHERE org_id = :org AND member_id = :member")
                     .bind("org", orgId).bind("member", memberId),
@@ -327,7 +328,7 @@ class PostgresGitHubLinkStore(private val driver: Driver, private val cipher: Se
     )
 
     private suspend fun open(orgId: Uuid, memberId: Uuid, envelope: String): StoredTokens? {
-        val text = cipher.open(envelope, linkContext(orgId, memberId))?.decodeToString() ?: return null
+        val text = (cipher.open(envelope, linkContext(orgId, memberId)) ?: return null).decodeToString()
         return try {
             Json.decodeFromString(StoredTokens.serializer(), text)
         } catch (_: SerializationException) {

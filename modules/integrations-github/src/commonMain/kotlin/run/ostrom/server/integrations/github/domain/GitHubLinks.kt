@@ -211,7 +211,7 @@ class GitHubLinks(
         error: String?,
         session: Pair<String, AuthenticatedPrincipal>?,
     ): GitHubLinkStatus {
-        val orgId = state?.takeIf { STATE.matches(it) }?.substringBefore('.')?.let(Uuid::parseOrNull)
+        val orgId = state?.takeIf { STATE.matches(it) }?.let { Uuid.parseOrNull(it.substringBefore('.')) }
             ?: throw GitHubLinkNotFoundException()
         val attempt = store.attempt(orgId, sha256Hex(state))?.takeIf { it.kind == GitHubLinkKind.WEB }
             ?: throw GitHubLinkNotFoundException()

@@ -142,16 +142,21 @@ private suspend fun GitHubLinkRoutesDependencies.actorOf(call: ApplicationCall, 
 private fun memberId(raw: String): Uuid = Uuid.parseOrNull(raw) ?: throw GitHubLinkMemberNotFoundException()
 
 /** Maps a link to the contract. */
-internal fun GitHubLinkStatus.toDto() = GitHubLinkDto(
-    memberId = memberId.toString(),
-    state = state?.wire ?: GitHubLinkState.NOT_LINKED,
-    appConfigured = appConfigured,
-    login = link?.identity?.login,
-    userId = link?.identity?.userId,
-    linkedAt = link?.linkedAt?.toString(),
-    refreshedAt = link?.refreshedAt?.toString(),
-    accessExpiresAt = link?.accessExpiresAt?.toString(),
-)
+internal fun GitHubLinkStatus.toDto(): GitHubLinkDto {
+    val shown = when (val known = state) {
+        null -> GitHubLinkState.NOT_LINKED
+        else -> known.wire
+    }
+    val base = GitHubLinkDto(memberId = memberId.toString(), state = shown, appConfigured = appConfigured)
+    val link = link ?: return base
+    return base.copy(
+        login = link.identity.login,
+        userId = link.identity.userId,
+        linkedAt = link.linkedAt.toString(),
+        refreshedAt = link.refreshedAt.toString(),
+        accessExpiresAt = link.accessExpiresAt?.toString(),
+    )
+}
 
 // A link only serves the member's cloud sessions: the scopes of those sessions reach it (the CLI's login holds
 // `cloud:write`, a browser session every scope of its person).

@@ -26,6 +26,7 @@ import run.ostrom.server.integrations.github.domain.GitHubLinks
 import run.ostrom.server.integrations.github.domain.GitHubRevocable
 import run.ostrom.server.integrations.github.domain.GitHubUnreachableException
 import run.ostrom.server.integrations.github.domain.sha256Hex
+import run.ostrom.server.integrations.github.presentation.toDto
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.PrincipalKind
 import kotlinx.coroutines.CancellationException
@@ -377,5 +378,17 @@ class GitHubLinksTest {
 
     private companion object {
         const val REDIRECT = "https://ostrom.example/api/v1/github/link/callback"
+    }
+
+    @Test
+    fun aMemberWithoutALinkIsShownNotLinked() {
+        val shown = GitHubLinkStatus(DEV, appConfigured = true, link = null, state = null).toDto()
+        assertEquals(GitHubLinkState.NOT_LINKED to null, shown.state to shown.login)
+        assertEquals(listOf(null, null, null), listOf(shown.linkedAt, shown.refreshedAt, shown.accessExpiresAt))
+        assertNull(shown.userId)
+        val linked = GitHubLinkStatus(DEV, true, octocatLink(expiresAt = null), GitHubLinkState.LINKED).toDto()
+        assertEquals("linked" to 7L, linked.state to linked.userId)
+        assertEquals(NOW.toString() to null, linked.linkedAt to linked.accessExpiresAt)
+        assertEquals(NOW.toString(), GitHubLinkStatus(DEV, true, octocatLink(), null).toDto().accessExpiresAt)
     }
 }

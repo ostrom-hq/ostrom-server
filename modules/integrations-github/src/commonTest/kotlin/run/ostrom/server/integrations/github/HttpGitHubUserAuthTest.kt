@@ -230,6 +230,8 @@ class HttpGitHubUserAuthTest {
         assertFailsWith<GitHubLinkNotFoundException> { auth.exchangeCode(OAUTH_APP, "c", "r", "v") }
         answers("", HttpStatusCode.ServiceUnavailable)
         assertFailsWith<GitHubCallException> { auth.exchangeCode(OAUTH_APP, "c", "r", "v") }
+        answers("not json")
+        assertFailsWith<GitHubCallException>("A 200 that is not JSON") { auth.exchangeCode(OAUTH_APP, "c", "r", "v") }
     }
 
     @Test
@@ -246,6 +248,8 @@ class HttpGitHubUserAuthTest {
         assertFailsWith<GitHubAppMisconfiguredException> { auth.refresh(OAUTH_APP, "ghr_1") }
         answers("{}", HttpStatusCode.BadGateway)
         assertFailsWith<GitHubCallException> { auth.refresh(OAUTH_APP, "ghr_1") }
+        answers("[]")
+        assertFailsWith<GitHubCallException>("A 200 that is not an object") { auth.refresh(OAUTH_APP, "ghr_1") }
     }
 
     @Test
