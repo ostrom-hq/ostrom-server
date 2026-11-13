@@ -67,8 +67,12 @@ class InMemoryTodos : TodosRepository {
 
     override suspend fun find(orgId: Uuid, sessionId: String): TodoList? = lists[orgId to sessionId]
 
-    override suspend fun create(list: TodoList): Boolean =
-        lists.putIfAbsent(list.orgId to list.sessionId, list) == null
+    override suspend fun create(list: TodoList): Boolean {
+        val key = list.orgId to list.sessionId
+        if (key in lists) return false
+        lists[key] = list
+        return true
+    }
 
     override suspend fun <T> mutate(orgId: Uuid, sessionId: String, change: (TodoList) -> Pair<TodoList, T>): T {
         if (failNextChange) {
