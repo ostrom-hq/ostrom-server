@@ -233,7 +233,8 @@ class GitHubLinks(
      * @param memberId Another member, for an owner or an admin; the caller when null.
      */
     suspend fun unlink(actor: GitHubLinkActor, memberId: Uuid? = null) {
-        val target = target(actor, memberId)
+        // A member who left can still be unlinked: their tokens go, and their GitHub account is free again.
+        val target = target(actor, memberId, active = false)
         val removed = store.removeLink(actor.orgId, target) ?: return
         audit.record(OrgAuditRecord(actor.orgId, actor.principal, REMOVED, MEMBER, target.toString()))
         app()?.let { revokeToken(github, it, removed) }
@@ -247,7 +248,9 @@ class GitHubLinks(
         tokens: GitHubTokens,
     ): GitHubLinkStatus {
         val issued = GitHubRevocable(app.clientId, tokens.accessToken)
-        val link = try {
+        val saved = try {
+            // An OAuth App's token (`gho_`) never expires nor refreshes: refused, and revoked below.
+            if (!tokens.accessToken.startsWith(USER_TOKEN_PREFIX)) throw GitHubAppMisconfiguredException(OAUTH_APP)
             val identity = remote { github.user(tokens.accessToken) }
             if (!members.isActiveMember(orgId, memberId.toString())) throw GitHubLinkMemberNotFoundException()
             store.saveLink(orgId, memberId, identity, app.clientId, tokens, clock.now())
@@ -259,14 +262,18 @@ class GitHubLinks(
             revokeToken(github, app, issued)
             throw error
         }
+        // The tokens of the link it replaced are no one's any more.
+        saved.replaced?.takeIf { it.accessToken != tokens.accessToken }?.let { revokeToken(github, app, it) }
         audit.record(OrgAuditRecord(orgId, actor, CREATED, MEMBER, memberId.toString()))
-        return GitHubLinkStatus(memberId, true, link, link.state)
+        return GitHubLinkStatus(memberId, true, saved.link, saved.link.state)
     }
 
-    private suspend fun target(actor: GitHubLinkActor, memberId: Uuid?): Uuid {
+    private suspend fun target(actor: GitHubLinkActor, memberId: Uuid?, active: Boolean = true): Uuid {
         if (memberId == null || memberId == actor.memberId) return actor.memberId
         if (!actor.admin) throw GitHubLinkAdminOnlyException()
-        if (!members.isActiveMember(actor.orgId, memberId.toString())) throw GitHubLinkMemberNotFoundException()
+        if (active && !members.isActiveMember(actor.orgId, memberId.toString())) {
+            throw GitHubLinkMemberNotFoundException()
+        }
         return memberId
     }
 
@@ -353,6 +360,9 @@ private fun sameText(a: String, b: String): Boolean {
 }
 
 private const val TOKEN_BYTES = 32
+private const val USER_TOKEN_PREFIX = "ghu_"
+private const val OAUTH_APP =
+    "The instance's client id does not issue GitHub App user tokens: configure a GitHub App, not an OAuth App."
 private const val MIN_DEVICE_SECONDS = 60
 private const val MAX_DEVICE_SECONDS = 15 * 60
 private val WEB_ATTEMPT = 10.minutes

@@ -62,7 +62,7 @@ interface GitHubLinkStore {
      * @param clientId The App's client that issued the tokens.
      * @param tokens The tokens.
      * @param now The current time.
-     * @return The link.
+     * @return The link, and the access token of the link it replaced (null when none, or unreadable).
      * @throws GitHubAccountInUseException When another member of the organization linked that account.
      */
     suspend fun saveLink(
@@ -72,7 +72,7 @@ interface GitHubLinkStore {
         clientId: String,
         tokens: GitHubTokens,
         now: Instant,
-    ): GitHubLink
+    ): GitHubSavedLink
 
     /**
      * @param orgId The organization.

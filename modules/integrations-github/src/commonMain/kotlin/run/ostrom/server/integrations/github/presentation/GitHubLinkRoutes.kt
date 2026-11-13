@@ -40,8 +40,8 @@ import kotlin.uuid.Uuid
  * - `GET`/`DELETE /api/v1/github/link`: the caller's own link; `POST …/device` and `POST …/device/{id}`: the device
  *   flow, for the CLI and the app.
  * - `GET /api/v1/github/link/start` (a browser session, started from the console) and the public
- *   `GET /api/v1/github/link/callback`, which always sends the browser back to the console's `/github` page with
- *   `linked=1` or `error=<error.type>`.
+ *   `GET /api/v1/github/link/callback`, which sends the browser back to the console's `/github` page with `linked=1`
+ *   or the refusal's `error=<error.type>` (an unforeseen failure stays a 500, logged as any other).
  * - `GET /api/v1/github/links`, `GET`/`DELETE /api/v1/github/links/{memberId}` and
  *   `GET /api/v1/github/links/{memberId}/start`: owners and admins (another member, unknown or malformed, 404).
  *

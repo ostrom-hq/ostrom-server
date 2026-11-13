@@ -14,6 +14,7 @@ import run.ostrom.server.integrations.github.domain.GitHubLinkStore
 import run.ostrom.server.integrations.github.domain.GitHubOAuthApp
 import run.ostrom.server.integrations.github.domain.GitHubRefresh
 import run.ostrom.server.integrations.github.domain.GitHubRevocable
+import run.ostrom.server.integrations.github.domain.GitHubSavedLink
 import run.ostrom.server.integrations.github.domain.GitHubTokenClaim
 import run.ostrom.server.integrations.github.domain.GitHubTokens
 import run.ostrom.server.integrations.github.domain.GitHubUserAuthApi
@@ -170,15 +171,16 @@ class MemoryGitHubLinkStore : GitHubLinkStore {
         clientId: String,
         tokens: GitHubTokens,
         now: Instant,
-    ): GitHubLink {
+    ): GitHubSavedLink {
         val holder = links.values.firstOrNull { it.first.orgId == orgId && it.first.identity.userId == identity.userId }
         if (holder != null && holder.first.memberId != memberId) throw GitHubAccountInUseException()
         val link = GitHubLink(
             orgId, memberId, identity, clientId, GitHubLinkState.LINKED, tokens.accessExpiresAt,
             tokens.refreshExpiresAt, now, now,
         )
-        links[orgId to memberId] = link to tokens
-        return link
+        val previous = links.put(orgId to memberId, link to tokens)
+        val replaced = previous?.let { (old, oldTokens) -> GitHubRevocable(old.clientId, oldTokens.accessToken) }
+        return GitHubSavedLink(link, replaced)
     }
 
     override suspend fun link(orgId: Uuid, memberId: Uuid): GitHubLink? = links[orgId to memberId]?.first

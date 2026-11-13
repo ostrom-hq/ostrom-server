@@ -184,8 +184,10 @@ class HttpGitHubUserAuthTest {
             answers(body)
             assertFailsWith<GitHubCallException>(body) { auth.pollDevice(CLIENT_ID, "dc") }
         }
+        // An OAuth App's token is the links' to refuse, and to revoke.
         answers("""{"access_token":"gho_oauth_app"}""")
-        assertFailsWith<GitHubAppMisconfiguredException> { auth.pollDevice(CLIENT_ID, "dc") }
+        val oauth = assertIs<GitHubDevicePoll.Authorized>(auth.pollDevice(CLIENT_ID, "dc"))
+        assertEquals("gho_oauth_app", oauth.tokens.accessToken)
 
         // An App that does not expire its tokens: no expiry, no refresh token.
         answers("""{"access_token":"ghu_forever","refresh_token":" ","refresh_token_expires_in":100}""")

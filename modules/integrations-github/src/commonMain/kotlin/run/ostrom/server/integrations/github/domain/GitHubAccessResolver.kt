@@ -83,7 +83,7 @@ class GitHubAccessResolver(
             when (claim) {
                 GitHubTokenClaim.NotLinked -> return GitHubAccess.NotLinked
                 is GitHubTokenClaim.ReconnectRequired -> {
-                    if (claim.endedNow) ended(orgId, memberId, "refresh_expired")
+                    claim.endedBecause?.let { ended(orgId, memberId, it) }
                     return GitHubAccess.NotLinked
                 }
                 is GitHubTokenClaim.Ready -> return linked(claim.link, claim.accessToken, claim.link.accessExpiresAt)

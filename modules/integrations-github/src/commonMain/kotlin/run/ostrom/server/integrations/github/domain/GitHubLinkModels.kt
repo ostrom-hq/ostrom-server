@@ -100,6 +100,16 @@ data class GitHubLink(
 )
 
 /**
+ * A link just stored.
+ *
+ * @property link The link.
+ * @property replaced The access token of the link it replaced, to revoke.
+ */
+class GitHubSavedLink(val link: GitHubLink, val replaced: GitHubRevocable?) {
+    override fun toString(): String = "GitHubSavedLink(${link.identity.login})"
+}
+
+/**
  * A member's link as the API shows it.
  *
  * @property memberId The member.
@@ -284,9 +294,10 @@ sealed interface GitHubTokenClaim {
     /**
      * The link needs a new one.
      *
-     * @property endedNow Whether this claim ended it (the refresh token expired or was missing): journaled once.
+     * @property endedBecause Why this claim ended it (`refresh_expired`, `tokens_unreadable`), journaled once; null
+     *   when it had ended before.
      */
-    data class ReconnectRequired(val endedNow: Boolean = false) : GitHubTokenClaim
+    data class ReconnectRequired(val endedBecause: String? = null) : GitHubTokenClaim
 
     /** Another replica is refreshing this link: ask again shortly. */
     data object Wait : GitHubTokenClaim

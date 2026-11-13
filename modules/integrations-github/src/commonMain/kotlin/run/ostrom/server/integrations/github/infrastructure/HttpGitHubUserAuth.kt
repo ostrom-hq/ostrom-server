@@ -42,7 +42,6 @@ import kotlin.time.Duration.Companion.seconds
 /**
  * [GitHubUserAuthApi] over HTTPS (teamcode `GitHubAppClient`): the device and web authorizations, the refresh and the
  * revocation of a GitHub App's user-to-server tokens. Bodies are read up to 64 KiB and never surface in an error.
- * Only GitHub App user tokens (`ghu_`) are accepted: an OAuth App's (`gho_`) never expires nor refreshes.
  *
  * @param http The client (`expectSuccess = false`).
  * @param apiUrl GitHub's API.
@@ -169,12 +168,6 @@ class HttpGitHubUserAuth(
         val access = body.string("access_token")
         if (access == null || access.isBlank() || access.length > MAX_TOKEN) {
             throw GitHubCallException("GitHub answered without a token.")
-        }
-        if (!access.startsWith("ghu_")) {
-            throw GitHubAppMisconfiguredException(
-                "The instance's client id does not issue GitHub App user tokens: configure a GitHub App, not an " +
-                    "OAuth App.",
-            )
         }
         val now = clock.now()
         val refresh = body.string("refresh_token")?.takeIf { it.isNotBlank() && it.length <= MAX_TOKEN }

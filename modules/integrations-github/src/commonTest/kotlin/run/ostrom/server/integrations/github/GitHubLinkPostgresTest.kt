@@ -324,9 +324,11 @@ class GitHubLinkPostgresTest {
         server.call("POST", "cli:a:dev", "/api/v1/github/link/device")
         val theirs = server.call("GET", "user:b:owner", "/api/v1/github/links").body<GitHubLinksPage>()
         assertEquals(emptyList(), theirs.items)
-        assertEquals(HttpStatusCode.NotFound, server.call("DELETE", "user:b:owner", "/api/v1/github/links/$DEV").status)
+        val unlinked = server.call("DELETE", "user:b:owner", "/api/v1/github/links/$DEV")
+        assertEquals(HttpStatusCode.NoContent, unlinked.status, "Nothing of B's to unlink")
         val store = server.koin.get<GitHubLinkStore>()
         assertNull(store.link(OTHER_ORG, DEV))
+        assertEquals("octocat", store.link(ORG, DEV)?.identity?.login, "A's link is untouched")
 
         val tables = listOf("github_links", "github_link_attempts")
         assertEquals(listOf("0", "0"), server.driver.asTenant(null) { tables.map { count(it) } }, "No organization")
@@ -368,9 +370,11 @@ class GitHubLinkPostgresTest {
         val now = clock.now
         val octocat = GitHubIdentity(7, "octocat")
         val first = store.saveLink(ORG, DEV, octocat, CLIENT_ID, GitHubTokens("ghu_1", null, null, null), now)
-        assertEquals(GitHubLinkState.LINKED to null, first.state to first.accessExpiresAt)
+        assertEquals(GitHubLinkState.LINKED to null, first.link.state to first.link.accessExpiresAt)
+        assertNull(first.replaced)
         val again = store.saveLink(ORG, DEV, octocat, CLIENT_ID, GitHubTokens("ghu_2", now, "ghr_2", now), now)
-        assertEquals(now, again.refreshExpiresAt, "Relinking the same account replaces the link")
+        assertEquals(now, again.link.refreshExpiresAt, "Relinking the same account replaces the link")
+        assertEquals(CLIENT_ID to "ghu_1", again.replaced?.clientId to again.replaced?.accessToken, "To revoke")
         assertFailsWith<GitHubAccountInUseException> {
             store.saveLink(ORG, ROBOT, octocat, CLIENT_ID, GitHubTokens("ghu_3", null, null, null), now)
         }
@@ -464,12 +468,12 @@ class GitHubLinkPostgresTest {
 
         store.saveLink(ORG, DEV, octocat, CLIENT_ID, GitHubTokens("ghu_a", now + 30.minutes, null, null), now)
         assertEquals("ghu_a", assertIs<GitHubTokenClaim.Ready>(claim(now)).accessToken)
-        assertEquals(GitHubTokenClaim.ReconnectRequired(endedNow = true), claim(now + 29.minutes + 30.seconds))
+        assertEquals(GitHubTokenClaim.ReconnectRequired("refresh_expired"), claim(now + 29.minutes + 30.seconds))
         assertEquals(GitHubTokenClaim.ReconnectRequired(), claim(now + 29.minutes + 30.seconds), "Ended once")
 
         // The refresh token expired.
         store.saveLink(ORG, DEV, octocat, CLIENT_ID, GitHubTokens("ghu_b", now + 30.minutes, "ghr", now), now)
-        assertEquals(GitHubTokenClaim.ReconnectRequired(endedNow = true), claim(now + 30.minutes))
+        assertEquals(GitHubTokenClaim.ReconnectRequired("refresh_expired"), claim(now + 30.minutes))
 
         // A pending refresh without its start time (an older row) is no refresh at all.
         store.saveLink(ORG, DEV, octocat, CLIENT_ID, GitHubTokens("ghu_c", now + 30.minutes, "ghr", null), now)
@@ -484,11 +488,15 @@ class GitHubLinkPostgresTest {
         server.driver.asTenant(ORG) {
             execute(Statement.create("UPDATE github_links SET tokens_sealed = :t").bind("t", notTokens)).getOrThrow()
         }
-        assertEquals(GitHubTokenClaim.ReconnectRequired(), claim(now))
+        assertEquals(GitHubTokenClaim.ReconnectRequired("tokens_unreadable"), claim(now))
+        assertEquals(GitHubLinkState.RECONNECT_REQUIRED, store.link(ORG, DEV)?.state, "The member is told")
+        assertEquals(GitHubTokenClaim.ReconnectRequired(), claim(now), "Ended once")
         assertNull(store.removeLink(ORG, DEV), "Removed, with nothing to revoke")
         store.saveLink(ORG, DEV, octocat, CLIENT_ID, GitHubTokens("ghu_d", null, null, null), now)
         server.driver.asTenant(ORG) { execute("UPDATE github_links SET tokens_sealed = 'garbage'").getOrThrow() }
-        assertEquals(GitHubTokenClaim.ReconnectRequired(), claim(now))
+        assertEquals(GitHubTokenClaim.ReconnectRequired("tokens_unreadable"), claim(now))
+        val relinked = store.saveLink(ORG, DEV, octocat, CLIENT_ID, GitHubTokens("ghu_e", null, null, null), now)
+        assertNull(relinked.replaced, "Unreadable: nothing to revoke")
     }
 
     @Test

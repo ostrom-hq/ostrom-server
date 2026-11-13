@@ -9,6 +9,7 @@ import run.ostrom.server.integrations.github.domain.GitHubLinkKind
 import run.ostrom.server.integrations.github.domain.GitHubLinkState
 import run.ostrom.server.integrations.github.domain.GitHubLinkStore
 import run.ostrom.server.integrations.github.domain.GitHubRevocable
+import run.ostrom.server.integrations.github.domain.GitHubSavedLink
 import run.ostrom.server.integrations.github.domain.GitHubTokenClaim
 import run.ostrom.server.integrations.github.domain.GitHubTokens
 import run.ostrom.server.secrets.domain.SecretCipher
@@ -130,9 +131,9 @@ class PostgresGitHubLinkStore(private val driver: Driver, private val cipher: Se
         clientId: String,
         tokens: GitHubTokens,
         now: Instant,
-    ): GitHubLink {
+    ): GitHubSavedLink {
         val sealed = seal(orgId, memberId, tokens)
-        return scoped(orgId) {
+        val (link, previous) = scoped(orgId) {
             // Serialized per organization: two members linking the same account at once never both pass the check.
             lock("github-links:$orgId")
             val holder = fetch(
@@ -140,15 +141,18 @@ class PostgresGitHubLinkStore(private val driver: Driver, private val cipher: Se
                     .bind("org", orgId).bind("user", identity.userId),
             ).firstOrNull()?.get("member_id")?.asUuid()
             if (holder != null && holder != memberId) throw GitHubAccountInUseException()
-            val version = fetch(
-                Statement.create("SELECT token_version FROM github_links WHERE org_id = :org AND member_id = :member")
-                    .bind("org", orgId).bind("member", memberId),
-            ).firstOrNull()?.get("token_version")?.asInt() ?: 0
+            val old = fetch(
+                Statement.create(
+                    "SELECT token_version, client_id, tokens_sealed FROM github_links " +
+                        "WHERE org_id = :org AND member_id = :member",
+                ).bind("org", orgId).bind("member", memberId),
+            ).firstOrNull()
+            val version = old?.get("token_version")?.asInt() ?: 0
             execute(
                 Statement.create("DELETE FROM github_links WHERE org_id = :org AND member_id = :member")
                     .bind("org", orgId).bind("member", memberId),
             )
-            fetch(
+            val saved = fetch(
                 Statement.create(
                     "INSERT INTO github_links (org_id, member_id, github_user_id, github_login, client_id, " +
                         "tokens_sealed, state, access_expires_at, refresh_expires_at, token_version, " +
@@ -160,7 +164,12 @@ class PostgresGitHubLinkStore(private val driver: Driver, private val cipher: Se
                     .bind("state", GitHubLinkState.LINKED.wire).bind("access", tokens.accessExpiresAt)
                     .bind("refresh", tokens.refreshExpiresAt).bind("version", version + 1).bind("now", now),
             ).first().toLink(orgId)
+            saved to old?.let { it.get("client_id").asString() to it.get("tokens_sealed").asString() }
         }
+        val replaced = previous?.let { (client, envelope) ->
+            open(orgId, memberId, envelope)?.let { GitHubRevocable(client, it.accessToken) }
+        }
+        return GitHubSavedLink(link, replaced)
     }
 
     override suspend fun link(orgId: Uuid, memberId: Uuid): GitHubLink? = scoped(orgId) {
@@ -213,8 +222,13 @@ class PostgresGitHubLinkStore(private val driver: Driver, private val cipher: Se
         ).firstOrNull() ?: return@scoped GitHubTokenClaim.NotLinked
         val link = row.toLink(orgId)
         val tokens = open(orgId, memberId, row.get("tokens_sealed").asString())
-        if (link.state != GitHubLinkState.LINKED || link.clientId != clientId || tokens == null) {
+        if (link.state != GitHubLinkState.LINKED || link.clientId != clientId) {
             return@scoped GitHubTokenClaim.ReconnectRequired()
+        }
+        if (tokens == null) {
+            // Sealed by another secrets key: unusable for good, so the member is told to link again.
+            setState(orgId, memberId, GitHubLinkState.RECONNECT_REQUIRED)
+            return@scoped GitHubTokenClaim.ReconnectRequired("tokens_unreadable")
         }
         val expiresAt = link.accessExpiresAt
         val startedAt = row.get("refresh_started_at").asInstantOrNull()
@@ -233,7 +247,7 @@ class PostgresGitHubLinkStore(private val driver: Driver, private val cipher: Se
                 GitHubTokenClaim.Ready(link, tokens.accessToken)
             } else {
                 setState(orgId, memberId, GitHubLinkState.RECONNECT_REQUIRED)
-                GitHubTokenClaim.ReconnectRequired(endedNow = true)
+                GitHubTokenClaim.ReconnectRequired("refresh_expired")
             }
             else -> {
                 // Committed before GitHub is called: a second replica waits instead of spending the same token. The

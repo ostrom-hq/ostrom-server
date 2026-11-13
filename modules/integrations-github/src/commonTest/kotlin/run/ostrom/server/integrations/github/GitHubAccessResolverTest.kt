@@ -12,6 +12,7 @@ import run.ostrom.server.integrations.github.domain.GitHubLinkKind
 import run.ostrom.server.integrations.github.domain.GitHubLinks
 import run.ostrom.server.integrations.github.domain.GitHubRefresh
 import run.ostrom.server.integrations.github.domain.GitHubRevocable
+import run.ostrom.server.integrations.github.domain.GitHubSavedLink
 import run.ostrom.server.integrations.github.domain.GitHubTokenClaim
 import run.ostrom.server.integrations.github.domain.GitHubUnreachableException
 import kotlinx.coroutines.CancellationException
@@ -65,7 +66,7 @@ class GitHubAccessResolverTest {
 
     @Test
     fun aLinkThatEndsIsAuditedOnceWhenItEnds() = runTest {
-        store.claims += GitHubTokenClaim.ReconnectRequired(endedNow = true)
+        store.claims += GitHubTokenClaim.ReconnectRequired("refresh_expired")
         store.claims += GitHubTokenClaim.ReconnectRequired()
         assertEquals(GitHubAccess.NotLinked, access())
         assertEquals(GitHubAccess.NotLinked, access())
@@ -198,6 +199,7 @@ class GitHubAccessResolverTest {
         assertEquals("Linked(octocat, expiresAt=$NOW)", linked.toString())
         assertEquals("GitHubTokens(accessExpiresAt=$NOW, refreshExpiresAt=null)", tokens().toString())
         assertEquals("GitHubOAuthApp(clientId=$CLIENT_ID)", OAUTH_APP.toString())
+        assertEquals("GitHubSavedLink(octocat)", GitHubSavedLink(octocatLink(), null).toString())
         assertEquals("GitHubRevocable(clientId=$CLIENT_ID)", GitHubRevocable(CLIENT_ID, "ghu_secret").toString())
         val attempt = GitHubLinkAttempt("a1", ORG, DEV, GitHubLinkKind.WEB, "verifier", "binding", 0, NOW, NOW)
         assertEquals("GitHubLinkAttempt(id=a1, memberId=$DEV, kind=WEB)", attempt.toString())

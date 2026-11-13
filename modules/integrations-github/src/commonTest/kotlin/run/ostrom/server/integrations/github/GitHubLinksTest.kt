@@ -4,6 +4,7 @@ package run.ostrom.server.integrations.github
 import run.ostrom.server.integrations.github.domain.CloudSessionsSwitch
 import run.ostrom.server.integrations.github.domain.GitHubAccountInUseException
 import run.ostrom.server.integrations.github.domain.GitHubAppCredentials
+import run.ostrom.server.integrations.github.domain.GitHubAppMisconfiguredException
 import run.ostrom.server.integrations.github.domain.GitHubAppNotConfiguredException
 import run.ostrom.server.integrations.github.domain.GitHubCallException
 import run.ostrom.server.integrations.github.domain.GitHubDeviceAuthorization
@@ -316,6 +317,39 @@ class GitHubLinksTest {
         links.unlink(owner, DEV)
         assertNull(store.link(ORG, DEV))
         assertEquals(1, github.revoked.size)
+    }
+
+    @Test
+    fun relinkingRevokesTheReplacedTokenAndAnOAuthAppsTokenIsRefusedAndRevoked() = runTest {
+        suspend fun link(token: String) {
+            github.exchange = { tokens(token) }
+            val state = links.startWeb(dev, "s").substringAfter("state=").substringBefore('&')
+            links.completeWeb(state, "code", null, "s" to dev.principal)
+        }
+        link("ghu_web")
+        link("ghu_web")
+        assertEquals(emptyList(), github.revoked, "The same token: still the link's")
+        link("ghu_device")
+        assertEquals(listOf("ghu_web"), github.revoked)
+
+        github.exchange = { tokens("gho_oauth_app") }
+        val state = links.startWeb(dev, "s").substringAfter("state=").substringBefore('&')
+        assertFailsWith<GitHubAppMisconfiguredException> {
+            links.completeWeb(state, "code", null, "s" to dev.principal)
+        }
+        assertEquals(listOf("ghu_web", "gho_oauth_app"), github.revoked)
+        assertEquals("ghu_device", store.links.getValue(ORG to DEV).second.accessToken, "The link is kept")
+    }
+
+    @Test
+    fun anOwnerUnlinksAMemberWhoLeft() = runTest {
+        val state = links.startWeb(dev, "s").substringAfter("state=").substringBefore('&')
+        links.completeWeb(state, "code", null, "s" to dev.principal)
+        members.active -= ORG to DEV
+        assertFailsWith<GitHubLinkMemberNotFoundException> { links.status(owner, DEV) }
+        links.unlink(owner, DEV)
+        assertNull(store.link(ORG, DEV))
+        assertEquals(listOf("ghu_web"), github.revoked)
     }
 
     @Test
