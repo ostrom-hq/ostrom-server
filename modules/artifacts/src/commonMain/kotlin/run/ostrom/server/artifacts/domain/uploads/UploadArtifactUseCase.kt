@@ -90,8 +90,8 @@ internal class UploadArtifactUseCaseImpl(
         val announced = announced(files)
         val now = clock.now()
         val existing = artifactId?.let { rules.owned(caller, it) }
-        val draft = if (existing == null) draftOf(caller, now) else null
-        val target = existing ?: checkNotNull(draft)
+        val target = existing ?: draftOf(caller, now)
+        val draft = target.takeIf { existing == null }
         val held = if (existing == null) emptySet() else artifacts.blobDigests(caller.orgId, existing.id)
         val upload = ArtifactUpload(
             id = Uuid.random(),
@@ -212,17 +212,15 @@ internal class UploadArtifactUseCaseImpl(
         createdAt = now,
         updatedAt = now,
     )
+}
 
-    private companion object {
-        val SHA256 = Regex("[0-9a-f]{64}")
-        const val PUBLISH_REFUSED = "publish_refused"
+private val SHA256 = Regex("[0-9a-f]{64}")
+private const val PUBLISH_REFUSED = "publish_refused"
 
-        // UTF-8 without a NUL byte is text, scanned for credentials; anything else is binary.
-        fun isText(bytes: ByteArray): Boolean = 0.toByte() !in bytes && try {
-            bytes.decodeToString(throwOnInvalidSequence = true)
-            true
-        } catch (_: CharacterCodingException) {
-            false
-        }
-    }
+// UTF-8 without a NUL byte is text, scanned for credentials; anything else is binary.
+private fun isText(bytes: ByteArray): Boolean = 0.toByte() !in bytes && try {
+    bytes.decodeToString(throwOnInvalidSequence = true)
+    true
+} catch (_: CharacterCodingException) {
+    false
 }
