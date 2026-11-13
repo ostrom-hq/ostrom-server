@@ -31,6 +31,17 @@ interface LaunchesRepository {
     suspend fun find(orgId: Uuid, id: String): Launch?
 
     /**
+     * The launches a cloud session's runner opened, one per execution, at most [limit]: the newest first.
+     *
+     * @param orgId The organization.
+     * @param cloudSessionId The cloud session.
+     * @param limit At most this many.
+     *
+     * @return Their ids.
+     */
+    suspend fun ofCloudSession(orgId: Uuid, cloudSessionId: Uuid, limit: Int): List<String>
+
+    /**
      * Deletes the launches expired before [before], of every organization: none of them acts any more.
      *
      * @param before The expiry before which a launch is deleted.

@@ -9,7 +9,9 @@ import run.ostrom.core.api.models.WaitSpec
 import run.ostrom.core.api.models.WorkflowEdge
 import run.ostrom.core.api.models.WorkflowNode
 import run.ostrom.core.api.models.WorkflowNodeKind
+import run.ostrom.core.api.models.WorkflowPendingDeliverable
 import run.ostrom.core.api.models.WorkflowRun
+import run.ostrom.core.api.models.WorkflowSessionPending
 import run.ostrom.server.gates.domain.models.ActorKind
 import run.ostrom.server.gates.domain.models.GateActor
 import run.ostrom.server.workflowruns.domain.engine.AgentRequests
@@ -26,6 +28,7 @@ import run.ostrom.server.workflowruns.domain.models.RunChange
 import run.ostrom.server.workflowruns.domain.models.RunGraph
 import run.ostrom.server.workflowruns.domain.models.RunNotFoundException
 import run.ostrom.server.workflowruns.domain.models.RunRef
+import run.ostrom.server.workflowruns.domain.models.RunSessionNotFoundException
 import run.ostrom.server.workflowruns.domain.models.TodoOpenException
 import run.ostrom.server.workflowruns.domain.repositories.RunEngineRepository
 import run.ostrom.server.workflowruns.domain.services.AgentRequest
@@ -36,8 +39,15 @@ import run.ostrom.server.workflowruns.domain.services.GateState
 import run.ostrom.server.workflowruns.domain.services.RunAgents
 import run.ostrom.server.workflowruns.domain.services.RunGates
 import run.ostrom.server.workflowruns.domain.services.RunTodos
+import run.ostrom.server.workflowruns.domain.services.StepSessions
 import run.ostrom.server.workflowruns.domain.usecases.DeliverRunUseCaseImpl
+import run.ostrom.server.workflowruns.domain.usecases.DeliverWorkflowSessionUseCaseImpl
+import run.ostrom.server.workflowruns.domain.usecases.PendingWorkflowSessionUseCaseImpl
+import run.ostrom.server.workflowruns.domain.usecases.RunDeliveries
+import run.ostrom.server.workflowruns.domain.usecases.SessionRuns
+import run.ostrom.server.workflowruns.domain.usecases.StepCaller
 import run.ostrom.server.workflowruns.fakes.FakeChildren
+import run.ostrom.server.workflowruns.fakes.FakeLaunches
 import run.ostrom.server.workflowruns.fakes.FakeWaits
 import run.ostrom.server.workflowruns.fakes.FixedClock
 import run.ostrom.server.workflowruns.fakes.ORG
@@ -62,11 +72,14 @@ class DeliveryTest {
     private class Runs(var writes: Boolean = true) : RunEngineRepository {
         val rows = mutableMapOf<String, PlayedRun>()
         val changes = mutableListOf<RunChange>()
+        val sessions = mutableMapOf<Uuid, String>()
 
         override suspend fun claimDue(owner: String, now: Instant, until: Instant, limit: Int): List<RunRef> =
             rows.keys.map { RunRef(ORG, it) }
 
         override suspend fun played(orgId: Uuid, id: String): PlayedRun? = rows[id]
+
+        override suspend fun ofSession(orgId: Uuid, sessionId: Uuid): PlayedRun? = sessions[sessionId]?.let { rows[it] }
 
         override suspend fun write(orgId: Uuid, change: RunChange): Boolean {
             val stored = rows[change.next.id]?.takeIf { writes && it.run == change.expected }
@@ -97,6 +110,14 @@ class DeliveryTest {
         override suspend fun open(orgId: Uuid, request: GateRequest): GateOpening = error("No gate here.")
 
         override suspend fun state(orgId: Uuid, gateId: Uuid): GateState = error("No gate here.")
+    }
+
+    private class Steps(val owned: MutableSet<Pair<Uuid, String>> = mutableSetOf(), var asked: Boolean = false) :
+        StepSessions {
+        override suspend fun ownedBy(orgId: Uuid, sessionId: Uuid, login: String): Boolean =
+            (sessionId to login) in owned
+
+        override suspend fun asked(orgId: Uuid, sessionId: Uuid): Boolean = asked
     }
 
     private class Todos(var refusal: String? = null) : RunTodos {
@@ -264,7 +285,7 @@ class DeliveryTest {
     @Test
     fun theStarterDeliversWhatTheNodeAsksForOnceAndTheRunMovesOn() = runTest {
         val todos = Todos()
-        val deliver = DeliverRunUseCaseImpl(runs, agents, todos, clock)
+        val deliver = DeliverRunUseCaseImpl(runs, RunDeliveries(runs, agents, todos, clock))
         val graph = RunGraph("a", listOf(DELIVERING, TRIGGER), listOf(WorkflowEdge("a", "t")))
         stored(graph, run(visits = listOf(RUNNING_AGENT)))
         val output = "https://github.com/acme/api/pull/" + "1".repeat(600)
@@ -295,7 +316,7 @@ class DeliveryTest {
     @Test
     fun aDeliveryIsRefusedForAnotherCallerARunThatWaitsForNoneAnOpenTodoOrAWrongOutput() = runTest {
         val todos = Todos()
-        val deliver = DeliverRunUseCaseImpl(runs, agents, todos, clock)
+        val deliver = DeliverRunUseCaseImpl(runs, RunDeliveries(runs, agents, todos, clock))
         val bare = AGENT.copy(id = "bare", run = NodeRun(instructions = "Nothing to hand in"))
         val graph = RunGraph("a", listOf(DELIVERING, AGENT.copy(id = "plain"), bare, TRIGGER))
         val good = JsonPrimitive("https://github.com/acme/api/pull/1")
@@ -333,7 +354,7 @@ class DeliveryTest {
         // Without a module that keeps todos, a delivery is never refused for one.
         runs.writes = true
         stored(graph, running)
-        val untracked = DeliverRunUseCaseImpl(runs, agents, null, clock)(ADA, RUN, good, null)
+        val untracked = DeliverRunUseCaseImpl(runs, RunDeliveries(runs, agents, null, clock))(ADA, RUN, good, null)
         assertEquals("delivered", untracked.visits.single().outcome)
     }
 
@@ -350,11 +371,78 @@ class DeliveryTest {
         assertEquals("Ship main after the fix?", waits.asked.single().question.body)
     }
 
+    @Test
+    fun theStarterOrTheSessionsAgentDeliversForTheStepTheSessionWorksOn() = runTest {
+        val steps = Steps()
+        val session = sessionOf(RUN, 1)
+        val launches = FakeLaunches(mapOf(LAUNCH to session))
+        val sessionRuns = SessionRuns(runs, steps, launches)
+        val deliver = DeliverWorkflowSessionUseCaseImpl(sessionRuns, RunDeliveries(runs, agents, null, clock))
+        val graph = RunGraph("a", listOf(DELIVERING, TRIGGER), listOf(WorkflowEdge("a", "t")))
+        val output = JsonPrimitive("https://github.com/acme/api/pull/1")
+        runs.sessions[session] = RUN
+
+        // The starter names the session.
+        stored(graph, run(visits = listOf(RUNNING_AGENT)))
+        val byStarter = deliver(StepCaller(ORG, "ada"), session, output, PERSON)
+        assertEquals("delivered", byStarter.visits.single().outcome)
+        // The session's agent token delivers for its launch's session, whatever the request names.
+        stored(graph, run(visits = listOf(RUNNING_AGENT)))
+        val byAgent = deliver(StepCaller(ORG, "ada", launchId = LAUNCH), Uuid.random(), output, null)
+        assertEquals("delivered", byAgent.visits.single().outcome)
+        assertEquals(listOf<Uuid?>(PERSON, null), runs.changes.map { it.audit.single().actor })
+
+        // Another member's session, or one that does not exist, is not found; the caller's own that runs no step is
+        // nothing to deliver, and so is an agent's launch without a cloud session, or whose session runs no step.
+        stored(graph, run(visits = listOf(RUNNING_AGENT)))
+        val mine = Uuid.random()
+        steps.owned += mine to "bob"
+        val bob = StepCaller(ORG, "bob")
+        assertFailsWith<RunSessionNotFoundException> { deliver(bob, session, output, null) }
+        assertFailsWith<RunSessionNotFoundException> { deliver(bob, Uuid.random(), output, null) }
+        assertFailsWith<NothingToDeliverException> { deliver(bob, mine, output, null) }
+        assertFailsWith<NothingToDeliverException> { deliver(StepCaller(ORG, "ada", "lch_cli"), null, output, null) }
+        assertFailsWith<NothingToDeliverException> { deliver(StepCaller(ORG, "bob", LAUNCH), null, output, null) }
+        // A session whose visit is over is not the step under way any more.
+        val later = RUNNING_AGENT.copy(seq = 2)
+        stored(graph, run(visits = listOf(RUNNING_AGENT.copy(status = RunMoves.DONE), later)))
+        assertFailsWith<NothingToDeliverException> { deliver(StepCaller(ORG, "ada"), session, output, null) }
+        assertEquals(2, runs.changes.size, "Nothing refused is stored")
+    }
+
+    @Test
+    fun aSessionsStepIsPendingWhileItWaitsForItsDeliveryAndItsAgentAskedNothingStillOpen() = runTest {
+        val steps = Steps(owned = mutableSetOf(OWN to "ada"))
+        val session = sessionOf(RUN, 1)
+        val pending = PendingWorkflowSessionUseCaseImpl(SessionRuns(runs, steps, FakeLaunches()), steps)
+        val graph = RunGraph("a", listOf(DELIVERING, AGENT.copy(id = "plain"), TRIGGER))
+        runs.sessions[session] = RUN
+        val ada = StepCaller(ORG, "ada")
+        val none = WorkflowSessionPending(needsAction = false)
+
+        stored(graph, run(visits = listOf(RUNNING_AGENT)))
+        val waiting = WorkflowSessionPending(true, RUN, "Build", WorkflowPendingDeliverable("url", "github.com"))
+        assertEquals(waiting, pending(ada, session))
+        steps.asked = true
+        assertEquals(none, pending(ada, session), "Its agent asked a person: it waits for the answer")
+        steps.asked = false
+        assertEquals(none, pending(ada, OWN), "The caller's own session runs no step")
+        assertFailsWith<RunSessionNotFoundException> { pending(StepCaller(ORG, "bob"), session) }
+        for (visits in listOf(listOf(RUNNING_AGENT.copy(nodeId = "plain")), listOf(RUNNING_AGENT.copy(seq = 2)))) {
+            stored(graph, run(visits = visits))
+            assertEquals(none, pending(ada, session), visits.toString())
+        }
+        assertEquals(none, pending(StepCaller(ORG, "ada", "lch_cli"), null), "A launch outside the cloud")
+        assertEquals(emptyList(), runs.changes, "A read writes nothing")
+    }
+
     private companion object {
         const val OWNER = "delivery-test"
         const val INSTRUCTIONS = "Fix {{inputs.branch}} after {{nodes.plan.output}}"
         const val AT = "2026-10-30T10:00:00.000Z"
         val RUN = "wfr_" + "d".repeat(32)
+        const val LAUNCH = "lch_agent"
+        val OWN: Uuid = Uuid.parse("0000000a-0000-0000-0000-000000000000")
         val PERSON: Uuid = Uuid.parse("000000ad-0000-0000-0000-000000000000")
         val ADA = GateActor("ada", ORG, ActorKind.USER, personId = "ada")
         val TRIGGER = WorkflowNode("t", WorkflowNodeKind.TRIGGER, "Push")

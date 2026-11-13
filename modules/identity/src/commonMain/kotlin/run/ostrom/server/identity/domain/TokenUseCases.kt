@@ -285,7 +285,7 @@ class IssueAgentTokenUseCaseImpl(
         val now = clock.nowMillis()
         val issued = issue(secrets, TokenKind.AGENT) { id, hint ->
             val name = "agent $agentSessionId"
-            val scopes = setOf(AGENT_SCOPE)
+            val scopes = AGENT_SCOPES
             val expiresAt = now + lifetime
             ApiToken(id, userId, orgId, name, TokenKind.AGENT, scopes, hint, agentSessionId, now, expiresAt, null, null)
         }

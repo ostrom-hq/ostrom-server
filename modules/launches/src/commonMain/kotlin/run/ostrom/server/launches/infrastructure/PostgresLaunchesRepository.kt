@@ -88,6 +88,13 @@ class PostgresLaunchesRepository(
             .firstOrNull()?.toLaunch()
     }
 
+    override suspend fun ofCloudSession(orgId: Uuid, cloudSessionId: Uuid, limit: Int): List<String> =
+        driver.withOrganization(orgId) { tx ->
+            val statement = Statement.create(OF_CLOUD_SESSION).bind("org_id", orgId)
+                .bind("cloud_session_id", cloudSessionId).bind("limit", limit)
+            tx.fetchAll(statement).getOrThrow().map { it.get("id").asString() }
+        }
+
     private fun Statement.nullable(name: String, value: String?): Statement =
         if (value == null) bindNull(name, String::class) else bind(name, value)
 
@@ -131,5 +138,9 @@ class PostgresLaunchesRepository(
 
         /** A launch by its primary key. */
         val FIND: String = "SELECT $COLUMNS FROM launches_launches WHERE org_id = :org_id AND id = :id"
+
+        /** The launches of a cloud session, newest first: the index on the cloud session. */
+        const val OF_CLOUD_SESSION: String = "SELECT id FROM launches_launches WHERE org_id = :org_id " +
+            "AND cloud_session_id = :cloud_session_id ORDER BY created_at DESC LIMIT :limit"
     }
 }

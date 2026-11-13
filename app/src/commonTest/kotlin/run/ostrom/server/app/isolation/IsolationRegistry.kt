@@ -364,6 +364,9 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/runs/{id}" to target("id" to RUN),
     "POST /api/v1/runs/{id}/cancel" to target("id" to RUN, body = "{}"),
     "POST /api/v1/runs/{id}/deliver" to target("id" to RUN, body = """{"output":"x"}"""),
+    "POST /api/v1/workflows/session/deliver" to
+        Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "output": "x"}"""),
+    "GET /api/v1/workflows/session/pending" to Case.Target(query = "sessionId={{CLOUD_SESSION}}"),
     "GET /api/v1/packages" to Case.Target(),
     "GET /api/v1/packages/current" to Case.Target(),
     "GET /api/v1/packages/audit" to Case.Target(),

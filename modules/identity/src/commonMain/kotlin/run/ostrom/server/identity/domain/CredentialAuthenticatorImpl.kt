@@ -22,7 +22,8 @@ import kotlin.uuid.Uuid
  * - A service key is a [PrincipalKind.SERVICE] whose subject is the key, bound to its organization: with the CI scopes
  *   it never acts as the person who created it; with member scopes it acts as them
  *   ([AuthenticatedPrincipal.onBehalfOf]), as a plain member, and only while they are still in the organization.
- * - An agent token is an [PrincipalKind.AGENT] whose subject is its agent session, with the single [AGENT_SCOPE]:
+ * - An agent token is an [PrincipalKind.AGENT] whose subject is its agent session, with [AGENT_SCOPE] (and
+ *   [WORKFLOW_SESSION_SCOPE] when issued with it):
  *   it never passes a console route (audit A2) and can only act on that session.
  * - A browser session acts as its user with all their rights, and needs the CSRF token and an allowed `Origin` on
  *   state-changing requests (S2-08).

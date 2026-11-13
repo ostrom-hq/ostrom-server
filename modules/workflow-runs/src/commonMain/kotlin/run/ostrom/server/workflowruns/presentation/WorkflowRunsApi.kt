@@ -198,6 +198,20 @@ class RunCancelApi(val id: String)
 @Resource("/api/v1/runs/{id}/deliver")
 class RunDeliverApi(val id: String)
 
+/** Hands in what the agent step a session works on asks for (`deliverWorkflowSession`). */
+@Serializable
+@Resource("/api/v1/workflows/session/deliver")
+class WorkflowSessionDeliverApi
+
+/**
+ * Whether the agent step a session works on still waits for its delivery (`pendingWorkflowSession`).
+ *
+ * @property sessionId The cloud session: required for a person, an agent token's own otherwise.
+ */
+@Serializable
+@Resource("/api/v1/workflows/session/pending")
+class WorkflowSessionPendingApi(val sessionId: String? = null)
+
 /**
  * The body of `POST /api/v1/workflows/{id}/runs`.
  *

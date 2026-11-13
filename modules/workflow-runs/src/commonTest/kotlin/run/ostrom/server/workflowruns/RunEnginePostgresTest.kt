@@ -8,6 +8,11 @@ import run.ostrom.core.api.models.WorkflowNode
 import run.ostrom.core.api.models.WorkflowNodeKind
 import run.ostrom.core.api.models.WorkflowRun
 import run.ostrom.server.automations.AutomationsModule
+import run.ostrom.server.automations.domain.Wait
+import run.ostrom.server.automations.domain.WaitAction
+import run.ostrom.server.automations.domain.WaitSpec
+import run.ostrom.server.automations.domain.WaitStatus
+import run.ostrom.server.automations.domain.WaitsRepository
 import run.ostrom.server.compiler.CompilerModule
 import run.ostrom.server.compiler.domain.usecases.WorkflowsUseCase
 import run.ostrom.server.gates.GatesModule
@@ -65,8 +70,11 @@ import run.ostrom.server.workflowruns.domain.repositories.StartedRunsRepository
 import run.ostrom.server.workflowruns.domain.services.AgentRequest
 import run.ostrom.server.workflowruns.domain.services.RunAgents
 import run.ostrom.server.workflowruns.domain.services.RunGates
+import run.ostrom.server.workflowruns.domain.services.StepSessions
 import run.ostrom.server.workflowruns.fakes.FixedClock
 import run.ostrom.server.workflowruns.infrastructure.CloudRunAgents
+import run.ostrom.server.workflowruns.infrastructure.EngineQueries
+import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -522,6 +530,117 @@ class RunEnginePostgresTest {
     }
 
     @Test
+    fun theSessionsAgentTokenOrItsStarterDeliversForTheStepTheSessionWorksOnAndThePendingStepIsTold() =
+        engineTest { server ->
+            val ada = server.person("ada")
+            val reader = server.person("rex", setOf("workflows:read"))
+            val eve = server.person("eve")
+            server.workflow(ada, DELIVERING, DELIVERING_EDGES, "build")
+            val run = server.start(ada)
+            val engine = server.engine()
+            engine.next()
+            val session = sessionOf(run.id, 1)
+            val deliver = "/api/v1/workflows/session/deliver"
+            val pending = "/api/v1/workflows/session/pending"
+            val pr = "https://github.com/acme/api/pull/9"
+            val waiting = """{"needsAction":true,"runId":"${run.id}","nodeTitle":"Build",""" +
+                """"deliverable":{"type":"url","domain":"github.com"}}"""
+            val none = """{"needsAction":false}"""
+            suspend fun pendingOf(token: String, query: String = "?sessionId=$session"): Pair<HttpStatusCode, String> {
+                val answer = server.call(token, pending + query)
+                return answer.status to answer.bodyAsText()
+            }
+
+            // The starter names the session; nobody else learns it exists.
+            assertEquals(HttpStatusCode.OK to waiting, pendingOf(ada.token))
+            assertEquals(HttpStatusCode.Unauthorized, server.client.get(pending).status)
+            assertEquals(HttpStatusCode.Unauthorized, server.client.post(deliver).status)
+            assertEquals(HttpStatusCode.Forbidden, pendingOf(reader.token).first)
+            assertEquals(HttpStatusCode.NotFound, pendingOf(eve.token).first, "Another organization's session")
+            assertEquals(HttpStatusCode.NotFound, pendingOf(ada.token, "?sessionId=${Uuid.random()}").first)
+            assertEquals(HttpStatusCode.NotFound, pendingOf(ada.token, "?sessionId=s-1").first)
+            assertEquals(HttpStatusCode.BadRequest, pendingOf(ada.token, "").first)
+            val body = """{"sessionId":"$session","output":"$pr"}"""
+            assertEquals(HttpStatusCode.NotFound, server.call(eve.token, deliver, body).status)
+            // A service key never delivers, whatever its scopes.
+            val key = TokenKind.SERVICE.prefix + "_" + Uuid.random().toHexString()
+            val now = clock.now()
+            val service = ApiToken(
+                Uuid.random(), ada.userId, ada.org.id, "ci", TokenKind.SERVICE, WRITE_SCOPES, "hint", null, now,
+                now + 1.hours, null, null,
+            )
+            server.koin.get<ApiTokensRepository>().create(service, server.koin.get<SecretHasher>().hash(key))
+            val refused = server.call(key, deliver, body)
+            assertEquals(HttpStatusCode.Forbidden, refused.status)
+            assertTrue("credential_scope" in refused.bodyAsText(), refused.bodyAsText())
+
+            // The session's runner opens its launch: its agent token acts on its own session only.
+            val cloud = server.koin.get<CloudSessionsRepository>()
+            val agent = server.koin.get<OpenRunnerLaunchUseCase>()(assertNotNull(cloud.get(ada.org.id, session)))
+            val token = agent.agentToken
+            assertEquals(HttpStatusCode.OK to waiting, pendingOf(token, "?sessionId=${Uuid.random()}"))
+            assertEquals(HttpStatusCode.Forbidden, server.call(token, "/api/v1/runs/${run.id}").status)
+            assertEquals(HttpStatusCode.Forbidden, server.call(token, "/api/v1/runs/${run.id}/deliver", body).status)
+            // Its agent asks a person something: the step is not pending while the question is open.
+            assertEquals(HttpStatusCode.OK, server.call(token, "/api/v1/sessions", SEGMENT).status)
+            val steps = server.koin.get<StepSessions>()
+            assertFalse(steps.asked(ada.org.id, session))
+            val question = WaitSpec("Which base?", actions = listOf(WaitAction("ok", "OK")))
+            val wait = Wait(
+                Uuid.random(), ada.org.id, "human_request", WaitStatus.OPEN, "s-1", null, ada.memberId.toString(),
+                ada.memberId.toString(), question, null, now, null, null,
+            )
+            server.koin.get<WaitsRepository>().createWithinLimit(wait, 5)
+            assertTrue(steps.asked(ada.org.id, session))
+            assertFalse(steps.asked(eve.org.id, session), "Another organization's")
+            assertEquals(HttpStatusCode.OK to none, pendingOf(token))
+            assertEquals(
+                listOf(true, false, false, false),
+                listOf("ada", "nobody").map { steps.ownedBy(ada.org.id, session, it) } +
+                    listOf(steps.ownedBy(ada.org.id, Uuid.random(), "ada"), steps.ownedBy(eve.org.id, session, "ada")),
+            )
+            // A token issued before deliveries does not deliver.
+            server.database.superuser.execute(
+                "UPDATE identity_api_tokens SET scopes = 'agent:session' WHERE kind = 'AGENT' " +
+                    "AND org_id = CAST('${ada.org.id}' AS uuid)",
+            ).getOrThrow()
+            val old = server.call(token, deliver, """{"output":"$pr"}""")
+            assertEquals(HttpStatusCode.Forbidden, old.status)
+            assertTrue("credential_scope" in old.bodyAsText(), old.bodyAsText())
+            server.database.superuser.execute(
+                "UPDATE identity_api_tokens SET scopes = 'agent:session workflow:session' WHERE kind = 'AGENT' " +
+                    "AND org_id = CAST('${ada.org.id}' AS uuid)",
+            ).getOrThrow()
+
+            val delivered = server.call(token, deliver, """{"sessionId":"${Uuid.random()}","output":"$pr"}""")
+
+            assertEquals(HttpStatusCode.OK, delivered.status, delivered.bodyAsText())
+            val visit = delivered.run().visits.single()
+            assertEquals(listOf<String?>("delivered", pr), listOf(visit.outcome, visit.output))
+            val again = server.call(ada.token, deliver, body)
+            assertEquals(HttpStatusCode.Conflict, again.status)
+            assertTrue("nothing_to_deliver" in again.bodyAsText(), again.bodyAsText())
+            assertEquals(HttpStatusCode.OK to none, pendingOf(ada.token))
+            // The caller's own session that runs no step is nothing to deliver, not unknown.
+            val own = Uuid.random()
+            val step = assertNotNull(cloud.get(ada.org.id, session))
+            val mine = step.copy(id = own, runnerTokenHash = null, runnerId = null)
+            assertTrue(cloud.createWithinCap(mine, RUNS))
+            assertEquals(HttpStatusCode.OK to none, pendingOf(ada.token, "?sessionId=$own"))
+            val nothing = server.call(ada.token, deliver, """{"sessionId":"$own","output":"$pr"}""")
+            assertEquals(HttpStatusCode.Conflict, nothing.status, nothing.bodyAsText())
+            // The run of a session is found through the visits' session index.
+            val plan = server.driver.withOrganization(ada.org.id) { tx ->
+                tx.execute("SET LOCAL enable_seqscan = off").getOrThrow()
+                val explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) ${EngineQueries.OF_SESSION}")
+                    .bind("org_id", ada.org.id).bind("session_id", session)
+                tx.fetchAll(explain).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
+            }
+            println("-- run of a session\n$plan")
+            assertTrue("workflow_runs_visits_session" in plan, plan)
+        }
+
+    @Test
     fun anAgentStepWhoseSessionStopsWithNothingDeliveredFailsEndedWithoutDelivery() = engineTest { server ->
         val ada = server.person("ada")
         server.workflow(ada, DELIVERING, DELIVERING_EDGES, "build")
@@ -662,6 +781,7 @@ class RunEnginePostgresTest {
             """"run":{"instructions":"Open a pull request on {{inputs.branch}}",""" +
             """"deliverable":{"type":"url","domain":"github.com"}}}]"""
         const val DELIVERING_EDGES = """[{"from":"build","to":null,"on":"delivered"}]"""
+        const val SEGMENT = """{"id":"s-1","agent":"claude-code","repo":"acme/api"}"""
         const val GATE_ONLY = """[{"id":"review","kind":"gate","label":"Review","approvers":["bea"]}]"""
     }
 }

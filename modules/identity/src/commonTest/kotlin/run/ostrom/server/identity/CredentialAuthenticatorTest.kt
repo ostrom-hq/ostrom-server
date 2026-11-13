@@ -309,7 +309,7 @@ class CredentialAuthenticatorTest {
 
     @Test
     fun aPersonalTokenNeverAnswersAGateEvenIfItsRowSaysSo() = runTest {
-        val everything = setOf("gates:answer", "workflows:write", AGENT_SCOPE, ALL_USER_SCOPES)
+        val everything = setOf("gates:answer", "workflows:write", AGENT_SCOPE, "workflow:session", ALL_USER_SCOPES)
         token("osp_old", TokenKind.PERSONAL, scopes = everything)
 
         val principal = assertNotNull(authenticator.authenticate("osp_old"))
@@ -323,6 +323,9 @@ class CredentialAuthenticatorTest {
         agentToken("osa_b", setOf("gates:answer", AGENT_SCOPE), session = "run-2")
 
         assertEquals(setOf(AGENT_SCOPE), authenticator.authenticate("osa_b")?.scopes)
+        // A token issued since workflow deliveries also delivers its step; one issued before does not.
+        agentToken("osa_w", setOf(AGENT_SCOPE, "workflow:session", "workflows:write"), session = "run-5")
+        assertEquals(setOf(AGENT_SCOPE, "workflow:session"), authenticator.authenticate("osa_w")?.scopes)
     }
 
     @Test

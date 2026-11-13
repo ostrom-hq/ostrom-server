@@ -516,6 +516,40 @@ class LaunchesPostgresTest {
             }
         }
 
+    @Test
+    fun theLaunchesOfACloudSessionAreReadNewestFirstFromTheirIndexInTheirOrganizationOnly() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val eve = server.person("eve")
+            val launches = server.koin.get<LaunchesRepository>()
+            val roomy = LaunchLimit(window = 1.hours, perPerson = 1000, perOrg = 1000)
+            val cloud = Uuid.random()
+            val first = stored(ada.org.id, ada.user.id, now - 20.minutes).copy(cloudSessionId = cloud)
+            val second = stored(ada.org.id, ada.user.id, now - 10.minutes).copy(cloudSessionId = cloud)
+            listOf(first, second, stored(ada.org.id, ada.user.id, now - 5.minutes)).forEach {
+                assertNull(launches.create(it, roomy))
+            }
+            repeat(LAUNCHES) {
+                val other = stored(ada.org.id, Uuid.random(), now - 1.minutes).copy(cloudSessionId = Uuid.random())
+                assertNull(launches.create(other, roomy))
+            }
+
+            assertEquals(listOf(second.id, first.id), launches.ofCloudSession(ada.org.id, cloud, 10))
+            assertEquals(listOf(second.id), launches.ofCloudSession(ada.org.id, cloud, 1))
+            assertEquals(emptyList(), launches.ofCloudSession(eve.org.id, cloud, 10), "Another organization's")
+
+            server.database.owner.execute("ANALYZE launches_launches").getOrThrow()
+            val plan = server.driver.withOrganization(ada.org.id) { tx ->
+                tx.execute("SET LOCAL enable_seqscan = off").getOrThrow()
+                val sql = PostgresLaunchesRepository.OF_CLOUD_SESSION
+                val explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql")
+                    .bind("org_id", ada.org.id).bind("cloud_session_id", cloud).bind("limit", 10)
+                tx.fetchAll(explain).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
+            }
+            println("-- the launches of a cloud session (a workflow step's pending delivery)\n$plan")
+            assertTrue("launches_launches_cloud_session" in plan, plan)
+        }
+
     // Read in the organization, as the serving role: row level security keeps the other organizations out.
     // A workflow of [org], as the console saves it: a launch may name it.
     private suspend fun TestServer.workflow(org: Org, id: String) {

@@ -67,6 +67,8 @@ class RunNodesTest {
 
         override suspend fun played(orgId: Uuid, id: String): PlayedRun? = rows[id]
 
+        override suspend fun ofSession(orgId: Uuid, sessionId: Uuid): PlayedRun? = null
+
         override suspend fun write(orgId: Uuid, change: RunChange): Boolean {
             val stored = rows[change.next.id]?.takeIf { writes && it.run == change.expected }
             stored?.let {

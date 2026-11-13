@@ -94,3 +94,10 @@ class NothingToDeliverException : OstromException(
  * @param reason Which, as the todos say it.
  */
 class TodoOpenException(reason: String) : OstromException(ErrorKind.CONFLICT, reason, "todo_open")
+
+/** A credential that cannot deliver for a session: a service key, or an agent token issued before deliveries. */
+class CredentialScopeException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "This credential cannot deliver a workflow step.",
+    "credential_scope",
+)
