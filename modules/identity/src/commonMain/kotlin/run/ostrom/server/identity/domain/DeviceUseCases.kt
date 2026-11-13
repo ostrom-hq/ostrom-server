@@ -267,6 +267,7 @@ interface PollDeviceAuthorizationUseCase {
  * [PollDeviceAuthorizationUseCase] on the repository.
  *
  * @param authorizations The authorizations.
+ * @param tokens Signs the oldest workstations out beyond [MAX_DEVICES_PER_USER].
  * @param secrets Makes the CLI token.
  * @param hasher Hashes codes and secrets.
  * @param audit The audit log.
@@ -274,6 +275,7 @@ interface PollDeviceAuthorizationUseCase {
  */
 class PollDeviceAuthorizationUseCaseImpl(
     private val authorizations: DeviceAuthorizationsRepository,
+    private val tokens: ApiTokensRepository,
     private val secrets: SecretGenerator,
     private val hasher: SecretHasher,
     private val audit: AuditLog,
@@ -314,6 +316,7 @@ class PollDeviceAuthorizationUseCaseImpl(
         val tokenId = issued.token.id.toString()
         val details = mapOf("kind" to kind.name.lowercase())
         audit.record(AuditEntry(orgId, userId, "token.created", "token", tokenId, details))
+        if (!admin) evictOldestDevices(tokens, audit, userId, now)
         return DevicePollResult.Approved(issued)
     }
 

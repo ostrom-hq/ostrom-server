@@ -244,7 +244,10 @@ class GetProfileUseCaseImpl(private val users: UsersRepository) : GetProfileUseC
     }
 }
 
-/** Starts a browser session for a signed-in user (after GitHub, Google, a link or SSO proved who they are). */
+/**
+ * Starts a browser session for a signed-in user (after GitHub, Google, a link or SSO proved who they are): it lives
+ * [SESSION_LIFETIME], and beyond [MAX_WEB_SESSIONS_PER_USER] live sessions the least recently used ones end.
+ */
 interface StartWebSessionUseCase {
     /**
      * Starts the session.
@@ -275,6 +278,10 @@ class StartWebSessionUseCaseImpl(
         val secret = SESSION_PREFIX + "_" + secrets.secret()
         val session = WebSession(Uuid.random(), userId, now, now + SESSION_LIFETIME, now, null)
         sessions.create(session, hasher.hash(secret))
+        // listLive is the last used first, this new session included: beyond the cap, the least used ones end.
+        sessions.listLive(userId, now, MAX_WEB_SESSIONS_LISTED).drop(MAX_WEB_SESSIONS_PER_USER).forEach {
+            sessions.revoke(it.id, now)
+        }
         return StartedSession(session, secret, hasher.csrfToken(secret))
     }
 }

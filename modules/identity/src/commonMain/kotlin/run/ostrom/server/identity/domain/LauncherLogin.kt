@@ -50,9 +50,8 @@ interface IssueCliTokenUseCase {
      * @param userId The user.
      * @param via What the CLI says it is (machine name), the token's label; blank or null gives a default label.
      *
-     * @return The token and its secret, given once.
-     *
-     * @throws TooManyTokensException When the user already has too many live tokens.
+     * @return The token and its secret, given once. Beyond [MAX_DEVICES_PER_USER] workstations, the oldest is signed
+     *   out.
      */
     suspend operator fun invoke(userId: Uuid, via: String?): IssuedToken
 }
@@ -75,7 +74,6 @@ class IssueCliTokenUseCaseImpl(
 ) : IssueCliTokenUseCase {
     override suspend fun invoke(userId: Uuid, via: String?): IssuedToken {
         val now = clock.nowMillis()
-        if (tokens.countLive(userId, USER_TOKEN_KINDS, now) >= MAX_TOKENS_PER_USER) throw TooManyTokensException()
         val name = trimmedOrNull(via, MAX_NAME) ?: DEFAULT_NAME
         val expiresAt = now + CLI_TOKEN_LIFETIME
         val issued = issue(secrets, TokenKind.CLI) { id, hint ->
@@ -84,6 +82,7 @@ class IssueCliTokenUseCaseImpl(
         tokens.create(issued.token, hasher.hash(issued.secret))
         val details = mapOf("kind" to "cli", "via" to "launcher")
         audit.record(AuditEntry(null, userId, "token.created", "token", issued.token.id.toString(), details))
+        evictOldestDevices(tokens, audit, userId, now)
         return issued
     }
 
@@ -111,7 +110,6 @@ interface LauncherLoginUseCase {
      * @throws GitHubTokenRejectedException When the token is empty, oversized, or GitHub did not issue it to Ostrom.
      * @throws RateLimitedException When the address tries too often.
      * @throws LauncherAccountNotFoundException When no Ostrom user signs in with that GitHub account.
-     * @throws TooManyTokensException When the user already has too many live tokens.
      * @throws ProviderNotConfiguredException When this instance has no GitHub app.
      * @throws ProviderRejectedException When GitHub cannot be reached.
      */

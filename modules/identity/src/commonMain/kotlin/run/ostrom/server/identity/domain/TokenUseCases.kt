@@ -8,10 +8,28 @@ import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * The token kinds a user creates and rotates, capped at [MAX_TOKENS_PER_USER]. The app's tokens are not among them:
- * they have their own cap ([MAX_PHONES_PER_USER]), and a phone signs in again instead of rotating (its unlock key).
+ * The token kinds a user lists and rotates: personal tokens (capped at [MAX_TOKENS_PER_USER]) and CLI tokens (capped at
+ * [MAX_DEVICES_PER_USER], [evictOldestDevices]). The app's tokens are not among them: they have their own cap
+ * ([MAX_PHONES_PER_USER]), and a phone signs in again instead of rotating (its unlock key).
  */
 val USER_TOKEN_KINDS: Set<TokenKind> = setOf(TokenKind.PERSONAL, TokenKind.CLI)
+
+/**
+ * Signs out the person's oldest workstations beyond [MAX_DEVICES_PER_USER], once a new CLI token is stored: a new
+ * `ostrom login` is never refused, the oldest login makes room for it (TeamCode's device cap). Each is recorded.
+ *
+ * @param tokens The tokens.
+ * @param audit The audit log (`token.revoked`, `reason` `device_limit`).
+ * @param userId The person.
+ * @param now The current time.
+ */
+internal suspend fun evictOldestDevices(tokens: ApiTokensRepository, audit: AuditLog, userId: Uuid, now: Instant) {
+    // listLive is newest first, the token just stored included: what is left beyond the cap is the oldest.
+    tokens.listLive(userId, setOf(TokenKind.CLI), now).drop(MAX_DEVICES_PER_USER).forEach {
+        tokens.revoke(userId, it.id, now)
+        audit.record(AuditEntry(null, userId, "token.revoked", "token", it.id.toString(), DEVICE_LIMIT_DETAILS))
+    }
+}
 
 /** The token kinds the console lists and revokes: a lost phone's token is revoked there. */
 val LISTED_TOKEN_KINDS: Set<TokenKind> = USER_TOKEN_KINDS + TokenKind.MOBILE
@@ -87,7 +105,7 @@ class CreatePersonalTokenUseCaseImpl(
             throw InvalidTokenLifetimeException()
         }
         val now = clock.nowMillis()
-        if (tokens.countLive(userId, USER_TOKEN_KINDS, now) >= MAX_TOKENS_PER_USER) throw TooManyTokensException()
+        if (tokens.countLive(userId, PERSONAL_KIND, now) >= MAX_TOKENS_PER_USER) throw TooManyTokensException()
         val issued = issue(secrets, TokenKind.PERSONAL) { id, hint ->
             val expiresAt = lifetime?.let { now + it }
             ApiToken(id, userId, null, label, TokenKind.PERSONAL, validScopes, hint, null, now, expiresAt, null, null)
@@ -98,6 +116,12 @@ class CreatePersonalTokenUseCaseImpl(
         return issued
     }
 }
+
+/** What the audit says of a workstation signed out to make room for a new one. */
+private val DEVICE_LIMIT_DETAILS = mapOf("kind" to "cli", "reason" to "device_limit")
+
+/** The kind counted against [MAX_TOKENS_PER_USER]. */
+private val PERSONAL_KIND: Set<TokenKind> = setOf(TokenKind.PERSONAL)
 
 /** Lists the signed-in user's live personal and CLI tokens. */
 interface ListTokensUseCase {

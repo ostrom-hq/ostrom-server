@@ -26,7 +26,9 @@ import run.ostrom.server.identity.fakes.InMemoryUsersRepository
 import run.ostrom.server.identity.fakes.InMemoryWebSessionsRepository
 import run.ostrom.server.identity.fakes.RecordingAuditLog
 import run.ostrom.server.identity.fakes.SettableClock
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -239,7 +241,7 @@ class AccountUseCasesTest {
     }
 
     @Test
-    fun aWebSessionLastsThirtyDaysWithAPrefixedSecretAndItsCsrfToken() = runTest {
+    fun aWebSessionLastsEightHoursWithAPrefixedSecretAndItsCsrfToken() = runTest {
         val sessions = InMemoryWebSessionsRepository()
         val started =
             StartWebSessionUseCaseImpl(sessions, CountingSecretGenerator(), FakeHasher(), clock)(Uuid.random())
@@ -247,7 +249,32 @@ class AccountUseCasesTest {
         assertEquals("oss_secret1", started.secret)
         assertEquals("csrf(oss_secret1)", started.csrfToken)
         assertEquals(started.session, sessions.findBySecretHash("h(oss_secret1)"))
-        assertEquals(clock.now + SESSION_LIFETIME, started.session.expiresAt)
+        assertEquals(clock.now + 8.hours, started.session.expiresAt)
+    }
+
+    @Test
+    fun theFiftyFirstBrowserSessionEndsTheLeastRecentlyUsedOne() = runTest {
+        val sessions = InMemoryWebSessionsRepository()
+        val start = StartWebSessionUseCaseImpl(sessions, CountingSecretGenerator(), FakeHasher(), clock)
+        val ada = Uuid.random()
+        val started = (1..50).map {
+            clock.now += 1.seconds
+            start(ada).session
+        }
+        val bob = Uuid.random()
+        val bobs = start(bob).session
+        clock.now += 1.seconds
+        sessions.touch(started.first().id, clock.now)
+        clock.now += 1.seconds
+
+        val latest = start(ada).session
+
+        val live = sessions.listLive(ada, clock.now, 100)
+        assertEquals(50, live.size, "Fifty browser sessions at most")
+        assertEquals(latest, live.first())
+        assertNull(live.firstOrNull { it.id == started[1].id }, "The least recently used session ends")
+        assertTrue(live.any { it.id == started.first().id }, "The oldest one, used since, stays")
+        assertEquals(listOf(bobs), sessions.listLive(bob, clock.now, 100), "Another person's sessions stay")
     }
 
     @Test
