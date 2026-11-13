@@ -167,13 +167,38 @@ object TodoRules {
      * @throws TodoException `todo_exists` when [existing] is set.
      */
     fun requireNoList(existing: TodoList?) {
-        if (existing != null) {
-            throw todoConflict("todo_exists", "This session already has a todo: use todo_add to add an item.")
+        refuse(existing != null) {
+            todoConflict(
+                "todo_exists",
+                "This session already has a todo: use todo_add to add an item, or todo_reset once it is closed to " +
+                    "start a new one.",
+            )
+        }
+    }
+
+    /**
+     * Refuses to reset an active list (TeamCode #266): the agent never deletes an item of a list that still holds
+     * its Stop hook, so a reset is no way to skip an unfinished item. A closed list (`done` or `abandoned`) is reset.
+     *
+     * @throws TodoException `todo_active` while [list] is active.
+     */
+    fun requireClosed(list: TodoList) {
+        refuse(list.status == TodoListStatus.ACTIVE) {
+            todoConflict(
+                "todo_active",
+                "This todo is still active: finish its items (todo_show lists them), or ask the owner to drop one " +
+                    "with todo_drop. Only a closed todo is reset.",
+            )
         }
     }
 
     private fun requireActive(list: TodoList) {
-        if (list.status != TodoListStatus.ACTIVE) throw todoConflict("todo_closed", "This todo is ${list.status.wire}.")
+        refuse(list.status != TodoListStatus.ACTIVE) {
+            todoConflict(
+                "todo_closed",
+                "This todo is ${list.status.wire}: call todo_reset to clear it, then todo_create a new one.",
+            )
+        }
     }
 
     private fun requireItem(list: TodoList, id: String): TodoItem = list.item(id) ?: throw unknownItem(id)

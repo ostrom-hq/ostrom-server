@@ -57,6 +57,18 @@ internal class TodosRepositoryImpl(private val driver: Driver, private val clock
             value
         }
 
+    override suspend fun reset(orgId: Uuid, sessionId: String, check: (TodoList) -> Unit): TodoList =
+        driver.inTenant(orgId) {
+            val list = read(orgId, sessionId, lock = true) ?: throw todoNotFound()
+            check(list)
+            // The items go with their list (ON DELETE CASCADE); nothing else refers to them.
+            execute(
+                Statement.create("DELETE FROM session_todos WHERE org_id = :org_id AND session_id = :session_id")
+                    .bind("org_id", orgId).bind("session_id", sessionId),
+            ).getOrThrow()
+            list
+        }
+
     override suspend fun stopHookEnabled(orgId: Uuid, memberId: String): Boolean = driver.fetchInOrg(
         orgId,
         Statement.create(

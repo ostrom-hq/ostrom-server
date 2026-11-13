@@ -373,6 +373,8 @@ class TodoRulesTest {
         assertEquals("todo_closed", code { TodoRules.link(finished, "a", TodoLink("wait", "w"), false, at(1)) })
         assertEquals("todo_closed", code { TodoRules.requestDrop(finished, "a", "why", null) })
         assertEquals(finished, TodoRules.addOrphan(finished, "$X_PULL/7", at(1)))
+        TodoRules.requireClosed(finished)
+        assertEquals("todo_active", code { TodoRules.requireClosed(list(item("a"))) }, "no way to skip an item")
     }
 
     @Test

@@ -179,12 +179,18 @@ private const val SCHEMAS = "#/components/schemas/"
 private fun reference(ref: String) = JsonObject(mapOf(REF to JsonPrimitive(ref)))
 
 private fun enumViolations(schema: JsonObject, value: JsonElement, at: String): List<Violation> {
-    val enum = schema["enum"]?.jsonArray
+    val enum = allowedValues(schema)
     return if (enum == null || value in enum) {
         emptyList()
     } else {
         listOf(Violation(at, DriftKind.TYPE, "$value is not one of $enum"))
     }
+}
+
+// A `const` (OpenAPI 3.1) is an enum of one value: it tells the branches of a oneOf apart by their `type` field.
+private fun allowedValues(schema: JsonObject): List<JsonElement>? {
+    val const = schema["const"]
+    return if (const != null) listOf(const) else schema["enum"]?.jsonArray
 }
 
 private fun matches(type: String, value: JsonElement): Boolean {

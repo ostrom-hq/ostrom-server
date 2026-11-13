@@ -9,6 +9,8 @@ import run.ostrom.core.api.models.TodoStopHook
 import run.ostrom.core.api.models.TodoStopHooks
 import run.ostrom.server.automations.domain.WaitAgent
 import run.ostrom.server.automations.domain.WaitAgentResolver
+import run.ostrom.server.kernel.audit.OrgAuditRecord
+import run.ostrom.server.kernel.audit.OrgAuditTrail
 import run.ostrom.server.kernel.auth.ALL_USER_SCOPES
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.MemberDirectory
@@ -21,9 +23,11 @@ import run.ostrom.server.kernel.auth.TokenAuthenticator
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.todos.domain.TodoArtifacts
 import run.ostrom.server.todos.domain.TodoCredentialRefusedException
+import run.ostrom.server.todos.domain.TodoListStatus
 import run.ostrom.server.todos.domain.TodoSessionNotFoundException
 import run.ostrom.server.todos.domain.TodoSessions
 import run.ostrom.server.todos.domain.TodoWaits
+import run.ostrom.server.todos.domain.TodosRepository
 import run.ostrom.server.todos.fakes.ADA
 import run.ostrom.server.todos.fakes.BEN
 import run.ostrom.server.todos.fakes.FakeArtifacts
@@ -144,6 +148,31 @@ class TodosRoutesPostgresTest {
     }
 
     @Test
+    fun aClosedTodoIsResetByItsAgentAndWrittenToTheAuditLog() = serverTest(listOf(TodosModule), audited) { server ->
+        val client = server.client
+        val reset = """{"sessionId": "s1"}"""
+        assertEquals(HttpStatusCode.NotFound, client.send("agent", "POST", "$SESSION/reset", reset).status)
+        client.send("agent", "POST", SESSION, """{"sessionId": "s1", "reference": "The plan", "items": [$A]}""")
+        assertEquals(HttpStatusCode.Conflict, client.send("agent", "POST", "$SESSION/reset", reset).status, "active")
+        val todos = server.koin.get<TodosRepository>()
+        todos.mutate(ORG_A, "s1") { it.copy(status = TodoListStatus.DONE).let { done -> done to done } }
+        assertEquals(HttpStatusCode.Forbidden, client.send("root", "POST", "$SESSION/reset", reset).status)
+        val cleared = client.send("agent", "POST", "$SESSION/reset", reset)
+        assertEquals(HttpStatusCode.OK to null, cleared.status to cleared.body<SessionTodo>().todo)
+        val record = records.single()
+        assertEquals(listOf("todo.reset", "session", "s1"), listOf(record.event, record.subjectType, record.subjectId))
+        assertEquals(mapOf("status" to "done", "items" to "1"), record.details - "list")
+        assertEquals(null, client.send("ada", "GET", "$SESSION?sessionId=s1").body<SessionTodo>().todo, "cleared")
+    }
+
+    private val records = mutableListOf<OrgAuditRecord>()
+
+    private val audited = module {
+        includes(overrides)
+        single<OrgAuditTrail> { OrgAuditTrail { records += it } }
+    }
+
+    @Test
     fun onlyAnAdministratorWhoSignedInTurnsAMembersStopHookOff() = todoTest {
         assertEquals(TodoStopHooks(emptyList()), send("root", "GET", HOOK).body<TodoStopHooks>())
         val off = send("root", "PUT", "$HOOK/members/$BEN", """{"enabled": false}""")
@@ -164,7 +193,7 @@ class TodosRoutesPostgresTest {
             "GET" to SESSION, "POST" to SESSION, "POST" to "$SESSION/items", "POST" to "$SESSION/items/a/start",
             "POST" to "$SESSION/items/a/notes", "POST" to "$SESSION/items/a/proof", "POST" to "$SESSION/items/a/link",
             "POST" to "$SESSION/items/a/drop", "GET" to "$SESSION/context", "POST" to "$SESSION/stop",
-            "POST" to "$SESSION/hook-error", "GET" to HOOK, "PUT" to "$HOOK/members/$BEN",
+            "POST" to "$SESSION/hook-error", "POST" to "$SESSION/reset", "GET" to HOOK, "PUT" to "$HOOK/members/$BEN",
         )
         for ((method, path) in routes) {
             assertEquals(HttpStatusCode.Unauthorized, send(null, method, path).status, "$method $path")

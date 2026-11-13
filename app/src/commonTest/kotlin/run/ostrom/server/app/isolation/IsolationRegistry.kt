@@ -411,6 +411,7 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/todos/session/context" to Case.Target(query = "sessionId={{SESSION}}"),
     "POST /api/v1/todos/session/stop" to Case.Target(body = """{"sessionId": "{{SESSION}}", "phase": "begin"}"""),
     "POST /api/v1/todos/session/hook-error" to Case.Target(body = """{"sessionId": "{{SESSION}}", "text": "Taken"}"""),
+    "POST /api/v1/todos/session/reset" to Case.Target(body = """{"sessionId": "{{SESSION}}"}"""),
     "GET /api/v1/todos/stop-hook" to Case.Target(),
     "PUT /api/v1/todos/stop-hook/members/{memberId}" to
         target("memberId" to MEMBER_ID, body = """{"enabled": false}""", admin = true),

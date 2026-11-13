@@ -106,6 +106,19 @@ class TodosPostgresTest {
     }
 
     @Test
+    fun aClosedListIsDeletedWithItsItemsAndAnActiveOneIsKept() = serverTest(listOf(TodosModule), adapters) { server ->
+        val repository = server.koin.get<TodosRepository>()
+        val written = list()
+        repository.create(written)
+        assertFailsWith<TodoException> { repository.reset(ORG_A, "s1", TodoRules::requireClosed) }
+        assertEquals(written, repository.find(ORG_A, "s1"), "a refusal deletes nothing")
+        assertEquals("todo_not_found", assertFailsWith<TodoException> { repository.reset(ORG_B, "s1") {} }.type)
+        assertEquals(written, repository.reset(ORG_A, "s1") {})
+        assertNull(repository.find(ORG_A, "s1"))
+        assertTrue(repository.create(list()), "the session starts a new list, its items too")
+    }
+
+    @Test
     fun anotherOrganizationNeitherReadsNorChangesAList() = serverTest(listOf(TodosModule), adapters) { server ->
         val repository = server.koin.get<TodosRepository>()
         val written = list()

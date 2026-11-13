@@ -8,6 +8,7 @@ import run.ostrom.server.todos.domain.TodoException
 import run.ostrom.server.todos.domain.TodoHookEvent
 import run.ostrom.server.todos.domain.TodoItemStatus
 import run.ostrom.server.todos.domain.TodoLink
+import run.ostrom.server.todos.domain.TodoListStatus
 import run.ostrom.server.todos.domain.TodoOwner
 import run.ostrom.server.todos.domain.TodoRef
 import run.ostrom.server.todos.domain.TodoSessionNotFoundException
@@ -54,6 +55,23 @@ class ChangeTodoUseCaseTest {
         assertEquals(refs, world.todos.list?.refs)
         assertEquals("todo_exists", code { change.create(adaAgent, null, "Again", emptyList(), listOf(item("b"))) })
         assertEquals(listOf("a"), world.todos.list?.items?.map { it.id }, "the first list is kept")
+    }
+
+    @Test
+    fun aClosedTodoIsResetAndANewOneStartsFromNothing() = runTest {
+        assertEquals("todo_not_found", code { change.reset(ada, "s1") }, "nothing to reset")
+        created("a")
+        assertEquals("todo_active", code { change.reset(adaAgent, "s1") })
+        assertEquals(TodoItemStatus.TODO, world.todos.list!!.item("a")!!.status, "the refusal changed nothing")
+        assertFailsWith<TodoWriteForbiddenException> { change.reset(root, "s1") }
+        assertFailsWith<TodoSessionNotFoundException> { change.reset(ben, "s1") }
+        world.todos.list = world.todos.list!!.copy(status = TodoListStatus.DONE)
+        assertEquals("todo_closed", code { change.add(ada, "s1", item("b"), "More work") }, "the dead end it opens")
+        val cleared = change.reset(adaAgent, "s1~r2")
+        assertEquals(listOf("a"), cleared.items.map { it.id })
+        assertNull(world.todos.list, "as if the session never had a todo")
+        val second = change.create(ada, "s1", "Second task", emptyList(), listOf(item("b")))
+        assertEquals(listOf("b"), second.items.map { it.id })
     }
 
     @Test
