@@ -35,7 +35,7 @@ class ReplicatedUsageFeedTest {
     private val logger = RecordingLogger()
 
     private fun replica(notifications: DatabaseNotifications, reads: UsageFeedReads = this.reads) =
-        ReplicatedUsageFeed(UsageFeedImpl(), notifications, reads, logger)
+        ReplicatedUsageFeed(UsageFeedImpl(), notifications, reads, logger, Uuid.random(), retryAfter = 2.seconds)
 
     private fun CoroutineScope.follow(feed: ReplicatedUsageFeed, org: Uuid): MutableList<UsageEvent> {
         val received = mutableListOf<UsageEvent>()
@@ -125,14 +125,14 @@ class ReplicatedUsageFeedTest {
             "garbage",
             "v1 $other",
             "v2 $other ${TestCallers.orgA}:$unknown",
-            "v1 $other not-an-org:$unknown ${TestCallers.orgA}:not-an-id ${TestCallers.orgA}",
+            "v1 $other not-an-org:$unknown ${TestCallers.orgA}:not-an-id ${TestCallers.orgA} ${TestCallers.orgA}:",
             "v1 $other ${Uuid.random()}:$unknown",
             "v1 $other ${TestCallers.orgA}:$unknown",
         ).forEach { launch { database.notify(ReplicatedUsageFeed.CHANNEL, it) } }
         runCurrent()
 
         assertEquals(emptyList(), onB)
-        assertEquals(listOf(TestCallers.orgA to listOf(unknown)), read, "Only the well-formed one of a watched org is read")
+        assertEquals(listOf(TestCallers.orgA to listOf(unknown)), read, "Only a well-formed one, of a watched org")
     }
 
     @Test
@@ -154,7 +154,7 @@ class ReplicatedUsageFeedTest {
         runCurrent()
         val event = modelEvent(7)
         recorded(a, event)
-        advanceTimeBy(5.seconds + 1.seconds)
+        advanceTimeBy(2.seconds + 1.seconds)
         launch { database.notify(ReplicatedUsageFeed.CHANNEL, "v1 ${Uuid.random()} ${TestCallers.orgA}:${event.id}") }
         runCurrent()
 
