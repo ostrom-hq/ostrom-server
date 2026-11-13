@@ -136,7 +136,7 @@ class WaitUseCasesTest {
         val again = ask.ask(bob, AskWait(WaitSpec("Other"), "s"), "key-1")
         assertTrue(again.replayed)
         assertEquals(first.wait, again.wait)
-        assertFalse(ask.ask(alice, AskWait(review, "s"), "key-1").replayed)
+        assertFalse(ask.ask(alice, AskWait(review, "alice-1"), "key-1").replayed)
 
         val raced = first.wait.copy(id = Uuid.random(), idempotencyKey = "key-2")
         repository.duplicateNext = raced

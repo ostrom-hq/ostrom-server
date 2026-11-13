@@ -15,6 +15,9 @@ import run.ostrom.server.launches.presentation.LaunchResponse
 import run.ostrom.server.orgs.domain.Member
 import run.ostrom.server.orgs.domain.Org
 import run.ostrom.server.orgs.domain.OrgsRepository
+import run.ostrom.server.sessions.domain.models.EndSession
+import run.ostrom.server.sessions.domain.models.Session
+import run.ostrom.server.sessions.domain.usecases.CloseSessionUseCase
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import io.ktor.client.call.body
@@ -52,7 +55,7 @@ class LaunchWaitAgentsPostgresTest {
     private val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
 
     /** A person who owns a new organization, their member id, and a CLI token of theirs bound to it. */
-    private class Person(val memberId: Uuid, val cliToken: String)
+    private class Person(val orgId: Uuid, val memberId: Uuid, val cliToken: String)
 
     private suspend fun TestServer.person(login: String): Person {
         val user = koin.get<ResolveUserUseCase>()(
@@ -67,7 +70,7 @@ class LaunchWaitAgentsPostgresTest {
             null,
         )
         koin.get<ApiTokensRepository>().create(token, koin.get<SecretHasher>().hash(secret))
-        return Person(member.id, secret)
+        return Person(org.id, member.id, secret)
     }
 
     private suspend fun TestServer.post(token: String, path: String, body: String): HttpResponse =
@@ -127,8 +130,9 @@ class LaunchWaitAgentsPostgresTest {
             val agent = running(ada).agentToken
             val before = tool(agent, "s-1", "ask_human", """{"title":"Before the sleep"}""").text()
                 .substringAfter("wait ").substringBefore(" ")
-            // The launcher's lifeline, not the relay: the segment ends while the machine sleeps, then it reopens it.
-            assertEquals(HttpStatusCode.OK, post(agent, "/api/v1/sessions/s-1/end", "{}").status)
+            // The machine sleeps: the sweep closes the silent segment (which ends no wait), then the launcher's
+            // lifeline, not the relay, reopens it.
+            koin.get<CloseSessionUseCase>()(ada.orgId, "s-1", EndSession(source = "${Session.LOST}: asleep"))
             val reopened = post(agent, "/api/v1/sessions/s-1/reopen", "{}")
             assertEquals(HttpStatusCode.OK, reopened.status, reopened.bodyAsText())
 

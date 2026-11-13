@@ -119,11 +119,11 @@ class AskWaitUseCaseImpl(
     }
 
     /** The member [reference] names: an id first, then a username. */
-    private suspend fun assigneeOf(caller: WaitCaller, reference: String?): String {
-        if (reference == null || reference == caller.memberId) return caller.memberId
-        if (reference.length > MAX_REFERENCE) throw InvalidAssigneeException()
-        if (members.isActiveMember(caller.orgId, reference)) return reference
-        return sessions.memberNamed(caller.orgId, reference) ?: throw InvalidAssigneeException()
+    private suspend fun assigneeOf(caller: WaitCaller, reference: String?): String = when {
+        reference == null || reference == caller.memberId -> caller.memberId
+        reference.length > MAX_REFERENCE -> throw InvalidAssigneeException()
+        members.isActiveMember(caller.orgId, reference) -> reference
+        else -> sessions.memberNamed(caller.orgId, reference) ?: throw InvalidAssigneeException()
     }
 
     private companion object {
