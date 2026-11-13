@@ -60,8 +60,11 @@ object Deliverables {
         return encoded
     }
 
-    private fun text(output: JsonElement, what: String): String =
-        (output as? JsonPrimitive)?.takeIf { it.isString }?.content ?: throw invalid("Deliver $what as a string.")
+    private fun text(output: JsonElement, what: String): String {
+        val primitive = output as? JsonPrimitive
+        if (primitive == null || !primitive.isString) throw invalid("Deliver $what as a string.")
+        return primitive.content
+    }
 
     private fun url(value: String, domain: String?): String =
         value.also { urlRefusal(it, domain)?.let { refusal -> throw invalid(refusal) } }
@@ -111,9 +114,10 @@ object Deliverables {
         if (primitive == null || !fits(primitive)) throw invalid("$path must be $what.")
     }
 
-    private fun names(element: JsonElement?): List<String> =
-        (element as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.orEmpty()
 }
+
+private fun names(element: JsonElement?): List<String> =
+    (element as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.orEmpty()
 
 private fun invalid(message: String) = InvalidDeliverableException(message)
 
@@ -123,7 +127,7 @@ private fun urlRefusal(value: String, domain: String?): String? {
     val authority = value.drop(HTTPS.length).substringBefore('/').substringBefore('?').substringBefore('#')
     val bracketed = authority.startsWith("[")
     val host = (if (bracketed) authority.substringBefore(']') + "]" else authority.substringBefore(':')).lowercase()
-    val within = domain?.lowercase()?.trimEnd('.')
+    val within = domain?.let { it.lowercase().trimEnd('.') }
     return when {
         value.length > Deliverables.MAX_URL || !URL_CHARACTERS.matches(value) ->
             "Deliver an https address of at most ${Deliverables.MAX_URL} characters, without spaces."

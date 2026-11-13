@@ -5,6 +5,7 @@ import run.ostrom.core.api.models.Deliverable
 import run.ostrom.core.api.models.NodeRun
 import run.ostrom.core.api.models.NodeVisit
 import run.ostrom.core.api.models.RunStatus
+import run.ostrom.core.api.models.WaitSpec
 import run.ostrom.core.api.models.WorkflowEdge
 import run.ostrom.core.api.models.WorkflowNode
 import run.ostrom.core.api.models.WorkflowNodeKind
@@ -109,7 +110,8 @@ class DeliveryTest {
 
     private val runs = Runs()
     private val agents = Agents()
-    private val play = PlayRunUseCaseImpl(runs, NodePlayers(agents, NoGates, FakeWaits(), FakeChildren()), clock)
+    private val waits = FakeWaits()
+    private val play = PlayRunUseCaseImpl(runs, NodePlayers(agents, NoGates, waits, FakeChildren()), clock)
 
     private fun run(
         status: RunStatus = RunStatus.RUNNING,
@@ -294,7 +296,8 @@ class DeliveryTest {
     fun aDeliveryIsRefusedForAnotherCallerARunThatWaitsForNoneAnOpenTodoOrAWrongOutput() = runTest {
         val todos = Todos()
         val deliver = DeliverRunUseCaseImpl(runs, agents, todos, clock)
-        val graph = RunGraph("a", listOf(DELIVERING, AGENT.copy(id = "plain"), TRIGGER))
+        val bare = AGENT.copy(id = "bare", run = NodeRun(instructions = "Nothing to hand in"))
+        val graph = RunGraph("a", listOf(DELIVERING, AGENT.copy(id = "plain"), bare, TRIGGER))
         val good = JsonPrimitive("https://github.com/acme/api/pull/1")
         suspend fun refusal(run: WorkflowRun, actor: GateActor = ADA, g: RunGraph = graph): Throwable {
             stored(g, run)
@@ -310,6 +313,7 @@ class DeliveryTest {
             run(visits = listOf(RUNNING_AGENT.copy(status = RunMoves.DONE))),
             run(visits = listOf(visit(1, "t", WorkflowNodeKind.TRIGGER, RunMoves.RUNNING))),
             run(visits = listOf(RUNNING_AGENT.copy(nodeId = "plain"))),
+            run(visits = listOf(RUNNING_AGENT.copy(nodeId = "bare"))),
             run(visits = listOf(RUNNING_AGENT.copy(nodeId = "gone"))),
         )
         for (run in nothing) assertTrue(refusal(run) is NothingToDeliverException, run.toString())
@@ -331,6 +335,19 @@ class DeliveryTest {
         stored(graph, running)
         val untracked = DeliverRunUseCaseImpl(runs, agents, null, clock)(ADA, RUN, good, null)
         assertEquals("delivered", untracked.visits.single().outcome)
+    }
+
+    @Test
+    fun aWaitNodesBodyIsRenderedAsTheRunsTextsAre() = runTest {
+        val question = WaitSpec("Ship it?", body = "Ship {{inputs.branch}} after {{nodes.a.output}}?")
+        val ask = WorkflowNode("w", WorkflowNodeKind.WAIT, "Ask", wait = question)
+        val done = visit(1, "a", WorkflowNodeKind.AGENT, RunMoves.DONE, "the fix")
+        val asking = visit(2, "w", WorkflowNodeKind.WAIT, RunMoves.RUNNING)
+        stored(RunGraph("w", listOf(ask)), run(visits = listOf(done, asking)))
+
+        played()
+
+        assertEquals("Ship main after the fix?", waits.asked.single().question.body)
     }
 
     private companion object {

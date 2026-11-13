@@ -79,7 +79,7 @@ class DeliverablesTest {
         assertEquals("Deliver at most 64000 characters of JSON.", refused(free, big))
         val schema = json(
             """{"type":"object","required":["status",{}],"properties":{
-            "status":{"type":"string","enum":["ok","ko",1]},
+            "status":{"type":"string","enum":["ok","ko",1,null,{}]},"meta":{"type":"object","required":"x"},
             "count":{"type":"integer"},"score":{"type":"number"},"done":{"type":"boolean"},
             "tags":{"type":"array","items":{"type":"string"}},"any":{"type":"array"},
             "free":{"type":"string"},"loose":{"enum":"x"},"odd":{"type":"null"},"raw":7}}""",
@@ -88,6 +88,9 @@ class DeliverablesTest {
         val right = """{"status":"ok","count":2,"score":1.5,"done":false,"tags":["a"],"any":[1],"free":"x","odd":1}"""
         assertEquals(right, Deliverables.validate(typed, json(right)))
         assertEquals("""{"status":"ko"}""", Deliverables.validate(typed, json("""{"status":"ko"}""")))
+        // An object without properties, or whose required names are not a list, checks only that it is an object.
+        val meta = """{"status":"ok","meta":{}}"""
+        assertEquals(meta, Deliverables.validate(typed, json(meta)))
         val refusals = listOf(
             "[]" to "output must be an object.",
             """{}""" to "output.status is required.",
@@ -97,6 +100,9 @@ class DeliverablesTest {
             """{"status":"ok","count":"1"}""" to "output.count must be an integer.",
             """{"status":"ok","score":"x"}""" to "output.score must be a number.",
             """{"status":"ok","score":{}}""" to "output.score must be a number.",
+            """{"status":"ok","score":true}""" to "output.score must be a number.",
+            """{"status":["ok"]}""" to "output.status must be a string.",
+            """{"status":"ok","meta":[]}""" to "output.meta must be an object.",
             """{"status":"ok","done":"true"}""" to "output.done must be true or false.",
             """{"status":"ok","done":1}""" to "output.done must be true or false.",
             """{"status":"ok","tags":"a"}""" to "output.tags must be a list.",
