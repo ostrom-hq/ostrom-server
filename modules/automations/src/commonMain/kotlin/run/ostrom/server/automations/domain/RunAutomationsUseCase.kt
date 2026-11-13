@@ -397,11 +397,3 @@ private fun runVariables(automation: Automation, runId: Uuid, source: RunSource,
         "automation.name" to automation.definition.name,
     )
 }
-
-/** Compares two strings in a time that does not depend on where they differ. */
-private fun constantTimeEquals(a: String, b: String): Boolean {
-    if (a.length != b.length) return false
-    var difference = 0
-    for (index in a.indices) difference = difference or (a[index].code xor b[index].code)
-    return difference == 0
-}

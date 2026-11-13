@@ -73,7 +73,7 @@ class WaitsMcpTest {
         val tools = client.json("""{"jsonrpc":"2.0","id":4,"method":"tools/list"}""")
             .getValue("result").jsonObject.getValue("tools").jsonArray
         val names = tools.map { it.jsonObject.getValue("name").jsonPrimitive.content }
-        assertEquals(listOf("ask_human", "list_waits", "get_wait", "cancel_wait"), names)
+        assertEquals(listOf("ask_human", "wait_for", "list_waits", "get_wait", "cancel_wait"), names)
 
         assertEquals(-32700, client.json("{nope").errorCode())
         assertEquals(-32600, client.json("[1]").errorCode())

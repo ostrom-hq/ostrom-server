@@ -61,12 +61,65 @@ private val ROUTES_UNDER_ROW_LEVEL_SECURITY_SQL: String =
     """
         .trimIndent()
 
+/** The reads across organizations of the waits that resolve by themselves, functions owned by `ostrom_router`. */
+private val WAIT_ROUTER_FUNCTIONS = listOf(
+    "automations_due_waits(TIMESTAMPTZ, INTEGER)",
+    "automations_wait_event(UUID)",
+)
+
+/**
+ * Version 6: the waits that resolve by themselves (`resolver` `time` or `event`, the agent's `wait_for`). Their instant
+ * is `due_at` for a time, `timeout_at` for an event; the clock's scan reads the open ones of every organization by
+ * that instant (partial index `automations_waits_due`), and an event address finds its wait by id alone: both only
+ * through narrow functions owned by `ostrom_router` (docs/tenancy.md), which return ids, organizations and a secret's
+ * hash, never a wait's content. Each wait is then resolved in its own organization. The secret of an event address is
+ * kept as its SHA-256 only (`event_secret_hash`).
+ */
+private val WAITS_THAT_RESOLVE_BY_THEMSELVES_SQL: String =
+    """
+    ALTER TABLE automations_waits
+        ADD COLUMN resolver TEXT NOT NULL DEFAULT 'human',
+        ADD COLUMN due_at TIMESTAMPTZ,
+        ADD COLUMN timeout_at TIMESTAMPTZ,
+        ADD COLUMN event_source TEXT,
+        ADD COLUMN resume_message TEXT,
+        ADD COLUMN event_secret_hash TEXT;
+    CREATE INDEX automations_waits_due ON automations_waits ((COALESCE(due_at, timeout_at)))
+        WHERE status = 'open' AND resolver <> 'human';
+    CREATE POLICY automations_waits_router ON automations_waits FOR SELECT TO ostrom_router
+        USING (current_user = 'ostrom_router');
+    GRANT SELECT ON automations_waits TO ostrom_router;
+    CREATE FUNCTION automations_due_waits(p_now TIMESTAMPTZ, p_limit INTEGER)
+        RETURNS TABLE (id UUID, org_id UUID, resolver TEXT)
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        SELECT w.id, w.org_id, w.resolver FROM automations_waits w
+        WHERE w.status = 'open' AND w.resolver <> 'human' AND COALESCE(w.due_at, w.timeout_at) <= p_now
+        ORDER BY COALESCE(w.due_at, w.timeout_at) LIMIT p_limit;
+    $$;
+    CREATE FUNCTION automations_wait_event(p_id UUID) RETURNS TABLE (org_id UUID, secret_hash TEXT)
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        SELECT w.org_id, w.event_secret_hash FROM automations_waits w
+        WHERE w.id = p_id AND w.status = 'open' AND w.resolver = 'event' AND w.event_secret_hash IS NOT NULL;
+    $$;
+    ${WAIT_ROUTER_FUNCTIONS.joinToString("\n") { "REVOKE EXECUTE ON FUNCTION $it FROM PUBLIC;" }}
+    DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+            ${WAIT_ROUTER_FUNCTIONS.joinToString("\n            ") { "GRANT EXECUTE ON FUNCTION $it TO ostrom_app;" }}
+        END IF;
+    END $$;
+    GRANT CREATE ON SCHEMA public TO ostrom_router;
+    ${WAIT_ROUTER_FUNCTIONS.joinToString("\n") { "ALTER FUNCTION $it OWNER TO ostrom_router;" }}
+    REVOKE CREATE ON SCHEMA public FROM ostrom_router;
+    """
+        .trimIndent()
+
 /**
  * The schema of the automations module; its tables start with `automations_`, and each is confined by row-level
  * security to the organization of the transaction (S2-01). `automations_routes` (an automation's id and organization
  * and its next cron slot, no customer content) is also read across organizations, by a webhook (an automation found
  * by its id) and by the scheduler (the due crons of every organization): only through [ROUTER_FUNCTIONS] (version 3,
- * docs/tenancy.md).
+ * docs/tenancy.md). `automations_waits` is read so too, by the clock's scan and an event address, only through
+ * [WAIT_ROUTER_FUNCTIONS] (version 6).
  */
 val AutomationsMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -179,5 +232,10 @@ val AutomationsMigrations: List<SchemaMigration> = listOf(
             ALTER TABLE automations_waits ADD COLUMN wake_pending BOOLEAN NOT NULL DEFAULT FALSE;
             CREATE INDEX automations_waits_wake ON automations_waits (org_id, session_id) WHERE wake_pending;
         """.trimIndent(),
+    ),
+    SchemaMigration(
+        version = 6,
+        name = "waits_that_resolve_by_themselves",
+        sql = WAITS_THAT_RESOLVE_BY_THEMSELVES_SQL,
     ),
 )
