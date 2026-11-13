@@ -6,6 +6,7 @@ import run.ostrom.server.gates.domain.models.ActorKind
 import run.ostrom.server.gates.domain.models.GateActor
 import run.ostrom.server.gates.domain.usecases.ListSessionGatesUseCase
 import run.ostrom.server.gates.domain.usecases.SessionGate
+import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.observability.OstromMetrics
@@ -46,6 +47,9 @@ fun agent(launch: String = "launch-1", person: String = "lyes", org: Uuid = ORG)
 /** A person's own credential. */
 fun user(id: String = "lyes", org: Uuid = ORG) = GateActor(id, org, ActorKind.USER, personId = id)
 
+/** A person of the organization with [role], `MEMBER` by default. */
+fun member(id: String, role: OrgRole = OrgRole.MEMBER, org: Uuid = ORG) = GateActor.person(id, org, role)
+
 class SettableClock(var now: Instant = Instant.parse("2026-10-30T09:00:00.123456Z")) : Clock {
     override fun now(): Instant = now
 }
@@ -68,6 +72,7 @@ class InMemorySessions : SessionsRepository {
     override suspend fun list(orgId: Uuid, query: SessionQuery): List<Session> {
         val cursor = query.before?.let { rows[orgId to it]?.startedAt ?: return emptyList() }
         return rows.values.filter { it.orgId == orgId && (query.launchId == null || it.launchId == query.launchId) }
+            .filter { query.dev == null || it.dev == query.dev }
             .filter { cursor == null || it.startedAt < cursor }
             .sortedByDescending { it.startedAt }
             .take(query.limit)

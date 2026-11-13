@@ -87,7 +87,8 @@ class RunAccess(
         owned(actor, sessionId).takeIf { it.endedAt != null } ?: throw SessionStillOpenException(sessionId)
 
     /**
-     * The session a read is about: any member reads it, an agent token its own launch's only (answered as absent).
+     * The session a read is about: its person, an owner or an administrator reads it, an agent token its own launch's
+     * only; anyone else is answered as absent (TeamCode #238).
      *
      * @param actor The caller.
      * @param sessionId The session.

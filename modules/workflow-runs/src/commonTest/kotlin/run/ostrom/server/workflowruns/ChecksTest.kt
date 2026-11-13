@@ -18,6 +18,7 @@ import run.ostrom.server.workflowruns.domain.repositories.RunQuery
 import run.ostrom.server.workflowruns.domain.usecases.ListChecksUseCaseImpl
 import run.ostrom.server.workflowruns.domain.usecases.ReportCheckUseCaseImpl
 import run.ostrom.server.workflowruns.fakes.ADA
+import run.ostrom.server.workflowruns.fakes.ADMIN
 import run.ostrom.server.workflowruns.fakes.AGENT
 import run.ostrom.server.workflowruns.fakes.BOB
 import run.ostrom.server.workflowruns.fakes.FakeLaunches
@@ -218,12 +219,14 @@ class ChecksTest {
     }
 
     @Test
-    fun theRunsAreReadByAMemberAndByTheSessionsAgentOnly() = runTest {
+    fun theRunsAreReadByTheirPersonAnAdministratorAndTheSessionsAgentOnly() = runTest {
         val run = report(AGENT, request())
         val bySession = RunQuery(sessionId = "s-1")
         assertTrue(list(ADA, RunQuery(before = run.id)).isEmpty(), "After the last run")
         assertFailsWith<InvalidPageException> { list(ADA, RunQuery(before = "nope")) }
-        assertEquals(1, list(BOB, bySession).size, "Any member reads them")
+        // TeamCode #238: a session's runs are its person's and the administrators', not another member's.
+        assertEquals(1, list(ADMIN, bySession).size, "An administrator reads them")
+        assertFailsWith<RunSessionNotFoundException> { list(BOB, bySession) }
         assertEquals(1, list(ADA, RunQuery()).size)
         assertEquals(1, list(AGENT, bySession).size)
         assertTrue(list(AGENT, RunQuery()).isEmpty(), "An agent names its own session")

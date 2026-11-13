@@ -3,6 +3,7 @@ package run.ostrom.server.sessions.domain.models
 
 import run.ostrom.server.gates.domain.models.ActorKind
 import run.ostrom.server.gates.domain.models.GateActor
+import run.ostrom.server.kernel.auth.OrgRole
 
 /**
  * What the hook `SessionStart` (or the launcher) sends.
@@ -84,16 +85,33 @@ object SessionAccess {
      */
     fun person(actor: GateActor): String = actor.personId ?: throw NotYourSessionException()
 
+    /** The roles that read every session of their organization, as TeamCode's run records (#238). */
+    val TEAM_READERS: Set<OrgRole> = setOf(OrgRole.OWNER, OrgRole.ADMIN)
+
     /**
-     * True when the caller may read the session: any member of its organization, but an agent token only reads its
-     * own launch's sessions (audit A12), and none without a launch (S2-48).
+     * True when the caller may read the session: its person, and an owner or an administrator of its organization
+     * (TeamCode #238: a session is its member's; only the team's administrators read the others'); an agent token
+     * only reads its own launch's sessions (audit A12), and none without a launch (S2-48).
      *
      * @param actor The caller.
      * @param session The session.
      * @return Whether it may read it.
      */
     fun canRead(actor: GateActor, session: Session): Boolean =
-        if (actor.kind == ActorKind.AGENT_SESSION) actor.launchId == session.launchId else true
+        if (actor.kind == ActorKind.AGENT_SESSION) {
+            actor.launchId == session.launchId
+        } else {
+            readsTeam(actor) || actor.personId == session.dev
+        }
+
+    /**
+     * True when the caller reads the sessions of the whole organization: an owner or an administrator (an agent token
+     * carries no role).
+     *
+     * @param actor The caller.
+     * @return Whether it does.
+     */
+    fun readsTeam(actor: GateActor): Boolean = actor.role in TEAM_READERS
 
     /**
      * Refuses a write by anyone but the session's person, or by an agent token of another launch.

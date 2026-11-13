@@ -7,6 +7,7 @@ import run.ostrom.server.gates.domain.models.GateMode
 import run.ostrom.server.gates.domain.models.GateStatus
 import run.ostrom.server.gates.domain.services.OpenSegment
 import run.ostrom.server.gates.domain.usecases.SessionGate
+import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.InvalidPageException
 import run.ostrom.server.kernel.sessions.AgentSession
@@ -27,6 +28,7 @@ import run.ostrom.server.sessions.fakes.ORG
 import run.ostrom.server.sessions.fakes.OTHER_ORG
 import run.ostrom.server.sessions.fakes.SessionBench
 import run.ostrom.server.sessions.fakes.agent
+import run.ostrom.server.sessions.fakes.member
 import run.ostrom.server.sessions.fakes.user
 import run.ostrom.server.sessions.infrastructure.SessionsAgentDirectory
 import run.ostrom.server.sessions.infrastructure.SessionsGateGuard
@@ -176,7 +178,7 @@ class SessionLifecycleTest {
         val gate = Uuid.parse("00000000-0000-0000-0000-0000000000a1")
         bench.gates.gates["s-1"] =
             listOf(SessionGate(gate, "push-main", GateMode.ENFORCED, GateStatus.PENDING, null, emptyList()))
-        val open = bench.get(user("rev-b"), session.id)
+        val open = bench.get(member("rev-b", OrgRole.ADMIN), session.id)
         assertEquals(listOf(gate.toString()), open.gates)
         assertNull(open.receipt)
 
@@ -184,6 +186,34 @@ class SessionLifecycleTest {
         assertEquals("rcpt_session_s-1", bench.get(agent(), session.id).receipt?.get("id")?.toString()?.trim('"'))
         assertFailsWith<SessionNotFoundException> { bench.get(agent("launch-2"), session.id) }
         assertFailsWith<SessionNotFoundException> { bench.get(user(org = OTHER_ORG), session.id) }
+    }
+
+    @Test
+    fun aMemberReadsTheirOwnSessionsAndOnlyAnOwnerOrAnAdminReadsTheTeams() = runTest {
+        // TeamCode #238: a session is its member's; a role other than owner or admin opens nobody else's.
+        val bench = SessionBench()
+        val session = bench.start(agent(), start)
+        bench.clock.now += 1.seconds
+        bench.start(agent("launch-2", person = "mia"), start.copy(id = "s-2"))
+        assertEquals(session.id, bench.get(member("lyes"), session.id).session.id)
+        listOf(OrgRole.MEMBER, OrgRole.APPROVER, OrgRole.BILLING).forEach { role ->
+            assertFailsWith<SessionNotFoundException>(role.name) { bench.get(member("rev-b", role), session.id) }
+            assertEquals(emptyList(), bench.list(member("rev-b", role), SessionQuery()), role.name)
+        }
+        listOf(OrgRole.OWNER, OrgRole.ADMIN).forEach { role ->
+            assertEquals(session.id, bench.get(member("rev-b", role), session.id).session.id, role.name)
+            assertEquals(listOf("s-2", "s-1"), bench.list(member("rev-b", role), SessionQuery()).map { it.id })
+            val lyes = bench.list(member("rev-b", role), SessionQuery(dev = "lyes"))
+            assertEquals(listOf("s-1"), lyes.map { it.id })
+        }
+        assertEquals(listOf("s-2"), bench.list(member("mia"), SessionQuery()).map { it.id })
+        assertEquals(listOf("s-2"), bench.list(member("mia"), SessionQuery(dev = "mia")).map { it.id })
+        assertFailsWith<NotYourSessionException> { bench.list(member("mia"), SessionQuery(dev = "lyes")) }
+        // Another's session as a cursor names nothing the member reads: a 400, as a forged one, before any page.
+        assertFailsWith<InvalidPageException> { bench.list(member("mia"), SessionQuery(before = "s-1")) }
+        val nobody = GateActor("nobody", ORG, ActorKind.USER)
+        assertFailsWith<NotYourSessionException>("No person, no session") { bench.list(nobody, SessionQuery()) }
+        assertFailsWith<NotYourSessionException> { bench.end(member("rev-b", OrgRole.ADMIN), session.id, EndSession()) }
     }
 
     @Test
