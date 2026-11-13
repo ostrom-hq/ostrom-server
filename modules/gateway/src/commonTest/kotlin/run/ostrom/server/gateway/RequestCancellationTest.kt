@@ -67,8 +67,13 @@ class RequestCancellationTest {
     fun aRunningCallStopsWithinAPollOfItsMarker() = runTest {
         val running = Uuid.random()
         var finished = false
+        var paused = 0.milliseconds
+        val timed = CancellationWatch(markers) {
+            paused += it
+            delay(it)
+        }
         assertFailsWith<CancellationException> {
-            watch.run(Gw.memberA, running) {
+            timed.run(Gw.memberA, running) {
                 delay(2_100.milliseconds)
                 markers.cancel(Gw.orgA, Gw.memberA.memberId, running)
                 delay(10.minutes)
@@ -76,7 +81,7 @@ class RequestCancellationTest {
             }
         }
         assertEquals(false, finished)
-        assertEquals(2_500L, currentTime, "Stopped at the next poll")
+        assertEquals(2_500.milliseconds, paused, "Stopped at the next poll")
     }
 
     @Test
