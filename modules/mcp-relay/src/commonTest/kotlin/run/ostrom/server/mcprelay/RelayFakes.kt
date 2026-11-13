@@ -6,6 +6,9 @@ import run.ostrom.server.mcprelay.domain.EffectiveServer
 import run.ostrom.server.mcprelay.domain.McpAssignment
 import run.ostrom.server.mcprelay.domain.McpCall
 import run.ostrom.server.mcprelay.domain.McpCallCursor
+import run.ostrom.server.mcprelay.domain.McpCallSlot
+import run.ostrom.server.mcprelay.domain.McpCallSlotRepository
+import run.ostrom.server.mcprelay.domain.McpLoad
 import run.ostrom.server.mcprelay.domain.McpOperation
 import run.ostrom.server.mcprelay.domain.McpOutcome
 import run.ostrom.server.mcprelay.domain.McpRelayRepository
@@ -66,6 +69,51 @@ class TestClock(var now: Instant = Relay.epoch) : Clock {
 
     fun advance(by: Duration = 5.milliseconds) {
         now += by
+    }
+}
+
+/** [McpCallSlotRepository] in memory, its minutes and expiry by [clock]. */
+class InMemoryMcpSlots(private val clock: Clock) : McpCallSlotRepository {
+    private class Running(val orgId: Uuid, val memberId: Uuid, val serverId: Uuid, var expiresAt: Instant)
+
+    /** Thrown by [release] and [renew] when set: the database failing. */
+    var failure: Exception? = null
+
+    private val running = mutableMapOf<Uuid, Running>()
+    private val started = mutableListOf<Triple<Uuid, Uuid, Long>>()
+
+    override suspend fun acquire(
+        orgId: Uuid,
+        memberId: Uuid,
+        serverId: Uuid,
+        admit: (McpLoad) -> Boolean,
+    ): McpCallSlot? {
+        val now = clock.now()
+        val minute = now.epochSeconds / 60
+        running.values.removeAll { it.expiresAt <= now }
+        val onServer = running.values.filter { it.orgId == orgId && it.serverId == serverId }
+        val thisMinute = started.filter { it.first == serverId && it.third == minute }
+        val usage = McpLoad(
+            memberRunning = onServer.count { it.memberId == memberId },
+            serverRunning = onServer.size,
+            memberThisMinute = thisMinute.count { it.second == memberId },
+            serverThisMinute = thisMinute.size,
+        )
+        if (!admit(usage)) return null
+        val slot = McpCallSlot(Uuid.random())
+        running[slot.id] = Running(orgId, memberId, serverId, now + McpCallSlotRepository.SLOT_LEASE)
+        started += Triple(serverId, memberId, minute)
+        return slot
+    }
+
+    override suspend fun release(orgId: Uuid, slot: McpCallSlot) {
+        failure?.let { throw it }
+        running.remove(slot.id)
+    }
+
+    override suspend fun renew(orgId: Uuid, slot: McpCallSlot) {
+        failure?.let { throw it }
+        running[slot.id]?.expiresAt = clock.now() + McpCallSlotRepository.SLOT_LEASE
     }
 }
 
