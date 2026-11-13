@@ -192,6 +192,32 @@ class SharingUseCasesTest {
     }
 
     @Test
+    fun theAccountsResettingLatestComeFirstAndTheNeutralNumbersKeepThePriorityOrder() = runTest {
+        // TeamCode #96, #127, #147, #149.
+        val now = clock.now()
+        fun window(name: String, reset: kotlin.time.Instant?) = QuotaWindow(name, 0.1, reset, now)
+        val labels = listOf("A none", "B soonest", "C weekly", "D no reset", "E five-hour")
+        val shared = labels.map { share(Sharing.otherA, payload(id = it, label = it)) }.associateBy { it.label }
+        repository.windows[shared.getValue("B soonest").id] = mutableListOf(
+            window("seven_day", now - 1.hours),
+            window("five_hour", now + 2.hours),
+        )
+        repository.windows[shared.getValue("C weekly").id] = mutableListOf(
+            window("five_hour", now + 1.hours),
+            window("seven_day", now + 48.hours),
+        )
+        repository.windows[shared.getValue("D no reset").id] = mutableListOf(window("five_hour", null))
+        repository.windows[shared.getValue("E five-hour").id] = mutableListOf(
+            window("model:opus", now + 100.hours),
+            window("five_hour", now + 3.hours),
+        )
+        val listed = list(Sharing.adminA).map { it.displayLabel }
+        assertEquals(listOf("C weekly", "E five-hour", "B soonest", "A none", "D no reset"), listed)
+        val neutral = list(Sharing.memberA).map { it.displayLabel }
+        assertEquals(listOf("Account 3", "Account 5", "Account 2", "Account 1", "Account 4"), neutral)
+    }
+
+    @Test
     fun onlyAdminsAndOwnersChangeOrRemove() = runTest {
         val account = share(Sharing.memberA, payload())
         assertFailsWith<AccountNotFoundException> {
