@@ -75,7 +75,8 @@ class DeliverRunUseCaseImpl(
         val now = clock.now()
         val next = RunMoves(DELIVERY, now).finish(run, RunMoves.DELIVERED, output = text).next
         val audit = RunAudit("delivered", auditDetails("node" to visit.nodeId, "seq" to visit.seq), person)
-        // One change on the run as read: a second delivery, or the engine failing the visit meanwhile, finds it changed.
+        // One change on the run as read: a second delivery, or the engine failing the visit meanwhile, finds it
+        // changed.
         if (!engine.write(actor.orgId, RunChange(run, next, null, audit = listOf(audit), dueAt = now))) {
             throw NothingToDeliverException()
         }

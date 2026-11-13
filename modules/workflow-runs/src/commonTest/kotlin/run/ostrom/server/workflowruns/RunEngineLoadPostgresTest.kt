@@ -186,7 +186,7 @@ class RunEngineLoadPostgresTest {
         }
         write("run-nodes-concurrency", report)
         assertEquals(List(runs.size) { RunStatus.SUCCEEDED }, ended.map { it.status }, report)
-        assertEquals(List(runs.size) { listOf("ship", "delivered") }, ended.map { r -> r.visits.map { it.outcome } })
+        assertEquals(List(runs.size) { listOf("ship", "next") }, ended.map { r -> r.visits.map { it.outcome } })
         assertEquals(runs.size * 3L, visitKeys, report)
         assertEquals(runs.size.toLong(), waits, report)
         assertEquals(runs.size.toLong(), children, report)

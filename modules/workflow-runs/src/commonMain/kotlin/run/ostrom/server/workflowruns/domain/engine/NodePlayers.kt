@@ -223,8 +223,9 @@ class GatePlayer(private val gates: RunGates) : NodePlayer {
 
 /**
  * A wait node: its question (its body rendered as the run's texts are, [RunTemplates]), asked of its first approver
- * (else its owner, else the run's starter) for the run's starter, keyed by the visit. The run waits without holding anything: the wait is stored, and the engine looks at it
- * again until it is answered, also after a restart. The answer's action is the visit's outcome, its values its output.
+ * (else its owner, else the run's starter) for the run's starter, keyed by the visit. The run waits without holding
+ * anything: the wait is stored, and the engine looks at it again until it is answered, also after a restart. The
+ * answer's action is the visit's outcome, its values its output.
  *
  * @param waits The waits.
  */
@@ -268,8 +269,8 @@ class WaitPlayer(private val waits: RunWaits) : NodePlayer {
 
 /**
  * A workflow node: a child run of another workflow of the organization, with the node's arguments as its inputs,
- * keyed by the visit; the node is `delivered`, with the child's output, when the child succeeds, and fails when the
- * child fails or is cancelled.
+ * keyed by the visit; the node is done, with the child's output, when the child succeeds, and fails when the child
+ * fails or is cancelled.
  *
  * @param children The child runs.
  */
@@ -297,7 +298,7 @@ class ChildPlayer(private val children: RunChildren) : NodePlayer {
 
     private fun ended(visit: Visit, child: ChildResult?): RunChange? = when {
         child == null -> visit.failed("The child run is gone.")
-        child.status == RunStatus.SUCCEEDED -> visit.done(RunMoves.DELIVERED, child.output)
+        child.status == RunStatus.SUCCEEDED -> visit.done(RunMoves.NEXT, child.output)
         child.status == RunStatus.FAILED -> visit.failed("The child run failed: ${child.failure}")
         child.status == RunStatus.CANCELLED -> visit.failed("The child run was cancelled.")
         else -> null

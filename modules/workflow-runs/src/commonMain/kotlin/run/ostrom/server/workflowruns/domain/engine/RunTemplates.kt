@@ -29,13 +29,9 @@ object RunTemplates {
     fun render(text: String, run: WorkflowRun): String {
         val outputs = outputs(run.visits)
         val rendered = PLACEHOLDER.replace(text) { match ->
-            val parts = match.groupValues[1].split('.')
-            val value = when {
-                parts.size == 2 && parts[0] == "inputs" -> run.inputs[parts[1]]
-                parts.size == 3 && parts[0] == "nodes" && parts[2] == "output" -> outputs[parts[1]]
-                else -> null
-            }
-            value.orEmpty()
+            val name = match.groupValues[1]
+            val input = INPUT.matchEntire(name)?.let { run.inputs[it.groupValues[1]] }
+            (input ?: NODE_OUTPUT.matchEntire(name)?.let { outputs[it.groupValues[1]] }).orEmpty()
         }
         return cut(rendered.filterNot { it.isISOControl() && it != '\n' && it != '\t' })
     }
@@ -65,3 +61,5 @@ object RunTemplates {
 
 // Top-level, not in the object: a private property of an object has a getter Kover counts.
 private val PLACEHOLDER = Regex("\\{\\{\\s*([^{}]*?)\\s*\\}\\}")
+private val INPUT = Regex("inputs\\.([^.]+)")
+private val NODE_OUTPUT = Regex("nodes\\.([^.]+)\\.output")

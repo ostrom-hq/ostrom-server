@@ -63,24 +63,8 @@ object Deliverables {
     private fun text(output: JsonElement, what: String): String =
         (output as? JsonPrimitive)?.takeIf { it.isString }?.content ?: throw invalid("Deliver $what as a string.")
 
-    // An https address of the characters an address may hold (no backslash a browser would read as a slash), without
-    // a user name, whose host is the domain or one of its subdomains.
-    private fun url(value: String, domain: String?): String {
-        if (value.length > MAX_URL || !URL_CHARACTERS.matches(value)) {
-            throw invalid("Deliver an https address of at most $MAX_URL characters, without spaces.")
-        }
-        if (!value.startsWith(HTTPS, ignoreCase = true)) throw invalid("Deliver an https address.")
-        val authority = value.substring(HTTPS.length).substringBefore('/').substringBefore('?').substringBefore('#')
-        if ('@' in authority) throw invalid("Deliver an https address without a user name.")
-        val bracketed = authority.startsWith("[")
-        val host = (if (bracketed) authority.substringBefore(']') + "]" else authority.substringBefore(':')).lowercase()
-        if (!HOST.matches(host)) throw invalid("Deliver an https address with a host.")
-        val within = domain?.lowercase()?.trimEnd('.')
-        if (within != null && host != within && !host.endsWith(".$within")) {
-            throw invalid("Deliver an address on ${within.take(ECHO)}.")
-        }
-        return value
-    }
+    private fun url(value: String, domain: String?): String =
+        value.also { urlRefusal(it, domain)?.let { refusal -> throw invalid(refusal) } }
 
     /**
      * A small subset of JSON Schema: `type` (object, array, string, number, integer, boolean), an object's
@@ -129,8 +113,26 @@ object Deliverables {
 
     private fun names(element: JsonElement?): List<String> =
         (element as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.orEmpty()
+}
 
-    private fun invalid(message: String) = InvalidDeliverableException(message)
+private fun invalid(message: String) = InvalidDeliverableException(message)
+
+// What is wrong with an address: it must be an https address of the characters an address may hold (no backslash a
+// browser would read as a slash), without a user name, whose host is the domain or one of its subdomains.
+private fun urlRefusal(value: String, domain: String?): String? {
+    val authority = value.drop(HTTPS.length).substringBefore('/').substringBefore('?').substringBefore('#')
+    val bracketed = authority.startsWith("[")
+    val host = (if (bracketed) authority.substringBefore(']') + "]" else authority.substringBefore(':')).lowercase()
+    val within = domain?.lowercase()?.trimEnd('.')
+    return when {
+        value.length > Deliverables.MAX_URL || !URL_CHARACTERS.matches(value) ->
+            "Deliver an https address of at most ${Deliverables.MAX_URL} characters, without spaces."
+        !value.startsWith(HTTPS, ignoreCase = true) -> "Deliver an https address."
+        '@' in authority -> "Deliver an https address without a user name."
+        !HOST.matches(host) -> "Deliver an https address with a host."
+        within != null && host != within && !host.endsWith(".$within") -> "Deliver an address on ${within.take(ECHO)}."
+        else -> null
+    }
 }
 
 // The deliverable types, the scheme of an address, the forms of an artifact id, of an address and of a host, and the
