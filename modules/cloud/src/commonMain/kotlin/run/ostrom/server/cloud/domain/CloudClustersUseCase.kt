@@ -91,7 +91,8 @@ class CloudClustersUseCaseImpl(
             id, clean.name, clean.apiUrl, clean.allowedNamespaces, clean.maxRunningPods, clean.defaultStorageClass,
             1, hasCaCertificate = true, hasServiceAccountToken = true, createdAt = now, updatedAt = now,
         )
-        val stored = StoredCloudCluster(cluster, seal(id, CA, clean.caCertificate), seal(id, TOKEN, clean.serviceAccountToken))
+        val sealedCa = seal(id, CA, clean.caCertificate)
+        val stored = StoredCloudCluster(cluster, sealedCa, seal(id, TOKEN, clean.serviceAccountToken))
         if (!repository.insert(stored)) throw CloudClusterConflictException()
         record(userId, "cloud.cluster.created", cluster, newCredentials = true)
         return cluster

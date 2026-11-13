@@ -105,6 +105,8 @@ class CloudProfilesTest {
         assertTrue("namespace" in refused(with(spec.copy(namespace = "other"))))
         assertTrue("spec.image" in refused(with(spec.copy(image = "bad image"))))
         assertTrue("allowedImageOverrides" in refused(with(spec.copy(allowedImageOverrides = listOf("bad image*")))))
+        assertTrue("allowedImageOverrides" in refused(with(spec.copy(allowedImageOverrides = listOf("ghcr.io/acme*")))))
+        assertTrue("allowedImageOverrides" in refused(with(spec.copy(allowedImageOverrides = listOf("bad image/*")))))
         assertTrue(
             "allowedImageOverrides" in refused(with(spec.copy(allowedImageOverrides = (1..51).map { "i$it" }))),
         )

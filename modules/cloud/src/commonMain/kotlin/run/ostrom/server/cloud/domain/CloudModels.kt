@@ -9,9 +9,9 @@ import kotlin.uuid.Uuid
  * How cloud sessions run on this instance, as TeamCode's `CloudRuntime` and `CloudSettings`: administrators edit it in
  * the console; the database is the source of truth, the former `OSTROM_RUNNERS_*` variables only seed it once.
  *
- * @property enabled Whether new cloud sessions start; off refuses only new work, running sessions go on.
- * @property runnerImage The delivery image holding the `ostrom` Linux binary at [runnerBinary], copied into each session
- *   pod by an init container; null before an administrator sets it.
+ * @property enabled Whether new cloud sessions start; off refuses only new work, running ones go on.
+ * @property runnerImage The delivery image holding the `ostrom` Linux binary at [runnerBinary], copied into each
+ *   session pod by an init container; null before an administrator sets it.
  * @property runnerBinary Where the binary is in [runnerImage].
  * @property serverUrl The https origin session pods call back; null uses the server's public URL.
  * @property workspaceAccessMode `ReadWriteOncePod`, or `ReadWriteOnce` for storage drivers without it.

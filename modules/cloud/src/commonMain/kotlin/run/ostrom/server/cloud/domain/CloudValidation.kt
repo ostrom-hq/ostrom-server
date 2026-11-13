@@ -13,6 +13,7 @@ private val DNS_SUBDOMAIN = Regex("[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?")
 private val TOKEN = Regex("[A-Za-z0-9._~+/=-]{1,16384}")
 private const val PEM_HEADER = "-----BEGIN CERTIFICATE-----"
 private const val MAX_NAME = 100
+private const val MAX_CA = 65_536
 private const val MAX_NAMESPACES = 100
 private const val MAX_PODS = 100_000
 private const val MAX_RETENTION_DAYS = 3650
@@ -35,8 +36,8 @@ internal fun isImage(value: String): Boolean = IMAGE.matches(value)
 internal fun runtimeProblem(runtime: CloudRuntime): String? = listOfNotNull(
     "runnerImage is not an image reference.".takeIf { runtime.runnerImage?.let(::isImage) == false },
     "runnerBinary is not an absolute path.".takeIf { !BINARY.matches(runtime.runnerBinary) },
-    "serverUrl is not an https URL session pods may call.".takeIf {
-        runtime.serverUrl?.let { url -> !isReachableUrl(url) || url.substringAfter("://").contains('/') } == true
+    "serverUrl is an https origin session pods may call, without a path, a query or credentials.".takeIf {
+        runtime.serverUrl?.let { url -> !isReachableUrl(url) || url.substringAfter("://").any { it in "/?#@" } } == true
     },
     "workspaceAccessMode is ReadWriteOncePod or ReadWriteOnce.".takeIf {
         runtime.workspaceAccessMode !in CloudRuntime.ACCESS_MODES
@@ -52,6 +53,12 @@ internal fun runtimeProblem(runtime: CloudRuntime): String? = listOfNotNull(
 
 private fun isRetention(days: Int) = days in 1..MAX_RETENTION_DAYS
 
+// A prefix stops at a path segment or a tag, so `ghcr.io/acme/*` never lets in `ghcr.io/acme-evil/x`.
+private fun isOverride(entry: String): Boolean {
+    val prefix = entry.endsWith("/*") || entry.endsWith(":*")
+    return isImage(if (prefix) entry.dropLast(1) else entry)
+}
+
 /**
  * Why a cluster is refused, or null (TeamCode a73e03f3 and 0ad9b80f).
  *
@@ -65,7 +72,9 @@ internal fun clusterProblem(input: CloudClusterInput, stored: CloudCluster?): St
         "name is 1 to 100 characters.".takeIf { input.name.isBlank() || input.name.length > MAX_NAME },
         ("apiUrl is an https URL that is not a link-local, unspecified or cloud metadata address.")
             .takeIf { !isReachableUrl(input.apiUrl) },
-        "caCertificate is a PEM bundle.".takeIf { input.caCertificate?.contains(PEM_HEADER) == false },
+        "caCertificate is a PEM bundle of 64 KiB at most.".takeIf {
+            input.caCertificate?.let { it.length > MAX_CA || !it.contains(PEM_HEADER) } == true
+        },
         "serviceAccountToken is a bearer token.".takeIf { input.serviceAccountToken?.let(TOKEN::matches) == false },
         "caCertificate and serviceAccountToken are needed for a new apiUrl.".takeIf {
             newServer && (input.caCertificate == null || input.serviceAccountToken == null)
@@ -98,9 +107,8 @@ internal fun profileProblem(input: CloudProfileInput, cluster: CloudCluster?): S
             cluster != null && spec.namespace !in cluster.allowedNamespaces
         },
         "spec.image is not an image reference.".takeIf { !isImage(spec.image) },
-        "spec.allowedImageOverrides holds up to 50 images or prefixes ending in *.".takeIf {
-            spec.allowedImageOverrides.size > MAX_OVERRIDES ||
-                !spec.allowedImageOverrides.all { isImage(it.removeSuffix("*")) }
+        "spec.allowedImageOverrides holds up to 50 images, or prefixes ending in /* or :*.".takeIf {
+            spec.allowedImageOverrides.size > MAX_OVERRIDES || !spec.allowedImageOverrides.all(::isOverride)
         },
         "spec.imagePullSecrets holds up to 20 Secret names.".takeIf {
             spec.imagePullSecrets.size > MAX_PULL_SECRETS || !spec.imagePullSecrets.all(DNS_SUBDOMAIN::matches)

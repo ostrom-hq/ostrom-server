@@ -110,11 +110,12 @@ class CloudAdminRoutesPostgresTest {
         listOf(CloudModule),
         overrides,
     ) { server ->
-        assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/cloud/runtime").status)
-        assertEquals(HttpStatusCode.Forbidden, server.client.get("/api/v1/cloud/runtime") { bearerAuth("bob") }.status)
-        assertEquals(HttpStatusCode.Forbidden, server.client.get("/api/v1/cloud/runtime") { bearerAuth("alicekey") }.status)
+        val http = server.client
+        assertEquals(HttpStatusCode.Unauthorized, http.get("/api/v1/cloud/runtime").status)
+        assertEquals(HttpStatusCode.Forbidden, http.get("/api/v1/cloud/runtime") { bearerAuth("bob") }.status)
+        assertEquals(HttpStatusCode.Forbidden, http.get("/api/v1/cloud/runtime") { bearerAuth("alicekey") }.status)
 
-        val seeded = server.client.get("/api/v1/cloud/runtime") { bearerAuth("alice") }.body<CloudRuntimeResponse>()
+        val seeded = http.get("/api/v1/cloud/runtime") { bearerAuth("alice") }.body<CloudRuntimeResponse>()
         assertTrue(seeded.enabled)
         assertEquals("https://api.acme.dev", seeded.effectiveServerUrl)
         val body = """
@@ -122,17 +123,17 @@ class CloudAdminRoutesPostgresTest {
             "failedWorkspaceRetentionDays":7,"maxRunningSessionsPerMember":2,"maxRetainedSessionsPerMember":20,
             "memberTransfers":"disabled","serverUrl":"https://pods.acme.dev","updatedAt":"${seeded.updatedAt}"}
         """.trimIndent()
-        assertEquals(HttpStatusCode.Forbidden, server.client.send("PUT", "/api/v1/cloud/runtime", "bob", body).status)
-        val saved = server.client.send("PUT", "/api/v1/cloud/runtime", "alice", body).body<CloudRuntimeResponse>()
+        assertEquals(HttpStatusCode.Forbidden, http.send("PUT", "/api/v1/cloud/runtime", "bob", body).status)
+        val saved = http.send("PUT", "/api/v1/cloud/runtime", "alice", body).body<CloudRuntimeResponse>()
         assertFalse(saved.enabled)
         assertEquals("https://pods.acme.dev", saved.effectiveServerUrl)
         assertEquals("disabled", server.koin.get<CloudRuntimeSource>().current().memberTransfers)
-        val stale = server.client.send("PUT", "/api/v1/cloud/runtime", "alice", body)
+        val stale = http.send("PUT", "/api/v1/cloud/runtime", "alice", body)
         assertEquals(HttpStatusCode.Conflict, stale.status)
         assertTrue("cloud_runtime_conflict" in stale.bodyAsText())
-        val invalid = server.client.send("PUT", "/api/v1/cloud/runtime", "alice", body.replace(seeded.updatedAt!!, "soon"))
+        val invalid = http.send("PUT", "/api/v1/cloud/runtime", "alice", body.replace(seeded.updatedAt!!, "soon"))
         assertEquals(HttpStatusCode.BadRequest, invalid.status)
-        val again = server.client.get("/api/v1/cloud/runtime") { bearerAuth("alice") }.body<CloudRuntimeResponse>()
+        val again = http.get("/api/v1/cloud/runtime") { bearerAuth("alice") }.body<CloudRuntimeResponse>()
         assertEquals(saved, again)
     }
 
@@ -141,39 +142,40 @@ class CloudAdminRoutesPostgresTest {
         listOf(CloudModule),
         overrides,
     ) { server ->
-        assertEquals(HttpStatusCode.Forbidden, server.client.get("/api/v1/cloud/clusters") { bearerAuth("carol") }.status)
+        val http = server.client
+        assertEquals(HttpStatusCode.Forbidden, http.get("/api/v1/cloud/clusters") { bearerAuth("carol") }.status)
         assertEquals(
             HttpStatusCode.Forbidden,
-            server.client.send("POST", "/api/v1/cloud/clusters", "carol", cluster("prod", 0)).status,
+            http.send("POST", "/api/v1/cloud/clusters", "carol", cluster("prod", 0)).status,
         )
-        val created = server.client.send("POST", "/api/v1/cloud/clusters", "alice", cluster("prod", 0))
+        val created = http.send("POST", "/api/v1/cloud/clusters", "alice", cluster("prod", 0))
         assertEquals(HttpStatusCode.Created, created.status)
         assertFalse("secret" in created.bodyAsText())
         val prod = created.body<CloudClusterResponse>()
         assertTrue(prod.serviceAccountToken.configured)
         assertEquals(
             HttpStatusCode.Conflict,
-            server.client.send("POST", "/api/v1/cloud/clusters", "alice", cluster("prod", 0)).status,
+            http.send("POST", "/api/v1/cloud/clusters", "alice", cluster("prod", 0)).status,
         )
         val metadata = cluster("meta", 0).replace("k8s.acme.dev", "169.254.169.254")
         assertEquals(
             HttpStatusCode.BadRequest,
-            server.client.send("POST", "/api/v1/cloud/clusters", "alice", metadata).status,
+            http.send("POST", "/api/v1/cloud/clusters", "alice", metadata).status,
         )
 
         val path = "/api/v1/cloud/clusters/${prod.id}"
-        assertEquals(HttpStatusCode.Forbidden, server.client.send("PUT", path, "bob", cluster("prod", 1, false)).status)
-        val changed = server.client.send("PUT", path, "alice", cluster("prod", 1, false)).body<CloudClusterResponse>()
+        assertEquals(HttpStatusCode.Forbidden, http.send("PUT", path, "bob", cluster("prod", 1, false)).status)
+        val changed = http.send("PUT", path, "alice", cluster("prod", 1, false)).body<CloudClusterResponse>()
         assertEquals(2, changed.version)
         val kept = server.koin.get<CloudClusterAccess>().credentials(Uuid.parse(prod.id))
         assertEquals("tok.secret", kept?.serviceAccountToken)
-        assertEquals(HttpStatusCode.Conflict, server.client.send("PUT", path, "alice", cluster("prod", 1, false)).status)
+        assertEquals(HttpStatusCode.Conflict, http.send("PUT", path, "alice", cluster("prod", 1, false)).status)
         for (unknown in listOf("not-an-id", Uuid.random().toString())) {
-            val missing = server.client.send("PUT", "/api/v1/cloud/clusters/$unknown", "alice", cluster("prod", 1, false))
+            val missing = http.send("PUT", "/api/v1/cloud/clusters/$unknown", "alice", cluster("prod", 1, false))
             assertEquals(HttpStatusCode.NotFound, missing.status)
         }
-        server.client.send("POST", "/api/v1/cloud/clusters", "alice", cluster("staging", 0))
-        val list = server.client.get("/api/v1/cloud/clusters") { bearerAuth("alice") }.body<CloudClusterListResponse>()
+        http.send("POST", "/api/v1/cloud/clusters", "alice", cluster("staging", 0))
+        val list = http.get("/api/v1/cloud/clusters") { bearerAuth("alice") }.body<CloudClusterListResponse>()
         assertEquals(listOf("prod", "staging"), list.clusters.map { it.name })
         assertEquals(changed, list.clusters.first())
     }
@@ -183,33 +185,34 @@ class CloudAdminRoutesPostgresTest {
         listOf(CloudModule),
         overrides,
     ) { server ->
-        val clusterId = server.client.send("POST", "/api/v1/cloud/clusters", "alice", cluster("prod", 0))
+        val http = server.client
+        val clusterId = http.send("POST", "/api/v1/cloud/clusters", "alice", cluster("prod", 0))
             .body<CloudClusterResponse>().id
-        assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/cloud/profiles").status)
+        assertEquals(HttpStatusCode.Unauthorized, http.get("/api/v1/cloud/profiles").status)
         assertEquals(
             HttpStatusCode.Forbidden,
-            server.client.send("POST", "/api/v1/cloud/profiles", "bob", profile(clusterId, 0)).status,
+            http.send("POST", "/api/v1/cloud/profiles", "bob", profile(clusterId, 0)).status,
         )
-        val created = server.client.send("POST", "/api/v1/cloud/profiles", "alice", profile(clusterId, 0))
+        val created = http.send("POST", "/api/v1/cloud/profiles", "alice", profile(clusterId, 0))
         assertEquals(HttpStatusCode.Created, created.status)
         val first = created.body<CloudProfileResponse>()
         val path = "/api/v1/cloud/profiles/${first.id}"
-        val second = server.client.send("PUT", path, "alice", profile(clusterId, 1)).body<CloudProfileResponse>()
+        val second = http.send("PUT", path, "alice", profile(clusterId, 1)).body<CloudProfileResponse>()
         assertEquals(2, second.version)
-        assertEquals(HttpStatusCode.Conflict, server.client.send("PUT", path, "alice", profile(clusterId, 1)).status)
-        val invalid = server.client.send("PUT", path, "alice", profile(Uuid.random().toString(), 2))
+        assertEquals(HttpStatusCode.Conflict, http.send("PUT", path, "alice", profile(clusterId, 1)).status)
+        val invalid = http.send("PUT", path, "alice", profile(Uuid.random().toString(), 2))
         assertEquals(HttpStatusCode.BadRequest, invalid.status)
         assertTrue("invalid_cloud_profile" in invalid.bodyAsText())
 
         // Bob sees the profile assigned to him; organization B neither sees nor changes it.
-        val bobs = server.client.get("/api/v1/cloud/profiles") { bearerAuth("bob") }.body<CloudProfileListResponse>()
+        val bobs = http.get("/api/v1/cloud/profiles") { bearerAuth("bob") }.body<CloudProfileListResponse>()
         assertEquals(listOf(second), bobs.profiles)
-        val theirs = server.client.get("/api/v1/cloud/profiles") { bearerAuth("carol") }.body<CloudProfileListResponse>()
+        val theirs = http.get("/api/v1/cloud/profiles") { bearerAuth("carol") }.body<CloudProfileListResponse>()
         assertTrue(theirs.profiles.isEmpty())
-        assertEquals(HttpStatusCode.NotFound, server.client.send("PUT", path, "carol", profile(clusterId, 2)).status)
+        assertEquals(HttpStatusCode.NotFound, http.send("PUT", path, "carol", profile(clusterId, 2)).status)
         assertEquals(
             HttpStatusCode.NotFound,
-            server.client.send("PUT", "/api/v1/cloud/profiles/not-an-id", "alice", profile(clusterId, 2)).status,
+            http.send("PUT", "/api/v1/cloud/profiles/not-an-id", "alice", profile(clusterId, 2)).status,
         )
         val repository = server.koin.get<CloudProfilesRepository>()
         assertNull(repository.get(ORG_B, Uuid.parse(first.id)))

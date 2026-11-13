@@ -12,7 +12,8 @@ import kotlin.uuid.Uuid
 
 /** [CloudRuntimeRepository] on PostgreSQL: one row of `cloud_runtime`, its fields as JSON. */
 class CloudRuntimeRepositoryImpl(private val driver: Driver) : CloudRuntimeRepository {
-    override suspend fun get(): CloudRuntime? = driver.fetchAll("SELECT body, updated_at FROM cloud_runtime WHERE id = 1")
+    override suspend fun get(): CloudRuntime? = driver
+        .fetchAll("SELECT body, updated_at FROM cloud_runtime WHERE id = 1")
         .getOrThrow().firstOrNull()?.let { row ->
             OstromJson.decodeFromString(CloudRuntime.serializer(), row.get("body").asString())
                 .copy(updatedAt = row.get("updated_at").asInstant())

@@ -95,6 +95,7 @@ class CloudClustersTest {
         assertTrue("name" in refused(input.copy(name = " ")))
         assertTrue("name" in refused(input.copy(name = "a".repeat(101))))
         assertTrue("caCertificate is a PEM" in refused(input.copy(caCertificate = "not a pem")))
+        assertTrue("caCertificate is a PEM" in refused(input.copy(caCertificate = PEM + "a".repeat(65_536))))
         assertTrue("serviceAccountToken is a bearer" in refused(input.copy(serviceAccountToken = "has space")))
         assertTrue("needed for a new apiUrl" in refused(input.copy(caCertificate = null)))
         assertTrue("needed for a new apiUrl" in refused(input.copy(serviceAccountToken = " ")))

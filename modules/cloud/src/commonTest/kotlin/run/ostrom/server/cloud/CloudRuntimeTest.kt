@@ -63,6 +63,8 @@ class CloudRuntimeTest {
         assertTrue("runnerBinary" in refused(on.copy(runnerBinary = "relative/ostrom")))
         assertTrue("serverUrl" in refused(on.copy(serverUrl = "http://api.acme.dev")))
         assertTrue("serverUrl" in refused(on.copy(serverUrl = "https://api.acme.dev/path")))
+        assertTrue("serverUrl" in refused(on.copy(serverUrl = "https://user:pw@api.acme.dev")))
+        assertTrue("serverUrl" in refused(on.copy(serverUrl = "https://api.acme.dev?x=1")))
         assertTrue("serverUrl" in refused(on.copy(serverUrl = "https://169.254.169.254")))
         assertTrue("workspaceAccessMode" in refused(on.copy(workspaceAccessMode = "ReadWriteMany")))
         assertTrue("pausedRetentionDays" in refused(on.copy(pausedRetentionDays = 0)))
