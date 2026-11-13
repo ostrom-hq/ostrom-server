@@ -39,6 +39,7 @@ import kotlin.uuid.Uuid
  *
  * @param driver The database.
  */
+@Suppress("TooManyFunctions") // One per step of the management and of the worker.
 class WebhooksRepositoryImpl(private val driver: Driver) : WebhooksRepository {
     override suspend fun list(orgId: Uuid): List<WebhookSubscription> = driver.withOrganization(orgId) { tx ->
         tx.fetchAll(
@@ -171,21 +172,7 @@ class WebhooksRepositoryImpl(private val driver: Driver) : WebhooksRepository {
             val page = rows.take(perWebhook)
             for (event in page) {
                 val deliveryId = Uuid.random()
-                val delivery = WebhookDeliveryRecord(
-                    id = deliveryId,
-                    subscriptionId = id,
-                    eventSeq = event.seq,
-                    eventType = event.type,
-                    payload = payload(deliveryId, event),
-                    state = DeliveryState.PENDING,
-                    attempts = 0,
-                    nextAttemptAt = now,
-                    lastStatus = null,
-                    lastError = null,
-                    createdAt = now,
-                    deliveredAt = null,
-                    test = false,
-                )
+                val delivery = eventDelivery(deliveryId, id, event, payload(deliveryId, event), now)
                 queued += tx.insertDelivery(orgId, delivery).getOrThrow().size
             }
             // A full page resumes after its last event; otherwise everything up to the head was looked at.
@@ -333,6 +320,23 @@ class WebhooksRepositoryImpl(private val driver: Driver) : WebhooksRepository {
             "UPDATE events_webhooks SET failures = :failures, enabled = FALSE, " +
                 "disabled_reason = '$TOO_MANY_FAILURES', updated_at = :at, version = version + 1 " +
                 "WHERE org_id = :org_id AND id = :id"
+
+        fun eventDelivery(id: Uuid, webhookId: Uuid, event: JournalEvent, payload: String, now: Instant) =
+            WebhookDeliveryRecord(
+                id = id,
+                subscriptionId = webhookId,
+                eventSeq = event.seq,
+                eventType = event.type,
+                payload = payload,
+                state = DeliveryState.PENDING,
+                attempts = 0,
+                nextAttemptAt = now,
+                lastStatus = null,
+                lastError = null,
+                createdAt = now,
+                deliveredAt = null,
+                test = false,
+            )
 
         fun encode(types: Set<String>): String = types.sorted().joinToString(",")
 

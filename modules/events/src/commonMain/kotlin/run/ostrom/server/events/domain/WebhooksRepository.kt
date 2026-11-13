@@ -9,6 +9,7 @@ import kotlin.uuid.Uuid
  * The webhooks and their delivery log. Every call but [workingOrgs] and [maintain] stays inside one organization;
  * every worker step is a conditional update, so replicas run them together.
  */
+@Suppress("TooManyFunctions") // One per step of the management and of the worker.
 interface WebhooksRepository {
     /**
      * An organization's webhooks, oldest first.

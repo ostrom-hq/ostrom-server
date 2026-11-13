@@ -72,6 +72,7 @@ class WebhooksServiceImpl(
         return CreatedWebhookSecret(created, secret)
     }
 
+    @Suppress("LongParameterList") // The fields of the update, as the contract names them.
     override suspend fun update(
         actor: WebhookActor,
         id: Uuid,
@@ -141,15 +142,15 @@ class WebhooksServiceImpl(
     private fun validate(url: String, types: List<String>, description: String): Set<String> {
         targets.requireWellFormed(url)
         val kept = types.toSet()
-        if (kept.isEmpty()) throw InvalidWebhookException("Choose at least one event type.")
-        if (kept.size > EventRules.MAX_TYPES || kept.any { OrgEventType.parse(it) == null }) {
-            throw InvalidWebhookException("Name at most ${EventRules.MAX_TYPES} event types of the feed.")
+        val problem = when {
+            kept.isEmpty() -> "Choose at least one event type."
+            kept.size > EventRules.MAX_TYPES || kept.any { OrgEventType.parse(it) == null } ->
+                "Name at most ${EventRules.MAX_TYPES} event types of the feed."
+            description.length > WebhookRules.MAX_DESCRIPTION || description.any { it.isISOControl() } ->
+                "The description is at most ${WebhookRules.MAX_DESCRIPTION} characters, without control characters."
+            else -> null
         }
-        if (description.length > WebhookRules.MAX_DESCRIPTION || description.any { it.isISOControl() }) {
-            throw InvalidWebhookException(
-                "The description is at most ${WebhookRules.MAX_DESCRIPTION} characters, without control characters.",
-            )
-        }
+        if (problem != null) throw InvalidWebhookException(problem)
         return kept
     }
 }

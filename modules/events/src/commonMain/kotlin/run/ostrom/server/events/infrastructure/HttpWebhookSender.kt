@@ -37,9 +37,12 @@ class HttpWebhookSender(
     private val lookup: suspend (String) -> List<String>,
 ) : WebhookSender {
     override suspend fun send(url: String, headers: Map<String, String>, body: String): SendResult {
-        if (!targets.allows(url)) return SendResult(null, HOST_NOT_ALLOWED)
-        refusal(Url(url).host)?.let { return SendResult(null, it) }
-        return try {
+        val refused = if (targets.allows(url)) refusal(Url(url).host) else HOST_NOT_ALLOWED
+        return if (refused != null) SendResult(null, refused) else post(url, headers, body)
+    }
+
+    private suspend fun post(url: String, headers: Map<String, String>, body: String): SendResult =
+        try {
             val status = client.preparePost(url) {
                 headers.forEach { (name, value) -> header(name, value) }
                 setBody(body)
@@ -52,7 +55,6 @@ class HttpWebhookSender(
         } catch (error: Exception) {
             SendResult(null, codeOf(error))
         }
-    }
 
     private suspend fun refusal(host: String): String? = try {
         val answers = lookup(host).map { parseIpAddress(it) }
