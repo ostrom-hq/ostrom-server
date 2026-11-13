@@ -329,8 +329,9 @@ object IdentityModule : ServerModule {
         route.keysAndDevicesRoutes(koin.get())
     }
 
-    /** The audit log (`/api/v1/audit`, `/api/v1/auth/me/audit`). */
-    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.AUDIT)
+    /** The audit log (`/api/v1/audit`, `/api/v1/auth/me/audit`) and the wide catalogue of service-key scopes. */
+    override suspend fun features(koin: Koin): Set<String> =
+        setOf(ServerFeatures.AUDIT, ServerFeatures.SERVICE_KEY_SCOPES)
 
     private fun signInMethods(config: SignInConfig, http: HttpClient, clock: Clock): SignInMethods {
         val oauth = buildMap<IdentityProvider, OAuthProvider> {

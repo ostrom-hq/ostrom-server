@@ -1,10 +1,53 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.app.isolation
 
-/** The routes a service key may succeed on, by the one scope it holds (SERVICE_KEY_SCOPES, ServiceKeyCalls.kt). */
+private val USAGE_READS = setOf(
+    "GET /api/v1/usage", "GET /api/v1/usage/summary", "GET /api/v1/usage/events", "GET /api/v1/usage/live",
+    "GET /api/v1/mcp/usage", "GET /api/v1/spending",
+)
+
+private val CLOUD_READS = setOf(
+    "GET /api/v1/cloud/sessions", "GET /api/v1/cloud/sessions/{id}", "GET /api/v1/runners",
+)
+
+private val CLOUD_WRITES = CLOUD_READS + setOf(
+    "POST /api/v1/cloud/sessions", "DELETE /api/v1/cloud/sessions/{id}", "POST /api/v1/cloud/sessions/{id}/pause",
+    "POST /api/v1/cloud/sessions/{id}/resume", "POST /api/v1/cloud/sessions/{id}/terminal/ticket",
+)
+
+private val ARTIFACT_READS = setOf(
+    "GET /api/v1/artifacts", "GET /api/v1/artifacts/{id}", "GET /api/v1/artifacts/{id}/versions",
+    "GET /api/v1/artifacts/{id}/versions/{number}/file", "GET /api/v1/artifacts/{id}/members",
+    "POST /api/v1/artifacts/{id}/tickets", "POST /api/v1/artifacts/mcp",
+)
+
+/**
+ * The routes a service key may succeed on, by the one scope it holds (SERVICE_KEY_SCOPES, ServiceKeyCalls.kt): the CI's
+ * two, and the member scopes, which act as the owner who made the key within them. Never an access change, a delete of
+ * an artifact, or a write on the organization.
+ */
 internal val SERVICE_KEY_ROUTES: Map<String, Set<String>> = mapOf(
     "rules:read" to setOf("GET /api/v1/rules", "GET /api/v1/rules/{id}"),
     "sessions:write" to setOf("POST /api/v1/checks", "POST /api/v1/sessions/{id}/workflow-receipt"),
+    "inference:use" to setOf(
+        "GET /api/v1/inference/v1/models", "POST /api/v1/inference/v1/messages", "POST /api/v1/inference/v1/responses",
+        "POST /api/v1/inference/v1/chat/completions",
+    ),
+    "mcp:use" to setOf("POST /api/v1/mcp/{server}"),
+    "usage:read" to USAGE_READS,
+    "cloud:read" to CLOUD_READS,
+    "cloud:write" to CLOUD_WRITES,
+    "cloud:admin" to CLOUD_WRITES,
+    "artifacts:read" to ARTIFACT_READS,
+    "artifacts:write" to ARTIFACT_READS + setOf(
+        "POST /api/v1/artifacts", "POST /api/v1/artifacts/{id}/versions", "PUT /api/v1/artifacts/{id}/members/{login}",
+        "DELETE /api/v1/artifacts/{id}/members/{login}",
+    ),
+    "team:read" to setOf(
+        "GET /api/v1/usage", "GET /api/v1/usage/summary", "GET /api/v1/usage/events", "GET /api/v1/usage/live",
+        "GET /api/v1/mcp/usage", "GET /api/v1/spending", "GET /api/v1/budgets", "GET /api/v1/accounts",
+        "GET /api/v1/capacity", "GET /api/v1/orgs/{org}/members",
+    ),
 )
 
 /**

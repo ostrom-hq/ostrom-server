@@ -6,6 +6,7 @@ import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
+import run.ostrom.server.kernel.auth.ServiceKeyScopes
 import run.ostrom.server.kernel.auth.authenticated
 import run.ostrom.server.kernel.auth.requireOrgPrincipal
 import run.ostrom.server.kernel.auth.requirePrincipal
@@ -111,7 +112,8 @@ fun Route.orgsRoutes(dependencies: OrgsRoutesDependencies) =
 private fun Route.memberRoutes(dependencies: OrgsRoutesDependencies) =
     with(dependencies) {
         get<OrgsApi.Org.Members> { params ->
-            val (orgId, userId) = member(call, params.parent.org, ORGS_READ)
+            // The member directory is one of the reads a `team:read` service key makes, as its creator, an admin.
+            val (orgId, userId) = member(call, params.parent.org, ORGS_READ, teamRead = true)
             val after = params.after?.let {
                 Uuid.parseOrNull(it) ?: throw InvalidOrgRequestException("after is a member id.")
             }
@@ -192,6 +194,7 @@ private fun Route.invitationRoutes(dependencies: OrgsRoutesDependencies) =
  * @param ref The organization's id or short name.
  * @param scope The scope the route needs.
  * @param browserOnly Whether the route refuses tokens.
+ * @param teamRead Whether a service key holding `team:read` passes too, as the person who created it.
  * @return The organization id and the caller's user id.
  */
 private suspend fun OrgsRoutesDependencies.member(
@@ -199,9 +202,13 @@ private suspend fun OrgsRoutesDependencies.member(
     ref: String,
     scope: String,
     browserOnly: Boolean = false,
+    teamRead: Boolean = false,
 ): Pair<Uuid, Uuid> {
-    val principal = call.requireScope(scope)
-    val userId = principal.userId()
+    val key = call.requirePrincipal().takeIf {
+        teamRead && it.kind == PrincipalKind.SERVICE && ServiceKeyScopes.TEAM_READ in it.scopes
+    }
+    val principal = key ?: call.requireScope(scope)
+    val userId = key?.let { it.onBehalfOf?.let(Uuid::parseOrNull) } ?: principal.userId()
     if (browserOnly && !principal.isBrowserSession) {
         throw OstromException(
             ErrorKind.FORBIDDEN,

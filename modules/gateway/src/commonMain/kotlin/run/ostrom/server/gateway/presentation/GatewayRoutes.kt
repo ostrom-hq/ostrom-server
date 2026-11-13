@@ -25,6 +25,7 @@ import run.ostrom.server.kernel.http.heldCalls
 import run.ostrom.server.secrets.domain.Caller
 import run.ostrom.server.secrets.domain.OrgNotFoundException
 import run.ostrom.server.secrets.domain.RelayScopes
+import run.ostrom.server.secrets.presentation.forKey
 import run.ostrom.server.secrets.presentation.mayUse
 import run.ostrom.server.secrets.presentation.requireCaller
 import io.ktor.http.ContentType
@@ -245,7 +246,7 @@ private suspend fun ApplicationCall.inferenceCaller(
 ): Pair<Caller, AuthenticatedPrincipal>? {
     val principal = inferenceToken()?.let { dependencies.tokens.authenticate(it) }
     val allowed = principal?.takeIf { it.mayUse(INFERENCE_SCOPES) }
-    val caller = allowed?.let { dependencies.callers.resolve(it, null) }
+    val caller = allowed?.let { dependencies.callers.resolve(it, null)?.forKey(it) }
     if (allowed == null || caller == null) {
         val refusal = if (principal != null && allowed == null) {
             InferenceRefusal(RefusalKind.CREDENTIAL_NOT_ALLOWED, "This credential does not allow model calls.")

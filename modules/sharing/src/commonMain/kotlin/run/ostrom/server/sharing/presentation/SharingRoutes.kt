@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.sharing.presentation
 
+import run.ostrom.server.kernel.auth.ServiceKeyScopes
 import run.ostrom.server.kernel.auth.authenticated
 import run.ostrom.server.secrets.domain.Caller
 import run.ostrom.server.secrets.domain.RelayScopes
@@ -42,7 +43,7 @@ import kotlin.uuid.Uuid
 fun Route.sharingRoutes(dependencies: SharingRoutesDependencies) = with(dependencies) {
     authenticated {
         get<AccountsApi> {
-            val caller = call.requireCaller(callers, RelayScopes.ACCOUNTS_READ)
+            val caller = call.requireCaller(callers, RelayScopes.ACCOUNTS_READ, ServiceKeyScopes.TEAM_READ)
             call.respond(SharedAccountsResponse(list(caller).map { it.toResponse(caller) }))
         }
         post<AccountsApi> {
@@ -75,7 +76,7 @@ fun Route.sharingRoutes(dependencies: SharingRoutesDependencies) = with(dependen
             call.respond(HttpStatusCode.NoContent)
         }
         get<CapacityApi> {
-            val caller = call.requireCaller(callers, RelayScopes.ACCOUNTS_READ)
+            val caller = call.requireCaller(callers, RelayScopes.ACCOUNTS_READ, ServiceKeyScopes.TEAM_READ)
             val views = list(caller)
             val pools = views.groupBy { it.account.provider }.map { (provider, accounts) ->
                 val ready = accounts.count { it.account.status == AccountStatus.READY }

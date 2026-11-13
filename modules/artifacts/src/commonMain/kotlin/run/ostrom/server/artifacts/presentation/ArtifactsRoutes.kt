@@ -76,12 +76,12 @@ fun Route.artifactsRoutes(dependencies: ArtifactsRoutesDependencies) = with(depe
             call.respond(toResponse(read.get(caller, artifactId(params.id))))
         }
         patch<ArtifactsApi.Id> { params ->
-            val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), ARTIFACTS_WRITE)
+            val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), ARTIFACTS_MANAGE)
             val request = call.receive<UpdateArtifactRequest>()
             call.respond(toResponse(manage.update(caller, artifactId(params.id), request.title, request.access)))
         }
         delete<ArtifactsApi.Id> { params ->
-            val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), ARTIFACTS_WRITE)
+            val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), ARTIFACTS_MANAGE)
             manage.delete(caller, artifactId(params.id))
             call.respond(HttpStatusCode.NoContent)
         }

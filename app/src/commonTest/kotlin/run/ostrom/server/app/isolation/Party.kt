@@ -4,13 +4,15 @@ package run.ostrom.server.app.isolation
 import run.ostrom.server.identity.domain.ADMIN_TOKEN_SCOPES
 import run.ostrom.server.identity.domain.ApiToken
 import run.ostrom.server.identity.domain.ApiTokensRepository
+import run.ostrom.server.identity.domain.CI_SERVICE_KEY_SCOPES
 import run.ostrom.server.identity.domain.CLI_SCOPES
 import run.ostrom.server.identity.domain.IdentityProvider
+import run.ostrom.server.identity.domain.MEMBER_SERVICE_KEY_SCOPES
 import run.ostrom.server.identity.domain.MOBILE_SCOPES
 import run.ostrom.server.identity.domain.MobileTokensRepository
 import run.ostrom.server.identity.domain.PERSONAL_TOKEN_SCOPES
+import run.ostrom.server.identity.domain.RESERVED_SERVICE_KEY_SCOPES
 import run.ostrom.server.identity.domain.ResolveUserUseCase
-import run.ostrom.server.identity.domain.SERVICE_KEY_SCOPES
 import run.ostrom.server.identity.domain.SecretHasher
 import run.ostrom.server.identity.domain.StartWebSessionUseCase
 import run.ostrom.server.identity.domain.StartedSession
@@ -55,6 +57,8 @@ internal class Party(
     val member: Person,
     val tokens: Map<TokenKind, String>,
     tokenIds: Map<TokenKind, Uuid>,
+    /** More credentials by name: the service key of member scopes, which acts as the owner who created it. */
+    val keys: Map<String, String> = emptyMap(),
 ) {
     val values = mutableMapOf(
         Seed.ORG_ID to "${org.id}",
@@ -85,6 +89,7 @@ internal class Party(
             browser,
             memberBrowser,
         ) + tokens.map { (kind, secret) -> Credential("${kind.name.lowercase()} token") { bearerAuth(secret) } } +
+            keys.map { (name, secret) -> Credential(name) { bearerAuth(secret) } } +
             listOfNotNull(agentToken?.let { secret -> Credential("agent token") { bearerAuth(secret) } })
 
     /** What only this organization's data contains: its marker, its ids, its distinctive figures. */
@@ -137,12 +142,16 @@ internal suspend fun TestServer.party(tag: String): Party {
         TokenKind.PERSONAL to PERSONAL_TOKEN_SCOPES.map { it.scope }.toSet(),
         TokenKind.ADMIN to ADMIN_TOKEN_SCOPES,
         TokenKind.MOBILE to MOBILE_SCOPES,
-        TokenKind.SERVICE to SERVICE_KEY_SCOPES,
+        TokenKind.SERVICE to CI_SERVICE_KEY_SCOPES,
     )
     val tokens = scopes.mapValues { (kind, granted) -> token(owner, org, kind, granted) }
     val secrets = tokens.mapValues { it.value.second }
     val people = Person(owner, sessions(owner.id), ownership.id) to Person(member, sessions(member.id), membership.id)
-    return Party(marker, org, people.first, people.second, secrets, tokens.mapValues { it.value.first })
+    // The wide key: every member scope and the reserved ones, made by the owner, so that it acts as them (admin scopes
+    // included): the most a key reaches, which the matrix holds to the organization's own resources.
+    val wide = (MEMBER_SERVICE_KEY_SCOPES + RESERVED_SERVICE_KEY_SCOPES)
+    val keys = mapOf("service key (member scopes)" to token(owner, org, TokenKind.SERVICE, wide).second)
+    return Party(marker, org, people.first, people.second, secrets, tokens.mapValues { it.value.first }, keys)
 }
 
 private suspend fun TestServer.signUp(login: String): User = koin.get<ResolveUserUseCase>()(

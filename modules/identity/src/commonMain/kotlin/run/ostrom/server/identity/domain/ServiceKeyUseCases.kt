@@ -23,9 +23,10 @@ private fun OrgPrincipal.requireKeyAdmin(): OrgPrincipal {
 }
 
 /**
- * Creates a service key of an organization: a token of the organization, not of a person, with some of
- * [SERVICE_KEY_SCOPES] and the lifetime a personal token takes. Only its SHA-256 is stored; its secret exists once, in
- * the answer.
+ * Creates a service key of an organization, with some of [SERVICE_KEY_SCOPES] and the lifetime a personal token takes:
+ * a key of the CI scopes acts for the organization, a key of member scopes acts as its creator, within those scopes.
+ * Only an owner or an admin creates one, so the [RESERVED_SERVICE_KEY_SCOPES] are always given by one; the key itself
+ * checks it again at every call. Only its SHA-256 is stored; its secret exists once, in the answer.
  */
 interface CreateServiceKeyUseCase {
     /**
@@ -34,7 +35,8 @@ interface CreateServiceKeyUseCase {
      * @param member The member creating it, in its organization.
      * @param userId The person behind [member], recorded as its creator and in the audit log.
      * @param name Its label.
-     * @param scopes What it allows: at least one of [SERVICE_KEY_SCOPES], nothing else.
+     * @param scopes What it allows: at least one of [SERVICE_KEY_SCOPES], nothing else; the CI scopes are not mixed
+     *   with the others.
      * @param lifetime How long it lives (1 to 366 days), or null for a key that does not expire.
      *
      * @return The key and its secret, shown once.
@@ -79,7 +81,9 @@ class CreateServiceKeyUseCaseImpl(
         val orgId = member.requireKeyAdmin().orgId
         val label = tokenName(name)
         val validScopes = scopes.toSet()
-        if (validScopes.isEmpty() || !SERVICE_KEY_SCOPES.containsAll(validScopes)) {
+        // The CI scopes act for the organization, the others as the creator: one key is never both.
+        val mixed = validScopes.any { it in CI_SERVICE_KEY_SCOPES } && validScopes.any { it !in CI_SERVICE_KEY_SCOPES }
+        if (validScopes.isEmpty() || !SERVICE_KEY_SCOPES.containsAll(validScopes) || mixed) {
             throw InvalidServiceKeyScopesException()
         }
         if (lifetime != null && (lifetime < 1.days || lifetime > MAX_TOKEN_LIFETIME)) {
@@ -95,7 +99,9 @@ class CreateServiceKeyUseCaseImpl(
         tokens.create(issued.token, hasher.hash(issued.secret))
         val details = mapOf("name" to label, "scopes" to validScopes.sorted().joinToString(" "))
         val keyId = issued.token.id.toString()
-        audit.record(AuditEntry(orgId, userId, "service_key.created", "service_key", keyId, details))
+        // A key that never expires is its own event, for whoever watches the long-lived credentials (TC-KEY-6).
+        val event = if (lifetime == null) "service_key.created_no_expiry" else "service_key.created"
+        audit.record(AuditEntry(orgId, userId, event, "service_key", keyId, details))
         return issued
     }
 }

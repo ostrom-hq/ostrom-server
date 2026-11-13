@@ -29,15 +29,28 @@ fun AuthenticatedPrincipal.allowsArtifacts(scope: String): Boolean =
         (kind == PrincipalKind.USER && ALL_USER_SCOPES in scopes)
 
 /**
+ * Changing an access level or deleting an artifact: [ARTIFACTS_WRITE] held by a person signed in. A service key
+ * holding `artifacts:write` publishes, uploads and invites, but never does this (TeamCode `artifacts:write`).
+ */
+const val ARTIFACTS_MANAGE = "artifacts:manage"
+
+/**
  * The member a request acts for.
  *
- * @throws MissingScopeException When the credential lacks [scope].
+ * @param scope [ARTIFACTS_READ], [ARTIFACTS_WRITE], or [ARTIFACTS_MANAGE] (which needs [ARTIFACTS_WRITE] and refuses a
+ *   service key).
+ *
+ * @throws MissingScopeException When the credential lacks the scope, or is a service key asking [ARTIFACTS_MANAGE].
  * @throws NotAMemberException When it acts for no organization.
  */
 suspend fun PrincipalOrgResolver.artifactCallerOf(principal: AuthenticatedPrincipal, scope: String): ArtifactCaller {
-    if (!principal.allowsArtifacts(scope)) throw MissingScopeException(scope)
+    val needed = if (scope == ARTIFACTS_MANAGE) ARTIFACTS_WRITE else scope
+    if (!principal.allowsArtifacts(needed)) throw MissingScopeException(needed)
+    if (scope == ARTIFACTS_MANAGE && principal.kind == PrincipalKind.SERVICE) throw MissingScopeException(scope)
     val member = resolve(principal, null) ?: throw NotAMemberException()
-    return ArtifactCaller(member.orgId, member.memberId.toString(), member.role in ADMIN_ROLES)
+    // A service key reads and writes the artifacts of its creator, never as an administrator.
+    val administers = member.role in ADMIN_ROLES && principal.kind != PrincipalKind.SERVICE
+    return ArtifactCaller(member.orgId, member.memberId.toString(), administers)
 }
 
 private val ADMIN_ROLES = setOf(OrgRole.OWNER, OrgRole.ADMIN)

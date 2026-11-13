@@ -130,6 +130,19 @@ class ArtifactsMcpTest {
     }
 
     @Test
+    fun aServiceKeyInvitesButNeverChangesAnAccessLevel() =
+        serverTest(listOf(ArtifactsModule), testIdentities) { server ->
+        val client = server.client
+        val id = client.call("publish", publishing("Plan", file("index.html", "<h1>Plan</h1>")), "writer").artifactId()
+        val bob = "00000000-0000-0000-0000-000000000b0b"
+        val invited = client.call("share", """{"artifact":"$id","member":"$bob"}""", "writer")
+        assertTrue(invited.text().startsWith("\"Plan\""))
+        val refused = client.call("share", """{"artifact":"$id","access":"link"}""", "writer")
+        assertTrue(refused.isError())
+        assertEquals("This credential lacks the artifacts:manage scope.", refused.text())
+    }
+
+    @Test
     fun anAgentSharesAndIsRefusedWhatItMayNotDo() = serverTest(listOf(ArtifactsModule), testIdentities) { server ->
         val client = server.client
         val id = client.call("publish", publishing("Plan", file("index.html", "<h1>Plan</h1>"))).artifactId()

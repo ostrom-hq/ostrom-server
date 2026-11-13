@@ -9,6 +9,7 @@ import run.ostrom.server.artifacts.fakes.ALICE
 import run.ostrom.server.artifacts.fakes.ORG_A
 import run.ostrom.server.artifacts.fakes.TestOrgResolver
 import run.ostrom.server.artifacts.infrastructure.ArtifactsConfig
+import run.ostrom.server.artifacts.presentation.ARTIFACTS_MANAGE
 import run.ostrom.server.artifacts.presentation.ARTIFACTS_READ
 import run.ostrom.server.artifacts.presentation.ARTIFACTS_WRITE
 import run.ostrom.server.artifacts.presentation.FileDto
@@ -81,6 +82,21 @@ class ConfigAndCallersTest {
         val koin = koinApplication { modules(bound, ArtifactsModule.koinModule) }
         assertEquals("/v", koin.koin.get<ArtifactLocations>().viewerUrl)
         koin.close()
+    }
+
+    @Test
+    fun aServiceKeyNeverAdministersNorChangesAnAccessLevelOrDeletes() = runTest {
+        val dave = "dave"
+        val key = AuthenticatedPrincipal(dave, PrincipalKind.SERVICE, setOf(ARTIFACTS_WRITE))
+        // Its creator is an administrator: the key reads and writes as a member, never as the administrator.
+        assertFalse(TestOrgResolver.artifactCallerOf(key, ARTIFACTS_WRITE).admin)
+        assertFailsWith<MissingScopeException> { TestOrgResolver.artifactCallerOf(key, ARTIFACTS_MANAGE) }
+        // A person signed in with the scope does it, as an administrator.
+        val person = AuthenticatedPrincipal(dave, PrincipalKind.USER, setOf(ARTIFACTS_WRITE))
+        assertTrue(TestOrgResolver.artifactCallerOf(person, ARTIFACTS_MANAGE).admin)
+        // Still needs the write scope, whoever asks.
+        val reader = AuthenticatedPrincipal(dave, PrincipalKind.USER, setOf(ARTIFACTS_READ))
+        assertFailsWith<MissingScopeException> { TestOrgResolver.artifactCallerOf(reader, ARTIFACTS_MANAGE) }
     }
 
     @Test

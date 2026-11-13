@@ -243,6 +243,24 @@ class ArtifactsPostgresTest {
     }
 
     @Test
+    fun aServiceKeyNeverChangesAnAccessLevelNorDeletes() =
+        serverTest(listOf(ArtifactsModule), testIdentities) { server ->
+        val client = server.client
+        val created = client.publish("alice", "Report", "personal", "<h1>v1</h1>").body<ArtifactResponse>()
+        val patched = client.patch("/api/v1/artifacts/${created.id}") {
+            bearerAuth("writer")
+            contentType(ContentType.Application.Json)
+            setBody(UpdateArtifactRequest(access = "link"))
+        }
+        assertEquals(HttpStatusCode.Forbidden, patched.status)
+        val deleted = client.delete("/api/v1/artifacts/${created.id}") { bearerAuth("writer") }
+        assertEquals(HttpStatusCode.Forbidden, deleted.status)
+        assertEquals(HttpStatusCode.OK, client.get("/api/v1/artifacts/${created.id}") { bearerAuth("reader") }.status)
+        val owned = client.delete("/api/v1/artifacts/${created.id}") { bearerAuth("alice") }
+        assertEquals(HttpStatusCode.NoContent, owned.status)
+    }
+
+    @Test
     fun theApiSharesListsAndDeletes() = serverTest(listOf(ArtifactsModule), testIdentities) { server ->
         val client = server.client
         val created = client.publish("alice", "Report", "personal", "<h1>v1</h1>").body<ArtifactResponse>()

@@ -82,7 +82,10 @@ internal class ArtifactsMcpServer(private val dependencies: ArtifactsRoutesDepen
             "publish" -> publish(callerFor(ARTIFACTS_WRITE), JSON.decodeFromJsonElement<PublishArguments>(arguments))
             "list" -> list(callerFor(ARTIFACTS_READ))
             "read" -> read(callerFor(ARTIFACTS_READ), JSON.decodeFromJsonElement<ReadArguments>(arguments))
-            else -> share(callerFor(ARTIFACTS_WRITE), JSON.decodeFromJsonElement<ShareArguments>(arguments))
+            else -> JSON.decodeFromJsonElement<ShareArguments>(arguments).let { args ->
+                // Changing an access level is for a person signed in; inviting or removing a member is a write.
+                share(callerFor(if (args.access == null) ARTIFACTS_WRITE else ARTIFACTS_MANAGE), args)
+            }
         }
         result(id, toolResult(text, isError = false))
     } catch (failure: OstromException) {

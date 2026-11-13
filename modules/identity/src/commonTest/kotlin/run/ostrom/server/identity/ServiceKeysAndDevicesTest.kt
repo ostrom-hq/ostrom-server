@@ -4,6 +4,7 @@ package run.ostrom.server.identity
 
 import run.ostrom.server.identity.domain.ApiToken
 import run.ostrom.server.identity.domain.AuditEntry
+import run.ostrom.server.identity.domain.CI_SERVICE_KEY_SCOPES
 import run.ostrom.server.identity.domain.CreateServiceKeyUseCaseImpl
 import run.ostrom.server.identity.domain.DeleteServiceKeyUseCaseImpl
 import run.ostrom.server.identity.domain.DeviceNotFoundException
@@ -13,6 +14,8 @@ import run.ostrom.server.identity.domain.InvalidTokenNameException
 import run.ostrom.server.identity.domain.ListDevicesUseCaseImpl
 import run.ostrom.server.identity.domain.ListServiceKeysUseCaseImpl
 import run.ostrom.server.identity.domain.MAX_SERVICE_KEYS_PER_ORG
+import run.ostrom.server.identity.domain.RESERVED_SERVICE_KEY_SCOPES
+import run.ostrom.server.identity.domain.SERVICE_KEY_SCOPES
 import run.ostrom.server.identity.domain.ServiceKeyAuditImpl
 import run.ostrom.server.identity.domain.ServiceKeyNotFoundException
 import run.ostrom.server.identity.domain.ServiceKeysAdminRequiredException
@@ -131,8 +134,10 @@ class ServiceKeysAndDevicesTest {
         assertFailsWith<InvalidTokenNameException> { create(owner, ada, "x".repeat(101), listOf("rules:read"), null) }
         assertFailsWith<InvalidTokenNameException> { create(owner, ada, "ci\nOwner", listOf("rules:read"), null) }
         assertFailsWith<InvalidServiceKeyScopesException> { create(owner, ada, "k", emptyList(), null) }
-        // What a CI calls, nothing else: never a governance write, a token, a member or billing.
-        for (scope in listOf("gates:answer", "orgs:write", "billing:read", "accounts", "cloud:read", "a:b")) {
+        // The catalogue, nothing else: never a governance write, a token, a member or billing, nor a TeamCode scope
+        // for a feature Ostrom does not serve yet.
+        val outside = listOf("gates:answer", "orgs:write", "billing:read", "a:b", "skills:publish", "admin:cloud")
+        for (scope in outside) {
             assertFailsWith<InvalidServiceKeyScopesException>(scope) {
                 create(owner, ada, "k", listOf("rules:read", scope), null)
             }
@@ -140,6 +145,27 @@ class ServiceKeysAndDevicesTest {
         assertFailsWith<InvalidTokenLifetimeException> { create(owner, ada, "k", listOf("rules:read"), 23.hours) }
         assertFailsWith<InvalidTokenLifetimeException> { create(owner, ada, "k", listOf("rules:read"), 367.days) }
         assertTrue(tokens.tokens.isEmpty())
+    }
+
+    @Test
+    fun aKeyHoldsTheCatalogueOfTheCiOrOfAMemberButNeverBoth() = runTest {
+        for (scope in SERVICE_KEY_SCOPES) {
+            assertEquals(setOf(scope), create(owner, ada, "k", listOf(scope), 30.days).token.scopes)
+        }
+        val member = listOf("inference:use", "mcp:use", "usage:read", "cloud:write", "artifacts:read", "team:read")
+        assertEquals(member.toSet(), create(admin, ada, "wide", member, 30.days).token.scopes)
+        for (mixed in listOf(listOf("sessions:write", "team:read"), listOf("rules:read", "inference:use"))) {
+            assertFailsWith<InvalidServiceKeyScopesException> { create(owner, ada, "mixed", mixed, null) }
+        }
+        assertEquals(setOf("sessions:write", "rules:read"), CI_SERVICE_KEY_SCOPES)
+        assertEquals(setOf("team:read", "cloud:admin"), RESERVED_SERVICE_KEY_SCOPES)
+    }
+
+    @Test
+    fun aKeyThatNeverExpiresIsItsOwnAuditEvent() = runTest {
+        create(owner, ada, "forever", listOf("rules:read"), null)
+        create(owner, ada, "month", listOf("rules:read"), 30.days)
+        assertEquals(listOf("service_key.created_no_expiry", "service_key.created"), audit.entries.map { it.action })
     }
 
     @Test
