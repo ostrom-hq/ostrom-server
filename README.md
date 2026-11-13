@@ -27,6 +27,13 @@
   <a href="CHANGELOG.md"><img alt="Version: pre-1.0" src="https://img.shields.io/badge/version-pre--1.0-44393C"></a>
 </p>
 
+> [!IMPORTANT]
+> **The server is moving from Kotlin/Native to the JVM (2026-11-13), on TeamCode's server stack: Ktor Netty, Exposed,
+> HikariCP, Flyway, koin-ktor and logback, still on PostgreSQL.** Nathan asked why a long-running backend was not on the JVM,
+> and decided after the measurements. On the same code and load, the JVM served 2.2× the throughput with 45 % less CPU
+> per request and a third of the p99 latency, for 4 to 5 times the memory and a 3 s start-up. The CLI and the session runner stay
+> native. Reasons, numbers and the migration plan: [docs/decisions/0001](docs/decisions/0001-jvm-and-teamcode-stack.md).
+
 ## What this is
 
 The server is where the rules live and where a person's yes is recorded: it compiles the team's rules into what each
