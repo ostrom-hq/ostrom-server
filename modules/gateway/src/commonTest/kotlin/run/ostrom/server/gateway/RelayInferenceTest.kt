@@ -324,11 +324,16 @@ class RelayInferenceTest {
         assertEquals(expected, request)
         assertEquals(listOf(request to false, request to true), admission.waits, "A retry already runs: it waits again")
 
-        settings.settings[Gw.orgA] = GatewaySettings(useSharedAccounts = false, anthropicKeySecret = "none")
+        settings.settings[Gw.orgA] = GatewaySettings(
+            useSharedAccounts = false,
+            anthropicKeySecret = "none",
+            memberConcurrency = mapOf(Gw.otherA.memberId.toString() to 0),
+        )
         val keyOnly = RecordingAdmission()
         queued(FakeUpstream(eventAnswer()), keyOnly)(Gw.otherA, call(), RecordingResponder())
         assertEquals("key", keyOnly.held.single().scope, "A call no shared account serves waits for its member only")
-        assertNull(keyOnly.held.single().limit)
+        assertNull(keyOnly.held.single().limit, "maxConcurrent 0 is unlimited, as TeamCode")
+        assertEquals(emptySet(), keyOnly.held.single().limitedMembers, "Nor does it make the waiting calls take turns")
 
         settings.settings[Gw.orgA] = GatewaySettings(openaiKeySecret = "none")
         val chat = RecordingAdmission()

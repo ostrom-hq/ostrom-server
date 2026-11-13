@@ -121,7 +121,7 @@ class SharingUseCasesTest {
         assertFailsWith<InvalidAccountException> { share(Sharing.memberA, payload().copy(email = "a".repeat(321))) }
         assertFailsWith<InvalidAccountException> { share(Sharing.memberA, payload().copy(refreshToken = "short")) }
         for (limits in listOf(
-            AccountLimits(maxConcurrent = 0),
+            AccountLimits(maxConcurrent = -1),
             AccountLimits(maxConcurrent = 65),
             AccountLimits(utilizationCeiling = 0.01),
             AccountLimits(utilizationCeiling = 2.0),
@@ -147,8 +147,9 @@ class SharingUseCasesTest {
             }
         }
         assertFailsWith<InvalidAccountException> {
-            update(Sharing.memberA, account.id, UpdateAccountPayload(limits = { AccountLimits(maxConcurrent = 0) }))
+            update(Sharing.memberA, account.id, UpdateAccountPayload(limits = { AccountLimits(maxConcurrent = -1) }))
         }
+        assertEquals(0, account.limits.maxConcurrent, "No concurrency limit by default, as TeamCode")
         val accepted = share(
             Sharing.memberA,
             payload(

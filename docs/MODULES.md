@@ -290,11 +290,12 @@ of the instance and comes before an org's own key (`/api/v1/inference/settings` 
 A model call waits for its turn in the org's admission queue (TeamCode's admission), shared by every replica in
 PostgreSQL (`gateway_admissions`, `gateway_admission_turns`, under an advisory lock of the org): while every shared
 account it may use is busy, or while its member already runs as many calls as their limit (`memberConcurrency` in
-the inference settings, 1 to 32). Interactive calls go first and a background one (`x-ostrom-workload: background`)
-joins them after 30 s; then the member served longest ago, then arrival order. Those turns are taken only while a
-waiting call's member has a limit: otherwise every waiting call tries the accounts as it polls, and a free account
-takes them all in one round (TeamCode #87). A call waits 90 s at most (503
-`queue_timeout`); 128 calls wait per org and 8 per limited member (503 `queue_full`, checked as a call arrives, whether it waits or not); a call whose replica stops
+the inference settings, 0 to 32; 0, the default, is unlimited, as TeamCode). Interactive calls go first and a
+background one (`x-ostrom-workload: background`) joins them after 30 s; then the member served longest ago, then
+arrival order. Those turns are taken only while a waiting call's member has a limit: otherwise every waiting call
+tries the accounts as it polls, and a free account takes them all in one round (TeamCode #87). A call waits 90 s at
+most (503 `queue_timeout`); 128 calls wait per org and 8 per limited member (503 `queue_full`, checked as a call
+arrives, whether it waits or not); a call whose replica stops
 polling loses its turn within 5 s and its place within 15 s, and a running call's place lasts 15 minutes, renewed
 every 5. Waiting holds no account, no budget and no database connection. The inference API's queue route counts the
 waiting calls; every gateway refusal carries its code in `x-ostrom-error`. A spent budget (`budget_exhausted`,
@@ -355,7 +356,7 @@ replica runs this version, an older replica still renews with its in-memory lock
 rollout before relying on it.
 
 The requests in flight on each account and the account each agent session used are in PostgreSQL too
-(`sharing_slots`, `sharing_affinities`), so an account's `maxConcurrent` holds across every replica and a session keeps
+(`sharing_slots`, `sharing_affinities`), so an account's `maxConcurrent` (0, the default, for unlimited, as TeamCode) holds across every replica and a session keeps
 its account (and the provider's prompt cache) whichever replica it reaches, as TeamCode's reservations and
 `conversation_affinities`. A lease locks its candidates' rows, counts their unexpired slots and takes one in the same
 transaction. A request still open renews its slot every 5 minutes, so a long stream keeps counting; a slot ends when

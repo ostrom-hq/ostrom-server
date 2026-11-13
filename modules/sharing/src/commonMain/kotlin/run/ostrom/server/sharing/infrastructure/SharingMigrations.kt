@@ -143,4 +143,11 @@ val SharingMigrations: List<SchemaMigration> = listOf(
         name = "sharing_refresh_ownership",
         sql = "ALTER TABLE sharing_accounts ADD COLUMN ownership TEXT NOT NULL DEFAULT 'OSTROM'",
     ),
+    // No concurrency limit by default, as TeamCode (0 is unlimited): the accounts shared with the former default of 8,
+    // or any limit, no longer make a request wait on a slot nobody chose.
+    SchemaMigration(
+        version = 10,
+        name = "sharing_unlimited_concurrency",
+        sql = "UPDATE sharing_accounts SET max_concurrent = 0",
+    ),
 )

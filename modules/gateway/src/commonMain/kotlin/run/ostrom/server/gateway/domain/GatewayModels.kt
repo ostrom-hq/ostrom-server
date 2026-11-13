@@ -238,8 +238,8 @@ object AllowAllSpend : SpendGuard {
  * @property openaiKeySecret Org secret holding an OpenAI API key, for Responses and Chat.
  * @property openrouterKeySecret Org secret holding an OpenRouter key, for Chat (models named `vendor/model`).
  * @property useSharedAccounts Whether shared subscription accounts serve first (on by default).
- * @property memberConcurrency The most calls a member runs at once, by member id; a member absent has no limit. Past
- *   it, the member's next calls wait in the admission queue.
+ * @property memberConcurrency Each member's `maxConcurrent` by member id: the most calls they run at once, 0 (or no
+ *   entry, the default) for unlimited. Past a limit, the member's next calls wait in the admission queue.
  */
 data class GatewaySettings(
     val anthropicKeySecret: String? = null,
