@@ -180,13 +180,11 @@ internal class CommitArtifactUploadUseCaseImpl(
         }
         return artifact.copy(title = checkNotNull(title), access = access, linkSlug = linkSlugFor(access))
     }
-
-    private companion object {
-        // The canonical manifest: the entry, then each file's path, SHA-256 and size, sorted by path.
-        fun manifestOf(entry: String, files: List<ArtifactFile>): String =
-            "$entry\n" + files.joinToString("") { "${it.path}\t${it.sha256}\t${it.size}\n" }
-
-        val REPLAY_WINDOW = 10.minutes
-        val PAGES = listOf(".html", ".htm", ".md")
-    }
 }
+
+// The canonical manifest: the entry, then each file's path, SHA-256 and size, sorted by path.
+private fun manifestOf(entry: String, files: List<ArtifactFile>): String =
+    "$entry\n" + files.joinToString("") { "${it.path}\t${it.sha256}\t${it.size}\n" }
+
+private val REPLAY_WINDOW = 10.minutes
+private val PAGES = listOf(".html", ".htm", ".md")
