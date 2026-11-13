@@ -245,11 +245,16 @@ class RunAutomationsUseCaseImpl(
     /** Starts, oldest first, the runs that waited for their owner's capacity, while it has room. */
     private suspend fun startParked() {
         for (waiting in repository.parked(BATCH)) {
-            if (atCapacity(waiting.automation)) continue
-            // Taken once: another replica that read the same run finds no prompt.
-            val prompt = repository.takeParked(waiting.run.orgId, waiting.run.id) ?: continue
-            proceed(waiting.automation, waiting.run, prompt)
+            // Its automation may be deleted since (its runs go with it, but not within one read).
+            val automation = repository.get(waiting.orgId, waiting.automationId) ?: continue
+            if (!atCapacity(automation)) startWaiting(automation, waiting)
         }
+    }
+
+    /** Takes the prompt of a waiting run, once (another replica that read the same run finds none), and starts it. */
+    private suspend fun startWaiting(automation: Automation, waiting: AutomationRun) {
+        val prompt = repository.takeParked(waiting.orgId, waiting.id) ?: return
+        proceed(automation, waiting, prompt)
     }
 
     /** What a due slot does: run once if it is on time, or late within the catch-up rule; then the next slot. */
@@ -294,8 +299,15 @@ class RunAutomationsUseCaseImpl(
             return run
         }
         val outcome = (refused ?: launch(automation, run, prompt)).copy(updatedAt = clock.now().truncatedToMillis())
-        if (repository.updateRun(outcome)) return outcome
-        // Cancelled while its session was being created: the session is paused, not left working for nobody.
+        return if (repository.updateRun(outcome)) outcome else cancelledMeanwhile(automation, run, outcome)
+    }
+
+    /** The run was cancelled while its session was being created: that session is paused, not left working. */
+    private suspend fun cancelledMeanwhile(
+        automation: Automation,
+        run: AutomationRun,
+        outcome: AutomationRun,
+    ): AutomationRun {
         outcome.sessionId?.let { launcher.pause(automation.orgId, automation.owner, it) }
         return run.copy(status = RunStatus.CANCELLED, reason = CANCELLED, updatedAt = outcome.updatedAt)
     }

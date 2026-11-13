@@ -449,6 +449,18 @@ class RunAutomationsTest {
     }
 
     @Test
+    fun aWaitingRunWhoseAutomationIsGoneIsLeftAlone() = runTest {
+        val automation = roomy()
+        fillCap(automation)
+        val waiting = runs.trigger(automation.id, signed(automation, key = "3"), body).run
+        launcher.working.clear()
+        repository.automations.remove(automation.id)
+        runs.tick()
+        assertEquals(RunStatus.QUEUED, repository.runs.getValue(waiting.id).status)
+        assertEquals(2, launcher.launched.size)
+    }
+
+    @Test
     fun aDueCronOverTheCapWaitsToo() = runTest {
         fillCap(roomy())
         manage.setEnabled(aliceAuto, manage.create(aliceAuto, cronDefinition()).automation.id, true)

@@ -5,7 +5,6 @@ import run.ostrom.server.automations.domain.Automation
 import run.ostrom.server.automations.domain.AutomationRun
 import run.ostrom.server.automations.domain.AutomationsRepository
 import run.ostrom.server.automations.domain.CronClaim
-import run.ostrom.server.automations.domain.ParkedRun
 import run.ostrom.server.automations.domain.PayloadProblem
 import run.ostrom.server.automations.domain.RunSource
 import run.ostrom.server.automations.domain.RunStatus
@@ -122,12 +121,12 @@ class AutomationsPostgresTest {
         val first = repository.insertRun(run(automation, "w1"))
         repository.park(ORG_A, first.id, "Fix it")
         repository.insertRun(run(automation, "w2", t0 + 1.minutes))
-        assertEquals(listOf(ParkedRun(automation, first)), repository.parked(10))
+        assertEquals(listOf(first), repository.parked(10))
         assertEquals(emptyList(), repository.parked(0))
         val ofB = automation(org = ORG_B).also { a -> repository.createWithinLimit(a, 20) }
         val third = repository.insertRun(run(ofB, "w3", t0 + 2.minutes))
         repository.park(ORG_B, third.id, "Other")
-        assertEquals(setOf(first.id, third.id), repository.parked(10).map { p -> p.run.id }.toSet())
+        assertEquals(setOf(first.id, third.id), repository.parked(10).map { p -> p.id }.toSet())
         assertEquals(1, repository.parked(1).size)
         // The prompt leaves with the first taker, and only for its own organization.
         assertNull(repository.takeParked(ORG_B, first.id))

@@ -14,7 +14,6 @@ import run.ostrom.server.automations.domain.ClaimedRun
 import run.ostrom.server.automations.domain.CronClaim
 import run.ostrom.server.automations.domain.LaunchRequest
 import run.ostrom.server.automations.domain.LaunchResult
-import run.ostrom.server.automations.domain.ParkedRun
 import run.ostrom.server.automations.domain.RunSource
 import run.ostrom.server.automations.domain.RunStatus
 import run.ostrom.server.automations.domain.TriggerKind
@@ -127,9 +126,8 @@ class InMemoryAutomations : AutomationsRepository {
         if (runs[runId]?.status == RunStatus.QUEUED) prompts[runId] = prompt
     }
 
-    override suspend fun parked(limit: Int): List<ParkedRun> =
-        runs.values.filter { it.status == RunStatus.QUEUED && it.id in prompts }
-            .map { ParkedRun(automations.getValue(it.automationId), it) }.take(limit)
+    override suspend fun parked(limit: Int): List<AutomationRun> =
+        runs.values.filter { it.status == RunStatus.QUEUED && it.id in prompts }.take(limit)
 
     override suspend fun takeParked(orgId: Uuid, runId: Uuid): String? =
         if (takenElsewhere) null else prompts.remove(runId)

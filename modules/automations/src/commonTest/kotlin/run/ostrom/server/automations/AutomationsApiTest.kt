@@ -96,11 +96,18 @@ class AutomationsApiTest {
         secret: String,
         payload: String = body,
         key: String? = null,
-        path: String = "trigger",
+    ): HttpResponse = triggerAt(secrets, "/api/v1/automations/$id/trigger", secret, payload, key)
+
+    private suspend fun HttpClient.triggerAt(
+        secrets: WebhookSecrets,
+        url: String,
+        secret: String,
+        payload: String,
+        key: String?,
     ): HttpResponse {
         val timestamp = Clock.System.now().epochSeconds.toString()
         val signature = secrets.sign(secret, "$timestamp.".encodeToByteArray() + payload.encodeToByteArray())
-        return post("/api/v1/automations/$id/$path") {
+        return post(url) {
             header("Ostrom-Timestamp", timestamp)
             header("Ostrom-Signature", "v1=${signature.toHexString()}")
             // A key starting with "idem:" goes in Idempotency-Key, which wins over Ostrom-Delivery.
@@ -217,7 +224,7 @@ class AutomationsApiTest {
             val path = "/api/v1/automations/${created.id}"
             client.send("alice", "POST", "$path/enable")
             suspend fun run(version: String, key: String, with: String = secret, id: String = created.id) =
-                client.trigger(secrets, id, with, key = key, path = "v/$version/trigger")
+                client.triggerAt(secrets, "/api/v1/automations/$id/v/$version/trigger", with, body, key)
             assertEquals(HttpStatusCode.Accepted, run("1", "a").status)
             assertEquals(HttpStatusCode.Accepted, run("latest", "b").status)
             assertEquals(HttpStatusCode.Accepted, client.trigger(secrets, created.id, secret, key = "c").status)

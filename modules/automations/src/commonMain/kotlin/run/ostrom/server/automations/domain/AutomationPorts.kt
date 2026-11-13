@@ -59,7 +59,7 @@ interface AutomationsRepository {
     suspend fun park(orgId: Uuid, runId: Uuid, prompt: String)
 
     /** The queued runs waiting for capacity, oldest first, at most [limit] across organizations. */
-    suspend fun parked(limit: Int): List<ParkedRun>
+    suspend fun parked(limit: Int): List<AutomationRun>
 
     /**
      * Takes the prompt of a waiting run, once.
@@ -121,14 +121,6 @@ interface AutomationsRepository {
  * @property run The run to record, or none when the slot is skipped.
  */
 data class CronClaim(val nextRunAt: Instant?, val run: AutomationRun?)
-
-/**
- * A queued run waiting for its owner's capacity.
- *
- * @property automation Its automation.
- * @property run The run, queued.
- */
-data class ParkedRun(val automation: Automation, val run: AutomationRun)
 
 /**
  * A cron run recorded by a claim.

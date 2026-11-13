@@ -7,7 +7,6 @@ import run.ostrom.server.automations.domain.AutomationRun
 import run.ostrom.server.automations.domain.AutomationsRepository
 import run.ostrom.server.automations.domain.ClaimedRun
 import run.ostrom.server.automations.domain.CronClaim
-import run.ostrom.server.automations.domain.ParkedRun
 import run.ostrom.server.automations.domain.PayloadProblem
 import run.ostrom.server.automations.domain.RunSource
 import run.ostrom.server.automations.domain.RunStatus
@@ -196,8 +195,8 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
         }
     }
 
-    override suspend fun parked(limit: Int): List<ParkedRun> {
-        val found = mutableListOf<ParkedRun>()
+    override suspend fun parked(limit: Int): List<AutomationRun> {
+        val found = mutableListOf<AutomationRun>()
         for (orgId in organizations()) {
             if (found.size >= limit) break
             val runs = driver.inTenant(orgId) {
@@ -210,8 +209,7 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
                     ).bind("org_id", orgId).bind("limit", limit - found.size),
                 ).getOrThrow().map { it.toRun() }
             }
-            // A run belongs to an automation of its own organization (the foreign key): it is there.
-            for (run in runs) found += ParkedRun(checkNotNull(get(orgId, run.automationId)), run)
+            found += runs
         }
         return found
     }
