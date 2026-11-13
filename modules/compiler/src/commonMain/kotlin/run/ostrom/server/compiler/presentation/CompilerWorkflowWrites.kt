@@ -32,8 +32,6 @@ internal fun Route.settingsRoutes(dependencies: CompilerRoutesDependencies) = wi
 
 private const val CONSOLE_ONLY = "Only a person signed in to the console changes who may edit workflows."
 
-private const val CONSOLE_ONLY = "Only a person signed in to the console changes who may edit workflows."
-
 /**
  * Saves a workflow as the person may: at once when they decide it, held for the console when their token asks a
  * decision, and only as a proposal otherwise.
