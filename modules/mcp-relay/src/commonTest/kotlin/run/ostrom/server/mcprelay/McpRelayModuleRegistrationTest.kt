@@ -43,6 +43,18 @@ class McpRelayModuleRegistrationTest {
         koinApplication { modules(McpRelayModule.koinModule) }.close()
     }
 
+    @Test
+    fun theHostAndTheUpstreamsHaveClientsOfTheirOwn() {
+        val app = koinApplication {
+            modules(McpRelayModule.koinModule, module { single<ConfigSource> { MapConfigSource(emptyMap()) } })
+        }
+        // The host's client follows no redirect; the upstreams' client checks each connection where it is made.
+        val host = app.koin.get<HttpClient>(McpRelayModule.HTTP_CLIENT)
+        val upstreams = app.koin.get<HttpClient>(McpRelayModule.UPSTREAM_CLIENT)
+        assertFalse(host === upstreams)
+        app.close()
+    }
+
     private fun config(vararg values: Pair<String, String>) = McpRelayConfig.from(MapConfigSource(values.toMap()))
 
     @Test
