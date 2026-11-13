@@ -103,8 +103,9 @@ object Deliverables {
     }
 
     private fun string(rules: JsonObject, value: JsonElement, path: String) {
-        val string = (value as? JsonPrimitive)?.takeIf { it.isString }?.content
-            ?: throw invalid("$path must be a string.")
+        val primitive = value as? JsonPrimitive
+        if (primitive == null || !primitive.isString) throw invalid("$path must be a string.")
+        val string = primitive.content
         val allowed = (rules["enum"] as? JsonArray)?.let { names(it) }
         if (allowed != null && string !in allowed) throw invalid("$path must be one of ${allowed.joinToString(", ")}.")
     }
