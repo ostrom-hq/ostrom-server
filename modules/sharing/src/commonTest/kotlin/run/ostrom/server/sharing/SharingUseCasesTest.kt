@@ -197,11 +197,13 @@ class SharingUseCasesTest {
         val now = clock.now()
         fun window(name: String, reset: kotlin.time.Instant?) = QuotaWindow(name, 0.1, reset, now)
         val labels = listOf("A none", "B soonest", "C weekly", "D no reset", "E five-hour")
-        val shared = labels.mapIndexed { i, it -> share(Sharing.otherA, payload(id = "acct-$i", label = it)) }
+        val shared = labels.mapIndexed { i, label -> share(Sharing.otherA, payload(id = "acct-$i", label = label)) }
             .associateBy { it.label }
         repository.windows[shared.getValue("B soonest").id] = mutableListOf(
             window("seven_day", now - 1.hours),
+            window("custom", now + 4.hours),
             window("five_hour", now + 2.hours),
+            window("other", now + 5.hours),
         )
         repository.windows[shared.getValue("C weekly").id] = mutableListOf(
             window("five_hour", now + 1.hours),
