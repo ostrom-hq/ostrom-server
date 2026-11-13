@@ -87,8 +87,26 @@ kotlin {
             // linked Ktor picks CIO for the engine-less clients, so every https call failed.
             implementation(libs.ktor.client.curl)
         }
+        // BENCH ONLY: the JVM run of the same application (JvmMain.kt).
+        jvmMain.dependencies {
+            implementation(libs.ktor.server.cio)
+            implementation(libs.ktor.client.cio)
+        }
         commonTest.dependencies {
             implementation(project(":testing"))
         }
+    }
+}
+
+// BENCH ONLY: the JVM application's class path, for `java -cp "$(cat app/build/bench/classpath.txt)" ...`.
+val benchClasspath = tasks.register("benchClasspath") {
+    val jar = tasks.named<Jar>("jvmJar")
+    val runtime = configurations.named("jvmRuntimeClasspath")
+    dependsOn(jar, runtime)
+    val out = layout.buildDirectory.file("bench/classpath.txt")
+    outputs.file(out)
+    doLast {
+        val files = listOf(jar.get().archiveFile.get().asFile) + runtime.get().files
+        out.get().asFile.writeText(files.joinToString(":") { it.absolutePath })
     }
 }

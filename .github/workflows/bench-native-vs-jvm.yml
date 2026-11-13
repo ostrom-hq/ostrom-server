@@ -1,0 +1,74 @@
+# BENCH ONLY (never merged): the same application, native binary against JVM, same runner, same database, same load.
+name: Bench native vs JVM
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths: ['.github/workflows/bench-native-vs-jvm.yml', 'ci/bench/**', 'app/src/jvmMain/**']
+permissions:
+  contents: read
+  packages: read
+env:
+  KOTLIN_VERSION: '2.4.21'
+  STEADY_MINUTES: '12'
+jobs:
+  bench:
+    timeout-minutes: 150
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f
+        env:
+          POSTGRES_USER: ostrom
+          POSTGRES_PASSWORD: ostrom
+          POSTGRES_DB: ostrom_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ostrom" --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/build-setup
+        with:
+          core-deploy-key: ${{ secrets.DEPLOY_KEY_CORE }}
+          kotlin-version: ${{ env.KOTLIN_VERSION }}
+          build-cache: image
+      - name: JVM class path
+        run: ./gradlew :app:benchClasspath && wc -c app/build/bench/classpath.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Native binary
+        run: |
+          echo 'org.gradle.workers.max=2' >> ~/.gradle/gradle.properties
+          ./gradlew --stop
+          ci/build-linux.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: k6 and roles
+        run: |
+          gh release download -R grafana/k6 --pattern '*linux-amd64.tar.gz' -D "$RUNNER_TEMP/k6"
+          tar -xzf "$RUNNER_TEMP"/k6/*.tar.gz -C "$RUNNER_TEMP/k6" --strip-components=1
+          echo "$RUNNER_TEMP/k6" >> "$GITHUB_PATH"
+          PGPASSWORD=ostrom psql -h localhost -U ostrom -d ostrom_test -v ON_ERROR_STOP=1 -c "$(sed -n '1,/^GRANT ostrom_router/p' ci/database-roles.sql)"
+          mkdir -p "$RUNNER_TEMP/bench"; nproc; free -m; java -version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Native
+        run: MALLOC_ARENA_MAX=2 ci/bench/run.sh native dist/ostrom-server
+      - name: JVM, heap capped as in a 384 MiB pod
+        run: |
+          ci/bench/run.sh jvm-capped java -Xmx256m -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=64m \
+            -XX:+ExitOnOutOfMemoryError -cp "$(cat app/build/bench/classpath.txt)" run.ostrom.server.app.JvmMainKt
+      - name: JVM, default ergonomics
+        run: |
+          ci/bench/run.sh jvm-default java -XX:+ExitOnOutOfMemoryError \
+            -cp "$(cat app/build/bench/classpath.txt)" run.ostrom.server.app.JvmMainKt
+      - name: Report
+        if: always()
+        run: python3 ci/bench/report.py "$RUNNER_TEMP/bench" "$STEADY_MINUTES" native jvm-capped jvm-default | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: bench
+          path: ${{ runner.temp }}/bench/**
+          retention-days: 14

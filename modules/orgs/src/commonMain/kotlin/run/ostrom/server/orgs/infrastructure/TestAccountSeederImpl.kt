@@ -60,4 +60,6 @@ val TEST_ACCOUNT_SCOPES: Set<String> = setOf(
     "cloud:write", "gates:read", "inference:read", "inference:admin", "mcp:read", "mcp:admin", "packages:read",
     "receipts:read", "secrets:read", "secrets:write", "sessions:read", "sessions:write", "usage:read",
     "usage:write", "waits:read", "waits:write", "workflows:read", "workflows:write",
+    // BENCH ONLY: the hook's gate ask, the hot path the load test drives.
+    "gates:ask",
 )
