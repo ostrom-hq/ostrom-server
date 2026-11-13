@@ -83,6 +83,7 @@ class SharingGroupsLendingTest {
         repository,
         repository,
         tokens(repository, cipher, FakeRefresher(), clock),
+        InMemorySlots(clock, repository),
         ProviderQuotaHeaderParser(),
         NoAccountSpendReader(),
         clock,

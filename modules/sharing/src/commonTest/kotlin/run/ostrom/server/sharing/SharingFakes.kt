@@ -10,6 +10,8 @@ import run.ostrom.server.sharing.domain.AccountChangedException
 import run.ostrom.server.sharing.domain.AccountCredentials
 import run.ostrom.server.sharing.domain.AccountProvider
 import run.ostrom.server.sharing.domain.AccountRefreshRepository
+import run.ostrom.server.sharing.domain.AccountSlot
+import run.ostrom.server.sharing.domain.AccountSlotRepository
 import run.ostrom.server.sharing.domain.AccountSpendReader
 import run.ostrom.server.sharing.domain.AccountStatus
 import run.ostrom.server.sharing.domain.AccountTokenCipher
@@ -23,6 +25,7 @@ import run.ostrom.server.sharing.domain.RefreshWrite
 import run.ostrom.server.sharing.domain.SharedAccount
 import run.ostrom.server.sharing.domain.SharedAccountPool
 import run.ostrom.server.sharing.domain.SharedAccountRepository
+import run.ostrom.server.sharing.domain.SlotView
 import run.ostrom.server.sharing.infrastructure.ProviderQuotaHeaderParser
 import kotlin.time.Clock
 import kotlin.time.Duration
@@ -199,6 +202,67 @@ class InMemoryAccounts :
         windows.filterKeys { id -> accounts.any { it.id == id && it.orgId == orgId } }
 }
 
+/**
+ * [AccountSlotRepository] in memory, expiring by [clock] like the database's clock; the accounts' current status read
+ * from [accounts] when given (an account no longer READY is not serving).
+ */
+class InMemorySlots(private val clock: Clock, private val accounts: InMemoryAccounts? = null) : AccountSlotRepository {
+    private class Slot(val orgId: Uuid, val slot: AccountSlot, var expiresAt: Instant)
+
+    private class Affinity(val accountId: Uuid, val expiresAt: Instant)
+
+    private val slots = mutableListOf<Slot>()
+
+    /** Thrown by [release] and [renew] when set: the database failing. */
+    var failure: Exception? = null
+    private val affinities = mutableMapOf<Triple<Uuid, Uuid, String>, Affinity>()
+
+    override suspend fun take(
+        orgId: Uuid,
+        memberId: Uuid,
+        session: String?,
+        candidates: List<SharedAccount>,
+        pick: (SlotView) -> SharedAccount?,
+    ): AccountSlot? {
+        val now = clock.now()
+        val serving = candidates.filter { candidate ->
+            accounts == null || accounts.get(orgId, candidate.id)?.status == AccountStatus.READY
+        }.map { it.id }.toSet()
+        val key = session?.let { Triple(orgId, memberId, it) }
+        val remembered = key?.let { affinities[it] }?.takeIf { it.expiresAt > now }?.accountId
+        val account = pick(SlotView(active(orgId), remembered, serving)) ?: return null
+        val slot = AccountSlot(Uuid.random(), account.id)
+        slots += Slot(orgId, slot, now + AccountSlotRepository.SLOT_LEASE)
+        if (key != null) {
+            affinities.entries.removeAll { (k, v) -> k.first == orgId && k.second == memberId && v.expiresAt <= now }
+            val member = affinities.keys.count { it.first == orgId && it.second == memberId }
+            val org = affinities.count { (k, v) -> k.first == orgId && v.expiresAt > now }
+            val room = member < AccountSlotRepository.MAX_MEMBER_AFFINITIES &&
+                org < AccountSlotRepository.MAX_ORG_AFFINITIES
+            if (key in affinities || room) {
+                affinities[key] = Affinity(account.id, now + AccountSlotRepository.AFFINITY)
+            }
+        }
+        return slot
+    }
+
+    override suspend fun release(orgId: Uuid, slot: AccountSlot) {
+        failure?.let { throw it }
+        slots.removeAll { it.orgId == orgId && it.slot.id == slot.id }
+    }
+
+    override suspend fun renew(orgId: Uuid, slot: AccountSlot) {
+        failure?.let { throw it }
+        slots.filter { it.orgId == orgId && it.slot.id == slot.id }
+            .forEach { it.expiresAt = clock.now() + AccountSlotRepository.SLOT_LEASE }
+    }
+
+    override suspend fun active(orgId: Uuid): Map<Uuid, Int> = slots
+        .filter { it.orgId == orgId && it.expiresAt > clock.now() }
+        .groupingBy { it.slot.accountId }
+        .eachCount()
+}
+
 /** The pool and its collaborators over [InMemoryAccounts], as the module wires them. */
 fun pool(
     repository: InMemoryAccounts,
@@ -208,9 +272,14 @@ fun pool(
     clock: TestClock,
 ) = pool(repository, tokens(repository, cipher, refresher, clock), spend, clock)
 
-/** The pool over [repository] with [tokens]. */
-fun pool(repository: InMemoryAccounts, tokens: AccountTokens, spend: AccountSpendReader, clock: TestClock) =
-    SharedAccountPool(repository, repository, tokens, ProviderQuotaHeaderParser(), spend, clock)
+/** The pool over [repository] with [tokens], its slots in [slots]. */
+fun pool(
+    repository: InMemoryAccounts,
+    tokens: AccountTokens,
+    spend: AccountSpendReader,
+    clock: TestClock,
+    slots: AccountSlotRepository = InMemorySlots(clock, repository),
+) = SharedAccountPool(repository, repository, tokens, slots, ProviderQuotaHeaderParser(), spend, clock)
 
 /** The tokens over [repository], warnings written to [logged]. */
 fun tokens(

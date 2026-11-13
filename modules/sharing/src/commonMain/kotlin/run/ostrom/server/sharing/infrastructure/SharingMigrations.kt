@@ -109,4 +109,31 @@ val SharingMigrations: List<SchemaMigration> = listOf(
             ALTER TABLE sharing_accounts ADD COLUMN credential_version BIGINT NOT NULL DEFAULT 1
         """.trimIndent(),
     ),
+    // The requests in flight on each account and the account each session used, shared by every replica (TeamCode's
+    // reservations and `conversation_affinities`): a slot expires by itself after its lease, so a killed replica's
+    // slots free up; an affinity is a digest of the session id, never the id.
+    SchemaMigration(
+        version = 8,
+        name = "sharing_slots_and_affinities",
+        sql = """
+            CREATE TABLE sharing_slots (
+                id UUID PRIMARY KEY,
+                org_id UUID NOT NULL,
+                account_id UUID NOT NULL REFERENCES sharing_accounts (id) ON DELETE CASCADE,
+                expires_at TIMESTAMPTZ NOT NULL
+            );
+            CREATE INDEX sharing_slots_account ON sharing_slots (account_id, expires_at);
+            CREATE INDEX sharing_slots_org ON sharing_slots (org_id, expires_at);
+            CREATE TABLE sharing_affinities (
+                org_id UUID NOT NULL,
+                member_id UUID NOT NULL,
+                session_hash TEXT NOT NULL,
+                account_id UUID NOT NULL REFERENCES sharing_accounts (id) ON DELETE CASCADE,
+                expires_at TIMESTAMPTZ NOT NULL,
+                PRIMARY KEY (org_id, member_id, session_hash)
+            );
+            CREATE INDEX sharing_affinities_account ON sharing_affinities (account_id);
+            CREATE INDEX sharing_affinities_expiry ON sharing_affinities (org_id, expires_at)
+        """.trimIndent() + ";\n" + tenantTableSql("sharing_slots") + "\n" + tenantTableSql("sharing_affinities"),
+    ),
 )

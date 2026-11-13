@@ -4,6 +4,7 @@ package run.ostrom.server.sharing
 import run.ostrom.server.sharing.domain.AccountCredentials
 import run.ostrom.server.sharing.domain.AccountLimits
 import run.ostrom.server.sharing.domain.AccountProvider
+import run.ostrom.server.sharing.domain.AccountSlotRepository
 import run.ostrom.server.sharing.domain.AccountSpendReader
 import run.ostrom.server.sharing.domain.AccountStatus
 import run.ostrom.server.sharing.domain.AccountTokenCipher
@@ -15,7 +16,6 @@ import run.ostrom.server.sharing.domain.RefreshResult
 import run.ostrom.server.sharing.domain.SharedAccount
 import run.ostrom.server.sharing.domain.SharedAccountPool
 import run.ostrom.server.sharing.domain.UNKNOWN_RESET
-import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -99,7 +99,7 @@ class SharedAccountPoolTest {
             pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, "s1"),
         ).lease
         assertEquals(first.account.id, again.account.id)
-        clock.advance(SharedAccountPool.AFFINITY + 1.minutes)
+        clock.advance(AccountSlotRepository.AFFINITY + 1.minutes)
         val later = assertIs<LeaseResult.Leased>(
             pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, "s1"),
         ).lease
@@ -157,7 +157,7 @@ class SharedAccountPoolTest {
         val first = assertIs<LeaseResult.Leased>(
             pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null),
         ).lease
-        assertEquals(1, pool.inFlight(first.account.id))
+        assertEquals(1, pool.inFlight(Sharing.orgA)[first.account.id] ?: 0)
         val busy = assertIs<LeaseResult.Refused>(
             pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null),
         ).refusal
@@ -165,7 +165,7 @@ class SharedAccountPoolTest {
         assertEquals(clock.now() + SharedAccountPool.BUSY_RETRY, busy.retryAt)
         first.release()
         first.release()
-        assertEquals(0, pool.inFlight(first.account.id))
+        assertEquals(0, pool.inFlight(Sharing.orgA)[first.account.id] ?: 0)
         assertIs<LeaseResult.Leased>(pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null))
     }
 
@@ -527,86 +527,6 @@ class SharedAccountPoolTest {
         Sharing.orgA,
         account.id,
     )
-
-    @Test
-    fun aLeaseIsRefusedWhileEveryAccountIsAtItsConcurrency() = runTest {
-        account("only", limits = AccountLimits(maxConcurrent = 1))
-        val pool = pool()
-        val first = assertIs<LeaseResult.Leased>(
-            pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, "s"),
-        ).lease
-        assertIs<LeaseResult.Refused>(pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, "s"))
-        first.release()
-        assertIs<LeaseResult.Leased>(pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null))
-    }
-
-    @Test
-    fun aReleaseDuringCancellationStillGivesTheSlotBack() = runTest {
-        // The release runs in the `finally` of a cancelled request: it must not be cut short there.
-        val account = account("a", limits = AccountLimits(maxConcurrent = 1))
-        val pool = pool()
-        val leased = assertIs<LeaseResult.Leased>(
-            pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null),
-        ).lease
-        val job = launch {
-            try {
-                awaitCancellation()
-            } finally {
-                leased.release()
-            }
-        }
-        testScheduler.runCurrent()
-        job.cancelAndJoin()
-        assertEquals(0, pool.inFlight(account.id))
-    }
-
-    @Test
-    fun aSlotIsGivenBackWhenTheTokensCannotBeRead() = runTest {
-        val account = account("a")
-        val pool = pool()
-        repository.failing = true
-        assertFailsWith<IllegalStateException> {
-            pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null)
-        }
-        assertEquals(0, pool.inFlight(account.id), "The failed lease holds no slot")
-    }
-
-    @Test
-    fun slotsAreCountedPerAccount() = runTest {
-        val account = account("shared", limits = AccountLimits(maxConcurrent = 2))
-        val pool = pool()
-        val first = assertIs<LeaseResult.Leased>(
-            pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null),
-        ).lease
-        assertIs<LeaseResult.Leased>(pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null))
-        first.release()
-        assertEquals(1, pool.inFlight(account.id))
-        pool.release(Uuid.random())
-        assertEquals(1, pool.inFlight(account.id), "Releasing an account never leased changes nothing")
-    }
-
-    @Test
-    fun theSessionUsedLongestAgoIsForgottenOnceTooManyAreRemembered() = runTest {
-        account("a", priority = 1)
-        account("b")
-        val pool = pool()
-        suspend fun lease(session: String, member: Uuid = Sharing.memberA.memberId) =
-            assertIs<LeaseResult.Leased>(pool.lease(Sharing.orgA, member, AccountProvider.CLAUDE, session)).lease
-        lease("kept").release()
-        lease("oldest").release()
-        // Raise b: a session still remembered keeps a, a forgotten one moves to b.
-        val b = repository.accounts.indexOfFirst { it.label == "b" }
-        repository.accounts[b] = repository.accounts[b].copy(priority = 5)
-        lease("kept").release()
-        repeat(SharedAccountPool.MAX_AFFINITY - 1) { lease("s$it").release() }
-        assertEquals("a", lease("kept").account.label, "Used recently: remembered")
-        assertEquals("b", lease("oldest").account.label, "Used longest ago: forgotten")
-        assertEquals(
-            "b",
-            lease("kept", Sharing.otherA.memberId).account.label,
-            "Another member's same id is another session",
-        )
-    }
 
     @Test
     fun aRetryAfterOutOfRangeOrUnreadableIsIgnored() = runTest {

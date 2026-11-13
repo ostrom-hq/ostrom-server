@@ -13,8 +13,10 @@ import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import run.ostrom.server.sharing.presentation.AccountLimitsDto
 import run.ostrom.server.sharing.presentation.ShareAccountRequest
+import run.ostrom.server.sharing.presentation.UpdateAccountRequest
 import run.ostrom.server.testing.TestServer
 import io.ktor.client.request.bearerAuth
+import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
@@ -95,4 +97,11 @@ abstract class SharingPostgresHarness {
             ),
         )
     }
+
+    protected suspend fun TestServer.patchAs(token: String, path: String, request: UpdateAccountRequest) =
+        client.patch(path) {
+            bearerAuth(token)
+            contentType(ContentType.Application.Json)
+            setBody(request)
+        }
 }

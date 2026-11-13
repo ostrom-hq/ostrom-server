@@ -70,7 +70,7 @@ data class UpdateAccountPayload(
  * @property displayLabel The label, or "Account N" for members other than its owner.
  * @property identityVisible Whether the caller is an admin or its owner.
  * @property windows Current provider windows.
- * @property inFlight Requests in flight on this replica.
+ * @property inFlight Requests in flight, on every replica.
  * @property spentMicros Equivalent API cost served this month.
  * @property owner The login of the member who shared it ([MemberNames]); empty unless [identityVisible] or when an
  *   admin added it.
@@ -215,6 +215,7 @@ class ListSharedAccountsUseCaseImpl(
         val changeable = accounts.filter { caller.mayChange(it) }
         val named = names.of(caller.orgId, changeable)
         val groups = names.groupsOf(caller.orgId, changeable)
+        val active = pool.inFlight(caller.orgId)
         return accounts.mapIndexed { index, account ->
             val visible = caller.mayChange(account)
             SharedAccountView(
@@ -231,7 +232,7 @@ class ListSharedAccountsUseCaseImpl(
                 displayLabel = if (visible) account.label else "Account ${index + 1}",
                 identityVisible = visible,
                 windows = windows[account.id].orEmpty().filter { it.isCurrent(now) }.sortedBy { it.window },
-                inFlight = pool.inFlight(account.id),
+                inFlight = active[account.id] ?: 0,
                 spentMicros = spend.spentMicros(account.id, since),
                 owner = if (visible) named.ownerOf(account) else "",
                 sharedWith = if (visible) named.sharedWithOf(account, groups) else emptyList(),

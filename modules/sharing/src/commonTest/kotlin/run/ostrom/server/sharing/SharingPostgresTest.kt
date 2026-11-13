@@ -26,7 +26,6 @@ import run.ostrom.server.sharing.presentation.ShareAccountRequest
 import run.ostrom.server.sharing.presentation.SharedAccountResponse
 import run.ostrom.server.sharing.presentation.SharedAccountsResponse
 import run.ostrom.server.sharing.presentation.UpdateAccountRequest
-import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.HttpClient
@@ -36,7 +35,6 @@ import io.ktor.client.engine.mock.respond
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
-import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
@@ -290,13 +288,6 @@ class SharingPostgresTest : SharingPostgresHarness() {
                 }
                 assertNull(repository.get(Sharing.orgA, id))
             }
-        }
-
-    private suspend fun TestServer.patchAs(token: String, path: String, request: UpdateAccountRequest) =
-        client.patch(path) {
-            bearerAuth(token)
-            contentType(ContentType.Application.Json)
-            setBody(request)
         }
 
     @Test

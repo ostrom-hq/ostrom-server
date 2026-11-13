@@ -333,6 +333,18 @@ account whose refresh is in flight (an intent younger than 60 seconds) answers 4
 replica runs this version, an older replica still renews with its in-memory lock and ignores the intent: finish the
 rollout before relying on it.
 
+The requests in flight on each account and the account each agent session used are in PostgreSQL too
+(`sharing_slots`, `sharing_affinities`), so an account's `maxConcurrent` holds across every replica and a session keeps
+its account (and the provider's prompt cache) whichever replica it reaches, as TeamCode's reservations and
+`conversation_affinities`. A lease locks its candidates' rows, counts their unexpired slots and takes one in the same
+transaction. A request still open renews its slot every 5 minutes, so a long stream keeps counting; a slot ends when
+its request does, or within 15 minutes if its replica died. A slot the database fails to renew or take back is left to
+that lease and fails no request. A session sticks to its account while that account serves and has room, for an hour
+after its last request; once moved, it stays on its new account. At most 1,000 sessions per member and 10,000 per
+organization are remembered: past that, a new session is placed without being remembered, and no member evicts
+another's. Only a SHA-256 digest of the session id is stored. `inFlight` in `GET /api/v1/accounts` and
+`GET /api/v1/capacity` counts every replica.
+
 | Key | Default | Meaning |
 |---|---|---|
 | `OSTROM_SHARING_CLAUDE_TOKEN_URL` | `https://platform.claude.com/v1/oauth/token` | Token endpoint of shared Claude accounts |

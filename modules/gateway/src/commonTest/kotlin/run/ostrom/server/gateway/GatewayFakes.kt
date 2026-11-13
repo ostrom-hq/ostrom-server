@@ -33,6 +33,8 @@ import run.ostrom.server.sharing.domain.AccountCredentials
 import run.ostrom.server.sharing.domain.AccountLimits
 import run.ostrom.server.sharing.domain.AccountProvider
 import run.ostrom.server.sharing.domain.AccountRefreshRepository
+import run.ostrom.server.sharing.domain.AccountSlot
+import run.ostrom.server.sharing.domain.AccountSlotRepository
 import run.ostrom.server.sharing.domain.AccountStatus
 import run.ostrom.server.sharing.domain.AccountTokenCipher
 import run.ostrom.server.sharing.domain.AccountTokens
@@ -46,6 +48,7 @@ import run.ostrom.server.sharing.domain.RefreshWrite
 import run.ostrom.server.sharing.domain.SharedAccount
 import run.ostrom.server.sharing.domain.SharedAccountPool
 import run.ostrom.server.sharing.domain.SharedAccountRepository
+import run.ostrom.server.sharing.domain.SlotView
 import run.ostrom.server.sharing.infrastructure.ProviderQuotaHeaderParser
 import kotlin.time.Clock
 import kotlin.time.Duration
@@ -198,11 +201,40 @@ class NoRefresh : OAuthRefresher {
     override suspend fun refresh(provider: AccountProvider, credentials: AccountCredentials) = RefreshResult.Unavailable
 }
 
+/** Slots in memory, never expiring; sessions remembered without bounds. */
+class InMemorySlots : AccountSlotRepository {
+    private val slots = mutableListOf<AccountSlot>()
+    private val affinities = mutableMapOf<String, Uuid>()
+
+    override suspend fun take(
+        orgId: Uuid,
+        memberId: Uuid,
+        session: String?,
+        candidates: List<SharedAccount>,
+        pick: (SlotView) -> SharedAccount?,
+    ): AccountSlot? {
+        val key = session?.let { "$orgId:$memberId:$it" }
+        val view = SlotView(active(orgId), key?.let { affinities[it] }, candidates.map { it.id }.toSet())
+        val account = pick(view) ?: return null
+        if (key != null) affinities[key] = account.id
+        return AccountSlot(Uuid.random(), account.id).also { slots += it }
+    }
+
+    override suspend fun release(orgId: Uuid, slot: AccountSlot) {
+        slots.remove(slot)
+    }
+
+    override suspend fun renew(orgId: Uuid, slot: AccountSlot) = Unit
+
+    override suspend fun active(orgId: Uuid): Map<Uuid, Int> = slots.groupingBy { it.accountId }.eachCount()
+}
+
 /** The pool over [accounts]. */
 fun pool(accounts: InMemoryAccounts, clock: Clock) = SharedAccountPool(
     accounts,
     accounts,
     AccountTokens(accounts, Gw.cipher, NoRefresh(), clock, JsonLogger(LogLevel.ERROR, sink = {})),
+    InMemorySlots(),
     ProviderQuotaHeaderParser(),
     NoAccountSpendReader(),
     clock,
