@@ -37,12 +37,14 @@ import run.ostrom.server.artifacts.presentation.artifactsRoutes
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
-import io.ktor.client.HttpClient
+import run.ostrom.server.kernel.network.outboundHttpClient
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.server.routing.Route
 import org.koin.core.Koin
 import org.koin.core.module.Module
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
+import org.koin.dsl.onClose
 
 /**
  * The artifacts module: pages and file sets that members and their agents publish for the organization to read,
@@ -52,6 +54,10 @@ import org.koin.dsl.module
  */
 object ArtifactsModule : ServerModule {
     override val name: String = "artifacts"
+
+    // Before [koinModule], whose declarations read it as the module is built.
+    /** The client of the organizations' buckets. */
+    private val BUCKET_CLIENT = named("artifactsBucketClient")
 
     override val koinModule: Module = module {
         single<ArtifactLocations> { ArtifactsConfig.from(get<ConfigSource>()) }
@@ -66,22 +72,23 @@ object ArtifactsModule : ServerModule {
         single<ViewArtifactUseCase> { ViewArtifactUseCaseImpl(get(), get(), get(), get(), get()) }
         single { ArtifactsRoutesDependencies(get(), get(), get(), get(), get(), get()) }
         single<ArtifactStorageRepository> { ArtifactStorageRepositoryImpl(get(), get()) }
-        single<ArtifactObjectStore> { S3ObjectStore(bucketClient()) }
+        // The bucket an administrator typed: every connection checked where it is made (no link-local, metadata or
+        // unspecified address; a private one is allowed, for a bucket on the organization's own network, as in
+        // TeamCode), no redirect followed, every call bounded.
+        single(BUCKET_CLIENT) {
+            outboundHttpClient(allowPrivate = true) {
+                install(HttpTimeout) {
+                    connectTimeoutMillis = CONNECT_TIMEOUT_MILLIS
+                    requestTimeoutMillis = REQUEST_TIMEOUT_MILLIS
+                }
+            }
+        } onClose { it?.close() }
+        single<ArtifactObjectStore> { S3ObjectStore(get(BUCKET_CLIENT)) }
         single<ArtifactAdministrationUseCase> {
             val digest = get<ContentDigest>()
             ArtifactAdministrationUseCaseImpl(get(), get(), { bytes -> digest.sha256(bytes) })
         }
         single { StorageRoutesDependencies(get(), get()) }
-    }
-
-    /** The bucket's client: no redirect followed, every call bounded. */
-    private fun bucketClient(): HttpClient = HttpClient {
-        followRedirects = false
-        expectSuccess = false
-        install(HttpTimeout) {
-            connectTimeoutMillis = CONNECT_TIMEOUT_MILLIS
-            requestTimeoutMillis = REQUEST_TIMEOUT_MILLIS
-        }
     }
 
     private const val CONNECT_TIMEOUT_MILLIS = 10_000L
