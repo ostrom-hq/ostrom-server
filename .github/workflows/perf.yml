@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-24.04
     services:
       postgres:
-        image: postgres:17
+        image: postgres:17@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f # 17 of 2026-11-09; the 2026-11-13 image plans the audit page with a seq scan
         env:
           POSTGRES_USER: ostrom
           POSTGRES_PASSWORD: ostrom
