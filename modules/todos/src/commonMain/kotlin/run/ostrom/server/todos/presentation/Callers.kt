@@ -74,8 +74,7 @@ class TodoCallers(private val orgs: PrincipalOrgResolver, private val agents: Wa
             }
             PrincipalKind.SERVICE, PrincipalKind.DEVICE -> throw TodoCredentialRefusedException()
         }
-
-    private companion object {
-        val ADMIN_ROLES = setOf(OrgRole.OWNER, OrgRole.ADMIN)
-    }
 }
+
+/** The roles that administer an organization. */
+private val ADMIN_ROLES = setOf(OrgRole.OWNER, OrgRole.ADMIN)
