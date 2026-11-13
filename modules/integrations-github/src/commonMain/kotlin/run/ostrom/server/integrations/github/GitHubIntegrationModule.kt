@@ -50,6 +50,7 @@ import run.ostrom.server.integrations.github.infrastructure.HttpGitHubApi
 import run.ostrom.server.integrations.github.infrastructure.HttpGitHubContentsApi
 import run.ostrom.server.integrations.github.infrastructure.HttpGitHubUserAuth
 import run.ostrom.server.integrations.github.infrastructure.IdentityGitHubAccounts
+import run.ostrom.server.integrations.github.infrastructure.LinkedRunnerGitHubTokens
 import run.ostrom.server.integrations.github.infrastructure.NoGitHubLinkMembers
 import run.ostrom.server.integrations.github.infrastructure.OrgsOrgReferences
 import run.ostrom.server.integrations.github.infrastructure.PostgresGitHubAppStore
@@ -73,6 +74,7 @@ import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.rules.domain.services.RepositoryReader
+import run.ostrom.server.runners.domain.RunnerGitHubTokens
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.server.routing.Route
@@ -193,6 +195,7 @@ object GitHubIntegrationModule : ServerModule {
             val members = getOrNull<MemberDirectory>() ?: NoGitHubLinkMembers
             GitHubAccessResolver(get(), get(), get(), members, get(), get(), get())
         }
+        single<RunnerGitHubTokens> { LinkedRunnerGitHubTokens(get(), get()) }
         single { GitHubLinkRoutesDependencies(get(), get(), get<GitHubSettings>().webOrigin) }
         single {
             val settings = get<GitHubSettings>()
