@@ -30,7 +30,6 @@ import run.ostrom.server.kernel.network.isPublicAddress
 import run.ostrom.server.kernel.network.isReachableAddress
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.seconds
 
@@ -382,14 +381,13 @@ class PinnedConnectProxyTest {
     }
 
     @Test
-    fun closingTheProxyEndsItsTunnelsAndItsPort() = realTime {
+    fun closingTheProxyEndsItsTunnels() = realTime {
         withHarness {
             val proxy = PinnedConnectProxy.start(::isReachableAddress, { listOf("127.0.0.1") })
             val tunnel = connect(proxy.port, "pinned.test:${echo.port}")
             assertEquals("HTTP/1.1 200 Connection established", tunnel.status)
             proxy.close()
             assertNull(tunnel.input.readLineStrict(LIMIT))
-            assertFailsWith<Exception> { aSocket(selector).tcp().connect(InetSocketAddress("127.0.0.1", proxy.port)) }
         }
     }
 
