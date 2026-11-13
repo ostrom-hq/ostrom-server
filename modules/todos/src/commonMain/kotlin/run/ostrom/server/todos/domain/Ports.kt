@@ -27,13 +27,23 @@ interface TodosRepository {
 
     /**
      * Reads the session's list under its row lock, applies [change] (which may throw to refuse), and stores what
-     * changed in the same transaction. Nothing is deleted.
+     * changed in the same transaction. No item is deleted.
      *
      * @param change The new list and a value for the caller.
      * @return The value.
      * @throws TodoException `todo_not_found` when the session has no list.
      */
     suspend fun <T> mutate(orgId: Uuid, sessionId: String, change: (TodoList) -> Pair<TodoList, T>): T
+
+    /**
+     * Reads the session's list under its row lock, lets [check] refuse (it throws), then deletes the list and its
+     * items in the same transaction: the one place a list is deleted, for a closed one ([TodoRules.requireClosed]).
+     *
+     * @param check Refuses the reset.
+     * @return The list deleted.
+     * @throws TodoException `todo_not_found` when the session has no list.
+     */
+    suspend fun reset(orgId: Uuid, sessionId: String, check: (TodoList) -> Unit): TodoList
 
     /**
      * Whether the todo Stop hook is on for a member: true unless an administrator turned it off.

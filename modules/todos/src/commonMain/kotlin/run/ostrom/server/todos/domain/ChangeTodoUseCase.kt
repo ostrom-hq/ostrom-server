@@ -104,6 +104,14 @@ interface ChangeTodoUseCase {
      * @return The list.
      */
     suspend fun hookError(caller: TodoCaller, sessionId: String?, text: String): TodoList
+
+    /**
+     * Clears the session's closed todo, as if it never had one, so a new one can be created (TeamCode #266).
+     *
+     * @return The list deleted, for the audit log.
+     * @throws TodoException `todo_active` while the list is active, `todo_not_found` without one.
+     */
+    suspend fun reset(caller: TodoCaller, sessionId: String?): TodoList
 }
 
 /**
@@ -212,6 +220,11 @@ class ChangeTodoUseCaseImpl(
         change(caller, sessionId) { list, now ->
             TodoRules.recordEvent(list, TodoHookEvent.HOOK_ERROR, text, now).copy(updatedAt = now)
         }
+
+    override suspend fun reset(caller: TodoCaller, sessionId: String?): TodoList {
+        val target = access.writer(caller, sessionId).target
+        return repository.reset(target.orgId, target.sessionId, TodoRules::requireClosed)
+    }
 
     private suspend fun change(
         caller: TodoCaller,

@@ -87,6 +87,13 @@ class InMemoryTodos : TodosRepository {
         return value
     }
 
+    override suspend fun reset(orgId: Uuid, sessionId: String, check: (TodoList) -> Unit): TodoList {
+        val stored = lists[orgId to sessionId] ?: throw todoNotFound()
+        check(stored)
+        lists.remove(orgId to sessionId)
+        return stored
+    }
+
     override suspend fun stopHookEnabled(orgId: Uuid, memberId: String): Boolean = (orgId to memberId) !in hookOff
 
     override suspend fun stopHookDisabled(orgId: Uuid): Set<String> =

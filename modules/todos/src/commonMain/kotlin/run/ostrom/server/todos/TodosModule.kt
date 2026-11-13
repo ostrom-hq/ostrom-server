@@ -52,7 +52,7 @@ object TodosModule : ServerModule {
         single<StopTodoUseCase> { StopTodoUseCaseImpl(get(), get(), get(), get()) }
         single<StopHookSettingsUseCase> { StopHookSettingsUseCaseImpl(get(), get()) }
         single { TodoCallers(get(), get()) }
-        single { TodosRoutesDependencies(get(), get(), get(), get(), get()) }
+        single { TodosRoutesDependencies(get(), get(), get(), get(), get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = TodosMigrations

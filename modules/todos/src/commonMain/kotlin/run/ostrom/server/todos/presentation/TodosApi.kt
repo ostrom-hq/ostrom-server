@@ -104,6 +104,15 @@ class TodoSessionApi(val sessionId: String? = null) {
     @Serializable
     @Resource("hook-error")
     class HookError(val parent: TodoSessionApi = TodoSessionApi())
+
+    /**
+     * `POST /api/v1/todos/session/reset` (`resetTodo`).
+     *
+     * @property parent The session's todo.
+     */
+    @Serializable
+    @Resource("reset")
+    class Reset(val parent: TodoSessionApi = TodoSessionApi())
 }
 
 /** `GET /api/v1/todos/stop-hook` (`listTodoStopHooks`): the members whose Stop hook is off. */

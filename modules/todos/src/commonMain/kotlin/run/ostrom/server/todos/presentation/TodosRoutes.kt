@@ -7,6 +7,7 @@ import run.ostrom.core.api.models.CreateTodoRequest
 import run.ostrom.core.api.models.DropTodoItemRequest
 import run.ostrom.core.api.models.LinkTodoItemRequest
 import run.ostrom.core.api.models.NoteTodoItemRequest
+import run.ostrom.core.api.models.ResetTodoRequest
 import run.ostrom.core.api.models.SessionTodo
 import run.ostrom.core.api.models.StartTodoItemRequest
 import run.ostrom.core.api.models.StartTodoItemResponse
@@ -16,6 +17,8 @@ import run.ostrom.core.api.models.TodoStopHook
 import run.ostrom.core.api.models.TodoStopHookRequest
 import run.ostrom.core.api.models.TodoStopHooks
 import run.ostrom.core.api.models.TodoStopRequest
+import run.ostrom.server.kernel.audit.OrgAuditRecord
+import run.ostrom.server.kernel.audit.auditDetails
 import run.ostrom.server.kernel.auth.authenticated
 import run.ostrom.server.kernel.auth.requirePrincipal
 import run.ostrom.server.kernel.http.OstromJson
@@ -73,6 +76,15 @@ private fun Route.sessionTodoRoutes(dependencies: TodosRoutesDependencies) = wit
         val request = call.receive<TodoHookErrorRequest>()
         val caller = callers.writer(call.requirePrincipal(), request.sessionId)
         call.respondTodo(change.hookError(caller, request.sessionId, request.text))
+    }
+    post<TodoSessionApi.Reset> {
+        val request = call.receive<ResetTodoRequest>()
+        val principal = call.requirePrincipal()
+        val cleared = change.reset(callers.writer(principal, request.sessionId), request.sessionId)
+        // What was cleared, never its content.
+        val details = auditDetails("list" to cleared.id, "status" to cleared.status.wire, "items" to cleared.items.size)
+        audit.record(OrgAuditRecord(cleared.orgId, principal, "todo.reset", "session", cleared.sessionId, details))
+        call.respondTodo(null)
     }
 }
 
