@@ -56,3 +56,24 @@ internal inline fun requireAutomation(condition: Boolean, message: () -> String)
 
 /** A webhook delivery already received (S2-50): a retry or a replay, never run twice. */
 class WebhookReplayException : OstromException(ErrorKind.CONFLICT, "This delivery was already received.")
+
+/**
+ * A webhook URL pinned to a version of the definition reached an automation that is no longer at it; nothing is
+ * recorded (TC-AUT-9).
+ *
+ * @param pinned The version in the URL.
+ * @param current The automation's version.
+ */
+class AutomationVersionChangedException(pinned: Int, current: Int) : OstromException(
+    ErrorKind.CONFLICT,
+    "This URL is pinned to version $pinned; the automation is at version $current. " +
+        "Use the URL of the current version, or the latest one.",
+    type = "automation_version_changed",
+)
+
+/** No such run for this automation. */
+class AutomationRunNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Run not found.")
+
+/** The run is over (finished, failed, skipped or already cancelled): there is nothing to cancel. */
+class AutomationRunEndedException :
+    OstromException(ErrorKind.CONFLICT, "This run has already ended.", type = "run_ended")

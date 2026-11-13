@@ -5,9 +5,12 @@ import run.ostrom.server.automations.domain.AutomationLauncher
 import run.ostrom.server.automations.domain.LaunchRequest
 import run.ostrom.server.automations.domain.LaunchResult
 import run.ostrom.server.runners.domain.Caller
+import run.ostrom.server.runners.domain.ChangeCloudSessionUseCase
 import run.ostrom.server.runners.domain.CloudHoursExhaustedException
 import run.ostrom.server.runners.domain.CloudSessionLimitException
+import run.ostrom.server.runners.domain.CloudSessionNotFoundException
 import run.ostrom.server.runners.domain.CloudSessionsClosedException
+import run.ostrom.server.runners.domain.CloudSessionStateException
 import run.ostrom.server.runners.domain.CloudSessionsRepository
 import run.ostrom.server.runners.domain.CreateCloudSessionPayload
 import run.ostrom.server.runners.domain.CreateCloudSessionUseCase
@@ -22,10 +25,12 @@ import kotlin.uuid.Uuid
  *
  * @param create Creates sessions.
  * @param repository Reads a run's session back, to tell whether it still works.
+ * @param change Pauses the session of a cancelled run.
  */
 internal class CloudSessionAutomationLauncher(
     private val create: CreateCloudSessionUseCase,
     private val repository: CloudSessionsRepository,
+    private val change: ChangeCloudSessionUseCase,
 ) : AutomationLauncher {
     override suspend fun launch(request: LaunchRequest): LaunchResult {
         val payload = CreateCloudSessionPayload(
@@ -53,5 +58,17 @@ internal class CloudSessionAutomationLauncher(
         val id = Uuid.parseOrNull(sessionId) ?: return false
         val session = repository.get(orgId, id)
         return session != null && session.state.holdsExecution
+    }
+
+    override suspend fun pause(orgId: Uuid, owner: String, sessionId: String): Boolean {
+        val id = Uuid.parseOrNull(sessionId) ?: return false
+        return try {
+            change.pause(Caller(orgId, owner), id)
+            true
+        } catch (_: CloudSessionNotFoundException) {
+            false
+        } catch (_: CloudSessionStateException) {
+            false
+        }
     }
 }

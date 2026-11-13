@@ -17,6 +17,7 @@ import run.ostrom.server.automations.presentation.AutomationRequest
 import run.ostrom.server.automations.presentation.AutomationResponse
 import run.ostrom.server.automations.presentation.AutomationsResponse
 import run.ostrom.server.automations.presentation.CreateWaitRequest
+import run.ostrom.server.automations.presentation.RunResponse
 import run.ostrom.server.automations.presentation.RunsResponse
 import run.ostrom.server.automations.presentation.TestRunRequest
 import run.ostrom.server.automations.presentation.WaitResponse
@@ -120,6 +121,19 @@ class AutomationsIsolationPostgresTest {
             assertEquals(emptyList(), launcher.launched, "B started nothing")
             val runs = client.get("$path/runs") { bearerAuth("alice") }.body<RunsResponse>()
             assertEquals(emptyList(), runs.items, "No run recorded for A's automation")
+
+            // A run of A's, started: B cannot cancel it, and its session is not paused.
+            val started = client.post("$path/run") {
+                bearerAuth("alice")
+                contentType(ContentType.Application.Json)
+                setBody(test)
+                header("Idempotency-Key", "t2")
+            }.body<RunResponse>()
+            val cancel = "$path/runs/${started.id}/cancel"
+            assertEquals(HttpStatusCode.NotFound, client.post(cancel) { bearerAuth("carol") }.status, "cancel")
+            assertEquals(emptyList(), launcher.paused, "B paused nothing")
+            val after = client.get("$path/runs") { bearerAuth("alice") }.body<RunsResponse>()
+            assertEquals(listOf("started"), after.items.map { run -> run.status })
         }
     }
 

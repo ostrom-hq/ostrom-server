@@ -217,6 +217,9 @@ enum class RunStatus(val wire: String) {
 
     /** The payload did not fit the variables ([AutomationRun.problems]). */
     INVALID_PAYLOAD("invalid_payload"),
+
+    /** Cancelled by the owner or an administrator: a queued run at once, a started one with its session paused. */
+    CANCELLED("cancelled"),
 }
 
 /**

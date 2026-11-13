@@ -238,4 +238,15 @@ val AutomationsMigrations: List<SchemaMigration> = listOf(
         name = "waits_that_resolve_by_themselves",
         sql = WAITS_THAT_RESOLVE_BY_THEMSELVES_SQL,
     ),
+    // A run over its owner's cap waits queued with its rendered prompt, dropped by any end of the run; the partial
+    // index finds the started runs of the last day, which the cap counts.
+    SchemaMigration(
+        version = 7,
+        name = "runs_waiting_for_capacity",
+        sql = """
+            ALTER TABLE automations_runs ADD COLUMN prompt TEXT;
+            CREATE INDEX automations_runs_started ON automations_runs (org_id, created_at DESC)
+                WHERE status = 'started';
+        """.trimIndent(),
+    ),
 )

@@ -14,6 +14,7 @@ import run.ostrom.server.automations.domain.ClaimedRun
 import run.ostrom.server.automations.domain.CronClaim
 import run.ostrom.server.automations.domain.LaunchRequest
 import run.ostrom.server.automations.domain.LaunchResult
+import run.ostrom.server.automations.domain.ParkedRun
 import run.ostrom.server.automations.domain.RunSource
 import run.ostrom.server.automations.domain.RunStatus
 import run.ostrom.server.automations.domain.TriggerKind
@@ -57,6 +58,8 @@ class InMemoryAutomations : AutomationsRepository {
     var failedBefore: Instant? = null
     var loseNextUpdate = false
     var refuseNextDelete = false
+    val prompts = linkedMapOf<Uuid, String>()
+    var takenElsewhere = false
 
     override suspend fun createWithinLimit(automation: Automation, maxPerOwner: Int): Boolean {
         if (automations.values.count { it.orgId == automation.orgId && it.owner == automation.owner } >= maxPerOwner) {
@@ -103,9 +106,39 @@ class InMemoryAutomations : AutomationsRepository {
         return run
     }
 
-    override suspend fun updateRun(run: AutomationRun) {
+    override suspend fun updateRun(run: AutomationRun): Boolean {
+        if (runs[run.id]?.status != RunStatus.QUEUED) return false
         runs[run.id] = run
+        prompts.remove(run.id)
+        return true
     }
+
+    override suspend fun endRun(run: AutomationRun, expected: RunStatus): Boolean {
+        if (runs[run.id]?.status != expected) return false
+        runs[run.id] = run
+        prompts.remove(run.id)
+        return true
+    }
+
+    override suspend fun findRun(orgId: Uuid, automationId: Uuid, id: Uuid): AutomationRun? =
+        runs[id]?.takeIf { it.orgId == orgId && it.automationId == automationId }
+
+    override suspend fun park(orgId: Uuid, runId: Uuid, prompt: String) {
+        if (runs[runId]?.status == RunStatus.QUEUED) prompts[runId] = prompt
+    }
+
+    override suspend fun parked(limit: Int): List<ParkedRun> =
+        runs.values.filter { it.status == RunStatus.QUEUED && it.id in prompts }
+            .map { ParkedRun(automations.getValue(it.automationId), it) }.take(limit)
+
+    override suspend fun takeParked(orgId: Uuid, runId: Uuid): String? =
+        if (takenElsewhere) null else prompts.remove(runId)
+
+    override suspend fun startedSessions(orgId: Uuid, owner: String, since: Instant, limit: Int): List<String> =
+        runs.values.reversed().filter {
+            it.orgId == orgId && it.status == RunStatus.STARTED && it.createdAt > since &&
+                automations[it.automationId]?.owner == owner
+        }.mapNotNull { it.sessionId }.take(limit)
 
     override suspend fun findRunByDelivery(orgId: Uuid, automationId: Uuid, deliveryKey: String): AutomationRun? =
         runs.values.firstOrNull {
@@ -158,7 +191,8 @@ class InMemoryAutomations : AutomationsRepository {
     override suspend fun failQueuedBefore(before: Instant, now: Instant) {
         failedBefore = before
         runs.entries.filter { (_, run) -> run.status == RunStatus.QUEUED && run.createdAt < before }.forEach { entry ->
-            entry.setValue(entry.value.copy(status = RunStatus.FAILED, reason = "interrupted", updatedAt = now))
+            val reason = if (prompts.remove(entry.key) == null) "interrupted" else "capacity_timeout"
+            entry.setValue(entry.value.copy(status = RunStatus.FAILED, reason = reason, updatedAt = now))
         }
     }
 }
@@ -167,6 +201,9 @@ class InMemoryAutomations : AutomationsRepository {
 class RecordingLauncher : AutomationLauncher {
     val launched = mutableListOf<LaunchRequest>()
     val working = mutableSetOf<String>()
+    val paused = mutableListOf<String>()
+    var pauses = true
+    var onPause: () -> Unit = {}
     var next: (LaunchRequest) -> LaunchResult = { LaunchResult.Started("session-${launched.size}") }
 
     override suspend fun launch(request: LaunchRequest): LaunchResult {
@@ -175,6 +212,12 @@ class RecordingLauncher : AutomationLauncher {
     }
 
     override suspend fun isWorking(orgId: Uuid, sessionId: String): Boolean = sessionId in working
+
+    override suspend fun pause(orgId: Uuid, owner: String, sessionId: String): Boolean {
+        paused += "$owner:$sessionId"
+        onPause()
+        return pauses
+    }
 }
 
 /** Secrets that read as what they are, and a signature that is the secret and the data joined. */

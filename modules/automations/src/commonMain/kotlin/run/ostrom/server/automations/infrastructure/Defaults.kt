@@ -55,4 +55,6 @@ internal object UnavailableLauncher : AutomationLauncher {
         LaunchResult.Refused("cloud_sessions_unavailable")
 
     override suspend fun isWorking(orgId: Uuid, sessionId: String): Boolean = false
+
+    override suspend fun pause(orgId: Uuid, owner: String, sessionId: String): Boolean = false
 }
