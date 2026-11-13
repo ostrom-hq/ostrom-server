@@ -550,9 +550,12 @@ class RunEnginePostgresTest {
         return answer.status to answer.bodyAsText()
     }
 
+    // The session's runner takes its execution, then opens its launch: the launch's agent token lives while it runs.
     private suspend fun TestServer.agentTokenOf(step: SessionStep): String {
         val cloud = koin.get<CloudSessionsRepository>()
-        return koin.get<OpenRunnerLaunchUseCase>()(assertNotNull(cloud.get(step.ada.org.id, step.session))).agentToken
+        val session = assertNotNull(cloud.get(step.ada.org.id, step.session))
+        val started = session.copy(state = SessionState.RUNNING, executionStartedAt = Clock.System.now() - 1.hours)
+        return koin.get<OpenRunnerLaunchUseCase>()(assertNotNull(cloud.compareAndSet(started, null))).agentToken
     }
 
     @Test
