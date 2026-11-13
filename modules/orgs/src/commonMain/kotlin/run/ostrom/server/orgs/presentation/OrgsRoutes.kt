@@ -204,9 +204,9 @@ private suspend fun OrgsRoutesDependencies.member(
     browserOnly: Boolean = false,
     teamRead: Boolean = false,
 ): Pair<Uuid, Uuid> {
-    val principal = call.requirePrincipal().takeIf {
-        teamRead && it.kind == PrincipalKind.SERVICE && ServiceKeyScopes.TEAM_READ in it.scopes
-    } ?: call.requireScope(scope)
+    // Only a service key can hold `team:read`: a person's scopes never list it.
+    val principal = call.requirePrincipal().takeIf { teamRead && ServiceKeyScopes.TEAM_READ in it.scopes }
+        ?: call.requireScope(scope)
     val userId = principal.userId()
     if (browserOnly && !principal.isBrowserSession) {
         throw OstromException(
