@@ -277,6 +277,18 @@ class EventsPostgresTest {
         }
     }
 
+    @Test
+    fun aQuietStreamSendsKeepAlives() = serverTest(modules, overrides(true)) { server ->
+        server.client.prepareGet("/api/v1/events?after=0") { bearerAuth("mia-a") }.execute { response ->
+            val stream = response.bodyAsChannel()
+            withTimeout(30.seconds) {
+                do {
+                    val line = stream.readUTF8Line()
+                } while (line != ": keep-alive")
+            }
+        }
+    }
+
     /** One SSE frame's lines, skipping keep-alive comments. */
     private suspend fun ByteReadChannel.frame(): List<String> {
         while (true) {

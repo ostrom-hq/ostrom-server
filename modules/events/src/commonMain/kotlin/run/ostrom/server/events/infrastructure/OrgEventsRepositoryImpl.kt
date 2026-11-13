@@ -71,7 +71,7 @@ class OrgEventsRepositoryImpl(private val driver: Driver) : OrgEventsRepository 
     }
 
     private companion object {
-        const val HEAD_SQL = "SELECT last_seq FROM events_cursors WHERE org_id = :org_id"
+        const val HEAD_SQL = "SELECT COALESCE(max(last_seq), 0) AS last_seq FROM events_cursors WHERE org_id = :org_id"
         const val OLDEST_SQL = "SELECT min(seq) AS seq FROM events_journal WHERE org_id = :org_id"
         const val READ_SQL =
             "SELECT seq, type, subject, subject_id, member_id, at, data FROM events_journal " +
@@ -83,8 +83,7 @@ class OrgEventsRepositoryImpl(private val driver: Driver) : OrgEventsRepository 
         const val ERASE_CURSOR_SQL = "DELETE FROM events_cursors WHERE org_id = :org_id"
 
         suspend fun QueryExecutor.headOf(orgId: Uuid): Long =
-            fetchAll(Statement.create(HEAD_SQL).bind("org_id", orgId)).getOrThrow().firstOrNull()
-                ?.get("last_seq")?.asLong() ?: 0L
+            fetchAll(Statement.create(HEAD_SQL).bind("org_id", orgId)).getOrThrow().first().get("last_seq").asLong()
 
         fun ResultSet.Row.toEvent() = JournalEvent(
             seq = get("seq").asLong(),

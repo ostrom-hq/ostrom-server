@@ -110,8 +110,8 @@ internal fun cursorOf(header: String?, query: String?): Long? {
  * @throws InvalidEventTypeException When a name is unknown or there are too many.
  */
 internal fun typesOf(query: String?): Set<String>? {
-    val names = query?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet()
-    if (names.isNullOrEmpty()) return null
+    val names = query.orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+    if (names.isEmpty()) return null
     if (names.size > EventRules.MAX_TYPES || names.any { OrgEventType.parse(it) == null }) {
         throw InvalidEventTypeException()
     }
