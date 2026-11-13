@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.todos
 
+import run.ostrom.server.automations.domain.WaitAgent
+import run.ostrom.server.automations.domain.WaitAgentResolver
+import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.testing.serverTest
+import run.ostrom.server.todos.domain.TodoArtifacts
 import run.ostrom.server.todos.domain.TodoCheck
 import run.ostrom.server.todos.domain.TodoCheckResult
 import run.ostrom.server.todos.domain.TodoException
@@ -12,12 +17,19 @@ import run.ostrom.server.todos.domain.TodoList
 import run.ostrom.server.todos.domain.TodoProof
 import run.ostrom.server.todos.domain.TodoRef
 import run.ostrom.server.todos.domain.TodoRules
+import run.ostrom.server.todos.domain.TodoSessions
+import run.ostrom.server.todos.domain.TodoWaits
 import run.ostrom.server.todos.domain.TodosRepository
 import run.ostrom.server.todos.fakes.ADA
 import run.ostrom.server.todos.fakes.BEN
+import run.ostrom.server.todos.fakes.FakeArtifacts
+import run.ostrom.server.todos.fakes.FakeMembers
+import run.ostrom.server.todos.fakes.FakeSessions
+import run.ostrom.server.todos.fakes.FakeWaits
 import run.ostrom.server.todos.fakes.ORG_A
 import run.ostrom.server.todos.fakes.ORG_B
 import run.ostrom.server.todos.fakes.item
+import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -31,6 +43,19 @@ import kotlin.uuid.Uuid
 class TodosPostgresTest {
     private val t0 = Instant.parse("2026-11-13T14:02:00.123Z")
 
+    /** The module's routes need its adapters and resolvers to start; these tests only use its storage. */
+    private val adapters = module {
+        single<TodoSessions> { FakeSessions() }
+        single<TodoWaits> { FakeWaits() }
+        single<TodoArtifacts> { FakeArtifacts() }
+        single<MemberDirectory> { FakeMembers() }
+        single<WaitAgentResolver> {
+            object : WaitAgentResolver {
+                override suspend fun resolve(principal: AuthenticatedPrincipal, sessionId: String): WaitAgent? = null
+            }
+        }
+    }
+
     private fun list(org: Uuid = ORG_A, session: String = "s1") = TodoRules.create(
         Uuid.random(),
         org,
@@ -42,7 +67,7 @@ class TodosPostgresTest {
     )
 
     @Test
-    fun aListReadsBackAsWrittenAndChangesInPlace() = serverTest(listOf(TodosModule)) { server ->
+    fun aListReadsBackAsWrittenAndChangesInPlace() = serverTest(listOf(TodosModule), adapters) { server ->
         val repository = server.koin.get<TodosRepository>()
         val written = list()
         assertTrue(repository.create(written))
@@ -81,7 +106,7 @@ class TodosPostgresTest {
     }
 
     @Test
-    fun anotherOrganizationNeitherReadsNorChangesAList() = serverTest(listOf(TodosModule)) { server ->
+    fun anotherOrganizationNeitherReadsNorChangesAList() = serverTest(listOf(TodosModule), adapters) { server ->
         val repository = server.koin.get<TodosRepository>()
         val written = list()
         repository.create(written)
@@ -93,7 +118,7 @@ class TodosPostgresTest {
     }
 
     @Test
-    fun theStopHookIsOnUntilAnAdministratorTurnsItOff() = serverTest(listOf(TodosModule)) { server ->
+    fun theStopHookIsOnUntilAnAdministratorTurnsItOff() = serverTest(listOf(TodosModule), adapters) { server ->
         val repository = server.koin.get<TodosRepository>()
         assertTrue(repository.stopHookEnabled(ORG_A, ADA))
         repository.setStopHookEnabled(ORG_A, ADA, false)
