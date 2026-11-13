@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 // The instance's administration: its administrators and its settings sections, stored in PostgreSQL with their
 // secrets sealed by the secrets key (TeamCode's dashboard settings), instead of the environment or the Helm chart.
 plugins {
