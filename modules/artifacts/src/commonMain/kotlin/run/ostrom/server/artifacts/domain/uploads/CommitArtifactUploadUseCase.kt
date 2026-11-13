@@ -103,7 +103,8 @@ internal class CommitArtifactUploadUseCaseImpl(
         val base = commit.baseVersion ?: artifact.latestVersion
         val since = now - REPLAY_WINDOW
         val replay = artifacts.versions(caller.orgId, artifact.id).firstOrNull {
-            it.digest == manifest && it.baseVersion == base && it.isRecentFrom(caller, since)
+            // A version with a digest has its base: one comparison of both.
+            Pair(it.digest, it.baseVersion) == Pair(manifest, base) && it.isRecentFrom(caller, since)
         }
         // Before the upload: the commit that made the version ended it.
         if (replay != null) return CommittedVersion(replay, replayed = true)
