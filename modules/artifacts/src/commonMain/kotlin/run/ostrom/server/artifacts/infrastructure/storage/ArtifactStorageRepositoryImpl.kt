@@ -144,13 +144,14 @@ internal class ArtifactStorageRepositoryImpl(
     override suspend fun connection(orgId: Uuid): ArtifactStorageConnection? {
         val row = driver.inTenant(orgId) {
             fetchAll(select("$STORAGE_COLUMNS, secret_sealed", "artifacts_storage", orgId)).getOrThrow().firstOrNull()
-        } ?: return null
-        val storage = row.toStorage()
+        }
         // A secret that no longer opens (the secrets key changed) leaves the bucket unreachable, never half-read.
-        val secret = cipher.open(row.get("secret_sealed").asString(), context(orgId))?.decodeToString() ?: return null
+        val secret = row?.let { cipher.open(it.get("secret_sealed").asString(), context(orgId)) }
+        if (row == null || secret == null) return null
+        val storage = row.toStorage()
         return ArtifactStorageConnection(
             storage.endpoint, storage.region, storage.bucket, storage.prefix, storage.pathStyle, storage.accessKeyId,
-            secret, storage.serverSideEncryption, storage.version,
+            secret.decodeToString(), storage.serverSideEncryption, storage.version,
         )
     }
 

@@ -46,7 +46,7 @@ data class ArtifactStorage(
  * @property secretAccessKey The secret, or null to keep the stored one (refused when the endpoint or bucket changes).
  * @property serverSideEncryption What writes ask for.
  */
-class ArtifactStorageInput(
+data class ArtifactStorageInput(
     val endpoint: String,
     val region: String,
     val bucket: String,
@@ -113,7 +113,7 @@ enum class PublicSharing(val wire: String) {
  */
 data class ArtifactQuotas(
     val memberBytes: Long = 2L * GIB,
-    val orgBytes: Long = 50L * GIB,
+    val orgBytes: Long = DEFAULT_ORG_BYTES,
     val artifactsPerMember: Int = 500,
     val publishesPerHour: Int = 60,
 ) {
@@ -124,6 +124,9 @@ data class ArtifactQuotas(
 
         /** One gibibyte. */
         const val GIB: Long = 1024L * MIB
+
+        /** What an organization's artifacts may hold by default, 50 GiB. */
+        const val DEFAULT_ORG_BYTES: Long = 50L * GIB
     }
 }
 

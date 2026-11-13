@@ -3,7 +3,6 @@ package run.ostrom.server.artifacts.presentation
 
 import run.ostrom.server.artifacts.domain.MissingScopeException
 import run.ostrom.server.artifacts.domain.NotAMemberException
-import run.ostrom.server.artifacts.domain.storage.ArtifactAdministrationUseCase
 import run.ostrom.server.artifacts.domain.storage.ArtifactQuotas
 import run.ostrom.server.artifacts.domain.storage.ArtifactRetention
 import run.ostrom.server.artifacts.domain.storage.ArtifactSettings
@@ -31,17 +30,6 @@ import io.ktor.server.resources.post
 import io.ktor.server.resources.put
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
-
-/**
- * What the bucket, settings and policy routes need.
- *
- * @property administration The use cases.
- * @property orgResolver The member a request acts for.
- */
-data class StorageRoutesDependencies(
-    val administration: ArtifactAdministrationUseCase,
-    val orgResolver: PrincipalOrgResolver,
-)
 
 /**
  * The bucket, the settings (a person who owns or administers the organization) and the publication policy (any

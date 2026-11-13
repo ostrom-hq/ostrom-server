@@ -18,30 +18,31 @@ import kotlin.test.assertTrue
 
 /** TC-ART-4: the bucket's fields and the settings' ranges, TeamCode's. */
 class StorageRulesTest {
-    private fun input(
-        endpoint: String = "https://s3.gra.io.cloud.ovh.net",
-        region: String = "gra",
-        bucket: String = "ostrom-artifacts",
-        prefix: String = "",
-        accessKeyId: String = "AKIAEXAMPLE",
-        secret: String? = "secret-access-key",
-    ) = ArtifactStorageInput(endpoint, region, bucket, prefix, false, accessKeyId, secret, ServerSideEncryption.NONE)
+    private val fine = ArtifactStorageInput(
+        "https://s3.gra.io.cloud.ovh.net", "gra", "ostrom-artifacts", "", false, "AKIAEXAMPLE", "secret-access-key",
+        ServerSideEncryption.NONE,
+    )
+
+    private fun input(endpoint: String = fine.endpoint, secret: String? = fine.secretAccessKey) =
+        fine.copy(endpoint = endpoint, secretAccessKey = secret)
 
     @Test
     fun aWellFormedBucketPasses() {
         StorageRules.validate(input())
-        StorageRules.validate(input(secret = null, prefix = "teams/ostrom", endpoint = "https://minio.local:9000/"))
+        StorageRules.validate(
+            fine.copy(secretAccessKey = null, prefix = "teams/ostrom", endpoint = "https://minio.local:9000/"),
+        )
     }
 
     @Test
     fun eachMalformedFieldIsRefused() {
         val malformed = listOf(
             input(endpoint = "http://s3.example.com"),
-            input(region = "Europe West"),
-            input(bucket = "Bucket"),
-            input(bucket = "a..b"),
-            input(prefix = "../up"),
-            input(accessKeyId = "AK IA"),
+            fine.copy(region = "Europe West"),
+            fine.copy(bucket = "Bucket"),
+            fine.copy(bucket = "a..b"),
+            fine.copy(prefix = "../up"),
+            fine.copy(accessKeyId = "AK IA"),
             input(secret = "short"),
             input(secret = "a secret with spaces"),
             input(secret = "x".repeat(513)),
@@ -126,18 +127,26 @@ class StorageRulesTest {
 
     @Test
     fun settingsStayWithinTeamCodesRanges() {
-        val fine = ArtifactSettings(retention = ArtifactRetention(personalDays = 30, sharedDays = 3650))
-        StorageRules.validate(fine)
+        val valid = ArtifactSettings(retention = ArtifactRetention(personalDays = 30, sharedDays = 3650))
+        StorageRules.validate(valid)
         StorageRules.validate(ArtifactSettings())
         val quotas = ArtifactQuotas()
+        val tooMany = 101L * 1024 * ArtifactQuotas.GIB
         val outOfRange = listOf(
-            fine.copy(quotas = quotas.copy(memberBytes = 1)),
-            fine.copy(quotas = quotas.copy(orgBytes = 101L * 1024 * ArtifactQuotas.GIB)),
-            fine.copy(quotas = quotas.copy(artifactsPerMember = 0)),
-            fine.copy(quotas = quotas.copy(publishesPerHour = 10_001)),
-            fine.copy(retention = ArtifactRetention(personalDays = 0)),
-            fine.copy(retention = ArtifactRetention(sharedDays = 3651)),
-            fine.copy(retention = ArtifactRetention(maxVersionsPerArtifact = 1001)),
+            valid.copy(quotas = quotas.copy(memberBytes = 1)),
+            valid.copy(quotas = quotas.copy(memberBytes = tooMany)),
+            valid.copy(quotas = quotas.copy(orgBytes = 1)),
+            valid.copy(quotas = quotas.copy(orgBytes = tooMany)),
+            valid.copy(quotas = quotas.copy(artifactsPerMember = 0)),
+            valid.copy(quotas = quotas.copy(artifactsPerMember = 100_001)),
+            valid.copy(quotas = quotas.copy(publishesPerHour = 0)),
+            valid.copy(quotas = quotas.copy(publishesPerHour = 10_001)),
+            valid.copy(retention = ArtifactRetention(personalDays = 0)),
+            valid.copy(retention = ArtifactRetention(personalDays = 3651)),
+            valid.copy(retention = ArtifactRetention(sharedDays = 0)),
+            valid.copy(retention = ArtifactRetention(sharedDays = 3651)),
+            valid.copy(retention = ArtifactRetention(maxVersionsPerArtifact = 0)),
+            valid.copy(retention = ArtifactRetention(maxVersionsPerArtifact = 1001)),
         )
         outOfRange.forEach {
             assertFailsWith<InvalidArtifactSettingsException>(it.toString()) { StorageRules.validate(it) }

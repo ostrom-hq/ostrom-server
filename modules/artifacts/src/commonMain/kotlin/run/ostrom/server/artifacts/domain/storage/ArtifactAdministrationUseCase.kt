@@ -217,19 +217,18 @@ class ArtifactAdministrationUseCaseImpl(
 
         /** Runs one step; its failure is its code, never a message. */
         private suspend fun step(name: String, block: suspend () -> String?): Boolean {
-            val failure = try {
-                withTimeout((endsAt - clock.now()).coerceAtLeast(MIN_STEP)) { block() }
+            val done = try {
+                val failure = withTimeout((endsAt - clock.now()).coerceAtLeast(MIN_STEP)) { block() }
+                StorageTestStep(name, failure == null, null, failure)
             } catch (_: TimeoutCancellationException) {
-                steps += StorageTestStep(name, false, null, "timeout")
-                return false
+                StorageTestStep(name, false, null, "timeout")
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (refused: ObjectStoreException) {
-                steps += StorageTestStep(name, false, refused.status, refused.code)
-                return false
+                StorageTestStep(name, false, refused.status, refused.code)
             }
-            steps += StorageTestStep(name, failure == null, null, failure)
-            return failure == null
+            steps += done
+            return done.ok
         }
 
         private suspend fun cleanUp() {

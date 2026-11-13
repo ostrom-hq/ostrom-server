@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.artifacts.presentation
 
+import run.ostrom.server.artifacts.domain.storage.ArtifactAdministrationUseCase
+import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
 
@@ -190,3 +192,14 @@ data class SaveArtifactSettingsRequest(
  */
 @Serializable
 data class ArtifactPolicyResponse(val canPublish: Boolean, val reason: String? = null)
+
+/**
+ * What the bucket, settings and policy routes need.
+ *
+ * @property administration The use cases.
+ * @property orgResolver The member a request acts for.
+ */
+data class StorageRoutesDependencies(
+    val administration: ArtifactAdministrationUseCase,
+    val orgResolver: PrincipalOrgResolver,
+)

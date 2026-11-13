@@ -167,10 +167,17 @@ class ArtifactStoragePostgresTest {
             """"quotaMemberBytes":2147483648,"quotaOrgBytes":53687091200,"quotaArtifactsPerMember":500,""" +
             """"quotaPublishesPerHour":60,"personalRetentionDays":30,"maxVersionsPerArtifact":50}"""
 
+    private val storageBody = """{"version":0,"endpoint":" https://s3.example.com/ ","region":"auto",""" +
+        """"bucket":"artifacts","accessKeyId":"AKIAEXAMPLE","secretAccessKey":"very-secret-key",""" +
+        """"serverSideEncryption":"AES256"}"""
+
+    private suspend fun HttpClient.policy(token: String): ArtifactPolicyResponse =
+        get("/api/v1/artifacts/policy") { bearerAuth(token) }.body()
+
     @Test
-    fun anAdministratorConfiguresTestsAndTurnsArtifactsOn() = serverTest(listOf(ArtifactsModule), overrides) { server ->
-        val client = server.client
-        // Only a signed-in owner or administrator: not a member, not an administrator's key.
+    fun onlyASignedInOwnerOrAdministratorConfiguresTheBucket() = serverTest(listOf(ArtifactsModule), overrides) {
+        val client = it.client
+        // Not a member, not an administrator's key, not a service key.
         for (token in listOf("alice", "dave-agent", "writer")) {
             assertEquals(HttpStatusCode.Forbidden, client.get("/api/v1/artifacts/storage") { bearerAuth(token) }.status)
         }
@@ -178,16 +185,13 @@ class ArtifactStoragePostgresTest {
         assertEquals(HttpStatusCode.Unauthorized, client.get("/api/v1/artifacts/storage").status)
         val empty = client.get("/api/v1/artifacts/storage") { bearerAuth("dave") }.body<ArtifactStorageResponse>()
         assertFalse(empty.configured)
-        val policy = client.get("/api/v1/artifacts/policy") { bearerAuth("alice") }.body<ArtifactPolicyResponse>()
-        assertEquals(ArtifactPolicyResponse(false, "artifact_storage_missing"), policy)
+        assertEquals(ArtifactPolicyResponse(false, "artifact_storage_missing"), client.policy("alice"))
 
-        val storage = """{"version":0,"endpoint":" https://s3.example.com/ ","region":"auto","bucket":"artifacts",""" +
-            """"accessKeyId":"AKIAEXAMPLE","secretAccessKey":"very-secret-key","serverSideEncryption":"AES256"}"""
         assertEquals(
             HttpStatusCode.BadRequest,
-            client.saveStorage("dave", storage.replace("AES256", "aws:kms")).status,
+            client.saveStorage("dave", storageBody.replace("AES256", "aws:kms")).status,
         )
-        val saved = client.saveStorage("dave", storage)
+        val saved = client.saveStorage("dave", storageBody)
         assertEquals(HttpStatusCode.OK, saved.status)
         assertFalse("very-secret-key" in saved.bodyAsText())
         val stored = saved.body<ArtifactStorageResponse>()
@@ -195,17 +199,28 @@ class ArtifactStoragePostgresTest {
         assertTrue(stored.configured && stored.secretConfigured && !stored.inUse)
         assertEquals("AES256", stored.serverSideEncryption)
         assertNull(stored.verifiedAt)
-        assertEquals(HttpStatusCode.Conflict, client.saveStorage("dave", storage).status)
+        assertEquals(HttpStatusCode.Conflict, client.saveStorage("dave", storageBody).status)
+        // Another organization's owner sees none of it.
+        val other = client.get("/api/v1/artifacts/storage") { bearerAuth("carol") }.body<ArtifactStorageResponse>()
+        assertFalse(other.configured)
 
+        assertEquals(HttpStatusCode.NoContent, client.delete("/api/v1/artifacts/storage") { bearerAuth("dave") }.status)
+        assertEquals(HttpStatusCode.NotFound, client.delete("/api/v1/artifacts/storage") { bearerAuth("dave") }.status)
+    }
+
+    @Test
+    fun aTestedBucketTurnsArtifactsOnAndThePolicyFollows() = serverTest(listOf(ArtifactsModule), overrides) {
+        val client = it.client
+        client.saveStorage("dave", storageBody)
         val unverified = client.saveSettings("dave", settingsBody(0))
         assertEquals(HttpStatusCode.Conflict, unverified.status)
         assertTrue("artifact_storage_unverified" in unverified.bodyAsText())
         val test = client.post("/api/v1/artifacts/storage/test") { bearerAuth("dave") }
             .body<ArtifactStorageTestResponse>()
         assertTrue(test.ok)
-        assertEquals(listOf("put", "get", "list", "delete"), test.steps.map { it.step })
-        assertNotNull(client.get("/api/v1/artifacts/storage") { bearerAuth("dave") }.body<ArtifactStorageResponse>()
-            .verifiedAt)
+        assertEquals(listOf("put", "get", "list", "delete"), test.steps.map { step -> step.step })
+        val verified = client.get("/api/v1/artifacts/storage") { bearerAuth("dave") }.body<ArtifactStorageResponse>()
+        assertNotNull(verified.verifiedAt)
         val disabled = client.get("/api/v1/artifacts/settings") { bearerAuth("dave") }.body<ArtifactSettingsResponse>()
         assertEquals("artifacts_disabled", disabled.inactiveReason)
         assertFalse(disabled.active)
@@ -220,27 +235,13 @@ class ArtifactStoragePostgresTest {
         assertEquals(1, on.version)
         assertNotNull(on.updatedAt)
 
-        assertEquals(
-            ArtifactPolicyResponse(true),
-            client.get("/api/v1/artifacts/policy") { bearerAuth("alice") }.body<ArtifactPolicyResponse>(),
-        )
-        assertEquals(
-            ArtifactPolicyResponse(false, "credential_scope"),
-            client.get("/api/v1/artifacts/policy") { bearerAuth("reader") }.body<ArtifactPolicyResponse>(),
-        )
+        assertEquals(ArtifactPolicyResponse(true), client.policy("alice"))
+        assertEquals(ArtifactPolicyResponse(false, "credential_scope"), client.policy("reader"))
         assertEquals(HttpStatusCode.Forbidden, client.get("/api/v1/artifacts/policy") { bearerAuth("cloud") }.status)
         client.saveSettings("dave", settingsBody(1, who = "admins"))
-        assertEquals(
-            ArtifactPolicyResponse(false, "artifact_publish_forbidden"),
-            client.get("/api/v1/artifacts/policy") { bearerAuth("alice") }.body<ArtifactPolicyResponse>(),
-        )
+        assertEquals(ArtifactPolicyResponse(false, "artifact_publish_forbidden"), client.policy("alice"))
 
-        // Another organization's owner sees none of it.
-        val other = client.get("/api/v1/artifacts/storage") { bearerAuth("carol") }.body<ArtifactStorageResponse>()
-        assertFalse(other.configured)
-
-        assertEquals(HttpStatusCode.NoContent, client.delete("/api/v1/artifacts/storage") { bearerAuth("dave") }.status)
-        assertEquals(HttpStatusCode.NotFound, client.delete("/api/v1/artifacts/storage") { bearerAuth("dave") }.status)
+        client.delete("/api/v1/artifacts/storage") { bearerAuth("dave") }
         val after = client.get("/api/v1/artifacts/settings") { bearerAuth("dave") }.body<ArtifactSettingsResponse>()
         assertFalse(after.enabled)
         assertEquals("artifact_storage_missing", after.inactiveReason)

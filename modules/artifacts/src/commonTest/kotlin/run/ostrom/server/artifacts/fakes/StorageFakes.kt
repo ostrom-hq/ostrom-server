@@ -70,8 +70,9 @@ class InMemoryStorage(var inUse: Boolean = false) : ArtifactStorageRepository {
     }
 
     override suspend fun connection(orgId: Uuid): ArtifactStorageConnection? {
-        val stored = storage[orgId] ?: return null
-        val secret = secrets[orgId] ?: return null
+        val stored = storage[orgId]
+        val secret = secrets[orgId]
+        if (stored == null || secret == null) return null
         return ArtifactStorageConnection(
             stored.endpoint, stored.region, stored.bucket, stored.prefix, stored.pathStyle, stored.accessKeyId, secret,
             stored.serverSideEncryption, stored.version,
