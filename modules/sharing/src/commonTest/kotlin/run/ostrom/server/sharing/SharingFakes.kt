@@ -9,6 +9,7 @@ import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.sharing.domain.AccountChangedException
 import run.ostrom.server.sharing.domain.AccountCredentials
 import run.ostrom.server.sharing.domain.AccountProvider
+import run.ostrom.server.sharing.domain.AccountRefreshRepository
 import run.ostrom.server.sharing.domain.AccountSpendReader
 import run.ostrom.server.sharing.domain.AccountStatus
 import run.ostrom.server.sharing.domain.AccountTokenCipher
@@ -17,6 +18,8 @@ import run.ostrom.server.sharing.domain.OAuthRefresher
 import run.ostrom.server.sharing.domain.QuotaWindow
 import run.ostrom.server.sharing.domain.QuotaWindowRepository
 import run.ostrom.server.sharing.domain.RefreshResult
+import run.ostrom.server.sharing.domain.RefreshState
+import run.ostrom.server.sharing.domain.RefreshWrite
 import run.ostrom.server.sharing.domain.SharedAccount
 import run.ostrom.server.sharing.domain.SharedAccountPool
 import run.ostrom.server.sharing.domain.SharedAccountRepository
@@ -66,13 +69,26 @@ class FakeRefresher(var result: RefreshResult = RefreshResult.Unavailable) : OAu
     }
 }
 
-/** [SharedAccountRepository] and [QuotaWindowRepository] in memory. */
+/** [SharedAccountRepository], [QuotaWindowRepository] and [AccountRefreshRepository] in memory. */
 class InMemoryAccounts :
     SharedAccountRepository,
-    QuotaWindowRepository {
+    QuotaWindowRepository,
+    AccountRefreshRepository {
     val accounts = mutableListOf<SharedAccount>()
     val envelopes = mutableMapOf<Uuid, String>()
     val windows = mutableMapOf<Uuid, MutableList<QuotaWindow>>()
+
+    /** Accounts whose refresh intent is committed. */
+    val pending = mutableSetOf<Uuid>()
+
+    /** Accounts whose intent is older than the limit by the database's clock. */
+    val staleIntents = mutableSetOf<Uuid>()
+
+    /** The tokens' version of each account (1 when never changed). */
+    val credentialVersions = mutableMapOf<Uuid, Long>()
+
+    /** Row looks taken, in order. */
+    var looks = 0
 
     /** Rows vanish between a read and the write that follows (a concurrent delete). */
     var vanishing = false
@@ -90,7 +106,50 @@ class InMemoryAccounts :
             account.copy(id = current.id, version = current.version + 1).also { accounts[index] = it }
         }
         envelopes[stored.id] = envelope
+        pending -= stored.id
+        staleIntents -= stored.id
+        credentialVersions[stored.id] = credentialVersion(stored.id) + 1
         return stored
+    }
+
+    private fun credentialVersion(id: Uuid) = credentialVersions[id] ?: 1
+
+    override suspend fun <T> locked(
+        orgId: Uuid,
+        id: Uuid,
+        decide: suspend (RefreshState?) -> Pair<RefreshWrite, T>,
+    ): T {
+        check(!failing) { "database down" }
+        looks++
+        val account = get(orgId, id)
+        val envelope = envelopes[id]
+        val state = if (account == null || envelope == null) {
+            null
+        } else {
+            RefreshState(account.status, envelope, id in pending, id in staleIntents, credentialVersion(id))
+        }
+        val (write, result) = decide(state)
+        when (write) {
+            RefreshWrite.Keep -> Unit
+            RefreshWrite.Claim -> pending += id
+            RefreshWrite.Retire -> setStatus(orgId, id, AccountStatus.RECONNECT_REQUIRED)
+            is RefreshWrite.Reseal -> envelopes[id] = write.envelope
+        }
+        return result
+    }
+
+    override suspend fun save(orgId: Uuid, id: Uuid, credentialVersion: Long, envelope: String): Boolean {
+        if (id !in pending || credentialVersion(id) != credentialVersion) return false
+        envelopes[id] = envelope
+        pending -= id
+        credentialVersions[id] = credentialVersion + 1
+        return true
+    }
+
+    override suspend fun fail(orgId: Uuid, id: Uuid, credentialVersion: Long, status: AccountStatus): Boolean {
+        val current = id in pending && credentialVersion(id) == credentialVersion
+        if (current) setStatus(orgId, id, status)
+        return current
     }
 
     private fun SharedAccount.sameProviderAccount(other: SharedAccount) =
@@ -118,10 +177,6 @@ class InMemoryAccounts :
     override suspend fun envelope(orgId: Uuid, id: Uuid): String? {
         check(!failing) { "database down" }
         return envelopes[id]?.takeIf { get(orgId, id) != null }
-    }
-
-    override suspend fun putEnvelope(orgId: Uuid, id: Uuid, envelope: String) {
-        envelopes[id] = envelope
     }
 
     override suspend fun setStatus(orgId: Uuid, id: Uuid, status: AccountStatus) {
