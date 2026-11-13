@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.mcprelay.infrastructure
 
+import run.ostrom.server.mcprelay.domain.McpHostControl
 import run.ostrom.server.mcprelay.domain.McpOutcome
 import run.ostrom.server.mcprelay.domain.McpUpstream
+import run.ostrom.server.mcprelay.domain.StdioSpec
 import run.ostrom.server.mcprelay.domain.UpstreamResult
 import run.ostrom.server.mcprelay.domain.UpstreamTarget
-import run.ostrom.server.secrets.domain.SecretValue
 import dev.whyoleg.cryptography.CryptographyProvider
 import dev.whyoleg.cryptography.algorithms.SHA256
 import io.ktor.client.HttpClient
@@ -19,6 +20,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.utils.io.readRemaining
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.readByteArray
 import kotlinx.serialization.SerializationException
@@ -27,6 +29,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
@@ -59,7 +62,7 @@ class HostMcpUpstream(
     private val config: McpHostConfig,
     private val startAllowance: Duration = 45.seconds,
     private val maxResponseBytes: Int = HttpMcpUpstream.DEFAULT_MAX_RESPONSE_BYTES,
-) : McpUpstream {
+) : McpUpstream, McpHostControl {
     override suspend fun listTools(target: UpstreamTarget, deadline: Duration): UpstreamResult<List<JsonObject>> {
         val first = operate(target, "list", null, null, deadline)
         val answer = if (first is HostAnswer.Retryable) operate(target, "list", null, null, deadline) else first
@@ -104,15 +107,8 @@ class HostMcpUpstream(
                 UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, "The MCP server has no command."),
             )
         val body = buildJsonObject {
-            put("key", processKey(target.processKey, target.secretEnv))
-            putJsonObject("spec") {
-                put("launcher", spec.launcher.wire)
-                put("package", spec.packageName)
-                putJsonArray("args") { spec.args.forEach { add(JsonPrimitive(it)) } }
-                putJsonObject("env") { spec.env.forEach { (name, value) -> put(name, value) } }
-                putJsonObject("secrets") { target.secretEnv.forEach { (name, value) -> put(name, value.reveal()) } }
-                put("declaredAt", target.server.createdAt.toEpochMilliseconds())
-            }
+            put("key", processKey(target.processKey))
+            put("spec", spec(target, spec))
             put("op", op)
             tool?.let { put("tool", it) }
             arguments?.let { put("arguments", it) }
@@ -137,6 +133,57 @@ class HostMcpUpstream(
         } catch (_: Exception) {
             HostAnswer.Retryable(failure("The MCP host is unreachable."))
         }
+    }
+
+    override suspend fun warm(target: UpstreamTarget) {
+        val spec = target.server.stdio ?: return
+        val body = buildJsonObject {
+            put("key", processKey(target.processKey))
+            put("spec", spec(target, spec))
+        }
+        // Best effort: the first operation starts the process anyway, and reports what went wrong.
+        try {
+            control("/v1/warm", body)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            Unit
+        }
+    }
+
+    override suspend fun retain(keys: Collection<String>): Int {
+        val body = buildJsonObject { putJsonArray("keys") { keys.forEach { add(JsonPrimitive(processKey(it))) } } }
+        val (status, answer) = control("/v1/retain", body)
+        val stopped = (answer?.get("stopped") as? JsonPrimitive)?.intOrNull
+        check(status == HttpStatusCode.OK && stopped != null) { "The MCP host refused the retain sweep." }
+        return stopped
+    }
+
+    private suspend fun control(path: String, body: JsonObject): Pair<HttpStatusCode, JsonObject?> =
+        withTimeout(CONTROL_TIMEOUT) {
+            client.preparePost(config.url.trimEnd('/') + path) {
+                bearerAuth(config.token)
+                header(PROTOCOL_HEADER, PROTOCOL_VERSION)
+                contentType(ContentType.Application.Json)
+                setBody(body.toString())
+            }.execute { response ->
+                val bytes = response.bodyAsChannel().readRemaining(HOST_ENVELOPE).readByteArray()
+                val json = try {
+                    Json.parseToJsonElement(bytes.decodeToString()) as? JsonObject
+                } catch (_: SerializationException) {
+                    null
+                }
+                response.status to json
+            }
+        }
+
+    private fun spec(target: UpstreamTarget, spec: StdioSpec) = buildJsonObject {
+        put("launcher", spec.launcher.wire)
+        put("package", spec.packageName)
+        putJsonArray("args") { spec.args.forEach { add(JsonPrimitive(it)) } }
+        putJsonObject("env") { spec.env.forEach { (name, value) -> put(name, value) } }
+        putJsonObject("secrets") { target.secretEnv.forEach { (name, value) -> put(name, value.reveal()) } }
+        put("declaredAt", target.server.createdAt.toEpochMilliseconds())
     }
 
     private fun answer(status: HttpStatusCode, bytes: ByteArray): HostAnswer {
@@ -193,21 +240,17 @@ class HostMcpUpstream(
         const val PROTOCOL_VERSION: String = "1"
 
         private const val HOST_ENVELOPE = 64 * 1024L
+        private val CONTROL_TIMEOUT = 30.seconds
         private const val MAX_ERROR = 1000
 
         /**
-         * The host's process key: SHA-256 (64 hex characters) of the relay's key and the secret variables, so a
-         * rotated secret starts a new process instead of reusing one that holds the old value.
+         * The host's process key: SHA-256 (64 hex characters) of the relay's key (`StdioProcessKey`), as TeamCode's.
+         * No secret is part of it: the host restarts a process whose definition,
+         * secret values included, changed under the same key, so the retain sweep decrypts nothing.
          *
          * @param key `org:server:version`, plus `:member:assignedAt` for a per-member server.
-         * @param secretEnv The secret variables the process starts with.
          */
-        fun processKey(key: String, secretEnv: Map<String, SecretValue> = emptyMap()): String {
-            val material = secretEnv.entries.sortedBy { it.key }
-                .joinToString("") { (name, value) -> "\u0000$name=${value.reveal()}" }
-            return CryptographyProvider.Default.get(SHA256).hasher()
-                .hashBlocking((key + material).encodeToByteArray())
-                .toHexString()
-        }
+        fun processKey(key: String): String =
+            CryptographyProvider.Default.get(SHA256).hasher().hashBlocking(key.encodeToByteArray()).toHexString()
     }
 }

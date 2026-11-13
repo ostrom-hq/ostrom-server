@@ -16,4 +16,7 @@ class MemberDirectoryImpl(private val members: MembersRepository) : MemberDirect
         val id = Uuid.parseOrNull(memberId) ?: return false
         return members.findById(orgId, id) != null
     }
+
+    override suspend fun memberIds(orgId: Uuid, limit: Int): List<String>? =
+        members.page(orgId, null, limit + 1).takeIf { it.size <= limit }?.map { it.id.toString() }
 }

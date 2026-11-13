@@ -38,12 +38,23 @@ interface ListMemberServersUseCase {
     suspend operator fun invoke(caller: Caller): List<MemberServer>
 }
 
-/** [ListMemberServersUseCase] on the repository. */
-class ListMemberServersUseCaseImpl(private val repository: McpRelayRepository) : ListMemberServersUseCase {
+/**
+ * [ListMemberServersUseCase] on the repository. A member's listing is what `ostrom claude` reads before the agent
+ * starts, so it also warms the member's stdio servers on the MCP host, in the background.
+ *
+ * @param repository The servers and assignments.
+ * @param warmup Starts the stdio processes, or null without an MCP host.
+ */
+class ListMemberServersUseCaseImpl(
+    private val repository: McpRelayRepository,
+    private val warmup: HostedWarmup? = null,
+) : ListMemberServersUseCase {
     override suspend fun invoke(caller: Caller): List<MemberServer> {
         val prefix = repository.settings(caller.orgId).agentPrefix
         val servers = repository.effectiveServers(caller.orgId, caller.memberId, McpRules.MAX_SERVERS)
         val agentNames = servers.groupBy { McpRules.agentName(prefix, it.server.name) }
+        val hosted = servers.filter { it.server.transport == McpTransport.STDIO }
+        if (hosted.isNotEmpty()) warmup?.warm(caller, hosted)
         // Two servers that would get the same agent name (`a.b` and `a_b`) are both left out rather than one hidden.
         return servers.filter { agentNames.getValue(McpRules.agentName(prefix, it.server.name)).size == 1 }.map {
             MemberServer(
@@ -313,25 +324,8 @@ class RelayMcpMessageUseCaseImpl(
         return result
     }
 
-    private suspend fun target(caller: Caller, effective: EffectiveServer): UpstreamTarget {
-        val server = effective.server
-        val credentialId = effective.assignment.credentialSecretId ?: server.credentialSecretId
-        val ids = listOfNotNull(credentialId) + server.stdio?.secretEnv.orEmpty().values
-        val values = revealSecrets(caller.orgId, ids)
-        // Fail closed: a server never runs nor is called without a credential or variable it was declared with.
-        if (!values.keys.containsAll(ids)) throw McpSecretNotFoundException()
-        val shared = "${server.orgId}:${server.id}:${server.version}"
-        val processKey = when (server.sharing) {
-            McpSharing.SHARED -> shared
-            McpSharing.PER_MEMBER -> "$shared:${caller.memberId}:${effective.assignment.assignedAt}"
-        }
-        return UpstreamTarget(
-            server = server,
-            credential = credentialId?.let(values::getValue),
-            secretEnv = server.stdio?.secretEnv.orEmpty().mapValues { (_, secretId) -> values.getValue(secretId) },
-            processKey = processKey,
-        )
-    }
+    private suspend fun target(caller: Caller, effective: EffectiveServer): UpstreamTarget =
+        revealSecrets.target(caller, effective)
 
     private suspend fun journal(
         call: RelayedOperation,
@@ -418,3 +412,26 @@ private fun error(status: Int, id: JsonElement, code: Int, text: String) = Relay
 )
 
 private const val HTTP_OK = 200
+
+/**
+ * Everything needed to reach a server for one member, its secrets decrypted for this request only.
+ *
+ * @param caller The member.
+ * @param effective The server and the assignment that applies.
+ *
+ * @throws McpSecretNotFoundException When a credential or variable it was declared with no longer exists.
+ */
+internal suspend fun RevealSecretsUseCase.target(caller: Caller, effective: EffectiveServer): UpstreamTarget {
+    val server = effective.server
+    val credentialId = effective.assignment.credentialSecretId ?: server.credentialSecretId
+    val ids = listOfNotNull(credentialId) + server.stdio?.secretEnv.orEmpty().values
+    val values = this(caller.orgId, ids)
+    // Fail closed: a server never runs nor is called without a credential or variable it was declared with.
+    if (!values.keys.containsAll(ids)) throw McpSecretNotFoundException()
+    return UpstreamTarget(
+        server = server,
+        credential = credentialId?.let(values::getValue),
+        secretEnv = server.stdio?.secretEnv.orEmpty().mapValues { (_, secretId) -> values.getValue(secretId) },
+        processKey = StdioProcessKey.of(server, caller.memberId, effective.assignment.assignedAt),
+    )
+}

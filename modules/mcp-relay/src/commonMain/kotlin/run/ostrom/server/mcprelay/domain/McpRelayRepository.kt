@@ -91,4 +91,13 @@ interface McpRelayRepository {
 
     /** Deletes journal rows older than [before]. @return How many. */
     suspend fun purgeCalls(before: Instant): Long
+
+    /**
+     * The assignments of every org's stdio servers, for the retain sweep: no definition, no secret.
+     *
+     * @param limit The most rows.
+     *
+     * @return The assignments, or null when there are more than [limit].
+     */
+    suspend fun hostedAssignments(limit: Int): List<HostedAssignment>?
 }

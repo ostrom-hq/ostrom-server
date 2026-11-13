@@ -3,6 +3,13 @@ package run.ostrom.server.mcprelay
 
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.kernel.config.ConfigSource
+import kotlin.time.Duration.Companion.minutes
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.SupervisorJob
+import run.ostrom.server.mcprelay.domain.RetainHostedMcpProcessesUseCaseImpl
+import run.ostrom.server.mcprelay.domain.HostedWarmup
+import run.ostrom.server.mcprelay.domain.HostedSweep
+import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.config.InvalidConfigException
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.logging.Logger
@@ -130,6 +137,8 @@ object McpRelayModule : ServerModule {
     /** The Koin name of the relay's HTTP client (redirects off), replaced by tests. */
     val HTTP_CLIENT = named("mcpRelayHttpClient")
 
+    private val WARMUP_SCOPE = named("mcpRelayWarmupScope")
+
     /**
      * The Koin name of the client of the org's upstream MCP servers (a URL a member supplied): every connection is
      * resolved once and checked, replaced by tests.
@@ -150,6 +159,9 @@ object McpRelayModule : ServerModule {
             outboundHttpClient(allowPrivate = get<McpRelayConfig>().allowPrivateUpstreams)
         } onClose { it?.close() }
         single<McpRelayRepository> { McpRelayRepositoryImpl(get()) }
+        single { HostedRuntime(get<McpRelayConfig>().host?.let { HostMcpUpstream(get<HttpClient>(HTTP_CLIENT), it) }) }
+        // The member listings' warm-ups, outside their requests; cancelled with the server.
+        single(WARMUP_SCOPE) { CoroutineScope(SupervisorJob()) } onClose { it?.cancel() }
         single<McpUpstream> {
             val config = get<McpRelayConfig>()
             TransportMcpUpstream(
@@ -157,7 +169,7 @@ object McpRelayModule : ServerModule {
                     get<HttpClient>(UPSTREAM_CLIENT),
                     UpstreamAddressGuard(config.allowPrivateUpstreams),
                 ),
-                host = config.host?.let { HostMcpUpstream(get<HttpClient>(HTTP_CLIENT), it) },
+                host = get<HostedRuntime>().host,
             )
         }
         single { McpHostAvailability { get<McpRelayConfig>().host != null } }
@@ -178,7 +190,12 @@ object McpRelayModule : ServerModule {
         single<PutMcpSettingsUseCase> { PutMcpSettingsUseCaseImpl(get()) }
         single<ListMcpCallsUseCase> { ListMcpCallsUseCaseImpl(get()) }
         single<McpUsageUseCase> { McpUsageUseCaseImpl(get(), get()) }
-        single<ListMemberServersUseCase> { ListMemberServersUseCaseImpl(get()) }
+        single<ListMemberServersUseCase> {
+            ListMemberServersUseCaseImpl(
+                get(),
+                get<HostedRuntime>().host?.let { HostedWarmup(get(), it, get(WARMUP_SCOPE)) },
+            )
+        }
         single<RelayMcpMessageUseCase> {
             RelayMcpMessageUseCaseImpl(
                 repository = get(),
@@ -227,5 +244,28 @@ object McpRelayModule : ServerModule {
                 delay(1.hours)
             }
         }
+        val host = koin.getOrNull<HostedRuntime>()?.host ?: return
+        val retain = RetainHostedMcpProcessesUseCaseImpl(repository, koin.getOrNull<MemberDirectory>(), host)
+        scope.launch {
+            var last: HostedSweep? = null
+            while (true) {
+                val sweep = try {
+                    retain()
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    HostedSweep.Incomplete
+                }
+                // Once per change of outcome, never the keys: a host down for an hour is one line, not sixty.
+                if (sweep !is HostedSweep.Done && sweep != last) {
+                    logger.warn("mcp retain sweep", mapOf("outcome" to sweep.toString()))
+                }
+                last = sweep
+                delay(1.minutes)
+            }
+        }
     }
+
+    /** The MCP host, when one is configured: it runs the stdio servers, warmed and swept from here. */
+    private class HostedRuntime(val host: HostMcpUpstream?)
 }

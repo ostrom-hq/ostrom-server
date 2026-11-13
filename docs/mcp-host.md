@@ -16,7 +16,8 @@ TeamCode's `mcp` module (TeamCode `docs/mcp.md`) and speaks the same host protoc
 | Host: supervisor, stdio transport, host protocol v1, limits, scrubbing, drain on SIGTERM | Done (`:mcp-host`) |
 | Image (amd64, arm64) and its contract test with real npm and PyPI servers | Done (`mcp-host-image.yml`) |
 | Relay → host operations (`HostMcpUpstream`, `POST /v1/ops`; `OSTROM_MCP_HOST_URL`, `OSTROM_MCP_HOST_TOKEN`) | Done (`mcp-relay`) |
-| Warm-up from the member's server list, the `retain` sweep, `/v1/stop`, the recorded state of each process | Next |
+| Warm-up from the member's server list and the `retain` sweep each minute (`mcp-relay`) | Done |
+| `/v1/stop` (Restart), the recorded state of each process, the member's view of it | Next |
 | Helm component (Deployment, Service, NetworkPolicy, generated token Secret) | Next (ostrom-helm) |
 
 ## Architecture
@@ -27,9 +28,10 @@ TeamCode's `mcp` module (TeamCode `docs/mcp.md`) and speaks the same host protoc
 - **Self-contained requests.** Each request carries everything the host needs: the key, the definition, the
   secrets and the operation. The host keeps nothing on disk beyond per-key caches. A restart only loses those
   caches, and the next operation starts the process again.
-- **One process per key.** The relay computes the key: SHA-256 of `org:server:version`, plus
-  `:member:assignedAt` for a per-member server, plus the secrets. A secret rotation therefore yields a new key and
-  a new process.
+- **One process per key.** The relay computes the key, as TeamCode's `StdioProcessKey` does: SHA-256 of
+  `org:server:version`, plus `:member:assignedAt` for a per-member server. No secret is part of it. The host
+  keeps a fingerprint of each key's definition, secret values included, and restarts the process when it changes:
+  a secret rotation therefore still starts a new process, under the same key.
 - **Multiplexing.** `initialize` runs once per process, and concurrent operations share its stdin, told apart by
   JSON-RPC id.
 - **No privileged access.** The host has no database, no encryption key and no Kubernetes token, and depends on
@@ -191,6 +193,30 @@ starving 16 Node.js servers. The pod's memory limit is the hard bound.
 
 A bad configuration exits with code 2.
 
+## Warm-up and retain sweep
+
+The relay (`modules/mcp-relay`, `HostedMcp.kt`) keeps the host's processes in step with the assignments, as
+TeamCode's `RetainHostedMcpProcessesUseCase` does. Both run only when `OSTROM_MCP_HOST_URL` is set.
+
+- **Warm-up.** When a member lists its servers, the relay sends `POST /v1/warm` in the background for each of its
+  stdio servers, so the agent's first `tools/list` finds the process ready. A missing secret or an unreachable host
+  is skipped: the first operation reports it.
+- **Retain sweep.** Each minute, every server replica reads the stdio assignments of every organization, computes
+  their keys, and sends them to `POST /v1/retain`. A deleted server, a new version, a removed assignment or a
+  removed member stops its process within a minute; the relay refuses their calls at once anyway.
+  - The keys hold no secret, so the sweep decrypts nothing: it reads ids, versions and assignment dates only.
+  - A per-member server assigned to the whole organization yields one key per member, from the organization's
+    member list.
+  - At most 10,000 keys (TeamCode's bound, about 650 KiB). When the list is longer or cannot be read completely,
+    nothing is sent, so no assigned process is stopped.
+  - The relay logs one warning per change of outcome (`Incomplete`, `HostUnavailable`), never the keys.
+  - Every replica sweeps (TeamCode runs one replica). The sweeps are idempotent, and the host spares a key first
+    seen less than `OSTROM_MCP_HOST_RETAIN_GRACE_SECONDS` ago, which covers a warm-up racing a sweep.
+- **The cross-organization read.** While the tables are under Row-Level Security, the sweep reads through the
+  `SECURITY DEFINER` function `mcp_relay_hosted_assignments(limit)` (`docs/tenancy.md`). It returns the stdio
+  assignments' ids, versions, sharing and dates, never a definition or a secret. It goes away with Row-Level
+  Security in the Exposed migration.
+
 ## Security
 
 - The host receives the secrets of one process per request and keeps them in memory only.
@@ -204,6 +230,9 @@ A bad configuration exits with code 2.
   - install scripts never run;
   - each key has its own caches;
   - the pod has no database, key or cluster access, and a NetworkPolicy.
+
+  This is TeamCode's choice, accepted for launch. Follow-ups: one pod per key, or `hidepid` on `/proc` so that a
+  process cannot see its neighbours.
 
 ## Image
 

@@ -528,6 +528,9 @@ class OrgsPostgresTest {
             assertFalse(directory.isActiveMember(acme.id, bobsOwner.id.toString()))
             assertFalse(directory.isActiveMember(acme.id, Uuid.random().toString()))
             assertFalse(directory.isActiveMember(acme.id, "not-a-member-id"))
+            // The members of one organization only, or null past the limit (the MCP relay's retain sweep).
+            assertEquals(listOf(owner.id.toString()), directory.memberIds(acme.id, 10))
+            assertNull(directory.memberIds(acme.id, 0))
             // Deleting the organization removes its members: none stays active.
             orgs.delete(acme.id, now, orgDeleted(acme.id))
             assertFalse(directory.isActiveMember(acme.id, owner.id.toString()))

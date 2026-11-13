@@ -3,6 +3,7 @@ package run.ostrom.server.mcprelay
 
 import run.ostrom.server.mcprelay.domain.ArgumentPolicy
 import run.ostrom.server.mcprelay.domain.EffectiveServer
+import run.ostrom.server.mcprelay.domain.HostedAssignment
 import run.ostrom.server.mcprelay.domain.McpAssignment
 import run.ostrom.server.mcprelay.domain.McpCall
 import run.ostrom.server.mcprelay.domain.McpCallCursor
@@ -275,6 +276,12 @@ class InMemoryRelayRepository : McpRelayRepository {
         journal.removeAll { it.startedAt < before }
         return count.toLong()
     }
+
+    override suspend fun hostedAssignments(limit: Int): List<HostedAssignment>? = assignments.mapNotNull { a ->
+        servers.firstOrNull { it.id == a.serverId && it.transport == McpTransport.STDIO }?.let {
+            HostedAssignment(it.orgId, it.id, it.version, it.sharing, a.memberId, a.assignedAt)
+        }
+    }.takeIf { it.size <= limit }
 
     /** Assigns [server] to [member] (null: the whole org). */
     fun assign(server: McpServer, member: Uuid?, tools: Set<String>? = null, credential: Uuid? = null) {

@@ -4,6 +4,15 @@ package run.ostrom.server.mcprelay
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.TokenAuthenticator
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import run.ostrom.server.mcprelay.domain.ToolPolicy
+import run.ostrom.server.mcprelay.domain.StdioSpec
+import run.ostrom.server.mcprelay.domain.StdioLauncher
+import run.ostrom.server.mcprelay.domain.McpTransport
+import run.ostrom.server.mcprelay.domain.McpSharing
+import run.ostrom.server.mcprelay.domain.McpAssignment
+import run.ostrom.server.mcprelay.domain.HostedAssignment
 import run.ostrom.server.mcprelay.domain.McpCall
 import run.ostrom.server.mcprelay.domain.McpOperation
 import run.ostrom.server.mcprelay.domain.McpOutcome
@@ -494,6 +503,38 @@ class McpRelayPostgresTest : RelayPostgresHarness() {
                     "Retention touches nothing else",
                 )
             }
+        }
+
+    @Test
+    fun theRetainSweepReadsTheStdioAssignmentsOfEveryOrgAndNothingElse() =
+        serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
+            val repository = server.koin.get<McpRelayRepository>()
+            val spec = StdioSpec(StdioLauncher.NPM, "mcp-x@1.0.0", emptyList(), emptyMap(), emptyMap())
+            val a = Relay.server("a", transport = McpTransport.STDIO, sharing = McpSharing.PER_MEMBER)
+                .copy(stdio = spec)
+            val b = Relay.server("b", org = Relay.orgB, transport = McpTransport.STDIO).copy(stdio = spec)
+            val http = Relay.server("http")
+            for (it in listOf(a, b, http)) repository.createServer(it)
+            repository.putAssignment(McpAssignment(a.orgId, a.id, null, ToolPolicy.ALL, null, Relay.epoch))
+            repository.putAssignment(
+                McpAssignment(a.orgId, a.id, Relay.memberA.memberId, ToolPolicy.ALL, null, Relay.epoch),
+            )
+            repository.putAssignment(McpAssignment(b.orgId, b.id, null, ToolPolicy.ALL, null, Relay.epoch))
+            repository.putAssignment(McpAssignment(http.orgId, http.id, null, ToolPolicy.ALL, null, Relay.epoch))
+            val rows = assertNotNull(repository.hostedAssignments(10))
+            assertEquals(
+                setOf(
+                    HostedAssignment(a.orgId, a.id, 1, McpSharing.PER_MEMBER, null, Relay.epoch),
+                    HostedAssignment(a.orgId, a.id, 1, McpSharing.PER_MEMBER, Relay.memberA.memberId, Relay.epoch),
+                    HostedAssignment(b.orgId, b.id, 1, McpSharing.SHARED, null, Relay.epoch),
+                ),
+                rows.toSet(),
+            )
+            assertNull(repository.hostedAssignments(2), "More rows than the limit: none")
+            // Outside the router's function, row-level security still confines each org.
+            val driver = server.driver
+            val all = Statement.create("SELECT server_id FROM mcp_relay_assignments")
+            assertEquals(1, driver.fetchInOrg(Relay.orgB, all).getOrThrow().size)
         }
 
     @Test

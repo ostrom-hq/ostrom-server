@@ -49,6 +49,38 @@ private val RETENTION_THROUGH_THE_ROUTER_SQL: String =
     """
         .trimIndent()
 
+/**
+ * Version 7: the retain sweep's read across organizations (docs/mcp-host.md), a `SECURITY DEFINER` function owned by
+ * `ostrom_router` like [RETENTION_THROUGH_THE_ROUTER_SQL]'s: the assignments of every stdio server, ids, versions and
+ * times only. The router's policies hold inside its functions only.
+ */
+private val HOSTED_ASSIGNMENTS_SQL: String =
+    """
+    CREATE POLICY mcp_relay_servers_router_read ON mcp_relay_servers FOR SELECT TO ostrom_router
+        USING (current_user = 'ostrom_router');
+    CREATE POLICY mcp_relay_assignments_router_read ON mcp_relay_assignments FOR SELECT TO ostrom_router
+        USING (current_user = 'ostrom_router');
+    GRANT SELECT ON mcp_relay_servers, mcp_relay_assignments TO ostrom_router;
+    CREATE FUNCTION mcp_relay_hosted_assignments(p_limit INTEGER)
+        RETURNS TABLE (org_id UUID, server_id UUID, version INTEGER, sharing TEXT, member_id UUID,
+            assigned_at TIMESTAMPTZ)
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        SELECT s.org_id, s.id, s.version, s.sharing, a.member_id, a.assigned_at
+        FROM mcp_relay_servers s JOIN mcp_relay_assignments a ON a.server_id = s.id AND a.org_id = s.org_id
+        WHERE s.transport = 'STDIO' ORDER BY s.id, a.member_id NULLS FIRST LIMIT p_limit;
+    $$;
+    REVOKE EXECUTE ON FUNCTION mcp_relay_hosted_assignments(INTEGER) FROM PUBLIC;
+    DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+            GRANT EXECUTE ON FUNCTION mcp_relay_hosted_assignments(INTEGER) TO ostrom_app;
+        END IF;
+    END $$;
+    GRANT CREATE ON SCHEMA public TO ostrom_router;
+    ALTER FUNCTION mcp_relay_hosted_assignments(INTEGER) OWNER TO ostrom_router;
+    REVOKE CREATE ON SCHEMA public FROM ostrom_router;
+    """
+        .trimIndent()
+
 /** The schema of the MCP relay; its tables start with `mcp_relay_`, each confined to its org by row-level security. */
 val McpRelayMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -171,4 +203,5 @@ val McpRelayMigrations: List<SchemaMigration> = listOf(
             )
         """.trimIndent() + ";\n" + tenantTableSql("mcp_relay_slots") + "\n" + tenantTableSql("mcp_relay_minutes"),
     ),
+    SchemaMigration(version = 7, name = "mcp_relay_hosted_assignments", sql = HOSTED_ASSIGNMENTS_SQL),
 )
