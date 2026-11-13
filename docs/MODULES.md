@@ -382,8 +382,8 @@ owner, so the serving role reads the history (the start-up check) and never rewr
   `OSTROM_TRUSTED_PROXIES`) counts each pod apart, and so do the read limits (`OSTROM_READS_*`, `OSTROM_READ_WAITS_IN_FLIGHT`).
   The MCP relay's limits are not among them: the running operations and the operations of the minute, per member and
   per server, are rows of `mcp_relay_slots` and `mcp_relay_minutes`, counted under a lock on the server's row and by
-  the database's clock, so every replica admits against the same count; a slot whose replica died frees itself after
-  15 minutes.
+  the database's clock, so every replica admits against the same count. A running operation renews its slot every
+  5 minutes; a slot whose replica died frees itself within 15, and one the database fails to take back fails no call.
 - **SQLite** (tests and local mode) is not wired yet: sqlx4k has a SQLite driver with the same `Driver` interface;
   repositories must stay portable SQL where they can.
 - **The instance signer is provisional** (`kernel/signing`): it moves to `ostrom-core` once published; the

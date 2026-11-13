@@ -74,7 +74,10 @@ class TestClock(var now: Instant = Relay.epoch) : Clock {
 
 /** [McpCallSlotRepository] in memory, its minutes and expiry by [clock]. */
 class InMemoryMcpSlots(private val clock: Clock) : McpCallSlotRepository {
-    private class Running(val orgId: Uuid, val memberId: Uuid, val serverId: Uuid, val expiresAt: Instant)
+    private class Running(val orgId: Uuid, val memberId: Uuid, val serverId: Uuid, var expiresAt: Instant)
+
+    /** Thrown by [release] and [renew] when set: the database failing. */
+    var failure: Exception? = null
 
     private val running = mutableMapOf<Uuid, Running>()
     private val started = mutableListOf<Triple<Uuid, Uuid, Long>>()
@@ -104,7 +107,13 @@ class InMemoryMcpSlots(private val clock: Clock) : McpCallSlotRepository {
     }
 
     override suspend fun release(orgId: Uuid, slot: McpCallSlot) {
+        failure?.let { throw it }
         running.remove(slot.id)
+    }
+
+    override suspend fun renew(orgId: Uuid, slot: McpCallSlot) {
+        failure?.let { throw it }
+        running[slot.id]?.expiresAt = clock.now() + McpCallSlotRepository.SLOT_LEASE
     }
 }
 

@@ -2,6 +2,7 @@
 package run.ostrom.server.mcprelay
 
 import run.ostrom.server.mcprelay.domain.McpCallLimiter
+import run.ostrom.server.mcprelay.domain.McpCallSlot
 import run.ostrom.server.mcprelay.domain.McpLimits
 import run.ostrom.server.mcprelay.infrastructure.McpCallSlotRepositoryImpl
 import run.ostrom.server.secrets.SecretsModule
@@ -77,6 +78,16 @@ class McpRelaySlotsPostgresTest : RelayPostgresHarness() {
             assertNotNull(dead.acquire(Relay.orgA, member, serverId))
             val alive = server.replica(limits)
             assertNull(alive.acquire(Relay.orgA, member, serverId))
+            // A running operation renews its slot for a whole lease, by the database's clock.
+            val id = server.database.superuser.fetchAll("SELECT CAST(id AS TEXT) AS id FROM mcp_relay_slots")
+                .getOrThrow().single().get("id").asString()
+            server.database.superuser.execute("UPDATE mcp_relay_slots SET expires_at = now() + INTERVAL '1 second'")
+                .getOrThrow()
+            McpCallSlotRepositoryImpl(server.driver).renew(Relay.orgA, McpCallSlot(Uuid.parse(id)))
+            val renewed = server.database.superuser
+                .fetchAll("SELECT id FROM mcp_relay_slots WHERE expires_at > now() + INTERVAL '14 minutes'")
+                .getOrThrow().size
+            assertEquals(1, renewed)
             server.database.superuser.execute("UPDATE mcp_relay_slots SET expires_at = now() - INTERVAL '1 second'")
                 .getOrThrow()
             assertNotNull(alive.acquire(Relay.orgA, member, serverId), "The expired slot no longer counts")

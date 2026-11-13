@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.mcprelay.domain
 
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.uuid.Uuid
 
 /**
@@ -40,6 +44,33 @@ class McpCallLimiter(private val limits: McpLimits, private val slots: McpCallSl
                 usage.serverThisMinute < limits.serverPerMinute
         }
 
-    /** Returns a slot taken by [acquire]. */
-    suspend fun release(orgId: Uuid, slot: McpCallSlot) = slots.release(orgId, slot)
+    /**
+     * Runs [block], the operation, renewing [slot] every [McpCallSlotRepository.SLOT_RENEWAL] while it runs. A renewal
+     * that fails is left to the next one.
+     */
+    suspend fun <T> held(orgId: Uuid, slot: McpCallSlot, block: suspend () -> T): T = coroutineScope {
+        val renewing = launch {
+            while (true) {
+                delay(McpCallSlotRepository.SLOT_RENEWAL)
+                quietly { slots.renew(orgId, slot) }
+            }
+        }
+        block().also { renewing.cancel() }
+    }
+
+    /**
+     * Returns a slot taken by [acquire]. One the database could not take back frees itself at the end of its lease:
+     * the operation's answer and its journal entry stand.
+     */
+    suspend fun release(orgId: Uuid, slot: McpCallSlot) = quietly { slots.release(orgId, slot) }
+
+    private suspend fun quietly(write: suspend () -> Unit) {
+        try {
+            write()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            // Left to the slot's lease.
+        }
+    }
 }

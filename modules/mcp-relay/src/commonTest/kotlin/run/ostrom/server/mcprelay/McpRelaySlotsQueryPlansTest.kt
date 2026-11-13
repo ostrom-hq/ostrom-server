@@ -7,6 +7,7 @@ import run.ostrom.server.mcprelay.infrastructure.MCP_SLOT_INSERT_SQL
 import run.ostrom.server.mcprelay.infrastructure.MCP_SLOT_LOCK_SQL
 import run.ostrom.server.mcprelay.infrastructure.MCP_SLOT_PURGE_SQL
 import run.ostrom.server.mcprelay.infrastructure.MCP_SLOT_RELEASE_SQL
+import run.ostrom.server.mcprelay.infrastructure.MCP_SLOT_RENEW_SQL
 import run.ostrom.server.mcprelay.infrastructure.MCP_USAGE_SQL
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.infrastructure.inTenant
@@ -62,6 +63,7 @@ class McpRelaySlotsQueryPlansTest : RelayPostgresHarness() {
             "the usage read" to MCP_USAGE_SQL,
             "the slot taken" to MCP_SLOT_INSERT_SQL,
             "the minute counted" to MCP_MINUTE_COUNT_SQL,
+            "the slot renewed" to MCP_SLOT_RENEW_SQL,
             "the slot given back" to MCP_SLOT_RELEASE_SQL,
         ).forEach { (what, sql) ->
             val plan = plan(server.driver, sql)

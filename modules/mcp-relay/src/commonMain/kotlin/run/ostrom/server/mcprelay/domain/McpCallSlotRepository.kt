@@ -39,9 +39,18 @@ interface McpCallSlotRepository {
     /** Gives a slot back; nothing when it is gone. */
     suspend fun release(orgId: Uuid, slot: McpCallSlot)
 
+    /** Extends a slot still held by [SLOT_LEASE] from now; nothing when it is gone. */
+    suspend fun renew(orgId: Uuid, slot: McpCallSlot)
+
     /** Timing. */
     companion object {
-        /** A slot never released (its replica died) frees itself after this: past the longest deadline, 10 minutes. */
+        /**
+         * A slot never released (its replica died) frees itself after this; an operation still running renews its
+         * slot every [SLOT_RENEWAL], so one slower than the lease (a host's cold start, a retry) keeps counting.
+         */
         val SLOT_LEASE: Duration = 15.minutes
+
+        /** How often a running operation renews its slot. */
+        val SLOT_RENEWAL: Duration = 5.minutes
     }
 }

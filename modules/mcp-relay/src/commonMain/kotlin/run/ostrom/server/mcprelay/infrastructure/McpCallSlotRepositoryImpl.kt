@@ -45,6 +45,11 @@ class McpCallSlotRepositoryImpl(private val driver: Driver) : McpCallSlotReposit
         slot
     }
 
+    override suspend fun renew(orgId: Uuid, slot: McpCallSlot) {
+        driver.executeInOrg(orgId, Statement.create(MCP_SLOT_RENEW_SQL).bind("org_id", orgId).bind("id", slot.id))
+            .getOrThrow()
+    }
+
     override suspend fun release(orgId: Uuid, slot: McpCallSlot) {
         driver.executeInOrg(orgId, Statement.create(MCP_SLOT_RELEASE_SQL).bind("org_id", orgId).bind("id", slot.id))
             .getOrThrow()
@@ -88,6 +93,11 @@ internal const val MCP_MINUTE_COUNT_SQL =
     "INSERT INTO mcp_relay_minutes (org_id, server_id, minute, member_id, calls) " +
         "VALUES (:org_id, :server_id, $MINUTE, :member_id, 1) " +
         "ON CONFLICT (server_id, minute, member_id) DO UPDATE SET calls = mcp_relay_minutes.calls + 1"
+
+/** A slot still held, extended by its lease from now. */
+internal val MCP_SLOT_RENEW_SQL =
+    "UPDATE mcp_relay_slots SET expires_at = now() + INTERVAL '$SLOT_SECONDS seconds' " +
+        "WHERE org_id = :org_id AND id = :id"
 
 /** One slot given back. */
 internal const val MCP_SLOT_RELEASE_SQL = "DELETE FROM mcp_relay_slots WHERE org_id = :org_id AND id = :id"

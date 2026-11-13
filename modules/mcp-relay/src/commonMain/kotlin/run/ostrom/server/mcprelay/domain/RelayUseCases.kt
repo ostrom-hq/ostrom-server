@@ -279,7 +279,7 @@ class RelayMcpMessageUseCaseImpl(
         var bytes = 0L
         val result = try {
             val target = target(caller, effective)
-            when (val answer = block(target)) {
+            when (val answer = limiter.held(caller.orgId, slot) { block(target) }) {
                 is UpstreamResult.Ok -> {
                     val failed = (answer.value as? JsonObject)?.get("isError") == JsonPrimitive(true)
                     outcome = if (failed) McpOutcome.TOOL_ERROR else McpOutcome.OK
