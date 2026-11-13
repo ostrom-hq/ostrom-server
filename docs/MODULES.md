@@ -444,8 +444,8 @@ member, 200 versions per skill.
 
 Every write takes the organization's catalog lock (a transaction-scoped advisory lock), so writes of one organization
 run one after the other on any replica, and the audit events are written once the change committed. The CLI's token
-is the workstation (`GET /api/v1/devices`): it alone reports what it installed (`PUT
-/api/v1/skill-delivery/installations`), a report never grants nor revokes anything, and the rows go with the skill.
+is the workstation (`GET /api/v1/devices`): it alone reports what it installed, a report never grants nor revokes
+anything, and the rows go with the skill.
 
 ## Commands
 
