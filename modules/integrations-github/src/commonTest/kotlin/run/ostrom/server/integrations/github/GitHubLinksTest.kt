@@ -5,7 +5,6 @@ import run.ostrom.server.integrations.github.domain.CloudSessionsSwitch
 import run.ostrom.server.integrations.github.domain.GitHubAccountInUseException
 import run.ostrom.server.integrations.github.domain.GitHubAppCredentials
 import run.ostrom.server.integrations.github.domain.GitHubAppMisconfiguredException
-import run.ostrom.server.integrations.github.domain.GitHubAppNotConfiguredException
 import run.ostrom.server.integrations.github.domain.GitHubCallException
 import run.ostrom.server.integrations.github.domain.GitHubDeviceAuthorization
 import run.ostrom.server.integrations.github.domain.GitHubDeviceFlowDisabledException
@@ -13,6 +12,7 @@ import run.ostrom.server.integrations.github.domain.GitHubDeviceLinkProgress
 import run.ostrom.server.integrations.github.domain.GitHubDevicePoll
 import run.ostrom.server.integrations.github.domain.GitHubLinkActor
 import run.ostrom.server.integrations.github.domain.GitHubLinkAdminOnlyException
+import run.ostrom.server.integrations.github.domain.GitHubLinkAppNotConfiguredException
 import run.ostrom.server.integrations.github.domain.GitHubLinkAttempt
 import run.ostrom.server.integrations.github.domain.GitHubLinkBrowserMismatchException
 import run.ostrom.server.integrations.github.domain.GitHubLinkCloudOffException
@@ -138,7 +138,7 @@ class GitHubLinksTest {
         store.attempts[ORG to "web"] = GitHubLinkAttempt("web", ORG, DEV, GitHubLinkKind.WEB, "v", "b", 0, NOW, NOW)
         assertFailsWith<GitHubLinkNotFoundException> { links.pollDevice(dev, "web") }
         apps.app = GitHubAppCredentials()
-        assertFailsWith<GitHubAppNotConfiguredException> { links.pollDevice(dev, id) }
+        assertFailsWith<GitHubLinkAppNotConfiguredException> { links.pollDevice(dev, id) }
     }
 
     @Test
@@ -148,10 +148,10 @@ class GitHubLinksTest {
         assertFailsWith<GitHubLinkCloudOffException> { links.startWeb(dev, "session") }
         cloud = true
         apps.app = GitHubAppCredentials(appId = "42", clientId = CLIENT_ID)
-        assertFailsWith<GitHubAppNotConfiguredException> { links.startDevice(dev) }
-        assertFailsWith<GitHubAppNotConfiguredException> { links.startWeb(dev, "session") }
+        assertFailsWith<GitHubLinkAppNotConfiguredException> { links.startDevice(dev) }
+        assertFailsWith<GitHubLinkAppNotConfiguredException> { links.startWeb(dev, "session") }
         apps.app = GitHubAppCredentials(appId = "42", clientSecret = "secret")
-        assertFailsWith<GitHubAppNotConfiguredException> { links.startDevice(dev) }
+        assertFailsWith<GitHubLinkAppNotConfiguredException> { links.startDevice(dev) }
         val status = links.status(dev)
         assertEquals(GitHubLinkStatus(DEV, appConfigured = false, link = null, state = null), status)
     }
@@ -254,7 +254,7 @@ class GitHubLinksTest {
         store.consumable = true
         state = start()
         apps.app = GitHubAppCredentials()
-        assertFailsWith<GitHubAppNotConfiguredException> { links.completeWeb(state, "code", null, session) }
+        assertFailsWith<GitHubLinkAppNotConfiguredException> { links.completeWeb(state, "code", null, session) }
         assertEquals(emptyList(), github.exchanged)
         assertNull(store.link(ORG, DEV))
     }

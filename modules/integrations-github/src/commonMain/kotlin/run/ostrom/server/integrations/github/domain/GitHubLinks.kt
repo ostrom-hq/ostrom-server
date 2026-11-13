@@ -95,11 +95,11 @@ class GitHubLinks(
      * @param actor The caller.
      * @return What to show them.
      * @throws GitHubLinkCloudOffException While cloud sessions are off.
-     * @throws GitHubAppNotConfiguredException Without the App's OAuth client.
+     * @throws GitHubLinkAppNotConfiguredException Without the App's OAuth client.
      */
     suspend fun startDevice(actor: GitHubLinkActor): GitHubDeviceLink {
         if (!cloud.enabled()) throw GitHubLinkCloudOffException()
-        val app = app() ?: throw GitHubAppNotConfiguredException()
+        val app = app() ?: throw GitHubLinkAppNotConfiguredException()
         val device = remote { github.startDevice(app.clientId) }
         val now = clock.now()
         val interval = device.intervalSeconds.coerceIn(MIN_INTERVAL_SECONDS, MAX_INTERVAL_SECONDS)
@@ -132,7 +132,7 @@ class GitHubLinks(
             return GitHubDeviceLinkProgress.Expired
         }
         if (now < attempt.nextPollAt) return GitHubDeviceLinkProgress.Pending(attempt.pollIntervalSeconds)
-        val app = app() ?: throw GitHubAppNotConfiguredException()
+        val app = app() ?: throw GitHubLinkAppNotConfiguredException()
         val next = now + attempt.pollIntervalSeconds.seconds
         if (!store.deferPoll(actor.orgId, id, attempt.nextPollAt, attempt.pollIntervalSeconds, next)) {
             return GitHubDeviceLinkProgress.Pending(attempt.pollIntervalSeconds)
@@ -169,12 +169,12 @@ class GitHubLinks(
      * @param memberId Another member to link, for an owner or an admin; the caller when null.
      * @return Where the browser authorizes the App.
      * @throws GitHubLinkCloudOffException While cloud sessions are off.
-     * @throws GitHubAppNotConfiguredException Without the App's OAuth client.
+     * @throws GitHubLinkAppNotConfiguredException Without the App's OAuth client.
      */
     suspend fun startWeb(actor: GitHubLinkActor, session: String, memberId: Uuid? = null): String {
         val target = target(actor, memberId)
         if (!cloud.enabled()) throw GitHubLinkCloudOffException()
-        val app = app() ?: throw GitHubAppNotConfiguredException()
+        val app = app() ?: throw GitHubLinkAppNotConfiguredException()
         val state = "${actor.orgId}.${token()}"
         val verifier = token()
         val now = clock.now()
@@ -221,7 +221,7 @@ class GitHubLinks(
         }
         if (error != null) throw GitHubLinkDeniedException()
         if (code == null || !CODE.matches(code)) throw GitHubLinkNotFoundException()
-        val app = app() ?: throw GitHubAppNotConfiguredException()
+        val app = app() ?: throw GitHubLinkAppNotConfiguredException()
         val tokens = remote { github.exchangeCode(app, code, redirectUri, attempt.secret) }
         return complete(app, orgId, attempt.memberId, session.second, tokens)
     }

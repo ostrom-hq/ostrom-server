@@ -5,7 +5,7 @@ import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
 
 /** The instance's App has no OAuth client: nobody can link (409 `github_app_not_configured`). */
-class GitHubAppNotConfiguredException : OstromException(
+class GitHubLinkAppNotConfiguredException : OstromException(
     ErrorKind.CONFLICT,
     "The instance's GitHub App cannot link accounts: an administrator sets its client id and secret first.",
     "github_app_not_configured",
