@@ -155,30 +155,50 @@ class InMemoryUsageRepository : UsageRepository {
     /** The holds of the calls in flight. */
     val holds = mutableMapOf<Uuid, Pair<SpendHold, Instant>>()
 
+    /** When each hold was first put. */
+    private val heldAt = mutableMapOf<Uuid, Instant>()
+
     override suspend fun settle(event: UsageEvent) {
         insert(event.orgId, listOf(event))
         holds.remove(event.id)
+        heldAt.remove(event.id)
     }
 
     override suspend fun dropHold(orgId: Uuid, callId: Uuid) {
         holds.remove(callId)
+        heldAt.remove(callId)
     }
+
+    /** What the expired holds of calls never recorded held since [since], kept by [keep]: spent, as PostgreSQL's. */
+    private fun uncertain(hold: SpendHold, now: Instant, since: Instant, keep: (SpendHold) -> Boolean = { true }) =
+        holds.values.filter { (other, expires) ->
+            other.orgId == hold.orgId && expires <= now && heldAt.getValue(other.callId) >= since && keep(other)
+        }.sumOf { it.first.micros }
 
     override suspend fun holdWithin(hold: SpendHold, limits: SpendLimits, window: HoldWindow): Admission {
         failure?.let { throw it }
         val live = holds.values.filter { (other, expires) ->
             other.orgId == hold.orgId && other.callId != hold.callId && expires > window.now
         }.map { it.first }
+        val now = window.now
+        val mine = { other: SpendHold -> other.memberId == hold.memberId }
         val totals = SpendTotals(
-            orgSpent = spentMicros(hold.orgId, null, window.since),
+            orgSpent = spentMicros(hold.orgId, null, window.since) + uncertain(hold, now, window.since),
             orgHeld = live.sumOf { it.micros },
-            memberSpent = spentMicros(hold.orgId, hold.memberId, window.since),
-            memberHeld = live.filter { it.memberId == hold.memberId }.sumOf { it.micros },
-            orgDaySpent = limits.daily?.let { spentMicros(hold.orgId, null, it.since) } ?: 0,
-            memberDaySpent = limits.daily?.let { spentMicros(hold.orgId, hold.memberId, it.since) } ?: 0,
+            memberSpent = spentMicros(hold.orgId, hold.memberId, window.since) +
+                uncertain(hold, now, window.since, mine),
+            memberHeld = live.filter(mine).sumOf { it.micros },
+            orgDaySpent = limits.daily?.let { spentMicros(hold.orgId, null, it.since) + uncertain(hold, now, it.since) }
+                ?: 0,
+            memberDaySpent = limits.daily?.let {
+                spentMicros(hold.orgId, hold.memberId, it.since) + uncertain(hold, now, it.since, mine)
+            } ?: 0,
         )
         return limits.admit(withWorkflow(totals, hold, limits, window, live), hold.micros).also {
-            if (it == Admission.Admitted) holds[hold.callId] = hold to window.expiresAt
+            if (it == Admission.Admitted) {
+                holds[hold.callId] = hold to window.expiresAt
+                heldAt.getOrPut(hold.callId) { now }
+            }
         }
     }
 
@@ -191,10 +211,14 @@ class InMemoryUsageRepository : UsageRepository {
         live: List<SpendHold>,
     ): SpendTotals {
         val id = hold.workflowId ?: return totals
+        val its = { other: SpendHold -> other.workflowId == id }
         return totals.copy(
-            workflowSpent = workflowSpentMicros(hold.orgId, id, window.since),
-            workflowHeld = live.filter { it.workflowId == id }.sumOf { it.micros },
-            workflowDaySpent = limits.daily?.let { workflowSpentMicros(hold.orgId, id, it.since) } ?: 0,
+            workflowSpent = workflowSpentMicros(hold.orgId, id, window.since) +
+                uncertain(hold, window.now, window.since, its),
+            workflowHeld = live.filter(its).sumOf { it.micros },
+            workflowDaySpent = limits.daily?.let {
+                workflowSpentMicros(hold.orgId, id, it.since) + uncertain(hold, window.now, it.since, its)
+            } ?: 0,
         )
     }
 

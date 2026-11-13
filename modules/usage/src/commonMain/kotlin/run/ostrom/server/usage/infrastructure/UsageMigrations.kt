@@ -255,4 +255,15 @@ val UsageMigrations: List<SchemaMigration> = listOf(
             ALTER TABLE usage_holds ADD COLUMN workflow_id TEXT;
         """.trimIndent(),
     ),
+    // TeamCode's « Failure behavior »: an expired hold, whose call a lost replica never recorded, stays charged at the
+    // time it was held, and is kept 90 days. The index reads an org's month or day of them.
+    SchemaMigration(
+        version = 9,
+        name = "usage_uncertain_holds_stay_charged",
+        sql = """
+            ALTER TABLE usage_holds ADD COLUMN held_at TIMESTAMPTZ NOT NULL DEFAULT now();
+            CREATE INDEX usage_holds_org_held ON usage_holds (org_id, held_at)
+                INCLUDE (member_id, workflow_id, micros, expires_at);
+        """.trimIndent(),
+    ),
 )

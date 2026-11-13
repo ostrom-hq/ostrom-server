@@ -5,6 +5,7 @@ import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import run.ostrom.server.secrets.infrastructure.fetchInOrg
+import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.usage.domain.UsageGroupBy
 import run.ostrom.server.usage.infrastructure.UsageQueries
@@ -50,14 +51,30 @@ class UsageQueryPlansTest {
             "FROM generate_series(1, $count) AS i"
     }
 
+    /** [count] holds of [org] over the last 90 days, most of them expired: calls their lost replicas never recorded. */
+    private fun holds(org: Uuid, count: Int): String =
+        "INSERT INTO usage_holds (call_id, org_id, member_id, workflow_id, micros, expires_at, held_at) " +
+            "SELECT gen_random_uuid(), CAST('$org' AS uuid), CAST(md5('m' || (i % 30)) AS uuid), " +
+            "CASE WHEN i % 7 = 0 THEN 'review' END, i % 1000, " +
+            "to_timestamp(${TestCallers.epoch.epochSeconds}) - (i % 2160) * INTERVAL '1 hour' + INTERVAL '1 hour', " +
+            "to_timestamp(${TestCallers.epoch.epochSeconds}) - (i % 2160) * INTERVAL '1 hour' " +
+            "FROM generate_series(1, $count) AS i"
+
+    /** Fixtures only: the rows of two organizations at once and the statistics, which no request writes. */
+    private suspend fun TestServer.fill() {
+        val fixtures = database.superuser
+        fixtures.execute(seed(TestCallers.orgB, 20_000)).getOrThrow()
+        fixtures.execute(seed(TestCallers.orgA, 2_000)).getOrThrow()
+        fixtures.execute(holds(TestCallers.orgB, 20_000)).getOrThrow()
+        fixtures.execute(holds(TestCallers.orgA, 200)).getOrThrow()
+        fixtures.execute("VACUUM ANALYZE usage_events").getOrThrow()
+        fixtures.execute("VACUUM ANALYZE usage_holds").getOrThrow()
+    }
+
     @Test
     fun theLedgersRequestPathReadsUseTheirIndexes() =
         serverTest(listOf(SecretsModule, UsageModule), overrides) { server ->
-            // Fixtures only: the rows of two organizations at once and the statistics, which no request writes.
-            val fixtures = server.database.superuser
-            fixtures.execute(seed(TestCallers.orgB, 20_000)).getOrThrow()
-            fixtures.execute(seed(TestCallers.orgA, 2_000)).getOrThrow()
-            fixtures.execute("VACUUM ANALYZE usage_events").getOrThrow()
+            server.fill()
             val driver = server.driver
             val since = TestCallers.epoch - 30.days
             val member = TestCallers.memberA.memberId
@@ -110,6 +127,7 @@ class UsageQueryPlansTest {
             SystemFileSystem.sink(Path("build/reports/explain/usage.txt")).buffered().use { it.writeString(report) }
             for ((name, plan) in plans) {
                 assertFalse("Seq Scan on usage_events" in plan, "$name scans the table:\n$plan")
+                assertFalse("Seq Scan on usage_holds" in plan, "$name scans the holds:\n$plan")
             }
         }
 

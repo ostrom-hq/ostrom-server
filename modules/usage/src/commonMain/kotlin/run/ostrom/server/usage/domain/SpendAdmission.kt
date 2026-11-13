@@ -3,6 +3,7 @@ package run.ostrom.server.usage.domain
 
 import kotlin.time.Clock
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -194,8 +195,8 @@ interface SpendAdmission {
  *
  * @param repository The ledger and the holds.
  * @param clock The time.
- * @param holdFor How long a hold counts when its call is never recorded (a replica lost mid-call): longer than any
- *   stream.
+ * @param holdFor How long a hold counts as in flight: longer than any stream. Past it, a call never recorded (a replica
+ *   lost mid-call) is charged what it held.
  */
 class SpendAdmissionImpl(
     private val repository: UsageRepository,
@@ -215,7 +216,14 @@ class SpendAdmissionImpl(
  * The times of an admission.
  *
  * @property since The start of the month the limits count.
- * @property now Holds that expire by then no longer count.
+ * @property now Holds that expire by then are no longer in flight: their calls were never recorded, so what they held
+ *   stays spent (TeamCode's « Failure behavior »: a killed pod's uncertain usage stays charged).
  * @property expiresAt When the new hold expires.
  */
-data class HoldWindow(val since: Instant, val now: Instant, val expiresAt: Instant)
+data class HoldWindow(val since: Instant, val now: Instant, val expiresAt: Instant) {
+    /** The retention of the holds. */
+    companion object {
+        /** How long a hold is kept, as TeamCode keeps its reservation details: past it, no month counts it. */
+        val RETENTION: Duration = 90.days
+    }
+}
