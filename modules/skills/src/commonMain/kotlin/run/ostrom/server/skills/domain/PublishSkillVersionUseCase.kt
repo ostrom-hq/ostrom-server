@@ -23,6 +23,7 @@ interface PublishSkillVersionUseCase {
      *
      * @return What the publication did.
      */
+    @Suppress("LongParameterList") // The fields of one publication.
     suspend operator fun invoke(
         caller: CatalogCaller,
         name: String,

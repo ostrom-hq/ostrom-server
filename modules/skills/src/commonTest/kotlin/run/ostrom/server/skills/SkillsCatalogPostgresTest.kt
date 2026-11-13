@@ -46,6 +46,7 @@ class SkillsCatalogPostgresTest {
         }
 
     @Test
+    @Suppress("LongMethod") // One end-to-end story through the HTTP API, read top to bottom.
     fun aVersionIsImmutableAndOnlyItsPinIsDelivered() {
         val audit = RecordingAudit()
         serverTest(listOf(SkillsModule), testIdentities(audit)) { server ->

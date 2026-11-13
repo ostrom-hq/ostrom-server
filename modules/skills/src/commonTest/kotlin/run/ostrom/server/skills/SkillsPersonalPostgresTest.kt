@@ -62,10 +62,10 @@ class SkillsPersonalPostgresTest {
             val pinned = client.call(put, "ada-cli", "$ME/notes/pin", """{"version": "1.1.0"}""")
             assertEquals("1.1.0", pinned.text("pinnedVersion"))
             assertEquals(null, client.call(delete, "ada-cli", "$ME/notes/pin").text("pinnedVersion"))
-            assertEquals(emptyList(), client.manifest("ada-cli"))
+            assertEquals(listOf("shared@1.0.0"), client.manifest("ada-cli"), "Unpinned: only the team's")
             client.call(put, "ada-cli", "$ME/notes/pin", PIN_1)
             assertEquals("true", client.call(delete, "ada-cli", "$ME/notes").text("retired"))
-            assertEquals(emptyList(), client.manifest("ada-cli"), "Retired: delivered to nobody")
+            assertEquals(listOf("shared@1.0.0"), client.manifest("ada-cli"), "Retired: delivered to nobody")
             assertEquals("false", client.call(post, "ada-cli", "$ME/notes/restore").text("retired"))
             assertEquals(403, client.call(delete, "ada-pat", "$ME/notes").status)
 

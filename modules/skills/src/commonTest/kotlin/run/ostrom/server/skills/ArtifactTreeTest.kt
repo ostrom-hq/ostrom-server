@@ -59,7 +59,7 @@ class ArtifactTreeTest {
         assertEquals("invalid_skill_path", assertFailsWith<InvalidCatalogRequestException> { entries(file("..")) }.type)
         val large = assertFailsWith<ArtifactTooLargeException> { entries(file("a", "123456"), file("b", "12345")) }
         assertEquals("skill_artifact_too_large", large.type)
-        assertFailsWith<InvalidCatalogRequestException> { entries(file("Read.md"), file("README.md")) }
+        assertFailsWith<InvalidCatalogRequestException> { entries(file("readme.md"), file("README.md")) }
         assertFailsWith<InvalidCatalogRequestException> { entries(file("Docs"), file("docs/a.md")) }
         assertFailsWith<InvalidCatalogRequestException> { entries(file("a/b"), file("a/b/c")) }
 

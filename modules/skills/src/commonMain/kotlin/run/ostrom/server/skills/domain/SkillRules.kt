@@ -82,6 +82,7 @@ internal sealed interface Ownership {
  */
 internal object SkillRules {
     /** The skill [name] as [ownership] sees it. */
+    @Suppress("ThrowsCount") // Not found, or not the team's: each its own refusal.
     suspend fun SkillsStore.owned(name: String, ownership: Ownership): Skill {
         val skill = skill(name) ?: throw CatalogNotFoundException()
         when (ownership) {
@@ -169,7 +170,7 @@ internal object SkillRules {
      *
      * @param personalOwner The owner for a personal publication, null for the team's.
      */
-    @Suppress("LongParameterList", "CyclomaticComplexMethod") // The rules of one publication, read in order.
+    @Suppress("LongParameterList", "CyclomaticComplexMethod", "ThrowsCount") // The rules of one publication, in order.
     suspend fun SkillsStore.publish(
         caller: CatalogCaller,
         orgId: Uuid,
