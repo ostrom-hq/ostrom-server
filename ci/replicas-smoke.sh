@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Two real server processes on one PostgreSQL, as TeamCode's scripts/smoke-replicas.py (docs/replicas.md « Evidence »,
 # parity TC-REP-7): both start at once on a migrated database; a token works on either; one replica killed (SIGKILL)
-# leaves the other serving, and comes back; a database outage makes both unready while they stay alive, then both
-# ready again; a token revoked on one replica is refused by the other. Only its own containers are stopped. Needs the
-# image ostrom-server:ci and a database migrated by the image smoke step, reached as the serving role through
-# OSTROM_SMOKE_DATABASE_URL (postgresql://user:password@host:port/database).
+# leaves the other serving, and comes back; a database outage makes both unready while they stay up (their /health
+# says the database is down, and they never exit), then both ready again; a token revoked on one replica is refused by
+# the other. Only its own containers are stopped. Needs the image ostrom-server:ci and a database migrated by the image
+# smoke step, reached as the serving role through OSTROM_SMOKE_DATABASE_URL
+# (postgresql://user:password@host:port/database).
 set -euo pipefail
 
 url="${OSTROM_SMOKE_DATABASE_URL:?}"
@@ -63,7 +64,7 @@ replica() {
 await_status() {
   local path="$1" seconds="$2" want="$3" got=""
   for _ in $(seq 1 "$seconds"); do
-    got="$(curl -s -o /dev/null -w '%{http_code}' "$path" || true)"
+    got="$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' "$path" || true)"
     [ "$got" = "$want" ] && return 0
     sleep 1
   done
@@ -71,7 +72,10 @@ await_status() {
 }
 
 # The HTTP status of GET /api/v1/auth/me on port $1 with the QA token.
-me() { curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "localhost:$1/api/v1/auth/me" || true; }
+me() {
+  curl -s --max-time 10 -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "localhost:$1/api/v1/auth/me" \
+    || true
+}
 
 proxy
 account="$(docker run --rm --network host -e OSTROM_DATABASE_URL="$proxied" -e OSTROM_ALLOW_TEST_ACCOUNTS=true \
@@ -99,14 +103,19 @@ docker start ostrom-replica-a >/dev/null
 await_status localhost:8082/ready 30 200
 [ "$(me 8082)" = 200 ] || { echo "A came back without the session"; exit 1; }
 
-echo "4. The database goes away: both are unready (503) and alive (/health 200), and authenticate nobody."
+echo "4. The database goes away: both are unready (503), stay up and say the database is down, and authenticate nobody."
 kill "$proxy_pid"
 wait "$proxy_pid" 2>/dev/null || true
 proxy_pid=""
 for port in 8082 8083; do
   await_status "localhost:$port/ready" 30 503
-  await_status "localhost:$port/health" 5 200
+  curl -s --max-time 10 "localhost:$port/health" | grep -Eq '"database": ?"down"' \
+    || { echo "replica $port does not say its database is down"; exit 1; }
   [ "$(me "$port")" != 200 ] || { echo "replica $port authenticated without its database"; exit 1; }
+done
+for name in ostrom-replica-a ostrom-replica-b; do
+  running="$(docker inspect -f '{{.State.Running}}' "$name")"
+  [ "$running" = true ] || { echo "$name exited without its database"; exit 1; }
 done
 proxy
 await_status localhost:8082/ready 60 200
