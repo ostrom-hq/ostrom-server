@@ -126,8 +126,11 @@ class StopTodoUseCaseImpl(
     override suspend fun invoke(caller: TodoCaller, sessionId: String?, input: TodoStopInput): TodoStopDecision {
         val writer = access.writer(caller, sessionId)
         val list = verifier.reconcile(writer.target.orgId, writer.target.sessionId)
-        val passes = list?.let { passes(writer, it, input) }
-            ?: TodoStopDecision(TodoStopAction.ALLOW, null, why = "no_list")
+        val passes = if (list == null) {
+            TodoStopDecision(TodoStopAction.ALLOW, null, why = "no_list")
+        } else {
+            passes(writer, list, input)
+        }
         return if (list == null || passes.action == TodoStopAction.ALLOW || input.phase == TodoStopPhase.BEGIN) {
             passes
         } else {
@@ -171,7 +174,7 @@ class StopTodoUseCaseImpl(
             emptyMap()
         } else {
             verifier.serverChecks(target.orgId, writer.owner.segments, wanted)
-        }
+        }.withDefault { emptyMap() } // An item added since this read has no server check observed yet.
         val now = verifier.now()
         // The ticks, the final verification and the counter are one change under the list's lock: two replicas
         // stopping at once count once each, and only one of them sees the limit.
@@ -225,7 +228,7 @@ class StopTodoUseCaseImpl(
         for (report in input.items) {
             val item = changed.item(report.itemId)
             if (item != null && (item.status == TodoItemStatus.TODO || item.status == TodoItemStatus.DOING)) {
-                val results = verifier.results(item, report.checks, observed[item.id].orEmpty())
+                val results = verifier.results(item, report.checks, observed.getValue(item.id))
                 changed = TodoRules.complete(changed, item.id, results, now).list
             }
         }
@@ -239,7 +242,7 @@ class StopTodoUseCaseImpl(
         observed: Map<String, Map<TodoCheck, TodoCheckResult>>,
     ): Map<String, List<TodoCheckResult>> = input.items.mapNotNull { report ->
         current.item(report.itemId)?.takeIf { it.status == TodoItemStatus.DONE }?.let { item ->
-            item.id to verifier.results(item, report.checks, observed[item.id].orEmpty())
+            item.id to verifier.results(item, report.checks, observed.getValue(item.id))
         }
     }.toMap()
 
@@ -267,7 +270,7 @@ class StopTodoUseCaseImpl(
                 }
                 var changed = current
                 if (open != null) changed = TodoRules.requestDrop(changed, open.id, STUCK_REASON, waitId)
-                val text = "Blocked on ${stuck?.id ?: "the todo"}: a wait asks the owner."
+                val text = "Blocked on ${if (stuck == null) "the todo" else stuck.id}: a wait asks the owner."
                 changed = TodoRules.recordEvent(changed, TodoHookEvent.BLOCKED, text, now).copy(updatedAt = now)
                 changed to changed
             }
