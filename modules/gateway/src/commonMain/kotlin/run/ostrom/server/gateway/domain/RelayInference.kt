@@ -243,7 +243,9 @@ class RelayInferenceUseCaseImpl(
             state: CallState,
         ): Boolean {
             val lease = plan.lease
-            lease?.observe(answer.status, answer.headers)
+            // The provider has answered: writing its windows or a cool-down is bookkeeping, and the database failing
+            // there must not turn an answer already paid for into a 502 the agent retries (TeamCode #165).
+            if (lease != null) deliver { lease.observe(answer.status, answer.headers) }
             val retry = lease != null && answer.status in RETRYABLE && tries < MAX_ATTEMPTS
             if (!retry) stream(answer, state)
             return retry

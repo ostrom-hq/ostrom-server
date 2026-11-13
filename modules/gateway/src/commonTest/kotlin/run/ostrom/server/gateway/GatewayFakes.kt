@@ -121,6 +121,9 @@ class InMemoryAccounts :
     val windows = mutableMapOf<Uuid, List<QuotaWindow>>()
     private val pending = mutableSetOf<Uuid>()
 
+    /** Thrown by the writes of what a provider answered (windows, cool-downs): the database down or locked. */
+    var answerWrites: Exception? = null
+
     override suspend fun upsert(account: SharedAccount, envelope: String, expectedVersion: Long?): SharedAccount {
         accounts += account
         envelopes[account.id] = envelope
@@ -182,10 +185,12 @@ class InMemoryAccounts :
     }
 
     override suspend fun setCooldown(orgId: Uuid, id: Uuid, until: Instant) {
+        answerWrites?.let { throw it }
         get(orgId, id)?.let { update(it.copy(cooldownUntil = until)) }
     }
 
     override suspend fun put(orgId: Uuid, id: Uuid, windows: List<QuotaWindow>) {
+        answerWrites?.let { throw it }
         this.windows[id] = windows
     }
 

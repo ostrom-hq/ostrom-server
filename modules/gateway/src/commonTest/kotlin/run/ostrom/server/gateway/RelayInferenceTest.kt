@@ -201,6 +201,29 @@ class RelayInferenceTest {
     }
 
     @Test
+    fun aDatabaseFailureWritingWhatTheProviderAnsweredNeverDiscardsTheAnswer() = runTest {
+        // TeamCode, production 25/10/2026: the provider answered 200, writing its headers hit a lock wait, and the
+        // agent got a 502 for an answer the subscription had already paid for.
+        accounts.share(AccountProvider.CLAUDE, "first", clock)
+        accounts.share(AccountProvider.CLAUDE, "second", clock)
+        accounts.answerWrites = IllegalStateException("lock wait timeout")
+        val upstream = FakeUpstream(UpstreamAnswer(429, mapOf("retry-after" to "30"), source()), eventAnswer())
+        val responder = RecordingResponder()
+        relay(upstream, InstanceProviderKeys())(Gw.memberA, call(), responder)
+        assertEquals(2, upstream.requests.size, "The refusal still hands the call to the next account")
+        assertEquals(200, responder.status)
+        assertEquals(events.decodeToString(), responder.text)
+        assertEquals("ok", records.single().outcome)
+        assertTrue(accounts.windows.isEmpty())
+        assertEquals(0, shared.inFlight(Gw.orgA).values.sum())
+
+        accounts.answerWrites = CancellationException("stopped")
+        assertFailsWith<CancellationException> {
+            relay(FakeUpstream(eventAnswer()), InstanceProviderKeys())(Gw.memberA, call(), RecordingResponder())
+        }
+    }
+
+    @Test
     fun afterThreeRefusalsTheLastOneReachesTheAgent() = runTest {
         repeat(3) { accounts.share(AccountProvider.CLAUDE, "a$it", clock) }
         val upstream = FakeUpstream(
