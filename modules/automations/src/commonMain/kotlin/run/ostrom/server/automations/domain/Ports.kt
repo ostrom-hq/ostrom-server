@@ -15,6 +15,7 @@ import kotlin.uuid.Uuid
  * @property sessionId Only those of this session, if set.
  * @property runId Only those of this run, if set.
  * @property sessionIds Only those of one of these sessions, if set.
+ * @property resolver Only those this resolves, if set.
  */
 data class WaitFilter(
     val orgId: Uuid,
@@ -25,7 +26,25 @@ data class WaitFilter(
     val sessionId: String? = null,
     val runId: String? = null,
     val sessionIds: List<String>? = null,
+    val resolver: WaitResolver? = null,
 )
+
+/**
+ * A wait for a time or an event whose instant has come, in any organization.
+ *
+ * @property orgId Its organization.
+ * @property id Its id.
+ * @property resolver [WaitResolver.TIME] (its time came) or [WaitResolver.EVENT] (it timed out).
+ */
+data class DueWait(val orgId: Uuid, val id: Uuid, val resolver: WaitResolver)
+
+/**
+ * An open wait for an event, found by its id alone (its event address names no organization).
+ *
+ * @property orgId Its organization.
+ * @property secretHash The SHA-256 of its secret, hexadecimal.
+ */
+data class WaitEventTarget(val orgId: Uuid, val secretHash: String)
 
 /** Where waits are stored. */
 interface WaitsRepository {
@@ -93,6 +112,52 @@ interface WaitsRepository {
      * @return True when one is.
      */
     suspend fun hasOpen(orgId: Uuid, sessions: List<String>): Boolean
+}
+
+/**
+ * Where the waits that resolve by themselves are found and resolved: across organizations by their instant or their
+ * id alone (the clock, an event address), then in their own organization.
+ */
+interface TimedWaitsRepository {
+    /**
+     * The open waits for a time or an event whose instant ([WaitTimer.at]) has come, of every organization, the
+     * earliest first.
+     *
+     * @param now The time.
+     * @param limit At most this many.
+     *
+     * @return The waits; another replica may resolve them first.
+     */
+    suspend fun due(now: Instant, limit: Int): List<DueWait>
+
+    /**
+     * The open wait for an event [id] names, of any organization.
+     *
+     * @return It, or null when there is none open.
+     */
+    suspend fun eventTarget(id: Uuid): WaitEventTarget?
+
+    /**
+     * Resolves an open wait for a time or an event with the server's own answer, and marks it for its session's wake.
+     *
+     * @param orgId The organization.
+     * @param id The wait.
+     * @param answer The answer: `time_reached`, `event_received` or `timed_out`.
+     * @param due Only once its instant has come (at [answer]'s time): the clock's resolution; otherwise only a wait
+     *   for an event, which its event resolves.
+     *
+     * @return The resolved wait, or null when it is not open any more (or not due, or not an event's).
+     */
+    suspend fun settle(orgId: Uuid, id: Uuid, answer: WaitAnswer, due: Boolean): Wait?
+}
+
+/** The secrets of the event addresses: 256 random bits each, kept as their SHA-256 only. */
+interface WaitEventSecrets {
+    /** A new secret, `wev_` and 64 hexadecimal digits. */
+    fun mint(): String
+
+    /** The SHA-256 of [secret], hexadecimal. */
+    suspend fun hash(secret: String): String
 }
 
 /** Told when a wait is created, answered or cancelled: notifications and the waking of sessions hook here. */

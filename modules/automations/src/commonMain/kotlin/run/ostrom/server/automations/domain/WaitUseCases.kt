@@ -16,7 +16,10 @@ import kotlin.uuid.Uuid
  * @property runId The workflow run that waits, if any.
  * @property assignee The member asked, by id or username (an id wins over a username that spells it); the caller when
  *   null.
- * @property kind `human_request`, the only kind a caller asks.
+ * @property kind `human_request`, or `timed` for a wait that resolves by itself.
+ * @property resolver `human` (by default), `time` or `event`: a wait for a time or an event, asked by an agent in its
+ *   session only.
+ * @property schedule When a wait for a time or an event resolves.
  */
 data class AskWait(
     val question: WaitSpec,
@@ -24,6 +27,8 @@ data class AskWait(
     val runId: String? = null,
     val assignee: String? = null,
     val kind: String? = null,
+    val resolver: String? = null,
+    val schedule: WaitSchedule = WaitSchedule(),
 )
 
 /**
@@ -31,8 +36,9 @@ data class AskWait(
  *
  * @property wait The wait.
  * @property replayed Whether it was asked before with the same idempotency key, and is returned unchanged.
+ * @property secret For a new wait for an event, its secret (`wev_…`): shown in this answer only, never stored.
  */
-data class AskedWait(val wait: Wait, val replayed: Boolean)
+data class AskedWait(val wait: Wait, val replayed: Boolean, val secret: String? = null)
 
 /** Asking a person. */
 interface AskWaitUseCase {
@@ -45,6 +51,7 @@ interface AskWaitUseCase {
      * @throws WaitSessionOwnerOnlyException When a member names a session someone else runs.
      * @throws SessionNotRunningException When the session ended.
      * @throws WaitLimitException When too many waits are open for the session or the caller.
+     * @throws WaitForbiddenException When anyone but an agent in its session asks a wait for a time or an event.
      */
     suspend fun ask(caller: WaitCaller, request: AskWait, idempotencyKey: String?): AskedWait
 }
@@ -53,13 +60,14 @@ interface AskWaitUseCase {
  * [AskWaitUseCase]. Anyone may be asked who is an active member of the organization, an agent's person or a colleague
  * (a product question goes to the product owner while the session stays with the developer). A member asks in a
  * session only when it is theirs and running; an agent token asks in its launch's open segment, which the server
- * found.
+ * found. A wait for a time or an event (`wait_for`) is an agent's, in its session, of its person: it asks nobody.
  *
  * @param repository Where waits are stored.
  * @param members Who the members are.
  * @param events Told of the new wait.
  * @param clock The time.
  * @param sessions Whose the sessions are.
+ * @param secrets The secrets of the event addresses.
  */
 class AskWaitUseCaseImpl(
     private val repository: WaitsRepository,
@@ -67,16 +75,31 @@ class AskWaitUseCaseImpl(
     private val events: WaitEvents,
     private val clock: Clock,
     private val sessions: WaitSessions,
+    private val secrets: WaitEventSecrets,
 ) : AskWaitUseCase {
     override suspend fun ask(caller: WaitCaller, request: AskWait, idempotencyKey: String?): AskedWait {
         requireWait(idempotencyKey == null || KEY.matches(idempotencyKey)) {
             "Idempotency-Key is 1 to 200 visible characters."
         }
+        val resolver = TimedWaitRules.resolver(request.resolver)
+        // Its address is shown once, its secret kept as a hash: a replay could not show it again.
+        requireWait(idempotencyKey == null || resolver != WaitResolver.EVENT) {
+            "A wait for an event takes no Idempotency-Key: its address is shown once."
+        }
         earlier(caller, idempotencyKey)?.let { return AskedWait(it, replayed = true) }
-        val wait = newWait(caller, request, idempotencyKey)
+        val secret = secrets.mint().takeIf { resolver == WaitResolver.EVENT }
+        val wait = if (resolver == WaitResolver.HUMAN) {
+            requireWait(request.schedule.empty) {
+                "at, after, source, timeoutSeconds and resumeMessage belong to waits for a time or an event: set " +
+                    "resolver to time or event."
+            }
+            newWait(caller, request, idempotencyKey)
+        } else {
+            timedWait(caller, request, resolver, secret?.let { secrets.hash(it) }, idempotencyKey)
+        }
         val limit = if (wait.sessionId == null) MAX_OPEN_ALONE else MAX_OPEN
         return when (repository.createWithinLimit(wait, limit, caller.segments.orEmpty())) {
-            CreateOutcome.CREATED -> AskedWait(wait, replayed = false).also { events.created(wait) }
+            CreateOutcome.CREATED -> AskedWait(wait, replayed = false, secret).also { events.created(wait) }
             CreateOutcome.AT_LIMIT -> throw WaitLimitException(limit)
             CreateOutcome.DUPLICATE -> AskedWait(
                 earlier(caller, idempotencyKey) ?: throw WaitKeyConflictException(),
@@ -99,8 +122,7 @@ class AskWaitUseCaseImpl(
             val session = sessions.owned(caller, request.sessionId) { WaitSessionOwnerOnlyException() }
             if (!session.open) throw SessionNotRunningException()
         }
-        // To the millisecond, as stored: the wait returned now equals the one read back later.
-        val now = Instant.fromEpochMilliseconds(clock.now().toEpochMilliseconds())
+        val now = now()
         return Wait(
             id = Uuid.random(),
             orgId = caller.orgId,
@@ -117,6 +139,48 @@ class AskWaitUseCaseImpl(
             idempotencyKey = key,
         )
     }
+
+    /**
+     * A wait for a time or an event: an agent's, in its session, of its person (TeamCode's `docs/waits.md`, « Waits
+     * that resolve by themselves »).
+     */
+    private fun timedWait(
+        caller: WaitCaller,
+        request: AskWait,
+        resolver: WaitResolver,
+        secretHash: String?,
+        key: String?,
+    ): Wait {
+        val session = caller.session
+        if (!caller.agent || session == null) {
+            throw WaitForbiddenException("Only an agent asks a wait for a time or an event, in its session (wait_for).")
+        }
+        requireWait(request.kind == null || request.kind == TimedWaitRules.TIMED) { "kind is ${TimedWaitRules.TIMED}." }
+        requireWait(request.assignee == null || request.assignee == caller.memberId) {
+            "A wait for a time or an event asks nobody: leave the assignee out."
+        }
+        val now = now()
+        val timer = TimedWaitRules.timer(resolver, request.question, request.schedule, now, secretHash)
+        return Wait(
+            id = Uuid.random(),
+            orgId = caller.orgId,
+            kind = TimedWaitRules.TIMED,
+            status = WaitStatus.OPEN,
+            sessionId = session,
+            runId = null,
+            assignee = caller.memberId,
+            createdBy = caller.memberId,
+            question = WaitRules.question(request.question).copy(actions = emptyList()),
+            answer = null,
+            createdAt = now,
+            resolvedAt = null,
+            idempotencyKey = key,
+            timer = timer,
+        )
+    }
+
+    /** To the millisecond, as stored: the wait returned now equals the one read back later. */
+    private fun now(): Instant = Instant.fromEpochMilliseconds(clock.now().toEpochMilliseconds())
 
     /** The member [reference] names: an id first, then a username. */
     private suspend fun assigneeOf(caller: WaitCaller, reference: String?): String = when {
@@ -146,6 +210,7 @@ class AskWaitUseCaseImpl(
  * @property before The last wait of the previous page.
  * @property limit The page size, 1 to 100 (50).
  * @property sessionIds Only those of one of these sessions.
+ * @property resolver `human` (the default: what "Waiting for you" shows), `time`, `event` or `all`.
  */
 data class WaitQuery(
     val mine: Boolean = false,
@@ -156,6 +221,7 @@ data class WaitQuery(
     val before: Uuid? = null,
     val limit: Int? = null,
     val sessionIds: List<String>? = null,
+    val resolver: String? = null,
 )
 
 /**
@@ -212,11 +278,19 @@ class ReadWaitsUseCaseImpl(
         if (query.sessionId != null && !caller.agent) {
             sessions.owned(caller, query.sessionId) { WaitSessionNotFoundException() }
         }
+        // A wait for a time or an event waits for nobody: listed only when asked for.
+        val resolver = when (query.resolver) {
+            null -> WaitResolver.HUMAN
+            ALL -> null
+            else -> WaitResolver.entries.firstOrNull { it.wire == query.resolver }
+                ?: throw InvalidWaitException("resolver is human, time, event or all.")
+        }
         val filter = scope(caller, query).copy(
             status = status,
             sessionId = query.sessionId,
             sessionIds = query.sessionIds,
             runId = query.runId,
+            resolver = resolver,
         )
         // A `before` that names no wait of the organization (forged, or another's) is a 400, not an empty page.
         val items = Pages.checked("before", query.before, repository.list(filter, query.before, limit + 1)) {
@@ -254,6 +328,7 @@ interface AnswerWaitUseCase {
      *   assignee nor an administrator who signed in.
      * @throws WaitClosedException When another answer won, or it was cancelled.
      * @throws InvalidWaitAnswerException When the answer does not fit the question.
+     * @throws WaitResolvesByItselfException When it waits for a time or an event.
      */
     suspend fun answer(caller: WaitCaller, id: Uuid, action: String, values: Map<String, JsonElement>): Wait
 
@@ -287,6 +362,7 @@ class AnswerWaitUseCaseImpl(
     ): Wait {
         if (caller.agent) throw WaitForbiddenException("An agent never answers a wait: its person does.")
         val wait = visibleWait(repository, caller, id)
+        if (wait.resolver != WaitResolver.HUMAN) throw WaitResolvesByItselfException()
         if (wait.assignee != caller.memberId && !caller.actsAsAdmin) {
             throw WaitForbiddenException("Only the member asked answers this wait.")
         }

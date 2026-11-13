@@ -17,6 +17,7 @@ import run.ostrom.server.automations.domain.WaitStatus
 import run.ostrom.server.automations.domain.WaitWakeResult
 import run.ostrom.server.automations.domain.WakeWaitsUseCaseImpl
 import run.ostrom.server.automations.fakes.ALICE
+import run.ostrom.server.automations.fakes.CountingSecrets
 import run.ostrom.server.automations.fakes.InMemoryWaits
 import run.ostrom.server.automations.fakes.ORG_A
 import run.ostrom.server.automations.fakes.RecordingEvents
@@ -53,7 +54,8 @@ class WakeWaitsTest {
         clock.now += it.milliseconds
         onSleep()
     }
-    private val ask = AskWaitUseCaseImpl(repository, TestMembers, RecordingEvents(), clock, testWaitSessions)
+    private val ask =
+        AskWaitUseCaseImpl(repository, TestMembers, RecordingEvents(), clock, testWaitSessions, CountingSecrets())
     private val answers = AnswerWaitUseCaseImpl(repository, RecordingEvents(), clock)
 
     /** Bob's agent, in its launch's segments `s-1` and `s-1~r2`. */

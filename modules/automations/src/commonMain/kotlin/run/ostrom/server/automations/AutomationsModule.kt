@@ -16,6 +16,13 @@ import run.ostrom.server.automations.domain.AskWaitUseCase
 import run.ostrom.server.automations.domain.AskWaitUseCaseImpl
 import run.ostrom.server.automations.domain.ReadWaitsUseCase
 import run.ostrom.server.automations.domain.ReadWaitsUseCaseImpl
+import run.ostrom.server.automations.domain.ReceiveWaitEventUseCase
+import run.ostrom.server.automations.domain.ReceiveWaitEventUseCaseImpl
+import run.ostrom.server.automations.domain.ResolveDueWaitsUseCase
+import run.ostrom.server.automations.domain.ResolveDueWaitsUseCaseImpl
+import run.ostrom.server.automations.domain.WaitEventRateLimit
+import run.ostrom.server.automations.domain.WaitEventSecrets
+import run.ostrom.server.automations.domain.TimedWaitsRepository
 import run.ostrom.server.automations.domain.WaitAgentResolver
 import run.ostrom.server.automations.domain.WaitEvents
 import run.ostrom.server.automations.domain.WaitSessions
@@ -26,12 +33,15 @@ import run.ostrom.server.automations.domain.WakeWaitsUseCaseImpl
 import run.ostrom.server.automations.infrastructure.AutomationScheduler
 import run.ostrom.server.automations.infrastructure.AutomationsMigrations
 import run.ostrom.server.automations.infrastructure.AutomationsRepositoryImpl
+import run.ostrom.server.automations.infrastructure.DueWaitsWorker
 import run.ostrom.server.automations.infrastructure.NoAgentSessions
 import run.ostrom.server.automations.infrastructure.NoMemberLogins
 import run.ostrom.server.automations.infrastructure.NoOtherMembers
 import run.ostrom.server.automations.infrastructure.NoWaitAgents
 import run.ostrom.server.automations.infrastructure.SilentWaitEvents
+import run.ostrom.server.automations.infrastructure.TimedWaitsRepositoryImpl
 import run.ostrom.server.automations.infrastructure.UnavailableLauncher
+import run.ostrom.server.automations.infrastructure.WaitEventSecretsImpl
 import run.ostrom.server.automations.infrastructure.WaitsRepositoryImpl
 import run.ostrom.server.automations.infrastructure.WebhookSecretsImpl
 import run.ostrom.server.automations.presentation.AutomationsRoutesDependencies
@@ -66,6 +76,7 @@ object AutomationsModule : ServerModule {
 
     override val koinModule: Module = module {
         single<WaitsRepository> { WaitsRepositoryImpl(get()) }
+        single<TimedWaitsRepository> { TimedWaitsRepositoryImpl(get()) }
         single<WaitSessions> {
             WaitSessionsImpl(
                 getOrNull<AgentSessions>() ?: NoAgentSessions,
@@ -79,8 +90,23 @@ object AutomationsModule : ServerModule {
                 getOrNull<WaitEvents>() ?: SilentWaitEvents,
                 get(),
                 get(),
+                get(),
             )
         }
+        single<WaitEventSecrets> { WaitEventSecretsImpl() }
+        single<ReceiveWaitEventUseCase> {
+            ReceiveWaitEventUseCaseImpl(
+                get(),
+                get(),
+                WaitEventRateLimit(get()),
+                getOrNull<WaitEvents>() ?: SilentWaitEvents,
+                get(),
+            )
+        }
+        single<ResolveDueWaitsUseCase> {
+            ResolveDueWaitsUseCaseImpl(get(), getOrNull<WaitEvents>() ?: SilentWaitEvents, get())
+        }
+        single { DueWaitsWorker(get(), get()) }
         single<ReadWaitsUseCase> { ReadWaitsUseCaseImpl(get(), get()) }
         single<WakeWaitsUseCase> { WakeWaitsUseCaseImpl(get(), get(), get()) }
         single<SessionEndListener> {
@@ -95,6 +121,8 @@ object AutomationsModule : ServerModule {
                 get(),
                 getOrNull<WaitAgentResolver>() ?: NoWaitAgents,
                 get(),
+                get(),
+                publicUrlOf(get()),
             )
         }
         single<AutomationsRepository> { AutomationsRepositoryImpl(get()) }
@@ -122,16 +150,22 @@ object AutomationsModule : ServerModule {
         route.automationsRoutes(koin.get())
     }
 
-    /** Automations, and the waits (`/api/v1/waits`) it serves. */
+    /**
+     * Automations, the waits (`/api/v1/waits`) it serves and the wake of an agent's session, and the waits that resolve
+     * by themselves (`wait_for`, the event address), whose clock [start] runs.
+     */
     override suspend fun features(koin: Koin): Set<String> = setOf(
         ServerFeatures.AUTOMATIONS,
         ServerFeatures.WAITS,
         ServerFeatures.WAITS_WAKE,
+        ServerFeatures.WAITS_TIMED,
     )
 
     override fun start(scope: CoroutineScope, koin: Koin) {
         val scheduler = koin.get<AutomationScheduler>()
+        val dueWaits = koin.get<DueWaitsWorker>()
         scope.launch { scheduler.run() }
+        scope.launch { dueWaits.run() }
     }
 }
 

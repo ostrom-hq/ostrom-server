@@ -27,6 +27,7 @@ import run.ostrom.server.automations.domain.WaitSessionOwnerOnlyException
 import run.ostrom.server.automations.domain.WaitSpec
 import run.ostrom.server.automations.domain.WaitStatus
 import run.ostrom.server.automations.fakes.ALICE
+import run.ostrom.server.automations.fakes.CountingSecrets
 import run.ostrom.server.automations.fakes.BOB
 import run.ostrom.server.automations.fakes.CAROL
 import run.ostrom.server.automations.fakes.DAVE
@@ -61,7 +62,7 @@ class WaitUseCasesTest {
     private val repository = InMemoryWaits()
     private val events = RecordingEvents()
     private val clock = TestClock()
-    private val ask = AskWaitUseCaseImpl(repository, TestMembers, events, clock, testWaitSessions)
+    private val ask = AskWaitUseCaseImpl(repository, TestMembers, events, clock, testWaitSessions, CountingSecrets())
     private val read = ReadWaitsUseCaseImpl(repository, testWaitSessions)
     private val answers = AnswerWaitUseCaseImpl(repository, events, clock)
 

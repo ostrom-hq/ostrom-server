@@ -138,7 +138,7 @@ data class WaitSpec(
  *
  * @property action The action chosen.
  * @property values The values by field id.
- * @property author The member who answered.
+ * @property author The member who answered; `ostrom` for a wait that resolved by itself.
  * @property answeredAt When.
  */
 data class WaitAnswer(
@@ -149,12 +149,12 @@ data class WaitAnswer(
 )
 
 /**
- * A question to a person, asked by an agent (`ask_human`) or a member, that the session waits for. The first answer
- * wins.
+ * A question to a person, asked by an agent (`ask_human`) or a member, that the session waits for; or, asked by an
+ * agent (`wait_for`), a time or an event its session waits for, which resolves by itself. The first answer wins.
  *
  * @property id Its id.
  * @property orgId The organization.
- * @property kind `human_request`.
+ * @property kind `human_request`, or `timed` for a wait that resolves by itself.
  * @property status Where it is.
  * @property sessionId The session that waits, if any.
  * @property runId The workflow run that waits, if any.
@@ -165,6 +165,7 @@ data class WaitAnswer(
  * @property createdAt When it was asked.
  * @property resolvedAt When it was answered or cancelled.
  * @property idempotencyKey The asker's key: asking again with it returns this wait.
+ * @property timer For a wait that resolves by itself (kind `timed`), when and how; null for a person's.
  */
 data class Wait(
     val id: Uuid,
@@ -180,7 +181,51 @@ data class Wait(
     val createdAt: Instant,
     val resolvedAt: Instant?,
     val idempotencyKey: String?,
-)
+    val timer: WaitTimer? = null,
+) {
+    /** Who resolves it. */
+    val resolver: WaitResolver get() = if (timer == null) WaitResolver.HUMAN else timer.resolver
+}
+
+/**
+ * Who resolves a wait.
+ *
+ * @property wire The contract's value.
+ */
+enum class WaitResolver(val wire: String) {
+    /** A person answers it: "Waiting for you". */
+    HUMAN("human"),
+
+    /** The clock: it resolves at its instant (`time_reached`). */
+    TIME("time"),
+
+    /** An outside caller of its event address (`event_received`), or else its timeout (`timed_out`). */
+    EVENT("event"),
+}
+
+/**
+ * When and how a wait for a time or an event resolves by itself (TeamCode's `docs/waits.md`, « Waits that resolve by
+ * themselves »).
+ *
+ * @property resolver [WaitResolver.TIME] or [WaitResolver.EVENT].
+ * @property at The instant it resolves: for a time, when it comes; for an event, when it times out.
+ * @property source For an event, where it comes from (`webhook`).
+ * @property resumeMessage The agent's note to itself, added to the message that wakes its session.
+ * @property secretHash For an event, the SHA-256 of its secret (hexadecimal): the secret itself is never stored.
+ */
+data class WaitTimer(
+    val resolver: WaitResolver,
+    val at: Instant,
+    val source: String? = null,
+    val resumeMessage: String? = null,
+    val secretHash: String? = null,
+) {
+    /** For a time, when it resolves. */
+    val dueAt: Instant? get() = at.takeIf { resolver == WaitResolver.TIME }
+
+    /** For an event, when it resolves as timed out. */
+    val timeoutAt: Instant? get() = at.takeIf { resolver == WaitResolver.EVENT }
+}
 
 /**
  * The member a request acts for.

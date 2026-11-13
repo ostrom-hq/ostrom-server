@@ -6,19 +6,13 @@ import run.ostrom.server.automations.domain.Wait
 import run.ostrom.server.automations.domain.WaitAnswer
 import run.ostrom.server.automations.domain.WaitFilter
 import run.ostrom.server.automations.domain.WaitSpec
-import run.ostrom.server.automations.domain.WaitStatus
 import run.ostrom.server.automations.domain.WaitsRepository
 import run.ostrom.server.kernel.http.OstromJson
 import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonObject
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -62,9 +56,11 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
                 Statement.create(
                     """
                     INSERT INTO automations_waits (id, org_id, kind, status, session_id, run_id, assignee, created_by,
-                    question, created_at, idempotency_key) VALUES (:id, :org_id, :kind, :status, :session_id, :run_id,
-                    :assignee, :created_by, :question, :created_at, :key) ON CONFLICT (org_id, created_by,
-                    idempotency_key) DO NOTHING RETURNING id
+                    question, created_at, idempotency_key, resolver, due_at, timeout_at, event_source, resume_message,
+                    event_secret_hash) VALUES (:id, :org_id, :kind, :status, :session_id, :run_id, :assignee,
+                    :created_by, :question, :created_at, :key, :resolver, :due_at, :timeout_at, :event_source,
+                    :resume_message, :event_secret_hash) ON CONFLICT (org_id, created_by, idempotency_key) DO NOTHING
+                    RETURNING id
                     """,
                 ).bind("id", wait.id)
                     .bind("org_id", wait.orgId)
@@ -76,7 +72,13 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
                     .bind("created_by", wait.createdBy)
                     .bind("question", OstromJson.encodeToString(WaitSpec.serializer(), wait.question))
                     .bind("created_at", wait.createdAt)
-                    .bind("key", wait.idempotencyKey),
+                    .bind("key", wait.idempotencyKey)
+                    .bind("resolver", wait.resolver.wire)
+                    .bind("due_at", wait.timer?.dueAt)
+                    .bind("timeout_at", wait.timer?.timeoutAt)
+                    .bind("event_source", wait.timer?.source)
+                    .bind("resume_message", wait.timer?.resumeMessage)
+                    .bind("event_secret_hash", wait.timer?.secretHash),
             ).getOrThrow()
             if (inserted.none()) CreateOutcome.DUPLICATE else CreateOutcome.CREATED
         }
@@ -85,7 +87,7 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
         orgId,
         Statement.create(
             """
-            SELECT $COLUMNS FROM automations_waits WHERE org_id = :org_id AND created_by = :created_by AND
+            SELECT $WAIT_COLUMNS FROM automations_waits WHERE org_id = :org_id AND created_by = :created_by AND
             idempotency_key = :key
             """,
         ).bind("org_id", orgId).bind("created_by", createdBy).bind("key", key),
@@ -93,7 +95,7 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
 
     override suspend fun get(orgId: Uuid, id: Uuid): Wait? = driver.fetchInOrg(
         orgId,
-        Statement.create("""SELECT $COLUMNS FROM automations_waits WHERE id = :id AND org_id = :org_id""")
+        Statement.create("""SELECT $WAIT_COLUMNS FROM automations_waits WHERE id = :id AND org_id = :org_id""")
             .bind("id", id).bind("org_id", orgId),
     ).getOrThrow().firstOrNull()?.toWait()
 
@@ -107,7 +109,7 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
         }
         val statement = Statement.create(
             """
-            SELECT $COLUMNS FROM automations_waits WHERE org_id = :org_id
+            SELECT $WAIT_COLUMNS FROM automations_waits WHERE org_id = :org_id
             AND (CAST(:assignee AS TEXT) IS NULL OR assignee = :assignee)
             AND (CAST(:involving AS TEXT) IS NULL OR assignee = :involving OR created_by = :involving)
             AND (CAST(:created_by AS TEXT) IS NULL OR created_by = :created_by)
@@ -115,7 +117,8 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
             AND (CAST(:session_id AS TEXT) IS NULL OR session_id = :session_id)
             AND (CAST(:session_ids AS TEXT) IS NULL
                 OR session_id = ANY(string_to_array(CAST(:session_ids AS TEXT), ',')))
-            AND (CAST(:run_id AS TEXT) IS NULL OR run_id = :run_id)$cursor
+            AND (CAST(:run_id AS TEXT) IS NULL OR run_id = :run_id)
+            AND (CAST(:resolver AS TEXT) IS NULL OR resolver = :resolver)$cursor
             ORDER BY created_at DESC, id DESC LIMIT :limit
             """,
         ).bind("org_id", filter.orgId)
@@ -127,6 +130,7 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
             // A session id never holds a comma (`SESSION_ID` of the sessions module, `REFERENCE` of the waits).
             .bind("session_ids", filter.sessionIds?.joinToString(","))
             .bind("run_id", filter.runId)
+            .bind("resolver", filter.resolver?.wire)
             .bind("limit", limit)
         if (before != null) statement.bind("before", before)
         return driver.fetchInOrg(filter.orgId, statement).getOrThrow().map { it.toWait() }
@@ -138,7 +142,7 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
             """
             UPDATE automations_waits SET status = 'resolved', answer_action = :action, answer_values = :values,
             answered_by = :author, answered_at = :at, resolved_at = :at, wake_pending = session_id IS NOT NULL
-            WHERE id = :id AND org_id = :org_id AND status = 'open' RETURNING $COLUMNS
+            WHERE id = :id AND org_id = :org_id AND status = 'open' RETURNING $WAIT_COLUMNS
             """,
         ).bind("action", answer.action)
             .bind("values", JsonObject(answer.values).toString())
@@ -153,7 +157,7 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
         Statement.create(
             """
             UPDATE automations_waits SET status = 'cancelled', resolved_at = :now WHERE id = :id AND org_id =
-            :org_id AND status = 'open' RETURNING $COLUMNS
+            :org_id AND status = 'open' RETURNING $WAIT_COLUMNS
             """,
         ).bind("now", now).bind("id", id).bind("org_id", orgId),
     ).getOrThrow().firstOrNull()?.toWait()
@@ -165,7 +169,7 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
             Statement.create(
                 """
                 UPDATE automations_waits SET status = 'cancelled', resolved_at = :now WHERE org_id = :org_id AND
-                session_id = ANY(string_to_array(:session_ids, ',')) AND status = 'open' RETURNING $COLUMNS
+                session_id = ANY(string_to_array(:session_ids, ',')) AND status = 'open' RETURNING $WAIT_COLUMNS
                 """,
             ).bind("now", now).bind("org_id", orgId).bind("session_ids", sessions.joinToString(",")),
         ).getOrThrow().map { it.toWait() }
@@ -178,7 +182,8 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
                 """
                 UPDATE automations_waits SET wake_pending = FALSE WHERE id IN (SELECT id FROM automations_waits
                 WHERE org_id = :org_id AND session_id = ANY(string_to_array(:session_ids, ',')) AND wake_pending
-                ORDER BY resolved_at, id LIMIT :limit FOR UPDATE SKIP LOCKED) AND org_id = :org_id RETURNING $COLUMNS
+                ORDER BY resolved_at, id LIMIT :limit FOR UPDATE SKIP LOCKED) AND org_id = :org_id
+                RETURNING $WAIT_COLUMNS
                 """,
             ).bind("org_id", orgId).bind("session_ids", sessions.joinToString(",")).bind("limit", limit),
         ).getOrThrow().map { it.toWait() }.sortedWith(compareBy({ it.resolvedAt }, { it.id.toString() }))
@@ -192,34 +197,4 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
             """,
         ).bind("org_id", orgId).bind("session_ids", sessions.joinToString(",")),
     ).getOrThrow().first().get("open").asBoolean()
-
-    private fun ResultSet.Row.toWait(): Wait = Wait(
-        id = get("id").asUuid(),
-        orgId = get("org_id").asUuid(),
-        kind = get("kind").asString(),
-        status = WaitStatus.valueOf(get("status").asString().uppercase()),
-        sessionId = get("session_id").asStringOrNull(),
-        runId = get("run_id").asStringOrNull(),
-        assignee = get("assignee").asString(),
-        createdBy = get("created_by").asString(),
-        question = OstromJson.decodeFromString(WaitSpec.serializer(), get("question").asString()),
-        answer = get("answer_action").asStringOrNull()?.let { action ->
-            WaitAnswer(
-                action = action,
-                values = OstromJson.parseToJsonElement(get("answer_values").asString()).jsonObject,
-                author = get("answered_by").asString(),
-                answeredAt = get("answered_at").asInstant(),
-            )
-        },
-        createdAt = get("created_at").asInstant(),
-        resolvedAt = get("resolved_at").asInstantOrNull(),
-        idempotencyKey = get("idempotency_key").asStringOrNull(),
-    )
-
-    private companion object {
-        const val COLUMNS = """
-            id, org_id, kind, status, session_id, run_id, assignee, created_by, question, answer_action,
-            answer_values, answered_by, answered_at, created_at, resolved_at, idempotency_key
-        """
-    }
 }

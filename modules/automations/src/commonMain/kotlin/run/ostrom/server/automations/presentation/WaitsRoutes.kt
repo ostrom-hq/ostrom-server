@@ -2,9 +2,9 @@
 package run.ostrom.server.automations.presentation
 
 import run.ostrom.server.automations.domain.AgentSessionRequiredException
-import run.ostrom.server.automations.domain.AskWait
 import run.ostrom.server.automations.domain.InvalidWaitException
 import run.ostrom.server.automations.domain.MissingWaitScopeException
+import run.ostrom.server.automations.domain.TimedWaitRules
 import run.ostrom.server.automations.domain.WaitQuery
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.WriteAccess
@@ -17,6 +17,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.request.header
 import io.ktor.server.request.receive
+import io.ktor.server.request.receiveChannel
 import io.ktor.server.request.receiveText
 import io.ktor.server.resources.get
 import io.ktor.server.resources.post
@@ -24,18 +25,22 @@ import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
+import io.ktor.utils.io.readRemaining
+import kotlinx.io.readByteArray
 import kotlinx.serialization.SerializationException
 import kotlin.uuid.Uuid
 
 /**
  * The waits API under `/api/v1/waits` ("Waiting for you"), the agents' MCP server at `/api/v1/waits/mcp` and the wake
  * of their sessions at `/api/v1/waits/wake`. An agent token reaches only those two, bound to one of its launch's
- * sessions; the REST routes refuse it, and the wake refuses anything else.
+ * sessions; the REST routes refuse it, and the wake refuses anything else. The event address of a wait for an event,
+ * `POST /api/v1/waits/{id}/event`, takes no login: the wait's secret is the proof, and every failure is a 404.
  *
  * @param dependencies The use cases.
  */
 fun Route.waitsRoutes(dependencies: WaitsRoutesDependencies) = with(dependencies) {
     val mcp = WaitsMcpServer(dependencies)
+    waitEventRoute(dependencies)
     authenticated {
         wakeRoute(dependencies)
         post<WaitsMcpApi> { params ->
@@ -60,6 +65,7 @@ fun Route.waitsRoutes(dependencies: WaitsRoutesDependencies) = with(dependencies
                 params.runId,
                 before,
                 params.limit,
+                resolver = params.resolver,
             )
             val page = read.list(caller, query)
             call.respond(WaitsResponse(page.items.map { it.toResponse() }, page.next?.toString()))
@@ -67,13 +73,9 @@ fun Route.waitsRoutes(dependencies: WaitsRoutesDependencies) = with(dependencies
         post<WaitsApi> {
             val caller = orgResolver.waitCallerOf(call.requirePrincipal(), WAITS_ASK)
             val request = call.receive<CreateWaitRequest>()
-            val asked = ask.ask(
-                caller,
-                AskWait(request.question, request.sessionId, request.runId, request.assignee, request.kind),
-                call.request.header(IDEMPOTENCY_KEY),
-            )
+            val asked = ask.ask(caller, request.toAsk(), call.request.header(IDEMPOTENCY_KEY))
             if (asked.replayed) call.response.header(IDEMPOTENCY_REPLAYED, "true")
-            call.respond(if (asked.replayed) HttpStatusCode.OK else HttpStatusCode.Created, asked.wait.toResponse())
+            call.respond(if (asked.replayed) HttpStatusCode.OK else HttpStatusCode.Created, asked.toResponse(publicUrl))
         }
         get<WaitsApi.Id> { params ->
             val caller = orgResolver.waitCallerOf(call.requirePrincipal(), WAITS_READ)
@@ -106,6 +108,17 @@ private fun Route.wakeRoute(dependencies: WaitsRoutesDependencies) = heldCalls {
     }
 }
 
+/** `POST /api/v1/waits/{id}/event`: no login, the wait's secret in the query or the `Ostrom-Wait-Token` header. */
+private fun Route.waitEventRoute(dependencies: WaitsRoutesDependencies) {
+    post<WaitsApi.Id.Event> { params ->
+        val secret = params.token ?: call.request.header(WAIT_TOKEN)
+        // One byte more than allowed is enough to refuse a body that is too large without reading it all.
+        val body = call.receiveChannel().readRemaining(TimedWaitRules.MAX_EVENT_BYTES + 1L).readByteArray()
+        val wait = dependencies.event.receive(params.parent.id, secret, body)
+        call.respond(HttpStatusCode.Accepted, WaitEventReceivedResponse(wait.id.toString(), wait.status.wire))
+    }
+}
+
 /** The body of a wake: empty for the defaults. */
 internal fun wakeRequestOf(body: String): WaitWakeRequest = if (body.isBlank()) {
     WaitWakeRequest()
@@ -121,3 +134,4 @@ internal fun wakeRequestOf(body: String): WaitWakeRequest = if (body.isBlank()) 
 private const val AGENT_SESSION = "agent:session"
 private const val IDEMPOTENCY_KEY = "Idempotency-Key"
 private const val IDEMPOTENCY_REPLAYED = "Idempotency-Replayed"
+private const val WAIT_TOKEN = "Ostrom-Wait-Token"

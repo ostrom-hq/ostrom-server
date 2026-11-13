@@ -2,13 +2,18 @@
 package run.ostrom.server.automations.fakes
 
 import run.ostrom.server.automations.domain.CreateOutcome
+import run.ostrom.server.automations.domain.DueWait
+import run.ostrom.server.automations.domain.TimedWaitsRepository
 import run.ostrom.server.automations.domain.Wait
 import run.ostrom.server.automations.domain.WaitAgent
 import run.ostrom.server.automations.domain.WaitAgentResolver
 import run.ostrom.server.automations.domain.WaitAnswer
 import run.ostrom.server.automations.domain.WaitCaller
+import run.ostrom.server.automations.domain.WaitEventSecrets
+import run.ostrom.server.automations.domain.WaitEventTarget
 import run.ostrom.server.automations.domain.WaitEvents
 import run.ostrom.server.automations.domain.WaitFilter
+import run.ostrom.server.automations.domain.WaitResolver
 import run.ostrom.server.automations.domain.WaitSessions
 import run.ostrom.server.automations.domain.WaitSessionsImpl
 import run.ostrom.server.automations.domain.WaitStatus
@@ -234,6 +239,7 @@ class InMemoryWaits : WaitsRepository {
 
     /** The state and place side of [WaitFilter]. */
     private fun WaitFilter.where(wait: Wait): Boolean = (status == null || wait.status == status) &&
+        (resolver == null || wait.resolver == resolver) &&
         (sessionId == null || wait.sessionId == sessionId) &&
         (sessionIds == null || sessionIds.any { it == wait.sessionId }) &&
         (runId == null || wait.runId == runId)
@@ -277,5 +283,35 @@ class InMemoryWaits : WaitsRepository {
     private fun update(orgId: Uuid, id: Uuid, change: (Wait) -> Wait): Wait? {
         val wait = waits[id]?.takeIf { it.orgId == orgId && it.status == WaitStatus.OPEN } ?: return null
         return change(wait).also { waits[id] = it }
+    }
+}
+
+/** Secrets numbered in the order they are minted, hashed by a readable rule: `wev_1` hashes to `hash:wev_1`. */
+class CountingSecrets : WaitEventSecrets {
+    private var minted = 0
+
+    override fun mint(): String = "wev_${++minted}"
+
+    override suspend fun hash(secret: String): String = "hash:$secret"
+}
+
+/** [TimedWaitsRepository] over the waits of an [InMemoryWaits], as the repository's functions read the same table. */
+@Suppress("ReturnCount") // The fake mirrors the SQL guards one early return at a time.
+class InMemoryTimedWaits(private val waits: InMemoryWaits) : TimedWaitsRepository {
+    override suspend fun due(now: Instant, limit: Int): List<DueWait> = waits.waits.values
+        .filter { wait -> wait.status == WaitStatus.OPEN && wait.timer?.let { it.at <= now } == true }
+        .sortedBy { it.timer?.at }
+        .take(limit)
+        .map { DueWait(it.orgId, it.id, it.resolver) }
+
+    override suspend fun eventTarget(id: Uuid): WaitEventTarget? = waits.waits[id]
+        ?.takeIf { it.status == WaitStatus.OPEN && it.resolver == WaitResolver.EVENT }
+        ?.let { wait -> wait.timer?.secretHash?.let { WaitEventTarget(wait.orgId, it) } }
+
+    override suspend fun settle(orgId: Uuid, id: Uuid, answer: WaitAnswer, due: Boolean): Wait? {
+        val wait = waits.waits[id] ?: return null
+        val timer = wait.timer ?: return null
+        if (if (due) timer.at > answer.answeredAt else wait.resolver != WaitResolver.EVENT) return null
+        return waits.resolve(orgId, id, answer)
     }
 }

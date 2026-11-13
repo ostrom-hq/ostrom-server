@@ -96,6 +96,8 @@ functions (the owner, a member of `ostrom_router` to hand the functions over, do
 | `automations_route_org(id)` | automations | an automation's organization, for its webhook | `AutomationsRoutesTenancyPostgresTest` |
 | `automations_due_routes(now, limit)` | automations | claims the due crons of every organization (`FOR UPDATE SKIP LOCKED`) | `AutomationsPostgresTest` |
 | `automations_organizations()` | automations | the organizations that have automations, for the retention jobs | `AutomationsPostgresTest` |
+| `automations_due_waits(now, limit)` | automations | the open waits for a time or an event of every organization whose instant has come (id, organization, resolver), for the waits' clock; each is resolved in its organization | `TimedWaitsPostgresTest` |
+| `automations_wait_event(id)` | automations | an open wait for an event's organization and its secret's hash, for its event address | `TimedWaitsPostgresTest` |
 | `sessions_stale(cutoff, limit)` | sessions | the open sessions of every organization last seen before the cutoff, for the sweep | `SessionsPostgresTest` |
 | `usage_purge(before, limit)` | usage | deletes one batch of events older than the retention | `UsagePostgresTest` |
 | `usage_daily_add()`, `usage_daily_remove()`, `usage_daily_change()`, `usage_daily_clear()` | usage | trigger functions of `usage_events` (no `EXECUTE` grant): keep the daily totals `usage_daily`, which an organization only reads, in the transaction of every write of the ledger | `UsageDailyTotalsPostgresTest` |

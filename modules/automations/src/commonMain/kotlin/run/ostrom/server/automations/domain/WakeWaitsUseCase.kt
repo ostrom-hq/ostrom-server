@@ -61,14 +61,18 @@ class WakeWaitsUseCaseImpl(
             val open = repository.hasOpen(caller.orgId, segments)
             val taken = repository.takeAnswered(caller.orgId, segments, BATCH)
             if (taken.isNotEmpty() || !open || clock.now() >= deadline) {
-                return WaitWakeResult(open, taken.map { WaitMessages.answered(it, username(caller, it)) })
+                return WaitWakeResult(open, taken.map { message(caller, it) })
             }
             sleep(POLL_MILLIS)
         }
     }
 
-    private suspend fun username(caller: WaitCaller, wait: Wait): String? =
-        wait.answer?.let { sessions.usernameOf(caller.orgId, it.author) }
+    /** A person's answer names who gave it; a wait that resolved by itself says what happened. */
+    private suspend fun message(caller: WaitCaller, wait: Wait): String = if (wait.resolver == WaitResolver.HUMAN) {
+        WaitMessages.answered(wait, wait.answer?.let { sessions.usernameOf(caller.orgId, it.author) })
+    } else {
+        WaitMessages.resolved(wait)
+    }
 
     /** The bounds of a wake. */
     companion object {

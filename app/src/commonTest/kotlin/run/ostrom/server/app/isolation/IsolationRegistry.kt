@@ -271,6 +271,7 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/waits/{id}" to target("id" to WAIT),
     "POST /api/v1/waits/{id}/answer" to target("id" to WAIT, body = """{"action": "approve"}"""),
     "POST /api/v1/waits/{id}/cancel" to target("id" to WAIT),
+    "POST /api/v1/waits/{id}/event" to target("id" to WAIT, body = """{"result": "success"}"""),
     "GET /api/v1/notifications" to Case.Target(),
     "POST /api/v1/notifications" to Case.Target(
         body = """{"sessionId": "{{SESSION}}", "digest": "{{PACKAGE}}", "nodeId": "n", "notifyId": "n"}""",

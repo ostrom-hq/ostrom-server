@@ -111,3 +111,24 @@ internal inline fun requireWait(condition: Boolean, message: () -> String) {
 internal inline fun requireAnswer(condition: Boolean, message: () -> String) {
     if (!condition) throw InvalidWaitAnswerException(message())
 }
+
+/** A wait for a time or an event: nobody answers it, its asker cancels it. */
+class WaitResolvesByItselfException : OstromException(
+    ErrorKind.CONFLICT,
+    "This wait waits for a time or an event, not for a person: it cannot be answered. Cancel it instead.",
+    "resolves_by_itself",
+)
+
+/**
+ * An event address called too often.
+ *
+ * @param perMinute The most calls a minute.
+ */
+class WaitEventRateLimitException(perMinute: Int) : OstromException(
+    ErrorKind.RATE_LIMITED,
+    "This address receives at most $perMinute calls a minute.",
+    "wait_event_rate_limit",
+)
+
+/** The body of an event is larger than an event wait takes. */
+class WaitEventTooLargeException : OstromException(ErrorKind.PAYLOAD_TOO_LARGE, "The body is at most 16 KiB.")
