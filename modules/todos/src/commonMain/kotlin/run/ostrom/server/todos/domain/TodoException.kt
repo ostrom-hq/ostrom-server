@@ -42,3 +42,14 @@ fun unknownItem(id: String): TodoException =
 
 /** How much of a caller's value a message repeats. */
 internal const val MAX_ECHO: Int = 80
+
+/**
+ * Throws what [error] makes when [refused]: one rule, one line.
+ *
+ * @param refused Whether the rule refuses.
+ * @param error The refusal.
+ * @throws TodoException When [refused].
+ */
+internal fun refuse(refused: Boolean, error: () -> TodoException) {
+    if (refused) throw error()
+}

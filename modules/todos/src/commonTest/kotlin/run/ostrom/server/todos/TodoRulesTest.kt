@@ -241,7 +241,7 @@ class TodoRulesTest {
         val finished = ok.list.item("c")!!
         assertEquals(TodoItemStatus.DONE, finished.status)
         assertEquals(true, finished.proof!!.passed)
-        assertEquals(listOf("https://x/1"), finished.proof!!.urls)
+        assertEquals(listOf("https://x/1"), finished.proof?.urls)
     }
 
     @Test
@@ -266,6 +266,7 @@ class TodoRulesTest {
         assertEquals("duplicate_item", code { TodoRules.add(l, item("late"), "again") })
         assertEquals("unknown_dependency", code { TodoRules.add(l, item("x", "ghost"), "why") })
         assertEquals("invalid_todo", code { TodoRules.add(l, item("y"), " ") })
+        assertEquals("invalid_todo", code { TodoRules.add(l, item("y"), "r".repeat(10_000)) }, "a reason too long")
         val appended = TodoRules.add(plan, item("tail"), "No item in progress")
         assertEquals("tail", appended.items.last().id)
     }
@@ -336,7 +337,7 @@ class TodoRulesTest {
         val reverted = TodoRules.settle(closed, mapOf("c" to results), at(400)).item("c")!!
         assertEquals(TodoItemStatus.TODO, reverted.status)
         assertEquals("PR reverted", reverted.proof!!.text)
-        assertEquals(listOf("https://x/2"), reverted.proof!!.urls)
+        assertEquals(listOf("https://x/2"), reverted.proof?.urls)
     }
 
     @Test
@@ -428,6 +429,8 @@ class TodoRulesTest {
         linked = TodoRules.link(linked, "a", first.copy(number = null, sha = "4e1c9a2"), false, at(20))
         assertEquals("4e1c9a2", linked.item("a")!!.links.single().sha)
         assertEquals(7, linked.item("a")!!.links.single().number)
+        linked = TodoRules.link(linked, "a", first, false, at(25))
+        assertEquals(first.copy(sha = "4e1c9a2", at = at(10)), linked.item("a")!!.links.single(), "nothing is lost")
         assertEquals("already_linked", code { TodoRules.link(linked, "a", TodoLink("pr", "$PULL/8"), false, at(30)) })
         // Other kinds are independent; a release is completed with its tag.
         val release = TodoLink("release", "https://github.com/acme/backend/releases/tag/v1.2.0")

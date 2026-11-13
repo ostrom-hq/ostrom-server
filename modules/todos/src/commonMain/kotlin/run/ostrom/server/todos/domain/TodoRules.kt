@@ -131,9 +131,9 @@ object TodoRules {
         now: Instant,
     ): TodoList {
         TodoValidation.reference(reference, refs)
-        if (items.isEmpty()) throw invalidTodo("invalid_todo", "A todo needs at least one item.")
-        if (items.size > MAX_ITEMS) {
-            throw invalidTodo(
+        refuse(items.isEmpty()) { invalidTodo("invalid_todo", "A todo needs at least one item.") }
+        refuse(items.size > MAX_ITEMS) {
+            invalidTodo(
                 "too_many_items",
                 "At most $MAX_ITEMS items: split the plan into several sessions, or group items.",
             )
@@ -179,7 +179,7 @@ object TodoRules {
     private fun requireItem(list: TodoList, id: String): TodoItem = list.item(id) ?: throw unknownItem(id)
 
     /** A dropped dependency no longer blocks: the owner decided it makes no sense. */
-    private fun satisfied(list: TodoList, id: String): Boolean = list.item(id)?.status?.closed == true
+    private fun satisfied(list: TodoList, id: String): Boolean = list.items.any { it.id == id && it.status.closed }
 
     /**
      * The first `todo` item, in list order, whose dependencies are all finished.
@@ -224,9 +224,9 @@ object TodoRules {
     fun start(list: TodoList, id: String, background: Boolean, agent: String?, now: Instant): TodoList {
         requireActive(list)
         val item = requireItem(list, id)
-        if (item.status.closed) throw todoConflict("item_closed", "Item $id is ${item.status.wire}.")
-        if (item.status == TodoItemStatus.DROP_REQUESTED) {
-            throw todoConflict("drop_pending", "Item $id waits for the owner to answer its drop request.")
+        refuse(item.status.closed) { todoConflict("item_closed", "Item $id is ${item.status.wire}.") }
+        refuse(item.status == TodoItemStatus.DROP_REQUESTED) {
+            todoConflict("drop_pending", "Item $id waits for the owner to answer its drop request.")
         }
         val missing = item.dependsOn.filterNot { satisfied(list, it) }
         if (missing.isNotEmpty()) {
@@ -346,12 +346,12 @@ object TodoRules {
     }
 
     private fun validLink(link: TodoLink) {
-        if (link.kind !in TodoLink.KINDS) {
-            throw invalidTodo("invalid_link", "Use a link of kind ${TodoLink.KINDS.joinToString(", ")}.")
+        refuse(link.kind !in TodoLink.KINDS) {
+            invalidTodo("invalid_link", "Use a link of kind ${TodoLink.KINDS.joinToString(", ")}.")
         }
         val text = listOfNotNull(link.ref, link.sha, link.tag)
-        if (link.ref.isBlank() || text.any { it.length > MAX_LINK || it.any(Char::isISOControl) }) {
-            throw invalidTodo("invalid_link", "Use a link reference of 1 to $MAX_LINK characters.")
+        refuse(link.ref.isBlank() || text.any { it.length > MAX_LINK || it.any(Char::isISOControl) }) {
+            invalidTodo("invalid_link", "Use a link reference of 1 to $MAX_LINK characters.")
         }
         if (link.kind in setOf("pr", "release") && !link.ref.startsWith("https://")) {
             throw invalidTodo("invalid_link", "A ${link.kind} link is an https address.")
@@ -426,7 +426,10 @@ object TodoRules {
     private fun reopen(list: TodoList, failures: Map<String, List<TodoCheckResult>>, now: Instant): TodoList =
         list.copy(
             items = list.items.map { item ->
-                failures[item.id]?.let { failed ->
+                val failed = failures[item.id]
+                if (failed == null) {
+                    item
+                } else {
                     val proof = TodoProof(
                         now,
                         false,
@@ -434,7 +437,7 @@ object TodoRules {
                         failed.flatMap { it.urls }.distinct().take(MAX_PROOF_URLS),
                     )
                     item.copy(status = TodoItemStatus.TODO, proof = proof)
-                } ?: item
+                }
             },
         )
 
@@ -473,9 +476,8 @@ object TodoRules {
     fun addOrphan(list: TodoList, url: String, now: Instant): TodoList {
         val match = pullRequest.matchEntire(url)
         val covered = list.items.any { item -> item.links.any { it.ref == url } }
-        if (match == null || list.status != TodoListStatus.ACTIVE || list.items.size >= MAX_ITEMS || covered) {
-            return list
-        }
+        val room = list.status == TodoListStatus.ACTIVE && list.items.size < MAX_ITEMS
+        if (match == null || !room || covered) return list
         val repo = match.groupValues[1]
         val number = match.groupValues[2].toInt()
         var id = "finish-pr-$number"

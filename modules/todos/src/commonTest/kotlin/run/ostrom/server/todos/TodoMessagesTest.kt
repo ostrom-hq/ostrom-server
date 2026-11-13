@@ -116,7 +116,7 @@ class TodoMessagesTest {
     fun theOwnerIsAskedWithTheListAndTheAgentsLastMessage() {
         val l = list("a", "b").with("a") { it.copy(status = TodoItemStatus.DONE) }
         assertEquals("Blocked: Item b", TodoMessages.blockedTitle(l))
-        val body = TodoMessages.blockedBody(l, "I could not\nreach the CI.")
+        val body = TodoMessages.blockedBody(l, "I could not\nreach the CI.\u0007")
         assertTrue(body.startsWith("The agent stopped three times in a row"), body)
         assertTrue(body.contains("1 of 2 items done:\n- ✓ `a` Item a\n- → `b` Item b\n"), body)
         assertTrue(body.contains("Its last message:\n> I could not reach the CI."), body)
@@ -124,5 +124,7 @@ class TodoMessagesTest {
         assertFalse(TodoMessages.blockedBody(l, null).contains("Its last message"))
         val stuck = l.with("b") { it.copy(status = TodoItemStatus.DROP_REQUESTED) }
         assertEquals("Blocked: the todo", TodoMessages.blockedTitle(stuck))
+        val doing = l.with("b") { it.copy(status = TodoItemStatus.DOING) }
+        assertTrue(TodoMessages.blockedBody(doing, null).contains("- · `b` Item b\n"), "nothing is ready")
     }
 }

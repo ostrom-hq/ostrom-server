@@ -122,7 +122,10 @@ object TodoMessages {
      * @param list The list.
      * @return The title.
      */
-    fun blockedTitle(list: TodoList): String = "Blocked: ${TodoRules.next(list)?.name ?: "the todo"}".take(TITLE_WIDTH)
+    fun blockedTitle(list: TodoList): String {
+        val next = TodoRules.next(list)
+        return "Blocked: ${if (next == null) "the todo" else next.name}".take(TITLE_WIDTH)
+    }
 
     /**
      * The body of that wait: the list, and the agent's last message.
