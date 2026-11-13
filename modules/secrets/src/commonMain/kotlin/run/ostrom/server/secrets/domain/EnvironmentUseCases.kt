@@ -168,7 +168,8 @@ class ManageEnvironmentVariantsUseCaseImpl(
         actor.caller.requireAdmin()
         val current = repository.get(actor.caller.orgId, id)?.variant ?: throw EnvironmentVariantNotFoundException()
         if (!current.personal) return current
-        val promoted = repository.promote(actor.caller.orgId, id, clock.now()) ?: throw VariantExistsException()
+        val promoted = repository.promote(actor.caller.orgId, id, clock.now(), EnvironmentRules.TEAM_LIMIT)
+            ?: throw VariantExistsException()
         journal(audit, actor, "environment.variant.promoted", promoted)
         return promoted
     }
@@ -409,8 +410,9 @@ class ResolveEnvironmentUseCaseImpl(
             val context = when (assigned.binding) {
                 EnvironmentBinding.SHARED -> environmentContext(orgId, assigned.variantId)
                 EnvironmentBinding.PER_MEMBER -> environmentContext(orgId, assigned.variantId, memberId)
+                null -> null
             }
-            val plaintext = assigned.envelope?.let { cipher.open(it, context) }
+            val plaintext = context?.let { bound -> assigned.envelope?.let { cipher.open(it, bound) } }
             if (plaintext == null) {
                 unavailable += assigned.variable
             } else {

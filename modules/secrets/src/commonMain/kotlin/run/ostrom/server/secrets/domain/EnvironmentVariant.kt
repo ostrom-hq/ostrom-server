@@ -148,13 +148,14 @@ data class BulkAssignment(val assigned: Int, val keptDirect: Int, val excluded: 
  *
  * @property variable The variable.
  * @property variantId The variant.
- * @property binding Its binding, which says which envelope holds the value and with which context.
+ * @property binding Its binding, which says which envelope holds the value and with which context; null for one this
+ *   version does not know, whose value is withheld.
  * @property envelope The variant's shared value, or the member's own for a per-member variant; null when missing.
  */
 data class AssignedEnvironmentValue(
     val variable: String,
     val variantId: Uuid,
-    val binding: EnvironmentBinding,
+    val binding: EnvironmentBinding?,
     val envelope: String?,
 ) {
     /** The envelope stays out of logs. */

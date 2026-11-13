@@ -11,9 +11,11 @@ import run.ostrom.server.secrets.domain.EnvironmentExclusion
 import run.ostrom.server.secrets.domain.EnvironmentRepository
 import run.ostrom.server.secrets.domain.EnvironmentRules
 import run.ostrom.server.secrets.domain.EnvironmentVariant
+import run.ostrom.server.secrets.domain.EnvironmentVariantNotFoundException
 import run.ostrom.server.secrets.domain.StoredEnvironmentVariant
 import run.ostrom.server.secrets.domain.UpdateVariantOutcome
 import run.ostrom.server.secrets.domain.VariantChange
+import run.ostrom.server.secrets.domain.VariantLimitException
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.Statement
@@ -63,15 +65,10 @@ class EnvironmentRepositoryImpl(private val driver: Driver) : EnvironmentReposit
     override suspend fun createTeam(stored: StoredEnvironmentVariant, limit: Int): CreateVariantOutcome {
         val variant = stored.variant
         return driver.inTenant(variant.orgId) {
-            lock("environment-team:${variant.orgId}")
+            lock(teamKey(variant.orgId))
             lock(nameKey(variant.orgId, variant.variable, null))
-            val count = fetchAll(
-                Statement.create(
-                    "SELECT COUNT(*) AS n FROM environment_variants WHERE org_id = :org_id AND owner_member_id IS NULL",
-                ).bind("org_id", variant.orgId),
-            ).getOrThrow().first().get("n").asLong()
             when {
-                count >= limit -> CreateVariantOutcome.LIMIT
+                teamCount(variant.orgId) >= limit -> CreateVariantOutcome.LIMIT
                 insert(stored) -> CreateVariantOutcome.CREATED
                 else -> CreateVariantOutcome.NAME_TAKEN
             }
@@ -166,17 +163,15 @@ class EnvironmentRepositoryImpl(private val driver: Driver) : EnvironmentReposit
         return driver.fetchInOrg(orgId, statement).getOrThrow().firstOrNull()?.toVariant()
     }
 
-    override suspend fun promote(orgId: Uuid, id: Uuid, updatedAt: Instant): EnvironmentVariant? =
+    override suspend fun promote(orgId: Uuid, id: Uuid, updatedAt: Instant, limit: Int): EnvironmentVariant? =
         driver.inTenant(orgId) {
-            val current = fetchAll(
-                Statement.create("SELECT $COLUMNS FROM environment_variants WHERE org_id = :org_id AND id = :id")
-                    .bind("org_id", orgId)
-                    .bind("id", id),
-            ).getOrThrow().firstOrNull()?.toVariant()
+            lock(teamKey(orgId))
+            val current = lockedVariant(orgId, id)
             if (current == null) {
                 null
             } else {
                 lock(nameKey(orgId, current.variable, null))
+                if (teamCount(orgId) >= limit) throw VariantLimitException(limit)
                 if (nameTaken(orgId, current.variable, null, current.name, id)) {
                     null
                 } else {
@@ -202,6 +197,8 @@ class EnvironmentRepositoryImpl(private val driver: Driver) : EnvironmentReposit
         assignedAt: Instant,
     ): EnvironmentAssignment? = driver.inTenant(orgId) {
         lock(variableKey(orgId, variant.variable))
+        // Read again under the lock, held until the commit: a variant deleted meanwhile is a 404, not a broken key.
+        val fresh = lockedVariant(orgId, variant.id) ?: throw EnvironmentVariantNotFoundException()
         val excluded = fetchAll(
             Statement.create(
                 "SELECT 1 AS excluded FROM environment_exclusions " +
@@ -214,15 +211,15 @@ class EnvironmentRepositoryImpl(private val driver: Driver) : EnvironmentReposit
         if (excluded) {
             null
         } else {
-            upsertAssignment(orgId, memberId, variant, source, memberEnvelope, assignedAt)
+            upsertAssignment(orgId, memberId, fresh, source, memberEnvelope, assignedAt)
             EnvironmentAssignment(
                 memberId = memberId,
-                variable = variant.variable,
-                variantId = variant.id,
-                variantName = variant.name,
-                version = variant.version,
+                variable = fresh.variable,
+                variantId = fresh.id,
+                variantName = fresh.name,
+                version = fresh.version,
                 source = source,
-                personal = variant.personal,
+                personal = fresh.personal,
                 hasMemberValue = memberEnvelope != null,
                 assignedAt = assignedAt,
             )
@@ -244,6 +241,7 @@ class EnvironmentRepositoryImpl(private val driver: Driver) : EnvironmentReposit
         if (members.isEmpty()) return BulkAssignment(0, 0, 0, emptyList())
         return driver.inTenant(orgId) {
             lock(variableKey(orgId, variant.variable))
+            lockedVariant(orgId, variant.id) ?: throw EnvironmentVariantNotFoundException()
             val excluded = memberSet(
                 "SELECT member_id FROM environment_exclusions " +
                     "WHERE org_id = :org_id AND variable = :variable AND member_id IN :members",
@@ -353,17 +351,28 @@ class EnvironmentRepositoryImpl(private val driver: Driver) : EnvironmentReposit
             )
                 .bind("org_id", orgId)
                 .bind("member", memberId),
-        ).getOrThrow().mapNotNull { row ->
-            // A binding this version cannot read withholds that variable only.
-            EnvironmentBinding.fromWire(row.get("binding").asString())?.let { binding ->
-                AssignedEnvironmentValue(
-                    variable = row.get("variable").asString(),
-                    variantId = row.get("variant_id").asUuid(),
-                    binding = binding,
-                    envelope = row.get("envelope").asStringOrNull(),
-                )
-            }
+        ).getOrThrow().map { row ->
+            // A binding this version cannot read withholds that variable only (null: named in `unavailable`).
+            AssignedEnvironmentValue(
+                variable = row.get("variable").asString(),
+                variantId = row.get("variant_id").asUuid(),
+                binding = EnvironmentBinding.fromWire(row.get("binding").asString()),
+                envelope = row.get("envelope").asStringOrNull(),
+            )
         }
+
+    // The variant, its row locked against a delete or a change until the commit.
+    private suspend fun Transaction.lockedVariant(orgId: Uuid, id: Uuid): EnvironmentVariant? = fetchAll(
+        Statement.create("SELECT $COLUMNS FROM environment_variants WHERE org_id = :org_id AND id = :id FOR SHARE")
+            .bind("org_id", orgId)
+            .bind("id", id),
+    ).getOrThrow().firstOrNull()?.toVariant()
+
+    private suspend fun Transaction.teamCount(orgId: Uuid): Long = fetchAll(
+        Statement.create(
+            "SELECT COUNT(*) AS n FROM environment_variants WHERE org_id = :org_id AND owner_member_id IS NULL",
+        ).bind("org_id", orgId),
+    ).getOrThrow().first().get("n").asLong()
 
     private suspend fun Transaction.lock(key: String) {
         fetchAll(
@@ -491,6 +500,8 @@ class EnvironmentRepositoryImpl(private val driver: Driver) : EnvironmentReposit
             "(envelope IS NOT NULL) AS has_value, version, created_at, updated_at"
 
         fun variableKey(orgId: Uuid, variable: String) = "environment-variable:$orgId:$variable"
+
+        fun teamKey(orgId: Uuid) = "environment-team:$orgId"
 
         fun nameKey(orgId: Uuid, variable: String, owner: Uuid?) =
             "environment-name:$orgId:$variable:${owner ?: "team"}"

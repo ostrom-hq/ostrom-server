@@ -108,9 +108,13 @@ interface EnvironmentRepository {
     /**
      * Clears a personal variant's owner, unless a team variant has the same name for the variable.
      *
-     * @return The team variant, or null when a team variant has the name (the caller has checked it exists).
+     * @param limit The most team variants the organization may hold.
+     *
+     * @return The team variant, or null when a team variant has the name or the variant is gone.
+     *
+     * @throws VariantLimitException When the organization already holds [limit] team variants.
      */
-    suspend fun promote(orgId: Uuid, id: Uuid, updatedAt: Instant): EnvironmentVariant?
+    suspend fun promote(orgId: Uuid, id: Uuid, updatedAt: Instant, limit: Int): EnvironmentVariant?
 
     /**
      * Selects a variant for a member's variable, replacing any selection, unless the member is excluded from it.
@@ -118,6 +122,8 @@ interface EnvironmentRepository {
      * @param memberEnvelope The member's sealed value for a per-member variant.
      *
      * @return The assignment, or null when the member is excluded.
+     *
+     * @throws EnvironmentVariantNotFoundException When the variant was deleted meanwhile.
      */
     @Suppress("LongParameterList") // The row's columns.
     suspend fun assign(
@@ -139,6 +145,8 @@ interface EnvironmentRepository {
     /**
      * Selects a shared variant for each of [memberIds], as `bulk`: replaces their bulk selections of the variable,
      * keeps direct ones, skips excluded members.
+     *
+     * @throws EnvironmentVariantNotFoundException When the variant was deleted meanwhile.
      */
     suspend fun bulkAssign(
         orgId: Uuid,

@@ -2,12 +2,15 @@
 package run.ostrom.server.secrets
 
 import run.ostrom.server.kernel.auth.MemberDirectory
+import run.ostrom.server.secrets.domain.AssignmentSource
 import run.ostrom.server.secrets.domain.CreateVariantOutcome
 import run.ostrom.server.secrets.domain.EnvironmentBinding
 import run.ostrom.server.secrets.domain.EnvironmentRepository
 import run.ostrom.server.secrets.domain.EnvironmentVariant
+import run.ostrom.server.secrets.domain.EnvironmentVariantNotFoundException
 import run.ostrom.server.secrets.domain.ResolveEnvironmentUseCase
 import run.ostrom.server.secrets.domain.StoredEnvironmentVariant
+import run.ostrom.server.secrets.domain.VariantLimitException
 import run.ostrom.server.secrets.infrastructure.executeInOrg
 import run.ostrom.server.secrets.infrastructure.fetchInOrg
 import run.ostrom.server.secrets.presentation.EnvironmentAssignRequest
@@ -39,6 +42,7 @@ import io.ktor.http.contentType
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -370,6 +374,19 @@ class EnvironmentPostgresTest {
         )
         assertEquals(CreateVariantOutcome.CREATED, repository.createTeam(team("a"), limit = 1))
         assertEquals(CreateVariantOutcome.LIMIT, repository.createTeam(team("b"), limit = 1))
+        val personal = server.page(mine, "member-a").items.first()
+        assertFailsWith<VariantLimitException>("A promotion counts too") {
+            repository.promote(TestCallers.orgA, Uuid.parse(personal.id), now, limit = 1)
+        }
+        assertNull(repository.promote(TestCallers.orgA, Uuid.random(), now, limit = 1), "Gone meanwhile")
+        // A variant deleted between the use case's read and the write: a 404, not a broken foreign key.
+        val gone = team("gone").variant
+        assertFailsWith<EnvironmentVariantNotFoundException> {
+            repository.assign(TestCallers.orgA, memberA, gone, AssignmentSource.DIRECT, null, now)
+        }
+        assertFailsWith<EnvironmentVariantNotFoundException> {
+            repository.bulkAssign(TestCallers.orgA, gone, listOf(memberA), now)
+        }
         val tooMany = server.send("POST", variants, "admin-a", create("TEAM", "a", value = "value-1"))
         assertTrue("variant_exists" in tooMany.bodyAsText(), "The name is checked under the organization's limit")
     }
@@ -396,7 +413,7 @@ class EnvironmentPostgresTest {
 
         val values = server.values("member-a")
         assertEquals(mapOf("GOOD" to "value-1"), values.variables)
-        assertEquals(listOf("BAD"), values.unavailable, "A binding this version cannot read is not served at all")
+        assertEquals(listOf("BAD", "ODD"), values.unavailable, "Nor a binding this version cannot read")
         val listed = server.page(variants, "admin-a")
         assertEquals("perMember", listed.items.single { it.variable == "ODD" }.binding)
         val resolve = server.koin.get<ResolveEnvironmentUseCase>()
