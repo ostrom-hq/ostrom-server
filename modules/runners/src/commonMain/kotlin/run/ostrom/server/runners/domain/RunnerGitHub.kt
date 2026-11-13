@@ -139,6 +139,7 @@ class SetCloudSessionGitHubAccessUseCaseImpl(
     private val audit: OrgAuditTrail,
     private val clock: Clock,
 ) : SetCloudSessionGitHubAccessUseCase {
+    @Suppress("ThrowsCount") // Each refusal of the change is its own answer.
     override suspend fun invoke(
         caller: Caller,
         principal: AuthenticatedPrincipal,
