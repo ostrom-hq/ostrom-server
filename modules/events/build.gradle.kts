@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 // Module events: the organization's event feed (one gap-free sequence per organization in PostgreSQL, read by every
 // replica, streamed as server-sent events) and its outgoing webhooks.
 plugins {
