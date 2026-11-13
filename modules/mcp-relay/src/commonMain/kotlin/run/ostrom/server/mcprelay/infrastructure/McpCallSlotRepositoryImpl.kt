@@ -3,7 +3,7 @@ package run.ostrom.server.mcprelay.infrastructure
 
 import run.ostrom.server.mcprelay.domain.McpCallSlot
 import run.ostrom.server.mcprelay.domain.McpCallSlotRepository
-import run.ostrom.server.mcprelay.domain.McpUsage
+import run.ostrom.server.mcprelay.domain.McpLoad
 import run.ostrom.server.secrets.infrastructure.executeInOrg
 import run.ostrom.server.secrets.infrastructure.inTenant
 import io.github.smyrgeorge.sqlx4k.Driver
@@ -23,7 +23,7 @@ class McpCallSlotRepositoryImpl(private val driver: Driver) : McpCallSlotReposit
         orgId: Uuid,
         memberId: Uuid,
         serverId: Uuid,
-        admit: (McpUsage) -> Boolean,
+        admit: (McpLoad) -> Boolean,
     ): McpCallSlot? = driver.inTenant(orgId) {
         fun sql(text: String) = Statement.create(text).bind("org_id", orgId).bind("server_id", serverId)
         val present = fetchAll(sql(MCP_SLOT_LOCK_SQL)).getOrThrow().firstOrNull() != null
@@ -31,7 +31,7 @@ class McpCallSlotRepositoryImpl(private val driver: Driver) : McpCallSlotReposit
         execute(sql(MCP_SLOT_PURGE_SQL)).getOrThrow()
         execute(sql(MCP_MINUTE_PURGE_SQL)).getOrThrow()
         val usage = fetchAll(sql(MCP_USAGE_SQL).bind("member_id", memberId)).getOrThrow().single().let {
-            McpUsage(
+            McpLoad(
                 memberRunning = it.get("member_running").asLong().toInt(),
                 serverRunning = it.get("server_running").asLong().toInt(),
                 memberThisMinute = it.get("member_minute").asLong().toInt(),

@@ -13,7 +13,7 @@ import kotlin.uuid.Uuid
  * @property memberThisMinute The member's operations on the server started this minute (database clock).
  * @property serverThisMinute The server's operations started this minute.
  */
-data class McpUsage(
+data class McpLoad(
     val memberRunning: Int,
     val serverRunning: Int,
     val memberThisMinute: Int,
@@ -29,12 +29,12 @@ data class McpCallSlot(val id: Uuid)
  */
 interface McpCallSlotRepository {
     /**
-     * In one transaction holding the server's row lock: shows [admit] the server's [McpUsage]; when it admits, takes a
+     * In one transaction holding the server's row lock: shows [admit] the server's [McpLoad]; when it admits, takes a
      * slot and counts the operation in the minute.
      *
      * @return The slot, or null when [admit] refused (or the server is gone).
      */
-    suspend fun acquire(orgId: Uuid, memberId: Uuid, serverId: Uuid, admit: (McpUsage) -> Boolean): McpCallSlot?
+    suspend fun acquire(orgId: Uuid, memberId: Uuid, serverId: Uuid, admit: (McpLoad) -> Boolean): McpCallSlot?
 
     /** Gives a slot back; nothing when it is gone. */
     suspend fun release(orgId: Uuid, slot: McpCallSlot)

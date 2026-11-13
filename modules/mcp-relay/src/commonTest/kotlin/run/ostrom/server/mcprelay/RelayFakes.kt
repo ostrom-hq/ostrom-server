@@ -8,6 +8,7 @@ import run.ostrom.server.mcprelay.domain.McpCall
 import run.ostrom.server.mcprelay.domain.McpCallCursor
 import run.ostrom.server.mcprelay.domain.McpCallSlot
 import run.ostrom.server.mcprelay.domain.McpCallSlotRepository
+import run.ostrom.server.mcprelay.domain.McpLoad
 import run.ostrom.server.mcprelay.domain.McpOperation
 import run.ostrom.server.mcprelay.domain.McpOutcome
 import run.ostrom.server.mcprelay.domain.McpRelayRepository
@@ -82,14 +83,14 @@ class InMemoryMcpSlots(private val clock: Clock) : McpCallSlotRepository {
         orgId: Uuid,
         memberId: Uuid,
         serverId: Uuid,
-        admit: (McpUsage) -> Boolean,
+        admit: (McpLoad) -> Boolean,
     ): McpCallSlot? {
         val now = clock.now()
         val minute = now.epochSeconds / 60
         running.values.removeAll { it.expiresAt <= now }
         val onServer = running.values.filter { it.orgId == orgId && it.serverId == serverId }
         val thisMinute = started.filter { it.first == serverId && it.third == minute }
-        val usage = McpUsage(
+        val usage = McpLoad(
             memberRunning = onServer.count { it.memberId == memberId },
             serverRunning = onServer.size,
             memberThisMinute = thisMinute.count { it.second == memberId },
