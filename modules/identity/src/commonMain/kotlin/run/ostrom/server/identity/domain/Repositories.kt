@@ -44,6 +44,13 @@ interface UsersRepository {
     suspend fun loginTaken(login: String): Boolean
 
     /**
+     * Whether the instance has any account (`ostrom-server bootstrap` runs only before the first).
+     *
+     * @return True when at least one user exists.
+     */
+    suspend fun any(): Boolean
+
+    /**
      * Finds a user by login.
      *
      * @param login The login, any case (logins are stored in lower case).

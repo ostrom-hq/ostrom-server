@@ -36,6 +36,7 @@ import run.ostrom.server.identity.fakes.RecordingAuditLog
 import run.ostrom.server.identity.fakes.RecordingMailSender
 import run.ostrom.server.identity.fakes.ScriptedRateLimiter
 import run.ostrom.server.identity.fakes.SettableClock
+import run.ostrom.server.identity.fakes.openSignUp
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -59,7 +60,7 @@ class SignInUseCasesTest {
     private val google = FakeOAuthProvider(IdentityProvider.GOOGLE)
     private val methods =
         SignInMethods(mapOf(IdentityProvider.GITHUB to github, IdentityProvider.GOOGLE to google), email = true)
-    private val resolve = ResolveUserUseCaseImpl(users, RecordingAuditLog(), clock)
+    private val resolve = ResolveUserUseCaseImpl(users, openSignUp(clock), RecordingAuditLog(), clock)
     private val startSession = StartWebSessionUseCaseImpl(sessions, generator, hasher, clock)
     private val callback = { provider: IdentityProvider -> "https://api.test/v1/auth/${provider.key}/callback" }
     private val services = SignInServices(generator, hasher, limiter, clock, callback)

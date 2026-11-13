@@ -2,6 +2,7 @@
 package run.ostrom.server.identity.presentation
 
 import run.ostrom.server.identity.domain.IdentityProvider
+import run.ostrom.server.identity.domain.SignUpMode
 import run.ostrom.server.identity.domain.trimmedOrNull
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.auth.HOST_COOKIE_PREFIX
@@ -18,11 +19,13 @@ import io.ktor.http.hostWithPortIfSpecified
  * @property allowedOrigins The origins a browser session may change state from (`OSTROM_ALLOWED_ORIGINS`, a comma
  *   list such as `https://app.ostrom.run,https://yes.ostrom.run`; the console's origin when unset): a request with a
  *   session cookie and another `Origin`, or none, is refused (audit S2-08).
+ * @property signUp Who may get a new account (`OSTROM_SIGNUP`: `invite`, the default, or `open`).
  */
 data class IdentityConfig(
     val publicUrl: String,
     val consoleUrl: String,
     val allowedOrigins: Set<String> = setOf(originOf(consoleUrl)),
+    val signUp: SignUpMode = SignUpMode.INVITE,
 ) {
     /** Cookies are `Secure` whenever the API is served over HTTPS (always, outside a developer's machine). */
     val secureCookies: Boolean get() = publicUrl.startsWith("https://")
@@ -48,6 +51,15 @@ data class IdentityConfig(
      */
     fun magicLinkUrl(token: String): String = "$consoleUrl/auth/email#token=$token"
 
+    /**
+     * The console page the instance's setup link opens; the token is in the fragment, as an e-mailed link's.
+     *
+     * @param token The setup link's token.
+     *
+     * @return The URL.
+     */
+    fun setupUrl(token: String): String = "$consoleUrl/setup#token=$token"
+
     /** Reads the configuration from the environment. */
     companion object {
         /**
@@ -57,7 +69,8 @@ data class IdentityConfig(
          *
          * @return The configuration.
          *
-         * @throws InvalidConfigException When a URL is not `http://` or `https://`.
+         * @throws InvalidConfigException When a URL is not `http://` or `https://`, or `OSTROM_SIGNUP` is neither
+         *   `invite` nor `open`.
          */
         fun from(source: ConfigSource): IdentityConfig {
             val consoleUrl = url(source, "OSTROM_CONSOLE_URL", "http://localhost:5173")
@@ -67,6 +80,8 @@ data class IdentityConfig(
                 publicUrl = url(source, "OSTROM_PUBLIC_URL", "http://localhost:8080"),
                 consoleUrl = consoleUrl,
                 allowedOrigins = if (listed.isEmpty()) setOf(originOf(consoleUrl)) else listed.map(::origin).toSet(),
+                signUp = SignUpMode.of(trimmedOrNull(source["OSTROM_SIGNUP"], Int.MAX_VALUE))
+                    ?: throw InvalidConfigException("OSTROM_SIGNUP is invite (the default) or open."),
             )
         }
 

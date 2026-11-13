@@ -66,7 +66,9 @@ private class RecordingLogger(val lines: MutableList<String> = mutableListOf()) 
 class OrgSettingsUseCasesTest {
     private val world = OrgsWorld()
     private val create =
-        CreateOrgUseCaseImpl(world.orgs, world.people, world.seats, world.limiter, world.audit, world.clock)
+        CreateOrgUseCaseImpl(
+            world.orgs, world.people, world.creation, world.seats, world.limiter, world.audit, world.clock,
+        )
     private val update = UpdateOrgUseCaseImpl(world.orgs, world.members, world.audit)
     private val delete = DeleteOrgUseCaseImpl(world.orgs, world.members, world.clock)
     private val listener = RecordingListener()

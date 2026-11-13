@@ -27,6 +27,7 @@ import run.ostrom.server.identity.fakes.InMemoryUsersRepository
 import run.ostrom.server.identity.fakes.InMemoryWebSessionsRepository
 import run.ostrom.server.identity.fakes.RecordingAuditLog
 import run.ostrom.server.identity.fakes.SettableClock
+import run.ostrom.server.identity.fakes.openSignUp
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
@@ -46,7 +47,7 @@ class AccountUseCasesTest {
     private val users = InMemoryUsersRepository()
     private val audit = RecordingAuditLog()
     private val clock = SettableClock()
-    private val resolve = ResolveUserUseCaseImpl(users, audit, clock)
+    private val resolve = ResolveUserUseCaseImpl(users, openSignUp(clock), audit, clock)
 
     private fun github(subject: String, email: String?, verified: Boolean = true, name: String? = "Ada") =
         VerifiedIdentity(IdentityProvider.GITHUB, subject, email, verified, name, "https://avatars.example/a.png")

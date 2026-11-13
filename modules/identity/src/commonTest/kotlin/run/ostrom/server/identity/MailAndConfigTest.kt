@@ -168,5 +168,6 @@ class MailAndConfigTest {
 
         assertEquals("https://api.ostrom.run/api/v1/auth/github/callback", config.callbackUrl(IdentityProvider.GITHUB))
         assertEquals("https://app.ostrom.run/auth/email#token=t", config.magicLinkUrl("t"))
+        assertEquals("https://app.ostrom.run/setup#token=osb_t", config.setupUrl("osb_t"))
     }
 }

@@ -12,6 +12,7 @@ import run.ostrom.server.orgs.domain.Member
 import run.ostrom.server.orgs.domain.MemberNotFoundException
 import run.ostrom.server.orgs.domain.Membership
 import run.ostrom.server.orgs.domain.NotAllowedException
+import run.ostrom.server.orgs.domain.OrgCreationClosedException
 import run.ostrom.server.orgs.domain.OrgNotFoundException
 import run.ostrom.server.orgs.domain.OrgRateLimitedException
 import run.ostrom.server.orgs.domain.Person
@@ -30,6 +31,7 @@ class OrgUseCasesTest {
         CreateOrgUseCaseImpl(
             world.orgs,
             world.people,
+            world.creation,
             world.seats,
             world.limiter,
             world.audit,
@@ -55,6 +57,26 @@ class OrgUseCasesTest {
         assertEquals(OrgRole.OWNER, created.member.role)
         assertEquals(created.member, world.members.findByUser(created.org.id, ada.id))
         assertEquals("org.created" to mapOf("slug" to "acme-inc"), world.audit.events.single())
+    }
+
+    @Test
+    fun anInviteOnlyInstanceLetsOnlyItsOwnersAdminsAndSetupPersonCreateOrganizations() = runTest {
+        val first = world.people.add("first", null)
+        val admin = world.people.add("admin", null)
+        val dev = world.people.add("dev", null)
+        val stranger = world.people.add("stranger", null)
+        world.creation.open = false
+        world.creation.allowed += first.id
+
+        val acme = create(first.id, "Acme", null)
+        join(acme, admin, OrgRole.ADMIN)
+        join(acme, dev, OrgRole.MEMBER)
+
+        assertEquals(OrgRole.OWNER, create(admin.id, "Acme labs", null).member.role, "An admin creates one")
+        val refused = assertFailsWith<OrgCreationClosedException> { create(dev.id, "Side", null) }
+        assertEquals("org_creation_closed", refused.type)
+        assertFailsWith<OrgCreationClosedException>("Nobody's member") { create(stranger.id, "Mine", null) }
+        assertEquals("QA", create(stranger.id, "QA", null, operator = true).org.name, "The operator seeds one")
     }
 
     @Test

@@ -218,6 +218,7 @@ Every request is already logged once by the kernel (method, route template — n
 | `KTOR_CURL_POLL_TIMEOUT` | `5` | Milliseconds the HTTP clients' engine (Ktor's Curl) waits in one poll while calls are open; set by the server at start unless already set. Ktor's own 100 ms made each outgoing exchange wait up to 100 ms while another exchange of the same client was open (an MCP tool call: 4 exchanges, 315 ms at p95 under load, 42 ms at 5) |
 | `OSTROM_DATABASE_MIGRATION_URL` | required by `migrate` | The owner's connection, read by `ostrom-server migrate` only; never give it to the serving process |
 | `OSTROM_DATABASE_MIGRATION_USER`, `OSTROM_DATABASE_MIGRATION_PASSWORD` | the URL's | The owner's credentials, as for `OSTROM_DATABASE_USER` |
+| `OSTROM_SIGNUP` | `invite` | Who gets a new account: `invite`, the instance's setup link (`ostrom-server bootstrap`), an invitation or an organization's SSO only, and only owners and admins (or the setup link's person) create organizations; `open`, anyone who signs in, who may create organizations (ostrom.run). An access policy, not a feature switch. Serve logs a warning while an invite-only instance has no account |
 | `OSTROM_ALLOW_TEST_ACCOUNTS` | — | `true` lets `ostrom-server seed-test-account` run; never set in production |
 | `OSTROM_SECRETS_KEY` | — | The secrets key, base64 of 32 bytes (AES-256-GCM); wins over the file. Losing it loses every stored secret |
 | `OSTROM_SECRETS_KEY_FILE` | `data/secrets.key` | File of the secrets key, created with mode 0600 at first start when `OSTROM_SECRETS_KEY` is unset; keep it on a persistent volume |
@@ -344,6 +345,7 @@ rollout before relying on it.
 |---|---|---|
 | `ostrom-server` (or `serve`) | Refuses a database role that is a superuser, has `BYPASSRLS`, or owns a table or is a member of its owner, checks the migrations, serves. On SIGTERM or SIGINT: `/ready` at 503 for `OSTROM_SHUTDOWN_DELAY_SECONDS`, then the engine stops and the pool closes | 0 after a graceful stop, 1 on a failure, 2 on an invalid configuration |
 | `ostrom-server migrate` | Applies every module's migrations with `OSTROM_DATABASE_MIGRATION_URL`, under the advisory lock | 0, 1 on a failure, 2 without the URL |
+| `ostrom-server bootstrap` | While the instance has no account, prints the first owner's setup link (`<OSTROM_CONSOLE_URL>/setup#token=osb_…`): it works once, for an hour, and a new one stops the earlier one. The person opens it and signs in with GitHub, Google or an e-mail link. The link is printed on the command's output only, never in the logs | 0, 2 when the instance already has an account or no module makes setup links |
 | `ostrom-server seed-test-account <email>` | With `OSTROM_ALLOW_TEST_ACCOUNTS=true`, creates a test account through the module that binds `TestAccountSeeder` (identity) and prints `{"email","token","organizationId"}` on one line | 0, 2 when refused or when no module binds the seeder |
 
 The probes: `GET /health` (liveness: 200 while the dependencies answer, also while draining) and `GET /ready`

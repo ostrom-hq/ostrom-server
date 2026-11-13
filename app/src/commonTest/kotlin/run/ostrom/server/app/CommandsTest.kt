@@ -2,6 +2,8 @@
 package run.ostrom.server.app
 
 import run.ostrom.server.kernel.config.MapConfigSource
+import run.ostrom.server.kernel.module.InstanceBootstrapper
+import run.ostrom.server.kernel.module.SetupLinkOutput
 import run.ostrom.server.kernel.module.TestAccount
 import run.ostrom.server.kernel.module.TestAccountSeeder
 import kotlinx.coroutines.test.runTest
@@ -17,6 +19,7 @@ class CommandsTest {
         assertEquals(Command.Serve, parseCommand(emptyList()))
         assertEquals(Command.Serve, parseCommand(listOf("serve")))
         assertEquals(Command.Migrate, parseCommand(listOf("migrate")))
+        assertEquals(Command.Bootstrap, parseCommand(listOf("bootstrap")))
         assertEquals(
             Command.SeedTestAccount("qa@ostrom.test"),
             parseCommand(listOf("seed-test-account", "qa@ostrom.test")),
@@ -25,7 +28,8 @@ class CommandsTest {
 
     @Test
     fun refusesAnUnknownCommandLine() {
-        listOf(listOf("serve", "now"), listOf("migrate", "down"), listOf("seed-test-account"), listOf("help"))
+        listOf(listOf("serve", "now"), listOf("migrate", "down"), listOf("seed-test-account"), listOf("help"),
+            listOf("bootstrap", "now"))
             .forEach { args ->
                 assertEquals(USAGE, assertFailsWith<UsageException>("$args") { parseCommand(args) }.message)
             }
@@ -76,6 +80,43 @@ class CommandsTest {
         assertEquals(
             "No module creates test accounts yet: the identity module binds TestAccountSeeder.",
             error.message,
+        )
+    }
+
+    private class Bootstrapper(private val refusal: IllegalStateException? = null) : InstanceBootstrapper {
+        override suspend fun setupLink(): SetupLinkOutput {
+            refusal?.let { throw it }
+            return SetupLinkOutput("https://app.example.com/setup#token=osb_abc", "2026-11-13T11:00:00Z")
+        }
+    }
+
+    private fun koinWith(bootstrapper: InstanceBootstrapper) =
+        koinApplication { modules(module { single<InstanceBootstrapper> { bootstrapper } }) }.koin
+
+    @Test
+    fun bootstrapPrintsTheSetupLinkAndUntilWhenItWorks() = runTest {
+        assertEquals(
+            "Open this link to become the first owner of this Ostrom instance. It works once, until " +
+                "2026-11-13T11:00:00Z:\nhttps://app.example.com/setup#token=osb_abc",
+            bootstrapInstance(koinWith(Bootstrapper())),
+        )
+    }
+
+    @Test
+    fun bootstrapRefusesAnInstanceThatHasAnAccountOrNoIdentityModule() = runTest {
+        val refused = Bootstrapper(IllegalStateException("This instance already has an account."))
+        assertEquals(
+            "This instance already has an account.",
+            assertFailsWith<UsageException> { bootstrapInstance(koinWith(refused)) }.message,
+        )
+        assertEquals(
+            "This instance cannot be bootstrapped.",
+            assertFailsWith<UsageException> { bootstrapInstance(koinWith(Bootstrapper(IllegalStateException()))) }
+                .message,
+        )
+        assertEquals(
+            "No module makes setup links: the identity module binds InstanceBootstrapper.",
+            assertFailsWith<UsageException> { bootstrapInstance(koinApplication {}.koin) }.message,
         )
     }
 }

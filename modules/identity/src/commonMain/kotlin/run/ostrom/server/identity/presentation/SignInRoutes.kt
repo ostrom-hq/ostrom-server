@@ -16,6 +16,9 @@ import run.ostrom.server.identity.domain.ProviderRejectedException
 import run.ostrom.server.identity.domain.RateLimitedException
 import run.ostrom.server.identity.domain.RequestMagicLinkUseCase
 import run.ostrom.server.identity.domain.SignInMethods
+import run.ostrom.server.identity.domain.SignUpClosedException
+import run.ostrom.server.identity.domain.GrantSignUpUseCase
+import run.ostrom.server.identity.domain.SignUpPolicy
 import run.ostrom.server.identity.domain.StartOAuthSignInUseCase
 import run.ostrom.server.identity.domain.VerifyMagicLinkUseCase
 import run.ostrom.server.identity.domain.constantTimeEquals
@@ -53,6 +56,15 @@ const val MOBILE_OAUTH_STATE_COOKIE = "ostrom_mobile_oauth_state"
  */
 const val EMAIL_LINK_COOKIE = "ostrom_email_link"
 
+/**
+ * The cookie that carries the setup link's or an invitation's token through the sign-in that follows
+ * (`grantSignUp`): the account it creates is admitted on an invite-only instance.
+ */
+const val SIGN_UP_COOKIE = "ostrom_signup"
+
+/** How long the sign-up cookie lasts: one sign-in, however slow. */
+private const val SIGN_UP_COOKIE_SECONDS = 3600
+
 private const val SIGN_IN_COOKIE_PATH = "/api/v1/auth"
 
 /**
@@ -66,6 +78,8 @@ private const val SIGN_IN_COOKIE_PATH = "/api/v1/auth"
  * @property verifyMagicLink Signs in with it.
  * @property launcherLogin Exchanges a GitHub token of Ostrom's app for a CLI token.
  * @property completeMobile Completes a sign-in the phone app started.
+ * @property signUp Who may get a new account (the instance's mode, the setup link and invitations).
+ * @property grantSignUp Checks the token given before signing in on an invite-only instance.
  */
 data class SignInRoutesDependencies(
     val config: IdentityConfig,
@@ -76,19 +90,22 @@ data class SignInRoutesDependencies(
     val verifyMagicLink: VerifyMagicLinkUseCase,
     val launcherLogin: LauncherLoginUseCase,
     val completeMobile: CompleteMobileSignInUseCase,
+    val signUp: SignUpPolicy,
+    val grantSignUp: GrantSignUpUseCase,
 )
 
 /**
  * The sign-in routes. GitHub and Google are browser navigations: their failures send the browser back to the
  * console's login page with an `error` code (`unavailable`, `rate_limited`, `access_denied`, `expired`, `refused`,
  * `link_required` when the provider names the address of another account, `identity_taken` when a link meets an
- * identity of another account) instead of a JSON error.
+ * identity of another account, `signup_closed` when an invite-only instance creates no account for this person)
+ * instead of a JSON error.
  *
  * @param dependencies The use cases.
  */
 fun Route.signInRoutes(dependencies: SignInRoutesDependencies) = with(dependencies) {
     get<SignInApi.Providers> {
-        call.respond(ProvidersResponse(methods.keys))
+        call.respond(ProvidersResponse(methods.keys, signUp.mode.key))
     }
     get<SignInApi.Provider.Start> { params ->
         // Invalid mobile parameters answer 400 here: nothing is redirected to a deep link that is not the app's.
@@ -115,14 +132,24 @@ fun Route.signInRoutes(dependencies: SignInRoutesDependencies) = with(dependenci
         call.response.cookies.append(stateCookie("", 0, config))
         if (params.error != null) return@get call.redirectToLogin(config, "access_denied")
         val signedIn = try {
-            completeOAuth(params.parent.provider, params.state, call.request.cookies[OAUTH_STATE_COOKIE], params.code)
+            val browserState = call.request.cookies[OAUTH_STATE_COOKIE]
+            val signUpToken = call.request.cookies[SIGN_UP_COOKIE]
+            completeOAuth(params.parent.provider, params.state, browserState, params.code, signUpToken)
         } catch (error: OstromException) {
             return@get call.redirectToLogin(config, error)
         }
+        call.forgetSignUpGrant(config)
         call.setSessionCookie(signedIn.session, config)
         call.respondRedirect(config.consoleUrl + signedIn.redirectPath)
     }
     emailRoutes(dependencies)
+    post<SignInApi.SignUpGrant, SignUpGrantRequest> { _, request ->
+        // Like the other unauthenticated starts of a session: only the console's own pages give a grant.
+        if (call.request.headers[HttpHeaders.Origin] !in config.allowedOrigins) throw OriginNotAllowedException()
+        grantSignUp(request.token, call.request.origin.remoteAddress)
+        call.response.cookies.append(stateCookie(request.token, SIGN_UP_COOKIE_SECONDS, config, SIGN_UP_COOKIE))
+        call.respond(HttpStatusCode.NoContent)
+    }
     post<LauncherApi.Login, LauncherLoginRequest> { _, request ->
         val login = launcherLogin(request.githubToken, request.via, call.request.origin.remoteAddress)
         val token = login.token
@@ -152,9 +179,11 @@ private fun Route.emailRoutes(dependencies: SignInRoutesDependencies) = with(dep
         call.respond(HttpStatusCode.Accepted)
     }
     post<SignInApi.Email.Verify, VerifyMagicLinkRequest> { _, request ->
-        val signedIn = verifyMagicLink(request.token, call.request.cookies[EMAIL_LINK_COOKIE])
-        // Signed in: the browser's nonce served its purpose.
+        val cookies = call.request.cookies
+        val signedIn = verifyMagicLink(request.token, cookies[EMAIL_LINK_COOKIE], cookies[SIGN_UP_COOKIE])
+        // Signed in: the browser's nonce and sign-up grant served their purpose.
         call.response.cookies.append(stateCookie("", 0, config, EMAIL_LINK_COOKIE))
+        call.forgetSignUpGrant(config)
         call.setSessionCookie(signedIn.session, config)
         call.respond(SignedInResponse(signedIn.redirectPath, signedIn.session.csrfToken))
     }
@@ -219,6 +248,11 @@ private fun stateCookie(value: String, maxAge: Int, config: IdentityConfig, name
     extensions = mapOf("SameSite" to "Lax"),
 )
 
+/** Expires the sign-up grant once a sign-in used it (or did not need it). */
+private fun ApplicationCall.forgetSignUpGrant(config: IdentityConfig) {
+    if (request.cookies[SIGN_UP_COOKIE] != null) response.cookies.append(stateCookie("", 0, config, SIGN_UP_COOKIE))
+}
+
 private suspend fun ApplicationCall.redirectToLogin(config: IdentityConfig, error: OstromException) =
     redirectToLogin(config, signInError(error))
 
@@ -236,6 +270,7 @@ private fun signInError(error: OstromException): String = when (error) {
     is ProviderRejectedException -> "refused"
     is AccountLinkRequiredException -> "link_required"
     is IdentityTakenException -> "identity_taken"
+    is SignUpClosedException -> "signup_closed"
     else -> throw error
 }
 

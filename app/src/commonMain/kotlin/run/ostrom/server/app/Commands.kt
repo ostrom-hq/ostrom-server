@@ -3,6 +3,7 @@ package run.ostrom.server.app
 
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.http.OstromJson
+import run.ostrom.server.kernel.module.InstanceBootstrapper
 import run.ostrom.server.kernel.module.TestAccountSeeder
 import org.koin.core.Koin
 
@@ -20,13 +21,16 @@ sealed interface Command {
      * @property email The account's e-mail address.
      */
     data class SeedTestAccount(val email: String) : Command
+
+    /** Print the first owner's one-time setup link of an instance without an account (`bootstrap`). */
+    data object Bootstrap : Command
 }
 
 /** A command line or a command the server refuses: exit code 2, with this message. */
 class UsageException(message: String) : IllegalArgumentException(message)
 
 /** The usage line printed with a [UsageException]. */
-const val USAGE: String = "usage: ostrom-server [serve | migrate | seed-test-account <email>]"
+const val USAGE: String = "usage: ostrom-server [serve | migrate | bootstrap | seed-test-account <email>]"
 
 private val EMAIL = Regex("[^@\\s]+@[^@\\s]+\\.[^@\\s]+")
 
@@ -42,6 +46,7 @@ private val EMAIL = Regex("[^@\\s]+@[^@\\s]+\\.[^@\\s]+")
 fun parseCommand(args: List<String>): Command = when {
     args.isEmpty() || args == listOf("serve") -> Command.Serve
     args == listOf("migrate") -> Command.Migrate
+    args == listOf("bootstrap") -> Command.Bootstrap
     args.size == 2 && args[0] == "seed-test-account" -> Command.SeedTestAccount(args[1])
     else -> throw UsageException(USAGE)
 }
@@ -82,4 +87,27 @@ suspend fun seedTestAccount(koin: Koin, source: ConfigSource, email: String): St
     val seeder = koin.getOrNull<TestAccountSeeder>()
         ?: throw UsageException("No module creates test accounts yet: the identity module binds TestAccountSeeder.")
     return OstromJson.encodeToString(seeder.seed(email))
+}
+
+/**
+ * Makes the instance's one-time setup link through the module that binds [InstanceBootstrapper] and returns what
+ * `ostrom-server bootstrap` prints: the link is for the operator who asked for it, on the command's output, never in
+ * a log (TeamCode prints its first administrator's password once on stderr the same way).
+ *
+ * @param koin The server's Koin, every module loaded and migrations verified.
+ *
+ * @return The text to print.
+ *
+ * @throws UsageException When the instance already has an account, or no module makes setup links.
+ */
+suspend fun bootstrapInstance(koin: Koin): String {
+    val bootstrapper = koin.getOrNull<InstanceBootstrapper>()
+        ?: throw UsageException("No module makes setup links: the identity module binds InstanceBootstrapper.")
+    val link = try {
+        bootstrapper.setupLink()
+    } catch (error: IllegalStateException) {
+        throw UsageException(error.message ?: "This instance cannot be bootstrapped.")
+    }
+    return "Open this link to become the first owner of this Ostrom instance. It works once, until ${link.expiresAt}:\n" +
+        link.url
 }

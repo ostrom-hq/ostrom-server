@@ -455,4 +455,22 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
         name = "api_tokens_unlock_request",
         sql = "ALTER TABLE identity_api_tokens ADD COLUMN unlock_request_id TEXT",
     ),
+    // TC-CODE-AUTH-2: the instance's one-time setup link (`ostrom-server bootstrap`), by hash. An instance-level
+    // table, as the sign-in links: no organization exists before it is used. `used_by` is the account it created,
+    // which may create the instance's organizations on an invite-only instance.
+    SchemaMigration(
+        version = 17,
+        name = "setup_links",
+        sql = """
+            CREATE TABLE identity_setup_links (
+                id UUID PRIMARY KEY,
+                token_hash TEXT NOT NULL UNIQUE,
+                created_at TIMESTAMPTZ NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                used_at TIMESTAMPTZ,
+                used_by UUID
+            );
+            CREATE INDEX identity_setup_links_used_by ON identity_setup_links (used_by) WHERE used_by IS NOT NULL
+        """.trimIndent(),
+    ),
 )

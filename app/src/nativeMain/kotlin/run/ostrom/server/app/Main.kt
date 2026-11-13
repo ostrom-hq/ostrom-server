@@ -65,6 +65,7 @@ fun main(args: Array<String>) {
         Command.Serve -> serve()
         Command.Migrate -> migrate()
         is Command.SeedTestAccount -> seed(command.email)
+        Command.Bootstrap -> bootstrap()
     }
 }
 
@@ -157,6 +158,37 @@ private fun migrate() {
         exitProcess(EXIT_FAILURE)
     }
     runBlocking { driver?.close() }
+}
+
+/** Prints the first owner's one-time setup link on stdout (never in a log). */
+private fun bootstrap() {
+    val (source, config) = loadConfig()
+    val logger = JsonLogger(config.logLevel)
+    val modules = serverModules()
+    var driver: Driver? = null
+    var koin: Koin? = null
+    val workers = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    try {
+        val database = connectPostgres(config.database).also { driver = it }
+        runBlocking { database.requireRowLevelSecurity() }
+        val signer = runBlocking { Ed25519InstanceSigner.loadOrCreate(config.signingKeyFile) }
+        val server = serverKoin(kernelModule(logger, database, signer, source), modules).also { koin = it }
+        val text = runBlocking {
+            val migrations = server.get<MigrationRunner>()
+            modules.forEach { migrations.verify(it.name, it.migrations) }
+            modules.forEach { it.initialize(server) }
+            bootstrapInstance(server)
+        }
+        println(text)
+    } catch (error: UsageException) {
+        shutDown(workers, koin, driver)
+        usage(error)
+    } catch (error: Throwable) { // not coroutine-reachable: the process entry point, outside any coroutine.
+        failed(logger, "setup link not made", error)
+        shutDown(workers, koin, driver)
+        exitProcess(EXIT_FAILURE)
+    }
+    shutDown(workers, koin, driver)
 }
 
 /** Creates a QA account and prints it as one JSON line on stdout. */

@@ -50,6 +50,7 @@ import run.ostrom.server.identity.fakes.InMemoryWebSessionsRepository
 import run.ostrom.server.identity.fakes.RecordingAuditLog
 import run.ostrom.server.identity.fakes.ScriptedRateLimiter
 import run.ostrom.server.identity.fakes.SettableClock
+import run.ostrom.server.identity.fakes.openSignUp
 import run.ostrom.server.identity.presentation.confirmPage
 import run.ostrom.server.identity.presentation.toUrl
 import run.ostrom.server.kernel.auth.PrincipalChannel
@@ -85,7 +86,7 @@ class MobileSignInTest {
         SignInMethods(mapOf(IdentityProvider.GITHUB to github, IdentityProvider.GOOGLE to google), email = false)
     private val callback = { provider: IdentityProvider -> "https://api.test/v1/auth/${provider.key}/callback" }
     private val services = SignInServices(generator, hasher, limiter, clock, callback)
-    private val resolve = ResolveUserUseCaseImpl(users, RecordingAuditLog(), clock)
+    private val resolve = ResolveUserUseCaseImpl(users, openSignUp(clock), RecordingAuditLog(), clock)
     private val start = StartOAuthSignInUseCaseImpl(methods, attempts, services)
     private val completeMobile = CompleteMobileSignInUseCaseImpl(methods, attempts, services, resolve, codes)
     private val completeBrowser = CompleteOAuthSignInUseCaseImpl(

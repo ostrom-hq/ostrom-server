@@ -206,6 +206,8 @@ class LinkedGitHubUsers(private val linked: Map<Long, String>) : UsersRepository
 
     override suspend fun loginTaken(login: String): Boolean = unused()
 
+    override suspend fun any(): Boolean = unused()
+
     override suspend fun findByLogin(login: String): User? = unused()
 
     override suspend fun getMany(ids: Collection<Uuid>): List<User> = unused()

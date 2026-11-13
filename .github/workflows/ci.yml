@@ -372,6 +372,8 @@ jobs:
           expect 1 UnsafeDatabaseRoleException -e OSTROM_DATABASE_URL="$OWNER_URL" ostrom-server:ci
           expect 2 OSTROM_ALLOW_TEST_ACCOUNTS -e OSTROM_DATABASE_URL="$APP_URL" ostrom-server:ci \
             seed-test-account qa@ostrom.test
+          # TC-CODE-AUTH-2: an invite-only instance without an account prints the first owner's setup link on demand.
+          expect 0 '/setup#token=osb_' -e OSTROM_DATABASE_URL="$APP_URL" ostrom-server:ci bootstrap
           docker run -d --name ostrom --network host --memory 512m -e OSTROM_DATABASE_URL="$APP_URL" \
             -e OSTROM_SHUTDOWN_DELAY_SECONDS=1 ostrom-server:ci
           for i in $(seq 1 30); do curl -fsS localhost:8080/ready && break; sleep 1; done
@@ -383,6 +385,9 @@ jobs:
           docker logs ostrom
           docker logs ostrom 2>&1 | grep '"msg":"server draining"' | grep '"signal":"SIGTERM"'
           docker logs ostrom 2>&1 | grep '"msg":"server stopped"'
+          # The start says how to bootstrap the instance, and never logs a setup link.
+          docker logs ostrom 2>&1 | grep -q 'run `ostrom-server bootstrap`'
+          if docker logs ostrom 2>&1 | grep -q 'osb_'; then echo "a setup link was logged" >&2; exit 1; fi
           # Under a container limit, the binary leaves the Kotlin/Native heap unbounded: a heap budget (a target and a
           # maximum read from the limit) grew Dispatchers.IO round after round and OOMKilled the server at the third
           # round of CHARGE's bench under 512 MiB (e2e 41693127618, server#266). The pause past the target is
