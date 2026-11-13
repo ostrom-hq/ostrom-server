@@ -30,15 +30,14 @@ class PresentationTest {
     }
 
     @Test
-    fun aServiceKeyIsAPlainMemberUnlessTeamReadOpenedTheRoute() {
-        val admin = Caller(Uuid.random(), Uuid.random(), MemberRole.ADMIN)
+    fun aServiceKeySeesTheOrganizationAsAnAdminOnlyOnTheReadsTeamReadOpens() {
+        val member = Caller(Uuid.random(), Uuid.random(), MemberRole.MEMBER)
         fun principal(kind: PrincipalKind, vararg scopes: String) = AuthenticatedPrincipal("s", kind, scopes.toSet())
         val teamKey = principal(PrincipalKind.SERVICE, "team:read", "usage:read")
-        val member = admin.copy(role = MemberRole.MEMBER)
-        assertEquals(admin, admin.forKey(teamKey, teamRead = true), "A route team:read opens: the administrator's view")
-        assertEquals(member, admin.forKey(teamKey), "Any other route: a plain member")
-        assertEquals(member, admin.forKey(principal(PrincipalKind.SERVICE, "usage:read"), teamRead = true))
-        assertEquals(admin, admin.forKey(principal(PrincipalKind.USER, "user:*")), "A person keeps their role")
+        assertEquals(member.copy(role = MemberRole.ADMIN), member.forKey(teamKey, teamRead = true))
+        assertEquals(member, member.forKey(teamKey), "Any other route: the plain member the resolver gave")
+        assertEquals(member, member.forKey(principal(PrincipalKind.SERVICE, "usage:read"), teamRead = true))
+        assertEquals(member, member.forKey(principal(PrincipalKind.USER, "team:read"), teamRead = true))
     }
 
     @Test

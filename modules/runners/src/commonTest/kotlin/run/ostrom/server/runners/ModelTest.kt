@@ -151,6 +151,9 @@ class ModelTest {
         assertFalse(TestOrgResolver.callerOf(key(CLOUD_WRITE), CLOUD_WRITE).admin)
         assertFalse(TestOrgResolver.callerOf(key(CLOUD_READ), CLOUD_READ).admin)
         assertFailsWith<MissingScopeException> { TestOrgResolver.callerOf(key("team:read"), CLOUD_READ) }
+        // Only a service key carries it: a person's token naming it is not allowed more.
+        val named = AuthenticatedPrincipal("dana", PrincipalKind.USER, setOf("cloud:admin"))
+        assertFailsWith<MissingScopeException> { TestOrgResolver.callerOf(named, CLOUD_READ) }
         // A person who is an administrator keeps theirs.
         val person = AuthenticatedPrincipal("dana", PrincipalKind.USER, setOf("user:*"))
         assertTrue(TestOrgResolver.callerOf(person, CLOUD_READ).admin)

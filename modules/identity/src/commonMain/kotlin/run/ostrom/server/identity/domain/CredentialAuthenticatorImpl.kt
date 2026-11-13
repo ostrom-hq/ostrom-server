@@ -72,7 +72,8 @@ class CredentialAuthenticatorImpl(
                     scopes = granted,
                     credentialId = stored.id.toString(),
                     orgId = stored.orgId?.toString(),
-                    onBehalfOf = stored.userId.toString().takeIf { granted.none { it in CI_SERVICE_KEY_SCOPES } },
+                    onBehalfOf = stored.userId.toString()
+                        .takeIf { granted.isNotEmpty() && granted.none { it in CI_SERVICE_KEY_SCOPES } },
                 )
             }
             // A person's tokens; the one of `ostrom login --admin` is bound to its organization (`orgId`).

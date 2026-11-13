@@ -259,6 +259,7 @@ class CredentialAuthenticatorTest {
         )
         assertEquals(null, authenticator.authenticate("oss_x")?.orgId, "A row without organization binds to none")
         assertEquals(corrupt.id.toString(), authenticator.authenticate("oss_x")?.subjectId)
+        assertNull(authenticator.authenticate("oss_x")?.onBehalfOf, "A row without a scope of the catalogue: nobody")
     }
 
     @Test

@@ -5,6 +5,7 @@ import run.ostrom.server.artifacts.domain.ArtifactLocations
 import run.ostrom.server.artifacts.domain.InvalidArtifactRequestException
 import run.ostrom.server.artifacts.domain.MissingScopeException
 import run.ostrom.server.artifacts.domain.NotAMemberException
+import run.ostrom.server.artifacts.domain.SignInRequiredException
 import run.ostrom.server.artifacts.fakes.ALICE
 import run.ostrom.server.artifacts.fakes.ORG_A
 import run.ostrom.server.artifacts.fakes.TestOrgResolver
@@ -90,7 +91,7 @@ class ConfigAndCallersTest {
         val key = AuthenticatedPrincipal(dave, PrincipalKind.SERVICE, setOf(ARTIFACTS_WRITE))
         // Its creator is an administrator: the key reads and writes as a member, never as the administrator.
         assertFalse(TestOrgResolver.artifactCallerOf(key, ARTIFACTS_WRITE).admin)
-        assertFailsWith<MissingScopeException> { TestOrgResolver.artifactCallerOf(key, ARTIFACTS_MANAGE) }
+        assertFailsWith<SignInRequiredException> { TestOrgResolver.artifactCallerOf(key, ARTIFACTS_MANAGE) }
         // A person signed in with the scope does it, as an administrator.
         val person = AuthenticatedPrincipal(dave, PrincipalKind.USER, setOf(ARTIFACTS_WRITE))
         assertTrue(TestOrgResolver.artifactCallerOf(person, ARTIFACTS_MANAGE).admin)

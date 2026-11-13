@@ -5,6 +5,7 @@ import run.ostrom.server.artifacts.domain.ArtifactCaller
 import run.ostrom.server.artifacts.domain.InvalidArtifactRequestException
 import run.ostrom.server.artifacts.domain.MissingScopeException
 import run.ostrom.server.artifacts.domain.NotAMemberException
+import run.ostrom.server.artifacts.domain.SignInRequiredException
 import run.ostrom.server.artifacts.domain.UploadedFile
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.OrgRole
@@ -40,13 +41,14 @@ const val ARTIFACTS_MANAGE = "artifacts:manage"
  * @param scope [ARTIFACTS_READ], [ARTIFACTS_WRITE], or [ARTIFACTS_MANAGE] (which needs [ARTIFACTS_WRITE] and refuses a
  *   service key).
  *
- * @throws MissingScopeException When the credential lacks the scope, or is a service key asking [ARTIFACTS_MANAGE].
+ * @throws MissingScopeException When the credential lacks the scope.
+ * @throws SignInRequiredException When it is a service key asking [ARTIFACTS_MANAGE].
  * @throws NotAMemberException When it acts for no organization.
  */
 suspend fun PrincipalOrgResolver.artifactCallerOf(principal: AuthenticatedPrincipal, scope: String): ArtifactCaller {
     val needed = if (scope == ARTIFACTS_MANAGE) ARTIFACTS_WRITE else scope
     if (!principal.allowsArtifacts(needed)) throw MissingScopeException(needed)
-    if (scope == ARTIFACTS_MANAGE && principal.kind == PrincipalKind.SERVICE) throw MissingScopeException(scope)
+    if (scope == ARTIFACTS_MANAGE && principal.kind == PrincipalKind.SERVICE) throw SignInRequiredException()
     val member = resolve(principal, null) ?: throw NotAMemberException()
     // A service key reads and writes the artifacts of its creator, never as an administrator.
     val administers = member.role in ADMIN_ROLES && principal.kind != PrincipalKind.SERVICE

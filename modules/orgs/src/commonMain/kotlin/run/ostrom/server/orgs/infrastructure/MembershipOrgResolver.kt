@@ -20,9 +20,9 @@ import kotlin.uuid.Uuid
  * (a removed member loses access at once, whatever token they hold).
  * - Only a person (`USER`) is resolved: an agent, a device or a service is never a member (audit A2). One exception: a
  *   service key that holds member scopes ([AuthenticatedPrincipal.onBehalfOf]) acts as its creator, in the one
- *   organization it is bound to, as a plain member: it never has more than its creator, nor an administrator's role
- *   unless it holds a reserved scope ([ServiceKeyScopes.RESERVED]), and then only while its creator is an owner or an
- *   admin. A creator who left the organization leaves the key with none, at the next request.
+ *   organization it is bound to, always as a plain member: the routes a reserved scope opens
+ *   ([ServiceKeyScopes.RESERVED]) raise it themselves, and the key holding one is resolved only while its creator is an
+ *   owner or an admin. A creator who left the organization leaves the key with none, at the next request.
  * - The organization is the one the path names, else the one the `Ostrom-Org` header names, else the one the token
  *   is bound to. A token bound to one organization only acts in that one; naming another resolves to nobody.
  * - When nothing names it, the caller's only organization is taken (no ambiguity is possible); with several, the
@@ -57,15 +57,15 @@ class MembershipOrgResolver(
         return member?.let { actingAs(principal, OrgPrincipal(it.orgId, it.id, it.role)) }
     }
 
-    /** A person acts with their role; a key as a plain member, unless it holds a reserved scope its creator may use. */
+    /**
+     * A person acts with their role; a key always as a plain member, and not at all with a reserved scope when its
+     * creator is no longer an owner or an admin.
+     */
     private fun actingAs(principal: AuthenticatedPrincipal, member: OrgPrincipal): OrgPrincipal? {
         if (principal.kind != PrincipalKind.SERVICE) return member
         val reserved = principal.scopes.any { it in ServiceKeyScopes.RESERVED }
-        return when {
-            !reserved -> member.copy(role = OrgRole.MEMBER)
-            member.role == OrgRole.OWNER || member.role == OrgRole.ADMIN -> member
-            else -> null
-        }
+        val administers = member.role == OrgRole.OWNER || member.role == OrgRole.ADMIN
+        return if (reserved && !administers) null else member.copy(role = OrgRole.MEMBER)
     }
 
     override suspend fun profile(orgId: Uuid): OrgProfile? =

@@ -76,8 +76,10 @@ fun Route.artifactsRoutes(dependencies: ArtifactsRoutesDependencies) = with(depe
             call.respond(toResponse(read.get(caller, artifactId(params.id))))
         }
         patch<ArtifactsApi.Id> { params ->
-            val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), ARTIFACTS_MANAGE)
             val request = call.receive<UpdateArtifactRequest>()
+            // A service key renames, but changing an access level is for a person signed in.
+            val scope = if (request.access == null) ARTIFACTS_WRITE else ARTIFACTS_MANAGE
+            val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), scope)
             call.respond(toResponse(manage.update(caller, artifactId(params.id), request.title, request.access)))
         }
         delete<ArtifactsApi.Id> { params ->

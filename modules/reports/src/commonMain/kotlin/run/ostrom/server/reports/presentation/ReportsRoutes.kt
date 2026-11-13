@@ -49,9 +49,10 @@ private suspend fun ApplicationCall.viewer(dependencies: ReportsRoutesDependenci
         throw OstromException(ErrorKind.FORBIDDEN, "This credential may not read this report.")
     }
     val member = requireOrgPrincipal(dependencies.orgs, null)
-    // A service key sees the whole organization only through `team:read`: any other scope reads as a plain member.
-    val asMember = principal.kind == PrincipalKind.SERVICE && ServiceKeyScopes.TEAM_READ !in principal.scopes
-    return Viewer.of(if (asMember) member.copy(role = OrgRole.MEMBER) else member)
+    // A service key is a plain member, and sees the whole organization only through `team:read` (its creator is
+    // checked to still be an admin by the resolver).
+    val team = principal.kind == PrincipalKind.SERVICE && ServiceKeyScopes.TEAM_READ in principal.scopes
+    return Viewer.of(if (team) member.copy(role = OrgRole.ADMIN) else member)
 }
 
 /** The scopes the reports accept, any one of them; a person's browser or app session (`user:*`) passes them all. */

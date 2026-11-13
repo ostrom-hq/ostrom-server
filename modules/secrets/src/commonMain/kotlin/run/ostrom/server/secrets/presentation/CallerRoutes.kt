@@ -50,13 +50,13 @@ suspend fun ApplicationCall.requireCaller(
 }
 
 /**
- * What a service key may do as its creator: a plain member, whatever its creator's role, unless the route is one of
- * the reads `team:read` opens ([teamRead]) and the key holds it, which see the organization as an administrator does.
- * A person's credential is unchanged.
+ * What a service key may do as its creator: a plain member, as the resolver gives it, unless the route is one of the
+ * reads `team:read` opens ([teamRead]) and the key holds it: those see the organization as an administrator does (the
+ * resolver has checked that its creator still is one). A person's credential is unchanged.
  */
 fun Caller.forKey(principal: AuthenticatedPrincipal, teamRead: Boolean = false): Caller =
-    if (principal.kind == PrincipalKind.SERVICE && !(teamRead && ServiceKeyScopes.TEAM_READ in principal.scopes)) {
-        copy(role = MemberRole.MEMBER)
+    if (principal.kind == PrincipalKind.SERVICE && teamRead && ServiceKeyScopes.TEAM_READ in principal.scopes) {
+        copy(role = MemberRole.ADMIN)
     } else {
         this
     }

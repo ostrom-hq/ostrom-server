@@ -30,7 +30,7 @@ private const val ALL_USER_SCOPES = "user:*"
 fun AuthenticatedPrincipal.allowsCloud(scope: String): Boolean =
     scope in scopes ||
         (scope == CLOUD_READ && CLOUD_WRITE in scopes) ||
-        ServiceKeyScopes.CLOUD_ADMIN in scopes ||
+        (kind == PrincipalKind.SERVICE && ServiceKeyScopes.CLOUD_ADMIN in scopes) ||
         (kind == PrincipalKind.USER && ALL_USER_SCOPES in scopes)
 
 /**
@@ -48,9 +48,13 @@ fun AuthenticatedPrincipal.allowsCloud(scope: String): Boolean =
 suspend fun PrincipalOrgResolver.callerOf(principal: AuthenticatedPrincipal, scope: String): Caller {
     if (!principal.allowsCloud(scope)) throw MissingScopeException(scope)
     val member = resolve(principal, null) ?: throw NotAMemberException()
-    // A service key is an administrator over the cloud sessions only through `cloud:admin`, and only then.
-    val administers = member.role in ADMIN_ROLES &&
-        (principal.kind != PrincipalKind.SERVICE || ServiceKeyScopes.CLOUD_ADMIN in principal.scopes)
+    // A service key is a plain member, and an administrator over the cloud sessions only through `cloud:admin` (the
+    // resolver has checked that its creator still is one).
+    val administers = if (principal.kind == PrincipalKind.SERVICE) {
+        ServiceKeyScopes.CLOUD_ADMIN in principal.scopes
+    } else {
+        member.role in ADMIN_ROLES
+    }
     return Caller(member.orgId, member.memberId.toString(), administers)
 }
 

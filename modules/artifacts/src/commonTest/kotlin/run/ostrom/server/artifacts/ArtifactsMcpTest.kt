@@ -139,7 +139,7 @@ class ArtifactsMcpTest {
         assertTrue(invited.text().startsWith("\"Plan\""))
         val refused = client.call("share", """{"artifact":"$id","access":"link"}""", "writer")
         assertTrue(refused.isError())
-        assertEquals("This credential lacks the artifacts:manage scope.", refused.text())
+        assertTrue("never changes an access level" in refused.text(), refused.text())
     }
 
     @Test

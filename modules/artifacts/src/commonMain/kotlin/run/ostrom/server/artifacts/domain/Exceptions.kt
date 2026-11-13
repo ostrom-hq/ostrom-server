@@ -36,6 +36,12 @@ class ArtifactTooLargeException(message: String) : OstromException(ErrorKind.PAY
 /** The caller acts for no organization: answered like an unknown organization. */
 class NotAMemberException : OstromException(ErrorKind.NOT_FOUND, "Organization not found.")
 
+/** A service key asks what only a person signed in does (change an access level, delete an artifact): 403. */
+class SignInRequiredException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "A service key never changes an access level nor deletes an artifact: a person signed in does.",
+)
+
 /**
  * The caller's credential lacks the scope the action needs.
  *

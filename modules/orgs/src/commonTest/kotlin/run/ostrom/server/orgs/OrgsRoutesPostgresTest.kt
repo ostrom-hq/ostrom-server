@@ -2,14 +2,18 @@
 package run.ostrom.server.orgs
 
 import run.ostrom.server.identity.IdentityModule
+import run.ostrom.server.identity.domain.ApiToken
+import run.ostrom.server.identity.domain.ApiTokensRepository
 import run.ostrom.server.identity.domain.CreatePersonalTokenUseCase
 import run.ostrom.server.identity.domain.IdentityProvider
 import run.ostrom.server.identity.domain.IssueAgentTokenUseCase
 import run.ostrom.server.identity.domain.Mail
 import run.ostrom.server.identity.domain.MailSender
 import run.ostrom.server.identity.domain.ResolveUserUseCase
+import run.ostrom.server.identity.domain.SecretHasher
 import run.ostrom.server.identity.domain.StartWebSessionUseCase
 import run.ostrom.server.identity.domain.StartedSession
+import run.ostrom.server.identity.domain.TokenKind
 import run.ostrom.server.identity.domain.User
 import run.ostrom.server.identity.domain.VerifiedIdentity
 import run.ostrom.server.identity.presentation.MeOrganizationResponse
@@ -20,6 +24,7 @@ import run.ostrom.server.kernel.auth.ORG_HEADER
 import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.auth.SESSION_COOKIE
 import run.ostrom.server.orgs.domain.Member
+import run.ostrom.server.orgs.domain.MembersRepository
 import run.ostrom.server.orgs.domain.Org
 import run.ostrom.server.orgs.domain.OrgsRepository
 import run.ostrom.server.orgs.presentation.CreateLinkRequest
@@ -50,6 +55,7 @@ import io.ktor.client.request.header
 import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -117,6 +123,51 @@ class OrgsRoutesPostgresTest {
         }
 
     private fun tokenOf(link: String) = link.substringAfter("#token=")
+
+    /** A service key row of [org], made by [creator], as `POST /api/v1/service-keys` stores it. */
+    private suspend fun TestServer.serviceKey(creator: User, org: Uuid, vararg scopes: String): String {
+        val secret = "${TokenKind.SERVICE.prefix}_" + Uuid.random().toHexString()
+        val now = Clock.System.now()
+        val row = ApiToken(
+            Uuid.random(), creator.id, org, "ci", TokenKind.SERVICE, scopes.toSet(), secret.takeLast(4), null, now,
+            now + 8.hours, null, null,
+        )
+        koin.get<ApiTokensRepository>().create(row, koin.get<SecretHasher>().hash(secret))
+        return secret
+    }
+
+    @Test
+    fun aTeamReadKeyListsTheMemberDirectoryOnlyWhileItsCreatorIsAnAdminAndNeverOfAnotherOrganization() =
+        serverTest(modules, overrides) { server ->
+            val (ada, _) = server.signIn("ada")
+            val (bob, _) = server.signIn("bob")
+            val orgs = server.koin.get<OrgsRepository>()
+            val now = Clock.System.now()
+            val acme = Org(Uuid.random(), "acme", "Acme", null, null, now)
+            val adaInAcme = Member(Uuid.random(), acme.id, ada.id, OrgRole.OWNER, now)
+            orgs.create(acme, adaInAcme) { false }
+            val other = Org(Uuid.random(), "other", "Other", null, null, now)
+            orgs.create(other, Member(Uuid.random(), other.id, bob.id, OrgRole.OWNER, now)) { false }
+            val directory = server.serviceKey(ada, acme.id, "team:read")
+            suspend fun listed(org: String, secret: String) =
+                server.client.get("/api/v1/orgs/$org/members") { bearerAuth(secret) }
+
+            val seen = listed("acme", directory)
+            assertEquals(HttpStatusCode.OK, seen.status, seen.bodyAsText())
+            assertEquals(listOf("ada"), seen.body<MembersResponse>().items.map { it.login })
+            assertEquals(HttpStatusCode.NotFound, listed("other", directory).status, "Bound to its own organization")
+            // Any other scope does not open the directory, and the key still is no person: no other route of it.
+            val usage = server.serviceKey(ada, acme.id, "usage:read")
+            assertEquals(HttpStatusCode.Forbidden, listed("acme", usage).status)
+            val profile = server.client.get("/api/v1/orgs/acme") { bearerAuth(directory) }
+            assertEquals(HttpStatusCode.Forbidden, profile.status)
+            // Its creator is demoted: the key stops at the next request, with no revocation.
+            server.koin.get<MembersRepository>().changeRole(acme.id, adaInAcme.id, OrgRole.MEMBER)
+            assertEquals(HttpStatusCode.NotFound, listed("acme", directory).status)
+            // Its creator leaves: nothing resolves.
+            server.koin.get<MembersRepository>().remove(acme.id, adaInAcme.id)
+            assertEquals(HttpStatusCode.NotFound, listed("acme", directory).status)
+        }
 
     @Test
     fun meShowsTheMembershipOfTheOrganizationTheHeaderNamesAndIgnoresAnyOther() =

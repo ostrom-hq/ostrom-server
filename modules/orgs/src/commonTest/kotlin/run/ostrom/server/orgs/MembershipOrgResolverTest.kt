@@ -45,7 +45,7 @@ class MembershipOrgResolverTest {
     )
 
     @Test
-    fun aKeyOfMemberScopesActsAsItsCreatorAsAPlainMember() = runTest {
+    fun aKeyOfMemberScopesActsAsItsCreatorAsAPlainMemberWhateverTheirRole() = runTest {
         val owner = join(acme, OrgRole.OWNER)
         val expected = OrgPrincipal(acme, owner.id, OrgRole.MEMBER)
         assertEquals(expected, resolver.resolve(key(owner, "inference:use"), null))
@@ -53,15 +53,15 @@ class MembershipOrgResolverTest {
     }
 
     @Test
-    fun aKeyOfAReservedScopeKeepsTheRoleOfACreatorWhoIsStillAnOwnerOrAnAdmin() = runTest {
+    fun aKeyOfAReservedScopeStillActsAsAPlainMemberAndOnlyWhileItsCreatorIsAnOwnerOrAnAdmin() = runTest {
         val owner = join(acme, OrgRole.OWNER)
         val admin = join(acme, OrgRole.ADMIN)
-        assertEquals(OrgPrincipal(acme, owner.id, OrgRole.OWNER), resolver.resolve(key(owner, "team:read"), null))
-        assertEquals(OrgPrincipal(acme, admin.id, OrgRole.ADMIN), resolver.resolve(key(admin, "cloud:admin"), null))
+        assertEquals(OrgPrincipal(acme, owner.id, OrgRole.MEMBER), resolver.resolve(key(owner, "team:read"), null))
+        assertEquals(OrgPrincipal(acme, admin.id, OrgRole.MEMBER), resolver.resolve(key(admin, "cloud:admin"), null))
         // The creator is demoted: the key stops at the next request, without a revocation.
         store.members[admin.id] = admin.copy(role = OrgRole.MEMBER)
         assertNull(resolver.resolve(key(admin, "team:read", "usage:read"), null))
-        // The member scopes of the same key's creator still work.
+        // The member scopes of the same creator still work, as a plain member.
         assertEquals(OrgPrincipal(acme, admin.id, OrgRole.MEMBER), resolver.resolve(key(admin, "usage:read"), null))
     }
 
