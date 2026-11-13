@@ -156,7 +156,10 @@ object WorkflowRunsModule : ServerModule {
         route.workflowRunsRoutes(koin.get())
     }
 
-    /** Workflow runs, and the notifications the hooks ask for (`/api/v1/notifications`). */
+    /**
+     * Workflow runs, the notifications the hooks ask for (`/api/v1/notifications`), and the delivery of an agent step
+     * (`deliverRun`, `deliverWorkflowSession`, `pendingWorkflowSession` and the `ostrom-workflow` MCP server).
+     */
     override suspend fun features(koin: Koin): Set<String> =
-        setOf(ServerFeatures.WORKFLOWS, ServerFeatures.NOTIFICATIONS)
+        setOf(ServerFeatures.WORKFLOWS, ServerFeatures.NOTIFICATIONS, ServerFeatures.WORKFLOWS_DELIVER)
 }

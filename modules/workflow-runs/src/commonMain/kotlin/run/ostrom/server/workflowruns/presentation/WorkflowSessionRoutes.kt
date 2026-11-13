@@ -11,11 +11,15 @@ import run.ostrom.server.workflowruns.domain.models.CredentialScopeException
 import run.ostrom.server.workflowruns.domain.models.InvalidRunException
 import run.ostrom.server.workflowruns.domain.models.RunSessionNotFoundException
 import run.ostrom.server.workflowruns.domain.usecases.StepCaller
+import io.ktor.http.ContentType
+import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.receive
+import io.ktor.server.request.receiveText
 import io.ktor.server.resources.get
 import io.ktor.server.resources.post
 import io.ktor.server.response.respond
+import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
 import kotlin.uuid.Uuid
 
@@ -23,8 +27,9 @@ import kotlin.uuid.Uuid
  * The agent step of a session (`workflows.deliver.v1`): its delivery (`deliverWorkflowSession`) and whether it still
  * waits for one (`pendingWorkflowSession`, the Stop hook). The session's agent token, with `workflow:session`, acts on
  * its launch's own cloud session whatever the request names; the run's starter names it, with a person's credential
- * that writes workflows. A service key, or an agent token issued before deliveries, is `credential_scope`. Mounted
- * inside the authenticated routes of [workflowRunsRoutes].
+ * that writes workflows. A service key, or an agent token issued before deliveries, is `credential_scope`. The
+ * `ostrom-workflow` MCP server (`workflowsMcp`, [WorkflowsMcpServer]) delivers the same way, for the session the CLI's
+ * relay names. Mounted inside the authenticated routes of [workflowRunsRoutes].
  *
  * @param dependencies The use cases.
  */
@@ -37,6 +42,16 @@ internal fun Route.workflowSessionRoutes(dependencies: WorkflowRunsRoutesDepende
     get<WorkflowSessionPendingApi> { params ->
         val (caller, session) = stepCallerOf(call, params.sessionId)
         call.respond(pendingSession(caller, session))
+    }
+    val mcp = WorkflowsMcpServer(deliverSession)
+    post<WorkflowsMcpApi> { params ->
+        // The credential is read when the tool is called: its refusal is the tool's error, which the agent reads.
+        val reply = mcp.handle(call.receiveText()) { stepCallerOf(call, params.session) }
+        if (reply == null) {
+            call.respond(HttpStatusCode.Accepted)
+        } else {
+            call.respondText(reply.toString(), ContentType.Application.Json)
+        }
     }
 }
 
