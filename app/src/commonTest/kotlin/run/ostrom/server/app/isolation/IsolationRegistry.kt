@@ -168,6 +168,7 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/capacity" to Case.Target(),
     "GET /api/v1/policy/models" to Case.Target(),
     "PUT /api/v1/policy/models" to Case.Target(body = """{"default": ["claude-sonnet-4-5"]}""", admin = true),
+    "GET /api/v1/inference/queue" to Case.Target(),
     "GET /api/v1/inference/settings" to Case.Target(),
     "PUT /api/v1/inference/settings" to Case.Target(body = "{}", admin = true),
     "GET /api/v1/inference/v1/models" to Case.Target(),

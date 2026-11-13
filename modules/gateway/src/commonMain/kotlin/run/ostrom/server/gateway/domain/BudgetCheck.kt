@@ -39,6 +39,14 @@ class BudgetCheck(
     }
 
     /**
+     * Drops the hold of a call that waits for its turn: it asks again ([check]) when it comes.
+     *
+     * @param caller The member.
+     * @param callId The call.
+     */
+    suspend fun release(caller: Caller, callId: Uuid) = guard.release(caller.orgId, callId)
+
+    /**
      * The most a call may cost.
      *
      * @param provider Where it goes: only its price family counts.

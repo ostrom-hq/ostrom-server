@@ -160,6 +160,10 @@ class InMemoryUsageRepository : UsageRepository {
         holds.remove(event.id)
     }
 
+    override suspend fun dropHold(orgId: Uuid, callId: Uuid) {
+        holds.remove(callId)
+    }
+
     override suspend fun holdWithin(hold: SpendHold, limits: SpendLimits, window: HoldWindow): Admission {
         failure?.let { throw it }
         val live = holds.values.filter { (other, expires) ->

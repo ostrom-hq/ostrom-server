@@ -70,8 +70,10 @@ class AccountLease internal constructor(
  *
  * @property reason A message safe for the agent.
  * @property retryAt When an account frees up, if known.
+ * @property busy Whether accounts that may serve the member are open but full: a slot frees up when a call ends, so
+ *   the gateway's admission queue waits for it, where an account at its limit or cooling down is refused at once.
  */
-data class PoolRefusal(val reason: String, val retryAt: Instant?)
+data class PoolRefusal(val reason: String, val retryAt: Instant?, val busy: Boolean = false)
 
 /** The result of a lease. */
 sealed interface LeaseResult {
@@ -154,6 +156,7 @@ class SharedAccountPool(
                 refused(
                     "Every shared ${request.provider.wire} account is busy.",
                     candidates.retryAt ?: (now + BUSY_RETRY),
+                    busy = true,
                 )
             else -> serve(candidates.open.first { it.first.id == slot.accountId }.first, slot, tried)
         }
@@ -289,7 +292,8 @@ private fun cooldownEnd(observed: List<QuotaWindow>, headers: Map<String, String
     return reset ?: (now + (retryAfter ?: SharedAccountPool.DEFAULT_COOLDOWN))
 }
 
-private fun refused(reason: String, retryAt: Instant?) = LeaseResult.Refused(PoolRefusal(reason, retryAt))
+private fun refused(reason: String, retryAt: Instant?, busy: Boolean = false) =
+    LeaseResult.Refused(PoolRefusal(reason, retryAt, busy))
 
 /**
  * The accounts of [ready] that [memberId] may use: lent to the whole org, to them by name, or to a group they are in

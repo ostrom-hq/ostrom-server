@@ -47,6 +47,7 @@ data class UsageCursor(val at: Instant, val id: Uuid?)
 data class UsageWindow(val orgId: Uuid, val memberId: Uuid?, val since: Instant, val until: Instant? = null)
 
 /** The ledger. Every read is scoped by org (or by pooled account) and bounded. */
+@Suppress("TooManyFunctions") // The one storage port of the module: its writes, holds, sums and reads.
 interface UsageRepository {
     /**
      * Writes events of one org, all in one statement.
@@ -76,6 +77,15 @@ interface UsageRepository {
      * @return The answer of [SpendLimits.admit]; the hold is written only when [Admission.Admitted].
      */
     suspend fun holdWithin(hold: SpendHold, limits: SpendLimits, window: HoldWindow): Admission
+
+    /**
+     * Drops a call's hold without recording it: the call waits in the gateway's admission queue and holds nothing
+     * meanwhile; it asks again ([holdWithin]) when its turn comes. Nothing when it holds none.
+     *
+     * @param orgId The org.
+     * @param callId The call.
+     */
+    suspend fun dropHold(orgId: Uuid, callId: Uuid)
 
     /**
      * Sums the cost of the org, or of one member, since a time.

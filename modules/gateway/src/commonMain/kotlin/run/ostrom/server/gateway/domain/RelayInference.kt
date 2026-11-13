@@ -79,8 +79,10 @@ interface RelayInferenceUseCase {
  * @param observer Metrics and Langfuse, once a call is recorded.
  * @param clock The time.
  * @param tracer The span of each call, from before its first try to its record.
+ * @param admission The admission queue: a call waits there for a busy account or its member's limit. Without one, a
+ *   call no account can take now is refused with 429 `no_capacity`.
  */
-@Suppress("LongParameterList") // Six collaborators and the tracer, named at the composition root.
+@Suppress("LongParameterList") // Six collaborators, the tracer and the queue, named at the composition root.
 class RelayInferenceUseCaseImpl(
     private val planner: InferencePlanner,
     private val upstream: InferenceUpstream,
@@ -89,10 +91,16 @@ class RelayInferenceUseCaseImpl(
     private val observer: ModelCallObserver,
     private val clock: Clock,
     private val tracer: ModelCallTracer = NoModelCallTracer,
+    private val admission: AwaitAdmissionUseCase? = null,
 ) : RelayInferenceUseCase {
     override suspend fun invoke(caller: Caller, call: InferenceCall, responder: InferenceResponder) {
         val started = clock.now()
         val exchange = Exchange(caller, call, responder, started, planner.configOf(caller), trace())
+        val queue = admission
+        if (queue == null) relay(exchange) else queue.holding(exchange.request) { relay(exchange) }
+    }
+
+    private suspend fun relay(exchange: Exchange) {
         // Every exit records the call once: its record settles its budget hold and ends its trace.
         try {
             var tries = 1
@@ -134,20 +142,42 @@ class RelayInferenceUseCaseImpl(
     ) {
         val id: Uuid = Uuid.random()
 
+        /** The call in the admission queue: its id is the call's. */
+        val request = AdmissionRequest(
+            id = id,
+            orgId = caller.orgId,
+            memberId = caller.memberId,
+            scope = call.protocol.shared.let { shared ->
+                if (shared != null && org.settings.useSharedAccounts) shared.wire else KEY_SCOPE
+            },
+            workload = call.workload,
+            limit = org.settings.memberConcurrency[caller.memberId.toString()],
+        )
+
         /** Whether the call is recorded: a failure after its record must not record it again. */
         var recorded: Boolean = false
 
         /** One try: the finished call, or null to try again on another account. */
-        suspend fun attempt(tries: Int): CallState? = when (val plan = planner.plan(caller, call, org, id)) {
-            is InferencePlan.Refused -> refuse(plan)
-            is InferencePlan.Ready -> send(plan, tries)
+        suspend fun attempt(tries: Int): CallState? {
+            // After its wait in the queue; a later try already runs and goes back to wait first.
+            val queue = admission
+            val plan = if (queue == null) {
+                planner.plan(caller, call, org, id)
+            } else {
+                queue(request, running = tries > 1) { planner.plan(caller, call, org, id) }
+            }
+            return when (plan) {
+                is InferencePlan.Refused -> refuse(plan.refusal, plan.model)
+                is InferencePlan.Busy -> refuse(plan.refusal, plan.model)
+                is InferencePlan.Ready -> send(plan, tries)
+            }
         }
 
-        private suspend fun refuse(plan: InferencePlan.Refused): CallState {
-            responder.refuse(call.protocol, plan.refusal)
-            return CallState(this, plan.model, null, null).apply {
-                status = plan.refusal.kind.status
-                outcome = plan.refusal.kind.name.lowercase()
+        private suspend fun refuse(refusal: InferenceRefusal, model: String): CallState {
+            responder.refuse(call.protocol, refusal)
+            return CallState(this, model, null, null).apply {
+                status = refusal.kind.status
+                outcome = refusal.kind.code
             }
         }
 
@@ -353,6 +383,9 @@ class RelayInferenceUseCaseImpl(
     companion object {
         /** Tries per call when shared accounts refuse. */
         const val MAX_ATTEMPTS = 3
+
+        /** The queue scope of a call no shared account serves. */
+        const val KEY_SCOPE = "key"
 
         /** A non-streamed answer larger than this is relayed but not metered. */
         const val MAX_BODY = 8 * 1024 * 1024

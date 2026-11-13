@@ -47,10 +47,15 @@ class LedgerSpendGuardTest {
 
     private var answer: Admission = Admission.Admitted
     private val admitted = mutableListOf<Triple<SpendHold, SpendLimits, Instant>>()
+    private val released = mutableListOf<Uuid>()
     private val admission = object : SpendAdmission {
         override suspend fun admit(hold: SpendHold, limits: SpendLimits, since: Instant): Admission {
             admitted += Triple(hold, limits, since)
             return answer
+        }
+
+        override suspend fun release(orgId: Uuid, callId: Uuid) {
+            released += callId
         }
     }
 
@@ -58,6 +63,12 @@ class LedgerSpendGuardTest {
 
     private suspend fun check(reserve: Long = 1_234_567, workflowId: String? = null) =
         spendGuard.check(SpendRequest(orgA, member, callId, reserve, workflowId))
+
+    @Test
+    fun aCallThatWaitsReleasesItsHoldThroughTheLedger() = runTest {
+        spendGuard.release(orgA, callId)
+        assertEquals(listOf(callId), released, "The ledger drops the hold")
+    }
 
     @Test
     fun withoutALimitACallGoesOnTheCachedDecisionAlone() = runTest {

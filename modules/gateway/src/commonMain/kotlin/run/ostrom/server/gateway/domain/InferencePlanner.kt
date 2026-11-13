@@ -5,6 +5,7 @@ import run.ostrom.server.secrets.domain.Caller
 import run.ostrom.server.secrets.domain.RevealSecretsUseCase
 import run.ostrom.server.secrets.domain.SecretUnreadableException
 import run.ostrom.server.sharing.domain.LeaseResult
+import run.ostrom.server.sharing.domain.PoolRefusal
 import run.ostrom.server.sharing.domain.SharedAccountPool
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -52,7 +53,10 @@ class InferencePlanner(
     suspend fun plan(caller: Caller, call: InferenceCall, org: GatewayOrgConfig, callId: Uuid): InferencePlan {
         val body = RequestBody.read(call.body, org.policy.default)
             ?: return refused(RefusalKind.INVALID, "The request body must be a JSON object naming a model.", "")
-        return admit(caller, call, body, org.policy, callId) ?: route(caller, call, body, org.settings)
+        val plan = admit(caller, call, body, org.policy, callId) ?: route(caller, call, body, org.settings)
+        // A call that waits for a busy account holds no budget meanwhile: it is taken again on its next try.
+        if (plan is InferencePlan.Busy) spend.release(caller, callId)
+        return plan
     }
 
     /** The refusal of a model the org does not allow, or of a member over budget; null when the call may go. */
@@ -88,29 +92,29 @@ class InferencePlanner(
             ?.let { pool.lease(caller.orgId, caller.memberId, it, call.sessionId) }
         return when (lease) {
             is LeaseResult.Leased -> requests.shared(call, body, lease.lease)
-            is LeaseResult.Refused -> byKey(caller, call, body, org, lease.refusal.retryAt)
+            is LeaseResult.Refused -> byKey(caller, call, body, org, lease.refusal)
             null -> byKey(caller, call, body, org, null)
         }
     }
 
-    /** The call on an API key; without one, busy shared accounts answer 429 and none at all 503. */
+    /**
+     * The call on an API key; without one, busy shared accounts make the call wait ([InferencePlan.Busy], its budget
+     * hold dropped meanwhile), accounts at their limit answer 429 and none at all 503.
+     */
     private suspend fun byKey(
         caller: Caller,
         call: InferenceCall,
         body: RequestBody,
         org: GatewaySettings,
-        busyUntil: Instant?,
+        pool: PoolRefusal?,
     ): InferencePlan {
         val provider = call.protocol.keyProvider(body.model)
         val key = keys.of(provider) ?: org.keySecret(provider)?.let { reveal(caller, it) }
+        val busyUntil = pool?.retryAt
         return when {
             key != null -> requests.byKey(provider, call, body, key)
-            busyUntil != null -> refused(
-                RefusalKind.NO_CAPACITY,
-                "Every shared account of your organization is busy or at its limit.",
-                body.model,
-                busyUntil,
-            )
+            pool?.busy == true -> InferencePlan.Busy(noCapacity(busyUntil), body.model)
+            busyUntil != null -> InferencePlan.Refused(noCapacity(busyUntil), body.model)
             else -> refused(
                 RefusalKind.NO_CREDENTIAL,
                 "Your organization has no shared account or ${provider.label} key for this request.",
@@ -125,6 +129,12 @@ class InferencePlanner(
     } catch (_: SecretUnreadableException) {
         null
     }
+
+    private fun noCapacity(busyUntil: Instant?) = InferenceRefusal(
+        RefusalKind.NO_CAPACITY,
+        "Every shared account of your organization is busy or at its limit.",
+        busyUntil,
+    )
 
     private fun refused(kind: RefusalKind, message: String, model: String, retryAt: Instant? = null) =
         InferencePlan.Refused(InferenceRefusal(kind, message, retryAt), model)

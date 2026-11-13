@@ -35,6 +35,8 @@ import kotlin.time.Clock
  */
 class KtorInferenceResponder(private val call: ApplicationCall, private val clock: Clock) : InferenceResponder {
     override suspend fun refuse(protocol: WireProtocol, refusal: InferenceRefusal) {
+        // The gateway's own refusal, told apart from a provider's: the local relay prints its cause once.
+        call.response.header(ERROR_HEADER, refusal.kind.code)
         refusal.retryAt?.let {
             call.response.header("retry-after", (it - clock.now()).inWholeSeconds.coerceAtLeast(1).toString())
         }
@@ -84,6 +86,9 @@ class KtorInferenceResponder(private val call: ApplicationCall, private val cloc
     companion object {
         private const val CONTENT_TYPE = "content-type"
 
+        /** The code of the gateway's own refusal (`no_capacity`, `queue_full`...), never set on a provider's answer. */
+        const val ERROR_HEADER = "x-ostrom-error"
+
         /** The error in the shape of the agent's API: Anthropic's for Messages, OpenAI's otherwise. */
         fun errorBody(protocol: WireProtocol, refusal: InferenceRefusal): JsonObject = buildJsonObject {
             if (protocol == WireProtocol.MESSAGES) {
@@ -96,7 +101,7 @@ class KtorInferenceResponder(private val call: ApplicationCall, private val cloc
                 putJsonObject("error") {
                     put("message", refusal.message)
                     put("type", refusal.kind.openAiType)
-                    put("code", refusal.kind.name.lowercase())
+                    put("code", refusal.kind.code)
                 }
             }
         }

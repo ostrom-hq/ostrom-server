@@ -33,6 +33,7 @@ import kotlin.uuid.Uuid
  *
  * @param driver The database.
  */
+@Suppress("TooManyFunctions") // The one storage port of the module: its writes, holds, sums and reads.
 class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
     override suspend fun insert(orgId: Uuid, events: List<UsageEvent>) {
         if (events.isEmpty()) return
@@ -52,6 +53,10 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
             execute(insert).getOrThrow()
             execute(Statement.create(UsageQueries.DROP_HOLD).bind("call_id", event.id)).getOrThrow()
         }
+    }
+
+    override suspend fun dropHold(orgId: Uuid, callId: Uuid) {
+        driver.executeInOrg(orgId, Statement.create(UsageQueries.DROP_HOLD).bind("call_id", callId)).getOrThrow()
     }
 
     override suspend fun holdWithin(hold: SpendHold, limits: SpendLimits, window: HoldWindow): Admission =

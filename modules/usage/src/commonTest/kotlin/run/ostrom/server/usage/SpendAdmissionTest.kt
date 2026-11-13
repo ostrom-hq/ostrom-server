@@ -34,6 +34,15 @@ class SpendAdmissionTest {
         SpendHold(TestCallers.orgA, memberId, callId, micros)
 
     @Test
+    fun aReleasedCallHoldsNothing() = runTest {
+        val waiting = hold(500)
+        admission.admit(waiting, SpendLimits(orgMicros = 1_000, memberMicros = null), since)
+        assertEquals(setOf(waiting.callId), repository.holds.keys)
+        admission.release(TestCallers.orgA, waiting.callId)
+        assertEquals(emptySet(), repository.holds.keys)
+    }
+
+    @Test
     fun aLimitIsReachedWhenSpentAndACallGoesOnlyWhenItsReserveFitsBesideTheOthers() {
         val org = SpendLimits(orgMicros = 10_000, memberMicros = null)
         assertEquals(Admission.Admitted, org.admit(SpendTotals(orgSpent = 6_000, orgHeld = 3_000), 1_000))

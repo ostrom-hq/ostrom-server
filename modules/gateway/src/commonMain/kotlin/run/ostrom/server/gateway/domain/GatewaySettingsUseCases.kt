@@ -28,6 +28,17 @@ interface PutModelPolicyUseCase {
     suspend operator fun invoke(caller: Caller, policy: ModelPolicy): ModelPolicy
 }
 
+/** Reads the calls waiting in the org's admission queue (any member): counts only, no call or member named. */
+interface GetInferenceQueueUseCase {
+    /** The org's waiting calls and the caller's. */
+    suspend operator fun invoke(caller: Caller): QueueCounts
+}
+
+/** [GetInferenceQueueUseCase] on the queue. */
+class GetInferenceQueueUseCaseImpl(private val queue: AdmissionQueueRepository) : GetInferenceQueueUseCase {
+    override suspend fun invoke(caller: Caller): QueueCounts = queue.counts(caller.orgId, caller.memberId)
+}
+
 /** [GetGatewaySettingsUseCase] on the repository. */
 class GetGatewaySettingsUseCaseImpl(private val repository: GatewaySettingsRepository) : GetGatewaySettingsUseCase {
     override suspend fun invoke(caller: Caller): GatewaySettings {
@@ -44,8 +55,19 @@ class PutGatewaySettingsUseCaseImpl(private val repository: GatewaySettingsRepos
         if (names.any { !GatewayRules.SECRET_NAME.matches(it) }) {
             throw InvalidGatewaySettingsException("A key is named by the org secret holding it.")
         }
-        repository.put(caller.orgId, settings)
-        return settings
+        val limits = settings.memberConcurrency
+        if (limits.size > GatewayRules.MAX_MEMBERS ||
+            limits.any { (member, limit) -> Uuid.parseOrNull(member) == null || limit !in GatewayRules.CONCURRENCY }
+        ) {
+            throw InvalidGatewaySettingsException(
+                "A member's concurrency limit is 1 to ${GatewayRules.CONCURRENCY.last}, by member id, " +
+                    "for at most ${GatewayRules.MAX_MEMBERS} members.",
+            )
+        }
+        // One spelling of each member id, the one the gateway looks up.
+        val canonical = settings.copy(memberConcurrency = limits.mapKeys { Uuid.parse(it.key).toString() })
+        repository.put(caller.orgId, canonical)
+        return canonical
     }
 }
 
@@ -69,8 +91,11 @@ object GatewayRules {
     /** Model lists per policy. */
     const val MAX_MODELS = 100
 
-    /** Members with their own list. */
+    /** Members with their own list, or their own concurrency limit. */
     const val MAX_MEMBERS = 1000
+
+    /** A member's concurrency limit (TeamCode's `maxConcurrent`, at most 32). */
+    val CONCURRENCY = 1..32
 
     /** A model name or prefix. */
     val MODEL = Regex("[A-Za-z0-9._:/-]{1,${RequestBody.MAX_MODEL}}")

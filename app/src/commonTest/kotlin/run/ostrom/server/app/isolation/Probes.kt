@@ -31,10 +31,10 @@ internal val SERVICE_KEY_ROUTES: Map<String, Set<String>> = mapOf(
     "sessions:write" to setOf("POST /api/v1/checks", "POST /api/v1/sessions/{id}/workflow-receipt"),
     "inference:use" to setOf(
         "GET /api/v1/inference/v1/models", "POST /api/v1/inference/v1/messages", "POST /api/v1/inference/v1/responses",
-        "POST /api/v1/inference/v1/chat/completions",
+        "POST /api/v1/inference/v1/chat/completions", "GET /api/v1/inference/queue",
     ),
     "mcp:use" to setOf("POST /api/v1/mcp/{server}", "GET /api/v1/mcp/servers"),
-    "usage:read" to USAGE_READS,
+    "usage:read" to USAGE_READS + "GET /api/v1/inference/queue",
     "cloud:read" to CLOUD_READS,
     "cloud:write" to CLOUD_WRITES,
     "cloud:admin" to CLOUD_WRITES,

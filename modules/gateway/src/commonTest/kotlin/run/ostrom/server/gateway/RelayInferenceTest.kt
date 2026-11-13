@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.gateway
 
+import run.ostrom.server.gateway.domain.AdmissionEntry
+import run.ostrom.server.gateway.domain.AdmissionRequest
 import run.ostrom.server.gateway.domain.AllowAllSpend
+import run.ostrom.server.gateway.domain.AwaitAdmissionUseCase
+import run.ostrom.server.gateway.domain.AwaitAdmissionUseCaseImpl
+import run.ostrom.server.gateway.domain.GatewaySettings
 import run.ostrom.server.gateway.domain.InferenceCall
+import run.ostrom.server.gateway.domain.InferencePlan
 import run.ostrom.server.gateway.domain.InferenceProvider
 import run.ostrom.server.gateway.domain.InferenceRefusal
 import run.ostrom.server.gateway.domain.InferenceResponder
@@ -24,13 +30,17 @@ import run.ostrom.server.gateway.domain.TokenUsage
 import run.ostrom.server.gateway.domain.UpstreamAnswer
 import run.ostrom.server.gateway.domain.UpstreamStalledException
 import run.ostrom.server.gateway.domain.WireProtocol
+import run.ostrom.server.gateway.domain.Workload
+import run.ostrom.server.sharing.domain.AccountLimits
 import run.ostrom.server.sharing.domain.AccountProvider
+import run.ostrom.server.sharing.domain.LeaseResult
 import run.ostrom.server.sharing.domain.SharedAccountPool
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -209,6 +219,99 @@ class RelayInferenceTest {
         assertEquals(429, responder.status)
         assertEquals("""{"error":{}}""", responder.text)
         assertEquals("provider_error", records.single().outcome)
+    }
+
+    /** Records each wait the relay asks for, then plans at once. */
+    private class RecordingAdmission : AwaitAdmissionUseCase {
+        val waits = mutableListOf<Pair<AdmissionRequest, Boolean>>()
+        val held = mutableListOf<AdmissionRequest>()
+
+        override suspend fun invoke(
+            request: AdmissionRequest,
+            running: Boolean,
+            start: suspend () -> InferencePlan,
+        ): InferencePlan {
+            waits += request to running
+            return start()
+        }
+
+        override suspend fun <T> holding(request: AdmissionRequest, block: suspend () -> T): T {
+            held += request
+            return block()
+        }
+    }
+
+    private fun queued(upstream: FakeUpstream, admission: AwaitAdmissionUseCase) = RelayInferenceUseCaseImpl(
+        planner(settings, shared),
+        upstream,
+        PriceTable(),
+        { sink.record(it) },
+        { observed += it },
+        clock,
+        admission = admission,
+    )
+
+    @Test
+    fun aCallWaitsInTheQueueAsItsMemberAndClassAndEveryRetryGoesBackToWait() = runTest {
+        repeat(2) { accounts.share(AccountProvider.CLAUDE, "a$it", clock) }
+        settings.settings[Gw.orgA] = GatewaySettings(memberConcurrency = mapOf(Gw.memberA.memberId.toString() to 3))
+        val admission = RecordingAdmission()
+        val upstream = FakeUpstream(UpstreamAnswer(429, emptyMap(), source()), eventAnswer())
+        val body = """{"model":"claude-opus-5"}"""
+        val background = InferenceCall(WireProtocol.MESSAGES, body, emptyMap(), null, Workload.BACKGROUND)
+        queued(upstream, admission)(Gw.memberA, background, RecordingResponder())
+        val request = admission.held.single()
+        val expected =
+            AdmissionRequest(records.single().id, Gw.orgA, Gw.memberA.memberId, "claude", Workload.BACKGROUND, 3)
+        assertEquals(expected, request)
+        assertEquals(listOf(request to false, request to true), admission.waits, "A retry already runs: it waits again")
+
+        settings.settings[Gw.orgA] = GatewaySettings(useSharedAccounts = false, anthropicKeySecret = "none")
+        val keyOnly = RecordingAdmission()
+        queued(FakeUpstream(eventAnswer()), keyOnly)(Gw.otherA, call(), RecordingResponder())
+        assertEquals("key", keyOnly.held.single().scope, "A call no shared account serves waits for its member only")
+        assertNull(keyOnly.held.single().limit)
+
+        settings.settings[Gw.orgA] = GatewaySettings(openaiKeySecret = "none")
+        val chat = RecordingAdmission()
+        val chatCall = call("""{"model":"gpt-5"}""", WireProtocol.CHAT)
+        queued(FakeUpstream(UpstreamAnswer(200, emptyMap(), source())), chat)(Gw.otherA, chatCall, RecordingResponder())
+        assertEquals("key", chat.held.single().scope, "No shared account serves Chat Completions")
+    }
+
+    @Test
+    fun aCallTheQueueRefusesIsAnsweredAndRecordedAndGivesItsPlaceBack() = runTest {
+        val queue = ScriptedQueue().apply { refusal = RefusalKind.QUEUE_FULL }
+        val responder = RecordingResponder()
+        queued(FakeUpstream(), AwaitAdmissionUseCaseImpl(queue, clock))(Gw.memberA, call(), responder)
+        assertEquals(RefusalKind.QUEUE_FULL, responder.refusal?.kind)
+        assertEquals(503, records.single().status)
+        assertEquals("queue_full", records.single().outcome)
+        assertEquals(listOf("enter", "release"), queue.calls)
+    }
+
+    private suspend fun takeTheOnlySlot() =
+        assertIs<LeaseResult.Leased>(shared.lease(Gw.orgA, Gw.otherA.memberId, AccountProvider.CLAUDE, null))
+
+    @Test
+    fun aCallWaitsForABusyAccountInsteadOfBeingRefused() = runTest {
+        accounts.share(AccountProvider.CLAUDE, "only", clock)
+        accounts.update(accounts.accounts.single().copy(limits = AccountLimits(maxConcurrent = 1)))
+        val other = takeTheOnlySlot()
+        val queue = ScriptedQueue(AdmissionEntry.Admitted, AdmissionEntry.Admitted)
+        val admission = AwaitAdmissionUseCaseImpl(queue, clock, pause = { other.lease.release() })
+        val responder = RecordingResponder()
+        queued(FakeUpstream(eventAnswer()), admission)(Gw.memberA, call(), responder)
+        assertEquals(200, responder.status, "Served once the other call gave its slot back")
+        assertEquals(listOf("enter", "requeue", "poll", "release"), queue.calls)
+
+        // Without a queue, the same busy account is refused at once.
+        val again = takeTheOnlySlot()
+        val refused = RecordingResponder()
+        relay(FakeUpstream(), InstanceProviderKeys())(Gw.memberA, call(), refused)
+        assertEquals(RefusalKind.NO_CAPACITY, refused.refusal?.kind)
+        assertEquals("no_capacity", records.last().outcome)
+        again.lease.release()
     }
 
     @Test

@@ -28,7 +28,8 @@ class GatewaySettingsRepositoryImpl(private val driver: Driver) : GatewaySetting
         val row = driver.fetchInOrg(
             orgId,
             Statement.create(
-                "SELECT anthropic_key_secret, openai_key_secret, openrouter_key_secret, use_shared_accounts " +
+                "SELECT anthropic_key_secret, openai_key_secret, openrouter_key_secret, use_shared_accounts, " +
+                    "member_concurrency " +
                     "FROM gateway_settings WHERE org_id = :org_id",
             ).bind("org_id", orgId),
         ).getOrThrow().firstOrNull()
@@ -50,6 +51,7 @@ class GatewaySettingsRepositoryImpl(private val driver: Driver) : GatewaySetting
         openaiKeySecret = row.get("openai_key_secret").asStringOrNull(),
         openrouterKeySecret = row.get("openrouter_key_secret").asStringOrNull(),
         useSharedAccounts = row.get("use_shared_accounts").asBoolean(),
+        memberConcurrency = Json.decodeFromString(CONCURRENCY, row.get("member_concurrency").asString()),
     )
 
     private fun policyOf(row: ResultSet.Row) = ModelPolicy(
@@ -66,7 +68,8 @@ class GatewaySettingsRepositoryImpl(private val driver: Driver) : GatewaySetting
                 .bindText("anthropic", settings.anthropicKeySecret)
                 .bindText("openai", settings.openaiKeySecret)
                 .bindText("openrouter", settings.openrouterKeySecret)
-                .bind("shared", settings.useSharedAccounts),
+                .bind("shared", settings.useSharedAccounts)
+                .bind("concurrency", Json.encodeToString(CONCURRENCY, settings.memberConcurrency)),
         ).getOrThrow()
     }
 
@@ -101,18 +104,19 @@ class GatewaySettingsRepositoryImpl(private val driver: Driver) : GatewaySetting
         const val FOR_CALL =
             "WITH org AS (SELECT CAST(:org_id AS UUID) AS id) " +
                 "SELECT CAST(s.org_id AS TEXT) AS settings_org, s.anthropic_key_secret, s.openai_key_secret, " +
-                "s.openrouter_key_secret, s.use_shared_accounts, " +
+                "s.openrouter_key_secret, s.use_shared_accounts, s.member_concurrency, " +
                 "CAST(p.org_id AS TEXT) AS policy_org, p.allowed, p.default_model, p.by_member " +
                 "FROM org LEFT JOIN gateway_settings s ON s.org_id = org.id " +
                 "LEFT JOIN gateway_model_policies p ON p.org_id = org.id"
 
         const val UPSERT_SETTINGS =
             "INSERT INTO gateway_settings (org_id, anthropic_key_secret, openai_key_secret, openrouter_key_secret, " +
-                "use_shared_accounts) VALUES (:org_id, :anthropic, :openai, :openrouter, :shared) " +
+                "use_shared_accounts, member_concurrency) " +
+                "VALUES (:org_id, :anthropic, :openai, :openrouter, :shared, :concurrency) " +
                 "ON CONFLICT (org_id) DO UPDATE SET anthropic_key_secret = EXCLUDED.anthropic_key_secret, " +
                 "openai_key_secret = EXCLUDED.openai_key_secret, " +
                 "openrouter_key_secret = EXCLUDED.openrouter_key_secret, " +
-                "use_shared_accounts = EXCLUDED.use_shared_accounts"
+                "use_shared_accounts = EXCLUDED.use_shared_accounts, member_concurrency = EXCLUDED.member_concurrency"
 
         const val UPSERT_POLICY =
             "INSERT INTO gateway_model_policies (org_id, allowed, default_model, by_member) " +
@@ -124,3 +128,4 @@ class GatewaySettingsRepositoryImpl(private val driver: Driver) : GatewaySetting
 
 private val MODELS = ListSerializer(String.serializer())
 private val BY_MEMBER = MapSerializer(String.serializer(), ListSerializer(String.serializer()))
+private val CONCURRENCY = MapSerializer(String.serializer(), Int.serializer())

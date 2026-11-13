@@ -12,6 +12,7 @@ import run.ostrom.server.usage.domain.SpendLimits
 import run.ostrom.server.usage.domain.SpendScope
 import kotlin.time.Clock
 import kotlin.time.Instant
+import kotlin.uuid.Uuid
 
 /**
  * The gateway's [SpendGuard] on the limits and the ledger: past a limit that stops, the gateway refuses; a limit that
@@ -53,6 +54,8 @@ class LedgerSpendGuard(
         }
         return answer.toDecision(month, day, request.reserveMicros)
     }
+
+    override suspend fun release(orgId: Uuid, callId: Uuid) = admission.release(orgId, callId)
 
     /** The limits that stop, for the ledger: those that warn never refuse a call. */
     private fun BudgetLimits.stopping(dayStart: Instant): SpendLimits {

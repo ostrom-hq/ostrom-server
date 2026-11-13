@@ -15,6 +15,20 @@ class ModelPolicyApi
 @Resource("/api/v1/inference/settings")
 class InferenceSettingsApi
 
+/** `/api/v1/inference/queue`: the calls waiting in the admission queue (contract `getInferenceQueue`). */
+@Serializable
+@Resource("/api/v1/inference/queue")
+class InferenceQueueApi
+
+/**
+ * The waiting calls (contract `InferenceQueue`).
+ *
+ * @property waiting The org's.
+ * @property waitingMine The caller's among them.
+ */
+@Serializable
+data class InferenceQueueDto(val waiting: Int, val waitingMine: Int)
+
 /**
  * The model policy (contract `ModelPolicy`).
  *
@@ -36,6 +50,7 @@ data class ModelPolicyDto(
  * @property openaiKeySecret OpenAI API key.
  * @property openrouterKeySecret OpenRouter key (models named `vendor/model`).
  * @property useSharedAccounts Whether shared subscription accounts serve first.
+ * @property memberConcurrency The most calls a member runs at once, by member id.
  */
 @Serializable
 data class InferenceSettingsDto(
@@ -43,4 +58,5 @@ data class InferenceSettingsDto(
     val openaiKeySecret: String? = null,
     val openrouterKeySecret: String? = null,
     val useSharedAccounts: Boolean = true,
+    val memberConcurrency: Map<String, Int> = emptyMap(),
 )
