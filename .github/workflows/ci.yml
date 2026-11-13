@@ -415,6 +415,12 @@ jobs:
         env:
           OSTROM_SMOKE_DATABASE_URL: postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
         run: ci/otel-smoke.sh
+      # TC-REP-7, TeamCode's scripts/smoke-replicas.py: two server processes on one database.
+      - name: Two replicas on one database (start, shared tokens, a kill, a database outage, a revocation)
+        timeout-minutes: 8
+        env:
+          OSTROM_SMOKE_DATABASE_URL: postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
+        run: ci/replicas-smoke.sh
       - name: Server logs on failure
         if: failure()
         run: |
