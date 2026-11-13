@@ -4,6 +4,9 @@ status: coming-soon
 
 # Decision: one workflow system (onboarding processes, TeamCode workflows and automations)
 
+The routes, fields and commands this record names that `main` does not serve yet are coming soon: the slices of
+[section 6](#6-delivery-plan) ship them.
+
 - **Goal, set by Nathan (2026-11-13):** the processes the Ostrom onboarding finds become the workflows, and that
   matches TeamCode's workflow system. Nothing from TeamCode's workflow system is lost; everything is merged into one
   system on the Ostrom side, and everything works together.
