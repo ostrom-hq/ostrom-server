@@ -39,6 +39,8 @@ import run.ostrom.server.gates.domain.services.GateActorResolver
 import run.ostrom.server.gates.domain.services.GateNodeResolver
 import run.ostrom.server.gates.presentation.GateScopes
 import run.ostrom.server.instance.InstanceModule
+import run.ostrom.server.kernel.audit.OrgAuditRecord
+import run.ostrom.server.kernel.audit.OrgAuditTrail
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.GovernanceChange
 import run.ostrom.server.kernel.auth.GovernanceConfirmationPending
@@ -46,6 +48,8 @@ import run.ostrom.server.kernel.auth.GovernanceConfirmations
 import run.ostrom.server.kernel.auth.GovernanceConfirmer
 import run.ostrom.server.kernel.auth.GovernanceRequest
 import run.ostrom.server.kernel.auth.GovernanceScopes
+import run.ostrom.server.kernel.auth.MemberDirectory
+import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.auth.OrgPrincipal
 import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.auth.PrincipalChannel
@@ -105,6 +109,7 @@ import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
 /** The compiler against a real PostgreSQL and real HTTP: workflows, packages, the catalogue, and org isolation. */
+@Suppress("LargeClass") // One real server, one scenario per behavior: splitting would copy the harness.
 class CompilerPostgresTest {
     private val orgA = Uuid.parse("0000000a-0000-0000-0000-000000000000")
     private val orgB = Uuid.parse("0000000b-0000-0000-0000-000000000000")
@@ -120,6 +125,13 @@ class CompilerPostgresTest {
     // The governance writes a token asked for, held for the console: their kind and request.
     private val held = mutableListOf<String>()
     private val requests = mutableListOf<GovernanceRequest>()
+
+    // The members of the organization, by login; what the editing rights record is their ids.
+    private val members = mapOf(
+        "member" to Uuid.parse("00000000-0000-0000-0000-0000000000a1"),
+        "approver" to Uuid.parse("00000000-0000-0000-0000-0000000000a2"),
+    )
+    private val audited = mutableListOf<OrgAuditRecord>()
 
     private fun overrides(config: Map<String, String>?, sources: CompilerSources? = null): Module = module {
         single<TokenAuthenticator> {
@@ -173,6 +185,22 @@ class CompilerPostgresTest {
                 }
             }
         }
+        single<MemberDirectory> {
+            object : MemberDirectory {
+                override suspend fun isActiveMember(orgId: Uuid, memberId: String) =
+                    memberId in members.values.map { it.toString() }
+            }
+        }
+        single<MemberLogins> {
+            object : MemberLogins {
+                override suspend fun idsOf(orgId: Uuid, logins: Collection<String>) =
+                    members.filterKeys { it in logins }
+
+                override suspend fun loginsOf(orgId: Uuid, memberIds: Collection<Uuid>) =
+                    members.entries.filter { it.value in memberIds }.associate { it.value to it.key }
+            }
+        }
+        single<OrgAuditTrail> { OrgAuditTrail { audited += it } }
         config?.let { values ->
             single<ConfigSource> { LayeredConfigSource(listOf(MapConfigSource(values), EnvironmentConfigSource())) }
         }
@@ -495,6 +523,92 @@ class CompilerPostgresTest {
         assertFailsWith<OstromException> { change.preview(orgA, unnamed) }
     }
 
+    private fun settings(mode: String, vararg ids: Uuid): JsonObject = JsonObject(
+        mapOf("mode" to JsonPrimitive(mode)) +
+            if (ids.isEmpty()) emptyMap() else mapOf("memberIds" to JsonArray(ids.map { JsonPrimitive("$it") })),
+    )
+
+    // The release workflow without its gate: what an editor may decide.
+    private fun plain(): JsonObject {
+        val workflow = workflow(
+            "release",
+            listOf(
+                node("t", TRIGGER, label = "push"),
+                node("c", CHECK, label = "Tests before a push", run = NodeRun(command = "make test", on = pushMain)),
+            ),
+            chain("t", "c"),
+            status = WorkflowStatus.ACCEPTED,
+            name = "Release acme-api",
+        )
+        return PackageCompiler.json.encodeToJsonElement(Workflow.serializer(), workflow).jsonObject
+    }
+
+    @Test
+    fun theEditingRightsLetEditorsDecideExceptOnAGate() = compilerTest { server ->
+        val settingsPath = "/api/v1/workflows/settings"
+        // Unset: owners and admins only; anyone reads, with whether they may edit.
+        val initial = server.call("user:a:member", settingsPath)
+        assertEquals(HttpStatusCode.OK, initial.status)
+        assertTrue(initial.bodyAsText().contains("\"admins\""))
+        assertEquals(HttpStatusCode.Unauthorized, server.call(null, settingsPath).status)
+        assertEquals(HttpStatusCode.Unauthorized, server.call(null, settingsPath, "PUT", settings("all")).status)
+        // Only an owner or an admin, in the browser, changes the rule.
+        for (who in listOf("user:a:member", "pat:a:lead", "agent:a:l1", "cli:a:dev")) {
+            val refused = server.call(who, settingsPath, "PUT", settings("all"))
+            assertEquals(HttpStatusCode.Forbidden, refused.status, who)
+        }
+        val memberTried = server.call("user:a:member", settingsPath, "PUT", settings("all"))
+        assertEquals("workflow_editors_only", memberTried.errorType())
+        // A listed editor must be an active member.
+        val stranger = server.call("user:a:admin", settingsPath, "PUT", settings("members", Uuid.random()))
+        assertEquals(HttpStatusCode.BadRequest, stranger.status)
+        assertEquals("invalid_editors", stranger.errorType())
+
+        val editor = members.getValue("member")
+        val saved = server.call("user:a:admin", settingsPath, "PUT", settings("members", editor))
+        assertEquals(HttpStatusCode.OK, saved.status)
+        assertEquals("workflow.editors.changed", audited.single().event)
+        assertTrue(server.call("user:a:member", settingsPath).bodyAsText().contains("\"canEdit\":true"))
+        assertTrue(server.call("user:a:approver", settingsPath).bodyAsText().contains("\"canEdit\":false"))
+
+        // The editor accepts, edits and deletes like an admin; another member still only proposes.
+        val path = "/api/v1/workflows/release"
+        val workflowsPath = "/api/v1/workflows"
+        assertEquals(HttpStatusCode.Forbidden, server.call("user:a:approver", workflowsPath, "POST", plain()).status)
+        assertEquals(HttpStatusCode.Created, server.call("user:a:member", workflowsPath, "POST", plain()).status)
+        val edited = server.call("user:a:member", path, "PUT", SaveWorkflowRequest(plain(), expectedVersion = 1))
+        assertEquals(HttpStatusCode.OK, edited.status)
+        // A workflow that holds a gate node stays an owner's or an admin's, whether stored or being saved.
+        val gating = server.call("user:a:member", path, "PUT", SaveWorkflowRequest(release(), expectedVersion = 2))
+        assertEquals(HttpStatusCode.Forbidden, gating.status)
+        assertEquals("workflow_editors_only", gating.errorType())
+        assertTrue(gating.bodyAsText().contains("gate node"))
+        val byAdmin = server.call("user:a:admin", path, "PUT", SaveWorkflowRequest(release(), expectedVersion = 2))
+        assertEquals(HttpStatusCode.OK, byAdmin.status)
+        assertEquals(HttpStatusCode.Forbidden, server.call("user:a:member", path, "DELETE").status)
+        assertEquals(HttpStatusCode.Forbidden, server.call("user:a:member", workflowsPath, "POST", release()).status)
+        assertEquals(HttpStatusCode.NoContent, server.call("user:a:admin", path, "DELETE").status)
+
+        // A save of what is not stored, and a delete of it, are not found (whoever decides); an editor who takes the
+        // gate out of a stored workflow does not decide it either.
+        assertEquals(HttpStatusCode.NotFound, server.call("user:a:admin", path, "DELETE").status)
+        val unknown = SaveWorkflowRequest(plain(), expectedVersion = 1)
+        assertEquals(HttpStatusCode.NotFound, server.call("user:a:admin", path, "PUT", unknown).status)
+        assertEquals(HttpStatusCode.Created, server.call("user:a:admin", workflowsPath, "POST", release()).status)
+        val ungating = server.call("user:a:member", path, "PUT", SaveWorkflowRequest(plain(), expectedVersion = 1))
+        assertEquals(HttpStatusCode.Forbidden, ungating.status)
+        assertEquals(HttpStatusCode.NoContent, server.call("user:a:admin", path, "DELETE").status)
+        // The rule `all` lets every member in; `admins` takes it back; a list is refused outside `members`.
+        assertEquals(HttpStatusCode.OK, server.call("user:a:admin", settingsPath, "PUT", settings("all")).status)
+        assertEquals(HttpStatusCode.Created, server.call("user:a:approver", workflowsPath, "POST", plain()).status)
+        assertEquals(HttpStatusCode.OK, server.call("user:a:admin", settingsPath, "PUT", settings("admins")).status)
+        assertEquals(HttpStatusCode.Forbidden, server.call("user:a:approver", path, "DELETE").status)
+        val misplaced = server.call("user:a:admin", settingsPath, "PUT", settings("all", editor))
+        assertEquals("invalid_editors", misplaced.errorType())
+        // The rule is each organization's own.
+        assertTrue(server.call("user:b:admin", settingsPath).bodyAsText().contains("\"admins\""))
+    }
+
     @Test
     fun onlyAnOwnerOrAnAdminDecides() = compilerTest { server ->
         // Second audit H4: a member or an approver, in the browser too, only proposes.
@@ -713,6 +827,7 @@ class CompilerPostgresTest {
     @Test
     fun rowLevelSecurityHidesOtherOrganizationsEvenWithoutAWhereClause() = compilerTest { server ->
         server.call("user:a:lead", "/api/v1/workflows", "POST", release())
+        server.call("user:a:lead", "/api/v1/workflows/settings", "PUT", settings("all"))
         server.call("agent:a:l1", "/api/v1/packages/current?repo=acme-api")
         // The test server's driver is the serving role, as in production: row level security applies to it.
         val tables = listOf(
@@ -722,6 +837,7 @@ class CompilerPostgresTest {
             "compiler_packages",
             "compiler_pins",
             "compiler_audit",
+            "compiler_workflow_settings",
         )
         val counts = server.driver.transaction {
             suspend fun count(org: Uuid?): List<String> {

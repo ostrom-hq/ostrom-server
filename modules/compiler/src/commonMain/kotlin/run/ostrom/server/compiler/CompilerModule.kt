@@ -3,6 +3,14 @@ package run.ostrom.server.compiler
 
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.compiler.domain.repositories.CompilerRepository
+import run.ostrom.server.compiler.domain.repositories.WorkflowSettingsRepository
+import run.ostrom.server.compiler.infrastructure.PostgresWorkflowSettingsRepository
+import run.ostrom.server.compiler.domain.usecases.WorkflowSettingsUseCase
+import run.ostrom.server.compiler.domain.usecases.WorkflowSettingsUseCaseImpl
+import run.ostrom.server.kernel.audit.OrgAuditTrail
+import run.ostrom.server.kernel.auth.MemberDirectory
+import run.ostrom.server.kernel.auth.MemberLogins
+import kotlin.uuid.Uuid
 import run.ostrom.server.compiler.domain.services.CompiledPackages
 import run.ostrom.server.compiler.domain.services.CompilerSources
 import run.ostrom.server.compiler.domain.services.HarnessReceiptSigner
@@ -69,6 +77,16 @@ object CompilerModule : ServerModule {
         single<WorkflowsUseCase> {
             WorkflowsUseCaseImpl(get(), get(), get(), automations = getOrNull(), removals = getOrNull())
         }
+        single<WorkflowSettingsRepository> { PostgresWorkflowSettingsRepository(get()) }
+        single<WorkflowSettingsUseCase> {
+            WorkflowSettingsUseCaseImpl(
+                get(),
+                getOrNull<MemberDirectory>() ?: NoMembers,
+                getOrNull<MemberLogins>() ?: NoMembers,
+                get<OrgAuditTrail>(),
+                get(),
+            )
+        }
         single<WorkflowDirectory> { CompilerWorkflowDirectory(get<CompilerRepository>()) }
         single<GovernanceChange>(named("compiler")) { CompilerGovernanceChange(get(), get()) }
         // Created when the gates module looks for it, possibly before this module's initialize has bound the
@@ -79,7 +97,7 @@ object CompilerModule : ServerModule {
         }
         single {
             val publicUrl = get<ConfigSource>()["OSTROM_PUBLIC_URL"]
-            CompilerRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), publicUrl)
+            CompilerRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), publicUrl)
         }
     }
 
@@ -99,5 +117,18 @@ object CompilerModule : ServerModule {
     }
 
     /** Session packages and the workflows it compiles (`/api/v1/packages`, `/api/v1/workflows`). */
-    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.PACKAGES, ServerFeatures.WORKFLOWS)
+    override suspend fun features(koin: Koin): Set<String> = setOf(
+        ServerFeatures.PACKAGES,
+        ServerFeatures.WORKFLOWS,
+        ServerFeatures.WORKFLOWS_SETTINGS,
+    )
+}
+
+/** The members when no module knows them: nobody is a member, so no editor is named and none is let in. */
+internal object NoMembers : MemberDirectory, MemberLogins {
+    override suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean = false
+
+    override suspend fun idsOf(orgId: Uuid, logins: Collection<String>): Map<String, Uuid> = emptyMap()
+
+    override suspend fun loginsOf(orgId: Uuid, memberIds: Collection<Uuid>): Map<Uuid, String> = emptyMap()
 }

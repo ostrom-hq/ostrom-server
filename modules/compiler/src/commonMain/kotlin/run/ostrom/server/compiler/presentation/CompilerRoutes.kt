@@ -39,6 +39,7 @@ fun Route.compilerRoutes(dependencies: CompilerRoutesDependencies) {
         catalogRoutes(dependencies)
         packagesRoutes(dependencies)
         workflowsRoutes(dependencies)
+        settingsRoutes(dependencies)
     }
 }
 
@@ -110,10 +111,10 @@ private fun Route.workflowsRoutes(dependencies: CompilerRoutesDependencies) = wi
     post<WorkflowsApi> {
         val actor = personOf(call, CompilerScopes.writingWorkflows)
         val body = call.receive<JsonObject>()
-        if (call.holdsDecision(actor, proposed(body))) {
+        if (holds(call, actor, gated(body), proposed(body))) {
             return@post call.hold(actor, WorkflowWrites.CREATE, CompilerGovernanceChange.payload(null, body))
         }
-        if (!call.decides(actor)) onlyProposed(body)
+        if (!call.decides(mayDecide(actor, gated(body))) && !proposed(body)) throw refusal(actor, gated(body))
         val saved = workflows.save(actor.orgId, body, null, actor.id, create = true)
         call.respond(HttpStatusCode.Created, documentOf(saved))
     }
@@ -122,28 +123,15 @@ private fun Route.workflowsRoutes(dependencies: CompilerRoutesDependencies) = wi
     }
     put<WorkflowsApi.Id> { params ->
         val actor = personOf(call, CompilerScopes.writingWorkflows)
-        val body = call.receive<SaveWorkflowRequest>()
-        val id = (body.workflow["id"] as? JsonPrimitive)?.content
-        if (id != params.id) {
-            throw OstromException(ErrorKind.INVALID_REQUEST, "The workflow's id is not the path's.")
-        }
-        if (!call.decides(actor)) {
-            val proposal = proposed(body.workflow) && proposed(workflows.get(actor.orgId, params.id).doc.raw)
-            if (call.holdsDecision(actor, proposal)) {
-                val payload = CompilerGovernanceChange.payload(params.id, OstromJson.encodeToJsonElement(body))
-                return@put call.hold(actor, WorkflowWrites.SAVE, payload)
-            }
-            if (!proposal) throw OstromException(ErrorKind.FORBIDDEN, DECIDES)
-        }
-        val saved = workflows.save(actor.orgId, body.workflow, body.expectedVersion, actor.id, create = false)
-        call.respond(documentOf(saved))
+        saveWorkflow(call, actor, params.id, call.receive<SaveWorkflowRequest>())?.let { call.respond(it) }
     }
     delete<WorkflowsApi.Id> { params ->
         val actor = personOf(call, CompilerScopes.writingWorkflows)
-        if (call.holdsDecision(actor, proposal = false)) {
+        val gate = repository.workflow(actor.orgId, params.id)?.let { gated(it.doc.raw) } == true
+        if (holds(call, actor, gate, proposal = false)) {
             return@delete call.hold(actor, WorkflowWrites.DELETE, CompilerGovernanceChange.payload(params.id, null))
         }
-        if (!call.decides(actor)) throw OstromException(ErrorKind.FORBIDDEN, DECIDES)
+        if (!call.decides(mayDecide(actor, gate))) throw refusal(actor, gate)
         workflows.delete(actor.orgId, params.id)
         call.respond(HttpStatusCode.NoContent)
     }

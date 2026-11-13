@@ -8,6 +8,7 @@ import run.ostrom.server.compiler.domain.usecases.GatesCatalogUseCase
 import run.ostrom.server.compiler.domain.usecases.PreviewPackageUseCase
 import run.ostrom.server.compiler.domain.usecases.PublishPackageUseCase
 import run.ostrom.server.compiler.domain.usecases.RevokePackageUseCase
+import run.ostrom.server.compiler.domain.usecases.WorkflowSettingsUseCase
 import run.ostrom.server.compiler.domain.usecases.WorkflowsUseCase
 import run.ostrom.server.gates.domain.services.GateActorResolver
 
@@ -35,5 +36,6 @@ data class CompilerRoutesDependencies(
     val policy: GatePolicyUseCase,
     val approvers: ApproversGraphUseCase,
     val workflows: WorkflowsUseCase,
+    val settings: WorkflowSettingsUseCase,
     val publicUrl: String?,
 )

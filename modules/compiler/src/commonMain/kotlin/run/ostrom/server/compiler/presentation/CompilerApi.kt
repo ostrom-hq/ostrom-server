@@ -122,6 +122,11 @@ class WorkflowsApi(val repo: String? = null, val status: String? = null) {
     @Serializable
     @Resource("{id}")
     class Id(val parent: WorkflowsApi = WorkflowsApi(), val id: String)
+
+    /** Who may decide workflows (contract `getWorkflowSettings`, `saveWorkflowSettings`). */
+    @Serializable
+    @Resource("settings")
+    class Settings(val parent: WorkflowsApi = WorkflowsApi())
 }
 
 /**
