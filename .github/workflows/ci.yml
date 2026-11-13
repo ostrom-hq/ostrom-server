@@ -368,7 +368,7 @@ jobs:
           # TC-CODE-AUTH-2: an invite-only instance without an account prints the first owner's setup link on demand.
           expect 0 '/setup#token=osb_' -e OSTROM_DATABASE_URL="$APP_URL" ostrom-server:ci bootstrap
           docker run -d --name ostrom --network host --memory 1g -e OSTROM_DATABASE_URL="$APP_URL" \
-            -e OSTROM_SHUTDOWN_DELAY_SECONDS=1 ostrom-server:ci
+            -e OSTROM_SHUTDOWN_DELAY_SECONDS=1 -e OSTROM_SHUTDOWN_GRACE_SECONDS=600 ostrom-server:ci
           for i in $(seq 1 30); do curl -fsS localhost:8080/ready && break; sleep 1; done
           echo
           curl -fsS localhost:8080/ready | grep '"status":"ready"'
@@ -376,7 +376,8 @@ jobs:
           curl -fsS localhost:8080/api/v1/instance | grep '"algorithm":"ed25519"'
           docker stop -t 30 ostrom
           docker logs ostrom
-          # SD-09: the drain says how long it waits for the calls in flight (none here: it stops at once).
+          # SD-09: the drain says how long it waits for the calls in flight, the chart's 600 s (none here: it stops at
+          # once).
           docker logs ostrom 2>&1 | grep '"msg":"server draining"' | grep '"signal":"SIGTERM"' | grep '"grace_s":600'
           docker logs ostrom 2>&1 | grep '"msg":"server stopped"'
           # The start says how to bootstrap the instance, and never logs a setup link.

@@ -233,8 +233,10 @@ class ConfigTest {
 
     @Test
     fun readsTheDrainGraceOfCallsInFlight() {
-        // SD-09: a model call is bounded by 10 minutes upstream, the default grace; the chart gives 660 s in all.
-        assertEquals(600.seconds, ServerConfig.from(MapConfigSource(database)).drainGrace)
+        // A short default fits `docker stop`; the chart sets 600 (SD-09: a model call is bounded by 10 minutes upstream).
+        assertEquals(5.seconds, ServerConfig.from(MapConfigSource(database)).drainGrace)
+        val chart = ServerConfig.from(MapConfigSource(database + mapOf("OSTROM_SHUTDOWN_GRACE_SECONDS" to "600")))
+        assertEquals(600.seconds, chart.drainGrace)
         val none = ServerConfig.from(MapConfigSource(database + mapOf("OSTROM_SHUTDOWN_GRACE_SECONDS" to "0")))
         assertEquals(Duration.ZERO, none.drainGrace)
         assertFailsWith<InvalidConfigException> {

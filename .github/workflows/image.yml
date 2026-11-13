@@ -96,6 +96,11 @@ jobs:
         run: |
           if [ "${GITHUB_REF_TYPE}" = tag ]; then
             version="${GITHUB_REF_NAME}"
+            # A bare semantic version only: it is the image's tag, its OCI label and `-PostromVersion`.
+            if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "not a release tag: $version" >&2
+              exit 1
+            fi
             tags="${version},sha-${SHA}-${version}"
           else
             version="0.0.0-edge.$(date -u +%Y%m%d%H%M%S).${SHA::7}"
