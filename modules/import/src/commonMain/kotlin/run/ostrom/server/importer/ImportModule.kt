@@ -2,6 +2,8 @@
 package run.ostrom.server.importer
 
 import run.ostrom.core.api.models.ServerFeatures
+import run.ostrom.server.automations.domain.ImportAutomationsUseCase
+import run.ostrom.server.compiler.domain.usecases.ImportWorkflowsUseCase
 import run.ostrom.server.identity.domain.AuditLog
 import run.ostrom.server.importer.domain.AccountImporter
 import run.ostrom.server.importer.domain.ImportProvenanceRepository
@@ -10,6 +12,8 @@ import run.ostrom.server.importer.domain.ImportTeamCodeUseCaseImpl
 import run.ostrom.server.importer.domain.McpPorts
 import run.ostrom.server.importer.domain.SecretPorts
 import run.ostrom.server.importer.domain.SharedAccountImporter
+import run.ostrom.server.importer.domain.TeamCodeProcessImporter
+import run.ostrom.server.importer.domain.WorkflowEditorsImporter
 import run.ostrom.server.importer.infrastructure.IdentityImportAudit
 import run.ostrom.server.importer.infrastructure.ImportMigrations
 import run.ostrom.server.importer.infrastructure.ImportProvenanceRepositoryImpl
@@ -17,6 +21,7 @@ import run.ostrom.server.importer.infrastructure.NoMembers
 import run.ostrom.server.importer.presentation.ImportRoutesDependencies
 import run.ostrom.server.importer.presentation.importRoutes
 import run.ostrom.server.kernel.auth.MemberDirectory
+import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.secrets.domain.CallerResolver
@@ -29,9 +34,11 @@ import org.koin.dsl.module
 
 /**
  * The import module: `POST /api/v1/import/teamcode` takes what `ostrom import teamcode` read from TeamCode and writes
- * it through the secrets, MCP relay and sharing modules. Its one table records what it created, so a later run updates
- * that and leaves alone what an admin created by hand. Shared accounts go through the sharing module's use cases
- * ([SharedAccountImporter]) when it is installed, or through a bound [AccountImporter]. The cutover run is recorded in
+ * it through the secrets, MCP relay and sharing modules, and the workflows and automations through the compiler's and
+ * the automations' import use cases ([TeamCodeProcessImporter]), when those modules are installed. Its one table
+ * records what it created, so a later run updates that and leaves alone what an admin created by hand. Shared
+ * accounts go through the sharing module's use cases ([SharedAccountImporter]) when it is installed, or through a
+ * bound [AccountImporter]. The cutover run is recorded in
  * the identity module's audit log ([IdentityImportAudit]), and refused without one. A member map is checked against
  * the orgs module's [MemberDirectory]; without one, no member can be mapped ([NoMembers]).
  */
@@ -49,7 +56,13 @@ object ImportModule : ServerModule {
                 }
             val audit = getOrNull<AuditLog>()?.let(::IdentityImportAudit)
             val members = getOrNull<MemberDirectory>() ?: NoMembers
-            ImportTeamCodeUseCaseImpl(get(), get(), get(), members, accounts, audit)
+            val processes = TeamCodeProcessImporter(
+                getOrNull<ImportWorkflowsUseCase>(),
+                getOrNull<ImportAutomationsUseCase>(),
+                getOrNull<WorkflowEditorsImporter>(),
+                getOrNull<MemberLogins>(),
+            )
+            ImportTeamCodeUseCaseImpl(get(), get(), get(), members, accounts, audit, processes)
         }
         single { ImportRoutesDependencies(getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get()), get()) }
     }

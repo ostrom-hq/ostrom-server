@@ -9,6 +9,8 @@ import run.ostrom.server.automations.domain.NoWorkflows
 import run.ostrom.server.automations.domain.WorkflowsStartedByAutomations
 import run.ostrom.server.automations.domain.CancelSessionWaitsUseCaseImpl
 import run.ostrom.server.automations.domain.AutomationsRepository
+import run.ostrom.server.automations.domain.ImportAutomationsUseCase
+import run.ostrom.server.automations.domain.ImportAutomationsUseCaseImpl
 import run.ostrom.server.automations.domain.ManageAutomationsUseCase
 import run.ostrom.server.automations.domain.ManageAutomationsUseCaseImpl
 import run.ostrom.server.automations.domain.RunAutomationsUseCase
@@ -135,6 +137,9 @@ object AutomationsModule : ServerModule {
         single<WebhookSecrets> { WebhookSecretsImpl(get()) }
         single<ManageAutomationsUseCase> {
             ManageAutomationsUseCaseImpl(get(), get(), get(), getOrNull<AutomationWorkflows>() ?: NoWorkflows)
+        }
+        single<ImportAutomationsUseCase> {
+            ImportAutomationsUseCaseImpl(get(), get(), getOrNull<AutomationWorkflows>() ?: NoWorkflows)
         }
         single<AutomationUsage> { WorkflowsStartedByAutomations(get()) }
         single<RunAutomationsUseCase> {

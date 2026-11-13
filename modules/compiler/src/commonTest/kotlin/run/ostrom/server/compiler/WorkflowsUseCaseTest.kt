@@ -17,6 +17,7 @@ import run.ostrom.server.compiler.domain.services.WorkflowRepos
 import run.ostrom.server.compiler.domain.usecases.CompileSourcesUseCaseImpl
 import run.ostrom.server.compiler.domain.usecases.PublishPackageUseCaseImpl
 import run.ostrom.server.compiler.domain.usecases.RevokePackageUseCaseImpl
+import run.ostrom.server.compiler.domain.usecases.WorkflowImport
 import run.ostrom.server.compiler.domain.usecases.WorkflowsUseCaseImpl
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
@@ -334,5 +335,30 @@ class WorkflowsUseCaseTest {
         assertEquals(setOf("release", "idea", "no"), repository.workflows(org).map { it.doc.workflow.id }.toSet())
         val inputs = compiler.inputs(org, "acme-api")
         assertEquals(setOf("release", "idea"), inputs.workflows.map { it.workflow.id }.toSet())
+    }
+
+    @Test
+    fun anImportCreatesAnImportDecisionThenSavesAChangeAndLeavesTheSameDocumentAlone() = runTest {
+        val first = raw(release(WorkflowStatus.ACCEPTED))
+        assertEquals(WorkflowImport.CREATED, workflows.import(org, first, "nina", dryRun = true))
+        assertNull(repository.workflow(org, "release"), "A dry run writes nothing")
+
+        assertEquals(WorkflowImport.CREATED, workflows.import(org, first, "nina", dryRun = false))
+        assertEquals("import", signer.signed.single().first)
+        assertEquals("nina", repository.lastDecisions(org).single().by)
+        assertEquals(WorkflowImport.UNCHANGED, workflows.import(org, first, "nina", dryRun = false))
+        assertEquals(1, repository.workflow(org, "release")?.version)
+
+        val changed = raw(release(WorkflowStatus.ACCEPTED).copy(name = "Release acme-web"))
+        assertEquals(WorkflowImport.UPDATED, workflows.import(org, changed, "nina", dryRun = true))
+        assertEquals(1, repository.workflow(org, "release")?.version)
+        assertEquals(WorkflowImport.UPDATED, workflows.import(org, changed, "nina", dryRun = false))
+        assertEquals(2, repository.workflow(org, "release")?.version)
+        assertEquals(listOf("import", "edit"), signer.signed.map { it.first })
+
+        val invalid = assertFailsWith<OstromException> {
+            workflows.import(org, JsonObject(mapOf("id" to JsonPrimitive("x"))), "nina", dryRun = true)
+        }
+        assertEquals("invalid_workflow", invalid.type)
     }
 }

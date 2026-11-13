@@ -114,7 +114,9 @@ private class NoSharingException :
  * @param accounts The sharing module's account import, or null when it is not installed.
  * @param audit The audit log of a cutover run, or null when none is installed (a cutover is then refused, as it is
  *   without [accounts]).
+ * @param processes Imports the workflows, their editing rule and the automations, after everything else.
  */
+@Suppress("LongParameterList") // One port per module the import writes through.
 class ImportTeamCodeUseCaseImpl(
     private val secrets: SecretPorts,
     private val mcp: McpPorts,
@@ -122,6 +124,7 @@ class ImportTeamCodeUseCaseImpl(
     private val members: MemberDirectory,
     private val accounts: AccountImporter?,
     private val audit: ImportAudit?,
+    private val processes: TeamCodeProcessImporter = TeamCodeProcessImporter(null, null, null, null),
 ) : ImportTeamCodeUseCase {
     override suspend fun invoke(
         caller: Caller,
@@ -151,6 +154,8 @@ class ImportTeamCodeUseCaseImpl(
         )
         val items = run.import(plan)
         importAccounts(caller, export.accounts, AccountRunMode(dryRun, cutoverBy != null, accessOnly), items)
+        val mode = ProcessRunMode(dryRun, cutover = cutoverBy != null)
+        processes.import(caller, export.processes, export.members, memberMap, mode, items)
         return ImportReport(items)
     }
 

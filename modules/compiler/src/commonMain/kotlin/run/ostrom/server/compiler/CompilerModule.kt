@@ -29,6 +29,7 @@ import run.ostrom.server.compiler.domain.usecases.PublishPackageUseCaseImpl
 import run.ostrom.server.compiler.domain.usecases.RevokePackageUseCase
 import run.ostrom.server.compiler.domain.usecases.RevokePackageUseCaseImpl
 import run.ostrom.server.compiler.domain.usecases.WorkflowDecisionSigner
+import run.ostrom.server.compiler.domain.usecases.ImportWorkflowsUseCase
 import run.ostrom.server.compiler.domain.usecases.WorkflowsUseCase
 import run.ostrom.server.compiler.domain.usecases.WorkflowsUseCaseImpl
 import run.ostrom.server.compiler.infrastructure.CatalogGateNodes
@@ -50,6 +51,7 @@ import io.ktor.server.routing.Route
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
+import org.koin.dsl.binds
 import org.koin.dsl.module
 
 /**
@@ -74,9 +76,9 @@ object CompilerModule : ServerModule {
         single<GatesCatalogUseCase> { GatesCatalogUseCaseImpl(get(), get()) }
         single<GatePolicyUseCase> { GatePolicyUseCaseImpl(get(), get(), get()) }
         single<ApproversGraphUseCase> { ApproversGraphUseCaseImpl(get()) }
-        single<WorkflowsUseCase> {
+        single {
             WorkflowsUseCaseImpl(get(), get(), get(), automations = getOrNull(), removals = getOrNull())
-        }
+        } binds arrayOf(WorkflowsUseCase::class, ImportWorkflowsUseCase::class)
         single<WorkflowSettingsRepository> { PostgresWorkflowSettingsRepository(get()) }
         single<WorkflowSettingsUseCase> {
             WorkflowSettingsUseCaseImpl(

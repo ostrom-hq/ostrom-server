@@ -13,12 +13,14 @@ import kotlin.time.Instant
  * @property servers TeamCode's MCP variants.
  * @property assignments Which member uses which variant, with their own credential.
  * @property accounts The team's shared subscription accounts.
+ * @property processes The team's workflows, their editing rule and its automations.
  */
 data class TeamCodeExport(
     val members: List<TeamCodeMember> = emptyList(),
     val servers: List<TeamCodeMcpServer> = emptyList(),
     val assignments: List<TeamCodeAssignment> = emptyList(),
     val accounts: List<TeamCodeAccount> = emptyList(),
+    val processes: TeamCodeProcesses = TeamCodeProcesses(),
 )
 
 /**

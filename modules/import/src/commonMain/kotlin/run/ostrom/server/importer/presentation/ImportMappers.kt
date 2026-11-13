@@ -6,10 +6,15 @@ import run.ostrom.server.importer.domain.ImportHandover
 import run.ostrom.server.importer.domain.ImportReport
 import run.ostrom.server.importer.domain.TeamCodeAccount
 import run.ostrom.server.importer.domain.TeamCodeAssignment
+import run.ostrom.server.importer.domain.TeamCodeAutomation
 import run.ostrom.server.importer.domain.TeamCodeExport
 import run.ostrom.server.importer.domain.TeamCodeMcpServer
 import run.ostrom.server.importer.domain.TeamCodeMember
+import run.ostrom.server.importer.domain.TeamCodeProcesses
+import run.ostrom.server.importer.domain.TeamCodeProfile
 import run.ostrom.server.importer.domain.TeamCodeStdio
+import run.ostrom.server.importer.domain.TeamCodeWorkflow
+import run.ostrom.server.importer.domain.TeamCodeWorkflowEditors
 import run.ostrom.server.importer.domain.ToolMode
 import run.ostrom.server.mcprelay.domain.StdioLauncher
 import run.ostrom.server.secrets.domain.SecretValue
@@ -23,6 +28,38 @@ fun TeamCodeImportRequest.toExport() = TeamCodeExport(
     servers = mcpServers.map { it.toDomain() },
     assignments = assignments.map { TeamCodeAssignment(it.memberId, it.serverId, it.memberSecret?.let(::SecretValue)) },
     accounts = accounts.map { it.toDomain() },
+    processes = TeamCodeProcesses(
+        workflows = workflows.map {
+            TeamCodeWorkflow(it.id, it.name, it.version, it.definition, it.updatedById, it.createdAt)
+        },
+        editors = workflowEditors?.let { TeamCodeWorkflowEditors(it.mode, it.memberIds) },
+        automations = automations.map { it.toDomain() },
+        profiles = profiles.map { TeamCodeProfile(it.id, it.name, it.repositories, it.setupCommands) },
+    ),
+)
+
+private fun TeamCodeAutomationDto.toDomain() = TeamCodeAutomation(
+    id = id,
+    ownerId = ownerId,
+    name = name,
+    triggerKind = triggerKind,
+    cron = cron,
+    timezone = timezone,
+    catchup = catchup,
+    catchupGraceMinutes = catchupGraceMinutes,
+    actionKind = actionKind,
+    profileId = profileId,
+    model = model,
+    effort = effort,
+    maxRuntimeMinutes = maxRuntimeMinutes,
+    prompt = prompt.orEmpty(),
+    variables = variables,
+    samplePayload = samplePayload,
+    overlap = overlap,
+    maxRunsPerDay = maxRunsPerDay,
+    enabled = enabled,
+    workflowId = workflowId,
+    workflowInputs = workflowInputs,
 )
 
 /** The member map, with Ostrom ids parsed. */
