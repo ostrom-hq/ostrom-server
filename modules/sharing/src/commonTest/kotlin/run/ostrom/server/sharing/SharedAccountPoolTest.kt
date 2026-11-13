@@ -591,6 +591,44 @@ class SharedAccountPoolTest {
     }
 
     @Test
+    fun aLongRequestRenewsItsSlotWhileItRunsAndOnlyThen() = runTest {
+        val account = account("long")
+        val pool = pool()
+        val lease = assertIs<LeaseResult.Leased>(
+            pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null),
+        ).lease
+        val counted = lease.held {
+            repeat(4) {
+                delay(AccountSlotRepository.SLOT_RENEWAL)
+                clock.advance(AccountSlotRepository.SLOT_RENEWAL)
+            }
+            pool.inFlight(Sharing.orgA)[account.id]
+        }
+        assertEquals(1, counted, "Twenty minutes in, past the slot's lease, the stream still counts")
+        clock.advance(AccountSlotRepository.SLOT_LEASE)
+        assertEquals(null, pool.inFlight(Sharing.orgA)[account.id], "Once the request ends, nothing renews it")
+    }
+
+    @Test
+    fun aSlotTheDatabaseCannotRenewOrTakeBackFailsNoRequest() = runTest {
+        account("a")
+        val slots = InMemorySlots(clock, repository)
+        val pool = pool(repository, tokens(repository, cipher, refresher, clock), spend, clock, slots)
+        val lease = assertIs<LeaseResult.Leased>(
+            pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null),
+        ).lease
+        slots.failure = IllegalStateException("The database is unreachable")
+        val answer = lease.held {
+            delay(AccountSlotRepository.SLOT_RENEWAL + 1.seconds)
+            "answered"
+        }
+        assertEquals("answered", answer, "A renewal that fails is left to the next one")
+        lease.release()
+        slots.failure = CancellationException("cancelled")
+        assertFailsWith<CancellationException> { pool.release(Sharing.orgA, AccountSlot(Uuid.random(), Uuid.random())) }
+    }
+
+    @Test
     fun pastItsBoundAMemberPlacesNewSessionsWithoutForgettingItsOthers() = runTest {
         account("a", priority = 1)
         account("b")

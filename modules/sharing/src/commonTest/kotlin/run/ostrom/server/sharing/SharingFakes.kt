@@ -207,11 +207,14 @@ class InMemoryAccounts :
  * from [accounts] when given (an account no longer READY is not serving).
  */
 class InMemorySlots(private val clock: Clock, private val accounts: InMemoryAccounts? = null) : AccountSlotRepository {
-    private class Slot(val orgId: Uuid, val slot: AccountSlot, val expiresAt: Instant)
+    private class Slot(val orgId: Uuid, val slot: AccountSlot, var expiresAt: Instant)
 
     private class Affinity(val accountId: Uuid, val expiresAt: Instant)
 
     private val slots = mutableListOf<Slot>()
+
+    /** Thrown by [release] and [renew] when set: the database failing. */
+    var failure: Exception? = null
     private val affinities = mutableMapOf<Triple<Uuid, Uuid, String>, Affinity>()
 
     override suspend fun take(
@@ -244,7 +247,14 @@ class InMemorySlots(private val clock: Clock, private val accounts: InMemoryAcco
     }
 
     override suspend fun release(orgId: Uuid, slot: AccountSlot) {
+        failure?.let { throw it }
         slots.removeAll { it.orgId == orgId && it.slot.id == slot.id }
+    }
+
+    override suspend fun renew(orgId: Uuid, slot: AccountSlot) {
+        failure?.let { throw it }
+        slots.filter { it.orgId == orgId && it.slot.id == slot.id }
+            .forEach { it.expiresAt = clock.now() + AccountSlotRepository.SLOT_LEASE }
     }
 
     override suspend fun active(orgId: Uuid): Map<Uuid, Int> = slots

@@ -224,6 +224,8 @@ class InMemorySlots : AccountSlotRepository {
         slots.remove(slot)
     }
 
+    override suspend fun renew(orgId: Uuid, slot: AccountSlot) = Unit
+
     override suspend fun active(orgId: Uuid): Map<Uuid, Int> = slots.groupingBy { it.accountId }.eachCount()
 }
 

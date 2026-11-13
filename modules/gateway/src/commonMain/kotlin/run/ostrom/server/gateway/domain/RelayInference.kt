@@ -155,7 +155,7 @@ class RelayInferenceUseCaseImpl(
             val state = CallState(this, plan.model, plan.provider, plan.lease?.let { it.account.id })
             // No `finally`: the compiler copies it per exit, and each copy needs its own test.
             val retry = try {
-                upstream.exchange(plan.request) { answer -> relay(plan, answer, tries, state) }
+                held(plan) { upstream.exchange(plan.request) { answer -> relay(plan, answer, tries, state) } }
             } catch (cancelled: CancellationException) {
                 release(plan)
                 state.outcome = "cancelled"
@@ -170,6 +170,12 @@ class RelayInferenceUseCaseImpl(
             }
             release(plan)
             return state.takeUnless { retry }
+        }
+
+        /** Runs [exchange] holding the shared account's slot, renewed while a long stream runs. */
+        private suspend fun held(plan: InferencePlan.Ready, exchange: suspend () -> Boolean): Boolean {
+            val lease = plan.lease
+            return if (lease == null) exchange() else lease.held(exchange)
         }
 
         private suspend fun release(plan: InferencePlan.Ready) {

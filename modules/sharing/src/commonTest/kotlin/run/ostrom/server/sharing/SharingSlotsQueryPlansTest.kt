@@ -14,6 +14,7 @@ import run.ostrom.server.sharing.infrastructure.SLOT_LOCK_SQL
 import run.ostrom.server.sharing.infrastructure.SLOT_PURGE_SQL
 import run.ostrom.server.sharing.infrastructure.SLOT_RELEASE_SQL
 import run.ostrom.server.sharing.infrastructure.SLOT_REMEMBERED_SQL
+import run.ostrom.server.sharing.infrastructure.SLOT_RENEW_SQL
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
@@ -77,6 +78,7 @@ class SharingSlotsQueryPlansTest {
             "the slot taken" to SLOT_INSERT_SQL,
             "the expired sessions dropped" to AFFINITY_PURGE_SQL,
             "the session remembered" to AFFINITY_REMEMBER_SQL,
+            "the slot renewed" to SLOT_RENEW_SQL,
             "the slot given back" to SLOT_RELEASE_SQL,
             "the org's slots" to SLOT_ACTIVE_SQL,
         ).forEach { (what, sql) ->

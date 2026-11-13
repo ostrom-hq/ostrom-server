@@ -160,13 +160,22 @@ interface AccountSlotRepository {
     /** Gives a slot back; nothing when it is gone. */
     suspend fun release(orgId: Uuid, slot: AccountSlot)
 
+    /** Extends a slot still held by [SLOT_LEASE] from now; nothing when it is gone. */
+    suspend fun renew(orgId: Uuid, slot: AccountSlot)
+
     /** The unexpired slots of the org's accounts (absent: none). */
     suspend fun active(orgId: Uuid): Map<Uuid, Int>
 
     /** The bounds. */
     companion object {
-        /** A slot never released (its replica died) frees itself after this (TeamCode's 15-minute lease). */
+        /**
+         * A slot never released (its replica died) frees itself after this (TeamCode's 15-minute lease); a request
+         * still open renews its slot every [SLOT_RENEWAL], so a long stream keeps counting.
+         */
         val SLOT_LEASE: Duration = 15.minutes
+
+        /** How often an open request renews its slot. */
+        val SLOT_RENEWAL: Duration = 5.minutes
 
         /** How long a session sticks to its account after its last lease. */
         val AFFINITY: Duration = 1.hours

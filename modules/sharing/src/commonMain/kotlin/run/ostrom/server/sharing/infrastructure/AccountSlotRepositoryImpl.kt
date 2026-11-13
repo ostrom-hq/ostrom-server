@@ -19,8 +19,8 @@ import kotlin.uuid.Uuid
  * [AccountSlotRepository] on PostgreSQL ([SharingMigrations] version 8). A take locks the candidates' rows
  * (`FOR UPDATE`, in id order so that two takes never deadlock), counts their unexpired slots, and inserts the slot in
  * the same transaction: two replicas never fill an account past its limit together. Expiry is the database's clock.
- * A session id is stored as its SHA-256 digest only. Expired slots of the account taken, and expired affinities of the
- * member, are deleted as a take goes, so neither table grows with dead rows.
+ * A session id is stored as its SHA-256 digest only. The org's expired slots and affinities are deleted as a take goes,
+ * so neither table keeps an org's dead rows past its next lease.
  *
  * @param driver The database.
  */
@@ -42,10 +42,10 @@ class AccountSlotRepositoryImpl(private val driver: Driver) : AccountSlotReposit
         }
         pick(SlotView(active, remembered, serving))?.let { account ->
             val slot = AccountSlot(Uuid.random(), account.id)
-            execute(sql(SLOT_PURGE_SQL).bind("account_id", account.id)).getOrThrow()
+            execute(sql(SLOT_PURGE_SQL)).getOrThrow()
             execute(sql(SLOT_INSERT_SQL).bind("id", slot.id).bind("account_id", account.id)).getOrThrow()
             if (session != null) {
-                execute(sql(AFFINITY_PURGE_SQL).bind("member_id", memberId)).getOrThrow()
+                execute(sql(AFFINITY_PURGE_SQL)).getOrThrow()
                 execute(
                     sql(AFFINITY_REMEMBER_SQL)
                         .bind("member_id", memberId)
@@ -61,6 +61,13 @@ class AccountSlotRepositoryImpl(private val driver: Driver) : AccountSlotReposit
         driver.executeInOrg(
             orgId,
             Statement.create(SLOT_RELEASE_SQL).bind("org_id", orgId).bind("id", slot.id),
+        ).getOrThrow()
+    }
+
+    override suspend fun renew(orgId: Uuid, slot: AccountSlot) {
+        driver.executeInOrg(
+            orgId,
+            Statement.create(SLOT_RENEW_SQL).bind("org_id", orgId).bind("id", slot.id),
         ).getOrThrow()
     }
 
@@ -93,9 +100,8 @@ internal const val SLOT_REMEMBERED_SQL =
     "SELECT account_id FROM sharing_affinities WHERE org_id = :org_id AND member_id = :member_id " +
         "AND session_hash = $HASH AND expires_at > now()"
 
-/** The expired slots of the account taken. */
-internal const val SLOT_PURGE_SQL =
-    "DELETE FROM sharing_slots WHERE org_id = :org_id AND account_id = :account_id AND expires_at <= now()"
+/** The org's expired slots. */
+internal const val SLOT_PURGE_SQL = "DELETE FROM sharing_slots WHERE org_id = :org_id AND expires_at <= now()"
 
 /** A new slot, expiring after its lease. */
 internal val SLOT_INSERT_SQL =
@@ -107,12 +113,15 @@ internal const val SLOT_ACTIVE_SQL =
     "SELECT account_id, count(*) AS active FROM sharing_slots WHERE org_id = :org_id AND expires_at > now() " +
         "GROUP BY account_id"
 
+/** A slot still held, extended by its lease from now. */
+internal val SLOT_RENEW_SQL =
+    "UPDATE sharing_slots SET expires_at = now() + INTERVAL '$SLOT_SECONDS seconds' WHERE org_id = :org_id AND id = :id"
+
 /** One slot given back. */
 internal const val SLOT_RELEASE_SQL = "DELETE FROM sharing_slots WHERE org_id = :org_id AND id = :id"
 
-/** The member's expired affinities. */
-internal const val AFFINITY_PURGE_SQL =
-    "DELETE FROM sharing_affinities WHERE org_id = :org_id AND member_id = :member_id AND expires_at <= now()"
+/** The org's expired affinities. */
+internal const val AFFINITY_PURGE_SQL = "DELETE FROM sharing_affinities WHERE org_id = :org_id AND expires_at <= now()"
 
 /**
  * A session already remembered is renewed; a new one is remembered while the member and the org are under their

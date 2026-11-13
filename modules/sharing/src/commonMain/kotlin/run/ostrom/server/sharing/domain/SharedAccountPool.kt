@@ -2,7 +2,11 @@
 package run.ostrom.server.sharing.domain
 
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
@@ -11,8 +15,8 @@ import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * An account taken for one request. The gateway sends [credentials] to the provider (never to a member), reports the
- * answer with [observe], and always calls [release].
+ * An account taken for one request. The gateway sends [credentials] to the provider (never to a member) within
+ * [held], reports the answer with [observe], and always calls [release].
  *
  * @property account The account.
  * @property credentials Fresh tokens.
@@ -38,6 +42,20 @@ class AccountLease internal constructor(
      * [SharedAccountPool.STALL_COOLDOWN], like a 429 that names no reset, so the next calls go to another account.
      */
     suspend fun stalled() = pool.observe(this, NO_ANSWER, emptyMap())
+
+    /**
+     * Runs [block], the request to the provider, renewing the slot every [AccountSlotRepository.SLOT_RENEWAL] while it
+     * runs: a stream longer than the slot's lease keeps counting. A renewal that fails is left to the next one.
+     */
+    suspend fun <T> held(block: suspend () -> T): T = coroutineScope {
+        val renewing = launch {
+            while (true) {
+                delay(AccountSlotRepository.SLOT_RENEWAL)
+                pool.renew(account.orgId, slot)
+            }
+        }
+        block().also { renewing.cancel() }
+    }
 
     /** Gives the slot back; idempotent, and done even when the request is being cancelled. */
     suspend fun release() {
@@ -125,7 +143,9 @@ class SharedAccountPool(
         val ready = accounts.ready(request.orgId, request.provider).filter { it.id !in tried }
         val usable = groups.allowed(request.orgId, request.memberId, ready, now)
         val candidates = candidates(request.orgId, usable, now)
-        val slot = if (candidates.open.isEmpty()) null else take(request, candidates.open)
+        // Not cancellable: a slot committed must reach serve(), which gives it back if the request is cancelled.
+        val slot = candidates.open.takeIf { it.isNotEmpty() }
+            ?.let { open -> withContext(NonCancellable) { take(request, open) } }
         return when {
             usable.isEmpty() -> refused("No shared ${request.provider.wire} account is available to you.", null)
             candidates.open.isEmpty() ->
@@ -213,7 +233,20 @@ class SharedAccountPool(
         }
     }
 
-    internal suspend fun release(orgId: Uuid, slot: AccountSlot) = slots.release(orgId, slot)
+    // A slot the database could not take back frees itself at the end of its lease: the request's answer stands.
+    internal suspend fun release(orgId: Uuid, slot: AccountSlot) = quietly { slots.release(orgId, slot) }
+
+    internal suspend fun renew(orgId: Uuid, slot: AccountSlot) = quietly { slots.renew(orgId, slot) }
+
+    private suspend fun quietly(write: suspend () -> Unit) {
+        try {
+            write()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            // Left to the slot's lease.
+        }
+    }
 
     /** Requests in flight on each of the org's accounts, on every replica (absent: none). */
     suspend fun inFlight(orgId: Uuid): Map<Uuid, Int> = slots.active(orgId)
