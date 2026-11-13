@@ -428,6 +428,12 @@ owner, so the serving role reads the history (the start-up check) and never rewr
   per server, are rows of `mcp_relay_slots` and `mcp_relay_minutes`, counted under a lock on the server's row and by
   the database's clock, so every replica admits against the same count. A running operation renews its slot every
   5 minutes; a slot whose replica died frees itself within 15, and one the database fails to take back fails no call.
+- **The live usage feed holds across replicas**: an event recorded on one replica reaches the live streams
+  (`GET /api/v1/usage/live`) of every replica through PostgreSQL's `LISTEN`/`NOTIFY` (channel `ostrom_usage_feed`,
+  kernel `DatabaseNotifications`, one listening connection per replica). A notification names events only
+  (`<org>:<id>`, 64 at most), never what they hold: a replica with a subscriber of that org reads them from the
+  ledger inside the org, one without reads nothing. Best effort like the feed itself: a notification sent while a
+  replica's listener reconnects is lost to it; the ledger stays complete.
 - **SQLite** (tests and local mode) is not wired yet: sqlx4k has a SQLite driver with the same `Driver` interface;
   repositories must stay portable SQL where they can.
 - **The instance signer is provisional** (`kernel/signing`): it moves to `ostrom-core` once published; the

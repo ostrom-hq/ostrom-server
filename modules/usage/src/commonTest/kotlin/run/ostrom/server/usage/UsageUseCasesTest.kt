@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.usage
 
+import run.ostrom.server.kernel.database.InProcessNotifications
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.usage.domain.ClientUsageEvent
@@ -21,6 +22,7 @@ import run.ostrom.server.usage.domain.UsageRecorderImpl
 import run.ostrom.server.usage.domain.UsageRepository
 import run.ostrom.server.usage.domain.UsageSummaryUseCaseImpl
 import run.ostrom.server.usage.domain.WatchUsageUseCaseImpl
+import run.ostrom.server.usage.infrastructure.ReplicatedUsageFeed
 import run.ostrom.server.usage.infrastructure.UsageFeedImpl
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
@@ -362,7 +364,8 @@ class UsageUseCasesTest {
     }
 
     @Test
-    fun theModuleStartsThePurgeInTheServerScope() = runTest {
+    fun theModuleStartsThePurgeAndTheReplicatedFeedInTheServerScope() = runTest {
+        val notifications = InProcessNotifications()
         repository.events += modelEvent(1, at = TestCallers.epoch - 500.days)
         val koin = koinApplication {
             modules(
@@ -371,6 +374,7 @@ class UsageUseCasesTest {
                     single<Clock> { clock }
                     single<Logger> { RecordingLogger() }
                     single<PurgeUsageUseCase> { PurgeUsageUseCaseImpl(get(), get(), 400.days) }
+                    single { ReplicatedUsageFeed(feed, notifications, { _, _ -> emptyList() }, get()) }
                 },
             )
         }.koin
@@ -378,6 +382,12 @@ class UsageUseCasesTest {
         runCurrent()
 
         assertTrue(repository.events.isEmpty(), "The first purge runs at start")
+        var told = false
+        backgroundScope.launch { notifications.listen(ReplicatedUsageFeed.CHANNEL) { told = true } }
+        runCurrent()
+        koin.get<ReplicatedUsageFeed>().publish(modelEvent(1))
+        runCurrent()
+        assertTrue(told, "The live feed tells the other replicas from the start")
         koin.close()
     }
 
