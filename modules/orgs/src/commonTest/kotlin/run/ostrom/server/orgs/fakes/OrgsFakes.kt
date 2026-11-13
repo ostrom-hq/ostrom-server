@@ -2,6 +2,7 @@
 package run.ostrom.server.orgs.fakes
 
 import run.ostrom.server.kernel.auth.OrgRole
+import run.ostrom.server.orgs.domain.OrgCreationGate
 import run.ostrom.server.orgs.domain.AlreadyMemberException
 import run.ostrom.server.orgs.domain.Invitation
 import run.ostrom.server.orgs.domain.InvitationMailer
@@ -295,6 +296,11 @@ class RecordingMailer : InvitationMailer {
     }
 }
 
+/** The instance's gate: open (anyone creates organizations), or invite-only with the people it lets. */
+class FakeCreationGate(var open: Boolean = true, val allowed: MutableSet<Uuid> = mutableSetOf()) : OrgCreationGate {
+    override suspend fun opensTo(userId: Uuid): Boolean = open || userId in allowed
+}
+
 /** Every fake wired together, as the module wires the real ones. */
 class OrgsWorld {
     val clock = SettableClock()
@@ -308,6 +314,7 @@ class OrgsWorld {
     val seats = FakeSeats()
     val tokens = FakeTokens()
     val limiter = FakeLimiter()
+    val creation = FakeCreationGate()
     val mailer = RecordingMailer()
     val services =
         InvitationServices(tokens, mailer, seats, limiter, audit) {

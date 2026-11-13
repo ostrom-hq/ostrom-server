@@ -64,7 +64,13 @@ fun main(args: Array<String>) {
     when (command) {
         Command.Serve -> serve()
         Command.Migrate -> migrate()
-        is Command.SeedTestAccount -> seed(command.email)
+        // A QA account, as one JSON line.
+        is Command.SeedTestAccount -> oneShot(
+            "test account not created",
+            allowed = { requireTestAccountsAllowed(it, command.email) },
+        ) { koin, source -> seedTestAccount(koin, source, command.email) }
+        // The first owner's one-time setup link.
+        Command.Bootstrap -> oneShot("setup link not made") { koin, _ -> bootstrapInstance(koin) }
     }
 }
 
@@ -159,11 +165,22 @@ private fun migrate() {
     runBlocking { driver?.close() }
 }
 
-/** Creates a QA account and prints it as one JSON line on stdout. */
-private fun seed(email: String) {
+/**
+ * Runs one command against the database and prints what it returns on stdout (never in a log): a refusal exits 2 with
+ * its usage, a failure 1.
+ *
+ * @param failure What the log says when it fails.
+ * @param allowed Refuses the command (a [UsageException]) before anything is touched.
+ * @param work The command, given the server's Koin and configuration once every module's migrations are checked.
+ */
+private fun oneShot(
+    failure: String,
+    allowed: (ConfigSource) -> Unit = {},
+    work: suspend (Koin, ConfigSource) -> String,
+) {
     val (source, config) = loadConfig()
     try {
-        requireTestAccountsAllowed(source, email)
+        allowed(source)
     } catch (error: UsageException) {
         usage(error)
     }
@@ -176,18 +193,18 @@ private fun seed(email: String) {
         val database = connectPostgres(config.database).also { driver = it }
         val signer = runBlocking { Ed25519InstanceSigner.loadOrCreate(config.signingKeyFile) }
         val server = serverKoin(kernelModule(logger, database, signer, source), modules).also { koin = it }
-        val account = runBlocking {
+        val text = runBlocking {
             val migrations = server.get<MigrationRunner>()
             modules.forEach { migrations.verify(it.name, it.migrations) }
             modules.forEach { it.initialize(server) }
-            seedTestAccount(server, source, email)
+            work(server, source)
         }
-        println(account)
+        println(text)
     } catch (error: UsageException) {
         shutDown(workers, koin, driver)
         usage(error)
     } catch (error: Throwable) { // not coroutine-reachable: the process entry point, outside any coroutine.
-        failed(logger, "test account not created", error)
+        failed(logger, failure, error)
         shutDown(workers, koin, driver)
         exitProcess(EXIT_FAILURE)
     }

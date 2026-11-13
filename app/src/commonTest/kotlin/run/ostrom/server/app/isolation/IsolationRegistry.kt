@@ -68,6 +68,7 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "POST /api/v1/auth/email" to Case.Exempt(SIGN_IN),
     "POST /api/v1/auth/email/verify" to Case.Exempt(SIGN_IN),
     "POST /api/v1/auth/link" to Case.Exempt(SIGN_IN),
+    "POST /api/v1/auth/signup-grant" to Case.Exempt(SIGN_IN),
     "POST /api/v1/auth/links" to Case.Own("makes a sign-in link for the caller"),
     "POST /api/v1/auth/launcher/login" to Case.Exempt(SIGN_IN),
     "POST /api/v1/auth/mobile/token" to Case.Exempt(SIGN_IN),

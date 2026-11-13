@@ -278,6 +278,7 @@ jobs:
           OSTROM_MAIL_DIR=/var/lib/ostrom/mail
           OSTROM_PUBLIC_URL=http://127.0.0.1:4600
           OSTROM_CONSOLE_URL=http://127.0.0.1:4600
+          OSTROM_SIGNUP=open
           OSTROM_WEB_ORIGIN=http://127.0.0.1:4600
           OSTROM_TRUSTED_PROXIES=127.0.0.1/32
           OSTROM_STRIPE_SECRET_KEY=sk_test_e2e

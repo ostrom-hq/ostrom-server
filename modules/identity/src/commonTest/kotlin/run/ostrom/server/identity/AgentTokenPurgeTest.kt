@@ -2,6 +2,8 @@
 package run.ostrom.server.identity
 
 import run.ostrom.server.identity.domain.ApiTokensRepository
+import run.ostrom.server.identity.domain.SignUpMode
+import run.ostrom.server.identity.presentation.IdentityConfig
 import run.ostrom.server.identity.fakes.InMemoryApiTokensRepository
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.logging.Logger
@@ -49,6 +51,9 @@ class AgentTokenPurgeTest {
                     single<ApiTokensRepository> { tokens }
                     single<Clock> { clock }
                     single<Logger> { logger }
+                    single {
+                        IdentityConfig("http://localhost:8080", "http://localhost:5173", signUp = SignUpMode.OPEN)
+                    }
                 },
             )
         }

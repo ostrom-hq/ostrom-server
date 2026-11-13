@@ -4,6 +4,7 @@ package run.ostrom.server.orgs.infrastructure
 import run.ostrom.server.identity.domain.CreatePersonalTokenUseCase
 import run.ostrom.server.identity.domain.IdentityProvider
 import run.ostrom.server.identity.domain.ResolveUserUseCase
+import run.ostrom.server.identity.domain.SignUpGrant
 import run.ostrom.server.identity.domain.VerifiedIdentity
 import run.ostrom.server.identity.domain.normalizeEmail
 import run.ostrom.server.kernel.module.TestAccount
@@ -32,9 +33,11 @@ class TestAccountSeederImpl(
     override suspend fun seed(email: String): TestAccount {
         val address = normalizeEmail(email)
         // The magic link proves the address the same way: an e-mail identity is its own verified subject.
-        val user = resolveUser(VerifiedIdentity(IdentityProvider.EMAIL, address, address, true))
+        // The operator seeds it from the host: an invite-only instance's sign-up policy does not apply.
+        val identity = VerifiedIdentity(IdentityProvider.EMAIL, address, address, true)
+        val user = resolveUser(identity, SignUpGrant.Operator)
         val membership = listMyOrgs(user.id).firstOrNull()
-            ?: createOrg(user.id, "QA ${address.substringBefore('@')}", null)
+            ?: createOrg(user.id, "QA ${address.substringBefore('@')}", null, operator = true)
         val issued = createToken(user.id, TEST_TOKEN_NAME, TEST_ACCOUNT_SCOPES, TEST_TOKEN_DAYS.days)
         return TestAccount(address, issued.secret, membership.org.id.toString())
     }

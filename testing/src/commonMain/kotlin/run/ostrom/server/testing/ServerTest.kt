@@ -3,6 +3,8 @@ package run.ostrom.server.testing
 
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.EnvironmentConfigSource
+import run.ostrom.server.kernel.config.LayeredConfigSource
+import run.ostrom.server.kernel.config.MapConfigSource
 import run.ostrom.server.kernel.database.MigrationRunner
 import run.ostrom.server.kernel.database.MigrationRunnerImpl
 import run.ostrom.server.kernel.database.migrateUnderLock
@@ -94,7 +96,10 @@ private suspend fun ApplicationTestBuilder.serve(
         database.driver.requireRowLevelSecurity()
         // The server's pool records what it sends, for the read benches (ReadBench.kt).
         val driver = RecordingDriver(database.driver)
-        val kernel = kernelModule(logger, driver, signer, environment)
+        // Tests sign people up as an open instance does (`OSTROM_SIGNUP` of ostrom.run); the invite-only default of a
+        // self-hosted instance has its own tests, which override the identity configuration.
+        val source = LayeredConfigSource(listOf(environment, MapConfigSource(mapOf("OSTROM_SIGNUP" to "open"))))
+        val kernel = kernelModule(logger, driver, signer, source)
         val koin = serverKoin(kernel, modules, overrides)
         try {
             val migrations = koin.get<MigrationRunner>()

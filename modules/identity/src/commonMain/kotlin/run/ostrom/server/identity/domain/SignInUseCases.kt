@@ -163,6 +163,8 @@ interface CompleteOAuthSignInUseCase {
      * @param state The state the provider returned.
      * @param browserState The state in the browser's cookie, set by [StartOAuthSignInUseCase].
      * @param code The authorization code.
+     * @param signUpToken The setup link's or invitation's token the browser gave before signing in (`grantSignUp`),
+     *   which lets an invite-only instance create the account.
      *
      * @return The user, a new browser session and where to go.
      *
@@ -172,12 +174,14 @@ interface CompleteOAuthSignInUseCase {
      * @throws ProviderRejectedException When the provider refuses the code.
      * @throws AccountLinkRequiredException When the provider asserts the address of another account (S2-07).
      * @throws IdentityTakenException When the identity to link signs another user in.
+     * @throws SignUpClosedException When the account would be new and the instance does not admit it.
      */
     suspend operator fun invoke(
         provider: String,
         state: String?,
         browserState: String?,
         code: String?,
+        signUpToken: String? = null,
     ): CompletedSignIn
 }
 
@@ -204,6 +208,7 @@ class CompleteOAuthSignInUseCaseImpl(
         state: String?,
         browserState: String?,
         code: String?,
+        signUpToken: String?,
     ): CompletedSignIn {
         val (oauth, attempt) = takeAttempt(methods, attempts, services, TakenState(provider, state, browserState))
         // A sign-in the phone app started ends in the app, never in a browser session.
@@ -211,7 +216,11 @@ class CompleteOAuthSignInUseCaseImpl(
         if (code.isNullOrEmpty()) throw ProviderRejectedException("no authorization code.")
         val identity = oauth.identity(code, attempt.codeVerifier, attempt.nonce, services.callbackUrl(oauth.provider))
         val linkTo = attempt.linkUserId
-        val user = if (linkTo != null) linkIdentity(linkTo, identity) else resolveUser(identity)
+        val user = if (linkTo != null) {
+            linkIdentity(linkTo, identity)
+        } else {
+            resolveUser(identity, SignUpGrant.Presented(signUpToken))
+        }
         return CompletedSignIn(user, startSession(user.id), attempt.redirectPath)
     }
 }
@@ -291,13 +300,15 @@ interface VerifyMagicLinkUseCase {
      *
      * @param token The token of the link.
      * @param browserNonce The nonce of the browser presenting it (its cookie), null when it holds none.
+     * @param signUpToken The setup link's or invitation's token the browser gave before signing in (`grantSignUp`).
      *
      * @return The user, a new browser session and where to go.
      *
      * @throws InvalidMagicLinkException When the link is unknown, used or expired.
      * @throws MagicLinkOtherBrowserException When the link is valid but another browser asked for it: it is not used.
+     * @throws SignUpClosedException When the account would be new and the instance does not admit it.
      */
-    suspend operator fun invoke(token: String, browserNonce: String?): CompletedSignIn
+    suspend operator fun invoke(token: String, browserNonce: String?, signUpToken: String? = null): CompletedSignIn
 }
 
 /**
@@ -316,7 +327,7 @@ class VerifyMagicLinkUseCaseImpl(
     private val startSession: StartWebSessionUseCase,
     private val clock: Clock,
 ) : VerifyMagicLinkUseCase {
-    override suspend fun invoke(token: String, browserNonce: String?): CompletedSignIn {
+    override suspend fun invoke(token: String, browserNonce: String?, signUpToken: String?): CompletedSignIn {
         if (token.isEmpty() || token.length > MAX_TOKEN) throw InvalidMagicLinkException()
         val tokenHash = hasher.hash(token)
         val now = clock.nowMillis()
@@ -326,7 +337,8 @@ class VerifyMagicLinkUseCaseImpl(
         if (link == null) {
             throw if (links.pending(tokenHash, now)) MagicLinkOtherBrowserException() else InvalidMagicLinkException()
         }
-        val user = resolveUser(VerifiedIdentity(IdentityProvider.EMAIL, link.email, link.email, true))
+        val identity = VerifiedIdentity(IdentityProvider.EMAIL, link.email, link.email, true)
+        val user = resolveUser(identity, SignUpGrant.Presented(signUpToken))
         return CompletedSignIn(user, startSession(user.id), link.redirectPath)
     }
 

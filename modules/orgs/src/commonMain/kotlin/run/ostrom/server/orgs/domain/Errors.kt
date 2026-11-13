@@ -13,6 +13,16 @@ class OrgNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Organization 
 /** No member of the organization has this login. */
 class MemberNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Member not found.")
 
+/**
+ * On an invite-only instance, only owners and admins of an organization (and the person of the instance's setup
+ * link) create organizations.
+ */
+class OrgCreationClosedException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "On this instance, an owner or an admin of an organization creates organizations: ask one of them.",
+    "org_creation_closed",
+)
+
 /** No live invitation matches. */
 class InvitationNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Invitation not found.")
 

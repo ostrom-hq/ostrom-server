@@ -61,39 +61,45 @@ fun Clock.nowMillis(): Instant = Instant.fromEpochMilliseconds(now().toEpochMill
  * the same e-mail, when the provider is an authority for it ([vouchesFor]); else a new user. Accounts never merge on
  * an address a provider merely asserts (S2-07): an organization's SSO naming the address of an existing account is
  * refused ([AccountLinkRequiredException]), and the address it gives is recorded unverified, so it can never become
- * the anchor a later sign-in merges into.
+ * the anchor a later sign-in merges into. A new account is created only when the instance's [SignUpPolicy] admits it.
  */
 interface ResolveUserUseCase {
     /**
      * Resolves the user.
      *
      * @param identity What the provider proved.
+     * @param grant What lets a new account be created on an invite-only instance: the token the browser presents,
+     *   or the operator.
      *
      * @return The user, existing or created.
+     *
+     * @throws SignUpClosedException When the account would be new and the instance does not admit it.
      */
-    suspend operator fun invoke(identity: VerifiedIdentity): User
+    suspend operator fun invoke(identity: VerifiedIdentity, grant: SignUpGrant = SignUpGrant.Presented(null)): User
 }
 
 /**
  * [ResolveUserUseCase] on the repository.
  *
  * @param users The users.
+ * @param signUp Who may get a new account.
  * @param audit The audit log (account creation and linking are recorded).
  * @param clock The clock.
  */
 class ResolveUserUseCaseImpl(
     private val users: UsersRepository,
+    private val signUp: SignUpPolicy,
     private val audit: AuditLog,
     private val clock: Clock,
 ) : ResolveUserUseCase {
-    override suspend fun invoke(identity: VerifiedIdentity): User = try {
-        resolve(identity)
+    override suspend fun invoke(identity: VerifiedIdentity, grant: SignUpGrant): User = try {
+        resolve(identity, grant)
     } catch (_: DuplicateIdentityException) {
         // Another sign-in of the same person won the race: the second pass finds what it created.
-        resolve(identity)
+        resolve(identity, grant)
     }
 
-    private suspend fun resolve(identity: VerifiedIdentity): User {
+    private suspend fun resolve(identity: VerifiedIdentity, grant: SignUpGrant): User {
         val now = clock.nowMillis()
         val email = identity.email?.let(::normalizeOrNull)
         val vouched = email != null && vouchesFor(identity, email)
@@ -113,13 +119,22 @@ class ResolveUserUseCaseImpl(
                 audit.record(AuditEntry(null, owner.id, "identity.linked", "user", owner.id.toString(), details))
                 owner
             }
-            else -> create(identity, email, userEmail, now)
+            else -> {
+                if (!signUp.admits(identity, grant)) throw SignUpClosedException()
+                create(Uuid.random(), identity, email, userEmail, now).also { signUp.claim(grant, it.id) }
+            }
         }
     }
 
-    private suspend fun create(identity: VerifiedIdentity, email: String?, userEmail: UserEmail?, now: Instant): User {
+    private suspend fun create(
+        id: Uuid,
+        identity: VerifiedIdentity,
+        email: String?,
+        userEmail: UserEmail?,
+        now: Instant,
+    ): User {
         val user = User(
-            id = Uuid.random(),
+            id = id,
             login = freeLogin(identity, email),
             displayName = trimmedOrNull(identity.displayName, MAX_DISPLAY_NAME)
                 ?: email?.substringBefore('@')

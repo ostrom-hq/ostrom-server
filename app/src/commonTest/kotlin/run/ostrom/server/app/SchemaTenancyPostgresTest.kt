@@ -250,6 +250,7 @@ class SchemaTenancyPostgresTest {
             "identity_mobile_codes" to "serving role, the app's sign-in: one-time codes, by hash",
             "identity_notification_preferences" to "serving role: a person's preferences, across organizations",
             "identity_oauth_attempts" to "serving role, sign-in: an OAuth round trip's state, by hash",
+            "identity_setup_links" to "serving role, setup: the one-time link of `ostrom-server bootstrap`, by hash",
             "identity_sign_in_links" to "serving role: a signed-in person's one-time link to a browser, by hash",
             "identity_user_emails" to "serving role, sign-in: a person's e-mail addresses",
             "identity_users" to "serving role: the people, members of any number of organizations",

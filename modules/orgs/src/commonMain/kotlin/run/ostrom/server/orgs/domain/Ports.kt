@@ -20,6 +20,17 @@ data class Person(
     val email: String?,
 )
 
+/** Who the instance lets create organizations whatever their roles (the identity module's sign-up policy). */
+interface OrgCreationGate {
+    /**
+     * Whether it lets this person: anyone on an open instance, the setup link's person on an invite-only one.
+     *
+     * @param userId The person.
+     * @return True when so.
+     */
+    suspend fun opensTo(userId: Uuid): Boolean
+}
+
 /** The people of the instance (the identity module's users). */
 interface People {
     /**

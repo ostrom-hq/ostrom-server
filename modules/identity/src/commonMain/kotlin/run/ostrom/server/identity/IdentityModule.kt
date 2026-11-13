@@ -79,6 +79,15 @@ import run.ostrom.server.identity.domain.RevokeTokenUseCaseImpl
 import run.ostrom.server.identity.domain.RotateTokenUseCase
 import run.ostrom.server.identity.domain.RotateTokenUseCaseImpl
 import run.ostrom.server.identity.domain.SecretGenerator
+import run.ostrom.server.identity.domain.BootstrapInstanceUseCase
+import run.ostrom.server.identity.domain.BootstrapInstanceUseCaseImpl
+import run.ostrom.server.identity.domain.SetupLinksRepository
+import run.ostrom.server.identity.domain.SignUpInvitations
+import run.ostrom.server.identity.domain.GrantSignUpUseCase
+import run.ostrom.server.identity.domain.GrantSignUpUseCaseImpl
+import run.ostrom.server.identity.domain.SignUpMode
+import run.ostrom.server.identity.domain.SignUpPolicy
+import run.ostrom.server.identity.domain.SignUpPolicyImpl
 import run.ostrom.server.identity.domain.SecretHasher
 import run.ostrom.server.identity.domain.ServiceKeyAuditImpl
 import run.ostrom.server.identity.domain.ServiceKeysRepository
@@ -124,6 +133,8 @@ import run.ostrom.server.identity.infrastructure.OidcProvider
 import run.ostrom.server.identity.infrastructure.PhoneUnlockProofsImpl
 import run.ostrom.server.identity.infrastructure.ResendMailSender
 import run.ostrom.server.identity.infrastructure.SecureSecretGenerator
+import run.ostrom.server.identity.infrastructure.IdentityInstanceBootstrapper
+import run.ostrom.server.identity.infrastructure.SetupLinksRepositoryImpl
 import run.ostrom.server.identity.infrastructure.ServiceKeysRepositoryImpl
 import run.ostrom.server.identity.infrastructure.Sha256SecretHasher
 import run.ostrom.server.identity.infrastructure.SignInLinksRepositoryImpl
@@ -157,6 +168,7 @@ import run.ostrom.server.kernel.auth.SignOutListener
 import run.ostrom.server.kernel.auth.TokenAuthenticator
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.logging.Logger
+import run.ostrom.server.kernel.module.InstanceBootstrapper
 import run.ostrom.server.kernel.module.ServerModule
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
@@ -217,7 +229,16 @@ object IdentityModule : ServerModule {
             val config = get<IdentityConfig>()
             CredentialAuthenticatorImpl(get(), get(), get(), get(), config.allowedOrigins, config.sessionCookiePrefix)
         }
-        single<ResolveUserUseCase> { ResolveUserUseCaseImpl(get(), get(), get()) }
+        single<SetupLinksRepository> { SetupLinksRepositoryImpl(get()) }
+        single<SignUpPolicy> {
+            // The orgs module binds the invitations: absent (a server without it), only the setup link admits.
+            SignUpPolicyImpl(get<IdentityConfig>().signUp, get(), getOrNull<SignUpInvitations>(), get(), get())
+        }
+        single<BootstrapInstanceUseCase> { BootstrapInstanceUseCaseImpl(get(), get(), get(), get()) }
+        single<InstanceBootstrapper> {
+            IdentityInstanceBootstrapper(get(), get<IdentityConfig>()::setupUrl)
+        }
+        single<ResolveUserUseCase> { ResolveUserUseCaseImpl(get(), get(), get(), get()) }
         single<LinkIdentityUseCase> { LinkIdentityUseCaseImpl(get(), get(), get()) }
         single<GetProfileUseCase> { GetProfileUseCaseImpl(get()) }
         single<StartWebSessionUseCase> { StartWebSessionUseCaseImpl(get(), get(), get(), get()) }
@@ -272,7 +293,8 @@ object IdentityModule : ServerModule {
         }
         single<IssueCliTokenUseCase> { IssueCliTokenUseCaseImpl(get(), get(), get(), get(), get()) }
         single<LauncherLoginUseCase> { LauncherLoginUseCaseImpl(get(), get(), get(), get()) }
-        single { SignInRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get()) }
+        single<GrantSignUpUseCase> { GrantSignUpUseCaseImpl(get(), get()) }
+        single { SignInRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single<MobileCodesRepository> { MobileCodesRepositoryImpl(get()) }
         single<MobileTokensRepository> { MobileTokensRepositoryImpl(get()) }
         single<PhoneUnlockProofs> { PhoneUnlockProofsImpl(get()) }
@@ -304,6 +326,7 @@ object IdentityModule : ServerModule {
     // Every hour, the agent tokens expired more than AGENT_TOKEN_RETENTION ago are deleted: one per launch, they were
     // kept for ever. A failed purge is logged and tried again the next hour; it never stops the server.
     override fun start(scope: CoroutineScope, koin: Koin) {
+        warnWhenNobodyCanSignUp(scope, koin)
         val tokens = koin.get<ApiTokensRepository>()
         val clock = koin.get<Clock>()
         val logger = koin.get<Logger>()
@@ -320,6 +343,30 @@ object IdentityModule : ServerModule {
             }
         }
     }
+
+    /**
+     * Says once at start, in the log, that an invite-only instance without any account needs `ostrom-server
+     * bootstrap`: nobody could sign up otherwise. The link itself is never logged (it is a credential).
+     */
+    private fun warnWhenNobodyCanSignUp(scope: CoroutineScope, koin: Koin) {
+        if (koin.get<IdentityConfig>().signUp != SignUpMode.INVITE) return
+        val setupLinks = koin.get<SetupLinksRepository>()
+        val logger = koin.get<Logger>()
+        scope.launch {
+            try {
+                if (!setupLinks.anyAccount()) logger.warn(BOOTSTRAP_HINT)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                logger.warn("account check failed", mapOf("error" to error::class.simpleName))
+            }
+        }
+    }
+
+    /** What the start says when an invite-only instance has no account yet. */
+    const val BOOTSTRAP_HINT: String =
+        "sign-up is invite-only (OSTROM_SIGNUP) and this instance has no account yet: run `ostrom-server bootstrap` " +
+            "for the first owner's one-time setup link"
 
     override fun routes(route: Route, koin: Koin) {
         route.noStoreOnIdentityRoutes()

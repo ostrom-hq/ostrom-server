@@ -50,12 +50,16 @@ interface CreateOrgUseCase {
      * @param userId The creator.
      * @param name The name.
      * @param slug The short name the creator chose, or null to derive it from the name.
+     * @param operator Whether the instance's operator creates it from the host (`seed-test-account`): the
+     *   instance's sign-up policy does not apply.
      * @return The organization and the owner's membership.
      * @throws FreeTeamTakenException When the creator's domain (or the creator) already has a free
      *   team.
      * @throws SlugTakenException When the chosen short name is taken.
+     * @throws OrgCreationClosedException On an invite-only instance, for a creator who is neither an owner nor
+     *   an admin of an organization, nor the person of the instance's setup link.
      */
-    suspend operator fun invoke(userId: Uuid, name: String, slug: String?): Membership
+    suspend operator fun invoke(userId: Uuid, name: String, slug: String?, operator: Boolean = false): Membership
 }
 
 /**
@@ -63,23 +67,25 @@ interface CreateOrgUseCase {
  *
  * @param orgs The organizations.
  * @param people The people.
+ * @param guards Who may create organizations, and how often.
  * @param seats The plan lookup.
- * @param limiter Limits creations per person.
  * @param audit The audit log.
  * @param clock The clock.
  */
 class CreateOrgUseCaseImpl(
     private val orgs: OrgsRepository,
     private val people: People,
+    private val guards: OrgCreationGuards,
     private val seats: SeatPolicy,
-    private val limiter: OrgRateLimiter,
     private val audit: OrgAudit,
     private val clock: Clock,
 ) : CreateOrgUseCase {
-    override suspend fun invoke(userId: Uuid, name: String, slug: String?): Membership {
+    override suspend fun invoke(userId: Uuid, name: String, slug: String?, operator: Boolean): Membership {
         val cleanName = validOrgName(name)
         val chosen = slug?.let(::validSlug)
-        ensure(limiter.tryAcquire("org-create:$userId", CREATIONS_PER_HOUR, HOUR_MINUTES)) {
+        // An invite-only instance (TC-CODE-AUTH-2): its organizations are made by those who already run one.
+        ensure(operator || mayCreate(userId)) { OrgCreationClosedException() }
+        ensure(guards.limiter.tryAcquire("org-create:$userId", CREATIONS_PER_HOUR, HOUR_MINUTES)) {
             OrgRateLimitedException()
         }
         ensure(chosen == null || !orgs.slugTaken(chosen)) { SlugTakenException() }
@@ -111,7 +117,18 @@ class CreateOrgUseCaseImpl(
         )
         return Membership(org, owner)
     }
+
+    private suspend fun mayCreate(userId: Uuid): Boolean =
+        guards.gate.opensTo(userId) || orgs.listOfUser(userId).any { it.member.role in MANAGER_ROLES }
 }
+
+/**
+ * What stands before a new organization.
+ *
+ * @property gate Whether the instance lets a person create organizations whatever their roles.
+ * @property limiter Limits creations per person.
+ */
+data class OrgCreationGuards(val gate: OrgCreationGate, val limiter: OrgRateLimiter)
 
 /** The organizations of the caller. */
 interface ListMyOrgsUseCase {

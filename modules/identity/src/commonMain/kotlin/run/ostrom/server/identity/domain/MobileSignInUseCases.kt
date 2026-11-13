@@ -14,6 +14,12 @@ const val MOBILE_REFUSED = "refused"
 /** The `error` of a mobile callback when the provider names the address of another account (S2-07). */
 const val MOBILE_LINK_REQUIRED = "link_required"
 
+/**
+ * The `error` of a mobile callback when an invite-only instance has no account for this person: they open their
+ * invitation in a browser first, which creates it.
+ */
+const val MOBILE_SIGNUP_CLOSED = "signup_closed"
+
 /** The app's token kind, to list a person's phones. */
 private val MOBILE_KIND = setOf(TokenKind.MOBILE)
 
@@ -95,6 +101,8 @@ class CompleteMobileSignInUseCaseImpl(
         callback.copy(error = MOBILE_REFUSED)
     } catch (_: AccountLinkRequiredException) {
         callback.copy(error = MOBILE_LINK_REQUIRED)
+    } catch (_: SignUpClosedException) {
+        callback.copy(error = MOBILE_SIGNUP_CLOSED)
     }
 
     private suspend fun issueCode(userId: Uuid, mobile: MobileClient): String {

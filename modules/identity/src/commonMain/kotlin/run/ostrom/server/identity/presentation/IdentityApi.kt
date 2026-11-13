@@ -189,15 +189,34 @@ class SignInApi {
         @Resource("verify")
         class Verify(val parent: Email = Email())
     }
+
+    /**
+     * `POST /api/v1/auth/signup-grant`: the setup link's or an invitation's token, before signing in on an
+     * invite-only instance.
+     *
+     * @property parent The auth resource.
+     */
+    @Serializable
+    @Resource("signup-grant")
+    class SignUpGrant(val parent: SignInApi = SignInApi())
 }
 
 /**
  * The sign-in methods this instance offers.
  *
  * @property methods `github`, `google`, `email`, in that order of keys.
+ * @property signUp Who may get a new account: `open` or `invite`.
  */
 @Serializable
-data class ProvidersResponse(val methods: List<String>)
+data class ProvidersResponse(val methods: List<String>, val signUp: String)
+
+/**
+ * The token of the instance's setup link or of an invitation, read by the console from its link's fragment.
+ *
+ * @property token The token.
+ */
+@Serializable
+data class SignUpGrantRequest(val token: String)
 
 /**
  * A request for a sign-in link.
