@@ -3,6 +3,7 @@ package run.ostrom.server.artifacts.presentation
 
 import run.ostrom.server.artifacts.domain.Artifact
 import run.ostrom.server.artifacts.domain.ArtifactCaller
+import run.ostrom.server.artifacts.domain.ArtifactConflictException
 import run.ostrom.server.artifacts.domain.ArtifactNotFoundException
 import run.ostrom.server.artifacts.domain.ArtifactRelation
 import run.ostrom.server.artifacts.domain.ArtifactRules
@@ -10,16 +11,19 @@ import run.ostrom.server.artifacts.domain.ArtifactTicketsRateLimitedException
 import run.ostrom.server.artifacts.domain.ArtifactVersion
 import run.ostrom.server.artifacts.domain.InvalidArtifactRequestException
 import run.ostrom.server.artifacts.domain.uploads.ArtifactUploadNotFoundException
+import run.ostrom.server.artifacts.domain.uploads.CommitArtifactUploadUseCase
 import run.ostrom.server.artifacts.domain.uploads.CommittedFile
 import run.ostrom.server.artifacts.domain.uploads.UploadCommit
 import run.ostrom.server.kernel.auth.authenticated
 import run.ostrom.server.kernel.auth.requirePrincipal
+import run.ostrom.server.kernel.http.ErrorDetail
 import run.ostrom.server.kernel.http.OstromJson
 import run.ostrom.server.kernel.http.bodyLimit
 import io.ktor.http.ContentDisposition
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.receive
 import io.ktor.server.request.receiveText
 import io.ktor.server.resources.delete
@@ -71,9 +75,7 @@ fun Route.artifactsRoutes(dependencies: ArtifactsRoutesDependencies) = with(depe
                     val version = publish.addVersion(caller, id, request.files.toUploads())
                     call.respond(HttpStatusCode.Created, version.toResponse())
                 } else {
-                    val committed = commit.commit(caller, id, request.toCommit(request.uploadId))
-                    val status = if (committed.replayed) HttpStatusCode.OK else HttpStatusCode.Created
-                    call.respond(status, committed.version.toResponse().copy(replayed = committed.replayed))
+                    call.respondCommit(commit, caller, id, request.toCommit(request.uploadId))
                 }
             }
         }
@@ -234,3 +236,22 @@ internal fun PublishVersionRequest.toCommit(uploadId: String) = UploadCommit(
     title = title,
     access = access,
 )
+
+// A commit's answer: its version (200 for a replay), or with a conflict the live version (TeamCode's
+// `{error, current}`).
+private suspend fun ApplicationCall.respondCommit(
+    commit: CommitArtifactUploadUseCase,
+    caller: ArtifactCaller,
+    id: Uuid,
+    upload: UploadCommit,
+) {
+    val committed = try {
+        commit.commit(caller, id, upload)
+    } catch (conflict: ArtifactConflictException) {
+        val error = ErrorDetail(conflict.type, conflict.message)
+        respond(HttpStatusCode.Conflict, ArtifactConflictResponse(error, conflict.current?.toResponse()))
+        return
+    }
+    val status = if (committed.replayed) HttpStatusCode.OK else HttpStatusCode.Created
+    respond(status, committed.version.toResponse().copy(replayed = committed.replayed))
+}

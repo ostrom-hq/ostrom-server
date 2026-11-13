@@ -19,6 +19,7 @@ import run.ostrom.server.artifacts.infrastructure.Sha256ContentDigest
 import run.ostrom.server.artifacts.infrastructure.UploadQueries
 import run.ostrom.server.artifacts.infrastructure.fetchInOrg
 import run.ostrom.server.artifacts.infrastructure.inTenant
+import run.ostrom.server.artifacts.presentation.ArtifactConflictResponse
 import run.ostrom.server.artifacts.presentation.ArtifactFileRefDto
 import run.ostrom.server.artifacts.presentation.ArtifactUploadChunkResponse
 import run.ostrom.server.artifacts.presentation.ArtifactUploadResponse
@@ -26,6 +27,7 @@ import run.ostrom.server.artifacts.presentation.ArtifactVersionResponse
 import run.ostrom.server.artifacts.presentation.CreateArtifactUploadRequest
 import run.ostrom.server.artifacts.presentation.FileDto
 import run.ostrom.server.artifacts.presentation.PublishVersionRequest
+import run.ostrom.server.kernel.http.ErrorDetail
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
@@ -207,6 +209,13 @@ class ArtifactUploadsPostgresTest {
         assertEquals(HttpStatusCode.NotFound, commit(request.copy(uploadId = "nope")).status)
         // Inline, a file needs its content.
         assertEquals(HttpStatusCode.BadRequest, commit(PublishVersionRequest(listOf(FileDto("index.html")))).status)
+        // A draft has no live version to give with its conflict.
+        val draftConflict = commit(request.copy(baseVersion = 1))
+        assertEquals(HttpStatusCode.Conflict, draftConflict.status)
+        assertEquals(
+            ArtifactConflictResponse(ErrorDetail("artifact_conflict", ARTIFACT_CONFLICT_MESSAGE)),
+            draftConflict.body<ArtifactConflictResponse>(),
+        )
         val first = commit(request)
         assertEquals(HttpStatusCode.Created, first.status)
         val made = first.body<ArtifactVersionResponse>()
@@ -214,6 +223,17 @@ class ArtifactUploadsPostgresTest {
         val again = commit(request)
         assertEquals(HttpStatusCode.OK, again.status)
         assertEquals(made.copy(replayed = true), again.body<ArtifactVersionResponse>())
+        // A commit from a stale base gets the live version back, to merge (TeamCode's `{error, current}`).
+        val next = client.post("/api/v1/artifacts/uploads") {
+            bearerAuth("alice")
+            contentType(ContentType.Application.Json)
+            val held = listOf(ArtifactFileRefDto(hash, page.size.toLong()))
+            setBody(CreateArtifactUploadRequest(upload.artifactId, held))
+        }.body<ArtifactUploadResponse>()
+        val moved = listOf(files[0].copy(path = "other.html"))
+        val stale = commit(PublishVersionRequest(moved, next.uploadId, baseVersion = 0))
+        assertEquals(HttpStatusCode.Conflict, stale.status)
+        assertEquals(made.copy(replayed = null), stale.body<ArtifactConflictResponse>().current)
     }
 
     @Test
@@ -273,3 +293,6 @@ class ArtifactUploadsPostgresTest {
     }
 
 }
+
+private const val ARTIFACT_CONFLICT_MESSAGE =
+    "Another version of this artifact was published at the same time: publish again."

@@ -78,10 +78,16 @@ internal inline fun ensureValid(condition: Boolean, message: () -> String) {
     if (!condition) throw InvalidArtifactRequestException(message())
 }
 
-/** Another version was published between the read and the write: publishing again builds on it. */
-class ArtifactConflictException : OstromException(
+/**
+ * Another version was published between the read and the write: publishing again builds on it.
+ *
+ * @property current The live version when the refusal carries it (a commit's, as TeamCode's `{error, current}`), for
+ *   the publisher to merge.
+ */
+class ArtifactConflictException(val current: ArtifactVersion? = null) : OstromException(
     ErrorKind.CONFLICT,
     "Another version of this artifact was published at the same time: publish again.",
+    "artifact_conflict",
 )
 
 /** No isolated content origin is configured: pages are not served, so no ticket is minted. */

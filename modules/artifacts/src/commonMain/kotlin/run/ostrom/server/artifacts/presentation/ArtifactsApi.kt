@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.artifacts.presentation
 
+import run.ostrom.server.kernel.http.ErrorDetail
 import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
 
@@ -203,6 +204,15 @@ data class ArtifactVersionResponse(
     val baseVersion: Int? = null,
     val replayed: Boolean? = null,
 )
+
+/**
+ * The refusal of a commit that did not start from the live version (TeamCode's `{error, current}`).
+ *
+ * @property error What was refused.
+ * @property current The live version, for the publisher to merge; absent for a draft.
+ */
+@Serializable
+data class ArtifactConflictResponse(val error: ErrorDetail, val current: ArtifactVersionResponse? = null)
 
 /**
  * An artifact's versions.
