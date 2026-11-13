@@ -67,6 +67,7 @@ import run.ostrom.server.identity.domain.OAuthAttemptsRepository
 import run.ostrom.server.identity.domain.OAuthProvider
 import run.ostrom.server.identity.domain.PollDeviceAuthorizationUseCase
 import run.ostrom.server.identity.domain.PollDeviceAuthorizationUseCaseImpl
+import run.ostrom.server.identity.domain.RateLimitWindows
 import run.ostrom.server.identity.domain.RateLimiter
 import run.ostrom.server.identity.domain.RequestMagicLinkUseCase
 import run.ostrom.server.identity.domain.RequestMagicLinkUseCaseImpl
@@ -122,7 +123,6 @@ import run.ostrom.server.identity.infrastructure.GitHubOAuthProvider
 import run.ostrom.server.identity.infrastructure.GitHubTokenVerifierImpl
 import run.ostrom.server.identity.infrastructure.IdentityMigrations
 import run.ostrom.server.identity.infrastructure.IdentityOrgAuditTrail
-import run.ostrom.server.identity.infrastructure.InMemoryRateLimiter
 import run.ostrom.server.identity.infrastructure.MagicLinksRepositoryImpl
 import run.ostrom.server.identity.infrastructure.MobileCodesRepositoryImpl
 import run.ostrom.server.identity.infrastructure.MobileTokensRepositoryImpl
@@ -131,6 +131,7 @@ import run.ostrom.server.identity.infrastructure.OAuthAttemptsRepositoryImpl
 import run.ostrom.server.identity.infrastructure.OidcEndpoints
 import run.ostrom.server.identity.infrastructure.OidcProvider
 import run.ostrom.server.identity.infrastructure.PhoneUnlockProofsImpl
+import run.ostrom.server.identity.infrastructure.RateLimiterImpl
 import run.ostrom.server.identity.infrastructure.ResendMailSender
 import run.ostrom.server.identity.infrastructure.SecureSecretGenerator
 import run.ostrom.server.identity.infrastructure.IdentityInstanceBootstrapper
@@ -206,7 +207,9 @@ object IdentityModule : ServerModule {
         single { IdentityConfig.from(get()) }
         single<SecretGenerator> { SecureSecretGenerator() }
         single<SecretHasher> { Sha256SecretHasher() }
-        single<RateLimiter> { InMemoryRateLimiter(get()) }
+        single { RateLimiterImpl(get(), get()) }
+        single<RateLimiter> { get<RateLimiterImpl>() }
+        single<RateLimitWindows> { get<RateLimiterImpl>() }
 
         single<UsersRepository> { UsersRepositoryImpl(get()) }
         single<LinkedIdentities> { LinkedIdentitiesImpl(get()) }
@@ -324,21 +327,19 @@ object IdentityModule : ServerModule {
     val AGENT_TOKEN_RETENTION: Duration = 7.days
 
     // Every hour, the agent tokens expired more than AGENT_TOKEN_RETENTION ago are deleted: one per launch, they were
-    // kept for ever. A failed purge is logged and tried again the next hour; it never stops the server.
+    // kept for ever; and so are the rate limits' windows already over. A failed purge is logged and tried again the
+    // next hour; it never stops the server.
     override fun start(scope: CoroutineScope, koin: Koin) {
         warnWhenNobodyCanSignUp(scope, koin)
         val tokens = koin.get<ApiTokensRepository>()
+        val windows = koin.get<RateLimitWindows>()
         val clock = koin.get<Clock>()
         val logger = koin.get<Logger>()
         scope.launch {
             while (true) {
-                try {
-                    tokens.purgeAgentTokens(clock.now() - AGENT_TOKEN_RETENTION)
-                } catch (error: CancellationException) {
-                    throw error
-                } catch (error: Exception) {
-                    logger.warn("agent token purge failed", mapOf("error" to error::class.simpleName))
-                }
+                val before = clock.now() - AGENT_TOKEN_RETENTION
+                logger.purging("agent token purge failed") { tokens.purgeAgentTokens(before) }
+                logger.purging("rate limit purge failed") { windows.purgeExpired() }
                 delay(1.hours)
             }
         }
@@ -367,6 +368,16 @@ object IdentityModule : ServerModule {
     const val BOOTSTRAP_HINT: String =
         "sign-up is invite-only (OSTROM_SIGNUP) and this instance has no account yet: run `ostrom-server bootstrap` " +
             "for the first owner's one-time setup link"
+
+    private suspend fun Logger.purging(failure: String, purge: suspend () -> Long) {
+        try {
+            purge()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            warn(failure, mapOf("error" to error::class.simpleName))
+        }
+    }
 
     override fun routes(route: Route, koin: Koin) {
         route.noStoreOnIdentityRoutes()

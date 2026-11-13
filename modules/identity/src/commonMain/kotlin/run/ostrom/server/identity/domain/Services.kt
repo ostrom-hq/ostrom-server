@@ -66,6 +66,16 @@ interface RateLimiter {
     suspend fun tryAcquire(key: String, limit: Int, window: Duration): Boolean
 }
 
+/** The stored windows of [RateLimiter], shared by every replica. */
+interface RateLimitWindows {
+    /**
+     * Forgets the windows already over: no attempt reads them again.
+     *
+     * @return How many were forgotten.
+     */
+    suspend fun purgeExpired(): Long
+}
+
 /** Records sensitive actions in the signed audit log; other modules use it through Koin. */
 interface AuditLog {
     /**

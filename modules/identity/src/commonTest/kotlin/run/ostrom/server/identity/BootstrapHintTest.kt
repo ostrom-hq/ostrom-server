@@ -5,6 +5,7 @@ import run.ostrom.server.identity.domain.ApiTokensRepository
 import run.ostrom.server.identity.domain.SignUpMode
 import run.ostrom.server.identity.domain.User
 import run.ostrom.server.identity.domain.SetupLinksRepository
+import run.ostrom.server.identity.domain.RateLimitWindows
 import run.ostrom.server.identity.fakes.InMemoryApiTokensRepository
 import run.ostrom.server.identity.fakes.InMemorySetupLinks
 import run.ostrom.server.identity.fakes.InMemoryUsersRepository
@@ -40,6 +41,7 @@ class BootstrapHintTest {
                 module {
                     single<ApiTokensRepository> { InMemoryApiTokensRepository() }
                     single<SetupLinksRepository> { links }
+                    single<RateLimitWindows> { NO_WINDOWS }
                     single<Clock> { SettableClock() }
                     single<Logger> { recorder }
                     single { IdentityConfig("http://localhost:8080", "http://localhost:5173", signUp = mode) }
@@ -49,6 +51,12 @@ class BootstrapHintTest {
         IdentityModule.start(backgroundScope, app.koin)
         runCurrent()
         app.close()
+    }
+
+    private companion object {
+        val NO_WINDOWS = object : RateLimitWindows {
+            override suspend fun purgeExpired(): Long = 0
+        }
     }
 
     @Test

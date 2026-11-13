@@ -118,7 +118,8 @@ class StartOAuthSignInUseCaseImpl(
     private suspend fun start(provider: String, source: String, options: AttemptOptions): StartedOAuth {
         val oauth = configuredProvider(methods, provider)
         val (generator, hasher) = services.generator to services.hasher
-        if (!services.limiter.tryAcquire("oauth-start:$source", START_LIMIT, LIMIT_WINDOW_MINUTES.minutes)) {
+        val key = "oauth-start:${rateLimitSource(source)}"
+        if (!services.limiter.tryAcquire(key, START_LIMIT, LIMIT_WINDOW_MINUTES.minutes)) {
             throw RateLimitedException()
         }
         val state = generator.secret()
@@ -270,7 +271,8 @@ class RequestMagicLinkUseCaseImpl(
         val limiter = services.limiter
         if (!methods.email) throw ProviderNotConfiguredException()
         val address = normalizeEmail(email)
-        if (!limiter.tryAcquire("magic-link:$source", SOURCE_LIMIT, LIMIT_WINDOW_MINUTES.minutes)) {
+        val key = "magic-link:${rateLimitSource(source)}"
+        if (!limiter.tryAcquire(key, SOURCE_LIMIT, LIMIT_WINDOW_MINUTES.minutes)) {
             throw RateLimitedException()
         }
         // Per recipient, the limit is silent: an error would tell a stranger the address is being used, and a flood

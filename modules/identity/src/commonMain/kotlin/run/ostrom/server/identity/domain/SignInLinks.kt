@@ -141,7 +141,8 @@ class ExchangeSignInLinkUseCaseImpl(
 ) : ExchangeSignInLinkUseCase {
     override suspend fun invoke(token: String, source: String): StartedSession {
         if (!token.startsWith(SIGN_IN_LINK_PREFIX + "_") || token.length > MAX_TOKEN) throw InvalidSignInLinkException()
-        val allowed = limiter.tryAcquire("sign-in-link-use:$source", LIMIT, LIMIT_WINDOW_MINUTES.minutes)
+        val key = "sign-in-link-use:${rateLimitSource(source)}"
+        val allowed = limiter.tryAcquire(key, LIMIT, LIMIT_WINDOW_MINUTES.minutes)
         if (!allowed) throw RateLimitedException()
         val link = links.consume(hasher.hash(token), clock.nowMillis()) ?: throw InvalidSignInLinkException()
         val started = startSession(link.userId)

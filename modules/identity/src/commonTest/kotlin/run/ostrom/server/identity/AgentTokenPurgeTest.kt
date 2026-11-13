@@ -2,6 +2,7 @@
 package run.ostrom.server.identity
 
 import run.ostrom.server.identity.domain.ApiTokensRepository
+import run.ostrom.server.identity.domain.RateLimitWindows
 import run.ostrom.server.identity.domain.SignUpMode
 import run.ostrom.server.identity.presentation.IdentityConfig
 import run.ostrom.server.identity.fakes.InMemoryApiTokensRepository
@@ -20,17 +21,28 @@ import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Instant
 
-/** The hourly purge of the agent tokens long expired, which the identity module starts with the server. */
+/**
+ * The hourly purge of the agent tokens long expired and of the rate limits' windows over, which the identity module
+ * starts with the server.
+ */
 class AgentTokenPurgeTest {
     private val now = Instant.parse("2026-11-03T12:00:00Z")
 
     @Test
-    fun theAgentTokensExpiredAWeekAgoArePurgedEveryHourAndAFailedPurgeIsLoggedNotFatal() = runTest {
+    fun theAgentTokensExpiredAWeekAgoAndTheWindowsOverArePurgedEveryHourAndAFailedPurgeIsLoggedNotFatal() = runTest {
         val purged = mutableListOf<Instant>()
         val tokens = object : ApiTokensRepository by InMemoryApiTokensRepository() {
             override suspend fun purgeAgentTokens(before: Instant): Long {
                 purged += before
                 if (purged.size == 1) error("database down")
+                return 0
+            }
+        }
+        var windowPurges = 0
+        val windows = object : RateLimitWindows {
+            override suspend fun purgeExpired(): Long {
+                windowPurges++
+                if (windowPurges == 2) error("database down")
                 return 0
             }
         }
@@ -49,6 +61,7 @@ class AgentTokenPurgeTest {
             modules(
                 module {
                     single<ApiTokensRepository> { tokens }
+                    single<RateLimitWindows> { windows }
                     single<Clock> { clock }
                     single<Logger> { logger }
                     single {
@@ -61,7 +74,8 @@ class AgentTokenPurgeTest {
         runCurrent()
         advanceTimeBy(1.hours + 1.milliseconds)
         assertEquals(2, purged.size, "Tried again an hour after a failure")
-        assertEquals(listOf("agent token purge failed"), warnings)
+        assertEquals(2, windowPurges, "The windows are purged even after a failed token purge")
+        assertEquals(listOf("agent token purge failed", "rate limit purge failed"), warnings)
         assertEquals(now - 7.days, purged.first())
         assertEquals(IdentityModule.AGENT_TOKEN_RETENTION, 7.days)
         app.close()
