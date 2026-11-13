@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.app.isolation
 
-import run.ostrom.server.artifacts.domain.storage.ArtifactStorageInput
-import run.ostrom.server.artifacts.domain.storage.ArtifactStorageRepository
-import run.ostrom.server.artifacts.domain.storage.ServerSideEncryption
 import run.ostrom.server.identity.domain.TokenKind
 import run.ostrom.server.runners.domain.AgentKind
 import run.ostrom.server.runners.domain.CloudPlan
@@ -222,23 +219,11 @@ private suspend fun Seeder.administration(party: Party) {
     keep(Seed.PUSH_DEVICE, device, "id")
 }
 
-// A tested bucket with artifacts on, written as the administration writes it: the matrix's bucket is in memory
-// (MatrixBucket), so publishing works without reaching S3.
+// A tested bucket with artifacts on: the matrix's bucket is in memory (MatrixBucket).
 private suspend fun TestServer.activateArtifacts(party: Party) {
-    val now = Clock.System.now()
-    val storage = koin.get<ArtifactStorageRepository>()
-    val input = ArtifactStorageInput(
-        "https://s3.example.com", "auto", "bucket-${party.marker}", "", false, "AKIA${party.marker}",
-        "secret-${party.marker}", ServerSideEncryption.NONE,
-    )
-    val saved = storage.saveStorage(party.org.id, 0, input, now)
-    if (saved == null) {
+    if (!activateArtifacts(party.org.id, party.marker)) {
         party.problems += "seed ${party.marker} artifact storage: not saved"
-        return
     }
-    storage.recordTest(party.org.id, saved.version, true, now)
-    val settings = storage.overview(party.org.id).settings
-    storage.saveSettings(party.org.id, settings.copy(enabled = true), now)
 }
 
 // A cloud session, written as the runners tests write it: the API keeps them closed without a runtime.

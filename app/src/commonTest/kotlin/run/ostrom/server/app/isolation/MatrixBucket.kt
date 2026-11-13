@@ -3,10 +3,16 @@ package run.ostrom.server.app.isolation
 
 import run.ostrom.server.artifacts.domain.storage.ArtifactObjectStore
 import run.ostrom.server.artifacts.domain.storage.ArtifactStorageConnection
+import run.ostrom.server.artifacts.domain.storage.ArtifactStorageInput
+import run.ostrom.server.artifacts.domain.storage.ArtifactStorageRepository
 import run.ostrom.server.artifacts.domain.storage.ListedObject
 import run.ostrom.server.artifacts.domain.storage.ObjectHead
 import run.ostrom.server.artifacts.domain.storage.ObjectListing
+import run.ostrom.server.artifacts.domain.storage.ServerSideEncryption
 import run.ostrom.server.artifacts.domain.storage.StoredObject
+import run.ostrom.server.testing.TestServer
+import kotlin.time.Clock
+import kotlin.uuid.Uuid
 
 /**
  * The matrix's buckets, in memory and keyed by bucket then key, so the organizations publish artifacts without
@@ -53,4 +59,21 @@ internal class MatrixBucket : ArtifactObjectStore {
         keys.forEach { objects.remove(connection.bucket to it) }
         return emptyList()
     }
+}
+
+/**
+ * Turns artifacts on for [orgId] as the administration does: a tested bucket (in memory, through [MatrixBucket]) and
+ * the setting on. Whether the bucket was saved.
+ */
+internal suspend fun TestServer.activateArtifacts(orgId: Uuid, marker: String): Boolean {
+    val now = Clock.System.now()
+    val storage = koin.get<ArtifactStorageRepository>()
+    val input = ArtifactStorageInput(
+        "https://s3.example.com", "auto", "bucket-$marker", "", false, "AKIA$marker", "secret-$marker",
+        ServerSideEncryption.NONE,
+    )
+    val saved = storage.saveStorage(orgId, 0, input, now) ?: return false
+    storage.recordTest(orgId, saved.version, true, now)
+    storage.saveSettings(orgId, storage.overview(orgId).settings.copy(enabled = true), now)
+    return true
 }
