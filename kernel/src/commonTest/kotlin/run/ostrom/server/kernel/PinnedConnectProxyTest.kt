@@ -109,8 +109,8 @@ class PinnedConnectProxyTest {
     }
 
     private suspend fun withHarness(block: suspend Harness.() -> Unit) {
-        val selector = SelectorManager(Dispatchers.IO)
-        val echoSelector = SelectorManager(Dispatchers.IO)
+        val selector = SelectorManager(Dispatchers.Default)
+        val echoSelector = SelectorManager(Dispatchers.Default)
         val echo = Echo(aSocket(echoSelector).tcp().bind("127.0.0.1", 0), echoSelector)
         try {
             Harness(echo, selector).block()

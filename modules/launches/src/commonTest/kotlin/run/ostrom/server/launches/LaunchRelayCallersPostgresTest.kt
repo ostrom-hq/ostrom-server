@@ -98,6 +98,7 @@ class LaunchRelayCallersPostgresTest {
     private val overrides = module {
         single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
         single(McpRelayModule.HTTP_CLIENT) { fakeMcp }
+        single(McpRelayModule.UPSTREAM_CLIENT) { fakeMcp }
     }
 
     /** The owner of a new organization, as the relay's admin use cases see them, and the CLI's token. */
