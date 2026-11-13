@@ -176,7 +176,10 @@ class InMemoryAutomations : AutomationsRepository {
         return due.mapNotNull { automation ->
             val slot = automation.nextRunAt!!
             val claim = decide(automation, slot)
-            automations[automation.id] = automation.copy(nextRunAt = claim.nextRunAt)
+            automations[automation.id] = automation.copy(
+                enabled = automation.enabled && !claim.pause,
+                nextRunAt = claim.nextRunAt,
+            )
             claim.run?.let { ClaimedRun(automation, insertRun(it), slot) }
         }
     }

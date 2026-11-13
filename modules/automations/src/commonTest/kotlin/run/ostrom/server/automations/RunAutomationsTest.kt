@@ -593,6 +593,24 @@ class RunAutomationsTest {
     }
 
     @Test
+    fun aStoredScheduleThatNoLongerReadsIsPausedAndTheOtherCronsStillRun() = runTest {
+        // TeamCode 9ade0c25: a saved cron whose zone is gone pauses its automation instead of failing every pass.
+        val broken = manage.setEnabled(aliceAuto, manage.create(aliceAuto, cronDefinition("Broken")).automation.id, true)
+        val healthy = manage.setEnabled(aliceAuto, manage.create(aliceAuto, cronDefinition("Healthy")).automation.id, true)
+        // As a zone the time-zone database dropped after it was saved, or a cron an older version accepted.
+        repository.automations[broken.id] = broken.copy(
+            definition = broken.definition.copy(trigger = broken.definition.trigger.copy(timezone = "Mars/Olympus")),
+        )
+        clock.now = Instant.parse("2026-10-30T20:00:30Z")
+        assertEquals(1, runs.tick(), "The healthy cron runs")
+        assertEquals(healthy.id, repository.runs.values.single().automationId)
+        val paused = repository.automations.getValue(broken.id)
+        assertFalse(paused.enabled, "Paused until its owner fixes the schedule")
+        assertNull(paused.nextRunAt)
+        assertEquals(0, runs.tick(), "No longer due")
+    }
+
+    @Test
     fun aLateSlotRunsOnceWithinTheGraceAndNeverWithSkip() = runTest {
         fun definition(catchup: String, grace: Int) = cronDefinition(name = catchup + grace).let {
             it.copy(
