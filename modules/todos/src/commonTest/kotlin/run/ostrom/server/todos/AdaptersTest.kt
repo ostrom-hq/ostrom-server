@@ -100,6 +100,8 @@ class AdaptersTest {
         override suspend fun cancel(orgId: Uuid, id: Uuid, now: Instant): Wait? = unused()
         override suspend fun cancelOpenOfSessions(orgId: Uuid, sessions: List<String>, now: Instant): List<Wait> =
             unused()
+        override suspend fun takeAnswered(orgId: Uuid, sessions: List<String>, limit: Int): List<Wait> = unused()
+        override suspend fun hasOpen(orgId: Uuid, sessions: List<String>): Boolean = unused()
     }
 
     private inner class Asker(private val waits: Waits) : AskWaitUseCase, AnswerWaitUseCase {
