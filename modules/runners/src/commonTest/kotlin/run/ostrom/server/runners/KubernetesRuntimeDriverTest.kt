@@ -210,6 +210,11 @@ class KubernetesRuntimeDriverTest {
             listOf("workspace", "tmp", "agent-socket", "check-tmp", "check-socket"),
             spec["volumes"]!!.jsonArray.map { it.jsonObject["name"]!!.jsonPrimitive.content },
         )
+        // The agent's gh configuration lives with the sockets, in memory only.
+        fun volume(name: String) = spec["volumes"]!!.jsonArray.map { it.jsonObject }
+            .single { it["name"]!!.jsonPrimitive.content == name }["emptyDir"]!!.jsonObject
+        assertEquals("Memory", volume("agent-socket")["medium"]!!.jsonPrimitive.content)
+        assertNull(volume("tmp")["medium"])
     }
 
     @Test

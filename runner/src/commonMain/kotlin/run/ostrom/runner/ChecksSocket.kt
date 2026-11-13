@@ -4,12 +4,8 @@ package run.ostrom.runner
 import io.ktor.network.selector.SelectorManager
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
-import io.ktor.utils.io.exhausted
-import io.ktor.utils.io.readByte
 import io.ktor.utils.io.writeByteArray
 import kotlinx.coroutines.CancellationException
-import kotlinx.io.Buffer
-import kotlinx.io.readString
 import kotlinx.serialization.json.Json
 
 /**
@@ -26,7 +22,6 @@ object ChecksSocket {
         // Every field of the reply, so that the hook reads one shape.
         encodeDefaults = true
     }
-    private const val NEWLINE: Byte = 10
 
     /**
      * Listens and runs each request with [checks], until cancelled.
@@ -61,7 +56,7 @@ object ChecksSocket {
         log: (String) -> Unit,
     ) {
         val reply = try {
-            val line = readLine(input)
+            val line = readSocketLine(input, MAX_LINE)
             if (line == null) {
                 CheckReply(started = false, outputTail = "no request.")
             } else {
@@ -85,17 +80,5 @@ object ChecksSocket {
         } catch (error: Exception) {
             log("check reply failed: ${error::class.simpleName}")
         }
-    }
-
-    /** Reads one line, without its newline; null at once at the end of the stream. */
-    private suspend fun readLine(input: ByteReadChannel): String? {
-        val line = Buffer()
-        while (!input.exhausted()) {
-            val byte = input.readByte()
-            if (byte == NEWLINE) return line.readString()
-            require(line.size < MAX_LINE) { "the request is over $MAX_LINE bytes." }
-            line.writeByte(byte)
-        }
-        return if (line.size == 0L) null else line.readString()
     }
 }

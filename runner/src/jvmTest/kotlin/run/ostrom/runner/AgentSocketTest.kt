@@ -125,6 +125,33 @@ class AgentSocketTest {
     }
 
     @Test
+    fun gitsHelperAsksTheRunnerForACredentialOverItsSocket() = runBlocking {
+        withTimeout(20.seconds) {
+            val path = Files.createTempDirectory("ostrom-credentials").resolve("credential.sock").toString()
+            val selector = SelectorManager(Dispatchers.IO)
+            val ready = CompletableDeferred<Unit>()
+            val logs = mutableListOf<String>()
+            val token = Credential("x-access-token", "ghu_one")
+            val credentials = launch(Dispatchers.IO) {
+                val source: suspend (CredentialRequest) -> Credential? = {
+                    if (it.host == "github.com") token else null
+                }
+                CredentialSocket.serve(selector, path, source, { synchronized(logs) { logs += it } }) {
+                    ready.complete(Unit)
+                }
+            }
+            ready.await()
+            val connect = suspend { AgentSocket.connect(selector, path) }
+            assertEquals(token, CredentialHelper.ask(connect, CredentialRequest("https", "github.com")))
+            assertNull(CredentialHelper.ask(connect, CredentialRequest("https", "gitlab.com")))
+            credentials.cancel()
+            credentials.join()
+            selector.close()
+            assertTrue("credentials listening" in logs)
+        }
+    }
+
+    @Test
     fun stoppingTheHostStopsTheTerminalsItServes() = runBlocking {
         withTimeout(20.seconds) {
             val path = Files.createTempDirectory("ostrom-agent").resolve("agent.sock").toString()

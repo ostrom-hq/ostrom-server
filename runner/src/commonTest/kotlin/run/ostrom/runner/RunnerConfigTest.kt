@@ -18,6 +18,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 class RunnerConfigTest {
@@ -61,6 +62,12 @@ class RunnerConfigTest {
         assertTrue(sockets.governed)
         assertEquals("/s/c.sock", sockets.checksSocket)
         assertEquals("/s/h.sock", sockets.checkHostSocket)
+        val defaults = config.credentialSocket to config.gitHubConfigDirectory
+        assertEquals("/run/ostrom/credential.sock" to "/run/ostrom/gh", defaults)
+        val github = RunnerConfig.from(
+            base + ("OSTROM_CREDENTIAL_SOCKET" to "/s/k.sock") + ("OSTROM_GH_CONFIG_DIR" to "/s/gh"),
+        ) { "t" }
+        assertEquals("/s/k.sock" to "/s/gh", github.credentialSocket to github.gitHubConfigDirectory)
         assertFalse(RunnerConfig.from(base + ("OSTROM_AGENT" to "shell")) { "t" }.governed)
 
         val inline = RunnerConfig.from(
@@ -130,6 +137,18 @@ class RunnerConfigTest {
         )
         assertEquals("/workspace/.home", SessionScript.environment(base + ("HOME" to " "), config)["HOME"])
         assertTrue("git clone" in SessionScript.FIRST && "exec bash -l" in SessionScript.AGAIN)
+        assertTrue("clone --no-recurse-submodules --" in SessionScript.FIRST)
+        // git and gh reach GitHub through the runner, with no token in the agent's environment.
+        assertEquals("2", environment["GIT_CONFIG_COUNT"])
+        assertEquals("credential.helper" to "", environment["GIT_CONFIG_KEY_0"] to environment["GIT_CONFIG_VALUE_0"])
+        assertEquals(
+            "credential.https://github.com.helper" to "/usr/local/bin/ostrom-runner credential",
+            environment["GIT_CONFIG_KEY_1"] to environment["GIT_CONFIG_VALUE_1"],
+        )
+        assertEquals("0", environment["GIT_TERMINAL_PROMPT"])
+        assertEquals("/run/ostrom/credential.sock", environment["OSTROM_CREDENTIAL_SOCKET"])
+        assertEquals("/run/ostrom/gh", environment["GH_CONFIG_DIR"])
+        assertTrue("protocol.allow=never" in environment.getValue("OSTROM_GIT_HARDENING"))
         assertTrue("OSTROM_LAUNCH_REFUSED" in SessionScript.FIRST)
     }
 
@@ -223,6 +242,41 @@ class RunnerConfigTest {
         assertEquals(report, bodies.single())
         status = HttpStatusCode.NotFound
         assertFalse(api.reportCheck(check))
+    }
+
+    @Test
+    fun theOwnersGitHubTokenIsAskedWithTheRunnerToken() = runTest {
+        val bodies = mutableListOf<String>()
+        var status = HttpStatusCode.OK
+        var answer = """{"status":"linked","token":"ghu_one","expiresAt":"2026-11-13T18:00:00Z","login":"octocat"}"""
+        val client = HttpClient(MockEngine { request ->
+            assertEquals("/api/v1/cloud/runner/github", request.url.encodedPath)
+            assertEquals("Bearer t", request.headers[HttpHeaders.Authorization])
+            bodies += request.body.toByteArray().decodeToString()
+            respond(answer, status, headersOf(HttpHeaders.ContentType, "application/json"))
+        }) { expectSuccess = false }
+        val api = HttpServerApi(client, RunnerConfig.from(base) { "t" }, this)
+
+        val linked = api.gitHubToken()
+        assertEquals("ghu_one", linked?.token)
+        assertEquals("octocat" to Instant.parse("2026-11-13T18:00:00Z"), linked?.login to linked?.expiresAt)
+        assertEquals("""{"sessionId":"$id","epoch":3}""", bodies.single())
+        answer = """{"status":"linked","token":"ghu_two","login":" "}"""
+        assertEquals(null to null, api.gitHubToken().let { it?.login to it?.expiresAt })
+        answer = """{"status":"linked","token":" "}"""
+        assertNull(api.gitHubToken())
+        answer = """{"status":"not_linked"}"""
+        assertNull(api.gitHubToken())
+        answer = """{"status":"unavailable","token":"ghu_x"}"""
+        assertNull(api.gitHubToken())
+        status = HttpStatusCode.NotFound
+        assertNull(api.gitHubToken(), "A server without the route")
+        status = HttpStatusCode.Conflict
+        assertFailsWith<ExecutionEndedException> { api.gitHubToken() }
+        status = HttpStatusCode.Unauthorized
+        assertFailsWith<ExecutionEndedException> { api.gitHubToken() }
+        status = HttpStatusCode.BadGateway
+        assertFailsWith<IllegalStateException> { api.gitHubToken() }
     }
 
     @Test

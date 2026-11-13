@@ -21,6 +21,10 @@ import kotlin.uuid.Uuid
  *   the agent's container mounts.
  * @property checkHostSocket Where the check host listens (`OSTROM_CHECK_HOST_SOCKET`), in a directory the agent's
  *   container does not mount.
+ * @property credentialSocket Where the runner serves git's credentials (`OSTROM_CREDENTIAL_SOCKET`), in the socket
+ *   directory the agent's container mounts.
+ * @property gitHubConfigDirectory The agent's `gh` configuration (`GH_CONFIG_DIR`), which the runner writes, in the
+ *   same directory.
  */
 data class RunnerConfig(
     val serverUrl: String,
@@ -36,6 +40,8 @@ data class RunnerConfig(
     val agent: String? = null,
     val checksSocket: String = DEFAULT_CHECKS_SOCKET,
     val checkHostSocket: String = DEFAULT_CHECK_HOST_SOCKET,
+    val credentialSocket: String = DEFAULT_CREDENTIAL_SOCKET,
+    val gitHubConfigDirectory: String = DEFAULT_GITHUB_CONFIG_DIRECTORY,
 ) {
     /** Whether the agent runs under a launch: every agent but the plain shell. */
     val governed: Boolean get() = agent != null && agent != SHELL_AGENT
@@ -92,6 +98,8 @@ data class RunnerConfig(
                 agent = optional("OSTROM_AGENT"),
                 checksSocket = optional(CHECKS_VARIABLE) ?: DEFAULT_CHECKS_SOCKET,
                 checkHostSocket = optional("OSTROM_CHECK_HOST_SOCKET") ?: DEFAULT_CHECK_HOST_SOCKET,
+                credentialSocket = optional(CREDENTIAL_VARIABLE) ?: DEFAULT_CREDENTIAL_SOCKET,
+                gitHubConfigDirectory = optional("OSTROM_GH_CONFIG_DIR") ?: DEFAULT_GITHUB_CONFIG_DIRECTORY,
             )
         }
 
@@ -111,6 +119,18 @@ data class RunnerConfig(
 
         /** Where the check host listens: a directory only the runner's and the check host's containers mount. */
         const val DEFAULT_CHECK_HOST_SOCKET = "/run/ostrom-check/check.sock"
+
+        /** The variable that tells git's helper where to ask for its credential. */
+        const val CREDENTIAL_VARIABLE = "OSTROM_CREDENTIAL_SOCKET"
+
+        /** Where the runner serves git's credentials: the agent socket's directory. */
+        const val DEFAULT_CREDENTIAL_SOCKET = "/run/ostrom/credential.sock"
+
+        /** The agent's `gh` configuration: the agent socket's directory, which no workspace file reaches. */
+        const val DEFAULT_GITHUB_CONFIG_DIRECTORY = "/run/ostrom/gh"
+
+        /** The runner's binary, in every container of the session image: git's helper runs it. */
+        const val BINARY = "/usr/local/bin/ostrom-runner"
     }
 }
 
@@ -119,7 +139,8 @@ object SessionScript {
     /**
      * The script of the first terminal: clone the repository once (never reset afterwards), enter it, run the
      * agent (with its model and first message, if any), then leave a login shell so the member can start the
-     * agent again. Values come from the environment, never from the script's text.
+     * agent again. Values come from the environment, never from the script's text. The clone and checkout run with
+     * [GIT_HARDENING] (no hook, no fsmonitor, HTTPS only, no submodule), so a repository's content runs nothing.
      */
     const val FIRST = """
 set -u
@@ -129,8 +150,12 @@ if [ -n "${'$'}{OSTROM_REPOSITORY_URL:-}" ]; then
   if [ ! -d "${'$'}dir/.git" ]; then
     rm -rf "${'$'}dir.clone"
     echo "Cloning ${'$'}OSTROM_REPOSITORY_URL…"
-    if git clone "${'$'}OSTROM_REPOSITORY_URL" "${'$'}dir.clone"; then
-      if [ -n "${'$'}{OSTROM_REPOSITORY_REF:-}" ]; then git -C "${'$'}dir.clone" checkout "${'$'}OSTROM_REPOSITORY_REF" || echo "Could not check out ${'$'}OSTROM_REPOSITORY_REF."; fi
+    if git ${'$'}OSTROM_GIT_HARDENING clone --no-recurse-submodules -- "${'$'}OSTROM_REPOSITORY_URL" "${'$'}dir.clone"; then
+      case "${'$'}{OSTROM_REPOSITORY_REF:-}" in
+        "") ;;
+        -*) echo "Refused to check out ${'$'}OSTROM_REPOSITORY_REF." ;;
+        *) git ${'$'}OSTROM_GIT_HARDENING -C "${'$'}dir.clone" checkout "${'$'}OSTROM_REPOSITORY_REF" || echo "Could not check out ${'$'}OSTROM_REPOSITORY_REF." ;;
+      esac
       mv "${'$'}dir.clone" "${'$'}dir"
     else
       echo "The clone failed: the session starts in ${'$'}OSTROM_WORKSPACE."
@@ -186,7 +211,32 @@ exec bash -l
             "HOME" to (environment["HOME"]?.takeIf { it.isNotBlank() } ?: "${config.workspace}/.home"),
             "TERM" to "xterm-256color",
             "LANG" to (environment["LANG"] ?: "C.UTF-8"),
-        )
+        ) + gitHub(config)
+
+    /**
+     * Git and `gh` against GitHub, with no token in the environment: git's helpers from the image are reset, then the
+     * runner's helper answers for `https://github.com` only; git never prompts; `gh` reads the directory the runner
+     * writes. These are paths, never a credential.
+     *
+     * @param config The runner's configuration.
+     *
+     * @return The variables.
+     */
+    fun gitHub(config: RunnerConfig): Map<String, String> = mapOf(
+        "GIT_CONFIG_COUNT" to "2",
+        "GIT_CONFIG_KEY_0" to "credential.helper",
+        "GIT_CONFIG_VALUE_0" to "",
+        "GIT_CONFIG_KEY_1" to "credential.https://github.com.helper",
+        "GIT_CONFIG_VALUE_1" to "${RunnerConfig.BINARY} credential",
+        "GIT_TERMINAL_PROMPT" to "0",
+        RunnerConfig.CREDENTIAL_VARIABLE to config.credentialSocket,
+        "GH_CONFIG_DIR" to config.gitHubConfigDirectory,
+        "OSTROM_GIT_HARDENING" to GIT_HARDENING,
+    )
+
+    /** The options of every git the runner's scripts start: no hook, no fsmonitor, HTTPS only, no submodule. */
+    const val GIT_HARDENING = "-c core.hooksPath=/dev/null -c core.fsmonitor=false -c protocol.allow=never " +
+        "-c protocol.https.allow=always -c fetch.recurseSubmodules=false -c submodule.recurse=false"
 }
 
 /**

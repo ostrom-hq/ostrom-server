@@ -207,7 +207,8 @@ class KubernetesRuntimeDriver(
                     },
                 )
                 add(emptyDir("tmp", "1Gi"))
-                add(emptyDir("agent-socket", "1Mi"))
+                // In memory: besides the sockets, it holds the agent's gh configuration, which the runner writes.
+                add(emptyDir("agent-socket", "1Mi", memory = true))
                 add(emptyDir("check-tmp", "1Gi"))
                 add(emptyDir("check-socket", "1Mi"))
             }
@@ -258,9 +259,12 @@ class KubernetesRuntimeDriver(
         }
     }
 
-    private fun emptyDir(name: String, size: String): JsonObject = buildJsonObject {
+    private fun emptyDir(name: String, size: String, memory: Boolean = false): JsonObject = buildJsonObject {
         put("name", name)
-        putJsonObject("emptyDir") { put("sizeLimit", size) }
+        putJsonObject("emptyDir") {
+            if (memory) put("medium", "Memory")
+            put("sizeLimit", size)
+        }
     }
 
     /** A container of the session pod: its own uid and group, no privilege, a read-only root. */
