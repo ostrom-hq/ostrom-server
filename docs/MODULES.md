@@ -295,7 +295,9 @@ joins them after 30 s; then the member served longest ago, then arrival order. A
 `queue_timeout`); 128 calls wait per org and 8 per limited member (503 `queue_full`); a call whose replica stops
 polling loses its turn within 5 s and its place within 15 s, and a running call's place lasts 15 minutes, renewed
 every 5. Waiting holds no account, no budget and no database connection. The inference API's queue route counts the
-waiting calls; every gateway refusal carries its code in `x-ostrom-error`.
+waiting calls; every gateway refusal carries its code in `x-ostrom-error`. A spent budget (`budget_exhausted`,
+`budget_insufficient`) also sends `x-should-retry: false`, as TeamCode does: Claude Code and the Anthropic SDKs then
+show the cause at once instead of retrying a state only a new period or an admin changes.
 
 ### Module `governance`
 

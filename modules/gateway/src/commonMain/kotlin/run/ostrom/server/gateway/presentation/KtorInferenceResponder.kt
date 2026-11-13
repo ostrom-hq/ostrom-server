@@ -37,6 +37,8 @@ class KtorInferenceResponder(private val call: ApplicationCall, private val cloc
     override suspend fun refuse(protocol: WireProtocol, refusal: InferenceRefusal) {
         // The gateway's own refusal, told apart from a provider's: the local relay prints its cause once.
         call.response.header(ERROR_HEADER, refusal.kind.code)
+        // A state retrying will not change: Claude Code and the Anthropic SDKs stop retrying and show the cause.
+        if (!refusal.kind.retryable) call.response.header(SHOULD_RETRY_HEADER, "false")
         refusal.retryAt?.let {
             call.response.header("retry-after", (it - clock.now()).inWholeSeconds.coerceAtLeast(1).toString())
         }
@@ -88,6 +90,9 @@ class KtorInferenceResponder(private val call: ApplicationCall, private val cloc
 
         /** The code of the gateway's own refusal (`no_capacity`, `queue_full`...), never set on a provider's answer. */
         const val ERROR_HEADER = "x-ostrom-error"
+
+        /** `false` on a refusal retrying will not change (TeamCode's `x-should-retry`). */
+        const val SHOULD_RETRY_HEADER = "x-should-retry"
 
         /** The error in the shape of the agent's API: Anthropic's for Messages, OpenAI's otherwise. */
         fun errorBody(protocol: WireProtocol, refusal: InferenceRefusal): JsonObject = buildJsonObject {
