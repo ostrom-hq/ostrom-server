@@ -11,11 +11,14 @@ import io.ktor.http.content.TextContent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.IOException
+import run.ostrom.server.events.domain.DeliveryState
 import run.ostrom.server.events.domain.SendResult
+import run.ostrom.server.events.domain.WebhookDeliveryRecord
 import run.ostrom.server.events.domain.WebhookTargets
 import run.ostrom.server.events.infrastructure.HmacWebhookSigner
 import run.ostrom.server.events.infrastructure.HttpWebhookSender
 import run.ostrom.server.events.infrastructure.WebhooksConfig
+import run.ostrom.server.events.presentation.toResponse
 import run.ostrom.server.kernel.config.MapConfigSource
 import run.ostrom.server.kernel.network.PinnedDnsRefusal
 import run.ostrom.server.kernel.network.PinnedDnsTimeout
@@ -24,7 +27,10 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Instant
+import kotlin.uuid.Uuid
 
 /** The network edge of the webhooks: the signature, the secrets, the sender's checks and its error codes. */
 class WebhooksEdgeTest {
@@ -111,6 +117,20 @@ class WebhooksEdgeTest {
         assertEquals("tls", codeOf(TlsFailure()))
         assertEquals("connect", codeOf(IOException("refused")))
         assertFailsWith<CancellationException> { codeOf(CancellationException("stop")) }
+    }
+
+    @Test
+    fun aFinishedDeliveryShowsNoNextAttemptAndNeverItsPayload() {
+        val at = Instant.parse("2026-11-13T10:00:00Z")
+        val record = WebhookDeliveryRecord(
+            Uuid.random(), Uuid.random(), 3, "cloud.todo", "{\"secret\":1}", DeliveryState.DELIVERED, 1, at, 200, null,
+            at, at, false,
+        )
+        val shown = record.toResponse()
+        assertNull(shown.nextAttemptAt)
+        assertEquals(at.toString(), shown.deliveredAt)
+        assertEquals("delivered" to 3L, shown.state to shown.eventSeq)
+        assertNull(record.copy(state = DeliveryState.PENDING, deliveredAt = null).toResponse().deliveredAt)
     }
 
     private class SocketTimeout : Exception()

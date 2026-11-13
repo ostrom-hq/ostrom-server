@@ -107,6 +107,8 @@ functions (the owner, a member of `ostrom_router` to hand the functions over, do
 | `sessions_stale(cutoff, limit)` | sessions | the open sessions of every organization last seen before the cutoff, for the sweep | `SessionsPostgresTest` |
 | `usage_purge(before, limit)` | usage | deletes one batch of events older than the retention | `UsagePostgresTest` |
 | `events_purge(before, limit)` | events | deletes one batch of the event feed's events older than the retention (7 days) | `EventsPostgresTest` |
+| `events_webhook_orgs(now, limit)` | events | the organizations whose webhooks have work (an enabled webhook behind the journal, a delivery due), ids only | `WebhooksPostgresTest` |
+| `events_webhook_maintain(now, give_up_before, delete_before, limit)` | events | gives up on the webhook deliveries pending for 24 hours and deletes the finished ones past the 14 days of the log | `WebhooksPostgresTest` |
 | `usage_daily_add()`, `usage_daily_remove()`, `usage_daily_change()`, `usage_daily_clear()` | usage | trigger functions of `usage_events` (no `EXECUTE` grant): keep the daily totals `usage_daily`, which an organization only reads, in the transaction of every write of the ledger | `UsageDailyTotalsPostgresTest` |
 | `usage_spend_days_add()`, `usage_spend_days_remove()`, `usage_spend_days_change()`, `usage_spend_days_clear()` | usage | trigger functions of `usage_events` (no `EXECUTE` grant): keep the spend of each day `usage_spend_days` (by member and workflow), which a budget's admission reads and an organization only reads, in the transaction of every write of the ledger | `UsageSpendDaysPostgresTest` |
 | `mcp_relay_purge(before)` | mcp-relay | deletes the calls older than the retention | `McpRelayPostgresTest` |

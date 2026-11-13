@@ -239,6 +239,7 @@ Every request is already logged once by the kernel (method, route template — n
 | `OSTROM_POSTHOG_API_KEY`, `OSTROM_POSTHOG_HOST` | —, EU cloud | Product events to PostHog |
 | `OSTROM_POD_NAME` | random | `service.instance.id` (`ServerConfig.instanceId`; the chart sets it from the pod name) |
 | `OSTROM_USAGE_RETENTION_DAYS` | `400` | Days the usage ledger keeps its events (1 to 3650); older ones are purged every hour |
+| `OSTROM_WEBHOOKS_ALLOW_PRIVATE_TARGETS` | `false` | `true` lets outgoing webhooks reach loopback and private addresses (an internal receiver); link-local, unspecified and metadata addresses stay refused |
 | `OSTROM_STRIPE_SECRET_KEY` (or `_FILE`) | — | Billing: Stripe secret key (`sk_test_…` or `sk_live_…`). Unset: self-hosted, limits come from the license key |
 | `OSTROM_STRIPE_WEBHOOK_SECRET` (or `_FILE`) | required with a key | Billing: the endpoint's `whsec_…` signing secret; two comma-separated during a rotation |
 | `OSTROM_STRIPE_API_BASE` | `https://api.stripe.com` | Billing: Stripe's API (stripe-mock in tests) |
@@ -520,7 +521,7 @@ anonymous call gets 401 `unauthorized`. A module lists a key of ostrom-core's `S
 | `budgets` | `budgets.v1` | — |
 | `cloud` | `cloud.admin.v1` | — |
 | `compiler` | `packages.v1`, `workflows.v1` | — |
-| `events` | `events.v1` | — |
+| `events` | `events.v1`, `webhooks.v1` | — |
 | `gates` | `gates.v1` | — |
 | `gateway` | `inference.v1`, `inference.queue.v1`, `inference.cancel.v1` | — (an organization can set its own provider keys) |
 | `governance` | `governance.v1` | — |
@@ -576,7 +577,10 @@ owner, so the serving role reads the history (the start-up check) and never rewr
   (`events_journal`, kernel `OrgEventPublisher`, preferably in the transaction of the change it reports) under the
   organization's row of `events_cursors`, so the sequence has no gap and commit order is sequence order; each open
   stream of the feed (`events.v1`) reads the journal every second on its own replica, so an event published on one
-  replica reaches the streams of all of them within a poll. Events are kept 7 days.
+  replica reaches the streams of all of them within a poll. Events are kept 7 days. The outgoing webhooks
+  (`webhooks.v1`) hold across replicas too: each event is queued once per webhook (unique in
+  `events_webhook_deliveries`), and every replica's worker claims due deliveries under a one-minute lease, so a
+  crashed replica's claims come back to the others. They are sent only through the kernel's outbound client.
 - **A cloud session's terminal is relayed by the replica holding its runner's socket** (TC-REP-1). That replica
   records the hold in `runners_terminal_hosts` (renewed every 30 s, 90 s lease by the database's clock, the newest
   execution wins). A member attached on another replica is relayed to it as a hop client, at its pod address
