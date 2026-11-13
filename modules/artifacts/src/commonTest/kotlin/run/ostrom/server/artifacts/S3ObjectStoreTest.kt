@@ -62,7 +62,7 @@ class S3ObjectStoreTest {
         val signedNames = Regex("SignedHeaders=([^,]+)").find(authorization)!!.groupValues[1].split(';')
         assertEquals(expectedHost, request.headers[HttpHeaders.Host])
         val headers = signedNames.associateWith { request.headers[it]!! }
-        val payload = SigV4.hex(SigV4.sha256(bytes(request)))
+        val payload = SigV4.sha256(bytes(request)).toHexString()
         assertEquals(payload, request.headers["x-amz-content-sha256"])
         val query = request.url.parameters.entries().flatMap { (name, values) -> values.map { name to it } }
         val signer = SigV4.Signer("AKIDEXAMPLE", SECRET, "gra", "20130524T000000Z")
@@ -193,7 +193,14 @@ class S3ObjectStoreTest {
             sent++
             respond("", HttpStatusCode.OK)
         }
-        for (endpoint in listOf("http://s3.example.test", "not a url at all", "https://")) {
+        val endpoints = listOf(
+            "http://s3.example.test",
+            "not a url at all",
+            "https://",
+            "https://s3.example.test:port",
+            "https://:443",
+        )
+        for (endpoint in endpoints) {
             val refused = assertFailsWith<ObjectStoreException> { s3.head(connection(endpoint = endpoint), "k") }
             assertEquals("invalid_endpoint", refused.code, endpoint)
             assertNull(refused.status)

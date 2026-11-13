@@ -119,7 +119,7 @@ enum class ServerSideEncryption(val wire: String) {
  * @property serverSideEncryption What to ask on writes.
  * @property version The storage version it was read from, so a connection test records the version it used.
  */
-class ArtifactStorageConnection(
+data class ArtifactStorageConnection(
     val endpoint: String,
     val region: String,
     val bucket: String,

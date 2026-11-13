@@ -86,7 +86,7 @@ class S3ObjectStore(
                         ?: throw ObjectStoreException(response.status.value, "object_too_large")
                     // A ranged answer's length is the range's; the object's size is the total of its Content-Range.
                     val contentRange = response.headers[HttpHeaders.ContentRange]
-                    val size = contentRange?.substringAfterLast('/')?.toLongOrNull() ?: bytes.size.toLong()
+                    val size = contentRange?.substringAfterLast('/').toLongOr(bytes.size.toLong())
                     StoredObject(bytes, size, contentRange, response.headers[HttpHeaders.ETag])
                 }
             }
@@ -100,7 +100,7 @@ class S3ObjectStore(
                 !response.status.isSuccess() ->
                     throw ObjectStoreException(response.status.value, "http_${response.status.value}")
                 else -> ObjectHead(
-                    response.headers[HttpHeaders.ContentLength]?.toLongOrNull() ?: 0,
+                    response.headers[HttpHeaders.ContentLength].toLongOr(0),
                     response.headers[HttpHeaders.ETag],
                 )
             }
@@ -123,7 +123,7 @@ class S3ObjectStore(
             val document = document(response)
             val keys = Xml.elements(document, "Contents").mapNotNull { item ->
                 val key = Xml.text(item, "Key")?.takeIf { it.isNotEmpty() }
-                key?.let { ListedObject(it, Xml.text(item, "Size")?.toLongOrNull() ?: 0) }
+                key?.let { ListedObject(it, Xml.text(item, "Size").toLongOr(0)) }
             }
             val truncated = Xml.text(document, "IsTruncated") == "true"
             ObjectListing(keys, if (truncated) Xml.text(document, "NextContinuationToken") else null)
@@ -150,8 +150,9 @@ class S3ObjectStore(
 
     /** An XML answer, bounded; one with a declaration (a DTD, an entity, a comment) is refused: S3 sends none. */
     private suspend fun document(response: HttpResponse): String {
-        val text = readAtMost(response, maxListingBytes)?.decodeToString()
+        val bytes = readAtMost(response, maxListingBytes)
             ?: throw ObjectStoreException(response.status.value, "listing_too_large")
+        val text = bytes.decodeToString()
         if ("<!" in text) throw ObjectStoreException(response.status.value, "invalid_response")
         return text
     }
@@ -166,14 +167,41 @@ class S3ObjectStore(
         val contentType: ContentType = ContentType.Application.OctetStream,
     )
 
+    /** A signed request, ready to send. */
+    private class Signed(val url: String, val headers: Map<String, String>)
+
     // Any failure to reach the bucket is one local code: the text of the exception may hold a URL, never shown.
     private suspend fun <T> send(
         connection: ArtifactStorageConnection,
         call: Call,
         read: suspend (HttpResponse) -> T,
     ): T {
-        val endpoint = parseUrl(connection.endpoint)?.takeIf { it.protocol.name == "https" && it.host.isNotEmpty() }
-            ?: throw ObjectStoreException(null, "invalid_endpoint")
+        val signed = sign(connection, call)
+        return try {
+            http.prepareRequest(signed.url) {
+                method = call.method
+                signed.headers.forEach { (name, value) -> header(name, value) }
+                if (call.body != null) setBody(ByteArrayContent(call.body, call.contentType))
+            }.execute { read(it) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failed: Exception) {
+            throw storeFailure(failed)
+        }
+    }
+
+    private fun storeFailure(failed: Exception): ObjectStoreException = when (failed) {
+        is ObjectStoreException -> failed
+        is HttpRequestTimeoutException -> ObjectStoreException(null, "timeout")
+        else -> ObjectStoreException(null, "unreachable")
+    }
+
+    /** The URL and the headers of [call], signed with SigV4. */
+    private suspend fun sign(connection: ArtifactStorageConnection, call: Call): Signed {
+        val endpoint = parseUrl(connection.endpoint)
+        if (endpoint == null || endpoint.protocol.name != "https" || endpoint.host.isEmpty()) {
+            throw ObjectStoreException(null, "invalid_endpoint")
+        }
         // The host the request goes to: with virtual-hosted addressing, <bucket>.<endpoint host>.
         val authorityHost = if (connection.pathStyle) endpoint.host else "${connection.bucket}.${endpoint.host}"
         val defaultPort = endpoint.specifiedPort == 0 || endpoint.specifiedPort == endpoint.protocol.defaultPort
@@ -184,40 +212,26 @@ class S3ObjectStore(
             if (call.key != null) append(call.key)
         }
         val canonicalUri = SigV4.encodePath(rawPath)
-        val payloadHash = SigV4.hex(SigV4.sha256(call.body ?: ByteArray(0)))
+        val payloadHash = SigV4.sha256(call.body ?: ByteArray(0)).toHexString()
         val amzDate = SigV4.amzDate(clock.now())
-        val signed = mapOf("host" to hostHeader, "x-amz-content-sha256" to payloadHash, "x-amz-date" to amzDate) +
+        val headers = mapOf("host" to hostHeader, "x-amz-content-sha256" to payloadHash, "x-amz-date" to amzDate) +
             call.extraHeaders
         val signer = SigV4.Signer(connection.accessKeyId, connection.secretAccessKey, connection.region, amzDate)
         val authorization = SigV4.authorization(
-            SigV4.Request(call.method.value, canonicalUri, call.query, signed, payloadHash),
+            SigV4.Request(call.method.value, canonicalUri, call.query, headers, payloadHash),
             signer,
         )
         val queryString = call.query.joinToString("&") { (name, value) ->
             "${SigV4.encode(name)}=${SigV4.encode(value)}"
         }
         val url = "https://$hostHeader$canonicalUri" + if (queryString.isEmpty()) "" else "?$queryString"
-        return try {
-            http.prepareRequest(url) {
-                method = call.method
-                signed.forEach { (name, value) -> header(name, value) }
-                header(HttpHeaders.Authorization, authorization)
-                if (call.body != null) setBody(ByteArrayContent(call.body, call.contentType))
-            }.execute { read(it) }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (refused: ObjectStoreException) {
-            throw refused
-        } catch (_: HttpRequestTimeoutException) {
-            throw ObjectStoreException(null, "timeout")
-        } catch (_: Exception) {
-            throw ObjectStoreException(null, "unreachable")
-        }
+        return Signed(url, headers + (HttpHeaders.Authorization to authorization))
     }
 
     private suspend fun failure(response: HttpResponse): ObjectStoreException {
-        val text = readAtMost(response, MAX_ERROR_BYTES)?.decodeToString()
-        val code = text?.let { ERROR_CODE.find(it)?.groupValues?.get(1) } ?: "http_${response.status.value}"
+        val bytes = readAtMost(response, MAX_ERROR_BYTES)
+        val match = if (bytes == null) null else ERROR_CODE.find(bytes.decodeToString())
+        val code = if (match == null) "http_${response.status.value}" else match.groupValues[1]
         return ObjectStoreException(response.status.value, code)
     }
 
@@ -232,7 +246,6 @@ class S3ObjectStore(
         const val SSE_HEADER = "x-amz-server-side-encryption"
         const val MAX_ERROR_BYTES = 64 * 1024
         const val MAX_LISTING_BYTES = 8 * 1024 * 1024
-        val ERROR_CODE = Regex("<Code>([A-Za-z0-9.]{1,64})</Code>")
 
         /** The whole body, or null as soon as it holds more than [limit] bytes. */
         suspend fun readAtMost(response: HttpResponse, limit: Int): ByteArray? {
@@ -244,6 +257,15 @@ class S3ObjectStore(
         @OptIn(DelicateCryptographyApi::class)
         suspend fun md5(bytes: ByteArray): ByteArray = CryptographyProvider.Default.get(MD5).hasher().hash(bytes)
     }
+}
+
+/** The code of an S3 error, when it is a plain identifier. */
+private val ERROR_CODE = Regex("<Code>([A-Za-z0-9.]{1,64})</Code>")
+
+/** A number S3 sent, or [default] when it sent none or not a number. */
+internal fun String?.toLongOr(default: Long): Long {
+    if (this == null) return default
+    return toLongOrNull() ?: default
 }
 
 /**

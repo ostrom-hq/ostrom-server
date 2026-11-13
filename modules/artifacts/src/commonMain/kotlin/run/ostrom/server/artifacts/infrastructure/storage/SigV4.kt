@@ -23,6 +23,7 @@ internal object SigV4 {
     private const val LOW_NIBBLE = 0xf
     private const val BYTE_MASK = 0xff
     private const val HEX_DIGITS = "0123456789ABCDEF"
+    private const val UNRESERVED = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~"
     private val SPACES = Regex(" +")
 
     /**
@@ -72,12 +73,13 @@ internal object SigV4 {
      */
     suspend fun signature(request: Request, signer: Signer): String {
         val canonical = canonicalRequest(request)
-        val toSign = "$ALGORITHM\n${signer.amzDate}\n${scope(signer)}\n${hex(sha256(canonical.encodeToByteArray()))}"
+        val digest = sha256(canonical.encodeToByteArray()).toHexString()
+        val toSign = "$ALGORITHM\n${signer.amzDate}\n${scope(signer)}\n$digest"
         var key = hmac(("AWS4" + signer.secretAccessKey).encodeToByteArray(), signer.amzDate.take(DAY_LENGTH))
         key = hmac(key, signer.region)
         key = hmac(key, SERVICE)
         key = hmac(key, "aws4_request")
-        return hex(hmac(key, toSign))
+        return hmac(key, toSign).toHexString()
     }
 
     /**
@@ -107,7 +109,7 @@ internal object SigV4 {
         for (byte in value.encodeToByteArray()) {
             val c = byte.toInt() and BYTE_MASK
             val char = c.toChar()
-            if (char in 'A'..'Z' || char in 'a'..'z' || char in '0'..'9' || char in "-_.~") {
+            if (char in UNRESERVED) {
                 append(char)
             } else {
                 append('%').append(HEX_DIGITS[c shr NIBBLE]).append(HEX_DIGITS[c and LOW_NIBBLE])
@@ -136,13 +138,6 @@ internal object SigV4 {
      * @return The digest.
      */
     suspend fun sha256(bytes: ByteArray): ByteArray = CryptographyProvider.Default.get(SHA256).hasher().hash(bytes)
-
-    /**
-     * Lower-case hex.
-     *
-     * @return The text.
-     */
-    fun hex(bytes: ByteArray): String = bytes.toHexString()
 
     private fun signedHeaders(headers: Map<String, String>) =
         headers.keys.map { it.lowercase() }.sorted().joinToString(";")

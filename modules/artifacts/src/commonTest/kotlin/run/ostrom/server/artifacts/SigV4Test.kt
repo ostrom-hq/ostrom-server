@@ -40,7 +40,7 @@ class SigV4Test {
 
     @Test
     fun putObjectWithAnEncodedKey() = runTest {
-        val payload = SigV4.hex(SigV4.sha256("Welcome to Amazon S3.".encodeToByteArray()))
+        val payload = SigV4.sha256("Welcome to Amazon S3.".encodeToByteArray()).toHexString()
         assertEquals("44ce7dd67c959e0d3524ffac1771dfbba87d2b6b4b4e99e42034a8b803f8b072", payload)
         val headers = mapOf(
             "Host" to host, "Date" to "Fri, 24 May 2013 00:00:00 GMT", "x-amz-content-sha256" to payload,
