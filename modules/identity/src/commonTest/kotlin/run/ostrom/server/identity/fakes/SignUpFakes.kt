@@ -19,9 +19,10 @@ class InMemorySetupLinks(private val users: InMemoryUsersRepository? = null) : S
     val links = mutableMapOf<String, Triple<SetupLink, Instant?, Uuid?>>()
 
     override suspend fun replace(link: SetupLink, tokenHash: String) {
-        links.replaceAll { _, (old, usedAt, usedBy) ->
+        for ((hash, stored) in links.entries.toList()) {
+            val (old, usedAt, usedBy) = stored
             val stopped = if (usedAt == null) old.copy(expiresAt = minOf(old.expiresAt, link.createdAt)) else old
-            Triple(stopped, usedAt, usedBy)
+            links[hash] = Triple(stopped, usedAt, usedBy)
         }
         links[tokenHash] = Triple(link, null, null)
     }
