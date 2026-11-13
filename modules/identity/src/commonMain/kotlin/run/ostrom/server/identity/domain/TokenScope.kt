@@ -42,6 +42,7 @@ val PERSONAL_TOKEN_SCOPES: List<TokenScope> = listOf(
     ),
     TokenScope("secrets:read", "List the secrets, never their values."),
     TokenScope("secrets:write", "Save and delete secrets."),
+    TokenScope("environment:read", "Read your own environment values, as `ostrom claude` does before an agent."),
     TokenScope("accounts:read", "Read the shared accounts and their capacity."),
     TokenScope("accounts:write", "Share, change and remove accounts."),
     TokenScope("mcp:read", "Read the MCP servers, their journal and usage."),

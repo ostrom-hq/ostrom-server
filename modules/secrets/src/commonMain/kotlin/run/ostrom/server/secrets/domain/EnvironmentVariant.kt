@@ -30,6 +30,10 @@ enum class EnvironmentBinding(val wire: String) {
     }
 }
 
+// TeamCode's ranks: a group source would sit between them.
+private const val DIRECT_PRECEDENCE = 300
+private const val BULK_PRECEDENCE = 100
+
 /**
  * How an assignment was made. A higher [precedence] wins when several sources select the same variable for a member;
  * a group source (between the two, as TeamCode reserves it) would slot in without changing them.
@@ -39,10 +43,10 @@ enum class EnvironmentBinding(val wire: String) {
  */
 enum class AssignmentSource(val wire: String, val precedence: Int) {
     /** Selected for this one member, by an administrator or by the member's own personal variant. */
-    DIRECT("direct", 300),
+    DIRECT("direct", DIRECT_PRECEDENCE),
 
     /** Written by a bulk assignment to every member enabled at that moment. */
-    BULK("bulk", 100),
+    BULK("bulk", BULK_PRECEDENCE),
     ;
 
     /** Constants and readers of the enclosing type. */

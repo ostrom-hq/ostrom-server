@@ -8,14 +8,8 @@ import run.ostrom.server.kernel.auth.requireRecentSignIn
 import run.ostrom.server.secrets.domain.Caller
 import run.ostrom.server.secrets.domain.CallerResolver
 import run.ostrom.server.secrets.domain.EnvironmentActor
-import run.ostrom.server.secrets.domain.EnvironmentAssignment
-import run.ostrom.server.secrets.domain.EnvironmentBinding
-import run.ostrom.server.secrets.domain.EnvironmentVariant
 import run.ostrom.server.secrets.domain.EnvironmentVariantNotFoundException
-import run.ostrom.server.secrets.domain.EnvironmentVariantUpdate
-import run.ostrom.server.secrets.domain.InvalidEnvironmentVariantException
 import run.ostrom.server.secrets.domain.MemberNotFoundException
-import run.ostrom.server.secrets.domain.NewEnvironmentVariant
 import run.ostrom.server.secrets.domain.RelayScopes
 import run.ostrom.server.secrets.domain.ScopeRequiredException
 import run.ostrom.server.secrets.domain.SecretValue
@@ -174,41 +168,3 @@ private suspend fun ApplicationCall.writer(dependencies: EnvironmentRoutesDepend
 private fun variantId(raw: String): Uuid = Uuid.parseOrNull(raw) ?: throw EnvironmentVariantNotFoundException()
 
 private fun memberId(raw: String): Uuid = Uuid.parseOrNull(raw) ?: throw MemberNotFoundException()
-
-private fun EnvironmentVariantCreateRequest.toNew() = NewEnvironmentVariant(
-    variable = variable,
-    name = name,
-    binding = binding?.let {
-        EnvironmentBinding.fromWire(it) ?: throw InvalidEnvironmentVariantException("Use shared or perMember.")
-    } ?: EnvironmentBinding.SHARED,
-    value = value?.let(::SecretValue),
-)
-
-private fun EnvironmentVariantUpdateRequest.toUpdate() =
-    EnvironmentVariantUpdate(expectedVersion, name, value?.let(::SecretValue))
-
-/** Maps a variant to the API, never with its value. */
-fun EnvironmentVariant.toResponse() = EnvironmentVariantResponse(
-    id = id.toString(),
-    variable = variable,
-    name = name,
-    binding = binding.wire,
-    owner = ownerMemberId?.toString(),
-    hasValue = hasValue,
-    version = version,
-    createdAt = createdAt.toString(),
-    updatedAt = updatedAt.toString(),
-)
-
-/** Maps an assignment to the API. */
-fun EnvironmentAssignment.toResponse() = EnvironmentAssignmentResponse(
-    member = memberId.toString(),
-    variable = variable,
-    variantId = variantId.toString(),
-    variantName = variantName,
-    version = version,
-    source = source.wire,
-    personal = personal,
-    hasMemberValue = hasMemberValue,
-    assignedAt = assignedAt.toString(),
-)

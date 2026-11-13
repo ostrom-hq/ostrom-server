@@ -343,8 +343,10 @@ class EnvironmentPostgresTest {
             server.send("POST", "$variants/${Uuid.random()}/promote", "admin-a").status,
         )
         assertEquals(HttpStatusCode.NotFound, server.send("DELETE", "$mine/${personal.id}", "member-a").status)
+    }
 
-        // A team assignment replaces a member's personal selection; the member then deletes theirs.
+    @Test
+    fun aTeamAssignmentReplacesAMembersPersonalSelection() = test { server ->
         val second = server.send("POST", mine, "member2-a", create("LOCAL_TOKEN", "mine", value = "local-1"))
             .body<EnvironmentVariantResponse>()
         val team = server.send("POST", variants, "admin-a", create("LOCAL_TOKEN", "team", value = "team-local"))
