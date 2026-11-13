@@ -210,6 +210,7 @@ class WorkflowChecksTest {
     fun anAgentNeedsItsInstructionAndAWellFormedDeliverable() {
         refused(flow(listOf(node("a", AGENT))), "Node a: an agent node run by the server needs run.instructions.")
         refused(flow(listOf(agent(instructions = "  "))), "needs run.instructions.")
+        refused(flow(listOf(agent(instructions = null))), "needs run.instructions.")
         fun delivering(deliverable: Deliverable) =
             flow(listOf(node("a", AGENT, run = NodeRun(instructions = "Do", deliverable = deliverable))))
         refused(delivering(Deliverable("video")), "a deliverable is an artifact, a url, a text or a json.")
