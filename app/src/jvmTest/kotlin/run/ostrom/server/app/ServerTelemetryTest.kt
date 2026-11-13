@@ -13,7 +13,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 
 class ServerTelemetryTest {
-    private val database = mapOf("OSTROM_DATABASE_URL" to "postgresql://localhost:5432/ostrom")
+    private val database = mapOf("OSTROM_DATABASE_URL" to "postgresql://ostrom:ostrom@localhost:5432/ostrom")
 
     @Test
     fun theTelemetryIsFlushedAfterAStopThatFailed() {

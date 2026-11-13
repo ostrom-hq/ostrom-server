@@ -2,11 +2,12 @@
 package run.ostrom.server.runners.infrastructure
 
 import java.io.File
+import java.io.FileNotFoundException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
-/** The runtime's client trusts the CA bundle it is given, and only it (the Curl engine's `caInfo` on Native). */
+/** The runtime's client trusts the CA bundle it is given, and only it. */
 class RuntimeHttpClientTest {
     private fun bundle(text: String): File = File.createTempFile("ostrom-ca", ".pem").apply {
         writeText(text)
@@ -23,6 +24,19 @@ class RuntimeHttpClientTest {
     fun aBundleWithoutCertificateIsRefused() {
         val error = assertFailsWith<IllegalArgumentException> { trustingOnly(bundle("")) }
         assertEquals(true, error.message?.contains("holds no certificate"))
+    }
+
+    @Test
+    fun theBundleIsReadAtTheFirstHandshakeOnly() {
+        val missing = File.createTempFile("ostrom-ca", ".pem").apply { delete() }
+        runtimeHttpClient(missing.path, 1_000).close()
+        val trust = BundleTrustManager(missing)
+        assertFailsWith<FileNotFoundException> { trust.acceptedIssuers }
+        missing.writeText(TEST_CA)
+        missing.deleteOnExit()
+        val issuer = trust.acceptedIssuers.single()
+        trust.checkServerTrusted(arrayOf(issuer), "RSA")
+        trust.checkClientTrusted(arrayOf(issuer), "RSA")
     }
 
     @Test

@@ -12,8 +12,6 @@ import run.ostrom.server.kernel.database.UnsafeDatabaseRoleException
 import run.ostrom.server.kernel.database.connectPostgres
 import run.ostrom.server.kernel.database.migrateUnderLock
 import run.ostrom.server.kernel.database.requireRowLevelSecurity
-import run.ostrom.server.kernel.http.CallsInProgress
-import run.ostrom.server.kernel.http.Readiness
 import run.ostrom.server.kernel.http.configureHttp
 import run.ostrom.server.kernel.logging.JsonLogger
 import run.ostrom.server.kernel.logging.LogLevel
@@ -25,15 +23,12 @@ import run.ostrom.server.kernel.observability.ProcessMetrics
 import run.ostrom.server.kernel.observability.TelemetryLogger
 import run.ostrom.server.kernel.signing.Ed25519InstanceSigner
 import io.github.smyrgeorge.sqlx4k.Driver
-import sun.misc.Signal
-import java.util.concurrent.LinkedBlockingQueue
 import kotlin.system.exitProcess
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.koin.core.Koin
 
@@ -123,23 +118,7 @@ private fun serve() {
         )
         val engine = serverEngine(config.port, config.host) { configureHttp(server, modules) }.start(wait = false)
         // From now on SIGTERM and SIGINT start the drain; before, they end a start at once (the JVM's own handling).
-        val name = awaitStopSignal()
-        logger.info(
-            "server draining",
-            mapOf(
-                "signal" to name,
-                "delay_s" to config.drainDelay.inWholeSeconds,
-                "grace_s" to config.drainGrace.inWholeSeconds,
-            ),
-        )
-        server.get<Readiness>().drain()
-        val ended = runBlocking {
-            delay(config.drainDelay)
-            server.get<CallsInProgress>().awaitCallsEnded(config.drainGrace)
-        }
-        if (!ended) {
-            logger.warn("calls still running after the grace", mapOf("grace_s" to config.drainGrace.inWholeSeconds))
-        }
+        drain(awaitStopSignal(), config, server, logger)
         engine.stop(STOP_GRACE_MILLIS, STOP_TIMEOUT_MILLIS)
         logger.info("server stopped")
     } catch (error: Throwable) { // not coroutine-reachable: the process entry point, outside any coroutine.
@@ -148,18 +127,6 @@ private fun serve() {
         exitProcess(EXIT_FAILURE)
     }
     stopThenFlush(telemetry, exporters) { shutDown(workers, koin, driver) }
-}
-
-/**
- * Blocks until SIGTERM or SIGINT arrives, and replaces the JVM's handling of both (an immediate exit through the
- * shutdown hooks) by the drain of [serve].
- *
- * @return The signal's name, `SIGTERM` or `SIGINT`.
- */
-private fun awaitStopSignal(): String {
-    val received = LinkedBlockingQueue<String>()
-    for (name in listOf("TERM", "INT")) Signal.handle(Signal(name)) { received.offer("SIG${it.name}") }
-    return received.take()
 }
 
 /** Applies every module's migrations under the migration lock, with the owner's connection, then exits. */

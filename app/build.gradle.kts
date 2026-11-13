@@ -99,13 +99,13 @@ kotlin {
     }
 }
 
-// The process entry point (Main.kt: signals, exitProcess) runs in the image, whose smoke tests (ci.yml ci-image) start,
+// The process entry point (Main.kt: exitProcess; Drain.kt: signals and the stop) runs in the image, whose smoke tests (ci.yml ci-image) start,
 // migrate, drain and stop it; what it calls is measured here.
 kover {
     reports {
         filters {
             excludes {
-                classes("run.ostrom.server.app.MainKt", "run.ostrom.server.app.MainKt$*")
+                classes("run.ostrom.server.app.MainKt", "run.ostrom.server.app.MainKt$*", "run.ostrom.server.app.DrainKt")
             }
         }
     }
