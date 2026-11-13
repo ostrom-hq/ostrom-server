@@ -287,6 +287,12 @@ of the instance and comes before an org's own key (`/api/v1/inference/settings` 
 | `OSTROM_GATEWAY_OPENROUTER_URL` | `https://openrouter.ai/api` | OpenRouter base URL (`/v1/chat/completions`) |
 | `OSTROM_GATEWAY_CODEX_URL` | `https://chatgpt.com/backend-api/codex` | ChatGPT's Codex backend (`/responses`), for shared ChatGPT accounts |
 
+A shared account that refuses a call before any output hands it to another, three accounts at most. How far it goes
+depends on the refusal (TeamCode #226): an account that cannot serve (a 401, or a 429 whose quota headers show a spent
+subscription window) sends the call on to the next account; a plain 429, a rate limit that may hold for every account,
+switches account once only, and a second one answers 429 `provider_rate_limited` with the shortest `Retry-After` the
+provider gave. Either way the account rests as after any 429.
+
 A model call waits for its turn in the org's admission queue (TeamCode's admission), shared by every replica in
 PostgreSQL (`gateway_admissions`, `gateway_admission_turns`, under an advisory lock of the org): while every shared
 account it may use is busy, or while its member already runs as many calls as their limit (`memberConcurrency` in

@@ -2,14 +2,28 @@
 package run.ostrom.server.gateway.domain
 
 import run.ostrom.server.secrets.domain.Caller
+import run.ostrom.server.sharing.domain.ProviderRefusal
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlin.time.Clock
+import kotlin.time.Duration
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
+
+/** The refusal of a call the provider rate-limited on each account in [waits], retried after the shortest. */
+private fun rateLimited(waits: List<Duration>, now: Instant): InferenceRefusal {
+    val wait = waits.min()
+    return InferenceRefusal(
+        RefusalKind.PROVIDER_RATE_LIMITED,
+        "The provider rate-limited ${waits.size} shared accounts one after the other for this call. They rest; " +
+            "Ostrom does not try the rest of the pool on a rate limit that may hold for every account. " +
+            "Retry in ${wait.inWholeSeconds} s.",
+        now + wait,
+    )
+}
 
 /** Bytes read from somewhere, chunk by chunk. */
 fun interface ByteSource {
@@ -170,6 +184,9 @@ class RelayInferenceUseCaseImpl(
         /** Whether the call is recorded: a failure after its record must not record it again. */
         var recorded: Boolean = false
 
+        /** The waits of the plain rate limits the call met, one per account (TeamCode's `ProviderFailoverBudget`). */
+        private val rateLimits = mutableListOf<Duration>()
+
         /** One try: the finished call, or null to try again on another account. */
         suspend fun attempt(tries: Int): CallState? {
             // After its wait in the queue; a later try already runs and goes back to wait first.
@@ -259,8 +276,21 @@ class RelayInferenceUseCaseImpl(
             // The provider has answered: writing its windows or a cool-down is bookkeeping, and the database failing
             // there must not turn an answer already paid for into a 502 the agent retries (TeamCode #165).
             if (lease != null) deliver { lease.observe(answer.status, answer.headers) }
-            val retry = lease != null && answer.status in RETRYABLE && tries < MAX_ATTEMPTS
-            if (!retry) stream(answer, state)
+            // An account that cannot serve sends the call to the next one; a plain rate limit, once only.
+            val refusal = lease?.refusal(answer.status, answer.headers)
+            if (refusal is ProviderRefusal.RateLimit) rateLimits += refusal.wait
+            val retry = refusal != null && tries < MAX_ATTEMPTS && rateLimits.size <= RATE_LIMIT_SWITCHES
+            when {
+                retry -> Unit
+                rateLimits.size > RATE_LIMIT_SWITCHES -> {
+                    // The provider rate-limited one account after another: the call stops, with the shortest wait.
+                    val refusal = rateLimited(rateLimits, clock.now())
+                    state.status = refusal.kind.status
+                    state.outcome = refusal.kind.code
+                    responder.refuse(call.protocol, refusal)
+                }
+                else -> stream(answer, state)
+            }
             return retry
         }
 
@@ -399,6 +429,9 @@ class RelayInferenceUseCaseImpl(
         /** Tries per call when shared accounts refuse. */
         const val MAX_ATTEMPTS = 3
 
+        /** Switches of account per call on a plain rate limit (TeamCode's `RATE_LIMIT_SWITCHES`). */
+        const val RATE_LIMIT_SWITCHES = 1
+
         /** The queue scope of a call no shared account serves. */
         const val KEY_SCOPE = "key"
 
@@ -418,7 +451,6 @@ class RelayInferenceUseCaseImpl(
         private const val INITIAL_BODY = 8 * 1024
         private const val EVENT_STREAM = "text/event-stream"
         private val SUCCESS = 200..299
-        private val RETRYABLE = setOf(401, 429)
 
         // Rate limits only: `openai-organization` and `openai-project` name the org behind a key, `x-codex-*` a shared
         // account's own usage.

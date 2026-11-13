@@ -46,6 +46,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
 /** The relay with a fake provider: bytes untouched, usage metered, retries on shared accounts, failures recorded. */
@@ -226,11 +227,32 @@ class RelayInferenceTest {
     }
 
     @Test
-    fun afterThreeRefusalsTheLastOneReachesTheAgent() = runTest {
+    fun aPlainRateLimitSwitchesAccountOnceThenStopsWithTheShortestWait() = runTest {
+        // TeamCode #226: walking the pool on a limit that may hold for every account rests every account.
         repeat(3) { accounts.share(AccountProvider.CLAUDE, "a$it", clock) }
         val upstream = FakeUpstream(
+            UpstreamAnswer(429, mapOf("retry-after" to "30"), source()),
+            UpstreamAnswer(429, mapOf("retry-after" to "20"), source()),
+            eventAnswer(),
+        )
+        val responder = RecordingResponder()
+        relay(upstream, InstanceProviderKeys())(Gw.memberA, call(), responder)
+        assertEquals(2, upstream.requests.size, "The third account is not tried")
+        assertEquals(RefusalKind.PROVIDER_RATE_LIMITED, responder.refusal?.kind)
+        assertEquals(clock.now() + 20.seconds, responder.refusal?.retryAt)
+        assertEquals(2, accounts.accounts.count { it.cooldownUntil != null }, "Both rest as after any 429")
+        assertEquals("provider_rate_limited", records.single().outcome)
+        assertEquals(429, records.single().status)
+        assertEquals(0, shared.inFlight(Gw.orgA).values.sum())
+    }
+
+    @Test
+    fun afterThreeRefusalsTheLastOneReachesTheAgent() = runTest {
+        repeat(3) { accounts.share(AccountProvider.CLAUDE, "a$it", clock) }
+        val spent = mapOf("anthropic-ratelimit-unified-5h-status" to "rejected")
+        val upstream = FakeUpstream(
             UpstreamAnswer(401, emptyMap(), source()),
-            UpstreamAnswer(429, emptyMap(), source()),
+            UpstreamAnswer(429, spent, source()),
             UpstreamAnswer(
                 429,
                 mapOf("content-type" to "application/json"),
@@ -239,7 +261,7 @@ class RelayInferenceTest {
         )
         val responder = RecordingResponder()
         relay(upstream, InstanceProviderKeys())(Gw.memberA, call(), responder)
-        assertEquals(RelayInferenceUseCaseImpl.MAX_ATTEMPTS, upstream.requests.size)
+        assertEquals(RelayInferenceUseCaseImpl.MAX_ATTEMPTS, upstream.requests.size, "A spent account is no rate limit")
         assertEquals(1, settings.callReads, "The org is read once, not once per try")
         assertEquals(429, responder.status)
         assertEquals("""{"error":{}}""", responder.text)

@@ -38,6 +38,26 @@ class AccountLease internal constructor(
     suspend fun observe(status: Int, headers: Map<String, String>) = pool.observe(this, status, headers)
 
     /**
+     * What a refusal the provider answered says about trying another account (TeamCode's `ProviderRefusal`), or null
+     * for an answer another account would not change: reads the headers only.
+     *
+     * @param status The HTTP status.
+     * @param headers The response headers, names in lower case.
+     */
+    fun refusal(status: Int, headers: Map<String, String>): ProviderRefusal? {
+        val now = pool.clock.now()
+        return when (status) {
+            UNAUTHORIZED -> ProviderRefusal.Account
+            TOO_MANY_REQUESTS -> if (pool.parser.parse(account.provider, headers, now).any { it.utilization >= 1.0 }) {
+                ProviderRefusal.Account
+            } else {
+                ProviderRefusal.RateLimit(cooldownEnd(emptyList(), headers, now) - now)
+            }
+            else -> null
+        }
+    }
+
+    /**
      * Reports that the provider stopped answering on this account and the call was cut: the account rests
      * [SharedAccountPool.STALL_COOLDOWN], like a 429 that names no reset, so the next calls go to another account.
      */
@@ -63,6 +83,23 @@ class AccountLease internal constructor(
         released = true
         withContext(NonCancellable) { pool.release(account.orgId, slot) }
     }
+}
+
+/** What a provider's refusal, answered before any output, says about trying another account for the same call. */
+sealed interface ProviderRefusal {
+    /**
+     * The account itself cannot serve: its token refused (401), or a 429 whose quota headers show a spent subscription
+     * window. It is cooled down or refreshed, so no call of any replica picks it again: the call tries the next one.
+     */
+    data object Account : ProviderRefusal
+
+    /**
+     * A 429 that shows no spent subscription: a rate limit that may hold for every account at once. The account cools
+     * down as for any 429, but a call switches account on it once only (TeamCode #226, TeamClaude's single hop).
+     *
+     * @property wait How long the provider asked to wait (its `Retry-After`, 60 s without one).
+     */
+    data class RateLimit(val wait: Duration) : ProviderRefusal
 }
 
 /**
@@ -111,9 +148,9 @@ class SharedAccountPool(
     private val windows: QuotaWindowRepository,
     private val tokens: AccountTokens,
     private val slots: AccountSlotRepository,
-    private val parser: QuotaHeaderParser,
+    internal val parser: QuotaHeaderParser,
     private val spend: AccountSpendReader,
-    private val clock: Clock,
+    internal val clock: Clock,
     private val groups: AccountGroups = NoAccountGroups,
 ) {
     /**
@@ -256,8 +293,6 @@ class SharedAccountPool(
         /** When to try again while every open account is busy. */
         val BUSY_RETRY: Duration = 5.seconds
 
-        private const val TOO_MANY_REQUESTS = 429
-        private const val UNAUTHORIZED = 401
         private val ORDER = compareBy<Pair<SharedAccount, Double>> { it.second }
             .thenByDescending { it.first.priority }
             .thenBy { it.first.id.toString() }
@@ -272,6 +307,9 @@ class SharedAccountPool(
  * [SharedAccountPool.observe] like a provider's status, so that the pool has one place that cools an account down.
  */
 private const val NO_ANSWER = 0
+
+private const val TOO_MANY_REQUESTS = 429
+private const val UNAUTHORIZED = 401
 
 /**
  * Cools an account down until [until], unless a longer cool-down (a 429's reset, set by another call meanwhile) is
