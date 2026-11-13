@@ -230,6 +230,7 @@ class GitHubIntegrationModuleRegistrationTest {
                     single { GitHubSettings("1", null, null, null, clientId = CLIENT_ID, clientSecret = "secret") }
                     single<GitHubAppStore> { MemoryGitHubAppStore() }
                     single<GitHubLinkStore> { store }
+                    single<ConfigSource> { MapConfigSource(mapOf("OSTROM_PUBLIC_URL" to "https://ostrom.example")) }
                     single<OrgAuditTrail> { RecordingAudit() }
                     single<PrincipalOrgResolver> {
                         object : PrincipalOrgResolver {
