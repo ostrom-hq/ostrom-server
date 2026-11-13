@@ -41,7 +41,7 @@ class InstanceSettingsReader(
         val now = clock.now()
         held[section]?.takeIf { now - it.first < ttl }?.let { return it.second }
         val before = saves
-        val values = repository.get(section)?.let { open(it) } ?: SettingsValues.EMPTY
+        val values = repository.get(section).let { if (it == null) SettingsValues.EMPTY else open(it) }
         if (saves == before) held = held + (section to (now to values))
         return values
     }

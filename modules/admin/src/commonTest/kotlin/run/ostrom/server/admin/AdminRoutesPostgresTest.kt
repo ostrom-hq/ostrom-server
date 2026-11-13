@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.admin
 
+import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.admin.domain.AdminSource
 import run.ostrom.server.admin.domain.InstanceAdmin
+import run.ostrom.server.admin.domain.InstanceAdminView
 import run.ostrom.server.admin.domain.InstanceAdminsRepository
 import run.ostrom.server.admin.domain.InstanceSettingsRepository
 import run.ostrom.server.admin.domain.RemoveOutcome
+import run.ostrom.server.admin.domain.SettingsView
 import run.ostrom.server.admin.domain.StoredSettings
 import run.ostrom.server.admin.presentation.InstanceAdminListResponse
 import run.ostrom.server.admin.presentation.InstanceSettingsListResponse
 import run.ostrom.server.admin.presentation.InstanceSettingsResponse
 import run.ostrom.server.admin.presentation.adminCaller
+import run.ostrom.server.admin.presentation.toResponse
 import run.ostrom.server.kernel.auth.ALL_USER_SCOPES
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.PrincipalChannel
@@ -76,7 +80,11 @@ class AdminRoutesPostgresTest {
     @Test
     fun theSetupLinksPersonAdministersAndAddsAnother() = serverTest(listOf(AdminModule), overrides) { server ->
         assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/admin/instance-admins").status)
-        assertEquals(HttpStatusCode.Forbidden, server.client.get("/api/v1/admin/instance-admins") { bearerAuth("bob") }.status)
+        val path = "/api/v1/admin/instance-admins"
+        assertEquals(HttpStatusCode.Forbidden, server.client.get(path) { bearerAuth("bob") }.status)
+        val first = server.client.get(path) { bearerAuth("alice") }.body<InstanceAdminListResponse>()
+        assertEquals(listOf(ALICE.toString()), first.admins.map { it.userId })
+        assertEquals(setOf(ServerFeatures.ADMIN_SETTINGS), AdminModule.features(server.koin))
         val refused = server.client.get("/api/v1/admin/settings") { bearerAuth("alicekey") }
         assertEquals(HttpStatusCode.Forbidden, refused.status)
         assertTrue("instance_admin_required" in refused.bodyAsText())
@@ -122,7 +130,8 @@ class AdminRoutesPostgresTest {
 
     @Test
     fun aSectionIsSavedSealedAndItsSecretNeverComesBack() = serverTest(listOf(AdminModule), overrides) { server ->
-        val empty = server.client.get("/api/v1/admin/settings") { bearerAuth("alice") }.body<InstanceSettingsListResponse>()
+        val empty = server.client.get("/api/v1/admin/settings") { bearerAuth("alice") }
+            .body<InstanceSettingsListResponse>()
         assertEquals(listOf("mail"), empty.sections.map { it.section })
         assertEquals(0, empty.sections.single().version)
         assertEquals(
@@ -167,7 +176,8 @@ class AdminRoutesPostgresTest {
         }
         assertEquals(HttpStatusCode.BadRequest, invalid.status)
         assertTrue("invalid_settings" in invalid.bodyAsText())
-        val again = server.client.get("/api/v1/admin/settings/mail") { bearerAuth("alice") }.body<InstanceSettingsResponse>()
+        val again = server.client.get("/api/v1/admin/settings/mail") { bearerAuth("alice") }
+            .body<InstanceSettingsResponse>()
         assertEquals(section, again)
         assertEquals(listOf("instance.admin.setup", "instance.settings.saved"), audit.records.map { it.event })
     }
@@ -213,5 +223,16 @@ class AdminRoutesPostgresTest {
         assertEquals(Uuid.NIL, service.adminCaller().userId)
         assertFalse(service.adminCaller().person)
         assertTrue(person(ALICE).adminCaller().person)
+    }
+
+    @Test
+    fun anAdministratorWithoutAnAccountAndAnImportedSectionAreShownAsSuch() {
+        val orphan = InstanceAdminView(InstanceAdmin(BOB, AdminSource.ENVIRONMENT, NOW), null).toResponse()
+        val imported = SettingsView(MAIL, StoredSettings("mail", emptyMap(), emptyMap(), 1, NOW, null)).toResponse()
+
+        assertNull(orphan.login)
+        assertNull(orphan.email)
+        assertNull(imported.updatedBy)
+        assertTrue(imported.importedFromEnvironment)
     }
 }

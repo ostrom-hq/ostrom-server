@@ -150,6 +150,7 @@ class InstanceSettingsTest {
         assertEquals("other is not a plain field of mail.", refused(values = mapOf("other" to "x")))
         assertEquals("apiKey is not a plain field of mail.", refused(values = mapOf("apiKey" to "x")))
         assertEquals("from is not a secret of mail.", refused(secrets = mapOf("from" to "x")))
+        assertEquals("other is not a secret of mail.", refused(secrets = mapOf("other" to "x")))
         assertEquals("url: an https URL", refused(values = mapOf("url" to "http://secret.example")))
         assertEquals("token: too short", refused(secrets = mapOf("token" to "abc")))
         assertEquals("from is 4096 characters at most.", refused(values = mapOf("from" to "a".repeat(4097))))
@@ -161,6 +162,12 @@ class InstanceSettingsTest {
 
     @Test
     fun theReaderKeepsASectionThirtySecondsAndForgetsItOnASave() = runTest {
+        assertTrue(reader.read("mail").isEmpty)
+        clock.advance(31.seconds)
+        assertEquals(
+            "SettingsChange(version=0, values=[from], secrets=[apiKey])",
+            SettingsChange(0, mapOf("from" to "a@example.com"), mapOf("apiKey" to "re_secret")).toString(),
+        )
         admin()
         assertTrue(reader.read("push").isEmpty)
         settings.save(alice, "push", SettingsChange(0, mapOf("relay" to "a"), emptyMap()))

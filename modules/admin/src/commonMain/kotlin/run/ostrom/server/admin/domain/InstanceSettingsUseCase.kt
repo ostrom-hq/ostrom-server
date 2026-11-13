@@ -20,7 +20,7 @@ data class SettingsView(val section: SettingsSection, val stored: StoredSettings
     /** Whether each secret field is set, by name. */
     val secrets: Map<String, Boolean>
         get() = section.fields.filter { it.secret }
-            .associate { it.name to (stored?.sealed?.containsKey(it.name) == true) }
+            .associate { it.name to (stored?.sealed.orEmpty().containsKey(it.name)) }
 }
 
 /**
@@ -118,7 +118,7 @@ class InstanceSettingsUseCaseImpl(
         problem(declared, change)?.let { throw InvalidSettingsException(it) }
         val stored = current(section, change.version)
         val values = change.values.filterValues { it.isNotEmpty() }
-        val sealed = (stored?.sealed ?: emptyMap()).toMutableMap()
+        val sealed = stored?.sealed.orEmpty().toMutableMap()
         change.secrets.forEach { (field, value) ->
             when {
                 value == null -> sealed.remove(field)
@@ -171,7 +171,7 @@ class InstanceSettingsUseCaseImpl(
 
     // The names of the fields changed, never a value: a secret's value never reaches the log.
     private fun details(before: StoredSettings?, after: StoredSettings, change: SettingsChange): Map<String, String> {
-        val previous = before?.values ?: emptyMap()
+        val previous = before?.values.orEmpty()
         val changed = (previous.keys + after.values.keys).filter { previous[it] != after.values[it] }.sorted()
         val set = change.secrets.filterValues { !it.isNullOrEmpty() }.keys.sorted()
         val removed = change.secrets.filterValues { it == null }.keys.sorted()

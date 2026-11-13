@@ -59,9 +59,7 @@ class InstanceSettingsRepositoryImpl(private val driver: Driver) : InstanceSetti
         updatedAt = get("updated_at").asInstant(),
         updatedBy = get("updated_by").asUuidOrNull(),
     )
-
-    private companion object {
-        const val COLUMNS = "section, plain_values, sealed_values, version, updated_at, updated_by"
-        val MAP = MapSerializer(String.serializer(), String.serializer())
-    }
 }
+
+private const val COLUMNS = "section, plain_values, sealed_values, version, updated_at, updated_by"
+private val MAP = MapSerializer(String.serializer(), String.serializer())

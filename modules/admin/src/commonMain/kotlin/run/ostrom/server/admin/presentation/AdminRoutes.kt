@@ -83,10 +83,10 @@ internal fun InstanceAdminView.toResponse(): InstanceAdminResponse = InstanceAdm
 internal fun SettingsView.toResponse(): InstanceSettingsResponse = InstanceSettingsResponse(
     section = section.name,
     version = version,
-    values = stored?.values ?: emptyMap(),
+    values = stored?.values.orEmpty(),
     secrets = secrets.mapValues { InstanceSecretStateResponse(it.value) },
     fields = section.fields.map { InstanceSettingFieldResponse(it.name, it.secret, it.required) },
-    updatedAt = stored?.updatedAt?.toString(),
+    updatedAt = stored?.let { it.updatedAt.toString() },
     updatedBy = stored?.updatedBy?.toString(),
     importedFromEnvironment = stored?.importedFromEnvironment ?: false,
 )
