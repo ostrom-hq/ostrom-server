@@ -190,16 +190,11 @@ class S3ObjectStore(
         }
     }
 
-    private fun storeFailure(failed: Exception): ObjectStoreException = when (failed) {
-        is ObjectStoreException -> failed
-        is HttpRequestTimeoutException -> ObjectStoreException(null, "timeout")
-        else -> ObjectStoreException(null, "unreachable")
-    }
-
     /** The URL and the headers of [call], signed with SigV4. */
     private suspend fun sign(connection: ArtifactStorageConnection, call: Call): Signed {
         val endpoint = parseUrl(connection.endpoint)
-        if (endpoint == null || endpoint.protocol.name != "https" || endpoint.host.isEmpty()) {
+        // The endpoint was checked when it was saved (`https://host[:port]`); this only refuses another scheme.
+        if (endpoint == null || endpoint.protocol.name != "https") {
             throw ObjectStoreException(null, "invalid_endpoint")
         }
         // The host the request goes to: with virtual-hosted addressing, <bucket>.<endpoint host>.
@@ -257,6 +252,13 @@ class S3ObjectStore(
         @OptIn(DelicateCryptographyApi::class)
         suspend fun md5(bytes: ByteArray): ByteArray = CryptographyProvider.Default.get(MD5).hasher().hash(bytes)
     }
+}
+
+/** What a failure to reach the bucket is reported as: its own code, never the exception's text. */
+private fun storeFailure(failed: Exception): ObjectStoreException = when (failed) {
+    is ObjectStoreException -> failed
+    is HttpRequestTimeoutException -> ObjectStoreException(null, "timeout")
+    else -> ObjectStoreException(null, "unreachable")
 }
 
 /** The code of an S3 error, when it is a plain identifier. */
