@@ -6,8 +6,16 @@ import run.ostrom.server.kernel.observability.CachedCount
 import run.ostrom.server.gates.GatesModule
 import run.ostrom.server.gates.domain.models.ActorKind
 import run.ostrom.server.gates.domain.models.GateActor
+import run.ostrom.server.gates.domain.models.ApprovalRequest
+import run.ostrom.server.gates.domain.models.AskedVia
+import run.ostrom.server.gates.domain.models.Gate
+import run.ostrom.server.gates.domain.models.GateMode
+import run.ostrom.server.gates.domain.models.GateStatus
+import run.ostrom.server.gates.domain.models.GateSubject
+import run.ostrom.server.gates.domain.models.RequestStatus
 import run.ostrom.server.gates.domain.services.GateActorResolver
 import run.ostrom.server.gates.domain.services.OpenSegment
+import run.ostrom.server.gates.infrastructure.PostgresGatesRepository
 import run.ostrom.server.gates.presentation.GateScopes
 import run.ostrom.server.instance.InstanceModule
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -89,8 +97,8 @@ class SessionsPostgresTest {
                     return when (kind) {
                         "agent" ->
                             GateActor("agent-$id", orgId, ActorKind.AGENT_SESSION, launchId = id, personId = "lyes")
-                        // TeamCode #238: an admin reads the team's sessions, the member `mia` her own only.
-                        else -> GateActor.person(id, orgId, if (id == "mia") OrgRole.MEMBER else OrgRole.ADMIN)
+                        // TeamCode #238: an admin reads the team's sessions, the members `mia` and `ana` their own only
+                        else -> GateActor.person(id, orgId, if (id in MEMBERS) OrgRole.MEMBER else OrgRole.ADMIN)
                     }
                 }
             }
@@ -365,6 +373,60 @@ class SessionsPostgresTest {
     }
 
     @Test
+    fun anApproverOpensTheSessionBehindTheGateTheyAnswerAndWritesNothing() = sessionsTest { server ->
+        // Parity TC-NEW-675a530-2, TeamCode waits.md: the member `ana`, sent a gate of s-1, reads s-1 to judge it.
+        server.start("agent:a:launch-1", "s-1")
+        clock.now += 1.minutes
+        server.start("agent:a:launch-2", "s-2")
+        val gate = approvalFor("s-1", approver = "ana")
+        val repository = PostgresGatesRepository(server.driver)
+        repository.transaction {
+            insertGate(gate)
+            val request = ApprovalRequest(
+                id = Uuid.random(),
+                gateId = gate.id,
+                orgId = orgA,
+                approverId = "ana",
+                status = RequestStatus.PENDING,
+                createdAt = clock.now(),
+            )
+            insertRequests(listOf(request))
+        }
+
+        val read = server.call("user:a:ana", "/api/v1/sessions/s-1")
+        assertEquals(HttpStatusCode.OK, read.status, read.bodyAsText())
+        assertEquals("s-1", read.body<SessionResponse>().session.id)
+        assertEquals(HttpStatusCode.NotFound, server.call("user:a:ana", "/api/v1/sessions/s-2").status, "Another")
+        assertEquals(HttpStatusCode.NotFound, server.call("user:a:mia", "/api/v1/sessions/s-1").status, "Not sent")
+        assertEquals(HttpStatusCode.NotFound, server.call("user:b:ana", "/api/v1/sessions/s-1").status, "Organization")
+        assertEquals(HttpStatusCode.Unauthorized, server.call(null, "/api/v1/sessions/s-1").status)
+        assertEquals(emptyList(), server.call("user:a:ana", "/api/v1/sessions").body<SessionsPage>().items)
+        assertEquals(HttpStatusCode.BadRequest, server.call("user:a:ana", "/api/v1/sessions?before=s-1").status)
+        for (write in listOf("alive", "end", "reopen")) {
+            val refused = server.call("user:a:ana", "/api/v1/sessions/s-1/$write", "{}")
+            assertEquals(HttpStatusCode.Forbidden, refused.status, "$write: ${refused.bodyAsText()}")
+        }
+        assertNull(server.koin.get<SessionsRepository>().get(orgA, "s-1")?.endedAt)
+    }
+
+    private fun approvalFor(session: String, approver: String) = Gate(
+        id = Uuid.random(),
+        orgId = orgA,
+        key = "deploy:acme/api:$approver",
+        subject = GateSubject("acme/api", actionClass = "deploy", command = "kubectl apply", scope = "repo:acme/api"),
+        node = null,
+        label = "Deploy",
+        mode = GateMode.ENFORCED,
+        status = GateStatus.PENDING,
+        askedBy = listOf("lyes"),
+        askedVia = setOf(AskedVia.HOOK),
+        sessionIds = listOf(session),
+        shownDigest = "sha256:$approver",
+        evidence = emptyList(),
+        createdAt = clock.now(),
+    )
+
+    @Test
     fun theActiveCountSeesTheFollowedSessionsOfEveryOrganization() = sessionsTest { server ->
         server.start("agent:a:launch-1", "s-1")
         server.start("agent:b:launch-2", "s-2")
@@ -381,5 +443,9 @@ class SessionsPostgresTest {
         clock.now += 3.minutes
         active.refresh()
         assertEquals(0, active.value(), "A silent launcher is no running session")
+    }
+
+    private companion object {
+        val MEMBERS = setOf("mia", "ana")
     }
 }
