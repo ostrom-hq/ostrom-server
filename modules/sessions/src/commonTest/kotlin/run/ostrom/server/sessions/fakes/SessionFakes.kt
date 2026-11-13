@@ -5,6 +5,7 @@ import run.ostrom.core.telemetry.metrics.MeterImpl
 import run.ostrom.server.gates.domain.models.ActorKind
 import run.ostrom.server.gates.domain.models.GateActor
 import run.ostrom.server.gates.domain.usecases.ListSessionGatesUseCase
+import run.ostrom.server.gates.domain.usecases.SessionApproversUseCase
 import run.ostrom.server.gates.domain.usecases.SessionGate
 import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.logging.LogLevel
@@ -120,6 +121,19 @@ class FakeSessionGates : ListSessionGatesUseCase {
     }
 }
 
+/** The approvers of the sessions' gates: the sessions each person was sent a gate of; remembers who was asked. */
+class FakeApprovers(val sessions: MutableMap<String, List<String>> = mutableMapOf()) : SessionApproversUseCase {
+    val asked = mutableListOf<String>()
+
+    override suspend fun approves(orgId: Uuid, person: String, sessionId: String): Boolean {
+        asked += "$person $sessionId"
+        return orgId == ORG && sessionId in sessions[person].orEmpty()
+    }
+
+    override suspend fun invoke(orgId: Uuid, person: String): List<String> =
+        sessions[person].orEmpty().takeIf { orgId == ORG }.orEmpty()
+}
+
 class FakeRules : ReceiptRules {
     private val rules =
         listOf(ReceiptRule("r-commit-style", "79b6ac48e5225be9037493c1e8a8fc9e5fbc42e2893b0c15b8846bd39d310cd7"))
@@ -196,7 +210,8 @@ class SessionBench {
     val alive = SessionAliveUseCaseImpl(repository, clock)
     val reopen = ReopenSessionUseCaseImpl(repository, segments)
     val seen = ReportSeenUseCaseImpl(repository, clock)
-    val get = GetSessionUseCaseImpl(repository, gates, sign)
+    val approvers = FakeApprovers()
+    val get = GetSessionUseCaseImpl(repository, gates, sign, approvers)
     val list = ListSessionsUseCaseImpl(repository)
     val sweep = SweepStaleSessionsUseCaseImpl(repository, close, clock, logger)
 }

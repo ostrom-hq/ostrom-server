@@ -5,6 +5,7 @@ import run.ostrom.server.gates.domain.models.ActorKind
 import run.ostrom.server.gates.domain.models.GateActor
 import run.ostrom.server.gates.domain.models.GateStatus
 import run.ostrom.server.gates.domain.usecases.ListSessionGatesUseCase
+import run.ostrom.server.gates.domain.usecases.SessionApproversUseCase
 import run.ostrom.server.gates.domain.usecases.SessionGate
 import run.ostrom.server.kernel.errors.Pages
 import run.ostrom.server.receipts.domain.usecases.GetReceiptUseCase
@@ -22,9 +23,11 @@ interface GetSessionUseCase {
     /**
      * Reads a segment.
      *
-     * @param actor The caller: the session's person, an owner or an admin, an agent token only for its own launch.
+     * @param actor The caller: the session's person, an owner or an admin, a person a gate of the session was sent to
+     *   (to judge it, read only), an agent token only for its own launch.
      * @param id The segment.
      * @return The segment, its gates and its receipt once ended.
+     * @throws SessionNotFoundException When the organization has no such segment, or the caller does not read it.
      */
     suspend operator fun invoke(actor: GateActor, id: String): SessionView
 
@@ -43,16 +46,26 @@ interface GetSessionUseCase {
  * @param repository The sessions.
  * @param sessionGates The gates of a segment.
  * @param receipts The receipts.
+ * @param approvers The approvers of the sessions' gates.
  */
 class GetSessionUseCaseImpl(
     private val repository: SessionsRepository,
     private val sessionGates: ListSessionGatesUseCase,
     private val receipts: GetReceiptUseCase,
+    private val approvers: SessionApproversUseCase,
 ) : GetSessionUseCase {
     override suspend fun invoke(actor: GateActor, id: String): SessionView {
-        val session = repository.get(actor.orgId, id)?.takeIf { SessionAccess.canRead(actor, it) }
-            ?: throw SessionNotFoundException()
+        val session = repository.get(actor.orgId, id) ?: throw SessionNotFoundException()
+        if (!SessionAccess.canRead(actor, session) && !approves(actor, session)) throw SessionNotFoundException()
         return view(session)
+    }
+
+    // Nathan's decision of 13/11/2026 (parity TC-NEW-675a530-2): a person a gate of the session was sent to opens the
+    // session behind what they answer, to judge it: this one read only, never in their list, never a write. Only a
+    // person approves: an agent token, a device or a service key never reads a session for its gates.
+    private suspend fun approves(actor: GateActor, session: Session): Boolean {
+        val person = actor.personId?.takeIf { actor.kind == ActorKind.USER } ?: return false
+        return approvers.approves(actor.orgId, person, session.id)
     }
 
     override suspend fun view(session: Session): SessionView {

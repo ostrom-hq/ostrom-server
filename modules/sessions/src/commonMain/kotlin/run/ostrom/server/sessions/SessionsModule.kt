@@ -73,7 +73,7 @@ object SessionsModule : ServerModule {
         single<SessionAliveUseCase> { SessionAliveUseCaseImpl(get(), get()) }
         single<ReopenSessionUseCase> { ReopenSessionUseCaseImpl(get(), get()) }
         single<ReportSeenUseCase> { ReportSeenUseCaseImpl(get(), get()) }
-        single<GetSessionUseCase> { GetSessionUseCaseImpl(get(), get(), get()) }
+        single<GetSessionUseCase> { GetSessionUseCaseImpl(get(), get(), get(), get()) }
         single<ListSessionsUseCase> { ListSessionsUseCaseImpl(get()) }
         single<SweepStaleSessionsUseCase> { SweepStaleSessionsUseCaseImpl(get(), get(), get(), get()) }
         single(named(ACTIVE_SESSIONS)) { CachedCount(ActiveSessionsCount(get(), get())::read) }

@@ -229,6 +229,52 @@ class SessionLifecycleTest {
     }
 
     @Test
+    fun anApproverOpensTheSessionBehindTheGateTheyAnswerReadOnly() = runTest {
+        // Parity TC-NEW-675a530-2, TeamCode waits.md: the one a gate was sent to reads what they judge, nothing more.
+        val bench = SessionBench()
+        val session = bench.start(agent(), start)
+        bench.clock.now += 1.seconds
+        bench.start(agent("launch-2", person = "mia"), start.copy(id = "s-2"))
+        bench.approvers.sessions["rev-b"] = listOf(session.id)
+
+        assertEquals(session.id, bench.get(member("rev-b"), session.id).session.id, "The session behind their gate")
+        assertFailsWith<SessionNotFoundException>("Another session") { bench.get(member("rev-b"), "s-2") }
+        assertFailsWith<SessionNotFoundException>("Another organization") {
+            bench.get(member("rev-b", org = OTHER_ORG), session.id)
+        }
+        assertEquals(emptyList(), bench.list(member("rev-b"), SessionQuery()), "Never in their list")
+        assertFailsWith<InvalidPageException>("Nor a cursor of theirs") {
+            bench.list(member("rev-b"), SessionQuery(before = session.id))
+        }
+        assertFailsWith<NotYourSessionException> { bench.end(member("rev-b"), session.id, EndSession()) }
+        assertFailsWith<NotYourSessionException> { bench.alive(member("rev-b"), session.id) }
+        assertFailsWith<NotYourSessionException> { bench.reopen(member("rev-b"), session.id) }
+        assertFailsWith<NotYourSessionException> { bench.seen(member("rev-b"), session.id, "skill", "x", "hook") }
+        assertNull(bench.repository.get(ORG, session.id)?.endedAt)
+    }
+
+    @Test
+    fun onlyAPersonApprovesNeitherATokenNorACredentialWithoutALogin() = runTest {
+        val bench = SessionBench()
+        val session = bench.start(agent(), start)
+        bench.approvers.sessions["lyes"] = listOf(session.id)
+        bench.approvers.sessions["rev-b"] = listOf(session.id)
+        assertFailsWith<SessionNotFoundException>("Another launch's agent token") {
+            bench.get(agent("launch-2", person = "rev-b"), session.id)
+        }
+        assertFailsWith<SessionNotFoundException>("A device") {
+            bench.get(GateActor("phone", ORG, ActorKind.DEVICE, personId = "rev-b"), session.id)
+        }
+        assertFailsWith<SessionNotFoundException>("No login") {
+            bench.get(GateActor("nobody", ORG, ActorKind.USER), session.id)
+        }
+        assertFailsWith<SessionNotFoundException>("No such session") { bench.get(member("rev-b"), "nope") }
+        assertEquals(session.id, bench.get(member("lyes"), session.id).session.id)
+        assertEquals(session.id, bench.get(member("root", OrgRole.ADMIN), session.id).session.id)
+        assertEquals(emptyList(), bench.approvers.asked, "Asked only of a person who does not read it already")
+    }
+
+    @Test
     fun anAgentTokenListsItsOwnLaunchOnly() = runTest {
         val bench = SessionBench()
         bench.start(agent(), start)
