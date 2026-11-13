@@ -87,7 +87,8 @@ class WorkflowsMcpServerTest {
         )
         assertTrue("do not deliver again" in text.string("instruction"))
         val output: JsonElement = JsonPrimitive("https://github.com/acme/api/pull/1")
-        assertEquals(listOf(Triple(CALLER, SESSION, output)), deliveries.delivered)
+        val expected: Triple<StepCaller, Uuid?, JsonElement> = Triple(CALLER, SESSION, output)
+        assertEquals(listOf(expected), deliveries.delivered)
         // A JSON value is handed in as it is.
         deliver("""{"output":{"status":"ok"}}""")
         assertEquals(Json.parseToJsonElement("""{"status":"ok"}"""), deliveries.delivered.last().third)
