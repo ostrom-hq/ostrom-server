@@ -23,7 +23,7 @@ import kotlin.time.Duration.Companion.seconds
 
 /**
  * The real launch path: the host runs the Node.js fixture server (TeamCode's, `stdio-fixture-server.js`) installed
- * as `npx` and `uvx`, through `ProcessBuilder`, `prlimit` when the machine has it, and the stdio transport. Node.js
+ * as `npx` and `uvx`, through `ProcessBuilder` and the stdio transport. Node.js
  * must be on `PATH` or in `OSTROM_MCP_HOST_TEST_NODE`: the test fails without it, it never passes by skipping.
  */
 class NodeFixtureTest {
@@ -44,9 +44,9 @@ class NodeFixtureTest {
             dataDir = root.resolve("data").toString(),
             npx = bin.resolve("npx").toString(),
             uvx = bin.resolve("uvx").toString(),
-            prlimit = "/usr/bin/prlimit".takeIf { Files.isExecutable(Path.of(it)) },
-            // RLIMIT_NPROC counts every thread of the user, Gradle's included: the production limit would starve it.
-            maxPids = 65_536,
+            // No prlimit: RLIMIT_NPROC counts every thread of the user, Gradle's included, and a CI user may not raise
+            // its hard limit. The image's contract test (scripts/smoke-mcp-host-image.py) runs the prlimit path.
+            prlimit = null,
             path = "${Path.of(node).parent}:/usr/bin:/bin",
             drainMinMillis = 0,
             tickMillis = 100,
