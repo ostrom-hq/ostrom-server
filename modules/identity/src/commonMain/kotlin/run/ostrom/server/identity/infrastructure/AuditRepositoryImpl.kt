@@ -144,10 +144,15 @@ internal suspend fun Transaction.appendAudit(
 
 /**
  * The read of `GET /api/v1/audit`: an organization's lines, newest first, each with the hash of the line before it in
- * the chain (`sequence - 1`) whatever the filters, so its link can be checked. That hash is a scalar subquery, run only
- * for the lines of the page, each one lookup in the unique index `(chain, sequence)`: a join let the planner read and
- * materialize the whole chain for every page (1.5 s at p95 over 10 000 lines, IdentityReadsBenchTest). Only the
- * filters asked for are in the SQL, each value bound, never spliced.
+ * the chain (`sequence - 1`) whatever the filters, so its link can be checked. That hash comes from a `LATERAL` read of
+ * the nearest earlier line of the same chain (`sequence < e.sequence ORDER BY sequence DESC LIMIT 1`), run only for
+ * the lines of the page, each one step backwards in the unique index `(chain, sequence)`; it counts only if that line
+ * is `sequence - 1`, so a gap gives no predecessor, as before. A join let the planner read and materialize the whole
+ * chain for every page (1.5 s at p95 over 10 000 lines, IdentityReadsBenchTest). An equality on `e.sequence - 1`
+ * reached the index on the PostgreSQL 17 image of 2026-11-09 only: under row-level security, 17.12 (image of
+ * 2026-11-13) leaves that computed comparison out of the index condition and scans the table for each line of the
+ * page, while a plain `<` between the two columns stays an index condition. Only the filters asked for are in the
+ * SQL, each value bound, never spliced.
  *
  * @param byActor Whether the read keeps one person's lines (`:actor`).
  * @param byAction Whether the read keeps one event name (`:action`).
@@ -161,7 +166,8 @@ internal fun orgAuditSql(byActor: Boolean, byAction: Boolean): String {
     ).joinToString(" ")
     return "SELECT e.id, e.sequence, e.org_id, e.actor_id, e.action, e.target_type, e.target_id, e.details, " +
         "e.occurred_at, e.previous_hash, e.hash, e.signature, e.key_id, " +
-        "(SELECT p.hash FROM identity_audit_events p WHERE p.chain = e.chain AND p.sequence = e.sequence - 1) " +
-        "AS predecessor_hash FROM identity_audit_events e " +
+        "CASE WHEN p.sequence = e.sequence - 1 THEN p.hash END AS predecessor_hash " +
+        "FROM identity_audit_events e LEFT JOIN LATERAL (SELECT q.sequence, q.hash FROM identity_audit_events q " +
+        "WHERE q.chain = e.chain AND q.sequence < e.sequence ORDER BY q.sequence DESC LIMIT 1) p ON TRUE " +
         "WHERE e.chain = :chain AND e.sequence < :before $filters ORDER BY e.sequence DESC LIMIT :limit"
 }
