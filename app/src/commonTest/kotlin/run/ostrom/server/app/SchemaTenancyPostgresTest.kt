@@ -241,6 +241,8 @@ class SchemaTenancyPostgresTest {
         val INSTANCE_TABLES = mapOf(
             "admin_instance_admins" to "serving role: the instance's administrators, who set what serves everyone",
             "admin_settings" to "serving role: the instance's settings sections, their secrets sealed",
+            "cloud_clusters" to "serving role: the instance's Kubernetes clusters, their credentials sealed",
+            "cloud_runtime" to "serving role: how the instance runs cloud sessions, one row",
             "billing_stripe_events" to "serving role, Stripe webhook: the events already handled, by Stripe's id",
             "github_apps" to "serving role: the instance's one GitHub App, its secrets sealed",
             "github_installation_origins" to "serving role, GitHub webhook: who installed an installation, by its id",

@@ -71,6 +71,16 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/admin/settings/{section}" to Case.Target(mapOf("section" to Param.Fixed("mail"))),
     "PUT /api/v1/admin/settings/{section}" to
         Case.Target(mapOf("section" to Param.Fixed("mail")), body = """{"version":0}"""),
+    // The cloud runtime and clusters (cloud): the instance's, a person who administers it only.
+    "GET /api/v1/cloud/runtime" to Case.Target(),
+    "PUT /api/v1/cloud/runtime" to Case.Target(body = "{}"),
+    "GET /api/v1/cloud/clusters" to Case.Target(),
+    "POST /api/v1/cloud/clusters" to Case.Target(body = "{}"),
+    "PUT /api/v1/cloud/clusters/{id}" to Case.Target(mapOf("id" to Param.Fresh), body = "{}"),
+    // The cloud profiles (cloud): the organization's, written by an owner or an admin.
+    "GET /api/v1/cloud/profiles" to Case.Target(),
+    "POST /api/v1/cloud/profiles" to Case.Target(body = "{}", admin = true),
+    "PUT /api/v1/cloud/profiles/{id}" to Case.Target(mapOf("id" to Param.Fresh), body = "{}", admin = true),
 
     // Sign-in flows (identity).
     "GET /api/v1/auth/{provider}/start" to Case.Exempt(SIGN_IN),
