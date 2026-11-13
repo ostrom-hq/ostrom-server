@@ -380,6 +380,7 @@ class ArtifactsPostgresTest {
         }
 
     @Test
+    @Suppress("LongMethod") // One page's life on both origins, read top to bottom.
     fun pagesAreServedOnTheContentOriginOnly() = serverTest(listOf(ArtifactsModule), testIdentities) { server ->
         val client = server.client
         val created = client.publish("alice", "Report", "personal", "<h1>page</h1>").body<ArtifactResponse>()
@@ -399,6 +400,9 @@ class ArtifactsPostgresTest {
         val page = client.content(ticket.url)
         assertEquals(HttpStatusCode.OK, page.status)
         assertEquals("<h1>page</h1>", page.bodyAsText())
+        assertEquals("private, max-age=30, no-transform", page.headers["Cache-Control"])
+        val byAgent = client.post("/api/v1/artifacts/${created.id}/tickets") { bearerAuth("agent") }
+        assertEquals(HttpStatusCode.Forbidden, byAgent.status, "A token opens no page")
         assertTrue(page.headers["Content-Security-Policy"].orEmpty().startsWith("sandbox allow-scripts"))
         assertEquals("no-referrer", page.headers["Referrer-Policy"])
         val image = client.content(ticket.url.replace("index.html", "img/a.png"))
@@ -413,6 +417,15 @@ class ArtifactsPostgresTest {
             HttpStatusCode.NotFound,
             client.content("$CONTENT_ORIGIN/a/${created.id}/1-1-00/index.html").status,
         )
+
+        // Sixty tickets a minute per credential: two were minted above.
+        repeat(58) {
+            val again = client.post("/api/v1/artifacts/${created.id}/tickets") { bearerAuth("alice") }
+            assertEquals(HttpStatusCode.Created, again.status)
+        }
+        val limited = client.post("/api/v1/artifacts/${created.id}/tickets") { bearerAuth("alice") }
+        assertEquals(HttpStatusCode.TooManyRequests, limited.status)
+        assertTrue((limited.headers[HttpHeaders.RetryAfter]?.toInt() ?: 0) in 1..60)
 
         val linked = client.patch("/api/v1/artifacts/${created.id}") {
             bearerAuth("alice")

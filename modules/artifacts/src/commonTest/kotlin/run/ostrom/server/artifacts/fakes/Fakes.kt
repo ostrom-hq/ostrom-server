@@ -5,7 +5,10 @@ import run.ostrom.server.artifacts.domain.Artifact
 import run.ostrom.server.artifacts.domain.ArtifactCaller
 import run.ostrom.server.artifacts.domain.ArtifactVersion
 import run.ostrom.server.artifacts.domain.ArtifactsRepository
+import run.ostrom.server.artifacts.domain.ViewTicket
+import run.ostrom.server.artifacts.domain.ViewerChecks
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.auth.OrgPrincipal
 import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.auth.PrincipalChannel
@@ -26,13 +29,34 @@ val BOB: Uuid = Uuid.parse("00000000-0000-0000-0000-000000000b0b")
 val DAVE: Uuid = Uuid.parse("00000000-0000-0000-0000-00000000da7e")
 val CAROL: Uuid = Uuid.parse("00000000-0000-0000-0000-00000000ca01")
 
-val alice = ArtifactCaller(ORG_A, ALICE.toString(), person = true, credentialId = "alice-session")
-val bob = ArtifactCaller(ORG_A, BOB.toString(), person = true, credentialId = "bob-session")
-val dave = ArtifactCaller(ORG_A, DAVE.toString(), person = true, credentialId = "dave-session")
-val carol = ArtifactCaller(ORG_B, CAROL.toString(), person = true, credentialId = "carol-session")
+val alice = ArtifactCaller(ORG_A, ALICE.toString(), person = true, "alice-session", "alice")
+val bob = ArtifactCaller(ORG_A, BOB.toString(), person = true, "bob-session", "bob")
+val dave = ArtifactCaller(ORG_A, DAVE.toString(), person = true, "dave-session", "dave")
+val carol = ArtifactCaller(ORG_B, CAROL.toString(), person = true, "carol-session", "carol")
 
 /** Alice through a token a program presents (her agent's): never a person. */
-val aliceAgent = ArtifactCaller(ORG_A, ALICE.toString(), person = false, credentialId = "alice-token")
+val aliceAgent = ArtifactCaller(ORG_A, ALICE.toString(), person = false, "alice-token", "alice")
+
+/** The members of the tests' organizations. */
+private val MEMBERS = mapOf(ORG_A to setOf(ALICE, BOB, DAVE), ORG_B to setOf(CAROL)).mapValues { (_, ids) ->
+    ids.map { it.toString() }.toSet()
+}
+
+/**
+ * [ViewerChecks] the test drives: every member of [MEMBERS] is signed in with every credential, except the
+ * credentials in [signedOut] and the members in [removed].
+ */
+class TestViewers : ViewerChecks {
+    val signedOut = mutableSetOf<String>()
+    val removed = mutableSetOf<String>()
+    var checks = 0
+
+    override suspend fun stillSignedIn(orgId: Uuid, ticket: ViewTicket): Boolean {
+        checks++
+        return ticket.memberId in MEMBERS[orgId].orEmpty() && ticket.memberId !in removed &&
+            ticket.credentialId !in signedOut
+    }
+}
 
 /** The content origin and viewer of the tests. */
 const val CONTENT_ORIGIN = "http://artifacts.test"
@@ -47,6 +71,10 @@ const val VIEWER = "https://app.test/artifacts"
 val testIdentities = module {
     single<TokenAuthenticator> {
         object : TokenAuthenticator {
+            // The browser sessions of the test identities stay live; tokens never open pages.
+            override suspend fun isLive(subjectId: String, credentialId: String): Boolean =
+                credentialId == "$subjectId-session"
+
             override suspend fun authenticate(token: String): AuthenticatedPrincipal? = when (token) {
                 "alice", "bob", "dave", "carol", "nobody" -> AuthenticatedPrincipal(
                     token,
@@ -66,6 +94,12 @@ val testIdentities = module {
         }
     }
     single<PrincipalOrgResolver> { TestOrgResolver }
+    single<MemberDirectory> {
+        object : MemberDirectory {
+            override suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean =
+                memberId in MEMBERS[orgId].orEmpty()
+        }
+    }
     single<ConfigSource> {
         MapConfigSource(
             mapOf("OSTROM_ARTIFACTS_CONTENT_ORIGIN" to CONTENT_ORIGIN, "OSTROM_ARTIFACTS_VIEWER_URL" to VIEWER),

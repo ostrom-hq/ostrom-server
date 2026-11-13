@@ -19,11 +19,18 @@ internal class ArtifactAccessRules(private val repository: ArtifactsRepository) 
      */
     suspend fun readable(caller: ArtifactCaller, id: Uuid): Artifact {
         val artifact = repository.get(caller.orgId, id) ?: throw ArtifactNotFoundException()
-        val reads = artifact.ownerId == caller.memberId || artifact.access != ArtifactAccess.PERSONAL ||
-            caller.memberId in repository.members(artifact.orgId, artifact.id)
-        if (!reads) throw ArtifactNotFoundException()
+        if (!reads(caller, artifact)) throw ArtifactNotFoundException()
         return artifact
     }
+
+    /**
+     * Whether the caller reads an artifact of their organization (the caller's own: read in it, or found by its id).
+     *
+     * @return True for its owner, any member for `team` and `link`, and the members it is shared with.
+     */
+    suspend fun reads(caller: ArtifactCaller, artifact: Artifact): Boolean =
+        artifact.ownerId == caller.memberId || artifact.access != ArtifactAccess.PERSONAL ||
+            caller.memberId in repository.members(artifact.orgId, artifact.id)
 
     /**
      * Reads an artifact the caller may change: publish to, retitle, share, change the access of or delete.

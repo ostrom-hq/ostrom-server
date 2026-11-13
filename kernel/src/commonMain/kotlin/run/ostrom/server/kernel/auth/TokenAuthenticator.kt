@@ -118,6 +118,19 @@ interface TokenAuthenticator {
         requireCsrf: Boolean,
         origin: String? = null,
     ): AuthenticatedPrincipal? = null
+
+    /**
+     * Whether a person's credential still works: a browser session neither revoked nor expired, or a token neither
+     * revoked nor expired. A module that keeps something bound to a credential beyond its request (an artifact's
+     * reading ticket) asks again here, so signing out ends it. False by default: nothing is live until the identity
+     * module answers.
+     *
+     * @param subjectId The person ([AuthenticatedPrincipal.subjectId]).
+     * @param credentialId The credential ([AuthenticatedPrincipal.credentialId]).
+     *
+     * @return True while it works.
+     */
+    suspend fun isLive(subjectId: String, credentialId: String): Boolean = false
 }
 
 /** The cookie that carries a browser session (HttpOnly, Secure, SameSite=Lax; set by the identity module). */

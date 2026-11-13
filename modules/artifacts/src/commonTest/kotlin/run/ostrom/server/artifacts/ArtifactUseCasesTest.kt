@@ -8,6 +8,8 @@ import run.ostrom.server.artifacts.domain.ArtifactNotFoundException
 import run.ostrom.server.artifacts.domain.ArtifactNotWritableException
 import run.ostrom.server.artifacts.domain.ArtifactPagesUnavailableException
 import run.ostrom.server.artifacts.domain.ArtifactPersonRequiredException
+import run.ostrom.server.artifacts.domain.ArtifactTicket
+import run.ostrom.server.artifacts.domain.ArtifactTicketsRateLimitedException
 import run.ostrom.server.artifacts.domain.ContentDigest
 import run.ostrom.server.artifacts.domain.InvalidArtifactRequestException
 import run.ostrom.server.artifacts.domain.ManageArtifactUseCaseImpl
@@ -18,26 +20,31 @@ import run.ostrom.server.artifacts.domain.ViewArtifactUseCaseImpl
 import run.ostrom.server.artifacts.fakes.CONTENT_ORIGIN
 import run.ostrom.server.artifacts.fakes.InMemoryArtifacts
 import run.ostrom.server.artifacts.fakes.TestClock
+import run.ostrom.server.artifacts.fakes.TestViewers
 import run.ostrom.server.artifacts.fakes.VIEWER
 import run.ostrom.server.artifacts.fakes.alice
 import run.ostrom.server.artifacts.fakes.aliceAgent
 import run.ostrom.server.artifacts.fakes.bob
 import run.ostrom.server.artifacts.fakes.carol
 import run.ostrom.server.artifacts.fakes.dave
+import run.ostrom.server.artifacts.infrastructure.SealedViewTickets
 import run.ostrom.server.artifacts.infrastructure.Sha256ContentDigest
 import run.ostrom.server.kernel.errors.InvalidPageException
 import run.ostrom.server.kernel.signing.Ed25519InstanceSigner
+import run.ostrom.server.kernel.signing.InstanceSigner
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
 class ArtifactUseCasesTest {
@@ -47,6 +54,9 @@ class ArtifactUseCasesTest {
     private val publish = PublishArtifactUseCaseImpl(repository, digest, clock)
     private val read = ReadArtifactsUseCaseImpl(repository)
     private val manage = ManageArtifactUseCaseImpl(repository, clock)
+    private var signer: InstanceSigner? = null
+
+    private suspend fun signer(): InstanceSigner = signer ?: Ed25519InstanceSigner.generate().also { signer = it }
 
     private fun page(text: String = "<h1>Report</h1>") = listOf(
         UploadedFile("index.html", text.encodeToByteArray()),
@@ -203,44 +213,117 @@ class ArtifactUseCasesTest {
         assertFailsWith<ArtifactNotFoundException> { read.get(alice, created.id) }
     }
 
+    private val viewers = TestViewers()
+
+    private suspend fun viewing(maxCached: Int = 10_000, origin: String? = CONTENT_ORIGIN) = ViewArtifactUseCaseImpl(
+        repository,
+        SealedViewTickets(signer()),
+        viewers,
+        ArtifactLocations(VIEWER, origin),
+        clock,
+        maxCached = maxCached,
+    )
+
+    private fun ArtifactTicket.sealed(): String =
+        contentUrl.removePrefix("$CONTENT_ORIGIN/a/$artifactId/").substringBefore('/')
+
     @Test
-    fun ticketsServeOneArtifactUntilTheyExpire() = runTest {
-        val signer = Ed25519InstanceSigner.generate()
-        val view = ViewArtifactUseCaseImpl(repository, signer, ArtifactLocations(VIEWER, CONTENT_ORIGIN), clock)
+    fun ticketsAreSealedForTheirReaderAndLastEightHours() = runTest {
+        val view = viewing()
         val created = publish.create(alice, "Plan", "personal", page())
         val other = publish.create(alice, "Other", "personal", page("<p>other</p>"))
 
         val ticket = view.ticket(alice, created.id, null)
         assertEquals(1, ticket.version)
-        assertTrue(ticket.contentUrl.startsWith("$CONTENT_ORIGIN/a/${created.id}/1-"))
         assertTrue(ticket.contentUrl.endsWith("/index.html"))
+        assertEquals(8.hours to 10.minutes, ViewArtifactUseCaseImpl.LIFETIME to ViewArtifactUseCaseImpl.ROUNDING)
         assertEquals(0L, ticket.expiresAt.epochSeconds % 600)
-        assertTrue(ticket.expiresAt > clock.now + 50.minutes)
-        val raw = ticket.contentUrl.removePrefix("$CONTENT_ORIGIN/a/${created.id}/").substringBefore('/')
+        assertTrue(ticket.expiresAt > clock.now + 7.hours + 50.minutes)
+        assertTrue(ticket.expiresAt <= clock.now + 8.hours)
+        val raw = ticket.sealed()
+        assertFalse(alice.memberId in raw || "alice-session" in raw, "The page learns nothing of its reader")
+        assertEquals(raw, view.ticket(alice, created.id, 1).sealed(), "Reloading reuses the address")
 
         assertEquals("<h1>Report</h1>", view.byTicket(created.id, raw, "index.html")?.bytes?.decodeToString())
-        assertNull(view.byTicket(other.id, raw, "index.html"))
-        assertNull(view.byTicket(created.id, raw.replaceFirst("1-", "2-"), "index.html"))
-        val tampered = raw.dropLast(1) + if (raw.last() == '0') '1' else '0'
-        assertNull(view.byTicket(created.id, tampered, "index.html"))
-        listOf("", "1", "1-2", "x-2-ab", "1-x-ab", "1-2-zz", "1-2-abc", "1-2-ab-cd").forEach {
-            assertNull(view.byTicket(created.id, it, "index.html"), it)
-        }
-        clock.now += 2.hours
-        assertNull(view.byTicket(created.id, raw, "index.html"))
+        assertNull(view.byTicket(other.id, raw, "index.html"), "Another artifact's")
+        assertNull(view.byTicket(created.id, raw.drop(1), "index.html"), "Forged")
+        clock.now += 8.hours
+        assertNull(view.byTicket(created.id, raw, "index.html"), "Expired")
+        clock.now -= 8.hours
 
-        clock.now -= 2.hours
         manage.delete(alice, created.id)
-        assertNull(view.byTicket(created.id, raw, "index.html"))
+        assertNull(view.byTicket(created.id, raw, "index.html"), "A deleted artifact stops at once")
         assertFailsWith<ArtifactNotFoundException> { view.ticket(alice, other.id, 9) }
         assertFailsWith<ArtifactNotFoundException> { view.ticket(bob, other.id, null) }
+        assertFailsWith<ArtifactNotFoundException> { view.ticket(dave, other.id, null) }
         assertEquals(1, view.ticket(alice, other.id, 1).version)
     }
 
     @Test
+    fun onlyAPersonGetsATicket() = runTest {
+        val view = viewing()
+        val created = publish.create(alice, "Plan", "team", page())
+        listOf(aliceAgent, alice.copy(credentialId = null), alice.copy(subjectId = null)).forEach {
+            assertFailsWith<ArtifactPersonRequiredException> { view.ticket(it, created.id, null) }
+        }
+        assertFailsWith<ArtifactPagesUnavailableException> { viewing(origin = null).ticket(alice, created.id, null) }
+    }
+
+    @Test
+    fun aTicketStopsWithinItsRecheckWhenItsReaderLosesTheArtifact() = runTest {
+        val view = viewing()
+        val created = publish.create(alice, "Plan", "personal", page())
+        manage.share(alice, created.id, bob.memberId, share = true)
+        val forBob = view.ticket(bob, created.id, null).sealed()
+        val forAlice = view.ticket(alice, created.id, null).sealed()
+        assertNotNull(view.byTicket(created.id, forBob, ""))
+        assertEquals(1, viewers.checks)
+        assertNotNull(view.byTicket(created.id, forBob, ""))
+        assertEquals(1, viewers.checks, "Checked again only past the recheck")
+
+        manage.share(alice, created.id, bob.memberId, share = false)
+        assertNotNull(view.byTicket(created.id, forBob, ""), "Within the 30 seconds")
+        clock.now += 31.seconds
+        assertNull(view.byTicket(created.id, forBob, ""), "No longer shared with them")
+        manage.share(alice, created.id, bob.memberId, share = true)
+        assertNotNull(view.byTicket(created.id, forBob, ""))
+
+        clock.now += 31.seconds
+        viewers.signedOut += "bob-session"
+        assertNull(view.byTicket(created.id, forBob, ""), "Signed out")
+        assertNotNull(view.byTicket(created.id, forAlice, ""), "Another reader's ticket keeps working")
+        clock.now += 31.seconds
+        viewers.removed += alice.memberId
+        assertNull(view.byTicket(created.id, forAlice, ""), "Left the organization")
+    }
+
+    @Test
+    fun aCredentialGetsSixtyTicketsAMinute() = runTest {
+        val view = viewing(maxCached = 2)
+        val created = publish.create(alice, "Plan", "team", page())
+        repeat(ViewArtifactUseCaseImpl.TICKETS_PER_MINUTE) { view.ticket(alice, created.id, null) }
+        clock.now += 20.seconds
+        val limited = assertFailsWith<ArtifactTicketsRateLimitedException> { view.ticket(alice, created.id, null) }
+        assertEquals(41, limited.retryAfterSeconds)
+        view.ticket(bob, created.id, null)
+        clock.now += 41.seconds
+        view.ticket(alice, created.id, null)
+
+        // Past its bounds, a replica forgets the oldest windows and grants first.
+        view.ticket(dave, created.id, null)
+        repeat(ViewArtifactUseCaseImpl.TICKETS_PER_MINUTE) { view.ticket(bob, created.id, null) }
+        val tickets = listOf(alice, bob, dave).map {
+            view.ticket(it.copy(credentialId = "${it.subjectId}-app"), created.id, null)
+        }
+        tickets.forEach { assertNotNull(view.byTicket(created.id, it.sealed(), "")) }
+        assertEquals(3, viewers.checks)
+        tickets.forEach { assertNotNull(view.byTicket(created.id, it.sealed(), "")) }
+        assertEquals(6, viewers.checks, "Two cached at most: each read checked again")
+    }
+
+    @Test
     fun publicLinksServeTheLatestVersionWhileLinked() = runTest {
-        val signer = Ed25519InstanceSigner.generate()
-        val view = ViewArtifactUseCaseImpl(repository, signer, ArtifactLocations(VIEWER, CONTENT_ORIGIN), clock)
+        val view = viewing()
         val created = publish.create(alice, "Plan", "link", page())
         val slug = assertNotNull(created.linkSlug)
         assertEquals("$CONTENT_ORIGIN/l/$slug/", view.publicUrl(created))
@@ -251,8 +334,6 @@ class ArtifactUseCasesTest {
         assertNull(view.byLink(slug, ""))
         assertNull(view.publicUrl(created.copy(linkSlug = null)))
 
-        val closed = ViewArtifactUseCaseImpl(repository, signer, ArtifactLocations(VIEWER, null), clock)
-        assertNull(closed.publicUrl(created))
-        assertFailsWith<ArtifactPagesUnavailableException> { closed.ticket(alice, created.id, null) }
+        assertNull(viewing(origin = null).publicUrl(created))
     }
 }

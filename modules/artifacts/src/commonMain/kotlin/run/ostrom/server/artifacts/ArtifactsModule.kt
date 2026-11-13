@@ -13,9 +13,13 @@ import run.ostrom.server.artifacts.domain.ReadArtifactsUseCase
 import run.ostrom.server.artifacts.domain.ReadArtifactsUseCaseImpl
 import run.ostrom.server.artifacts.domain.ViewArtifactUseCase
 import run.ostrom.server.artifacts.domain.ViewArtifactUseCaseImpl
+import run.ostrom.server.artifacts.domain.ViewTicketSeal
+import run.ostrom.server.artifacts.domain.ViewerChecks
 import run.ostrom.server.artifacts.infrastructure.ArtifactsConfig
 import run.ostrom.server.artifacts.infrastructure.ArtifactsMigrations
 import run.ostrom.server.artifacts.infrastructure.ArtifactsRepositoryImpl
+import run.ostrom.server.artifacts.infrastructure.KernelViewerChecks
+import run.ostrom.server.artifacts.infrastructure.SealedViewTickets
 import run.ostrom.server.artifacts.infrastructure.Sha256ContentDigest
 import run.ostrom.server.artifacts.presentation.ArtifactsRoutesDependencies
 import run.ostrom.server.artifacts.presentation.artifactContentRoutes
@@ -30,9 +34,9 @@ import org.koin.dsl.module
 
 /**
  * The artifacts module: pages and file sets that members and their agents publish for the organization to read,
- * with versions, sharing (`personal`, `team`, `link`), signed tickets to read them on an isolated content origin
- * under TeamCode's content policy, and an MCP server for agents (`/api/v1/artifacts/mcp`). The files are stored in
- * PostgreSQL, each distinct content once per artifact.
+ * with versions, sharing (`personal`, `team`, `link`), sealed member-bound tickets to read them on an isolated
+ * content origin under TeamCode's content policy, and an MCP server for agents (`/api/v1/artifacts/mcp`). The files
+ * are stored in PostgreSQL, each distinct content once per artifact.
  */
 object ArtifactsModule : ServerModule {
     override val name: String = "artifacts"
@@ -44,7 +48,9 @@ object ArtifactsModule : ServerModule {
         single<PublishArtifactUseCase> { PublishArtifactUseCaseImpl(get(), get(), get()) }
         single<ReadArtifactsUseCase> { ReadArtifactsUseCaseImpl(get()) }
         single<ManageArtifactUseCase> { ManageArtifactUseCaseImpl(get(), get()) }
-        single<ViewArtifactUseCase> { ViewArtifactUseCaseImpl(get(), get(), get(), get()) }
+        single<ViewTicketSeal> { SealedViewTickets(get()) }
+        single<ViewerChecks> { KernelViewerChecks(get(), getOrNull()) }
+        single<ViewArtifactUseCase> { ViewArtifactUseCaseImpl(get(), get(), get(), get(), get()) }
         single { ArtifactsRoutesDependencies(get(), get(), get(), get(), get(), get()) }
     }
 
