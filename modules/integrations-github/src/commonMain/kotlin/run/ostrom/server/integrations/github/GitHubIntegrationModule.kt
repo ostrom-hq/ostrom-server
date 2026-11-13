@@ -6,7 +6,9 @@ import run.ostrom.server.gates.domain.services.CiChecks
 import run.ostrom.server.gates.domain.services.GateChannel
 import run.ostrom.server.gates.domain.services.GateGitHubAccounts
 import run.ostrom.server.gates.domain.services.PullRequestHeads
+import run.ostrom.server.integrations.github.domain.CloudSessionsSwitch
 import run.ostrom.server.integrations.github.domain.ConfiguredInstanceAdmins
+import run.ostrom.server.integrations.github.domain.GitHubAccessResolver
 import run.ostrom.server.integrations.github.domain.GitHubAccounts
 import run.ostrom.server.integrations.github.domain.GitHubApi
 import run.ostrom.server.integrations.github.domain.GitHubAppManifests
@@ -21,12 +23,15 @@ import run.ostrom.server.integrations.github.domain.GitHubDirectoryRepository
 import run.ostrom.server.integrations.github.domain.GitHubDirectorySync
 import run.ostrom.server.integrations.github.domain.GitHubGateChecks
 import run.ostrom.server.integrations.github.domain.GitHubInstalls
+import run.ostrom.server.integrations.github.domain.GitHubLinkStore
+import run.ostrom.server.integrations.github.domain.GitHubLinks
 import run.ostrom.server.integrations.github.domain.GitHubManifestApi
 import run.ostrom.server.integrations.github.domain.GitHubManifestTarget
 import run.ostrom.server.integrations.github.domain.GitHubOriginsRepository
 import run.ostrom.server.integrations.github.domain.GitHubPullRequestHeads
 import run.ostrom.server.integrations.github.domain.GitHubRepository
 import run.ostrom.server.integrations.github.domain.GitHubRepositoryReader
+import run.ostrom.server.integrations.github.domain.GitHubUserAuthApi
 import run.ostrom.server.integrations.github.domain.HandleWebhookUseCase
 import run.ostrom.server.integrations.github.domain.HandleWebhookUseCaseImpl
 import run.ostrom.server.integrations.github.domain.InstanceAdmins
@@ -36,27 +41,35 @@ import run.ostrom.server.integrations.github.domain.ListGitHubTeamsUseCase
 import run.ostrom.server.integrations.github.domain.ListGitHubTeamsUseCaseImpl
 import run.ostrom.server.integrations.github.domain.OrgReferences
 import run.ostrom.server.integrations.github.domain.installPage
+import run.ostrom.server.integrations.github.domain.oauthApp
 import run.ostrom.server.integrations.github.infrastructure.AppJwts
 import run.ostrom.server.integrations.github.infrastructure.GitHubAppSetup
 import run.ostrom.server.integrations.github.infrastructure.GitHubMigrations
 import run.ostrom.server.integrations.github.infrastructure.GitHubSettings
 import run.ostrom.server.integrations.github.infrastructure.HttpGitHubApi
 import run.ostrom.server.integrations.github.infrastructure.HttpGitHubContentsApi
+import run.ostrom.server.integrations.github.infrastructure.HttpGitHubUserAuth
 import run.ostrom.server.integrations.github.infrastructure.IdentityGitHubAccounts
+import run.ostrom.server.integrations.github.infrastructure.NoGitHubLinkMembers
 import run.ostrom.server.integrations.github.infrastructure.OrgsOrgReferences
 import run.ostrom.server.integrations.github.infrastructure.PostgresGitHubAppStore
 import run.ostrom.server.integrations.github.infrastructure.PostgresGitHubDirectoryRepository
+import run.ostrom.server.integrations.github.infrastructure.PostgresGitHubLinkStore
 import run.ostrom.server.integrations.github.infrastructure.PostgresGitHubOriginsRepository
 import run.ostrom.server.integrations.github.infrastructure.PostgresGitHubRepository
+import run.ostrom.server.integrations.github.infrastructure.RunnersCloudSwitch
 import run.ostrom.server.integrations.github.infrastructure.WebhookSignature
 import run.ostrom.server.integrations.github.infrastructure.credentials
 import run.ostrom.server.integrations.github.infrastructure.oauthClient
 import run.ostrom.server.integrations.github.presentation.GitHubDirectoryRoutesDependencies
+import run.ostrom.server.integrations.github.presentation.GitHubLinkRoutesDependencies
 import run.ostrom.server.integrations.github.presentation.GitHubManifestRoutesDependencies
 import run.ostrom.server.integrations.github.presentation.GitHubRoutesDependencies
 import run.ostrom.server.integrations.github.presentation.gitHubDirectoryRoutes
+import run.ostrom.server.integrations.github.presentation.gitHubLinkRoutes
 import run.ostrom.server.integrations.github.presentation.gitHubManifestRoutes
 import run.ostrom.server.integrations.github.presentation.gitHubRoutes
+import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.rules.domain.services.RepositoryReader
@@ -81,7 +94,8 @@ val GITHUB_HTTP = named("github-http")
  * organization's directory (repositories and teams) read from its installation and kept in the database; and the
  * manifest flow, which creates the instance's App when the environment names none; and the rules analysis's
  * [RepositoryReader], which reads the files, CODEOWNERS and branch protection of the installation's
- * repositories. Its settings come from the
+ * repositories; and the members' GitHub links, which give each member's cloud sessions their own Git and `gh` access
+ * (device flow, web flow, refresh, unlink). Its settings come from the
  * environment (`OSTROM_GITHUB_*`, `OSTROM_PUBLIC_URL`, `OSTROM_INSTANCE_ADMINS`).
  */
 object GitHubIntegrationModule : ServerModule {
@@ -162,6 +176,24 @@ object GitHubIntegrationModule : ServerModule {
             GitHubRoutesDependencies(get(), get(), get(), get(), get(), signature, get(), apps, get())
         }
         single { GitHubDirectoryRoutesDependencies(get(), get(), get(), get(), get()) }
+        // The members' links: the App's OAuth client links, refreshes and revokes; tokens sealed by the secrets key.
+        single<GitHubUserAuthApi> {
+            val settings = get<GitHubSettings>()
+            HttpGitHubUserAuth(get(GITHUB_HTTP), settings.apiUrl, settings.webUrl, get())
+        }
+        single<GitHubLinkStore> { PostgresGitHubLinkStore(get(), get()) }
+        // Cloud sessions are on with a runtime driver: a new link starts only then.
+        single<CloudSessionsSwitch> { RunnersCloudSwitch(getOrNull()) }
+        single {
+            val redirect = "${get<GitHubAppSetup>().publicUrl}/api/v1/github/link/callback"
+            val members = getOrNull<MemberDirectory>() ?: NoGitHubLinkMembers
+            GitHubLinks(get(), get(), get(), members, get(), get(), redirect, get())
+        }
+        single {
+            val members = getOrNull<MemberDirectory>() ?: NoGitHubLinkMembers
+            GitHubAccessResolver(get(), get(), get(), members, get(), get(), get())
+        }
+        single { GitHubLinkRoutesDependencies(get(), get(), get<GitHubSettings>().webOrigin) }
         single {
             val settings = get<GitHubSettings>()
             GitHubManifestRoutesDependencies(get(), settings.webUrl, settings.webOrigin)
@@ -174,14 +206,21 @@ object GitHubIntegrationModule : ServerModule {
         route.gitHubRoutes(koin.get())
         route.gitHubDirectoryRoutes(koin.get())
         route.gitHubManifestRoutes(koin.get())
+        route.gitHubLinkRoutes(koin.get())
     }
 
     /**
      * The GitHub App integration, only once the instance has an App: the environment's, or the one the
-     * manifest flow created (read again at each call, so an App created by the console counts at once).
+     * manifest flow created (read again at each call, so an App created by the console counts at once); the members'
+     * links once that App's OAuth client is known and cloud sessions are on.
      */
-    override suspend fun features(koin: Koin): Set<String> =
-        if (koin.get<GitHubAppSource>().current().named) setOf(ServerFeatures.GITHUB) else emptySet()
+    override suspend fun features(koin: Koin): Set<String> {
+        val app = koin.get<GitHubAppSource>().current()
+        // Links only with the App's OAuth client (it alone links, refreshes and revokes a member's tokens), and only
+        // where cloud sessions run, the one use of a link.
+        val links = app.oauthApp() != null && koin.get<CloudSessionsSwitch>().enabled()
+        return setOfNotNull(ServerFeatures.GITHUB.takeIf { app.named }, ServerFeatures.GITHUB_LINK.takeIf { links })
+    }
 
     override fun start(scope: CoroutineScope, koin: Koin) {
         val sync = koin.get<GitHubDirectorySync>()

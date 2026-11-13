@@ -90,7 +90,9 @@ data class GitHubManifestTarget(
  * The App asks what the integration uses and no more: `checks: write` for the `ostrom-gate` check; read-only
  * metadata, contents, pull requests, issues, actions and members (the directory and the analysis); the
  * `pull_request` events on `/webhooks/github`; and the person's authorization during the install
- * (`request_oauth_on_install`, S2-56), returning to the install callback.
+ * (`request_oauth_on_install`, S2-56), returning to the install callback. The members' cloud sessions clone and push
+ * with their own user-to-server tokens, which never exceed the App's permissions: `contents` and `pull_requests` are
+ * read and write for them; the server's own installation tokens keep asking for the read access they use.
  *
  * @param apps The App in use.
  * @param store The stored App and the states.
@@ -180,7 +182,11 @@ class GitHubAppManifests(
         put("url", target.webOrigin)
         put("description", "Ostrom asks a person before an agent ships, and signs the answer.")
         put("redirect_url", "$api/api/v1/github/app/manifest/callback")
-        putJsonArray("callback_urls") { add("$api/api/v1/github/app/install/callback") }
+        putJsonArray("callback_urls") {
+            add("$api/api/v1/github/app/install/callback")
+            // The members' links of the cloud sessions (the web flow); Device Flow is an App setting no manifest sets.
+            add("$api/api/v1/github/link/callback")
+        }
         // Where GitHub returns after an install if the authorization on install is turned off.
         put("setup_url", "$api/api/v1/github/app/install/callback")
         put("request_oauth_on_install", true)
@@ -222,9 +228,9 @@ private val CODE = Regex("[A-Za-z0-9_-]{1,100}")
 private val PERMISSIONS = listOf(
     "actions" to "read",
     "checks" to "write",
-    "contents" to "read",
+    "contents" to "write",
     "issues" to "read",
     "members" to "read",
     "metadata" to "read",
-    "pull_requests" to "read",
+    "pull_requests" to "write",
 )

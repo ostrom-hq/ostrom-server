@@ -2,8 +2,11 @@
 package run.ostrom.server.integrations.github
 
 import run.ostrom.server.gates.domain.services.CiChecks
-import run.ostrom.server.integrations.github.domain.GitHubApi
+import run.ostrom.server.integrations.github.domain.CloudSessionsSwitch
 import run.ostrom.server.integrations.github.domain.DirectoryState
+import run.ostrom.server.integrations.github.domain.GitHubAccess
+import run.ostrom.server.integrations.github.domain.GitHubAccessResolver
+import run.ostrom.server.integrations.github.domain.GitHubApi
 import run.ostrom.server.integrations.github.domain.GitHubAppStore
 import run.ostrom.server.integrations.github.domain.GitHubCallException
 import run.ostrom.server.integrations.github.domain.GitHubCiApi
@@ -14,31 +17,50 @@ import run.ostrom.server.integrations.github.domain.GitHubDirectoryApi
 import run.ostrom.server.integrations.github.domain.GitHubDirectoryRepository
 import run.ostrom.server.integrations.github.domain.GitHubDirectorySync
 import run.ostrom.server.integrations.github.domain.GitHubInstallation
+import run.ostrom.server.integrations.github.domain.GitHubLinkActor
+import run.ostrom.server.integrations.github.domain.GitHubLinkCloudOffException
+import run.ostrom.server.integrations.github.domain.GitHubLinkStore
+import run.ostrom.server.integrations.github.domain.GitHubLinks
 import run.ostrom.server.integrations.github.domain.GitHubManifestApi
 import run.ostrom.server.integrations.github.domain.GitHubRepository
 import run.ostrom.server.integrations.github.domain.GitHubRepositoryReader
+import run.ostrom.server.integrations.github.domain.GitHubTokenClaim
+import run.ostrom.server.integrations.github.domain.GitHubUserAuthApi
 import run.ostrom.server.integrations.github.infrastructure.GitHubSettings
 import run.ostrom.server.integrations.github.infrastructure.HttpGitHubApi
 import run.ostrom.server.integrations.github.infrastructure.HttpGitHubContentsApi
+import run.ostrom.server.integrations.github.infrastructure.HttpGitHubUserAuth
+import run.ostrom.server.integrations.github.infrastructure.NoGitHubLinkMembers
+import run.ostrom.server.integrations.github.infrastructure.RunnersCloudSwitch
+import run.ostrom.server.integrations.github.presentation.GitHubLinkRoutesDependencies
+import run.ostrom.server.kernel.audit.OrgAuditTrail
+import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import run.ostrom.server.kernel.auth.MemberDirectory
+import run.ostrom.server.kernel.auth.PrincipalKind
+import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.MapConfigSource
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.rules.domain.services.RepositoryReader
+import run.ostrom.server.runners.infrastructure.RunnersConfig
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.runTest
+import org.koin.core.module.Module
 import org.koin.dsl.koinApplication
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
+import kotlin.uuid.Uuid
 
 class GitHubIntegrationModuleRegistrationTest {
     @Test
@@ -49,6 +71,7 @@ class GitHubIntegrationModuleRegistrationTest {
             1L to "create_github",
             2L to "create_github_directory_and_app",
             3L to "create_github_origins_and_deliveries",
+            4L to "create_github_links",
         )
         assertEquals(expected, migrations)
         koinApplication { modules(GitHubIntegrationModule.koinModule) }.close()
@@ -192,5 +215,67 @@ class GitHubIntegrationModuleRegistrationTest {
         sync.stop()
         worker.cancel()
         app.close()
+    }
+
+    @Test
+    fun theLinksAreWiredOnTheAppsClientTheMembersAndTheRunners() = runTest {
+        val store = MemoryGitHubLinkStore()
+        fun links(vararg extra: Module) = koinApplication {
+            allowOverride(true)
+            modules(
+                GitHubIntegrationModule.koinModule,
+                module {
+                    single<Clock> { SettableClock() }
+                    single<Logger> { RecordingLogger() }
+                    single { GitHubSettings("1", null, null, null, clientId = CLIENT_ID, clientSecret = "secret") }
+                    single<GitHubAppStore> { MemoryGitHubAppStore() }
+                    single<GitHubLinkStore> { store }
+                    single<OrgAuditTrail> { RecordingAudit() }
+                    single<PrincipalOrgResolver> {
+                        object : PrincipalOrgResolver {
+                            override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?) = null
+                        }
+                    }
+                },
+                *extra,
+            )
+        }
+        val bare = links()
+        assertIs<HttpGitHubUserAuth>(bare.koin.get<GitHubUserAuthApi>())
+        assertEquals(false, bare.koin.get<CloudSessionsSwitch>().enabled(), "No runners module: no cloud sessions")
+        val actor = GitHubLinkActor(ORG, DEV, false, AuthenticatedPrincipal("u", PrincipalKind.USER, emptySet()))
+        assertFailsWith<GitHubLinkCloudOffException> { bare.koin.get<GitHubLinks>().startDevice(actor) }
+        val nobody = bare.koin.get<GitHubAccessResolver>().access(ORG, DEV)
+        assertEquals(GitHubAccess.NotLinked, nobody, "Without the orgs module, nobody is a member")
+        assertEquals("http://localhost:5173", bare.koin.get<GitHubLinkRoutesDependencies>().webOrigin)
+        bare.close()
+
+        val docker = RunnersConfig.from(
+            MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "docker", "OSTROM_RUNNERS_SERVER_URL" to "http://ostrom")),
+        )
+        val full = links(
+            module {
+                single { docker }
+                single<MemberDirectory> { SettableMembers(mutableSetOf(ORG to DEV)) }
+                single<GitHubUserAuthApi> { FakeGitHubUserAuth() }
+            },
+        )
+        assertTrue(full.koin.get<CloudSessionsSwitch>().enabled())
+        assertEquals("ABCD-1234", full.koin.get<GitHubLinks>().startDevice(actor).userCode)
+        store.claims += GitHubTokenClaim.NotLinked
+        assertEquals(GitHubAccess.NotLinked, full.koin.get<GitHubAccessResolver>().access(ORG, DEV))
+        assertTrue(store.claims.isEmpty(), "A member: their link is read")
+        full.close()
+    }
+
+    @Test
+    fun cloudSessionsAreOnWithARuntimeOnly() = runTest {
+        assertFalse(RunnersCloudSwitch(null).enabled())
+        assertFalse(RunnersCloudSwitch(RunnersConfig.from(MapConfigSource(emptyMap()))).enabled())
+        val registered = MapConfigSource(
+            mapOf("OSTROM_RUNNERS_DRIVER" to "registered", "OSTROM_RUNNERS_SERVER_URL" to "https://ostrom"),
+        )
+        assertTrue(RunnersCloudSwitch(RunnersConfig.from(registered)).enabled())
+        assertFalse(NoGitHubLinkMembers.isActiveMember(ORG, DEV.toString()))
     }
 }
