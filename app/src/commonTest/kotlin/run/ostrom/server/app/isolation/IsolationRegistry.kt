@@ -36,6 +36,7 @@ import run.ostrom.server.app.isolation.Seed.SESSION
 import run.ostrom.server.app.isolation.Seed.SKILL
 import run.ostrom.server.app.isolation.Seed.TOKEN
 import run.ostrom.server.app.isolation.Seed.WAIT
+import run.ostrom.server.app.isolation.Seed.WEBHOOK
 import run.ostrom.server.app.isolation.Seed.WORKFLOW
 
 private const val SIGN_IN = "a sign-in flow: it names no organization, its code or link is the only key"
@@ -208,6 +209,15 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/usage/live" to Case.Target(stream = true),
     // The organization's event feed (events.v1): from the oldest kept event, so A's would show.
     "GET /api/v1/events" to Case.Target(stream = true, query = "after=0"),
+    // The organization's outgoing webhooks (webhooks.v1): an owner's or an admin's, reads included.
+    "GET /api/v1/webhooks" to Case.Target(admin = true),
+    "POST /api/v1/webhooks" to Case.Target(body = WEBHOOK_BODY, admin = true),
+    "GET /api/v1/webhooks/{id}" to target("id" to WEBHOOK, admin = true),
+    "PUT /api/v1/webhooks/{id}" to target("id" to WEBHOOK, body = """{"version": 1, $WEBHOOK_FIELDS}""", admin = true),
+    "DELETE /api/v1/webhooks/{id}" to target("id" to WEBHOOK, admin = true),
+    "GET /api/v1/webhooks/{id}/deliveries" to target("id" to WEBHOOK, admin = true),
+    "POST /api/v1/webhooks/{id}/test" to target("id" to WEBHOOK, admin = true),
+    "POST /api/v1/webhooks/{id}/rotate-secret" to target("id" to WEBHOOK, admin = true),
     "GET /api/v1/usage/events" to Case.Target(),
     "POST /api/v1/usage/events" to Case.Target(body = "{}"),
     "GET /api/v1/spending" to Case.Target(),
@@ -578,6 +588,10 @@ private const val SKILL_BODY = """{"version": "1.0.0",""" +
 // A hook version: its one executable file, run.sh, base64 of "#!/bin/sh\n", run on Stop.
 internal const val HOOK_BODY = """{"version": "1.0.0", "definition": {"events": ["Stop"], "command": "run.sh"},""" +
     """ "files": [{"path": "run.sh", "mode": "executable", "contentBase64": "IyEvYmluL3NoCg=="}]}"""
+
+private const val WEBHOOK_FIELDS = """"url": "https://example.com/taken", "types": ["cloud.wait.created"]"""
+
+private const val WEBHOOK_BODY = "{$WEBHOOK_FIELDS}"
 
 private const val AUTOMATION_BODY = """{"name": "Taken", "trigger": {"kind": "webhook"},""" +
     """ "action": {"prompt": "Fix"}, "variables": [], "overlap": "allow"}"""
