@@ -70,6 +70,18 @@ interface WorkflowsRepository {
     suspend fun workflowCount(orgId: Uuid): Int
 
     /**
+     * Runs [block] holding the organization's workflow lock, in one transaction: two saves or deletes of the
+     * organization's workflows (on this replica or another) never overlap, so that two of them cannot both create a
+     * call loop, take one name or pass the cap. [block] reads and writes through the repository it is given, which is
+     * bound to that transaction; anything it throws undoes what it wrote.
+     *
+     * @param orgId The organization.
+     * @param block What to do under the lock.
+     * @return What [block] returns.
+     */
+    suspend fun <T> underWorkflowLock(orgId: Uuid, block: suspend (WorkflowsRepository) -> T): T
+
+    /**
      * Lists the last decision taken on each of the organization's workflows: what a package cites. Never the whole
      * log, which grows with every save.
      *

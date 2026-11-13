@@ -244,6 +244,16 @@ class PackagesUseCasesTest {
         assertTrue(GatesCatalogUseCaseImpl(repository, sources)(other, "acme-api").all { it.gate == null })
     }
 
+    @Test
+    fun aRejectedWorkflowIsInNeitherTheCatalogueNorThePackage() = runTest {
+        save(tests("w1", WorkflowStatus.REJECTED))
+        val catalog = GatesCatalogUseCaseImpl(repository, sources)(org, "acme-api")
+        assertTrue(catalog.all { it.gate == null })
+        assertTrue(compiler.inputs(org, "acme-api").workflows.isEmpty())
+        save(tests("w2"))
+        assertEquals(listOf("w2"), compiler.inputs(org, "acme-api").workflows.map { it.workflow.id })
+    }
+
     private fun publishing(compiler: CompileSourcesUseCaseImpl) =
         PublishPackageUseCaseImpl(compiler, repository, sources, SeedSigner(ByteArray(32) { it.toByte() }), clock)
 

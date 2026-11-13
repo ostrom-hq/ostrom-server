@@ -4,10 +4,12 @@ package run.ostrom.server.compiler
 import run.ostrom.core.api.models.NodePosition
 import run.ostrom.core.api.models.NodeRun
 import run.ostrom.core.api.models.Workflow
+import run.ostrom.core.api.models.WorkflowNodeKind.AGENT
 import run.ostrom.core.api.models.WorkflowNodeKind.CHECK
 import run.ostrom.core.api.models.WorkflowNodeKind.GATE
 import run.ostrom.core.api.models.WorkflowNodeKind.NOTIFY
 import run.ostrom.core.api.models.WorkflowNodeKind.STEP
+import run.ostrom.core.api.models.WorkflowNodeKind.WORKFLOW
 import run.ostrom.core.api.models.WorkflowStatus
 import run.ostrom.server.compiler.domain.models.PackagePin
 import run.ostrom.server.compiler.domain.services.PackageCompiler
@@ -18,6 +20,7 @@ import run.ostrom.server.compiler.domain.usecases.RevokePackageUseCaseImpl
 import run.ostrom.server.compiler.domain.usecases.WorkflowsUseCaseImpl
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
+import run.ostrom.server.kernel.workflows.AutomationUsage
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -36,7 +39,7 @@ class WorkflowsUseCaseTest {
     private val signer = RecordingDecisionSigner()
     private val clock = SettableClock()
     private val removed = mutableListOf<Pair<Uuid, String>>()
-    private val workflows = WorkflowsUseCaseImpl(repository, signer, clock) { org, id -> removed += org to id }
+    private val workflows = WorkflowsUseCaseImpl(repository, signer, clock, removals = { o, i -> removed += o to i })
 
     private fun raw(workflow: Workflow): JsonObject =
         PackageCompiler.json.encodeToJsonElement(Workflow.serializer(), workflow).jsonObject
@@ -210,5 +213,125 @@ class WorkflowsUseCaseTest {
         workflows.delete(org, "release")
 
         assertTrue(repository.workflows(org).isEmpty())
+    }
+
+    private fun agentFlow(id: String, name: String) = workflow(
+        id,
+        listOf(node("a", AGENT, run = NodeRun(instructions = "Do it"))),
+        edges = listOf("a" to null),
+        name = name,
+    )
+
+    private fun calls(id: String, name: String, target: String) = workflow(
+        id,
+        listOf(node("c", WORKFLOW).copy(workflowId = target)),
+        name = name,
+    )
+
+    @Test
+    fun aWorkflowTheServerRunsIsCheckedWhenSavedAndRefusedWithItsKey() = runTest {
+        val broken = agentFlow("fix", "Fix").copy(start = "nowhere")
+        val error = assertFailsWith<OstromException> { workflows.save(org, raw(broken), null, "lead", create = true) }
+        assertEquals(ErrorKind.INVALID_REQUEST, error.kind)
+        assertEquals("invalid_workflow", error.type)
+        assertTrue("The start node nowhere does not exist." in error.message, error.message)
+        assertTrue(repository.workflows(org).isEmpty())
+        // The checks of a workflow of the harness only are today's.
+        val harness = workflow("h", listOf(node("c", CHECK, run = NodeRun(command = "make"))), name = " ")
+        assertEquals(1, workflows.save(org, raw(harness), null, "lead", create = true).version)
+    }
+
+    @Test
+    fun everySaveAndDeleteTakesTheOrganizationsWorkflowLock() = runTest {
+        workflows.save(org, raw(agentFlow("fix", "Fix")), null, "lead", create = true)
+        workflows.save(org, raw(agentFlow("fix", "Fix")), 1, "lead", create = false)
+        assertEquals(2, repository.locks)
+        workflows.delete(org, "fix")
+        assertEquals(3, repository.locks)
+    }
+
+    @Test
+    fun aNameIsUniquePerOrganizationAmongTheWorkflowsTheServerRuns() = runTest {
+        workflows.save(org, raw(agentFlow("fix", "Fix the build")), null, "lead", create = true)
+        val taken = assertFailsWith<OstromException> {
+            workflows.save(org, raw(agentFlow("other", " fix THE build ")), null, "lead", create = true)
+        }
+        assertEquals(ErrorKind.CONFLICT, taken.kind)
+        assertEquals("workflow_name_taken", taken.type)
+        // Its own name is its own, and another organization's names are not this one's.
+        workflows.save(org, raw(agentFlow("fix", "Fix the build")), null, "lead", create = false)
+        val elsewhere = Uuid.parse("0000000e-0000-0000-0000-000000000000")
+        workflows.save(elsewhere, raw(agentFlow("other", "Fix the build")), null, "lead", create = true)
+        assertEquals(1, repository.workflowCount(org))
+    }
+
+    @Test
+    fun theCallsOfAWorkflowAreCheckedAgainstTheOrganizationsOthers() = runTest {
+        workflows.save(org, raw(agentFlow("leaf", "Leaf")), null, "lead", create = true)
+        workflows.save(org, raw(calls("mid", "Mid", "leaf")), null, "lead", create = true)
+        val loop = assertFailsWith<OstromException> {
+            workflows.save(org, raw(calls("leaf", "Leaf", "mid")), null, "lead", create = false)
+        }
+        assertEquals("invalid_workflow", loop.type)
+        assertTrue("Workflow calls loop back to this one (leaf -> mid -> leaf)." in loop.message, loop.message)
+        val missing = assertFailsWith<OstromException> {
+            workflows.save(org, raw(calls("top", "Top", "gone")), null, "lead", create = true)
+        }
+        assertTrue("the workflow gone does not exist" in missing.message, missing.message)
+    }
+
+    @Test
+    fun aWorkflowAnotherOneCallsOrAnAutomationStartsIsInUse() = runTest {
+        val automation = AutomationUsage { _, id -> if (id == "leaf") "Nightly build" else null }
+        val use = WorkflowsUseCaseImpl(repository, signer, clock, automation)
+        use.save(org, raw(agentFlow("leaf", "Leaf")), null, "lead", create = true)
+        use.save(org, raw(agentFlow("solo", "Solo")), null, "lead", create = true)
+        use.save(org, raw(calls("mid", "Mid", "solo")), null, "lead", create = true)
+
+        val called = assertFailsWith<OstromException> { use.delete(org, "solo") }
+        assertEquals(ErrorKind.CONFLICT, called.kind)
+        assertEquals("workflow_in_use", called.type)
+        assertTrue("the workflow Mid calls it" in called.message, called.message)
+        val started = assertFailsWith<OstromException> { use.delete(org, "leaf") }
+        assertEquals("workflow_in_use", started.type)
+        assertTrue("the automation Nightly build starts it" in started.message, started.message)
+
+        use.delete(org, "mid")
+        use.delete(org, "solo")
+        assertEquals(listOf("leaf"), repository.workflows(org).map { it.doc.workflow.id })
+    }
+
+    @Test
+    fun aProposalIsRejectedAndNothingElseIs() = runTest {
+        workflows.save(org, raw(release()), null, "bot", create = true)
+        val rejected = workflows.save(org, raw(release(WorkflowStatus.REJECTED)), 1, "lead", create = false)
+        assertEquals(2, rejected.version)
+        // A rejected proposal stays rejected when saved again, and an edit can still accept it.
+        workflows.save(org, raw(release(WorkflowStatus.REJECTED, x = 9.0)), 2, "lead", create = false)
+        workflows.save(org, raw(release(WorkflowStatus.ACCEPTED)), 3, "lead", create = false)
+
+        val accepted = assertFailsWith<OstromException> {
+            workflows.save(org, raw(release(WorkflowStatus.REJECTED)), 4, "lead", create = false)
+        }
+        assertEquals("invalid_workflow", accepted.type)
+        assertTrue("only a proposed workflow is rejected" in accepted.message, accepted.message)
+        val born = workflow("new", listOf(node("s", STEP)), status = WorkflowStatus.REJECTED)
+        val created = assertFailsWith<OstromException> { workflows.save(org, raw(born), null, "lead", true) }
+        assertEquals("invalid_workflow", created.type)
+    }
+
+    @Test
+    fun aRejectedWorkflowCompilesNothing() = runTest {
+        val compiler = CompileSourcesUseCaseImpl(repository, FixedSources(), CountingHarnessSigner(), clock)
+        workflows.save(org, raw(release(WorkflowStatus.ACCEPTED)), null, "lead", create = true)
+        val idea = release(WorkflowStatus.PROPOSED).copy(id = "idea", name = "Idea")
+        workflows.save(org, raw(idea), null, "bot", create = true)
+        val turnedDown = release(WorkflowStatus.PROPOSED).copy(id = "no", name = "No")
+        workflows.save(org, raw(turnedDown), null, "bot", create = true)
+        workflows.save(org, raw(turnedDown.copy(status = WorkflowStatus.REJECTED)), null, "lead", create = false)
+
+        assertEquals(setOf("release", "idea", "no"), repository.workflows(org).map { it.doc.workflow.id }.toSet())
+        val inputs = compiler.inputs(org, "acme-api")
+        assertEquals(setOf("release", "idea"), inputs.workflows.map { it.workflow.id }.toSet())
     }
 }

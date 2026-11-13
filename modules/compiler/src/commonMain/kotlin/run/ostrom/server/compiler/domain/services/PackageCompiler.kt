@@ -351,10 +351,15 @@ object PackageCompiler {
                 NodeBuild(node, workflow, mode, approval).also { it.compile() }.result()
             }
             val skillPath = "skills/ostrom-wf-${PackageTexts.slug(workflow.name)}/SKILL.md"
-            val skill = PackageTexts.skill(workflow, ordered, compiled, scripts, notes, inputs.rules, inputs.repo)
-            file(skillPath, skill, PackageFileMode.FILE)
+            // What a proposed workflow's steps say comes from a repository, not from a person: no skill is written
+            // for it until it is accepted (its checks, gates and notifications stay shadow records).
+            val skilled = workflow.status != WorkflowStatus.PROPOSED
+            if (skilled) {
+                val skill = PackageTexts.skill(workflow, ordered, compiled, scripts, notes, inputs.rules, inputs.repo)
+                file(skillPath, skill, PackageFileMode.FILE)
+            }
             nodes += compiled.map { node ->
-                val withSkill = node.kind in WITH_SKILL
+                val withSkill = skilled && node.kind in WITH_SKILL
                 if (withSkill) node.copy(artifacts = listOf(skillPath) + node.artifacts) else node
             }
             val trigger = workflow.nodes.firstOrNull { it.kind == WorkflowNodeKind.TRIGGER }
@@ -369,7 +374,8 @@ object PackageCompiler {
                 }
             }
             val skillName = "ostrom-wf-${PackageTexts.slug(workflow.name)}"
-            context += "- ${workflow.name}$proposed$starts; skill $skillName$enforced"
+            val skillNote = if (skilled) "; skill $skillName" else ""
+            context += "- ${workflow.name}$proposed$starts$skillNote$enforced"
         }
 
         private val WorkflowNodeKind.wire: String get() = name.lowercase()
@@ -513,7 +519,9 @@ object PackageCompiler {
             // Without a channel, a notification is logged under its owner, or the team's log.
             private fun logOf(owner: String): String = if (owner.isEmpty()) "log:team" else "log:$owner"
 
+            // A proposed workflow's agents are not written: no sub-agent for what nobody accepted.
             private fun compileAgent() {
+                if (workflow.status == WorkflowStatus.PROPOSED) return
                 val claude = "agents/ostrom-${PackageTexts.slug(node.label)}.md"
                 file(claude, PackageTexts.subagent(workflow, node), PackageFileMode.FILE)
                 val codex = "codex/agents/${PackageTexts.codexAgentName(node.label)}.toml"

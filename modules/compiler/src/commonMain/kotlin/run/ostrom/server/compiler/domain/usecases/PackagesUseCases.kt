@@ -4,6 +4,7 @@ package run.ostrom.server.compiler.domain.usecases
 import run.ostrom.core.api.models.PackageMode
 import run.ostrom.server.compiler.domain.models.CatalogEntry
 import run.ostrom.server.compiler.domain.models.CompileInputs
+import run.ostrom.server.compiler.domain.models.compiled
 import run.ostrom.server.compiler.domain.models.PackageAudit
 import run.ostrom.server.compiler.domain.models.PackagePin
 import run.ostrom.server.compiler.domain.models.StoredPackage
@@ -81,7 +82,7 @@ class CompileSourcesUseCaseImpl(
         return CompileInputs(
             repo = repo,
             serverUrl = "",
-            workflows = repository.workflows(orgId).map { it.doc },
+            workflows = repository.workflows(orgId).compiled(),
             rules = sources.rules(orgId),
             decisions = repository.lastDecisions(orgId) + sources.ruleDecisions(orgId),
             repos = sources.repos(orgId),
@@ -325,7 +326,7 @@ class GatesCatalogUseCaseImpl(
     }
 
     private suspend fun catalogue(orgId: Uuid): GatesCatalog {
-        val docs = repository.workflows(orgId).map { it.doc }
+        val docs = repository.workflows(orgId).compiled()
         return GatesCatalog.of(docs, sources.ruleGates(orgId), sources.settings(orgId).prodApprover)
     }
 }

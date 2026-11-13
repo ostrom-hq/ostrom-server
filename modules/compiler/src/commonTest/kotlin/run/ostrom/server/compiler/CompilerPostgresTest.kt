@@ -5,9 +5,11 @@ import run.ostrom.core.api.models.GateAction
 import run.ostrom.core.api.models.NodeRun
 import run.ostrom.core.api.models.PackageEnvelope
 import run.ostrom.core.api.models.Workflow
+import run.ostrom.core.api.models.WorkflowNodeKind.AGENT
 import run.ostrom.core.api.models.WorkflowNodeKind.CHECK
 import run.ostrom.core.api.models.WorkflowNodeKind.GATE
 import run.ostrom.core.api.models.WorkflowNodeKind.TRIGGER
+import run.ostrom.core.api.models.WorkflowNodeKind.WORKFLOW
 import run.ostrom.core.api.models.WorkflowStatus
 import run.ostrom.core.receipts.Digests
 import run.ostrom.server.compiler.domain.models.Authorship
@@ -76,6 +78,9 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.TextContent
 import io.ktor.http.contentType
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -271,6 +276,52 @@ class CompilerPostgresTest {
         assertEquals(JsonNull, envelope["repo"])
         val page = server.call("user:a:lead", "/api/v1/packages").body<JsonObject>()
         assertEquals(JsonNull, page.getValue("items").jsonArray.single().jsonObject["repo"])
+    }
+
+    private fun serverRun(id: String, name: String, target: String? = null): JsonObject {
+        val only = if (target == null) {
+            node("a", AGENT, run = NodeRun(instructions = "Do it"))
+        } else {
+            node("c", WORKFLOW).copy(workflowId = target)
+        }
+        val workflow = workflow(id, listOf(only), name = name)
+        return PackageCompiler.json.encodeToJsonElement(Workflow.serializer(), workflow).jsonObject
+    }
+
+    private suspend fun HttpResponse.errorType(): String =
+        body<JsonObject>().getValue("error").jsonObject.getValue("type").jsonPrimitive.content
+
+    @Test
+    fun theWorkflowsTheServerRunsAreCheckedAndSavedOneAtATimeUnderTheOrganizationsLock() = compilerTest { server ->
+        val answers = coroutineScope {
+            (1..3).map { n ->
+                val body = serverRun("fix-$n", "Fix the build")
+                async { server.call("user:a:lead", "/api/v1/workflows", "POST", body) }
+            }.awaitAll()
+        }
+        assertEquals(1, answers.count { it.status == HttpStatusCode.Created }, answers.map { it.status }.toString())
+        val refused = answers.filter { it.status != HttpStatusCode.Created }
+        assertEquals(listOf(HttpStatusCode.Conflict, HttpStatusCode.Conflict), refused.map { it.status })
+        assertEquals(listOf("workflow_name_taken", "workflow_name_taken"), refused.map { it.errorType() })
+        assertEquals(1, server.koin.get<CompilerRepository>().workflowCount(orgA))
+
+        val broken = JsonObject(serverRun("fix-9", "Another") + ("start" to JsonPrimitive("nowhere")))
+        val invalid = server.call("user:a:lead", "/api/v1/workflows", "POST", broken)
+        assertEquals(HttpStatusCode.BadRequest, invalid.status)
+        assertEquals("invalid_workflow", invalid.errorType())
+
+        // Another workflow calls the one that was kept: it cannot be deleted while it does.
+        val kept = server.koin.get<CompilerRepository>().workflows(orgA).single().doc.workflow.id
+        assertEquals(
+            HttpStatusCode.Created,
+            server.call("user:a:lead", "/api/v1/workflows", "POST", serverRun("caller", "Caller", kept)).status,
+        )
+        val inUse = server.call("user:a:lead", "/api/v1/workflows/$kept", "DELETE")
+        assertEquals(HttpStatusCode.Conflict, inUse.status)
+        assertEquals("workflow_in_use", inUse.errorType())
+        assertEquals(HttpStatusCode.NoContent, server.call("user:a:lead", "/api/v1/workflows/caller", "DELETE").status)
+        assertEquals(HttpStatusCode.NoContent, server.call("user:a:lead", "/api/v1/workflows/$kept", "DELETE").status)
+        assertEquals(0, server.koin.get<CompilerRepository>().workflowCount(orgA))
     }
 
     @Test

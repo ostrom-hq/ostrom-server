@@ -11,6 +11,7 @@ import run.ostrom.server.compiler.domain.models.RuleDoc
 import run.ostrom.server.compiler.domain.models.StoredPackage
 import run.ostrom.server.compiler.domain.models.StoredWorkflow
 import run.ostrom.server.compiler.domain.repositories.CompilerRepository
+import run.ostrom.server.compiler.domain.repositories.WorkflowsRepository
 import run.ostrom.server.compiler.domain.services.CompilerDocs
 import run.ostrom.server.compiler.domain.services.CompilerSources
 import run.ostrom.server.compiler.domain.services.HarnessReceiptSigner
@@ -52,6 +53,14 @@ internal class MemoryCompilerRepository : CompilerRepository {
         val saved = StoredWorkflow(CompilerDocs.workflow(raw), (current?.version ?: 0) + 1, author.by, author.at)
         workflows[orgId to id] = saved
         return saved
+    }
+
+    /** How many times the lock was taken. */
+    var locks = 0
+
+    override suspend fun <T> underWorkflowLock(orgId: Uuid, block: suspend (WorkflowsRepository) -> T): T {
+        locks++
+        return block(this)
     }
 
     override suspend fun deleteWorkflow(orgId: Uuid, id: String): Boolean = workflows.remove(orgId to id) != null

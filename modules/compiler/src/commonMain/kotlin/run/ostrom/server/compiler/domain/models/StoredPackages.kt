@@ -2,6 +2,7 @@
 package run.ostrom.server.compiler.domain.models
 
 import run.ostrom.core.api.models.PackageEnvelope
+import run.ostrom.core.api.models.WorkflowStatus
 import kotlinx.serialization.json.JsonObject
 import kotlin.time.Instant
 
@@ -14,6 +15,15 @@ import kotlin.time.Instant
  * @property updatedAt When.
  */
 data class StoredWorkflow(val doc: WorkflowDoc, val version: Int, val updatedBy: String, val updatedAt: Instant)
+
+/**
+ * The documents a package, a gates catalogue or an approvers graph is built from: every workflow but the rejected ones,
+ * which compile nothing (a proposal a person turned down is only kept, so that the analysis never proposes it again).
+ *
+ * @return The documents, in their order.
+ */
+fun List<StoredWorkflow>.compiled(): List<WorkflowDoc> =
+    filter { it.doc.workflow.status != WorkflowStatus.REJECTED }.map { it.doc }
 
 /**
  * A compiled package version, signed once: the same content keeps its version and signature.

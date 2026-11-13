@@ -141,6 +141,26 @@ class NodeRulesTest {
     }
 
     @Test
+    fun aProposedWorkflowProducesNoSkillAndNoSubAgentUntilAPersonAcceptsIt() {
+        val nodes = arrayOf(
+            node("s", STEP),
+            node("a", AGENT),
+            node("c", CHECK, label = "x"),
+            node("k", CHECK, label = "y", run = NodeRun(command = "make")),
+            node("t", TRIGGER),
+        )
+        val (step, agent, bare, scripted, trigger) = produced(*nodes, status = WorkflowStatus.PROPOSED)
+        assertEquals(emptyList(), step)
+        assertEquals(emptyList(), agent)
+        assertEquals(emptyList(), bare, "A check with no command only asks for a skill")
+        assertEquals(listOf(ArtifactType.HOOK, ArtifactType.SCRIPT), scripted.map { it.type })
+        assertEquals(listOf(ArtifactType.CONTEXT), trigger.map { it.type })
+        val (acceptedStep, acceptedAgent) = produced(*nodes)
+        assertEquals(listOf(ArtifactType.SKILL), acceptedStep.map { it.type })
+        assertEquals(listOf(ArtifactType.SUBAGENT, ArtifactType.MCP), acceptedAgent.map { it.type })
+    }
+
+    @Test
     fun aCheckProducesAHookAndAScriptOnlyWithACommand() {
         val suggestedFound = node("c1", CHECK, label = "push", suggested = NodeSuggestions(command = text("npm test")))
         val suggestedNone = node("c2", CHECK, label = "x", suggested = NodeSuggestions(command = text("npm test")))

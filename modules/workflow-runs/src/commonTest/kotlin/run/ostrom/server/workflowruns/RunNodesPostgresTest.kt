@@ -12,6 +12,8 @@ import run.ostrom.server.automations.domain.WaitCaller
 import run.ostrom.server.automations.domain.WaitStatus
 import run.ostrom.server.automations.domain.WaitsRepository
 import run.ostrom.server.compiler.CompilerModule
+import run.ostrom.server.compiler.domain.models.Authorship
+import run.ostrom.server.compiler.domain.repositories.CompilerRepository
 import run.ostrom.server.compiler.domain.usecases.WorkflowsUseCase
 import run.ostrom.server.gates.GatesModule
 import run.ostrom.server.gates.domain.models.GateActor
@@ -127,6 +129,15 @@ class RunNodesPostgresTest {
             """"status":"accepted","foundAt":"2026-11-03T10:00:00Z","inputs":$inputs}"""
         val raw = OstromJson.parseToJsonElement(document).jsonObject
         koin.get<WorkflowsUseCase>().save(team.org.id, raw, null, OWNER, true)
+    }
+
+    /** Stores an accepted workflow of [team]'s organization without the checks of a save. */
+    private suspend fun TestServer.unchecked(team: Team, id: String, nodes: String, start: String, inputs: String) {
+        val document = """{"id":"$id","name":"$id","domain":"git","nodes":$nodes,"edges":[],"start":"$start",""" +
+            """"status":"accepted","foundAt":"2026-11-03T10:00:00Z","inputs":$inputs}"""
+        val raw = OstromJson.parseToJsonElement(document).jsonObject
+        val author = Authorship(OWNER, clock.now())
+        assertNotNull(koin.get<CompilerRepository>().saveWorkflow(team.org.id, id, raw, null, author))
     }
 
     private suspend fun TestServer.start(team: Team, workflowId: String): WorkflowRun =
@@ -278,7 +289,8 @@ class RunNodesPostgresTest {
     @Test
     fun aWorkflowThatCallsItselfFailsAndACancelledParentCancelsItsChildWhoseWaitIsWithdrawn() = nodesTest { server ->
         val team = server.team("ada")
-        server.workflow(team, LOOP, """[{"id":"again","kind":"workflow","label":"Again","workflowId":"$LOOP"}]""",
+        // A save refuses a workflow that calls itself: it is stored as an older version could have been.
+        server.unchecked(team, LOOP, """[{"id":"again","kind":"workflow","label":"Again","workflowId":"$LOOP"}]""",
             "again", BRANCH)
         server.workflow(team, ASK, ASK_NODES, "ask", BRANCH)
         server.workflow(team, SHIP, CALL_ASK, "call", BRANCH)
@@ -371,7 +383,7 @@ class RunNodesPostgresTest {
         val CHECK_NODES = ASK_NODES.removeSuffix("]") + """,{"id":"go","kind":"check","label":"Go?",""" +
             """"condition":{"step":"ask","path":"output.note","op":"equals","value":"go"}},""" +
             """{"id":"t","kind":"trigger","label":"Shipped"}]"""
-        const val CHECK_EDGES = """[{"from":"ask","to":"go","on":"ship"},{"from":"go","to":"t","on":"true"},""" +
-            """{"from":"go","to":null,"on":"false"}]"""
+        const val CHECK_EDGES = """[{"from":"ask","to":"go","on":"ship"},{"from":"ask","to":null,"on":"hold"},""" +
+            """{"from":"go","to":"t","on":"true"},{"from":"go","to":null,"on":"false"}]"""
     }
 }

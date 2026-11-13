@@ -26,7 +26,7 @@ object NodeProduces {
         val rulesNote = unlinked?.let {
             "$it rule${if (it > 1) "s" else ""} suggested by the analysis: not in the skill until someone links them"
         }
-        return when (node.kind) {
+        val produced = when (node.kind) {
             WorkflowNodeKind.TRIGGER -> listOf(
                 Produced(
                     ArtifactType.CONTEXT,
@@ -46,6 +46,9 @@ object NodeProduces {
             )
             else -> emptyList()
         }
+        // A proposed workflow's text comes from a repository nobody trusted yet: no skill, no sub-agent, until a
+        // person accepts it (its checks, gates and notifications stay shadow records).
+        return if (shadow) produced.filter { it.type !in UNTIL_ACCEPTED } else produced
     }
 
     // The note of a hook without a trigger: the analysis's suggestion when there is one, else [fallback].
@@ -162,3 +165,6 @@ object NodeProduces {
     private const val STEP_NOTE = "instructions and linked rules, loaded when the agent needs them"
     private const val AGENT_NOTE = "Claude Code, OpenCode and Codex (ostrom_* role); a skill for the other agents"
 }
+
+// What a proposed workflow produces nothing of: the skill and the sub-agent written from what a repository says.
+private val UNTIL_ACCEPTED = setOf(ArtifactType.SKILL, ArtifactType.SUBAGENT, ArtifactType.MCP)
