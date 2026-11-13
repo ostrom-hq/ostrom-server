@@ -33,7 +33,6 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.time.Clock
-import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
 /**
@@ -134,7 +133,8 @@ class TerminalIsolationTest {
         assertRefused(TerminalCloseCodes.UNAUTHORIZED, ws.attempt("$path?ticket=$once"))
 
         val late = server.ticket(world.alice)
-        clock.now += TICKET_LIFETIME
+        // A minute later, by the database's clock the tickets live by.
+        server.database.superuser.execute("UPDATE runners_terminal_tickets SET expires_at = now()").getOrThrow()
         assertRefused(TerminalCloseCodes.UNAUTHORIZED, ws.attempt("$path?ticket=$late"))
     }
 
@@ -181,8 +181,5 @@ class TerminalIsolationTest {
 
     private companion object {
         const val SECRET = "carol's secret prompt $ "
-
-        // InMemoryTerminalTickets' lifetime, and the instant it ends.
-        val TICKET_LIFETIME = 60.seconds
     }
 }
