@@ -40,15 +40,8 @@ class LegacyContentsMover(
             val pending = repository.legacyBlobs(orgId, batch)
             for (blob in pending) {
                 val key = ArtifactKeys.blob(connection.prefix, org, blob.artifactId.toString(), blob.sha256)
-                val back = try {
-                    objects.put(connection, key, blob.bytes, OCTET_STREAM)
-                    objects.get(connection, key)
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: ObjectStoreException) {
-                    null
-                }
-                if (back == null || digest(back.bytes) != blob.sha256) {
+                val back = copy(connection, key, blob.bytes)
+                if (back == null || digest(back) != blob.sha256) {
                     throw ArtifactStorageUnavailableException(
                         "The existing artifacts could not be moved to the bucket. Test it, then try again.",
                     )
@@ -56,6 +49,16 @@ class LegacyContentsMover(
                 repository.releaseLegacyBlob(orgId, blob.artifactId, blob.sha256)
             }
         } while (pending.size == batch)
+    }
+
+    /** Writes [bytes] and reads them back, or null when the bucket fails either. */
+    private suspend fun copy(connection: ArtifactStorageConnection, key: String, bytes: ByteArray): ByteArray? = try {
+        objects.put(connection, key, bytes, OCTET_STREAM)
+        objects.get(connection, key)?.bytes
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: ObjectStoreException) {
+        null
     }
 
     private companion object {

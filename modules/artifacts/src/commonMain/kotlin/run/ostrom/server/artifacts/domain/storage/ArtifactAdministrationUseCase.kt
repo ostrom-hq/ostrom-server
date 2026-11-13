@@ -91,7 +91,6 @@ interface ArtifactAdministrationUseCase {
  * @param digest SHA-256, to compare the probe read back.
  * @param clock The time of saves and tests.
  * @param probeId The probe object's name.
- * @param deadline The whole test's bound.
  */
 class ArtifactAdministrationUseCaseImpl(
     private val repository: ArtifactStorageRepository,
@@ -100,7 +99,6 @@ class ArtifactAdministrationUseCaseImpl(
     private val digest: suspend (ByteArray) -> String,
     private val clock: Clock = Clock.System,
     private val probeId: () -> String = { Uuid.random().toString() },
-    private val deadline: Duration = TEST_DEADLINE,
 ) : ArtifactAdministrationUseCase {
     private val testing = Mutex()
 
@@ -188,12 +186,12 @@ class ArtifactAdministrationUseCaseImpl(
         if (!administrator || !person) throw ArtifactAdministratorRequiredException()
     }
 
-    /** The probe sequence of one test, every step bounded by what remains of [deadline]. */
+    /** The probe sequence of one test, every step bounded by what remains of [TEST_DEADLINE]. */
     private inner class Probe(private val connection: ArtifactStorageConnection, root: String) {
         private val key = root + ".ostrom-probe-" + probeId()
         private val body = "Ostrom artifact storage probe $key".encodeToByteArray()
         private val steps = mutableListOf<StorageTestStep>()
-        private val endsAt = clock.now() + deadline
+        private val endsAt = clock.now() + TEST_DEADLINE
 
         suspend fun run(): List<StorageTestStep> {
             val written = step("put") {
