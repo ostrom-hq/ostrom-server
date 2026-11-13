@@ -10,6 +10,6 @@ class AutomationsFeaturesTest {
     @Test
     fun itsFeaturesNeedNoConfiguration() = runTest {
         val koin = koinApplication {}.koin
-        assertEquals(setOf("automations.v1", "waits.v1"), AutomationsModule.features(koin))
+        assertEquals(setOf("automations.v1", "waits.v1", "waits.wake.v1"), AutomationsModule.features(koin))
     }
 }

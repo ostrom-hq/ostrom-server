@@ -267,6 +267,7 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
         Case.Target(body = """{"question": {"title": "Taken"}, "assignee": "{{MEMBER_ID}}"}"""),
     "POST /api/v1/waits/mcp" to
         Case.Target(body = mcpCall("get_wait", "wait"), query = "session={{SESSION}}", rpc = true),
+    "POST /api/v1/waits/wake" to Case.Target(body = """{"waitMillis": 0}""", query = "session={{SESSION}}"),
     "GET /api/v1/waits/{id}" to target("id" to WAIT),
     "POST /api/v1/waits/{id}/answer" to target("id" to WAIT, body = """{"action": "approve"}"""),
     "POST /api/v1/waits/{id}/cancel" to target("id" to WAIT),

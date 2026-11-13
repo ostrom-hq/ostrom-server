@@ -1,13 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.automations.presentation
 
+import run.ostrom.server.automations.domain.AgentSessionRequiredException
 import run.ostrom.server.automations.domain.AskWait
 import run.ostrom.server.automations.domain.InvalidWaitException
+import run.ostrom.server.automations.domain.MissingWaitScopeException
 import run.ostrom.server.automations.domain.WaitQuery
+import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.WriteAccess
 import run.ostrom.server.kernel.auth.authenticated
 import run.ostrom.server.kernel.auth.requirePrincipal
 import run.ostrom.server.kernel.auth.requireWrite
+import run.ostrom.server.kernel.http.OstromJson
+import run.ostrom.server.kernel.http.heldCalls
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.request.header
@@ -19,17 +24,20 @@ import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
+import kotlinx.serialization.SerializationException
 import kotlin.uuid.Uuid
 
 /**
- * The waits API under `/api/v1/waits` ("Waiting for you"), and the agents' MCP server at `/api/v1/waits/mcp`. An
- * agent token reaches only the MCP server, bound to one of its launch's sessions; the REST routes refuse it.
+ * The waits API under `/api/v1/waits` ("Waiting for you"), the agents' MCP server at `/api/v1/waits/mcp` and the wake
+ * of their sessions at `/api/v1/waits/wake`. An agent token reaches only those two, bound to one of its launch's
+ * sessions; the REST routes refuse it, and the wake refuses anything else.
  *
  * @param dependencies The use cases.
  */
 fun Route.waitsRoutes(dependencies: WaitsRoutesDependencies) = with(dependencies) {
     val mcp = WaitsMcpServer(dependencies)
     authenticated {
+        wakeRoute(dependencies)
         post<WaitsMcpApi> { params ->
             val callers = mcpCallers(call.requirePrincipal(), params)
             val reply = mcp.handle(call.receiveText(), params, callers)
@@ -86,5 +94,30 @@ fun Route.waitsRoutes(dependencies: WaitsRoutesDependencies) = with(dependencies
     }
 }
 
+/** The wake of an agent's session, held up to 30 s as a gate's wait: counted apart from the ordinary calls. */
+private fun Route.wakeRoute(dependencies: WaitsRoutesDependencies) = heldCalls {
+    post<WaitsWakeApi> { params ->
+        val principal = call.requirePrincipal()
+        if (principal.kind != PrincipalKind.AGENT) throw MissingWaitScopeException(AGENT_SESSION)
+        val session = params.session ?: throw AgentSessionRequiredException()
+        val caller = dependencies.agents.agentWaitCallerOf(principal, session, WAITS_READ)
+        val woken = dependencies.wake.wake(caller, wakeRequestOf(call.receiveText()).waitMillis)
+        call.respond(WaitWakeResponse(woken.open, woken.messages))
+    }
+}
+
+/** The body of a wake: empty for the defaults. */
+internal fun wakeRequestOf(body: String): WaitWakeRequest = if (body.isBlank()) {
+    WaitWakeRequest()
+} else {
+    try {
+        OstromJson.decodeFromString<WaitWakeRequest>(body)
+    } catch (_: SerializationException) {
+        throw InvalidWaitException("The request is malformed: {\"waitMillis\": 0 to 30000}.")
+    }
+}
+
+/** What the wake needs: an agent token in its session. */
+private const val AGENT_SESSION = "agent:session"
 private const val IDEMPOTENCY_KEY = "Idempotency-Key"
 private const val IDEMPOTENCY_REPLAYED = "Idempotency-Replayed"

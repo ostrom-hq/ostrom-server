@@ -12,6 +12,7 @@ import run.ostrom.server.kernel.http.OstromJson
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
@@ -136,8 +137,8 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
         Statement.create(
             """
             UPDATE automations_waits SET status = 'resolved', answer_action = :action, answer_values = :values,
-            answered_by = :author, answered_at = :at, resolved_at = :at WHERE id = :id AND org_id = :org_id AND
-            status = 'open' RETURNING $COLUMNS
+            answered_by = :author, answered_at = :at, resolved_at = :at, wake_pending = session_id IS NOT NULL
+            WHERE id = :id AND org_id = :org_id AND status = 'open' RETURNING $COLUMNS
             """,
         ).bind("action", answer.action)
             .bind("values", JsonObject(answer.values).toString())
@@ -168,6 +169,29 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
                 """,
             ).bind("now", now).bind("org_id", orgId).bind("session_ids", sessions.joinToString(",")),
         ).getOrThrow().map { it.toWait() }
+
+    override suspend fun takeAnswered(orgId: Uuid, sessions: List<String>, limit: Int): List<Wait> =
+        driver.fetchInOrg(
+            orgId,
+            // A session id never holds a comma (`SESSION_ID` of the sessions module, `REFERENCE` of the waits).
+            Statement.create(
+                """
+                UPDATE automations_waits SET wake_pending = FALSE WHERE id IN (SELECT id FROM automations_waits
+                WHERE org_id = :org_id AND session_id = ANY(string_to_array(:session_ids, ',')) AND wake_pending
+                ORDER BY resolved_at, id LIMIT :limit FOR UPDATE SKIP LOCKED) AND org_id = :org_id RETURNING $COLUMNS
+                """,
+            ).bind("org_id", orgId).bind("session_ids", sessions.joinToString(",")).bind("limit", limit),
+        ).getOrThrow().map { it.toWait() }.sortedWith(compareBy({ it.resolvedAt }, { it.id.toString() }))
+
+    override suspend fun hasOpen(orgId: Uuid, sessions: List<String>): Boolean = driver.fetchInOrg(
+        orgId,
+        Statement.create(
+            """
+            SELECT EXISTS (SELECT 1 FROM automations_waits WHERE org_id = :org_id AND
+            session_id = ANY(string_to_array(:session_ids, ',')) AND status = 'open') AS open
+            """,
+        ).bind("org_id", orgId).bind("session_ids", sessions.joinToString(",")),
+    ).getOrThrow().first().get("open").asBoolean()
 
     private fun ResultSet.Row.toWait(): Wait = Wait(
         id = get("id").asUuid(),

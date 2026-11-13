@@ -72,6 +72,27 @@ interface WaitsRepository {
      * @return The waits it cancelled; none that was already answered or cancelled.
      */
     suspend fun cancelOpenOfSessions(orgId: Uuid, sessions: List<String>, now: Instant): List<Wait>
+
+    /**
+     * Takes the answered waits of these sessions not handed to their agent yet: each is taken once.
+     *
+     * @param orgId The organization.
+     * @param sessions The segments of a session.
+     * @param limit At most this many.
+     *
+     * @return The waits taken, oldest answer first.
+     */
+    suspend fun takeAnswered(orgId: Uuid, sessions: List<String>, limit: Int): List<Wait>
+
+    /**
+     * Whether a wait of these sessions is open.
+     *
+     * @param orgId The organization.
+     * @param sessions The segments of a session.
+     *
+     * @return True when one is.
+     */
+    suspend fun hasOpen(orgId: Uuid, sessions: List<String>): Boolean
 }
 
 /** Told when a wait is created, answered or cancelled: notifications and the waking of sessions hook here. */

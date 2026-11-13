@@ -52,6 +52,7 @@ import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
@@ -162,6 +163,30 @@ class WaitsPostgresTest {
         assertEquals(WaitStatus.OPEN, repository.get(ORG_A, other.id)?.status)
         assertEquals(WaitStatus.OPEN, repository.get(ORG_B, elsewhere.id)?.status)
         assertEquals(emptyList(), repository.cancelOpenOfSessions(ORG_A, listOf("s-1", "s-1~r2"), t0), "Once")
+    }
+
+    @Test
+    fun anAnswerInASessionIsTakenOnceOldestFirst() = serverTest(listOf(AutomationsModule)) { server ->
+        val repository = server.koin.get<WaitsRepository>()
+        val first = wait(session = "s-1")
+        val second = wait(session = "s-1~r2", at = t0 + 1.minutes)
+        val alone = wait(session = null)
+        val elsewhere = wait(session = "s-1", org = ORG_B)
+        for (wait in listOf(first, second, alone, elsewhere)) repository.createWithinLimit(wait, 5)
+        val segments = listOf("s-1", "s-1~r2")
+        assertTrue(repository.hasOpen(ORG_A, segments))
+        assertEquals(emptyList(), repository.takeAnswered(ORG_A, segments, 10))
+
+        fun answer(at: Instant) = WaitAnswer("approve", emptyMap(), ALICE.toString(), at)
+        repository.resolve(ORG_A, second.id, answer(t0 + 2.minutes))
+        repository.resolve(ORG_A, first.id, answer(t0 + 3.minutes))
+        repository.resolve(ORG_A, alone.id, answer(t0 + 1.minutes))
+        repository.resolve(ORG_B, elsewhere.id, answer(t0 + 1.minutes))
+        assertFalse(repository.hasOpen(ORG_A, segments))
+        assertEquals(listOf(second.id), repository.takeAnswered(ORG_A, segments, 1).map { it.id }, "Oldest answer")
+        assertEquals(listOf(first.id), repository.takeAnswered(ORG_A, segments, 10).map { it.id })
+        assertEquals(emptyList(), repository.takeAnswered(ORG_A, segments, 10), "Once")
+        assertEquals(listOf(elsewhere.id), repository.takeAnswered(ORG_B, segments, 10).map { it.id })
     }
 
     private fun open(session: String) = WaitFilter(ORG_A, status = WaitStatus.OPEN, sessionId = session)

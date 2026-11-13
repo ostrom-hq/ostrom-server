@@ -21,6 +21,8 @@ import run.ostrom.server.automations.domain.WaitEvents
 import run.ostrom.server.automations.domain.WaitSessions
 import run.ostrom.server.automations.domain.WaitSessionsImpl
 import run.ostrom.server.automations.domain.WaitsRepository
+import run.ostrom.server.automations.domain.WakeWaitsUseCase
+import run.ostrom.server.automations.domain.WakeWaitsUseCaseImpl
 import run.ostrom.server.automations.infrastructure.AutomationScheduler
 import run.ostrom.server.automations.infrastructure.AutomationsMigrations
 import run.ostrom.server.automations.infrastructure.AutomationsRepositoryImpl
@@ -80,12 +82,20 @@ object AutomationsModule : ServerModule {
             )
         }
         single<ReadWaitsUseCase> { ReadWaitsUseCaseImpl(get(), get()) }
+        single<WakeWaitsUseCase> { WakeWaitsUseCaseImpl(get(), get(), get()) }
         single<SessionEndListener> {
             CancelSessionWaitsUseCaseImpl(get(), getOrNull<WaitEvents>() ?: SilentWaitEvents, get())
         }
         single<AnswerWaitUseCase> { AnswerWaitUseCaseImpl(get(), getOrNull<WaitEvents>() ?: SilentWaitEvents, get()) }
         single {
-            WaitsRoutesDependencies(get(), get(), get(), get(), getOrNull<WaitAgentResolver>() ?: NoWaitAgents)
+            WaitsRoutesDependencies(
+                get(),
+                get(),
+                get(),
+                get(),
+                getOrNull<WaitAgentResolver>() ?: NoWaitAgents,
+                get(),
+            )
         }
         single<AutomationsRepository> { AutomationsRepositoryImpl(get()) }
         single<WebhookSecrets> { WebhookSecretsImpl(get()) }
@@ -113,7 +123,11 @@ object AutomationsModule : ServerModule {
     }
 
     /** Automations, and the waits (`/api/v1/waits`) it serves. */
-    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.AUTOMATIONS, ServerFeatures.WAITS)
+    override suspend fun features(koin: Koin): Set<String> = setOf(
+        ServerFeatures.AUTOMATIONS,
+        ServerFeatures.WAITS,
+        ServerFeatures.WAITS_WAKE,
+    )
 
     override fun start(scope: CoroutineScope, koin: Koin) {
         val scheduler = koin.get<AutomationScheduler>()

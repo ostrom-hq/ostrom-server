@@ -197,6 +197,9 @@ class TestClock(var now: Instant = Instant.parse("2026-10-30T10:00:00Z")) : Cloc
 @Suppress("ReturnCount") // The fake mirrors the SQL guards one early return at a time.
 class InMemoryWaits : WaitsRepository {
     val waits = linkedMapOf<Uuid, Wait>()
+
+    /** The answered waits of a session not handed to its agent yet, as the column `wake_pending`. */
+    val wakePending = linkedSetOf<Uuid>()
     var loseNextAnswer = false
     var duplicateNext: Wait? = null
 
@@ -250,8 +253,20 @@ class InMemoryWaits : WaitsRepository {
         }
         return update(orgId, id) {
             it.copy(status = WaitStatus.RESOLVED, answer = answer, resolvedAt = answer.answeredAt)
-        }
+        }?.also { if (it.sessionId != null) wakePending += it.id }
     }
+
+    override suspend fun takeAnswered(orgId: Uuid, sessions: List<String>, limit: Int): List<Wait> {
+        val taken = wakePending.map { waits.getValue(it) }
+            .filter { it.orgId == orgId && it.sessionId in sessions }
+            .sortedBy { it.resolvedAt }
+            .take(limit)
+        wakePending -= taken.map { it.id }.toSet()
+        return taken
+    }
+
+    override suspend fun hasOpen(orgId: Uuid, sessions: List<String>): Boolean =
+        waits.values.any { it.orgId == orgId && it.sessionId in sessions && it.status == WaitStatus.OPEN }
 
     override suspend fun cancel(orgId: Uuid, id: Uuid, now: Instant): Wait? =
         update(orgId, id) { it.copy(status = WaitStatus.CANCELLED, resolvedAt = now) }

@@ -170,4 +170,14 @@ val AutomationsMigrations: List<SchemaMigration> = listOf(
             ALTER POLICY automations_routes_router ON automations_routes USING (current_user = 'ostrom_router')
         """.trimIndent(),
     ),
+    // An answered wait of a session waits to be handed to its agent once (the Stop hook of its launch, through
+    // `POST /api/v1/waits/wake`): waits answered before this version are never handed over.
+    SchemaMigration(
+        version = 5,
+        name = "waits_wake_pending",
+        sql = """
+            ALTER TABLE automations_waits ADD COLUMN wake_pending BOOLEAN NOT NULL DEFAULT FALSE;
+            CREATE INDEX automations_waits_wake ON automations_waits (org_id, session_id) WHERE wake_pending;
+        """.trimIndent(),
+    ),
 )
