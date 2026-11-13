@@ -4,6 +4,7 @@ package run.ostrom.server.importer
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.automations.domain.ImportAutomationsUseCase
 import run.ostrom.server.compiler.domain.usecases.ImportWorkflowsUseCase
+import run.ostrom.server.compiler.domain.usecases.WorkflowSettingsUseCase
 import run.ostrom.server.identity.domain.AuditLog
 import run.ostrom.server.importer.domain.AccountImporter
 import run.ostrom.server.importer.domain.ImportProvenanceRepository
@@ -13,7 +14,7 @@ import run.ostrom.server.importer.domain.McpPorts
 import run.ostrom.server.importer.domain.SecretPorts
 import run.ostrom.server.importer.domain.SharedAccountImporter
 import run.ostrom.server.importer.domain.TeamCodeProcessImporter
-import run.ostrom.server.importer.domain.WorkflowEditorsImporter
+import run.ostrom.server.importer.domain.workflowEditorsOf
 import run.ostrom.server.importer.infrastructure.IdentityImportAudit
 import run.ostrom.server.importer.infrastructure.ImportMigrations
 import run.ostrom.server.importer.infrastructure.ImportProvenanceRepositoryImpl
@@ -59,7 +60,7 @@ object ImportModule : ServerModule {
             val processes = TeamCodeProcessImporter(
                 getOrNull<ImportWorkflowsUseCase>(),
                 getOrNull<ImportAutomationsUseCase>(),
-                getOrNull<WorkflowEditorsImporter>(),
+                workflowEditorsOf(getOrNull<WorkflowSettingsUseCase>()),
                 getOrNull<MemberLogins>(),
             )
             ImportTeamCodeUseCaseImpl(get(), get(), get(), members, accounts, audit, processes)

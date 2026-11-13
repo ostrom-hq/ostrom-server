@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.importer.domain
 
+import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
@@ -23,6 +24,8 @@ interface ImportTeamCodeUseCase {
      *   reconnection with TeamCode's tokens and hands over those waiting for their handover ([AccountImporter.begin]).
      * @param accessOnly TeamCode's `--access-only` trial for the shared accounts ([AccountImporter.begin]); never with
      *   [cutoverBy].
+     * @param principal The caller's credential, named in the audit log of what the import changes (the workflows'
+     *   editing rule).
      *
      * @return One line per item.
      *
@@ -42,6 +45,7 @@ interface ImportTeamCodeUseCase {
         dryRun: Boolean,
         cutoverBy: Uuid?,
         accessOnly: Boolean,
+        principal: AuthenticatedPrincipal,
     ): ImportReport
 }
 
@@ -133,6 +137,7 @@ class ImportTeamCodeUseCaseImpl(
         dryRun: Boolean,
         cutoverBy: Uuid?,
         accessOnly: Boolean,
+        principal: AuthenticatedPrincipal,
     ): ImportReport {
         caller.requireAdmin()
         if (accessOnly && cutoverBy != null) throw AccessOnlyCutoverException()
@@ -154,7 +159,7 @@ class ImportTeamCodeUseCaseImpl(
         )
         val items = run.import(plan)
         importAccounts(caller, export.accounts, AccountRunMode(dryRun, cutoverBy != null, accessOnly), items)
-        val mode = ProcessRunMode(dryRun, cutover = cutoverBy != null)
+        val mode = ProcessRunMode(dryRun, cutover = cutoverBy != null, principal)
         processes.import(caller, export.processes, export.members, memberMap, mode, items)
         return ImportReport(items)
     }

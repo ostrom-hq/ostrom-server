@@ -1,26 +1,42 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.importer.domain
 
 import run.ostrom.server.automations.domain.AutomationImport
 import run.ostrom.server.automations.domain.ImportAutomationsUseCase
 import run.ostrom.server.compiler.domain.usecases.ImportWorkflowsUseCase
 import run.ostrom.server.compiler.domain.usecases.WorkflowImport
+import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.secrets.domain.Caller
 import kotlin.uuid.Uuid
 
-/** Sets who edits the organization's workflows (`PUT /api/v1/workflows/settings`), bound by the module serving it. */
+/**
+ * Who edits the workflows, as an import sets it.
+ *
+ * @property mode `all`, `admins` or `members`.
+ * @property memberIds The Ostrom members who edit, in mode `members`.
+ */
+data class EditorsChange(val mode: String, val memberIds: List<Uuid>)
+
+/** Sets who edits the organization's workflows (`PUT /api/v1/workflows/settings`). */
 fun interface WorkflowEditorsImporter {
     /**
      * Sets them, or says what it would do.
      *
      * @param caller The admin running the import.
-     * @param mode `all`, `admins` or `members`.
-     * @param memberIds The Ostrom members who edit, in mode `members`.
+     * @param by The caller's login.
+     * @param principal The caller's credential, for the audit log.
+     * @param change The rule.
      * @param dryRun Writes nothing.
      * @return [ImportAction.UPDATED] or [ImportAction.UNCHANGED]; [ImportAction.PLANNED] for a change in a dry run.
      */
-    suspend fun import(caller: Caller, mode: String, memberIds: List<Uuid>, dryRun: Boolean): ImportAction
+    suspend fun import(
+        caller: Caller,
+        by: String,
+        principal: AuthenticatedPrincipal,
+        change: EditorsChange,
+        dryRun: Boolean,
+    ): ImportAction
 }
 
 /**
@@ -46,7 +62,7 @@ data class TeamCodeProcesses(
  *
  * @param workflows The compiler's import, or null when this server keeps no workflows.
  * @param automations The automations' import, or null when this server runs none.
- * @param editors The editing rights, or null until a module serves them.
+ * @param editors The editing rights, or null when the compiler module is not installed.
  * @param logins The members' logins (approvers, authors and the importer), or null without a member directory.
  */
 class TeamCodeProcessImporter(
@@ -83,7 +99,7 @@ class TeamCodeProcessImporter(
         for (mapped in ordered(processes.workflows.map { TeamCodeWorkflowMapper.map(it, mapping) })) {
             importWorkflow(caller, mapped, by, mode.dryRun, items)
         }
-        processes.editors?.let { importEditors(caller, it, memberMap, mode.dryRun, items) }
+        processes.editors?.let { importEditors(caller, by, it, memberMap, mode, items) }
         val usernames = members.associate { it.id to it.username }
         for (automation in processes.automations) {
             val name = "${usernames[automation.ownerId] ?: automation.ownerId}/${automation.name}"
@@ -121,22 +137,25 @@ class TeamCodeProcessImporter(
         }
     }
 
+    @Suppress("LongParameterList") // The caller, the setting, how members map, how the run goes, and the report.
     private suspend fun importEditors(
         caller: Caller,
+        by: String,
         setting: TeamCodeWorkflowEditors,
         memberMap: Map<String, Uuid>,
-        dryRun: Boolean,
+        mode: ProcessRunMode,
         items: MutableList<ImportItem>,
     ) {
         val unmapped = setting.memberIds.count { it !in memberMap }
         val note = if (unmapped == 0) null else "$unmapped of its members have no Ostrom member and are left out."
         val use = editors
         if (use == null) {
-            items += ImportItem(ImportKind.EDITORS, setting.mode, ImportAction.SKIPPED, NO_EDITORS)
+            items += ImportItem(ImportKind.EDITORS, setting.mode, ImportAction.SKIPPED, NO_WORKFLOWS)
             return
         }
         guarded(items, ImportKind.EDITORS, setting.mode) {
-            val action = use.import(caller, setting.mode, setting.memberIds.mapNotNull(memberMap::get), dryRun)
+            val change = EditorsChange(setting.mode, setting.memberIds.mapNotNull(memberMap::get))
+            val action = use.import(caller, by, mode.principal, change, mode.dryRun)
             items += ImportItem(ImportKind.EDITORS, setting.mode, action, note)
         }
     }
@@ -173,8 +192,9 @@ class TeamCodeProcessImporter(
  *
  * @property dryRun Writes nothing.
  * @property cutover The cutover run: automations are armed as TeamCode had them.
+ * @property principal The caller's credential, for the audit log of the editing rule.
  */
-data class ProcessRunMode(val dryRun: Boolean, val cutover: Boolean)
+data class ProcessRunMode(val dryRun: Boolean, val cutover: Boolean, val principal: AuthenticatedPrincipal)
 
 /**
  * The workflows in an order that imports a called workflow before its callers (then by id); a call loop, which the
@@ -195,5 +215,3 @@ internal fun ordered(workflows: List<MappedWorkflow>): List<MappedWorkflow> {
 
 private const val NO_WORKFLOWS = "This server keeps no workflows."
 private const val NO_AUTOMATIONS = "This server runs no automations."
-private const val NO_EDITORS = "This server does not set who edits the workflows yet (workflows.settings.v1): set it " +
-    "in the console once it does."

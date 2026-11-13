@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.importer
 
 import run.ostrom.server.automations.domain.AutomationImport
@@ -17,7 +17,9 @@ import run.ostrom.server.importer.domain.TeamCodeProcesses
 import run.ostrom.server.importer.domain.TeamCodeWorkflow
 import run.ostrom.server.importer.domain.TeamCodeWorkflowEditors
 import run.ostrom.server.importer.domain.WorkflowEditorsImporter
+import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.MemberLogins
+import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
 import kotlinx.coroutines.test.runTest
@@ -32,6 +34,7 @@ import kotlin.uuid.Uuid
 class TeamCodeProcessImporterTest {
     private val caller = Importing.adminA
     private val lena = Importing.memberA.memberId
+    private val principal = AuthenticatedPrincipal("user-nina", PrincipalKind.USER, setOf("import:write"))
 
     private fun definition(calls: String? = null): JsonObject = Json.parseToJsonElement(
         """
@@ -87,7 +90,7 @@ class TeamCodeProcessImporterTest {
 
     private suspend fun run(importer: TeamCodeProcessImporter, dryRun: Boolean, cutover: Boolean = false) =
         mutableListOf<ImportItem>().also {
-            importer.import(caller, processes, members, memberMap, ProcessRunMode(dryRun, cutover), it)
+            importer.import(caller, processes, members, memberMap, ProcessRunMode(dryRun, cutover, principal), it)
         }
 
     @Test
@@ -98,8 +101,9 @@ class TeamCodeProcessImporterTest {
         val importer = TeamCodeProcessImporter(
             workflows,
             automations,
-            { _, _, ids, dryRun ->
-                editors += ids
+            { _, by, _, change, dryRun ->
+                editors += change.memberIds
+                assertEquals("nina", by)
                 if (dryRun) ImportAction.PLANNED else ImportAction.UPDATED
             },
             logins,
@@ -155,7 +159,7 @@ class TeamCodeProcessImporterTest {
         val refused = TeamCodeProcessImporter(
             Workflows { throw OstromException(ErrorKind.CONFLICT, "workflow_name_taken: another workflow.") },
             Automations { throw OstromException(ErrorKind.INVALID_REQUEST, "action.workflowId: invalid id.") },
-            { _, _, _, _ -> throw OstromException(ErrorKind.FORBIDDEN, "Owners only.") },
+            { _, _, _, _, _ -> throw OstromException(ErrorKind.FORBIDDEN, "Owners only.") },
             null,
         )
         val items = run(refused, dryRun = false)
@@ -169,8 +173,7 @@ class TeamCodeProcessImporterTest {
                 "This server keeps no workflows.",
                 "This server keeps no workflows.",
                 "TeamCode's definition could not be read.",
-                "This server does not set who edits the workflows yet (workflows.settings.v1): set it in the " +
-                    "console once it does.",
+                "This server keeps no workflows.",
                 "This server runs no automations.",
                 "No Ostrom member is mapped to its owner.",
             ),
@@ -180,12 +183,12 @@ class TeamCodeProcessImporterTest {
 
         val quiet = mutableListOf<ImportItem>()
         val editorsOnly = TeamCodeProcesses(editors = TeamCodeWorkflowEditors("admins"))
-        TeamCodeProcessImporter(null, null, { _, _, _, _ -> ImportAction.UNCHANGED }, null)
-            .import(caller, editorsOnly, emptyList(), emptyMap(), ProcessRunMode(false, false), quiet)
+        TeamCodeProcessImporter(null, null, { _, _, _, _, _ -> ImportAction.UNCHANGED }, null)
+            .import(caller, editorsOnly, emptyList(), emptyMap(), ProcessRunMode(false, false, principal), quiet)
         assertEquals(listOf(ImportItem(ImportKind.EDITORS, "admins", ImportAction.UNCHANGED)), quiet)
         val none = mutableListOf<ImportItem>()
         TeamCodeProcessImporter(null, null, null, null)
-            .import(caller, TeamCodeProcesses(), emptyList(), emptyMap(), ProcessRunMode(false, false), none)
+            .import(caller, TeamCodeProcesses(), emptyList(), emptyMap(), ProcessRunMode(false, false, principal), none)
         assertEquals(emptyList(), none)
     }
 
@@ -206,7 +209,7 @@ class TeamCodeProcessImporterTest {
         )
         val items = mutableListOf<ImportItem>()
         TeamCodeProcessImporter(Workflows(), null, null, logins)
-            .import(caller, noted, emptyList(), emptyMap(), ProcessRunMode(dryRun = false, cutover = false), items)
+            .import(caller, noted, emptyList(), emptyMap(), ProcessRunMode(false, false, principal), items)
         assertEquals(
             ImportItem(
                 ImportKind.WORKFLOW,
