@@ -33,6 +33,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlin.test.assertFailsWith
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlin.test.Test
@@ -390,18 +392,16 @@ class UpstreamsTest {
         assertEquals("Bearer host_token", request.headers[HttpHeaders.Authorization])
         assertEquals("1", request.headers["TeamCode-Host-Protocol"])
         val key = body!!["key"]!!.jsonPrimitive.content
-        assertEquals(HostMcpUpstream.processKey("org:server:1", stdioTarget().secretEnv), key)
+        assertEquals(HostMcpUpstream.processKey("org:server:1"), key)
         assertEquals(64, key.length)
-        // A rotated secret is a new process: the old one, started with the old value, is never reused.
+        // No secret in the key: a rotated value keeps it, and the host restarts the process for the new definition.
         val rotated = stdioTarget().copy(secretEnv = mapOf("TOKEN" to SecretValue("discord_bot_token_2")))
         upstream.callTool(rotated, "discord_send", buildJsonObject { put("text", "hi") }, 5.seconds)
-        assertTrue(key != requests.last().second!!["key"]!!.jsonPrimitive.content)
-        assertTrue(
-            HostMcpUpstream.processKey("k", mapOf("A" to SecretValue("1"), "B" to SecretValue("2"))) ==
-                HostMcpUpstream.processKey("k", mapOf("B" to SecretValue("2"), "A" to SecretValue("1"))),
-            "The order of the variables does not matter",
+        assertEquals(key, requests.last().second!!["key"]!!.jsonPrimitive.content)
+        assertEquals(
+            "discord_bot_token_2",
+            requests.last().second!!["spec"]!!.jsonObject["secrets"]!!.jsonObject["TOKEN"]!!.jsonPrimitive.content,
         )
-        assertTrue(HostMcpUpstream.processKey("k") != HostMcpUpstream.processKey("k", mapOf("A" to SecretValue("1"))))
         val spec = body["spec"]!!.jsonObject
         assertEquals("npm", spec["launcher"]!!.jsonPrimitive.content)
         assertEquals("discord_bot_token", spec["secrets"]!!.jsonObject["TOKEN"]!!.jsonPrimitive.content)
@@ -503,10 +503,56 @@ class UpstreamsTest {
         assertEquals("No MCP host is configured on this server.", (none as UpstreamResult.Failure).message)
         assertIs<UpstreamResult.Failure>(TransportMcpUpstream(http, null).listTools(stdioTarget(), 1.seconds))
     }
+
+    @Test
+    fun theHostIsWarmedAndToldTheKeysToKeep() = realTime {
+        var answer = """{"stopped":2}"""
+        var status = HttpStatusCode.OK
+        var warmStatus = HttpStatusCode.Unauthorized
+        val upstream = HostMcpUpstream(
+            client { request, _ ->
+                if (request.url.encodedPath.endsWith("/v1/warm")) {
+                    respond("""{"state":"starting"}""", warmStatus)
+                } else {
+                    respond(answer, status)
+                }
+            },
+            McpHostConfig("http://mcp-host:8080/", "host_token"),
+        )
+        // A refused warm-up fails, which leaves its key free for the next listing.
+        assertFailsWith<IllegalStateException> { upstream.warm(stdioTarget()) }
+        warmStatus = HttpStatusCode.Accepted
+        upstream.warm(stdioTarget())
+        val (warm, warmBody) = requests.last()
+        assertEquals("http://mcp-host:8080/v1/warm", warm.url.toString())
+        assertEquals(HostMcpUpstream.processKey("org:server:1"), warmBody!!["key"]!!.jsonPrimitive.content)
+        assertEquals("npm", warmBody["spec"]!!.jsonObject["launcher"]!!.jsonPrimitive.content)
+        requests.clear()
+        // An HTTP server has nothing to warm.
+        upstream.warm(stdioTarget().copy(server = stdioTarget().server.copy(stdio = null)))
+        assertTrue(requests.isEmpty())
+        assertEquals(2, upstream.retain(listOf("org:server:1")))
+        val (retain, retainBody) = requests.last()
+        assertEquals("http://mcp-host:8080/v1/retain", retain.url.toString())
+        assertEquals("Bearer host_token", retain.headers[HttpHeaders.Authorization])
+        assertEquals("1", retain.headers["TeamCode-Host-Protocol"])
+        assertEquals(
+            listOf(HostMcpUpstream.processKey("org:server:1")),
+            retainBody!!["keys"]!!.jsonArray.map { it.jsonPrimitive.content },
+        )
+        val refusals = listOf(
+            """{"error":{"code":"unauthorized"}}""" to HttpStatusCode.Unauthorized,
+            "not json" to HttpStatusCode.OK,
+            "[]" to HttpStatusCode.OK,
+            """{"stopped":"many"}""" to HttpStatusCode.OK,
+            """{"stopped":{}}""" to HttpStatusCode.OK,
+        )
+        for ((body, code) in refusals) {
+            answer = body
+            status = code
+            assertFailsWith<IllegalStateException>(body) { upstream.retain(emptyList()) }
+        }
+    }
 }
 
-/**
- * Runs a test on real time: the upstreams bound each request with a timeout, and the virtual time of `runTest` would
- * fire it while the mock engine answers on another dispatcher.
- */
 fun realTime(block: suspend CoroutineScope.() -> Unit) = runTest { withContext(Dispatchers.Default) { block() } }

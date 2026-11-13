@@ -7,9 +7,12 @@ import run.ostrom.server.kernel.config.MapConfigSource
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.mcprelay.domain.ApprovalRequester
+import run.ostrom.server.mcprelay.domain.HostedAssignment
+import run.ostrom.server.mcprelay.domain.ListMemberServersUseCase
 import run.ostrom.server.mcprelay.domain.McpCallSlotRepository
 import run.ostrom.server.mcprelay.domain.McpHostAvailability
 import run.ostrom.server.mcprelay.domain.McpRelayRepository
+import run.ostrom.server.mcprelay.domain.McpSharing
 import run.ostrom.server.mcprelay.domain.McpUpstream
 import run.ostrom.server.mcprelay.domain.NoApprovalRequester
 import run.ostrom.server.mcprelay.domain.RelayMcpMessageUseCase
@@ -17,7 +20,10 @@ import run.ostrom.server.mcprelay.infrastructure.McpHostConfig
 import run.ostrom.server.secrets.domain.RevealSecretsUseCase
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.MockEngineConfig
 import io.ktor.client.engine.mock.respond
+import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -33,8 +39,10 @@ import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
+import kotlin.uuid.Uuid
 
 class McpRelayModuleRegistrationTest {
     @Test
@@ -116,6 +124,8 @@ class McpRelayModuleRegistrationTest {
         assertTrue(app.koin.get<McpHostAvailability>().isConfigured())
         app.koin.get<McpUpstream>()
         app.koin.get<RelayMcpMessageUseCase>()
+        // With a host, the listing warms the member's stdio servers.
+        app.koin.get<ListMemberServersUseCase>()
         app.close()
     }
 
@@ -153,5 +163,69 @@ class McpRelayModuleRegistrationTest {
         assertEquals(listOf("mcp journal purge failed"), warnings)
         assertEquals(Relay.epoch - 30.days, purged.first())
         app.close()
+    }
+
+    @Test
+    fun aConfiguredHostIsSweptEachMinuteAndAnOutageIsLoggedOnce() = runTest {
+        var reads = 0
+        val repository = object : McpRelayRepository by InMemoryRelayRepository() {
+            override suspend fun hostedAssignments(limit: Int): List<HostedAssignment> {
+                if (++reads == 1) error("database down")
+                return listOf(HostedAssignment(Relay.orgA, Uuid.random(), 1, McpSharing.SHARED, null, Relay.epoch))
+            }
+        }
+        val warnings = mutableListOf<String>()
+        val logger = object : Logger {
+            override fun log(level: LogLevel, message: String, fields: Map<String, Any?>, error: Throwable?) {
+                if (level == LogLevel.WARN) warnings += "$message ${fields["outcome"]}"
+            }
+
+            override fun with(fields: Map<String, Any?>): Logger = this
+        }
+        val answers = ArrayDeque(listOf(HttpStatusCode.ServiceUnavailable, HttpStatusCode.ServiceUnavailable))
+        fun app(host: Boolean) = koinApplication {
+            modules(
+                McpRelayModule.koinModule,
+                module {
+                    single<ConfigSource> {
+                        val values = mapOf("OSTROM_MCP_HOST_URL" to "http://h", "OSTROM_MCP_HOST_TOKEN" to "t")
+                        MapConfigSource(if (host) values else mapOf())
+                    }
+                    single<McpRelayRepository> { repository }
+                    single<Clock> { TestClock() }
+                    single<Logger> { logger }
+                    single(McpRelayModule.HTTP_CLIENT) {
+                        // On the test's scheduler, so each minute's call is answered before the next one.
+                        val engine = MockEngineConfig().apply {
+                            dispatcher = StandardTestDispatcher(testScheduler)
+                            addHandler {
+                                val status = answers.removeFirstOrNull() ?: HttpStatusCode.OK
+                                respond("""{"stopped":0}""", status)
+                            }
+                        }
+                        HttpClient(MockEngine(engine))
+                    }
+                },
+            )
+        }
+        val without = app(host = false)
+        McpRelayModule.start(backgroundScope, without.koin)
+        runCurrent()
+        assertEquals(0, reads, "No host, no sweep")
+        without.koin.get<ListMemberServersUseCase>()
+        // The module's singles live in its definitions until their application closes.
+        without.close()
+        val with = app(host = true)
+        McpRelayModule.start(backgroundScope, with.koin)
+        repeat(5) {
+            runCurrent()
+            advanceTimeBy(1.minutes)
+        }
+        assertEquals(
+            listOf("mcp retain sweep Incomplete", "mcp retain sweep HostUnavailable"),
+            warnings,
+            "Each change of outcome once: the second minute of the outage is not logged again",
+        )
+        with.close()
     }
 }

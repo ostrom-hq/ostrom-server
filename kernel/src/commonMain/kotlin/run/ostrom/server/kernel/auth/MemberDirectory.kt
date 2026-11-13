@@ -17,4 +17,16 @@ interface MemberDirectory {
      * @return True when that organization has a member with this id.
      */
     suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean
+
+    /**
+     * Every active member of [orgId], such as the MCP relay's retain sweep needs for a per-member server assigned to
+     * the whole organization.
+     *
+     * @param orgId The organization.
+     * @param limit The most ids returned.
+     *
+     * @return The members' ids, as [OrgPrincipal.memberId] gives them; null when there are more than [limit], or when
+     * this directory cannot list them.
+     */
+    suspend fun memberIds(orgId: Uuid, limit: Int): List<String>? = null
 }

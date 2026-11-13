@@ -5,6 +5,7 @@ import run.ostrom.server.mcprelay.domain.ArgumentCondition
 import run.ostrom.server.mcprelay.domain.ArgumentPolicy
 import run.ostrom.server.mcprelay.domain.ConditionOperator
 import run.ostrom.server.mcprelay.domain.EffectiveServer
+import run.ostrom.server.mcprelay.domain.HostedAssignment
 import run.ostrom.server.mcprelay.domain.McpAssignment
 import run.ostrom.server.mcprelay.domain.McpCall
 import run.ostrom.server.mcprelay.domain.McpCallCursor
@@ -320,6 +321,19 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
     override suspend fun purgeCalls(before: Instant): Long = driver.fetchAll(
         Statement.create("SELECT mcp_relay_purge(CAST(:before AS TIMESTAMPTZ)) AS n").bind("before", before),
     ).getOrThrow().first().get("n").asLong()
+
+    override suspend fun hostedAssignments(limit: Int): List<HostedAssignment>? = driver.fetchAll(
+        Statement.create("SELECT * FROM mcp_relay_hosted_assignments(:limit)").bind("limit", limit + 1),
+    ).getOrThrow().map { row ->
+        HostedAssignment(
+            orgId = row.get("org_id").asUuid(),
+            serverId = row.get("server_id").asUuid(),
+            version = row.get("version").asInt(),
+            sharing = McpSharing.valueOf(row.get("sharing").asString()),
+            memberId = row.get("member_id").asUuidOrNull(),
+            assignedAt = row.get("assigned_at").asInstant(),
+        )
+    }.takeIf { it.size <= limit }
 
     // Every column but created_at, which only INSERT names: sqlx4k refuses a value for a parameter its SQL lacks.
     private fun Statement.bindServer(server: McpServer): Statement = bind("id", server.id)

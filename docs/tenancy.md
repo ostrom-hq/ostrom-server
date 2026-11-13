@@ -103,6 +103,7 @@ functions (the owner, a member of `ostrom_router` to hand the functions over, do
 | `usage_purge(before, limit)` | usage | deletes one batch of events older than the retention | `UsagePostgresTest` |
 | `usage_daily_add()`, `usage_daily_remove()`, `usage_daily_change()`, `usage_daily_clear()` | usage | trigger functions of `usage_events` (no `EXECUTE` grant): keep the daily totals `usage_daily`, which an organization only reads, in the transaction of every write of the ledger | `UsageDailyTotalsPostgresTest` |
 | `mcp_relay_purge(before)` | mcp-relay | deletes the calls older than the retention | `McpRelayPostgresTest` |
+| `mcp_relay_hosted_assignments(limit)` | mcp-relay | the stdio assignments of every organization (ids, version, sharing, member, date; no definition, no secret), for the MCP host's retain sweep | `McpRelayPostgresTest` |
 | `launches_purge(before)` | launches | deletes the launches expired before the date, never one expired less than 30 days ago; no date, an infinite or a future one is refused | `LaunchPurgeTest` |
 | `gates_pending_count()` | gates | counts the pending gates (sees `status` alone), for the `ostrom.gates.pending` gauge | `GatesPostgresTest` |
 | `sessions_active_count(since)` | sessions | counts the open sessions of every organization seen since, for `ostrom.sessions.active` | `SessionsPostgresTest` |
