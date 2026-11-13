@@ -44,8 +44,7 @@ internal fun memoryLimit(v2: File, v1: File): String? = firstLine(v2) ?: firstLi
  */
 internal fun residentBytes(status: File): Long? {
     val line = readLines(status)?.firstOrNull { it.startsWith("VmRSS:") } ?: return null
-    val kib = line.removePrefix("VmRSS:").trim().removeSuffix("kB").trim().toLongOrNull() ?: return null
-    return kib * BYTES_PER_KIB
+    return line.removePrefix("VmRSS:").trim().removeSuffix("kB").trim().toLongOrNull()?.times(BYTES_PER_KIB)
 }
 
 /**
