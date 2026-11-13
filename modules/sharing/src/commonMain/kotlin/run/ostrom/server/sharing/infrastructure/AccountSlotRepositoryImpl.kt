@@ -38,7 +38,7 @@ class AccountSlotRepositoryImpl(private val driver: Driver) : AccountSlotReposit
         val active = fetchAll(sql(SLOT_ACTIVE_OF_SQL).bind("ids", ids)).getOrThrow().counts()
         val remembered = session?.let {
             fetchAll(sql(SLOT_REMEMBERED_SQL).bind("member_id", memberId).bind("session", it)).getOrThrow()
-                .firstOrNull()?.get("account_id")?.asUuid()
+                .firstOrNull()?.let { row -> row.get("account_id").asUuid() }
         }
         pick(SlotView(active, remembered, serving))?.let { account ->
             val slot = AccountSlot(Uuid.random(), account.id)

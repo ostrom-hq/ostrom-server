@@ -238,15 +238,6 @@ class SharedAccountPool(
 
     internal suspend fun renew(orgId: Uuid, slot: AccountSlot) = quietly { slots.renew(orgId, slot) }
 
-    private suspend fun quietly(write: suspend () -> Unit) {
-        try {
-            write()
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Exception) {
-            // Left to the slot's lease.
-        }
-    }
 
     /** Requests in flight on each of the org's accounts, on every replica (absent: none). */
     suspend fun inFlight(orgId: Uuid): Map<Uuid, Int> = slots.active(orgId)
@@ -314,4 +305,15 @@ private suspend fun AccountGroups.allowed(
     if (named.size == ready.size) return ready
     val lent = lentTo(orgId, memberId, now)
     return ready.filter { it in named || it.id in lent }
+}
+
+/** Runs a slot's write; one that fails is left to the slot's lease. */
+private suspend fun quietly(write: suspend () -> Unit) {
+    try {
+        write()
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        // Left to the slot's lease.
+    }
 }
