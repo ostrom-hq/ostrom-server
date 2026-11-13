@@ -42,6 +42,12 @@ class ContractSchemaTest {
               },
               "Ref": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
               "Twice": {"oneOf": [{"type": "string"}, {"type": "string"}]},
+              "Check": {"oneOf": [
+                {"type": "object", "required": ["type"],
+                  "properties": {"type": {"type": "string", "const": "pr_merged"}}},
+                {"type": "object", "required": ["type"],
+                  "properties": {"type": {"type": "string", "const": "attested"}}}
+              ]},
               "Either": {"anyOf": [{"type": "string"}, {"type": "string"}, {"type": "integer"}]}
             }}}
             """,
@@ -108,6 +114,13 @@ class ContractSchemaTest {
     fun aValueTwoBranchesAcceptIsRefused() {
         val twice = contract.violations("Twice", Json.parseToJsonElement("\"x\""))
         assertEquals("$: matches more than one branch of oneOf", twice.single().toString())
+    }
+
+    @Test
+    fun aConstTellsTheBranchesOfAOneOfApart() {
+        assertEquals(emptyList(), contract.violations("Check", Json.parseToJsonElement("""{"type": "attested"}""")))
+        val other = contract.violations("Check", Json.parseToJsonElement("""{"type": "command"}""")).single()
+        assertTrue(other.toString().startsWith("$: matches no branch of oneOf"), other.toString())
     }
 
     @Test
