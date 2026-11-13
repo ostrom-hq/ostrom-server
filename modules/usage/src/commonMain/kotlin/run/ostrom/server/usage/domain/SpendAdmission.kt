@@ -221,6 +221,7 @@ class SpendAdmissionImpl(
  * @property expiresAt When the new hold expires.
  */
 data class HoldWindow(val since: Instant, val now: Instant, val expiresAt: Instant) {
+    /** The retention of the holds. */
     companion object {
         /** How long a hold is kept, as TeamCode keeps its reservation details: past it, no month counts it. */
         val RETENTION: Duration = 90.days

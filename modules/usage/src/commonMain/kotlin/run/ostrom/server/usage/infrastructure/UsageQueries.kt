@@ -65,25 +65,27 @@ internal object UsageQueries {
         workflow: Boolean = false,
         workflowDay: Boolean = false,
     ): String {
-        val held = "SELECT SUM(micros) FROM usage_holds WHERE org_id = :org_id AND expires_at > :now " +
-            "AND call_id <> :call_id"
         val mine = " AND member_id = :member_id"
         val its = " AND workflow_id = :workflow_id"
         val columns = listOf(
             Triple("org_spent", org, spent(":since", "")),
-            Triple("org_held", org || orgDay, held),
+            Triple("org_held", org || orgDay, held("")),
             Triple("member_spent", member, spent(":since", mine)),
-            Triple("member_held", member || memberDay, "$held$mine"),
+            Triple("member_held", member || memberDay, held(mine)),
             Triple("org_day_spent", orgDay, spent(":day_since", "")),
             Triple("member_day_spent", memberDay, spent(":day_since", mine)),
             Triple("workflow_spent", workflow, spent(":since", its)),
-            Triple("workflow_held", workflow || workflowDay, "$held$its"),
+            Triple("workflow_held", workflow || workflowDay, held(its)),
             Triple("workflow_day_spent", workflowDay, spent(":day_since", its)),
         )
         return "SELECT " + columns.joinToString(", ") { (name, read, sum) ->
             (if (read) "CAST($sum AS BIGINT)" else "CAST(0 AS BIGINT)") + " AS $name"
         }
     }
+
+    /** What the other calls in flight hold at `:now` ([filter] on them). */
+    private fun held(filter: String) = "COALESCE((SELECT SUM(micros) FROM usage_holds WHERE org_id = :org_id " +
+        "AND expires_at > :now AND call_id <> :call_id$filter), 0)"
 
     /** What is recorded since [since], plus what the calls never recorded held then ([filter] on both). */
     private fun spent(since: String, filter: String) =
