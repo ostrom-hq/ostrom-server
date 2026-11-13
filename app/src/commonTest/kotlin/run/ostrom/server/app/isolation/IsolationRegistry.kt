@@ -9,6 +9,8 @@ import run.ostrom.server.app.isolation.Seed.AUTOMATION
 import run.ostrom.server.app.isolation.Seed.CLOUD_SESSION
 import run.ostrom.server.app.isolation.Seed.CONFIRMATION
 import run.ostrom.server.app.isolation.Seed.DEVICE
+import run.ostrom.server.app.isolation.Seed.ENV_PERSONAL
+import run.ostrom.server.app.isolation.Seed.ENV_VARIANT
 import run.ostrom.server.app.isolation.Seed.GATE
 import run.ostrom.server.app.isolation.Seed.GROUP
 import run.ostrom.server.app.isolation.Seed.INVITATION
@@ -208,6 +210,39 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "POST /api/v1/secrets" to Case.Target(body = """{"name": "TAKEN", "value": "v", "scope": "org"}"""),
     "PUT /api/v1/secrets/{name}" to target("name" to SECRET, body = """{"value": "taken", "scope": "org"}"""),
     "DELETE /api/v1/secrets/{name}" to target("name" to SECRET),
+
+    // Environment variants: the caller's own values, the administrators' variants, assignments and exclusions.
+    "GET /api/v1/environment" to Case.Target(),
+    "GET /api/v1/environment/variants" to Case.Target(),
+    "POST /api/v1/environment/variants" to Case.Target(
+        body = """{"variable": "TAKEN", "name": "taken", "value": "v"}""",
+        admin = true,
+    ),
+    "GET /api/v1/environment/variants/personal" to Case.Target(),
+    "PATCH /api/v1/environment/variants/{id}" to target(
+        "id" to ENV_VARIANT,
+        body = """{"expectedVersion": 1, "name": "taken"}""",
+        admin = true,
+    ),
+    "DELETE /api/v1/environment/variants/{id}" to target("id" to ENV_VARIANT, admin = true),
+    "POST /api/v1/environment/variants/{id}/bulk-assign" to target("id" to ENV_VARIANT, admin = true),
+    "POST /api/v1/environment/variants/{id}/promote" to target("id" to ENV_PERSONAL, admin = true),
+    "GET /api/v1/environment/assignments" to Case.Target(),
+    "PUT /api/v1/environment/assignments/{member}/{variable}" to environmentSlot(
+        """{"variantId": "{{ENV_VARIANT}}"}""",
+    ),
+    "DELETE /api/v1/environment/assignments/{member}/{variable}" to environmentSlot(),
+    "PUT /api/v1/environment/exclusions/{member}/{variable}" to environmentSlot(),
+    "DELETE /api/v1/environment/exclusions/{member}/{variable}" to environmentSlot(),
+    "GET /api/v1/me/environment/variants" to Case.Target(),
+    "POST /api/v1/me/environment/variants" to Case.Target(
+        body = """{"variable": "TAKEN_MINE", "name": "taken", "value": "v"}""",
+    ),
+    "PATCH /api/v1/me/environment/variants/{id}" to target(
+        "id" to ENV_PERSONAL,
+        body = """{"expectedVersion": 1, "name": "taken"}""",
+    ),
+    "DELETE /api/v1/me/environment/variants/{id}" to target("id" to ENV_PERSONAL),
 
     // MCP relay.
     "GET /api/v1/mcp/servers" to Case.Target(),
@@ -496,3 +531,10 @@ private fun mcpCall(tool: String, argument: String): String {
     return """{"jsonrpc": "2.0", "id": 1, "method": "tools/call", """ +
         """"params": {"name": "$tool", "arguments": {"$argument": "{{$seed}}"}}}"""
 }
+
+// A member's slot for one variable: the member is B's, the variable a fixed name.
+private fun environmentSlot(body: String? = null): Case = Case.Target(
+    mapOf("member" to of(MEMBER_ID), "variable" to Param.Fixed("ISOLATION_TOKEN")),
+    body,
+    admin = true,
+)

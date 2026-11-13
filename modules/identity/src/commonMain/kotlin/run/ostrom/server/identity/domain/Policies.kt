@@ -89,10 +89,13 @@ val NEVER_ON_A_TOKEN: Set<String> = setOf(ANSWER_SCOPE, AGENT_SCOPE, WORKFLOW_SE
  * one, as it can already open a launch: the session is the person's, bounded by the plan (hours, sessions at once),
  * its agent launched under the organization's policy by the runner, and its clone has no credential to push with. It
  * governs nothing (decided on 03/11/2026, line 6.2 of the demo journey).
+ *
+ * `environment:read` reads the person's own environment values (`GET /api/v1/environment`), which `ostrom claude`
+ * gives its agent, as TeamCode's `teamcode run` does: they are the person's own, as in their shell.
  */
 val CLI_SCOPES: Set<String> = setOf(
     "profile:read", "orgs:read", "workflows:read", "sessions:write", "receipts:read", "gates:read", "mcp:read",
-    "rules:read", "cloud:write",
+    "rules:read", "cloud:write", "environment:read",
 )
 
 /**

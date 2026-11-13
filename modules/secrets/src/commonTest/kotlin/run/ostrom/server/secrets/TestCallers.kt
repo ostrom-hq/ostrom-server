@@ -26,9 +26,13 @@ object TestCallers {
     val adminA = Caller(orgA, Uuid.parse("0000000a-0000-0000-0000-0000000000a1"), MemberRole.ADMIN)
     val memberA = Caller(orgA, Uuid.parse("0000000a-0000-0000-0000-0000000000b1"), MemberRole.MEMBER)
     val adminB = Caller(orgB, Uuid.parse("0000000b-0000-0000-0000-0000000000a1"), MemberRole.OWNER)
+    val member2A = Caller(orgA, Uuid.parse("0000000a-0000-0000-0000-0000000000b2"), MemberRole.MEMBER)
     private val byToken = mapOf(
         "admin-a" to adminA,
         "member-a" to memberA,
+        "member2-a" to member2A,
+        "service-a" to memberA,
+        "cli-env-a" to memberA,
         "admin-b" to adminB,
         "agent-a" to memberA,
         "cli-a" to memberA,
@@ -48,6 +52,12 @@ object TestCallers {
         "agent-a" to AuthenticatedPrincipal("agent-a", PrincipalKind.SERVICE, setOf(RelayScopes.AGENT_SESSION)),
         "cli-a" to AuthenticatedPrincipal("cli-a", PrincipalKind.USER, setOf("profile:read", RelayScopes.SECRETS_READ)),
         "device-a" to AuthenticatedPrincipal("device-a", PrincipalKind.DEVICE, setOf(RelayScopes.ALL_USER)),
+        "service-a" to AuthenticatedPrincipal(
+            "service-a",
+            PrincipalKind.SERVICE,
+            setOf(RelayScopes.ENVIRONMENT_READ, RelayScopes.SECRETS_READ),
+        ),
+        "cli-env-a" to AuthenticatedPrincipal("cli-env-a", PrincipalKind.USER, setOf(RelayScopes.ENVIRONMENT_READ)),
         "cli-write-a" to AuthenticatedPrincipal(
             "cli-write-a",
             PrincipalKind.USER,
