@@ -74,7 +74,8 @@ enum class RefreshOwnership {
 /**
  * Per-account limits, on top of the provider's own windows.
  *
- * @property maxConcurrent Requests in flight at once on the account.
+ * @property maxConcurrent Requests in flight at once on the account, [UNLIMITED_CONCURRENCY] (the default) for no
+ *   limit, as TeamCode.
  * @property utilizationCeiling The share of a provider window (0..1) at which the account stops taking requests,
  *   leaving its owner room.
  * @property monthlyBudgetMicros Equivalent API cost (USD millionths) the account may serve per calendar month, or null.
@@ -89,10 +90,16 @@ data class AccountLimits(
     val allowedMembers: Set<Uuid>? = null,
     val dailyBudgetMicros: Long? = null,
 ) {
+    /** Whether the account takes one more request with [active] in flight: always without a limit. */
+    fun hasRoom(active: Int): Boolean = maxConcurrent == UNLIMITED_CONCURRENCY || active < maxConcurrent
+
     /** The defaults. */
     companion object {
-        /** Default concurrency, as TeamCode. */
-        const val DEFAULT_MAX_CONCURRENT: Int = 8
+        /** A concurrency limit of zero is disabled (TeamCode's `UNLIMITED_CONCURRENCY`). */
+        const val UNLIMITED_CONCURRENCY: Int = 0
+
+        /** Default concurrency: none, as TeamCode. */
+        const val DEFAULT_MAX_CONCURRENT: Int = UNLIMITED_CONCURRENCY
 
         /** Default ceiling: 95 % of any window. */
         const val DEFAULT_CEILING: Double = 0.95
@@ -205,7 +212,7 @@ object SharingRules {
     /** Refuses limits out of range (a NaN ceiling is in no range). */
     fun requireLimits(limits: AccountLimits) {
         val problem = when {
-            limits.maxConcurrent !in 1..MAX_CONCURRENT -> "maxConcurrent is 1 to $MAX_CONCURRENT."
+            limits.maxConcurrent !in 0..MAX_CONCURRENT -> "maxConcurrent is 0 (unlimited) to $MAX_CONCURRENT."
             limits.utilizationCeiling !in MIN_CEILING..1.0 -> "utilizationCeiling is $MIN_CEILING to 1."
             (limits.monthlyBudgetMicros ?: 0) < 0 -> "monthlyBudgetMicros is positive."
             (limits.dailyBudgetMicros ?: 1) <= 0 -> "The daily allocation is positive."

@@ -86,4 +86,11 @@ val GatewayMigrations: List<SchemaMigration> = listOf(
             CREATE INDEX gateway_cancellations_expiry ON gateway_cancellations (org_id, expires_at)
         """.trimIndent() + ";\n" + tenantTableSql("gateway_cancellations"),
     ),
+    // Every member's `maxConcurrent` back to 0, unlimited, the default (as TeamCode): no request waits on a
+    // concurrency slot an administrator did not choose under the former 1-to-32 rule.
+    SchemaMigration(
+        version = 5,
+        name = "gateway_unlimited_member_concurrency",
+        sql = "UPDATE gateway_settings SET member_concurrency = '{}'",
+    ),
 )

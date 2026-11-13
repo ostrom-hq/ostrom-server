@@ -177,8 +177,9 @@ class RelayInferenceUseCaseImpl(
                 if (shared != null && org.settings.useSharedAccounts) shared.wire else KEY_SCOPE
             },
             workload = call.workload,
-            limit = org.settings.memberConcurrency[caller.memberId.toString()],
-            limitedMembers = org.settings.memberConcurrency.keys,
+            // 0, or no entry, is unlimited (TeamCode's `maxConcurrent > 0 && active >= max`).
+            limit = org.settings.memberConcurrency[caller.memberId.toString()]?.takeIf { it > 0 },
+            limitedMembers = org.settings.memberConcurrency.filterValues { it > 0 }.keys,
         )
 
         /** Whether the call is recorded: a failure after its record must not record it again. */

@@ -245,7 +245,7 @@ class SharedAccountPool(
     private suspend fun take(request: Request, open: List<Pair<SharedAccount, Double>>): AccountSlot? {
         val ordered = open.sortedWith(ORDER).map { it.first }
         return slots.take(request.orgId, request.memberId, request.sessionKey, ordered) { view ->
-            val free = ordered.filter { it.id in view.serving && (view.active[it.id] ?: 0) < it.limits.maxConcurrent }
+            val free = ordered.filter { it.id in view.serving && it.limits.hasRoom(view.active[it.id] ?: 0) }
             free.firstOrNull { it.id == view.remembered } ?: free.firstOrNull()
         }
     }

@@ -43,7 +43,7 @@ class CapacityApi
 /** Per-account limits; [dailyBudgetMicros] is the contract's `dailyAllocationUsd` in USD millionths. */
 @Serializable
 data class AccountLimitsDto(
-    val maxConcurrent: Int = 8,
+    val maxConcurrent: Int = 0,
     val utilizationCeiling: Double = 0.95,
     val monthlyBudgetMicros: Long? = null,
     val allowedMembers: List<String>? = null,

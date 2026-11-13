@@ -37,9 +37,9 @@ enum class Workload(val wire: String) {
  * @property scope What it competes for with the other waiting calls: the shared accounts of one provider (`claude`,
  *   `codex`), or `key` for a call no shared account serves.
  * @property workload Its class.
- * @property limit The most calls the member runs at once (`memberConcurrency`), or null for no limit.
- * @property limitedMembers The org's members who have a limit, by id: the waiting calls take turns only while one of
- *   theirs waits (TeamCode #87).
+ * @property limit The most calls the member runs at once (their `maxConcurrent`, above 0), or null for no limit.
+ * @property limitedMembers The org's members who have a limit (above 0), by id: the waiting calls take turns only
+ *   while one of theirs waits (TeamCode #87).
  */
 data class AdmissionRequest(
     val id: Uuid,

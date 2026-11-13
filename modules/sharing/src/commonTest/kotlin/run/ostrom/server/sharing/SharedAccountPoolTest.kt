@@ -186,6 +186,19 @@ class SharedAccountPoolTest {
     }
 
     @Test
+    fun anAccountWithoutAConcurrencyLimitAlwaysHasRoom() = runTest {
+        account("unlimited")
+        val pool = pool()
+        val leases = List(100) {
+            assertIs<LeaseResult.Leased>(
+                pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null),
+            ).lease
+        }
+        assertEquals(100, pool.inFlight(Sharing.orgA)[leases.first().account.id])
+        leases.forEach { it.release() }
+    }
+
+    @Test
     fun tokensCloseToExpiryAreRefreshedAndSealedAgain() = runTest {
         val account = account("a", expiresAt = clock.now() + 1.minutes)
         refresher.result = RefreshResult.Renewed(AccountCredentials("access-new", "refresh-new", clock.now() + 8.hours))

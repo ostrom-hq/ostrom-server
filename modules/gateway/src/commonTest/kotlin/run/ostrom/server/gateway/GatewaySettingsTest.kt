@@ -48,7 +48,7 @@ class GatewaySettingsTest {
     }
 
     @Test
-    fun aMembersConcurrencyLimitIsOneToThirtyTwoByMemberIdInOneSpelling() = runTest {
+    fun aMembersMaxConcurrentIsZeroForUnlimitedToThirtyTwoByMemberIdInOneSpelling() = runTest {
         val put = PutGatewaySettingsUseCaseImpl(repository)
         val member = Gw.memberA.memberId
         val upper = member.toString().uppercase()
@@ -58,7 +58,9 @@ class GatewaySettingsTest {
         val most = put(Gw.adminA, GatewaySettings(memberConcurrency = mapOf("$member" to 32)))
         assertEquals(mapOf("$member" to 32), most.memberConcurrency)
         val tooMany = (0..GatewayRules.MAX_MEMBERS).associate { Uuid.random().toString() to 1 }
-        for (bad in listOf(mapOf("$member" to 0), mapOf("$member" to 33), mapOf("ada" to 2), tooMany)) {
+        val unlimited = put(Gw.adminA, GatewaySettings(memberConcurrency = mapOf("$member" to 0)))
+        assertEquals(mapOf("$member" to 0), unlimited.memberConcurrency, "0 is unlimited, as TeamCode")
+        for (bad in listOf(mapOf("$member" to -1), mapOf("$member" to 33), mapOf("ada" to 2), tooMany)) {
             assertFailsWith<InvalidGatewaySettingsException> {
                 put(Gw.adminA, GatewaySettings(memberConcurrency = bad))
             }

@@ -60,7 +60,7 @@ class PutGatewaySettingsUseCaseImpl(private val repository: GatewaySettingsRepos
             limits.any { (member, limit) -> Uuid.parseOrNull(member) == null || limit !in GatewayRules.CONCURRENCY }
         ) {
             throw InvalidGatewaySettingsException(
-                "A member's concurrency limit is 1 to ${GatewayRules.CONCURRENCY.last}, by member id, " +
+                "A member's maxConcurrent is 0 (unlimited) to ${GatewayRules.CONCURRENCY.last}, by member id, " +
                     "for at most ${GatewayRules.MAX_MEMBERS} members.",
             )
         }
@@ -94,8 +94,8 @@ object GatewayRules {
     /** Members with their own list, or their own concurrency limit. */
     const val MAX_MEMBERS = 1000
 
-    /** A member's concurrency limit (TeamCode's `maxConcurrent`, at most 32). */
-    val CONCURRENCY = 1..32
+    /** A member's `maxConcurrent` (TeamCode's `MAX_MEMBER_CONCURRENCY`, 32), 0 for unlimited. */
+    val CONCURRENCY = 0..32
 
     /** A model name or prefix. */
     val MODEL = Regex("[A-Za-z0-9._:/-]{1,${RequestBody.MAX_MODEL}}")
