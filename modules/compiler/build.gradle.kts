@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 // Module compiler: compilation of workflows into signed packages.
 plugins {
     id("ostrom.native-module")

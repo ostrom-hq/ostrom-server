@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 // Module mcp-relay: the org's MCP servers relayed by the server (HTTPS upstreams, and stdio commands run by the MCP
 // host), the tools each member is assigned, argument policies, and the journal of every call.
 plugins {

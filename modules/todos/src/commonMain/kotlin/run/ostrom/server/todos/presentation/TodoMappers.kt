@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 @file:Suppress("TooManyFunctions") // The mappers of one contract, both ways.
 
 package run.ostrom.server.todos.presentation

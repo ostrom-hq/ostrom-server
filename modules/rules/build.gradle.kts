@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 // Module rules: the organization's rules, its signed decisions and its gate policy (self-approval), which the gates
 // module reads.
 plugins {

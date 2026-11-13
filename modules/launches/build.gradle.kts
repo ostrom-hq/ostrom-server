@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 // Module launches: `ostrom <agent>` asks for a launch and gets an agent token scoped to its sessions (audit A12/A13).
 plugins {
     id("ostrom.native-module")

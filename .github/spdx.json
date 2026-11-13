@@ -1,5 +1,5 @@
 {
-  "default": "AGPL-3.0-only",
+  "default": "Apache-2.0",
   "rules": [
     {
       "prefix": "ee/",

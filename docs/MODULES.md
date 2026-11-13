@@ -188,8 +188,8 @@ Every request is already logged once by the kernel (method, route template — n
   `dist/ostrom-server`) and the image smoke test.
 - One PR per module step, small; the PR touches only `modules/<name>/` (and its line in `ServerModules.kt` if needed).
 - `ee/` code: same shape, under `ee/modules/<name>/` (Gradle path `:ee:modules:<name>`, discovered like `modules/`),
-  plus an `ee-module.properties` naming its `ServerModule` object; the app registers it after every AGPL module.
-  AGPL code never depends on `ee/`, and CI compiles the app with `ee/` deleted (see `ee/README.md`).
+  plus an `ee-module.properties` naming its `ServerModule` object; the app registers it after every Apache-2.0 module.
+  Apache-2.0 code never depends on `ee/`, and CI compiles the app with `ee/` deleted (see `ee/README.md`).
 
 ## Configuration
 

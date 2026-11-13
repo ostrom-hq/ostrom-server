@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.automations.domain
 
 /** Reads one field of a cron: `*`, a value, a range, each with an optional step, separated by commas. */

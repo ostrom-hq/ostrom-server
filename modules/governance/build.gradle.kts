@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 // Module governance: a governance write made with a person's token waits until an owner or an admin confirms it on
 // the console with a fresh sign-in (audit CLI H1, decision of 02/11/2026).
 plugins {

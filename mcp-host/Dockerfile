@@ -82,7 +82,7 @@ RUN as_mcp() { setpriv --reuid=10002 --regid=10002 --clear-groups env HOME=/tmp 
 ENV OSTROM_MCP_HOST_DATA_DIR=/var/mcp \
     JAVA_TOOL_OPTIONS="-Xmx384m -XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError"
 LABEL org.opencontainers.image.source="https://github.com/ostrom-hq/ostrom-server" \
-      org.opencontainers.image.licenses="AGPL-3.0-only" \
+      org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.description="Ostrom MCP stdio host"
 USER 10002:10002
 WORKDIR /var/mcp

@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: Apache-2.0
 -- The database roles of a deployment, as the Helm chart creates them (docs/tenancy.md), for CI's smoke test and local
 -- development (docker-compose.yml): an owner that runs `ostrom-server migrate`, and a serving role that owns nothing
 -- and cannot bypass row-level security. The passwords are local placeholders, never a deployment's.

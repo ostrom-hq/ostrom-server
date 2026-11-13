@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.billing.domain
 
 import kotlin.time.Instant
@@ -206,7 +206,7 @@ data class Invoice(
 
 /**
  * What the self-hosted license key grants (empty without a key). Verified by the `ee/` license module, which binds
- * [LicenseProvider]; the AGPL code only reads this.
+ * [LicenseProvider]; the Apache-2.0 code only reads this.
  *
  * @property features The licensed features (`sso`, `policies`, `retention`…).
  * @property maxPeople The licensed people, null for unlimited.

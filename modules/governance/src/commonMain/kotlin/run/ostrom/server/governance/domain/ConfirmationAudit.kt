@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.governance.domain
 
 /** Records each step of a confirmation in its organization's signed audit log. */

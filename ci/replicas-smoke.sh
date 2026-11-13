@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # Two real server processes on one PostgreSQL, as TeamCode's scripts/smoke-replicas.py (docs/replicas.md « Evidence »,
 # parity TC-REP-7): both start at once on a migrated database; a token works on either; one replica killed (SIGKILL)
 # leaves the other serving, and comes back; a database outage makes both unready while they keep running, then both

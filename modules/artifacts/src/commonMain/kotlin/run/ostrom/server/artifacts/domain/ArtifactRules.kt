@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.artifacts.domain
 
 /** What a publication may hold, checked before anything is stored (TeamCode's artifact rules, simplified). */

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # SIGTERM and SIGINT, waited for without running Kotlin in a signal handler: the handler only writes the signal number
 # to a pipe (write(2) is async-signal-safe), and the main thread reads it. Same code on Linux and macOS.
 package = run.ostrom.server.app.signals

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Compares the routes this server mounts with the ostrom-core contract (api/openapi.yaml), so that they cannot drift.
 
     python3 scripts/check-contract.py <ostrom-core checkout>

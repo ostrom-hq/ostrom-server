@@ -183,7 +183,7 @@ jobs:
           labels: |
             org.opencontainers.image.title=ostrom-server
             org.opencontainers.image.revision=${{ env.SHA }}
-            org.opencontainers.image.licenses=AGPL-3.0-only
+            org.opencontainers.image.licenses=Apache-2.0
             org.opencontainers.image.version=${{ needs.version.outputs.version }}
       # Each architecture as deployed (docs/tenancy.md): the owner migrates, the server serves as a role that owns
       # nothing, read-only root and no capability like the chart. arm64 runs under QEMU, the same checks.

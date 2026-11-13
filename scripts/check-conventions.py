@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Checks the Ostrom conventions that detekt cannot (docs/CONVENTIONS.md sections 1.1, 4.1 and 10).
 
 Copy to scripts/check-conventions.py of a Kotlin repository, fill MODULE_GRAPH, run in CI before Gradle:

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # Fills the npm cache $1 with the tarballs of runner/agents/package-lock.json, on the CI host, for the session image
 # build to mount (ci/session-image-context.sh). Install scripts are not run here: only the download is wanted. A warm
 # cache (restored by actions/cache, keyed on the lockfile) makes this a check that reads nothing from the registry.

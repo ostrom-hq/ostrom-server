@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # Builds the release server binary for linuxX64 and leaves it in dist/ostrom-server, where the Docker image and the
 # end-to-end and load tests of ostrom-e2e take it. Linux x64 hosts only (CI); on the shared Mac, never run it directly.
 set -euo pipefail

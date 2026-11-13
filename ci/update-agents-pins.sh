@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # Moves every agent CLI of runner/agents/package.json to its latest version on the npm registry (an exact version,
 # never a range), then rewrites package-lock.json without running any install script. Prints the changes, one
 # "<package> <old> -> <new>" per line; prints nothing when every pin is already the latest. Reads the registry only.

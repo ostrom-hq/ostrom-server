@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 // Module import: a one-time import of a TeamCode team (MCP servers, their secrets, assignments, tool policies and
 // shared accounts), read by the CLI from TeamCode without writing to it, and applied here through the use cases of
 // the modules that own the data.

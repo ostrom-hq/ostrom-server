@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # Proves the server's telemetry reaches a real OpenTelemetry collector (BRIEF, rule TESTS: integration with a collector
 # in CI): one traced request, then its span, the request metrics and a log line are read back from the collector's
 # files; a request whose path holds a secret slug leaves no trace of it there (S2-45). Needs the image ostrom-server:ci

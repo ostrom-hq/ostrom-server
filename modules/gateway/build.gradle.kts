@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 // Module gateway: the inference gateway. Agents send Anthropic Messages, OpenAI Responses or Chat Completions to
 // Ostrom; the gateway sends them on with the org's shared subscription accounts or its own provider keys (BYOK),
 // streams the answer back untouched, meters usage and enforces budgets.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 // Module workflow-runs: what the compiled workflows did in a session (checks run, notifications sent), its signed
 // workflow receipt, and the receipt bundle `ostrom verify` reads offline.
 plugins {

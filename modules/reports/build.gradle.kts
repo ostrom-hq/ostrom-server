@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 // Module reports: the console's and the app's read models across modules — the spending report (the usage ledger by
 // agent, repository and person, against the budget) and the activity feed (sessions, gates, workflow decisions).
 plugins {

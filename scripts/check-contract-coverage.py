@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Fails when an operation the ostrom-core contract serves was never seen answering by the tests, so that no answer
 escapes the strict check of ContractObserver (testing module).
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Check the license of every source file: an SPDX header, the right one for its path, and the license files.
 
 Configuration: .github/spdx.json
@@ -37,8 +37,6 @@ DEFAULT_EXCLUDE = [
 ]
 LICENSE_MARKERS = {
     "Apache-2.0": "Apache License",
-    "AGPL-3.0-only": "GNU AFFERO GENERAL PUBLIC LICENSE",
-    "AGPL-3.0-or-later": "GNU AFFERO GENERAL PUBLIC LICENSE",
     "MIT": "MIT License",
 }
 HEAD_LINES = 5

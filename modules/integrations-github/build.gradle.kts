@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 // Module integrations-github: the GitHub App (installation per organization, webhooks, created by the manifest flow
 // when the environment names none), the head of a pull request read from GitHub for the gates, the `ostrom-gate`
 // check run, each organization's directory (repositories and teams) read from its installation, and the rules

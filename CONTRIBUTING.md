@@ -72,14 +72,14 @@ This adds `Signed-off-by: Your Name <you@example.com>` to the message. Forgot it
 push with `--force-with-lease`. The `community` check verifies every commit of a pull request from a contributor
 without write access; maintainers signed it once for all.
 
-Contributions to `ee/` are made under the [Ostrom Enterprise License](ee/LICENSE); everything else under the [GNU AGPL v3.0](LICENSE).
+Contributions to `ee/` are made under the [Ostrom Enterprise License](ee/LICENSE); everything else under the [Apache License 2.0](LICENSE): inbound = outbound, your contribution is licensed as the project is.
 
 ## License headers
 
 Every source file starts with its SPDX identifier, checked in CI by the `community` job:
 
 ```text
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 ```
 
 Add it to the files you create, or let the script do it: `python3 .github/scripts/check_spdx.py --fix <files>`.
