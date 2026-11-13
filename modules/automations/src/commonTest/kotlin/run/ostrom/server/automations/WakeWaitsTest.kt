@@ -167,6 +167,13 @@ class WakeWaitsTest {
         val cut = WaitMessages.answered(long, "alice")
         assertEquals(WaitMessages.MAX_LENGTH, cut.length)
         assertTrue(cut.endsWith("\n…"))
+        // Emoji are two UTF-16 units: whichever parity the cut falls on, it never keeps half of one.
+        val emoji = listOf("", "x").map { lead ->
+            val values = mapOf<String, JsonElement>("feedback" to JsonPrimitive(lead + "\uD83D\uDE00".repeat(20_000)))
+            WaitMessages.answered(answered.copy(answer = answered.answer?.copy(values = values)), "alice")
+        }
+        assertTrue(emoji.none { it.dropLast(2).last().isHighSurrogate() })
+        assertEquals(setOf(WaitMessages.MAX_LENGTH, WaitMessages.MAX_LENGTH - 1), emoji.map { it.length }.toSet())
     }
 
     @Test

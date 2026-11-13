@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.automations.presentation
 
+import run.ostrom.server.automations.domain.AgentSessionRequiredException
 import run.ostrom.server.automations.domain.AskWait
 import run.ostrom.server.automations.domain.InvalidWaitException
-import run.ostrom.server.automations.domain.AgentSessionRequiredException
 import run.ostrom.server.automations.domain.MissingWaitScopeException
 import run.ostrom.server.automations.domain.WaitQuery
 import run.ostrom.server.kernel.auth.PrincipalKind

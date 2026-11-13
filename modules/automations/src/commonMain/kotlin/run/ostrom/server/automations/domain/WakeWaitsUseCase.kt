@@ -56,9 +56,10 @@ class WakeWaitsUseCaseImpl(
         requireWait(hold in 0..MAX_MILLIS) { "waitMillis is 0 to $MAX_MILLIS." }
         val deadline = clock.now() + hold.milliseconds
         while (true) {
-            val taken = repository.takeAnswered(caller.orgId, segments, BATCH)
+            // Open first, then the answers: an answer written between the two is taken now, or seen open and
+            // taken at the next look (an answer and its wake are written at once).
             val open = repository.hasOpen(caller.orgId, segments)
-            // An answer and its wake are written at once: no answer to take and none open means nothing will come.
+            val taken = repository.takeAnswered(caller.orgId, segments, BATCH)
             if (taken.isNotEmpty() || !open || clock.now() >= deadline) {
                 return WaitWakeResult(open, taken.map { WaitMessages.answered(it, username(caller, it)) })
             }

@@ -50,7 +50,9 @@ internal object WaitMessages {
             }
         }
         val text = lines.joinToString("\n")
-        return if (text.length <= MAX_LENGTH) text else text.take(MAX_LENGTH - CUT.length) + CUT
+        if (text.length <= MAX_LENGTH) return text
+        // Never half of a character written in two (an emoji): the hook prints it as JSON.
+        return text.take(MAX_LENGTH - CUT.length).dropLastWhile { it.isHighSurrogate() } + CUT
     }
 
     /** A value as one line of text; null when it fills nothing. */
