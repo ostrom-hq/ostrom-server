@@ -153,8 +153,9 @@ class SetCloudSessionGitHubAccessUseCaseImpl(
         if (session.githubAccess == mode) return session
         // A running execution's `gh` keeps the token it was handed until it expires: revoke the access paused.
         if (mode == GitHubAccessMode.NONE && session.state != SessionState.PAUSED) throw SessionNotPausedException()
+        // `none` is written only if the session is still paused: a resume in between keeps it as it was.
         val changed = repository.setGitHubAccess(caller.orgId, id, mode, clock.now())
-            ?: throw CloudSessionNotFoundException()
+            ?: throw if (mode == GitHubAccessMode.NONE) SessionNotPausedException() else CloudSessionNotFoundException()
         audit.record(
             OrgAuditRecord(
                 caller.orgId,

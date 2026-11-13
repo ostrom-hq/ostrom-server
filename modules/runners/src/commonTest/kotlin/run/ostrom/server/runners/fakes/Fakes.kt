@@ -168,6 +168,7 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
         now: Instant,
     ): CloudSession? {
         val current = get(orgId, id)?.takeUnless { it.state.isFinal } ?: return null
+        if (access == GitHubAccessMode.NONE && current.state != SessionState.PAUSED) return null
         val updated = current.copy(githubAccess = access, generation = current.generation + 1, updatedAt = now)
         sessions[id] = updated
         return updated

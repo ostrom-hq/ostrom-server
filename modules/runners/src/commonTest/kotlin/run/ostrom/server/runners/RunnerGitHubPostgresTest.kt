@@ -77,7 +77,12 @@ class RunnerGitHubPostgresTest {
         assertEquals(GitHubAccessMode.OWNER, repository.get(ORG_A, created.id)?.githubAccess, "The default")
         val shared = repository.setGitHubAccess(ORG_A, created.id, GitHubAccessMode.SHARED, T0)
         assertEquals(GitHubAccessMode.SHARED to 1L, shared?.githubAccess to shared?.generation)
-        assertNull(repository.setGitHubAccess(ORG_B, created.id, GitHubAccessMode.NONE, T0), "Another organization")
+        assertNull(repository.setGitHubAccess(ORG_B, created.id, GitHubAccessMode.SHARED, T0), "Another organization")
+        assertNull(repository.setGitHubAccess(ORG_A, created.id, GitHubAccessMode.NONE, T0), "Not paused")
+        val paused = session(state = SessionState.PAUSED, createdAt = T0)
+        repository.createWithinCap(paused, 5)
+        val none = repository.setGitHubAccess(ORG_A, paused.id, GitHubAccessMode.NONE, T0)
+        assertEquals(GitHubAccessMode.NONE, none?.githubAccess)
         val over = session(state = SessionState.TERMINATED, createdAt = T0)
         repository.createWithinCap(over, 5)
         assertNull(repository.setGitHubAccess(ORG_A, over.id, GitHubAccessMode.NONE, T0))
@@ -139,7 +144,12 @@ class RunnerGitHubPostgresTest {
 
         // Paused then resumed without access: nothing, whatever the link.
         answer = RunnerGitHubToken.Linked("ghu_alice", EXPIRY, "octocat")
-        repository.setGitHubAccess(ORG_A, running.id, GitHubAccessMode.NONE, T0)
+        server.driver.inTenant(ORG_A) {
+            execute(
+                Statement.create("UPDATE runners_sessions SET github_access = 'none' WHERE id = :id")
+                    .bind("id", running.id),
+            ).getOrThrow()
+        }
         assertEquals(RunnerGitHubTokenResponse("not_linked"), server.ask("Bearer $token", body).body())
 
         val stale = RunnerGitHubTokenRequest(running.id.toString(), 1)

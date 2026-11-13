@@ -163,6 +163,9 @@ class RunnerGitHubTest {
         }
         val racing = SetCloudSessionGitHubAccessUseCaseImpl(vanishing, audit, clock)
         assertFailsWith<CloudSessionNotFoundException> { racing(alice, principal, live.id, "shared") }
+        // Resumed between the read and the write: `none` is refused as for a running session.
+        repository.put(live.copy(state = SessionState.PAUSED))
+        assertFailsWith<SessionNotPausedException> { racing(alice, principal, live.id, "none") }
         assertEquals(emptyList(), audit.records)
     }
 

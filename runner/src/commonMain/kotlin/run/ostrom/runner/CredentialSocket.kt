@@ -53,8 +53,8 @@ object CredentialSocket {
     }
 
     /**
-     * Answers one connection. A request that cannot be read, a source that fails or takes over [timeout]: no
-     * credential.
+     * Answers one connection. A request that cannot be read, a source that fails, or a request not answered within
+     * [timeout] (read and wait included): no credential.
      *
      * @param input From the helper.
      * @param output To the helper.
@@ -70,9 +70,12 @@ object CredentialSocket {
         timeout: Duration = TIMEOUT,
     ) {
         val credential = try {
-            readSocketLine(input, MAX_LINE)?.let { line ->
-                val request = JSON.decodeFromString(CredentialRequest.serializer(), line)
-                permits.withPermit { withTimeoutOrNull(timeout) { source(request) } }
+            // The whole request is bounded: a helper that sends nothing holds no handler for long.
+            withTimeoutOrNull(timeout) {
+                readSocketLine(input, MAX_LINE)?.let { line ->
+                    val request = JSON.decodeFromString(CredentialRequest.serializer(), line)
+                    permits.withPermit { source(request) }
+                }
             }
         } catch (error: CancellationException) {
             throw error

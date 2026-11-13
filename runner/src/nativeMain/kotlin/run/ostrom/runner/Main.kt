@@ -31,6 +31,8 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.launch
 import kotlinx.cinterop.toKString
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.io.IOException
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
@@ -130,7 +132,8 @@ private suspend fun CoroutineScope.gitHubAccess(
 ): Job {
     val gitHub = GitHubCredentialSource(server::gitHubToken, Clock.System)
     val gh = GitHubCliRenewal(gitHub, GitHubCliConfig(config.gitHubConfigDirectory), Clock.System, ::log)
-    val first = gh.refresh()
+    // The agent starts once the configuration is written, or after a bounded wait: a slow server delays no session.
+    val first = withTimeoutOrNull(GITHUB_FIRST_TIMEOUT) { gh.refresh() } ?: GitHubCredentialSource.RETRY
     return launch {
         launch {
             CredentialSocket.serve(selector, config.credentialSocket, gitHub::credential, ::log) {
@@ -369,6 +372,9 @@ private val KNOWN_VARIABLES = listOf(
 )
 
 private const val CONNECT_TIMEOUT_MILLIS = 10_000L
+
+/** The longest the first GitHub token may take before the agent starts without it. */
+private val GITHUB_FIRST_TIMEOUT = 10.seconds
 
 /** An image pull, the longest call to the engine. */
 private const val DOCKER_TIMEOUT_MILLIS = 600_000L

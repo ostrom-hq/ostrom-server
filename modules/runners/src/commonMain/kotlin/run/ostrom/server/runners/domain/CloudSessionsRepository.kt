@@ -82,7 +82,7 @@ interface CloudSessionsRepository {
      * @param access The mode.
      * @param now The time.
      *
-     * @return The session after the change, or null when it does not exist or is over.
+     * @return The session after the change, or null when it does not exist, is over, or is not paused for `none`.
      */
     suspend fun setGitHubAccess(orgId: Uuid, id: Uuid, access: GitHubAccessMode, now: Instant): CloudSession?
 

@@ -85,10 +85,10 @@ class GitHubCliConfigTest {
         assertTrue(exists(config.notice))
 
         clock.now += 5.minutes
-        answers += { GitHubToken("bad token", "octocat", clock.now + 1.hours) }
+        answers += { GitHubToken("bad token", "octocat", clock.now + 6.minutes) }
         assertEquals(5.minutes, renewal.refresh())
         clock.now += 5.minutes
-        answers += { GitHubToken("bad token", "octocat", clock.now + 1.hours) }
+        answers += { GitHubToken("bad token", "octocat", clock.now + 6.minutes) }
         assertEquals(5.minutes, renewal.refresh())
         assertEquals("the GitHub token was not written to the gh configuration: unexpected format", logs.last())
         assertEquals(2, logs.size, "Once per streak")
@@ -112,12 +112,14 @@ class GitHubCliConfigTest {
         clock.now += 5.minutes
         assertEquals(5.minutes, renewal.refresh())
         assertFalse(exists(config.hosts), "Expired: removed")
+        clock.now += 30.seconds
         answers += { error("server down") }
         assertEquals(5.minutes, renewal.refresh())
         assertEquals(listOf("the gh configuration could not be renewed"), logs)
 
         // A failure before anything was written removes nothing.
         val fresh = GitHubCliRenewal(source, config, clock, { logs += it })
+        clock.now += 30.seconds
         answers += { error("server down") }
         assertEquals(30.seconds, fresh.refresh())
     }

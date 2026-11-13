@@ -49,7 +49,7 @@ data class Credential(val username: String, val password: String) {
  * it; without a usable link it answers nothing (public repositories clone anonymously) and the server is not asked
  * again for [RETRY].
  *
- * @param fetch Asks the server; null without a usable link. A failure throws and leaves the schedule as it was.
+ * @param fetch Asks the server; null without a usable link. A failure throws (GitHub unreachable included).
  * @param clock The time.
  */
 class GitHubCredentialSource(private val fetch: suspend () -> GitHubToken?, private val clock: Clock) {
@@ -69,10 +69,18 @@ class GitHubCredentialSource(private val fetch: suspend () -> GitHubToken?, priv
         return token()?.let { Credential(USERNAME, it.token) }
     }
 
-    /** @return The current token, asking the server only on the first call or once the last answer is due. */
+    /**
+     * @return The current token, asking the server only on the first call or once the last answer is due; null
+     *   without a link or once the token expired.
+     *
+     * @throws Exception When the server could not answer: it is asked again after [RETRY], and the last token is
+     *   still handed out until it expires.
+     */
     suspend fun token(): GitHubToken? = lock.withLock {
         val now = clock.now()
         if (renewAt.let { it == null || now >= it }) {
+            // A failure is retried after a while, not at every git call.
+            renewAt = now + RETRY
             val fresh = fetch()
             current = fresh
             val due = when {
@@ -83,7 +91,7 @@ class GitHubCredentialSource(private val fetch: suspend () -> GitHubToken?, priv
             // A token that expires soon is not asked for again at every call.
             renewAt = maxOf(due, now + RETRY)
         }
-        current
+        current?.takeIf { token -> token.expiresAt.let { it == null || it > now } }
     }
 
     /** @return When [token] next asks the server; now before the first call. */

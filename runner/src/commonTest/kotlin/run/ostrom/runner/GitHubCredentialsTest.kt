@@ -71,10 +71,28 @@ class GitHubCredentialsTest {
     }
 
     @Test
-    fun aFailedCallLeavesTheScheduleAsItWas() = runTest {
+    fun aFailedCallIsRetriedAfterAWhileAndKeepsTheLastTokenWhileItIsValid() = runTest {
         answers += { error("server down") }
         assertFailsWith<IllegalStateException> { source.credential(github) }
-        answers += { GitHubToken("ghu_one", "octocat", null) }
-        assertEquals("ghu_one", source.token()?.token, "Asked again at once")
+        assertNull(source.token(), "Not asked again at once")
+        assertEquals(1, asked)
+
+        clock.now += 30.seconds
+        answers += { GitHubToken("ghu_one", "octocat", clock.now + 1.hours) }
+        assertEquals("ghu_one", source.token()?.token)
+        clock.now += 55.minutes
+        answers += { error("server down") }
+        assertFailsWith<IllegalStateException> { source.token() }
+        assertEquals("ghu_one", source.token()?.token, "Still valid")
+        assertEquals(3, asked)
+    }
+
+    @Test
+    fun anExpiredTokenIsNeverHandedOut() = runTest {
+        answers += { GitHubToken("ghu_short", "octocat", clock.now + 20.seconds) }
+        assertEquals("ghu_short", source.token()?.token)
+        clock.now += 25.seconds
+        assertNull(source.token(), "Expired, and not due yet")
+        assertEquals(1, asked)
     }
 }

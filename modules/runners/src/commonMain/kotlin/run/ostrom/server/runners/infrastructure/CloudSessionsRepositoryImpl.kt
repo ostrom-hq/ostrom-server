@@ -119,7 +119,9 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             Statement.create(
                 """
                 UPDATE runners_sessions SET github_access = :access, generation = generation + 1, updated_at = :now
-                WHERE id = :id AND org_id = :org_id AND state NOT IN ('terminated', 'failed') RETURNING $COLUMNS
+                WHERE id = :id AND org_id = :org_id AND state NOT IN ('terminated', 'failed')
+                    AND (:access <> 'none' OR state = 'paused')
+                RETURNING $COLUMNS
                 """,
             ).bind("access", access.wire).bind("now", now).bind("id", id).bind("org_id", orgId),
         ).getOrThrow().firstOrNull()?.toSession()

@@ -135,10 +135,10 @@ class HttpServerApi(
     /**
      * Asks for the GitHub token of the member this execution runs for (never cached by the server's answer).
      *
-     * @return The token, or null without a usable link, while GitHub is unreachable, or on a server without the route.
+     * @return The token, or null without a usable link or on a server without the route.
      *
      * @throws ExecutionEndedException When the server no longer knows this execution.
-     * @throws IllegalStateException When the server fails.
+     * @throws IllegalStateException When the server fails, or GitHub is unavailable for now.
      */
     suspend fun gitHubToken(): GitHubToken? {
         val response = client.post("${config.serverUrl}/api/v1/cloud/runner/github") {
@@ -149,6 +149,8 @@ class HttpServerApi(
         }
         return when (response.status) {
             HttpStatusCode.OK -> JSON.decodeFromString(GitHubResponse.serializer(), response.bodyAsText()).let {
+                // GitHub could not refresh the token for now: a failure, so the last token is kept while valid.
+                check(it.status != UNAVAILABLE) { "GitHub is unavailable for now." }
                 val login = it.login?.takeIf(String::isNotBlank)
                 it.token?.takeIf { token -> it.status == LINKED && token.isNotBlank() }
                     ?.let { token -> GitHubToken(token, login, it.expiresAt?.let(Instant::parse)) }
@@ -196,6 +198,7 @@ class HttpServerApi(
         private val ENDED_CODES = setOf(TOKEN_REFUSED, ANOTHER_EXECUTION)
         private const val SERVER_ERRORS = 500
         private const val LINKED = "linked"
+        private const val UNAVAILABLE = "unavailable"
 
         /**
          * Why the server refused: the message of its error body, or the status when the body is not one.

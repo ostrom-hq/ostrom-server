@@ -267,8 +267,10 @@ class RunnerConfigTest {
         assertNull(api.gitHubToken())
         answer = """{"status":"not_linked"}"""
         assertNull(api.gitHubToken())
-        answer = """{"status":"unavailable","token":"ghu_x"}"""
+        answer = """{"status":"other","token":"ghu_x"}"""
         assertNull(api.gitHubToken())
+        answer = """{"status":"unavailable"}"""
+        assertFailsWith<IllegalStateException>("GitHub down: the last token is kept") { api.gitHubToken() }
         status = HttpStatusCode.NotFound
         assertNull(api.gitHubToken(), "A server without the route")
         status = HttpStatusCode.Conflict
