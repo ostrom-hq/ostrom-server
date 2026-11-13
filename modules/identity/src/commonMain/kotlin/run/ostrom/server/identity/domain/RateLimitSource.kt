@@ -21,7 +21,10 @@ private const val IPV4_ADDRESS_BYTES = 4
  */
 fun rateLimitSource(source: String): String {
     val bytes = parseIpAddress(source) ?: return source
-    if (bytes.size == IPV4_ADDRESS_BYTES) return formatIpAddress(bytes)
-    val network = ByteArray(bytes.size) { if (it < IPV6_CLIENT_BYTES) bytes[it] else 0 }
-    return formatIpAddress(network) + "/" + IPV6_CLIENT_BYTES * Byte.SIZE_BITS
+    return if (bytes.size == IPV4_ADDRESS_BYTES) {
+        formatIpAddress(bytes)
+    } else {
+        val network = ByteArray(bytes.size) { if (it < IPV6_CLIENT_BYTES) bytes[it] else 0 }
+        formatIpAddress(network) + "/" + IPV6_CLIENT_BYTES * Byte.SIZE_BITS
+    }
 }
