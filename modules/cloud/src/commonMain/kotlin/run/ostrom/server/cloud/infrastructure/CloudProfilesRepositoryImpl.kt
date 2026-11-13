@@ -71,11 +71,9 @@ class CloudProfilesRepositoryImpl(private val driver: Driver) : CloudProfilesRep
         createdAt = get("created_at").asInstant(),
         updatedAt = get("updated_at").asInstant(),
     )
-
-    private companion object {
-        const val SELECT = "SELECT p.id, p.org_id, p.name, p.version, p.assigned_member_ids, p.created_at, " +
-            "p.updated_at, v.spec FROM cloud_profiles p " +
-            "JOIN cloud_profile_versions v ON v.profile_id = p.id AND v.version = p.version"
-        val MEMBERS = ListSerializer(String.serializer())
-    }
 }
+
+private const val SELECT = "SELECT p.id, p.org_id, p.name, p.version, p.assigned_member_ids, p.created_at, " +
+    "p.updated_at, v.spec FROM cloud_profiles p " +
+    "JOIN cloud_profile_versions v ON v.profile_id = p.id AND v.version = p.version"
+private val MEMBERS = ListSerializer(String.serializer())

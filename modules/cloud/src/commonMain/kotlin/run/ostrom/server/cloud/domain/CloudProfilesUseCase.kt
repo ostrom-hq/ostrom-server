@@ -103,8 +103,8 @@ class CloudProfilesUseCaseImpl(
                 image = input.spec.image.trim(),
                 allowedImageOverrides = input.spec.allowedImageOverrides.map { it.trim() }.distinct(),
                 imagePullSecrets = input.spec.imagePullSecrets.map { it.trim() }.distinct(),
-                storageClass = input.spec.storageClass?.trim()?.takeIf { it.isNotEmpty() },
-                agentVersion = input.spec.agentVersion?.trim()?.takeIf { it.isNotEmpty() },
+                storageClass = input.spec.storageClass.trimmedOrNull(),
+                agentVersion = input.spec.agentVersion.trimmedOrNull(),
             ),
             assignedMemberIds = input.assignedMemberIds.map { it.trim() }.filter { it.isNotEmpty() }.toSet(),
         )

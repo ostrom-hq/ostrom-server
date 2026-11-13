@@ -128,3 +128,6 @@ internal fun profileProblem(input: CloudProfileInput, cluster: CloudCluster?): S
 }
 
 private val AGENTS = setOf("claude", "codex")
+
+/** The value trimmed, or null when it is null or blank. */
+internal fun String?.trimmedOrNull(): String? = this?.let { value -> value.trim().takeIf { it.isNotEmpty() } }

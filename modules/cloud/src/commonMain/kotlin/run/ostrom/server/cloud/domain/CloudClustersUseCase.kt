@@ -158,10 +158,10 @@ class CloudClustersUseCaseImpl(
         fun normalize(input: CloudClusterInput) = input.copy(
             name = input.name.trim(),
             apiUrl = input.apiUrl.trim().trimEnd('/'),
-            caCertificate = input.caCertificate?.trim()?.takeIf { it.isNotEmpty() },
-            serviceAccountToken = input.serviceAccountToken?.trim()?.takeIf { it.isNotEmpty() },
+            caCertificate = input.caCertificate.trimmedOrNull(),
+            serviceAccountToken = input.serviceAccountToken.trimmedOrNull(),
             allowedNamespaces = input.allowedNamespaces.map { it.trim() },
-            defaultStorageClass = input.defaultStorageClass?.trim()?.takeIf { it.isNotEmpty() },
+            defaultStorageClass = input.defaultStorageClass.trimmedOrNull(),
         )
     }
 }

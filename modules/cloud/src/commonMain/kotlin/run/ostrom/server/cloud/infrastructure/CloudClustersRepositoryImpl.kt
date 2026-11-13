@@ -73,10 +73,8 @@ class CloudClustersRepositoryImpl(private val driver: Driver) : CloudClustersRep
         )
         return StoredCloudCluster(cluster, ca, token)
     }
-
-    private companion object {
-        const val COLUMNS = "id, name, api_url, sealed_ca, sealed_token, allowed_namespaces, max_running_pods, " +
-            "default_storage_class, version, created_at, updated_at"
-        val NAMES = ListSerializer(String.serializer())
-    }
 }
+
+private const val COLUMNS = "id, name, api_url, sealed_ca, sealed_token, allowed_namespaces, max_running_pods, " +
+    "default_storage_class, version, created_at, updated_at"
+private val NAMES = ListSerializer(String.serializer())

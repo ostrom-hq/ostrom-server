@@ -19,6 +19,8 @@ import run.ostrom.server.secrets.domain.CallerResolver
  * @property audit The organizations' audit log.
  * @property publicUrl The server's public URL, the callback when the runtime names none.
  */
+// The instance's runtime and clusters and the organizations' profiles are one console page, as TeamCode's.
+@Suppress("LongParameterList")
 class CloudAdminRoutesDependencies(
     val gate: CloudAdminGate,
     val runtime: CloudRuntimeUseCase,

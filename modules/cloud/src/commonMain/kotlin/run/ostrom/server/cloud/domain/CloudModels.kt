@@ -141,12 +141,10 @@ class CloudClusterCredentials(
  * @property memoryMebibytes Memory, in MiB.
  */
 @Serializable
-data class CloudResources(val cpuMillis: Int = DEFAULT_CPU, val memoryMebibytes: Int = DEFAULT_MEMORY) {
-    private companion object {
-        const val DEFAULT_CPU = 1000
-        const val DEFAULT_MEMORY = 2048
-    }
-}
+data class CloudResources(val cpuMillis: Int = DEFAULT_CPU, val memoryMebibytes: Int = DEFAULT_MEMORY)
+
+private const val DEFAULT_CPU = 1000
+private const val DEFAULT_MEMORY = 2048
 
 /**
  * What a session of a profile runs (TeamCode's `CloudProfileSpec`); a version of it never changes once published.
@@ -180,14 +178,12 @@ data class CloudProfileSpec(
     val idleTimeoutMinutes: Int = DEFAULT_IDLE,
     val minIdleTimeoutMinutes: Int = DEFAULT_MIN_IDLE,
     val maxIdleTimeoutMinutes: Int = DEFAULT_MAX_IDLE,
-) {
-    private companion object {
-        const val DEFAULT_WORKSPACE = 10
-        const val DEFAULT_IDLE = 30
-        const val DEFAULT_MIN_IDLE = 5
-        const val DEFAULT_MAX_IDLE = 1440
-    }
-}
+)
+
+private const val DEFAULT_WORKSPACE = 10
+private const val DEFAULT_IDLE = 30
+private const val DEFAULT_MIN_IDLE = 5
+private const val DEFAULT_MAX_IDLE = 1440
 
 /**
  * A profile of an organization at its current version (TeamCode's `CloudProfile`).

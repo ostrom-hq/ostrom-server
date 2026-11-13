@@ -116,7 +116,7 @@ class CloudRuntimeUseCaseImpl(
     }
 
     override suspend fun seed(environment: (String) -> String?) {
-        val set = LEGACY.filter { !environment(it).isNullOrEmpty() }
+        val set = listOf(DRIVER, IMAGE, SERVER_URL).filter { !environment(it).isNullOrEmpty() }
         when {
             set.isEmpty() -> Unit
             repository.get() != null -> logger.warn(
@@ -174,12 +174,11 @@ class CloudRuntimeUseCaseImpl(
         const val IMAGE = "OSTROM_RUNNERS_IMAGE"
         const val SERVER_URL = "OSTROM_RUNNERS_SERVER_URL"
         const val DEFAULT_IMAGE = "ghcr.io/ostrom-hq/ostrom-runner:latest"
-        val LEGACY = listOf(DRIVER, IMAGE, SERVER_URL)
 
         fun normalize(runtime: CloudRuntime) = runtime.copy(
-            runnerImage = runtime.runnerImage?.trim()?.takeIf { it.isNotEmpty() },
+            runnerImage = runtime.runnerImage.trimmedOrNull(),
             runnerBinary = runtime.runnerBinary.trim().ifEmpty { CloudRuntime.DEFAULT_RUNNER_BINARY },
-            serverUrl = runtime.serverUrl?.trim()?.trimEnd('/')?.takeIf { it.isNotEmpty() },
+            serverUrl = runtime.serverUrl.trimmedOrNull()?.trimEnd('/'),
             workspaceAccessMode = runtime.workspaceAccessMode.trim(),
             memberTransfers = runtime.memberTransfers.trim().lowercase(),
         )
