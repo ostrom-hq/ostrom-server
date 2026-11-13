@@ -23,7 +23,7 @@ class OrgCreationClosedException : OstromException(
     "org_creation_closed",
 )
 
-/** No live invitation matches.
+/** No live invitation matches. */
 class InvitationNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Invitation not found.")
 
 /**
