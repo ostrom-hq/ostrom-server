@@ -8,6 +8,7 @@ import run.ostrom.server.gateway.domain.ModelPolicy
 import run.ostrom.server.gateway.domain.PriceTable
 import run.ostrom.server.gateway.domain.RefusalKind
 import run.ostrom.server.gateway.domain.WireProtocol
+import run.ostrom.server.gateway.domain.Workload
 import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.audit.auditDetails
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -62,6 +63,9 @@ const val INFERENCE_BASE: String = "/api/v1/inference"
 
 /** The credentials that call models: an agent session, a personal token with the scope, a browser session. */
 private val INFERENCE_SCOPES = arrayOf(RelayScopes.AGENT_SESSION, RelayScopes.INFERENCE_USE)
+
+/** The header naming a call's class in the admission queue. */
+private const val WORKLOAD_HEADER = "x-ostrom-workload"
 
 /** Who changes the policy and the settings besides a browser session (S2-52, declared): an `inference:admin` key. */
 private val INFERENCE_ADMINS = WriteAccess.tokens(PrincipalKind.SERVICE)
@@ -130,6 +134,15 @@ fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependen
             call.respond(getPolicy(caller).toDto())
         }
         put<ModelPolicyApi> { call.putModelPolicy(dependencies) }
+        get<InferenceQueueApi> {
+            // Whoever may call models or read usage.
+            val reader = call.requireCaller(
+                callers, RelayScopes.INFERENCE_USE, RelayScopes.AGENT_SESSION, RelayScopes.INFERENCE_READ,
+                RelayScopes.USAGE_READ,
+            )
+            val counts = getQueue(reader)
+            call.respond(InferenceQueueDto(counts.waiting, counts.waitingMine))
+        }
         get<InferenceSettingsApi> {
             call.respond(getSettings(call.requireCaller(callers, RelayScopes.INFERENCE_ADMIN)).toDto())
         }
@@ -143,6 +156,7 @@ fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependen
                 request.openaiKeySecret,
                 request.openrouterKeySecret,
                 request.useSharedAccounts,
+                request.memberConcurrency,
             )
             val saved = putSettings(caller, settings)
             // The names of the secrets the keys are read from, never a key: repointing a key is in the log.
@@ -151,6 +165,7 @@ fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependen
                 "openai_key_secret" to saved.openaiKeySecret,
                 "openrouter_key_secret" to saved.openrouterKeySecret,
                 "use_shared_accounts" to saved.useSharedAccounts,
+                "member_concurrency" to saved.memberConcurrency.entries.joinToString(",") { "${it.key}=${it.value}" },
             )
             audit.record(
                 OrgAuditRecord(caller.orgId, principal, "inference.settings.changed", "settings", "inference", details),
@@ -193,7 +208,13 @@ private suspend fun ApplicationCall.putModelPolicy(dependencies: GatewayRoutesDe
 private fun ModelPolicy.toDto() = ModelPolicyDto(allowed, default, byMember)
 
 private fun GatewaySettings.toDto() =
-    InferenceSettingsDto(anthropicKeySecret, openaiKeySecret, openrouterKeySecret, useSharedAccounts)
+    InferenceSettingsDto(
+        anthropicKeySecret,
+        openaiKeySecret,
+        openrouterKeySecret,
+        useSharedAccounts,
+        memberConcurrency,
+    )
 
 /** The models the member may name, as `/v1/models` lists them: the default first, every priced model if all are. */
 private fun modelList(policy: ModelPolicy, caller: Caller): JsonObject {
@@ -221,15 +242,20 @@ private suspend fun RoutingContext.infer(dependencies: GatewayRoutesDependencies
         null
     }
     val responder = KtorInferenceResponder(call, dependencies.clock)
+    // Sent twice, the values are joined and name no class.
+    val workload = Workload.named(call.request.headers.getAll(WORKLOAD_HEADER)?.joinToString(","))
     if (bytes == null) {
         responder.refuse(protocol, InferenceRefusal(RefusalKind.INVALID, "The request exceeds 32 MiB."))
+    } else if (workload == null) {
+        val refusal = InferenceRefusal(RefusalKind.INVALID_WORKLOAD, "x-ostrom-workload is interactive or background.")
+        responder.refuse(protocol, refusal)
     } else {
         val headers = call.request.headers.entries()
             .associate { (name, values) -> name.lowercase() to values.joinToString(",") } - CREDENTIAL_HEADERS
         // The session comes from the token, never from a header the agent sets (S2-53): an agent session's token is
         // its launch; any other credential has no session, so no account affinity.
         val session = principal.subjectId.takeIf { RelayScopes.AGENT_SESSION in principal.scopes }
-        val inference = InferenceCall(protocol, bytes.decodeToString(), headers, session?.take(MAX_SESSION))
+        val inference = InferenceCall(protocol, bytes.decodeToString(), headers, session?.take(MAX_SESSION), workload)
         dependencies.relay(caller, inference, responder)
     }
 }

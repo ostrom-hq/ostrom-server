@@ -62,12 +62,14 @@ enum class InferenceProvider(val wire: String, val family: String, val label: St
  * @property body The request body.
  * @property headers The agent's headers, names in lowercase, without its Ostrom credential.
  * @property sessionId The agent session, for account affinity, when the agent named it.
+ * @property workload Its class in the admission queue (`x-ostrom-workload`).
  */
 class InferenceCall(
     val protocol: WireProtocol,
     val body: String,
     val headers: Map<String, String>,
     val sessionId: String?,
+    val workload: Workload = Workload.INTERACTIVE,
 ) {
     override fun toString(): String = "InferenceCall($protocol, ${body.length} chars)"
 }
@@ -216,6 +218,9 @@ sealed interface SpendDecision {
 fun interface SpendGuard {
     /** Decides for the member's call, and holds its reserve when it may go. */
     suspend fun check(request: SpendRequest): SpendDecision
+
+    /** Drops the hold of a call that waits in the admission queue; nothing when it holds none. */
+    suspend fun release(orgId: Uuid, callId: Uuid) = Unit
 }
 
 /** Allows every call: the default until the budgets module binds its [SpendGuard]. */
@@ -231,12 +236,15 @@ object AllowAllSpend : SpendGuard {
  * @property openaiKeySecret Org secret holding an OpenAI API key, for Responses and Chat.
  * @property openrouterKeySecret Org secret holding an OpenRouter key, for Chat (models named `vendor/model`).
  * @property useSharedAccounts Whether shared subscription accounts serve first (on by default).
+ * @property memberConcurrency The most calls a member runs at once, by member id; a member absent has no limit. Past
+ *   it, the member's next calls wait in the admission queue.
  */
 data class GatewaySettings(
     val anthropicKeySecret: String? = null,
     val openaiKeySecret: String? = null,
     val openrouterKeySecret: String? = null,
     val useSharedAccounts: Boolean = true,
+    val memberConcurrency: Map<String, Int> = emptyMap(),
 ) {
     /** The secret naming the key of [provider], if the org set one. */
     fun keySecret(provider: InferenceProvider): String? = if (provider.family == InferenceProvider.ANTHROPIC.family) {

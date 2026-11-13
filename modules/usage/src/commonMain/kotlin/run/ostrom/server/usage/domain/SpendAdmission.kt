@@ -178,6 +178,15 @@ interface SpendAdmission {
      * @return The answer.
      */
     suspend fun admit(hold: SpendHold, limits: SpendLimits, since: Instant): Admission
+
+    /**
+     * Drops the hold of a call that waits before it starts (the gateway's admission queue); it is admitted again when
+     * its turn comes.
+     *
+     * @param orgId The org.
+     * @param callId The call.
+     */
+    suspend fun release(orgId: Uuid, callId: Uuid)
 }
 
 /**
@@ -198,6 +207,8 @@ class SpendAdmissionImpl(
         val now = clock.now()
         return repository.holdWithin(hold, limits, HoldWindow(since, now, now + holdFor))
     }
+
+    override suspend fun release(orgId: Uuid, callId: Uuid) = repository.dropHold(orgId, callId)
 }
 
 /**

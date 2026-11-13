@@ -2,6 +2,7 @@
 package run.ostrom.server.gateway.presentation
 
 import run.ostrom.server.gateway.domain.GetGatewaySettingsUseCase
+import run.ostrom.server.gateway.domain.GetInferenceQueueUseCase
 import run.ostrom.server.gateway.domain.GetModelPolicyUseCase
 import run.ostrom.server.gateway.domain.PutGatewaySettingsUseCase
 import run.ostrom.server.gateway.domain.PutModelPolicyUseCase
@@ -23,6 +24,7 @@ import kotlin.time.Clock
  * @property putPolicy Changes it.
  * @property clock The time.
  * @property audit Writes a change of the policy or the settings to the organization's audit log.
+ * @property getQueue Reads the admission queue's waiting calls.
  */
 data class GatewayRoutesDependencies(
     val tokens: TokenAuthenticator,
@@ -34,4 +36,5 @@ data class GatewayRoutesDependencies(
     val putPolicy: PutModelPolicyUseCase,
     val clock: Clock,
     val audit: OrgAuditTrail,
+    val getQueue: GetInferenceQueueUseCase,
 )

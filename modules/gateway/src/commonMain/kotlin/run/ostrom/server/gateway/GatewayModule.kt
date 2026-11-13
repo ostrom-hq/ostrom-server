@@ -3,11 +3,16 @@ package run.ostrom.server.gateway
 
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.core.telemetry.Telemetry
+import run.ostrom.server.gateway.domain.AdmissionQueueRepository
 import run.ostrom.server.gateway.domain.AllowAllSpend
+import run.ostrom.server.gateway.domain.AwaitAdmissionUseCase
+import run.ostrom.server.gateway.domain.AwaitAdmissionUseCaseImpl
 import run.ostrom.server.gateway.domain.BudgetCheck
 import run.ostrom.server.gateway.domain.GatewaySettingsRepository
 import run.ostrom.server.gateway.domain.GetGatewaySettingsUseCase
 import run.ostrom.server.gateway.domain.GetGatewaySettingsUseCaseImpl
+import run.ostrom.server.gateway.domain.GetInferenceQueueUseCase
+import run.ostrom.server.gateway.domain.GetInferenceQueueUseCaseImpl
 import run.ostrom.server.gateway.domain.GetModelPolicyUseCase
 import run.ostrom.server.gateway.domain.GetModelPolicyUseCaseImpl
 import run.ostrom.server.gateway.domain.InferencePlanner
@@ -26,6 +31,7 @@ import run.ostrom.server.gateway.domain.RelayInferenceUseCase
 import run.ostrom.server.gateway.domain.RelayInferenceUseCaseImpl
 import run.ostrom.server.gateway.domain.SpendGuard
 import run.ostrom.server.gateway.domain.UpstreamRequests
+import run.ostrom.server.gateway.infrastructure.AdmissionQueueRepositoryImpl
 import run.ostrom.server.gateway.infrastructure.GatewayMigrations
 import run.ostrom.server.gateway.infrastructure.GatewaySettingsRepositoryImpl
 import run.ostrom.server.gateway.infrastructure.KtorInferenceUpstream
@@ -95,6 +101,9 @@ object GatewayModule : ServerModule {
                 requests = UpstreamRequests(config.endpoints),
             )
         }
+        single<AdmissionQueueRepository> { AdmissionQueueRepositoryImpl(get()) }
+        single<AwaitAdmissionUseCase> { AwaitAdmissionUseCaseImpl(get(), get()) }
+        single<GetInferenceQueueUseCase> { GetInferenceQueueUseCaseImpl(get()) }
         single<RelayInferenceUseCase> {
             RelayInferenceUseCaseImpl(
                 planner = get(),
@@ -104,6 +113,7 @@ object GatewayModule : ServerModule {
                 observer = MeteredModelCallObserver(get(), getOrNull<ModelCallObserver>() ?: NoModelCallObserver),
                 clock = get(),
                 tracer = SpanModelCallTracer(get<Telemetry>().tracer),
+                admission = get(),
             )
         }
         single<GetGatewaySettingsUseCase> { GetGatewaySettingsUseCaseImpl(get()) }
@@ -125,6 +135,7 @@ object GatewayModule : ServerModule {
                 putPolicy = get(),
                 clock = get(),
                 audit = get(),
+                getQueue = get(),
             )
         }
     }
@@ -140,6 +151,7 @@ object GatewayModule : ServerModule {
         route.gatewayRoutes(koin.get())
     }
 
-    /** The inference gateway: an org configures its own provider keys, so it is always served. */
-    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.INFERENCE)
+    /** The inference gateway and its admission queue: an org configures its own provider keys, so both are served. */
+    override suspend fun features(koin: Koin): Set<String> =
+        setOf(ServerFeatures.INFERENCE, ServerFeatures.INFERENCE_QUEUE)
 }

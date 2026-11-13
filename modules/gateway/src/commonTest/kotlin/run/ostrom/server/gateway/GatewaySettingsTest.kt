@@ -48,6 +48,24 @@ class GatewaySettingsTest {
     }
 
     @Test
+    fun aMembersConcurrencyLimitIsOneToThirtyTwoByMemberIdInOneSpelling() = runTest {
+        val put = PutGatewaySettingsUseCaseImpl(repository)
+        val member = Gw.memberA.memberId
+        val upper = member.toString().uppercase()
+        val saved = put(Gw.adminA, GatewaySettings(memberConcurrency = mapOf(upper to 1)))
+        assertEquals(mapOf(member.toString() to 1), saved.memberConcurrency)
+        assertEquals(saved, GetGatewaySettingsUseCaseImpl(repository)(Gw.adminA))
+        val most = put(Gw.adminA, GatewaySettings(memberConcurrency = mapOf("$member" to 32)))
+        assertEquals(mapOf("$member" to 32), most.memberConcurrency)
+        val tooMany = (0..GatewayRules.MAX_MEMBERS).associate { Uuid.random().toString() to 1 }
+        for (bad in listOf(mapOf("$member" to 0), mapOf("$member" to 33), mapOf("ada" to 2), tooMany)) {
+            assertFailsWith<InvalidGatewaySettingsException> {
+                put(Gw.adminA, GatewaySettings(memberConcurrency = bad))
+            }
+        }
+    }
+
+    @Test
     fun aLaunchReadsTheSamePolicyAsAModelCall() = runTest {
         val access = PolicyModelAccess(repository)
         assertNull(access.refusal(Gw.orgA, Gw.memberA.memberId, "gpt-5"), "No policy: every model")

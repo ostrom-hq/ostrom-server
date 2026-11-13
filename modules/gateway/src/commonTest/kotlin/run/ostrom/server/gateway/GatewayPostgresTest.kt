@@ -9,6 +9,7 @@ import run.ostrom.server.gateway.domain.SpendDecision
 import run.ostrom.server.gateway.domain.SpendGuard
 import run.ostrom.server.gateway.domain.TokenUsage
 import run.ostrom.server.gateway.domain.UpstreamRequests
+import run.ostrom.server.gateway.presentation.InferenceQueueDto
 import run.ostrom.server.gateway.presentation.InferenceSettingsDto
 import run.ostrom.server.gateway.presentation.MAX_INFERENCE_REQUEST_BYTES
 import run.ostrom.server.gateway.presentation.ModelPolicyDto
@@ -70,6 +71,7 @@ import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.writeStringUtf8
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -612,6 +614,78 @@ class GatewayPostgresTest {
             }
         }
 
+    private suspend fun TestServer.queue(token: String): InferenceQueueDto =
+        client.get("/api/v1/inference/queue") { bearerAuth(token) }.body()
+
+    @Test
+    fun whoeverCallsModelsReadsTheQueueAndAWorkloadIsInteractiveOrBackground() =
+        serverTest(modules, overrides) { server ->
+            with(server) {
+                for (token in listOf("agent-a", "use-a", "policy-a", "member-a")) {
+                    assertEquals(InferenceQueueDto(0, 0), queue(token), token)
+                }
+                val reader = client.get("/api/v1/inference/queue") { bearerAuth("reader-a") }
+                assertEquals(HttpStatusCode.Forbidden, reader.status)
+                for (token in listOf(null, "nobody")) {
+                    val refused = client.get("/api/v1/inference/queue") { token?.let { bearerAuth(it) } }
+                    assertEquals(HttpStatusCode.Unauthorized, refused.status, token)
+                }
+                for (workload in listOf("urgent", "BACKGROUND")) {
+                    val invalid = infer("messages", """{"model":"claude-opus-5"}""") {
+                        header("x-api-key", "agent-a")
+                        header("x-ostrom-workload", workload)
+                    }
+                    assertEquals(HttpStatusCode.BadRequest, invalid.status, workload)
+                    assertEquals("invalid_request_error", errorField(invalid, "type"))
+                    assertEquals("invalid_workload", invalid.headers["x-ostrom-error"])
+                }
+                assertTrue(received.isEmpty() && records.isEmpty(), "Refused before it is a model call")
+            }
+        }
+
+    /** TeamCode's member concurrency (TC-SCH): a member's call past their limit waits for one of theirs to end. */
+    @Test
+    fun aMemberAtTheirLimitWaitsForTheirCallToEndAndTheQueueSaysSo() = serverTest(modules, overrides) { server ->
+        with(server) {
+            shareClaude()
+            val ada = Gw.memberA.memberId.toString()
+            val limited = InferenceSettingsDto(memberConcurrency = mapOf(ada.uppercase() to 1))
+            val saved = putJson("/api/v1/inference/settings", "admin-a", limited)
+            assertEquals(mapOf(ada to 1), saved.body<InferenceSettingsDto>().memberConcurrency, "In one spelling")
+            val tooMany = InferenceSettingsDto(memberConcurrency = mapOf(ada to 33))
+            assertEquals(HttpStatusCode.BadRequest, putJson("/api/v1/inference/settings", "admin-a", tooMany).status)
+
+            val upstream = ByteChannel()
+            broken = upstream
+            val stream = """{"model":"claude-opus-5","stream":true}"""
+            val (first, second) = coroutineScope {
+                val first = async { infer("messages", stream).bodyAsText() }
+                val second = async {
+                    withContext(Dispatchers.Default) {
+                        withTimeout(10.seconds) { while (received.isEmpty()) delay(5.milliseconds) }
+                    }
+                    infer("messages", stream) {
+                        header("x-api-key", "agent-a")
+                        header("x-ostrom-workload", "background")
+                    }
+                }
+                withContext(Dispatchers.Default) {
+                    withTimeout(10.seconds) { while (queue("member-a").waitingMine == 0) delay(20.milliseconds) }
+                }
+                assertEquals(InferenceQueueDto(1, 0), queue("admin-a"), "The org's, and none of the admin's")
+                assertEquals(1, received.size, "A waiting call never reaches the provider")
+                broken = null
+                upstream.writeStringUtf8(events)
+                upstream.flushAndClose()
+                first.await() to second.await()
+            }
+            assertEquals(events, first)
+            assertEquals(HttpStatusCode.OK, second.status)
+            assertEquals(events, second.bodyAsText())
+            assertEquals(InferenceQueueDto(0, 0), queue("member-a"))
+        }
+    }
+
     @Test
     fun refusalsTakeTheProviderShape() = serverTest(modules, overrides) { server ->
         with(server) {
@@ -629,6 +703,7 @@ class GatewayPostgresTest {
             val noKey = infer("messages", """{"model":"claude-opus-5"}""")
             assertEquals(HttpStatusCode.ServiceUnavailable, noKey.status)
             assertEquals("api_error", errorField(noKey, "type"))
+            assertEquals("no_credential", noKey.headers["x-ostrom-error"], "The gateway's own refusal says so")
             val tooLarge = infer("messages", "x".repeat((MAX_INFERENCE_REQUEST_BYTES + 1).toInt()))
             assertEquals(HttpStatusCode.BadRequest, tooLarge.status)
             assertEquals(
@@ -709,6 +784,8 @@ class GatewayPostgresTest {
                         bearerAuth("agent-a")
                     }.status,
                 )
+                val queue = client.get("/api/v1/inference/queue") { bearerAuth("agent-a") }
+                assertEquals(HttpStatusCode.NotFound, queue.status)
             }
         }
 }

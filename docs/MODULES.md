@@ -286,6 +286,16 @@ of the instance and comes before an org's own key (`/api/v1/inference/settings` 
 | `OSTROM_GATEWAY_OPENROUTER_URL` | `https://openrouter.ai/api` | OpenRouter base URL (`/v1/chat/completions`) |
 | `OSTROM_GATEWAY_CODEX_URL` | `https://chatgpt.com/backend-api/codex` | ChatGPT's Codex backend (`/responses`), for shared ChatGPT accounts |
 
+A model call waits for its turn in the org's admission queue (TeamCode's admission), shared by every replica in
+PostgreSQL (`gateway_admissions`, `gateway_admission_turns`, under an advisory lock of the org): while every shared
+account it may use is busy, or while its member already runs as many calls as their limit (`memberConcurrency` in
+the inference settings, 1 to 32). Interactive calls go first and a background one (`x-ostrom-workload: background`)
+joins them after 30 s; then the member served longest ago, then arrival order. A call waits 90 s at most (503
+`queue_timeout`); 128 calls wait per org and 8 per limited member (503 `queue_full`); a call whose replica stops
+polling loses its turn within 5 s and its place within 15 s, and a running call's place lasts 15 minutes, renewed
+every 5. Waiting holds no account, no budget and no database connection. The inference API's queue route counts the
+waiting calls; every gateway refusal carries its code in `x-ostrom-error`.
+
 ### Module `governance`
 
 A governance write (the rules, the gate policy, the model policy, a workflow's decision) made with a person's API
@@ -390,7 +400,7 @@ anonymous call gets 401 `unauthorized`. A module lists a key of ostrom-core's `S
 | `budgets` | `budgets.v1` | — |
 | `compiler` | `packages.v1`, `workflows.v1` | — |
 | `gates` | `gates.v1` | — |
-| `gateway` | `inference.v1` | — (an organization can set its own provider keys) |
+| `gateway` | `inference.v1`, `inference.queue.v1` | — (an organization can set its own provider keys) |
 | `governance` | `governance.v1` | — |
 | `identity` | `audit.v1` | — |
 | `import` | `import.teamcode.v1` | — |

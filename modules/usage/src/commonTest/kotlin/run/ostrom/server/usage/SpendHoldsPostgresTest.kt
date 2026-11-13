@@ -63,6 +63,18 @@ class SpendHoldsPostgresTest {
         database.superuser.fetchAll("SELECT COUNT(*) AS n FROM usage_holds").getOrThrow().first().get("n").asLong()
 
     @Test
+    fun aCallThatWaitsInTheAdmissionQueueHoldsNothingUntilItAsksAgain() = serverTest(modules, overrides) { server ->
+        val waiting = hold(9_000)
+        assertEquals(Admission.Admitted, server.admit(waiting))
+        assertEquals(Admission.Insufficient(SpendScope.ORG, 10_000, 1_000), server.admit(hold(3_000)))
+        server.koin.get<SpendAdmission>().release(TestCallers.orgA, waiting.callId)
+        assertEquals(0, server.holdRows(), "Its hold is dropped while it waits")
+        assertEquals(Admission.Admitted, server.admit(hold(3_000)), "Another call takes what it held")
+        server.koin.get<SpendAdmission>().release(TestCallers.orgA, Uuid.random())
+        assertEquals(1, server.holdRows(), "Releasing a call that holds nothing changes nothing")
+    }
+
+    @Test
     fun twentyCallsAtOnceAdmitExactlyWhatTheLimitHolds() = serverTest(modules, overrides) { server ->
         val asked = List(20) { hold(3_000) }
         val answers = withContext(Dispatchers.Default) {

@@ -2,6 +2,7 @@
 package run.ostrom.server.gateway
 
 import run.ostrom.server.gateway.domain.ClaudeMetadata
+import run.ostrom.server.gateway.domain.GatewayOrgConfig
 import run.ostrom.server.gateway.domain.GatewaySettings
 import run.ostrom.server.gateway.domain.InferenceCall
 import run.ostrom.server.gateway.domain.InferencePlan
@@ -11,6 +12,7 @@ import run.ostrom.server.gateway.domain.ModelPolicy
 import run.ostrom.server.gateway.domain.RefusalKind
 import run.ostrom.server.gateway.domain.SpendDecision
 import run.ostrom.server.gateway.domain.SpendGuard
+import run.ostrom.server.gateway.domain.SpendRequest
 import run.ostrom.server.gateway.domain.UpstreamRequests
 import run.ostrom.server.gateway.domain.WireProtocol
 import run.ostrom.server.sharing.domain.AccountLimits
@@ -24,6 +26,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
+import kotlin.uuid.Uuid
 
 /** Where a call goes and what is sent: model policy, budgets, shared accounts first, then keys. */
 class InferencePlannerTest {
@@ -281,16 +284,29 @@ class InferencePlannerTest {
     }
 
     @Test
-    fun busySharedAccountsAnswerWhenToRetryOrFallBackToAKey() = runTest {
+    fun busySharedAccountsMakeTheCallWaitWithoutItsHoldOrFallBackToAKey() = runTest {
         accounts.share(AccountProvider.CLAUDE, "max", clock)
         accounts.update(accounts.accounts.single().copy(limits = AccountLimits(maxConcurrent = 1)))
         val shared = pool(accounts, clock)
-        val busyPlanner = planner(settings, shared)
+        val released = mutableListOf<Pair<Uuid, Uuid>>()
+        val spend = object : SpendGuard {
+            override suspend fun check(request: SpendRequest) = SpendDecision.Allowed
+
+            override suspend fun release(orgId: Uuid, callId: Uuid) {
+                released += orgId to callId
+            }
+        }
+        val busyPlanner = planner(settings, shared, spend = spend)
         val body = """{"model":"claude-opus-5"}"""
         val first = assertIs<InferencePlan.Ready>(busyPlanner.plan(Gw.memberA, call(WireProtocol.MESSAGES, body)))
-        val busy = refusal(busyPlanner.plan(Gw.memberA, call(WireProtocol.MESSAGES, body)))
-        assertEquals(RefusalKind.NO_CAPACITY, busy.kind)
-        assertEquals(clock.now() + 5.seconds, busy.retryAt)
+        val callId = Uuid.random()
+        val busy = assertIs<InferencePlan.Busy>(
+            busyPlanner.plan(Gw.memberA, call(WireProtocol.MESSAGES, body), GatewayOrgConfig(), callId),
+        )
+        assertEquals("claude-opus-5", busy.model)
+        assertEquals(RefusalKind.NO_CAPACITY, busy.refusal.kind, "Answered when the call cannot wait")
+        assertEquals(clock.now() + 5.seconds, busy.refusal.retryAt)
+        assertEquals(listOf(Gw.orgA to callId), released, "A waiting call holds no budget")
         val withKey =
             planner(settings, shared, keys = InstanceProviderKeys(anthropic = "sk-an"))
         assertEquals(
@@ -298,6 +314,16 @@ class InferencePlannerTest {
             assertIs<InferencePlan.Ready>(withKey.plan(Gw.memberA, call(WireProtocol.MESSAGES, body))).provider,
         )
         first.lease?.release()
+    }
+
+    @Test
+    fun anAccountCoolingDownIsRefusedAtOnceRatherThanWaitedFor() = runTest {
+        accounts.share(AccountProvider.CLAUDE, "max", clock)
+        accounts.setCooldown(Gw.orgA, accounts.accounts.single().id, clock.now() + 30.seconds)
+        val cooling = planner(settings, pool(accounts, clock))
+        val refused = refusal(cooling.plan(Gw.memberA, call(WireProtocol.MESSAGES, """{"model":"claude-opus-5"}""")))
+        assertEquals(RefusalKind.NO_CAPACITY, refused.kind)
+        assertEquals(clock.now() + 30.seconds, refused.retryAt)
     }
 
     @Test
