@@ -5,6 +5,7 @@ import run.ostrom.core.api.models.RunStatus
 import run.ostrom.server.gates.domain.models.GateActor
 import run.ostrom.server.kernel.auth.requirePrincipal
 import run.ostrom.server.workflowruns.domain.models.InvalidRunException
+import run.ostrom.server.workflowruns.domain.repositories.RunQuery
 import run.ostrom.server.workflowruns.domain.repositories.RunsQuery
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
@@ -33,7 +34,7 @@ internal fun Route.startedRunsRoutes(dependencies: WorkflowRunsRoutesDependencie
     }
     get<RunsApi> { params ->
         val actor = actorOf(call, RunScopes.reading)
-        respondRuns(call, actor, RunsQuery(null, runStatusOf(params.status), params.before))
+        respondRuns(call, actor, RunsQuery(null, runStatusOf(params.status), params.before, pageOf(params.limit)))
     }
     get<RunApi> { params ->
         call.respond(getRun(actorOf(call, RunScopes.reading), params.id))
@@ -55,6 +56,15 @@ private suspend fun WorkflowRunsRoutesDependencies.respondRuns(
     val items = listRuns(actor, query)
     call.respond(RunsPage(items, nextOf(items.map { it.id }, query.limit)))
 }
+
+// The page size the contract bounds (`listRuns`): 1 to 100, 50 by default.
+private fun pageOf(limit: Int?): Int = when {
+    limit == null -> RunQuery.PAGE
+    limit in 1..MAX_PAGE -> limit
+    else -> throw InvalidRunException("limit: 1 to $MAX_PAGE.")
+}
+
+private const val MAX_PAGE = 100
 
 private fun runStatusOf(value: String?): RunStatus? = value?.let { text ->
     RunStatus.entries.filter { it != RunStatus.UNKNOWN }.firstOrNull { it.value == text }

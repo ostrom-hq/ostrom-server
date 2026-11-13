@@ -165,10 +165,11 @@ class WorkflowRunsOfApi(val id: String, val status: String? = null, val before: 
  *
  * @property status Only these.
  * @property before The id the previous page ended on.
+ * @property limit The page size, 1 to 100, 50 by default.
  */
 @Serializable
 @Resource("/api/v1/runs")
-class RunsApi(val status: String? = null, val before: String? = null)
+class RunsApi(val status: String? = null, val before: String? = null, val limit: Int? = null)
 
 /**
  * A run of a workflow, with its visits.

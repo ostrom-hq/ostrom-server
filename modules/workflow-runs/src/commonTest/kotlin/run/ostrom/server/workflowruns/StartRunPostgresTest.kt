@@ -275,6 +275,15 @@ class StartRunPostgresTest {
         assertEquals(1, second.ids().size)
         assertNull(second.next(), "A shorter page is the last")
         assertEquals(started.toSet(), (first.ids() + second.ids()).toSet())
+        // A page size of the contract's bounds (1 to 100): a full page of one ends with its cursor; others are refused.
+        val one = server.call("user:a:lead", "/api/v1/runs?limit=1")
+        assertEquals(first.ids().take(1), one.ids())
+        assertEquals(one.ids().single(), one.next())
+        assertEquals(PAGE + 1, server.call("user:a:lead", "/api/v1/runs?limit=100").ids().size)
+        for (limit in listOf(0, -1, 101, 100_000)) {
+            val refused = server.call("user:a:lead", "/api/v1/runs?limit=$limit")
+            assertEquals(HttpStatusCode.BadRequest, refused.status, "limit=$limit")
+        }
         assertEquals(first.ids() + second.ids(), (first.ids() + second.ids()).distinct(), "No run twice")
         // Newest first, and the runs of a workflow are its own.
         val ofShip = server.call("user:a:lead", RUNS).ids()
