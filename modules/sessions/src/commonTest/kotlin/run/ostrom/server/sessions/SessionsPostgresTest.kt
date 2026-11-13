@@ -89,7 +89,8 @@ class SessionsPostgresTest {
                     return when (kind) {
                         "agent" ->
                             GateActor("agent-$id", orgId, ActorKind.AGENT_SESSION, launchId = id, personId = "lyes")
-                        else -> GateActor(id, orgId, ActorKind.USER, personId = id)
+                        // TeamCode #238: an admin reads the team's sessions, the member `mia` her own only.
+                        else -> GateActor.person(id, orgId, if (id == "mia") OrgRole.MEMBER else OrgRole.ADMIN)
                     }
                 }
             }
@@ -267,6 +268,9 @@ class SessionsPostgresTest {
         assertNull(web.next)
         val own = server.call("agent:a:launch-3", "/api/v1/sessions").body<SessionsPage>()
         assertEquals(listOf("s-3"), own.items.map { it.id }, "An agent token lists its own launch's only")
+        assertEquals(emptyList(), server.call("user:a:mia", "/api/v1/sessions").body<SessionsPage>().items)
+        assertEquals(HttpStatusCode.Forbidden, server.call("user:a:mia", "/api/v1/sessions?dev=lyes").status)
+        assertEquals(HttpStatusCode.NotFound, server.call("user:a:mia", "/api/v1/sessions/s-1").status)
         val orgBPage = server.call("user:b:x", "/api/v1/sessions").body<SessionsPage>()
         assertEquals(listOf("s-9"), orgBPage.items.map { it.id })
 

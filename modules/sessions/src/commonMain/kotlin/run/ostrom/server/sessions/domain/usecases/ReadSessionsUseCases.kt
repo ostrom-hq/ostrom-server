@@ -9,6 +9,7 @@ import run.ostrom.server.gates.domain.usecases.SessionGate
 import run.ostrom.server.kernel.errors.Pages
 import run.ostrom.server.receipts.domain.usecases.GetReceiptUseCase
 import run.ostrom.server.sessions.domain.models.GateAnswer
+import run.ostrom.server.sessions.domain.models.NotYourSessionException
 import run.ostrom.server.sessions.domain.models.Session
 import run.ostrom.server.sessions.domain.models.SessionAccess
 import run.ostrom.server.sessions.domain.models.SessionNotFoundException
@@ -21,7 +22,7 @@ interface GetSessionUseCase {
     /**
      * Reads a segment.
      *
-     * @param actor The caller: any member of the organization, an agent token only for its own launch.
+     * @param actor The caller: the session's person, an owner or an admin, an agent token only for its own launch.
      * @param id The segment.
      * @return The segment, its gates and its receipt once ended.
      */
@@ -89,7 +90,7 @@ interface ListSessionsUseCase {
     /**
      * Lists segments, newest first.
      *
-     * @param actor The caller: an agent token lists its own launch's only.
+     * @param actor The caller: a member lists their own, an owner or an admin all, an agent token its launch's.
      * @param query The filters and the page.
      * @return The segments.
      */
@@ -105,11 +106,20 @@ class ListSessionsUseCaseImpl(private val repository: SessionsRepository) : List
     override suspend fun invoke(actor: GateActor, query: SessionQuery): List<Session> {
         // S2-48: an agent token lists its launch's sessions only, and nothing without a launch.
         if (actor.kind == ActorKind.AGENT_SESSION && actor.launchId == null) return emptyList()
+        // TeamCode #238: a member lists their own sessions; another's is a 403, only an owner or an admin lists all.
+        val own = actor.kind != ActorKind.AGENT_SESSION && !SessionAccess.readsTeam(actor)
+        if (own && query.dev != null && query.dev != actor.personId) throw NotYourSessionException()
         val page = repository.list(
             actor.orgId,
-            query.copy(launchId = actor.launchId, limit = query.limit.coerceIn(1, SessionQuery.PAGE)),
+            query.copy(
+                dev = if (own) actor.personId else query.dev,
+                launchId = actor.launchId,
+                limit = query.limit.coerceIn(1, SessionQuery.PAGE),
+            ),
         )
-        // A `before` that names no session of the organization (forged, or another's) is a 400, not an empty page.
-        return Pages.checked("before", query.before, page) { repository.get(actor.orgId, it) != null }
+        // A `before` that names no session the caller reads (forged, or another's) is a 400, not an empty page.
+        return Pages.checked("before", query.before, page) { before ->
+            repository.get(actor.orgId, before)?.let { SessionAccess.canRead(actor, it) } == true
+        }
     }
 }
