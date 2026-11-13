@@ -73,6 +73,11 @@ class TodosPostgresTest {
         }
         assertEquals(TodoItemStatus.DONE, done)
         assertEquals(TodoItemStatus.DONE, repository.find(ORG_A, "s1")!!.item("a")!!.status)
+        val moved = repository.mutate(ORG_A, "s1") { current ->
+            TodoRules.add(TodoRules.start(current, "c", false, null, t0), item("d"), "Found later").let { it to it }
+        }
+        assertEquals(listOf("a", "c", "d", "b"), moved.items.map { it.id }, "unchanged items only move")
+        assertEquals(moved, repository.find(ORG_A, "s1"))
     }
 
     @Test
