@@ -595,8 +595,10 @@ class RunAutomationsTest {
     @Test
     fun aStoredScheduleThatNoLongerReadsIsPausedAndTheOtherCronsStillRun() = runTest {
         // TeamCode 9ade0c25: a saved cron whose zone is gone pauses its automation instead of failing every pass.
-        val broken = manage.setEnabled(aliceAuto, manage.create(aliceAuto, cronDefinition("Broken")).automation.id, true)
-        val healthy = manage.setEnabled(aliceAuto, manage.create(aliceAuto, cronDefinition("Healthy")).automation.id, true)
+        suspend fun enabledCron(name: String) =
+            manage.setEnabled(aliceAuto, manage.create(aliceAuto, cronDefinition(name)).automation.id, true)
+        val broken = enabledCron("Broken")
+        val healthy = enabledCron("Healthy")
         // As a zone the time-zone database dropped after it was saved, or a cron an older version accepted.
         repository.automations[broken.id] = broken.copy(
             definition = broken.definition.copy(trigger = broken.definition.trigger.copy(timezone = "Mars/Olympus")),
