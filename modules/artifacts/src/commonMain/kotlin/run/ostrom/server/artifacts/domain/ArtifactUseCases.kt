@@ -228,7 +228,7 @@ internal suspend fun serveFile(
 ): ServedFile? {
     val version = repository.version(artifact.orgId, artifact.id, number)
     val wanted = path?.takeIf { it.isNotEmpty() } ?: version?.entry
-    val file = version?.files?.firstOrNull { it.path == wanted } ?: return null
+    val file = version?.files.orEmpty().firstOrNull { it.path == wanted } ?: return null
     return ServedFile(contents.read(artifact.orgId, artifact.id, file), file.contentType)
 }
 
