@@ -183,7 +183,9 @@ class EventsPostgresTest {
             draft(OrgEventType.WAIT_CREATED, "w-2", miaA),
         )
         server.publish(orgB, draft(OrgEventType.WAIT_CREATED, "w-3", null))
-        server.database.superuser.execute("UPDATE events_journal SET at = at - INTERVAL '8 days' WHERE seq = 1")
+        server.database.superuser.execute(
+            "UPDATE events_journal SET at = at - INTERVAL '8 days' WHERE org_id = '$orgA' AND seq = 1",
+        )
             .getOrThrow()
         val events = server.koin.get<OrgEventsRepository>()
 

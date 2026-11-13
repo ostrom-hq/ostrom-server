@@ -192,6 +192,8 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/usage" to Case.Target(),
     "GET /api/v1/usage/summary" to Case.Target(),
     "GET /api/v1/usage/live" to Case.Target(stream = true),
+    // The organization's event feed (events.v1): from the oldest kept event, so A's would show.
+    "GET /api/v1/events" to Case.Target(stream = true, query = "after=0"),
     "GET /api/v1/usage/events" to Case.Target(),
     "POST /api/v1/usage/events" to Case.Target(body = "{}"),
     "GET /api/v1/spending" to Case.Target(),

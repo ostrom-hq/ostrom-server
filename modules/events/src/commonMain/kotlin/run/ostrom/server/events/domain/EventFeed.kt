@@ -10,6 +10,7 @@ import kotlin.uuid.Uuid
  * @property gapOldest Set when events after the client's cursor were purged: the oldest kept sequence, which the
  *   client is told of before the events that follow.
  */
+@Suppress("LongParameterList") // What one reader reads, from where, and how it waits: no two belong together.
 class EventFeed internal constructor(
     private val orgId: Uuid,
     private val audience: EventAudience,

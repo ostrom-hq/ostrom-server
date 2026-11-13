@@ -79,11 +79,10 @@ internal suspend fun PrincipalOrgResolver.stillReads(
     audience: EventAudience,
 ): Boolean {
     val credential = principal.credentialId
-    if (principal.kind == PrincipalKind.USER && credential != null) {
-        if (!credentials.isLive(principal.subjectId, credential)) return false
-    }
-    val now = resolve(principal, member.orgId) ?: return false
-    return now.memberId == member.memberId && (!audience.wholeOrg || principal.readsWholeOrg(now))
+    val live = principal.kind != PrincipalKind.USER || credential == null ||
+        credentials.isLive(principal.subjectId, credential)
+    val now = if (live) resolve(principal, member.orgId) else null
+    return now != null && now.memberId == member.memberId && (!audience.wholeOrg || principal.readsWholeOrg(now))
 }
 
 /**
