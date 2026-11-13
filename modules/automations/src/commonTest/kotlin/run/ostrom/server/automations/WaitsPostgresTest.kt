@@ -205,6 +205,9 @@ class WaitsPostgresTest {
             single<WaitEvents> { events }
         }
         serverTest(listOf(AutomationsModule), overrides) { server ->
+            // A session's end tells the bound events of what it cancels (none here).
+            server.koin.get<SessionEndListener>().ended(ORG_A, listOf("s-none"))
+            assertTrue(events.seen.isEmpty())
             val client = server.client
             val request = CreateWaitRequest(question, sessionId = "s1", assignee = ALICE.toString())
             val created = client.ask("agent", request, key = "k1")
