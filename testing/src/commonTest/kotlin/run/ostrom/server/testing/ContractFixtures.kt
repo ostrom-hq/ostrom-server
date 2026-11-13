@@ -109,7 +109,7 @@ object ContractFixtures {
     }
 
     /**
-     * The contract written to a file, as CI writes ostrom-core main's.
+     * The contract written to a file, as CI writes the pinned ostrom-core's.
      *
      * @return The file's path.
      */
