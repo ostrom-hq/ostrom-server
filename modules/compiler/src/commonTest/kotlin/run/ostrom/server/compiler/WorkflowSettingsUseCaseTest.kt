@@ -13,7 +13,10 @@ import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
+import run.ostrom.server.compiler.presentation.gated
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -124,5 +127,20 @@ class WorkflowSettingsUseCaseTest {
         assertFalse(NoMembers.isActiveMember(org, "$ada"))
         assertEquals(emptyMap(), NoMembers.idsOf(org, listOf("ada")))
         assertEquals(emptyMap(), NoMembers.loginsOf(org, listOf(ada)))
+    }
+
+    @Test
+    fun aMembersRuleWithoutAListLetsNobodyIn() = runTest {
+        stored[org] = WorkflowEditors("members", null) to "lead"
+        assertFalse(settings.mayDecide(org, "ada", OrgRole.MEMBER, gated = false))
+    }
+
+    @Test
+    fun aGateIsFoundInTheNodesOfADocument() {
+        fun doc(json: String) = Json.parseToJsonElement(json).jsonObject
+        assertTrue(gated(doc("""{"nodes":[{"kind":"step"},{"kind":"gate"}]}""")))
+        assertFalse(gated(doc("""{"nodes":[{"kind":"step"},"x",{"label":"no kind"}]}""")))
+        assertFalse(gated(doc("""{"nodes":"none"}""")))
+        assertFalse(gated(doc("{}")))
     }
 }

@@ -589,6 +589,15 @@ class CompilerPostgresTest {
         assertEquals(HttpStatusCode.Forbidden, server.call("user:a:member", workflowsPath, "POST", release()).status)
         assertEquals(HttpStatusCode.NoContent, server.call("user:a:admin", path, "DELETE").status)
 
+        // A save of what is not stored, and a delete of it, are not found (whoever decides); an editor who takes the
+        // gate out of a stored workflow does not decide it either.
+        assertEquals(HttpStatusCode.NotFound, server.call("user:a:admin", path, "DELETE").status)
+        val unknown = SaveWorkflowRequest(plain(), expectedVersion = 1)
+        assertEquals(HttpStatusCode.NotFound, server.call("user:a:admin", path, "PUT", unknown).status)
+        assertEquals(HttpStatusCode.Created, server.call("user:a:admin", workflowsPath, "POST", release()).status)
+        val ungating = server.call("user:a:member", path, "PUT", SaveWorkflowRequest(plain(), expectedVersion = 1))
+        assertEquals(HttpStatusCode.Forbidden, ungating.status)
+        assertEquals(HttpStatusCode.NoContent, server.call("user:a:admin", path, "DELETE").status)
         // The rule `all` lets every member in; `admins` takes it back; a list is refused outside `members`.
         assertEquals(HttpStatusCode.OK, server.call("user:a:admin", settingsPath, "PUT", settings("all")).status)
         assertEquals(HttpStatusCode.Created, server.call("user:a:approver", workflowsPath, "POST", plain()).status)

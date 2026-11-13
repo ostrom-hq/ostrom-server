@@ -7,7 +7,6 @@ import run.ostrom.server.compiler.domain.repositories.WorkflowSettingsRepository
 import run.ostrom.server.compiler.infrastructure.PostgresWorkflowSettingsRepository
 import run.ostrom.server.compiler.domain.usecases.WorkflowSettingsUseCase
 import run.ostrom.server.compiler.domain.usecases.WorkflowSettingsUseCaseImpl
-import run.ostrom.server.kernel.audit.DiscardingOrgAuditTrail
 import run.ostrom.server.kernel.audit.OrgAuditTrail
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.auth.MemberLogins
@@ -84,7 +83,7 @@ object CompilerModule : ServerModule {
                 get(),
                 getOrNull<MemberDirectory>() ?: NoMembers,
                 getOrNull<MemberLogins>() ?: NoMembers,
-                getOrNull<OrgAuditTrail>() ?: DiscardingOrgAuditTrail(),
+                get<OrgAuditTrail>(),
                 get(),
             )
         }
