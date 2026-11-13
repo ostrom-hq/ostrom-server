@@ -57,9 +57,10 @@ internal class Party(
     val member: Person,
     val tokens: Map<TokenKind, String>,
     tokenIds: Map<TokenKind, Uuid>,
-    /** More credentials by name: the service key of member scopes, which acts as the owner who created it. */
-    val keys: Map<String, String> = emptyMap(),
 ) {
+    /** More credentials by name: the service key of member scopes, which acts as the owner who created it. */
+    var keys: Map<String, String> = emptyMap()
+
     val values = mutableMapOf(
         Seed.ORG_ID to "${org.id}",
         Seed.ORG_SLUG to org.slug,
@@ -151,7 +152,9 @@ internal suspend fun TestServer.party(tag: String): Party {
     // included): the most a key reaches, which the matrix holds to the organization's own resources.
     val wide = (MEMBER_SERVICE_KEY_SCOPES + RESERVED_SERVICE_KEY_SCOPES)
     val keys = mapOf("service key (member scopes)" to token(owner, org, TokenKind.SERVICE, wide).second)
-    return Party(marker, org, people.first, people.second, secrets, tokens.mapValues { it.value.first }, keys)
+    return Party(marker, org, people.first, people.second, secrets, tokens.mapValues { it.value.first }).also {
+        it.keys = keys
+    }
 }
 
 private suspend fun TestServer.signUp(login: String): User = koin.get<ResolveUserUseCase>()(

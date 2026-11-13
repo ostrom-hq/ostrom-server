@@ -52,7 +52,8 @@ class MembershipOrgResolver(
         // A token bound to one organization never acts in another.
         val foreign = bound != null && bound != target
         // A key is bound to its organization by its row: without one, it acts in none.
-        if (userId == null || foreign || (service && bound == null)) return null
+        val unbound = service && bound == null
+        if (userId == null || foreign || unbound) return null
         val member = if (target == null) onlyMembership(userId) else members.findByUser(target, userId)
         return member?.let { actingAs(principal, OrgPrincipal(it.orgId, it.id, it.role)) }
     }

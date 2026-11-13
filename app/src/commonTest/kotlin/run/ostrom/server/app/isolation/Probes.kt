@@ -33,7 +33,7 @@ internal val SERVICE_KEY_ROUTES: Map<String, Set<String>> = mapOf(
         "GET /api/v1/inference/v1/models", "POST /api/v1/inference/v1/messages", "POST /api/v1/inference/v1/responses",
         "POST /api/v1/inference/v1/chat/completions",
     ),
-    "mcp:use" to setOf("POST /api/v1/mcp/{server}"),
+    "mcp:use" to setOf("POST /api/v1/mcp/{server}", "GET /api/v1/mcp/servers"),
     "usage:read" to USAGE_READS,
     "cloud:read" to CLOUD_READS,
     "cloud:write" to CLOUD_WRITES,
@@ -41,7 +41,7 @@ internal val SERVICE_KEY_ROUTES: Map<String, Set<String>> = mapOf(
     "artifacts:read" to ARTIFACT_READS,
     "artifacts:write" to ARTIFACT_READS + setOf(
         "POST /api/v1/artifacts", "POST /api/v1/artifacts/{id}/versions", "PUT /api/v1/artifacts/{id}/members/{login}",
-        "DELETE /api/v1/artifacts/{id}/members/{login}",
+        "DELETE /api/v1/artifacts/{id}/members/{login}", "PATCH /api/v1/artifacts/{id}",
     ),
     "team:read" to setOf(
         "GET /api/v1/usage", "GET /api/v1/usage/summary", "GET /api/v1/usage/events", "GET /api/v1/usage/live",

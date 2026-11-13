@@ -46,9 +46,14 @@ const val ARTIFACTS_MANAGE = "artifacts:manage"
  * @throws NotAMemberException When it acts for no organization.
  */
 suspend fun PrincipalOrgResolver.artifactCallerOf(principal: AuthenticatedPrincipal, scope: String): ArtifactCaller {
-    val needed = if (scope == ARTIFACTS_MANAGE) ARTIFACTS_WRITE else scope
-    if (!principal.allowsArtifacts(needed)) throw MissingScopeException(needed)
-    if (scope == ARTIFACTS_MANAGE && principal.kind == PrincipalKind.SERVICE) throw SignInRequiredException()
+    val manage = scope == ARTIFACTS_MANAGE
+    val needed = if (manage) ARTIFACTS_WRITE else scope
+    val refusal = when {
+        !principal.allowsArtifacts(needed) -> MissingScopeException(needed)
+        manage && principal.kind == PrincipalKind.SERVICE -> SignInRequiredException()
+        else -> null
+    }
+    if (refusal != null) throw refusal
     val member = resolve(principal, null) ?: throw NotAMemberException()
     // A service key reads and writes the artifacts of its creator, never as an administrator.
     val administers = member.role in ADMIN_ROLES && principal.kind != PrincipalKind.SERVICE
