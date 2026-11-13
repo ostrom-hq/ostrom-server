@@ -32,6 +32,7 @@ import run.ostrom.server.sessions.fakes.member
 import run.ostrom.server.sessions.fakes.user
 import run.ostrom.server.sessions.infrastructure.SessionsAgentDirectory
 import run.ostrom.server.sessions.infrastructure.SessionsGateGuard
+import run.ostrom.server.sessions.infrastructure.SessionsReceiptOwners
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -214,6 +215,17 @@ class SessionLifecycleTest {
         val nobody = GateActor("nobody", ORG, ActorKind.USER)
         assertFailsWith<NotYourSessionException>("No person, no session") { bench.list(nobody, SessionQuery()) }
         assertFailsWith<NotYourSessionException> { bench.end(member("rev-b", OrgRole.ADMIN), session.id, EndSession()) }
+    }
+
+    @Test
+    fun aReceiptAboutASessionBelongsToItsPerson() = runTest {
+        // TeamCode #238: the receipts read who owns the session a receipt is about; nobody owns an unknown one.
+        val bench = SessionBench()
+        val session = bench.start(agent(), start)
+        val owners = SessionsReceiptOwners(bench.repository)
+        assertEquals("lyes", owners.ownerOf(ORG, session.id))
+        assertNull(owners.ownerOf(ORG, "nope"))
+        assertNull(owners.ownerOf(OTHER_ORG, session.id))
     }
 
     @Test

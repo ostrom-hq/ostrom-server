@@ -92,6 +92,16 @@ interface GatesRepository {
      * @return The gates.
      */
     suspend fun ofSession(orgId: Uuid, sessionId: String): List<Gate>
+
+    /**
+     * The sessions whose gates [approver] was asked to answer (a request of theirs on one, whatever became of it).
+     *
+     * @param orgId The organization.
+     * @param approver The approver's login, any case.
+     * @param sessionId When given, that session only: whether they were asked about it, read on its own links.
+     * @return The sessions, each once.
+     */
+    suspend fun sessionsApprovedBy(orgId: Uuid, approver: String, sessionId: String? = null): List<String>
 }
 
 /**

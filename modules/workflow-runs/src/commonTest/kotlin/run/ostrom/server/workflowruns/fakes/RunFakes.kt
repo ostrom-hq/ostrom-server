@@ -22,6 +22,7 @@ import run.ostrom.server.workflowruns.domain.models.PackageNode
 import run.ostrom.server.workflowruns.domain.models.PackageNotify
 import run.ostrom.server.workflowruns.domain.models.PackageScript
 import run.ostrom.server.workflowruns.domain.models.RunPackage
+import run.ostrom.server.workflowruns.domain.repositories.RunAudience
 import run.ostrom.server.workflowruns.domain.repositories.RunQuery
 import run.ostrom.server.workflowruns.domain.repositories.WorkflowRunsRepository
 import run.ostrom.server.workflowruns.domain.services.Delivery
@@ -105,11 +106,17 @@ class FixedClock(var now: Instant = Instant.parse("2026-10-30T10:05:00.123456Z")
 class FakeSessions(
     private val sessions: List<Session> = listOf(session()),
     private val gates: List<SessionGate> = emptyList(),
+    /** The sessions whose gates each person approves. */
+    private val approvals: Map<String, List<String>> = emptyMap(),
 ) : RunSessions {
     override suspend fun find(orgId: Uuid, id: String): Session? =
         sessions.firstOrNull { it.orgId == orgId && it.id == id }
 
     override suspend fun gates(orgId: Uuid, id: String): List<SessionGate> = gates
+
+    override suspend fun approves(orgId: Uuid, person: String, id: String): Boolean = id in approvedBy(orgId, person)
+
+    override suspend fun approvedBy(orgId: Uuid, person: String): List<String> = approvals[person].orEmpty()
 }
 
 class FakePackages(
@@ -146,10 +153,12 @@ class InMemoryRuns : WorkflowRunsRepository {
         queries += query
         return checks.filter { query.sessionId == null || it.sessionId == query.sessionId }
             .filter { query.nodeId == null || it.nodeId == query.nodeId }
+            .filter { query.audience.reads(it.dev, it.sessionId) }
             .reversed().after(query.before) { it.id }.take(query.limit)
     }
 
-    override suspend fun hasCheck(orgId: Uuid, id: String): Boolean = checks.any { it.id == id }
+    override suspend fun hasCheck(orgId: Uuid, id: String, audience: RunAudience?): Boolean =
+        checks.any { it.id == id && audience.reads(it.dev, it.sessionId) }
 
     override suspend fun addNotification(orgId: Uuid, notification: Notification, actionKey: String): Notification {
         val first = notifications.firstOrNull { (stored, key) ->
@@ -170,10 +179,16 @@ class InMemoryRuns : WorkflowRunsRepository {
     override suspend fun notifications(orgId: Uuid, query: RunQuery): List<Notification> {
         queries += query
         return notifications.map { it.first }.filter { query.sessionId == null || it.sessionId == query.sessionId }
+            .filter { query.audience.reads(it.dev, it.sessionId) }
             .reversed().after(query.before) { it.id }
     }
 
-    override suspend fun hasNotification(orgId: Uuid, id: String): Boolean = notifications.any { it.first.id == id }
+    override suspend fun hasNotification(orgId: Uuid, id: String, audience: RunAudience?): Boolean =
+        notifications.any { it.first.id == id && audience.reads(it.first.dev, it.first.sessionId) }
+
+    // As the database: a member's own, and those of the sessions whose gates they approve.
+    private fun RunAudience?.reads(dev: String?, sessionId: String?): Boolean =
+        this == null || this.dev != null && dev == this.dev || sessionId != null && sessionId in sessions
 
     // As the database: the rows after the cursor, newest first; none after a row it does not hold.
     private fun <T> List<T>.after(before: String?, id: (T) -> String): List<T> {
@@ -219,6 +234,12 @@ fun gate(approved: Boolean, self: Boolean, receiptId: String? = "rcpt_gate_1") =
 
 class InMemoryReceipts(vararg receipts: Pair<String, JsonObject>) : ReceiptsRepository {
     private val stored = receipts.associate { (id, body) -> id to StoredReceipt(ORG, id, "x", "x", body, STARTED) }
+        .toMutableMap()
+
+    /** Stores a receipt about a session of [member]. */
+    fun about(id: String, body: JsonObject, sessionId: String, member: String?) {
+        stored[id] = StoredReceipt(ORG, id, "x", "x", body, STARTED, sessionId, member)
+    }
 
     override suspend fun insertIfAbsent(receipt: StoredReceipt): StoredReceipt = error("Bundles sign nothing.")
 

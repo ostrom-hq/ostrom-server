@@ -25,6 +25,22 @@ internal object GatesQueries {
         "WHERE s.org_id = :org AND s.session_id = :session AND g.org_id = :org " +
         "ORDER BY g.created_at, g.id LIMIT $MAX_SESSION_GATES"
 
+    /**
+     * Whether `:approver` (any case) has a request on a gate of `:session`: the session's links by their primary key,
+     * then the requests of each gate by `gates_requests_by_gate`.
+     */
+    const val APPROVES = "SELECT s.session_id FROM gates_sessions s JOIN gates_requests r ON r.gate_id = s.gate_id " +
+        "WHERE s.org_id = :org AND s.session_id = :session AND r.org_id = :org " +
+        "AND r.approver_key = lower(:approver) LIMIT 1"
+
+    /**
+     * The sessions of the gates `:approver` (any case) has a request on: the approver's requests by the inbox index,
+     * then each gate's links by `gates_sessions_by_gate` (migration 9).
+     */
+    const val APPROVED_SESSIONS = "SELECT DISTINCT s.session_id FROM gates_requests r " +
+        "JOIN gates_sessions s ON s.org_id = r.org_id AND s.gate_id = r.gate_id " +
+        "WHERE r.org_id = :org AND r.approver_key = lower(:approver) AND s.org_id = :org"
+
     /** When a session's end read its gates (`:session`), on the primary key of `gates_session_ends`. */
     const val SESSION_ENDED =
         "SELECT ended_at FROM gates_session_ends WHERE org_id = :org AND session_id = :session"

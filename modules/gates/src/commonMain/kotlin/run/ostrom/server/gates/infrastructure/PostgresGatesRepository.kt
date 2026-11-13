@@ -110,6 +110,20 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository, Gat
         }
     }
 
+    override suspend fun sessionsApprovedBy(orgId: Uuid, approver: String, sessionId: String?): List<String> =
+        driver.transaction {
+            Tx(this).run {
+                scope.enter(orgId)
+                val statement = if (sessionId == null) {
+                    Statement.create(GatesQueries.APPROVED_SESSIONS)
+                } else {
+                    Statement.create(GatesQueries.APPROVES).bind("session", sessionId)
+                }
+                executor.rows(statement.bind("org", orgId).bind("approver", approver))
+                    .map { it.get("session_id").asString() }
+            }
+        }
+
     override suspend fun approversOf(orgId: Uuid, gateIds: List<Uuid>): Map<Uuid, List<String>> {
         if (gateIds.isEmpty()) return emptyMap()
         return driver.transaction {

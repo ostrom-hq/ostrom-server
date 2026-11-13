@@ -56,6 +56,27 @@ interface RunSessions {
      * @return The gates, oldest first.
      */
     suspend fun gates(orgId: Uuid, id: String): List<SessionGate>
+
+    /**
+     * Whether [person] approves a gate of a session.
+     *
+     * @param orgId The organization.
+     * @param person The person's login.
+     * @param id The session segment.
+     *
+     * @return True when a gate of the session was sent to them.
+     */
+    suspend fun approves(orgId: Uuid, person: String, id: String): Boolean
+
+    /**
+     * The sessions whose gates [person] approves.
+     *
+     * @param orgId The organization.
+     * @param person The person's login.
+     *
+     * @return The sessions, each once.
+     */
+    suspend fun approvedBy(orgId: Uuid, person: String): List<String>
 }
 
 /**

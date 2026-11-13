@@ -148,9 +148,15 @@ class ListChecksUseCaseImpl(
         if (sessionId != null) access.reading(actor, sessionId)
         // An agent token reads its own session's runs only: without one, nothing.
         if (sessionId == null && actor.kind == ActorKind.AGENT_SESSION) return emptyList()
-        // A `before` that names no run of the organization (forged, or another's) is a 400, not an empty page.
-        return Pages.checked("before", query.before, repository.checks(actor.orgId, query)) {
-            repository.hasCheck(actor.orgId, it)
+        // TeamCode #238: without a session, a member lists their own and those of the sessions whose gates they
+        // approve. A `before` that names none the caller reads (forged, another organization's or member's) is a 400,
+        // not an empty page: a member's before any page, whose start would otherwise order theirs against another's.
+        val audience = if (sessionId == null) access.audience(actor) else null
+        val before = query.before
+        if (audience != null && before != null && !repository.hasCheck(actor.orgId, before, audience)) {
+            Pages.unknownCursor("before")
         }
+        val page = repository.checks(actor.orgId, query.copy(audience = audience))
+        return Pages.checked("before", before, page) { repository.hasCheck(actor.orgId, it, audience) }
     }
 }

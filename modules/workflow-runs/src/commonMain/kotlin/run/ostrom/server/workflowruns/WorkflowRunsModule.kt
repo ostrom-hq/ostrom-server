@@ -86,14 +86,14 @@ object WorkflowRunsModule : ServerModule {
     override val koinModule: Module = module {
         single<WorkflowRunsRepository> { PostgresWorkflowRunsRepository(get()) }
         single<RunPackages> { CompilerRunPackages(get()) }
-        single<RunSessions> { SessionsRunSessions(get(), get()) }
+        single<RunSessions> { SessionsRunSessions(get(), get(), get()) }
         single { RunAccess(get(), get(), get()) }
         single<ReportCheckUseCase> { ReportCheckUseCaseImpl(get(), get(), get()) }
         single<ListChecksUseCase> { ListChecksUseCaseImpl(get(), get()) }
         single<SendNotificationUseCase> { SendNotificationUseCaseImpl(get(), get(), get(), get()) }
         single<ListNotificationsUseCase> { ListNotificationsUseCaseImpl(get(), get()) }
         single<SignWorkflowReceiptUseCase> { SignWorkflowReceiptUseCaseImpl(get(), get(), get(), get(), get(), get()) }
-        single<GetReceiptBundleUseCase> { GetReceiptBundleUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<GetReceiptBundleUseCase> { GetReceiptBundleUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single<RunLaunches> { LaunchesRunLaunches(get()) }
         single<ReportRunnerCheckUseCase> { ReportRunnerCheckUseCaseImpl(get(), get(), get()) }
         single<GateCheckProofs> { RunsGateCheckProofs(get()) { get() } }

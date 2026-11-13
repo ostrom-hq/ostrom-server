@@ -111,7 +111,9 @@ class ReceiptsPostgresTest {
         val one = server.call("a", "/api/v1/receipts?subjectKind=gate&subjectId=gate-3").body<ReceiptsPage>()
         assertEquals(listOf(ids[2]), one.items.map { it.text("id") })
         assertNull(one.next, "A page that is not full has no next one")
-        assertEquals(6, server.call("a", "/api/v1/receipts").body<ReceiptsPage>().items.size)
+        // TeamCode #238: a member known by their organization alone (no gates module, no login) reads no session's.
+        val all = server.call("a", "/api/v1/receipts").body<ReceiptsPage>()
+        assertEquals(ids.reversed(), all.items.map { it.text("id") })
     }
 
     @Test

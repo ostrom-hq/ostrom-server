@@ -9,6 +9,7 @@ import run.ostrom.server.receipts.domain.services.ReceiptBodySigner
 import run.ostrom.server.receipts.domain.usecases.GetReceiptUseCaseImpl
 import run.ostrom.server.receipts.domain.usecases.ListReceiptKeysUseCaseImpl
 import run.ostrom.server.receipts.domain.usecases.ListReceiptsUseCaseImpl
+import run.ostrom.server.receipts.domain.usecases.ReadReceiptUseCaseImpl
 import run.ostrom.server.receipts.domain.usecases.SignReceiptUseCaseImpl
 import run.ostrom.server.receipts.domain.usecases.VerifyReceiptUseCaseImpl
 import run.ostrom.server.receipts.domain.usecases.isoMillis
@@ -35,7 +36,7 @@ class ReceiptsUseCasesTest {
             return InstanceReceiptSigner(instance).sign(body)
         }
     }
-    private val sign = SignReceiptUseCaseImpl(receipts, signer, FixedClock())
+    private val sign = SignReceiptUseCaseImpl(receipts, signer, FixedClock(), FakeOwners(mapOf("s-1" to "lyes")))
 
     @Test
     fun theServerSetsTheIdTheDateAndTheSignature() = runTest {
@@ -109,32 +110,36 @@ class ReceiptsUseCasesTest {
         val get = GetReceiptUseCaseImpl(receipts)
         assertEquals(receipt, get(ORG_A, receipt.text("id")))
         assertFailsWith<ReceiptNotFoundException> { get(ORG_B, receipt.text("id")) }
+        val read = ReadReceiptUseCaseImpl(access(receipts))
+        assertEquals(receipt, read(admin(ORG_A), receipt.text("id")))
+        assertFailsWith<ReceiptNotFoundException> { read(admin(ORG_B), receipt.text("id")) }
 
-        val list = ListReceiptsUseCaseImpl(receipts)
-        assertEquals(listOf(receipt), list(ORG_A, ReceiptQuery(limit = 0)).map { it.body })
+        val list = ListReceiptsUseCaseImpl(receipts, access(receipts))
+        assertEquals(listOf(receipt), list(admin(ORG_A), ReceiptQuery(limit = 0)).map { it.body })
 
         assertEquals(1, receipts.lastQuery?.limit)
-        list(ORG_A, ReceiptQuery(subjectKind = "gate", limit = 1_000))
+        assertEquals(null, receipts.lastQuery?.audience, "An administrator reads every receipt")
+        list(admin(ORG_A), ReceiptQuery(subjectKind = "gate", limit = 1_000))
         assertEquals(ReceiptQuery.MAX_PAGE, receipts.lastQuery?.limit)
         assertEquals("gate", receipts.lastQuery?.subjectKind)
-        assertEquals(emptyList(), list(ORG_B, ReceiptQuery()))
+        assertEquals(emptyList(), list(admin(ORG_B), ReceiptQuery()))
         // After its cursor, none after the last; a receipt the organization does not hold is a 400.
         val id = receipt.text("id")
-        assertEquals(emptyList(), list(ORG_A, ReceiptQuery(before = id)))
-        assertFailsWith<InvalidPageException> { list(ORG_A, ReceiptQuery(before = "nope")) }
-        assertFailsWith<InvalidPageException> { list(ORG_B, ReceiptQuery(before = id)) }
+        assertEquals(emptyList(), list(admin(ORG_A), ReceiptQuery(before = id)))
+        assertFailsWith<InvalidPageException> { list(admin(ORG_A), ReceiptQuery(before = "nope")) }
+        assertFailsWith<InvalidPageException> { list(admin(ORG_B), ReceiptQuery(before = id)) }
     }
 
     @Test
     fun aStoredReceiptIsVerifiedWithTheInstanceKeys() = runTest {
         val receipt = sign(ORG_A, draft())
         val keys = FakeKeys(listOf(instance.receiptKey()))
-        val verify = VerifyReceiptUseCaseImpl(receipts, keys)
-        val outcome = verify(ORG_A, receipt.text("id"))
+        val verify = VerifyReceiptUseCaseImpl(access(receipts), keys)
+        val outcome = verify(admin(ORG_A), receipt.text("id"))
         assertTrue(outcome.ok)
         assertTrue(outcome.orgBound, "It names A, who verifies it")
         assertEquals(GoldenVectors.KID, outcome.kid)
-        assertFailsWith<ReceiptNotFoundException> { verify(ORG_B, receipt.text("id")) }
+        assertFailsWith<ReceiptNotFoundException> { verify(admin(ORG_B), receipt.text("id")) }
         assertEquals(listOf(instance.receiptKey()), ListReceiptKeysUseCaseImpl(keys)())
     }
 

@@ -13,9 +13,16 @@ import run.ostrom.server.compiler.domain.models.PackagePin
 import run.ostrom.server.compiler.domain.models.StoredPackage
 import run.ostrom.server.compiler.domain.repositories.CompilerRepository
 import run.ostrom.server.gates.GatesModule
+import run.ostrom.server.gates.domain.models.ApprovalRequest
+import run.ostrom.server.gates.domain.models.AskedVia
+import run.ostrom.server.gates.domain.models.Gate
+import run.ostrom.server.gates.domain.models.GateMode
+import run.ostrom.server.gates.domain.models.GateStatus
 import run.ostrom.server.gates.domain.models.GateSubject
+import run.ostrom.server.gates.domain.models.RequestStatus
 import run.ostrom.server.gates.domain.services.GateCheckProof
 import run.ostrom.server.gates.domain.services.GateCheckProofs
+import run.ostrom.server.gates.infrastructure.PostgresGatesRepository
 import run.ostrom.server.identity.IdentityModule
 import run.ostrom.server.identity.domain.ApiToken
 import run.ostrom.server.identity.domain.ApiTokensRepository
@@ -49,8 +56,10 @@ import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.sessions.SessionsModule
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
+import run.ostrom.server.workflowruns.domain.repositories.RunAudience
 import run.ostrom.server.workflowruns.domain.repositories.RunQuery
 import run.ostrom.server.workflowruns.domain.repositories.WorkflowRunsRepository
+import run.ostrom.server.workflowruns.domain.services.RunSessions
 import run.ostrom.server.workflowruns.infrastructure.RunQueries
 import run.ostrom.server.workflowruns.infrastructure.RunsGateCheckProofs
 import run.ostrom.server.workflowruns.presentation.BUNDLE_FORMAT
@@ -594,6 +603,22 @@ class WorkflowRunsPostgresTest {
                 server.call(agent, "/api/v1/checks", CHECK)
                 server.call(agent, "/api/v1/notifications", NOTIFY.replace("git push", "git push $it"))
             }
+            // A member reads Ada's runs as an approver of her session's gates, nobody else's.
+            val repository = server.koin.get<WorkflowRunsRepository>()
+            val member = RunAudience("mia", listOf("s-1", "s-2"))
+            val stranger = RunAudience(null, listOf("s-9"))
+            val all = repository.checks(ada.org.id, RunQuery(limit = PAGE))
+            assertEquals(all, repository.checks(ada.org.id, RunQuery(limit = PAGE, audience = member)))
+            val own = RunAudience("ada", emptyList())
+            assertEquals(all, repository.checks(ada.org.id, RunQuery(limit = PAGE, audience = own)))
+            assertEquals(emptyList(), repository.checks(ada.org.id, RunQuery(audience = stranger)))
+            assertEquals(ROWS, repository.notifications(ada.org.id, RunQuery(audience = member)).size)
+            assertEquals(emptyList(), repository.notifications(ada.org.id, RunQuery(audience = stranger)))
+            assertTrue(repository.hasCheck(ada.org.id, all.first().id, member))
+            assertFalse(repository.hasCheck(ada.org.id, all.first().id, stranger))
+            val notified = repository.notifications(ada.org.id, RunQuery()).first().id
+            assertTrue(repository.hasNotification(ada.org.id, notified, own))
+            assertFalse(repository.hasNotification(ada.org.id, notified, stranger))
             // Statistics only: the serving role owns no table, the owner analyzes them.
             server.database.owner.execute("ANALYZE workflow_runs_checks").getOrThrow()
             server.database.owner.execute("ANALYZE workflow_runs_notifications").getOrThrow()
@@ -610,6 +635,10 @@ class WorkflowRunsPostgresTest {
                     "workflow_runs_notifications_",
                 ),
                 Triple("an action's first notification", RunQueries.FIRST_NOTIFICATION, "once"),
+                // TeamCode #238: a member's own (`dev`), and those of the sessions whose gates they approve.
+                Triple("checks of a member", RunQueries.checks(RunQuery(audience = member)), "dev"),
+                Triple("notifications of a member", RunQueries.notifications(RunQuery(audience = member)), "dev"),
+                Triple("a member's cursor", RunQueries.holds("workflow_runs_checks", member), "pkey"),
                 Triple("the attested runs of a session", RunQueries.ATTESTED, "session"),
             )
             plans.forEach { (name, sql, index) ->
@@ -619,7 +648,8 @@ class WorkflowRunsPostgresTest {
                         .bindIfPresent(sql, "limit", PAGE).bindIfPresent(sql, "session_id", "s-1")
                         .bindIfPresent(sql, "before", "chk_x").bindIfPresent(sql, "notify_id", "nt-1")
                         .bindIfPresent(sql, "action_key", "k").bindIfPresent(sql, "node_id", "n-check")
-                        .bindIfPresent(sql, "status", "sent")
+                        .bindIfPresent(sql, "status", "sent").bindIfPresent(sql, "dev", "ada")
+                        .bindIfPresent(sql, "sessions", """["s-1", "s-2"]""").bindIfPresent(sql, "id", "chk_x")
                     tx.fetchAll(explain).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
                 }
                 println("-- $name\n$plan")
@@ -643,6 +673,46 @@ class WorkflowRunsPostgresTest {
         text = "t",
         dev = "ada",
     )
+
+    @Test
+    fun theRunsReadTheApproversOfASessionsGatesFromTheGatesModule() = serverTest(modules) { server ->
+        // TeamCode #238 (parity TC-NEW-675a530-2): the person a gate of s-1 was sent to reads its checks and notices.
+        val org = Uuid.random()
+        val gate = Gate(
+            id = Uuid.random(),
+            orgId = org,
+            key = "deploy:acme/api",
+            subject = GateSubject("acme/api", actionClass = "deploy", command = "kubectl", scope = "repo:acme/api"),
+            node = null,
+            label = "Deploy",
+            mode = GateMode.ENFORCED,
+            status = GateStatus.PENDING,
+            askedBy = listOf("ada"),
+            askedVia = setOf(AskedVia.HOOK),
+            sessionIds = listOf("s-1"),
+            shownDigest = "sha256:deploy",
+            evidence = emptyList(),
+            createdAt = Clock.System.now(),
+        )
+        val request = ApprovalRequest(
+            id = Uuid.random(),
+            gateId = gate.id,
+            orgId = org,
+            approverId = "rev",
+            status = RequestStatus.PENDING,
+            createdAt = gate.createdAt,
+        )
+        PostgresGatesRepository(server.driver).transaction {
+            insertGate(gate)
+            insertRequests(listOf(request))
+        }
+        val sessions = server.koin.get<RunSessions>()
+        assertTrue(sessions.approves(org, "rev", "s-1"))
+        assertFalse(sessions.approves(org, "rev", "s-2"), "Another session")
+        assertFalse(sessions.approves(org, "ada", "s-1"), "The asker is no approver")
+        assertEquals(listOf("s-1"), sessions.approvedBy(org, "REV"))
+        assertEquals(emptyList(), sessions.approvedBy(Uuid.random(), "rev"), "Another organization")
+    }
 
     private companion object {
         const val PAGE = 50

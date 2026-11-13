@@ -40,11 +40,14 @@ import run.ostrom.server.gates.domain.usecases.OpenGateUseCase
 import run.ostrom.server.gates.domain.usecases.OpenGateUseCaseImpl
 import run.ostrom.server.gates.domain.usecases.ReportLocalDenialUseCase
 import run.ostrom.server.gates.domain.usecases.ReportLocalDenialUseCaseImpl
+import run.ostrom.server.gates.domain.usecases.SessionApproversUseCase
+import run.ostrom.server.gates.domain.usecases.SessionApproversUseCaseImpl
 import run.ostrom.server.gates.domain.usecases.UseGateUseCase
 import run.ostrom.server.gates.domain.usecases.UseGateUseCaseImpl
 import run.ostrom.server.gates.infrastructure.ChannelsGateNotifier
 import run.ostrom.server.gates.infrastructure.DefaultGatePolicies
 import run.ostrom.server.gates.infrastructure.GatesMigrations
+import run.ostrom.server.gates.infrastructure.GatesReceiptReaders
 import run.ostrom.server.gates.infrastructure.InProcessGateChanges
 import run.ostrom.server.gates.infrastructure.MetricsGateChannel
 import run.ostrom.server.gates.infrastructure.NoCiChecks
@@ -65,6 +68,8 @@ import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.observability.CachedCount
 import run.ostrom.server.kernel.observability.OstromMetrics
+import run.ostrom.server.receipts.domain.services.ReceiptReaders
+import run.ostrom.server.receipts.infrastructure.OrgReceiptReaders
 import io.ktor.server.routing.Route
 import kotlinx.coroutines.CoroutineScope
 import org.koin.core.Koin
@@ -99,6 +104,11 @@ object GatesModule : ServerModule {
         single<GetApprovalQueueUseCase> { GetApprovalQueueUseCaseImpl(get(), get(), get()) }
         single<GetApprovalViewUseCase> { GetApprovalViewUseCaseImpl(get(), get(), get()) }
         single<ListSessionGatesUseCase> { ListSessionGatesUseCaseImpl(get()) }
+        single<SessionApproversUseCase> { SessionApproversUseCaseImpl(get()) }
+        // The receipts' readers (TeamCode #238): the actor resolver is bound by the identity side, or by default here.
+        single<ReceiptReaders> {
+            GatesReceiptReaders(lazy { get<GateActorResolver>() }, get(), OrgReceiptReaders(get()))
+        }
         single<ReportLocalDenialUseCase> { ReportLocalDenialUseCaseImpl(get(), get()) }
         // Named: the channels of other modules (notifications, Slack, GitHub) bind theirs next to it.
         single<GateChannel>(named("metrics")) { MetricsGateChannel(get()) }

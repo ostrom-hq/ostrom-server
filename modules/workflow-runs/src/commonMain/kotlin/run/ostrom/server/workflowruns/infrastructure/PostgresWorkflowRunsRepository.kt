@@ -6,11 +6,14 @@ import run.ostrom.core.api.models.CheckRun
 import run.ostrom.core.api.models.Notification
 import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.kernel.http.OstromJson
+import run.ostrom.server.workflowruns.domain.repositories.RunAudience
 import run.ostrom.server.workflowruns.domain.repositories.RunQuery
 import run.ostrom.server.workflowruns.domain.repositories.WorkflowRunsRepository
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.Transaction
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -89,16 +92,18 @@ class PostgresWorkflowRunsRepository(private val driver: Driver) : WorkflowRunsR
             }
         }
 
-    override suspend fun hasCheck(orgId: Uuid, id: String): Boolean = holds(orgId, "workflow_runs_checks", id)
+    override suspend fun hasCheck(orgId: Uuid, id: String, audience: RunAudience?): Boolean =
+        holds(orgId, "workflow_runs_checks", id, audience)
 
-    override suspend fun hasNotification(orgId: Uuid, id: String): Boolean =
-        holds(orgId, "workflow_runs_notifications", id)
+    override suspend fun hasNotification(orgId: Uuid, id: String, audience: RunAudience?): Boolean =
+        holds(orgId, "workflow_runs_notifications", id, audience)
 
     // One row by its key (the table's primary key starts with the organization), under row-level security.
-    private suspend fun holds(orgId: Uuid, table: String, id: String): Boolean = driver.withOrganization(orgId) { tx ->
-        val statement = Statement.create("SELECT 1 AS one FROM $table WHERE org_id = :org_id AND id = :id")
-        tx.fetchAll(statement.bind("org_id", orgId).bind("id", id)).getOrThrow().firstOrNull() != null
-    }
+    private suspend fun holds(orgId: Uuid, table: String, id: String, audience: RunAudience?): Boolean =
+        driver.withOrganization(orgId) { tx ->
+            val statement = Statement.create(RunQueries.holds(table, audience)).bind("org_id", orgId).bind("id", id)
+            tx.fetchAll(statement.audience(audience)).getOrThrow().firstOrNull() != null
+        }
 
     private fun String.bindQuery(orgId: Uuid, query: RunQuery): Statement {
         var statement = Statement.create(this).bind("org_id", orgId).bind("limit", query.limit)
@@ -106,6 +111,14 @@ class PostgresWorkflowRunsRepository(private val driver: Driver) : WorkflowRunsR
         query.nodeId?.let { statement = statement.bind("node_id", it) }
         query.status?.let { statement = statement.bind("status", it.value) }
         query.before?.let { statement = statement.bind("before", it) }
+        return statement.audience(query.audience)
+    }
+
+    // A named parameter is bound only when the SQL names it: sqlx4k refuses an unknown one.
+    private fun Statement.audience(audience: RunAudience?): Statement {
+        var statement = this
+        audience?.dev?.let { statement = statement.bind("dev", it) }
+        audience?.let { statement = statement.bind("sessions", OstromJson.encodeToString(SESSIONS, it.sessions)) }
         return statement
     }
 
@@ -155,6 +168,7 @@ object RunQueries {
             "node_id = :node_id".takeIf { query.nodeId != null },
         ),
         query.before != null,
+        query.audience,
     )
 
     /**
@@ -170,11 +184,44 @@ object RunQueries {
             "status = :status".takeIf { query.status != null },
         ),
         query.before != null,
+        query.audience,
     )
 
-    private fun page(table: String, filters: List<String>, after: Boolean): String {
+    /**
+     * One row by its key, among those [audience] reads when set.
+     *
+     * @param table The table.
+     * @param audience Who reads it, or null.
+     * @return The SQL.
+     */
+    fun holds(table: String, audience: RunAudience?): String {
+        val read = audience?.let { " AND ${readBy(it)}" }.orEmpty()
+        return "SELECT 1 AS one FROM $table WHERE org_id = :org_id AND id = :id$read"
+    }
+
+    // Who reads a row (TeamCode #238): its person, and the approvers of its session's gates (`:sessions`, JSON).
+    private fun readBy(audience: RunAudience): String {
+        val own = if (audience.dev != null) "dev = :dev OR " else ""
+        return "($own$APPROVED)"
+    }
+
+    private fun page(table: String, filters: List<String>, after: Boolean, audience: RunAudience?): String {
         val cursor = "(at, id) < (SELECT at, id FROM $table WHERE org_id = :org_id AND id = :before)"
         val where = (listOf("org_id = :org_id") + filters + listOfNotNull(cursor.takeIf { after }))
-        return "SELECT body FROM $table WHERE ${where.joinToString(" AND ")} ORDER BY at DESC, id DESC LIMIT :limit"
+        if (audience == null) return pageOf(table, where, "body")
+        // A member's page is the newest of two, each through its own index: their own (`dev`), and those of the
+        // sessions whose gates they approve, without their own so that none is read twice.
+        val branches = listOfNotNull(
+            "dev = :dev".takeIf { audience.dev != null },
+            if (audience.dev != null) "$APPROVED AND (dev IS NULL OR dev <> :dev)" else APPROVED,
+        )
+        val union = branches.joinToString(" UNION ALL ") { "(${pageOf(table, where + it, "at, id, body")})" }
+        return "SELECT body FROM ($union) AS readable ORDER BY at DESC, id DESC LIMIT :limit"
     }
+
+    private fun pageOf(table: String, where: List<String>, columns: String): String =
+        "SELECT $columns FROM $table WHERE ${where.joinToString(" AND ")} ORDER BY at DESC, id DESC LIMIT :limit"
 }
+
+private const val APPROVED = "session_id IN (SELECT jsonb_array_elements_text(CAST(:sessions AS JSONB)))"
+private val SESSIONS = ListSerializer(String.serializer())

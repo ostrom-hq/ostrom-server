@@ -90,6 +90,13 @@ class InMemoryGatesRepository : GatesRepository {
     override suspend fun ofSession(orgId: Uuid, sessionId: String): List<Gate> =
         gates.values.filter { it.orgId == orgId && (it.id to sessionId) in links }.sortedBy { it.createdAt }
 
+    override suspend fun sessionsApprovedBy(orgId: Uuid, approver: String, sessionId: String?): List<String> {
+        val gateIds = requests.values.filter { it.orgId == orgId && it.approverId.equals(approver, ignoreCase = true) }
+            .map { it.gateId }.toSet()
+        return links.filter { (gate, _) -> gate in gateIds && gates[gate]?.orgId == orgId }.map { it.second }.distinct()
+            .filter { sessionId == null || it == sessionId }
+    }
+
     override suspend fun approval(orgId: Uuid, id: Uuid): ApprovalView? =
 
         requests[id]?.takeIf { it.orgId == orgId }

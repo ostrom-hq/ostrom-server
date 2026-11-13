@@ -7,6 +7,7 @@ import run.ostrom.core.api.models.PackageMode
 import run.ostrom.core.api.models.ReportCheckRequest
 import run.ostrom.server.gates.domain.models.CiCheck
 import run.ostrom.server.gates.domain.services.CiChecks
+import run.ostrom.server.receipts.domain.models.ReceiptReader
 import run.ostrom.server.receipts.domain.models.Verification
 import run.ostrom.server.receipts.domain.usecases.SignReceiptUseCase
 import run.ostrom.server.receipts.domain.usecases.VerifyReceiptUseCase
@@ -55,7 +56,7 @@ class WorkflowReceiptTest {
         }
     }
     private val verifier = object : VerifyReceiptUseCase {
-        override suspend fun invoke(orgId: Uuid, id: String): Verification = error("Verified as signed.")
+        override suspend fun invoke(reader: ReceiptReader, id: String): Verification = error("Verified as signed.")
 
         override suspend fun verify(orgId: Uuid, receipt: JsonObject): Verification {
             assertEquals(ORG, orgId, "Verified for the caller's organization")

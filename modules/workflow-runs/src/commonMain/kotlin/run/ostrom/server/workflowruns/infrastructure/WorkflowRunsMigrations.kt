@@ -165,4 +165,17 @@ val WorkflowRunsMigrations: List<SchemaMigration> = listOf(
         CREATE UNIQUE INDEX workflow_runs_started_child ON workflow_runs_started (org_id, parent_run_id, parent_seq);
         """.trimIndent(),
     ),
+    // TeamCode #238 (parity TC-NEW-675a530-2): a member lists their own runs and notifications and those of the
+    // sessions whose gates they approve. The person of each (their session's, or the reporter's outside a session) is
+    // read from the stored body into a column of its own: under row level security, `->>` is no index condition.
+    SchemaMigration(
+        6,
+        "checks_and_notifications_by_dev",
+        """
+        ALTER TABLE workflow_runs_checks ADD COLUMN dev TEXT GENERATED ALWAYS AS (body ->> 'dev') STORED;
+        CREATE INDEX workflow_runs_checks_dev ON workflow_runs_checks (org_id, dev, at DESC, id DESC);
+        ALTER TABLE workflow_runs_notifications ADD COLUMN dev TEXT GENERATED ALWAYS AS (body ->> 'dev') STORED;
+        CREATE INDEX workflow_runs_notifications_dev ON workflow_runs_notifications (org_id, dev, at DESC, id DESC)
+        """.trimIndent(),
+    ),
 )

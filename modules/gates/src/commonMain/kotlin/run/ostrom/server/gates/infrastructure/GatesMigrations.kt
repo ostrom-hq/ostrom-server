@@ -163,5 +163,11 @@ val GatesMigrations: List<SchemaMigration> = listOf(
             WITH CHECK (org_id = CAST(NULLIF(current_setting('ostrom.org_id', TRUE), '') AS UUID))
         """.trimIndent(),
     ),
+    // TeamCode #238 (parity TC-NEW-675a530-2): the approvers of a session's gates read its receipts; the sessions of an
+    // approver's gates are read from their requests (the inbox index) to each gate's links, by gate.
+    SchemaMigration(
+        9,
+        "gates_sessions_by_gate",
+        "CREATE INDEX gates_sessions_by_gate ON gates_sessions (org_id, gate_id)",
+    ),
 )
-
