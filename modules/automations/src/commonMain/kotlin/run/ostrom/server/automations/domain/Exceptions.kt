@@ -50,8 +50,25 @@ class WaitKeyConflictException : OstromException(
 /** The assignee is not an active member of the organization. */
 class InvalidAssigneeException : OstromException(
     ErrorKind.INVALID_REQUEST,
-    "The assignee is not an active member of this organization: give a member id.",
+    "The assignee is not an active member of this organization: give a member id or a username.",
 )
+
+/** A member asks a wait in a session that is not theirs (another member's, an administrator's included). */
+class WaitSessionOwnerOnlyException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "Only the person who runs this session asks a wait in it.",
+    "wait_session_owner_only",
+)
+
+/** The session ended: it opens no new wait. */
+class SessionNotRunningException : OstromException(
+    ErrorKind.CONFLICT,
+    "This session has ended: it opens no new wait.",
+    "session_not_running",
+)
+
+/** The session named is not one of the organization's. */
+class WaitSessionNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Session not found.")
 
 /**
  * The credential lacks the scope the operation needs.
@@ -70,12 +87,6 @@ class NoOrganizationException : OstromException(ErrorKind.NOT_FOUND, "Organizati
 class AgentSessionRequiredException : OstromException(
     ErrorKind.INVALID_REQUEST,
     "An agent token names the session it runs in: add ?session=<session id>.",
-)
-
-/** An agent token asks the person who launched it, never another member. */
-class AgentAssigneeRefusedException : OstromException(
-    ErrorKind.FORBIDDEN,
-    "An agent asks only the person who launched it.",
 )
 
 /** An agent token's waits belong to its session: it never names a workflow run. */

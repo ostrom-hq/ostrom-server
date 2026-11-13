@@ -147,4 +147,28 @@ val McpRelayMigrations: List<SchemaMigration> = listOf(
             ALTER POLICY mcp_relay_calls_router_purge ON mcp_relay_calls USING (current_user = 'ostrom_router')
         """.trimIndent(),
     ),
+    // The relay's limits, shared by every replica instead of each one's memory: the running operations (a slot frees
+    // itself after its lease when its replica died) and the operations started each minute, by the database's clock.
+    SchemaMigration(
+        version = 6,
+        name = "mcp_relay_slots_and_minutes",
+        sql = """
+            CREATE TABLE mcp_relay_slots (
+                id UUID PRIMARY KEY,
+                org_id UUID NOT NULL,
+                server_id UUID NOT NULL REFERENCES mcp_relay_servers (id) ON DELETE CASCADE,
+                member_id UUID NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL
+            );
+            CREATE INDEX mcp_relay_slots_server ON mcp_relay_slots (server_id, member_id, expires_at);
+            CREATE TABLE mcp_relay_minutes (
+                org_id UUID NOT NULL,
+                server_id UUID NOT NULL REFERENCES mcp_relay_servers (id) ON DELETE CASCADE,
+                minute BIGINT NOT NULL,
+                member_id UUID NOT NULL,
+                calls INTEGER NOT NULL,
+                PRIMARY KEY (server_id, minute, member_id)
+            )
+        """.trimIndent() + ";\n" + tenantTableSql("mcp_relay_slots") + "\n" + tenantTableSql("mcp_relay_minutes"),
+    ),
 )

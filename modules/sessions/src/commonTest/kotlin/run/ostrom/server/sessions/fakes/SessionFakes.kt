@@ -9,6 +9,7 @@ import run.ostrom.server.gates.domain.usecases.SessionGate
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.observability.OstromMetrics
+import run.ostrom.server.kernel.sessions.SessionEndListener
 import run.ostrom.server.receipts.domain.services.ReceiptRule
 import run.ostrom.server.receipts.domain.services.ReceiptRules
 import run.ostrom.server.receipts.domain.usecases.GetReceiptUseCase
@@ -185,7 +186,8 @@ class SessionBench {
     val meter = MeterImpl(Clock.System)
     val segments = SessionSegments(close, clock, OstromMetrics(meter))
     val start = StartSessionUseCaseImpl(repository, segments)
-    val end = EndSessionUseCaseImpl(repository, close)
+    val endings = mutableListOf<Pair<Uuid, List<String>>>()
+    val end = EndSessionUseCaseImpl(repository, close, listOf(SessionEndListener { org, ids -> endings += org to ids }))
     val alive = SessionAliveUseCaseImpl(repository, clock)
     val reopen = ReopenSessionUseCaseImpl(repository, segments)
     val seen = ReportSeenUseCaseImpl(repository, clock)

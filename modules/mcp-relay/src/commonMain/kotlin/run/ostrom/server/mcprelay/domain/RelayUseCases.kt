@@ -267,7 +267,8 @@ class RelayMcpMessageUseCaseImpl(
         val started = clock.now()
         val (caller, effective) = call
         val server = effective.server
-        if (!limiter.acquire(caller.orgId, caller.memberId, server.id)) {
+        val slot = limiter.acquire(caller.orgId, caller.memberId, server.id)
+        if (slot == null) {
             journal(call, McpOutcome.RATE_LIMITED, started)
             return UpstreamResult.Failure(
                 McpOutcome.RATE_LIMITED,
@@ -278,7 +279,7 @@ class RelayMcpMessageUseCaseImpl(
         var bytes = 0L
         val result = try {
             val target = target(caller, effective)
-            when (val answer = block(target)) {
+            when (val answer = limiter.held(caller.orgId, slot) { block(target) }) {
                 is UpstreamResult.Ok -> {
                     val failed = (answer.value as? JsonObject)?.get("isError") == JsonPrimitive(true)
                     outcome = if (failed) McpOutcome.TOOL_ERROR else McpOutcome.OK
@@ -305,7 +306,7 @@ class RelayMcpMessageUseCaseImpl(
             UpstreamResult.Failure(outcome, "The MCP server could not be reached with its configured credentials.")
         } finally {
             withContext(NonCancellable) {
-                limiter.release(caller.orgId, caller.memberId, server.id)
+                limiter.release(caller.orgId, slot)
                 journal(call, outcome, started, bytes)
             }
         }

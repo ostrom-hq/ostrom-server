@@ -9,10 +9,13 @@ import run.ostrom.server.automations.domain.WaitAnswer
 import run.ostrom.server.automations.domain.WaitCaller
 import run.ostrom.server.automations.domain.WaitEvents
 import run.ostrom.server.automations.domain.WaitFilter
+import run.ostrom.server.automations.domain.WaitSessions
+import run.ostrom.server.automations.domain.WaitSessionsImpl
 import run.ostrom.server.automations.domain.WaitStatus
 import run.ostrom.server.automations.domain.WaitsRepository
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.MemberDirectory
+import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.auth.OrgPrincipal
 import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.auth.PrincipalChannel
@@ -21,6 +24,8 @@ import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.TokenAuthenticator
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
+import run.ostrom.server.kernel.sessions.AgentSession
+import run.ostrom.server.kernel.sessions.AgentSessions
 import org.koin.dsl.module
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -46,6 +51,43 @@ object TestMembers : MemberDirectory {
         else -> memberId == CAROL.toString()
     }
 }
+
+/** The usernames of the tests' members. */
+object TestLogins : MemberLogins {
+    private val names = mapOf(
+        ORG_A to mapOf(ALICE to "alice", BOB to "bob", DAVE to "dave"),
+        ORG_B to mapOf(CAROL to "carol"),
+    )
+
+    override suspend fun idsOf(orgId: Uuid, logins: Collection<String>): Map<String, Uuid> {
+        val byLogin = names[orgId].orEmpty().entries.associate { (id, login) -> login to id }
+        return logins.mapNotNull { login -> byLogin[login.lowercase()]?.let { login to it } }.toMap()
+    }
+
+    override suspend fun loginsOf(orgId: Uuid, memberIds: Collection<Uuid>): Map<Uuid, String> =
+        names[orgId].orEmpty().filterKeys { it in memberIds }
+}
+
+/** A session of org A that ended. */
+const val ENDED_SESSION = "ended-1"
+
+/** A session org A does not have. */
+const val UNKNOWN_SESSION = "unknown-1"
+
+/**
+ * The agent sessions of the tests, in org A: `alice-…` are alice's, [UNKNOWN_SESSION] is none, every other is bob's,
+ * running but [ENDED_SESSION]. Org B has none.
+ */
+object TestSessions : AgentSessions {
+    override suspend fun find(orgId: Uuid, sessionId: String): AgentSession? = when {
+        orgId != ORG_A || sessionId == UNKNOWN_SESSION -> null
+        sessionId.startsWith("alice-") -> AgentSession("alice", true, listOf(sessionId))
+        else -> AgentSession("bob", sessionId != ENDED_SESSION, listOf(sessionId))
+    }
+}
+
+/** The tests' [WaitSessions]. */
+val testWaitSessions: WaitSessions = WaitSessionsImpl(TestSessions, TestLogins)
 
 /** Records what it is told. */
 class RecordingEvents : WaitEvents {
@@ -109,6 +151,8 @@ val testIdentities = module {
     }
     single<PrincipalOrgResolver> { TestOrgResolver }
     single<MemberDirectory> { TestMembers }
+    single<MemberLogins> { TestLogins }
+    single<AgentSessions> { TestSessions }
 }
 
 /** The launch of the `launch` agent token: bob's. */
@@ -211,6 +255,9 @@ class InMemoryWaits : WaitsRepository {
 
     override suspend fun cancel(orgId: Uuid, id: Uuid, now: Instant): Wait? =
         update(orgId, id) { it.copy(status = WaitStatus.CANCELLED, resolvedAt = now) }
+
+    override suspend fun cancelOpenOfSessions(orgId: Uuid, sessions: List<String>, now: Instant): List<Wait> =
+        waits.values.filter { it.orgId == orgId && it.sessionId in sessions }.mapNotNull { cancel(orgId, it.id, now) }
 
     private fun update(orgId: Uuid, id: Uuid, change: (Wait) -> Wait): Wait? {
         val wait = waits[id]?.takeIf { it.orgId == orgId && it.status == WaitStatus.OPEN } ?: return null

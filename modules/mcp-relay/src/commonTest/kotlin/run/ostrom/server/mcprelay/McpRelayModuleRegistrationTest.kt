@@ -7,6 +7,7 @@ import run.ostrom.server.kernel.config.MapConfigSource
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.mcprelay.domain.ApprovalRequester
+import run.ostrom.server.mcprelay.domain.McpCallSlotRepository
 import run.ostrom.server.mcprelay.domain.McpHostAvailability
 import run.ostrom.server.mcprelay.domain.McpRelayRepository
 import run.ostrom.server.mcprelay.domain.McpUpstream
@@ -94,6 +95,7 @@ class McpRelayModuleRegistrationTest {
                     single<ApprovalRequester> { approver }
                     single<Clock> { TestClock() }
                     single<McpRelayRepository> { InMemoryRelayRepository() }
+                    single<McpCallSlotRepository> { InMemoryMcpSlots(TestClock()) }
                     single<RevealSecretsUseCase> { FakeReveal() }
                     single(McpRelayModule.HTTP_CLIENT) { HttpClient(MockEngine { respond("") }) }
                 },

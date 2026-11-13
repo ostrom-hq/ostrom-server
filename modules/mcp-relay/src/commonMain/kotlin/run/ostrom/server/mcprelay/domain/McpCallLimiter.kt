@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.mcprelay.domain
 
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import kotlin.time.Clock
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.uuid.Uuid
 
 /**
- * Concurrency and per-minute limits of relayed operations, per member and server and per server across the org.
- * Held in this replica's memory: with several replicas each enforces its own share (the journal stays shared).
+ * Concurrency and per-minute limits of relayed operations, per member and server and per server across the org. They
+ * hold across every replica: the running operations and the minute's count are in the database
+ * ([McpCallSlotRepository]), not in a replica's memory.
  *
  * @property memberConcurrency Running operations per member and server.
  * @property serverConcurrency Running operations per server.
@@ -26,54 +28,49 @@ data class McpLimits(
  * Admits operations under [McpLimits].
  *
  * @param limits The limits.
- * @param clock The time, for the per-minute windows.
+ * @param slots The running operations and the minutes' counts.
  */
-class McpCallLimiter(private val limits: McpLimits, private val clock: Clock) {
-    private val mutex = Mutex()
-    private val running = mutableMapOf<String, Int>()
-    private val windows = mutableMapOf<String, Pair<Long, Int>>()
-
+class McpCallLimiter(private val limits: McpLimits, private val slots: McpCallSlotRepository) {
     /**
      * Takes a slot.
      *
-     * @return True when admitted; the caller then calls [release] exactly once.
+     * @return The slot when admitted; the caller then calls [release] with it exactly once.
      */
-    suspend fun acquire(orgId: Uuid, memberId: Uuid, serverId: Uuid): Boolean = mutex.withLock {
-        val minute = clock.now().epochSeconds / SECONDS_PER_MINUTE
-        val member = "$orgId:$serverId:$memberId"
-        val server = "$orgId:$serverId"
-        val admitted = (running[member] ?: 0) < limits.memberConcurrency &&
-            (running[server] ?: 0) < limits.serverConcurrency &&
-            count(member, minute) < limits.memberPerMinute &&
-            count(server, minute) < limits.serverPerMinute
-        if (admitted) {
-            running[member] = (running[member] ?: 0) + 1
-            running[server] = (running[server] ?: 0) + 1
-            windows[member] = minute to count(member, minute) + 1
-            windows[server] = minute to count(server, minute) + 1
-            if (windows.size > MAX_KEYS) windows.entries.removeAll { it.value.first < minute }
+    suspend fun acquire(orgId: Uuid, memberId: Uuid, serverId: Uuid): McpCallSlot? =
+        slots.acquire(orgId, memberId, serverId) { usage ->
+            usage.memberRunning < limits.memberConcurrency &&
+                usage.serverRunning < limits.serverConcurrency &&
+                usage.memberThisMinute < limits.memberPerMinute &&
+                usage.serverThisMinute < limits.serverPerMinute
         }
-        admitted
-    }
 
-    /** Returns a slot taken by [acquire]. */
-    suspend fun release(orgId: Uuid, memberId: Uuid, serverId: Uuid) {
-        mutex.withLock {
-            decrement("$orgId:$serverId:$memberId")
-            decrement("$orgId:$serverId")
+    /**
+     * Runs [block], the operation, renewing [slot] every [McpCallSlotRepository.SLOT_RENEWAL] while it runs. A renewal
+     * that fails is left to the next one.
+     */
+    suspend fun <T> held(orgId: Uuid, slot: McpCallSlot, block: suspend () -> T): T = coroutineScope {
+        val renewing = launch {
+            while (true) {
+                delay(McpCallSlotRepository.SLOT_RENEWAL)
+                quietly { slots.renew(orgId, slot) }
+            }
         }
+        block().also { renewing.cancel() }
     }
 
-    private fun count(key: String, minute: Long): Int = windows[key]?.takeIf { it.first == minute }?.second ?: 0
+    /**
+     * Returns a slot taken by [acquire]. One the database could not take back frees itself at the end of its lease:
+     * the operation's answer and its journal entry stand.
+     */
+    suspend fun release(orgId: Uuid, slot: McpCallSlot) = quietly { slots.release(orgId, slot) }
 
-    private fun decrement(key: String) {
-        val next = (running[key] ?: 0) - 1
-        if (next <= 0) running.remove(key) else running[key] = next
-    }
-
-    private companion object {
-        const val MAX_KEYS = 10_000
+    private suspend fun quietly(write: suspend () -> Unit) {
+        try {
+            write()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            // Left to the slot's lease.
+        }
     }
 }
-
-private const val SECONDS_PER_MINUTE = 60
