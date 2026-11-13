@@ -85,7 +85,7 @@ private fun TodoItem.toDto(listCreatedAt: String): TodoItemDto = TodoItemDto(
             link.number,
             link.sha,
             link.tag,
-            link.at?.toString() ?: listCreatedAt,
+            if (link.at == null) listCreatedAt else link.at.toString(),
         )
     },
     unverified = unverified,

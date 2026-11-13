@@ -20,6 +20,7 @@ import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.TokenAuthenticator
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.todos.domain.TodoArtifacts
+import run.ostrom.server.todos.domain.TodoCredentialRefusedException
 import run.ostrom.server.todos.domain.TodoSessionNotFoundException
 import run.ostrom.server.todos.domain.TodoSessions
 import run.ostrom.server.todos.domain.TodoWaits
@@ -32,6 +33,7 @@ import run.ostrom.server.todos.fakes.FakeWaits
 import run.ostrom.server.todos.fakes.LONG
 import run.ostrom.server.todos.fakes.ORG_A
 import run.ostrom.server.todos.fakes.ROOT
+import run.ostrom.server.todos.presentation.TodoCallers
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.HttpRequestBuilder
@@ -48,6 +50,7 @@ import io.ktor.http.contentType
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
@@ -165,6 +168,16 @@ class TodosRoutesPostgresTest {
         )
         for ((method, path) in routes) {
             assertEquals(HttpStatusCode.Unauthorized, send(null, method, path).status, "$method $path")
+        }
+    }
+
+    @Test
+    fun aMachineThatGetsPastTheGatesIsStillRefused() = serverTest(listOf(TodosModule), overrides) { server ->
+        // The kernel stops a service key or a device before these routes; the callers refuse them all the same.
+        val callers = server.koin.get<TodoCallers>()
+        for (kind in listOf(PrincipalKind.SERVICE, PrincipalKind.DEVICE)) {
+            val machine = AuthenticatedPrincipal("m", kind, setOf(ALL_USER_SCOPES))
+            assertFailsWith<TodoCredentialRefusedException> { callers.reader(machine, "s1") }
         }
     }
 
