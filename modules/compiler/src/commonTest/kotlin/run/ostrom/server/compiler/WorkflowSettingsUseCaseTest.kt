@@ -118,4 +118,11 @@ class WorkflowSettingsUseCaseTest {
         }
         assertTrue(stored.isEmpty())
     }
+
+    @Test
+    fun withoutAMembersModuleNobodyIsAMemberSoNobodyIsNamedOrLetIn() = runTest {
+        assertFalse(NoMembers.isActiveMember(org, "$ada"))
+        assertEquals(emptyMap(), NoMembers.idsOf(org, listOf("ada")))
+        assertEquals(emptyMap(), NoMembers.loginsOf(org, listOf(ada)))
+    }
 }

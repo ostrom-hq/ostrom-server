@@ -40,6 +40,7 @@ fun Route.compilerRoutes(dependencies: CompilerRoutesDependencies) {
         catalogRoutes(dependencies)
         packagesRoutes(dependencies)
         workflowsRoutes(dependencies)
+        settingsRoutes(dependencies)
     }
 }
 
@@ -108,17 +109,6 @@ private fun Route.workflowsRoutes(dependencies: CompilerRoutesDependencies) = wi
         val status = params.status?.let(::statusOf)
         call.respond(WorkflowsPage(workflows.list(actor.orgId, params.repo, status).map(::documentOf)))
     }
-    get<WorkflowsApi.Settings> {
-        val actor = actorOf(call, CompilerScopes.readingWorkflows)
-        call.respond(settings.settings(actor.orgId, actor.id, actor.role))
-    }
-    put<WorkflowsApi.Settings> {
-        val actor = personOf(call, CompilerScopes.writingWorkflows)
-        // The rule changes who decides: a browser session only, as the decisions it governs (SECURITY-AUDIT S2-04).
-        if (!call.decides(may = true)) throw OstromException(ErrorKind.FORBIDDEN, CONSOLE_ONLY)
-        val saved = settings.save(actor.orgId, actor.id, actor.role, call.requirePrincipal(), call.receive())
-        call.respond(saved)
-    }
     post<WorkflowsApi> {
         val actor = personOf(call, CompilerScopes.writingWorkflows)
         val body = call.receive<JsonObject>()
@@ -139,10 +129,10 @@ private fun Route.workflowsRoutes(dependencies: CompilerRoutesDependencies) = wi
         if (id != params.id) {
             throw OstromException(ErrorKind.INVALID_REQUEST, "The workflow's id is not the path's.")
         }
-        val stored = workflows.get(actor.orgId, params.id).doc.raw
-        val gate = gated(body.workflow) || gated(stored)
+        val stored = repository.workflow(actor.orgId, params.id)?.doc?.raw
+        val gate = gated(body.workflow) || (stored != null && gated(stored))
         if (!call.decides(mayDecide(actor, gate))) {
-            val proposal = proposed(body.workflow) && proposed(stored)
+            val proposal = proposed(body.workflow) && stored != null && proposed(stored)
             if (holds(call, actor, gate, proposal)) {
                 val payload = CompilerGovernanceChange.payload(params.id, OstromJson.encodeToJsonElement(body))
                 return@put call.hold(actor, WorkflowWrites.SAVE, payload)
@@ -154,13 +144,27 @@ private fun Route.workflowsRoutes(dependencies: CompilerRoutesDependencies) = wi
     }
     delete<WorkflowsApi.Id> { params ->
         val actor = personOf(call, CompilerScopes.writingWorkflows)
-        val gate = gated(workflows.get(actor.orgId, params.id).doc.raw)
+        val gate = repository.workflow(actor.orgId, params.id)?.doc?.raw?.let(::gated) ?: false
         if (holds(call, actor, gate, proposal = false)) {
             return@delete call.hold(actor, WorkflowWrites.DELETE, CompilerGovernanceChange.payload(params.id, null))
         }
         if (!call.decides(mayDecide(actor, gate))) throw refusal(actor, gate)
         workflows.delete(actor.orgId, params.id)
         call.respond(HttpStatusCode.NoContent)
+    }
+}
+
+private fun Route.settingsRoutes(dependencies: CompilerRoutesDependencies) = with(dependencies) {
+    get<WorkflowsApi.Settings> {
+        val actor = actorOf(call, CompilerScopes.readingWorkflows)
+        call.respond(settings.settings(actor.orgId, actor.id, actor.role))
+    }
+    put<WorkflowsApi.Settings> {
+        val actor = personOf(call, CompilerScopes.writingWorkflows)
+        // The rule changes who decides: a browser session only, as the decisions it governs (SECURITY-AUDIT S2-04).
+        if (!call.decides(may = true)) throw OstromException(ErrorKind.FORBIDDEN, CONSOLE_ONLY)
+        val saved = settings.save(actor.orgId, actor.id, actor.role, call.requirePrincipal(), call.receive())
+        call.respond(saved)
     }
 }
 

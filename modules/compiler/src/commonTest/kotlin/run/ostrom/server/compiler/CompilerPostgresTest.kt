@@ -109,6 +109,7 @@ import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
 /** The compiler against a real PostgreSQL and real HTTP: workflows, packages, the catalogue, and org isolation. */
+@Suppress("LargeClass") // One real server, one scenario per behavior: splitting would copy the harness.
 class CompilerPostgresTest {
     private val orgA = Uuid.parse("0000000a-0000-0000-0000-000000000000")
     private val orgB = Uuid.parse("0000000b-0000-0000-0000-000000000000")

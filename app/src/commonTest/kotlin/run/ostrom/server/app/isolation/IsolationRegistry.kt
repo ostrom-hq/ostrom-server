@@ -363,6 +363,8 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     // Workflows and packages (compiler).
     "GET /api/v1/workflows" to Case.Target(),
     "POST /api/v1/workflows" to Case.Target(body = "{}"),
+    "GET /api/v1/workflows/settings" to Case.Target(),
+    "PUT /api/v1/workflows/settings" to Case.Target(body = """{"mode": "admins"}"""),
     "GET /api/v1/workflows/{id}" to target("id" to WORKFLOW),
     "PUT /api/v1/workflows/{id}" to target("id" to WORKFLOW, body = """{"workflow": {}}"""),
     "DELETE /api/v1/workflows/{id}" to target("id" to WORKFLOW),

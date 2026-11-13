@@ -126,7 +126,7 @@ object CompilerModule : ServerModule {
 }
 
 /** The members when no module knows them: nobody is a member, so no editor is named and none is let in. */
-private object NoMembers : MemberDirectory, MemberLogins {
+internal object NoMembers : MemberDirectory, MemberLogins {
     override suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean = false
 
     override suspend fun idsOf(orgId: Uuid, logins: Collection<String>): Map<String, Uuid> = emptyMap()
