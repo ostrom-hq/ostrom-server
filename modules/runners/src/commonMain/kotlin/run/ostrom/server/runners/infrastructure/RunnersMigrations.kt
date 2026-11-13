@@ -272,4 +272,22 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
         sql = "CREATE INDEX runners_assignments_undelivered ON runners_assignments (org_id) " +
             "WHERE delivered_at IS NULL AND stopped_at IS NULL",
     ),
+    // TC-REP-2: the terminal tickets, in the database instead of a replica's memory, so that one replica issues a
+    // ticket another redeems (TerminalTicketsImpl). Their hash only, a minute's life by the database's clock.
+    SchemaMigration(
+        version = 9,
+        name = "terminal_tickets",
+        sql = """
+            CREATE TABLE runners_terminal_tickets (
+                token_hash TEXT PRIMARY KEY,
+                org_id UUID NOT NULL,
+                session_id UUID NOT NULL,
+                member_id TEXT NOT NULL,
+                admin BOOLEAN NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL
+            );
+            CREATE INDEX runners_terminal_tickets_expiry ON runners_terminal_tickets (org_id, expires_at);
+            ${tenantTableSql("runners_terminal_tickets")}
+        """.trimIndent(),
+    ),
 )

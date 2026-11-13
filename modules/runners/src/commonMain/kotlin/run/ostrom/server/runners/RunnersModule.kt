@@ -60,7 +60,6 @@ import run.ostrom.server.runners.infrastructure.BillingCloudUsageMeter
 import run.ostrom.server.runners.infrastructure.CloudSessionAutomationLauncher
 import run.ostrom.server.runners.infrastructure.CloudSessionsRepositoryImpl
 import run.ostrom.server.runners.infrastructure.DockerExecutionPlan
-import run.ostrom.server.runners.infrastructure.InMemoryTerminalTickets
 import run.ostrom.server.runners.infrastructure.InProcessRunnerWorkSignals
 import run.ostrom.server.runners.infrastructure.ReconcilerWorker
 import run.ostrom.server.runners.infrastructure.RegisteredRunnersRepositoryImpl
@@ -71,6 +70,7 @@ import run.ostrom.server.runners.infrastructure.RunnersConfig
 import run.ostrom.server.runners.infrastructure.RunnersMigrations
 import run.ostrom.server.runners.infrastructure.RuntimeDrivers
 import run.ostrom.server.runners.infrastructure.TerminalRelay
+import run.ostrom.server.runners.infrastructure.TerminalTicketsImpl
 import run.ostrom.server.runners.presentation.CloudSessionsRoutesDependencies
 import run.ostrom.server.runners.presentation.RunnerRuntime
 import run.ostrom.server.runners.presentation.RunnersRoutesDependencies
@@ -147,7 +147,7 @@ object RunnersModule : ServerModule {
             RunnersRoutesDependencies(get(), runtime, get(), get(), get(), get(), get(), get())
         }
         single { TerminalRelay() }
-        single<TerminalTickets> { InMemoryTerminalTickets(get(), get()) }
+        single<TerminalTickets> { TerminalTicketsImpl(get(), get()) }
         single<AuthenticateRunnerUseCase> { AuthenticateRunnerUseCaseImpl(get(), get()) }
         single<OpenTerminalUseCase> { OpenTerminalUseCaseImpl(get()) }
         single<IssueTerminalTicketUseCase> { IssueTerminalTicketUseCaseImpl(get(), get()) }

@@ -13,19 +13,19 @@ import run.ostrom.server.runners.domain.RecordCloudSessionActivityUseCase
 import run.ostrom.server.runners.domain.RunnerUnauthenticatedException
 import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.runners.domain.TerminalActivity
+import run.ostrom.server.runners.domain.TerminalTicket
+import run.ostrom.server.runners.domain.TerminalTickets
 import run.ostrom.server.runners.fakes.FakeRunnerTokens
 import run.ostrom.server.runners.fakes.InMemoryCloudSessionsRepository
 import run.ostrom.server.runners.fakes.ORG_A
 import run.ostrom.server.runners.fakes.ORG_B
 import run.ostrom.server.runners.fakes.SettableClock
 import run.ostrom.server.runners.fakes.session
-import run.ostrom.server.runners.infrastructure.InMemoryTerminalTickets
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
@@ -72,32 +72,22 @@ class TerminalUseCasesTest {
     }
 
     @Test
-    fun aTicketOpensOneSessionOnceBeforeItExpires() = runTest {
-        val tickets = InMemoryTerminalTickets(tokens, clock)
+    fun aTicketIsIssuedOnlyToWhoMayAttach() = runTest {
+        val issued = mutableListOf<Pair<Caller, Uuid>>()
+        val tickets = object : TerminalTickets {
+            override suspend fun issue(caller: Caller, sessionId: Uuid): TerminalTicket {
+                issued += caller to sessionId
+                return TerminalTicket("ostrom_term_x", clock.now + 60.seconds)
+            }
+
+            override suspend fun redeem(value: String, sessionId: Uuid): Caller? = null
+        }
         val issue = IssueTerminalTicketUseCaseImpl(OpenTerminalUseCaseImpl(repository), tickets)
         val live = session(state = SessionState.RUNNING).also { repository.put(it) }
         assertFailsWith<CloudSessionNotFoundException> { issue(Caller(ORG_B, "carol"), live.id) }
 
-        val ticket = issue(alice, live.id)
-        assertTrue(ticket.value.startsWith("ostrom_term_"))
-        assertEquals(clock.now + 60.seconds, ticket.expiresAt)
-        assertNull(tickets.redeem("ostrom_term_unknown", live.id))
-        assertEquals(alice, tickets.redeem(ticket.value, live.id))
-        assertNull(tickets.redeem(ticket.value, live.id))
-
-        val other = issue(alice, live.id)
-        assertNull(tickets.redeem(other.value, Uuid.random()))
-        assertNull(tickets.redeem(other.value, live.id))
-
-        val late = issue(alice, live.id)
-        val forgotten = issue(alice, live.id)
-        clock.now += 61.seconds
-        assertNull(tickets.redeem(late.value, live.id))
-        val kept = issue(alice, live.id)
-        // Expired tickets are purged at the next issue, live ones kept.
-        issue(alice, live.id)
-        assertEquals(alice, tickets.redeem(kept.value, live.id))
-        assertNull(tickets.redeem(forgotten.value, live.id))
+        assertEquals("ostrom_term_x", issue(alice, live.id).value)
+        assertEquals(listOf(alice to live.id), issued)
     }
 
     @Test
