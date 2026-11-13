@@ -20,6 +20,7 @@ import run.ostrom.server.identity.domain.MOBILE_REFUSED
 import run.ostrom.server.identity.domain.ListTokensUseCaseImpl
 import run.ostrom.server.identity.domain.MAX_PHONES_PER_USER
 import run.ostrom.server.identity.domain.MOBILE_SCOPES
+import run.ostrom.server.identity.domain.MOBILE_UNLOCKED_SCOPES
 import run.ostrom.server.identity.domain.MobileCallback
 import run.ostrom.server.identity.domain.MobileClient
 import run.ostrom.server.identity.domain.MobileUnlockRefusedException
@@ -296,7 +297,7 @@ class MobileSignInTest {
         assertEquals(PrincipalKind.USER, before.kind)
         assertEquals(PrincipalChannel.MOBILE_APP, before.channel)
         assertEquals(token.userId.toString(), before.subjectId)
-        assertEquals(MOBILE_SCOPES - ANSWER_SCOPE, before.scopes, "No yes before the first unlock")
+        assertEquals(MOBILE_SCOPES - MOBILE_UNLOCKED_SCOPES, before.scopes, "No yes nor answer before the first unlock")
         assertNull(before.orgId)
         assertNull(before.authenticatedAt)
 
@@ -312,7 +313,8 @@ class MobileSignInTest {
         assertTrue(ANSWER_SCOPE in assertNotNull(authenticator.authenticate(issued.token.secret)).scopes)
         clock.now += 1.seconds
         val stale = assertNotNull(authenticator.authenticate(issued.token.secret))
-        assertEquals(MOBILE_SCOPES - ANSWER_SCOPE, stale.scopes, "Five minutes after the unlock, no yes any more")
+        assertEquals(MOBILE_SCOPES - MOBILE_UNLOCKED_SCOPES, stale.scopes, "Five minutes after the unlock, no yes")
+        assertTrue("waits:read" in stale.scopes, "The waits asked of it still read")
     }
 
     @Test

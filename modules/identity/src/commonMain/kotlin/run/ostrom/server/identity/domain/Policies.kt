@@ -111,13 +111,23 @@ const val NOTIFICATIONS_WRITE_SCOPE = "notifications:write"
 
 /**
  * The scopes of the phone app's token: what the app shows (the person, their organizations, the approvals and their
- * receipts, the spending, the activity feed) and does (answer a gate, register for push, set its notifications).
+ * receipts, the spending, the activity feed, the waits asked of the person) and does (answer a gate or a wait, register
+ * for push, set its notifications).
  * Nothing of the console's administration, no workflow write, no token management.
  */
 val MOBILE_SCOPES: Set<String> = setOf(
     "profile:read", "orgs:read", "gates:read", ANSWER_SCOPE, "receipts:read", "usage:read", "activity:read",
-    NOTIFICATIONS_WRITE_SCOPE,
+    NOTIFICATIONS_WRITE_SCOPE, "waits:read", MOBILE_WAITS_ANSWER_SCOPE,
 )
+
+/**
+ * The scope with which the app answers a wait asked of its person ("Waiting for you"). Like a yes, an answer can carry
+ * what only a person gives (a decision, an approval), so the app holds it only within [MOBILE_UNLOCK_WINDOW].
+ */
+const val MOBILE_WAITS_ANSWER_SCOPE = "waits:write"
+
+/** The scopes the app's token holds only within [MOBILE_UNLOCK_WINDOW] of the phone's last biometric unlock. */
+val MOBILE_UNLOCKED_SCOPES: Set<String> = setOf(ANSWER_SCOPE, MOBILE_WAITS_ANSWER_SCOPE)
 
 /**
  * How long after the phone's biometric unlock the app's token may say yes (S2-54): the step-up window of a yes. The
@@ -129,7 +139,7 @@ val MOBILE_SCOPES: Set<String> = setOf(
 val MOBILE_UNLOCK_WINDOW: Duration = 5.minutes
 
 /**
- * The scopes the app's token grants now: [MOBILE_SCOPES] at most, and [ANSWER_SCOPE] only within
+ * The scopes the app's token grants now: [MOBILE_SCOPES] at most, and [MOBILE_UNLOCKED_SCOPES] only within
  * [MOBILE_UNLOCK_WINDOW] of the phone's last biometric unlock.
  *
  * @param stored The app's token.
@@ -140,7 +150,7 @@ val MOBILE_UNLOCK_WINDOW: Duration = 5.minutes
 fun mobileScopes(stored: ApiToken, now: Instant): Set<String> {
     val granted = grantedScopes(TokenKind.MOBILE, stored.scopes)
     val unlocked = stored.authenticatedAt?.let { now - it <= MOBILE_UNLOCK_WINDOW } == true
-    return if (unlocked) granted else granted - ANSWER_SCOPE
+    return if (unlocked) granted else granted - MOBILE_UNLOCKED_SCOPES
 }
 
 /**
