@@ -486,7 +486,7 @@ jobs:
       e2e_ref: ${{ inputs.e2e_ref || 'main' }}
     secrets: inherit
 
-  # The API package (CS-02, ostrom-core docs/decisions/0002-generated-openapi.md): the server's OpenAPI document
+  # The API package (CS-02, ostrom-core docs/decisions/0001-generated-openapi.md): the server's OpenAPI document
   # (openapi.json) and its TypeScript types, built on every run and published from main as @ostrom-hq/openapi
   # 0.1.<run> once `ci` is green. The web console and the site generate their clients from it. Until the server
   # generates the document from its own routes (ktor-server-routing-openapi, on the JVM), it is the contract of the
