@@ -249,7 +249,7 @@ environment, then `OSTROM_CONFIG_FILE`), with the `OSTROM_<MODULE>_…` prefix, 
 
 The environment holds only what the server needs to start (the table above: address, database, keys, public URLs,
 proxies, per-replica ceilings, OpenTelemetry). Everything else is set by an administrator of the instance in the
-console (**Admin → Settings**, `/api/v1/admin/settings`) and stored in PostgreSQL by the `admin` module, as TeamCode
+console (**Admin → Settings**, the `admin` tag of the contract) and stored in PostgreSQL by the `admin` module, as TeamCode
 keeps its dashboard settings: plain values in `admin_settings.plain_values`, secrets sealed with the secrets key and
 bound to their section and field (`instance-setting:<section>:<field>`), never returned, only whether they are set.
 Every save is checked against the version read (a `409 settings_conflict` when another came first) and written to the
@@ -262,7 +262,7 @@ start where nothing is stored for the section, the variables set are imported on
 that they are deprecated; afterwards a variable still set is ignored with a warning. The pull request that moves a
 setting removes its variable from the table above and from the chart once the import has shipped.
 
-The administrators of the instance (**Admin → Administrators**, `/api/v1/admin/instance-admins`) are stored too: the
+The administrators of the instance (**Admin → Administrators**) are stored too: the
 person who used the setup link is the first, and an administrator adds another by a verified e-mail of their account
 or removes one (never the last). Only a person signed in (a browser session or the unlocked app) who administers the
 instance reaches the admin routes, never a key whatever its scopes. `GET /auth/me` answers `instanceAdmin: true` for
