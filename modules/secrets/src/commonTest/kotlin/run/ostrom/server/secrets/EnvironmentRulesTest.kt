@@ -10,6 +10,7 @@ import run.ostrom.server.secrets.domain.EnvironmentVariant
 import run.ostrom.server.secrets.domain.InvalidEnvironmentVariantException
 import run.ostrom.server.secrets.domain.SecretValue
 import run.ostrom.server.secrets.domain.StoredEnvironmentVariant
+import run.ostrom.server.secrets.domain.VariantChange
 import run.ostrom.server.secrets.presentation.EnvironmentAssignRequest
 import run.ostrom.server.secrets.presentation.EnvironmentValuesResponse
 import run.ostrom.server.secrets.presentation.EnvironmentVariantCreateRequest
@@ -69,6 +70,7 @@ class EnvironmentRulesTest {
             EnvironmentVariantUpdateRequest(1, value = "value-secret").toString(),
             EnvironmentAssignRequest("id", "value-secret").toString(),
             EnvironmentValuesResponse(mapOf("TOKEN" to "value-secret"), emptyList()).toString(),
+            VariantChange(1, "TOKEN", "envelope-secret", now).toString(),
         )
         for (text in texts) {
             assertFalse("secret" in text, text)

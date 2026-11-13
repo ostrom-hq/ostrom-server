@@ -13,9 +13,11 @@ import run.ostrom.server.secrets.domain.SecretValue
 internal fun EnvironmentVariantCreateRequest.toNew() = NewEnvironmentVariant(
     variable = variable,
     name = name,
-    binding = binding?.let {
-        EnvironmentBinding.fromWire(it) ?: throw InvalidEnvironmentVariantException("Use shared or perMember.")
-    } ?: EnvironmentBinding.SHARED,
+    binding = if (binding == null) {
+        EnvironmentBinding.SHARED
+    } else {
+        EnvironmentBinding.fromWire(binding) ?: throw InvalidEnvironmentVariantException("Use shared or perMember.")
+    },
     value = value?.let(::SecretValue),
 )
 

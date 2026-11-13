@@ -10,6 +10,8 @@ import run.ostrom.server.secrets.domain.EnvironmentVariant
 import run.ostrom.server.secrets.domain.EnvironmentVariantNotFoundException
 import run.ostrom.server.secrets.domain.ResolveEnvironmentUseCase
 import run.ostrom.server.secrets.domain.StoredEnvironmentVariant
+import run.ostrom.server.secrets.domain.UpdateVariantOutcome
+import run.ostrom.server.secrets.domain.VariantChange
 import run.ostrom.server.secrets.domain.VariantLimitException
 import run.ostrom.server.secrets.infrastructure.executeInOrg
 import run.ostrom.server.secrets.infrastructure.fetchInOrg
@@ -353,6 +355,13 @@ class EnvironmentPostgresTest {
             .body<EnvironmentVariantResponse>()
         server.assign("$member2A/LOCAL_TOKEN", team.id)
         assertEquals(mapOf("LOCAL_TOKEN" to "team-local"), server.values("member2-a").variables)
+        // Unassigned, the slot is free again, and the member's own variant still holds its name.
+        server.send("DELETE", "$assignments/$member2A/LOCAL_TOKEN", "admin-a")
+        val again = server.send("POST", mine, "member2-a", create("LOCAL_TOKEN", "MINE", value = "local-2"))
+        assertTrue("variant_exists" in again.bodyAsText(), again.bodyAsText())
+        val rename = EnvironmentVariantUpdateRequest(1, "x")
+        val unknown = server.send("PATCH", "$mine/${Uuid.random()}", "member2-a", rename)
+        assertEquals(HttpStatusCode.NotFound, unknown.status)
         assertEquals(HttpStatusCode.NoContent, server.send("DELETE", "$mine/${second.id}", "member2-a").status)
         assertEquals(HttpStatusCode.NoContent, server.send("DELETE", "$variants/${team.id}", "admin-a").status)
     }
@@ -381,6 +390,11 @@ class EnvironmentPostgresTest {
             repository.promote(TestCallers.orgA, Uuid.parse(personal.id), now, limit = 1)
         }
         assertNull(repository.promote(TestCallers.orgA, Uuid.random(), now, limit = 1), "Gone meanwhile")
+        val change = VariantChange(1, "x", null, now)
+        assertEquals(UpdateVariantOutcome.NotFound, repository.update(TestCallers.orgA, Uuid.random(), null, change))
+        assertFailsWith<IllegalArgumentException>("A personal variant has an owner") {
+            repository.createPersonal(team("ownerless"), limit = 1)
+        }
         // A variant deleted between the use case's read and the write: a 404, not a broken foreign key.
         val gone = team("gone").variant
         assertFailsWith<EnvironmentVariantNotFoundException> {
@@ -401,7 +415,9 @@ class EnvironmentPostgresTest {
             .body<EnvironmentVariantResponse>()
         val odd = server.send("POST", variants, "admin-a", create("ODD", "o", value = "value-3"))
             .body<EnvironmentVariantResponse>()
-        for (variant in listOf(good, bad, odd)) {
+        val empty = server.send("POST", variants, "admin-a", create("EMPTY", "e", value = "value-4"))
+            .body<EnvironmentVariantResponse>()
+        for (variant in listOf(good, bad, odd, empty)) {
             server.assign("$memberA/${variant.variable}", variant.id)
         }
         server.driver.executeInOrg(
@@ -412,10 +428,14 @@ class EnvironmentPostgresTest {
             TestCallers.orgA,
             Statement.create("UPDATE environment_variants SET binding = 'future' WHERE variable = 'ODD'"),
         ).getOrThrow()
+        server.driver.executeInOrg(
+            TestCallers.orgA,
+            Statement.create("UPDATE environment_variants SET envelope = NULL WHERE variable = 'EMPTY'"),
+        ).getOrThrow()
 
         val values = server.values("member-a")
         assertEquals(mapOf("GOOD" to "value-1"), values.variables)
-        assertEquals(listOf("BAD", "ODD"), values.unavailable, "Nor a binding this version cannot read")
+        assertEquals(listOf("BAD", "EMPTY", "ODD"), values.unavailable, "Nor a binding this version cannot read")
         val listed = server.page(variants, "admin-a")
         assertEquals("perMember", listed.items.single { it.variable == "ODD" }.binding)
         val resolve = server.koin.get<ResolveEnvironmentUseCase>()

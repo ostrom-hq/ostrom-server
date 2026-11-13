@@ -117,7 +117,7 @@ class EnvironmentRepositoryImpl(private val driver: Driver) : EnvironmentReposit
         val current = fetchAll(
             Statement.create(
                 "SELECT $COLUMNS FROM environment_variants " +
-                    "WHERE org_id = :org_id AND id = :id AND ${owner(ownerMemberId)}",
+                    "WHERE org_id = :org_id AND id = :id AND ${owner(ownerMemberId)} FOR UPDATE",
             ).bindKey(orgId, id, ownerMemberId),
         ).getOrThrow().firstOrNull()?.toVariant()
         when {
@@ -132,10 +132,9 @@ class EnvironmentRepositoryImpl(private val driver: Driver) : EnvironmentReposit
                     val statement = Statement.create(
                         "UPDATE environment_variants SET name = COALESCE(:name, name), " +
                             "envelope = COALESCE(:envelope, envelope), version = version + 1, updated_at = :at " +
-                            "WHERE org_id = :org_id AND id = :id AND ${owner(ownerMemberId)} AND version = :expected " +
-                            "RETURNING $COLUMNS",
-                    ).bindKey(orgId, id, ownerMemberId)
-                        .bind("expected", change.expectedVersion)
+                            "WHERE org_id = :org_id AND id = :id RETURNING $COLUMNS",
+                    ).bind("org_id", orgId)
+                        .bind("id", id)
                         .bind("at", change.updatedAt)
                     if (name == null) statement.bindNull("name", String::class) else statement.bind("name", name)
                     val envelope = change.envelope
@@ -144,9 +143,8 @@ class EnvironmentRepositoryImpl(private val driver: Driver) : EnvironmentReposit
                     } else {
                         statement.bind("envelope", envelope)
                     }
-                    fetchAll(statement).getOrThrow().firstOrNull()?.toVariant()
-                        ?.let { UpdateVariantOutcome.Updated(it) }
-                        ?: UpdateVariantOutcome.VersionConflict
+                    // The row is locked since it was read: the version cannot have moved.
+                    UpdateVariantOutcome.Updated(fetchAll(statement).getOrThrow().first().toVariant())
                 }
             }
         }
@@ -183,7 +181,7 @@ class EnvironmentRepositoryImpl(private val driver: Driver) : EnvironmentReposit
                             .bind("org_id", orgId)
                             .bind("id", id)
                             .bind("at", updatedAt),
-                    ).getOrThrow().firstOrNull()?.toVariant()
+                    ).getOrThrow().first().toVariant()
                 }
             }
         }

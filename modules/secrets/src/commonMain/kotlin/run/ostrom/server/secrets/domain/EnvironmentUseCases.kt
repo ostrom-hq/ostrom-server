@@ -124,7 +124,7 @@ class ManageEnvironmentVariantsUseCaseImpl(
         update: EnvironmentVariantUpdate,
     ): EnvironmentVariant {
         actor.caller.requireAdmin()
-        val current = repository.get(actor.caller.orgId, id)?.variant ?: throw EnvironmentVariantNotFoundException()
+        val current = (repository.get(actor.caller.orgId, id) ?: throw EnvironmentVariantNotFoundException()).variant
         if (current.personal) throw VariantPersonalException()
         val updated = change(repository, cipher, current, update, clock)
         journal(audit, actor, "environment.variant.updated", updated)
@@ -139,7 +139,7 @@ class ManageEnvironmentVariantsUseCaseImpl(
 
     override suspend fun bulkAssign(actor: EnvironmentActor, id: Uuid): BulkAssignment {
         actor.caller.requireAdmin()
-        val variant = repository.get(actor.caller.orgId, id)?.variant ?: throw EnvironmentVariantNotFoundException()
+        val variant = (repository.get(actor.caller.orgId, id) ?: throw EnvironmentVariantNotFoundException()).variant
         if (variant.personal) throw VariantPersonalException()
         if (variant.binding != EnvironmentBinding.SHARED) throw VariantNotSharedException()
         val result = repository.bulkAssign(
@@ -166,7 +166,7 @@ class ManageEnvironmentVariantsUseCaseImpl(
 
     override suspend fun promote(actor: EnvironmentActor, id: Uuid): EnvironmentVariant {
         actor.caller.requireAdmin()
-        val current = repository.get(actor.caller.orgId, id)?.variant ?: throw EnvironmentVariantNotFoundException()
+        val current = (repository.get(actor.caller.orgId, id) ?: throw EnvironmentVariantNotFoundException()).variant
         if (!current.personal) return current
         val promoted = repository.promote(actor.caller.orgId, id, clock.now(), EnvironmentRules.TEAM_LIMIT)
             ?: throw VariantExistsException()
@@ -241,7 +241,7 @@ class ManageEnvironmentAssignmentsUseCaseImpl(
         actor.caller.requireAdmin()
         val orgId = actor.caller.orgId
         requireMember(members, orgId, memberId)
-        val variant = repository.get(orgId, variantId)?.variant ?: throw EnvironmentVariantNotFoundException()
+        val variant = (repository.get(orgId, variantId) ?: throw EnvironmentVariantNotFoundException()).variant
         if (variant.variable != variable) {
             throw InvalidEnvironmentVariantException("This variant fills ${variant.variable}, not $variable.")
         }
@@ -358,8 +358,9 @@ class PersonalEnvironmentVariantsUseCaseImpl(
         update: EnvironmentVariantUpdate,
     ): EnvironmentVariant {
         val current = repository.get(actor.caller.orgId, id)?.variant
-            ?.takeIf { it.ownerMemberId == actor.caller.memberId }
-            ?: throw EnvironmentVariantNotFoundException()
+        if (current == null || current.ownerMemberId != actor.caller.memberId) {
+            throw EnvironmentVariantNotFoundException()
+        }
         val updated = change(repository, cipher, current, update, clock)
         journal(audit, actor, "environment.variant.personal.updated", updated)
         return updated
@@ -407,12 +408,13 @@ class ResolveEnvironmentUseCaseImpl(
         val values = mutableMapOf<String, SecretValue>()
         val unavailable = mutableListOf<String>()
         for (assigned in repository.assignedValues(orgId, memberId)) {
-            val context = when (assigned.binding) {
-                EnvironmentBinding.SHARED -> environmentContext(orgId, assigned.variantId)
-                EnvironmentBinding.PER_MEMBER -> environmentContext(orgId, assigned.variantId, memberId)
-                null -> null
+            val binding = assigned.binding
+            val envelope = assigned.envelope
+            val plaintext = if (binding == null || envelope == null) {
+                null
+            } else {
+                cipher.open(envelope, context(orgId, assigned.variantId, memberId, binding))
             }
-            val plaintext = context?.let { bound -> assigned.envelope?.let { cipher.open(it, bound) } }
             if (plaintext == null) {
                 unavailable += assigned.variable
             } else {
@@ -422,6 +424,13 @@ class ResolveEnvironmentUseCaseImpl(
         return EnvironmentValues(values.toMap(), unavailable.sorted())
     }
 }
+
+// The context a value is sealed with: the variant's, and the member's for a per-member one.
+private fun context(orgId: Uuid, variantId: Uuid, memberId: Uuid, binding: EnvironmentBinding): String =
+    when (binding) {
+        EnvironmentBinding.SHARED -> environmentContext(orgId, variantId)
+        EnvironmentBinding.PER_MEMBER -> environmentContext(orgId, variantId, memberId)
+    }
 
 private const val VARIANT_SUBJECT = "environment_variant"
 private const val MEMBER_SUBJECT = "member"
