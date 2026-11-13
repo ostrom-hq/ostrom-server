@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
+# Two real server processes on one PostgreSQL, as TeamCode's scripts/smoke-replicas.py (docs/replicas.md « Evidence »,
+# parity TC-REP-7): both start at once on a migrated database; a token works on either; one replica killed (SIGKILL)
+# leaves the other serving, and comes back; a database outage makes both unready while they keep running, then both
+# ready again without a restart; a token revoked on one replica is refused by the other. Only its own containers are
+# stopped. Needs the image ostrom-server:ci and a database migrated by the image smoke step, reached as the serving
+# role through OSTROM_SMOKE_DATABASE_URL (postgresql://user:password@host:port/database).
+set -euo pipefail
+
+url="${OSTROM_SMOKE_DATABASE_URL:?}"
+# The replicas reach PostgreSQL through a TCP proxy of their own, so that the outage cuts them only.
+proxied="$(sed -E 's#@([^/:]+):([0-9]+)/#@127.0.0.1:5499/#' <<<"$url")"
+target="$(sed -E 's#.*@([^/:]+):([0-9]+)/.*#\1:\2#' <<<"$url")"
+names=(ostrom-replica-a ostrom-replica-b)
+proxy_pid=""
+
+cleanup() {
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    for name in ostrom-replica-a ostrom-replica-b; do echo "--- $name"; docker logs "$name" 2>&1 | tail -40 || true; done
+  fi
+  docker rm -f "${names[@]}" >/dev/null 2>&1 || true
+  [ -z "$proxy_pid" ] || kill "$proxy_pid" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+# A TCP proxy of this script's own (its PID kept, the only process it stops): every connection through it ends with it.
+proxy() {
+  python3 - "$target" <<'PY' &
+import socket, sys, threading
+host, port = sys.argv[1].rsplit(":", 1)
+server = socket.socket()
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(("127.0.0.1", 5499))
+server.listen(64)
+def pipe(a, b):
+    try:
+        while data := a.recv(65536):
+            b.sendall(data)
+    except OSError:
+        pass
+    finally:
+        a.close()
+        b.close()
+while True:
+    client, _ = server.accept()
+    upstream = socket.create_connection((host, int(port)))
+    threading.Thread(target=pipe, args=(client, upstream), daemon=True).start()
+    threading.Thread(target=pipe, args=(upstream, client), daemon=True).start()
+PY
+  proxy_pid=$!
+  sleep 1
+}
+
+# Starts replica $1 on port $2 (detached).
+replica() {
+  docker run -d --name "$1" --network host -e OSTROM_PORT="$2" -e OSTROM_DATABASE_URL="$proxied" \
+    -e OSTROM_SHUTDOWN_DELAY_SECONDS=1 ostrom-server:ci >/dev/null
+}
+
+# Waits up to $2 seconds for `curl` of $1 to answer HTTP $3.
+await_status() {
+  local path="$1" seconds="$2" want="$3" got=""
+  for _ in $(seq 1 "$seconds"); do
+    got="$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' "$path" || true)"
+    [ "$got" = "$want" ] && return 0
+    sleep 1
+  done
+  echo "$path answered $got, not $want, within ${seconds}s"; exit 1
+}
+
+# The HTTP status of GET /api/v1/auth/me on port $1 with the QA token.
+me() {
+  curl -s --max-time 10 -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "localhost:$1/api/v1/auth/me" \
+    || true
+}
+
+proxy
+account="$(docker run --rm --network host -e OSTROM_DATABASE_URL="$proxied" -e OSTROM_ALLOW_TEST_ACCOUNTS=true \
+  ostrom-server:ci seed-test-account replicas@ostrom.test)"
+token="$(sed -nE 's/.*"token":"([^"]+)".*/\1/p' <<<"$account" | tail -1)"
+[ -n "$token" ] || { echo "no token from seed-test-account"; exit 1; }
+
+echo "1. Both replicas start at once on the same database."
+replica ostrom-replica-a 8082 &
+a=$!
+replica ostrom-replica-b 8083 &
+b=$!
+# Their two `docker run` only: the proxy runs in the background too.
+wait "$a" "$b"
+await_status localhost:8082/ready 30 200
+await_status localhost:8083/ready 30 200
+
+echo "2. A token works on either replica: the sessions are in PostgreSQL, not in a process."
+[ "$(me 8082)" = 200 ] && [ "$(me 8083)" = 200 ] || { echo "the token is refused: $(me 8082) $(me 8083)"; exit 1; }
+
+echo "3. Replica A is killed (SIGKILL): B keeps serving; A comes back."
+docker kill -s KILL ostrom-replica-a >/dev/null
+[ "$(me 8083)" = 200 ] || { echo "B stopped serving once A was killed"; exit 1; }
+docker start ostrom-replica-a >/dev/null
+await_status localhost:8082/ready 30 200
+[ "$(me 8082)" = 200 ] || { echo "A came back without the session"; exit 1; }
+
+echo "4. The database goes away: both are unready, authenticate nobody and keep running; then both are ready again."
+kill "$proxy_pid"
+wait "$proxy_pid" 2>/dev/null || true
+proxy_pid=""
+# Unready is a 503 or no answer within the probe's 5 seconds, both a failed readiness probe for an orchestrator.
+for port in 8082 8083; do
+  ready=200
+  for _ in $(seq 1 30); do
+    ready="$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' "localhost:$port/ready" || true)"
+    [ "$ready" = 200 ] || break
+    sleep 1
+  done
+  [ "$ready" != 200 ] || { echo "replica $port stayed ready without its database"; exit 1; }
+  echo "   replica $port: /ready answered $ready"
+  [ "$(me "$port")" != 200 ] || { echo "replica $port authenticated without its database"; exit 1; }
+done
+for name in ostrom-replica-a ostrom-replica-b; do
+  running="$(docker inspect -f '{{.State.Running}}' "$name")"
+  [ "$running" = true ] || { echo "$name exited without its database"; exit 1; }
+done
+proxy
+await_status localhost:8082/ready 60 200
+await_status localhost:8083/ready 60 200
+
+echo "5. A token revoked on B is refused by A."
+revoked="$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $token" \
+  localhost:8083/api/v1/auth/logout)"
+[ "$revoked" = 204 ] || { echo "logout on B answered $revoked"; exit 1; }
+[ "$(me 8082)" = 401 ] || { echo "A still takes a token B revoked: $(me 8082)"; exit 1; }
+[ "$(me 8083)" = 401 ] || { echo "B still takes the token it revoked"; exit 1; }
+
+echo "Two replicas on one database: every step held."
