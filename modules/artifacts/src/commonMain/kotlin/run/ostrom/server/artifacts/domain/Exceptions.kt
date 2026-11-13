@@ -33,6 +33,15 @@ class ArtifactSecretException(path: String) : OstromException(
 /** The publication is larger than an artifact may be. */
 class ArtifactTooLargeException(message: String) : OstromException(ErrorKind.PAYLOAD_TOO_LARGE, message)
 
+/**
+ * A token a program can present asks what only a person does: change an artifact's access, publish one as `link` or
+ * delete one. An agent never makes an artifact public nor deletes one.
+ */
+class ArtifactPersonRequiredException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "Only a person changes who reads an artifact, makes it public or deletes it: do it in the console.",
+)
+
 /** The caller acts for no organization: answered like an unknown organization. */
 class NotAMemberException : OstromException(ErrorKind.NOT_FOUND, "Organization not found.")
 

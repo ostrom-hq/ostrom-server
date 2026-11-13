@@ -7,6 +7,7 @@ import run.ostrom.server.artifacts.domain.ArtifactLocations
 import run.ostrom.server.artifacts.domain.ArtifactNotFoundException
 import run.ostrom.server.artifacts.domain.ArtifactNotWritableException
 import run.ostrom.server.artifacts.domain.ArtifactPagesUnavailableException
+import run.ostrom.server.artifacts.domain.ArtifactPersonRequiredException
 import run.ostrom.server.artifacts.domain.ContentDigest
 import run.ostrom.server.artifacts.domain.InvalidArtifactRequestException
 import run.ostrom.server.artifacts.domain.ManageArtifactUseCaseImpl
@@ -19,6 +20,7 @@ import run.ostrom.server.artifacts.fakes.InMemoryArtifacts
 import run.ostrom.server.artifacts.fakes.TestClock
 import run.ostrom.server.artifacts.fakes.VIEWER
 import run.ostrom.server.artifacts.fakes.alice
+import run.ostrom.server.artifacts.fakes.aliceAgent
 import run.ostrom.server.artifacts.fakes.bob
 import run.ostrom.server.artifacts.fakes.carol
 import run.ostrom.server.artifacts.fakes.dave
@@ -112,7 +114,7 @@ class ArtifactUseCasesTest {
         assertFailsWith<ArtifactNotFoundException> { read.get(bob, personal.id) }
         assertEquals(team, read.get(bob, team.id))
         assertEquals(linked, read.get(bob, linked.id))
-        assertEquals(personal, read.get(dave, personal.id))
+        assertFailsWith<ArtifactNotFoundException> { read.get(dave, personal.id) }
         assertFailsWith<ArtifactNotFoundException> { read.get(carol, team.id) }
         assertFailsWith<ArtifactNotFoundException> { read.get(alice, Uuid.random()) }
 
@@ -127,6 +129,49 @@ class ArtifactUseCasesTest {
         assertFailsWith<ArtifactNotWritableException> { publish.addVersion(dave, team.id, page()) }
         assertFailsWith<ArtifactNotWritableException> { manage.update(bob, team.id, "Taken", null) }
         assertFailsWith<ArtifactNotWritableException> { manage.delete(bob, team.id) }
+    }
+
+    @Test
+    fun anAdministratorHasNoRightOverAnotherMembersArtifact() = runTest {
+        val personal = publish.create(alice, "Mine", "personal", page())
+        val team = publish.create(alice, "Ours", "team", page())
+        assertEquals(listOf(team.id), read.list(dave, null, null).map { it.id }, "Only what any member lists")
+        assertFailsWith<ArtifactNotFoundException> { read.get(dave, personal.id) }
+        assertFailsWith<ArtifactNotFoundException> { read.versions(dave, personal.id) }
+        assertFailsWith<ArtifactNotFoundException> { read.file(dave, personal.id, null, null) }
+        assertFailsWith<ArtifactNotFoundException> { manage.members(dave, personal.id) }
+        assertFailsWith<ArtifactNotFoundException> { manage.update(dave, personal.id, null, "link") }
+        assertFailsWith<ArtifactNotFoundException> { manage.share(dave, personal.id, dave.memberId, share = true) }
+        assertFailsWith<ArtifactNotFoundException> { manage.delete(dave, personal.id) }
+        assertFailsWith<ArtifactNotWritableException> { manage.update(dave, team.id, null, "link") }
+        assertFailsWith<ArtifactNotWritableException> { manage.update(dave, team.id, null, "personal") }
+        assertFailsWith<ArtifactNotWritableException> { manage.share(dave, team.id, dave.memberId, share = true) }
+        assertFailsWith<ArtifactNotWritableException> { manage.delete(dave, team.id) }
+        assertEquals(ArtifactAccess.TEAM, read.get(alice, team.id).access)
+
+        manage.share(alice, personal.id, dave.memberId, share = true)
+        assertEquals(personal, read.get(dave, personal.id), "Shared with them, they read it as any member")
+        assertEquals(listOf(personal.id, team.id).toSet(), read.list(dave, null, null).map { it.id }.toSet())
+        assertFailsWith<ArtifactNotWritableException> { manage.delete(dave, personal.id) }
+    }
+
+    @Test
+    fun onlyAPersonMakesAnArtifactPublicChangesItsAccessOrDeletesIt() = runTest {
+        assertFailsWith<ArtifactPersonRequiredException> { publish.create(aliceAgent, "Leak", "link", page()) }
+        assertTrue(repository.artifacts.isEmpty())
+        val team = publish.create(aliceAgent, "Ours", "team", page())
+        val personal = publish.create(aliceAgent, "Mine", "personal", page())
+        assertFailsWith<ArtifactPersonRequiredException> { manage.update(aliceAgent, personal.id, null, "link") }
+        assertFailsWith<ArtifactPersonRequiredException> { manage.update(aliceAgent, team.id, null, "personal") }
+        assertFailsWith<ArtifactPersonRequiredException> { manage.delete(aliceAgent, personal.id) }
+        assertEquals("Renamed", manage.update(aliceAgent, personal.id, "Renamed", null).title)
+        assertEquals(ArtifactAccess.TEAM, manage.update(aliceAgent, team.id, null, "team").access, "Unchanged")
+        manage.share(aliceAgent, personal.id, bob.memberId, share = true)
+        assertEquals(2, publish.addVersion(aliceAgent, personal.id, page("v2")).number)
+
+        assertNotNull(manage.update(alice, personal.id, null, "link").linkSlug)
+        manage.delete(alice, team.id)
+        assertFailsWith<ArtifactNotFoundException> { read.get(alice, team.id) }
     }
 
     @Test
@@ -151,12 +196,12 @@ class ArtifactUseCasesTest {
         assertEquals(clock.now, linked.updatedAt)
         assertEquals(slug, manage.update(alice, created.id, "Plan B", null).linkSlug)
         assertEquals(slug, manage.update(alice, created.id, null, "link").linkSlug)
-        val team = manage.update(dave, created.id, null, "team")
+        val team = manage.update(alice, created.id, null, "team")
         assertEquals(ArtifactAccess.TEAM, team.access)
         assertNull(team.linkSlug)
         assertNotEquals(slug, manage.update(alice, created.id, null, "link").linkSlug)
 
-        manage.delete(dave, created.id)
+        manage.delete(alice, created.id)
         assertFailsWith<ArtifactNotFoundException> { read.get(alice, created.id) }
     }
 

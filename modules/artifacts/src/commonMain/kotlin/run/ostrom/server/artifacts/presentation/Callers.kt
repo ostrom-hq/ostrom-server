@@ -7,15 +7,19 @@ import run.ostrom.server.artifacts.domain.MissingScopeException
 import run.ostrom.server.artifacts.domain.NotAMemberException
 import run.ostrom.server.artifacts.domain.UploadedFile
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
-import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
+import run.ostrom.server.kernel.auth.WriteAccess
+import run.ostrom.server.kernel.auth.mayWrite
 import kotlin.io.encoding.Base64
 
 /** Reading artifacts. */
 const val ARTIFACTS_READ = "artifacts:read"
 
-/** Publishing, sharing and deleting artifacts; includes [ARTIFACTS_READ]. */
+/**
+ * Publishing and sharing artifacts; includes [ARTIFACTS_READ]. Changing an artifact's access, making it public and
+ * deleting it also need a person ([ArtifactCaller.person]): no token reaches them, whatever its scopes.
+ */
 const val ARTIFACTS_WRITE = "artifacts:write"
 
 private const val ALL_USER_SCOPES = "user:*"
@@ -29,7 +33,8 @@ fun AuthenticatedPrincipal.allowsArtifacts(scope: String): Boolean =
         (kind == PrincipalKind.USER && ALL_USER_SCOPES in scopes)
 
 /**
- * The member a request acts for.
+ * The member a request acts for. Their role is not read: it gives no right over another member's artifact. Whether a
+ * person presents the credential is [WriteAccess.PERSON]'s rule: a browser session or the unlocked app.
  *
  * @throws MissingScopeException When the credential lacks [scope].
  * @throws NotAMemberException When it acts for no organization.
@@ -37,10 +42,13 @@ fun AuthenticatedPrincipal.allowsArtifacts(scope: String): Boolean =
 suspend fun PrincipalOrgResolver.artifactCallerOf(principal: AuthenticatedPrincipal, scope: String): ArtifactCaller {
     if (!principal.allowsArtifacts(scope)) throw MissingScopeException(scope)
     val member = resolve(principal, null) ?: throw NotAMemberException()
-    return ArtifactCaller(member.orgId, member.memberId.toString(), member.role in ADMIN_ROLES)
+    return ArtifactCaller(
+        orgId = member.orgId,
+        memberId = member.memberId.toString(),
+        person = principal.mayWrite(WriteAccess.PERSON),
+        credentialId = principal.credentialId,
+    )
 }
-
-private val ADMIN_ROLES = setOf(OrgRole.OWNER, OrgRole.ADMIN)
 
 /**
  * Decodes the files of a request.

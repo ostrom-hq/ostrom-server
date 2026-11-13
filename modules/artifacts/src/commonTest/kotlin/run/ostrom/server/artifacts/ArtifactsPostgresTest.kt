@@ -9,6 +9,7 @@ import run.ostrom.server.artifacts.domain.ArtifactsRepository
 import run.ostrom.server.artifacts.fakes.ALICE
 import run.ostrom.server.artifacts.fakes.BOB
 import run.ostrom.server.artifacts.fakes.CONTENT_ORIGIN
+import run.ostrom.server.artifacts.fakes.DAVE
 import run.ostrom.server.artifacts.fakes.ORG_A
 import run.ostrom.server.artifacts.fakes.ORG_B
 import run.ostrom.server.artifacts.fakes.VIEWER
@@ -176,11 +177,11 @@ class ArtifactsPostgresTest {
         repository.setMember(ORG_A, shared.id, BOB.toString(), share = true)
 
         assertEquals(setOf(team.id, shared.id), repository.listReadable(bob, null, 10).map { it.id }.toSet())
+        assertEquals(listOf(team.id), repository.listReadable(dave, null, 10).map { it.id }, "A role opens nothing")
         assertEquals(3, repository.listReadable(alice, null, 10).size)
-        assertEquals(3, repository.listReadable(dave, null, 10).size)
-        val first = repository.listReadable(dave, null, 1).single()
+        val first = repository.listReadable(alice, null, 1).single()
         assertEquals(team.id, first.id)
-        assertEquals(2, repository.listReadable(dave, first.id, 10).size)
+        assertEquals(2, repository.listReadable(alice, first.id, 10).size)
     }
 
     /**
@@ -299,6 +300,9 @@ class ArtifactsPostgresTest {
         assertEquals(HttpStatusCode.Forbidden, client.publish("reader", "No", "team", "x").status)
         assertEquals(HttpStatusCode.NotFound, client.get("/api/v1/artifacts") { bearerAuth("nobody") }.status)
         assertEquals(HttpStatusCode.NotFound, client.get("/api/v1/artifacts/${team.id}") { bearerAuth("carol") }.status)
+        assertEquals("owner", team.relation)
+        val asBob = client.get("/api/v1/artifacts/${team.id}") { bearerAuth("bob") }.body<ArtifactResponse>()
+        assertEquals("team", asBob.relation)
         assertEquals(HttpStatusCode.NotFound, client.get("/api/v1/artifacts/not-a-uuid") { bearerAuth("alice") }.status)
         assertEquals(
             HttpStatusCode.BadRequest,
@@ -322,10 +326,58 @@ class ArtifactsPostgresTest {
         assertEquals(listOf(team.id), listed.items.map { it.id })
         assertNull(listed.next)
         assertEquals(
-            HttpStatusCode.NoContent,
+            HttpStatusCode.Forbidden,
             client.delete("/api/v1/artifacts/${team.id}") { bearerAuth("dave") }.status,
+            "An administrator deletes no other member's artifact",
+        )
+        assertEquals(
+            HttpStatusCode.Forbidden,
+            client.delete("/api/v1/artifacts/${team.id}") { bearerAuth("agent") }.status,
+            "Its owner's agent neither",
+        )
+        assertEquals(HttpStatusCode.Forbidden, client.publish("agent", "Public", "link", "x").status)
+        val toLink = client.patch("/api/v1/artifacts/${team.id}") {
+            bearerAuth("agent")
+            contentType(ContentType.Application.Json)
+            setBody(UpdateArtifactRequest(access = "link"))
+        }
+        assertEquals(HttpStatusCode.Forbidden, toLink.status)
+        assertEquals(
+            HttpStatusCode.NoContent,
+            client.delete("/api/v1/artifacts/${team.id}") { bearerAuth("alice") }.status,
         )
     }
+
+    @Test
+    fun anAdministratorsAgentReadsNoOtherMembersPersonalArtifact() =
+        serverTest(listOf(ArtifactsModule), testIdentities) { server ->
+            val client = server.client
+            val personal = client.publish("alice", "Mine", "personal", "<p>x</p>").body<ArtifactResponse>()
+            listOf("dave", "dave-agent").forEach { token ->
+                val listed = client.get("/api/v1/artifacts") { bearerAuth(token) }.body<ArtifactsResponse>()
+                assertEquals(emptyList(), listed.items, token)
+                listOf(
+                    "/api/v1/artifacts/${personal.id}",
+                    "/api/v1/artifacts/${personal.id}/versions",
+                    "/api/v1/artifacts/${personal.id}/versions/1/file",
+                    "/api/v1/artifacts/${personal.id}/members",
+                ).forEach { path ->
+                    assertEquals(HttpStatusCode.NotFound, client.get(path) { bearerAuth(token) }.status, "$token $path")
+                }
+                assertEquals(
+                    HttpStatusCode.NotFound,
+                    client.delete("/api/v1/artifacts/${personal.id}") { bearerAuth(token) }.status,
+                )
+                assertEquals(
+                    HttpStatusCode.NotFound,
+                    client.put("/api/v1/artifacts/${personal.id}/members/$DAVE") { bearerAuth(token) }.status,
+                )
+            }
+            val shared = client.put("/api/v1/artifacts/${personal.id}/members/$DAVE") { bearerAuth("alice") }
+            assertEquals(HttpStatusCode.NoContent, shared.status)
+            val read = client.get("/api/v1/artifacts/${personal.id}") { bearerAuth("dave") }.body<ArtifactResponse>()
+            assertEquals("viewer", read.relation)
+        }
 
     @Test
     fun pagesAreServedOnTheContentOriginOnly() = serverTest(listOf(ArtifactsModule), testIdentities) { server ->
