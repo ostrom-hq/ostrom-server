@@ -264,7 +264,8 @@ class ListSharedAccountsUseCaseImpl(
 internal fun nextReset(windows: List<QuotaWindow>, now: Instant): Instant? {
     val ahead = windows.filterNot { it.window.startsWith(MODEL_WINDOW) }
         .mapNotNull { window -> window.resetsAt?.takeIf { it > now }?.let { window.window to it } }
-    return ahead.firstOrNull { it.first == WEEKLY_WINDOW }?.second ?: ahead.minOfOrNull { it.second }
+    val weekly = ahead.firstOrNull { it.first == WEEKLY_WINDOW }
+    return if (weekly != null) weekly.second else ahead.minOfOrNull { it.second }
 }
 
 private const val WEEKLY_WINDOW = "seven_day"
