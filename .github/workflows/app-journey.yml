@@ -1,7 +1,7 @@
 name: App journey
 
 # The mobile app's flows against the real server (ostrom-app .maestro/real/, demo/PARCOURS.md 6.7) on a PUBLISHED image
-# of this server: by default the newest published `sha-<7>` of main's last commits, never `edge`, which a slower run of an older commit may still
+# of this server: by default the newest published `sha-<commit>` of main's last commits, never `latest`, which a slower run of an older commit may still
 # hold. The job prepares the server through its own routes (ostrom-app scripts/real-server-session.sh): the phone's
 # person signs in with GitHub (the demo stack's fake GitHub, ostrom-helm compose/demo/fake-github.mjs), owns the
 # organization and approves pushes to main; another member asks two; the phone's session comes from the app's own
@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       server_image:
-        description: Server image (empty = the newest published ghcr.io/ostrom-hq/ostrom-server:sha-<7> of main)
+        description: Server image (empty = the newest published docker.io/ostromhq/ostrom-server:sha-<commit> of main)
         default: ""
       app_ref:
         description: ostrom-app ref whose app and flows run
@@ -124,7 +124,7 @@ jobs:
           nohup node helm/compose/demo/fake-github.mjs > "$RUNNER_TEMP/fake-github.log" 2>&1 &
           for _ in $(seq 1 30); do curl -fsS 127.0.0.1:8080/health >/dev/null 2>&1 && exit 0; sleep 1; done
           cat "$RUNNER_TEMP/fake-github.log"; exit 1
-      - name: The server image (the newest published sha-<7> of main unless named)
+      - name: The server image (the newest published sha-<commit> of main unless named)
         id: server
         env:
           GHCR_TOKEN: ${{ github.token }}
@@ -135,11 +135,11 @@ jobs:
             image=$WANTED_IMAGE
             docker pull --quiet "$image" || { echo "::error::$image cannot be pulled"; exit 1; }
           else
-            # Main moves faster than its images are published: the newest `sha-<7>` among its last 20 commits.
+            # Main moves faster than its images are published: the newest `sha-<commit>` among its last 20 commits.
             image=""
             for commit in $(git -C server rev-list --max-count=20 origin/main); do
-              if docker pull --quiet "ghcr.io/ostrom-hq/ostrom-server:sha-${commit:0:7}" > /dev/null 2>&1; then
-                image="ghcr.io/ostrom-hq/ostrom-server:sha-${commit:0:7}"
+              if docker pull --quiet "docker.io/ostromhq/ostrom-server:sha-${commit}" > /dev/null 2>&1; then
+                image="docker.io/ostromhq/ostrom-server:sha-${commit}"
                 break
               fi
             done

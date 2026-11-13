@@ -1,10 +1,10 @@
-// SPDX-License-Identifier: Apache-2.0
-// The server binary: `ostrom-server` serves HTTP on Ktor's CIO engine (role checked, migrations verified, graceful
-// stop on SIGTERM), `ostrom-server migrate` applies every module's migrations with the owner's credentials, and
+// SPDX-License-Identifier: AGPL-3.0-only
+// The server application: `ostrom-server` serves HTTP on Ktor's CIO engine (role checked, migrations verified, graceful
+// drain on SIGTERM), `ostrom-server migrate` applies every module's migrations with the owner's credentials, and
 // `ostrom-server seed-test-account` creates a QA account. Depends on every module of modules/, and on the enterprise
-// modules of ee/modules/ when that directory is present (an Apache-2.0 build without ee/ compiles the same code with none).
-// The entry point is native only (nativeMain); the module list and the commands (commonMain) are also tested on the
-// JVM for coverage.
+// modules of ee/modules/ when that directory is present (an AGPL build without ee/ compiles the same code with none).
+// The shipped entry point is the JVM's (jvmMain, docs/decisions/0001), packaged into the image by image/; the native
+// one (nativeMain) goes with the native targets of the server modules.
 plugins {
     id("ostrom.native-module")
 }
@@ -41,7 +41,7 @@ val generateEeModules = tasks.register("generateEeModules") {
             |
             |import run.ostrom.server.kernel.module.ServerModule
             |
-            |/** The enterprise modules found in ee/modules/ at build time, none in an Apache-2.0 build without ee/. */
+            |/** The enterprise modules found in ee/modules/ at build time, none in an AGPL build without ee/. */
             |internal fun eeModules(): List<ServerModule> = listOf<ServerModule>(
             |$entries)
             |
@@ -87,8 +87,26 @@ kotlin {
             // linked Ktor picks CIO for the engine-less clients, so every https call failed.
             implementation(libs.ktor.client.curl)
         }
+        // The JVM process: Ktor's CIO server (Netty comes with the next step of docs/decisions/0001), and the CIO
+        // client of the telemetry and of every module's engine-less HttpClient { }, with the JDK's TLS.
+        jvmMain.dependencies {
+            implementation(libs.ktor.server.cio)
+            implementation(libs.ktor.client.cio)
+        }
         commonTest.dependencies {
             implementation(project(":testing"))
+        }
+    }
+}
+
+// The process entry point (Main.kt: signals, exitProcess) runs in the image, whose smoke tests (ci.yml ci-image) start,
+// migrate, drain and stop it; what it calls is measured here.
+kover {
+    reports {
+        filters {
+            excludes {
+                classes("run.ostrom.server.app.MainKt", "run.ostrom.server.app.MainKt$*")
+            }
         }
     }
 }

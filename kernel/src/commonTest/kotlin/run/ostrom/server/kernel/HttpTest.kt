@@ -226,7 +226,7 @@ class HttpTest {
         val response = client.get("/health")
         assertEquals(HttpStatusCode.OK, response.status)
         val health = OstromJson.decodeFromString<HealthResponse>(response.bodyAsText())
-        assertEquals(HealthResponse("ok", SERVER_VERSION, mapOf("database" to "ok")), health)
+        assertEquals(HealthResponse("ok", SERVER_VERSION, emptyMap()), health)
     }
 
     @Test
@@ -237,13 +237,18 @@ class HttpTest {
     }
 
     @Test
-    fun healthIs503WhenACheckIsDownOrFails() =
+    fun aDatabaseOutageLeavesTheProcessAliveButNotReady() =
         probeServer(listOf(FixedHealthCheck("database", false), ThrowingHealthCheck())) {
-            val response = client.get("/health")
+            // SD-04: liveness never fails on the database, or an outage would restart every replica at once.
+            val alive = client.get("/health")
+            assertEquals(HttpStatusCode.OK, alive.status)
+            val health = OstromJson.decodeFromString<HealthResponse>(alive.bodyAsText())
+            assertEquals(HealthResponse("ok", SERVER_VERSION, emptyMap()), health)
+            val response = client.get("/ready")
             assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
-            val health = OstromJson.decodeFromString<HealthResponse>(response.bodyAsText())
+            val ready = OstromJson.decodeFromString<HealthResponse>(response.bodyAsText())
             val expected = HealthResponse("degraded", SERVER_VERSION, mapOf("database" to "down", "cache" to "down"))
-            assertEquals(expected, health)
+            assertEquals(expected, ready)
         }
 
     @Test
@@ -294,7 +299,7 @@ class HttpTest {
     @Test
     fun aCancelledHealthCheckIsNotReportedAsAnError() = probeServer(listOf(FixedHealthCheck("database", null))) {
         val status = try {
-            client.get("/health").status
+            client.get("/ready").status
         } catch (expected: Exception) {
             null
         }

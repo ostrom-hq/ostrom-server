@@ -1,7 +1,7 @@
 name: Console journeys
 
 # The console's journeys against the real server (ostrom-web e2e-real/, Playwright, desktop and mobile) against a
-# PUBLISHED image of this server: by default the newest `sha-<7>` of main's last commits, never `edge`, which a
+# PUBLISHED image of this server: by default the newest `sha-<commit>` of main's last commits, never `latest`, which a
 # slower run of an older commit may still hold. The console is built here from ostrom-web, without mocks, and served by `vite preview`, which
 # proxies /api to the server, as in ostrom-web's own CI. It runs in this repository because its token reads its own
 # GHCR packages, which ostrom-web's cannot yet (the journeys are skipped there, "package Actions access"); the same
@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       server_image:
-        description: Server image (empty = the newest ghcr.io/ostrom-hq/ostrom-server:sha-<7> of main published)
+        description: Server image (empty = the newest docker.io/ostromhq/ostrom-server:sha-<commit> of main published)
         default: ""
       runner_image:
         description: Cloud session image the server starts on this runner's Docker (empty = latest)
@@ -140,7 +140,7 @@ jobs:
           ssh-key: ${{ secrets.DEPLOY_KEY_WEB }}
           path: web
           persist-credentials: false
-      - name: The server image (the newest sha-<7> of main published, unless named)
+      - name: The server image (the newest sha-<commit> of main published, unless named)
         id: server
         env:
           GHCR_TOKEN: ${{ github.token }}
@@ -155,7 +155,7 @@ jobs:
             # main's head is published a few minutes after its merge: the newest of its last commits that is.
             # Only an image not published yet is skipped; any other pull error stops the job.
             for commit in $(git -C server rev-list --first-parent --max-count=10 origin/main); do
-              candidate=ghcr.io/ostrom-hq/ostrom-server:sha-${commit:0:7}
+              candidate=docker.io/ostromhq/ostrom-server:sha-${commit}
               if error=$(docker pull --quiet "$candidate" 2>&1 >/dev/null); then
                 image=$candidate
                 break
@@ -165,7 +165,7 @@ jobs:
                 *) echo "::error::$candidate cannot be pulled: $error"; exit 1 ;;
               esac
             done
-            [ -n "$image" ] || { echo "::error::no sha-<7> image of main's last 10 commits can be pulled"; exit 1; }
+            [ -n "$image" ] || { echo "::error::no sha-<commit> image of main's last 10 commits can be pulled"; exit 1; }
           else
             docker pull --quiet "$image" || { echo "::error::$image cannot be pulled"; exit 1; }
           fi

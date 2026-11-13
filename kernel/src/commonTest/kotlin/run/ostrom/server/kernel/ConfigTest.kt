@@ -232,6 +232,17 @@ class ConfigTest {
     }
 
     @Test
+    fun readsTheDrainGraceOfCallsInFlight() {
+        // SD-09: a model call is bounded by 10 minutes upstream, the default grace; the chart gives 660 s in all.
+        assertEquals(600.seconds, ServerConfig.from(MapConfigSource(database)).drainGrace)
+        val none = ServerConfig.from(MapConfigSource(database + mapOf("OSTROM_SHUTDOWN_GRACE_SECONDS" to "0")))
+        assertEquals(Duration.ZERO, none.drainGrace)
+        assertFailsWith<InvalidConfigException> {
+            ServerConfig.from(MapConfigSource(database + mapOf("OSTROM_SHUTDOWN_GRACE_SECONDS" to "601")))
+        }
+    }
+
+    @Test
     fun readsTheTrustedProxiesAndTheDrainDelay() {
         val defaults = ServerConfig.from(MapConfigSource(database))
         assertSame(TrustedProxies.NONE, defaults.trustedProxies)

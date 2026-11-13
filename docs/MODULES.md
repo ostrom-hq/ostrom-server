@@ -184,8 +184,8 @@ Every request is already logged once by the kernel (method, route template — n
 ## 8. Before the PR
 
 - CI job `ci` green: `scripts/check-conventions.py`, then
-  `./gradlew detekt jvmTest koverVerify koverXmlReport linuxX64Test`, the binaries (`ci/build-linux.sh` leaves
-  `dist/ostrom-server`) and the image smoke test.
+  `./gradlew detekt jvmTest koverVerify koverXmlReport linuxX64Test`, the image (`./gradlew
+  :image:publishImageToLocalRegistry`, jib) and its smoke test.
 - One PR per module step, small; the PR touches only `modules/<name>/` (and its line in `ServerModules.kt` if needed).
 - `ee/` code: same shape, under `ee/modules/<name>/` (Gradle path `:ee:modules:<name>`, discovered like `modules/`),
   plus an `ee-module.properties` naming its `ServerModule` object; the app registers it after every Apache-2.0 module.
@@ -207,7 +207,8 @@ Every request is already logged once by the kernel (method, route template — n
 | `OSTROM_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `OSTROM_TRUSTED_PROXIES` | none | Comma-separated networks (`10.0.0.0/8, fd00::/8`) of the reverse proxies whose `X-Forwarded-For` is believed: the client is the right-most hop that is not one of them. With none, the header is ignored and the client is the socket's peer |
 | `OSTROM_CLIENT_ADDRESS_HEADER` | none | A header in which the trusted proxies give the client's address, read before `X-Forwarded-For` when the peer is one of them (`CF-Connecting-IP` behind Cloudflare). Absent, sent twice, not an IP address or a trusted proxy's: `X-Forwarded-For` decides. Without `OSTROM_TRUSTED_PROXIES`, or set to `X-Forwarded-For`, the server refuses to start. Set it only when clients cannot reach the server around that proxy (Cloudflare: Authenticated Origin Pulls on the ingress), or they could choose their address |
-| `OSTROM_SHUTDOWN_DELAY_SECONDS` | `5` | 0 to 10: after SIGTERM, how long the server keeps serving with `/ready` at 503 before stopping the engine (then up to 15 s for requests in flight: at most 25 s, within the Helm grace period of 30 s) |
+| `OSTROM_SHUTDOWN_DELAY_SECONDS` | `5` | 0 to 10: after SIGTERM, how long the server keeps serving with `/ready` at 503 before it waits for the calls in flight |
+| `OSTROM_SHUTDOWN_GRACE_SECONDS` | `600` | 0 to 600: then, how long the server waits at most for the ordinary and held calls in flight (a model's stream, a gate's wait) to end before stopping the engine, which cuts the open connections (terminal, live usage stream) their clients reopen elsewhere. The Helm chart's grace period is 660 s (TeamCode's, audit SD-09) |
 | `OSTROM_READS_PER_MINUTE` | `600` | 1 to 100 000: how many calls one subject (a person, a device, an agent, a service) makes per minute to the costly reads (sessions and their thread, activity, spending, receipts, the audit log, a gate and its wait, the approvals); past it, a 429 with `Retry-After`. Counted per replica |
 | `OSTROM_READS_IN_FLIGHT` | `16` | 1 to 1 000: how many of those reads one subject holds at once; past it, a 429 with `Retry-After`. Counted per replica |
 | `OSTROM_READ_WAITS_IN_FLIGHT` | `256` | 1 to 10 000: how many gate reads (`GET /gates/{id}`, whose `wait` holds the call up to 30 s) one subject holds at once, apart from the reads above; they count in `OSTROM_READS_PER_MINUTE` too. Past it, a 429 with `Retry-After`. Counted per replica |
@@ -250,13 +251,11 @@ environment, then `OSTROM_CONFIG_FILE`), with the `OSTROM_<MODULE>_…` prefix, 
 The server reads its container's memory limit (cgroup v2 `memory.max`, else v1) and holds itself under it, with no
 key to set (the ceilings of calls can be set):
 
-- Calls run on `Dispatchers.Default`, one thread per core. Ktor's CIO runs them on `Dispatchers.IO`, whose threads (up
-  to 64) start on demand and never end, each with memory of its own: a burst of 100 unauthenticated requests took the
-  server from 63 to 121 threads and OOMKilled it under 512 MiB (CHARGE 41637506577).
-- The Kotlin/Native collector keeps its defaults, with no target or maximum set from the limit. A heap budget bounded
-  under the limit grew Dispatchers.IO round after round and OOMKilled the server at the third round of a burst under 512
-  MiB (CHARGE e2e 41693127618); without it, the same rounds stayed at 102 threads and peaked at 450 MiB (bisection,
-  JOURNAL 03/11). The image's smoke test checks it.
+- The JVM's heap follows the limit: the image sets `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=70
+  -XX:+ExitOnOutOfMemoryError` (TeamCode's), so the heap is 70 % of the limit and an `OutOfMemoryError` ends the
+  process, which the orchestrator restarts. The image's smoke test checks the heap against a 1 GiB limit. The
+  ceilings below were measured on the earlier Kotlin/Native binary (docs/decisions/0001) and are re-sized once the
+  JVM is measured under the chart's load.
 
 - Calls at once are bounded (`OSTROM_MAX_CALLS_IN_PROGRESS`): each costs memory while it runs, about 1 MiB more past
   100 at once, so 500 approvals at once still OOMKilled the server under 512 MiB once the heap was bounded, where 200
@@ -389,13 +388,14 @@ refresh intent is on the row, in flight or left by a failure: new tokens clear i
 
 | Command | What it does | Exit |
 |---|---|---|
-| `ostrom-server` (or `serve`) | Refuses a database role that is a superuser, has `BYPASSRLS`, or owns a table or is a member of its owner, checks the migrations, serves. On SIGTERM or SIGINT: `/ready` at 503 for `OSTROM_SHUTDOWN_DELAY_SECONDS`, then the engine stops and the pool closes | 0 after a graceful stop, 1 on a failure, 2 on an invalid configuration |
+| `ostrom-server` (or `serve`) | Refuses a database role that is a superuser, has `BYPASSRLS`, or owns a table or is a member of its owner, checks the migrations, serves. On SIGTERM or SIGINT: `/ready` at 503 for `OSTROM_SHUTDOWN_DELAY_SECONDS`, then the calls in flight end (up to `OSTROM_SHUTDOWN_GRACE_SECONDS`), then the engine stops and the pool closes | 0 after a graceful stop, 1 on a failure, 2 on an invalid configuration |
 | `ostrom-server migrate` | Applies every module's migrations with `OSTROM_DATABASE_MIGRATION_URL`, under the advisory lock | 0, 1 on a failure, 2 without the URL |
 | `ostrom-server bootstrap` | While the instance has no account, prints the first owner's setup link (`<OSTROM_CONSOLE_URL>/setup#token=osb_…`): it works once, for an hour, and a new one stops the earlier one. The person opens it and signs in with GitHub, Google or an e-mail link. The link is printed on the command's output only, never in the logs | 0, 2 when the instance already has an account or no module makes setup links |
 | `ostrom-server seed-test-account <email>` | With `OSTROM_ALLOW_TEST_ACCOUNTS=true`, creates a test account through the module that binds `TestAccountSeeder` (identity) and prints `{"email","token","organizationId"}` on one line | 0, 2 when refused or when no module binds the seeder |
 
-The probes: `GET /health` (liveness: 200 while the dependencies answer, also while draining) and `GET /ready`
-(readiness: 200 `ready`, 503 `degraded` or `draining`), both unauthenticated.
+The probes: `GET /health` (liveness: 200 `ok` while the process answers HTTP, with no check, also while draining and
+during a database outage, as TeamCode's, audit SD-04) and `GET /ready` (readiness: the database checked, 200 `ready`,
+503 `degraded` or `draining`), both unauthenticated.
 
 `GET /api/v1/capabilities` (`Capabilities` and `ServerFeatures` in ostrom-core), served by the kernel, answers what
 clients read after signing in: `apiVersion` (the contract version of the ostrom-core the server is built on,

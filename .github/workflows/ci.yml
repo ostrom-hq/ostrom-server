@@ -9,18 +9,18 @@ on:
     branches: [main]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  # A manual run with full_validation also links linuxArm64; a tag (release-binaries.yml) and main's Image workflow
-  # always do (AGENTS.md rule 14: arm64 runs on tags or full_validation only, never on a pull request).
+  # full_validation is kept for the callers that pass it: the server has no native binary any more (docs/decisions/0001),
+  # and image.yml builds the arm64 image with jib, without a native link.
   workflow_dispatch:
     inputs:
       full_validation:
-        description: Also link the linuxArm64 release binary
+        description: No effect since the server runs on the JVM (kept for the callers that pass it)
         type: boolean
         default: false
       # A core PR that touches an answer (schema, status, enum) is squashed only after this server's strict contract
       # test ran green against it: core#96 turned every server PR red with three drifts (JOURNAL 03/11 15:1x).
       core_ref:
-        description: The ostrom-core commit (full SHA) whose contract the tests check, instead of gradle/ostrom-core.ref
+        description: The ostrom-core commit (full SHA) whose contract the tests check, instead of main
         type: string
         default: ''
       # A server change that an e2e scenario proves, while main's scenario still waits for it (a temporary skip):
@@ -71,24 +71,17 @@ jobs:
       OSTROM_STRIPE_MOCK_REQUIRED: 'true'
       OSTROM_STRIPE_E2E_KEY: ${{ secrets.STRIPE_TEST_KEY }}
       OSTROM_STRIPE_E2E_REQUIRED: 'true'
-      # The contract tests (ContractSchema) compare real answers with the pinned ostrom-core's schemas, written as JSON by
+      # The contract tests (ContractSchema) compare real answers with ostrom-core main's schemas, written as JSON by
       # the contract step below; they fail instead of being skipped here.
       OSTROM_CONTRACT_REQUIRED: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # One ostrom-core for the whole run (CS-03): the commit gradle/ostrom-core.ref pins, which the Kotlin library is
-      # built from too. Only a manual run naming core_ref (squash.sh, before it squashes a core PR) checks another one.
-      - name: The ostrom-core commit this run checks against
-        id: core
-        env:
-          CORE_REF: ${{ inputs.core_ref }}
-        run: echo "ref=${CORE_REF:-$(tr -d '[:space:]' < gradle/ostrom-core.ref)}" >> "$GITHUB_OUTPUT"
-      # docs-truth (ostrom-core's tools/docs-truth) and api/contract/served-routes.txt at that commit; moved out of the
-      # workspace, so that no check of this repository scans it.
+      # docs-truth (ostrom-core's tools/docs-truth) at a pinned commit, whose api/contract/served-routes.txt says what
+      # ostrom-server main serves; moved out of the workspace, so that no check of this repository scans it.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ostrom-hq/ostrom-core
-          ref: ${{ steps.core.outputs.ref }}
+          ref: 386c70b2798d08c28657b3e4592f79425d00a2a1 # docs-truth and served-routes.txt; move it forward by pull request
           ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
           path: docs-truth-core
           persist-credentials: false
@@ -98,13 +91,13 @@ jobs:
           core="$RUNNER_TEMP/docs-truth-core"
           node "$core/tools/docs-truth/bin/docs-truth.mjs" --routes "$core/api/contract/served-routes.txt" \
             --tests --source . --source "$core/telemetry" README.md docs
-      # The contract at that ostrom-core commit against the routes this server mounts, read from the sources (no build): fails
+      # The contract at ostrom-core main against the routes this server mounts, read from the sources (no build): fails
       # for a mounted route the contract lacks and for a `served` operation not mounted; warns for a mounted route
       # still `planned` (the server may merge before core).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ostrom-hq/ostrom-core
-          ref: ${{ steps.core.outputs.ref }}
+          ref: ${{ inputs.core_ref }}
           ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
           path: contract-core
           persist-credentials: false
@@ -247,7 +240,8 @@ jobs:
           path: '**/build/reports/**'
           retention-days: 7
 
-  # The release binary, the session image, the server image and its smoke tests against PostgreSQL, then the Apache-2.0 build.
+  # The server image (jib, the JVM application of docs/decisions/0001), the session image, the server image's smoke tests
+  # against PostgreSQL, then the AGPL build.
   ci-image:
     name: Binary, images and smoke tests
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
@@ -270,14 +264,21 @@ jobs:
           core-deploy-key: ${{ secrets.DEPLOY_KEY_CORE }}
           kotlin-version: ${{ env.KOTLIN_VERSION }}
           build-cache: image
+      # The image image.yml publishes, built the same way for this runner's architecture into the local daemon.
+      - name: Server image (jib, amd64, into Docker)
+        run: |
+          ./gradlew :image:publishImageToLocalRegistry -PimageTags=ci -PimagePlatforms=amd64
+          docker images ostrom-server:ci --format '{{.Size}}'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # From here, two Gradle workers at a time: several Kotlin/Native compilations and links at once exhaust the
       # runner's memory (#13, exit 143 while linking linuxArm64).
       - name: Two Gradle workers for the native builds
         if: ${{ !cancelled() }}
         run: echo 'org.gradle.workers.max=2' >> ~/.gradle/gradle.properties
-      # A private repository's runner has 7 GB: after the tests, the Gradle and Kotlin daemons still hold much of it,
-      # and the release links were killed (exit 143) even with #52's lighter daemons. Stop them, and add swap where the
-      # disk has room, before the native links.
+      # A private repository's runner has 7 GB: the Gradle and Kotlin daemons of the image build still hold much of it,
+      # and native links were killed (exit 143) even with #52's lighter daemons. Stop them, and add swap where the disk
+      # has room, before the runner's native link.
       - name: Free memory for the native links
         run: |
           ./gradlew --stop
@@ -293,18 +294,6 @@ jobs:
             fi
           done
           free -h
-      # S2-49: one session of the real image, run as the Docker driver runs it; the agent must not reach the token.
-      - name: Server binary (linuxX64 in dist/)
-        run: |
-          ci/build-linux.sh
-          ldd dist/ostrom-server
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Server binary (linuxArm64 cross-linked, full validation only)
-        if: github.event_name == 'workflow_dispatch' && inputs.full_validation
-        run: ./gradlew :app:linkReleaseExecutableLinuxArm64
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # The swap file takes the root disk the images need (run 41029912954: "no space left on device" pulling the
       # collector): give it back once the links are done.
       - name: Release the swap of the native links
@@ -320,6 +309,7 @@ jobs:
         with:
           path: ~/.cache/ostrom-agents-npm
           key: agents-npm-${{ hashFiles('runner/agents/package-lock.json') }}
+      # S2-49: one session of the real image, run as the Docker driver runs it; the agent must not reach the token.
       - name: Session image, the agent cannot read the runner token (S2-49)
         if: ${{ !cancelled() }}
         run: |
@@ -329,10 +319,6 @@ jobs:
           ci/runner-isolation.sh runner/build/bin/linuxX64/debugExecutable/ostrom-runner.kexe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Docker image
-        run: |
-          docker build -t ostrom-server:ci .
-          docker images ostrom-server:ci --format '{{.Size}}'
       # The image this pull request builds, for ci-e2e: ostrom-e2e main runs against it before the merge, not after.
       - name: Save the image for ci-e2e
         run: |
@@ -381,7 +367,7 @@ jobs:
             seed-test-account qa@ostrom.test
           # TC-CODE-AUTH-2: an invite-only instance without an account prints the first owner's setup link on demand.
           expect 0 '/setup#token=osb_' -e OSTROM_DATABASE_URL="$APP_URL" ostrom-server:ci bootstrap
-          docker run -d --name ostrom --network host --memory 512m -e OSTROM_DATABASE_URL="$APP_URL" \
+          docker run -d --name ostrom --network host --memory 1g -e OSTROM_DATABASE_URL="$APP_URL" \
             -e OSTROM_SHUTDOWN_DELAY_SECONDS=1 ostrom-server:ci
           for i in $(seq 1 30); do curl -fsS localhost:8080/ready && break; sleep 1; done
           echo
@@ -390,18 +376,17 @@ jobs:
           curl -fsS localhost:8080/api/v1/instance | grep '"algorithm":"ed25519"'
           docker stop -t 30 ostrom
           docker logs ostrom
-          docker logs ostrom 2>&1 | grep '"msg":"server draining"' | grep '"signal":"SIGTERM"'
+          # SD-09: the drain says how long it waits for the calls in flight (none here: it stops at once).
+          docker logs ostrom 2>&1 | grep '"msg":"server draining"' | grep '"signal":"SIGTERM"' | grep '"grace_s":600'
           docker logs ostrom 2>&1 | grep '"msg":"server stopped"'
           # The start says how to bootstrap the instance, and never logs a setup link.
           docker logs ostrom 2>&1 | grep -q 'run `ostrom-server bootstrap`'
           if docker logs ostrom 2>&1 | grep -q 'osb_'; then echo "a setup link was logged" >&2; exit 1; fi
-          # Under a container limit, the binary leaves the Kotlin/Native heap unbounded: a heap budget (a target and a
-          # maximum read from the limit) grew Dispatchers.IO round after round and OOMKilled the server at the third
-          # round of CHARGE's bench under 512 MiB (e2e 41693127618, server#266). The pause past the target is
-          # Kotlin/Native's default ("gc_pause":true without any setting, Build 41722339019), and the bisection's flat
-          # image ran with it: only the bound is checked.
+          # The JVM's heap follows the container's limit (the image's JAVA_TOOL_OPTIONS, MaxRAMPercentage=70 of 1g).
           starting=$(docker logs ostrom 2>&1 | grep '"msg":"server starting"')
-          echo "$starting" | grep -q '"gc_heap_bounded":false' || { echo "the heap is bounded: $starting"; exit 1; }
+          echo "$starting" | grep -q '"runtime":"jvm 21' || { echo "not the JVM: $starting"; exit 1; }
+          heap=$(echo "$starting" | sed -n 's/.*"max_heap_mib":\([0-9]*\).*/\1/p')
+          [ "$heap" -gt 600 ] && [ "$heap" -le 720 ] || { echo "the heap does not follow the limit: $starting"; exit 1; }
           test "$(docker inspect -f '{{.State.ExitCode}}' ostrom)" -eq 0
       - name: Smoke test of the license check (an invalid key fails the start, without logging the key)
         env:
@@ -433,33 +418,24 @@ jobs:
         run: |
           docker logs ostrom || true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: ostrom-server-linux
-          # The linuxArm64 binary is only there after a full validation.
-          path: |
-            dist/ostrom-server
-            app/build/bin/linuxArm64/releaseExecutable/ostrom-server.kexe
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: reports-image
           path: '**/build/reports/**'
           retention-days: 7
-      # Last, because it deletes ee/ from the checkout: the Apache-2.0 build must compile without the enterprise code, and
+      # Last, because it deletes ee/ from the checkout: the AGPL build must compile without the enterprise code, and
       # nothing outside ee/ may name it (app/build.gradle.kts generates the only reference, from ee/ itself).
-      - name: Apache-2.0 build without ee/
+      - name: AGPL build without ee/
         run: |
           if grep -rn "dev\.ostrom\.server\.ee\." --include='*.kt' --include='*.kts' --exclude-dir=build app kernel modules testing; then
             echo "Code outside ee/ references the enterprise modules." >&2
             exit 1
           fi
           rm -rf ee
-          ./gradlew :app:compileKotlinLinuxX64
+          ./gradlew :app:compileKotlinJvm
           grep -q 'listOf<ServerModule>($' app/build/generated/ee-modules/kotlin/run/ostrom/server/app/EeModules.kt
           if grep -q 'LicenseModule' app/build/generated/ee-modules/kotlin/run/ostrom/server/app/EeModules.kt; then
-            echo "The Apache-2.0 build still registers an enterprise module." >&2
+            echo "The AGPL build still registers an enterprise module." >&2
             exit 1
           fi
         env:
@@ -486,88 +462,10 @@ jobs:
       e2e_ref: ${{ inputs.e2e_ref || 'main' }}
     secrets: inherit
 
-  # The API package (CS-02, ostrom-core docs/decisions/0001-generated-openapi.md): the server's OpenAPI document
-  # (openapi.json) and its TypeScript types, built on every run and published from main as @ostrom-hq/openapi
-  # 0.1.<run> once `ci` is green. The web console and the site generate their clients from it. Until the server
-  # generates the document from its own routes (ktor-server-routing-openapi, on the JVM), it is the contract of the
-  # ostrom-core this server pins (gradle/ostrom-core.ref).
-  api-package:
-    name: API package (@ostrom-hq/openapi)
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    timeout-minutes: 10
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: The ostrom-core commit this server pins
-        id: core
-        run: echo "ref=$(tr -d '[:space:]' < gradle/ostrom-core.ref)" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ostrom-hq/ostrom-core
-          ref: ${{ steps.core.outputs.ref }}
-          ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
-          path: contract-core
-          sparse-checkout: api/openapi.yaml
-          sparse-checkout-cone-mode: false
-          persist-credentials: false
-      - name: The OpenAPI document
-        run: |
-          mv contract-core "$RUNNER_TEMP/contract-core"
-          yq -o=json "$RUNNER_TEMP/contract-core/api/openapi.yaml" > api-package/openapi.json
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: api-package/package-lock.json
-      - name: Build and pack @ostrom-hq/openapi 0.1.<run>
-        working-directory: api-package
-        env:
-          VERSION: 0.1.${{ github.run_number }}
-          CORE: ${{ steps.core.outputs.ref }}
-        run: |
-          npm ci --no-audit --no-fund
-          npm run build
-          npm version --no-git-tag-version "$VERSION"
-          npm pack
-          echo "- API package: @ostrom-hq/openapi $VERSION (contract of ostrom-core $CORE)" >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: api-package
-          path: api-package/ostrom-hq-openapi-*.tgz
-          retention-days: 7
-
-  # From main only, after the required check: the package built above, as is.
-  api-package-publish:
-    name: Publish @ostrom-hq/openapi
-    needs: [ci]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    timeout-minutes: 10
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: api-package
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: '22'
-          registry-url: https://npm.pkg.github.com
-          scope: '@ostrom-hq'
-      - name: Publish to GitHub Packages
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          npm publish ostrom-hq-openapi-*.tgz
-          echo "Published $(ls ostrom-hq-openapi-*.tgz)" >> "$GITHUB_STEP_SUMMARY"
-
   # The required check of main, still named `ci` (branch protection, .coord/squash.sh).
   ci:
     if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
-    needs: [ci-jvm, ci-native, ci-image, ci-e2e, api-package]
+    needs: [ci-jvm, ci-native, ci-image, ci-e2e]
     timeout-minutes: 5
     runs-on: ubuntu-24.04
     steps:
@@ -577,7 +475,6 @@ jobs:
           NATIVE: ${{ needs.ci-native.result }}
           IMAGE: ${{ needs.ci-image.result }}
           E2E: ${{ needs.ci-e2e.result }}
-          API: ${{ needs.api-package.result }}
         run: |
-          echo "JVM tests and Kover: $JVM; native tests: $NATIVE; binary, images and smoke tests: $IMAGE; e2e: $E2E; API package: $API"
-          test "$JVM" = success && test "$NATIVE" = success && test "$IMAGE" = success && test "$E2E" = success && test "$API" = success
+          echo "JVM tests and Kover: $JVM; native tests: $NATIVE; binary, images and smoke tests: $IMAGE; e2e: $E2E"
+          test "$JVM" = success && test "$NATIVE" = success && test "$IMAGE" = success && test "$E2E" = success

@@ -25,9 +25,11 @@ import kotlin.time.Duration.Companion.seconds
  * @property trustedProxies The reverse proxies whose `X-Forwarded-For` is believed (`OSTROM_TRUSTED_PROXIES`), and
  *   their client address header (`OSTROM_CLIENT_ADDRESS_HEADER`).
  * @property drainDelay How long the server keeps serving, `/ready` at 503, between SIGTERM and stopping the engine
- *   (`OSTROM_SHUTDOWN_DELAY_SECONDS`, 0 to 10), so the load balancer stops sending it requests first. With the 15 s
- *   the engine then gives requests in flight, a stop takes at most 25 s, leaving 5 s of the Helm chart's 30 s grace
- *   period to close the pool and the workers.
+ *   (`OSTROM_SHUTDOWN_DELAY_SECONDS`, 0 to 10), so the load balancer stops sending it requests first.
+ * @property drainGrace Then, how long the server waits at most for the calls in flight (a model's stream, a gate's
+ *   wait) to end before it stops the engine (`OSTROM_SHUTDOWN_GRACE_SECONDS`, 0 to 600, 600 by default: a model
+ *   call is bounded by 10 minutes upstream, TeamCode's grace, audit SD-09). The Helm chart's grace period (660 s)
+ *   covers both and the engine's own stop.
  * @property readLimits How much one subject may read of the costly routes (`OSTROM_READS_PER_MINUTE`,
  *   `OSTROM_READS_IN_FLIGHT`, `OSTROM_READ_WAITS_IN_FLIGHT`).
  * @property callCeilings The calls one replica runs at once (`OSTROM_MAX_CALLS_IN_PROGRESS`, `OSTROM_MAX_HELD_CALLS`,
@@ -45,6 +47,7 @@ data class ServerConfig(
     val instanceId: String? = null,
     val trustedProxies: TrustedProxies = TrustedProxies.NONE,
     val drainDelay: Duration = DEFAULT_DRAIN_DELAY_SECONDS.seconds,
+    val drainGrace: Duration = MAX_DRAIN_GRACE_SECONDS.seconds,
     val readLimits: ReadLimits =
         ReadLimits(ReadLimits.DEFAULT_PER_MINUTE, ReadLimits.DEFAULT_IN_FLIGHT, ReadLimits.DEFAULT_WAITS_IN_FLIGHT),
     val callCeilings: CallCeilingSettings = CallCeilingSettings(),
@@ -59,6 +62,7 @@ data class ServerConfig(
         private const val MAX_CONNECTIONS = 1000
         private const val DEFAULT_DRAIN_DELAY_SECONDS = 5
         private const val MAX_DRAIN_DELAY_SECONDS = 10
+        private const val MAX_DRAIN_GRACE_SECONDS = 600
         private const val MIGRATION_CONNECTIONS = 2
         private const val MAX_READS_PER_MINUTE = 100_000
         private const val MAX_READS_IN_FLIGHT = 1000
@@ -103,6 +107,11 @@ data class ServerConfig(
                 "OSTROM_SHUTDOWN_DELAY_SECONDS",
                 DEFAULT_DRAIN_DELAY_SECONDS,
                 0..MAX_DRAIN_DELAY_SECONDS,
+            ).seconds,
+            drainGrace = source.int(
+                "OSTROM_SHUTDOWN_GRACE_SECONDS",
+                MAX_DRAIN_GRACE_SECONDS,
+                0..MAX_DRAIN_GRACE_SECONDS,
             ).seconds,
             readLimits = readLimits(source),
             callCeilings = callCeilings(source),

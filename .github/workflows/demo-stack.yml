@@ -1,7 +1,7 @@
 name: Demo stack
 
 # The local demo stack of ostrom-helm (compose/demo: Mailpit, a fake GitHub, cloud sessions on Docker, Stripe's test
-# mode), run with the REAL images: this repository's server image (the one Image just published, or `edge`), its cloud
+# mode), run with the REAL images: this repository's server image (the one Image just published, or `latest`), its cloud
 # session image, and the console built from ostrom-web main. Then the customer's journey from outside
 # (compose/demo/journey.mjs), whose report becomes the job summary. It proves on a runner what the demo shows on a
 # laptop; the film is made there. This repository's token reads its own GHCR packages, which ostrom-helm's and
@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       server_image:
-        description: Server image (empty = edge)
+        description: Server image (empty = latest, Docker Hub)
         default: ""
       runner_image:
         description: Cloud session and machine runner image (empty = latest)
@@ -45,7 +45,7 @@ jobs:
       packages: read
     env:
       HELM_REF: ${{ inputs.helm_ref || 'main' }}
-      SERVER_IMAGE: ${{ inputs.server_image || 'ghcr.io/ostrom-hq/ostrom-server:edge' }}
+      SERVER_IMAGE: ${{ inputs.server_image || 'docker.io/ostromhq/ostrom-server:latest' }}
       RUNNER_IMAGE: ${{ inputs.runner_image || 'ghcr.io/ostrom-hq/ostrom-runner:latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -1,6 +1,6 @@
 # ostrom-server contributor instructions
 
-This is the Ostrom server, Kotlin/Native (linuxX64, linuxArm64 in production, macosArm64 for development; + jvm for tests only), Ktor CIO, PostgreSQL (SQLite for tests and local) through sqlx4k. Apache-2.0, `ee/` under the Ostrom Enterprise License.
+This is the Ostrom server, on the JVM in production (Java 21, a jib image for linux/amd64 and linux/arm64, [docs/decisions/0001](docs/decisions/0001-jvm-and-teamcode-stack.md)), Ktor CIO, PostgreSQL (SQLite for tests and local) through sqlx4k until the Exposed migration. The session runner (`runner/`) stays Kotlin/Native. AGPL-3.0, `ee/` under the commercial license.
 
 **The conventions are in [ostrom-core `docs/CONVENTIONS.md`](https://github.com/ostrom-hq/ostrom-core/blob/main/docs/CONVENTIONS.md) (local clone: `../ostrom-core/docs/CONVENTIONS.md`).** They follow Nathan Fallet's practices (teamcode, asonar,
 pkg) and bind every contributor, human or agent. This file only summarizes the most important rules; when in
@@ -27,7 +27,7 @@ fix first: an ostrom-e2e pull request merged before it, as a contract change goe
 needs its sweep case in ostrom-e2e (`PARAM_KINDS` in `scenarios/sweep.e2e.ts`, and the resource organization A makes),
 or E2E-SWEEP-001 fails the server pull request. After the race, a burst guard (E2E-LOAD-012, `load/burst.js`) sends 100 requests
 without a credential then 100 authenticated asks, and checks that the container neither stops nor is OOM-killed and
-that its memory peak stays under the chart's limit (512Mi): a warning until #266 merges, blocking after.
+that its memory peak stays under the chart's limit (1Gi, the container runs with `--memory 1g`): a warning until #266 merges, blocking after.
 
 ## The 15 rules that matter most
 
@@ -42,7 +42,7 @@ that its memory peak stays under the chart's limit (512Mi): a warning until #266
 9. Never log credentials, tokens, prompts, response bodies or raw provider errors.
 10. Configuration is read once from `OSTROM_*` variables into a typed object; no feature switch in an environment variable.
 11. Tests: TDD (red first), `kotlin.test` + `runTest` + hand-written fakes in `commonTest` (no MockK), lowerCamelCase sentence names. 100 % lines and branches of commonMain via the test-only `jvm()` target (Kover), plus `linuxX64Test`; integration on real PostgreSQL, end-to-end on the real binary, load tests for the server.
-12. Kotlin/Native only in production: no JVM-only library (Exposed, JDBC, Netty, Logback, MockK). Ktor CIO server, Ktor engine-defaults client, sqlx4k, cryptography-kotlin + OpenSSL prebuilt, Okio, Clikt.
+12. The JVM in production (docs/decisions/0001), on TeamCode's server libraries as each migration step lands them: today Ktor's CIO server and client, sqlx4k kept behind each module's repository interfaces; then Netty, Exposed + JDBC + HikariCP, Flyway, koin-ktor and logback. The image is TeamCode's: the Ktor Gradle plugin's `ktor { docker { } }` and jib (`image/`), `ostromhq/ostrom-server` on Docker Hub, `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=70 -XX:+ExitOnOutOfMemoryError`, 512Mi requested and 1Gi limit in the chart. Liveness (`/health`) checks only the process, readiness (`/ready`) the database; a stop drains the calls in flight up to `OSTROM_SHUTDOWN_GRACE_SECONDS` (600, the chart's grace period is 660 s). While the server modules still have native targets, their code stays in `commonMain`.
 13. Gradle: versions only in `gradle/libs.versions.toml` (same versions in every repository), convention plugin `ostrom.kmp` from `build-logic/`, module build files hold dependencies only. No heavy local build on the shared Mac: CI, or `~/git/ostrom-hq/.coord/build-lock.sh`.
 14. CI: Linux on every pull request (detekt, check-conventions, jvmTest + koverVerify, linuxX64Test, PostgreSQL integration); macOS, Windows and arm64 runs on tags or `full_validation` only; actions pinned by SHA.
 15. Git: one branch per topic in its own worktree, never push to `main`, Conventional Commits in English, squash-merge after green CI and a review with nothing blocking; evidence in the pull request, never in a shared status file.
