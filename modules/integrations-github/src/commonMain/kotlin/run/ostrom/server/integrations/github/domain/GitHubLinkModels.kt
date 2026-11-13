@@ -174,6 +174,7 @@ enum class GitHubLinkKind(val wire: String) {
  * @property nextPollAt When GitHub may be asked again.
  * @property expiresAt When it stops being accepted.
  */
+@Suppress("LongParameterList") // A stored row: every column is a property.
 class GitHubLinkAttempt(
     val id: String,
     val orgId: Uuid,

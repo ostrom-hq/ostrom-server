@@ -75,6 +75,7 @@ class PostgresGitHubLinkStore(private val driver: Driver, private val cipher: Se
         }
     }
 
+    @Suppress("ReturnCount") // An attempt that is missing, unreadable or another row's is no attempt.
     override suspend fun attempt(orgId: Uuid, id: String): GitHubLinkAttempt? {
         val row = scoped(orgId) {
             fetch(
@@ -188,6 +189,7 @@ class PostgresGitHubLinkStore(private val driver: Driver, private val cipher: Se
         ).map { it.toLink(orgId) }
     }
 
+    @Suppress("ReturnCount") // No link, or a link whose tokens no longer open, revokes nothing.
     override suspend fun removeLink(orgId: Uuid, memberId: Uuid): GitHubRevocable? {
         val row = scoped(orgId) {
             execute(
@@ -205,6 +207,7 @@ class PostgresGitHubLinkStore(private val driver: Driver, private val cipher: Se
         return GitHubRevocable(row.get("client_id").asString(), tokens.accessToken)
     }
 
+    @Suppress("CyclomaticComplexMethod") // Every state a link can be in, in the one locked read that decides.
     override suspend fun claim(
         orgId: Uuid,
         memberId: Uuid,

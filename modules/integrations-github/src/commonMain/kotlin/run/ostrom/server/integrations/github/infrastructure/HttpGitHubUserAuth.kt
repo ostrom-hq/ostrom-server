@@ -48,12 +48,14 @@ import kotlin.time.Duration.Companion.seconds
  * @param webUrl GitHub's web address, where the OAuth endpoints are.
  * @param clock The clock, for the expiries.
  */
+@Suppress("TooManyFunctions") // GitHub's user-to-server endpoints, one call each, and their shared readers.
 class HttpGitHubUserAuth(
     private val http: HttpClient,
     private val apiUrl: String,
     private val webUrl: String,
     private val clock: Clock,
 ) : GitHubUserAuthApi {
+    @Suppress("CyclomaticComplexMethod") // Each field GitHub sends is checked before anything is stored.
     override suspend fun startDevice(clientId: String): GitHubDeviceAuthorization {
         val (status, body) = form(DEVICE_PATH, listOf("client_id" to clientId))
         body?.string("error")?.let { throw oauthFailure(it) }
@@ -143,9 +145,9 @@ class HttpGitHubUserAuth(
             header(HttpHeaders.Authorization, "Bearer $accessToken")
             rest()
         }
-        val id = body?.long("id")
-        val login = body?.string("login")
-        if (status != OK || id == null || id <= 0 || login == null || !LOGIN.matches(login)) {
+        val id = body?.long("id")?.takeIf { it > 0 }
+        val login = body?.string("login")?.takeIf { LOGIN.matches(it) }
+        if (status != OK || id == null || login == null) {
             throw GitHubCallException("GitHub did not tell whose token this is ($status).")
         }
         return GitHubIdentity(id, login)

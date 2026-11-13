@@ -72,6 +72,7 @@ class GitHubAccessResolver(
      * @param memberId The member the session runs for.
      * @return Their access.
      */
+    @Suppress("ReturnCount") // Every way a link ends gives no token.
     suspend fun access(orgId: Uuid, memberId: Uuid): GitHubAccess {
         val app = apps.current().oauthApp() ?: return GitHubAccess.NotLinked
         if (!members.isActiveMember(orgId, memberId.toString())) return GitHubAccess.NotLinked

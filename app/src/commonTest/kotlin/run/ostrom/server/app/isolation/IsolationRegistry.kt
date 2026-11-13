@@ -396,7 +396,8 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/github/link/callback" to Case.Exempt(LINK_CALLBACK),
     "GET /api/v1/github/links" to Case.Target(),
     "GET /api/v1/github/links/{memberId}" to target("memberId" to MEMBER_ID),
-    "DELETE /api/v1/github/links/{memberId}" to target("memberId" to MEMBER_ID, admin = true),
+    // The seeded member is the simple member too: unlinking oneself is theirs to do, unlinking another an admin's.
+    "DELETE /api/v1/github/links/{memberId}" to target("memberId" to MEMBER_ID),
     "GET /api/v1/github/links/{memberId}/start" to target("memberId" to MEMBER_ID, admin = true),
     "POST /webhooks/github" to Case.Exempt(SIGNED),
 )

@@ -47,6 +47,7 @@ import kotlin.uuid.Uuid
  *
  * @param dependencies The links and the member resolver.
  */
+@Suppress("LongMethod") // The ten routes of the links, one block each.
 fun Route.gitHubLinkRoutes(dependencies: GitHubLinkRoutesDependencies) = with(dependencies) {
     // GitHub sends the browser back with its session cookie (SameSite=Lax): the session is read when there is one.
     authenticate(TOKEN_AUTH, optional = true) {
@@ -126,6 +127,7 @@ private suspend fun GitHubLinkRoutesDependencies.webStart(call: ApplicationCall,
  * The member a link request acts for: a person, in the organization the request names, with a scope that reaches
  * their cloud sessions or their link.
  */
+@Suppress("ThrowsCount") // Who may link: a member, signed in for a write, with the right scope.
 private suspend fun GitHubLinkRoutesDependencies.actorOf(call: ApplicationCall, write: Boolean): GitHubLinkActor {
     val principal = call.requirePrincipal()
     if (principal.kind != PrincipalKind.USER) throw GitHubLinkPersonOnlyException()

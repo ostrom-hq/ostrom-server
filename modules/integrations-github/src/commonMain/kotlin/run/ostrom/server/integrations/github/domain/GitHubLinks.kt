@@ -55,7 +55,7 @@ data class GitHubLinkActor(
  * @param redirectUri The App's callback URL for the web flow.
  * @param clock The clock.
  */
-@Suppress("TooManyFunctions") // The link's whole life: start, poll, finish, read and remove, as one service.
+@Suppress("TooManyFunctions", "LongParameterList") // The link's whole life, as one service, and its ports.
 class GitHubLinks(
     private val apps: GitHubAppSource,
     private val store: GitHubLinkStore,
@@ -122,6 +122,7 @@ class GitHubLinks(
      * @return Where the link is.
      * @throws GitHubLinkNotFoundException For an unknown, used or another member's attempt.
      */
+    @Suppress("ReturnCount") // Each answer of GitHub ends the poll its own way.
     suspend fun pollDevice(actor: GitHubLinkActor, id: String): GitHubDeviceLinkProgress {
         val attempt = store.attempt(actor.orgId, id)
             ?.takeIf { it.kind == GitHubLinkKind.DEVICE && it.memberId == actor.memberId }
@@ -203,6 +204,7 @@ class GitHubLinks(
      * @throws GitHubLinkBrowserMismatchException For another session.
      * @throws GitHubLinkDeniedException When the member cancelled.
      */
+    @Suppress("ThrowsCount") // Each refusal of the callback is its own answer.
     suspend fun completeWeb(
         state: String?,
         code: String?,
@@ -235,11 +237,18 @@ class GitHubLinks(
     suspend fun unlink(actor: GitHubLinkActor, memberId: Uuid? = null) {
         // A member who left can still be unlinked: their tokens go, and their GitHub account is free again.
         val target = target(actor, memberId, active = false)
-        val removed = store.removeLink(actor.orgId, target) ?: return
+        val removed = store.removeLink(actor.orgId, target)
+        if (removed == null) {
+            // Nothing to unlink: done for oneself or an active member, unknown for anybody else (another org's).
+            val known = target == actor.memberId || members.isActiveMember(actor.orgId, target.toString())
+            if (!known) throw GitHubLinkMemberNotFoundException()
+            return
+        }
         audit.record(OrgAuditRecord(actor.orgId, actor.principal, REMOVED, MEMBER, target.toString()))
         app()?.let { revokeToken(github, it, removed) }
     }
 
+    @Suppress("ThrowsCount") // A refused token is revoked, then the refusal goes on.
     private suspend fun complete(
         app: GitHubOAuthApp,
         orgId: Uuid,

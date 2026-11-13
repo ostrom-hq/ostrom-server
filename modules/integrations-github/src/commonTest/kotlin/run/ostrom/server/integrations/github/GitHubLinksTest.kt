@@ -236,7 +236,7 @@ class GitHubLinksTest {
             GitHubLinkAttempt(sha256Hex(deviceState), ORG, DEV, GitHubLinkKind.DEVICE, "dc", null, 5, NOW, NOW)
         assertFailsWith<GitHubLinkNotFoundException> { links.completeWeb(deviceState, "code", null, session) }
 
-        fun start() = links.startWeb(dev, "session-dev").substringAfter("state=").substringBefore('&')
+        suspend fun start() = links.startWeb(dev, "session-dev").substringAfter("state=").substringBefore('&')
         var state = start()
         clock.now += 11.minutes
         assertFailsWith<GitHubLinkNotFoundException>("Expired") { links.completeWeb(state, "code", null, session) }
@@ -350,6 +350,10 @@ class GitHubLinksTest {
         links.unlink(owner, DEV)
         assertNull(store.link(ORG, DEV))
         assertEquals(listOf("ghu_web"), github.revoked)
+        // Once gone, a member who left is nobody this organization knows.
+        assertFailsWith<GitHubLinkMemberNotFoundException> { links.unlink(owner, DEV) }
+        members.active += ORG to DEV
+        links.unlink(owner, DEV)
     }
 
     @Test

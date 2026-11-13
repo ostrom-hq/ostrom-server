@@ -325,7 +325,7 @@ class GitHubLinkPostgresTest {
         val theirs = server.call("GET", "user:b:owner", "/api/v1/github/links").body<GitHubLinksPage>()
         assertEquals(emptyList(), theirs.items)
         val unlinked = server.call("DELETE", "user:b:owner", "/api/v1/github/links/$DEV")
-        assertEquals(HttpStatusCode.NoContent, unlinked.status, "Nothing of B's to unlink")
+        assertEquals(HttpStatusCode.NotFound, unlinked.status, "Not a member of B's")
         val store = server.koin.get<GitHubLinkStore>()
         assertNull(store.link(OTHER_ORG, DEV))
         assertEquals("octocat", store.link(ORG, DEV)?.identity?.login, "A's link is untouched")

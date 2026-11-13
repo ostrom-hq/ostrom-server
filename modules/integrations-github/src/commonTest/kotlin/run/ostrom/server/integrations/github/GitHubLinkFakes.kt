@@ -147,6 +147,7 @@ class MemoryGitHubLinkStore : GitHubLinkStore {
     override suspend fun consumeAttempt(orgId: Uuid, id: String): Boolean =
         attempts.remove(orgId to id) != null && consumable
 
+    @Suppress("ReturnCount") // The compare-and-set of the real store.
     override suspend fun deferPoll(
         orgId: Uuid,
         id: String,

@@ -9,6 +9,7 @@ import kotlin.uuid.Uuid
  * The members' links and their pending attempts, one organization's at a time. Tokens and attempt secrets are sealed,
  * each bound to its organization and member: an envelope copied to another row does not open.
  */
+@Suppress("TooManyFunctions") // The attempts and the links, which share one encrypted store.
 interface GitHubLinkStore {
     /**
      * Stores an attempt, replacing the member's previous one and dropping the organization's expired ones.
@@ -65,6 +66,7 @@ interface GitHubLinkStore {
      * @return The link, and the access token of the link it replaced (null when none, or unreadable).
      * @throws GitHubAccountInUseException When another member of the organization linked that account.
      */
+    @Suppress("LongParameterList") // Whose link, which account, which client, its tokens and when.
     suspend fun saveLink(
         orgId: Uuid,
         memberId: Uuid,
