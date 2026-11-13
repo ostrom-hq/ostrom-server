@@ -54,6 +54,20 @@ class RepositoryContext(val snapshot: RepositorySnapshot) {
         RuleSource(kind, path, "${snapshot.repo.webUrl}/blob/$branch/$path")
 
     /**
+     * Where a process read a line of a file.
+     *
+     * @param path The file.
+     * @param line The line, or null for the whole file.
+     * @param kind `ci`, `doc`, `config`…
+     * @return The source (`path:line`, the path [clean]), linked to the line on its branch.
+     */
+    fun line(path: String, line: Int?, kind: String): RuleSource {
+        val anchor = line?.let { "#L$it" }.orEmpty()
+        val ref = clean(path) + line?.let { ":$it" }.orEmpty()
+        return RuleSource(kind, ref, "${snapshot.repo.webUrl}/blob/$branch/$path$anchor")
+    }
+
+    /**
      * Where a rule read the branch protection.
      *
      * @return The source, linked to the branch settings.
