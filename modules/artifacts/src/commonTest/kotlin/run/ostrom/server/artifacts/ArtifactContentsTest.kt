@@ -126,8 +126,7 @@ class ArtifactContentsTest {
         // A copy that does not read back the same stays in PostgreSQL, to move again.
         val pending = "pending".encodeToByteArray()
         repository.legacy[artifact to digest.sha256(pending)] = pending
-        for (fault in listOf<InMemoryBucket.() -> Unit>({ corrupt = true }, { forget = true })) {
-            val faulty = InMemoryBucket().apply(fault)
+        for (faulty in listOf(InMemoryBucket().apply { corrupt = true }, InMemoryBucket().apply { forget = true })) {
             assertFailsWith<ArtifactStorageUnavailableException> {
                 LegacyContentsMover(repository, storage, faulty, { digest.sha256(it) }).moveToBucket(ORG_A)
             }
