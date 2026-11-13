@@ -48,8 +48,8 @@ class TerminalTicketsImpl(
         val orgId = orgOf(value) ?: return null
         val redeem = Statement.create(TERMINAL_TICKET_REDEEM_SQL).bind("org_id", orgId).bind("hash", tokens.hash(value))
         // Spent whatever happens next: a ticket tried on another session opens nothing afterwards.
-        val row = driver.inTenant(orgId) { fetchAll(redeem).getOrThrow().firstOrNull() } ?: return null
-        val live = row.get("live").asBoolean() && row.get("session_id").asUuid() == sessionId
+        val row = driver.inTenant(orgId) { fetchAll(redeem).getOrThrow().firstOrNull() }
+        val live = row != null && row.get("live").asBoolean() && row.get("session_id").asUuid() == sessionId
         return if (live) Caller(orgId, row.get("member_id").asString(), row.get("admin").asBoolean()) else null
     }
 
