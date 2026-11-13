@@ -246,12 +246,10 @@ class ArtifactAdministrationUseCaseImpl(
             }
         }
     }
-
-    private companion object {
-        val TEST_DEADLINE: Duration = 80.seconds
-        val CLEANUP: Duration = 10.seconds
-        val MIN_STEP: Duration = 1.seconds
-        const val PROBE_STEPS = 4
-        const val LISTED = 10
-    }
 }
+
+private val TEST_DEADLINE: Duration = 80.seconds
+private val CLEANUP: Duration = 10.seconds
+private val MIN_STEP: Duration = 1.seconds
+private const val PROBE_STEPS = 4
+private const val LISTED = 10
