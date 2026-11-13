@@ -31,6 +31,7 @@ import run.ostrom.server.mcprelay.domain.ListMcpServersUseCaseImpl
 import run.ostrom.server.mcprelay.domain.ListMemberServersUseCase
 import run.ostrom.server.mcprelay.domain.ListMemberServersUseCaseImpl
 import run.ostrom.server.mcprelay.domain.McpCallLimiter
+import run.ostrom.server.mcprelay.domain.McpCallSlotRepository
 import run.ostrom.server.mcprelay.domain.McpHostAvailability
 import run.ostrom.server.mcprelay.domain.McpLimits
 import run.ostrom.server.mcprelay.domain.McpRelayRepository
@@ -51,6 +52,7 @@ import run.ostrom.server.mcprelay.domain.UpdateMcpServerUseCase
 import run.ostrom.server.mcprelay.domain.UpdateMcpServerUseCaseImpl
 import run.ostrom.server.mcprelay.infrastructure.HostMcpUpstream
 import run.ostrom.server.mcprelay.infrastructure.HttpMcpUpstream
+import run.ostrom.server.mcprelay.infrastructure.McpCallSlotRepositoryImpl
 import run.ostrom.server.mcprelay.infrastructure.McpHostConfig
 import run.ostrom.server.mcprelay.infrastructure.McpRelayMigrations
 import run.ostrom.server.mcprelay.infrastructure.McpRelayRepositoryImpl
@@ -145,6 +147,7 @@ object McpRelayModule : ServerModule {
             )
         }
         single { McpHostAvailability { get<McpRelayConfig>().host != null } }
+        single<McpCallSlotRepository> { McpCallSlotRepositoryImpl(get()) }
         single { McpCallLimiter(McpLimits(), get()) }
         single { McpServerAdministration(get(), get(), get(), get()) }
         single<CreateMcpServerUseCase> { CreateMcpServerUseCaseImpl(get()) }

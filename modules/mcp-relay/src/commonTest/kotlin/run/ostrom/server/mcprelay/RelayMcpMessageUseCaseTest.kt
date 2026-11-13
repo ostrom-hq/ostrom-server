@@ -57,7 +57,7 @@ class RelayMcpMessageUseCaseTest {
         reveal,
         upstream,
         approvals,
-        RelayLimits(McpCallLimiter(limits, clock)),
+        RelayLimits(McpCallLimiter(limits, InMemoryMcpSlots(clock))),
         clock,
     )
 
