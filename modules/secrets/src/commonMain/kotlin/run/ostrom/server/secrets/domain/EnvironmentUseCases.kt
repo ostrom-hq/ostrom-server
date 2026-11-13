@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.secrets.domain
 
 import run.ostrom.server.kernel.audit.OrgAuditRecord
@@ -146,7 +146,8 @@ class ManageEnvironmentVariantsUseCaseImpl(
             actor.caller.orgId,
             variant,
             // A directory that cannot list them, or more than the bulk reaches, grants nobody.
-            members.memberIds(actor.caller.orgId, EnvironmentRules.BULK_MEMBERS).orEmpty().mapNotNull(Uuid::parseOrNull),
+            members.memberIds(actor.caller.orgId, EnvironmentRules.BULK_MEMBERS).orEmpty()
+                .mapNotNull(Uuid::parseOrNull),
             clock.now(),
         )
         journal(audit, actor, "environment.variant.bulk_assigned", variant, "assigned" to result.assigned)
