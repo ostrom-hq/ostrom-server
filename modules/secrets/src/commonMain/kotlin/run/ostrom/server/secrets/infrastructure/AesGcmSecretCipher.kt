@@ -8,7 +8,7 @@ import kotlinx.coroutines.CancellationException
 import kotlin.io.encoding.Base64
 
 /**
- * [SecretCipher] with AES-256-GCM (OpenSSL 3, statically linked by cryptography-kotlin). An envelope is
+ * [SecretCipher] with AES-256-GCM (the JDK, through cryptography-kotlin). An envelope is
  * `v1:` + base64url without padding of the 12-byte nonce, the ciphertext and the 16-byte tag, with the context as
  * associated data: the layout TeamCode writes (`CredentialCipher`), so an imported TeamCode envelope opens with
  * [open] given TeamCode's key and context.
@@ -46,7 +46,7 @@ class AesGcmSecretCipher(key: ByteArray) : SecretCipher {
     } catch (error: CancellationException) {
         throw error
     } catch (_: Exception) {
-        // OpenSSL reports a failed tag check as a provider exception: a wrong key, context or a tampered envelope.
+        // The provider reports a failed tag check as an exception: a wrong key, context or a tampered envelope.
         null
     }
 

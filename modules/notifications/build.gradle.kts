@@ -16,7 +16,7 @@ kotlin {
             implementation(project(":modules:orgs"))
             // The gate channel the gates module tells of each request.
             implementation(project(":modules:gates"))
-            // Outbound HTTPS to Expo's push service: Curl on Linux, Darwin on macOS (CIO has no TLS on Kotlin/Native).
+            // Outbound HTTPS to Expo's push service: the app's CIO client, with the JDK's TLS.
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.engine.defaults)
         }

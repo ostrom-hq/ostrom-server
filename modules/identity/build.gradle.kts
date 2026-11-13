@@ -10,8 +10,7 @@ kotlin {
         commonMain.dependencies {
             implementation(project(":kernel"))
             implementation(libs.cryptography.core)
-            // Outbound HTTPS to GitHub, Google, SSO providers and Resend: Curl on Linux, Darwin on macOS (CIO has no
-            // TLS on Kotlin/Native), as in ostrom-cli.
+            // Outbound HTTPS to GitHub, Google, SSO providers and Resend: the app's CIO client, with the JDK's TLS.
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.engine.defaults)
         }

@@ -62,6 +62,6 @@ object RuntimeDrivers {
  * @param caFile A CA bundle to trust instead of the system's (the Kubernetes cluster CA), or null.
  * @param timeoutMillis The request timeout.
  *
- * @return The client: Curl on native; CIO on the test-only JVM target, which never reaches a real runtime.
+ * @return The client: CIO, trusting [caFile] only when it is given.
  */
 internal expect fun runtimeHttpClient(caFile: String?, timeoutMillis: Long): HttpClient

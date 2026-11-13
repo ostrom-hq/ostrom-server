@@ -6,7 +6,7 @@ import dev.whyoleg.cryptography.CryptographyProvider
 import dev.whyoleg.cryptography.algorithms.SHA256
 import dev.whyoleg.cryptography.random.CryptographyRandom
 
-/** [RunnerTokens] with the system's secure random generator and SHA-256 (OpenSSL through cryptography-kotlin). */
+/** [RunnerTokens] with the system's secure random generator and SHA-256 (the JDK through cryptography-kotlin). */
 class RunnerTokensImpl : RunnerTokens {
     private val hasher = CryptographyProvider.Default.get(SHA256).hasher()
 

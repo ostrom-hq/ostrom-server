@@ -3,15 +3,14 @@
 // drain on SIGTERM), `ostrom-server migrate` applies every module's migrations with the owner's credentials, and
 // `ostrom-server seed-test-account` creates a QA account. Depends on every module of modules/, and on the enterprise
 // modules of ee/modules/ when that directory is present (an Apache-2.0 build without ee/ compiles the same code with none).
-// The shipped entry point is the JVM's (jvmMain, docs/decisions/0001), packaged into the image by image/; the native
-// one (nativeMain) goes with the native targets of the server modules.
+// The entry point is the JVM's (jvmMain, docs/decisions/0001), packaged into the image by image/.
 plugins {
     id("ostrom.native-module")
 }
 
 // Enterprise modules: each ee/modules/<name>/ee-module.properties names its ServerModule object; the app gets a
-// generated `eeModules()` listing them (empty without ee/), appended to `serverModules()`. Native has no reflection
-// or ServiceLoader, so the list is written at build time.
+// generated `eeModules()` listing them (empty without ee/), appended to `serverModules()`. The list is written at
+// build time, so no ServiceLoader or reflection is needed.
 val eeProjects = rootProject.subprojects.filter { it.path.startsWith(":ee:modules:") }.sortedBy { it.path }
 val eeModuleObjects: List<String> = eeProjects.map { ee ->
     val file = ee.projectDir.resolve("ee-module.properties")
@@ -51,25 +50,6 @@ val generateEeModules = tasks.register("generateEeModules") {
 }
 
 kotlin {
-    targets.withType<org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget>().configureEach {
-        // SIGTERM and SIGINT through a pipe (src/nativeInterop/cinterop/signals.def), for the graceful stop.
-        compilations.getByName("main").cinterops.create("signals")
-        // Names the threads of the pools that serve calls (src/nativeInterop/cinterop/threads.def).
-        compilations.getByName("main").cinterops.create("threads")
-        binaries.executable {
-            baseName = "ostrom-server"
-            entryPoint = "run.ostrom.server.app.main"
-        }
-        // Kotlin/Native's allocator without pages: objects come from malloc (two arenas, MALLOC_ARENA_MAX in the
-        // Dockerfile) and go back to it once collected. With its default pages, the server kept what each burst of
-        // calls on CIO's 64 Dispatchers.IO threads had touched: at the chart's 256 Mi and the same 37 held streams it
-        // climbed phase after phase to 252-269 MiB and was OOMKilled (ostrom-e2e Chart load 41957078621,
-        // 42085793965); without pages it stayed at 69 MiB at rest and 88 at the peak of 300 streams (42087325520),
-        // for about 3 ms more of gateway overhead at p95 (9.6 against 6.0, under the 15 ms the load pass checks).
-        // Every binary of the module, its tests' too.
-        binaries.all { binaryOptions["pagedAllocator"] = "false" }
-    }
-
     sourceSets {
         commonMain.configure { kotlin.srcDir(generateEeModules) }
         commonMain.dependencies {
@@ -78,14 +58,6 @@ kotlin {
                 .filter { it.path.startsWith(":modules:") }
                 .forEach { implementation(project(it.path)) }
             eeProjects.forEach { implementation(project(it.path)) }
-        }
-        nativeMain.dependencies {
-            implementation(libs.ktor.server.cio)
-            // The binary's only HTTP client engine: telemetry's client and every module's engine-less HttpClient { }
-            // (Stripe, GitHub, the gateway's providers, the MCP relay, sharing) get Curl. Never CIO here: its client has
-            // no TLS on Kotlin/Native ("TLS sessions are not supported on Native platform"), and with both engines
-            // linked Ktor picks CIO for the engine-less clients, so every https call failed.
-            implementation(libs.ktor.client.curl)
         }
         // The JVM process: Ktor's CIO server (Netty comes with the next step of docs/decisions/0001), and the CIO
         // client of the telemetry and of every module's engine-less HttpClient { }, with the JDK's TLS.

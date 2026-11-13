@@ -45,7 +45,7 @@ class SecureSecretGenerator : SecretGenerator {
     }
 }
 
-/** [SecretHasher] on SHA-256 (OpenSSL, linked by the kernel's cryptography provider). */
+/** [SecretHasher] on SHA-256 (the JDK, through the kernel's cryptography provider). */
 class Sha256SecretHasher : SecretHasher {
     override suspend fun hash(secret: String): String = sha256(secret.encodeToByteArray()).toHexString()
 

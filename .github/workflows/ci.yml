@@ -122,23 +122,6 @@ jobs:
           kotlin-version: ${{ env.KOTLIN_VERSION }}
           build-cache: jvm
       - run: python3 scripts/check-conventions.py
-      # Ktor's CIO client has no TLS on Kotlin/Native, and with two engines linked Ktor gives CIO to every engine-less
-      # HttpClient { }: one CIO in a shipped source set of the server and every https call fails (ostrom-server#89).
-      # The runner binary (runner/) talks plain http to the in-cluster Service; tests and the JVM target never ship.
-      - name: The server binary links no CIO HTTP client (no TLS on Kotlin/Native)
-        shell: python3 {0}
-        run: |
-          import pathlib, re, sys
-          found = []
-          for build in sorted(pathlib.Path(".").glob("**/build.gradle.kts")):
-              if build.parts[0] in ("runner", "build-logic") or "build" in build.parts[:-1]:
-                  continue
-              for block in re.finditer(r"(\w+)\.dependencies\s*\{(.*?)\n\s*\}", build.read_text(), re.S):
-                  shipped = not re.search(r"Test$|^jvm", block.group(1))
-                  if shipped and "libs.ktor.client.cio" in block.group(2):
-                      found.append(f"{build}: {block.group(1)} links ktor-client-cio")
-          print("\n".join(found) or "no CIO client in the server's shipped source sets")
-          sys.exit(1 if found else 0)
       - name: License signing tool (ee/tools/license, 100 % lines and branches)
         working-directory: ee/tools/license
         run: |
@@ -185,35 +168,12 @@ jobs:
           path: '**/build/reports/**'
           retention-days: 7
 
+  # The session runner (runner/) is the one Kotlin/Native program left (docs/decisions/0001): its tests run natively.
   ci-native:
-    name: Native tests (linuxX64)
+    name: Runner native tests (linuxX64)
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     timeout-minutes: 30
     runs-on: ubuntu-24.04
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_USER: ostrom
-          POSTGRES_PASSWORD: ostrom
-          POSTGRES_DB: ostrom_test
-        ports: ['5432:5432']
-        options: >-
-          --health-cmd "pg_isready -U ostrom" --health-interval 5s --health-timeout 5s --health-retries 20
-      # Stripe's official mock, for the billing gateway's integration test.
-      stripe-mock:
-        image: stripe/stripe-mock@sha256:aeb96b83e87a893d2ac005e363ac01ffa6e59a5ad85b49c155dfc9129de02e78 # latest, 2026-10-01
-        ports: ['12111:12111']
-    env:
-      OSTROM_TEST_DATABASE_URL: postgresql://ostrom:ostrom@localhost:5432/ostrom_test
-      # Database tests fail instead of being skipped when the service is missing: CI never passes by skipping them.
-      OSTROM_TEST_DATABASE_REQUIRED: 'true'
-      # Billing: the stripe-mock integration test, and the end-to-end test against the real Stripe test mode (its key
-      # is the repository secret STRIPE_TEST_KEY); both fail instead of being skipped here.
-      OSTROM_STRIPE_MOCK_URL: http://localhost:12111
-      OSTROM_STRIPE_MOCK_REQUIRED: 'true'
-      OSTROM_STRIPE_E2E_KEY: ${{ secrets.STRIPE_TEST_KEY }}
-      OSTROM_STRIPE_E2E_REQUIRED: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/build-setup
@@ -226,9 +186,9 @@ jobs:
       - name: Two Gradle workers for the native builds
         if: ${{ !cancelled() }}
         run: echo 'org.gradle.workers.max=2' >> ~/.gradle/gradle.properties
-      - name: Native tests (linuxX64), with PostgreSQL
+      - name: Runner native tests (linuxX64)
         if: ${{ !cancelled() }}
-        run: ./gradlew --continue linuxX64Test
+        run: ./gradlew --continue :runner:linuxX64Test
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Measured times and their budgets (reported, held by perf.yml)
@@ -563,5 +523,5 @@ jobs:
           E2E: ${{ needs.ci-e2e.result }}
           API: ${{ needs.api-package.result }}
         run: |
-          echo "JVM tests and Kover: $JVM; native tests: $NATIVE; binary, images and smoke tests: $IMAGE; e2e: $E2E; API package: $API"
+          echo "JVM tests and Kover: $JVM; runner native tests: $NATIVE; binary, images and smoke tests: $IMAGE; e2e: $E2E; API package: $API"
           test "$JVM" = success && test "$NATIVE" = success && test "$IMAGE" = success && test "$E2E" = success && test "$API" = success

@@ -11,10 +11,7 @@ kotlin {
             implementation(project(":kernel"))
             implementation(libs.cryptography.core)
         }
-        nativeMain.dependencies {
-            implementation(libs.cryptography.openssl3.prebuilt)
-        }
-        // The JVM target only runs the tests and Kover (never shipped): the JDK provides AES-GCM there.
+        // The JDK provides AES-GCM there.
         jvmMain.dependencies {
             implementation(libs.cryptography.jdk)
         }

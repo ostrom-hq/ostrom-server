@@ -5,7 +5,7 @@ import run.ostrom.server.gates.domain.services.GateDigester
 import dev.whyoleg.cryptography.CryptographyProvider
 import dev.whyoleg.cryptography.algorithms.SHA256
 
-/** [GateDigester] with SHA-256 (cryptography-kotlin, OpenSSL on native). */
+/** [GateDigester] with SHA-256 (cryptography-kotlin, the JDK provider). */
 @OptIn(ExperimentalStdlibApi::class)
 class Sha256GateDigester : GateDigester {
     private val hasher = CryptographyProvider.Default.get(SHA256).hasher()

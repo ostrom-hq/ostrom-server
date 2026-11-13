@@ -15,9 +15,6 @@ kotlin {
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.engine.defaults)
         }
-        nativeMain.dependencies {
-            implementation(libs.cryptography.openssl3.prebuilt)
-        }
         jvmMain.dependencies {
             implementation(libs.cryptography.jdk)
         }

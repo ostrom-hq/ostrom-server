@@ -23,19 +23,19 @@ goes through the same short path. This guide takes ten minutes to read and saves
 
 ## Set up your machine
 
-Prerequisites: JDK 21 (only for Gradle and the test target) and Git. Kotlin/Native downloads its own toolchain on the
-first build.
+Prerequisites: JDK 21 and Git. Kotlin/Native downloads its own toolchain the first time the session runner
+(`runner/`) is built.
 
 ```sh
-./gradlew jvmTest koverVerify     # every common test, and the 100 % coverage gate
-./gradlew macosArm64Test          # the same tests in native code (linuxX64Test on Linux)
+./gradlew jvmTest koverVerify     # every test, and the 100 % coverage gate
+./gradlew :runner:macosArm64Test  # the runner's tests in native code (:runner:linuxX64Test on Linux)
 ./gradlew check                   # everything CI runs on your platform
 ```
 
-The server ships on the JVM ([docs/decisions/0001](docs/decisions/0001-jvm-and-teamcode-stack.md)): the `jvm()`
-target's tests and its Kover coverage are those of the shipped runtime, and `./gradlew :image:installDist` gives a
-runnable `image/build/install/ostrom-server/bin/ostrom-server`. The native test targets stay until the server modules
-drop them; the session runner (`runner/`) stays native.
+The server runs on the JVM ([docs/decisions/0001](docs/decisions/0001-jvm-and-teamcode-stack.md)): the server modules
+have only the `jvm()` target, whose tests and Kover coverage are those of the shipped runtime, and
+`./gradlew :image:installDist` gives a runnable `image/build/install/ostrom-server/bin/ostrom-server`. The session
+runner (`runner/`) is the one Kotlin/Native program (`runner/gradle.properties` gives it its native targets).
 
 ## Tests: the bar
 
