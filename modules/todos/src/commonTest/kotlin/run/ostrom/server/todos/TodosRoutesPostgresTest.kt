@@ -40,6 +40,7 @@ import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
@@ -91,7 +92,7 @@ class TodosRoutesPostgresTest {
         val again = send("ada", "POST", SESSION, """{"sessionId": "s1", "reference": "R", "items": [$A]}""")
         assertEquals(HttpStatusCode.Conflict, again.status, "one todo per session")
 
-        val todo = { token: String -> send(token, "GET", "$SESSION?sessionId=s1") }
+        val todo: suspend (String) -> HttpResponse = { token -> send(token, "GET", "$SESSION?sessionId=s1") }
         assertEquals("The plan", todo("ada").body<SessionTodo>().todo!!.reference)
         assertEquals("The plan", todo("root").body<SessionTodo>().todo!!.reference, "an administrator reads")
         assertEquals(HttpStatusCode.NotFound, todo("ben").status, "another person's session")
