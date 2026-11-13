@@ -236,6 +236,7 @@ class ArtifactUseCasesTest {
         val ticket = view.ticket(alice, created.id, null)
         assertEquals(1, ticket.version)
         assertTrue(ticket.contentUrl.endsWith("/index.html"))
+        assertEquals(8.hours to 10.minutes, ViewArtifactUseCaseImpl.LIFETIME to ViewArtifactUseCaseImpl.ROUNDING)
         assertEquals(0L, ticket.expiresAt.epochSeconds % 600)
         assertTrue(ticket.expiresAt > clock.now + 7.hours + 50.minutes)
         assertTrue(ticket.expiresAt <= clock.now + 8.hours)

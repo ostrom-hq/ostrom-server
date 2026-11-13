@@ -45,12 +45,12 @@ internal class SealedViewTickets(private val signer: InstanceSigner) : ViewTicke
     }
 
     /** The ciphertext and the MAC of a ticket of the right shape, in its one canonical spelling; null otherwise. */
-    private fun canonical(sealed: String): List<ByteArray>? =
-        sealed.takeIf { it.length <= MAX_LENGTH && SHAPE.matches(it) }
-            ?.split('.')
-            ?.mapNotNull { decoded(it) }
-            // Only the canonical spelling: one ticket is one string, cached and compared as such.
-            ?.takeIf { parts -> parts.size == 2 && parts.joinToString(".") { URL.encode(it) } == sealed }
+    private fun canonical(sealed: String): List<ByteArray>? {
+        val shaped = sealed.length <= MAX_LENGTH && SHAPE.matches(sealed)
+        val parts = if (shaped) sealed.split('.').mapNotNull { decoded(it) } else emptyList()
+        // Only the canonical spelling: one ticket is one string, cached and compared as such.
+        return parts.takeIf { it.size == 2 && it.joinToString(".") { part -> URL.encode(part) } == sealed }
+    }
 
     /** An authenticated payload: [seal] wrote it, so it has its five fields. */
     private fun ticketOf(artifactId: Uuid, payload: String): ViewTicket {
