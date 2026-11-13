@@ -380,6 +380,7 @@ class ArtifactsPostgresTest {
         }
 
     @Test
+    @Suppress("LongMethod") // One page's life on both origins, read top to bottom.
     fun pagesAreServedOnTheContentOriginOnly() = serverTest(listOf(ArtifactsModule), testIdentities) { server ->
         val client = server.client
         val created = client.publish("alice", "Report", "personal", "<h1>page</h1>").body<ArtifactResponse>()

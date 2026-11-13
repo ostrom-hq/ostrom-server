@@ -108,9 +108,8 @@ class CredentialAuthenticatorImpl(
         val id = Uuid.parseOrNull(credentialId)
         if (user == null || id == null) return false
         val now = clock.now()
-        if (sessions.listLive(user, now, LIVE_SESSIONS).any { it.id == id }) return true
-        val token = tokens.get(user, id) ?: return false
-        return token.revokedAt == null && token.expiresAt.let { it == null || it > now }
+        return sessions.listLive(user, now, LIVE_SESSIONS).any { it.id == id } ||
+            tokens.get(user, id)?.let { it.revokedAt == null && (it.expiresAt == null || it.expiresAt > now) } == true
     }
 
     /** The live token a bearer secret names: its prefix says its kind, and the stored token must agree. */

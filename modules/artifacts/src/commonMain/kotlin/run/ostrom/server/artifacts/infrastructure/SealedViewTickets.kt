@@ -39,15 +39,24 @@ internal class SealedViewTickets(private val signer: InstanceSigner) : ViewTicke
     }
 
     override suspend fun open(artifactId: Uuid, sealed: String): ViewTicket? {
-        if (sealed.length > MAX_LENGTH || !SHAPE.matches(sealed)) return null
-        val (ciphertext, presented) = sealed.split('.').map { decoded(it) ?: return null }
-        // Only the canonical spelling: one ticket is one string, cached and compared as such.
-        if ("${URL.encode(ciphertext)}.${URL.encode(presented)}" != sealed) return null
+        val (ciphertext, presented) = canonical(sealed) ?: return null
         val payload = crypt(presented, ciphertext).decodeToString()
-        if (!constantTimeEquals(presented, mac(artifactId, payload))) return null
-        // Authenticated: [seal] wrote it, so it has its five fields.
-        val (version, member, subject, credential, expiry) = payload.split(':')
-        return ViewTicket(artifactId, version.toInt(), member, subject, credential, expiry.toLong())
+        return if (constantTimeEquals(presented, mac(artifactId, payload))) ticketOf(artifactId, payload) else null
+    }
+
+    /** The ciphertext and the MAC of a ticket of the right shape, in its one canonical spelling; null otherwise. */
+    private fun canonical(sealed: String): List<ByteArray>? =
+        sealed.takeIf { it.length <= MAX_LENGTH && SHAPE.matches(it) }
+            ?.split('.')
+            ?.mapNotNull { decoded(it) }
+            // Only the canonical spelling: one ticket is one string, cached and compared as such.
+            ?.takeIf { parts -> parts.size == 2 && parts.joinToString(".") { URL.encode(it) } == sealed }
+
+    /** An authenticated payload: [seal] wrote it, so it has its five fields. */
+    private fun ticketOf(artifactId: Uuid, payload: String): ViewTicket {
+        val fields = payload.split(':')
+        val (member, subject, credential) = fields.subList(1, fields.size - 1)
+        return ViewTicket(artifactId, fields.first().toInt(), member, subject, credential, fields.last().toLong())
     }
 
     private suspend fun keys(): Keys = keys ?: run {

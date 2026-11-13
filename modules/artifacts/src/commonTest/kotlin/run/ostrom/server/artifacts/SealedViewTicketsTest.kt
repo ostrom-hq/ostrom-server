@@ -15,8 +15,11 @@ import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
 class SealedViewTicketsTest {
-    private val signer = Ed25519InstanceSigner.generate()
-    private val tickets = SealedViewTickets(signer)
+    private var sealer: SealedViewTickets? = null
+
+    /** One instance's tickets for the whole test, its key made once. */
+    private suspend fun tickets(): SealedViewTickets =
+        sealer ?: SealedViewTickets(Ed25519InstanceSigner.generate()).also { sealer = it }
     private val artifact = Uuid.random()
     private val ticket = ViewTicket(artifact, 3, "member-1", "user-1", "session-1", 1_800_000_000)
 
@@ -32,31 +35,31 @@ class SealedViewTicketsTest {
 
     @Test
     fun aTicketOpensForItsArtifactOnlyAndTellsNothingOfItsReader() = runTest {
-        val sealed = tickets.seal(ticket)
-        assertEquals(sealed, tickets.seal(ticket), "The same ticket is the same address")
-        assertEquals(ticket, tickets.open(artifact, sealed))
+        val sealed = tickets().seal(ticket)
+        assertEquals(sealed, tickets().seal(ticket), "The same ticket is the same address")
+        assertEquals(ticket, tickets().open(artifact, sealed))
         listOf("member-1", "user-1", "session-1", "1800000000").forEach { assertFalse(it in sealed, it) }
         assertTrue(Regex("[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]{43}").matches(sealed))
-        assertNull(tickets.open(Uuid.random(), sealed), "Another artifact's")
-        assertNotEquals(sealed, tickets.seal(ticket.copy(version = 4)))
+        assertNull(tickets().open(Uuid.random(), sealed), "Another artifact's")
+        assertNotEquals(sealed, tickets().seal(ticket.copy(version = 4)))
         assertNull(SealedViewTickets(Ed25519InstanceSigner.generate()).open(artifact, sealed), "Another instance's")
     }
 
     @Test
     fun aForgedOrAlteredTicketOpensNothing() = runTest {
-        val sealed = tickets.seal(ticket)
+        val sealed = tickets().seal(ticket)
         val (ciphertext, mac) = sealed.split('.')
         val flipped = ciphertext.first().let { if (it == 'A') 'B' else 'A' } + ciphertext.drop(1)
-        assertNull(tickets.open(artifact, "$flipped.$mac"), "Altered payload")
+        assertNull(tickets().open(artifact, "$flipped.$mac"), "Altered payload")
         val otherMac = mac.first().let { if (it == 'A') 'B' else 'A' } + mac.drop(1)
-        assertNull(tickets.open(artifact, "$ciphertext.$otherMac"), "Altered MAC")
+        assertNull(tickets().open(artifact, "$ciphertext.$otherMac"), "Altered MAC")
         // The MAC's last character carries two unused bits: another spelling of the same bytes is refused.
         val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
         val last = alphabet[alphabet.indexOf(mac.last()) xor 1]
-        assertNull(tickets.open(artifact, "$ciphertext.${mac.dropLast(1)}$last"), "Not canonical")
-        assertNull(tickets.open(artifact, "aaaaa.$mac"), "Not base64")
+        assertNull(tickets().open(artifact, "$ciphertext.${mac.dropLast(1)}$last"), "Not canonical")
+        assertNull(tickets().open(artifact, "aaaaa.$mac"), "Not base64")
         listOf("", "x", "abc.def", "$ciphertext.$mac.x", "${"a".repeat(460)}.$mac").forEach {
-            assertNull(tickets.open(artifact, it), it.take(20))
+            assertNull(tickets().open(artifact, it), it.take(20))
         }
     }
 
@@ -67,6 +70,6 @@ class SealedViewTicketsTest {
             ticket.copy(memberId = ""),
             ticket.copy(subjectId = "a:b"),
             ticket.copy(credentialId = "c:d"),
-        ).forEach { assertFailsWith<IllegalArgumentException> { tickets.seal(it) } }
+        ).forEach { assertFailsWith<IllegalArgumentException> { tickets().seal(it) } }
     }
 }

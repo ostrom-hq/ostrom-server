@@ -111,9 +111,8 @@ internal class ViewArtifactUseCaseImpl(
 
     override suspend fun byTicket(id: Uuid, ticket: String, path: String): ServedFile? {
         val opened = seal.open(id, ticket)?.takeIf { it.expiresAt > clock.now().epochSeconds } ?: return null
-        val artifact = repository.getById(id) ?: return null
-        if (!granted(ticket, artifact, opened)) return null
-        return serveFile(repository, artifact, opened.version, path)
+        val artifact = repository.getById(id)?.takeIf { granted(ticket, it, opened) }
+        return artifact?.let { serveFile(repository, it, opened.version, path) }
     }
 
     override suspend fun byLink(slug: String, path: String): ServedFile? {

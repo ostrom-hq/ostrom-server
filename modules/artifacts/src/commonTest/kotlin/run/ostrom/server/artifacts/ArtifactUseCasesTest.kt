@@ -31,6 +31,7 @@ import run.ostrom.server.artifacts.infrastructure.SealedViewTickets
 import run.ostrom.server.artifacts.infrastructure.Sha256ContentDigest
 import run.ostrom.server.kernel.errors.InvalidPageException
 import run.ostrom.server.kernel.signing.Ed25519InstanceSigner
+import run.ostrom.server.kernel.signing.InstanceSigner
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -53,7 +54,9 @@ class ArtifactUseCasesTest {
     private val publish = PublishArtifactUseCaseImpl(repository, digest, clock)
     private val read = ReadArtifactsUseCaseImpl(repository)
     private val manage = ManageArtifactUseCaseImpl(repository, clock)
-    private val signer = Ed25519InstanceSigner.generate()
+    private var signer: InstanceSigner? = null
+
+    private suspend fun signer(): InstanceSigner = signer ?: Ed25519InstanceSigner.generate().also { signer = it }
 
     private fun page(text: String = "<h1>Report</h1>") = listOf(
         UploadedFile("index.html", text.encodeToByteArray()),
@@ -212,9 +215,9 @@ class ArtifactUseCasesTest {
 
     private val viewers = TestViewers()
 
-    private fun viewing(maxCached: Int = 10_000, origin: String? = CONTENT_ORIGIN) = ViewArtifactUseCaseImpl(
+    private suspend fun viewing(maxCached: Int = 10_000, origin: String? = CONTENT_ORIGIN) = ViewArtifactUseCaseImpl(
         repository,
-        SealedViewTickets(signer),
+        SealedViewTickets(signer()),
         viewers,
         ArtifactLocations(VIEWER, origin),
         clock,
