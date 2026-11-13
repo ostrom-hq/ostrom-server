@@ -10,6 +10,6 @@ class CompilerFeaturesTest {
     @Test
     fun itsFeaturesNeedNoConfiguration() = runTest {
         val koin = koinApplication {}.koin
-        assertEquals(setOf("packages.v1", "workflows.v1"), CompilerModule.features(koin))
+        assertEquals(setOf("packages.v1", "workflows.v1", "workflows.settings.v1"), CompilerModule.features(koin))
     }
 }

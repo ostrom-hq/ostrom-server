@@ -12,6 +12,9 @@ private val TABLES = listOf(
     "compiler_audit",
 )
 
+// The tables of later migrations that carry `org_id` under the same policy.
+private val SETTINGS_TABLES = listOf("compiler_workflow_settings")
+
 // Row level security forced on every table (the owner included): a transaction that has not set `ostrom.org_id`
 // sees and writes nothing.
 private fun isolated(table: String) = """
@@ -106,5 +109,20 @@ val CompilerMigrations: List<SchemaMigration> = listOf(
         2,
         "packages_by_repo",
         "CREATE INDEX compiler_packages_by_repo ON compiler_packages (org_id, repo, compiled_at DESC, content_digest)",
+    ),
+    // Who may decide the workflows, one row per organization that changed it (`workflows.settings.v1`). The members of
+    // the `members` mode are member ids, a JSON array of texts.
+    SchemaMigration(
+        3,
+        "workflow_settings",
+        """
+        CREATE TABLE compiler_workflow_settings (
+            org_id UUID NOT NULL PRIMARY KEY,
+            mode TEXT NOT NULL,
+            member_ids TEXT NOT NULL,
+            updated_by TEXT NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL
+        );
+        """.trimIndent() + "\n" + SETTINGS_TABLES.joinToString("\n", transform = ::isolated).removeSuffix(";"),
     ),
 )

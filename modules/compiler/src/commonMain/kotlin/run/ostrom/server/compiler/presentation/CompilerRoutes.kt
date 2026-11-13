@@ -9,6 +9,7 @@ import run.ostrom.server.compiler.domain.usecases.catalogJson
 import run.ostrom.server.gates.domain.models.ActorKind
 import run.ostrom.server.gates.domain.models.GateActor
 import run.ostrom.server.kernel.auth.authenticated
+import run.ostrom.server.kernel.auth.requirePrincipal
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
 import run.ostrom.server.kernel.http.NullsKept
@@ -107,13 +108,24 @@ private fun Route.workflowsRoutes(dependencies: CompilerRoutesDependencies) = wi
         val status = params.status?.let(::statusOf)
         call.respond(WorkflowsPage(workflows.list(actor.orgId, params.repo, status).map(::documentOf)))
     }
+    get<WorkflowsApi.Settings> {
+        val actor = actorOf(call, CompilerScopes.readingWorkflows)
+        call.respond(settings.settings(actor.orgId, actor.id, actor.role))
+    }
+    put<WorkflowsApi.Settings> {
+        val actor = personOf(call, CompilerScopes.writingWorkflows)
+        // The rule changes who decides: a browser session only, as the decisions it governs (SECURITY-AUDIT S2-04).
+        if (!call.decides(may = true)) throw OstromException(ErrorKind.FORBIDDEN, CONSOLE_ONLY)
+        val saved = settings.save(actor.orgId, actor.id, actor.role, call.requirePrincipal(), call.receive())
+        call.respond(saved)
+    }
     post<WorkflowsApi> {
         val actor = personOf(call, CompilerScopes.writingWorkflows)
         val body = call.receive<JsonObject>()
-        if (call.holdsDecision(actor, proposed(body))) {
+        if (holds(call, actor, gated(body), proposed(body))) {
             return@post call.hold(actor, WorkflowWrites.CREATE, CompilerGovernanceChange.payload(null, body))
         }
-        if (!call.decides(actor)) onlyProposed(body)
+        if (!call.decides(mayDecide(actor, gated(body))) && !proposed(body)) throw refusal(actor, gated(body))
         val saved = workflows.save(actor.orgId, body, null, actor.id, create = true)
         call.respond(HttpStatusCode.Created, documentOf(saved))
     }
@@ -127,27 +139,32 @@ private fun Route.workflowsRoutes(dependencies: CompilerRoutesDependencies) = wi
         if (id != params.id) {
             throw OstromException(ErrorKind.INVALID_REQUEST, "The workflow's id is not the path's.")
         }
-        if (!call.decides(actor)) {
-            val proposal = proposed(body.workflow) && proposed(workflows.get(actor.orgId, params.id).doc.raw)
-            if (call.holdsDecision(actor, proposal)) {
+        val stored = workflows.get(actor.orgId, params.id).doc.raw
+        val gate = gated(body.workflow) || gated(stored)
+        if (!call.decides(mayDecide(actor, gate))) {
+            val proposal = proposed(body.workflow) && proposed(stored)
+            if (holds(call, actor, gate, proposal)) {
                 val payload = CompilerGovernanceChange.payload(params.id, OstromJson.encodeToJsonElement(body))
                 return@put call.hold(actor, WorkflowWrites.SAVE, payload)
             }
-            if (!proposal) throw OstromException(ErrorKind.FORBIDDEN, DECIDES)
+            if (!proposal) throw refusal(actor, gate)
         }
         val saved = workflows.save(actor.orgId, body.workflow, body.expectedVersion, actor.id, create = false)
         call.respond(documentOf(saved))
     }
     delete<WorkflowsApi.Id> { params ->
         val actor = personOf(call, CompilerScopes.writingWorkflows)
-        if (call.holdsDecision(actor, proposal = false)) {
+        val gate = gated(workflows.get(actor.orgId, params.id).doc.raw)
+        if (holds(call, actor, gate, proposal = false)) {
             return@delete call.hold(actor, WorkflowWrites.DELETE, CompilerGovernanceChange.payload(params.id, null))
         }
-        if (!call.decides(actor)) throw OstromException(ErrorKind.FORBIDDEN, DECIDES)
+        if (!call.decides(mayDecide(actor, gate))) throw refusal(actor, gate)
         workflows.delete(actor.orgId, params.id)
         call.respond(HttpStatusCode.NoContent)
     }
 }
+
+private const val CONSOLE_ONLY = "Only a person signed in to the console changes who may edit workflows."
 
 private const val MAX_AUDIT = 200
 

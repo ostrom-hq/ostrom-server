@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.compiler.presentation
 
+import run.ostrom.server.compiler.domain.usecases.WorkflowSettingsUseCaseImpl
 import run.ostrom.server.gates.domain.models.ActorKind
 import run.ostrom.server.gates.domain.models.GateActor
 import run.ostrom.server.gates.presentation.GateScopes
@@ -14,6 +15,7 @@ import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.plugins.origin
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -29,21 +31,37 @@ internal suspend fun CompilerRoutesDependencies.personOf(call: ApplicationCall, 
     actorOf(call, accepted).takeIf { it.kind == ActorKind.USER }
         ?: throw OstromException(ErrorKind.FORBIDDEN, "Only a person changes workflows and packages.")
 
-// Only a person's browser session decides (SECURITY-AUDIT S2-04), and only an owner's or an admin's (second audit H4):
-// any other member, in the browser too, proposes.
-internal fun ApplicationCall.decides(actor: GateActor): Boolean {
+// Only a person's browser session decides (SECURITY-AUDIT S2-04), and only one the editing rights let decide (an owner
+// or an admin, or an editor, second audit H4): any other member, in the browser too, proposes. [may] is what
+// `WorkflowSettingsUseCase.mayDecide` says of the person and the workflow.
+internal fun ApplicationCall.decides(may: Boolean): Boolean {
     val principal = requirePrincipal()
-    return !principal.confirmsByConsole && GateScopes.ALL_USER in principal.scopes && actor.role in MANAGERS
+    return !principal.confirmsByConsole && GateScopes.ALL_USER in principal.scopes && may
 }
 
 // A person's token (the CLI's, elevated by `ostrom login --admin` or not; an agent can read it on the developer's
-// machine) proposes a workflow at once; a decision it asks (accept, edit an accepted one, delete) is an owner's or an
-// admin's only, and waits for their confirmation on the console (audit CLI H1).
-internal fun ApplicationCall.holdsDecision(actor: GateActor, proposal: Boolean): Boolean {
-    if (!requirePrincipal().confirmsByConsole || proposal) return false
-    if (actor.role !in MANAGERS) throw OstromException(ErrorKind.FORBIDDEN, DECIDES)
+// machine) proposes a workflow at once; a decision it asks (accept, edit an accepted one, delete) waits for a
+// confirmation on the console (audit CLI H1), unless the person may not decide it at all.
+internal suspend fun CompilerRoutesDependencies.holds(
+    call: ApplicationCall,
+    actor: GateActor,
+    gated: Boolean,
+    proposal: Boolean,
+): Boolean {
+    if (!call.requirePrincipal().confirmsByConsole || proposal) return false
+    if (!mayDecide(actor, gated)) throw refusal(actor, gated)
     return true
 }
+
+// What a person who may not decide a workflow is told: an editor is let in by the rights, but never on a gate.
+internal suspend fun CompilerRoutesDependencies.refusal(actor: GateActor, gated: Boolean): OstromException {
+    val onlyTheGate = gated && mayDecide(actor, gated = false)
+    return OstromException(ErrorKind.FORBIDDEN, if (onlyTheGate) GATED else DECIDES, type = EDITORS_ONLY)
+}
+
+// Whether this person may decide a workflow, whose gate nodes (before or after the change) are [gated].
+internal suspend fun CompilerRoutesDependencies.mayDecide(actor: GateActor, gated: Boolean): Boolean =
+    settings.mayDecide(actor.orgId, actor.id, actor.role, gated)
 
 // Revoking a package stops every session that runs it: an owner or an admin, with any of their credentials, so a
 // leaked package is stopped from the terminal too (second audit H4).
@@ -53,7 +71,7 @@ internal fun requireManager(actor: GateActor) {
 
 // Restoring puts a revoked package back in force: an owner's or an admin's browser session only (second audit M3).
 internal fun ApplicationCall.requireDecides(actor: GateActor) {
-    if (!decides(actor)) throw OstromException(ErrorKind.FORBIDDEN, RESTORES)
+    if (!decides(actor.role in MANAGERS)) throw OstromException(ErrorKind.FORBIDDEN, RESTORES)
 }
 
 private val MANAGERS = setOf(OrgRole.OWNER, OrgRole.ADMIN)
@@ -63,12 +81,19 @@ internal const val RESTORES = "Only an owner or an admin signed in to the consol
 
 internal fun proposed(document: JsonObject): Boolean = (document["status"] as? JsonPrimitive)?.content == "proposed"
 
-internal fun onlyProposed(document: JsonObject) {
-    if (!proposed(document)) throw OstromException(ErrorKind.FORBIDDEN, DECIDES)
+// Whether a workflow document holds a gate node: a gate is Ostrom's security boundary, an owner's or an admin's to
+// change whatever the editing rights say.
+internal fun gated(document: JsonObject): Boolean = (document["nodes"] as? JsonArray).orEmpty().any {
+    ((it as? JsonObject)?.get("kind") as? JsonPrimitive)?.content == "gate"
 }
 
 internal const val DECIDES =
     "Only an owner or an admin accepts, edits or deletes a workflow, signed in to the console or confirming there."
+
+internal const val GATED =
+    "A workflow that holds a gate node stays an owner's or an admin's decision, whatever the editing rights."
+
+internal const val EDITORS_ONLY = WorkflowSettingsUseCaseImpl.EDITORS_ONLY
 
 /** The scopes the compiler routes require; a user's browser session (`user:*`) holds them all. */
 object CompilerScopes {
