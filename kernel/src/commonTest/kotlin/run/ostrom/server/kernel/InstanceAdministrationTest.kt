@@ -6,6 +6,7 @@ import run.ostrom.server.kernel.module.serverKoin
 import run.ostrom.server.kernel.settings.DiscardingInstanceAuditTrail
 import run.ostrom.server.kernel.settings.EmptyInstanceSettings
 import run.ostrom.server.kernel.settings.IgnoringInstanceAdminGrants
+import run.ostrom.server.kernel.settings.InstanceAccount
 import run.ostrom.server.kernel.settings.InstanceAccounts
 import run.ostrom.server.kernel.settings.InstanceAdminGrants
 import run.ostrom.server.kernel.settings.InstanceAdministrators
@@ -53,6 +54,7 @@ class InstanceAdministrationTest {
         assertNull(koin.get<InstanceAccounts>().byVerifiedEmail("a@example.com"))
         assertEquals(emptyMap(), koin.get<InstanceAccounts>().describe(listOf(someone)))
         assertEquals(emptyMap(), koin.get<InstanceAccounts>().setupOwners())
+        assertEquals("ada", InstanceAccount(someone, "ada", null).login)
         assertIs<DiscardingInstanceAuditTrail>(koin.get<InstanceAuditTrail>())
         koin.get<InstanceAuditTrail>().record(InstanceAuditRecord(null, "instance.settings.saved", "settings", "mail"))
     }
@@ -100,5 +102,6 @@ class InstanceAdministrationTest {
         assertEquals(values.hashCode(), reordered.hashCode())
         assertNotEquals<Any>(values, "SettingsValues(apiKey, from)")
         assertTrue(SettingsValues.EMPTY.isEmpty)
+        assertNotEquals(SettingsValues.EMPTY, values)
     }
 }

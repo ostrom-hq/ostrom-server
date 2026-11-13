@@ -34,7 +34,7 @@ class SettingsField(
  */
 class SettingsSection(val name: String, val fields: List<SettingsField>) {
     init {
-        require(NAME.matches(name)) { "A settings section is named [a-z][a-z0-9-]{0,39}: $name." }
+        require(SECTION_NAME.matches(name)) { "A settings section is named [a-z][a-z0-9-]{0,39}: $name." }
         require(fields.map { it.name }.toSet().size == fields.size) { "The fields of $name have one name each." }
     }
 
@@ -46,10 +46,6 @@ class SettingsSection(val name: String, val fields: List<SettingsField>) {
      * @return The field, or null when the section has none of that name.
      */
     fun field(name: String): SettingsField? = fields.firstOrNull { it.name == name }
-
-    private companion object {
-        val NAME = Regex("[a-z][a-z0-9-]{0,39}")
-    }
 }
 
 /**
@@ -100,3 +96,5 @@ fun interface InstanceSettings {
 class EmptyInstanceSettings : InstanceSettings {
     override suspend fun read(section: String): SettingsValues = SettingsValues.EMPTY
 }
+
+private val SECTION_NAME = Regex("[a-z][a-z0-9-]{0,39}")

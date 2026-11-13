@@ -4,8 +4,6 @@ package run.ostrom.server.admin.presentation
 import run.ostrom.server.admin.domain.AdminCaller
 import run.ostrom.server.admin.domain.InstanceAdminNotFoundException
 import run.ostrom.server.admin.domain.InstanceAdminView
-import run.ostrom.server.admin.domain.InstanceAdminsUseCase
-import run.ostrom.server.admin.domain.InstanceSettingsUseCase
 import run.ostrom.server.admin.domain.SettingsChange
 import run.ostrom.server.admin.domain.SettingsView
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -23,14 +21,6 @@ import io.ktor.server.resources.put
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import kotlin.uuid.Uuid
-
-/**
- * What the admin routes need.
- *
- * @property admins The administrators.
- * @property settings The settings sections.
- */
-class AdminRoutesDependencies(val admins: InstanceAdminsUseCase, val settings: InstanceSettingsUseCase)
 
 /**
  * The instance's administration under `/api/v1/admin`: a person who administers the instance, signed in (a browser

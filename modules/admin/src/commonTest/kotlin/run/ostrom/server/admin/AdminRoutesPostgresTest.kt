@@ -75,13 +75,13 @@ class AdminRoutesPostgresTest {
 
     @Test
     fun theSetupLinksPersonAdministersAndAddsAnother() = serverTest(listOf(AdminModule), overrides) { server ->
-        assertEquals(HttpStatusCode.Unauthorized, client.get("/api/v1/admin/instance-admins").status)
-        assertEquals(HttpStatusCode.Forbidden, client.get("/api/v1/admin/instance-admins") { bearerAuth("bob") }.status)
-        val refused = client.get("/api/v1/admin/settings") { bearerAuth("alicekey") }
+        assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/admin/instance-admins").status)
+        assertEquals(HttpStatusCode.Forbidden, server.client.get("/api/v1/admin/instance-admins") { bearerAuth("bob") }.status)
+        val refused = server.client.get("/api/v1/admin/settings") { bearerAuth("alicekey") }
         assertEquals(HttpStatusCode.Forbidden, refused.status)
         assertTrue("instance_admin_required" in refused.bodyAsText())
 
-        val added = client.post("/api/v1/admin/instance-admins") {
+        val added = server.client.post("/api/v1/admin/instance-admins") {
             bearerAuth("alice")
             contentType(ContentType.Application.Json)
             setBody("""{"email":"bob@example.com"}""")
@@ -93,7 +93,7 @@ class AdminRoutesPostgresTest {
         assertEquals(ALICE.toString(), admins.last().addedBy)
         assertTrue(server.koin.get<InstanceAdministrators>().isAdmin(BOB))
 
-        val unknown = client.post("/api/v1/admin/instance-admins") {
+        val unknown = server.client.post("/api/v1/admin/instance-admins") {
             bearerAuth("alice")
             contentType(ContentType.Application.Json)
             setBody("""{"email":"nobody@example.com"}""")
@@ -101,44 +101,44 @@ class AdminRoutesPostgresTest {
         assertEquals(HttpStatusCode.NotFound, unknown.status)
         assertEquals(
             HttpStatusCode.NotFound,
-            client.delete("/api/v1/admin/instance-admins/not-an-id") { bearerAuth("alice") }.status,
+            server.client.delete("/api/v1/admin/instance-admins/not-an-id") { bearerAuth("alice") }.status,
         )
         assertEquals(
             HttpStatusCode.NotFound,
-            client.delete("/api/v1/admin/instance-admins/$CAROL") { bearerAuth("alice") }.status,
+            server.client.delete("/api/v1/admin/instance-admins/$CAROL") { bearerAuth("alice") }.status,
         )
         assertEquals(
             HttpStatusCode.NoContent,
-            client.delete("/api/v1/admin/instance-admins/$ALICE") { bearerAuth("bob") }.status,
+            server.client.delete("/api/v1/admin/instance-admins/$ALICE") { bearerAuth("bob") }.status,
         )
-        val last = client.delete("/api/v1/admin/instance-admins/$BOB") { bearerAuth("bob") }
+        val last = server.client.delete("/api/v1/admin/instance-admins/$BOB") { bearerAuth("bob") }
         assertEquals(HttpStatusCode.Conflict, last.status)
         assertTrue("last_instance_admin" in last.bodyAsText())
         assertEquals(
             HttpStatusCode.Forbidden,
-            client.get("/api/v1/admin/instance-admins") { bearerAuth("alice") }.status,
+            server.client.get("/api/v1/admin/instance-admins") { bearerAuth("alice") }.status,
         )
     }
 
     @Test
     fun aSectionIsSavedSealedAndItsSecretNeverComesBack() = serverTest(listOf(AdminModule), overrides) { server ->
-        val empty = client.get("/api/v1/admin/settings") { bearerAuth("alice") }.body<InstanceSettingsListResponse>()
+        val empty = server.client.get("/api/v1/admin/settings") { bearerAuth("alice") }.body<InstanceSettingsListResponse>()
         assertEquals(listOf("mail"), empty.sections.map { it.section })
         assertEquals(0, empty.sections.single().version)
         assertEquals(
             HttpStatusCode.NotFound,
-            client.get("/api/v1/admin/settings/other") { bearerAuth("alice") }.status,
+            server.client.get("/api/v1/admin/settings/other") { bearerAuth("alice") }.status,
         )
         assertEquals(
             HttpStatusCode.Forbidden,
-            client.put("/api/v1/admin/settings/mail") {
+            server.client.put("/api/v1/admin/settings/mail") {
                 bearerAuth("bob")
                 contentType(ContentType.Application.Json)
                 setBody("""{"version":0}""")
             }.status,
         )
 
-        val saved = client.put("/api/v1/admin/settings/mail") {
+        val saved = server.client.put("/api/v1/admin/settings/mail") {
             bearerAuth("alice")
             contentType(ContentType.Application.Json)
             setBody("""{"version":0,"values":{"from":"Ostrom <a@example.com>"},"secrets":{"apiKey":"re_secret"}}""")
@@ -154,20 +154,20 @@ class AdminRoutesPostgresTest {
         assertFalse(section.importedFromEnvironment)
         assertEquals("re_secret", server.koin.get<InstanceSettings>().read("mail")["apiKey"])
 
-        val stale = client.put("/api/v1/admin/settings/mail") {
+        val stale = server.client.put("/api/v1/admin/settings/mail") {
             bearerAuth("alice")
             contentType(ContentType.Application.Json)
             setBody("""{"version":0}""")
         }
         assertEquals(HttpStatusCode.Conflict, stale.status)
-        val invalid = client.put("/api/v1/admin/settings/mail") {
+        val invalid = server.client.put("/api/v1/admin/settings/mail") {
             bearerAuth("alice")
             contentType(ContentType.Application.Json)
             setBody("""{"version":1,"values":{"url":"http://example.com"}}""")
         }
         assertEquals(HttpStatusCode.BadRequest, invalid.status)
         assertTrue("invalid_settings" in invalid.bodyAsText())
-        val again = client.get("/api/v1/admin/settings/mail") { bearerAuth("alice") }.body<InstanceSettingsResponse>()
+        val again = server.client.get("/api/v1/admin/settings/mail") { bearerAuth("alice") }.body<InstanceSettingsResponse>()
         assertEquals(section, again)
         assertEquals(listOf("instance.admin.setup", "instance.settings.saved"), audit.records.map { it.event })
     }
