@@ -132,7 +132,8 @@ class DeliveryTest {
     private val runs = Runs()
     private val agents = Agents()
     private val waits = FakeWaits()
-    private val play = PlayRunUseCaseImpl(runs, NodePlayers(agents, NoGates, waits, FakeChildren()), clock)
+    private val asked = Steps()
+    private val play = PlayRunUseCaseImpl(runs, NodePlayers(agents, NoGates, waits, FakeChildren(), asked), clock)
 
     private fun run(
         status: RunStatus = RunStatus.RUNNING,
@@ -230,6 +231,9 @@ class DeliveryTest {
         assertEquals(RunStatus.RUNNING, played().status, "The agent works: the run waits")
 
         agents.state = AgentState.DONE
+        asked.asked = true
+        assertEquals(RunStatus.RUNNING, played().status, "Its agent asked a person: the step waits for the answer")
+        asked.asked = false
         val ended = played()
 
         assertEquals(RunStatus.FAILED, ended.status)

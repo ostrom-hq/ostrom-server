@@ -19,6 +19,7 @@ import run.ostrom.server.workflowruns.domain.services.RunAgents
 import run.ostrom.server.workflowruns.domain.services.RunChildren
 import run.ostrom.server.workflowruns.domain.services.RunGates
 import run.ostrom.server.workflowruns.domain.services.RunWaits
+import run.ostrom.server.workflowruns.domain.services.StepSessions
 import run.ostrom.server.workflowruns.domain.services.WaitOpening
 import run.ostrom.server.workflowruns.domain.services.WaitRequest
 import run.ostrom.server.workflowruns.domain.services.WaitResult
@@ -102,11 +103,12 @@ interface NodePlayer {
  * @param gates The gates.
  * @param waits The waits.
  * @param children The child runs.
+ * @param steps Whether a step's agent asked a person something still open.
  */
-class NodePlayers(agents: RunAgents, gates: RunGates, waits: RunWaits, children: RunChildren) {
+class NodePlayers(agents: RunAgents, gates: RunGates, waits: RunWaits, children: RunChildren, steps: StepSessions) {
     private val players = mapOf(
         WorkflowNodeKind.TRIGGER to TriggerPlayer,
-        WorkflowNodeKind.AGENT to AgentPlayer(agents),
+        WorkflowNodeKind.AGENT to AgentPlayer(agents, steps),
         WorkflowNodeKind.GATE to GatePlayer(gates),
         WorkflowNodeKind.WAIT to WaitPlayer(waits),
         WorkflowNodeKind.WORKFLOW to ChildPlayer(children),
@@ -149,12 +151,14 @@ object CheckPlayer : NodePlayer {
 /**
  * An agent node: a cloud session of the run's starter, keyed by the visit. A node that asks for a deliverable
  * (`run.deliverable`) ends `delivered` only by its delivery (`deliverRun`, which finishes the visit), and fails
- * `ended_without_delivery` when its session stops holding an execution with nothing delivered; a node that asks for
- * none (a workflow written before deliveries) is done once its session no longer holds an execution.
+ * `ended_without_delivery` when its session stops holding an execution with nothing delivered and no question to a
+ * person still open (TeamCode 83bb4a8f: an agent that asked waits for the answer, which wakes its session); a node
+ * that asks for none (a workflow written before deliveries) is done once its session no longer holds an execution.
  *
  * @param agents The agent sessions.
+ * @param steps Whether the step's agent asked a person something still open.
  */
-class AgentPlayer(private val agents: RunAgents) : NodePlayer {
+class AgentPlayer(private val agents: RunAgents, private val steps: StepSessions) : NodePlayer {
     // Conditions rather than a `when` on the nullable state, whose unreachable default Kover counts as a branch.
     override suspend fun play(visit: Visit): RunChange? {
         val sessionId = sessionOf(visit.run.id, visit.last.seq)
@@ -166,8 +170,9 @@ class AgentPlayer(private val agents: RunAgents) : NodePlayer {
             }
             state == AgentState.WORKING -> null
             state == AgentState.FAILED -> visit.failed(RunMoves.SESSION_FAILED)
-            visit.node.run?.deliverable != null -> visit.failed(RunMoves.ENDED_WITHOUT_DELIVERY)
-            else -> visit.done(RunMoves.NEXT)
+            visit.node.run?.deliverable == null -> visit.done(RunMoves.NEXT)
+            steps.asked(visit.ref.orgId, sessionId) -> null
+            else -> visit.failed(RunMoves.ENDED_WITHOUT_DELIVERY)
         }
     }
 

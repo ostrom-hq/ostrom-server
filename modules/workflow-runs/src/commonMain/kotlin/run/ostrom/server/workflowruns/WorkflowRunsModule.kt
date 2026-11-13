@@ -114,7 +114,7 @@ object WorkflowRunsModule : ServerModule {
         single<RunGates> { GatesRunGates(get(), get()) }
         single<RunWaits> { AutomationsRunWaits(get(), get(), get(), get()) }
         single<RunChildren> { StartedRunChildren(get(), get(), get(), get()) }
-        single { NodePlayers(get(), get(), get(), get()) }
+        single { NodePlayers(get(), get(), get(), get(), get()) }
         single<PlayRunUseCase> { PlayRunUseCaseImpl(get(), get(), get()) }
         single<TickRunsUseCase> { TickRunsUseCaseImpl(get(), get(), get(), get()) }
         single<GetWorkflowRunUseCase> { GetWorkflowRunUseCaseImpl(get()) }

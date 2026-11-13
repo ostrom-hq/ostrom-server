@@ -41,6 +41,7 @@ import run.ostrom.server.workflowruns.domain.services.WaitResult
 import run.ostrom.server.workflowruns.domain.services.WaitState
 import run.ostrom.server.workflowruns.fakes.CHILD
 import run.ostrom.server.workflowruns.fakes.FakeChildren
+import run.ostrom.server.workflowruns.fakes.FakeSteps
 import run.ostrom.server.workflowruns.fakes.FakeWaits
 import run.ostrom.server.workflowruns.fakes.FixedClock
 import run.ostrom.server.workflowruns.fakes.ORG
@@ -119,7 +120,7 @@ class RunNodesTest {
     private val runs = Runs()
     private val waits = FakeWaits()
     private val children = FakeChildren()
-    private val play = PlayRunUseCaseImpl(runs, NodePlayers(NoAgents, NoGates, waits, children), clock)
+    private val play = PlayRunUseCaseImpl(runs, NodePlayers(NoAgents, NoGates, waits, children, FakeSteps()), clock)
 
     private fun run(
         id: String = RUN,
