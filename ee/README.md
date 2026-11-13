@@ -1,8 +1,8 @@
 # ee/
 
-Code under this directory is **not** AGPL-3.0: it is licensed under the Ostrom Enterprise Edition license
+Code under this directory is **not** Apache-2.0: it is licensed under the Ostrom Enterprise Edition license
 ([`ee/LICENSE`](LICENSE)) and only runs in production with a valid license key. Everything outside `ee/` is
-AGPL-3.0 ([`../LICENSE`](../LICENSE)). Source files here start with
+Apache-2.0 ([`../LICENSE`](../LICENSE)). Source files here start with
 `// SPDX-License-Identifier: LicenseRef-Ostrom-Enterprise`.
 
 ```
@@ -19,12 +19,12 @@ ee/
   exactly as it discovers `modules/`.
 - `app/build.gradle.kts` depends on each of them and reads its `ee-module.properties`, then generates
   `app/build/generated/ee-modules/.../EeModules.kt`: `internal fun eeModules(): List<ServerModule>` listing those
-  objects (sorted by directory name). `serverModules()` appends `eeModules()` after every AGPL module, so an
+  objects (sorted by directory name). `serverModules()` appends `eeModules()` after every Apache-2.0 module, so an
   enterprise module migrates and initializes after the modules it builds on (billing, instance). Kotlin/Native has no
   reflection or `ServiceLoader`, hence a list written at build time.
-- **AGPL build**: delete `ee/`. Nothing is discovered, `eeModules()` is empty, and the server builds and runs with
-  AGPL code only. Nothing outside `ee/` may reference `ee/`: AGPL modules expose ports (billing's `LicenseProvider`)
-  that an enterprise module binds in Koin, and resolve them with `getOrNull()` and an AGPL default. CI proves it on
+- **Apache-2.0 build**: delete `ee/`. Nothing is discovered, `eeModules()` is empty, and the server builds and runs with
+  Apache-2.0 code only. Nothing outside `ee/` may reference `ee/`: Apache-2.0 modules expose ports (billing's `LicenseProvider`)
+  that an enterprise module binds in Koin, and resolve them with `getOrNull()` and an Apache-2.0 default. CI proves it on
   every pull request: a lexical check that no file outside `ee/` names `run.ostrom.server.ee`, then
   `rm -rf ee && ./gradlew :app:compileKotlinLinuxX64`.
 
