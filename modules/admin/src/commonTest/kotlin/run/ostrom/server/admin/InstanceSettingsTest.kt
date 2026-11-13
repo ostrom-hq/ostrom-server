@@ -161,6 +161,15 @@ class InstanceSettingsTest {
     }
 
     @Test
+    fun twoSectionsOfOneNameAreRefusedAtStart() {
+        assertFailsWith<IllegalArgumentException> {
+            InstanceSettingsUseCaseImpl(listOf(MAIL, MAIL), repository, settingsAdmins(), cipher, reader, audit, clock)
+        }
+    }
+
+    private fun settingsAdmins() = InstanceAdminsUseCaseImpl(admins, FakeAccounts(), audit, clock)
+
+    @Test
     fun theReaderKeepsASectionThirtySecondsAndForgetsItOnASave() = runTest {
         assertTrue(reader.read("mail").isEmpty)
         clock.advance(31.seconds)

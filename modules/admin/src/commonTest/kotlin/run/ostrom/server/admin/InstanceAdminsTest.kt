@@ -53,6 +53,7 @@ class InstanceAdminsTest {
         assertEquals(AdminSource.ENVIRONMENT, repository.list().first().source)
         assertEquals(listOf("instance.admin.imported", "instance.admin.imported"), audit.records.map { it.event })
         assertEquals(listOf(2, 0), logger.events.map { it.third["imported"] })
+        assertEquals(listOf(2, 0), logger.events.map { it.third["ignored"] })
         assertTrue(logger.events.all { it.first == LogLevel.WARN && "deprecated" in it.second })
     }
 

@@ -101,6 +101,11 @@ class InstanceSettingsUseCaseImpl(
 ) : InstanceSettingsUseCase {
     private val sections = sections.sortedBy { it.name }.associateBy { it.name }
 
+    init {
+        // Two modules declaring one section would leave one's fields unsettable: refused at start instead.
+        require(this.sections.size == sections.size) { "Two settings sections have one name." }
+    }
+
     override suspend fun list(caller: AdminCaller): List<SettingsView> {
         admins.requireAdmin(caller)
         val stored = repository.all()

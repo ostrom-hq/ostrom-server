@@ -45,8 +45,10 @@ class SeedInstanceAdminsUseCaseImpl(
         accounts.setupOwners().forEach { (userId, at) -> grantSetupOwner(userId, at) }
         if (legacyAdmins == null) return
         // Only an account of this instance: an id of nobody would count as an administrator nobody can be.
-        val parsed = legacyAdmins.split(',').mapNotNull { Uuid.parseOrNull(it.trim()) }
-        val ids = parsed.filter { it in accounts.describe(parsed) }
+        val entries = legacyAdmins.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        val parsed = entries.mapNotNull { Uuid.parseOrNull(it) }
+        val known = accounts.describe(parsed)
+        val ids = parsed.filter { it in known }
         val imported = ids.count { userId ->
             admins.addIfNeverSeen(InstanceAdmin(userId, AdminSource.ENVIRONMENT, clock.nowMillis())).also { added ->
                 if (added) {
@@ -57,7 +59,8 @@ class SeedInstanceAdminsUseCaseImpl(
         logger.warn(
             "OSTROM_INSTANCE_ADMINS is deprecated: the instance's administrators are managed in the console " +
                 "(Admin → Administrators). Remove the variable.",
-            mapOf("imported" to imported),
+            // What was left out (not a user id of an account here) is counted, so an operator sees nobody is lost.
+            mapOf("imported" to imported, "ignored" to entries.size - ids.size),
         )
     }
 
