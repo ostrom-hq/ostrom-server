@@ -125,6 +125,11 @@ class ConfigAndCallersTest {
             ARTIFACTS_WRITE,
         )
         assertFalse(personalToken.person, "A personal token, an administrator's included, is no person")
+        val cli = TestOrgResolver.artifactCallerOf(
+            AuthenticatedPrincipal("dave", PrincipalKind.USER, setOf(ARTIFACTS_WRITE), "c1", signedIn = true),
+            ARTIFACTS_WRITE,
+        )
+        assertTrue(cli.person, "The CLI's sign-in is a person, as TeamCode's interactive login")
     }
 
     @Test

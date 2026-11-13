@@ -86,6 +86,8 @@ class CredentialAuthenticatorImpl(
                 orgId = stored.orgId?.toString(),
                 // A governance confirmation names the personal token that asked, never the CLI's (audit 2, F1 bis).
                 personalTokenName = shownTokenName(stored.name).takeIf { stored.kind == TokenKind.PERSONAL },
+                // TeamCode's interactive login: the person signed in on this workstation, not a token made to hand out.
+                signedIn = stored.kind != TokenKind.PERSONAL,
             )
         }
     }

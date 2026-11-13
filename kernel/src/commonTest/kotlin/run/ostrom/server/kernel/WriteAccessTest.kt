@@ -27,6 +27,7 @@ class WriteAccessTest {
     private val personal = principal(PrincipalKind.USER)
     private val agent = principal(PrincipalKind.SERVICE)
     private val device = principal(PrincipalKind.DEVICE)
+    private val cli = principal(PrincipalKind.USER).copy(signedIn = true)
 
     @Test
     fun aPrincipalIsAnApiTokenUnlessTheIdentityModuleSaysOtherwise() {
@@ -37,7 +38,7 @@ class WriteAccessTest {
     @Test
     fun aConsoleWriteAdmitsOnlyABrowserSession() {
         assertTrue(browser.mayWrite(WriteAccess.BROWSER))
-        for (other in listOf(app, personal, agent, device)) {
+        for (other in listOf(app, personal, agent, device, cli)) {
             assertFalse(other.mayWrite(WriteAccess.BROWSER), "$other")
         }
     }
@@ -49,9 +50,12 @@ class WriteAccessTest {
     }
 
     @Test
-    fun aPersonsWriteAlsoAdmitsTheUnlockedApp() {
+    fun aPersonsWriteAlsoAdmitsTheUnlockedAppAndTheCliSignIn() {
         assertTrue(browser.mayWrite(WriteAccess.PERSON))
         assertTrue(app.mayWrite(WriteAccess.PERSON))
+        assertTrue(cli.mayWrite(WriteAccess.PERSON), "The token of ostrom login, as TeamCode's interactive login")
+        val signedInMachine = principal(PrincipalKind.SERVICE).copy(signedIn = true)
+        assertFalse(signedInMachine.mayWrite(WriteAccess.PERSON), "Only a person's sign-in")
         for (other in listOf(personal, agent, device)) {
             assertFalse(other.mayWrite(WriteAccess.PERSON), "$other")
         }
@@ -65,6 +69,7 @@ class WriteAccessTest {
         assertTrue(agent.mayWrite(access))
         assertFalse(device.mayWrite(access))
         assertFalse(app.mayWrite(access))
+        assertFalse(cli.copy(kind = PrincipalKind.DEVICE).mayWrite(access))
     }
 
     @Test
@@ -76,6 +81,7 @@ class WriteAccessTest {
         assertTrue(agent.mayWrite(access), "A declared kind")
         assertFalse(personal.mayWrite(access), "A person's token without the scope")
         assertFalse(app.mayWrite(access))
+        assertFalse(cli.mayWrite(access), "A sign-in token without the scope")
         val agentWithTheScope = AuthenticatedPrincipal("s", PrincipalKind.AGENT, GovernanceScopes.ALL)
         assertFalse(agentWithTheScope.mayWrite(access), "Only a person governs")
         assertFalse(elevated.mayWrite(WriteAccess.BROWSER), "A console write that declares no governance scope")

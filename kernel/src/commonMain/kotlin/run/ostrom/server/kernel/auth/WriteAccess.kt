@@ -7,12 +7,14 @@ package run.ostrom.server.kernel.auth
  * its scope: this decides which kinds of credential reach it at all.
  *
  * @property mobileApp Whether the mobile app's token, presented after the phone's biometric unlock, may write.
+ * @property signedIn Whether a person's sign-in token ([AuthenticatedPrincipal.signedIn], the CLI's) may write.
  * @property tokenKinds The kinds of API token the route admits; none for a console write.
  * @property governing The governance scope ([GovernanceScopes]) that also admits a person's token holding it (the
  *   token of `ostrom login --admin`), or null.
  */
 class WriteAccess private constructor(
     val mobileApp: Boolean,
+    val signedIn: Boolean = false,
     val tokenKinds: Set<PrincipalKind>,
     val governing: String? = null,
 ) {
@@ -21,8 +23,12 @@ class WriteAccess private constructor(
         /** A browser session only: every console write unless it declares more. */
         val BROWSER: WriteAccess = WriteAccess(mobileApp = false, tokenKinds = emptySet())
 
-        /** A person: a browser session or the unlocked mobile app, never a token a program can present. */
-        val PERSON: WriteAccess = WriteAccess(mobileApp = true, tokenKinds = emptySet())
+        /**
+         * A person, as TeamCode's interactive login: a browser session, the unlocked mobile app or the token of
+         * `ostrom login` ([AuthenticatedPrincipal.signedIn]); never a personal token made in the console, a service
+         * key, an agent's or a device's token.
+         */
+        val PERSON: WriteAccess = WriteAccess(mobileApp = true, signedIn = true, tokenKinds = emptySet())
 
         /**
          * A browser session, or an API token of one of [kinds] (a personal or CLI token is [PrincipalKind.USER], an
@@ -60,7 +66,8 @@ class WriteAccess private constructor(
 fun AuthenticatedPrincipal.mayWrite(access: WriteAccess): Boolean = when (channel) {
     PrincipalChannel.BROWSER -> kind == PrincipalKind.USER
     PrincipalChannel.MOBILE_APP -> kind == PrincipalKind.USER && access.mobileApp
-    PrincipalChannel.API_TOKEN -> kind in access.tokenKinds || access.governing?.let { governs(it) } == true
+    PrincipalChannel.API_TOKEN -> kind in access.tokenKinds || access.governing?.let { governs(it) } == true ||
+        (access.signedIn && signedIn && kind == PrincipalKind.USER)
 }
 
 /**
