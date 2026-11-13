@@ -7,6 +7,7 @@ import run.ostrom.server.runners.domain.RunnerGitHubToken
 import run.ostrom.server.runners.domain.RunnerGitHubTokens
 import run.ostrom.server.runners.domain.RunnerTokens
 import run.ostrom.server.runners.domain.SessionState
+import run.ostrom.server.runners.fakes.ALICE
 import run.ostrom.server.runners.fakes.ORG_A
 import run.ostrom.server.runners.fakes.ORG_B
 import run.ostrom.server.runners.fakes.session
@@ -100,7 +101,7 @@ class RunnerGitHubPostgresTest {
     @Test
     fun theOwnerSetsTheAccessFromTheApi() = gitHubTest { server ->
         val repository = server.koin.get<CloudSessionsRepository>()
-        val running = session(state = SessionState.RUNNING, createdAt = T0)
+        val running = session(state = SessionState.RUNNING, ownerId = ALICE.toString(), createdAt = T0)
         repository.createWithinCap(running, 5)
 
         val shared = server.setAccess("alice", running.id, "shared")

@@ -62,12 +62,6 @@ class RunnerConfigTest {
         assertTrue(sockets.governed)
         assertEquals("/s/c.sock", sockets.checksSocket)
         assertEquals("/s/h.sock", sockets.checkHostSocket)
-        val defaults = config.credentialSocket to config.gitHubConfigDirectory
-        assertEquals("/run/ostrom/credential.sock" to "/run/ostrom/gh", defaults)
-        val github = RunnerConfig.from(
-            base + ("OSTROM_CREDENTIAL_SOCKET" to "/s/k.sock") + ("OSTROM_GH_CONFIG_DIR" to "/s/gh"),
-        ) { "t" }
-        assertEquals("/s/k.sock" to "/s/gh", github.credentialSocket to github.gitHubConfigDirectory)
         assertFalse(RunnerConfig.from(base + ("OSTROM_AGENT" to "shell")) { "t" }.governed)
 
         val inline = RunnerConfig.from(
@@ -104,6 +98,17 @@ class RunnerConfigTest {
     }
 
     @Test
+    fun theGitHubPathsHaveDefaultsTheEnvironmentMayChange() {
+        val config = RunnerConfig.from(base) { "t" }
+        val defaults = config.credentialSocket to config.gitHubConfigDirectory
+        assertEquals("/run/ostrom/credential.sock" to "/run/ostrom/gh", defaults)
+        val github = RunnerConfig.from(
+            base + ("OSTROM_CREDENTIAL_SOCKET" to "/s/k.sock") + ("OSTROM_GH_CONFIG_DIR" to "/s/gh"),
+        ) { "t" }
+        assertEquals("/s/k.sock" to "/s/gh", github.credentialSocket to github.gitHubConfigDirectory)
+    }
+
+    @Test
     fun aMissingOrMalformedVariableIsRefused() {
         val read = { _: String -> "t" }
         listOf(
@@ -136,8 +141,7 @@ class RunnerConfigTest {
             SessionScript.environment(base + ("HOME" to "/h") + ("LANG" to "fr_FR.UTF-8"), config)["HOME"],
         )
         assertEquals("/workspace/.home", SessionScript.environment(base + ("HOME" to " "), config)["HOME"])
-        assertTrue("git clone" in SessionScript.FIRST && "exec bash -l" in SessionScript.AGAIN)
-        assertTrue("clone --no-recurse-submodules --" in SessionScript.FIRST)
+        assertTrue("clone --no-recurse-submodules --" in SessionScript.FIRST && "exec bash -l" in SessionScript.AGAIN)
         // git and gh reach GitHub through the runner, with no token in the agent's environment.
         assertEquals("2", environment["GIT_CONFIG_COUNT"])
         assertEquals("credential.helper" to "", environment["GIT_CONFIG_KEY_0"] to environment["GIT_CONFIG_VALUE_0"])
