@@ -161,7 +161,7 @@ class CommitArtifactUploadUseCaseTest {
             use.commit(alice, draft, commit.copy(uploadId = Uuid.random()))
         }
         assertFailsWith<ArtifactUploadNotFoundException> { use.commit(aliceAgent, draft, commit) }
-        clock.now += 2 * 60.minutes
+        clock.now += 120.minutes
         assertFailsWith<ArtifactUploadNotFoundException> { use.commit(alice, draft, commit) }
     }
 
