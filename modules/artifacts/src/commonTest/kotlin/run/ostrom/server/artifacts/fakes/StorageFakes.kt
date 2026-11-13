@@ -128,7 +128,7 @@ class InMemoryBucket : ArtifactObjectStore {
         maxKeys: Int,
     ): ObjectListing {
         record("list")
-        val keys = if (hideListing) emptyList() else objects.filterKeys { it.startsWith(prefix) }
+        val keys = if (hideListing) emptyMap() else objects.filterKeys { it.startsWith(prefix) }
         return ObjectListing(keys.map { (key, bytes) -> ListedObject(key, bytes.size.toLong()) }, null)
     }
 

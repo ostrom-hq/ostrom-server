@@ -157,7 +157,7 @@ object StorageRules {
             )
         }
     }
-
-    /** Whether a value is in [range], or absent. */
-    private fun Int?.inOrNull(range: IntRange): Boolean = this == null || this in range
 }
+
+/** Whether a value is in [range], or absent. */
+private fun Int?.inOrNull(range: IntRange): Boolean = this == null || this in range
