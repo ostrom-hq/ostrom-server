@@ -36,7 +36,10 @@ val PERSONAL_TOKEN_SCOPES: List<TokenScope> = listOf(
     TokenScope("rules:read", "Read the rules, their signed decisions and the self-approval policy."),
     TokenScope("receipts:read", "Read and verify the signed receipts."),
     TokenScope("artifacts:read", "Read the artifacts."),
-    TokenScope("artifacts:write", "Publish and share artifacts; making one public or deleting one stays in the console."),
+    TokenScope(
+        "artifacts:write",
+        "Publish and share artifacts; making one public or deleting one stays in the console.",
+    ),
     TokenScope("secrets:read", "List the secrets, never their values."),
     TokenScope("secrets:write", "Save and delete secrets."),
     TokenScope("accounts:read", "Read the shared accounts and their capacity."),

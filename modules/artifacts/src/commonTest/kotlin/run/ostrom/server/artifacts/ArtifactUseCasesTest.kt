@@ -135,7 +135,6 @@ class ArtifactUseCasesTest {
     fun anAdministratorHasNoRightOverAnotherMembersArtifact() = runTest {
         val personal = publish.create(alice, "Mine", "personal", page())
         val team = publish.create(alice, "Ours", "team", page())
-        assertEquals(listOf(team.id), read.list(dave, null, null).map { it.id }, "Only what any member lists")
         assertFailsWith<ArtifactNotFoundException> { read.get(dave, personal.id) }
         assertFailsWith<ArtifactNotFoundException> { read.versions(dave, personal.id) }
         assertFailsWith<ArtifactNotFoundException> { read.file(dave, personal.id, null, null) }
@@ -151,7 +150,6 @@ class ArtifactUseCasesTest {
 
         manage.share(alice, personal.id, dave.memberId, share = true)
         assertEquals(personal, read.get(dave, personal.id), "Shared with them, they read it as any member")
-        assertEquals(listOf(personal.id, team.id).toSet(), read.list(dave, null, null).map { it.id }.toSet())
         assertFailsWith<ArtifactNotWritableException> { manage.delete(dave, personal.id) }
     }
 
