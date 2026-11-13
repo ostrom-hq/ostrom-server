@@ -22,8 +22,8 @@ import kotlin.time.Duration.Companion.seconds
  */
 class ReadBenchTest {
     @Test
-    fun theHealthRouteSendsOneQueryAndIsTimed() = benchTest(emptyList(), null) { server ->
-        val measure = server.measureRead("GET /health") { get("/health") }
+    fun theReadinessRouteSendsOneQueryAndIsTimed() = benchTest(emptyList(), null) { server ->
+        val measure = server.measureRead("GET /ready") { get("/ready") }
         assertEquals(listOf("SELECT 1"), measure.statements.map { it.sql })
         assertEquals(1, measure.queries)
         assertTrue("Result" in measure.plans.single(), measure.plans.single())
@@ -31,10 +31,10 @@ class ReadBenchTest {
         assertTrue(measure.p50 <= measure.p95 && measure.http.isPositive())
         measure.assertWithinBudget(setOf("pg_class"), maxQueries = 1)
         val report = writeReadReport("testing", listOf(measure))
-        assertTrue("== GET /health" in report && "queries per call: 1" in report, report)
+        assertTrue("== GET /ready" in report && "queries per call: 1" in report, report)
         val written = SystemFileSystem.source(Path("build/reports/perf/testing.txt")).buffered().use { it.readString() }
         assertEquals(report, written)
-        val writing = server.measureRead("GET /health", writes = true) { get("/health") }
+        val writing = server.measureRead("GET /ready", writes = true) { get("/ready") }
         assertEquals(1, writing.queries, "A read route reads the same with its writes explained")
     }
 

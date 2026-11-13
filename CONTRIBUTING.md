@@ -32,8 +32,10 @@ first build.
 ./gradlew check                   # everything CI runs on your platform
 ```
 
-The product is native only. The `jvm()` target exists to run the common tests fast and to measure coverage with
-Kover; it is never shipped.
+The server ships on the JVM ([docs/decisions/0001](docs/decisions/0001-jvm-and-teamcode-stack.md)): the `jvm()`
+target's tests and its Kover coverage are those of the shipped runtime, and `./gradlew :image:installDist` gives a
+runnable `image/build/install/ostrom-server/bin/ostrom-server`. The native test targets stay until the server modules
+drop them; the session runner (`runner/`) stays native.
 
 ## Tests: the bar
 

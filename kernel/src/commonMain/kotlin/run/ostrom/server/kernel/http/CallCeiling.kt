@@ -19,6 +19,7 @@ import io.ktor.server.routing.RouteSelector
 import io.ktor.server.routing.RouteSelectorEvaluation
 import io.ktor.server.routing.RoutingResolveContext
 import io.ktor.util.AttributeKey
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -29,6 +30,7 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeMark
 import kotlin.time.TimeSource
@@ -147,6 +149,25 @@ class CallsInProgress(
      */
     fun inProgress(kind: CallKind): Long = placesOf(kind)?.let { it.running.load() } ?: 0
 
+    /**
+     * Waits for the ordinary and the held calls running now to end: what a stopping server owes its callers (a
+     * model's stream, a gate's wait, audit SD-09). The open connections (the live usage stream, a terminal) are not
+     * waited for: their clients open them again on another replica once the engine cuts them.
+     *
+     * @param within How long to wait at most.
+     * @param every How often to look again.
+     *
+     * @return True when none runs any more, false when some still run after [within].
+     */
+    suspend fun awaitCallsEnded(within: Duration, every: Duration = DRAIN_POLL): Boolean {
+        fun running() = inProgress(CallKind.SERVED) + inProgress(CallKind.HELD)
+        if (running() == 0L) return true
+        return withTimeoutOrNull(within) {
+            while (running() > 0) delay(every)
+            true
+        } ?: false
+    }
+
     private fun placesOf(kind: CallKind): Places? = when (kind) {
         CallKind.SERVED -> served
         CallKind.HELD -> held
@@ -210,6 +231,7 @@ class CallsInProgress(
         private const val MIN_CEILING = 16L
         private const val HELD_SHARE = 2
         private val LIMIT_EVERY = 5.seconds
+        private val DRAIN_POLL = 100.milliseconds
         private val NO_PLACE = CallPlace {}
 
         /**

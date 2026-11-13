@@ -33,7 +33,8 @@ The server is where the rules live and where a person's yes is recorded: it comp
 agent session runs, holds the gates that wait for an approver, reads the diff and the checks on GitHub, and signs a
 receipt for every change.
 
-The Ostrom server, in Kotlin/Native (no JVM at run time): one binary for Linux x64 and arm64, Ktor on the CIO engine,
+The Ostrom server, on the JVM (Java 21, [docs/decisions/0001](docs/decisions/0001-jvm-and-teamcode-stack.md)): one
+container image for Linux x64 and arm64 (`ostromhq/ostrom-server` on Docker Hub, built by jib), Ktor on the CIO engine,
 PostgreSQL, Koin, Clean Architecture with one Gradle module per functional domain.
 
 ## Quick start
@@ -72,7 +73,7 @@ Ostrom is before its first public release.
 | --- | --- |
 | Kernel: configuration, logs, PostgreSQL and migrations, HTTP errors, token authentication, instance signing key | Available |
 | Domain modules (identity, orgs, sessions, gates, receipts, runners, billing...) | In progress, one pull request each |
-| Linux binaries and container image | Built and smoke-tested in CI, private until the launch |
+| Container image (amd64, arm64) | Built and smoke-tested in CI, published to Docker Hub from main and tags |
 
 ## Layout
 
@@ -81,10 +82,10 @@ Ostrom is before its first public release.
 | `kernel/` | Configuration, structured logs, PostgreSQL and migrations, uniform HTTP errors, token authentication, the instance signing key, the `ServerModule` contract |
 | `modules/<name>/` | One functional domain each (`identity`, `orgs`, `receipts`…), with `domain/`, `infrastructure/`, `presentation/` packages |
 | `testing/` | Test helpers: a throwaway PostgreSQL database per test, a test server |
-| `app/` | The binary: `migrate` applies every module's migrations, `serve` wires the kernel and every module and serves HTTP until SIGTERM, `seed-test-account` creates a QA account |
+| `app/` | The application: `migrate` applies every module's migrations, `serve` wires the kernel and every module and serves HTTP until SIGTERM, then drains, `seed-test-account` creates a QA account, `bootstrap` prints the first owner's setup link |
+| `image/` | The container image: the Ktor Gradle plugin's `ktor { docker { } }` and jib package `app/` on `eclipse-temurin:21-jre`, as TeamCode's; `/usr/local/bin/ostrom-server` runs it |
 | `ee/` | Enterprise modules (commercial license) |
 | `build-logic/` | The `ostrom.kmp` convention plugin of ostrom-core's CONVENTIONS (native targets, the test-only `jvm()` target, Kover 100 %, detekt), applied as `ostrom.native-module` |
-| `ci/build-linux.sh` | Builds the release linuxX64 binary into `dist/ostrom-server` (image, end-to-end and load tests) |
 
 Adding a module: [`docs/MODULES.md`](docs/MODULES.md).
 
@@ -95,23 +96,22 @@ Builds run in GitHub Actions (Linux, one job `ci`; none on a draft pull request)
 ```sh
 python3 scripts/check-conventions.py
 ./gradlew detekt jvmTest koverVerify koverXmlReport linuxX64Test   # with a PostgreSQL service
-ci/build-linux.sh                                                   # dist/ostrom-server
-./gradlew :app:linkReleaseExecutableLinuxArm64
-docker build -t ostrom-server .                                     # distroless image, smoke-tested in CI
+./gradlew :image:publishImageToLocalRegistry -PimageTags=ci -PimagePlatforms=amd64   # ostrom-server:ci, smoke-tested
 ```
 
-The JVM target only runs the tests and measures coverage; nothing JVM is shipped. The version the server reports
+The `jvm()` target's tests are the tests of the shipped runtime. `image.yml` pushes `latest` and `sha-<commit>` from
+main, `<version>` and `sha-<commit>-<version>` from a release tag, signed with cosign. The version the server reports
 (`/health`, `/api/v1/instance`, `/api/v1/capabilities`, its logs and traces) is the Gradle property `ostromVersion`,
-written into the kernel's generated `BuildInfo.kt`: CI passes the tag for a release (`release-binaries.yml`,
-`image.yml`) and `0.0.0-edge.<time>.<sha7>` for an image of main; any other build reports `0.0.0-dev` (`./gradlew
+written into the kernel's generated `BuildInfo.kt`: CI passes the tag for a release (`image.yml`) and
+`0.0.0-edge.<time>.<sha7>` for an image of main; any other build reports `0.0.0-dev` (`./gradlew
 -PostromVersion=1.2.3 …` to set it, a semantic version only). Locally (macOS arm64):
 
 ```sh
 docker compose up -d postgres            # PostgreSQL on localhost:5432
 export OSTROM_TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres
 ./gradlew jvmTest koverHtmlReport        # unit and database tests, coverage report
-./gradlew :app:linkDebugExecutableMacosArm64
-server=./app/build/bin/macosArm64/debugExecutable/ostrom-server.kexe
+./gradlew :image:installDist
+server=./image/build/install/ostrom-server/bin/ostrom-server
 OSTROM_DATABASE_MIGRATION_URL=postgresql://ostrom_owner:ostrom_owner@localhost:5432/ostrom $server migrate
 OSTROM_DATABASE_URL=postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom $server   # never as a superuser
 curl localhost:8080/ready

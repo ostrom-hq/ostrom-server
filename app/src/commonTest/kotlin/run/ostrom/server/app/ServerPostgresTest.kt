@@ -20,10 +20,12 @@ class ServerPostgresTest {
     fun everyModuleMigratesAndTheServerIsHealthy() = serverTest(serverModules()) { server ->
         val response = server.client.get("/health")
         assertEquals(HttpStatusCode.OK, response.status)
-        assertEquals(mapOf("database" to "ok"), response.body<HealthResponse>().checks)
+        assertEquals(emptyMap(), response.body<HealthResponse>().checks)
         // The probes at their contract paths, so that their answers are checked against it (ContractObserver).
         assertEquals(HttpStatusCode.OK, server.client.get("/api/v1/health").status)
-        assertEquals(HttpStatusCode.OK, server.client.get("/ready").status)
+        val ready = server.client.get("/ready")
+        assertEquals(HttpStatusCode.OK, ready.status)
+        assertEquals(mapOf("database" to "ok"), ready.body<HealthResponse>().checks)
         // The ports that fall back to dropping everything are bound in the full server: the costs reach the ledger.
         assertIs<LedgerModelUsageSink>(server.koin.get<ModelUsageSink>())
         assertIs<LedgerSessionCosts>(server.koin.get<SessionCosts>())

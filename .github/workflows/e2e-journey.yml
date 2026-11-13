@@ -1,9 +1,9 @@
 name: E2E journey
 
 # ostrom-e2e's scenarios (scenarios/*.e2e.ts: the journey of demo/PARCOURS.md, budgets, attestation…) against a
-# PUBLISHED image of this server: the image named, or by default the newest `sha-<7>` of main's last commits published,
-# never `edge`, which names no commit. A PARCOURS cell is ✅ only on such a run (JOURNAL 03/11): the bench of
-# ostrom-e2e builds main from its Dockerfile, which proves an e2e pull request, not the image that ships. It runs in
+# PUBLISHED image of this server: the image named, or by default the newest `sha-<commit>` of main's last commits published,
+# never `latest`, which names no commit. A PARCOURS cell is ✅ only on such a run (JOURNAL 03/11): the bench of
+# ostrom-e2e builds main itself, which proves an e2e pull request, not the image that ships. It runs in
 # this repository because its token reads its own GHCR packages, which ostrom-e2e's cannot yet (as cli-journey.yml).
 # On demand; and, called by ci.yml's ci-e2e on every pull request and every main commit, against the image ci-image
 # built (`image_artifact`): ostrom-e2e main's sweep, every scenario but the TeamCode import, and a short k6 of the
@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       server_image:
-        description: Server image (empty = the newest ghcr.io/ostrom-hq/ostrom-server:sha-<7> of main published)
+        description: Server image (empty = the newest docker.io/ostromhq/ostrom-server:sha-<commit> of main published)
         default: ""
       e2e_ref:
         description: ostrom-e2e ref whose scenarios run
@@ -203,7 +203,7 @@ jobs:
         with:
           name: ${{ env.IMAGE_ARTIFACT }}
           path: ${{ runner.temp }}/image
-      - name: The server image (the calling run's, or the newest sha-<7> of main published, unless named)
+      - name: The server image (the calling run's, or the newest sha-<commit> of main published, unless named)
         id: server
         env:
           GHCR_TOKEN: ${{ github.token }}
@@ -218,18 +218,21 @@ jobs:
             image=$WANTED_IMAGE
             if [ -z "$image" ]; then
               # as cli-journey.yml: a head whose image failed or is still building is skipped; any other error stops.
+              # Until main's last commits are all JVM images on Docker Hub, a commit merged before the JVM has its
+              # native image on GHCR only (docs/decisions/0001): docker.io first, then ghcr.io. To drop once done.
               for commit in $(git -C server rev-list --first-parent --max-count=10 origin/main); do
-                candidate=ghcr.io/ostrom-hq/ostrom-server:sha-${commit:0:7}
-                if error=$(docker pull --quiet "$candidate" 2>&1 >/dev/null); then
-                  image=$candidate
-                  break
-                fi
-                case "$error" in
-                  *"manifest unknown"* | *"not found"*) echo "$candidate is not published yet" ;;
-                  *) echo "::error::$candidate cannot be pulled: $error"; exit 1 ;;
-                esac
+                for candidate in docker.io/ostromhq/ostrom-server:sha-${commit} ghcr.io/ostrom-hq/ostrom-server:sha-${commit:0:7}; do
+                  if error=$(docker pull --quiet "$candidate" 2>&1 >/dev/null); then
+                    image=$candidate
+                    break 2
+                  fi
+                  case "$error" in
+                    *"manifest unknown"* | *"not found"* | *"repository does not exist"*) echo "$candidate is not published yet" ;;
+                    *) echo "::error::$candidate cannot be pulled: $error"; exit 1 ;;
+                  esac
+                done
               done
-              [ -n "$image" ] || { echo "::error::no sha-<7> image of main's last 10 commits can be pulled"; exit 1; }
+              [ -n "$image" ] || { echo "::error::no sha-<commit> image of main's last 10 commits can be pulled"; exit 1; }
             else
               docker pull --quiet "$image" || { echo "::error::$image cannot be pulled"; exit 1; }
             fi
@@ -317,8 +320,9 @@ jobs:
           printf 'OSTROM_GITHUB_APP_PEM=%s\n' "$(awk '{printf "%s\\n", $0}' "$RUNNER_TEMP/github-app.pem")" \
             >> "$RUNNER_TEMP/server.env"
           rm "$RUNNER_TEMP/github-app.pem"
-          docker run -d --name ostrom-server --network host -v "$RUNNER_TEMP/ostrom-mail:/var/lib/ostrom/mail" \
-            --env-file "$RUNNER_TEMP/server.env" "$IMAGE"
+          # The chart's memory limit (1Gi, ostrom-helm#47): the JVM sizes its heap from it, as in a pod.
+          docker run -d --name ostrom-server --network host --memory 1g \
+            -v "$RUNNER_TEMP/ostrom-mail:/var/lib/ostrom/mail" --env-file "$RUNNER_TEMP/server.env" "$IMAGE"
           for _ in $(seq 1 60); do curl -fsS 127.0.0.1:4600/ready >/dev/null 2>&1 && exit 0; sleep 1; done
           docker logs ostrom-server; exit 1
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -439,7 +443,7 @@ jobs:
         working-directory: e2e
         env:
           OSTROM_URL: http://127.0.0.1:4600
-          MEMORY_LIMIT_MIB: 512 # the server's resources.limits.memory in ostrom-helm (helm#41)
+          MEMORY_LIMIT_MIB: 1024 # the server's limit in ostrom-helm (JVM, helm#47) and the container's --memory
           BURST_GUARD: warn
         run: |
           if [ ! -f load/burst.js ]; then echo "::warning::load/burst.js is not in this ostrom-e2e checkout"; exit 0; fi

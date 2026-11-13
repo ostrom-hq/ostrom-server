@@ -60,6 +60,26 @@ class CallCeilingTest {
     private val mib = 1024L * 1024
 
     @Test
+    fun aStoppingServerWaitsForTheServedAndHeldCallsOnly() = runTest {
+        val calls = CallsInProgress(CallCeilingSettings(), { null })
+        assertTrue(calls.awaitCallsEnded(ZERO), "nothing runs: done at once")
+        // A live stream's connection is not waited for: its client opens it again on another replica.
+        val stream = assertNotNull(calls.enter(CallKind.OPEN))
+        assertTrue(calls.awaitCallsEnded(ZERO))
+        val model = assertNotNull(calls.enter(CallKind.HELD))
+        val request = assertNotNull(calls.enter(CallKind.SERVED))
+        assertFalse(calls.awaitCallsEnded(1.seconds), "still running after the grace")
+        val drained = async { calls.awaitCallsEnded(10.seconds) }
+        advanceTimeBy(2.seconds)
+        request.leave()
+        advanceTimeBy(2.seconds)
+        assertFalse(drained.isCompleted, "the held call still runs")
+        model.leave()
+        assertTrue(drained.await())
+        stream.leave()
+    }
+
+    @Test
     fun theCeilingFollowsTheContainersLimit() {
         assertEquals(150, CallsInProgress.ceilingUnder(512 * mib))
         assertEquals(300, CallsInProgress.ceilingUnder(1024 * mib))

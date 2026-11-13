@@ -44,6 +44,8 @@ kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", v
 kotlin-serialization-plugin = { module = "org.jetbrains.kotlin:kotlin-serialization", version.ref = "kotlin" }
 kover-gradle-plugin = { module = "org.jetbrains.kotlinx:kover-gradle-plugin", version.ref = "kover" }
 detekt-gradle-plugin = { module = "io.gitlab.arturbosch.detekt:detekt-gradle-plugin", version.ref = "detekt" }
+# The Ktor Gradle plugin (its `ktor { docker { } }` and jib) builds the server image, as TeamCode's app (decision 0001).
+ktor-gradle-plugin = { module = "io.ktor.plugin:plugin", version.ref = "ktor" }
 
 # Kotlinx
 coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
