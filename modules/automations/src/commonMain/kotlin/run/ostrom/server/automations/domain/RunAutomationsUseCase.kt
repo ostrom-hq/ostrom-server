@@ -12,6 +12,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlin.math.abs
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -67,10 +68,23 @@ data class DryRun(
  */
 data class RunPage(val items: List<AutomationRun>, val next: Uuid?)
 
+/** The `version` of a webhook URL that follows the automation's current version (`…/v/latest/trigger`). */
+const val LATEST_VERSION = "latest"
+
 /** Running automations: their webhooks, their tests, their crons, and their history. */
 interface RunAutomationsUseCase {
-    /** A webhook request; its proof is checked before anything else. */
-    suspend fun trigger(id: Uuid, delivery: WebhookDelivery, body: ByteArray): Triggered
+    /**
+     * A webhook request; its proof is checked before anything else.
+     *
+     * @param version What the URL pins: `latest` (the current version, as `/trigger`) or a version number, which the
+     *   automation must still be at once the proof holds (TC-AUT-9).
+     */
+    suspend fun trigger(
+        id: Uuid,
+        delivery: WebhookDelivery,
+        body: ByteArray,
+        version: String = LATEST_VERSION,
+    ): Triggered
 
     /** A real test of the saved definition, enabled or not (the owner only); [idempotencyKey] is required. */
     suspend fun test(caller: AutomationCaller, id: Uuid, payload: JsonObject?, idempotencyKey: String?): Triggered
@@ -82,7 +96,18 @@ interface RunAutomationsUseCase {
     suspend fun runs(caller: AutomationCaller, id: Uuid, before: Uuid?, limit: Int?): RunPage
 
     /**
-     * One scheduler pass: expires the history, fails the runs queued too long, then runs the due crons.
+     * Cancels a run of an automation the caller owns or administers: a queued run ends `cancelled` at once, a started
+     * one has its session paused first (TC-AUT-17).
+     *
+     * @throws AutomationNotFoundException When the caller cannot see the automation.
+     * @throws AutomationRunNotFoundException When it has no such run.
+     * @throws AutomationRunEndedException When the run is over already.
+     */
+    suspend fun cancel(caller: AutomationCaller, id: Uuid, runId: Uuid): AutomationRun
+
+    /**
+     * One scheduler pass: expires the history, fails the runs queued too long, runs the due crons, then starts the
+     * runs that waited for their owner's capacity.
      *
      * @return How many cron runs it recorded.
      */
@@ -97,6 +122,7 @@ interface RunAutomationsUseCase {
  * @param secrets Checks webhook signatures.
  * @param members Tells whether an owner is still a member; every owner is when null (no directory bound).
  * @param clock The time.
+ * @param maxRunning How many sessions of one member's automation runs may work at once; a run over it waits, queued.
  */
 @Suppress("TooManyFunctions") // The steps of one run pipeline, shared by its three triggers.
 class RunAutomationsUseCaseImpl(
@@ -105,12 +131,14 @@ class RunAutomationsUseCaseImpl(
     private val secrets: WebhookSecrets,
     private val members: MemberDirectory?,
     private val clock: Clock,
+    private val maxRunning: Int = DEFAULT_MAX_RUNNING,
 ) : RunAutomationsUseCase {
-    override suspend fun trigger(id: Uuid, delivery: WebhookDelivery, body: ByteArray): Triggered {
+    override suspend fun trigger(id: Uuid, delivery: WebhookDelivery, body: ByteArray, version: String): Triggered {
         val now = clock.now().truncatedToMillis()
         val automation = repository.getById(id)?.takeIf { it.definition.trigger.kind == TriggerKind.WEBHOOK }
             ?: throw InvalidSignatureException()
         verify(automation, delivery, body, now)
+        checkVersion(automation, version)
         if (!automation.enabled) throw AutomationDisabledException()
         val payload = payloadOf(body)
         val key = deliveryKey(delivery, body)
@@ -180,6 +208,28 @@ class RunAutomationsUseCaseImpl(
         return RunPage(items.take(size), items.getOrNull(size)?.let { items[size - 1].id })
     }
 
+    override suspend fun cancel(caller: AutomationCaller, id: Uuid, runId: Uuid): AutomationRun {
+        val automation = repository.visibleTo(caller, id)
+        val run = repository.findRun(automation.orgId, automation.id, runId) ?: throw AutomationRunNotFoundException()
+        when (run.status) {
+            RunStatus.QUEUED -> Unit
+            RunStatus.STARTED -> pauseSession(automation, run)
+            else -> throw AutomationRunEndedException()
+        }
+        val now = clock.now().truncatedToMillis()
+        val ended = run.copy(status = RunStatus.CANCELLED, reason = CANCELLED, updatedAt = now)
+        if (!repository.endRun(ended, run.status)) throw AutomationRunEndedException()
+        return ended
+    }
+
+    /** Pauses the session of a started run; one that no longer works means the run is over already. */
+    private suspend fun pauseSession(automation: Automation, run: AutomationRun) {
+        val session = run.sessionId
+        val paused = session != null && launcher.isWorking(automation.orgId, session) &&
+            launcher.pause(automation.orgId, automation.owner, session)
+        if (!paused) throw AutomationRunEndedException()
+    }
+
     override suspend fun tick(): Int {
         val now = clock.now().truncatedToMillis()
         repository.deleteRunsBefore(now - HISTORY)
@@ -188,7 +238,23 @@ class RunAutomationsUseCaseImpl(
         for (entry in claimed) {
             proceed(entry.automation, entry.run, render(entry.automation, entry.run.id, RunSource.CRON, entry.slot))
         }
+        startParked()
         return claimed.size
+    }
+
+    /** Starts, oldest first, the runs that waited for their owner's capacity, while it has room. */
+    private suspend fun startParked() {
+        for (waiting in repository.parked(BATCH)) {
+            // Its automation may be deleted since (its runs go with it, but not within one read).
+            val automation = repository.get(waiting.orgId, waiting.automationId) ?: continue
+            if (!atCapacity(automation)) startWaiting(automation, waiting)
+        }
+    }
+
+    /** Takes the prompt of a waiting run, once (another replica that read the same run finds none), and starts it. */
+    private suspend fun startWaiting(automation: Automation, waiting: AutomationRun) {
+        val prompt = repository.takeParked(waiting.orgId, waiting.id) ?: return
+        proceed(automation, waiting, prompt)
     }
 
     /** What a due slot does: run once if it is on time, or late within the catch-up rule; then the next slot. */
@@ -222,20 +288,65 @@ class RunAutomationsUseCaseImpl(
         return Triggered(run, duplicate)
     }
 
-    /** Starts a queued run, or records why it does not start. */
+    /**
+     * Starts a queued run, records why it does not start, or leaves it queued with its prompt when its owner's
+     * sessions of automation runs are at their cap (it starts when one ends, or fails after 30 minutes).
+     */
     private suspend fun proceed(automation: Automation, run: AutomationRun, prompt: String): AutomationRun {
-        val definition = automation.definition
-        val outcome = when {
-            run.source != RunSource.TEST && runsOfDay(automation, run.createdAt) > definition.maxRunsPerDay ->
-                run.copy(status = RunStatus.SKIPPED_BUDGET)
-            members?.isActiveMember(automation.orgId, automation.owner) == false ->
-                run.copy(status = RunStatus.FAILED, reason = "owner_unavailable")
-            definition.overlap == Overlap.SKIP && overlapping(automation, run.id) ->
-                run.copy(status = RunStatus.SKIPPED_OVERLAP)
-            else -> launch(automation, run, prompt)
-        }.copy(updatedAt = clock.now().truncatedToMillis())
-        repository.updateRun(outcome)
-        return outcome
+        val refused = refusal(automation, run)
+        if (refused == null && atCapacity(automation)) {
+            repository.park(run.orgId, run.id, prompt)
+            return run
+        }
+        val outcome = (refused ?: launch(automation, run, prompt)).copy(updatedAt = clock.now().truncatedToMillis())
+        return if (repository.updateRun(outcome)) outcome else cancelledMeanwhile(automation, run, outcome)
+    }
+
+    /** The run was cancelled while its session was being created: that session is paused, not left working. */
+    private suspend fun cancelledMeanwhile(
+        automation: Automation,
+        run: AutomationRun,
+        outcome: AutomationRun,
+    ): AutomationRun {
+        outcome.sessionId?.let { launcher.pause(automation.orgId, automation.owner, it) }
+        return run.copy(status = RunStatus.CANCELLED, reason = CANCELLED, updatedAt = outcome.updatedAt)
+    }
+
+    /** The end of a queued run that must not start, or null when it may. */
+    private suspend fun refusal(automation: Automation, run: AutomationRun): AutomationRun? = when {
+        run.source != RunSource.TEST && runsOfDay(automation, run.createdAt) > automation.definition.maxRunsPerDay ->
+            run.copy(status = RunStatus.SKIPPED_BUDGET)
+        members?.isActiveMember(automation.orgId, automation.owner) == false ->
+            run.copy(status = RunStatus.FAILED, reason = "owner_unavailable")
+        automation.definition.overlap == Overlap.SKIP && overlapping(automation, run.id) ->
+            run.copy(status = RunStatus.SKIPPED_OVERLAP)
+        else -> null
+    }
+
+    /**
+     * Whether the automation's owner already has [maxRunning] sessions of automation runs working: the sessions of
+     * their started runs of the last day (a run lasts 24 hours at most) that still hold an execution, newest first.
+     */
+    private suspend fun atCapacity(automation: Automation): Boolean {
+        val sessions = repository.startedSessions(
+            automation.orgId,
+            automation.owner,
+            clock.now().truncatedToMillis() - WORKING_WINDOW,
+            WORKING_SCAN,
+        )
+        var working = 0
+        for (session in sessions) {
+            if (launcher.isWorking(automation.orgId, session)) working++
+            if (working >= maxRunning) return true
+        }
+        return false
+    }
+
+    /** A pinned version must be the automation's own, a `latest` is always. */
+    private fun checkVersion(automation: Automation, version: String) {
+        if (version == LATEST_VERSION) return
+        val pinned = version.toIntOrNull() ?: throw InvalidAutomationException("A version is a number, or latest.")
+        if (pinned != automation.version) throw AutomationVersionChangedException(pinned, automation.version)
     }
 
     private suspend fun launch(automation: Automation, run: AutomationRun, prompt: String): AutomationRun {
@@ -268,7 +379,7 @@ class RunAutomationsUseCaseImpl(
         automation.id,
         at - 1.days,
         setOf(RunSource.CRON, RunSource.WEBHOOK),
-        setOf(RunStatus.QUEUED, RunStatus.STARTED, RunStatus.FAILED),
+        setOf(RunStatus.QUEUED, RunStatus.STARTED, RunStatus.FAILED, RunStatus.CANCELLED),
     )
 
     private suspend fun overlapping(automation: Automation, except: Uuid): Boolean =
@@ -323,6 +434,17 @@ class RunAutomationsUseCaseImpl(
 
         /** How long a run may stay queued before it is marked failed. */
         private val QUEUE_TIMEOUT = 30.minutes
+
+        /** How many sessions of one member's automation runs may work at once (TeamCode's default). */
+        const val DEFAULT_MAX_RUNNING = 2
+
+        private const val CANCELLED = "cancelled"
+
+        /** How far back a started run may still have a working session: its runtime is at most 24 hours. */
+        private val WORKING_WINDOW = 25.hours
+
+        /** How many started runs are looked at to count the working sessions. */
+        private const val WORKING_SCAN = 100
 
         /** A slot found later than this is a missed one, ruled by the catch-up. */
         private val LATE = 2.minutes

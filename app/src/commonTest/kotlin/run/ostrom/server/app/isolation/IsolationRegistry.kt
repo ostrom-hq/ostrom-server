@@ -267,6 +267,12 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/automations/{id}/runs" to target("id" to AUTOMATION),
     "POST /api/v1/automations/{id}/webhook/rotate-secret" to target("id" to AUTOMATION),
     "POST /api/v1/automations/{id}/trigger" to target("id" to AUTOMATION, body = """{"ticket": {"number": 1}}"""),
+    "POST /api/v1/automations/{id}/v/{version}/trigger" to Case.Target(
+        mapOf("id" to of(AUTOMATION), "version" to Param.Fixed("1")),
+        body = """{"ticket": {"number": 1}}""",
+    ),
+    "POST /api/v1/automations/{id}/runs/{runId}/cancel" to
+        Case.Target(mapOf("id" to of(AUTOMATION), "runId" to Param.Fresh)),
     "GET /api/v1/waits" to Case.Target(),
     "POST /api/v1/waits" to
         Case.Target(body = """{"question": {"title": "Taken"}, "assignee": "{{MEMBER_ID}}"}"""),

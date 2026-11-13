@@ -32,6 +32,7 @@ import io.ktor.client.request.post
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
@@ -95,10 +96,18 @@ class AutomationsApiTest {
         secret: String,
         payload: String = body,
         key: String? = null,
+    ): HttpResponse = triggerAt(secrets, "/api/v1/automations/$id/trigger", secret, payload, key)
+
+    private suspend fun HttpClient.triggerAt(
+        secrets: WebhookSecrets,
+        url: String,
+        secret: String,
+        payload: String,
+        key: String?,
     ): HttpResponse {
         val timestamp = Clock.System.now().epochSeconds.toString()
         val signature = secrets.sign(secret, "$timestamp.".encodeToByteArray() + payload.encodeToByteArray())
-        return post("/api/v1/automations/$id/trigger") {
+        return post(url) {
             header("Ostrom-Timestamp", timestamp)
             header("Ostrom-Signature", "v1=${signature.toHexString()}")
             // A key starting with "idem:" goes in Idempotency-Key, which wins over Ostrom-Delivery.
@@ -201,6 +210,95 @@ class AutomationsApiTest {
     }
 
     @Test
+    fun aVersionedUrlRunsOnlyWhileTheAutomationIsAtThatVersion() {
+        val launcher = RecordingLauncher()
+        val overrides = module {
+            includes(testIdentities)
+            single<AutomationLauncher> { launcher }
+        }
+        serverTest(listOf(AutomationsModule), overrides) {
+            val client = it.client
+            val secrets = it.koin.get<WebhookSecrets>()
+            val created = client.create("alice", webhook).body<AutomationResponse>()
+            val secret = assertNotNull(created.secret)
+            val path = "/api/v1/automations/${created.id}"
+            client.send("alice", "POST", "$path/enable")
+            suspend fun run(version: String, key: String, with: String = secret, id: String = created.id) =
+                client.triggerAt(secrets, "/api/v1/automations/$id/v/$version/trigger", with, body, key)
+            assertEquals(HttpStatusCode.Accepted, run("1", "a").status)
+            assertEquals(HttpStatusCode.Accepted, run("latest", "b").status)
+            assertEquals(HttpStatusCode.Accepted, client.trigger(secrets, created.id, secret, key = "c").status)
+            // The proof first: a wrong secret, or an id that cannot exist, is the same 401 whatever the version.
+            assertEquals(HttpStatusCode.Unauthorized, run("9", "d", with = "whsec_wrong").status)
+            assertEquals(HttpStatusCode.Unauthorized, run("1", "d", id = "nope").status)
+            assertEquals(HttpStatusCode.Unauthorized, run("1", "d", id = Uuid.random().toString()).status)
+            assertEquals(HttpStatusCode.BadRequest, run("x", "d").status)
+            val stale = run("9", "d")
+            assertEquals(HttpStatusCode.Conflict, stale.status)
+            assertTrue("automation_version_changed" in stale.bodyAsText())
+            // Arming, pausing and rotating the secret keep the version.
+            client.send("alice", "POST", "$path/disable")
+            client.send("alice", "POST", "$path/enable")
+            val rotated = client.send("alice", "POST", "$path/webhook/rotate-secret").body<SecretResponse>()
+            assertEquals(1, client.get(path) { bearerAuth("alice") }.body<AutomationResponse>().version)
+            assertEquals(HttpStatusCode.Accepted, run("1", "e", with = rotated.secret).status)
+            val runsBefore = client.get("$path/runs") { bearerAuth("alice") }.body<RunsResponse>().items.size
+            val renamed = client.change("alice", path, webhook.copy(name = "Ticket 2", version = 1))
+            assertEquals(2, renamed.body<AutomationResponse>().version)
+            val old = run("1", "f", with = rotated.secret)
+            assertEquals(HttpStatusCode.Conflict, old.status)
+            assertTrue("automation_version_changed" in old.bodyAsText())
+            assertEquals(HttpStatusCode.Accepted, run("2", "g", with = rotated.secret).status)
+            assertEquals(HttpStatusCode.Accepted, run("latest", "h", with = rotated.secret).status)
+            val runs = client.get("$path/runs?limit=100") { bearerAuth("alice") }.body<RunsResponse>()
+            // The refused call recorded nothing: only the two that ran are new.
+            assertEquals(runsBefore + 2, runs.items.size)
+            assertEquals(listOf(2, 2, 1), runs.items.take(3).map { run -> run.version })
+        }
+    }
+
+    @Test
+    fun aRunIsCancelledByItsOwnerAKeyOrAnAdministratorAndOnlyOnce() {
+        val launcher = RecordingLauncher()
+        val overrides = module {
+            includes(testIdentities)
+            single<AutomationLauncher> { launcher }
+        }
+        serverTest(listOf(AutomationsModule), overrides) {
+            val client = it.client
+            val secrets = it.koin.get<WebhookSecrets>()
+            val created = client.create("alice", webhook).body<AutomationResponse>()
+            val secret = assertNotNull(created.secret)
+            val path = "/api/v1/automations/${created.id}"
+            client.send("alice", "POST", "$path/enable")
+            val first = client.trigger(secrets, created.id, secret, key = "a").body<TriggerResponse>()
+            val second = client.trigger(secrets, created.id, secret, key = "b").body<TriggerResponse>()
+            launcher.working += listOf("session-1", "session-2")
+            val cancel = "$path/runs/${first.runId}/cancel"
+            assertEquals(HttpStatusCode.Unauthorized, client.post(cancel).status)
+            assertEquals(HttpStatusCode.Forbidden, client.send("autoreader", "POST", cancel).status)
+            assertEquals(HttpStatusCode.Forbidden, client.send("agent", "POST", cancel).status)
+            assertEquals(HttpStatusCode.NotFound, client.send("bob", "POST", cancel).status)
+            assertEquals(HttpStatusCode.NotFound, client.send("carol", "POST", cancel).status)
+            assertEquals(HttpStatusCode.NotFound, client.send("nobody", "POST", cancel).status)
+            val absent = listOf("$path/runs/${Uuid.random()}", "$path/runs/nope", "/api/v1/automations/nope/runs/x")
+            for (missing in absent) {
+                assertEquals(HttpStatusCode.NotFound, client.send("alice", "POST", "$missing/cancel").status, missing)
+            }
+            assertEquals(emptyList(), launcher.paused)
+            val cancelled = client.send("dave", "POST", cancel)
+            assertEquals(HttpStatusCode.OK, cancelled.status)
+            assertEquals("cancelled", cancelled.body<RunResponse>().status)
+            assertEquals(listOf("$ALICE:session-1"), launcher.paused)
+            assertEquals(HttpStatusCode.Conflict, client.send("alice", "POST", cancel).status)
+            val byKey = client.send("autowriter", "POST", "$path/runs/${second.runId}/cancel")
+            assertEquals("cancelled", byKey.body<RunResponse>().status)
+            val history = client.get("$path/runs") { bearerAuth("alice") }.body<RunsResponse>()
+            assertEquals(listOf("cancelled", "cancelled"), history.items.map { run -> run.status })
+        }
+    }
+
+    @Test
     fun withoutCloudSessionsARunFailsAndSaysWhy() = serverTest(listOf(AutomationsModule), testIdentities) {
         val client = it.client
         val created = client.create("alice", webhook).body<AutomationResponse>()
@@ -211,6 +309,7 @@ class AutomationsApiTest {
         val history = client.get("/api/v1/automations/${created.id}/runs") { bearerAuth("alice") }.body<RunsResponse>()
         assertEquals("cloud_sessions_unavailable", history.items.single().reason)
         assertFalse(UnavailableLauncher.isWorking(ORG_A, "s1"))
+        assertFalse(UnavailableLauncher.pause(ORG_A, "alice", "s1"))
     }
 
     @Test

@@ -26,6 +26,16 @@ import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
+ * The sessions of the started runs of one owner's automations since an instant, newest first: what the cap of running
+ * automation sessions counts (one read a trigger over the cap's reach, on `automations_runs_started`).
+ */
+internal const val STARTED_SESSIONS_SQL = """
+    SELECT r.session_id FROM automations_runs r JOIN automations_automations a ON a.id = r.automation_id AND a.org_id =
+    r.org_id WHERE r.org_id = :org_id AND r.status = 'started' AND r.created_at > :since AND a.owner = :owner AND
+    r.session_id IS NOT NULL ORDER BY r.created_at DESC, r.id DESC LIMIT :limit
+"""
+
+/**
  * [AutomationsRepository] on PostgreSQL (tables of [AutomationsMigrations]). The definition is JSON; the name and
  * trigger kind are columns for the unique name per owner.
  *
@@ -126,22 +136,104 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
 
     override suspend fun insertRun(run: AutomationRun): AutomationRun = driver.inTenant(run.orgId) { storeRun(run) }
 
-    override suspend fun updateRun(run: AutomationRun) {
-        driver.inTenant(run.orgId) {
+    override suspend fun updateRun(run: AutomationRun): Boolean = driver.inTenant(run.orgId) {
+        // Only a queued run moves on: one cancelled meanwhile stays cancelled. The prompt a waiting run kept goes.
+        fetchAll(
+            Statement.create(
+                """
+                UPDATE automations_runs SET status = :status, session_id = :session_id, reason = :reason,
+                updated_at = :updated_at, prompt = NULL WHERE id = :id AND org_id = :org_id AND status = 'queued'
+                RETURNING id
+                """,
+            ).bind("status", run.status.wire)
+                .bind("session_id", run.sessionId)
+                .bind("reason", run.reason)
+                .bind("updated_at", run.updatedAt)
+                .bind("id", run.id)
+                .bind("org_id", run.orgId),
+        ).getOrThrow().any()
+    }
+
+    override suspend fun endRun(run: AutomationRun, expected: RunStatus): Boolean = driver.inTenant(run.orgId) {
+        fetchAll(
+            Statement.create(
+                """
+                UPDATE automations_runs SET status = :status, reason = :reason, updated_at = :updated_at, prompt = NULL
+                WHERE id = :id AND org_id = :org_id AND status = :expected RETURNING id
+                """,
+            ).bind("status", run.status.wire)
+                .bind("reason", run.reason)
+                .bind("updated_at", run.updatedAt)
+                .bind("id", run.id)
+                .bind("org_id", run.orgId)
+                .bind("expected", expected.wire),
+        ).getOrThrow().any()
+    }
+
+    override suspend fun findRun(orgId: Uuid, automationId: Uuid, id: Uuid): AutomationRun? =
+        driver.inTenant(orgId) {
+            fetchAll(
+                Statement.create(
+                    """
+                    SELECT $RUN_COLUMNS FROM automations_runs WHERE id = :id AND automation_id = :automation_id AND
+                    org_id = :org_id
+                    """,
+                ).bind("id", id).bind("automation_id", automationId).bind("org_id", orgId),
+            ).getOrThrow().firstOrNull()?.toRun()
+        }
+
+    override suspend fun park(orgId: Uuid, runId: Uuid, prompt: String) {
+        driver.inTenant(orgId) {
             execute(
                 Statement.create(
                     """
-                    UPDATE automations_runs SET status = :status, session_id = :session_id, reason = :reason,
-                    updated_at = :updated_at WHERE id = :id
+                    UPDATE automations_runs SET prompt = :prompt WHERE id = :id AND org_id = :org_id AND status =
+                    'queued'
                     """,
-                ).bind("status", run.status.wire)
-                    .bind("session_id", run.sessionId)
-                    .bind("reason", run.reason)
-                    .bind("updated_at", run.updatedAt)
-                    .bind("id", run.id),
+                ).bind("prompt", prompt).bind("id", runId).bind("org_id", orgId),
             ).getOrThrow()
         }
     }
+
+    override suspend fun parked(limit: Int): List<AutomationRun> {
+        val found = mutableListOf<AutomationRun>()
+        for (orgId in organizations()) {
+            if (found.size >= limit) break
+            val runs = driver.inTenant(orgId) {
+                fetchAll(
+                    Statement.create(
+                        """
+                        SELECT $RUN_COLUMNS FROM automations_runs WHERE org_id = :org_id AND status = 'queued' AND
+                        prompt IS NOT NULL ORDER BY created_at, id LIMIT :limit
+                        """,
+                    ).bind("org_id", orgId).bind("limit", limit - found.size),
+                ).getOrThrow().map { it.toRun() }
+            }
+            found += runs
+        }
+        return found
+    }
+
+    override suspend fun takeParked(orgId: Uuid, runId: Uuid): String? = driver.inTenant(orgId) {
+        // The prompt leaves the row with the update: of two replicas that read the run, one gets it.
+        fetchAll(
+            Statement.create(
+                """
+                UPDATE automations_runs AS r SET prompt = NULL FROM (SELECT id, prompt FROM automations_runs WHERE id =
+                :id AND org_id = :org_id AND status = 'queued' AND prompt IS NOT NULL FOR UPDATE) AS taken WHERE r.id =
+                taken.id RETURNING taken.prompt AS prompt
+                """,
+            ).bind("id", runId).bind("org_id", orgId),
+        ).getOrThrow().firstOrNull()?.let { it.get("prompt").asStringOrNull() }
+    }
+
+    override suspend fun startedSessions(orgId: Uuid, owner: String, since: Instant, limit: Int): List<String> =
+        driver.inTenant(orgId) {
+            fetchAll(
+                Statement.create(STARTED_SESSIONS_SQL)
+                    .bind("org_id", orgId).bind("since", since).bind("owner", owner).bind("limit", limit),
+            ).getOrThrow().map { it.get("session_id").asString() }
+        }
 
     override suspend fun findRunByDelivery(orgId: Uuid, automationId: Uuid, deliveryKey: String): AutomationRun? =
         driver.inTenant(orgId) {
@@ -269,7 +361,8 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
                 execute(
                     Statement.create(
                         """
-                        UPDATE automations_runs SET status = 'failed', reason = 'interrupted', updated_at = :now
+                        UPDATE automations_runs SET status = 'failed', updated_at = :now, reason =
+                        CASE WHEN prompt IS NULL THEN 'interrupted' ELSE 'capacity_timeout' END, prompt = NULL
                         WHERE org_id = :org_id AND status = 'queued' AND created_at < :before
                         """,
                     ).bind("now", now).bind("org_id", orgId).bind("before", before),

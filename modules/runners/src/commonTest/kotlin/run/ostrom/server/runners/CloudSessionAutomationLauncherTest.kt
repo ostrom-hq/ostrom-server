@@ -5,7 +5,9 @@ import run.ostrom.server.automations.domain.AutomationAction
 import run.ostrom.server.automations.domain.LaunchRequest
 import run.ostrom.server.automations.domain.LaunchResult
 import run.ostrom.server.runners.domain.CloudPlan
+import run.ostrom.server.runners.domain.ChangeCloudSessionUseCaseImpl
 import run.ostrom.server.runners.domain.CloudPlanProvider
+import run.ostrom.server.runners.domain.DesiredState
 import run.ostrom.server.runners.domain.CreateCloudSessionUseCaseImpl
 import run.ostrom.server.runners.domain.RepositoryCloudUsageMeter
 import run.ostrom.server.runners.domain.SessionState
@@ -29,9 +31,11 @@ class CloudSessionAutomationLauncherTest {
     private val repository = InMemoryCloudSessionsRepository()
     private val plans = FixedPlans()
     private val meter = RepositoryCloudUsageMeter(repository)
+    private val clock = SettableClock()
     private val launcher = CloudSessionAutomationLauncher(
-        CreateCloudSessionUseCaseImpl(repository, plans, meter, SettableClock()),
+        CreateCloudSessionUseCaseImpl(repository, plans, meter, clock),
         repository,
+        ChangeCloudSessionUseCaseImpl(repository, plans, meter, clock),
     )
 
     private fun request(agent: String = "claude", model: String? = "claude-sonnet-4-5") = LaunchRequest(
@@ -73,6 +77,7 @@ class CloudSessionAutomationLauncherTest {
         val failing = CloudSessionAutomationLauncher(
             CreateCloudSessionUseCaseImpl(repository, DownPlans, meter, SettableClock()),
             repository,
+            ChangeCloudSessionUseCaseImpl(repository, plans, meter, clock),
         )
         assertFailsWith<IllegalStateException> { failing.launch(request()) }
     }
@@ -86,6 +91,21 @@ class CloudSessionAutomationLauncherTest {
         assertFalse(launcher.isWorking(ORG_A, paused.id.toString()))
         assertFalse(launcher.isWorking(ORG_A, Uuid.random().toString()))
         assertFalse(launcher.isWorking(ORG_A, "not-a-session"))
+    }
+
+    @Test
+    fun aCancelledRunsSessionIsPausedAsItsOwnerAndOneThatIsGoneOrOverIsNotPaused() = runTest {
+        val running = session(SessionState.RUNNING).also(repository::put)
+        assertTrue(launcher.pause(ORG_A, "alice", running.id.toString()))
+        assertEquals(DesiredState.PAUSED, repository.sessions.getValue(running.id).desiredState)
+        // Pausing a paused session changes nothing.
+        assertTrue(launcher.pause(ORG_A, "alice", running.id.toString()))
+        assertFalse(launcher.pause(ORG_A, "bob", running.id.toString()))
+        assertFalse(launcher.pause(ORG_B, "alice", running.id.toString()))
+        assertFalse(launcher.pause(ORG_A, "alice", Uuid.random().toString()))
+        assertFalse(launcher.pause(ORG_A, "alice", "not-a-session"))
+        val over = session(SessionState.TERMINATED).also(repository::put)
+        assertFalse(launcher.pause(ORG_A, "alice", over.id.toString()))
     }
 }
 

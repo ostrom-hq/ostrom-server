@@ -164,7 +164,7 @@ object RunnersModule : ServerModule {
         single<IssueTerminalTicketUseCase> { IssueTerminalTicketUseCaseImpl(get(), get()) }
         single { TerminalActivity(get(), get()) }
         single { TerminalRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get()) }
-        single<AutomationLauncher> { CloudSessionAutomationLauncher(get(), get()) }
+        single<AutomationLauncher> { CloudSessionAutomationLauncher(get(), get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = RunnersMigrations

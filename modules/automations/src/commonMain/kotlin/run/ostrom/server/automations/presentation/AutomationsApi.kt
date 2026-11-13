@@ -70,6 +70,24 @@ class AutomationsApi(val owner: String? = null, val before: String? = null, val 
         @Serializable
         @Resource("trigger")
         class Trigger(val parent: Id)
+
+        /**
+         * `POST …/v/{version}/trigger`: the signed webhook pinned to a version of the definition, or to `latest`.
+         *
+         * @property version A version number, or `latest`.
+         */
+        @Serializable
+        @Resource("v/{version}/trigger")
+        class VersionTrigger(val parent: Id, val version: String)
+
+        /**
+         * `POST …/runs/{runId}/cancel`.
+         *
+         * @property runId The run.
+         */
+        @Serializable
+        @Resource("runs/{runId}/cancel")
+        class CancelRun(val parent: Id, val runId: String)
     }
 }
 

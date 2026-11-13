@@ -36,8 +36,40 @@ interface AutomationsRepository {
      */
     suspend fun insertRun(run: AutomationRun): AutomationRun
 
-    /** Writes the status of [run]. */
-    suspend fun updateRun(run: AutomationRun)
+    /**
+     * Writes the end of a queued [run] (started, failed or skipped), and drops the prompt it kept.
+     *
+     * @return False when the run is no longer queued (it was cancelled meanwhile): nothing is written.
+     */
+    suspend fun updateRun(run: AutomationRun): Boolean
+
+    /**
+     * Writes [run], ended by a cancel, if it is still in [expected].
+     *
+     * @return False when it is not (another replica or request ended it first): nothing is written.
+     */
+    suspend fun endRun(run: AutomationRun, expected: RunStatus): Boolean
+
+    /** The run [id] of [automationId] (of [orgId]). */
+    suspend fun findRun(orgId: Uuid, automationId: Uuid, id: Uuid): AutomationRun?
+
+    /**
+     * Keeps [prompt] with the queued run [runId] while it waits for its owner's capacity; any end of the run drops it.
+     */
+    suspend fun park(orgId: Uuid, runId: Uuid, prompt: String)
+
+    /** The queued runs waiting for capacity, oldest first, at most [limit] across organizations. */
+    suspend fun parked(limit: Int): List<AutomationRun>
+
+    /**
+     * Takes the prompt of a waiting run, once.
+     *
+     * @return The prompt, or null when another replica took it or the run is no longer queued.
+     */
+    suspend fun takeParked(orgId: Uuid, runId: Uuid): String?
+
+    /** The sessions of the started runs of [owner]'s automations recorded since [since], newest first. */
+    suspend fun startedSessions(orgId: Uuid, owner: String, since: Instant, limit: Int): List<String>
 
     /** The run of [automationId] (of [orgId]) with [deliveryKey]. */
     suspend fun findRunByDelivery(orgId: Uuid, automationId: Uuid, deliveryKey: String): AutomationRun?
@@ -75,7 +107,10 @@ interface AutomationsRepository {
     /** Deletes the runs recorded before [before] (the history keeps 14 days). */
     suspend fun deleteRunsBefore(before: Instant)
 
-    /** Marks failed (`interrupted`) the runs still queued since before [before]. */
+    /**
+     * Marks failed the runs still queued since before [before]: `capacity_timeout` for one that waited for its owner's
+     * capacity, `interrupted` for the others; a waiting run's prompt is dropped.
+     */
     suspend fun failQueuedBefore(before: Instant, now: Instant)
 }
 
@@ -131,8 +166,15 @@ interface AutomationLauncher {
     /** Starts a session. */
     suspend fun launch(request: LaunchRequest): LaunchResult
 
-    /** Whether the session still works (an overlapping trigger is then skipped). */
+    /** Whether the session still works (an overlapping trigger is then skipped, and it counts in its owner's cap). */
     suspend fun isWorking(orgId: Uuid, sessionId: String): Boolean
+
+    /**
+     * Pauses the session [sessionId] of [owner] (a cancelled run): the agent stops, the workspace stays.
+     *
+     * @return False when the session is gone or over, so there is nothing to pause.
+     */
+    suspend fun pause(orgId: Uuid, owner: String, sessionId: String): Boolean
 }
 
 /** Webhook secrets and signatures. */

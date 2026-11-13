@@ -14,6 +14,7 @@ import run.ostrom.server.automations.fakes.ORG_A
 import run.ostrom.server.automations.fakes.ORG_B
 import run.ostrom.server.automations.fakes.cronDefinition
 import run.ostrom.server.automations.fakes.webhookDefinition
+import run.ostrom.server.automations.infrastructure.STARTED_SESSIONS_SQL
 import run.ostrom.server.automations.infrastructure.inTenant
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
@@ -111,6 +112,96 @@ class AutomationsPostgresTest {
         assertEquals(2, repository.listRuns(ORG_A, automation.id, null, 10).size)
         repository.delete(ORG_A, automation.id)
         assertNull(repository.findRunByDelivery(ORG_A, automation.id, "k2"))
+    }
+
+    @Test
+    fun aRunWaitsForCapacityWithItsPromptTakenOnceAndDroppedByAnyEnd() = serverTest(listOf(AutomationsModule)) {
+        val repository = it.koin.get<AutomationsRepository>()
+        val automation = automation().also { a -> repository.createWithinLimit(a, 20) }
+        val first = repository.insertRun(run(automation, "w1"))
+        repository.park(ORG_A, first.id, "Fix it")
+        repository.insertRun(run(automation, "w2", t0 + 1.minutes))
+        assertEquals(listOf(first), repository.parked(10))
+        assertEquals(emptyList(), repository.parked(0))
+        val ofB = automation(org = ORG_B).also { a -> repository.createWithinLimit(a, 20) }
+        val third = repository.insertRun(run(ofB, "w3", t0 + 2.minutes))
+        repository.park(ORG_B, third.id, "Other")
+        assertEquals(setOf(first.id, third.id), repository.parked(10).map { p -> p.id }.toSet())
+        assertEquals(1, repository.parked(1).size)
+        // The prompt leaves with the first taker, and only for its own organization.
+        assertNull(repository.takeParked(ORG_B, first.id))
+        assertEquals("Fix it", repository.takeParked(ORG_A, first.id))
+        assertNull(repository.takeParked(ORG_A, first.id))
+        // A run that is no longer queued keeps no prompt, and gets none.
+        val ended = repository.insertRun(run(automation, "w4", t0 + 3.minutes))
+        repository.park(ORG_A, ended.id, "Soon")
+        assertTrue(repository.updateRun(ended.copy(status = RunStatus.STARTED, sessionId = "s")))
+        assertNull(repository.takeParked(ORG_A, ended.id))
+        repository.park(ORG_A, ended.id, "Late")
+        assertNull(repository.takeParked(ORG_A, ended.id))
+        // Failing the runs queued too long drops the prompts and names the wait.
+        val waiting = repository.insertRun(run(automation, "w5", t0 + 4.minutes))
+        repository.park(ORG_A, waiting.id, "Slow")
+        val lost = repository.insertRun(run(automation, "w6", t0 + 4.minutes))
+        repository.failQueuedBefore(t0 + 5.minutes, t0 + 6.minutes)
+        assertEquals("capacity_timeout", repository.findRun(ORG_A, automation.id, waiting.id)?.reason)
+        assertEquals("interrupted", repository.findRun(ORG_A, automation.id, lost.id)?.reason)
+        assertNull(repository.takeParked(ORG_A, waiting.id))
+    }
+
+    @Test
+    fun aCancelEndsARunOnlyFromTheStatusItSawAndALateStartDoesNotUndoIt() = serverTest(listOf(AutomationsModule)) {
+        val repository = it.koin.get<AutomationsRepository>()
+        val automation = automation().also { a -> repository.createWithinLimit(a, 20) }
+        val queued = repository.insertRun(run(automation, "c1"))
+        val cancelled = queued.copy(status = RunStatus.CANCELLED, reason = "cancelled", updatedAt = t0 + 1.minutes)
+        assertFalse(repository.endRun(cancelled, RunStatus.STARTED))
+        assertEquals(queued, repository.findRun(ORG_A, automation.id, queued.id))
+        assertTrue(repository.endRun(cancelled, RunStatus.QUEUED))
+        assertEquals(cancelled, repository.findRun(ORG_A, automation.id, queued.id))
+        assertFalse(repository.endRun(cancelled, RunStatus.QUEUED))
+        assertFalse(repository.updateRun(queued.copy(status = RunStatus.STARTED, sessionId = "late")))
+        assertEquals(cancelled, repository.findRun(ORG_A, automation.id, queued.id))
+        assertNull(repository.findRun(ORG_B, automation.id, queued.id))
+        assertNull(repository.findRun(ORG_A, Uuid.random(), queued.id))
+        // A cancelled run's prompt is dropped with it.
+        val waiting = repository.insertRun(run(automation, "c2", t0 + 2.minutes))
+        repository.park(ORG_A, waiting.id, "Never")
+        val dropped = waiting.copy(status = RunStatus.CANCELLED, reason = "cancelled")
+        assertTrue(repository.endRun(dropped, RunStatus.QUEUED))
+        assertNull(repository.takeParked(ORG_A, waiting.id))
+    }
+
+    @Test
+    fun theWorkingSessionsOfAnOwnerAreReadNewestFirstOnTheirOwnIndex() = serverTest(listOf(AutomationsModule)) {
+        val repository = it.koin.get<AutomationsRepository>()
+        val automation = automation().also { a -> repository.createWithinLimit(a, 20) }
+        val bobs = automation(BOB, "Bob's").also { a -> repository.createWithinLimit(a, 20) }
+        suspend fun started(of: Automation, key: String, session: String?, at: Instant) {
+            val stored = repository.insertRun(run(of, key, at))
+            repository.updateRun(stored.copy(status = RunStatus.STARTED, sessionId = session))
+        }
+        started(automation, "s1", "sess-1", t0)
+        started(automation, "s2", "sess-2", t0 + 5.minutes)
+        started(automation, "s3", null, t0 + 6.minutes)
+        started(bobs, "s4", "sess-3", t0 + 7.minutes)
+        repository.insertRun(run(automation, "s5", t0 + 8.minutes))
+        val owner = ALICE.toString()
+        assertEquals(listOf("sess-2", "sess-1"), repository.startedSessions(ORG_A, owner, t0 - 1.minutes, 10))
+        assertEquals(listOf("sess-2"), repository.startedSessions(ORG_A, owner, t0, 10))
+        assertEquals(listOf("sess-2"), repository.startedSessions(ORG_A, owner, t0 - 1.minutes, 1))
+        assertEquals(listOf("sess-3"), repository.startedSessions(ORG_A, BOB.toString(), t0, 10))
+        assertEquals(emptyList(), repository.startedSessions(ORG_B, owner, t0 - 1.minutes, 10))
+        it.database.owner.execute("ANALYZE automations_runs").getOrThrow() // the serving role owns no table
+        val plan = it.driver.inTenant(ORG_A) {
+            execute("SET LOCAL enable_seqscan = off").getOrThrow()
+            val explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $STARTED_SESSIONS_SQL")
+                .bind("org_id", ORG_A).bind("since", t0).bind("owner", owner).bind("limit", 100)
+            fetchAll(explain).getOrThrow().joinToString("\n") { row -> row.get("QUERY PLAN").asString() }
+        }
+        println("-- the started runs of an owner (each trigger over the cap's reach)\n$plan")
+        assertFalse("Seq Scan on automations_runs" in plan, plan)
+        assertTrue("automations_runs_" in plan, plan)
     }
 
     @Test
