@@ -16,6 +16,10 @@ import run.ostrom.server.artifacts.domain.ViewArtifactUseCase
 import run.ostrom.server.artifacts.domain.ViewArtifactUseCaseImpl
 import run.ostrom.server.artifacts.domain.ViewTicketSeal
 import run.ostrom.server.artifacts.domain.ViewerChecks
+import run.ostrom.server.artifacts.domain.storage.ArtifactAdministrationUseCase
+import run.ostrom.server.artifacts.domain.storage.ArtifactAdministrationUseCaseImpl
+import run.ostrom.server.artifacts.domain.storage.ArtifactObjectStore
+import run.ostrom.server.artifacts.domain.storage.ArtifactStorageRepository
 import run.ostrom.server.artifacts.infrastructure.ArtifactsConfig
 import run.ostrom.server.artifacts.infrastructure.ArtifactsMigrations
 import run.ostrom.server.artifacts.infrastructure.ArtifactsRepositoryImpl
@@ -23,25 +27,37 @@ import run.ostrom.server.artifacts.infrastructure.AuditedArtifactEvents
 import run.ostrom.server.artifacts.infrastructure.KernelViewerChecks
 import run.ostrom.server.artifacts.infrastructure.SealedViewTickets
 import run.ostrom.server.artifacts.infrastructure.Sha256ContentDigest
+import run.ostrom.server.artifacts.infrastructure.storage.ArtifactStorageRepositoryImpl
+import run.ostrom.server.artifacts.infrastructure.storage.S3ObjectStore
 import run.ostrom.server.artifacts.presentation.ArtifactsRoutesDependencies
+import run.ostrom.server.artifacts.presentation.StorageRoutesDependencies
+import run.ostrom.server.artifacts.presentation.artifactStorageRoutes
 import run.ostrom.server.artifacts.presentation.artifactContentRoutes
 import run.ostrom.server.artifacts.presentation.artifactsRoutes
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
+import run.ostrom.server.kernel.network.outboundHttpClient
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.server.routing.Route
 import org.koin.core.Koin
 import org.koin.core.module.Module
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
+import org.koin.dsl.onClose
 
 /**
  * The artifacts module: pages and file sets that members and their agents publish for the organization to read,
  * with versions, sharing (`personal`, `team`, `link`), sealed member-bound tickets to read them on an isolated
- * content origin under TeamCode's content policy, and an MCP server for agents (`/api/v1/artifacts/mcp`). The files
- * are stored in PostgreSQL, each distinct content once per artifact.
+ * content origin under TeamCode's content policy, and an MCP server for agents (`/api/v1/artifacts/mcp`). An owner or
+ * an administrator configures the organization's S3-compatible bucket and the artifact settings, as in TeamCode.
  */
 object ArtifactsModule : ServerModule {
     override val name: String = "artifacts"
+
+    // Before [koinModule], whose declarations read it as the module is built.
+    /** The client of the organizations' buckets. */
+    private val BUCKET_CLIENT = named("artifactsBucketClient")
 
     override val koinModule: Module = module {
         single<ArtifactLocations> { ArtifactsConfig.from(get<ConfigSource>()) }
@@ -55,7 +71,28 @@ object ArtifactsModule : ServerModule {
         single<ViewerChecks> { KernelViewerChecks(get(), getOrNull()) }
         single<ViewArtifactUseCase> { ViewArtifactUseCaseImpl(get(), get(), get(), get(), get()) }
         single { ArtifactsRoutesDependencies(get(), get(), get(), get(), get(), get()) }
+        single<ArtifactStorageRepository> { ArtifactStorageRepositoryImpl(get(), get()) }
+        // The bucket an administrator typed: every connection checked where it is made (no link-local, metadata or
+        // unspecified address; a private one is allowed, for a bucket on the organization's own network, as in
+        // TeamCode), no redirect followed, every call bounded.
+        single(BUCKET_CLIENT) {
+            outboundHttpClient(allowPrivate = true) {
+                install(HttpTimeout) {
+                    connectTimeoutMillis = CONNECT_TIMEOUT_MILLIS
+                    requestTimeoutMillis = REQUEST_TIMEOUT_MILLIS
+                }
+            }
+        } onClose { it?.close() }
+        single<ArtifactObjectStore> { S3ObjectStore(get(BUCKET_CLIENT)) }
+        single<ArtifactAdministrationUseCase> {
+            val digest = get<ContentDigest>()
+            ArtifactAdministrationUseCaseImpl(get(), get(), { bytes -> digest.sha256(bytes) })
+        }
+        single { StorageRoutesDependencies(get(), get()) }
     }
+
+    private const val CONNECT_TIMEOUT_MILLIS = 10_000L
+    private const val REQUEST_TIMEOUT_MILLIS = 60_000L
 
     override val migrations: List<SchemaMigration> = ArtifactsMigrations
 
@@ -63,6 +100,7 @@ object ArtifactsModule : ServerModule {
         val dependencies = koin.get<ArtifactsRoutesDependencies>()
         route.artifactsRoutes(dependencies)
         route.artifactContentRoutes(dependencies.view, dependencies.locations)
+        route.artifactStorageRoutes { koin.get<StorageRoutesDependencies>() }
     }
 
     /** Shared artifacts, their viewer and their MCP server. */
