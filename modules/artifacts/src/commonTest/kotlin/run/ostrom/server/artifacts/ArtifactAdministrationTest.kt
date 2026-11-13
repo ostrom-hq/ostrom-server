@@ -15,6 +15,7 @@ import run.ostrom.server.artifacts.domain.storage.ArtifactsInactiveException
 import run.ostrom.server.artifacts.domain.storage.InactiveReason
 import run.ostrom.server.artifacts.domain.storage.InvalidArtifactSettingsException
 import run.ostrom.server.artifacts.domain.storage.InvalidArtifactStorageException
+import run.ostrom.server.artifacts.domain.storage.LegacyContents
 import run.ostrom.server.artifacts.domain.storage.ObjectStoreException
 import run.ostrom.server.artifacts.domain.storage.PublishRefusal
 import run.ostrom.server.artifacts.domain.storage.ServerSideEncryption
@@ -38,6 +39,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
+import kotlin.uuid.Uuid
 
 /** TC-ART-1/3/4/5/25: the bucket, its connection test, the settings and the publication policy. */
 class ArtifactAdministrationTest {
@@ -45,8 +47,10 @@ class ArtifactAdministrationTest {
     private val clock = TestClock()
     private val storage = InMemoryStorage()
     private val bucket = InMemoryBucket()
+    private val moved = mutableListOf<Uuid>()
+    private val legacy = LegacyContents { moved += it }
     private val administration = ArtifactAdministrationUseCaseImpl(
-        storage, bucket, { it.contentHashCode().toString() }, clock, { "probe" },
+        storage, bucket, legacy, { it.contentHashCode().toString() }, clock, { "probe" },
     )
 
     private fun input(
@@ -145,8 +149,9 @@ class ArtifactAdministrationTest {
             InMemoryBucket().apply { keepDeleted = true } to StorageTestStep("delete", false, null, "still_present"),
         )
         for ((faulty, failed) in cases) {
-            val result = ArtifactAdministrationUseCaseImpl(storage, faulty, { it.contentHashCode().toString() }, clock)
-                .testStorage(admin)
+            val result = ArtifactAdministrationUseCaseImpl(
+                storage, faulty, legacy, { it.contentHashCode().toString() }, clock,
+            ).testStorage(admin)
             assertFalse(result.ok)
             assertTrue(failed in result.steps, result.toString())
             assertNull(storage.overview(ORG_A).storage?.verifiedAt)
@@ -234,9 +239,12 @@ class ArtifactAdministrationTest {
             assertFailsWith<ArtifactsInactiveException> { administration.saveSettings(admin, on.copy(version = 1)) }
                 .reason,
         )
+        assertEquals(emptyList(), moved)
         administration.testStorage(admin)
         assertFailsWith<ArtifactSettingsConflictException> { administration.saveSettings(admin, on) }
         assertTrue(administration.saveSettings(admin, on.copy(version = 1)).enabled)
+        // What was published before the bucket moves there before artifacts turn on (again after a lost race).
+        assertEquals(listOf(ORG_A, ORG_A), moved)
         assertTrue(administration.overview(admin).availability.active)
         administration.deleteStorage(admin)
         assertFalse(storage.overview(ORG_A).settings.enabled)

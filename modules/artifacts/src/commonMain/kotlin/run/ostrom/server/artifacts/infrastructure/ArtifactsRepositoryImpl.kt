@@ -7,6 +7,7 @@ import run.ostrom.server.artifacts.domain.ArtifactCaller
 import run.ostrom.server.artifacts.domain.ArtifactFile
 import run.ostrom.server.artifacts.domain.ArtifactVersion
 import run.ostrom.server.artifacts.domain.ArtifactsRepository
+import run.ostrom.server.artifacts.domain.LegacyBlob
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.QueryExecutor
 import io.github.smyrgeorge.sqlx4k.ResultSet
@@ -23,8 +24,9 @@ import kotlin.uuid.Uuid
 
 /**
  * [ArtifactsRepository] on PostgreSQL (tables of [ArtifactsMigrations]). A version's file list is JSON in
- * `artifacts_versions.files`; each distinct content is one `artifacts_blobs` row per artifact, so republishing an
- * unchanged file stores nothing.
+ * `artifacts_versions.files`; each distinct content is one `artifacts_blobs` row per artifact (its size; the bytes are
+ * in the organization's bucket, [run.ostrom.server.artifacts.domain.storage.ArtifactContents]), so republishing an
+ * unchanged file stores nothing. A row that still holds `bytes` predates the bucket and waits to be moved there.
  *
  * Every read and write runs confined to the artifact's organization ([inTenant], S2-01). Only `artifacts_routes` is
  * read across organizations, only through its `SECURITY DEFINER` functions: the content origin finds an artifact's
@@ -34,7 +36,7 @@ import kotlin.uuid.Uuid
  */
 @Suppress("TooManyFunctions") // One implementation of the module's one port.
 internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRepository {
-    override suspend fun create(artifact: Artifact, version: ArtifactVersion, blobs: Map<String, ByteArray>) {
+    override suspend fun create(artifact: Artifact, version: ArtifactVersion) {
         driver.inTenant(artifact.orgId) {
             execute(
                 Statement.create(
@@ -57,31 +59,27 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
                     """INSERT INTO artifacts_routes (artifact_id, org_id, link_slug) VALUES (:id, :org_id, :slug)""",
                 ).bind("id", artifact.id).bind("org_id", artifact.orgId).bind("slug", artifact.linkSlug),
             ).getOrThrow()
-            insertContent(artifact.orgId, version, blobs)
+            insertContent(artifact.orgId, version)
         }
     }
 
-    override suspend fun addVersion(
-        orgId: Uuid,
-        version: ArtifactVersion,
-        blobs: Map<String, ByteArray>,
-        now: Instant,
-    ): Artifact? = driver.inTenant(orgId) {
-        val updated = fetchAll(
-            Statement.create(
-                """
-                UPDATE artifacts_artifacts SET latest_version = :number, updated_at = :now WHERE id = :id AND
-                org_id = :org_id AND latest_version = :previous RETURNING $COLUMNS
-                """,
-            ).bind("number", version.number)
-                .bind("now", now)
-                .bind("id", version.artifactId)
-                .bind("org_id", orgId)
-                .bind("previous", version.number - 1),
-        ).getOrThrow().firstOrNull()?.toArtifact()
-        if (updated != null) insertContent(orgId, version, blobs)
-        updated
-    }
+    override suspend fun addVersion(orgId: Uuid, version: ArtifactVersion, now: Instant): Artifact? =
+        driver.inTenant(orgId) {
+            val updated = fetchAll(
+                Statement.create(
+                    """
+                    UPDATE artifacts_artifacts SET latest_version = :number, updated_at = :now WHERE id = :id AND
+                    org_id = :org_id AND latest_version = :previous RETURNING $COLUMNS
+                    """,
+                ).bind("number", version.number)
+                    .bind("now", now)
+                    .bind("id", version.artifactId)
+                    .bind("org_id", orgId)
+                    .bind("previous", version.number - 1),
+            ).getOrThrow().firstOrNull()?.toArtifact()
+            if (updated != null) insertContent(orgId, version)
+            updated
+        }
 
     override suspend fun updateSettings(artifact: Artifact) {
         driver.inTenant(artifact.orgId) {
@@ -154,11 +152,26 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
         ).bind("id", artifactId).bind("number", number),
     ).getOrThrow().firstOrNull()?.toVersion()
 
-    override suspend fun blob(orgId: Uuid, artifactId: Uuid, sha256: String): ByteArray? = driver.fetchInOrg(
+    override suspend fun legacyBlobs(orgId: Uuid, limit: Int): List<LegacyBlob> = driver.fetchInOrg(
         orgId,
-        Statement.create("""SELECT bytes FROM artifacts_blobs WHERE artifact_id = :id AND sha256 = :sha""")
-            .bind("id", artifactId).bind("sha", sha256),
-    ).getOrThrow().firstOrNull()?.let { it.get("bytes").asByteArray() }
+        Statement.create(
+            """
+            SELECT artifact_id, sha256, bytes FROM artifacts_blobs WHERE bytes IS NOT NULL
+            ORDER BY artifact_id, sha256 LIMIT :limit
+            """,
+        ).bind("limit", limit),
+    ).getOrThrow().map {
+        LegacyBlob(it.get("artifact_id").asUuid(), it.get("sha256").asString(), it.get("bytes").asByteArray())
+    }
+
+    override suspend fun releaseLegacyBlob(orgId: Uuid, artifactId: Uuid, sha256: String) {
+        driver.inTenant(orgId) {
+            execute(
+                Statement.create("UPDATE artifacts_blobs SET bytes = NULL WHERE artifact_id = :id AND sha256 = :sha")
+                    .bind("id", artifactId).bind("sha", sha256),
+            ).getOrThrow()
+        }
+    }
 
     override suspend fun blobDigests(orgId: Uuid, artifactId: Uuid): Set<String> = driver.fetchInOrg(
         orgId,
@@ -209,19 +222,17 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
         return get(row.get("org_id").asUuid(), row.get("artifact_id").asUuid())
     }
 
-    private suspend fun QueryExecutor.insertContent(
-        orgId: Uuid,
-        version: ArtifactVersion,
-        blobs: Map<String, ByteArray>,
-    ) {
-        blobs.forEach { (sha, bytes) ->
+    // One row per distinct content of the artifact, its size only: the bytes are in the bucket.
+    private suspend fun QueryExecutor.insertContent(orgId: Uuid, version: ArtifactVersion) {
+        version.files.distinctBy { it.sha256 }.forEach { file ->
             execute(
                 Statement.create(
                     """
-                    INSERT INTO artifacts_blobs (artifact_id, org_id, sha256, bytes) VALUES (:id, :org_id, :sha,
-                    CAST(:bytes AS BYTEA)) ON CONFLICT DO NOTHING
+                    INSERT INTO artifacts_blobs (artifact_id, org_id, sha256, size) VALUES (:id, :org_id, :sha, :size)
+                    ON CONFLICT DO NOTHING
                     """,
-                ).bind("id", version.artifactId).bind("org_id", orgId).bind("sha", sha).bind("bytes", bytes),
+                ).bind("id", version.artifactId).bind("org_id", orgId).bind("sha", file.sha256)
+                    .bind("size", file.size),
             ).getOrThrow()
         }
         val files = version.files.map { FileRow(it.path, it.sha256, it.size, it.contentType) }

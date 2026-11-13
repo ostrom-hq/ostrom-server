@@ -18,8 +18,11 @@ import run.ostrom.server.artifacts.domain.ViewTicketSeal
 import run.ostrom.server.artifacts.domain.ViewerChecks
 import run.ostrom.server.artifacts.domain.storage.ArtifactAdministrationUseCase
 import run.ostrom.server.artifacts.domain.storage.ArtifactAdministrationUseCaseImpl
+import run.ostrom.server.artifacts.domain.storage.ArtifactContents
 import run.ostrom.server.artifacts.domain.storage.ArtifactObjectStore
 import run.ostrom.server.artifacts.domain.storage.ArtifactStorageRepository
+import run.ostrom.server.artifacts.domain.storage.BucketArtifactContents
+import run.ostrom.server.artifacts.domain.storage.LegacyContentsMover
 import run.ostrom.server.artifacts.infrastructure.ArtifactsConfig
 import run.ostrom.server.artifacts.infrastructure.ArtifactsMigrations
 import run.ostrom.server.artifacts.infrastructure.ArtifactsRepositoryImpl
@@ -31,13 +34,14 @@ import run.ostrom.server.artifacts.infrastructure.storage.ArtifactStorageReposit
 import run.ostrom.server.artifacts.infrastructure.storage.S3ObjectStore
 import run.ostrom.server.artifacts.presentation.ArtifactsRoutesDependencies
 import run.ostrom.server.artifacts.presentation.StorageRoutesDependencies
-import run.ostrom.server.artifacts.presentation.artifactStorageRoutes
 import run.ostrom.server.artifacts.presentation.artifactContentRoutes
+import run.ostrom.server.artifacts.presentation.artifactStorageRoutes
 import run.ostrom.server.artifacts.presentation.artifactsRoutes
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.network.outboundHttpClient
+import run.ostrom.server.secrets.domain.SecretCipher
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.server.routing.Route
 import org.koin.core.Koin
@@ -64,14 +68,15 @@ object ArtifactsModule : ServerModule {
         single<ArtifactsRepository> { ArtifactsRepositoryImpl(get()) }
         single<ContentDigest> { Sha256ContentDigest() }
         single<ArtifactEvents> { AuditedArtifactEvents(get()) }
-        single<PublishArtifactUseCase> { PublishArtifactUseCaseImpl(get(), get(), get(), get()) }
-        single<ReadArtifactsUseCase> { ReadArtifactsUseCaseImpl(get()) }
-        single<ManageArtifactUseCase> { ManageArtifactUseCaseImpl(get(), get(), get()) }
+        single<ArtifactContents> { BucketArtifactContents(get(), get()) }
+        single<PublishArtifactUseCase> { PublishArtifactUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<ReadArtifactsUseCase> { ReadArtifactsUseCaseImpl(get(), get()) }
+        single<ManageArtifactUseCase> { ManageArtifactUseCaseImpl(get(), get(), get(), get()) }
         single<ViewTicketSeal> { SealedViewTickets(get()) }
         single<ViewerChecks> { KernelViewerChecks(get(), getOrNull()) }
-        single<ViewArtifactUseCase> { ViewArtifactUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<ViewArtifactUseCase> { ViewArtifactUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single { ArtifactsRoutesDependencies(get(), get(), get(), get(), get(), get()) }
-        single<ArtifactStorageRepository> { ArtifactStorageRepositoryImpl(get(), get()) }
+        single<ArtifactStorageRepository> { ArtifactStorageRepositoryImpl(get(), lazy { get<SecretCipher>() }) }
         // The bucket an administrator typed: every connection checked where it is made (no link-local, metadata or
         // unspecified address; a private one is allowed, for a bucket on the organization's own network, as in
         // TeamCode), no redirect followed, every call bounded.
@@ -86,7 +91,8 @@ object ArtifactsModule : ServerModule {
         single<ArtifactObjectStore> { S3ObjectStore(get(BUCKET_CLIENT)) }
         single<ArtifactAdministrationUseCase> {
             val digest = get<ContentDigest>()
-            ArtifactAdministrationUseCaseImpl(get(), get(), { bytes -> digest.sha256(bytes) })
+            val sha256: suspend (ByteArray) -> String = { bytes -> digest.sha256(bytes) }
+            ArtifactAdministrationUseCaseImpl(get(), get(), LegacyContentsMover(get(), get(), get(), sha256), sha256)
         }
         single { StorageRoutesDependencies(get(), get()) }
     }

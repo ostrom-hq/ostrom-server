@@ -5,8 +5,10 @@ import run.ostrom.server.artifacts.domain.Artifact
 import run.ostrom.server.artifacts.domain.ArtifactCaller
 import run.ostrom.server.artifacts.domain.ArtifactVersion
 import run.ostrom.server.artifacts.domain.ArtifactsRepository
+import run.ostrom.server.artifacts.domain.LegacyBlob
 import run.ostrom.server.artifacts.domain.ViewTicket
 import run.ostrom.server.artifacts.domain.ViewerChecks
+import run.ostrom.server.artifacts.domain.storage.ArtifactObjectStore
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.auth.OrgPrincipal
@@ -17,6 +19,7 @@ import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.TokenAuthenticator
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.MapConfigSource
+import run.ostrom.server.secrets.domain.SecretCipher
 import org.koin.dsl.module
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -66,7 +69,7 @@ const val VIEWER = "https://app.test/artifacts"
  * The test identities: `alice`, `bob` (members of org A), `dave` (admin of org A), `carol` (owner of org B) and
  * `nobody` (no org) are browser sessions; `reader` and `writer` are alice's service tokens with `artifacts:read`
  * and `artifacts:write`; `cloud` is alice's with no artifact scope; `agent` and `dave-agent` are personal tokens
- * with `artifacts:write` that alice and dave hand to their agents.
+ * with `artifacts:write` that alice and dave hand to their agents. The bucket is in memory.
  */
 val testIdentities = module {
     single<TokenAuthenticator> {
@@ -94,6 +97,9 @@ val testIdentities = module {
         }
     }
     single<PrincipalOrgResolver> { TestOrgResolver }
+    // The organization's bucket, in memory; artifacts work once a test turns them on ([activateArtifacts]).
+    single<SecretCipher> { TestCipher }
+    single<ArtifactObjectStore> { InMemoryBucket() }
     single<MemberDirectory> {
         object : MemberDirectory {
             override suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean =
@@ -128,34 +134,30 @@ class TestClock(var now: Instant = Instant.parse("2026-10-30T10:00:00Z")) : Cloc
 class InMemoryArtifacts : ArtifactsRepository {
     val artifacts = mutableMapOf<Uuid, Artifact>()
     val versions = mutableMapOf<Pair<Uuid, Int>, ArtifactVersion>()
-    val blobs = mutableMapOf<Pair<Uuid, String>, ByteArray>()
+    val blobs = mutableMapOf<Pair<Uuid, String>, Long>()
+    val legacy = mutableMapOf<Pair<Uuid, String>, ByteArray>()
     val shares = mutableMapOf<Uuid, MutableSet<String>>()
     var loseNextRace = false
 
-    override suspend fun create(artifact: Artifact, version: ArtifactVersion, blobs: Map<String, ByteArray>) {
+    override suspend fun create(artifact: Artifact, version: ArtifactVersion) {
         artifacts[artifact.id] = artifact
-        store(version, blobs)
+        store(version)
     }
 
-    override suspend fun addVersion(
-        orgId: Uuid,
-        version: ArtifactVersion,
-        blobs: Map<String, ByteArray>,
-        now: Instant,
-    ): Artifact? {
+    override suspend fun addVersion(orgId: Uuid, version: ArtifactVersion, now: Instant): Artifact? {
         if (loseNextRace) {
             loseNextRace = false
             return null
         }
         val artifact = artifacts.getValue(version.artifactId).copy(latestVersion = version.number, updatedAt = now)
         artifacts[artifact.id] = artifact
-        store(version, blobs)
+        store(version)
         return artifact
     }
 
-    private fun store(version: ArtifactVersion, blobs: Map<String, ByteArray>) {
+    private fun store(version: ArtifactVersion) {
         versions[version.artifactId to version.number] = version
-        blobs.forEach { (sha, bytes) -> this.blobs[version.artifactId to sha] = bytes }
+        version.files.forEach { blobs[version.artifactId to it.sha256] = it.size }
     }
 
     override suspend fun updateSettings(artifact: Artifact) {
@@ -181,7 +183,12 @@ class InMemoryArtifacts : ArtifactsRepository {
     override suspend fun version(orgId: Uuid, artifactId: Uuid, number: Int): ArtifactVersion? =
         versions[artifactId to number]
 
-    override suspend fun blob(orgId: Uuid, artifactId: Uuid, sha256: String): ByteArray? = blobs[artifactId to sha256]
+    override suspend fun legacyBlobs(orgId: Uuid, limit: Int): List<LegacyBlob> =
+        legacy.entries.take(limit).map { (key, bytes) -> LegacyBlob(key.first, key.second, bytes) }
+
+    override suspend fun releaseLegacyBlob(orgId: Uuid, artifactId: Uuid, sha256: String) {
+        legacy.remove(artifactId to sha256)
+    }
 
     override suspend fun blobDigests(orgId: Uuid, artifactId: Uuid): Set<String> =
         blobs.keys.filter { it.first == artifactId }.map { it.second }.toSet()

@@ -167,4 +167,19 @@ val ArtifactsMigrations: List<SchemaMigration> = listOf(
             ${tenantTableSql("artifacts_settings")}
         """.trimIndent(),
     ),
+    // The bytes leave PostgreSQL for the organization's bucket: each content keeps its size here; the bytes of those
+    // published before stay until an administrator turns artifacts on, which moves them (verified by SHA-256) and
+    // forgets them. A later migration drops the column.
+    SchemaMigration(
+        version = 5,
+        name = "artifacts_blobs_sizes",
+        sql = """
+            ALTER TABLE artifacts_blobs ADD COLUMN size BIGINT;
+            ALTER TABLE artifacts_blobs NO FORCE ROW LEVEL SECURITY;
+            UPDATE artifacts_blobs SET size = octet_length(bytes);
+            ALTER TABLE artifacts_blobs FORCE ROW LEVEL SECURITY;
+            ALTER TABLE artifacts_blobs ALTER COLUMN size SET NOT NULL;
+            ALTER TABLE artifacts_blobs ALTER COLUMN bytes DROP NOT NULL;
+        """.trimIndent(),
+    ),
 )

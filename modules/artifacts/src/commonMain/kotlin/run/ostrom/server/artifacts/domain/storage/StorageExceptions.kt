@@ -107,3 +107,11 @@ class ArtifactStorageMissingException : OstromException(
     "No artifact storage is configured. Save one first.",
     InactiveReason.STORAGE_MISSING.wire,
 )
+
+/**
+ * The bucket did not take or give back a file: TeamCode's `artifact_storage_unavailable`, to retry.
+ *
+ * @param message What failed.
+ */
+class ArtifactStorageUnavailableException(message: String) :
+    OstromException(ErrorKind.UNAVAILABLE, message, "artifact_storage_unavailable")

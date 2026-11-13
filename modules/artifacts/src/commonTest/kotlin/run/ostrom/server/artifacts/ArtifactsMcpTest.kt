@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.artifacts
 
+import run.ostrom.server.artifacts.fakes.activateArtifacts
 import run.ostrom.server.artifacts.fakes.testIdentities
 import run.ostrom.server.testing.serverTest
 import io.ktor.client.HttpClient
@@ -46,6 +47,7 @@ class ArtifactsMcpTest {
 
     @Test
     fun theProtocolIsNegotiatedAndTheToolsListed() = serverTest(listOf(ArtifactsModule), testIdentities) { server ->
+        server.koin.activateArtifacts()
         val client = server.client
         val init = Json.parseToJsonElement(
             client.rpc("""{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}""")
@@ -102,6 +104,7 @@ class ArtifactsMcpTest {
 
     @Test
     fun anAgentPublishesListsAndReads() = serverTest(listOf(ArtifactsModule), testIdentities) { server ->
+        server.koin.activateArtifacts()
         val client = server.client
         val published = client.call(
             "publish",
@@ -131,6 +134,7 @@ class ArtifactsMcpTest {
 
     @Test
     fun anAgentSharesAndIsRefusedWhatItMayNotDo() = serverTest(listOf(ArtifactsModule), testIdentities) { server ->
+        server.koin.activateArtifacts()
         val client = server.client
         val id = client.call("publish", publishing("Plan", file("index.html", "<h1>Plan</h1>"))).artifactId()
         val bob = "00000000-0000-0000-0000-000000000b0b"

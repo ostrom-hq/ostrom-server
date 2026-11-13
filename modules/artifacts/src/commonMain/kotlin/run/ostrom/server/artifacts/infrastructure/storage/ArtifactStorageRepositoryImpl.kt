@@ -33,12 +33,15 @@ import kotlin.uuid.Uuid
  * (`artifact-storage:<org>`): an envelope copied to another organization's row does not open.
  *
  * @param driver The database.
- * @param cipher Seals the secret.
+ * @param sealer Seals the secret; resolved at the first secret sealed or opened, so a server whose secrets key is
+ *   not configured still starts (and serves every route that needs no bucket).
  */
 internal class ArtifactStorageRepositoryImpl(
     private val driver: Driver,
-    private val cipher: SecretCipher,
+    sealer: Lazy<SecretCipher>,
 ) : ArtifactStorageRepository {
+    private val cipher by sealer
+
     override suspend fun overview(orgId: Uuid): ArtifactStorageOverview = driver.inTenant(orgId) {
         val storage = fetchAll(select(STORAGE_COLUMNS, "artifacts_storage", orgId)).getOrThrow()
             .firstOrNull()?.toStorage()

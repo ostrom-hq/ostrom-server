@@ -3,6 +3,7 @@ package run.ostrom.server.artifacts
 
 import run.ostrom.server.artifacts.fakes.BOB
 import run.ostrom.server.artifacts.fakes.CAROL
+import run.ostrom.server.artifacts.fakes.activateArtifacts
 import run.ostrom.server.artifacts.fakes.testIdentities
 import run.ostrom.server.artifacts.presentation.ArtifactMembersResponse
 import run.ostrom.server.artifacts.presentation.ArtifactResponse
@@ -35,6 +36,7 @@ import kotlin.test.assertEquals
 class ArtifactsIsolationPostgresTest {
     @Test
     fun anotherOrganizationNeitherSeesNorChangesAnArtifact() = serverTest(listOf(ArtifactsModule), testIdentities) {
+        it.koin.activateArtifacts()
         val client = it.client
         val created = client.post("/api/v1/artifacts") {
             bearerAuth("alice")

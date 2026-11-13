@@ -11,8 +11,10 @@ import run.ostrom.server.artifacts.domain.storage.ArtifactStorageRepository
 import run.ostrom.server.artifacts.domain.storage.ListedObject
 import run.ostrom.server.artifacts.domain.storage.ObjectHead
 import run.ostrom.server.artifacts.domain.storage.ObjectListing
+import run.ostrom.server.artifacts.domain.storage.ServerSideEncryption
 import run.ostrom.server.artifacts.domain.storage.StoredObject
 import run.ostrom.server.secrets.domain.SecretCipher
+import org.koin.core.Koin
 import kotlin.io.encoding.Base64
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -82,7 +84,8 @@ class InMemoryStorage(var inUse: Boolean = false) : ArtifactStorageRepository {
 
 /**
  * A bucket in memory. [beforeEach] runs before every call (to fail or wait one), [keepDeleted] keeps what a deletion
- * names, [corrupt] reads other bytes back, [hideListing] lists nothing, [refuseDelete] reports every key undeleted.
+ * names, [corrupt] reads other bytes back, [hideListing] lists nothing, [refuseDelete] reports every key undeleted,
+ * [forget] keeps nothing written, [pageSize] bounds a listing's page.
  */
 class InMemoryBucket : ArtifactObjectStore {
     val objects = mutableMapOf<String, ByteArray>()
@@ -93,6 +96,7 @@ class InMemoryBucket : ArtifactObjectStore {
     var hideListing = false
     var refuseDelete = false
     var forget = false
+    var pageSize = Int.MAX_VALUE
 
     override suspend fun put(
         connection: ArtifactStorageConnection,
@@ -128,8 +132,15 @@ class InMemoryBucket : ArtifactObjectStore {
         maxKeys: Int,
     ): ObjectListing {
         record("list")
-        val keys = if (hideListing) emptyMap() else objects.filterKeys { it.startsWith(prefix) }
-        return ObjectListing(keys.map { (key, bytes) -> ListedObject(key, bytes.size.toLong()) }, null)
+        val keys = if (hideListing) {
+            emptyList()
+        } else {
+            val after = continuationToken.orEmpty()
+            objects.keys.filter { it.startsWith(prefix) && it > after }.sorted()
+        }
+        val page = keys.take(pageSize)
+        val next = page.lastOrNull()?.takeIf { keys.size > pageSize }
+        return ObjectListing(page.map { ListedObject(it, objects.getValue(it).size.toLong()) }, next)
     }
 
     override suspend fun delete(connection: ArtifactStorageConnection, keys: List<String>): List<String> {
@@ -142,5 +153,40 @@ class InMemoryBucket : ArtifactObjectStore {
     private suspend fun record(call: String) {
         calls += call
         beforeEach(call)
+    }
+}
+
+/** A bucket every test organization may use. */
+fun testBucketInput(org: String = "test") = ArtifactStorageInput(
+    "https://s3.example.com", "auto", "bucket-$org", "", false, "AKIA$org", "secret-$org", ServerSideEncryption.NONE,
+)
+
+/** Stores a bucket for each organization, marks it tested and turns artifacts on. */
+suspend fun ArtifactStorageRepository.activate(vararg orgs: Uuid) {
+    val now = Instant.parse("2026-11-13T10:00:00Z")
+    for (org in orgs) {
+        val stored = overview(org).storage ?: checkNotNull(saveStorage(org, 0, testBucketInput(org.toString()), now))
+        recordTest(org, stored.version, true, now)
+        val settings = overview(org).settings
+        saveSettings(org, settings.copy(enabled = true), now)
+    }
+}
+
+/** [activate] on a test server's repository: artifacts work in org A and org B. */
+suspend fun Koin.activateArtifacts(vararg orgs: Uuid = arrayOf(ORG_A, ORG_B)) {
+    get<ArtifactStorageRepository>().activate(*orgs)
+}
+
+/** Artifacts turned on for [orgs] with a tested bucket, at once (for tests that build their use cases directly). */
+fun InMemoryStorage.active(vararg orgs: Uuid): InMemoryStorage = apply {
+    val now = Instant.parse("2026-11-13T10:00:00Z")
+    for (org in orgs) {
+        val input = testBucketInput(org.toString())
+        storage[org] = ArtifactStorage(
+            org, input.endpoint, input.region, input.bucket, input.prefix, input.pathStyle, input.accessKeyId,
+            input.serverSideEncryption, now, 1, now,
+        )
+        secrets[org] = checkNotNull(input.secretAccessKey)
+        settings[org] = ArtifactSettings(enabled = true, version = 1, updatedAt = now)
     }
 }
