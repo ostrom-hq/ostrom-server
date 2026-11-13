@@ -375,6 +375,12 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "POST /api/v1/workflows/session/deliver" to
         Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "output": "x"}"""),
     "GET /api/v1/workflows/session/pending" to Case.Target(query = "sessionId={{CLOUD_SESSION}}"),
+    "POST /api/v1/workflows/mcp" to Case.Target(
+        body = """{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "deliver", """ +
+            """"arguments": {"output": "x"}}}""",
+        query = "session={{CLOUD_SESSION}}",
+        rpc = true,
+    ),
     "GET /api/v1/packages" to Case.Target(),
     "GET /api/v1/packages/current" to Case.Target(),
     "GET /api/v1/packages/audit" to Case.Target(),

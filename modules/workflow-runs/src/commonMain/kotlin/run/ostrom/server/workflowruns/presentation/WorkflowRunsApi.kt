@@ -213,6 +213,15 @@ class WorkflowSessionDeliverApi
 class WorkflowSessionPendingApi(val sessionId: String? = null)
 
 /**
+ * The `ostrom-workflow` MCP server of an agent working on a workflow step (`workflowsMcp`).
+ *
+ * @property session The cloud session, filled by the CLI's relay: an agent token's own is its launch's.
+ */
+@Serializable
+@Resource("/api/v1/workflows/mcp")
+class WorkflowsMcpApi(val session: String? = null)
+
+/**
  * The body of `POST /api/v1/workflows/{id}/runs`.
  *
  * @property inputs The inputs, by id.

@@ -10,6 +10,9 @@ class WorkflowRunsFeaturesTest {
     @Test
     fun itsFeaturesNeedNoConfiguration() = runTest {
         val koin = koinApplication {}.koin
-        assertEquals(setOf("workflows.v1", "notifications.v1"), WorkflowRunsModule.features(koin))
+        assertEquals(
+            setOf("workflows.v1", "notifications.v1", "workflows.deliver.v1"),
+            WorkflowRunsModule.features(koin),
+        )
     }
 }

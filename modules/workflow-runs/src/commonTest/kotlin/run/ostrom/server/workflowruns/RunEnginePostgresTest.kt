@@ -672,6 +672,27 @@ class RunEnginePostgresTest {
     }
 
     @Test
+    fun theAgentOfAStepDeliversThroughTheWorkflowMcpServer() = engineTest { server ->
+        val step = server.sessionStep()
+        val token = server.agentTokenOf(step)
+        val mcp = "/api/v1/workflows/mcp?session=${step.session}"
+        val call = """{"jsonrpc":"2.0","id":1,"method":"tools/call",""" +
+            """"params":{"name":"deliver","arguments":{"output":"${step.pr}"}}}"""
+
+        assertEquals(HttpStatusCode.Unauthorized, server.client.post(mcp).status)
+        val notified = server.call(token, mcp, """{"jsonrpc":"2.0","method":"notifications/initialized"}""")
+        assertEquals(HttpStatusCode.Accepted, notified.status)
+        val delivered = server.call(token, mcp, call)
+
+        assertEquals(HttpStatusCode.OK, delivered.status, delivered.bodyAsText())
+        assertTrue("Your delivery is recorded" in delivered.bodyAsText(), delivered.bodyAsText())
+        val visit = server.read(step.ada, step.run.id).visits.single()
+        assertEquals(listOf<String?>("delivered", step.pr), listOf(visit.outcome, visit.output))
+        val again = server.call(token, mcp, call).bodyAsText()
+        assertTrue(""""isError":true""" in again && "end your turn" in again, again)
+    }
+
+    @Test
     fun anAgentStepWhoseSessionStopsWithNothingDeliveredFailsEndedWithoutDelivery() = engineTest { server ->
         val ada = server.person("ada")
         server.workflow(ada, DELIVERING, DELIVERING_EDGES, "build")
