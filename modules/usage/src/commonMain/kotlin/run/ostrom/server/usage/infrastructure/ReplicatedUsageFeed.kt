@@ -99,8 +99,9 @@ class ReplicatedUsageFeed(
     }
 
     private suspend fun tell() {
-        for (first in outgoing) {
-            val batch = mutableListOf(first)
+        // The queue is never closed: this runs until cancelled.
+        while (true) {
+            val batch = mutableListOf(outgoing.receive())
             while (batch.size < MAX_PER_NOTIFICATION) batch += outgoing.tryReceive().getOrNull() ?: break
             val payload = (listOf(VERSION, replica.toString()) + batch.map { "${it.orgId}:${it.id}" }).joinToString(" ")
             quietly("usage feed notification failed") { notifications.notify(CHANNEL, payload) }
