@@ -3,6 +3,7 @@
 package run.ostrom.server.identity
 
 import run.ostrom.server.identity.domain.AGENT_SCOPE
+import run.ostrom.server.identity.domain.ApiToken
 import run.ostrom.server.identity.domain.CreatePersonalTokenUseCaseImpl
 import run.ostrom.server.identity.domain.InvalidScopesException
 import run.ostrom.server.identity.domain.InvalidTokenLifetimeException
@@ -98,7 +99,14 @@ class TokenUseCasesTest {
     }
 
     @Test
-    fun aUserHasAtMostAHundredLiveTokens() = runTest {
+    fun aUserHasAtMostAHundredLivePersonalTokensWhateverTheirWorkstations() = runTest {
+        repeat(50) {
+            val cli = ApiToken(
+                Uuid.random(), userId, null, "laptop", TokenKind.CLI, setOf("orgs:read"), "osc_hint", null,
+                clock.now, null, null, null,
+            )
+            tokens.create(cli, "cli-$it")
+        }
         repeat(MAX_TOKENS_PER_USER) { create(userId, "t$it", listOf("orgs:read"), null) }
 
         assertFailsWith<TooManyTokensException> { create(userId, "one more", listOf("orgs:read"), null) }
@@ -140,6 +148,18 @@ class TokenUseCasesTest {
         assertEquals(clock.now + 10.days, new.token.expiresAt)
         assertEquals(clock.now, tokens.findBySecretHash("h(osp_secret1)")?.revokedAt)
         assertEquals(mapOf("replacement" to new.token.id.toString()), audit.entries.last().details)
+    }
+
+    @Test
+    fun aCliTokenOfTheNinetyDaysRotatesIntoOneOfThirty() = runTest {
+        val legacy = ApiToken(
+            Uuid.random(), userId, null, "laptop", TokenKind.CLI, setOf("orgs:read"), "osc_hint", null,
+            clock.now, clock.now + 90.days, null, null,
+        )
+        tokens.create(legacy, "legacy")
+        clock.now += 1.days
+
+        assertEquals(clock.now + 30.days, rotate(userId, legacy.id).token.expiresAt)
     }
 
     @Test

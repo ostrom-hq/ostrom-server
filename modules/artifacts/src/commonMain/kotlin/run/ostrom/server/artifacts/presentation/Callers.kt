@@ -5,18 +5,21 @@ import run.ostrom.server.artifacts.domain.ArtifactCaller
 import run.ostrom.server.artifacts.domain.InvalidArtifactRequestException
 import run.ostrom.server.artifacts.domain.MissingScopeException
 import run.ostrom.server.artifacts.domain.NotAMemberException
-import run.ostrom.server.artifacts.domain.SignInRequiredException
 import run.ostrom.server.artifacts.domain.UploadedFile
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
-import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
+import run.ostrom.server.kernel.auth.WriteAccess
+import run.ostrom.server.kernel.auth.mayWrite
 import kotlin.io.encoding.Base64
 
 /** Reading artifacts. */
 const val ARTIFACTS_READ = "artifacts:read"
 
-/** Publishing, sharing and deleting artifacts; includes [ARTIFACTS_READ]. */
+/**
+ * Publishing and sharing artifacts; includes [ARTIFACTS_READ]. Changing an artifact's access, making it public and
+ * deleting it also need a person ([ArtifactCaller.person]): no token reaches them, whatever its scopes.
+ */
 const val ARTIFACTS_WRITE = "artifacts:write"
 
 private const val ALL_USER_SCOPES = "user:*"
@@ -30,37 +33,22 @@ fun AuthenticatedPrincipal.allowsArtifacts(scope: String): Boolean =
         (kind == PrincipalKind.USER && ALL_USER_SCOPES in scopes)
 
 /**
- * Changing an access level or deleting an artifact: [ARTIFACTS_WRITE] held by a person signed in. A service key
- * holding `artifacts:write` publishes, uploads and invites, but never does this (TeamCode `artifacts:write`).
- */
-const val ARTIFACTS_MANAGE = "artifacts:manage"
-
-/**
- * The member a request acts for.
+ * The member a request acts for. Their role is not read: it gives no right over another member's artifact. Whether a
+ * person presents the credential is [WriteAccess.PERSON]'s rule: a browser session or the unlocked app.
  *
- * @param scope [ARTIFACTS_READ], [ARTIFACTS_WRITE], or [ARTIFACTS_MANAGE] (which needs [ARTIFACTS_WRITE] and refuses a
- *   service key).
- *
- * @throws MissingScopeException When the credential lacks the scope.
- * @throws SignInRequiredException When it is a service key asking [ARTIFACTS_MANAGE].
+ * @throws MissingScopeException When the credential lacks [scope].
  * @throws NotAMemberException When it acts for no organization.
  */
 suspend fun PrincipalOrgResolver.artifactCallerOf(principal: AuthenticatedPrincipal, scope: String): ArtifactCaller {
-    val manage = scope == ARTIFACTS_MANAGE
-    val needed = if (manage) ARTIFACTS_WRITE else scope
-    val refusal = when {
-        !principal.allowsArtifacts(needed) -> MissingScopeException(needed)
-        manage && principal.kind == PrincipalKind.SERVICE -> SignInRequiredException()
-        else -> null
-    }
-    if (refusal != null) throw refusal
+    if (!principal.allowsArtifacts(scope)) throw MissingScopeException(scope)
     val member = resolve(principal, null) ?: throw NotAMemberException()
-    // A service key reads and writes the artifacts of its creator, never as an administrator.
-    val administers = member.role in ADMIN_ROLES && principal.kind != PrincipalKind.SERVICE
-    return ArtifactCaller(member.orgId, member.memberId.toString(), administers)
+    return ArtifactCaller(
+        orgId = member.orgId,
+        memberId = member.memberId.toString(),
+        person = principal.mayWrite(WriteAccess.PERSON),
+        credentialId = principal.credentialId,
+    )
 }
-
-private val ADMIN_ROLES = setOf(OrgRole.OWNER, OrgRole.ADMIN)
 
 /**
  * Decodes the files of a request.

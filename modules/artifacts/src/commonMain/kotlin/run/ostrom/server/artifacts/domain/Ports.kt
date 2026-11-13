@@ -63,8 +63,8 @@ interface ArtifactsRepository {
     suspend fun getByLinkSlug(slug: String): Artifact?
 
     /**
-     * Lists the artifacts a member reads: theirs, the team's and linked ones, those shared with them, and every one
-     * for an administrator; most recently changed first.
+     * Lists the artifacts a member reads: theirs, the team's and linked ones, and those shared with them, whatever
+     * their role; most recently changed first.
      *
      * @param caller The member.
      * @param before The last artifact of the previous page, or null.

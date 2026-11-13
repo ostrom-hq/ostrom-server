@@ -13,8 +13,17 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
-/** How long a browser session lasts, whatever its use: the user signs in again after that. */
-val SESSION_LIFETIME: Duration = 30.days
+/**
+ * How long a browser session lasts, whatever its use: a working day, after which the person signs in again (no sliding
+ * renewal). A cookie lifted from a browser stops working the same day (TeamCode's dashboard session, TC-CODE-AUTH-3).
+ */
+val SESSION_LIFETIME: Duration = 8.hours
+
+/**
+ * At most this many live browser sessions per person: signing in once more ends the least recently used one, so a
+ * script that signs in in a loop cannot pile sessions up (TeamCode's 50 sessions per member).
+ */
+const val MAX_WEB_SESSIONS_PER_USER = 50
 
 /** A session or token's last use is written at most this often: authenticating a request stays one read. */
 val SESSION_TOUCH_INTERVAL: Duration = 5.minutes
@@ -22,8 +31,14 @@ val SESSION_TOUCH_INTERVAL: Duration = 5.minutes
 /** The longest a personal token can live; the console offers shorter. */
 val MAX_TOKEN_LIFETIME: Duration = 366.days
 
-/** How long a CLI token lasts before `ostrom login` is needed again. */
-val CLI_TOKEN_LIFETIME: Duration = 90.days
+/** How long a CLI token lasts before `ostrom login` is needed again: 30 days, as the phone app's token. */
+val CLI_TOKEN_LIFETIME: Duration = 30.days
+
+/**
+ * At most this many signed-in workstations (live CLI tokens) per person: a new `ostrom login` beyond it signs the
+ * oldest one out instead of being refused (TeamCode's 50 devices per member).
+ */
+const val MAX_DEVICES_PER_USER = 50
 
 /** The longest an agent token lives: one agent session, never more than a day. */
 val MAX_AGENT_TOKEN_LIFETIME: Duration = 24.hours
@@ -153,8 +168,14 @@ fun grantedScopes(kind: TokenKind, stored: Set<String>): Set<String> = when (kin
 /** At most this many scopes on one token. */
 const val MAX_SCOPES = 32
 
-/** At most this many live tokens per user: a list and a guard against a runaway script. */
+/**
+ * At most this many live personal tokens per user: a list and a guard against a runaway script. A new one beyond it is
+ * refused (the person chooses which to revoke); CLI tokens have their own cap, [MAX_DEVICES_PER_USER].
+ */
 const val MAX_TOKENS_PER_USER = 100
+
+/** At most this many of a user's live tokens in one listing: every personal token, workstation and phone. */
+const val MAX_LISTED_TOKENS = MAX_TOKENS_PER_USER + MAX_DEVICES_PER_USER + MAX_PHONES_PER_USER
 
 /** At most this many live service keys per organization, for the same reasons. */
 const val MAX_SERVICE_KEYS_PER_ORG = 100
@@ -273,7 +294,7 @@ class DeviceNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Device not
 class InvalidTokenLifetimeException :
     OstromException(ErrorKind.INVALID_REQUEST, "A token lives between 1 and 366 days.")
 
-/** The user already has [MAX_TOKENS_PER_USER] live tokens. */
+/** The user already has [MAX_TOKENS_PER_USER] live personal tokens. */
 class TooManyTokensException :
     OstromException(ErrorKind.CONFLICT, "Too many live tokens: revoke one before creating another.")
 

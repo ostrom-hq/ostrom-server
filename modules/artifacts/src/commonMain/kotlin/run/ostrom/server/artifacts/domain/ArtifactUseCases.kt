@@ -12,10 +12,12 @@ interface PublishArtifactUseCase {
      *
      * @param caller The member.
      * @param title Its title.
-     * @param access `personal`, `team` or `link`.
+     * @param access `personal`, `team` or `link` (a person only).
      * @param files Its files.
      *
      * @return The artifact.
+     *
+     * @throws ArtifactPersonRequiredException For `link` when no person asks.
      */
     suspend fun create(caller: ArtifactCaller, title: String, access: String, files: List<UploadedFile>): Artifact
 
@@ -48,6 +50,7 @@ internal class PublishArtifactUseCaseImpl(
     ): Artifact {
         val checkedTitle = ArtifactRules.title(title)
         val checkedAccess = parseAccess(access)
+        if (checkedAccess == ArtifactAccess.LINK && !caller.person) throw ArtifactPersonRequiredException()
         ArtifactRules.check(files)
         val now = clock.now()
         val id = Uuid.random()
@@ -69,7 +72,7 @@ internal class PublishArtifactUseCaseImpl(
     }
 
     override suspend fun addVersion(caller: ArtifactCaller, id: Uuid, files: List<UploadedFile>): ArtifactVersion {
-        val artifact = rules.writable(caller, id)
+        val artifact = rules.owned(caller, id)
         ArtifactRules.check(files)
         val (recorded, blobs) = record(files)
         val known = repository.blobDigests(artifact.orgId, id)

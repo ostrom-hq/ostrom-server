@@ -5,12 +5,10 @@ import run.ostrom.server.artifacts.domain.ArtifactLocations
 import run.ostrom.server.artifacts.domain.InvalidArtifactRequestException
 import run.ostrom.server.artifacts.domain.MissingScopeException
 import run.ostrom.server.artifacts.domain.NotAMemberException
-import run.ostrom.server.artifacts.domain.SignInRequiredException
 import run.ostrom.server.artifacts.fakes.ALICE
 import run.ostrom.server.artifacts.fakes.ORG_A
 import run.ostrom.server.artifacts.fakes.TestOrgResolver
 import run.ostrom.server.artifacts.infrastructure.ArtifactsConfig
-import run.ostrom.server.artifacts.presentation.ARTIFACTS_MANAGE
 import run.ostrom.server.artifacts.presentation.ARTIFACTS_READ
 import run.ostrom.server.artifacts.presentation.ARTIFACTS_WRITE
 import run.ostrom.server.artifacts.presentation.FileDto
@@ -19,6 +17,8 @@ import run.ostrom.server.artifacts.presentation.contentHeaders
 import run.ostrom.server.artifacts.presentation.parseTicketRequest
 import run.ostrom.server.artifacts.presentation.toUploads
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import run.ostrom.server.kernel.auth.PrincipalChannel.BROWSER
+import run.ostrom.server.kernel.auth.PrincipalChannel.MOBILE_APP
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.InvalidConfigException
@@ -86,21 +86,6 @@ class ConfigAndCallersTest {
     }
 
     @Test
-    fun aServiceKeyNeverAdministersNorChangesAnAccessLevelOrDeletes() = runTest {
-        val dave = "dave"
-        val key = AuthenticatedPrincipal(dave, PrincipalKind.SERVICE, setOf(ARTIFACTS_WRITE))
-        // Its creator is an administrator: the key reads and writes as a member, never as the administrator.
-        assertFalse(TestOrgResolver.artifactCallerOf(key, ARTIFACTS_WRITE).admin)
-        assertFailsWith<SignInRequiredException> { TestOrgResolver.artifactCallerOf(key, ARTIFACTS_MANAGE) }
-        // A person signed in with the scope does it, as an administrator.
-        val person = AuthenticatedPrincipal(dave, PrincipalKind.USER, setOf(ARTIFACTS_WRITE))
-        assertTrue(TestOrgResolver.artifactCallerOf(person, ARTIFACTS_MANAGE).admin)
-        // Still needs the write scope, whoever asks.
-        val reader = AuthenticatedPrincipal(dave, PrincipalKind.USER, setOf(ARTIFACTS_READ))
-        assertFailsWith<MissingScopeException> { TestOrgResolver.artifactCallerOf(reader, ARTIFACTS_MANAGE) }
-    }
-
-    @Test
     fun scopesAndMembershipMakeTheCaller() = runTest {
         fun principal(
             kind: PrincipalKind,
@@ -109,7 +94,7 @@ class ConfigAndCallersTest {
         val caller = TestOrgResolver.artifactCallerOf(principal(PrincipalKind.SERVICE, ARTIFACTS_WRITE), ARTIFACTS_READ)
         assertEquals(ORG_A, caller.orgId)
         assertEquals(ALICE.toString(), caller.memberId)
-        assertFalse(caller.admin)
+        assertFalse(caller.person, "A token a program presents is no person")
         TestOrgResolver.artifactCallerOf(principal(PrincipalKind.SERVICE, ARTIFACTS_READ), ARTIFACTS_READ)
         TestOrgResolver.artifactCallerOf(principal(PrincipalKind.USER, "user:*"), ARTIFACTS_WRITE)
         assertFailsWith<MissingScopeException> {
@@ -124,16 +109,22 @@ class ConfigAndCallersTest {
                 ARTIFACTS_READ,
             )
         }
-        val admin = TestOrgResolver.artifactCallerOf(
-            AuthenticatedPrincipal("dave", PrincipalKind.USER, setOf("user:*")),
+        val browser = TestOrgResolver.artifactCallerOf(
+            AuthenticatedPrincipal("dave", PrincipalKind.USER, setOf("user:*"), "s1", channel = BROWSER),
             ARTIFACTS_READ,
         )
-        assertTrue(admin.admin)
-        val owner = TestOrgResolver.artifactCallerOf(
-            AuthenticatedPrincipal("carol", PrincipalKind.USER, setOf("user:*")),
+        assertTrue(browser.person)
+        assertEquals("s1", browser.credentialId)
+        val app = TestOrgResolver.artifactCallerOf(
+            AuthenticatedPrincipal("carol", PrincipalKind.USER, setOf(ARTIFACTS_READ), channel = MOBILE_APP),
             ARTIFACTS_READ,
         )
-        assertTrue(owner.admin)
+        assertTrue(app.person)
+        val personalToken = TestOrgResolver.artifactCallerOf(
+            AuthenticatedPrincipal("dave", PrincipalKind.USER, setOf(ARTIFACTS_WRITE), "t1"),
+            ARTIFACTS_WRITE,
+        )
+        assertFalse(personalToken.person, "A personal token, an administrator's included, is no person")
     }
 
     @Test

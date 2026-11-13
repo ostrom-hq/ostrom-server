@@ -6,6 +6,7 @@ import run.ostrom.server.identity.domain.ADMIN_READ_SCOPES
 import run.ostrom.server.identity.domain.ADMIN_SCOPES
 import run.ostrom.server.identity.domain.AdminApprovalForbiddenException
 import run.ostrom.server.identity.domain.AnswerDeviceAuthorizationUseCaseImpl
+import run.ostrom.server.identity.domain.ApiToken
 import run.ostrom.server.identity.domain.CLI_SCOPES
 import run.ostrom.server.identity.domain.CLI_TOKEN_LIFETIME
 import run.ostrom.server.identity.domain.DEVICE_CODE_LIFETIME
@@ -37,6 +38,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 class DeviceUseCasesTest {
@@ -50,7 +52,7 @@ class DeviceUseCasesTest {
     private val start = StartDeviceAuthorizationUseCaseImpl(authorizations, secrets, hasher, limiter, clock)
     private val get = GetDeviceAuthorizationUseCaseImpl(authorizations, limiter, clock)
     private val answer = AnswerDeviceAuthorizationUseCaseImpl(authorizations, limiter, audit, clock)
-    private val poll = PollDeviceAuthorizationUseCaseImpl(authorizations, secrets, hasher, audit, clock)
+    private val poll = PollDeviceAuthorizationUseCaseImpl(authorizations, tokens, secrets, hasher, audit, clock)
     private val userId = Uuid.random()
 
     @Test
@@ -86,6 +88,30 @@ class DeviceUseCasesTest {
         assertEquals(clock.now + CLI_TOKEN_LIFETIME, approved.token.token.expiresAt)
         assertEquals(approved.token.token, tokens.findBySecretHash("h(osc_secret2)"))
         assertEquals(DevicePollResult.Expired, poll("secret1"), "A device code gives one token")
+    }
+
+    @Test
+    fun theFiftyFirstWorkstationSignsTheOldestOutInsteadOfBeingRefused() = runTest {
+        val first = Instant.fromEpochSeconds(1_000)
+        val previous = (0 until 50).map { index ->
+            ApiToken(
+                Uuid.random(), userId, null, "laptop $index", TokenKind.CLI, CLI_SCOPES, "osc_hint", null,
+                first + index.seconds, clock.now + 1.hours, null, null,
+            ).also { tokens.create(it, "hash-$index") }
+        }
+        start("laptop", "ip")
+        answer(userId, "BCDF-GHJK", approve = true)
+        clock.now += 6.seconds
+
+        val approved = assertIs<DevicePollResult.Approved>(poll("secret1"))
+
+        val live = tokens.listLive(userId, setOf(TokenKind.CLI), clock.now)
+        assertEquals(50, live.size, "Fifty workstations at most")
+        assertTrue(approved.token.token in live, "The new login works")
+        assertNull(live.firstOrNull { it.id == previous.first().id }, "The oldest login is signed out")
+        val revoked = audit.entries.single { it.action == "token.revoked" }
+        assertEquals(previous.first().id.toString(), revoked.targetId)
+        assertEquals(mapOf("kind" to "cli", "reason" to "device_limit"), revoked.details)
     }
 
     @Test

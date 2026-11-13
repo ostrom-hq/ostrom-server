@@ -3,6 +3,7 @@ package run.ostrom.server.identity.infrastructure
 
 import run.ostrom.server.identity.domain.ApiToken
 import run.ostrom.server.identity.domain.ApiTokensRepository
+import run.ostrom.server.identity.domain.MAX_LISTED_TOKENS
 import run.ostrom.server.identity.domain.MAX_TOKENS_PER_USER
 import run.ostrom.server.identity.domain.TokenKind
 import run.ostrom.server.identity.domain.WebSession
@@ -131,7 +132,7 @@ class ApiTokensRepositoryImpl(
             "SELECT $TOKEN_COLUMNS FROM identity_api_tokens WHERE user_id = :user AND revoked_at IS NULL " +
                 "AND (expires_at IS NULL OR expires_at > :now) AND kind IN :kinds ORDER BY created_at DESC, id " +
                 "LIMIT :limit",
-        ).bind("user", userId).bind("now", now).bind("kinds", kinds.map { it.name }).bind("limit", MAX_TOKENS_PER_USER),
+        ).bind("user", userId).bind("now", now).bind("kinds", kinds.map { it.name }).bind("limit", MAX_LISTED_TOKENS),
     ).getOrThrow().map { it.toApiToken() }
 
     override suspend fun countLive(userId: Uuid, kinds: Set<TokenKind>, now: Instant): Int = driver.fetchAll(

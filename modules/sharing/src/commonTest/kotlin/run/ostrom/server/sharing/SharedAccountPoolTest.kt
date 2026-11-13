@@ -17,8 +17,10 @@ import run.ostrom.server.sharing.domain.SharedAccountPool
 import run.ostrom.server.sharing.domain.UNKNOWN_RESET
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -227,16 +229,29 @@ class SharedAccountPoolTest {
             AccountCredentials("access-foreign", "refresh-foreign", clock.now() + 8.hours),
             accountId = "acct-someone-else",
         )
-        refresher.onRefresh = {
-            repository.envelopes[account.id] = cipher.seal(
-                AccountCredentials("access-owner", "refresh-owner", clock.now() + 8.hours),
-                Sharing.orgA,
-                account.id,
-            )
-        }
+        refresher.onRefresh = { shareAgain(account, "owner") }
         assertEquals("access-owner", assertIs<LeaseResult.Leased>(lease()).lease.credentials.accessToken)
         assertEquals(AccountStatus.READY, repository.get(Sharing.orgA, account.id)!!.status, "Its share stands")
-        assertEquals(emptyList(), logged)
+        assertEquals(1, refresher.calls, "The new tokens are fresh: not refreshed again")
+        assertTrue(logged.isEmpty(), "No warning for an account whose share stands")
+    }
+
+    @Test
+    fun anAccountSharedAgainDuringARenewalKeepsItsNewTokensAndDropsTheRenewedPair() = runTest {
+        val account = account("raced", expiresAt = clock.now())
+        refresher.result = RefreshResult.Renewed(AccountCredentials("access-new", "refresh-new", clock.now() + 8.hours))
+        refresher.onRefresh = { shareAgain(account, "owner") }
+        assertEquals("access-owner", assertIs<LeaseResult.Leased>(lease()).lease.credentials.accessToken)
+        assertEquals(
+            "access-owner",
+            cipher.open(repository.envelopes.getValue(account.id), Sharing.orgA, account.id)!!.accessToken,
+        )
+    }
+
+    /** The owner shares [account] again with fresh tokens named after [label], as the CLI does. */
+    private suspend fun shareAgain(account: SharedAccount, label: String) {
+        val tokens = AccountCredentials("access-$label", "refresh-$label", clock.now() + 8.hours)
+        repository.upsert(account, cipher.seal(tokens, Sharing.orgA, account.id))
     }
 
     @Test
@@ -256,14 +271,71 @@ class SharedAccountPoolTest {
     }
 
     @Test
-    fun anUnreachableProviderKeepsTokensThatStillWork() = runTest {
-        account("soon", expiresAt = clock.now() + 2.minutes)
+    fun anUnreachableProviderRetiresTheAccountSinceItsRotationIsUncertain() = runTest {
+        val unsure = account("unsure", priority = 5, expiresAt = clock.now() + 2.minutes)
+        account("backup")
         refresher.result = RefreshResult.Unavailable
-        assertEquals("access-soon", assertIs<LeaseResult.Leased>(lease()).lease.credentials.accessToken)
-        repository.accounts.clear()
-        account("expired", expiresAt = clock.now() - 1.minutes)
-        assertIs<LeaseResult.Refused>(lease(), "Tried once, never loops")
-        assertEquals(AccountStatus.READY, repository.accounts.single().status)
+        assertEquals("backup", assertIs<LeaseResult.Leased>(lease()).lease.account.label)
+        assertEquals(AccountStatus.RECONNECT_REQUIRED, repository.get(Sharing.orgA, unsure.id)!!.status)
+        assertTrue(unsure.id in repository.pending, "The intent stays until new tokens clear it")
+        lease()
+        assertEquals(1, refresher.calls, "Its refresh token is never sent again")
+    }
+
+    @Test
+    fun aRefreshPastItsTimeoutRetiresTheAccount() = runTest {
+        val slow = account("slow", priority = 5, expiresAt = clock.now())
+        account("backup")
+        refresher.result = RefreshResult.Renewed(AccountCredentials("access-new", "refresh-new", clock.now() + 8.hours))
+        refresher.onRefresh = { delay(AccountTokens.REFRESH_TIMEOUT + 1.seconds) }
+        assertEquals("backup", assertIs<LeaseResult.Leased>(lease()).lease.account.label)
+        assertEquals(AccountStatus.RECONNECT_REQUIRED, repository.get(Sharing.orgA, slow.id)!!.status)
+    }
+
+    @Test
+    fun tokensAreRenewedOnlyWithinTheirMarginOfExpiry() = runTest {
+        account("a", expiresAt = clock.now() + AccountTokens.REFRESH_MARGIN + 1.seconds)
+        refresher.result = RefreshResult.Renewed(AccountCredentials("access-new", "refresh-new", clock.now() + 8.hours))
+        assertEquals("access-a", assertIs<LeaseResult.Leased>(lease()).lease.credentials.accessToken)
+        assertEquals(0, refresher.calls, "Still outside the margin: served as they are")
+        clock.advance(2.seconds)
+        val renewed = assertIs<LeaseResult.Leased>(lease()).lease
+        assertEquals("access-new", renewed.credentials.accessToken)
+        assertEquals(1, refresher.calls)
+    }
+
+    @Test
+    fun aRefreshThatThrowsRetiresTheAccountAndKeepsItsIntent() = runTest {
+        val broken = account("broken", priority = 5, expiresAt = clock.now())
+        account("backup")
+        refresher.onRefresh = { throw IllegalStateException("The provider's answer could not be read") }
+        assertEquals("backup", assertIs<LeaseResult.Leased>(lease()).lease.account.label)
+        assertEquals(AccountStatus.RECONNECT_REQUIRED, repository.get(Sharing.orgA, broken.id)!!.status)
+        assertTrue(broken.id in repository.pending, "The intent stays until new tokens clear it")
+    }
+
+    @Test
+    fun aCancellationThrownByTheRefresherIsNotSwallowed() = runTest {
+        account("a", expiresAt = clock.now())
+        refresher.onRefresh = { throw CancellationException("cancelled") }
+        assertFailsWith<CancellationException> { lease() }
+    }
+
+    @Test
+    fun aRequestCancelledDuringARefreshLetsTheRefreshEndAndBeStored() = runTest {
+        val account = account("a", expiresAt = clock.now())
+        refresher.result = RefreshResult.Renewed(AccountCredentials("access-new", "refresh-new", clock.now() + 8.hours))
+        refresher.onRefresh = { delay(1.seconds) }
+        val request = launch { lease() }
+        testScheduler.runCurrent()
+        request.cancelAndJoin()
+        assertEquals(
+            "access-new",
+            cipher.open(repository.envelopes.getValue(account.id), Sharing.orgA, account.id)!!.accessToken,
+            "The rotated pair is kept, not lost with the request",
+        )
+        assertEquals(AccountStatus.READY, repository.get(Sharing.orgA, account.id)!!.status)
+        assertFalse(account.id in repository.pending)
     }
 
     @Test
@@ -329,6 +401,15 @@ class SharedAccountPoolTest {
             Instant.fromEpochMilliseconds(0),
             cipher.open(repository.envelopes.getValue(account.id), Sharing.orgA, account.id)!!.expiresAt,
         )
+        val replaced = rotated(account)
+        repository.envelopes[account.id] = replaced
+        leased.observe(401, emptyMap())
+        assertEquals(replaced, repository.envelopes[account.id], "Tokens a refresh already replaced are kept")
+        repository.envelopes[account.id] = leasedTokens(account)
+        repository.pending += account.id
+        leased.observe(401, emptyMap())
+        assertEquals(leasedTokens(account), repository.envelopes[account.id], "A refresh in progress is left alone")
+        repository.pending -= account.id
         repository.envelopes[account.id] = "garbage"
         leased.observe(401, emptyMap())
         repository.envelopes.remove(account.id)
@@ -381,55 +462,71 @@ class SharedAccountPoolTest {
     }
 
     @Test
-    fun anUnreachableProviderIsNotAskedAgainForThirtySeconds() = runTest {
-        account("soon", expiresAt = clock.now() + 2.minutes)
-        refresher.result = RefreshResult.Unavailable
-        val pool = pool()
-        repeat(3) {
-            assertIs<LeaseResult.Leased>(
-                pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null),
-            ).lease.release()
-        }
-        assertEquals(1, refresher.calls, "One slow refresh, not one per lease")
-        clock.advance(AccountTokens.UNAVAILABLE_BACKOFF)
-        refresher.result = RefreshResult.Renewed(AccountCredentials("access-new", "refresh-new", clock.now() + 8.hours))
-        val renewed = assertIs<LeaseResult.Leased>(
-            pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null),
-        ).lease
-        assertEquals("access-new", renewed.credentials.accessToken)
-        assertEquals(2, refresher.calls)
-        clock.advance(10.hours)
-        refresher.result = RefreshResult.Unavailable
-        assertIs<LeaseResult.Refused>(pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null))
-        assertIs<LeaseResult.Refused>(
-            pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null),
-            "Expired during the back-off: not served, not retired",
-        )
-        assertEquals(3, refresher.calls)
-        assertEquals(AccountStatus.READY, repository.accounts.single().status)
-    }
-
-    @Test
-    fun aRefreshTokenRotatedByAnotherReplicaIsUsedInsteadOfRetiringTheAccount() = runTest {
+    fun anotherReplicaRefreshingIsWaitedForAndItsTokensUsedWithoutSendingTheTokenAgain() = runTest {
         val account = account("a", expiresAt = clock.now())
-        val rotated = AccountCredentials("access-other", "refresh-other", clock.now() + 8.hours)
-        refresher.result = RefreshResult.Revoked
-        refresher.onRefresh = {
-            // Another replica refreshed first and stored the rotated pair; ours is refused as already used.
-            repository.envelopes[account.id] = cipher.seal(rotated, Sharing.orgA, account.id)
+        repository.pending += account.id
+        val other = launch {
+            delay(2.seconds)
+            // The other replica stores its rotated pair and ends its intent.
+            repository.save(Sharing.orgA, account.id, 1, rotated(account))
         }
         assertEquals("access-other", assertIs<LeaseResult.Leased>(lease()).lease.credentials.accessToken)
+        other.join()
+        assertEquals(0, refresher.calls, "Only the owner of the intent calls the provider")
         assertEquals(AccountStatus.READY, repository.accounts.single().status)
     }
 
     @Test
-    fun aRefusedRefreshWhileTheTokensVanishedRetiresTheAccount() = runTest {
-        val account = account("a", expiresAt = clock.now())
-        refresher.result = RefreshResult.Revoked
-        refresher.onRefresh = { repository.envelopes.remove(account.id) }
-        assertIs<LeaseResult.Refused>(lease())
-        assertEquals(AccountStatus.RECONNECT_REQUIRED, repository.accounts.single().status)
+    fun aRefreshThatNeverEndsElsewhereGivesUpOnTheAccountForThisLeaseOnly() = runTest {
+        val busy = account("busy", priority = 5, expiresAt = clock.now())
+        account("backup")
+        repository.pending += busy.id
+        val start = testScheduler.currentTime
+        assertEquals("backup", assertIs<LeaseResult.Leased>(lease()).lease.account.label)
+        assertEquals(
+            AccountTokens.WAIT_TURN.inWholeMilliseconds * (AccountTokens.WAIT_TURNS - 1),
+            testScheduler.currentTime - start,
+            "It waited for the owner, 400 looks",
+        )
+        assertEquals(AccountStatus.READY, repository.get(Sharing.orgA, busy.id)!!.status, "Not retired: not stale yet")
+        assertEquals(0, refresher.calls)
     }
+
+    @Test
+    fun aStaleIntentRetiresTheAccountWithoutSendingTheToken() = runTest {
+        val dead = account("dead", priority = 5, expiresAt = clock.now())
+        account("backup")
+        repository.pending += dead.id
+        repository.staleIntents += dead.id
+        assertEquals("backup", assertIs<LeaseResult.Leased>(lease()).lease.account.label)
+        assertEquals(AccountStatus.RECONNECT_REQUIRED, repository.get(Sharing.orgA, dead.id)!!.status)
+        assertEquals(0, refresher.calls, "A dead owner's refresh is never taken over")
+        shareAgain(dead, "owner")
+        assertFalse(dead.id in repository.pending, "New tokens clear the intent")
+    }
+
+    @Test
+    fun anAccountNoLongerReadyWhenItsTokensAreReadServesNothing() = runTest {
+        val account = account("a")
+        val pool = pool()
+        repository.accounts[0] = account.copy(status = AccountStatus.DISABLED)
+        assertNull(tokens(repository, cipher, refresher, clock).fresh(account))
+        assertEquals(AccountStatus.DISABLED, repository.accounts.single().status, "Left as it is")
+        assertIs<LeaseResult.Refused>(pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null))
+    }
+
+    // The sealing is deterministic (ContextCipher): the same tokens seal to the same envelope.
+    private suspend fun leasedTokens(account: SharedAccount) = cipher.seal(
+        AccountCredentials("access-${account.label}", "refresh-${account.label}", clock.now() + 1.days),
+        Sharing.orgA,
+        account.id,
+    )
+
+    private suspend fun rotated(account: SharedAccount) = cipher.seal(
+        AccountCredentials("access-other", "refresh-other", clock.now() + 8.hours),
+        Sharing.orgA,
+        account.id,
+    )
 
     @Test
     fun aLeaseIsRefusedWhileEveryAccountIsAtItsConcurrency() = runTest {

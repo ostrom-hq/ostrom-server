@@ -9,6 +9,7 @@ import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.secrets.domain.CallerResolver
 import run.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
 import run.ostrom.server.sharing.domain.AccountGroups
+import run.ostrom.server.sharing.domain.AccountRefreshRepository
 import run.ostrom.server.sharing.domain.AccountSpendReader
 import run.ostrom.server.sharing.domain.AccountTokenCipher
 import run.ostrom.server.sharing.domain.AccountTokens
@@ -39,6 +40,7 @@ import run.ostrom.server.sharing.domain.UpdateSharedAccountUseCaseImpl
 import run.ostrom.server.sharing.domain.ViewSharedAccountUseCase
 import run.ostrom.server.sharing.domain.ViewSharedAccountUseCaseImpl
 import run.ostrom.server.sharing.infrastructure.AccountGroupsImpl
+import run.ostrom.server.sharing.infrastructure.AccountRefreshRepositoryImpl
 import run.ostrom.server.sharing.infrastructure.GroupRepositoryImpl
 import run.ostrom.server.sharing.infrastructure.HttpOAuthRefresher
 import run.ostrom.server.sharing.infrastructure.ProviderQuotaHeaderParser
@@ -83,6 +85,7 @@ object SharingModule : ServerModule {
             HttpOAuthRefresher(get(HTTP_CLIENT), get(), SharingConfig.tokenEndpoints(get<ConfigSource>()))
         }
         single<QuotaHeaderParser> { ProviderQuotaHeaderParser() }
+        single<AccountRefreshRepository> { AccountRefreshRepositoryImpl(get()) }
         single { AccountTokens(get(), get(), get(), get(), get()) }
         single<AccountGroups> { AccountGroupsImpl(get()) }
         single { SharedAccountPool(get(), get(), get(), get(), spend(), get(), get()) }

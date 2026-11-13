@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.gateway
 
-import run.ostrom.server.gateway.domain.BudgetCheck
 import run.ostrom.server.gateway.domain.AllowAllSpend
+import run.ostrom.server.gateway.domain.BudgetCheck
 import run.ostrom.server.gateway.domain.ByteSink
 import run.ostrom.server.gateway.domain.ByteSource
 import run.ostrom.server.gateway.domain.GatewayOrgConfig
@@ -14,8 +14,8 @@ import run.ostrom.server.gateway.domain.InferenceResponder
 import run.ostrom.server.gateway.domain.InferenceUpstream
 import run.ostrom.server.gateway.domain.InstanceProviderKeys
 import run.ostrom.server.gateway.domain.ModelPolicy
-import run.ostrom.server.gateway.domain.ProviderEndpoints
 import run.ostrom.server.gateway.domain.PriceTable
+import run.ostrom.server.gateway.domain.ProviderEndpoints
 import run.ostrom.server.gateway.domain.SpendGuard
 import run.ostrom.server.gateway.domain.UpstreamAnswer
 import run.ostrom.server.gateway.domain.UpstreamRequest
@@ -32,6 +32,7 @@ import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import run.ostrom.server.sharing.domain.AccountCredentials
 import run.ostrom.server.sharing.domain.AccountLimits
 import run.ostrom.server.sharing.domain.AccountProvider
+import run.ostrom.server.sharing.domain.AccountRefreshRepository
 import run.ostrom.server.sharing.domain.AccountStatus
 import run.ostrom.server.sharing.domain.AccountTokenCipher
 import run.ostrom.server.sharing.domain.AccountTokens
@@ -40,6 +41,8 @@ import run.ostrom.server.sharing.domain.OAuthRefresher
 import run.ostrom.server.sharing.domain.QuotaWindow
 import run.ostrom.server.sharing.domain.QuotaWindowRepository
 import run.ostrom.server.sharing.domain.RefreshResult
+import run.ostrom.server.sharing.domain.RefreshState
+import run.ostrom.server.sharing.domain.RefreshWrite
 import run.ostrom.server.sharing.domain.SharedAccount
 import run.ostrom.server.sharing.domain.SharedAccountPool
 import run.ostrom.server.sharing.domain.SharedAccountRepository
@@ -104,13 +107,15 @@ class InMemorySettings : GatewaySettingsRepository {
     }
 }
 
-/** Shared accounts and their windows in memory. */
+/** Shared accounts, their windows and their refresh intents in memory. */
 class InMemoryAccounts :
     SharedAccountRepository,
-    QuotaWindowRepository {
+    QuotaWindowRepository,
+    AccountRefreshRepository {
     val accounts = mutableListOf<SharedAccount>()
     val envelopes = mutableMapOf<Uuid, String>()
     val windows = mutableMapOf<Uuid, List<QuotaWindow>>()
+    private val pending = mutableSetOf<Uuid>()
 
     override suspend fun upsert(account: SharedAccount, envelope: String, expectedVersion: Long?): SharedAccount {
         accounts += account
@@ -136,8 +141,31 @@ class InMemoryAccounts :
 
     override suspend fun envelope(orgId: Uuid, id: Uuid) = envelopes[id]
 
-    override suspend fun putEnvelope(orgId: Uuid, id: Uuid, envelope: String) {
+    override suspend fun <T> locked(
+        orgId: Uuid,
+        id: Uuid,
+        decide: suspend (RefreshState?) -> Pair<RefreshWrite, T>,
+    ): T {
+        val account = get(orgId, id)
+        val state = account?.let { RefreshState(it.status, envelopes.getValue(id), id in pending, false, 1) }
+        val (write, result) = decide(state)
+        when (write) {
+            RefreshWrite.Keep -> Unit
+            RefreshWrite.Claim -> pending += id
+            RefreshWrite.Retire -> setStatus(orgId, id, AccountStatus.RECONNECT_REQUIRED)
+            is RefreshWrite.Reseal -> envelopes[id] = write.envelope
+        }
+        return result
+    }
+
+    override suspend fun save(orgId: Uuid, id: Uuid, credentialVersion: Long, envelope: String): Boolean {
         envelopes[id] = envelope
+        return pending.remove(id)
+    }
+
+    override suspend fun fail(orgId: Uuid, id: Uuid, credentialVersion: Long, status: AccountStatus): Boolean {
+        setStatus(orgId, id, status)
+        return id in pending
     }
 
     override suspend fun setStatus(orgId: Uuid, id: Uuid, status: AccountStatus) {

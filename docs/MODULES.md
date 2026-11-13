@@ -318,6 +318,21 @@ serves no call and the new pair is not stored. Pausing and resuming do not bring
 owner shares it again. An answer that names no account is accepted, because the field is optional at the providers.
 A fake token endpoint must therefore name the account's own id, or none.
 
+Renewals are coordinated in PostgreSQL, so any number of replicas share the accounts safely (TeamCode's
+`refresh_pending`, docs/replicas.md there). Providers rotate refresh tokens: one sent twice disconnects the account.
+Under the account row's lock (`SELECT … FOR UPDATE`), the replica that finds the tokens due (5 minutes before they
+expire) commits a refresh intent (`refresh_pending`, its start by the database's clock) before it calls the provider.
+Another replica that needs the account meanwhile looks again every 100 ms, up to 400 times, then leaves the account
+for that call (the pool tries the next one); it never sends the token itself. The owner has 45 seconds, and a request
+cancelled meanwhile does not cut the renewal short. It stores the new pair only while its intent is still the current
+one (`credential_version`): a share made meanwhile wins. Any failure (refused, unreachable, an unreadable answer, the
+45 seconds) leaves the provider's state unknown, so the account becomes `reconnect_required` and keeps its intent;
+an intent older than 60 seconds is a dead replica's, and the next call that needs the account marks it
+`reconnect_required` too. Only new tokens clear it: the owner sharing the account again, or an import. A share of an
+account whose refresh is in flight (an intent younger than 60 seconds) answers 409 and changes nothing. Before every
+replica runs this version, an older replica still renews with its in-memory lock and ignores the intent: finish the
+rollout before relying on it.
+
 | Key | Default | Meaning |
 |---|---|---|
 | `OSTROM_SHARING_CLAUDE_TOKEN_URL` | `https://platform.claude.com/v1/oauth/token` | Token endpoint of shared Claude accounts |

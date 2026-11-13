@@ -241,7 +241,9 @@ object IdentityModule : ServerModule {
         }
         single<GetDeviceAuthorizationUseCase> { GetDeviceAuthorizationUseCaseImpl(get(), get(), get()) }
         single<AnswerDeviceAuthorizationUseCase> { AnswerDeviceAuthorizationUseCaseImpl(get(), get(), get(), get()) }
-        single<PollDeviceAuthorizationUseCase> { PollDeviceAuthorizationUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<PollDeviceAuthorizationUseCase> {
+            PollDeviceAuthorizationUseCaseImpl(get(), get(), get(), get(), get(), get())
+        }
         single { SignInConfig.from(get()) }
         single(HTTP) {
             HttpClient {

@@ -33,13 +33,13 @@ class AccountLease internal constructor(
      * @param status The HTTP status.
      * @param headers The response headers, names in lower case.
      */
-    suspend fun observe(status: Int, headers: Map<String, String>) = pool.observe(account, status, headers)
+    suspend fun observe(status: Int, headers: Map<String, String>) = pool.observe(this, status, headers)
 
     /**
      * Reports that the provider stopped answering on this account and the call was cut: the account rests
      * [SharedAccountPool.STALL_COOLDOWN], like a 429 that names no reset, so the next calls go to another account.
      */
-    suspend fun stalled() = pool.observe(account, NO_ANSWER, emptyMap())
+    suspend fun stalled() = pool.observe(this, NO_ANSWER, emptyMap())
 
     /** Gives the slot back; idempotent, and done even when the request is being cancelled. */
     suspend fun release() {
@@ -216,14 +216,15 @@ class SharedAccountPool(
         return credentials?.let { LeaseResult.Leased(AccountLease(account, it, this)) }
     }
 
-    internal suspend fun observe(account: SharedAccount, status: Int, headers: Map<String, String>) {
+    internal suspend fun observe(lease: AccountLease, status: Int, headers: Map<String, String>) {
+        val account = lease.account
         val now = clock.now()
         val observed = parser.parse(account.provider, headers, now)
         if (observed.isNotEmpty()) windows.put(account.orgId, account.id, observed)
         when (status) {
             TOO_MANY_REQUESTS -> accounts.setCooldown(account.orgId, account.id, cooldownEnd(observed, headers, now))
             NO_ANSWER -> accounts.rest(account, now + STALL_COOLDOWN)
-            UNAUTHORIZED -> tokens.expire(account)
+            UNAUTHORIZED -> tokens.expire(account, lease.credentials)
         }
     }
 
