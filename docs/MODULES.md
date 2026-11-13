@@ -394,7 +394,7 @@ anonymous call gets 401 `unauthorized`. A module lists a key of ostrom-core's `S
 | `governance` | `governance.v1` | — |
 | `identity` | `audit.v1` | — |
 | `import` | `import.teamcode.v1` | — |
-| `integrations-github` | `github.v1` | a GitHub App: the environment's (`OSTROM_GITHUB_APP_ID` or `_SLUG`) or the manifest flow's |
+| `integrations-github` | `github.v1`; `github.link.v1` | a GitHub App: the environment's (`OSTROM_GITHUB_APP_ID` or `_SLUG`) or the manifest flow's; the latter once that App's OAuth client (id and secret) is known |
 | `mcp-relay` | `mcp.v1` | — |
 | `notifications` | `notifications.v1`, `notifications.push.v1` | — (Expo's push service needs no key; `OSTROM_EXPO_ACCESS_TOKEN` only when the project requires one) |
 | `receipts` | `receipts.v1` | — |

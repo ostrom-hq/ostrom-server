@@ -43,7 +43,10 @@ private fun tenant(table: String) = """
  * the secrets key (`AesGcmSecretCipher`), so a read of the table alone opens nothing. Version 3 (AUDIT-SECU-2): who
  * installed each installation, from its `installation.created` webhook, seen only by the transaction that names that
  * installation (no organization owns it yet); and the ids of the webhook deliveries handled in the last 30 days, the
- * instance's (an id and a time), so that a replayed delivery is ignored.
+ * instance's (an id and a time), so that a replayed delivery is ignored. Version 4: the members' GitHub links (one per
+ * member of an organization, one member per GitHub account in it, the tokens sealed) and their pending attempts (the
+ * device code or PKCE verifier sealed, the hash of the browser session of a web link), both an organization's rows
+ * under forced row level security.
  */
 val GitHubMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -150,6 +153,47 @@ val GitHubMigrations: List<SchemaMigration> = listOf(
             received_at TIMESTAMPTZ NOT NULL
         );
         CREATE INDEX github_webhook_deliveries_received ON github_webhook_deliveries (received_at)
+        """.trimIndent(),
+    ),
+    SchemaMigration(
+        4,
+        "create_github_links",
+        """
+        CREATE TABLE github_links (
+            org_id UUID NOT NULL,
+            member_id UUID NOT NULL,
+            github_user_id BIGINT NOT NULL,
+            github_login TEXT NOT NULL,
+            client_id TEXT NOT NULL,
+            tokens_sealed TEXT NOT NULL,
+            state TEXT NOT NULL,
+            access_expires_at TIMESTAMPTZ,
+            refresh_expires_at TIMESTAMPTZ,
+            token_version INTEGER NOT NULL,
+            refresh_pending BOOLEAN NOT NULL DEFAULT FALSE,
+            refresh_started_at TIMESTAMPTZ,
+            linked_at TIMESTAMPTZ NOT NULL,
+            refreshed_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (org_id, member_id),
+            UNIQUE (org_id, github_user_id)
+        );
+        CREATE TABLE github_link_attempts (
+            org_id UUID NOT NULL,
+            id TEXT NOT NULL,
+            member_id UUID NOT NULL,
+            kind TEXT NOT NULL,
+            secret_sealed TEXT NOT NULL,
+            binding TEXT,
+            poll_interval INTEGER NOT NULL,
+            next_poll_at TIMESTAMPTZ NOT NULL,
+            expires_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (org_id, id)
+        );
+        CREATE INDEX github_links_login ON github_links (org_id, github_login, member_id);
+        CREATE INDEX github_link_attempts_member ON github_link_attempts (org_id, member_id);
+        CREATE INDEX github_link_attempts_expiry ON github_link_attempts (org_id, expires_at);
+        ${tenant("github_links")}
+        ${tenant("github_link_attempts")}
         """.trimIndent(),
     ),
 )

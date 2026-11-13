@@ -66,6 +66,16 @@ class GitHubAppManifestsTest {
             .mapValues { it.value.jsonPrimitive.content }
         assertEquals("write", permissions["checks"])
         assertEquals("read", permissions["members"])
+        // The cloud sessions' user tokens clone and push: never more than the App's own permissions.
+        assertEquals("write", permissions["contents"])
+        assertEquals("write", permissions["pull_requests"])
+        assertEquals(
+            listOf(
+                "https://api.example/api/v1/github/app/install/callback",
+                "https://api.example/api/v1/github/link/callback",
+            ),
+            manifest["callback_urls"]?.jsonArray?.map { it.jsonPrimitive.content },
+        )
         assertEquals("pull_request", manifest["default_events"]?.jsonArray?.single()?.jsonPrimitive?.content)
         assertEquals(1, store.states.size, "Kept as its hash only")
         assertFalse(store.states.keys.single() == form.action.substringAfter("state="))

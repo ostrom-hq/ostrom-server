@@ -20,6 +20,8 @@ kotlin {
             implementation(project(":modules:rules"))
             // Who a pull request's author is in Ostrom: the person whose account is linked to that GitHub user.
             implementation(project(":modules:identity"))
+            // Whether cloud sessions are on (a new GitHub link starts only then): the runners module's configuration.
+            implementation(project(":modules:runners"))
             // RS256 for the App's JWT, HMAC-SHA256 for the webhook signature (OpenSSL, linked by the kernel).
             implementation(libs.cryptography.core)
             // Outbound HTTPS to GitHub: Curl on Linux, Darwin on macOS (CIO has no TLS on Kotlin/Native).

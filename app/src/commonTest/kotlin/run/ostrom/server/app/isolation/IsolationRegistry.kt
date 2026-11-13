@@ -35,6 +35,8 @@ import run.ostrom.server.app.isolation.Seed.WORKFLOW
 
 private const val SIGN_IN = "a sign-in flow: it names no organization, its code or link is the only key"
 private const val CALLBACK = "a redirect back from GitHub, bound to the state cookie of the browser that left"
+private const val LINK_CALLBACK = "a redirect back from GitHub: its single-use state names the attempt, which only " +
+    "the browser session that started it finishes"
 private const val SIGNED = "a webhook signed with the provider's secret: unsigned, it is refused before any lookup"
 /** The content origin's host in the matrix (OSTROM_ARTIFACTS_CONTENT_ORIGIN): the artifact pages are served there. */
 internal const val CONTENT_HOST = "artifacts.test"
@@ -385,6 +387,18 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/github/app/install/callback" to Case.Exempt(CALLBACK),
     "GET /api/v1/github/app/manifest/start" to Case.Target(),
     "GET /api/v1/github/app/manifest/callback" to Case.Exempt(CALLBACK),
+    // The members' GitHub links: the caller's own, or another member's for an owner or an admin.
+    "GET /api/v1/github/link" to Case.Target(),
+    "DELETE /api/v1/github/link" to Case.Target(),
+    "POST /api/v1/github/link/device" to Case.Target(),
+    "POST /api/v1/github/link/device/{id}" to Case.Target(mapOf("id" to Param.Fresh)),
+    "GET /api/v1/github/link/start" to Case.Target(),
+    "GET /api/v1/github/link/callback" to Case.Exempt(LINK_CALLBACK),
+    "GET /api/v1/github/links" to Case.Target(),
+    "GET /api/v1/github/links/{memberId}" to target("memberId" to MEMBER_ID),
+    // The seeded member is the simple member too: unlinking oneself is theirs to do, unlinking another an admin's.
+    "DELETE /api/v1/github/links/{memberId}" to target("memberId" to MEMBER_ID),
+    "GET /api/v1/github/links/{memberId}/start" to target("memberId" to MEMBER_ID, admin = true),
     "POST /webhooks/github" to Case.Exempt(SIGNED),
 )
 
