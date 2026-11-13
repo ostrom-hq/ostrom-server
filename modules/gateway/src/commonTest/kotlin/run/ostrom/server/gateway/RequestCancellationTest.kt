@@ -68,9 +68,10 @@ class RequestCancellationTest {
         val running = Uuid.random()
         var finished = false
         var paused = 0.milliseconds
+        // The pauses that ended: the one begun as the call stopped is cancelled with it.
         val timed = CancellationWatch(markers) {
-            paused += it
             delay(it)
+            paused += it
         }
         assertFailsWith<CancellationException> {
             timed.run(Gw.memberA, running) {
