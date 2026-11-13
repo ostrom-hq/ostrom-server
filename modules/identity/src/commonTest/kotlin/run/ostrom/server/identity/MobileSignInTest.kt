@@ -16,6 +16,7 @@ import run.ostrom.server.identity.domain.InvalidSignInStateException
 import run.ostrom.server.identity.domain.LinkIdentityUseCaseImpl
 import run.ostrom.server.identity.domain.MOBILE_ACCESS_DENIED
 import run.ostrom.server.identity.domain.MOBILE_LINK_REQUIRED
+import run.ostrom.server.identity.domain.MOBILE_SIGNUP_CLOSED
 import run.ostrom.server.identity.domain.MOBILE_REFUSED
 import run.ostrom.server.identity.domain.ListTokensUseCaseImpl
 import run.ostrom.server.identity.domain.MAX_PHONES_PER_USER
@@ -25,6 +26,8 @@ import run.ostrom.server.identity.domain.MobileClient
 import run.ostrom.server.identity.domain.MobileUnlockRefusedException
 import run.ostrom.server.identity.domain.RateLimitedException
 import run.ostrom.server.identity.domain.ResolveUserUseCaseImpl
+import run.ostrom.server.identity.domain.SignUpMode
+import run.ostrom.server.identity.domain.SignUpPolicyImpl
 import run.ostrom.server.identity.domain.RevokeTokenUseCaseImpl
 import run.ostrom.server.identity.domain.RotateTokenUseCaseImpl
 import run.ostrom.server.identity.domain.SignInMethods
@@ -50,6 +53,7 @@ import run.ostrom.server.identity.fakes.InMemoryWebSessionsRepository
 import run.ostrom.server.identity.fakes.RecordingAuditLog
 import run.ostrom.server.identity.fakes.ScriptedRateLimiter
 import run.ostrom.server.identity.fakes.SettableClock
+import run.ostrom.server.identity.fakes.InMemorySetupLinks
 import run.ostrom.server.identity.fakes.openSignUp
 import run.ostrom.server.identity.presentation.confirmPage
 import run.ostrom.server.identity.presentation.toUrl
@@ -214,6 +218,19 @@ class MobileSignInTest {
         val second = startMobile("google")
 
         assertEquals(MOBILE_LINK_REQUIRED, completeMobile("google", second, second, "good", null).error)
+    }
+
+    @Test
+    fun aStrangerOnAnInviteOnlyInstanceIsSentBackToTheAppWithoutAccount() = runTest {
+        val closed = SignUpPolicyImpl(SignUpMode.INVITE, InMemorySetupLinks(), null, hasher, clock)
+        val closedResolve = ResolveUserUseCaseImpl(users, closed, RecordingAuditLog(), clock)
+        val closedMobile = CompleteMobileSignInUseCaseImpl(methods, attempts, services, closedResolve, codes)
+        val state = startMobile()
+
+        val outcome = closedMobile("github", state, state, "good", null)
+
+        assertEquals(MobileCallback(APP_REDIRECT_URI, "app-state", error = MOBILE_SIGNUP_CLOSED), outcome)
+        assertTrue(users.users.isEmpty() && codes.codes.isEmpty())
     }
 
     @Test
