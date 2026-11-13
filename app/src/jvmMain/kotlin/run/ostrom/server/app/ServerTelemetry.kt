@@ -31,8 +31,11 @@ internal fun startTelemetry(config: ServerConfig, exporters: CoroutineScope): Te
         instanceId = config.instanceId ?: Uuid.random().toString(),
     ),
     scope = exporters,
-    httpClient = { HttpClient(CIO) },
+    httpClient = ::telemetryHttpClient,
 )
+
+/** The exporters' HTTP client: CIO, with the JDK's TLS. */
+internal fun telemetryHttpClient(): HttpClient = HttpClient(CIO)
 
 /**
  * Stops the server with [stop], then flushes the telemetry whatever failed in it: the last spans and logs, the one

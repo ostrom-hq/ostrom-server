@@ -23,7 +23,17 @@ internal actual fun processResidentBytes(): Long? = residentBytes(File("/proc/se
 
 /** The container's memory limit: cgroup v2 `memory.max`, else cgroup v1 `memory.limit_in_bytes`. */
 internal actual fun processMemoryLimit(): String? =
-    firstLine(File("/sys/fs/cgroup/memory.max")) ?: firstLine(File("/sys/fs/cgroup/memory/memory.limit_in_bytes"))
+    memoryLimit(File("/sys/fs/cgroup/memory.max"), File("/sys/fs/cgroup/memory/memory.limit_in_bytes"))
+
+/**
+ * The memory limit of a cgroup.
+ *
+ * @param v2 Its cgroup v2 `memory.max`.
+ * @param v1 Its cgroup v1 `memory.limit_in_bytes`, read when [v2] has none.
+ *
+ * @return The first line of the first file that has one, or null.
+ */
+internal fun memoryLimit(v2: File, v1: File): String? = firstLine(v2) ?: firstLine(v1)
 
 /**
  * The `VmRSS` line of a `/proc/<pid>/status` file, in bytes.
@@ -32,10 +42,11 @@ internal actual fun processMemoryLimit(): String? =
  *
  * @return Null when the file or the line is missing or unreadable.
  */
-internal fun residentBytes(status: File): Long? = readLines(status)
-    ?.firstOrNull { it.startsWith("VmRSS:") }
-    ?.removePrefix("VmRSS:")?.trim()?.removeSuffix("kB")?.trim()?.toLongOrNull()
-    ?.let { it * BYTES_PER_KIB }
+internal fun residentBytes(status: File): Long? {
+    val line = readLines(status)?.firstOrNull { it.startsWith("VmRSS:") } ?: return null
+    val kib = line.removePrefix("VmRSS:").trim().removeSuffix("kB").trim().toLongOrNull() ?: return null
+    return kib * BYTES_PER_KIB
+}
 
 /**
  * The first line of [file].

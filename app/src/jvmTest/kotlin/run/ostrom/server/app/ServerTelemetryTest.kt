@@ -29,4 +29,9 @@ class ServerTelemetryTest {
             assertFalse(exporters.isActive, "the exporters are cancelled after the last flush")
         }
     }
+
+    @Test
+    fun theExportersUseTheCioClient() {
+        telemetryHttpClient().use { assertEquals("CIOEngine", it.engine::class.simpleName) }
+    }
 }

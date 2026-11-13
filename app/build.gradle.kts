@@ -105,7 +105,12 @@ kover {
     reports {
         filters {
             excludes {
-                classes("run.ostrom.server.app.MainKt", "run.ostrom.server.app.MainKt$*", "run.ostrom.server.app.DrainKt")
+                classes(
+                    "run.ostrom.server.app.MainKt",
+                    "run.ostrom.server.app.MainKt$*",
+                    "run.ostrom.server.app.DrainKt",
+                    "run.ostrom.server.app.DrainKt$*",
+                )
             }
         }
     }
