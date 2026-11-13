@@ -12,7 +12,9 @@ import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.CSRF_COOKIE
 import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.auth.SESSION_COOKIE
+import run.ostrom.server.kernel.auth.WriteAccess
 import run.ostrom.server.kernel.auth.authenticated
+import run.ostrom.server.kernel.auth.mayWrite
 import run.ostrom.server.kernel.auth.requirePrincipal
 import run.ostrom.server.kernel.auth.requireRecentSignIn
 import run.ostrom.server.kernel.auth.requireScope
@@ -88,7 +90,9 @@ private fun Route.accountRoutes(dependencies: IdentityRoutesDependencies) = with
         // With `Ostrom-Org`, the member and organization of that organization; an id that is not a membership is
         // ignored, never a 404 or a 409 (`/me` is how the console learns the caller's organizations).
         val current = principal.namedOrg?.let { orgResolver.currentOrganization(principal) }
-        call.respond(getProfile(principal.userId()).toMeResponse(principal.scopes, csrf, current))
+        // The console shows its Admin area to a person who administers the instance, never to a program's token.
+        val admin = principal.mayWrite(WriteAccess.PERSON) && instanceAdmins.isAdmin(principal.userId())
+        call.respond(getProfile(principal.userId()).toMeResponse(principal.scopes, csrf, current, admin))
     }
     get<MeApi.Account> {
         val principal = call.requireScope("profile:read")

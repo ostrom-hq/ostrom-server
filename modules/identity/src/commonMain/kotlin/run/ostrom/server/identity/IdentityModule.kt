@@ -121,6 +121,8 @@ import run.ostrom.server.identity.infrastructure.DirectoryMailSender
 import run.ostrom.server.identity.infrastructure.ElevatedTokensRepositoryImpl
 import run.ostrom.server.identity.infrastructure.GitHubOAuthProvider
 import run.ostrom.server.identity.infrastructure.GitHubTokenVerifierImpl
+import run.ostrom.server.identity.infrastructure.IdentityInstanceAccounts
+import run.ostrom.server.identity.infrastructure.IdentityInstanceAuditTrail
 import run.ostrom.server.identity.infrastructure.IdentityMigrations
 import run.ostrom.server.identity.infrastructure.IdentityOrgAuditTrail
 import run.ostrom.server.identity.infrastructure.MagicLinksRepositoryImpl
@@ -171,6 +173,8 @@ import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.InstanceBootstrapper
 import run.ostrom.server.kernel.module.ServerModule
+import run.ostrom.server.kernel.settings.InstanceAccounts
+import run.ostrom.server.kernel.settings.InstanceAuditTrail
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.server.routing.Route
@@ -225,6 +229,8 @@ object IdentityModule : ServerModule {
         single<ServiceKeyAudit> { ServiceKeyAuditImpl(get()) }
         single<GovernanceAudit> { AuditLogGovernanceAudit(get()) }
         single<OrgAuditTrail> { IdentityOrgAuditTrail(get()) }
+        single<InstanceAuditTrail> { IdentityInstanceAuditTrail(get()) }
+        single<InstanceAccounts> { IdentityInstanceAccounts(get(), get()) }
         single<AuditVerifier> { AuditVerifierImpl(get(), get()) }
         single<ListOrgAuditUseCase> { ListOrgAuditUseCaseImpl(get(), get(), get()) }
         single { OrgAuditRoutesDependencies(get(), get()) }
@@ -235,7 +241,7 @@ object IdentityModule : ServerModule {
         single<SetupLinksRepository> { SetupLinksRepositoryImpl(get()) }
         single<SignUpPolicy> {
             // The orgs module binds the invitations: absent (a server without it), only the setup link admits.
-            SignUpPolicyImpl(get<IdentityConfig>().signUp, get(), getOrNull<SignUpInvitations>(), get(), get())
+            SignUpPolicyImpl(get<IdentityConfig>().signUp, get(), getOrNull<SignUpInvitations>(), get(), get(), get())
         }
         single<BootstrapInstanceUseCase> { BootstrapInstanceUseCaseImpl(get(), get(), get(), get()) }
         single<InstanceBootstrapper> {
@@ -316,6 +322,7 @@ object IdentityModule : ServerModule {
             IdentityRoutesDependencies(
                 get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
                 getAll<SignOutListener>(),
+                get(),
                 get(),
             )
         }

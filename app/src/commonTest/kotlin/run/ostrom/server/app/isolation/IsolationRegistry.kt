@@ -62,6 +62,14 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/capabilities" to Case.Target(),
     "GET /api/v1/auth/providers" to Case.Target(),
     "GET /api/v1/tokens/scopes" to Case.Target(),
+    // The instance's administration (admin): the instance's, no organization's; a person who administers it only.
+    "GET /api/v1/admin/instance-admins" to Case.Target(),
+    "POST /api/v1/admin/instance-admins" to Case.Target(body = """{"email":"someone@example.com"}"""),
+    "DELETE /api/v1/admin/instance-admins/{userId}" to Case.Target(mapOf("userId" to Param.Fresh)),
+    "GET /api/v1/admin/settings" to Case.Target(),
+    "GET /api/v1/admin/settings/{section}" to Case.Target(mapOf("section" to Param.Fixed("mail"))),
+    "PUT /api/v1/admin/settings/{section}" to
+        Case.Target(mapOf("section" to Param.Fixed("mail")), body = """{"version":0}"""),
 
     // Sign-in flows (identity).
     "GET /api/v1/auth/{provider}/start" to Case.Exempt(SIGN_IN),

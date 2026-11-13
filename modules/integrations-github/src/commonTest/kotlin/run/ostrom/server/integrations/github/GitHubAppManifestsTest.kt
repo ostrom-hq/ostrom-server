@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.integrations.github
 
-import run.ostrom.server.integrations.github.domain.ConfiguredInstanceAdmins
 import run.ostrom.server.integrations.github.domain.GitHubAppCredentials
 import run.ostrom.server.integrations.github.domain.GitHubAppExistsException
 import run.ostrom.server.integrations.github.domain.GitHubAppManifests
@@ -9,6 +8,7 @@ import run.ostrom.server.integrations.github.domain.GitHubAppSourceImpl
 import run.ostrom.server.integrations.github.domain.GitHubManifestTarget
 import run.ostrom.server.integrations.github.domain.GitHubUnavailableException
 import run.ostrom.server.integrations.github.domain.NotAnInstanceAdminException
+import run.ostrom.server.integrations.github.domain.StoredInstanceAdmins
 import run.ostrom.server.integrations.github.infrastructure.AppJwts
 import run.ostrom.server.integrations.github.infrastructure.GitHubAppSetup
 import run.ostrom.server.integrations.github.infrastructure.GitHubSettings
@@ -18,6 +18,7 @@ import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.config.MapConfigSource
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
+import kotlin.uuid.Uuid
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -39,13 +40,13 @@ class GitHubAppManifestsTest {
     private val clock = SettableClock()
     private val store = MemoryGitHubAppStore()
     private val api = FakeGitHubDirectoryApi()
-    private val admin = AuthenticatedPrincipal("usr_admin", PrincipalKind.USER, emptySet())
+    private val admin = AuthenticatedPrincipal(ADMIN_ID.toString(), PrincipalKind.USER, emptySet())
     private val target =
         GitHubManifestTarget("https://api.example", "https://console.example", "https://github.com", "Ostrom")
 
     private fun manifests(environment: GitHubAppCredentials = GitHubAppCredentials()): GitHubAppManifests {
         val apps = GitHubAppSourceImpl(environment, store, clock)
-        return GitHubAppManifests(apps, store, api, ConfiguredInstanceAdmins(setOf("usr_admin")), target, clock)
+        return GitHubAppManifests(apps, store, api, StoredInstanceAdmins { it == ADMIN_ID }, target, clock)
     }
 
     @Test
@@ -86,7 +87,7 @@ class GitHubAppManifestsTest {
 
     @Test
     fun onlyAnAdministratorPersonStartsItAndNeverOverAnExistingApp() = runTest {
-        val service = AuthenticatedPrincipal("usr_admin", PrincipalKind.SERVICE, emptySet())
+        val service = AuthenticatedPrincipal(ADMIN_ID.toString(), PrincipalKind.SERVICE, emptySet())
         val stranger = AuthenticatedPrincipal("usr_other", PrincipalKind.USER, emptySet())
         assertFailsWith<NotAnInstanceAdminException> { manifests().start(service, null, SESSION) }
         assertFailsWith<NotAnInstanceAdminException> { manifests().start(stranger, null, SESSION) }
@@ -94,7 +95,7 @@ class GitHubAppManifestsTest {
             GitHubAppSourceImpl(GitHubAppCredentials(), store, clock),
             store,
             api,
-            ConfiguredInstanceAdmins(emptySet()),
+            StoredInstanceAdmins { false },
             target,
             clock,
         )
@@ -162,7 +163,7 @@ class GitHubAppManifestsTest {
             GitHubAppSourceImpl(GitHubAppCredentials(), MemoryGitHubAppStore(), clock),
             racing,
             api,
-            ConfiguredInstanceAdmins(setOf("usr_admin")),
+            StoredInstanceAdmins { it == ADMIN_ID },
             target,
             clock,
         )
@@ -238,17 +239,16 @@ class GitHubAppManifestsTest {
     @Test
     fun theSetupIsReadFromTheEnvironment() {
         val defaults = GitHubAppSetup.from(MapConfigSource(emptyMap()))
-        assertEquals(GitHubAppSetup("http://localhost:8080", "Ostrom", emptySet()), defaults)
+        assertEquals(GitHubAppSetup("http://localhost:8080", "Ostrom"), defaults)
         val set = GitHubAppSetup.from(
             MapConfigSource(
                 mapOf(
                     "OSTROM_PUBLIC_URL" to " https://api.acme.dev/ ",
                     "OSTROM_GITHUB_APP_NAME" to " Acme Ostrom ",
-                    "OSTROM_INSTANCE_ADMINS" to "usr_1, ,usr_2",
                 ),
             ),
         )
-        assertEquals(GitHubAppSetup("https://api.acme.dev", "Acme Ostrom", setOf("usr_1", "usr_2")), set)
+        assertEquals(GitHubAppSetup("https://api.acme.dev", "Acme Ostrom"), set)
         val settings = GitHubSettings("1", "pem", "hook", "slug")
         assertEquals(GitHubAppCredentials("1", "slug", "pem", "hook"), settings.credentials())
     }
@@ -264,3 +264,5 @@ private suspend fun kindOf(block: suspend () -> Unit): ErrorKind? = try {
 }
 
 private const val SESSION = "session-of-the-admin"
+
+private val ADMIN_ID: Uuid = Uuid.parse("00000000-0000-0000-0000-0000000ad111")

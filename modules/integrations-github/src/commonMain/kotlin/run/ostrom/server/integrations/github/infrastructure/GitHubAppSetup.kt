@@ -9,23 +9,20 @@ import run.ostrom.server.kernel.config.ConfigSource
  *
  * @property publicUrl `OSTROM_PUBLIC_URL`, the API's public URL, where GitHub sends people back and posts webhooks.
  * @property appName `OSTROM_GITHUB_APP_NAME`, the name of the App created on GitHub (unique on GitHub).
- * @property instanceAdmins `OSTROM_INSTANCE_ADMINS`, the user ids (comma-separated) of who may create the App.
  */
-data class GitHubAppSetup(val publicUrl: String, val appName: String, val instanceAdmins: Set<String>) {
+data class GitHubAppSetup(val publicUrl: String, val appName: String) {
     /** Reads the setup. */
     companion object {
         /**
          * Reads the setup.
          *
          * @param config The environment.
-         * @return The setup; `http://localhost:8080`, `Ostrom` and nobody by default.
+         * @return The setup; `http://localhost:8080` and `Ostrom` by default.
          */
         fun from(config: ConfigSource): GitHubAppSetup = GitHubAppSetup(
             // `(value ?: default).trim()`, not `value?.trim() ?: default`: no null check after a trim that never is.
             publicUrl = (config["OSTROM_PUBLIC_URL"] ?: "http://localhost:8080").trim().trimEnd('/'),
             appName = (config["OSTROM_GITHUB_APP_NAME"] ?: "Ostrom").trim(),
-            instanceAdmins = config["OSTROM_INSTANCE_ADMINS"].orEmpty().split(',')
-                .map { it.trim() }.filter { it.isNotEmpty() }.toSet(),
         )
     }
 }

@@ -320,6 +320,7 @@ data class AccountResponse(
  * @property organization With `Ostrom-Org` naming one of the caller's organizations, that organization.
  * @property capabilities What the credential may do: its scopes, sorted (`user:*` for a browser session).
  * @property csrfToken For a browser session, the token to send in `X-CSRF-Token` on state-changing requests.
+ * @property instanceAdmin True when the person administers the instance (the console's Admin area); absent otherwise.
  */
 @Serializable
 data class MeResponse(
@@ -328,6 +329,7 @@ data class MeResponse(
     val organization: MeOrganizationResponse? = null,
     val capabilities: List<String>,
     val csrfToken: String? = null,
+    val instanceAdmin: Boolean? = null,
 )
 
 /**

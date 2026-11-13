@@ -26,6 +26,7 @@ import run.ostrom.server.integrations.github.domain.GitHubRepo
 import run.ostrom.server.integrations.github.domain.GitHubRepository
 import run.ostrom.server.integrations.github.domain.GitHubRepositoryReader
 import run.ostrom.server.integrations.github.domain.GitHubTeam
+import run.ostrom.server.integrations.github.domain.InstanceAdmins
 import run.ostrom.server.integrations.github.infrastructure.GitHubAppSetup
 import run.ostrom.server.integrations.github.infrastructure.GitHubDirectoryQueries
 import run.ostrom.server.integrations.github.infrastructure.GitHubSettings
@@ -170,7 +171,14 @@ class GitHubDirectoryPostgresTest {
         }
         // No App in the environment: the manifest flow is open.
         single { GitHubSettings(null, null, null, null, webOrigin = "https://console.example") }
-        single { GitHubAppSetup("https://api.example", "Ostrom", setOf("user:a:owner")) }
+        single { GitHubAppSetup("https://api.example", "Ostrom") }
+        // The instance's administrator (the admin module's, stored): the owner of organization A.
+        single<InstanceAdmins> {
+            object : InstanceAdmins {
+                override suspend fun isAdmin(principal: AuthenticatedPrincipal): Boolean =
+                    principal.subjectId == "user:a:owner"
+            }
+        }
         single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
         single<Clock> { clock }
         single<GitHubApi> { github }

@@ -3,6 +3,8 @@ package run.ostrom.server.identity.domain
 
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
+import run.ostrom.server.kernel.settings.IgnoringInstanceAdminGrants
+import run.ostrom.server.kernel.settings.InstanceAdminGrants
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
@@ -125,6 +127,13 @@ interface SetupLinksRepository {
      * @return True once anyone signed up.
      */
     suspend fun anyAccount(): Boolean
+
+    /**
+     * The people who used a setup link, and when: the instance's first administrators.
+     *
+     * @return Each person, with the time they used it.
+     */
+    suspend fun owners(): Map<Uuid, Instant>
 }
 
 /** The organizations' invitations (the orgs module): a live one lets its person get an account. */
@@ -192,6 +201,7 @@ interface SignUpPolicy {
  * @param invitations The organizations' invitations, when the orgs module runs.
  * @param hasher Hashes the tokens.
  * @param clock The clock.
+ * @param grants Makes the setup link's person an administrator of the instance.
  */
 class SignUpPolicyImpl(
     override val mode: SignUpMode,
@@ -199,6 +209,7 @@ class SignUpPolicyImpl(
     private val invitations: SignUpInvitations?,
     private val hasher: SecretHasher,
     private val clock: Clock,
+    private val grants: InstanceAdminGrants = IgnoringInstanceAdminGrants(),
 ) : SignUpPolicy {
     override suspend fun admits(identity: VerifiedIdentity, grant: SignUpGrant): Boolean {
         val token = (grant as? SignUpGrant.Presented)?.token
@@ -210,7 +221,8 @@ class SignUpPolicyImpl(
     override suspend fun claim(grant: SignUpGrant, userId: Uuid) {
         val token = (grant as? SignUpGrant.Presented)?.token?.takeIf { isSetupToken(it) } ?: return
         // Lost only to a simultaneous sign-up with the same link: the account stays, without the setup's rights.
-        setupLinks.consume(hasher.hash(token), userId, clock.nowMillis())
+        val now = clock.nowMillis()
+        if (setupLinks.consume(hasher.hash(token), userId, now)) grants.grantSetupOwner(userId, now)
     }
 
     override suspend fun accepts(token: String): Boolean {
