@@ -1,11 +1,11 @@
 # Adding a functional module
 
 Every functional domain of the server (`identity`, `orgs`, `sessions`, `launches`, `gates`, `receipts`, `compiler`,
-`workflow-runs`, `mcp-relay`, `secrets`, `usage`, `gateway`, `budgets`, `runners`, `automations`, `artifacts`,
-`integrations-github`, `integrations-slack`, `sharing`, `governance`, `todos`) is a Gradle module under `modules/<name>/`.
-Each one already exists as an empty skeleton, registered in the app: **the owner of a module only edits its own
-directory**, plus its single line in `app/.../ServerModules.kt` if the order must change. `modules/instance` is the
-complete reference example: copy its shape.
+`workflow-runs`, `mcp-relay`, `secrets`, `events`, `usage`, `gateway`, `budgets`, `runners`, `automations`,
+`artifacts`, `integrations-github`, `integrations-slack`, `sharing`, `governance`, `todos`) is a Gradle module under
+`modules/<name>/`. Each one already exists as an empty skeleton, registered in the app: **the owner of a module only
+edits its own directory**, plus its single line in `app/.../ServerModules.kt` if the order must change.
+`modules/instance` is the complete reference example: copy its shape.
 
 Read [`ostrom-core/docs/CONVENTIONS.md`](https://github.com/ostrom-hq/ostrom-core/blob/main/docs/CONVENTIONS.md)
 first: it wins over this page wherever they differ.
@@ -453,6 +453,7 @@ anonymous call gets 401 `unauthorized`. A module lists a key of ostrom-core's `S
 | `billing` | `billing.v1` | Stripe configured (`OSTROM_STRIPE_SECRET_KEY`) |
 | `budgets` | `budgets.v1` | — |
 | `compiler` | `packages.v1`, `workflows.v1` | — |
+| `events` | `events.v1` | — |
 | `gates` | `gates.v1` | — |
 | `gateway` | `inference.v1`, `inference.queue.v1`, `inference.cancel.v1` | — (an organization can set its own provider keys) |
 | `governance` | `governance.v1` | — |
@@ -499,6 +500,11 @@ owner, so the serving role reads the history (the start-up check) and never rewr
   (`<org>:<id>`, 64 at most), never what they hold: a replica with a subscriber of that org reads them from the
   ledger inside the org, one without reads nothing. Best effort like the feed itself: a notification sent while a
   replica's listener reconnects is lost to it; the ledger stays complete.
+- **The event feed holds across replicas**: every module publishes to the organization's journal
+  (`events_journal`, kernel `OrgEventPublisher`, preferably in the transaction of the change it reports) under the
+  organization's row of `events_cursors`, so the sequence has no gap and commit order is sequence order; each open
+  stream of `GET /api/v1/events` reads the journal every second on its own replica, so an event published on one
+  replica reaches the streams of all of them within a poll. Events are kept 7 days.
 - **SQLite** (tests and local mode) is not wired yet: sqlx4k has a SQLite driver with the same `Driver` interface;
   repositories must stay portable SQL where they can.
 - **The instance signer is provisional** (`kernel/signing`): it moves to `ostrom-core` once published; the

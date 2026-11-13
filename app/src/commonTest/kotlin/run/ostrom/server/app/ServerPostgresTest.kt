@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.app
 
+import run.ostrom.server.events.infrastructure.JournalOrgEventPublisher
 import run.ostrom.server.gateway.domain.ModelUsageSink
+import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.http.HealthResponse
 import run.ostrom.server.sessions.domain.services.SessionCosts
 import run.ostrom.server.testing.serverTest
@@ -29,6 +31,8 @@ class ServerPostgresTest {
         // The ports that fall back to dropping everything are bound in the full server: the costs reach the ledger.
         assertIs<LedgerModelUsageSink>(server.koin.get<ModelUsageSink>())
         assertIs<LedgerSessionCosts>(server.koin.get<SessionCosts>())
+        // The modules' events reach the organization's journal.
+        assertIs<JournalOrgEventPublisher>(server.koin.get<OrgEventPublisher>())
     }
 
     @Test

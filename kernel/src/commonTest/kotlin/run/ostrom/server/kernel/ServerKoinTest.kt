@@ -2,6 +2,10 @@
 package run.ostrom.server.kernel
 
 import run.ostrom.server.kernel.audit.DiscardingOrgAuditTrail
+import run.ostrom.server.kernel.events.DiscardingOrgEventPublisher
+import run.ostrom.server.kernel.events.OrgEventDraft
+import run.ostrom.server.kernel.events.OrgEventPublisher
+import run.ostrom.server.kernel.events.OrgEventType
 import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.audit.OrgAuditTrail
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -108,6 +112,19 @@ class ServerKoinTest {
         val bound = OrgAuditTrail { }
         val identity = ProbeModule("identity", module { single<OrgAuditTrail> { bound } })
         assertSame(bound, serverKoin(kernel, listOf(identity)).get<OrgAuditTrail>())
+    }
+
+    @Test
+    fun publishesNoEventUntilTheEventsModuleBindsThePublisher() = runTest {
+        val publisher = serverKoin(kernel, emptyList()).get<OrgEventPublisher>()
+        assertIs<DiscardingOrgEventPublisher>(publisher)
+        val event = OrgEventDraft(OrgEventType.WAIT_CREATED, "wait-1", null)
+        publisher.publish(Uuid.random(), listOf(event))
+        val bound = DiscardingOrgEventPublisher()
+        val events = ProbeModule("events", module { single<OrgEventPublisher> { bound } })
+        assertSame(bound, serverKoin(kernel, listOf(events)).get<OrgEventPublisher>())
+        assertEquals(OrgEventType.TODO_UPDATED, OrgEventType.parse("cloud.todo"))
+        assertNull(OrgEventType.parse("cloud.unknown"))
     }
 
     @Test

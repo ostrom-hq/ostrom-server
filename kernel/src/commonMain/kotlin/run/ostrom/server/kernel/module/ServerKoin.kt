@@ -11,6 +11,8 @@ import run.ostrom.server.kernel.auth.RejectingServiceKeyAudit
 import run.ostrom.server.kernel.auth.RejectingTokenAuthenticator
 import run.ostrom.server.kernel.auth.ServiceKeyAudit
 import run.ostrom.server.kernel.auth.TokenAuthenticator
+import run.ostrom.server.kernel.events.DiscardingOrgEventPublisher
+import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.settings.DiscardingInstanceAuditTrail
 import run.ostrom.server.kernel.settings.EmptyInstanceSettings
 import run.ostrom.server.kernel.settings.IgnoringInstanceAdminGrants
@@ -32,11 +34,12 @@ import org.koin.dsl.module
  * Builds the server's Koin: the kernel, then every module, **without overrides** (two modules binding the same type
  * fail the start instead of one silently replacing the other). The only defaults a module may replace are the
  * [TokenAuthenticator], the [PrincipalOrgResolver], the [OrgAuditTrail], the [ServiceKeyAudit], the
- * [PhoneUnlockProofs], the [InstanceKeyring] and the instance's administration ports ([InstanceSettings],
- * [InstanceAdministrators], [InstanceAdminGrants], [InstanceAccounts], [InstanceAuditTrail]): when no module binds
- * them (before the identity, orgs, instance and admin modules exist, or in a module's own tests), every token is
- * rejected, no one is a member of any organization, the audit trails write nothing, no service key acts, no phone
- * unlock proves a yes, only the current key verifies, no setting is stored and nobody administers the instance.
+ * [PhoneUnlockProofs], the [InstanceKeyring], the [OrgEventPublisher] and the instance's administration ports
+ * ([InstanceSettings], [InstanceAdministrators], [InstanceAdminGrants], [InstanceAccounts], [InstanceAuditTrail]): when
+ * no module binds them (before the identity, orgs, instance, events and admin modules exist, or in a module's own
+ * tests), every token is rejected, no one is a member of any organization, the audit trails write nothing, no service
+ * key acts, no phone unlock proves a yes, only the current key verifies, no event is published, no setting is stored
+ * and nobody administers the instance.
  *
  * @param kernel The kernel definitions ([kernelModule]).
  * @param modules The functional modules.
@@ -67,6 +70,7 @@ fun serverKoin(kernel: Module, modules: List<ServerModule>, overrides: Module? =
     if (koin.getOrNull<PhoneUnlockProofs>() == null) {
         koin.loadModules(listOf(module { single<PhoneUnlockProofs> { RejectingPhoneUnlockProofs() } }))
     }
+    loadDefault<OrgEventPublisher>(koin) { DiscardingOrgEventPublisher() }
     // What the admin module's bindings are built from first: probing one builds it, and a missing dependency would
     // read as a missing binding.
     loadDefault<InstanceAccounts>(koin) { NoInstanceAccounts() }
