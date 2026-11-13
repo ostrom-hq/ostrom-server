@@ -39,9 +39,9 @@ class Contract(val schema: ContractSchema, val operations: ContractOperations) {
         private val loaded = mutableMapOf<String, Contract>()
 
         /**
-         * The contract CI gives (`OSTROM_CONTRACT_OPENAPI`, the pinned ostrom-core's `api/openapi.yaml` as JSON), read once
-         * per test process; null where none is given (a local run, the native job), unless `OSTROM_CONTRACT_REQUIRED`
-         * is `true`, where a missing contract fails instead of skipping.
+         * The contract CI gives (`OSTROM_CONTRACT_OPENAPI`, the pinned ostrom-core's `api/openapi.yaml` as JSON), read
+         * once per test process; null where none is given (a local run, the native job), unless
+         * `OSTROM_CONTRACT_REQUIRED` is `true`, where a missing contract fails instead of skipping.
          *
          * @param environment The test's configuration.
          * @return The contract, or null.

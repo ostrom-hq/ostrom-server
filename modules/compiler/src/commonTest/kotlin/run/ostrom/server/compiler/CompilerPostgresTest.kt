@@ -559,7 +559,8 @@ class CompilerPostgresTest {
 
         val catalog = server.call("agent:a:l1", "/api/v1/gates/catalog?repo=acme-api").body<JsonObject>()
         assertEquals("closed", catalog.getValue("failMode").jsonPrimitive.content)
-        // The real answer, one gated action and ungated ones, against the pinned ostrom-core's contract (WEB-PARCOURS 3344).
+        // The real answer, one gated action and ungated ones, against the pinned ostrom-core's contract
+        // (WEB-PARCOURS 3344).
         val contract = Contract.from(EnvironmentConfigSource())?.schema
         contract?.assertMatches("GateCatalog", catalog)
         val push = catalog.getValue("actions").jsonArray.map { it.jsonObject }

@@ -187,18 +187,14 @@ jobs:
       # E2E-SWEEP reads the contract (the OpenAPI and api/contract/served-routes.txt of the ostrom-core the image pins
       # in gradle/ostrom-core.ref, CS-03) and the routes the image serves (core's scripts/served-routes.py on the
       # image's own sources): without them it is skipped (run 41549184819, E2E-SWEEP-005), as in ostrom-e2e's ci.yml.
-      # The whole history, to check out that commit once the image's revision is known.
+      # The whole history, with every file (no sparse checkout: its partial clone would fetch the pinned commit's
+      # files later, without the key), to check out that commit once the image's revision is known.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ostrom-hq/ostrom-core
           ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
           path: core-contract
           fetch-depth: 0
-          sparse-checkout: |
-            api/openapi.yaml
-            api/contract
-            scripts/served-routes.py
-          sparse-checkout-cone-mode: false
           persist-credentials: false
       # Called by ci-e2e: the image ci-image built from this very checkout.
       - name: The image of the calling run (ci-image)
