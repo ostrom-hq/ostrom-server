@@ -38,7 +38,7 @@ class RequestCancellationRepositoryImpl(private val driver: Driver) : RequestCan
     override suspend fun isCancelled(orgId: Uuid, memberId: Uuid, requestId: Uuid): Boolean {
         val statement = Statement.create(CANCELLATION_READ_SQL).bind("org_id", orgId).bind("member_id", memberId)
             .bind("request_id", requestId)
-        return driver.fetchInOrg(orgId, statement).getOrThrow().isNotEmpty()
+        return driver.fetchInOrg(orgId, statement).getOrThrow().any()
     }
 }
 
