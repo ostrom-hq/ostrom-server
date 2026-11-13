@@ -29,7 +29,7 @@ internal object GatesQueries {
      * Whether `:approver` (any case) has a request on a gate of `:session`: the session's links by their primary key,
      * then the requests of each gate by `gates_requests_by_gate`.
      */
-    const val APPROVES = "SELECT 1 AS one FROM gates_sessions s JOIN gates_requests r ON r.gate_id = s.gate_id " +
+    const val APPROVES = "SELECT s.session_id FROM gates_sessions s JOIN gates_requests r ON r.gate_id = s.gate_id " +
         "WHERE s.org_id = :org AND s.session_id = :session AND r.org_id = :org " +
         "AND r.approver_key = lower(:approver) LIMIT 1"
 

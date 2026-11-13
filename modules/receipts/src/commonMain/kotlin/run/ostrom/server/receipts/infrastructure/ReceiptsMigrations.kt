@@ -60,7 +60,9 @@ val ReceiptsMigrations: List<SchemaMigration> = listOf(
     // `ALWAYS`, in its own transaction, whose ACCESS EXCLUSIVE lock (taken by the first ALTER TABLE) keeps any other
     // statement off the table until it commits; the signed bodies are not touched. The owner reads every
     // organization's rows for that one statement, with the policies no longer forced on it (as gates migration 3). A
-    // database where the sessions module has not run yet has no session to read: the owners stay unknown there.
+    // database where the sessions module has not run yet has no session to read: the owners stay unknown there. A
+    // member's page reads the receipts about no session by `receipts_by_session` (`session_id IS NULL`), and those of
+    // one kind by the partial `receipts_without_session`, never through the organization's other receipts.
     SchemaMigration(
         3,
         "receipts_session_and_member",
@@ -87,7 +89,9 @@ val ReceiptsMigrations: List<SchemaMigration> = listOf(
         ALTER TABLE receipts_receipts FORCE ROW LEVEL SECURITY;
         ALTER TABLE receipts_receipts ENABLE ALWAYS TRIGGER receipts_receipts_append_only;
         CREATE INDEX receipts_by_session ON receipts_receipts (org_id, session_id, created_at DESC, id DESC);
-        CREATE INDEX receipts_by_member ON receipts_receipts (org_id, member, created_at DESC, id DESC)
+        CREATE INDEX receipts_by_member ON receipts_receipts (org_id, member, created_at DESC, id DESC);
+        CREATE INDEX receipts_without_session ON receipts_receipts (org_id, subject_kind, created_at DESC, id DESC)
+            WHERE session_id IS NULL
         """.trimIndent(),
     ),
 )

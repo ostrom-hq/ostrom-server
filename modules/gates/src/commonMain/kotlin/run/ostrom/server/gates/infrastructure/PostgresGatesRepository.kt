@@ -110,23 +110,19 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository, Gat
         }
     }
 
-    override suspend fun approves(orgId: Uuid, approver: String, sessionId: String): Boolean = driver.transaction {
-        Tx(this).run {
-            scope.enter(orgId)
-            val statement = Statement.create(GatesQueries.APPROVES).bind("org", orgId)
-                .bind("session", sessionId).bind("approver", approver)
-            executor.rows(statement).isNotEmpty()
+    override suspend fun sessionsApprovedBy(orgId: Uuid, approver: String, sessionId: String?): List<String> =
+        driver.transaction {
+            Tx(this).run {
+                scope.enter(orgId)
+                val statement = if (sessionId == null) {
+                    Statement.create(GatesQueries.APPROVED_SESSIONS)
+                } else {
+                    Statement.create(GatesQueries.APPROVES).bind("session", sessionId)
+                }
+                executor.rows(statement.bind("org", orgId).bind("approver", approver))
+                    .map { it.get("session_id").asString() }
+            }
         }
-    }
-
-    override suspend fun sessionsApprovedBy(orgId: Uuid, approver: String): List<String> = driver.transaction {
-        Tx(this).run {
-            scope.enter(orgId)
-            val statement = Statement.create(GatesQueries.APPROVED_SESSIONS).bind("org", orgId)
-                .bind("approver", approver)
-            executor.rows(statement).map { it.get("session_id").asString() }
-        }
-    }
 
     override suspend fun approversOf(orgId: Uuid, gateIds: List<Uuid>): Map<Uuid, List<String>> {
         if (gateIds.isEmpty()) return emptyMap()

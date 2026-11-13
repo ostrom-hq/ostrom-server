@@ -58,8 +58,11 @@ class ReceiptAccess(private val repository: ReceiptsRepository, private val read
      * @return Null for an owner or an administrator (every receipt), the caller's audience otherwise.
      */
     suspend fun audience(reader: ReceiptReader): ReceiptAudience? {
-        if (reader.readsAll) return null
-        val person = reader.person ?: return ReceiptAudience(null, emptyList())
-        return ReceiptAudience(person, readers.approvedSessions(reader.orgId, person))
+        val person = reader.person
+        return when {
+            reader.readsAll -> null
+            person == null -> ReceiptAudience(null, emptyList())
+            else -> ReceiptAudience(person, readers.approvedSessions(reader.orgId, person))
+        }
     }
 }

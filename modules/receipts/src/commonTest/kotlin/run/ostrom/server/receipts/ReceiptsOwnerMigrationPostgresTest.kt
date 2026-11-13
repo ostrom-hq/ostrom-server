@@ -50,7 +50,8 @@ class ReceiptsOwnerMigrationPostgresTest {
 
             val rows = fixtures.fetchAll("SELECT id, session_id, member FROM receipts_receipts ORDER BY id")
                 .getOrThrow().map {
-                    Triple(it.get("id").asString(), it.get("session_id").asStringOrNull(), it.get("member").asStringOrNull())
+                    val member = it.get("member").asStringOrNull()
+                    Triple(it.get("id").asString(), it.get("session_id").asStringOrNull(), member)
                 }
             assertEquals(
                 listOf(

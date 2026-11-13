@@ -13,9 +13,16 @@ import run.ostrom.server.compiler.domain.models.PackagePin
 import run.ostrom.server.compiler.domain.models.StoredPackage
 import run.ostrom.server.compiler.domain.repositories.CompilerRepository
 import run.ostrom.server.gates.GatesModule
+import run.ostrom.server.gates.domain.models.ApprovalRequest
+import run.ostrom.server.gates.domain.models.AskedVia
+import run.ostrom.server.gates.domain.models.Gate
+import run.ostrom.server.gates.domain.models.GateMode
+import run.ostrom.server.gates.domain.models.GateStatus
 import run.ostrom.server.gates.domain.models.GateSubject
+import run.ostrom.server.gates.domain.models.RequestStatus
 import run.ostrom.server.gates.domain.services.GateCheckProof
 import run.ostrom.server.gates.domain.services.GateCheckProofs
+import run.ostrom.server.gates.infrastructure.PostgresGatesRepository
 import run.ostrom.server.identity.IdentityModule
 import run.ostrom.server.identity.domain.ApiToken
 import run.ostrom.server.identity.domain.ApiTokensRepository
@@ -52,6 +59,7 @@ import run.ostrom.server.testing.serverTest
 import run.ostrom.server.workflowruns.domain.repositories.RunAudience
 import run.ostrom.server.workflowruns.domain.repositories.RunQuery
 import run.ostrom.server.workflowruns.domain.repositories.WorkflowRunsRepository
+import run.ostrom.server.workflowruns.domain.services.RunSessions
 import run.ostrom.server.workflowruns.infrastructure.RunQueries
 import run.ostrom.server.workflowruns.infrastructure.RunsGateCheckProofs
 import run.ostrom.server.workflowruns.presentation.BUNDLE_FORMAT
@@ -665,6 +673,46 @@ class WorkflowRunsPostgresTest {
         text = "t",
         dev = "ada",
     )
+
+    @Test
+    fun theRunsReadTheApproversOfASessionsGatesFromTheGatesModule() = serverTest(modules) { server ->
+        // TeamCode #238 (parity TC-NEW-675a530-2): the person a gate of s-1 was sent to reads its checks and notices.
+        val org = Uuid.random()
+        val gate = Gate(
+            id = Uuid.random(),
+            orgId = org,
+            key = "deploy:acme/api",
+            subject = GateSubject("acme/api", actionClass = "deploy", command = "kubectl", scope = "repo:acme/api"),
+            node = null,
+            label = "Deploy",
+            mode = GateMode.ENFORCED,
+            status = GateStatus.PENDING,
+            askedBy = listOf("ada"),
+            askedVia = setOf(AskedVia.HOOK),
+            sessionIds = listOf("s-1"),
+            shownDigest = "sha256:deploy",
+            evidence = emptyList(),
+            createdAt = Clock.System.now(),
+        )
+        val request = ApprovalRequest(
+            id = Uuid.random(),
+            gateId = gate.id,
+            orgId = org,
+            approverId = "rev",
+            status = RequestStatus.PENDING,
+            createdAt = gate.createdAt,
+        )
+        PostgresGatesRepository(server.driver).transaction {
+            insertGate(gate)
+            insertRequests(listOf(request))
+        }
+        val sessions = server.koin.get<RunSessions>()
+        assertTrue(sessions.approves(org, "rev", "s-1"))
+        assertFalse(sessions.approves(org, "rev", "s-2"), "Another session")
+        assertFalse(sessions.approves(org, "ada", "s-1"), "The asker is no approver")
+        assertEquals(listOf("s-1"), sessions.approvedBy(org, "REV"))
+        assertEquals(emptyList(), sessions.approvedBy(Uuid.random(), "rev"), "Another organization")
+    }
 
     private companion object {
         const val PAGE = 50

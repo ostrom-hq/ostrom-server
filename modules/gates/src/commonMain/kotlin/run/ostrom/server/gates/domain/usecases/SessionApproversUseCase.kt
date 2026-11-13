@@ -39,7 +39,7 @@ interface SessionApproversUseCase {
  */
 class SessionApproversUseCaseImpl(private val repository: GatesRepository) : SessionApproversUseCase {
     override suspend fun approves(orgId: Uuid, person: String, sessionId: String): Boolean =
-        repository.approves(orgId, person, sessionId)
+        repository.sessionsApprovedBy(orgId, person, sessionId).isNotEmpty()
 
     override suspend fun invoke(orgId: Uuid, person: String): List<String> =
         repository.sessionsApprovedBy(orgId, person)
