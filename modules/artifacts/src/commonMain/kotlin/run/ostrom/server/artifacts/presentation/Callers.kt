@@ -34,7 +34,8 @@ fun AuthenticatedPrincipal.allowsArtifacts(scope: String): Boolean =
 
 /**
  * The member a request acts for. Their role is not read: it gives no right over another member's artifact. Whether a
- * person presents the credential is [WriteAccess.PERSON]'s rule: a browser session or the unlocked app.
+ * person presents the credential is [WriteAccess.PERSON]'s rule: a browser session, the unlocked app or the CLI's
+ * sign-in, as TeamCode's interactive login.
  *
  * @throws MissingScopeException When the credential lacks [scope].
  * @throws NotAMemberException When it acts for no organization.

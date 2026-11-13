@@ -83,7 +83,7 @@ fun Route.waitsRoutes(dependencies: WaitsRoutesDependencies) = with(dependencies
         }
         post<WaitsApi.Id.Answer> { params ->
             val principal = call.requirePrincipal()
-            // Only a person answers, in the console or the unlocked app: never a token, whatever its scopes (S2-52).
+            // Only a person answers: the console, the unlocked app or the CLI's sign-in, never a program's token.
             principal.requireWrite(WriteAccess.PERSON)
             val caller = orgResolver.waitCallerOf(principal, WAITS_WRITE)
             val request = call.receive<AnswerWaitRequest>()

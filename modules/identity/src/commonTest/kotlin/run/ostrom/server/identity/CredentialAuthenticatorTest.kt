@@ -95,6 +95,9 @@ class CredentialAuthenticatorTest {
         assertEquals(PrincipalKind.USER, principal?.kind)
         assertEquals(orgId.toString(), principal?.orgId)
         assertEquals(null, principal?.personalTokenName, "Only a personal token is named")
+        assertEquals(true, principal?.signedIn, "The CLI's sign-in is TeamCode's interactive login")
+        token("osg_a", TokenKind.ADMIN, org = orgId)
+        assertEquals(true, authenticator.authenticate("osg_a")?.signedIn, "So is the one of ostrom login --admin")
     }
 
     @Test
