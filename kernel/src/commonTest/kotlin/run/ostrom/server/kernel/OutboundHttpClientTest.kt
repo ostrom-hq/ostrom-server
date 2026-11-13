@@ -58,7 +58,7 @@ class OutboundHttpClientTest {
     fun everyConnectionGoesThroughTheLocalCheck() = realTime {
         val client = outboundHttpClient(engine = mock { respond("") })
         try {
-            // The proxy is spelled differently per platform (java.net.Proxy on the JVM); its address is in it either way.
+            // Spelled differently per platform (java.net.Proxy on the JVM); the address is in it either way.
             assertNotNull(PROXY.find(client.engine.config.proxy.toString()))
         } finally {
             client.close()
