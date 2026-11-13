@@ -9,6 +9,7 @@ import run.ostrom.server.sharing.domain.AccountProvider
 import run.ostrom.server.sharing.domain.AccountRefreshingException
 import run.ostrom.server.sharing.domain.AccountStatus
 import run.ostrom.server.sharing.domain.AccountTokens
+import run.ostrom.server.sharing.domain.RefreshOwnership
 import run.ostrom.server.sharing.domain.SharedAccount
 import run.ostrom.server.sharing.domain.SharedAccountRepository
 import io.github.smyrgeorge.sqlx4k.Driver
@@ -52,6 +53,7 @@ class SharedAccountRepositoryImpl(private val driver: Driver) : SharedAccountRep
                 .bind("provider_account_id", account.providerAccountId)
                 .bindNullable("owner", account.ownerMemberId, Uuid::class)
                 .bind("status", account.status.name)
+                .bind("ownership", account.ownership.name)
                 .bind("envelope", envelope),
         ).getOrThrow().singleOrNull()
             ?: throw when {
@@ -96,7 +98,7 @@ class SharedAccountRepositoryImpl(private val driver: Driver) : SharedAccountRep
         Statement.create(
             "SELECT $ACCOUNT_COLUMNS FROM sharing_accounts " +
                 "WHERE org_id = :org_id AND provider = :provider AND status = 'READY' " +
-                "ORDER BY priority DESC, id LIMIT 1000",
+                "AND ownership <> 'PENDING_HANDOVER' ORDER BY priority DESC, id LIMIT 1000",
         ).bind("org_id", orgId).bind("provider", provider.name),
     ).getOrThrow().map { it.toAccount() }
 
@@ -141,6 +143,19 @@ class SharedAccountRepositoryImpl(private val driver: Driver) : SharedAccountRep
     override suspend fun setCooldown(orgId: Uuid, id: Uuid, until: Instant) {
         driver.setColumn(orgId, id, "cooldown_until = :value", bump = false) { bind("value", until) }
     }
+
+    // TeamCode's handover refusal: an intent on the row, in flight or left by a failure, is cleared by new tokens only.
+    override suspend fun setOwnership(orgId: Uuid, id: Uuid, ownership: RefreshOwnership): SharedAccount? =
+        driver.fetchInOrg(
+            orgId,
+            Statement.create(
+                "UPDATE sharing_accounts SET ownership = :ownership, version = version + 1 " +
+                    "WHERE org_id = :org_id AND id = :id AND NOT refresh_pending RETURNING $ACCOUNT_COLUMNS",
+            )
+                .bind("org_id", orgId)
+                .bind("id", id)
+                .bind("ownership", ownership.name),
+        ).getOrThrow().firstOrNull()?.toAccount()
 }
 
 /**
@@ -158,7 +173,8 @@ private fun refreshingSql(table: String) =
 // refresh intent and credential version, since no new tokens were stored. An account another member owns is
 // never taken over, nor a row past the expected version (no row comes back).
 private val SHARE_AGAIN =
-    "UPDATE sharing_accounts SET label = :label, email = :email, status = :status, cooldown_until = NULL, " +
+    "UPDATE sharing_accounts SET label = :label, email = :email, status = :status, ownership = :ownership, " +
+        "cooldown_until = NULL, " +
         "envelope = :envelope, version = version + 1, refresh_pending = FALSE, refresh_started_at = NULL, " +
         "credential_version = credential_version + 1 " +
         "WHERE org_id = :org_id AND provider = :provider AND provider_account_id = :provider_account_id " +
@@ -169,12 +185,14 @@ private val SHARE_AGAIN =
 private val UPSERT =
     "INSERT INTO sharing_accounts (id, org_id, provider, label, email, provider_account_id, " +
         "owner_member_id, priority, status, max_concurrent, utilization_ceiling, monthly_budget_micros, " +
-        "daily_budget_micros, allowed_members, cooldown_until, envelope, created_at, version) " +
+        "daily_budget_micros, allowed_members, cooldown_until, envelope, created_at, version, ownership) " +
         "VALUES (:id, :org_id, :provider, :label, :email, :provider_account_id, :owner, :priority, " +
-        ":status, :max_concurrent, :ceiling, :budget, :daily, :allowed, NULL, :envelope, :created_at, 1) " +
+        ":status, :max_concurrent, :ceiling, :budget, :daily, :allowed, NULL, :envelope, :created_at, 1, " +
+        ":ownership) " +
         "ON CONFLICT (org_id, provider, provider_account_id) DO UPDATE SET label = EXCLUDED.label, " +
         "email = EXCLUDED.email, status = CASE WHEN sharing_accounts.id = EXCLUDED.id " +
-        "THEN EXCLUDED.status ELSE sharing_accounts.status END, cooldown_until = NULL, " +
+        "THEN EXCLUDED.status ELSE sharing_accounts.status END, ownership = CASE WHEN sharing_accounts.id = " +
+        "EXCLUDED.id THEN EXCLUDED.ownership ELSE sharing_accounts.ownership END, cooldown_until = NULL, " +
         "envelope = CASE WHEN sharing_accounts.id = EXCLUDED.id THEN EXCLUDED.envelope " +
         "ELSE sharing_accounts.envelope END, version = sharing_accounts.version + 1, " +
         "refresh_pending = sharing_accounts.refresh_pending AND sharing_accounts.id <> EXCLUDED.id, " +

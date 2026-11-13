@@ -12,11 +12,14 @@ import kotlinx.serialization.Serializable
  *
  * @property dryRun Reports the plan without writing anything.
  * @property cutover The final run, once TeamCode is stopped (owners only, recorded in the audit log): it also revives
- *   the shared accounts waiting for a reconnection, testing TeamCode's tokens first.
+ *   the shared accounts waiting for a reconnection, testing TeamCode's tokens first, and hands over those waiting for
+ *   their handover.
+ * @property accessOnly TeamCode's `--access-only` trial: the shared accounts serve with TeamCode's access tokens and
+ *   are never renewed by Ostrom.
  */
 @Serializable
 @Resource("/api/v1/import/teamcode")
-class TeamCodeImportApi(val dryRun: Boolean = false, val cutover: Boolean = false)
+class TeamCodeImportApi(val dryRun: Boolean = false, val cutover: Boolean = false, val accessOnly: Boolean = false)
 
 /** The scope a console token needs to import (a browser session has every user scope). */
 const val IMPORT_SCOPE: String = "import:write"
@@ -162,10 +165,17 @@ data class TeamCodeImportRequest(
  * @property name Its name.
  * @property action `planned`, `created`, `updated`, `unchanged`, `skipped` or `revive_at_cutover` (a shared account
  *   left waiting for a reconnection until the cutover run).
- * @property reason Why it was skipped.
+ * @property reason Why it was skipped, or a warning.
+ * @property refreshOwnership `pending_handover` or `access_only` for a shared account left to TeamCode's refresh.
  */
 @Serializable
-data class ImportItemDto(val kind: String, val name: String, val action: String, val reason: String? = null)
+data class ImportItemDto(
+    val kind: String,
+    val name: String,
+    val action: String,
+    val reason: String? = null,
+    val refreshOwnership: String? = null,
+)
 
 /**
  * The import report.
@@ -176,6 +186,8 @@ data class ImportItemDto(val kind: String, val name: String, val action: String,
  * @property unchanged How many were already as in TeamCode.
  * @property skipped How many were not imported.
  * @property reviveAtCutover How many shared accounts wait for a reconnection until the cutover run.
+ * @property pendingHandover How many shared accounts wait for their handover.
+ * @property accessOnly How many shared accounts serve access-only.
  */
 @Serializable
 data class ImportReportDto(
@@ -185,4 +197,6 @@ data class ImportReportDto(
     val unchanged: Int,
     val skipped: Int,
     val reviveAtCutover: Int,
+    val pendingHandover: Int = 0,
+    val accessOnly: Int = 0,
 )

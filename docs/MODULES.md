@@ -346,6 +346,19 @@ organization are remembered: past that, a new session is placed without being re
 another's. Only a SHA-256 digest of the session id is stored. `inFlight` in `GET /api/v1/accounts` and
 `GET /api/v1/capacity` counts every replica.
 
+Refresh ownership follows TeamCode's (`docs/capacity.md` « Refresh ownership » there, `sharing.handover.v1`): a share
+from a sign-in is Ostrom's at once, since nothing else holds its refresh token. An account the TeamCode import creates
+waits for a handover (`refreshOwnership` `pending_handover`, status `pending_handover`): TeamCode may still renew its
+tokens, and two refreshers of one rotating refresh token disconnect the account, so it serves nothing and no replica
+leases it. Each later import gives it TeamCode's current tokens. Once TeamCode no longer uses it, an owner or admin
+hands it over (`POST /api/v1/accounts/{id}/handover`, or the import's cutover run, which hands over every waiting
+account with TeamCode's tokens), and Ostrom renews it from then on. The import's `accessOnly` trial (TeamCode's
+`--access-only`), or `POST /api/v1/accounts/{id}/access-only`, serves an account with its access token and never
+renews it: once the token is within the 5-minute margin of its expiry, the account serves nothing until imported
+again. Pausing and resuming never change the ownership; a member's own share of a waiting or access-only account is
+refused (403 `account_in_use`), an admin's takes it over. A handover is refused (409 `account_refreshing`) while a
+refresh intent is on the row, in flight or left by a failure: new tokens clear it first.
+
 | Key | Default | Meaning |
 |---|---|---|
 | `OSTROM_SHARING_CLAUDE_TOKEN_URL` | `https://platform.claude.com/v1/oauth/token` | Token endpoint of shared Claude accounts |

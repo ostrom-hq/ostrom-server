@@ -2,6 +2,7 @@
 package run.ostrom.server.importer.presentation
 
 import run.ostrom.server.importer.domain.ImportAction
+import run.ostrom.server.importer.domain.ImportHandover
 import run.ostrom.server.importer.domain.ImportReport
 import run.ostrom.server.importer.domain.TeamCodeAccount
 import run.ostrom.server.importer.domain.TeamCodeAssignment
@@ -71,10 +72,20 @@ private fun TeamCodeAccountDto.toDomain() = TeamCodeAccount(
 
 /** Maps the report to the API. */
 fun ImportReport.toDto() = ImportReportDto(
-    items = items.map { ImportItemDto(it.kind.name.lowercase(), it.name, it.action.name.lowercase(), it.reason) },
+    items = items.map {
+        ImportItemDto(
+            it.kind.name.lowercase(),
+            it.name,
+            it.action.name.lowercase(),
+            it.reason,
+            it.handover?.name?.lowercase(),
+        )
+    },
     created = count(ImportAction.CREATED),
     updated = count(ImportAction.UPDATED),
     unchanged = count(ImportAction.UNCHANGED),
     skipped = count(ImportAction.SKIPPED),
     reviveAtCutover = count(ImportAction.REVIVE_AT_CUTOVER),
+    pendingHandover = count(ImportHandover.PENDING_HANDOVER),
+    accessOnly = count(ImportHandover.ACCESS_ONLY),
 )

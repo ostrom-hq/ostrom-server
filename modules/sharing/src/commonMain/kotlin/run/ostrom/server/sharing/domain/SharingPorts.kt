@@ -29,7 +29,7 @@ interface SharedAccountRepository {
     /** The org's accounts, by priority then label. */
     suspend fun list(orgId: Uuid): List<SharedAccount>
 
-    /** The org's accounts of a provider that are READY. */
+    /** The org's accounts of a provider that serve ([SharedAccount.serves]). */
     suspend fun ready(orgId: Uuid, provider: AccountProvider): List<SharedAccount>
 
     /**
@@ -48,6 +48,14 @@ interface SharedAccountRepository {
 
     /** Sets the cool-down: no request before [until]. */
     suspend fun setCooldown(orgId: Uuid, id: Uuid, until: Instant)
+
+    /**
+     * Sets who renews the tokens, bumping the version, unless a refresh intent is on the row (in flight, or left
+     * uncertain by a failure): only new tokens clear it.
+     *
+     * @return The account, or null when it is gone or carries a refresh intent.
+     */
+    suspend fun setOwnership(orgId: Uuid, id: Uuid, ownership: RefreshOwnership): SharedAccount?
 }
 
 /**
@@ -60,6 +68,7 @@ interface SharedAccountRepository {
  * @property stale Whether that refresh began more than [AccountTokens.PENDING_LIMIT] ago by the database's clock: its
  *   owner died or hung, and whether the provider rotated the token is unknown.
  * @property credentialVersion Bumped each time the tokens change (a refresh saved, a share).
+ * @property ownership Who renews the tokens.
  */
 data class RefreshState(
     val status: AccountStatus,
@@ -67,6 +76,7 @@ data class RefreshState(
     val pending: Boolean,
     val stale: Boolean,
     val credentialVersion: Long,
+    val ownership: RefreshOwnership = RefreshOwnership.OSTROM,
 )
 
 /** What a look at a [RefreshState] writes, in the transaction that holds the row's lock. */

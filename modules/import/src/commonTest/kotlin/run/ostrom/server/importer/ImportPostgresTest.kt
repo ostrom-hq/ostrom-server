@@ -325,7 +325,7 @@ class ImportPostgresTest {
                 val plan = report(Importing.team(), dryRun = true)
                 assertEquals(
                     listOf(
-                        line("account", "claude/Lena", PLANNED),
+                        line("account", "claude/Lena", PLANNED, WAITS_FOR_HANDOVER, "pending_handover"),
                         line("account", "codex/Lena", SKIPPED, "This account is already shared."),
                     ),
                     plan.items.takeLast(2),
@@ -335,12 +335,33 @@ class ImportPostgresTest {
                 val report = report(Importing.team())
                 assertEquals(
                     listOf(
-                        line("account", "claude/Lena", CREATED),
+                        line("account", "claude/Lena", CREATED, WAITS_FOR_HANDOVER, "pending_handover"),
                         line("account", "codex/Lena", SKIPPED, "This account is already shared."),
                     ),
                     report.items.takeLast(2),
                 )
+                assertEquals(1, report.pendingHandover)
+                assertEquals(0, report.accessOnly)
                 assertEquals(listOf("${adminA.orgId}/claude/access-claude"), accounts.imported)
+            }
+        }
+    }
+
+    @Test
+    fun theAccessOnlyTrialReachesTheSharingModuleAndNeverGoesWithTheCutover() {
+        val accounts = FakeAccountImporter()
+        serverTest(modules, importOverrides(accounts)) { server ->
+            with(server) {
+                val report = report(Importing.team(), accessOnly = true)
+                assertEquals(
+                    line("account", "claude/Lena", CREATED, ACCESS_ONLY, "access_only"),
+                    report.items.first { it.name == "claude/Lena" },
+                )
+                assertEquals(1, report.accessOnly)
+                assertEquals(0, report.pendingHandover)
+                val both = import(Importing.team(), "owner-a", cutover = true, accessOnly = true)
+                assertEquals(HttpStatusCode.BadRequest, both.status)
+                assertEquals(1, accounts.imported.size, "Refused before any account")
             }
         }
     }
@@ -381,6 +402,10 @@ class ImportPostgresTest {
     }
 
     companion object {
+        const val WAITS_FOR_HANDOVER = "TeamCode may still renew this account's tokens: it serves nothing in Ostrom " +
+            "until it is handed over (the cutover run, or a handover once TeamCode no longer uses it)."
+        const val ACCESS_ONLY = "Serves with TeamCode's access token, never renewed by Ostrom: import again when it " +
+            "expires."
         const val NO_SHARING = "This server does not import shared accounts: share them again from the console."
         const val NOT_CARRIED = "Only an HTTP per-member server carries a member's credential: set it again in Ostrom."
         const val NOT_IMPORTED = "Its server was not imported."

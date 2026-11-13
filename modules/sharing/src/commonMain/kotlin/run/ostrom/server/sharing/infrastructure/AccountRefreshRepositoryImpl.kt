@@ -6,6 +6,7 @@ import run.ostrom.server.secrets.infrastructure.inTenant
 import run.ostrom.server.sharing.domain.AccountRefreshRepository
 import run.ostrom.server.sharing.domain.AccountStatus
 import run.ostrom.server.sharing.domain.AccountTokens
+import run.ostrom.server.sharing.domain.RefreshOwnership
 import run.ostrom.server.sharing.domain.RefreshState
 import run.ostrom.server.sharing.domain.RefreshWrite
 import io.github.smyrgeorge.sqlx4k.Driver
@@ -36,6 +37,7 @@ class AccountRefreshRepositoryImpl(private val driver: Driver) : AccountRefreshR
                     pending = row.get("refresh_pending").asBoolean(),
                     stale = row.get("stale").asBoolean(),
                     credentialVersion = row.get("credential_version").asLong(),
+                    ownership = RefreshOwnership.valueOf(row.get("ownership").asString()),
                 )
             }
         val (write, result) = decide(state)
@@ -82,7 +84,8 @@ class AccountRefreshRepositoryImpl(private val driver: Driver) : AccountRefreshR
         const val ROW = "WHERE org_id = :org_id AND id = :id"
         const val INTENT = "AND refresh_pending AND credential_version = :credential_version"
         val LOCK =
-            "SELECT status, envelope, refresh_pending, credential_version, COALESCE(refresh_started_at <= now() - " +
+            "SELECT status, ownership, envelope, refresh_pending, credential_version, " +
+                "COALESCE(refresh_started_at <= now() - " +
                 "INTERVAL '${AccountTokens.PENDING_LIMIT.inWholeSeconds} seconds', FALSE) AS stale " +
                 "FROM sharing_accounts WHERE org_id = :org_id AND id = :id FOR UPDATE"
     }

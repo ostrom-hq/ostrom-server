@@ -10,6 +10,6 @@ class SharingFeaturesTest {
     @Test
     fun itsFeaturesNeedNoConfiguration() = runTest {
         val koin = koinApplication {}.koin
-        assertEquals(setOf("sharing.v1"), SharingModule.features(koin))
+        assertEquals(setOf("sharing.v1", "sharing.handover.v1"), SharingModule.features(koin))
     }
 }

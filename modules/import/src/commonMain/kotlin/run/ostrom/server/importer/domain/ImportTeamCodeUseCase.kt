@@ -20,7 +20,9 @@ interface ImportTeamCodeUseCase {
      * @param dryRun Reports what the import would do without writing anything.
      * @param cutoverBy For the final run, once TeamCode is stopped, the user who runs it (null for a normal run): an
      *   owner only, recorded in the audit log in that user's name; it also revives the shared accounts waiting for a
-     *   reconnection with TeamCode's tokens ([AccountImporter.begin]).
+     *   reconnection with TeamCode's tokens and hands over those waiting for their handover ([AccountImporter.begin]).
+     * @param accessOnly TeamCode's `--access-only` trial for the shared accounts ([AccountImporter.begin]); never with
+     *   [cutoverBy].
      *
      * @return One line per item.
      *
@@ -30,6 +32,7 @@ interface ImportTeamCodeUseCase {
      * @throws CutoverAuditUnavailableException When [cutoverBy] is given and no audit log is installed.
      * @throws CutoverSharingUnavailableException When [cutoverBy] is given and this server does not import shared
      *   accounts.
+     * @throws AccessOnlyCutoverException When both [accessOnly] and [cutoverBy] are given.
      */
     suspend operator fun invoke(
         caller: Caller,
@@ -37,8 +40,16 @@ interface ImportTeamCodeUseCase {
         memberMap: Map<String, Uuid>,
         dryRun: Boolean,
         cutoverBy: Uuid?,
+        accessOnly: Boolean = false,
     ): ImportReport
 }
+
+/** The cutover hands the accounts over to Ostrom: it cannot leave them access-only too. */
+class AccessOnlyCutoverException :
+    OstromException(
+        ErrorKind.INVALID_REQUEST,
+        "Choose either the cutover, which hands the accounts over to Ostrom, or the access-only trial.",
+    )
 
 /** The member map names Ostrom ids that are not members of the caller's org. */
 class UnknownImportMembersException(teamCodeIds: List<String>) :
@@ -117,8 +128,10 @@ class ImportTeamCodeUseCaseImpl(
         memberMap: Map<String, Uuid>,
         dryRun: Boolean,
         cutoverBy: Uuid?,
+        accessOnly: Boolean,
     ): ImportReport {
         caller.requireAdmin()
+        if (accessOnly && cutoverBy != null) throw AccessOnlyCutoverException()
         // One lookup per Ostrom id, however many TeamCode members map to it.
         val outside = memberMap.values.toSet().filterNot { members.isActiveMember(caller.orgId, it.toString()) }
         val strangers = memberMap.filterValues { it in outside }.keys
@@ -136,7 +149,7 @@ class ImportTeamCodeUseCaseImpl(
             McpImporter(mcp, dryRun, mcp.listServers(caller), servers, record),
         )
         val items = run.import(plan)
-        importAccounts(caller, export.accounts, dryRun, cutoverBy != null, items)
+        importAccounts(caller, export.accounts, AccountRunMode(dryRun, cutoverBy != null, accessOnly), items)
         return ImportReport(items)
     }
 
@@ -163,13 +176,12 @@ class ImportTeamCodeUseCaseImpl(
     private suspend fun importAccounts(
         caller: Caller,
         accounts: List<TeamCodeAccount>,
-        dryRun: Boolean,
-        cutover: Boolean,
+        mode: AccountRunMode,
         items: MutableList<ImportItem>,
     ) {
         if (accounts.isEmpty()) return
         val run = try {
-            (this.accounts ?: throw NoSharingException()).begin(caller, dryRun, cutover)
+            (this.accounts ?: throw NoSharingException()).begin(caller, mode.dryRun, mode.cutover, mode.accessOnly)
         } catch (refused: OstromException) {
             // A refusal only, as for an item: a cancellation or an unforeseen error still stops the import.
             AccountImportRun { throw refused }
@@ -177,9 +189,14 @@ class ImportTeamCodeUseCaseImpl(
         for (account in accounts) {
             val name = "${account.provider.trim().lowercase()}/${account.label}"
             guarded(items, ImportKind.ACCOUNT, name) {
-                val action = run.import(account)
-                val reason = WAITS_FOR_CUTOVER.takeIf { action == ImportAction.REVIVE_AT_CUTOVER }
-                items += ImportItem(ImportKind.ACCOUNT, name, action, reason)
+                val outcome = run.import(account)
+                val reason = when {
+                    outcome.action == ImportAction.REVIVE_AT_CUTOVER -> WAITS_FOR_CUTOVER
+                    outcome.handover == ImportHandover.PENDING_HANDOVER -> WAITS_FOR_HANDOVER
+                    outcome.handover == ImportHandover.ACCESS_ONLY -> SERVES_ACCESS_ONLY
+                    else -> null
+                }
+                items += ImportItem(ImportKind.ACCOUNT, name, outcome.action, reason, outcome.handover)
             }
         }
     }
@@ -187,7 +204,14 @@ class ImportTeamCodeUseCaseImpl(
     private fun List<ImportRecord>.ids(kind: ImportRecordKind): Set<Uuid> =
         filter { it.kind == kind }.map { it.ostromId }.toSet()
 
+    /** How a run treats the shared accounts. */
+    private class AccountRunMode(val dryRun: Boolean, val cutover: Boolean, val accessOnly: Boolean)
+
     private companion object {
+        const val WAITS_FOR_HANDOVER = "TeamCode may still renew this account's tokens: it serves nothing in Ostrom " +
+            "until it is handed over (the cutover run, or a handover once TeamCode no longer uses it)."
+        const val SERVES_ACCESS_ONLY = "Serves with TeamCode's access token, never renewed by Ostrom: import again " +
+            "when it expires."
         const val WAITS_FOR_CUTOVER = "This account waits for a reconnection. It is left so while TeamCode runs " +
             "(testing TeamCode's tokens would disconnect TeamCode): the cutover run revives it."
     }

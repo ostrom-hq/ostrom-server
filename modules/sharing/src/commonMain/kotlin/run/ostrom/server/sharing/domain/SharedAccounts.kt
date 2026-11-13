@@ -52,6 +52,26 @@ enum class AccountStatus {
 }
 
 /**
+ * Who renews an account's tokens, as TeamCode's refresh ownership (docs/capacity.md « Refresh ownership »). Providers
+ * rotate refresh tokens: two refreshers of one account disconnect it. An account shared from a sign-in is Ostrom's at
+ * once; an imported one may still be renewed by its source (TeamCode), so it waits for an explicit handover, or serves
+ * access-only for a trial. Independent of [AccountStatus]: pausing and resuming never change it.
+ */
+enum class RefreshOwnership {
+    /** Ostrom renews the tokens: the account serves. */
+    OSTROM,
+
+    /** Imported: its source may still renew the tokens. It serves nothing until an admin hands it over. */
+    PENDING_HANDOVER,
+
+    /**
+     * Serves with the access token it holds and is never renewed here: its source keeps renewing its own copy. Once the
+     * access token is due, it serves nothing until imported again with fresh tokens, or handed over.
+     */
+    ACCESS_ONLY,
+}
+
+/**
  * Per-account limits, on top of the provider's own windows.
  *
  * @property maxConcurrent Requests in flight at once on the account.
@@ -96,6 +116,7 @@ data class AccountLimits(
  * @property createdAt When it was shared.
  * @property version Bumped by every share, edit and status change of its row (not by the pool's refreshes and
  *   cool-downs): a conditional write names the version it read, so it never overwrites a change made in between.
+ * @property ownership Who renews its tokens.
  */
 data class SharedAccount(
     val id: Uuid,
@@ -111,7 +132,11 @@ data class SharedAccount(
     val cooldownUntil: Instant?,
     val createdAt: Instant,
     val version: Long = 0,
-)
+    val ownership: RefreshOwnership = RefreshOwnership.OSTROM,
+) {
+    /** Whether the pool may lease it: READY, and not waiting for its handover. */
+    val serves: Boolean get() = status == AccountStatus.READY && ownership != RefreshOwnership.PENDING_HANDOVER
+}
 
 /**
  * OAuth tokens of an account; never logged, stored only sealed.
@@ -247,6 +272,37 @@ class AccountRefreshingException :
     OstromException(
         ErrorKind.CONFLICT,
         "The account's tokens are being renewed right now: nothing was overwritten. Try again in a minute.",
+    )
+
+/**
+ * A refresh of the account is in flight, or failed and left its outcome unknown: its refresh ownership changes only
+ * once current tokens are shared or imported (TeamCode's handover refusal).
+ */
+class AccountRefreshUncertainException :
+    OstromException(
+        ErrorKind.CONFLICT,
+        "A refresh of this account is in flight or left it uncertain: share or import its current tokens before " +
+            "changing who renews them.",
+        "account_refreshing",
+    )
+
+/** Only an admin changes who renews an account's tokens: a 403 `account_handover_forbidden`. */
+class AccountHandoverForbiddenException :
+    OstromException(
+        ErrorKind.FORBIDDEN,
+        "Only an owner or an admin of the organization hands an account over.",
+        "account_handover_forbidden",
+    )
+
+/**
+ * A member shares again an account that waits for its handover or serves access-only: a fresh share would give Ostrom
+ * its refresh, undoing an admin's handover decision (TeamCode's `account_in_use`).
+ */
+class AccountInUseException :
+    OstromException(
+        ErrorKind.FORBIDDEN,
+        "This account was imported and waits for an admin's handover: ask an admin to share it again or hand it over.",
+        "account_in_use",
     )
 
 /** Too many accounts. */

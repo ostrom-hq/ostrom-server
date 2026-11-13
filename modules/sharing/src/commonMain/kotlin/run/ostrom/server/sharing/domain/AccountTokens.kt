@@ -40,6 +40,10 @@ import kotlin.time.Instant
  * A long-lived token (no refresh token), or an envelope that no longer opens, marks the account RECONNECT_REQUIRED once
  * it is due.
  *
+ * Refresh ownership ([RefreshOwnership], TeamCode's handover): an account waiting for its handover serves nothing, and
+ * an access-only one serves its access token until it is due, then nothing, never sending its refresh token: its
+ * source renews its own copy, and only an import with fresh tokens (or a handover) brings it back.
+ *
  * @param refreshes The accounts' tokens and refresh intents.
  * @param cipher Opens and seals the tokens.
  * @param refresher Renews tokens.
@@ -110,10 +114,13 @@ class AccountTokens(
             ?.let { cipher.open(it.envelope, account.orgId, account.id) }
         return when {
             state == null || state.status != AccountStatus.READY -> RefreshWrite.Keep to Step.Gone
+            state.ownership == RefreshOwnership.PENDING_HANDOVER -> RefreshWrite.Keep to Step.Gone
             state.pending && state.stale -> RefreshWrite.Retire to Step.Gone
             state.pending -> RefreshWrite.Keep to Step.Wait
             stored == null -> RefreshWrite.Retire to Step.Gone
             stored.expiresAt > clock.now() + REFRESH_MARGIN -> RefreshWrite.Keep to Step.Use(stored)
+            // Never renewed here: its source holds the refresh token, and sending it would disconnect the source.
+            state.ownership == RefreshOwnership.ACCESS_ONLY -> RefreshWrite.Keep to Step.Gone
             // A long-lived token has nothing to renew it with: refused or expired, its owner enrolls it again.
             stored.refreshToken.isEmpty() -> RefreshWrite.Retire to Step.Gone
             else -> RefreshWrite.Claim to Step.Own(stored, state.credentialVersion)
