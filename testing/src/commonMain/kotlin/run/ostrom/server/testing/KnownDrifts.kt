@@ -8,10 +8,9 @@ package run.ostrom.server.testing
  * `scripts/check-contract-coverage.py`. Found by the first run of the check on every served operation (#246).
  */
 object KnownDrifts {
-    /** Each drift's key ([Drift.key], such as `listThings 200 $.id MISSING`) to why it waits. */
-    val drifts: Map<String, String> = mapOf(
-        // Seen once the server reads ostrom-core 0.1.467 or later, where grantSignUp is served: the contract declares
-        // no 403 for a sign-up refused to a stranger. Its fix is ostrom-core's, by an additive 403.
-        "grantSignUp 403 \$ STATUS" to "ostrom-core declares no 403 for grantSignUp",
-    )
+    /**
+     * Each drift's key ([Drift.key], such as `listThings 200 $.id MISSING`) to why it waits. Empty: every answer the
+     * tests see follows the ostrom-core contract.
+     */
+    val drifts: Map<String, String> = emptyMap()
 }
