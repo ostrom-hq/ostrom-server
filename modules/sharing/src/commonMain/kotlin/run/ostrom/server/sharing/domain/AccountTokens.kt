@@ -6,6 +6,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -121,25 +122,30 @@ class AccountTokens(
 
     // The intent is committed: whatever happens to the request, the refresh runs to its end and records it.
     private suspend fun renew(account: SharedAccount, own: Step.Own): Step = withContext(NonCancellable) {
-        val result = withTimeoutOrNull(REFRESH_TIMEOUT) { refresher.refresh(account.provider, own.stored) }
-        val named = (result as? RefreshResult.Renewed)?.accountId
-        val recorded = when {
-            result !is RefreshResult.Renewed -> fail(account, own, AccountStatus.RECONNECT_REQUIRED)
-            named != null && !SharingRules.sameProviderAccount(account.providerAccountId, named) -> {
-                warnWrongAccount(account)
-                fail(account, own, AccountStatus.WRONG_ACCOUNT)
-            }
-            else -> {
-                val envelope = cipher.seal(result.credentials, account.orgId, account.id)
-                if (refreshes.save(account.orgId, account.id, own.credentialVersion, envelope)) {
-                    Step.Use(result.credentials)
-                } else {
-                    null
-                }
-            }
+        val recorded = try {
+            record(account, own, withTimeoutOrNull(REFRESH_TIMEOUT) { refresher.refresh(account.provider, own.stored) })
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            // The refresher, the cipher or the database failing leaves the provider's state as unknown as a refusal.
+            fail(account, own, AccountStatus.RECONNECT_REQUIRED)
         }
         // Not recorded: the owner shared the account again meanwhile, and its new tokens are the ones to use.
         recorded ?: Step.Again
+    }
+
+    private suspend fun record(account: SharedAccount, own: Step.Own, result: RefreshResult?): Step? {
+        val named = (result as? RefreshResult.Renewed)?.accountId
+        return when {
+            result !is RefreshResult.Renewed -> fail(account, own, AccountStatus.RECONNECT_REQUIRED)
+            named != null && !SharingRules.sameProviderAccount(account.providerAccountId, named) ->
+                fail(account, own, AccountStatus.WRONG_ACCOUNT)?.also { warnWrongAccount(account) }
+            else -> {
+                val envelope = cipher.seal(result.credentials, account.orgId, account.id)
+                Step.Use(result.credentials)
+                    .takeIf { refreshes.save(account.orgId, account.id, own.credentialVersion, envelope) }
+            }
+        }
     }
 
     private suspend fun fail(account: SharedAccount, own: Step.Own, status: AccountStatus): Step? =

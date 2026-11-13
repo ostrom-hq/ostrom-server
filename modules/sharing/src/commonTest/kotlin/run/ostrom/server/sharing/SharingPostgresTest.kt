@@ -606,9 +606,22 @@ class SharingPostgresTest {
             assertEquals(HttpStatusCode.Conflict, refused.status, "A share never overwrites a refresh in flight")
             assertTrue("being renewed" in refused.bodyAsText(), refused.bodyAsText())
             assertEquals(true to 1L, intent(shared.id))
+            // Another member is told the account is not theirs, not that it is being renewed.
+            val repository = koin.get<SharedAccountRepository>()
+            val cipher = koin.get<AccountTokenCipher>()
+            val credentials = AccountCredentials("racer-access", "racer-refresh", Clock.System.now() + 8.hours)
+            val stranger = account.copy(id = Uuid.random(), ownerMemberId = Sharing.otherA.memberId)
+            assertFailsWith<AccountOwnedByAnotherMemberException> {
+                repository.upsert(stranger, cipher.seal(credentials, Sharing.orgA, stranger.id))
+            }
 
             assertTrue(refreshes.fail(Sharing.orgA, account.id, 1, AccountStatus.RECONNECT_REQUIRED))
             assertEquals(true to 1L, intent(shared.id), "A failed refresh keeps its intent")
+            // A racing first share keeps the row's tokens, so it keeps their intent too.
+            val racer = account.copy(id = Uuid.random(), status = AccountStatus.READY)
+            assertEquals(account.id, repository.upsert(racer, cipher.seal(credentials, Sharing.orgA, racer.id)).id)
+            assertEquals(true to 1L, intent(shared.id), "No new tokens stored, the intent stands")
+            assertEquals(AccountStatus.RECONNECT_REQUIRED, storedAccount(shared.id).status)
             assertEquals(HttpStatusCode.Created, shareAs("member-a").status, "An account to reconnect takes new tokens")
             assertEquals(false to 2L, intent(shared.id))
 

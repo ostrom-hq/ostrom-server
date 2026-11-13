@@ -20,6 +20,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -232,6 +233,7 @@ class SharedAccountPoolTest {
         assertEquals("access-owner", assertIs<LeaseResult.Leased>(lease()).lease.credentials.accessToken)
         assertEquals(AccountStatus.READY, repository.get(Sharing.orgA, account.id)!!.status, "Its share stands")
         assertEquals(1, refresher.calls, "The new tokens are fresh: not refreshed again")
+        assertTrue(logged.isEmpty(), "No warning for an account whose share stands")
     }
 
     @Test
@@ -288,6 +290,23 @@ class SharedAccountPoolTest {
         refresher.onRefresh = { delay(AccountTokens.REFRESH_TIMEOUT + 1.seconds) }
         assertEquals("backup", assertIs<LeaseResult.Leased>(lease()).lease.account.label)
         assertEquals(AccountStatus.RECONNECT_REQUIRED, repository.get(Sharing.orgA, slow.id)!!.status)
+    }
+
+    @Test
+    fun aRefreshThatThrowsRetiresTheAccountAndKeepsItsIntent() = runTest {
+        val broken = account("broken", priority = 5, expiresAt = clock.now())
+        account("backup")
+        refresher.onRefresh = { throw IllegalStateException("The provider's answer could not be read") }
+        assertEquals("backup", assertIs<LeaseResult.Leased>(lease()).lease.account.label)
+        assertEquals(AccountStatus.RECONNECT_REQUIRED, repository.get(Sharing.orgA, broken.id)!!.status)
+        assertTrue(broken.id in repository.pending, "The intent stays until new tokens clear it")
+    }
+
+    @Test
+    fun aCancellationThrownByTheRefresherIsNotSwallowed() = runTest {
+        account("a", expiresAt = clock.now())
+        refresher.onRefresh = { throw CancellationException("cancelled") }
+        assertFailsWith<CancellationException> { lease() }
     }
 
     @Test

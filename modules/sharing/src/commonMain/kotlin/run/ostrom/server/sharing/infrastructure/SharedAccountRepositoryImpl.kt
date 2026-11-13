@@ -66,9 +66,11 @@ class SharedAccountRepositoryImpl(private val driver: Driver) : SharedAccountRep
         account.orgId,
         Statement.create(
             "SELECT 1 FROM sharing_accounts WHERE org_id = :org_id AND provider = :provider " +
-                "AND provider_account_id = :provider_account_id AND ${refreshing("sharing_accounts")}",
+                "AND provider_account_id = :provider_account_id " +
+                "AND (owner_member_id IS NULL OR owner_member_id = :owner) AND ${refreshing("sharing_accounts")}",
         )
             .bind("org_id", account.orgId)
+            .bindNullable("owner", account.ownerMemberId, Uuid::class)
             .bind("provider", account.provider.name)
             .bind("provider_account_id", account.providerAccountId),
     ).getOrThrow().firstOrNull() != null
@@ -151,8 +153,9 @@ class SharedAccountRepositoryImpl(private val driver: Driver) : SharedAccountRep
                 "now() - INTERVAL '${AccountTokens.PENDING_LIMIT.inWholeSeconds} seconds'"
 
         // Sharing again keeps the limits. Two shares racing on a new account both insert: the second keeps the first
-        // row's id, so its envelope (sealed for its own id) would not open; the first's stays. An account another
-        // member owns is never taken over, nor a row past the expected version (no row comes back).
+        // row's id, so its envelope (sealed for its own id) would not open; the first's stays, and so do its status,
+        // refresh intent and credential version, since no new tokens were stored. An account another member owns is
+        // never taken over, nor a row past the expected version (no row comes back).
         val SHARE_AGAIN =
             "UPDATE sharing_accounts SET label = :label, email = :email, status = :status, cooldown_until = NULL, " +
                 "envelope = :envelope, version = version + 1, refresh_pending = FALSE, refresh_started_at = NULL, " +
@@ -169,11 +172,15 @@ class SharedAccountRepositoryImpl(private val driver: Driver) : SharedAccountRep
                 "VALUES (:id, :org_id, :provider, :label, :email, :provider_account_id, :owner, :priority, " +
                 ":status, :max_concurrent, :ceiling, :budget, :daily, :allowed, NULL, :envelope, :created_at, 1) " +
                 "ON CONFLICT (org_id, provider, provider_account_id) DO UPDATE SET label = EXCLUDED.label, " +
-                "email = EXCLUDED.email, status = EXCLUDED.status, cooldown_until = NULL, " +
+                "email = EXCLUDED.email, status = CASE WHEN sharing_accounts.id = EXCLUDED.id " +
+                "THEN EXCLUDED.status ELSE sharing_accounts.status END, cooldown_until = NULL, " +
                 "envelope = CASE WHEN sharing_accounts.id = EXCLUDED.id THEN EXCLUDED.envelope " +
                 "ELSE sharing_accounts.envelope END, version = sharing_accounts.version + 1, " +
-                "refresh_pending = FALSE, refresh_started_at = NULL, " +
-                "credential_version = sharing_accounts.credential_version + 1 " +
+                "refresh_pending = sharing_accounts.refresh_pending AND sharing_accounts.id <> EXCLUDED.id, " +
+                "refresh_started_at = CASE WHEN sharing_accounts.id = EXCLUDED.id THEN NULL " +
+                "ELSE sharing_accounts.refresh_started_at END, " +
+                "credential_version = sharing_accounts.credential_version + " +
+                "CASE WHEN sharing_accounts.id = EXCLUDED.id THEN 1 ELSE 0 END " +
                 "WHERE (sharing_accounts.owner_member_id IS NULL " +
                 "OR sharing_accounts.owner_member_id = EXCLUDED.owner_member_id) " +
                 "AND sharing_accounts.version = COALESCE(:expected, sharing_accounts.version) " +
