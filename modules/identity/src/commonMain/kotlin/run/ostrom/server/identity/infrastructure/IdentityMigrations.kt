@@ -473,4 +473,19 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
             CREATE INDEX identity_setup_links_used_by ON identity_setup_links (used_by) WHERE used_by IS NOT NULL
         """.trimIndent(),
     ),
+    // TC-REP-2: the sign-in rate limits' windows, shared by every replica instead of each one's memory, and timed by
+    // the database's clock (RateLimiterImpl). No organization's: the keys are client addresses, e-mail addresses and
+    // people before any organization, stored hashed. The windows over are purged every hour.
+    SchemaMigration(
+        version = 18,
+        name = "rate_limits",
+        sql = """
+            CREATE TABLE identity_rate_limits (
+                key_hash TEXT PRIMARY KEY,
+                attempts INTEGER NOT NULL,
+                ends_at TIMESTAMPTZ NOT NULL
+            );
+            CREATE INDEX identity_rate_limits_ends ON identity_rate_limits (ends_at)
+        """.trimIndent(),
+    ),
 )

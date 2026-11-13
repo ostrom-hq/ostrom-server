@@ -55,6 +55,7 @@ admitted by their prefix: the owner role writes them when it migrates.
 | `identity_mobile_codes` | identity | serving role, the app's sign-in | one-time codes, by hash |
 | `identity_notification_preferences` | identity | serving role | a person's preferences, across their organizations |
 | `identity_oauth_attempts` | identity | serving role, sign-in | an OAuth round trip's state, by hash |
+| `identity_rate_limits` | identity | serving role, sign-in | the rate limits' windows, by the hash of a client address, an e-mail address or a person, counted before any organization |
 | `identity_setup_links` | identity | serving role, setup | the instance's one-time setup link (`ostrom-server bootstrap`), by hash, and who used it |
 | `identity_sign_in_links` | identity | serving role | a signed-in person's one-time link to a browser, by hash |
 | `identity_user_emails` | identity | serving role, sign-in | a person's e-mail addresses |

@@ -11,10 +11,10 @@ import run.ostrom.server.identity.domain.USER_CODE_ALPHABET
 import run.ostrom.server.identity.domain.auditCanonicalForm
 import run.ostrom.server.identity.domain.constantTimeEquals
 import run.ostrom.server.identity.domain.normalizeEmail
+import run.ostrom.server.identity.domain.rateLimitSource
 import run.ostrom.server.identity.domain.validateScopes
 import run.ostrom.server.identity.fakes.InMemoryAuditRepository
 import run.ostrom.server.identity.fakes.SettableClock
-import run.ostrom.server.identity.infrastructure.InMemoryRateLimiter
 import run.ostrom.server.identity.infrastructure.SecureSecretGenerator
 import run.ostrom.server.identity.infrastructure.Sha256SecretHasher
 import run.ostrom.server.identity.domain.SignUpMode
@@ -30,8 +30,6 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import kotlin.time.Duration.Companion.minutes
-import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -115,31 +113,12 @@ class SupportTest {
     }
 
     @Test
-    fun theRateLimiterCountsPerKeyAndWindow() = runTest {
-        val clock = SettableClock()
-        val limiter = InMemoryRateLimiter(clock)
-
-        assertTrue(limiter.tryAcquire("a", 2, 1.minutes))
-        assertTrue(limiter.tryAcquire("a", 2, 1.minutes))
-        assertFalse(limiter.tryAcquire("a", 2, 1.minutes))
-        assertTrue(limiter.tryAcquire("b", 2, 1.minutes))
-        clock.now += 61.seconds
-        assertTrue(limiter.tryAcquire("a", 2, 1.minutes))
-    }
-
-    @Test
-    fun theRateLimiterBoundsItsMemory() = runTest {
-        val clock = SettableClock()
-        val limiter = InMemoryRateLimiter(clock, maxKeys = 2)
-
-        limiter.tryAcquire("a", 1, 1.minutes)
-        clock.now += 2.minutes
-        limiter.tryAcquire("b", 1, 1.minutes)
-        // "a" expired: it is dropped first.
-        limiter.tryAcquire("c", 1, 1.minutes)
-        // Nothing expired: the oldest ("b") is dropped, so it starts a new window.
-        limiter.tryAcquire("d", 1, 1.minutes)
-        assertTrue(limiter.tryAcquire("b", 1, 1.minutes))
+    fun aRateLimitCountsAnIpv6ClientByItsSlash64AndAnIpv4ClientByItsAddress() {
+        assertEquals("2001:db8:1:2::/64", rateLimitSource("2001:db8:1:2:aaaa:bbbb:cccc:dddd"))
+        assertEquals(rateLimitSource("2001:db8:1:2::1"), rateLimitSource("[2001:DB8:1:2:ffff::9]"))
+        assertEquals("203.0.113.7", rateLimitSource("203.0.113.7"))
+        assertEquals("203.0.113.7", rateLimitSource("::ffff:203.0.113.7"), "An IPv4-mapped address is IPv4")
+        assertEquals("unknown", rateLimitSource("unknown"), "What is not an address is counted as it is")
     }
 
     @Test

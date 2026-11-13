@@ -407,9 +407,12 @@ owner, so the serving role reads the history (the start-up check) and never rewr
 
 ## Known limits of the foundation
 
-- **The in-memory limits are per replica**: a rate limit keyed on the client address (now the real one behind
-  `OSTROM_TRUSTED_PROXIES`) counts each pod apart, and so do the read limits (`OSTROM_READS_*`, `OSTROM_READ_WAITS_IN_FLIGHT`).
-  The MCP relay's limits are not among them: the running operations and the operations of the minute, per member and
+- **The in-memory limits are per replica**: the read limits (`OSTROM_READS_*`, `OSTROM_READ_WAITS_IN_FLIGHT`) count
+  each pod apart, as a protection of its own CPU and memory. The sign-in rate limits are not among them: their windows
+  (per client address, an IPv6 client by its /64, per e-mail recipient and per person) are rows of
+  `identity_rate_limits`, by the hash of their key, counted in one statement under the key's row lock and timed by the
+  database's clock, so every replica counts the same window; the windows over are purged every hour.
+  Nor are the MCP relay's limits: the running operations and the operations of the minute, per member and
   per server, are rows of `mcp_relay_slots` and `mcp_relay_minutes`, counted under a lock on the server's row and by
   the database's clock, so every replica admits against the same count. A running operation renews its slot every
   5 minutes; a slot whose replica died frees itself within 15, and one the database fails to take back fails no call.

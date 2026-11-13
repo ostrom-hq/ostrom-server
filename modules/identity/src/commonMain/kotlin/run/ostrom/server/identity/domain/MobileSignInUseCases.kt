@@ -164,7 +164,8 @@ class ExchangeMobileCodeUseCaseImpl(
         redirectUri: String,
         source: String,
     ): IssuedMobileToken {
-        if (!services.limiter.tryAcquire("mobile-token:$source", EXCHANGE_LIMIT, MOBILE_LIMIT_WINDOW)) {
+        val key = "mobile-token:${rateLimitSource(source)}"
+        if (!services.limiter.tryAcquire(key, EXCHANGE_LIMIT, MOBILE_LIMIT_WINDOW)) {
             throw RateLimitedException()
         }
         val now = services.clock.nowMillis()
@@ -252,7 +253,8 @@ class UnlockMobileAppUseCaseImpl(
         source: String,
         requestId: String?,
     ): Instant {
-        if (!limiter.tryAcquire("mobile-unlock:$tokenId:$source", UNLOCK_LIMIT, MOBILE_LIMIT_WINDOW)) {
+        val key = "mobile-unlock:$tokenId:${rateLimitSource(source)}"
+        if (!limiter.tryAcquire(key, UNLOCK_LIMIT, MOBILE_LIMIT_WINDOW)) {
             throw RateLimitedException()
         }
         val now = clock.nowMillis()

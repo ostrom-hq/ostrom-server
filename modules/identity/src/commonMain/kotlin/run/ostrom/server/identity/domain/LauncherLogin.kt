@@ -132,7 +132,8 @@ class LauncherLoginUseCaseImpl(
 ) : LauncherLoginUseCase {
     override suspend fun invoke(githubToken: String, via: String?, source: String): LauncherLogin {
         if (githubToken.isBlank() || githubToken.length > MAX_GITHUB_TOKEN) throw GitHubTokenRejectedException()
-        if (!limiter.tryAcquire("launcher-login:$source", LIMIT, LIMIT_WINDOW_MINUTES.minutes)) {
+        val key = "launcher-login:${rateLimitSource(source)}"
+        if (!limiter.tryAcquire(key, LIMIT, LIMIT_WINDOW_MINUTES.minutes)) {
             throw RateLimitedException()
         }
         val account = verifier.verify(githubToken) ?: throw GitHubTokenRejectedException()

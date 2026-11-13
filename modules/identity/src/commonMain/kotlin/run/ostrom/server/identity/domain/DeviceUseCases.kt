@@ -105,7 +105,8 @@ class StartDeviceAuthorizationUseCaseImpl(
     ): StartedDeviceAuthorization {
         val asked = scopes.orEmpty().toSet()
         if (asked.isNotEmpty() && asked != ADMIN_SCOPES) throw InvalidScopesException()
-        val allowed = limiter.tryAcquire("device-start:$source", DEVICE_STARTS_PER_WINDOW, DEVICE_RATE_WINDOW)
+        val key = "device-start:${rateLimitSource(source)}"
+        val allowed = limiter.tryAcquire(key, DEVICE_STARTS_PER_WINDOW, DEVICE_RATE_WINDOW)
         if (!allowed) throw RateLimitedException()
         val now = clock.nowMillis()
         val name = trimmedOrNull(clientName?.filterNot { it.isISOControl() }, MAX_CLIENT_NAME) ?: DEFAULT_CLIENT_NAME
