@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.sharing.domain
 
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -109,6 +112,71 @@ interface AccountRefreshRepository {
      * @return Whether it was set.
      */
     suspend fun fail(orgId: Uuid, id: Uuid, credentialVersion: Long, status: AccountStatus): Boolean
+}
+
+/**
+ * A request's slot on an account, held until it is released or [AccountSlotRepository.SLOT_LEASE] passes.
+ *
+ * @property id The slot.
+ * @property accountId The account.
+ */
+data class AccountSlot(val id: Uuid, val accountId: Uuid)
+
+/**
+ * What a lease sees of the candidates while their rows are locked.
+ *
+ * @property active The unexpired slots of each candidate (absent: none).
+ * @property remembered The account the member's session used last, while its affinity lasts, if any.
+ * @property serving The candidates still serving now that their rows are locked (an account disabled or removed since
+ *   the pool read it is not among them).
+ */
+data class SlotView(val active: Map<Uuid, Int>, val remembered: Uuid?, val serving: Set<Uuid>)
+
+/**
+ * The requests in flight on the accounts and the sessions' accounts, in the database so that every replica counts
+ * them together (TeamCode's reservations and `conversation_affinities`, docs/replicas.md). Every call is confined to
+ * one org; times are the database's clock.
+ */
+interface AccountSlotRepository {
+    /**
+     * In one transaction: locks the rows of [candidates], shows [pick] their slots and the session's remembered
+     * account, takes a slot on the account it picks and remembers it for [session].
+     *
+     * @param memberId The member asking: affinities are the member's.
+     * @param session The agent's session id, or null (no affinity read or written).
+     * @param candidates The accounts that may serve, in the pool's order.
+     * @param pick Picks one of [candidates], or null when none has room.
+     *
+     * @return The slot taken, or null when [pick] picked none.
+     */
+    suspend fun take(
+        orgId: Uuid,
+        memberId: Uuid,
+        session: String?,
+        candidates: List<SharedAccount>,
+        pick: (SlotView) -> SharedAccount?,
+    ): AccountSlot?
+
+    /** Gives a slot back; nothing when it is gone. */
+    suspend fun release(orgId: Uuid, slot: AccountSlot)
+
+    /** The unexpired slots of the org's accounts (absent: none). */
+    suspend fun active(orgId: Uuid): Map<Uuid, Int>
+
+    /** The bounds. */
+    companion object {
+        /** A slot never released (its replica died) frees itself after this (TeamCode's 15-minute lease). */
+        val SLOT_LEASE: Duration = 15.minutes
+
+        /** How long a session sticks to its account after its last lease. */
+        val AFFINITY: Duration = 1.hours
+
+        /** Sessions remembered at most per member: past it, a new session is placed without being remembered. */
+        const val MAX_MEMBER_AFFINITIES: Int = 1_000
+
+        /** Sessions remembered at most per org. */
+        const val MAX_ORG_AFFINITIES: Int = 10_000
+    }
 }
 
 /** The provider quota windows last observed on each account; scoped by org like the accounts. */

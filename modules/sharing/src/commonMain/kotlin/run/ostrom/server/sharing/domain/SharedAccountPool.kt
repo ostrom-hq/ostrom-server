@@ -2,13 +2,10 @@
 package run.ostrom.server.sharing.domain
 
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
-import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -24,6 +21,7 @@ class AccountLease internal constructor(
     val account: SharedAccount,
     val credentials: AccountCredentials,
     private val pool: SharedAccountPool,
+    private val slot: AccountSlot,
 ) {
     private var released = false
 
@@ -45,7 +43,7 @@ class AccountLease internal constructor(
     suspend fun release() {
         if (released) return
         released = true
-        withContext(NonCancellable) { pool.release(account.id) }
+        withContext(NonCancellable) { pool.release(account.orgId, slot) }
     }
 }
 
@@ -73,31 +71,31 @@ sealed interface LeaseResult {
  * otherwise the least used account wins, then the higher priority. An account whose tokens cannot be renewed is
  * skipped for the next one.
  *
- * Concurrency and affinity are per replica, in memory.
+ * Concurrency and affinity are in the database ([AccountSlotRepository]), shared by every replica: a slot is taken
+ * under the candidates' row locks, so two replicas never fill an account past its limit together, and a session finds
+ * its account whichever replica it reaches.
  *
  * @param accounts The accounts.
  * @param windows Their observed quota windows.
  * @param tokens Their tokens.
+ * @param slots The requests in flight and the sessions' accounts.
  * @param parser Reads quota headers.
  * @param spend What each account served this month.
  * @param clock The time.
  * @param groups The accounts lent to the member through their groups: an account that does not name the member serves
  *   them when one of their groups, where they are not paused, holds it.
  */
-@Suppress("LongParameterList") // One port per owner: accounts, windows, tokens, headers, spend, time, groups.
+@Suppress("LongParameterList") // One port per owner: accounts, windows, tokens, slots, headers, spend, time, groups.
 class SharedAccountPool(
     private val accounts: SharedAccountRepository,
     private val windows: QuotaWindowRepository,
     private val tokens: AccountTokens,
+    private val slots: AccountSlotRepository,
     private val parser: QuotaHeaderParser,
     private val spend: AccountSpendReader,
     private val clock: Clock,
     private val groups: AccountGroups = NoAccountGroups,
 ) {
-    private val mutex = Mutex()
-    private val inFlight = mutableMapOf<Uuid, Int>()
-    private val affinity = mutableMapOf<String, Pair<Uuid, Instant>>()
-
     /**
      * Leases an account.
      *
@@ -107,8 +105,8 @@ class SharedAccountPool(
      * @param sessionKey The agent session, for affinity, if known.
      */
     suspend fun lease(orgId: Uuid, memberId: Uuid, provider: AccountProvider, sessionKey: String?): LeaseResult {
-        // The agent names its session: scoped to the member, so one org's or member's ids never meet another's.
-        val request = Request(orgId, memberId, provider, sessionKey?.let { "$orgId:$memberId:$it" })
+        // The agent names its session; the repository scopes it to the org and the member.
+        val request = Request(orgId, memberId, provider, sessionKey)
         val tried = mutableSetOf<Uuid>()
         // Each turn either answers or adds one account to `tried`: the loop ends within the org's account count.
         while (true) {
@@ -127,17 +125,17 @@ class SharedAccountPool(
         val ready = accounts.ready(request.orgId, request.provider).filter { it.id !in tried }
         val usable = groups.allowed(request.orgId, request.memberId, ready, now)
         val candidates = candidates(request.orgId, usable, now)
-        val chosen = take(candidates.open, request.sessionKey, now)
+        val slot = if (candidates.open.isEmpty()) null else take(request, candidates.open)
         return when {
             usable.isEmpty() -> refused("No shared ${request.provider.wire} account is available to you.", null)
-            chosen == null && candidates.open.isEmpty() ->
+            candidates.open.isEmpty() ->
                 refused("Every shared ${request.provider.wire} account is at its limit.", candidates.retryAt)
-            chosen == null ->
+            slot == null ->
                 refused(
                     "Every shared ${request.provider.wire} account is busy.",
                     candidates.retryAt ?: (now + BUSY_RETRY),
                 )
-            else -> serve(chosen, tried)
+            else -> serve(candidates.open.first { it.first.id == slot.accountId }.first, slot, tried)
         }
     }
 
@@ -183,37 +181,24 @@ class SharedAccountPool(
         }
     }
 
-    /** Takes a slot on the session's account if it is open, otherwise on the least used one. */
-    private suspend fun take(open: List<Pair<SharedAccount, Double>>, sessionKey: String?, now: Instant) =
-        mutex.withLock {
-            val free = open.filter { (account, _) -> (inFlight[account.id] ?: 0) < account.limits.maxConcurrent }
-            val remembered = if (sessionKey == null) null else affinity[sessionKey]
-            val sticky = if (remembered != null && remembered.second > now) remembered.first else null
-            val pick = (free.firstOrNull { it.first.id == sticky } ?: free.minWithOrNull(ORDER))?.first
-            if (pick != null) {
-                inFlight[pick.id] = (inFlight[pick.id] ?: 0) + 1
-                if (sessionKey != null) remember(sessionKey, pick.id, now)
-            }
-            pick
+    /** Takes a slot on the session's account if it has room, otherwise on the least used one that has. */
+    private suspend fun take(request: Request, open: List<Pair<SharedAccount, Double>>): AccountSlot? {
+        val ordered = open.sortedWith(ORDER).map { it.first }
+        return slots.take(request.orgId, request.memberId, request.sessionKey, ordered) { view ->
+            val free = ordered.filter { it.id in view.serving && (view.active[it.id] ?: 0) < it.limits.maxConcurrent }
+            free.firstOrNull { it.id == view.remembered } ?: free.firstOrNull()
         }
-
-    private fun remember(sessionKey: String, accountId: Uuid, now: Instant) {
-        // Insertion order is use order (removed then put back): over the bound, the session used longest ago goes, in
-        // constant time under the pool's lock, whoever floods the map with new sessions.
-        affinity.remove(sessionKey)
-        affinity[sessionKey] = accountId to now + AFFINITY
-        if (affinity.size > MAX_AFFINITY) affinity.remove(affinity.keys.first())
     }
 
-    private suspend fun serve(account: SharedAccount, tried: MutableSet<Uuid>): LeaseResult? {
+    private suspend fun serve(account: SharedAccount, slot: AccountSlot, tried: MutableSet<Uuid>): LeaseResult? {
         var credentials: AccountCredentials? = null
         try {
             credentials = tokens.fresh(account)
         } finally {
-            if (credentials == null) withContext(NonCancellable) { release(account.id) }
+            if (credentials == null) withContext(NonCancellable) { release(account.orgId, slot) }
         }
         tried += account.id
-        return credentials?.let { LeaseResult.Leased(AccountLease(account, it, this)) }
+        return credentials?.let { LeaseResult.Leased(AccountLease(account, it, this, slot)) }
     }
 
     internal suspend fun observe(lease: AccountLease, status: Int, headers: Map<String, String>) {
@@ -228,21 +213,13 @@ class SharedAccountPool(
         }
     }
 
-    internal suspend fun release(accountId: Uuid) {
-        mutex.withLock {
-            val left = (inFlight[accountId] ?: 1) - 1
-            if (left <= 0) inFlight.remove(accountId) else inFlight[accountId] = left
-        }
-    }
+    internal suspend fun release(orgId: Uuid, slot: AccountSlot) = slots.release(orgId, slot)
 
-    /** Requests in flight on the account, on this replica. */
-    suspend fun inFlight(accountId: Uuid): Int = mutex.withLock { inFlight[accountId] ?: 0 }
+    /** Requests in flight on each of the org's accounts, on every replica (absent: none). */
+    suspend fun inFlight(orgId: Uuid): Map<Uuid, Int> = slots.active(orgId)
 
     /** Timing and the calendar. */
     companion object {
-        /** How long a session sticks to its account. */
-        val AFFINITY: Duration = 1.hours
-
         /** Cool-down after a 429 that names no reset. */
         val DEFAULT_COOLDOWN: Duration = 60.seconds
 
@@ -251,9 +228,6 @@ class SharedAccountPool(
 
         /** When to try again while every open account is busy. */
         val BUSY_RETRY: Duration = 5.seconds
-
-        /** Sessions remembered before the expired ones are dropped. */
-        const val MAX_AFFINITY: Int = 10_000
 
         private const val TOO_MANY_REQUESTS = 429
         private const val UNAUTHORIZED = 401

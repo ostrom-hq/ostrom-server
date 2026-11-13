@@ -187,7 +187,7 @@ class RelayInferenceTest {
         val cooled = accounts.accounts.single { it.cooldownUntil != null }.id
         assertEquals(setOf(first.id, second.id), setOf(used, cooled))
         assertEquals(InferenceProvider.CLAUDE_SHARED, records.single().provider)
-        assertEquals(0, shared.inFlight(first.id) + shared.inFlight(second.id), "Every slot is given back")
+        assertEquals(0, shared.inFlight(Gw.orgA).values.sum(), "Every slot is given back")
     }
 
     @Test
@@ -275,7 +275,7 @@ class RelayInferenceTest {
             setOf(stalled, records.last().accountId),
             "The next call goes elsewhere",
         )
-        assertEquals(0, shared.inFlight(first.id) + shared.inFlight(second.id), "Every slot is given back")
+        assertEquals(0, shared.inFlight(Gw.orgA).values.sum(), "Every slot is given back")
     }
 
     @Test
@@ -328,7 +328,7 @@ class RelayInferenceTest {
         }
         assertEquals("cancelled", records.single().outcome)
         assertEquals(account.id, records.single().accountId)
-        assertEquals(0, shared.inFlight(account.id))
+        assertEquals(0, (shared.inFlight(Gw.orgA)[account.id] ?: 0))
     }
 
     @Test
