@@ -1,8 +1,8 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 // The server application: `ostrom-server` serves HTTP on Ktor's CIO engine (role checked, migrations verified, graceful
 // drain on SIGTERM), `ostrom-server migrate` applies every module's migrations with the owner's credentials, and
 // `ostrom-server seed-test-account` creates a QA account. Depends on every module of modules/, and on the enterprise
-// modules of ee/modules/ when that directory is present (an AGPL build without ee/ compiles the same code with none).
+// modules of ee/modules/ when that directory is present (an Apache-2.0 build without ee/ compiles the same code with none).
 // The shipped entry point is the JVM's (jvmMain, docs/decisions/0001), packaged into the image by image/; the native
 // one (nativeMain) goes with the native targets of the server modules.
 plugins {
@@ -41,7 +41,7 @@ val generateEeModules = tasks.register("generateEeModules") {
             |
             |import run.ostrom.server.kernel.module.ServerModule
             |
-            |/** The enterprise modules found in ee/modules/ at build time, none in an AGPL build without ee/. */
+            |/** The enterprise modules found in ee/modules/ at build time, none in an Apache-2.0 build without ee/. */
             |internal fun eeModules(): List<ServerModule> = listOf<ServerModule>(
             |$entries)
             |

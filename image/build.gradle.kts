@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 // The server image (docs/decisions/0001): the JVM application of :app, packaged by the Ktor Gradle plugin's
 // `ktor { docker { } }` and jib, as TeamCode's app/build.gradle.kts. No Dockerfile.
 //   ./gradlew :image:publishImageToLocalRegistry -PimageTags=ci -PimagePlatforms=amd64   → ostrom-server:ci in Docker
@@ -85,7 +85,7 @@ jib {
             buildMap {
                 put("org.opencontainers.image.title", "ostrom-server")
                 put("org.opencontainers.image.source", "https://github.com/ostrom-hq/ostrom-server")
-                put("org.opencontainers.image.licenses", "AGPL-3.0-only")
+                put("org.opencontainers.image.licenses", "Apache-2.0")
                 put("org.opencontainers.image.version", version.toString())
                 if (imageRevision.isNotEmpty()) put("org.opencontainers.image.revision", imageRevision)
             },

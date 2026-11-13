@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # The server image's command (docs/decisions/0001): the JVM application jib packaged, under the path the Helm chart's
 # `migrate` init container and the compose files name. `ostrom-server [serve | migrate | seed-test-account <email> |
 # bootstrap]`. exec: the JVM is the container's first process and receives SIGTERM itself.
