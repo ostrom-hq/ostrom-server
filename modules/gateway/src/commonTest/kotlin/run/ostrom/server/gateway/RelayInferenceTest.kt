@@ -261,8 +261,9 @@ class RelayInferenceTest {
         val background = InferenceCall(WireProtocol.MESSAGES, body, emptyMap(), null, Workload.BACKGROUND)
         queued(upstream, admission)(Gw.memberA, background, RecordingResponder())
         val request = admission.held.single()
+        val ada = Gw.memberA.memberId
         val expected =
-            AdmissionRequest(records.single().id, Gw.orgA, Gw.memberA.memberId, "claude", Workload.BACKGROUND, 3)
+            AdmissionRequest(records.single().id, Gw.orgA, ada, "claude", Workload.BACKGROUND, 3, setOf("$ada"))
         assertEquals(expected, request)
         assertEquals(listOf(request to false, request to true), admission.waits, "A retry already runs: it waits again")
 

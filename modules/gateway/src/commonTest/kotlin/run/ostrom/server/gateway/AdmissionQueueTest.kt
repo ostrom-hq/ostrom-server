@@ -102,45 +102,69 @@ class AdmissionQueueTest {
         assertNull(Workload.named("BACKGROUND"))
     }
 
+    /** [QueueTurns.decide], with no other member limited. */
+    private fun decide(
+        call: QueueCandidate,
+        others: List<QueueCandidate>,
+        running: Int,
+        limit: Int?,
+        limited: Set<String> = emptySet(),
+    ) = QueueTurns.decide(call, others, running, limit, limited)
+
     @Test
-    fun interactiveCallsGoFirstMembersTakeTurnsAndOneMembersCallsKeepTheirOrder() {
+    fun withoutALimitAmongTheWaitingCallsEveryCallRunsAsItAsks() {
+        // TeamCode #87: taking turns let one waiting call through per poll and timed the others out.
+        val ada = Uuid.random()
+        val bob = Uuid.random()
+        val late = candidate(ada, Workload.BACKGROUND)
+        val ahead = listOf(candidate(bob, waited = 40.seconds), candidate(ada, waited = 20.seconds))
+        assertEquals(AdmissionEntry.Admitted, decide(late, ahead, running = 5, limit = null))
+        assertEquals(
+            AdmissionEntry.Waiting(blocked = false),
+            decide(late, ahead, running = 5, limit = null, limited = setOf(bob.toString())),
+            "One limited member among the waiting calls brings the turns back",
+        )
+    }
+
+    @Test
+    fun behindALimitInteractiveCallsGoFirstMembersTakeTurnsAndOneMembersCallsKeepTheirOrder() {
         val ada = Uuid.random()
         val bob = Uuid.random()
         val call = candidate(ada, Workload.BACKGROUND, waited = 10.seconds)
         assertEquals(
             AdmissionEntry.Waiting(blocked = false),
-            QueueTurns.decide(call, listOf(candidate(bob)), running = 0, limit = null),
+            decide(call, listOf(candidate(bob)), running = 0, limit = 1),
             "An interactive call goes before a background one",
         )
         val promoted = candidate(ada, Workload.BACKGROUND, waited = QueueTurns.PROMOTION)
         assertEquals(
             AdmissionEntry.Admitted,
-            QueueTurns.decide(promoted, listOf(candidate(bob, waited = 1.seconds)), running = 0, limit = null),
+            decide(promoted, listOf(candidate(bob, waited = 1.seconds)), running = 0, limit = 1),
             "A background call that waited 30 s joins the interactive ones, and waited longer",
         )
         val promotedBob = candidate(bob, Workload.BACKGROUND, waited = 40.seconds)
         assertEquals(
             AdmissionEntry.Waiting(blocked = false),
-            QueueTurns.decide(candidate(ada, waited = 1.seconds), listOf(promotedBob), running = 0, limit = null),
+            decide(candidate(ada, waited = 1.seconds), listOf(promotedBob), running = 0, limit = 1),
             "Promoted, it goes first by its wait",
         )
         assertEquals(
             AdmissionEntry.Waiting(blocked = false),
-            QueueTurns.decide(candidate(ada, turn = 5), listOf(candidate(bob, turn = 4)), running = 0, limit = null),
+            decide(candidate(ada, turn = 5), listOf(candidate(bob, turn = 4)), running = 0, limit = 1),
             "The member served longest ago goes first",
         )
         assertEquals(
             AdmissionEntry.Waiting(blocked = false),
-            QueueTurns.decide(candidate(ada, waited = 1.seconds), listOf(candidate(ada, waited = 2.seconds)), 0, null),
+            decide(candidate(ada, waited = 1.seconds), listOf(candidate(ada, waited = 2.seconds)), 0, 1),
             "A member's calls go in arrival order",
         )
         val first = candidate(ada).copy(id = Uuid.parse("00000000-0000-4000-8000-000000000001"))
         val second = first.copy(id = Uuid.parse("ffffffff-ffff-4fff-bfff-ffffffffffff"))
-        assertEquals(AdmissionEntry.Admitted, QueueTurns.decide(first, listOf(second), 0, null), "Ties by id")
-        assertEquals(AdmissionEntry.Admitted, QueueTurns.decide(candidate(ada), emptyList(), running = 1, limit = 2))
+        assertEquals(AdmissionEntry.Admitted, decide(first, listOf(second), 0, 1), "Ties by id")
+        assertEquals(AdmissionEntry.Admitted, decide(candidate(ada), emptyList(), running = 1, limit = 2))
         assertEquals(
             AdmissionEntry.Waiting(blocked = true),
-            QueueTurns.decide(candidate(ada), emptyList(), running = 2, limit = 2),
+            decide(candidate(ada), emptyList(), running = 2, limit = 2),
             "A member at their limit waits for one of their calls to end",
         )
     }
