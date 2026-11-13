@@ -503,7 +503,7 @@ owner, so the serving role reads the history (the start-up check) and never rewr
 - **The event feed holds across replicas**: every module publishes to the organization's journal
   (`events_journal`, kernel `OrgEventPublisher`, preferably in the transaction of the change it reports) under the
   organization's row of `events_cursors`, so the sequence has no gap and commit order is sequence order; each open
-  stream of `GET /api/v1/events` reads the journal every second on its own replica, so an event published on one
+  stream of the feed (`events.v1`) reads the journal every second on its own replica, so an event published on one
   replica reaches the streams of all of them within a poll. Events are kept 7 days.
 - **SQLite** (tests and local mode) is not wired yet: sqlx4k has a SQLite driver with the same `Driver` interface;
   repositories must stay portable SQL where they can.
