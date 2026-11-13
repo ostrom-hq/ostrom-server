@@ -373,6 +373,11 @@ organization are remembered: past that, a new session is placed without being re
 another's. Only a SHA-256 digest of the session id is stored. `inFlight` in `GET /api/v1/accounts` and
 `GET /api/v1/capacity` counts every replica.
 
+`GET /api/v1/accounts` lists the accounts whose quota resets latest first (TeamCode #147/#149): an account's next
+reset is its weekly window's while that is still ahead, otherwise the soonest still ahead among its other windows (a
+model's own window never counts, since it never bars the account). Accounts with no known reset come last, in priority
+order; a member's neutral `Account N` labels keep the priority order, not the listing's.
+
 Refresh ownership follows TeamCode's (`docs/capacity.md` « Refresh ownership » there, `sharing.handover.v1`): a share
 from a sign-in is Ostrom's at once, since nothing else holds its refresh token. An account the TeamCode import creates
 waits for a handover (`refreshOwnership` `pending_handover`, status `pending_handover`): TeamCode may still renew its

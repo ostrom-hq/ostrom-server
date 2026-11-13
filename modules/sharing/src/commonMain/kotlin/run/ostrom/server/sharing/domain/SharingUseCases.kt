@@ -227,7 +227,11 @@ class ListSharedAccountsUseCaseImpl(
         val named = names.of(caller.orgId, changeable)
         val groups = names.groupsOf(caller.orgId, changeable)
         val active = pool.inFlight(caller.orgId)
-        return accounts.mapIndexed { index, account ->
+        // Latest reset first, an account with none known last (TeamCode #147/#149); the neutral numbering keeps the
+        // priority order the accounts are read in.
+        val numbers = accounts.withIndex().associate { it.value.id to it.index + 1 }
+        val resets = accounts.associate { it.id to nextReset(windows[it.id].orEmpty(), now) }
+        return accounts.sortedWith(compareByDescending<SharedAccount> { resets[it.id] }).map { account ->
             val visible = caller.mayChange(account)
             SharedAccountView(
                 account = if (visible) {
@@ -240,7 +244,7 @@ class ListSharedAccountsUseCaseImpl(
                         label = "",
                     )
                 },
-                displayLabel = if (visible) account.label else "Account ${index + 1}",
+                displayLabel = if (visible) account.label else "Account ${numbers[account.id]}",
                 identityVisible = visible,
                 windows = windows[account.id].orEmpty().filter { it.isCurrent(now) }.sortedBy { it.window },
                 inFlight = active[account.id] ?: 0,
@@ -251,6 +255,21 @@ class ListSharedAccountsUseCaseImpl(
         }
     }
 }
+
+/**
+ * An account's next quota reset (TeamCode #96/#127): its weekly window's while that is still ahead, otherwise the
+ * soonest still ahead among its other windows; a `model:` window never counts, since it never bars the account. Null
+ * when none is known.
+ */
+internal fun nextReset(windows: List<QuotaWindow>, now: Instant): Instant? {
+    val ahead = windows.filterNot { it.window.startsWith(MODEL_WINDOW) }
+        .mapNotNull { window -> window.resetsAt?.takeIf { it > now }?.let { window.window to it } }
+    val weekly = ahead.firstOrNull { it.first == WEEKLY_WINDOW }
+    return if (weekly != null) weekly.second else ahead.minOfOrNull { it.second }
+}
+
+private const val WEEKLY_WINDOW = "seven_day"
+private const val MODEL_WINDOW = "model:"
 
 /** [ViewSharedAccountUseCase]. */
 class ViewSharedAccountUseCaseImpl(private val names: MemberNames) : ViewSharedAccountUseCase {
