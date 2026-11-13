@@ -17,7 +17,7 @@ import kotlin.io.encoding.Base64
 import kotlin.time.Instant
 
 /**
- * [LicenseVerifier] on Ed25519 (OpenSSL 3 through cryptography-kotlin). The key format is
+ * [LicenseVerifier] on Ed25519 (the JDK through cryptography-kotlin). The key format is
  * `ostrom-license.v1.<base64url(payload JSON)>.<base64url(signature)>`, both parts base64url without padding, the
  * signature made over the payload bytes exactly as encoded (never over a re-serialization).
  *

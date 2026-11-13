@@ -14,10 +14,7 @@ kotlin {
             implementation(libs.ktor.client.engine.defaults)
             implementation(libs.cryptography.core)
         }
-        nativeMain.dependencies {
-            implementation(libs.cryptography.openssl3.prebuilt)
-        }
-        // The JVM target only runs the tests and Kover (never shipped): the JDK provides SHA-256 there.
+        // The JDK provides SHA-256 there.
         jvmMain.dependencies {
             implementation(libs.cryptography.jdk)
         }

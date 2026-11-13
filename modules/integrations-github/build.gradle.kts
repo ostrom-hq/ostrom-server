@@ -22,9 +22,9 @@ kotlin {
             implementation(project(":modules:identity"))
             // Whether cloud sessions are on (a new GitHub link starts only then): the runners module's configuration.
             implementation(project(":modules:runners"))
-            // RS256 for the App's JWT, HMAC-SHA256 for the webhook signature (OpenSSL, linked by the kernel).
+            // RS256 for the App's JWT, HMAC-SHA256 for the webhook signature (the JDK provider, linked by the kernel).
             implementation(libs.cryptography.core)
-            // Outbound HTTPS to GitHub: Curl on Linux, Darwin on macOS (CIO has no TLS on Kotlin/Native).
+            // Outbound HTTPS to GitHub: the app's CIO client, with the JDK's TLS.
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.engine.defaults)
         }

@@ -11,7 +11,7 @@ kotlin {
             implementation(project(":kernel"))
             api(project(":modules:secrets"))
             implementation(libs.ktor.client.core)
-            // The engine of each platform: Curl on Linux, Darwin on macOS, CIO on the test-only JVM target.
+            // The JVM's engine: CIO, with the JDK's TLS.
             implementation(libs.ktor.client.engine.defaults)
         }
         commonTest.dependencies {

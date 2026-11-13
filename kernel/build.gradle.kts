@@ -56,10 +56,7 @@ kotlin {
             api(libs.ostrom.telemetry)
             implementation(libs.cryptography.core)
         }
-        nativeMain.dependencies {
-            implementation(libs.cryptography.openssl3.prebuilt)
-        }
-        // The JVM target only runs the tests and Kover (never shipped): the JDK provides Ed25519 there.
+        // The JDK provides Ed25519 there.
         jvmMain.dependencies {
             implementation(libs.cryptography.jdk)
             // Loading a key file needs its public key, which the JDK alone cannot derive from an Ed25519 private key.

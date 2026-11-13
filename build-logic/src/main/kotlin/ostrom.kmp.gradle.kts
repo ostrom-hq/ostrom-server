@@ -2,10 +2,12 @@
 // Convention for every Kotlin module of Ostrom (docs/CONVENTIONS.md sections 7, 8, 9 and 10).
 // A module applies `id("ostrom.kmp")` and declares its own dependencies; nothing else goes in its build file.
 //
-// Native targets come from the Gradle property `ostrom.nativeTargets` (gradle.properties of the repository):
+// Native targets come from the property `ostrom.nativeTargets`, read per project, so that a project's own
+// gradle.properties overrides the repository's:
 //   ostrom-core, ostrom-cli: macosArm64,linuxX64,linuxArm64,mingwX64
-//   ostrom-server:           linuxX64,linuxArm64,macosArm64
-// The jvm() target is for tests and Kover coverage of commonMain only: never published, never shipped.
+//   ostrom-server:           none (the server runs on the JVM, docs/decisions/0001)
+//   ostrom-server runner/:   linuxX64,linuxArm64,macosArm64 (runner/gradle.properties)
+// The jvm() target always exists: the server's runtime, and the tests and Kover coverage of every project.
 
 import io.gitlab.arturbosch.detekt.Detekt
 import kotlinx.kover.gradle.plugin.dsl.CoverageUnit
@@ -21,11 +23,10 @@ val libs = the<VersionCatalogsExtension>().named("libs")
 fun lib(alias: String) = libs.findLibrary(alias).get()
 
 val allNativeTargets = setOf("macosArm64", "linuxX64", "linuxArm64", "mingwX64")
-val nativeTargets = providers.gradleProperty("ostrom.nativeTargets")
-    .orElse(allNativeTargets.joinToString(","))
-    .get().split(',').map(String::trim).filter(String::isNotEmpty).toSet()
-require(nativeTargets.isNotEmpty() && allNativeTargets.containsAll(nativeTargets)) {
-    "ostrom.nativeTargets must be a comma-separated subset of $allNativeTargets, got $nativeTargets."
+val nativeTargets = (findProperty("ostrom.nativeTargets")?.toString() ?: allNativeTargets.joinToString(","))
+    .split(',').map(String::trim).filter(String::isNotEmpty).toSet()
+require(allNativeTargets.containsAll(nativeTargets)) {
+    "ostrom.nativeTargets must be a comma-separated subset of $allNativeTargets (or empty), got $nativeTargets."
 }
 
 kotlin {

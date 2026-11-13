@@ -8,14 +8,11 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(project(":kernel"))
-            // Darwin on macOS, Curl on Linux, CIO on the test-only JVM target.
+            // The JVM's engine: CIO, with the JDK's TLS.
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.engine.defaults)
             implementation(libs.cryptography.core)
             implementation(libs.kotlinx.datetime)
-        }
-        nativeMain.dependencies {
-            implementation(libs.cryptography.openssl3.prebuilt)
         }
         jvmMain.dependencies {
             implementation(libs.cryptography.jdk)

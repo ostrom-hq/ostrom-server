@@ -69,7 +69,7 @@ data class StripeConfig(
  * repeat leaves as they are, and a meter event is counted once by its own identifier. A key derived from the
  * parameters would be wrong for them: cancel, reactivate, cancel again within 24 hours would replay the first answer.
  *
- * @param client The HTTP client (Curl on Linux, Darwin on macOS; MockEngine in unit tests).
+ * @param client The HTTP client (CIO in the server, MockEngine in unit tests).
  * @param config The key and base URL.
  * @param idempotencyKey Generates the key of the writes other than a customer (random; fixed in tests).
  */

@@ -155,16 +155,16 @@ Every request is already logged once by the kernel (method, route template — n
 
 ## 7. Tests
 
-- Tests live in `commonTest` and run twice: on the **JVM** (`jvmTest`, a test-only target never shipped) where Kover
-  requires **100 % of the lines and branches** of the module (`koverVerify`), and **natively** (`linuxX64Test`), which
-  proves the real binary's behaviour. Native-only code (`nativeMain`) stays thin. Each module's own tests must cover
-  it: another module's tests do not count. `@Serializable` classes are left out of the measure (a plugin-written
+- Tests live in `commonTest` (and `jvmTest` for JVM-only code) and run on the **JVM** (`jvmTest`), the server's runtime
+  ([docs/decisions/0001](decisions/0001-jvm-and-teamcode-stack.md)), where Kover requires **100 % of the lines and
+  branches** of the module (`koverVerify`). The server modules have no native target any more. Each module's own
+  tests must cover it: another module's tests do not count. `@Serializable` classes are left out of the measure (a plugin-written
   branch in them cannot be reached): keep them free of logic, and test their JSON through the routes.
 - A test that waits on real I/O with a timeout (`withTimeout`, the database health check) runs on
   `withContext(Dispatchers.Default)` inside `runTest`: `runTest`'s virtual clock would fire the timeout at once.
 - **TDD**: the failing test first, for every behaviour ported from the prototype (`~/git/ostrom/mvp/server`, reuse its
   test cases).
-- **Unit tests** (use cases): hand-written fakes (`InMemoryOrgsRepository`); MockK does not exist on Kotlin/Native.
+- **Unit tests** (use cases): hand-written fakes (`InMemoryOrgsRepository`), no MockK (CONVENTIONS).
   Coroutines with `runTest`; time from an injected `Clock`.
 - **Database and route tests**: `serverTest(listOf(OrgsModule)) { server -> server.client.get("/api/v1/orgs") … }` starts
   a fresh PostgreSQL database, applies the migrations, runs `initialize`, serves the routes, and drops the database
@@ -184,7 +184,7 @@ Every request is already logged once by the kernel (method, route template — n
 ## 8. Before the PR
 
 - CI job `ci` green: `scripts/check-conventions.py`, then
-  `./gradlew detekt jvmTest koverVerify koverXmlReport linuxX64Test`, the image (`./gradlew
+  `./gradlew detekt jvmTest koverVerify koverXmlReport`, the runner's `:runner:linuxX64Test`, the image (`./gradlew
   :image:publishImageToLocalRegistry`, jib) and its smoke test.
 - One PR per module step, small; the PR touches only `modules/<name>/` (and its line in `ServerModules.kt` if needed).
 - `ee/` code: same shape, under `ee/modules/<name>/` (Gradle path `:ee:modules:<name>`, discovered like `modules/`),
@@ -216,7 +216,6 @@ Every request is already logged once by the kernel (method, route template — n
 | `OSTROM_MAX_HELD_CALLS` | from the memory limit | 1 to 100 000: the same, apart, half the ordinary ceiling when unset (75 per 512 MiB), for the calls that stay open: gate and confirmation waits, inference calls, MCP relay calls. A model call refused past it gets its 503 in the agent's API, as an overloaded provider answers (`overloaded_error` for Anthropic clients, `server_error` for OpenAI ones), with `Retry-After: 1` |
 | `OSTROM_MAX_OPEN_CONNECTIONS` | from the memory limit | 1 to 100 000: the same, apart, for the connections open as long as their client keeps them: terminal WebSockets, the live usage stream. Unset, 100 per 512 MiB of container limit (at least 16; 170 without a limit): with 150, the three kinds full at once peaked at 495 MiB under 512 MiB (CHARGE 41668930337) |
 | `OSTROM_CALL_QUEUE_SECONDS` | `5` | 0 to 60: how long a call past its ceiling waits in line for a place before its 503 |
-| `KTOR_CURL_POLL_TIMEOUT` | `5` | Milliseconds the HTTP clients' engine (Ktor's Curl) waits in one poll while calls are open; set by the server at start unless already set. Ktor's own 100 ms made each outgoing exchange wait up to 100 ms while another exchange of the same client was open (an MCP tool call: 4 exchanges, 315 ms at p95 under load, 42 ms at 5) |
 | `OSTROM_MCP_ALLOW_PRIVATE_UPSTREAMS` | `false` | `true` lets an organization's MCP server URL resolve to a loopback or private address (a self-hosted instance whose MCP servers live on its own network). Either way, every connection to such a URL is checked where it is made (SSRF protection): the host is resolved once, every answer is checked, and the connection dials an address that was checked, through a local `CONNECT` proxy of the process, so a name that resolves to a private address, or answers differently the second time (DNS rebinding), never reaches the server's network, IPv4 and IPv6 alike (mapped, 6to4, Teredo and NAT64 forms read as the IPv4 address they carry). By default only public addresses pass (not loopback, private, carrier-grade NAT, link-local, multicast, reserved or documentation ranges); with `true`, loopback and private ones pass, and link-local (cloud metadata) and unspecified ones never do. Redirects are not followed. Do not set `NO_PROXY` in the server's environment: libcurl would reach the hosts it names without the check. The chart's NetworkPolicy remains good practice, no longer the only barrier (docker compose has none) |
 | `OSTROM_DATABASE_MIGRATION_URL` | required by `migrate` | The owner's connection, read by `ostrom-server migrate` only; never give it to the serving process |
 | `OSTROM_DATABASE_MIGRATION_USER`, `OSTROM_DATABASE_MIGRATION_PASSWORD` | the URL's | The owner's credentials, as for `OSTROM_DATABASE_USER` |
