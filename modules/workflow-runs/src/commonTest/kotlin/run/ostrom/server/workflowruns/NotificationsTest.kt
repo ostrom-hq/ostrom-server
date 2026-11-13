@@ -14,6 +14,7 @@ import run.ostrom.server.workflowruns.domain.usecases.ListNotificationsUseCaseIm
 import run.ostrom.server.workflowruns.domain.usecases.NotificationRequest
 import run.ostrom.server.workflowruns.domain.usecases.SendNotificationUseCaseImpl
 import run.ostrom.server.workflowruns.fakes.ADA
+import run.ostrom.server.workflowruns.fakes.ADMIN
 import run.ostrom.server.workflowruns.fakes.AGENT
 import run.ostrom.server.workflowruns.fakes.BOB
 import run.ostrom.server.workflowruns.fakes.FakePackages
@@ -137,9 +138,10 @@ class NotificationsTest {
     }
 
     @Test
-    fun theNotificationsAreReadByAMemberAndByTheSessionsAgentOnly() = runTest {
+    fun theNotificationsAreReadByTheirPersonAnAdministratorAndTheSessionsAgentOnly() = runTest {
         val sent = send(AGENT, request())
-        assertEquals(1, list(BOB, RunQuery(sessionId = "s-1")).size)
+        assertEquals(1, list(ADMIN, RunQuery(sessionId = "s-1")).size)
+        assertFailsWith<RunSessionNotFoundException> { list(BOB, RunQuery(sessionId = "s-1")) }
         assertTrue(list(ADA, RunQuery(before = sent.id)).isEmpty(), "After the last notification")
         assertFailsWith<InvalidPageException> { list(ADA, RunQuery(before = "nope")) }
         assertEquals(1, list(ADA, RunQuery()).size)

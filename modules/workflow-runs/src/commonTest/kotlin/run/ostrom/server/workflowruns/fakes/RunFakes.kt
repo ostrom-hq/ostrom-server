@@ -13,6 +13,7 @@ import run.ostrom.server.gates.domain.models.GateMode
 import run.ostrom.server.gates.domain.models.GateStatus
 import run.ostrom.server.gates.domain.usecases.SessionGate
 import run.ostrom.server.gates.domain.usecases.SessionGateDecision
+import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.receipts.domain.models.ReceiptQuery
 import run.ostrom.server.receipts.domain.models.StoredReceipt
 import run.ostrom.server.receipts.domain.repositories.ReceiptsRepository
@@ -37,10 +38,11 @@ import kotlinx.serialization.json.JsonObject
 val ORG: Uuid = Uuid.parse("0000000a-0000-0000-0000-000000000000")
 val STARTED: Instant = Instant.parse("2026-10-30T10:00:00Z")
 
-/** Ada's agent token on launch `lch_1`, Ada herself, Bob, and an agent of another launch. */
+/** Ada's agent token on launch `lch_1`, Ada herself, Bob, an administrator, and an agent of another launch. */
 val AGENT: GateActor = GateActor("agent-lch_1", ORG, ActorKind.AGENT_SESSION, launchId = "lch_1", personId = "ada")
 val ADA: GateActor = GateActor("ada", ORG, ActorKind.USER, personId = "ada")
 val BOB: GateActor = GateActor("bob", ORG, ActorKind.USER, personId = "bob")
+val ADMIN: GateActor = GateActor.person("root", ORG, OrgRole.ADMIN)
 val OTHER_AGENT: GateActor =
     GateActor("agent-lch_2", ORG, ActorKind.AGENT_SESSION, launchId = "lch_2", personId = "ada")
 
