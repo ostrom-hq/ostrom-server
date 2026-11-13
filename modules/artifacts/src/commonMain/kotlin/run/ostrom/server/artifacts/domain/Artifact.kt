@@ -89,6 +89,9 @@ data class ArtifactFile(
  * @property files Its files, sorted by path.
  * @property createdAt When it was published.
  * @property createdBy The member who published it.
+ * @property digest The SHA-256 of its canonical manifest, for a version committed from an upload.
+ * @property baseVersion The version its publisher started from, for a version committed from an upload.
+ * @property credentialId The credential that committed it, to answer the same commit again ([digest]).
  */
 data class ArtifactVersion(
     val artifactId: Uuid,
@@ -97,6 +100,9 @@ data class ArtifactVersion(
     val files: List<ArtifactFile>,
     val createdAt: Instant,
     val createdBy: String,
+    val digest: String? = null,
+    val baseVersion: Int? = null,
+    val credentialId: String? = null,
 )
 
 /**

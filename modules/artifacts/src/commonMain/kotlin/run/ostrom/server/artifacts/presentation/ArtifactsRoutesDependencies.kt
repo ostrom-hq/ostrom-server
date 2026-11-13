@@ -6,6 +6,7 @@ import run.ostrom.server.artifacts.domain.ManageArtifactUseCase
 import run.ostrom.server.artifacts.domain.PublishArtifactUseCase
 import run.ostrom.server.artifacts.domain.ReadArtifactsUseCase
 import run.ostrom.server.artifacts.domain.ViewArtifactUseCase
+import run.ostrom.server.artifacts.domain.uploads.CommitArtifactUploadUseCase
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 
 /**
@@ -17,6 +18,7 @@ import run.ostrom.server.kernel.auth.PrincipalOrgResolver
  * @property view Mints tickets and serves pages.
  * @property locations Where artifacts are read.
  * @property orgResolver The member a request acts for.
+ * @property commit Commits uploads as versions.
  */
 data class ArtifactsRoutesDependencies(
     val publish: PublishArtifactUseCase,
@@ -25,4 +27,5 @@ data class ArtifactsRoutesDependencies(
     val view: ViewArtifactUseCase,
     val locations: ArtifactLocations,
     val orgResolver: PrincipalOrgResolver,
+    val commit: CommitArtifactUploadUseCase,
 )

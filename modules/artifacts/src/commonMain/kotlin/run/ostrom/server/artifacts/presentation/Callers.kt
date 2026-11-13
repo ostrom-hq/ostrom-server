@@ -56,19 +56,23 @@ suspend fun PrincipalOrgResolver.artifactCallerOf(principal: AuthenticatedPrinci
 /**
  * Decodes the files of a request.
  *
- * @throws InvalidArtifactRequestException When an encoding is unknown or a base64 content is malformed.
+ * @throws InvalidArtifactRequestException When a file has no content, an encoding is unknown or a base64 content is
+ *   malformed.
  */
 internal fun List<FileDto>.toUploads(): List<UploadedFile> = map { file ->
-    val bytes = when (file.encoding ?: "utf8") {
-        "utf8" -> file.content.encodeToByteArray()
-        "base64" -> try {
-            Base64.Default.decode(file.content)
-        } catch (_: IllegalArgumentException) {
-            throw InvalidArtifactRequestException("${file.path.take(MAX_ECHO)} is not valid base64.")
-        }
-        else -> throw InvalidArtifactRequestException("encoding is utf8 or base64.")
+    val content = file.content
+        ?: throw InvalidArtifactRequestException("${file.path.take(MAX_ECHO)} has no content (or name an upload).")
+    UploadedFile(file.path, decode(content, file.encoding, file.path))
+}
+
+private fun decode(content: String, encoding: String?, path: String): ByteArray = when (encoding ?: "utf8") {
+    "utf8" -> content.encodeToByteArray()
+    "base64" -> try {
+        Base64.Default.decode(content)
+    } catch (_: IllegalArgumentException) {
+        throw InvalidArtifactRequestException("${path.take(MAX_ECHO)} is not valid base64.")
     }
-    UploadedFile(file.path, bytes)
+    else -> throw InvalidArtifactRequestException("encoding is utf8 or base64.")
 }
 
 private const val MAX_ECHO = 200

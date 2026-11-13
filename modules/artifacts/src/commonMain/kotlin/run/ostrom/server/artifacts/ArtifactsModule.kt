@@ -26,6 +26,8 @@ import run.ostrom.server.artifacts.domain.storage.BucketUploadChunks
 import run.ostrom.server.artifacts.domain.storage.LegacyContentsMover
 import run.ostrom.server.artifacts.domain.storage.UploadChunks
 import run.ostrom.server.artifacts.domain.uploads.ArtifactUploadsRepository
+import run.ostrom.server.artifacts.domain.uploads.CommitArtifactUploadUseCase
+import run.ostrom.server.artifacts.domain.uploads.CommitArtifactUploadUseCaseImpl
 import run.ostrom.server.artifacts.domain.uploads.UploadArtifactUseCase
 import run.ostrom.server.artifacts.domain.uploads.UploadArtifactUseCaseImpl
 import run.ostrom.server.artifacts.domain.uploads.UploadStores
@@ -83,7 +85,7 @@ object ArtifactsModule : ServerModule {
         single<ViewTicketSeal> { SealedViewTickets(get()) }
         single<ViewerChecks> { KernelViewerChecks(get(), getOrNull()) }
         single<ViewArtifactUseCase> { ViewArtifactUseCaseImpl(get(), get(), get(), get(), get(), get()) }
-        single { ArtifactsRoutesDependencies(get(), get(), get(), get(), get(), get()) }
+        single { ArtifactsRoutesDependencies(get(), get(), get(), get(), get(), get(), get()) }
         single<ArtifactStorageRepository> { ArtifactStorageRepositoryImpl(get(), lazy { get<SecretCipher>() }) }
         // The bucket an administrator typed: every connection checked where it is made (no link-local, metadata or
         // unspecified address; a private one is allowed, for a bucket on the organization's own network, as in
@@ -105,6 +107,9 @@ object ArtifactsModule : ServerModule {
         single { StorageRoutesDependencies(get(), get()) }
         single<ArtifactUploadsRepository> { ArtifactUploadsRepositoryImpl(get()) }
         single<UploadChunks> { BucketUploadChunks(get(), get()) }
+        single<CommitArtifactUploadUseCase> {
+            CommitArtifactUploadUseCaseImpl(get(), get(), get(), get(), get(), get())
+        }
         single<UploadArtifactUseCase> {
             UploadArtifactUseCaseImpl(get(), UploadStores(get(), get()), get(), get(), get(), get())
         }

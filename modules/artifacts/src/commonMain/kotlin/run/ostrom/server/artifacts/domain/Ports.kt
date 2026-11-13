@@ -106,6 +106,13 @@ interface ArtifactsRepository {
     suspend fun blobDigests(orgId: Uuid, artifactId: Uuid): Set<String>
 
     /**
+     * The contents an artifact's folder holds, with their sizes.
+     *
+     * @return The size of each, by SHA-256.
+     */
+    suspend fun blobSizes(orgId: Uuid, artifactId: Uuid): Map<String, Long>
+
+    /**
      * The members an artifact is shared with.
      *
      * @return Their ids.

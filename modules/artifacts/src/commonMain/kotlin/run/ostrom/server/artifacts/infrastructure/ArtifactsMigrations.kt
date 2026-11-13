@@ -225,4 +225,15 @@ val ArtifactsMigrations: List<SchemaMigration> = listOf(
             ${tenantTableSql("artifacts_upload_chunks")}
         """.trimIndent(),
     ),
+    // A version committed from an upload keeps its manifest's digest, the version it started from and the credential
+    // that committed it: the same commit within ten minutes answers that version again (TeamCode's `replayed`).
+    SchemaMigration(
+        version = 7,
+        name = "artifacts_versions_commits",
+        sql = """
+            ALTER TABLE artifacts_versions ADD COLUMN digest TEXT;
+            ALTER TABLE artifacts_versions ADD COLUMN base_version INTEGER;
+            ALTER TABLE artifacts_versions ADD COLUMN credential_id TEXT;
+        """.trimIndent(),
+    ),
 )

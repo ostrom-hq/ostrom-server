@@ -43,3 +43,14 @@ class ArtifactFileTooLargeException : OstromException(
         "${UploadLimits.MAX_BINARY_BYTES / UploadLimits.CHUNK_BYTES} MiB of binary.",
     "artifact_file_too_large",
 )
+
+/**
+ * A file of the version is neither sent by the upload nor in the artifact's folder (at its size).
+ *
+ * @param sha256 The file.
+ */
+class ArtifactBlobMissingException(sha256: String) : OstromException(
+    ErrorKind.CONFLICT,
+    "The file $sha256 was not sent by this upload and the artifact does not hold it: send it, then commit again.",
+    "artifact_blob_missing",
+)

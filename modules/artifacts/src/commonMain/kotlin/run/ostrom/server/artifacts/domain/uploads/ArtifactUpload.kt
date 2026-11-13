@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.artifacts.domain.uploads
 
+import run.ostrom.server.artifacts.domain.ArtifactCaller
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -114,6 +115,14 @@ data class ArtifactUpload(
 ) {
     /** The files to send, in the order they were announced. */
     val missing: List<String> get() = files.filter { it.state != UploadBlobState.HELD }.map { it.sha256 }
+
+    /**
+     * Whether [caller] still uses it: the credential that opened it, before it closes.
+     *
+     * @return True for that credential until [expiresAt].
+     */
+    fun isOpenFor(caller: ArtifactCaller, now: Instant): Boolean =
+        memberId == caller.memberId && credentialId == caller.credentialId && expiresAt > now
 }
 
 /**

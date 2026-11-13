@@ -9,6 +9,9 @@ import run.ostrom.server.artifacts.domain.ArtifactRules
 import run.ostrom.server.artifacts.domain.ArtifactTicketsRateLimitedException
 import run.ostrom.server.artifacts.domain.ArtifactVersion
 import run.ostrom.server.artifacts.domain.InvalidArtifactRequestException
+import run.ostrom.server.artifacts.domain.uploads.ArtifactUploadNotFoundException
+import run.ostrom.server.artifacts.domain.uploads.CommittedFile
+import run.ostrom.server.artifacts.domain.uploads.UploadCommit
 import run.ostrom.server.kernel.auth.authenticated
 import run.ostrom.server.kernel.auth.requirePrincipal
 import run.ostrom.server.kernel.http.OstromJson
@@ -63,8 +66,15 @@ fun Route.artifactsRoutes(dependencies: ArtifactsRoutesDependencies) = with(depe
             post<ArtifactsApi.Id.Versions> { params ->
                 val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), ARTIFACTS_WRITE)
                 val request = call.receive<PublishVersionRequest>()
-                val version = publish.addVersion(caller, artifactId(params.parent.id), request.files.toUploads())
-                call.respond(HttpStatusCode.Created, version.toResponse())
+                val id = artifactId(params.parent.id)
+                if (request.uploadId == null) {
+                    val version = publish.addVersion(caller, id, request.files.toUploads())
+                    call.respond(HttpStatusCode.Created, version.toResponse())
+                } else {
+                    val committed = commit.commit(caller, id, request.toCommit(request.uploadId))
+                    val status = if (committed.replayed) HttpStatusCode.OK else HttpStatusCode.Created
+                    call.respond(status, committed.version.toResponse().copy(replayed = committed.replayed))
+                }
             }
         }
         get<ArtifactsApi> { params ->
@@ -197,4 +207,30 @@ internal fun ArtifactVersion.toResponse() = ArtifactVersionResponse(
     entry = entry,
     createdAt = createdAt.toString(),
     createdBy = createdBy,
+    digest = digest,
+    baseVersion = baseVersion,
+)
+
+/**
+ * The commit of [uploadId]: each file by its SHA-256 and size.
+ *
+ * @throws InvalidArtifactRequestException When a file lacks them.
+ * @throws run.ostrom.server.artifacts.domain.uploads.ArtifactUploadNotFoundException When the upload id is malformed.
+ */
+internal fun PublishVersionRequest.toCommit(uploadId: String) = UploadCommit(
+    uploadId = Uuid.parseOrNull(uploadId) ?: throw ArtifactUploadNotFoundException(),
+    files = files.map { file ->
+        val sha256 = file.sha256
+        val size = file.size
+        if (sha256 == null || size == null) {
+            throw InvalidArtifactRequestException(
+                "${file.path.take(ArtifactRules.MAX_PATH_LENGTH)} needs its sha256 and size to commit an upload.",
+            )
+        }
+        CommittedFile(file.path, sha256, size)
+    },
+    entry = entry,
+    baseVersion = baseVersion,
+    title = title,
+    access = access,
 )
