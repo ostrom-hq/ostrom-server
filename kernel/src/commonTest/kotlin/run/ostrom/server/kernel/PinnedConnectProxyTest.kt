@@ -328,6 +328,22 @@ class PinnedConnectProxyTest {
     }
 
     @Test
+    fun aFailedTunnelNeverStopsTheProxyFromServingTheNext() = realTime {
+        withHarness {
+            val proxy = PinnedConnectProxy.start(::isReachableAddress, { host ->
+                if (host == "broken.test") throw IOException("no such host") else listOf("127.0.0.1")
+            })
+            try {
+                assertNull(connect(proxy.port, "broken.test:443").status)
+                val tunnel = connect(proxy.port, "pinned.test:${echo.port}")
+                assertEquals("HTTP/1.1 200 Connection established", tunnel.status)
+            } finally {
+                proxy.close()
+            }
+        }
+    }
+
+    @Test
     fun aCancelledDialEndsTheTunnelQuietly() = realTime {
         withHarness {
             val proxy = PinnedConnectProxy.start(::isReachableAddress, { listOf("127.0.0.1") }, { _, _, _ ->

@@ -24,8 +24,9 @@ private val LOOKUP_DEADLINE = 5.seconds
 private const val LOOKUP_THREADS = 16
 
 /**
- * The address check and the connection on one lookup, for the CIO engine's `dnsResolver`. The engine dials exactly
- * the addresses returned here and keeps the URL's host name for SNI, certificate verification and the `Host` header.
+ * The address check and the connection on one lookup, for [PinnedConnectProxy] (the engines of the server on
+ * Kotlin/Native have no resolver hook). The proxy dials exactly the addresses returned here and the client keeps
+ * the URL's host name for SNI, certificate verification and the `Host` header.
  * A name that answers a public address to a first lookup and a private one to the next (DNS rebinding) cannot pass
  * the check with one and be dialled with the other: there is no second lookup.
  *

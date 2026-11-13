@@ -85,6 +85,7 @@ class PinnedConnectProxy private constructor(
         }
     }
 
+    // A tunnel's failure (an unresolvable name, a reset, an over-long line) ends that tunnel, never the accept loop.
     private suspend fun serve(client: Socket) {
         try {
             val input = client.openReadChannel()
@@ -95,6 +96,10 @@ class PinnedConnectProxy private constructor(
             } else {
                 open(target.first, target.second, output)?.let { relay(it, input, output) }
             }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            // Nothing the network said is echoed; the client sees the connection close.
         } finally {
             withContext(NonCancellable) { client.close() }
         }
@@ -132,11 +137,11 @@ class PinnedConnectProxy private constructor(
 
     /** Every address was checked; the first that connects is the one dialled. Null when none does. */
     private suspend fun dial(addresses: List<String>, port: Int): Socket? {
-        var socket: Socket? = null
         for (address in addresses) {
-            if (socket == null) socket = attempt(address, port)
+            val socket = attempt(address, port)
+            if (socket != null) return socket
         }
-        return socket
+        return null
     }
 
     private suspend fun attempt(address: String, port: Int): Socket? = try {
