@@ -445,9 +445,11 @@ class TodoRulesTest {
 
     @Test
     fun onlyAPrClosedWithoutMergeIsReplacedAndTheChangeIsNoted() {
-        val linked = TodoRules.link(list(item("a")), "a", TodoLink("pr", "$PULL/7", number = 7), false, at(10))
+        val waited = TodoRules.link(list(item("a")), "a", TodoLink("wait", "w1"), false, at(5))
+        val linked = TodoRules.link(waited, "a", TodoLink("pr", "$PULL/7", number = 7), false, at(10))
         val replaced = TodoRules.link(linked, "a", TodoLink("pr", "$PULL/8", number = 8), true, at(40)).item("a")!!
-        assertEquals(8, replaced.links.single().number)
+        assertEquals(listOf("w1", "$PULL/8"), replaced.links.map { it.ref }, "only the PR is replaced")
+        assertEquals(8, replaced.links.last().number)
         assertTrue(replaced.notes.single().text.contains("pull/7"), "the change is noted")
     }
 

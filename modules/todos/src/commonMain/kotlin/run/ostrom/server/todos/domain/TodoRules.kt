@@ -207,7 +207,7 @@ object TodoRules {
         TodoValidation.item(definition)
         TodoValidation.links(definition, list.items.map { it.id }.toSet() + definition.id)
         val doing = list.items.indexOfLast { it.status == TodoItemStatus.DOING }
-        val afterDeps = definition.dependsOn.maxOfOrNull { dep -> list.items.indexOfFirst { it.id == dep } } ?: -1
+        val afterDeps = list.items.indexOfLast { it.id in definition.dependsOn }
         val position = maxOf(if (doing >= 0) doing + 1 else list.items.size, afterDeps + 1)
         val added = toItem(definition, TodoOrigin.DISCOVERED, reason)
         val items = list.items.toMutableList().apply { add(position, added) }
