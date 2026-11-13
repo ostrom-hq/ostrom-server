@@ -11,6 +11,7 @@ import run.ostrom.server.sharing.domain.AccountTokenCipher
 import run.ostrom.server.sharing.domain.AccountTokens
 import run.ostrom.server.sharing.domain.LeaseResult
 import run.ostrom.server.sharing.domain.NoAccountSpendReader
+import run.ostrom.server.sharing.domain.ProviderRefusal
 import run.ostrom.server.sharing.domain.QuotaWindow
 import run.ostrom.server.sharing.domain.RefreshResult
 import run.ostrom.server.sharing.domain.SharedAccount
@@ -70,6 +71,21 @@ class SharedAccountPoolTest {
         member: Uuid = Sharing.memberA.memberId,
         provider: AccountProvider = AccountProvider.CLAUDE,
     ) = pool().let { it.lease(Sharing.orgA, member, provider, session) }
+
+    @Test
+    fun aRefusalSaysWhetherTheAccountOrAPlainRateLimitRefused() = runTest {
+        account("only")
+        val lease = assertIs<LeaseResult.Leased>(lease()).lease
+        assertEquals(ProviderRefusal.Account, lease.refusal(401, emptyMap()))
+        val spent = mapOf("anthropic-ratelimit-unified-7d-status" to "rejected", "retry-after" to "5")
+        assertEquals(ProviderRefusal.Account, lease.refusal(429, spent), "A spent subscription is the account's")
+        assertEquals(ProviderRefusal.RateLimit(5.seconds), lease.refusal(429, mapOf("retry-after" to "5")))
+        val halfUsed = mapOf("anthropic-ratelimit-unified-5h-utilization" to "0.5")
+        assertEquals(ProviderRefusal.RateLimit(SharedAccountPool.DEFAULT_COOLDOWN), lease.refusal(429, halfUsed))
+        assertNull(lease.refusal(500, emptyMap()))
+        assertNull(lease.refusal(200, emptyMap()))
+        lease.release()
+    }
 
     @Test
     fun theLeastUsedAccountWinsThenPriority() = runTest {

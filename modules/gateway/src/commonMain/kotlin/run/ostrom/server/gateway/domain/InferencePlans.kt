@@ -118,6 +118,13 @@ enum class RefusalKind(
 
     /** The call's place in the admission queue expired (its lease was not renewed). */
     QUEUE_EXPIRED(SERVICE_UNAVAILABLE, "api_error", "server_error"),
+
+    /**
+     * The provider rate-limited two shared accounts one after the other for this call, without a spent
+     * subscription: a limit that may hold for every account, so the rest of the pool is not tried (TeamCode's
+     * `provider_rate_limited`).
+     */
+    PROVIDER_RATE_LIMITED(TOO_MANY_REQUESTS, "rate_limit_error", "rate_limit_exceeded"),
     ;
 
     /** The code of the refusal, in `x-ostrom-error` and an OpenAI error's `code`. */
