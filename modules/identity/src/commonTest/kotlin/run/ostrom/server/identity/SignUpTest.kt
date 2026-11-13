@@ -63,9 +63,11 @@ class SignUpTest {
         assertTrue(invite.accepts(second.token))
 
         val ada = Uuid.random()
-        assertTrue(invite.admits(github, SignUpGrant.Presented(second.token), ada))
+        assertTrue(invite.admits(github, SignUpGrant.Presented(second.token)))
+        assertTrue(invite.accepts(second.token), "Not spent until the account exists")
+        invite.claim(SignUpGrant.Presented(second.token), ada)
         assertFalse(invite.accepts(second.token), "Used once")
-        assertFalse(invite.admits(github, SignUpGrant.Presented(second.token), Uuid.random()))
+        assertFalse(invite.admits(github, SignUpGrant.Presented(second.token)))
         assertTrue(invite.mayCreateOrgs(ada), "The setup link's person creates the organizations")
         assertFalse(invite.mayCreateOrgs(Uuid.random()))
 
@@ -80,22 +82,29 @@ class SignUpTest {
     @Test
     fun anInviteOnlyInstanceAdmitsAnInvitationTheSsoAndTheOperatorOnly() = runTest {
         val id = Uuid.random()
-        assertTrue(invite.admits(github, SignUpGrant.Presented("invite-token"), id))
+        assertTrue(invite.admits(github, SignUpGrant.Presented("invite-token")))
         assertTrue(invite.accepts("invite-token"))
         assertFalse(invite.accepts("revoked-token"))
-        assertFalse(invite.admits(github, SignUpGrant.Presented("revoked-token"), id))
-        assertFalse(invite.admits(github, SignUpGrant.Presented(null), id))
-        assertFalse(invite.admits(github, SignUpGrant.Presented(""), id))
-        assertFalse(invite.admits(github, SignUpGrant.Presented("x".repeat(257)), id))
+        assertFalse(invite.admits(github, SignUpGrant.Presented("revoked-token")))
+        assertFalse(invite.admits(github, SignUpGrant.Presented(null)))
+        assertFalse(invite.admits(github, SignUpGrant.Presented("")))
+        assertFalse(invite.admits(github, SignUpGrant.Presented("x".repeat(257))))
         assertFalse(invite.accepts(""))
         assertFalse(invite.accepts("osb_unknown"))
-        assertTrue(invite.admits(github, SignUpGrant.Operator, id))
+        assertTrue(invite.admits(github, SignUpGrant.Operator))
         val sso = VerifiedIdentity(IdentityProvider.OIDC, "sub", null, false, connectionId = Uuid.random())
-        assertTrue(invite.admits(sso, SignUpGrant.Presented(null), id), "The organization's SSO provisions")
+        assertTrue(invite.admits(sso, SignUpGrant.Presented(null)), "The organization's SSO provisions")
+        assertFalse(invite.mayCreateOrgs(id))
+
+        // Only a setup link is spent by the account it creates: neither an invitation nor the operator.
+        invite.claim(SignUpGrant.Presented("invite-token"), id)
+        invite.claim(SignUpGrant.Presented(null), id)
+        invite.claim(SignUpGrant.Operator, id)
+        assertTrue(invite.accepts("invite-token"))
         assertFalse(invite.mayCreateOrgs(id))
 
         val withoutOrgs = SignUpPolicyImpl(SignUpMode.INVITE, links, null, hasher, clock)
-        assertFalse(withoutOrgs.admits(github, SignUpGrant.Presented("invite-token"), id))
+        assertFalse(withoutOrgs.admits(github, SignUpGrant.Presented("invite-token")))
         assertFalse(withoutOrgs.accepts("invite-token"))
     }
 
@@ -103,7 +112,7 @@ class SignUpTest {
     fun anOpenInstanceAdmitsEveryoneAndLetsEveryoneCreateOrganizations() = runTest {
         val open = SignUpPolicyImpl(SignUpMode.OPEN, links, invitations, hasher, clock)
 
-        assertTrue(open.admits(github, SignUpGrant.Presented(null), Uuid.random()))
+        assertTrue(open.admits(github, SignUpGrant.Presented(null)))
         assertTrue(open.mayCreateOrgs(Uuid.random()))
     }
 

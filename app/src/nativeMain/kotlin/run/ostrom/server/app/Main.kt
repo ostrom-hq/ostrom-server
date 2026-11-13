@@ -65,10 +65,10 @@ fun main(args: Array<String>) {
         Command.Serve -> serve()
         Command.Migrate -> migrate()
         // A QA account, as one JSON line.
-        is Command.SeedTestAccount -> oneShot("test account not created") { koin, source ->
-            requireTestAccountsAllowed(source, command.email)
-            seedTestAccount(koin, source, command.email)
-        }
+        is Command.SeedTestAccount -> oneShot(
+            "test account not created",
+            allowed = { requireTestAccountsAllowed(it, command.email) },
+        ) { koin, source -> seedTestAccount(koin, source, command.email) }
         // The first owner's one-time setup link.
         Command.Bootstrap -> oneShot("setup link not made") { koin, _ -> bootstrapInstance(koin) }
     }
@@ -170,10 +170,20 @@ private fun migrate() {
  * its usage, a failure 1.
  *
  * @param failure What the log says when it fails.
+ * @param allowed Refuses the command (a [UsageException]) before anything is touched.
  * @param work The command, given the server's Koin and configuration once every module's migrations are checked.
  */
-private fun oneShot(failure: String, work: suspend (Koin, ConfigSource) -> String) {
+private fun oneShot(
+    failure: String,
+    allowed: (ConfigSource) -> Unit = {},
+    work: suspend (Koin, ConfigSource) -> String,
+) {
     val (source, config) = loadConfig()
+    try {
+        allowed(source)
+    } catch (error: UsageException) {
+        usage(error)
+    }
     val logger = JsonLogger(config.logLevel)
     val modules = serverModules()
     var driver: Driver? = null

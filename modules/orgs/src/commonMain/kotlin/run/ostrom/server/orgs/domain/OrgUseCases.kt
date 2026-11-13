@@ -50,9 +50,9 @@ interface CreateOrgUseCase {
      * @param userId The creator.
      * @param name The name.
      * @param slug The short name the creator chose, or null to derive it from the name.
-     * @return The organization and the owner's membership.
      * @param operator Whether the instance's operator creates it from the host (`seed-test-account`): the
      *   instance's sign-up policy does not apply.
+     * @return The organization and the owner's membership.
      * @throws FreeTeamTakenException When the creator's domain (or the creator) already has a free
      *   team.
      * @throws SlugTakenException When the chosen short name is taken.

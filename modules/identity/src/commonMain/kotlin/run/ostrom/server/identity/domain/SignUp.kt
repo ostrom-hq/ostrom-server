@@ -146,15 +146,23 @@ interface SignUpPolicy {
 
     /**
      * Whether a sign-in may create an account: always on an open instance; on an invite-only one, for an
-     * organization's SSO, the operator, the setup link (used now, by [userId]) or a live invitation.
+     * organization's SSO, the operator, a usable setup link or a live invitation. Nothing is used yet ([claim]).
      *
      * @param identity What the provider proved.
      * @param grant What the browser presents, or the operator.
-     * @param userId The account about to be created.
      *
      * @return True when the account may be created.
      */
-    suspend fun admits(identity: VerifiedIdentity, grant: SignUpGrant, userId: Uuid): Boolean
+    suspend fun admits(identity: VerifiedIdentity, grant: SignUpGrant): Boolean
+
+    /**
+     * Once the account exists, uses the setup link it was created with (once, recording who), so a failed creation
+     * never spends it. An invitation is used when its person accepts it, not here.
+     *
+     * @param grant What the browser presented.
+     * @param userId The account created.
+     */
+    suspend fun claim(grant: SignUpGrant, userId: Uuid)
 
     /**
      * Whether a token is a usable setup link or live invitation, without using it (`grantSignUp`).
@@ -192,15 +200,17 @@ class SignUpPolicyImpl(
     private val hasher: SecretHasher,
     private val clock: Clock,
 ) : SignUpPolicy {
-    override suspend fun admits(identity: VerifiedIdentity, grant: SignUpGrant, userId: Uuid): Boolean {
-        val token = (grant as? SignUpGrant.Presented)?.token?.takeIf { it.length in 1..MAX_GRANT_LENGTH }
-        return when {
-            // An organization's SSO provisions its own people: its administrators configured it.
-            mode == SignUpMode.OPEN || grant == SignUpGrant.Operator || identity.connectionId != null -> true
-            token == null -> false
-            isSetupToken(token) -> setupLinks.consume(hasher.hash(token), userId, clock.nowMillis())
-            else -> invitations?.isLive(token) == true
-        }
+    override suspend fun admits(identity: VerifiedIdentity, grant: SignUpGrant): Boolean {
+        val token = (grant as? SignUpGrant.Presented)?.token
+        // An organization's SSO provisions its own people: its administrators configured it.
+        val vouched = mode == SignUpMode.OPEN || grant == SignUpGrant.Operator || identity.connectionId != null
+        return vouched || token != null && accepts(token)
+    }
+
+    override suspend fun claim(grant: SignUpGrant, userId: Uuid) {
+        val token = (grant as? SignUpGrant.Presented)?.token?.takeIf { isSetupToken(it) } ?: return
+        // Lost only to a simultaneous sign-up with the same link: the account stays, without the setup's rights.
+        setupLinks.consume(hasher.hash(token), userId, clock.nowMillis())
     }
 
     override suspend fun accepts(token: String): Boolean {

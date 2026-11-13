@@ -48,7 +48,9 @@ class SignUpAdaptersTest {
         val policy = object : SignUpPolicy {
             override val mode = SignUpMode.INVITE
 
-            override suspend fun admits(identity: VerifiedIdentity, grant: SignUpGrant, userId: Uuid) = false
+            override suspend fun admits(identity: VerifiedIdentity, grant: SignUpGrant) = false
+
+            override suspend fun claim(grant: SignUpGrant, userId: Uuid) = Unit
 
             override suspend fun accepts(token: String) = false
 

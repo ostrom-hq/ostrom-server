@@ -130,15 +130,16 @@ fun Route.signInRoutes(dependencies: SignInRoutesDependencies) = with(dependenci
         if (call.answeredTheApp(params, completeMobile, config)) return@get
         // The state cookie served its purpose whatever happens next.
         call.response.cookies.append(stateCookie("", 0, config))
+        val signUpToken = call.request.cookies[SIGN_UP_COOKIE]
+        // Spent or not, the grant ends with this sign-in: a later person in this browser never inherits it.
+        call.forgetSignUpGrant(config)
         if (params.error != null) return@get call.redirectToLogin(config, "access_denied")
         val signedIn = try {
             val browserState = call.request.cookies[OAUTH_STATE_COOKIE]
-            val signUpToken = call.request.cookies[SIGN_UP_COOKIE]
             completeOAuth(params.parent.provider, params.state, browserState, params.code, signUpToken)
         } catch (error: OstromException) {
             return@get call.redirectToLogin(config, error)
         }
-        call.forgetSignUpGrant(config)
         call.setSessionCookie(signedIn.session, config)
         call.respondRedirect(config.consoleUrl + signedIn.redirectPath)
     }
@@ -163,7 +164,6 @@ fun Route.signInRoutes(dependencies: SignInRoutesDependencies) = with(dependenci
 }
 
 
-/** The e-mailed link: asked for by a browser, which keeps a nonce (a cookie) that the link needs to sign in (M4). */
 /** `grantSignUp`: the token a browser gives before signing in on an invite-only instance, kept in a cookie. */
 private fun Route.signUpGrantRoute(dependencies: SignInRoutesDependencies) = with(dependencies) {
     post<SignInApi.SignUpGrant, SignUpGrantRequest> { _, request ->
@@ -175,6 +175,7 @@ private fun Route.signUpGrantRoute(dependencies: SignInRoutesDependencies) = wit
     }
 }
 
+/** The e-mailed link: asked for by a browser, which keeps a nonce (a cookie) that the link needs to sign in (M4). */
 private fun Route.emailRoutes(dependencies: SignInRoutesDependencies) = with(dependencies) {
     post<SignInApi.Email, MagicLinkRequest> { _, request ->
         val source = call.request.origin.remoteAddress

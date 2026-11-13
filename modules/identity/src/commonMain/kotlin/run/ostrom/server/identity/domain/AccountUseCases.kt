@@ -120,9 +120,8 @@ class ResolveUserUseCaseImpl(
                 owner
             }
             else -> {
-                val id = Uuid.random()
-                if (!signUp.admits(identity, grant, id)) throw SignUpClosedException()
-                create(id, identity, email, userEmail, now)
+                if (!signUp.admits(identity, grant)) throw SignUpClosedException()
+                create(Uuid.random(), identity, email, userEmail, now).also { signUp.claim(grant, it.id) }
             }
         }
     }
