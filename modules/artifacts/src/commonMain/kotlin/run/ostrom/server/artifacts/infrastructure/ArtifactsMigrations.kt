@@ -128,4 +128,43 @@ val ArtifactsMigrations: List<SchemaMigration> = listOf(
             ALTER POLICY artifacts_routes_router ON artifacts_routes USING (current_user = 'ostrom_router')
         """.trimIndent(),
     ),
+    // TeamCode's `artifact_storage` and `artifact_settings`: one row per organization, the bucket's secret sealed
+    // with the instance's secrets key (context `artifact-storage:<org>`), under the same row-level security.
+    SchemaMigration(
+        version = 4,
+        name = "artifacts_storage_and_settings",
+        sql = """
+            CREATE TABLE artifacts_storage (
+                org_id UUID PRIMARY KEY,
+                endpoint TEXT NOT NULL,
+                region TEXT NOT NULL,
+                bucket TEXT NOT NULL,
+                prefix TEXT NOT NULL,
+                path_style BOOLEAN NOT NULL,
+                access_key_id TEXT NOT NULL,
+                secret_sealed TEXT NOT NULL,
+                server_side_encryption TEXT NOT NULL,
+                verified_at TIMESTAMPTZ,
+                version INTEGER NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL
+            );
+            CREATE TABLE artifacts_settings (
+                org_id UUID PRIMARY KEY,
+                enabled BOOLEAN NOT NULL,
+                who_can_publish TEXT NOT NULL,
+                public_sharing TEXT NOT NULL,
+                quota_member_bytes BIGINT NOT NULL,
+                quota_org_bytes BIGINT NOT NULL,
+                quota_artifacts_per_member INTEGER NOT NULL,
+                quota_publishes_per_hour INTEGER NOT NULL,
+                personal_retention_days INTEGER,
+                shared_retention_days INTEGER,
+                max_versions_per_artifact INTEGER NOT NULL,
+                version INTEGER NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL
+            );
+            ${tenantTableSql("artifacts_storage")}
+            ${tenantTableSql("artifacts_settings")}
+        """.trimIndent(),
+    ),
 )
