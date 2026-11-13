@@ -147,3 +147,20 @@ data class ArtifactLocations(
     val viewerUrl: String,
     val contentOrigin: String?,
 )
+
+/**
+ * The organization's audit log, told what happens to an artifact as TeamCode's `docs/audit.md` names it:
+ * `artifact.created`, `artifact.version_published`, `artifact.access_changed`, `artifact.member_added`,
+ * `artifact.member_removed`, `artifact.deleted` and `artifact.publish_refused`. Reading writes nothing.
+ */
+fun interface ArtifactEvents {
+    /**
+     * Records [event] about the artifact [artifactId].
+     *
+     * @param caller Who did it.
+     * @param event The event's name, without its `artifact.` prefix.
+     * @param artifactId The artifact, or null when none was created.
+     * @param details The facts of the line.
+     */
+    suspend fun record(caller: ArtifactCaller, event: String, artifactId: Uuid?, details: Map<String, String?>)
+}

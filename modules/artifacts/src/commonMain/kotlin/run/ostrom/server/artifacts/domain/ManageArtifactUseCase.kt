@@ -40,10 +40,11 @@ interface ManageArtifactUseCase {
     suspend fun delete(caller: ArtifactCaller, id: Uuid)
 }
 
-/** [ManageArtifactUseCase]. */
+/** [ManageArtifactUseCase]; the audit log is told of each change of access, reader and deletion. */
 internal class ManageArtifactUseCaseImpl(
     private val repository: ArtifactsRepository,
     private val clock: Clock,
+    private val events: ArtifactEvents,
 ) : ManageArtifactUseCase {
     private val rules = ArtifactAccessRules(repository)
 
@@ -63,6 +64,9 @@ internal class ManageArtifactUseCaseImpl(
             updatedAt = clock.now(),
         )
         repository.updateSettings(updated)
+        if (newAccess != artifact.access) {
+            events.record(caller, "access_changed", id, mapOf("from" to artifact.access.wire, "to" to newAccess.wire))
+        }
         return updated
     }
 
@@ -75,11 +79,13 @@ internal class ManageArtifactUseCaseImpl(
         rules.owned(caller, id)
         ensureValid(Uuid.parseOrNull(member) != null) { "Name the member by their id." }
         repository.setMember(caller.orgId, id, member, share)
+        events.record(caller, if (share) "member_added" else "member_removed", id, mapOf("member" to member))
     }
 
     override suspend fun delete(caller: ArtifactCaller, id: Uuid) {
         rules.owned(caller, id)
         if (!caller.person) throw ArtifactPersonRequiredException()
         repository.delete(caller.orgId, id)
+        events.record(caller, "deleted", id, emptyMap())
     }
 }
