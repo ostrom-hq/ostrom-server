@@ -2,6 +2,7 @@
 package run.ostrom.server.automations
 
 import run.ostrom.server.automations.domain.AutomationCaller
+import run.ostrom.server.automations.domain.AutomationRun
 import run.ostrom.server.automations.domain.DryRun
 import run.ostrom.server.automations.domain.RunAutomationsUseCase
 import run.ostrom.server.automations.domain.RunPage
@@ -40,7 +41,10 @@ class AutomationSchedulerTest {
             return 0
         }
 
-        override suspend fun trigger(id: Uuid, delivery: WebhookDelivery, body: ByteArray): Triggered = error("unused")
+        override suspend fun trigger(id: Uuid, delivery: WebhookDelivery, body: ByteArray, version: String): Triggered =
+            error("unused")
+
+        override suspend fun cancel(caller: AutomationCaller, id: Uuid, runId: Uuid): AutomationRun = error("unused")
 
         override suspend fun test(
             caller: AutomationCaller,
