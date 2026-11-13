@@ -298,7 +298,9 @@ class RelayInferenceUseCaseImpl(
         private suspend fun stream(answer: UpstreamAnswer, state: CallState) {
             state.status = answer.status
             state.outcome = if (answer.status in SUCCESS) "ok" else "provider_error"
-            val meter = UsageMeter(call.protocol)
+            // Held by the call's state: what the provider reported is charged even when the agent leaves mid-answer
+            // or right after its last event (TeamCode a252a0db), not only when the stream reaches its end.
+            val meter = UsageMeter(call.protocol).also { state.meter = it }
             val events = answer.headers["content-type"]?.startsWith(EVENT_STREAM) == true
             val whole = if (events) null else Accumulator()
             val buffer = ByteArray(CHUNK)
@@ -318,7 +320,6 @@ class RelayInferenceUseCaseImpl(
                 }
             }
             whole?.bytes()?.let(meter::acceptBody)
-            state.usage = meter.usage
         }
 
         /** Writes to the agent; a failure here is the agent gone, not the provider. */
@@ -346,7 +347,10 @@ class RelayInferenceUseCaseImpl(
         var answered: Boolean = false
         var agentGone: Boolean = false
         var firstByte: Instant? = null
-        var usage: TokenUsage? = null
+        var meter: UsageMeter? = null
+
+        /** The usage the provider reported so far: all of it once the answer was read to its end. */
+        val usage: TokenUsage? get() = meter?.usage
     }
 
     /**

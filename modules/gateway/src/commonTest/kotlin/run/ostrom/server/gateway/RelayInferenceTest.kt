@@ -6,6 +6,7 @@ import run.ostrom.server.gateway.domain.AdmissionRequest
 import run.ostrom.server.gateway.domain.AllowAllSpend
 import run.ostrom.server.gateway.domain.AwaitAdmissionUseCase
 import run.ostrom.server.gateway.domain.AwaitAdmissionUseCaseImpl
+import run.ostrom.server.gateway.domain.ByteSink
 import run.ostrom.server.gateway.domain.CancellationWatch
 import run.ostrom.server.gateway.domain.GatewaySettings
 import run.ostrom.server.gateway.domain.InferenceCall
@@ -441,6 +442,34 @@ class RelayInferenceTest {
         assertNull(cut.refusal)
         assertEquals(5, cut.size, "An empty read is not the start of the answer")
         assertEquals("upstream_broken", records.last().outcome)
+    }
+
+    @Test
+    fun anAgentLeavingAfterTheProviderReportedItsUsageIsStillCharged() = runTest {
+        // TeamCode a252a0db: the usage the provider already reported is charged, however the agent's side ends.
+        val gone = RecordingResponder().apply { failAfterWrites = 0 }
+        relay(FakeUpstream(eventAnswer()))(Gw.memberA, call(), gone)
+        assertEquals("agent_gone", records.last().outcome)
+        assertEquals(TokenUsage(1_000_000, 1_000_000, 0, 0), records.last().usage, "What the provider reported")
+        assertTrue(records.last().priced)
+        assertTrue(records.last().costMicros > 0, "The member pays for what the provider billed")
+
+        val closed = object : InferenceResponder {
+            override suspend fun refuse(protocol: WireProtocol, refusal: InferenceRefusal) = Unit
+
+            override suspend fun stream(
+                status: Int,
+                headers: List<Pair<String, String>>,
+                body: suspend (ByteSink) -> Unit,
+            ) = body { _, _ -> throw CancellationException("client closed after the terminal event") }
+        }
+        val cancelled = assertFailsWith<CancellationException> {
+            relay(FakeUpstream(eventAnswer()))(Gw.memberA, call(), closed)
+        }
+        assertEquals("client closed after the terminal event", cancelled.message, "Still a cancellation")
+        assertEquals("cancelled", records.last().outcome)
+        assertEquals(TokenUsage(1_000_000, 1_000_000, 0, 0), records.last().usage)
+        assertTrue(records.last().costMicros > 0)
     }
 
     @Test
