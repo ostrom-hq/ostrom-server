@@ -12,7 +12,7 @@ import run.ostrom.server.skills.domain.Sha256
 import run.ostrom.server.skills.domain.SkillDeliveryUseCase
 import run.ostrom.server.skills.domain.SkillDeliveryUseCaseImpl
 import run.ostrom.server.skills.domain.SkillsRepository
-import run.ostrom.server.skills.infrastructure.OpenSslSha256
+import run.ostrom.server.skills.infrastructure.JdkSha256
 import run.ostrom.server.skills.infrastructure.SkillsMigrations
 import run.ostrom.server.skills.infrastructure.SkillsRepositoryImpl
 import run.ostrom.server.skills.presentation.SkillsRoutesDependencies
@@ -33,7 +33,7 @@ object SkillsModule : ServerModule {
 
     override val koinModule: Module = module {
         single<SkillsRepository> { SkillsRepositoryImpl(get()) }
-        single<Sha256> { OpenSslSha256() }
+        single<Sha256> { JdkSha256() }
         single<PublishSkillVersionUseCase> { PublishSkillVersionUseCaseImpl(get(), get(), get(), get()) }
         single<ManageSkillCatalogUseCase> { ManageSkillCatalogUseCaseImpl(get(), get(), get(), get()) }
         single<SkillDeliveryUseCase> { SkillDeliveryUseCaseImpl(get(), get(), get(), get()) }

@@ -10,9 +10,6 @@ kotlin {
             implementation(project(":kernel"))
             implementation(libs.cryptography.core)
         }
-        nativeMain.dependencies {
-            implementation(libs.cryptography.openssl3.prebuilt)
-        }
         jvmMain.dependencies {
             implementation(libs.cryptography.jdk)
         }

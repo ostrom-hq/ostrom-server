@@ -7,14 +7,14 @@ import run.ostrom.server.skills.domain.ArtifactTooLargeException
 import run.ostrom.server.skills.domain.ArtifactTree
 import run.ostrom.server.skills.domain.FileMode
 import run.ostrom.server.skills.domain.InvalidCatalogRequestException
-import run.ostrom.server.skills.infrastructure.OpenSslSha256
+import run.ostrom.server.skills.infrastructure.JdkSha256
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
 class ArtifactTreeTest {
-    private val sha256 = OpenSslSha256()
+    private val sha256 = JdkSha256()
 
     private fun file(path: String, content: String = "x", mode: FileMode = FileMode.FILE) =
         ArtifactFile(path, mode, content.encodeToByteArray())
