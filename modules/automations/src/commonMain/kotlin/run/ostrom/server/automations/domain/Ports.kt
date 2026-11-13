@@ -61,6 +61,17 @@ interface WaitsRepository {
      * @return The cancelled wait, or null when it is not open any more.
      */
     suspend fun cancel(orgId: Uuid, id: Uuid, now: Instant): Wait?
+
+    /**
+     * Cancels every open wait of these sessions, at once.
+     *
+     * @param orgId The organization.
+     * @param sessions The segments of a session.
+     * @param now When.
+     *
+     * @return The waits it cancelled; none that was already answered or cancelled.
+     */
+    suspend fun cancelOpenOfSessions(orgId: Uuid, sessions: List<String>, now: Instant): List<Wait>
 }
 
 /** Told when a wait is created, answered or cancelled: notifications and the waking of sessions hook here. */

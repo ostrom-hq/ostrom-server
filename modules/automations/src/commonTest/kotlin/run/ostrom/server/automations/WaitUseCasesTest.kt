@@ -4,10 +4,12 @@ package run.ostrom.server.automations
 import run.ostrom.server.automations.domain.AnswerWaitUseCaseImpl
 import run.ostrom.server.automations.domain.AskWait
 import run.ostrom.server.automations.domain.AskWaitUseCaseImpl
+import run.ostrom.server.automations.domain.CancelSessionWaitsUseCaseImpl
 import run.ostrom.server.automations.domain.InvalidAssigneeException
 import run.ostrom.server.automations.domain.InvalidWaitAnswerException
 import run.ostrom.server.automations.domain.InvalidWaitException
 import run.ostrom.server.automations.domain.ReadWaitsUseCaseImpl
+import run.ostrom.server.automations.domain.SessionNotRunningException
 import run.ostrom.server.automations.domain.Wait
 import run.ostrom.server.automations.domain.WaitAction
 import run.ostrom.server.automations.domain.WaitCaller
@@ -20,20 +22,28 @@ import run.ostrom.server.automations.domain.WaitLimitException
 import run.ostrom.server.automations.domain.WaitNotFoundException
 import run.ostrom.server.automations.domain.WaitPage
 import run.ostrom.server.automations.domain.WaitQuery
+import run.ostrom.server.automations.domain.WaitSessionNotFoundException
+import run.ostrom.server.automations.domain.WaitSessionOwnerOnlyException
 import run.ostrom.server.automations.domain.WaitSpec
 import run.ostrom.server.automations.domain.WaitStatus
 import run.ostrom.server.automations.fakes.ALICE
 import run.ostrom.server.automations.fakes.BOB
 import run.ostrom.server.automations.fakes.CAROL
+import run.ostrom.server.automations.fakes.DAVE
+import run.ostrom.server.automations.fakes.ENDED_SESSION
 import run.ostrom.server.automations.fakes.InMemoryWaits
+import run.ostrom.server.automations.fakes.ORG_A
+import run.ostrom.server.automations.fakes.ORG_B
 import run.ostrom.server.automations.fakes.RecordingEvents
 import run.ostrom.server.automations.fakes.TestClock
 import run.ostrom.server.automations.fakes.TestMembers
+import run.ostrom.server.automations.fakes.UNKNOWN_SESSION
 import run.ostrom.server.automations.fakes.alice
 import run.ostrom.server.automations.fakes.bob
 import run.ostrom.server.automations.fakes.carol
 import run.ostrom.server.automations.fakes.dave
 import run.ostrom.server.automations.fakes.daveKey
+import run.ostrom.server.automations.fakes.testWaitSessions
 import run.ostrom.server.kernel.errors.InvalidPageException
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonElement
@@ -51,8 +61,8 @@ class WaitUseCasesTest {
     private val repository = InMemoryWaits()
     private val events = RecordingEvents()
     private val clock = TestClock()
-    private val ask = AskWaitUseCaseImpl(repository, TestMembers, events, clock)
-    private val read = ReadWaitsUseCaseImpl(repository)
+    private val ask = AskWaitUseCaseImpl(repository, TestMembers, events, clock, testWaitSessions)
+    private val read = ReadWaitsUseCaseImpl(repository, testWaitSessions)
     private val answers = AnswerWaitUseCaseImpl(repository, events, clock)
 
     private val review = WaitSpec(
@@ -64,7 +74,7 @@ class WaitUseCasesTest {
     private suspend fun asked(
         caller: WaitCaller = bob,
         assignee: String? = null,
-        session: String? = "session-1",
+        session: String? = if (caller == alice) "alice-1" else "session-1",
         key: String? = null,
     ): Wait = ask.ask(caller, AskWait(review, session, "run-1", assignee), key).wait.also { clock.now += 1.minutes }
 
@@ -82,6 +92,13 @@ class WaitUseCasesTest {
         assertEquals(BOB.toString(), asked(assignee = BOB.toString()).assignee)
         assertFailsWith<InvalidAssigneeException> { asked(assignee = CAROL.toString()) }
         assertEquals(listOf("created", "created", "created"), events.seen.map { it.first })
+        // An agent asks a colleague as well, by id or by username, any case.
+        val agent = bob.copy(interactive = false, agent = true)
+        assertEquals(ALICE.toString(), asked(caller = agent, assignee = ALICE.toString()).assignee)
+        assertEquals(ALICE.toString(), asked(caller = agent, assignee = "alice").assignee)
+        assertEquals(DAVE.toString(), asked(caller = agent, assignee = "Dave").assignee)
+        assertFailsWith<InvalidAssigneeException> { asked(caller = agent, assignee = "carol") }
+        assertFailsWith<InvalidAssigneeException> { asked(assignee = "x".repeat(65)) }
         val explicit = ask.ask(bob, AskWait(review, kind = "human_request"), null).wait
         assertNull(explicit.sessionId)
     }
@@ -119,7 +136,7 @@ class WaitUseCasesTest {
         val again = ask.ask(bob, AskWait(WaitSpec("Other"), "s"), "key-1")
         assertTrue(again.replayed)
         assertEquals(first.wait, again.wait)
-        assertFalse(ask.ask(alice, AskWait(review, "s"), "key-1").replayed)
+        assertFalse(ask.ask(alice, AskWait(review, "alice-1"), "key-1").replayed)
 
         val raced = first.wait.copy(id = Uuid.random(), idempotencyKey = "key-2")
         repository.duplicateNext = raced
@@ -156,7 +173,7 @@ class WaitUseCasesTest {
     @Test
     fun listingsShowWhatWaitsForTheCaller() = runTest {
         val forAlice = asked(caller = bob, assignee = ALICE.toString())
-        val forBob = asked(caller = alice, assignee = BOB.toString(), session = "session-2")
+        val forBob = asked(caller = alice, assignee = BOB.toString(), session = "alice-2")
         val aliceOwn = asked(caller = alice)
         fun ids(page: WaitPage) = page.items.map { it.id }
 
@@ -168,7 +185,14 @@ class WaitUseCasesTest {
         assertFailsWith<WaitForbiddenException> { read.list(bob, WaitQuery(assignee = ALICE.toString())) }
         assertEquals(3, read.list(dave, WaitQuery(assignee = "all")).items.size)
         assertEquals(listOf(aliceOwn.id, forAlice.id), ids(read.list(dave, WaitQuery(assignee = ALICE.toString()))))
-        assertEquals(listOf(forBob.id), ids(read.list(dave, WaitQuery(assignee = "all", sessionId = "session-2"))))
+        assertEquals(listOf(forBob.id), ids(read.list(alice, WaitQuery(sessionId = "alice-2"))))
+        // A session's waits are listed for its person only, an administrator included.
+        assertFailsWith<WaitSessionNotFoundException> {
+            read.list(dave, WaitQuery(assignee = "all", sessionId = "alice-2"))
+        }
+        assertFailsWith<WaitSessionNotFoundException> { read.list(bob, WaitQuery(sessionId = UNKNOWN_SESSION)) }
+        val agent = bob.copy(interactive = false, agent = true)
+        assertEquals(emptyList(), ids(read.list(agent, WaitQuery(sessionId = "alice-2"))), "the agent's own asks only")
         assertEquals(3, read.list(dave, WaitQuery(assignee = "all", runId = "run-1")).items.size)
 
         answers.cancel(alice, aliceOwn.id)
@@ -241,5 +265,42 @@ class WaitUseCasesTest {
         assertEquals(clock.now, answers.cancel(dave, third.id).resolvedAt)
         val cancelled = events.seen.map { it.first }.filter { it != "created" }
         assertEquals(listOf("cancelled", "cancelled", "cancelled"), cancelled)
+    }
+
+    @Test
+    fun aMemberAsksOnlyInARunningSessionOfTheirs() = runTest {
+        assertFailsWith<WaitSessionOwnerOnlyException> { asked(caller = alice, session = "session-1") }
+        assertFailsWith<WaitSessionOwnerOnlyException> { asked(caller = dave, session = "session-1") }
+        assertFailsWith<WaitSessionOwnerOnlyException> { asked(caller = bob.copy(memberId = "x"), session = "s") }
+        assertFailsWith<WaitSessionNotFoundException> { asked(session = UNKNOWN_SESSION) }
+        assertFailsWith<SessionNotRunningException> { asked(session = ENDED_SESSION) }
+        assertTrue(repository.waits.isEmpty())
+        // An agent token's session is the open segment the server found for it.
+        val agent = bob.copy(interactive = false, agent = true, session = "alice-1")
+        assertEquals("alice-1", asked(caller = agent, session = "alice-1").sessionId)
+    }
+
+    @Test
+    fun aSessionThatEndsCancelsItsOpenWaitsOnly() = runTest {
+        val cancel = CancelSessionWaitsUseCaseImpl(repository, events, clock)
+        val answered = asked(assignee = ALICE.toString())
+        answers.answer(alice, answered.id, "approve", approve)
+        val open = asked()
+        val elsewhere = asked(session = "session-2")
+        val alone = asked(session = null)
+        events.seen.clear()
+        cancel.ended(ORG_A, emptyList())
+        assertTrue(events.seen.isEmpty())
+        cancel.ended(ORG_B, listOf("session-1"))
+        assertTrue(events.seen.isEmpty(), "Another organization's session")
+        cancel.ended(ORG_A, listOf("session-0", "session-1"))
+        assertEquals(listOf("cancelled" to open.id), events.seen)
+        assertEquals(WaitStatus.CANCELLED, repository.waits.getValue(open.id).status)
+        assertEquals(clock.now, repository.waits.getValue(open.id).resolvedAt)
+        assertEquals(WaitStatus.RESOLVED, repository.waits.getValue(answered.id).status)
+        assertEquals(WaitStatus.OPEN, repository.waits.getValue(elsewhere.id).status)
+        assertEquals(WaitStatus.OPEN, repository.waits.getValue(alone.id).status)
+        cancel.ended(ORG_A, listOf("session-1"))
+        assertEquals(1, events.seen.size, "Once")
     }
 }
