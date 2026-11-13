@@ -5,6 +5,7 @@ import run.ostrom.server.runners.domain.AgentKind
 import run.ostrom.server.runners.domain.CloudSession
 import run.ostrom.server.runners.domain.CloudSessionsRepository
 import run.ostrom.server.runners.domain.DesiredState
+import run.ostrom.server.runners.domain.GitHubAccessMode
 import run.ostrom.server.runners.domain.RepositorySpec
 import run.ostrom.server.runners.domain.ResumeOutcome
 import run.ostrom.server.runners.domain.SessionFailure
@@ -106,6 +107,24 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         ).getOrThrow().firstOrNull()?.toSession()
         if (updated != null) lookAt(id, now)
         updated ?: select(id)
+    }
+
+    override suspend fun setGitHubAccess(
+        orgId: Uuid,
+        id: Uuid,
+        access: GitHubAccessMode,
+        now: Instant,
+    ): CloudSession? = driver.inTenant(orgId) {
+        fetchAll(
+            Statement.create(
+                """
+                UPDATE runners_sessions SET github_access = :access, generation = generation + 1, updated_at = :now
+                WHERE id = :id AND org_id = :org_id AND state NOT IN ('terminated', 'failed')
+                    AND (:access <> 'none' OR state = 'paused')
+                RETURNING $COLUMNS
+                """,
+            ).bind("access", access.wire).bind("now", now).bind("id", id).bind("org_id", orgId),
+        ).getOrThrow().firstOrNull()?.toSession()
     }
 
     override suspend fun resumeWithinCap(orgId: Uuid, id: Uuid, maxRunning: Int, now: Instant): ResumeOutcome =
@@ -277,6 +296,7 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         .bind("max_run_minutes", session.limits.maxRunMinutes)
         .bind("restricted_egress", session.limits.restrictedEgress)
         .bind("created_at", session.createdAt)
+        .bind("github_access", session.githubAccess.wire)
 
     /** Binds the columns a reconciler or heartbeat write changes. */
     private fun Statement.bindUpdate(session: CloudSession): Statement = bind("id", session.id)
@@ -331,6 +351,8 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             runnerTokenHash = get("runner_token_hash").asStringOrNull(),
             model = get("model").asStringOrNull(),
             prompt = get("prompt").asStringOrNull(),
+            // A name this version does not know grants nothing.
+            githubAccess = GitHubAccessMode.fromWire(get("github_access").asString()) ?: GitHubAccessMode.NONE,
         )
     }
 
@@ -342,14 +364,15 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             id, org_id, owner_id, name, agent, model, prompt, repository_url, repository_ref, state, desired_state,
             phase, epoch, generation, failure_code, failure_message, idle_timeout_minutes, max_run_minutes,
             restricted_egress, created_at, updated_at, execution_started_at, ready_at, last_heartbeat_at,
-            last_activity_at, paused_at, terminated_at, pausing_since, runner_stopped_at, runner_token_hash
+            last_activity_at, paused_at, terminated_at, pausing_since, runner_stopped_at, runner_token_hash,
+            github_access
         """
         const val VALUES = """
             :id, :org_id, :owner_id, :name, :agent, :model, :prompt, :repository_url, :repository_ref, :state,
             :desired_state, :phase, :epoch, 0, :failure_code, :failure_message, :idle_timeout_minutes,
             :max_run_minutes, :restricted_egress, :created_at, :updated_at, :execution_started_at, :ready_at,
             :last_heartbeat_at, :last_activity_at, :paused_at, :terminated_at, :pausing_since, :runner_stopped_at,
-            :runner_token_hash
+            :runner_token_hash, :github_access
         """
     }
 }

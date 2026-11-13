@@ -97,3 +97,17 @@ class RunnerLimitException(max: Int) : OstromException(
     ErrorKind.CONFLICT,
     "An organization registers at most $max runners.",
 )
+
+/** Only the owner in person changes whose GitHub token a session holds: never an agent or a service key (403). */
+class GitHubOwnerOnlyException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "Only the session's owner, in person, changes its GitHub access.",
+    "github_owner_only",
+)
+
+/** Removing a session's GitHub access needs it paused: a running execution may hold a token already. */
+class SessionNotPausedException : OstromException(
+    ErrorKind.CONFLICT,
+    "Pause the session before removing its GitHub access.",
+    "session_not_paused",
+)

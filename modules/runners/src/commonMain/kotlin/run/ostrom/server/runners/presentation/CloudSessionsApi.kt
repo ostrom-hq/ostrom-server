@@ -42,6 +42,15 @@ class CloudSessionsApi(val before: String? = null, val limit: Int? = null) {
         class Resume(val parent: Id)
 
         /**
+         * `PUT /api/v1/cloud/sessions/{id}/github` (`setCloudSessionGithubAccess`).
+         *
+         * @property parent The session.
+         */
+        @Serializable
+        @Resource("github")
+        class GitHub(val parent: Id)
+
+        /**
          * `/api/v1/cloud/sessions/{id}/terminal` (the WebSocket itself is a plain route).
          *
          * @property parent The session.
@@ -65,6 +74,44 @@ class CloudSessionsApi(val before: String? = null, val limit: Int? = null) {
 @Serializable
 @Resource("/api/v1/cloud/runner/heartbeat")
 class RunnerHeartbeatApi
+
+/** `POST /api/v1/cloud/runner/github` (`fetchRunnerGithubToken`): the owner's GitHub token, for the runner. */
+@Serializable
+@Resource("/api/v1/cloud/runner/github")
+class RunnerGitHubApi
+
+/**
+ * The body of `PUT /api/v1/cloud/sessions/{id}/github`.
+ *
+ * @property access `owner`, `shared` or `none`.
+ */
+@Serializable
+data class SetCloudSessionGitHubAccessRequest(val access: String)
+
+/**
+ * The body of `POST /api/v1/cloud/runner/github`.
+ *
+ * @property sessionId The session the runner was started for.
+ * @property epoch The execution the runner was started for.
+ */
+@Serializable
+data class RunnerGitHubTokenRequest(val sessionId: String, val epoch: Long)
+
+/**
+ * The contract's `RunnerGitHubToken`.
+ *
+ * @property status `linked`, `not_linked` or `unavailable`.
+ * @property token The token, when linked.
+ * @property expiresAt When it expires.
+ * @property login The GitHub account.
+ */
+@Serializable
+data class RunnerGitHubTokenResponse(
+    val status: String,
+    val token: String? = null,
+    val expiresAt: String? = null,
+    val login: String? = null,
+)
 
 /**
  * Creates a session.
@@ -117,6 +164,7 @@ data class SessionLimitsDto(
  * (`creating`, `running`, `pausing`, `paused`, `resuming`, `terminated`, `failed`), `desiredStatus` what the
  * owner asked for (`running`, `paused`, `terminated`); `phase` is open. `runnerId` names the registered runner the
  * current execution was handed to, on the session's own read only (`GET /api/v1/cloud/sessions/{id}`).
+ * `githubAccess` says whose GitHub access its Git and `gh` use (`owner`, `shared`, `none`).
  */
 @Serializable
 data class CloudSessionResponse(
@@ -140,6 +188,7 @@ data class CloudSessionResponse(
     val pausedAt: String? = null,
     val endedAt: String? = null,
     val runnerId: String? = null,
+    val githubAccess: String = "owner",
 )
 
 /**

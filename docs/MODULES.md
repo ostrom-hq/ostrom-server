@@ -411,7 +411,7 @@ anonymous call gets 401 `unauthorized`. A module lists a key of ostrom-core's `S
 | `receipts` | `receipts.v1` | — |
 | `reports` | `reports.v1` | — |
 | `rules` | `rules.v1`, `reports.v1` (the analysis) | — |
-| `runners` | `runners.v1`; `runners.cloud.v1` | the latter with a runtime driver (`OSTROM_RUNNERS_DRIVER` not `none`) |
+| `runners` | `runners.v1`; `runners.cloud.v1`; `runners.cloud.github.v1` | the second with a runtime driver (`OSTROM_RUNNERS_DRIVER` not `none`); the third also once members can link a GitHub account (`github.link.v1`) |
 | `secrets` | `secrets.v1` | — |
 | `sessions` | `sessions.v1` | — |
 | `sharing` | `sharing.v1` | — |

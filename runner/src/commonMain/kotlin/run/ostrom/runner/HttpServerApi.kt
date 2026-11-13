@@ -23,10 +23,12 @@ import kotlinx.coroutines.channels.produce
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlin.time.Instant
 
 /**
  * [ServerApi] over HTTP, with the runner token: `POST /api/v1/cloud/runner/heartbeat`, `WS
- * /api/v1/cloud/runner/terminal`, `POST /api/v1/cloud/runner/launch` and `POST /api/v1/cloud/runner/checks`.
+ * /api/v1/cloud/runner/terminal`, `POST /api/v1/cloud/runner/launch`, `POST /api/v1/cloud/runner/checks` and `POST
+ * /api/v1/cloud/runner/github`.
  *
  * @param client An HTTP client with WebSockets installed.
  * @param config The runner's configuration.
@@ -63,6 +65,14 @@ class HttpServerApi(
 
     @Serializable
     private data class CheckRequest(val sessionId: String, val epoch: Long, val check: RunnerCheck)
+
+    @Serializable
+    private data class GitHubResponse(
+        val status: String,
+        val token: String? = null,
+        val expiresAt: String? = null,
+        val login: String? = null,
+    )
 
     @Serializable
     private sealed interface Control {
@@ -122,6 +132,36 @@ class HttpServerApi(
         return response.status.isSuccess()
     }
 
+    /**
+     * Asks for the GitHub token of the member this execution runs for (never cached by the server's answer).
+     *
+     * @return The token, or null without a usable link or on a server without the route.
+     *
+     * @throws ExecutionEndedException When the server no longer knows this execution.
+     * @throws IllegalStateException When the server fails, or GitHub is unavailable for now.
+     */
+    suspend fun gitHubToken(): GitHubToken? {
+        val response = client.post("${config.serverUrl}/api/v1/cloud/runner/github") {
+            bearerAuth(config.token)
+            contentType(ContentType.Application.Json)
+            val request = ExecutionRequest(config.sessionId.toString(), config.epoch)
+            setBody(JSON.encodeToString(ExecutionRequest.serializer(), request))
+        }
+        return when (response.status) {
+            HttpStatusCode.OK -> JSON.decodeFromString(GitHubResponse.serializer(), response.bodyAsText()).let {
+                // GitHub could not refresh the token for now: a failure, so the last token is kept while valid.
+                check(it.status != UNAVAILABLE) { "GitHub is unavailable for now." }
+                val login = it.login?.takeIf(String::isNotBlank)
+                it.token?.takeIf { token -> it.status == LINKED && token.isNotBlank() }
+                    ?.let { token -> GitHubToken(token, login, it.expiresAt?.let(Instant::parse)) }
+            }
+            HttpStatusCode.NotFound -> null
+            HttpStatusCode.Unauthorized, HttpStatusCode.Conflict ->
+                throw ExecutionEndedException("The server ended this execution (${response.status.value}).")
+            else -> error("The GitHub token answered ${response.status.value}.")
+        }
+    }
+
     override suspend fun openTerminal(): TerminalLink {
         val query = "sessionId=${config.sessionId}&epoch=${config.epoch}"
         val url = config.serverUrl.replaceFirst("http", "ws") + "/api/v1/cloud/runner/terminal?$query"
@@ -157,6 +197,8 @@ class HttpServerApi(
         private const val ANOTHER_EXECUTION: Short = 4409
         private val ENDED_CODES = setOf(TOKEN_REFUSED, ANOTHER_EXECUTION)
         private const val SERVER_ERRORS = 500
+        private const val LINKED = "linked"
+        private const val UNAVAILABLE = "unavailable"
 
         /**
          * Why the server refused: the message of its error body, or the status when the body is not one.

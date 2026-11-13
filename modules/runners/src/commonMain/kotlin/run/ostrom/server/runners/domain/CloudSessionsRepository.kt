@@ -75,6 +75,18 @@ interface CloudSessionsRepository {
     suspend fun setDesiredState(orgId: Uuid, id: Uuid, desiredState: DesiredState, now: Instant): CloudSession?
 
     /**
+     * Sets whose GitHub access a session uses.
+     *
+     * @param orgId The organization.
+     * @param id The session.
+     * @param access The mode.
+     * @param now The time.
+     *
+     * @return The session after the change, or null when it does not exist, is over, or is not paused for `none`.
+     */
+    suspend fun setGitHubAccess(orgId: Uuid, id: Uuid, access: GitHubAccessMode, now: Instant): CloudSession?
+
+    /**
      * Sets the desired state to running unless the organization already has [maxRunning] sessions holding an
      * execution, serialized per organization like [createWithinCap]. A session that already holds one is not
      * counted twice.

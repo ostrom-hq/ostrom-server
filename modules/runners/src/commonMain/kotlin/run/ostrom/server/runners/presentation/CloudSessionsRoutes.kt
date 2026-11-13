@@ -9,6 +9,8 @@ import run.ostrom.server.runners.domain.CloudSessionNotFoundException
 import run.ostrom.server.runners.domain.CreateCloudSessionPayload
 import run.ostrom.server.runners.domain.InvalidCloudSessionRequestException
 import run.ostrom.server.runners.domain.RepositorySpec
+import run.ostrom.server.runners.domain.RunnerGitHubRequest
+import run.ostrom.server.runners.domain.RunnerGitHubToken
 import run.ostrom.server.runners.domain.RunnerHeartbeat
 import run.ostrom.server.runners.domain.RunnerUnauthenticatedException
 import io.ktor.http.HttpHeaders
@@ -18,6 +20,8 @@ import io.ktor.server.request.receive
 import io.ktor.server.resources.delete
 import io.ktor.server.resources.get
 import io.ktor.server.resources.post
+import io.ktor.server.resources.put
+import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import kotlin.time.Instant
@@ -72,6 +76,15 @@ fun Route.cloudSessionsRoutes(dependencies: CloudSessionsRoutesDependencies) = w
             val resumed = changeCloudSession.resume(caller, sessionId(params.parent.id))
             call.respond(HttpStatusCode.Accepted, resumed.toResponse())
         }
+        bodyLimit(ACCESS_BODY_LIMIT) {
+            put<CloudSessionsApi.Id.GitHub> { params ->
+                val principal = call.requirePrincipal()
+                val caller = orgResolver.callerOf(principal, CLOUD_WRITE)
+                val request = call.receive<SetCloudSessionGitHubAccessRequest>()
+                val session = setGitHubAccess(caller, principal, sessionId(params.parent.id), request.access)
+                call.respond(session.toResponse())
+            }
+        }
     }
     runnerChannelRoutes(dependencies)
 }
@@ -94,11 +107,27 @@ private fun Route.runnerChannelRoutes(dependencies: CloudSessionsRoutesDependenc
             val answer = runnerHeartbeat(token, heartbeat)
             call.respond(RunnerHeartbeatResponse(answer.instruction.wire, answer.state.wire))
         }
+        // The owner's GitHub token for one Git or `gh` operation: never cached, never logged.
+        post<RunnerGitHubApi> {
+            val token = call.runnerToken()
+            checkRunnerToken(token)
+            val request = call.receive<RunnerGitHubTokenRequest>()
+            val access = runnerGitHubToken(token, RunnerGitHubRequest(parseId(request.sessionId), request.epoch))
+            call.response.header(HttpHeaders.CacheControl, "no-store")
+            call.respond(
+                when (access) {
+                    is RunnerGitHubToken.Linked ->
+                        RunnerGitHubTokenResponse(access.wire, access.token, access.expiresAt?.toString(), access.login)
+                    else -> RunnerGitHubTokenResponse(access.wire)
+                },
+            )
+        }
     }
 }
 
-/** A heartbeat is a few fields: 4 KiB is plenty (S2-46). */
+/** A heartbeat is a few fields: 4 KiB is plenty (S2-46); a token request and an access change, fewer still. */
 private const val HEARTBEAT_BODY_LIMIT = 4L * 1024
+private const val ACCESS_BODY_LIMIT = 1024L
 
 private const val DEFAULT_LIMIT = 20
 
@@ -148,4 +177,5 @@ fun CloudSession.toResponse() = CloudSessionResponse(
     pausedAt = pausedAt?.toString(),
     endedAt = terminatedAt?.toString(),
     runnerId = runnerId?.toString(),
+    githubAccess = githubAccess.wire,
 )

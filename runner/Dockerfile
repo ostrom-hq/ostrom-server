@@ -8,7 +8,7 @@
 FROM node:22-bookworm-slim
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends bash ca-certificates curl git less openssh-client procps python3 ripgrep \
+ && apt-get install -y --no-install-recommends bash ca-certificates curl gh git less openssh-client procps python3 ripgrep \
  && rm -rf /var/lib/apt/lists/*
 
 # The agents' CLIs, pinned in agents/package.json and its lockfile, installed by `npm ci`: the same versions on every

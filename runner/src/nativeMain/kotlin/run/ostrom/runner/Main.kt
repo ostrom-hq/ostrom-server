@@ -31,6 +31,8 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.launch
 import kotlinx.cinterop.toKString
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.io.IOException
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
@@ -62,6 +64,7 @@ import kotlin.time.Clock
 fun main(args: Array<String>) {
     val environment = readEnvironment()
     if (args.firstOrNull() == "machine") machine(environment)
+    if (args.firstOrNull() == "credential") credential(args.getOrNull(1), environment)
     val socket = environment["OSTROM_AGENT_SOCKET"]?.takeIf { it.isNotBlank() } ?: AgentSocket.DEFAULT_PATH
     if (args.firstOrNull() == "agent-host") host(socket, AgentHost(PtyTerminal))
     if (args.firstOrNull() == "check-host") {
@@ -100,9 +103,11 @@ fun main(args: Array<String>) {
             val checksJob = launch {
                 ChecksSocket.serve(selector, config.checksSocket, checks::run, ::log) { chmod(it, OPEN_MODE.convert()) }
             }
+            val gitHubJob = gitHubAccess(selector, config, server)
             try {
                 Runner(config, server, terminals, environment, Clock.System, ::log).run()
             } finally {
+                gitHubJob.cancelAndJoin()
                 checksJob.cancel()
                 listener.stop()
                 selector.close()
@@ -113,6 +118,30 @@ fun main(args: Array<String>) {
     }
     log("exiting with $code")
     exitProcess(code)
+}
+
+/**
+ * git and `gh` reach GitHub with the owner's token, which only the runner holds and asks the server for: the
+ * credential socket answers git's helper, and the `gh` configuration is written before the agent starts, then kept
+ * current. Cancelling the job stops both and removes the configuration.
+ */
+private suspend fun CoroutineScope.gitHubAccess(
+    selector: SelectorManager,
+    config: RunnerConfig,
+    server: HttpServerApi,
+): Job {
+    val gitHub = GitHubCredentialSource(server::gitHubToken, Clock.System)
+    val gh = GitHubCliRenewal(gitHub, GitHubCliConfig(config.gitHubConfigDirectory), Clock.System, ::log)
+    // The agent starts once the configuration is written, or after a bounded wait: a slow server delays no session.
+    val first = withTimeoutOrNull(GITHUB_FIRST_TIMEOUT) { gh.refresh() } ?: GitHubCredentialSource.RETRY
+    return launch {
+        launch {
+            CredentialSocket.serve(selector, config.credentialSocket, gitHub::credential, ::log) {
+                chmod(it, OPEN_MODE.convert())
+            }
+        }
+        gh.run(first)
+    }
 }
 
 /**
@@ -283,6 +312,29 @@ private fun machine(environment: Map<String, String>): Nothing {
     exitProcess(code)
 }
 
+/**
+ * Git's credential helper (`ostrom-runner credential get`), in the agent's container: asks the runner's credential
+ * socket for the remote git describes on stdin and prints what it answers. Every other operation, and every failure,
+ * prints nothing and succeeds, so git moves on.
+ */
+private fun credential(operation: String?, environment: Map<String, String>): Nothing {
+    if (operation == "get") {
+        val socket = environment[RunnerConfig.CREDENTIAL_VARIABLE]?.takeIf { it.isNotBlank() }
+            ?: RunnerConfig.DEFAULT_CREDENTIAL_SOCKET
+        val request = CredentialHelper.parse(generateSequence { readlnOrNull() })
+        val answer = runBlocking {
+            val selector = SelectorManager(Dispatchers.IO)
+            try {
+                CredentialHelper.ask({ AgentSocket.connect(selector, socket) }, request)
+            } finally {
+                selector.close()
+            }
+        }
+        print(CredentialHelper.format(answer))
+    }
+    exitProcess(0)
+}
+
 /** A host (agent or checks): serves the runner's terminals on [socket], until the pod stops it (SIGTERM). */
 private fun host(socket: String, host: AgentHost): Nothing {
     // As pid 1 of its container, the host gets no default action for SIGTERM: without this, a stop waits the grace.
@@ -315,10 +367,14 @@ private val KNOWN_VARIABLES = listOf(
     "OSTROM_REPOSITORY_URL", "OSTROM_REPOSITORY_REF", "OSTROM_RUNNER_TOKEN", "OSTROM_RUNNER_TOKEN_FILE",
     "OSTROM_WORKSPACE", "OSTROM_AGENT_SOCKET", "OSTROM_RUNNER_CHECKS", "OSTROM_CHECK_HOST_SOCKET",
     "OSTROM_RUNNER_ID", "OSTROM_RUNNER_KEY", "OSTROM_RUNNER_KEY_FILE", "OSTROM_RUNNER_INTERVAL_SECONDS",
-    "OSTROM_DOCKER_API_URL", "OSTROM_DOCKER_NETWORK", "OSTROM_RUNNER_SESSION_IMAGE",
+    "OSTROM_DOCKER_API_URL", "OSTROM_DOCKER_NETWORK", "OSTROM_RUNNER_SESSION_IMAGE", "OSTROM_CREDENTIAL_SOCKET",
+    "OSTROM_GH_CONFIG_DIR",
 )
 
 private const val CONNECT_TIMEOUT_MILLIS = 10_000L
+
+/** The longest the first GitHub token may take before the agent starts without it. */
+private val GITHUB_FIRST_TIMEOUT = 10.seconds
 
 /** An image pull, the longest call to the engine. */
 private const val DOCKER_TIMEOUT_MILLIS = 600_000L

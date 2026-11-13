@@ -132,6 +132,24 @@ The check host runs under the agent's UID so that what a check writes in the wor
 what keeps the agent out of the check is the container: the agent's container mounts neither the check host's
 socket nor its temporary directory, and sees none of its processes.
 
+## GitHub in the session: git and `gh` with the owner's link
+
+The agent's environment holds no token, only paths. `GIT_CONFIG_*` resets the image's credential helpers and sets
+`ostrom-runner credential` as the helper for `https://github.com` only; `GIT_TERMINAL_PROMPT=0` keeps git from asking.
+The helper sends the remote git describes to the runner's `/run/ostrom/credential.sock` (`OSTROM_CREDENTIAL_SOCKET`)
+and prints the one credential it answers: `x-access-token` and the GitHub user token of the member the session runs
+for, which the runner asks of the server (`POST /api/v1/cloud/runner/github`) when first needed and again five minutes
+before it expires, and keeps in memory. Any other host, no link, or a session whose GitHub access is `none` gets
+nothing, and public repositories clone anonymously. `store` and `erase` do nothing.
+
+`gh` reads `GH_CONFIG_DIR=/run/ostrom/gh`, a directory only the runner writes, with the token in `hosts.yml` (written
+before the agent starts, rewritten when the token is renewed, removed when the runner stops). Without a usable link it
+holds only `OSTROM-GITHUB-NOT-LINKED.txt`, a notice without any token, and the server is asked again every five
+minutes. The volume of `/run/ostrom` is in memory on Kubernetes.
+
+The first terminal's clone and checkout run with hooks, fsmonitor and submodules off and HTTPS only
+(`OSTROM_GIT_HARDENING`), so a repository's content runs nothing before the agent does.
+
 ## The agent cannot read the runner token (S2-49)
 
 The agent and the runner never share a UID, a container, a process namespace or the token. CI proves it on the real
