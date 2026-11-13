@@ -351,7 +351,9 @@ its account (and the provider's prompt cache) whichever replica it reaches, as T
 `conversation_affinities`. A lease locks its candidates' rows, counts their unexpired slots and takes one in the same
 transaction. A request still open renews its slot every 5 minutes, so a long stream keeps counting; a slot ends when
 its request does, or within 15 minutes if its replica died. A slot the database fails to renew or take back is left to
-that lease and fails no request. A session sticks to its account while that account serves and has room, for an hour
+that lease and fails no request. Once the provider has answered, writing what its headers say (the quota windows, a
+cool-down after a 429) is bookkeeping too: the database failing there fails no request, and the answer reaches the
+agent (TeamCode #165). A session sticks to its account while that account serves and has room, for an hour
 after its last request; once moved, it stays on its new account. At most 1,000 sessions per member and 10,000 per
 organization are remembered: past that, a new session is placed without being remembered, and no member evicts
 another's. Only a SHA-256 digest of the session id is stored. `inFlight` in `GET /api/v1/accounts` and
