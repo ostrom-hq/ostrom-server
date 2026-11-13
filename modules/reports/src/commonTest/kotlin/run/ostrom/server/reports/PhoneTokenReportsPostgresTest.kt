@@ -6,11 +6,14 @@ import run.ostrom.server.compiler.CompilerModule
 import run.ostrom.server.gates.GatesModule
 import run.ostrom.server.identity.IdentityModule
 import run.ostrom.server.identity.domain.APP_REDIRECT_URI
+import run.ostrom.server.identity.domain.ApiToken
+import run.ostrom.server.identity.domain.ApiTokensRepository
 import run.ostrom.server.identity.domain.IdentityProvider
 import run.ostrom.server.identity.domain.MobileCode
 import run.ostrom.server.identity.domain.MobileCodesRepository
 import run.ostrom.server.identity.domain.ResolveUserUseCase
 import run.ostrom.server.identity.domain.SecretHasher
+import run.ostrom.server.identity.domain.TokenKind
 import run.ostrom.server.identity.domain.VerifiedIdentity
 import run.ostrom.server.identity.presentation.MobileTokenRequest
 import run.ostrom.server.identity.presentation.MobileTokenResponse
@@ -41,6 +44,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -89,6 +93,37 @@ class PhoneTokenReportsPostgresTest {
         assertEquals("week", spending.body<SpendingDto>().period)
         val receipts = server.client.get("/api/v1/receipts") { bearerAuth(token) }
         assertEquals(HttpStatusCode.OK, receipts.status, receipts.bodyAsText())
+    }
+
+    /** A service key of a new organization, made by its owner: what `POST /api/v1/service-keys` stores. */
+    private suspend fun TestServer.serviceKeys(login: String, vararg scopes: Set<String>): List<String> {
+        val user = koin.get<ResolveUserUseCase>()(
+            VerifiedIdentity(IdentityProvider.GITHUB, login, "$login@example.com", true, login, login = login),
+        )
+        val org = Org(Uuid.random(), "$login-team", "$login team", null, null, now)
+        koin.get<OrgsRepository>().create(org, Member(Uuid.random(), org.id, user.id, OrgRole.OWNER, now)) { false }
+        return scopes.map { granted ->
+            val secret = "${TokenKind.SERVICE.prefix}_" + Uuid.random().toHexString()
+            val row = ApiToken(
+                Uuid.random(), user.id, org.id, "ci", TokenKind.SERVICE, granted, secret.takeLast(4), null, now,
+                now + 8.hours, null, null,
+            )
+            koin.get<ApiTokensRepository>().create(row, koin.get<SecretHasher>().hash(secret))
+            secret
+        }
+    }
+
+    @Test
+    fun aServiceKeyReadsTheSpendingAsAMemberOrAsTheTeamAndNoOtherReport() = serverTest(modules) { server ->
+        val (member, team, activity) =
+            server.serviceKeys("zoe", setOf("usage:read"), setOf("team:read"), setOf("inference:use"))
+        listOf(member, team).forEach { secret ->
+            val spending = server.client.get("/api/v1/spending?period=week") { bearerAuth(secret) }
+            assertEquals(HttpStatusCode.OK, spending.status, spending.bodyAsText())
+        }
+        // The feed is not a usage read: a key never reads it, nor a spending without a scope that opens it.
+        assertEquals(HttpStatusCode.Forbidden, server.client.get("/api/v1/activity") { bearerAuth(team) }.status)
+        assertEquals(HttpStatusCode.Forbidden, server.client.get("/api/v1/spending") { bearerAuth(activity) }.status)
     }
 
     private companion object {

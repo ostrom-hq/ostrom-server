@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.reports.presentation
 
+import run.ostrom.server.kernel.auth.OrgRole
+import run.ostrom.server.kernel.auth.PrincipalKind
+import run.ostrom.server.kernel.auth.ServiceKeyScopes
 import run.ostrom.server.kernel.auth.authenticated
 import run.ostrom.server.kernel.auth.requireOrgPrincipal
 import run.ostrom.server.kernel.auth.requirePrincipal
@@ -45,7 +48,11 @@ private suspend fun ApplicationCall.viewer(dependencies: ReportsRoutesDependenci
     if (accepted.none(principal::allows)) {
         throw OstromException(ErrorKind.FORBIDDEN, "This credential may not read this report.")
     }
-    return Viewer.of(requireOrgPrincipal(dependencies.orgs, null))
+    val member = requireOrgPrincipal(dependencies.orgs, null)
+    // A service key is a plain member, and sees the whole organization only through `team:read` (its creator is
+    // checked to still be an admin by the resolver).
+    val team = principal.kind == PrincipalKind.SERVICE && ServiceKeyScopes.TEAM_READ in principal.scopes
+    return Viewer.of(if (team) member.copy(role = OrgRole.ADMIN) else member)
 }
 
 /** The scopes the reports accept, any one of them; a person's browser or app session (`user:*`) passes them all. */
@@ -54,7 +61,7 @@ object ReportsScopes {
     const val ACTIVITY_READ: String = "activity:read"
 
     /** Who reads the spending: the usage and budgets readers. */
-    val spending: Set<String> = setOf("usage:read", "budgets:read")
+    val spending: Set<String> = setOf("usage:read", "budgets:read", ServiceKeyScopes.TEAM_READ)
 
     /** Who reads the activity. */
     val activity: Set<String> = setOf(ACTIVITY_READ)

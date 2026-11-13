@@ -141,6 +141,24 @@ class ModelTest {
         assertFailsWith<NotAMemberException> { TestOrgResolver.callerOf(stranger, CLOUD_READ) }
     }
 
+    @Test
+    fun aServiceKeyAdministersTheCloudSessionsOnlyThroughCloudAdmin() = runTest {
+        fun key(vararg scopes: String) = AuthenticatedPrincipal("dana", PrincipalKind.SERVICE, scopes.toSet())
+        // cloud:admin is write and read, and the administrator's view over every session.
+        assertTrue(TestOrgResolver.callerOf(key("cloud:admin"), CLOUD_WRITE).admin)
+        assertTrue(TestOrgResolver.callerOf(key("cloud:admin"), CLOUD_READ).admin)
+        // cloud:write on the key of an administrator acts as the owner alone.
+        assertFalse(TestOrgResolver.callerOf(key(CLOUD_WRITE), CLOUD_WRITE).admin)
+        assertFalse(TestOrgResolver.callerOf(key(CLOUD_READ), CLOUD_READ).admin)
+        assertFailsWith<MissingScopeException> { TestOrgResolver.callerOf(key("team:read"), CLOUD_READ) }
+        // Only a service key carries it: a person's token naming it is not allowed more.
+        val named = AuthenticatedPrincipal("dana", PrincipalKind.USER, setOf("cloud:admin"))
+        assertFailsWith<MissingScopeException> { TestOrgResolver.callerOf(named, CLOUD_READ) }
+        // A person who is an administrator keeps theirs.
+        val person = AuthenticatedPrincipal("dana", PrincipalKind.USER, setOf("user:*"))
+        assertTrue(TestOrgResolver.callerOf(person, CLOUD_READ).admin)
+    }
+
     private fun principal(vararg scopes: String) = AuthenticatedPrincipal("alice", PrincipalKind.USER, scopes.toSet())
 
     @Test

@@ -10,6 +10,6 @@ class IdentityFeaturesTest {
     @Test
     fun itsFeaturesNeedNoConfiguration() = runTest {
         val koin = koinApplication {}.koin
-        assertEquals(setOf("audit.v1"), IdentityModule.features(koin))
+        assertEquals(setOf("audit.v1", "servicekeys.scopes.v1"), IdentityModule.features(koin))
     }
 }

@@ -2,6 +2,7 @@
 package run.ostrom.server.usage.presentation
 
 import run.ostrom.server.kernel.auth.PrincipalKind
+import run.ostrom.server.kernel.auth.ServiceKeyScopes
 import run.ostrom.server.kernel.auth.WriteAccess
 import run.ostrom.server.kernel.auth.authenticated
 import run.ostrom.server.kernel.errors.Pages
@@ -36,7 +37,7 @@ import kotlinx.serialization.SerializationException
 fun Route.usageRoutes(dependencies: UsageRoutesDependencies) = with(dependencies) {
     authenticated {
         get<UsageApi> { params ->
-            val caller = call.requireCaller(callers, UsageScopes.READ)
+            val caller = call.requireCaller(callers, UsageScopes.READ, ServiceKeyScopes.TEAM_READ)
             val from = params.from?.toInstantParameter("from")
             val to = params.to?.toInstantParameter("to")
             call.respond(report(caller, from, to, params.member?.toMemberParameter()).toResponse())
@@ -60,11 +61,11 @@ fun Route.usageRoutes(dependencies: UsageRoutesDependencies) = with(dependencies
             call.respond(HttpStatusCode.Accepted, UsageAcceptedResponse(accepted))
         }
         get<UsageApi.Summary> { params ->
-            val caller = call.requireCaller(callers, UsageScopes.READ)
+            val caller = call.requireCaller(callers, UsageScopes.READ, ServiceKeyScopes.TEAM_READ)
             call.respond(summary(caller, params.days, params.groupBy.toGroupBy()).toResponse())
         }
         get<UsageApi.Events> { params ->
-            val caller = call.requireCaller(callers, UsageScopes.READ)
+            val caller = call.requireCaller(callers, UsageScopes.READ, ServiceKeyScopes.TEAM_READ)
             val limit = Pages.size(params.limit, UsageRules.MAX_PAGE, UsageRules.MAX_PAGE)
             val page = listEvents(caller, params.before?.toUsageCursor(), limit)
             val next = if (page.size == limit) page.last().toCursor() else null
@@ -76,7 +77,7 @@ fun Route.usageRoutes(dependencies: UsageRoutesDependencies) = with(dependencies
     openConnections {
         authenticated {
             get<UsageApi.Live> {
-                val caller = call.requireCaller(callers, UsageScopes.READ)
+                val caller = call.requireCaller(callers, UsageScopes.READ, ServiceKeyScopes.TEAM_READ)
                 call.response.header(HttpHeaders.CacheControl, "no-cache")
                 // nginx (the web image proxies /api/) buffers responses unless told not to: the events would arrive
                 // late.

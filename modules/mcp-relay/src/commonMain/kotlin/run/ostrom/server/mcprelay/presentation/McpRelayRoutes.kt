@@ -4,6 +4,7 @@ package run.ostrom.server.mcprelay.presentation
 import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.audit.auditDetails
 import run.ostrom.server.kernel.auth.PrincipalKind
+import run.ostrom.server.kernel.auth.ServiceKeyScopes
 import run.ostrom.server.kernel.auth.WriteAccess
 import run.ostrom.server.kernel.auth.authenticated
 import run.ostrom.server.kernel.auth.requirePrincipal
@@ -204,7 +205,8 @@ private fun Route.journalRoutes(dependencies: McpRelayRoutesDependencies) = with
         call.respond(McpCallsPage(calls.map { it.toDto() }, next))
     }
     get<McpApi.Usage> { params ->
-        val caller = call.requireCaller(callers, RelayScopes.MCP_READ)
+        val caller =
+            call.requireCaller(callers, RelayScopes.MCP_READ, RelayScopes.USAGE_READ, ServiceKeyScopes.TEAM_READ)
         call.respond(usage(caller, params.days).toResponse())
     }
 }

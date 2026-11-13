@@ -43,6 +43,9 @@ object RelayScopes {
     /** Changes them. */
     const val INFERENCE_ADMIN: String = "inference:admin"
 
+    /** Reads the usage ledger; also opens the MCP usage, as TeamCode's `usage:read` does. */
+    const val USAGE_READ: String = "usage:read"
+
     /** Calls the inference gateway with a personal token. */
     const val INFERENCE_USE: String = "inference:use"
 }

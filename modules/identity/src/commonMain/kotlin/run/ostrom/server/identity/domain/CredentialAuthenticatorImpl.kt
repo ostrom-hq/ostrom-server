@@ -18,8 +18,9 @@ import kotlin.time.Instant
  * - The phone app's token acts as its user on the [PrincipalChannel.MOBILE_APP] channel, limited to [MOBILE_SCOPES],
  *   and answers a gate only within [MOBILE_UNLOCK_WINDOW] of the phone's last biometric unlock ([mobileScopes]);
  *   its `authenticatedAt` is that unlock, never its issuance (S2-54).
- * - A service key is a [PrincipalKind.SERVICE] whose subject is the key, bound to its organization: it never acts as
- *   the person who created it, and no organization resolves it as a member.
+ * - A service key is a [PrincipalKind.SERVICE] whose subject is the key, bound to its organization: with the CI scopes
+ *   it never acts as the person who created it; with member scopes it acts as them
+ *   ([AuthenticatedPrincipal.onBehalfOf]), as a plain member, and only while they are still in the organization.
  * - An agent token is an [PrincipalKind.AGENT] whose subject is its agent session, with the single [AGENT_SCOPE]:
  *   it never passes a console route (audit A2) and can only act on that session.
  * - A browser session acts as its user with all their rights, and needs the CSRF token and an allowed `Origin` on
@@ -61,14 +62,20 @@ class CredentialAuthenticatorImpl(
                 channel = PrincipalChannel.MOBILE_APP,
                 authenticatedAt = stored.authenticatedAt,
             )
-            // An organization's service key: the key itself is the subject, never its creator.
-            TokenKind.SERVICE -> AuthenticatedPrincipal(
-                subjectId = stored.id.toString(),
-                kind = PrincipalKind.SERVICE,
-                scopes = grantedScopes(stored.kind, stored.scopes),
-                credentialId = stored.id.toString(),
-                orgId = stored.orgId?.toString(),
-            )
+            // An organization's service key: the key itself is the subject. A key of the CI scopes never acts as its
+            // creator; a key of member scopes does, within them (`onBehalfOf`), as a plain member, so that the one
+            // place resolving organizations decides, at every request, whether its creator is still there.
+            TokenKind.SERVICE -> grantedScopes(stored.kind, stored.scopes).let { granted ->
+                AuthenticatedPrincipal(
+                    subjectId = stored.id.toString(),
+                    kind = PrincipalKind.SERVICE,
+                    scopes = granted,
+                    credentialId = stored.id.toString(),
+                    orgId = stored.orgId?.toString(),
+                    onBehalfOf = stored.userId.toString()
+                        .takeIf { granted.isNotEmpty() && granted.none { it in CI_SERVICE_KEY_SCOPES } },
+                )
+            }
             // A person's tokens; the one of `ostrom login --admin` is bound to its organization (`orgId`).
             TokenKind.PERSONAL, TokenKind.CLI, TokenKind.ADMIN -> AuthenticatedPrincipal(
                 subjectId = stored.userId.toString(),

@@ -246,7 +246,7 @@ class CredentialAuthenticatorTest {
 
     @Test
     fun aServiceKeyActsAsItselfInItsOrganizationNeverAsItsCreator() = runTest {
-        val stored = setOf("rules:read", "cloud:write", "gates:answer")
+        val stored = setOf("rules:read", "gates:answer", "orgs:write")
         val key = token("oss_k", TokenKind.SERVICE, stored, expiresIn = null, org = orgId)
         val corrupt = token("oss_x", TokenKind.SERVICE, org = null)
 
@@ -259,6 +259,24 @@ class CredentialAuthenticatorTest {
         )
         assertEquals(null, authenticator.authenticate("oss_x")?.orgId, "A row without organization binds to none")
         assertEquals(corrupt.id.toString(), authenticator.authenticate("oss_x")?.subjectId)
+        assertNull(authenticator.authenticate("oss_x")?.onBehalfOf, "A row without a scope of the catalogue: nobody")
+    }
+
+    @Test
+    fun aServiceKeyOfMemberScopesActsAsItsCreatorWithinThemAndAMixedRowActsAsNobody() = runTest {
+        val member = token("oss_m", TokenKind.SERVICE, setOf("inference:use", "team:read", "billing:read"), org = orgId)
+        token("oss_mixed", TokenKind.SERVICE, setOf("rules:read", "inference:use"), org = orgId)
+
+        assertEquals(
+            AuthenticatedPrincipal(
+                member.id.toString(), PrincipalKind.SERVICE, setOf("inference:use", "team:read"), member.id.toString(),
+                orgId.toString(), onBehalfOf = member.userId.toString(),
+            ),
+            authenticator.authenticate("oss_m"),
+            "Its creator, within the catalogue; never what a service key may not hold",
+        )
+        assertNull(authenticator.authenticate("oss_mixed")?.onBehalfOf, "A row mixing both never acts as a person")
+        assertEquals(setOf("rules:read", "inference:use"), authenticator.authenticate("oss_mixed")?.scopes)
     }
 
     @Test

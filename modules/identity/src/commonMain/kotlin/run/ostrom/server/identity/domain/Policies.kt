@@ -3,6 +3,7 @@ package run.ostrom.server.identity.domain
 
 import run.ostrom.server.kernel.auth.ALL_USER_SCOPES
 import run.ostrom.server.kernel.auth.GovernanceScopes
+import run.ostrom.server.kernel.auth.ServiceKeyScopes
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
 import kotlin.time.Duration
@@ -253,16 +254,40 @@ class TooManyServiceKeysException :
     OstromException(ErrorKind.CONFLICT, "Too many live service keys: delete one before creating another.")
 
 /**
- * The scopes a service key may hold: what a CI calls, nothing else. `sessions:write` reports a check (`reportCheck`)
- * and signs an ended session's workflow receipt (`signWorkflowReceipt`); `rules:read` reads the rules (`listRules`,
- * `getRule`). No other route admits a key: never a governance write, a token, a member or billing.
+ * What a service key holds for a CI: it acts for its organization, each call audited in its name. `sessions:write`
+ * reports a check (`reportCheck`) and signs an ended session's workflow receipt (`signWorkflowReceipt`); `rules:read`
+ * reads the rules (`listRules`, `getRule`). No other route admits a key on these scopes alone: never a governance
+ * write, a token, a member or billing.
  */
-val SERVICE_KEY_SCOPES: Set<String> = setOf("sessions:write", "rules:read")
+val CI_SERVICE_KEY_SCOPES: Set<String> = ServiceKeyScopes.CI
+
+/**
+ * What a service key holds to act as the person who created it, within the scope and as a plain member (the catalogue
+ * of TeamCode's service keys, mapped on the routes Ostrom serves): the inference gateway, the relayed MCP servers, the
+ * creator's own usage, their cloud sessions (`cloud:write` reads too), the artifacts they can read (`artifacts:write`
+ * reads too, and never changes an access level nor deletes). TeamCode's `skills:*`, `hooks:*` and `guidance` scopes
+ * join the day Ostrom serves those features.
+ */
+val MEMBER_SERVICE_KEY_SCOPES: Set<String> = setOf(
+    "inference:use", "mcp:use", "usage:read", "cloud:read", "cloud:write", "artifacts:read", "artifacts:write",
+)
+
+/**
+ * The scopes reserved to an owner or an admin ([ServiceKeyScopes.RESERVED]): `team:read` (a read-only view of the
+ * organization) and `cloud:admin` (`cloud:write` with an administrator's rights over every cloud session). Only an
+ * owner or an admin creates a key, and a key with one of these works only while its creator is still one: a demoted
+ * or removed creator takes the key down at the next request, without a revocation.
+ */
+val RESERVED_SERVICE_KEY_SCOPES: Set<String> = ServiceKeyScopes.RESERVED
+
+/** Every scope a service key may hold; the catalogue is [CI_SERVICE_KEY_SCOPES] or the others, never both on a key. */
+val SERVICE_KEY_SCOPES: Set<String> = CI_SERVICE_KEY_SCOPES + MEMBER_SERVICE_KEY_SCOPES + RESERVED_SERVICE_KEY_SCOPES
 
 /** A service key asks for a scope it may not hold: 400. */
 class InvalidServiceKeyScopesException : OstromException(
     ErrorKind.INVALID_REQUEST,
-    "A service key holds ${SERVICE_KEY_SCOPES.joinToString(" or ")}, or both.",
+    "A service key holds scopes of the catalogue (${SERVICE_KEY_SCOPES.joinToString(", ")}); the CI scopes " +
+        "(${CI_SERVICE_KEY_SCOPES.joinToString(", ")}) are not mixed with the others.",
 )
 
 /** The service key is absent, another organization's, or already deleted. */

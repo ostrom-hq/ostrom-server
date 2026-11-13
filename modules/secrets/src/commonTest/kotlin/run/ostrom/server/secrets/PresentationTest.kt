@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.secrets
 
+import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import run.ostrom.server.kernel.auth.PrincipalKind
+import run.ostrom.server.secrets.domain.Caller
 import run.ostrom.server.secrets.domain.InvalidSecretException
+import run.ostrom.server.secrets.domain.MemberRole
 import run.ostrom.server.secrets.domain.SecretCursor
 import run.ostrom.server.secrets.domain.SecretNotFoundException
 import run.ostrom.server.secrets.presentation.SecretWriteRequest
+import run.ostrom.server.secrets.presentation.forKey
 import run.ostrom.server.secrets.presentation.personalScope
 import run.ostrom.server.secrets.presentation.toIdOr
 import run.ostrom.server.secrets.presentation.toSecretCursor
@@ -22,6 +27,17 @@ class PresentationTest {
         assertEquals(false, personalScope("org"))
         assertEquals(true, personalScope("personal"))
         assertFailsWith<InvalidSecretException> { personalScope("everyone") }
+    }
+
+    @Test
+    fun aServiceKeySeesTheOrganizationAsAnAdminOnlyOnTheReadsTeamReadOpens() {
+        val member = Caller(Uuid.random(), Uuid.random(), MemberRole.MEMBER)
+        fun principal(kind: PrincipalKind, vararg scopes: String) = AuthenticatedPrincipal("s", kind, scopes.toSet())
+        val teamKey = principal(PrincipalKind.SERVICE, "team:read", "usage:read")
+        assertEquals(member.copy(role = MemberRole.ADMIN), member.forKey(teamKey, teamRead = true))
+        assertEquals(member, member.forKey(teamKey), "Any other route: the plain member the resolver gave")
+        assertEquals(member, member.forKey(principal(PrincipalKind.SERVICE, "usage:read"), teamRead = true))
+        assertEquals(member, member.forKey(principal(PrincipalKind.USER, "team:read"), teamRead = true))
     }
 
     @Test

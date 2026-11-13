@@ -4,11 +4,13 @@ package run.ostrom.server.secrets.presentation
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.BrowserSessionRequiredException
 import run.ostrom.server.kernel.auth.PrincipalKind
+import run.ostrom.server.kernel.auth.ServiceKeyScopes
 import run.ostrom.server.kernel.auth.WriteAccess
 import run.ostrom.server.kernel.auth.requirePrincipal
 import run.ostrom.server.kernel.auth.requireWrite
 import run.ostrom.server.secrets.domain.Caller
 import run.ostrom.server.secrets.domain.CallerResolver
+import run.ostrom.server.secrets.domain.MemberRole
 import run.ostrom.server.secrets.domain.OrgNotFoundException
 import run.ostrom.server.secrets.domain.RelayScopes
 import run.ostrom.server.secrets.domain.ScopeRequiredException
@@ -25,7 +27,8 @@ import kotlin.uuid.Uuid
  * write scope still cannot make a console change by construction.
  *
  * @param resolver Resolves principals.
- * @param scopes The scopes that open the route; one is enough.
+ * @param scopes The scopes that open the route; one is enough. A route that lists [ServiceKeyScopes.TEAM_READ] is a
+ *   read a `team:read` key makes as an administrator would; any other route sees a service key as a plain member.
  * @param writers Who may call the route when it writes, besides a browser session; nobody else by default.
  *
  * @return The caller.
@@ -42,8 +45,21 @@ suspend fun ApplicationCall.requireCaller(
     val principal = requirePrincipal()
     if (!principal.mayUse(scopes)) throw ScopeRequiredException(scopes.first())
     if (request.httpMethod !in READ_METHODS) principal.requireWrite(writers)
-    return resolver.resolve(principal, null) ?: throw OrgNotFoundException()
+    val caller = resolver.resolve(principal, null) ?: throw OrgNotFoundException()
+    return caller.forKey(principal, ServiceKeyScopes.TEAM_READ in scopes)
 }
+
+/**
+ * What a service key may do as its creator: a plain member, as the resolver gives it, unless the route is one of the
+ * reads `team:read` opens ([teamRead]) and the key holds it: those see the organization as an administrator does (the
+ * resolver has checked that its creator still is one). A person's credential is unchanged.
+ */
+fun Caller.forKey(principal: AuthenticatedPrincipal, teamRead: Boolean = false): Caller =
+    if (principal.kind == PrincipalKind.SERVICE && teamRead && ServiceKeyScopes.TEAM_READ in principal.scopes) {
+        copy(role = MemberRole.ADMIN)
+    } else {
+        this
+    }
 
 /** The methods that change nothing: every other one is a write. */
 private val READ_METHODS = setOf(HttpMethod.Get, HttpMethod.Head, HttpMethod.Options)

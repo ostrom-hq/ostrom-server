@@ -5,6 +5,7 @@ import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
+import run.ostrom.server.kernel.auth.ServiceKeyScopes
 import run.ostrom.server.runners.domain.Caller
 import run.ostrom.server.runners.domain.MissingScopeException
 import run.ostrom.server.runners.domain.NotAMemberException
@@ -19,8 +20,8 @@ const val CLOUD_WRITE = "cloud:write"
 private const val ALL_USER_SCOPES = "user:*"
 
 /**
- * Whether a principal's scopes allow a cloud action: the scope itself, [CLOUD_WRITE] for [CLOUD_READ], or a user's
- * browser session.
+ * Whether a principal's scopes allow a cloud action: the scope itself, [CLOUD_WRITE] for [CLOUD_READ],
+ * [ServiceKeyScopes.CLOUD_ADMIN] for both, or a user's browser session.
  *
  * @param scope The scope the action needs.
  *
@@ -29,6 +30,7 @@ private const val ALL_USER_SCOPES = "user:*"
 fun AuthenticatedPrincipal.allowsCloud(scope: String): Boolean =
     scope in scopes ||
         (scope == CLOUD_READ && CLOUD_WRITE in scopes) ||
+        (kind == PrincipalKind.SERVICE && ServiceKeyScopes.CLOUD_ADMIN in scopes) ||
         (kind == PrincipalKind.USER && ALL_USER_SCOPES in scopes)
 
 /**
@@ -46,7 +48,14 @@ fun AuthenticatedPrincipal.allowsCloud(scope: String): Boolean =
 suspend fun PrincipalOrgResolver.callerOf(principal: AuthenticatedPrincipal, scope: String): Caller {
     if (!principal.allowsCloud(scope)) throw MissingScopeException(scope)
     val member = resolve(principal, null) ?: throw NotAMemberException()
-    return Caller(member.orgId, member.memberId.toString(), member.role in ADMIN_ROLES)
+    // A service key is a plain member, and an administrator over the cloud sessions only through `cloud:admin` (the
+    // resolver has checked that its creator still is one).
+    val administers = if (principal.kind == PrincipalKind.SERVICE) {
+        ServiceKeyScopes.CLOUD_ADMIN in principal.scopes
+    } else {
+        member.role in ADMIN_ROLES
+    }
+    return Caller(member.orgId, member.memberId.toString(), administers)
 }
 
 /** The roles that administer the organization's runners. */

@@ -78,6 +78,11 @@ class PresentationTest {
         assertFailsWith<OstromException> {
             AuthenticatedPrincipal("x", PrincipalKind.USER, emptySet()).userId()
         }
+        assertFailsWith<OstromException> {
+            AuthenticatedPrincipal(id.toString(), PrincipalKind.AGENT, emptySet()).userId()
+        }
+        val key = AuthenticatedPrincipal("k", PrincipalKind.SERVICE, emptySet(), onBehalfOf = id.toString())
+        assertEquals(id, key.userId())
     }
 
     @Test

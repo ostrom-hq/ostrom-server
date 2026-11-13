@@ -3,6 +3,7 @@ package run.ostrom.server.budgets.presentation
 
 import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.audit.auditDetails
+import run.ostrom.server.kernel.auth.ServiceKeyScopes
 import run.ostrom.server.kernel.auth.authenticated
 import run.ostrom.server.kernel.auth.requirePrincipal
 import run.ostrom.server.secrets.domain.RelayScopes
@@ -24,7 +25,8 @@ import io.ktor.server.routing.Route
 fun Route.budgetsRoutes(dependencies: BudgetsRoutesDependencies) = with(dependencies) {
     authenticated {
         get<BudgetsApi> {
-            call.respond(getBudgets(call.requireCaller(callers, BudgetScopes.READ)).toPage())
+            val caller = call.requireCaller(callers, BudgetScopes.READ, ServiceKeyScopes.TEAM_READ)
+            call.respond(getBudgets(caller).toPage())
         }
         put<BudgetsApi> {
             val caller = call.requireCaller(callers, BudgetScopes.WRITE)

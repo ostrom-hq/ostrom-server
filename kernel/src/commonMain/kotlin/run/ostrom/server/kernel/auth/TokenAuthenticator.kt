@@ -22,6 +22,10 @@ import kotlin.time.Instant
  *   [PrincipalOrgResolver] checks against the caller's membership.
  * @property personalTokenName The name its owner gave a personal token made in the console, which a governance
  *   confirmation shows; null for any other credential (the CLI's, a browser session, an agent, a service key).
+ * @property onBehalfOf The person a service key acts as within its member scopes (the user who created it): set by
+ *   the identity module only for a key that holds no CI scope, null for every other credential. The
+ *   [PrincipalOrgResolver] resolves it to the creator's membership (a creator who left, or who is no longer an owner
+ *   or an admin for a [ServiceKeyScopes.RESERVED] scope, leaves the key with no organization).
  */
 data class AuthenticatedPrincipal(
     val subjectId: String,
@@ -33,6 +37,7 @@ data class AuthenticatedPrincipal(
     val authenticatedAt: Instant? = null,
     val namedOrg: String? = null,
     val personalTokenName: String? = null,
+    val onBehalfOf: String? = null,
 ) {
     /**
      * Whether the principal may do what [scope] names: the scope is listed, or the principal is a user's browser
