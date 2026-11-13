@@ -118,7 +118,7 @@ internal class UploadArtifactUseCaseImpl(
         bytes: ByteArray,
     ): ChunkReceipt {
         contents.requireActive(caller.orgId)
-        val upload = uploads.get(caller.orgId, uploadId)?.takeIf { it.isOpenFor(caller) }
+        val upload = uploads.get(caller.orgId, uploadId)?.takeIf { it.isOpenFor(caller, clock.now()) }
             ?: throw ArtifactUploadNotFoundException()
         val file = upload.files.firstOrNull { it.sha256 == sha256 && it.state != UploadBlobState.HELD }
             ?: throw ArtifactUploadNotFoundException()
@@ -134,9 +134,6 @@ internal class UploadArtifactUseCaseImpl(
             assemble(caller, upload, file, total)
         return ChunkReceipt(complete, received, total)
     }
-
-    private fun ArtifactUpload.isOpenFor(caller: ArtifactCaller): Boolean =
-        memberId == caller.memberId && credentialId == caller.credentialId && expiresAt > clock.now()
 
     // The file from its chunks, checked, scanned and stored in the artifact's folder. Its chunks then leave the bucket;
     // unless it is stored they are forgotten too, so that it can be sent again, whatever stopped it (the bucket, a

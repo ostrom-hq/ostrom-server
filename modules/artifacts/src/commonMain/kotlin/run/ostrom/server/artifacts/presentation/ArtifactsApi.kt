@@ -79,14 +79,22 @@ class ArtifactsApi(val before: String? = null, val limit: Int? = null) {
 class ArtifactsMcpApi
 
 /**
- * A file sent for publication.
+ * A file sent for publication: its content inline, or, for the commit of an upload, its SHA-256 and size.
  *
  * @property path Its path in the version (`index.html`, `img/a.png`).
  * @property content Its content.
  * @property encoding `utf8` (default) or `base64`.
+ * @property sha256 Its SHA-256, for the commit of an upload.
+ * @property size Its size, for the commit of an upload.
  */
 @Serializable
-data class FileDto(val path: String, val content: String, val encoding: String? = null)
+data class FileDto(
+    val path: String,
+    val content: String? = null,
+    val encoding: String? = null,
+    val sha256: String? = null,
+    val size: Long? = null,
+)
 
 /**
  * Publishes an artifact.
@@ -99,12 +107,24 @@ data class FileDto(val path: String, val content: String, val encoding: String? 
 data class PublishArtifactRequest(val title: String, val access: String = "personal", val files: List<FileDto>)
 
 /**
- * Publishes a version.
+ * Publishes a version: its files inline, or the commit of an upload ([uploadId]).
  *
  * @property files Its files.
+ * @property uploadId The upload whose files the commit uses.
+ * @property entry The page a reader opens first.
+ * @property baseVersion The version the publisher started from (0 for a draft).
+ * @property title The title, required for a draft's first version.
+ * @property access A draft's access.
  */
 @Serializable
-data class PublishVersionRequest(val files: List<FileDto>)
+data class PublishVersionRequest(
+    val files: List<FileDto>,
+    val uploadId: String? = null,
+    val entry: String? = null,
+    val baseVersion: Int? = null,
+    val title: String? = null,
+    val access: String? = null,
+)
 
 /**
  * Changes an artifact's settings.
@@ -168,6 +188,9 @@ data class ArtifactsResponse(val items: List<ArtifactResponse>, val next: String
  * @property entry The page a reader opens first.
  * @property createdAt ISO 8601.
  * @property createdBy The member who published it.
+ * @property digest The SHA-256 of its canonical manifest, for a version committed from an upload.
+ * @property baseVersion The version its publisher started from, for a version committed from an upload.
+ * @property replayed The same commit again within ten minutes, answered with the version it made.
  */
 @Serializable
 data class ArtifactVersionResponse(
@@ -176,6 +199,9 @@ data class ArtifactVersionResponse(
     val entry: String,
     val createdAt: String,
     val createdBy: String,
+    val digest: String? = null,
+    val baseVersion: Int? = null,
+    val replayed: Boolean? = null,
 )
 
 /**

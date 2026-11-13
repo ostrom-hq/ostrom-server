@@ -22,7 +22,10 @@ import run.ostrom.server.artifacts.infrastructure.inTenant
 import run.ostrom.server.artifacts.presentation.ArtifactFileRefDto
 import run.ostrom.server.artifacts.presentation.ArtifactUploadChunkResponse
 import run.ostrom.server.artifacts.presentation.ArtifactUploadResponse
+import run.ostrom.server.artifacts.presentation.ArtifactVersionResponse
 import run.ostrom.server.artifacts.presentation.CreateArtifactUploadRequest
+import run.ostrom.server.artifacts.presentation.FileDto
+import run.ostrom.server.artifacts.presentation.PublishVersionRequest
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
@@ -173,6 +176,44 @@ class ArtifactUploadsPostgresTest {
         }
         assertEquals(HttpStatusCode.PayloadTooLarge, tooLarge.status)
         assertTrue("artifact_file_too_large" in tooLarge.body<String>())
+    }
+
+    @Test
+    fun anUploadIsCommittedOnceThenReplayed() = serverTest(listOf(ArtifactsModule), testIdentities) { server ->
+        server.koin.activateArtifacts()
+        val client = server.client
+        val page = "<p>v1</p>".encodeToByteArray()
+        val hash = Sha256ContentDigest().sha256(page)
+        val upload = client.post("/api/v1/artifacts/uploads") {
+            bearerAuth("alice")
+            contentType(ContentType.Application.Json)
+            setBody(CreateArtifactUploadRequest(files = listOf(ArtifactFileRefDto(hash, page.size.toLong()))))
+        }.body<ArtifactUploadResponse>()
+        client.put("/api/v1/artifacts/uploads/${upload.uploadId}/blobs/$hash/0") {
+            bearerAuth("alice")
+            contentType(ContentType.Application.OctetStream)
+            setBody(page)
+        }
+        val versions = "/api/v1/artifacts/${upload.artifactId}/versions"
+        suspend fun commit(request: PublishVersionRequest) = client.post(versions) {
+            bearerAuth("alice")
+            contentType(ContentType.Application.Json)
+            setBody(request)
+        }
+        val files = listOf(FileDto("index.html", sha256 = hash, size = page.size.toLong()))
+        val request = PublishVersionRequest(files, upload.uploadId, baseVersion = 0, title = "Uploaded")
+        assertEquals(HttpStatusCode.BadRequest, commit(request.copy(files = listOf(FileDto("index.html")))).status)
+        assertEquals(HttpStatusCode.BadRequest, commit(request.copy(files = listOf(files[0].copy(size = null)))).status)
+        assertEquals(HttpStatusCode.NotFound, commit(request.copy(uploadId = "nope")).status)
+        // Inline, a file needs its content.
+        assertEquals(HttpStatusCode.BadRequest, commit(PublishVersionRequest(listOf(FileDto("index.html")))).status)
+        val first = commit(request)
+        assertEquals(HttpStatusCode.Created, first.status)
+        val made = first.body<ArtifactVersionResponse>()
+        assertEquals(Triple(1, 0, false), Triple(made.number, made.baseVersion, made.replayed))
+        val again = commit(request)
+        assertEquals(HttpStatusCode.OK, again.status)
+        assertEquals(made.copy(replayed = true), again.body<ArtifactVersionResponse>())
     }
 
     @Test

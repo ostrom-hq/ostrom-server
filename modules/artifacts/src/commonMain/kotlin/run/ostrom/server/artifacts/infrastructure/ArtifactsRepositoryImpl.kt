@@ -14,6 +14,8 @@ import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asIntOrNull
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import io.github.smyrgeorge.sqlx4k.postgres.extensions.asByteArray
 import kotlinx.serialization.Serializable
@@ -179,6 +181,11 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
         Statement.create("""SELECT sha256 FROM artifacts_blobs WHERE artifact_id = :id""").bind("id", artifactId),
     ).getOrThrow().map { it.get("sha256").asString() }.toSet()
 
+    override suspend fun blobSizes(orgId: Uuid, artifactId: Uuid): Map<String, Long> = driver.fetchInOrg(
+        orgId,
+        Statement.create("SELECT sha256, size FROM artifacts_blobs WHERE artifact_id = :id").bind("id", artifactId),
+    ).getOrThrow().associate { it.get("sha256").asString() to it.get("size").asLong() }
+
     override suspend fun members(orgId: Uuid, artifactId: Uuid): List<String> = driver.fetchInOrg(
         orgId,
         Statement.create(
@@ -241,9 +248,12 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
             Statement.create(
                 """
                 INSERT INTO artifacts_versions (org_id, $VERSION_COLUMNS) VALUES (:org_id, :id, :number, :entry,
-                :files, :created_at, :created_by)
+                :files, :created_at, :created_by, :digest, :base_version, :credential_id)
                 """,
             ).bind("org_id", orgId)
+                .bind("digest", version.digest)
+                .bind("base_version", version.baseVersion)
+                .bind("credential_id", version.credentialId)
                 .bind("id", version.artifactId)
                 .bind("number", version.number)
                 .bind("entry", version.entry)
@@ -280,6 +290,9 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
             .map { ArtifactFile(it.path, it.sha256, it.size, it.type) },
         createdAt = get("created_at").asInstant(),
         createdBy = get("created_by").asString(),
+        digest = get("digest").asStringOrNull(),
+        baseVersion = get("base_version").asIntOrNull(),
+        credentialId = get("credential_id").asStringOrNull(),
     )
 
     /** A file as stored in `artifacts_versions.files`. */
@@ -293,6 +306,8 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
         const val COLUMNS = """
             id, org_id, owner_id, title, access, latest_version, link_slug, created_at, updated_at
         """
-        const val VERSION_COLUMNS = """artifact_id, number, entry, files, created_at, created_by"""
+        const val VERSION_COLUMNS = """
+            artifact_id, number, entry, files, created_at, created_by, digest, base_version, credential_id
+        """
     }
 }

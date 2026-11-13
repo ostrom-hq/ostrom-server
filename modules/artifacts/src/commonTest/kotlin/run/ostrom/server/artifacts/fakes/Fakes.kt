@@ -193,6 +193,9 @@ class InMemoryArtifacts : ArtifactsRepository {
     override suspend fun blobDigests(orgId: Uuid, artifactId: Uuid): Set<String> =
         blobs.keys.filter { it.first == artifactId }.map { it.second }.toSet()
 
+    override suspend fun blobSizes(orgId: Uuid, artifactId: Uuid): Map<String, Long> =
+        blobs.filterKeys { it.first == artifactId }.mapKeys { it.key.second }
+
     override suspend fun members(orgId: Uuid, artifactId: Uuid): List<String> = shares[artifactId].orEmpty().sorted()
 
     override suspend fun setMember(orgId: Uuid, artifactId: Uuid, memberId: String, share: Boolean) {
