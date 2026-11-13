@@ -293,6 +293,18 @@ class SharedAccountPoolTest {
     }
 
     @Test
+    fun tokensAreRenewedOnlyWithinTheirMarginOfExpiry() = runTest {
+        account("a", expiresAt = clock.now() + AccountTokens.REFRESH_MARGIN + 1.seconds)
+        refresher.result = RefreshResult.Renewed(AccountCredentials("access-new", "refresh-new", clock.now() + 8.hours))
+        assertEquals("access-a", assertIs<LeaseResult.Leased>(lease()).lease.credentials.accessToken)
+        assertEquals(0, refresher.calls, "Still outside the margin: served as they are")
+        clock.advance(2.seconds)
+        val renewed = assertIs<LeaseResult.Leased>(lease()).lease
+        assertEquals("access-new", renewed.credentials.accessToken)
+        assertEquals(1, refresher.calls)
+    }
+
+    @Test
     fun aRefreshThatThrowsRetiresTheAccountAndKeepsItsIntent() = runTest {
         val broken = account("broken", priority = 5, expiresAt = clock.now())
         account("backup")

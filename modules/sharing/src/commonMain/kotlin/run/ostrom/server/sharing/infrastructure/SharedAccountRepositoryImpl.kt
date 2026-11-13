@@ -5,8 +5,8 @@ import run.ostrom.server.secrets.infrastructure.executeInOrg
 import run.ostrom.server.secrets.infrastructure.fetchInOrg
 import run.ostrom.server.sharing.domain.AccountChangedException
 import run.ostrom.server.sharing.domain.AccountOwnedByAnotherMemberException
-import run.ostrom.server.sharing.domain.AccountRefreshingException
 import run.ostrom.server.sharing.domain.AccountProvider
+import run.ostrom.server.sharing.domain.AccountRefreshingException
 import run.ostrom.server.sharing.domain.AccountStatus
 import run.ostrom.server.sharing.domain.AccountTokens
 import run.ostrom.server.sharing.domain.SharedAccount
@@ -54,11 +54,12 @@ class SharedAccountRepositoryImpl(private val driver: Driver) : SharedAccountRep
                 .bind("status", account.status.name)
                 .bind("envelope", envelope),
         ).getOrThrow().singleOrNull()
-        return row?.toAccount() ?: throw when {
-            refreshing(account) -> AccountRefreshingException()
-            expectedVersion == null -> AccountOwnedByAnotherMemberException()
-            else -> AccountChangedException()
-        }
+            ?: throw when {
+                refreshing(account) -> AccountRefreshingException()
+                expectedVersion == null -> AccountOwnedByAnotherMemberException()
+                else -> AccountChangedException()
+            }
+        return row.toAccount()
     }
 
     /** Whether the org's row of [account]'s provider account is being refreshed now. */
@@ -67,7 +68,7 @@ class SharedAccountRepositoryImpl(private val driver: Driver) : SharedAccountRep
         Statement.create(
             "SELECT 1 FROM sharing_accounts WHERE org_id = :org_id AND provider = :provider " +
                 "AND provider_account_id = :provider_account_id " +
-                "AND (owner_member_id IS NULL OR owner_member_id = :owner) AND ${refreshing("sharing_accounts")}",
+                "AND (owner_member_id IS NULL OR owner_member_id = :owner) AND ${refreshingSql("sharing_accounts")}",
         )
             .bind("org_id", account.orgId)
             .bindNullable("owner", account.ownerMemberId, Uuid::class)
@@ -140,51 +141,49 @@ class SharedAccountRepositoryImpl(private val driver: Driver) : SharedAccountRep
     override suspend fun setCooldown(orgId: Uuid, id: Uuid, until: Instant) {
         driver.setColumn(orgId, id, "cooldown_until = :value", bump = false) { bind("value", until) }
     }
-
-    private companion object {
-        /**
-         * Whether [table]'s row is being refreshed now: an intent younger than [AccountTokens.PENDING_LIMIT] by the
-         * database's clock on an account that serves. New tokens then wait for the refresh (TeamCode's import and
-         * sign-in conflict): the refresh would store its pair over them, or fail and retire the account. An older
-         * intent, or one on an account that waits for a sign-in, is uncertain: new tokens are what clears it.
-         */
-        fun refreshing(table: String) =
-            "$table.refresh_pending AND $table.status NOT IN ($AWAITING_SIGN_IN) AND $table.refresh_started_at > " +
-                "now() - INTERVAL '${AccountTokens.PENDING_LIMIT.inWholeSeconds} seconds'"
-
-        // Sharing again keeps the limits. Two shares racing on a new account both insert: the second keeps the first
-        // row's id, so its envelope (sealed for its own id) would not open; the first's stays, and so do its status,
-        // refresh intent and credential version, since no new tokens were stored. An account another member owns is
-        // never taken over, nor a row past the expected version (no row comes back).
-        val SHARE_AGAIN =
-            "UPDATE sharing_accounts SET label = :label, email = :email, status = :status, cooldown_until = NULL, " +
-                "envelope = :envelope, version = version + 1, refresh_pending = FALSE, refresh_started_at = NULL, " +
-                "credential_version = credential_version + 1 " +
-                "WHERE org_id = :org_id AND provider = :provider AND provider_account_id = :provider_account_id " +
-                "AND id = :id AND version = :expected " +
-                "AND (owner_member_id IS NULL OR owner_member_id = :owner) " +
-                "AND NOT (${refreshing("sharing_accounts")}) " +
-                "RETURNING $ACCOUNT_COLUMNS"
-        val UPSERT =
-            "INSERT INTO sharing_accounts (id, org_id, provider, label, email, provider_account_id, " +
-                "owner_member_id, priority, status, max_concurrent, utilization_ceiling, monthly_budget_micros, " +
-                "daily_budget_micros, allowed_members, cooldown_until, envelope, created_at, version) " +
-                "VALUES (:id, :org_id, :provider, :label, :email, :provider_account_id, :owner, :priority, " +
-                ":status, :max_concurrent, :ceiling, :budget, :daily, :allowed, NULL, :envelope, :created_at, 1) " +
-                "ON CONFLICT (org_id, provider, provider_account_id) DO UPDATE SET label = EXCLUDED.label, " +
-                "email = EXCLUDED.email, status = CASE WHEN sharing_accounts.id = EXCLUDED.id " +
-                "THEN EXCLUDED.status ELSE sharing_accounts.status END, cooldown_until = NULL, " +
-                "envelope = CASE WHEN sharing_accounts.id = EXCLUDED.id THEN EXCLUDED.envelope " +
-                "ELSE sharing_accounts.envelope END, version = sharing_accounts.version + 1, " +
-                "refresh_pending = sharing_accounts.refresh_pending AND sharing_accounts.id <> EXCLUDED.id, " +
-                "refresh_started_at = CASE WHEN sharing_accounts.id = EXCLUDED.id THEN NULL " +
-                "ELSE sharing_accounts.refresh_started_at END, " +
-                "credential_version = sharing_accounts.credential_version + " +
-                "CASE WHEN sharing_accounts.id = EXCLUDED.id THEN 1 ELSE 0 END " +
-                "WHERE (sharing_accounts.owner_member_id IS NULL " +
-                "OR sharing_accounts.owner_member_id = EXCLUDED.owner_member_id) " +
-                "AND sharing_accounts.version = COALESCE(:expected, sharing_accounts.version) " +
-                "AND NOT (${refreshing("sharing_accounts")}) " +
-                "RETURNING $ACCOUNT_COLUMNS"
-    }
 }
+
+/**
+ * Whether [table]'s row is being refreshed now: an intent younger than [AccountTokens.PENDING_LIMIT] by the
+ * database's clock on an account that serves. New tokens then wait for the refresh (TeamCode's import and
+ * sign-in conflict): the refresh would store its pair over them, or fail and retire the account. An older
+ * intent, or one on an account that waits for a sign-in, is uncertain: new tokens are what clears it.
+ */
+private fun refreshingSql(table: String) =
+    "$table.refresh_pending AND $table.status NOT IN ($AWAITING_SIGN_IN) AND $table.refresh_started_at > " +
+        "now() - INTERVAL '${AccountTokens.PENDING_LIMIT.inWholeSeconds} seconds'"
+
+// Sharing again keeps the limits. Two shares racing on a new account both insert: the second keeps the first
+// row's id, so its envelope (sealed for its own id) would not open; the first's stays, and so do its status,
+// refresh intent and credential version, since no new tokens were stored. An account another member owns is
+// never taken over, nor a row past the expected version (no row comes back).
+private val SHARE_AGAIN =
+    "UPDATE sharing_accounts SET label = :label, email = :email, status = :status, cooldown_until = NULL, " +
+        "envelope = :envelope, version = version + 1, refresh_pending = FALSE, refresh_started_at = NULL, " +
+        "credential_version = credential_version + 1 " +
+        "WHERE org_id = :org_id AND provider = :provider AND provider_account_id = :provider_account_id " +
+        "AND id = :id AND version = :expected " +
+        "AND (owner_member_id IS NULL OR owner_member_id = :owner) " +
+        "AND NOT (${refreshingSql("sharing_accounts")}) " +
+        "RETURNING $ACCOUNT_COLUMNS"
+private val UPSERT =
+    "INSERT INTO sharing_accounts (id, org_id, provider, label, email, provider_account_id, " +
+        "owner_member_id, priority, status, max_concurrent, utilization_ceiling, monthly_budget_micros, " +
+        "daily_budget_micros, allowed_members, cooldown_until, envelope, created_at, version) " +
+        "VALUES (:id, :org_id, :provider, :label, :email, :provider_account_id, :owner, :priority, " +
+        ":status, :max_concurrent, :ceiling, :budget, :daily, :allowed, NULL, :envelope, :created_at, 1) " +
+        "ON CONFLICT (org_id, provider, provider_account_id) DO UPDATE SET label = EXCLUDED.label, " +
+        "email = EXCLUDED.email, status = CASE WHEN sharing_accounts.id = EXCLUDED.id " +
+        "THEN EXCLUDED.status ELSE sharing_accounts.status END, cooldown_until = NULL, " +
+        "envelope = CASE WHEN sharing_accounts.id = EXCLUDED.id THEN EXCLUDED.envelope " +
+        "ELSE sharing_accounts.envelope END, version = sharing_accounts.version + 1, " +
+        "refresh_pending = sharing_accounts.refresh_pending AND sharing_accounts.id <> EXCLUDED.id, " +
+        "refresh_started_at = CASE WHEN sharing_accounts.id = EXCLUDED.id THEN NULL " +
+        "ELSE sharing_accounts.refresh_started_at END, " +
+        "credential_version = sharing_accounts.credential_version + " +
+        "CASE WHEN sharing_accounts.id = EXCLUDED.id THEN 1 ELSE 0 END " +
+        "WHERE (sharing_accounts.owner_member_id IS NULL " +
+        "OR sharing_accounts.owner_member_id = EXCLUDED.owner_member_id) " +
+        "AND sharing_accounts.version = COALESCE(:expected, sharing_accounts.version) " +
+        "AND NOT (${refreshingSql("sharing_accounts")}) " +
+        "RETURNING $ACCOUNT_COLUMNS"
