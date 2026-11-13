@@ -8,10 +8,33 @@ import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * The token kinds a user creates and rotates, capped at [MAX_TOKENS_PER_USER]. The app's tokens are not among them:
- * they have their own cap ([MAX_PHONES_PER_USER]), and a phone signs in again instead of rotating (its unlock key).
+ * The token kinds a user lists and rotates: personal tokens (capped at [MAX_TOKENS_PER_USER]) and CLI tokens (capped at
+ * [MAX_DEVICES_PER_USER], [makeRoomForDevice]). The app's tokens are not among them: they have their own cap
+ * ([MAX_PHONES_PER_USER]), and a phone signs in again instead of rotating (its unlock key).
  */
 val USER_TOKEN_KINDS: Set<TokenKind> = setOf(TokenKind.PERSONAL, TokenKind.CLI)
+
+/**
+ * Makes room for one more workstation before its CLI token is issued: signs out the person's oldest ones beyond
+ * [MAX_DEVICES_PER_USER] - 1, so a new `ostrom login` is never refused (TeamCode's device cap). Each is recorded.
+ * Done before the token exists, so a failure here issues nothing and the new token is never the one evicted; a
+ * person with more workstations than one listing holds (before the cap) is brought under it in one call.
+ *
+ * @param tokens The tokens.
+ * @param audit The audit log (`token.revoked`, `reason` `device_limit`).
+ * @param userId The person.
+ * @param now The current time.
+ */
+internal suspend fun makeRoomForDevice(tokens: ApiTokensRepository, audit: AuditLog, userId: Uuid, now: Instant) {
+    do {
+        // listLive is newest first: what is left beyond the room kept is the oldest.
+        val beyond = tokens.listLive(userId, setOf(TokenKind.CLI), now).drop(MAX_DEVICES_PER_USER - 1)
+        beyond.forEach {
+            tokens.revoke(userId, it.id, now)
+            audit.record(AuditEntry(null, userId, "token.revoked", "token", it.id.toString(), DEVICE_LIMIT_DETAILS))
+        }
+    } while (beyond.isNotEmpty())
+}
 
 /** The token kinds the console lists and revokes: a lost phone's token is revoked there. */
 val LISTED_TOKEN_KINDS: Set<TokenKind> = USER_TOKEN_KINDS + TokenKind.MOBILE
@@ -87,7 +110,7 @@ class CreatePersonalTokenUseCaseImpl(
             throw InvalidTokenLifetimeException()
         }
         val now = clock.nowMillis()
-        if (tokens.countLive(userId, USER_TOKEN_KINDS, now) >= MAX_TOKENS_PER_USER) throw TooManyTokensException()
+        if (tokens.countLive(userId, PERSONAL_KIND, now) >= MAX_TOKENS_PER_USER) throw TooManyTokensException()
         val issued = issue(secrets, TokenKind.PERSONAL) { id, hint ->
             val expiresAt = lifetime?.let { now + it }
             ApiToken(id, userId, null, label, TokenKind.PERSONAL, validScopes, hint, null, now, expiresAt, null, null)
@@ -98,6 +121,12 @@ class CreatePersonalTokenUseCaseImpl(
         return issued
     }
 }
+
+/** What the audit says of a workstation signed out to make room for a new one. */
+private val DEVICE_LIMIT_DETAILS = mapOf("kind" to "cli", "reason" to "device_limit")
+
+/** The kind counted against [MAX_TOKENS_PER_USER]. */
+private val PERSONAL_KIND: Set<TokenKind> = setOf(TokenKind.PERSONAL)
 
 /** Lists the signed-in user's live personal and CLI tokens. */
 interface ListTokensUseCase {
@@ -196,7 +225,7 @@ class RotateTokenUseCaseImpl(
         val issued = issue(secrets, old.kind) { id, hint ->
             old.copy(
                 id = id, hint = hint, createdAt = now, lastUsedAt = null, revokedAt = null,
-                expiresAt = old.expiresAt?.let { now + (it - old.createdAt) },
+                expiresAt = old.expiresAt?.let { now + minOf(it - old.createdAt, old.kind.longestLifetime()) },
             )
         }
         val rotated = tokens.rotate(userId, tokenId, issued.token, hasher.hash(issued.secret), now)
@@ -205,6 +234,10 @@ class RotateTokenUseCaseImpl(
         audit.record(AuditEntry(null, userId, "token.rotated", "token", tokenId.toString(), details))
         return issued
     }
+
+    /** A CLI token issued before [CLI_TOKEN_LIFETIME] (90 days then) rotates into one of today's lifetime. */
+    private fun TokenKind.longestLifetime(): Duration =
+        if (this == TokenKind.CLI) CLI_TOKEN_LIFETIME else Duration.INFINITE
 
     /** A live personal or CLI token: an agent or app token, a revoked or an expired one is never rotated. */
     private fun ApiToken.isRotatableAt(now: Instant): Boolean =

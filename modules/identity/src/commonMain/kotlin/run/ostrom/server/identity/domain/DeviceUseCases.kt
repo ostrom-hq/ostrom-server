@@ -267,6 +267,7 @@ interface PollDeviceAuthorizationUseCase {
  * [PollDeviceAuthorizationUseCase] on the repository.
  *
  * @param authorizations The authorizations.
+ * @param tokens Signs the oldest workstations out beyond [MAX_DEVICES_PER_USER].
  * @param secrets Makes the CLI token.
  * @param hasher Hashes codes and secrets.
  * @param audit The audit log.
@@ -274,6 +275,7 @@ interface PollDeviceAuthorizationUseCase {
  */
 class PollDeviceAuthorizationUseCaseImpl(
     private val authorizations: DeviceAuthorizationsRepository,
+    private val tokens: ApiTokensRepository,
     private val secrets: SecretGenerator,
     private val hasher: SecretHasher,
     private val audit: AuditLog,
@@ -308,6 +310,8 @@ class PollDeviceAuthorizationUseCaseImpl(
             val scopes = if (admin) ADMIN_TOKEN_SCOPES else CLI_SCOPES
             ApiToken(id, userId, orgId, authorization.clientName, kind, scopes, hint, null, now, expiresAt, null, null)
         }
+        // An admin token lasts a working day and is approved each time from the console: it takes no workstation.
+        if (!admin) makeRoomForDevice(tokens, audit, userId, now)
         if (!authorizations.consume(authorization.id, issued.token, hasher.hash(issued.secret))) {
             return DevicePollResult.Expired
         }

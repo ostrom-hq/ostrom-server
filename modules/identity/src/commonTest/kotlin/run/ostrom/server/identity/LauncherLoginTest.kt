@@ -9,12 +9,10 @@ import run.ostrom.server.identity.domain.IdentityProvider
 import run.ostrom.server.identity.domain.IssueCliTokenUseCaseImpl
 import run.ostrom.server.identity.domain.LauncherAccountNotFoundException
 import run.ostrom.server.identity.domain.LauncherLoginUseCaseImpl
-import run.ostrom.server.identity.domain.MAX_TOKENS_PER_USER
 import run.ostrom.server.identity.domain.ProviderNotConfiguredException
 import run.ostrom.server.identity.domain.ProviderRejectedException
 import run.ostrom.server.identity.domain.RateLimitedException
 import run.ostrom.server.identity.domain.TokenKind
-import run.ostrom.server.identity.domain.TooManyTokensException
 import run.ostrom.server.identity.domain.User
 import run.ostrom.server.identity.domain.VerifiedIdentity
 import run.ostrom.server.identity.fakes.CountingSecretGenerator
@@ -43,6 +41,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
 /** A fake GitHub: it knows the tokens it issued to Ostrom's app, and answers 404 for any other (S2-22). */
@@ -148,13 +147,26 @@ class LauncherLoginTest {
     }
 
     @Test
-    fun aBlankLabelGetsTheDefaultOneAndTheTokenCountIsCapped() = runTest {
+    fun aBlankLabelGetsTheDefaultOneAndTheFiftyFirstWorkstationSignsTheOldestOut() = runTest {
         val ada = ada()
 
-        assertEquals("ostrom launcher", login("gho_ostrom", " ", "ip").token.token.name)
+        val oldest = login("gho_ostrom", " ", "ip").token.token
+        assertEquals("ostrom launcher", oldest.name)
+        clock.now += 1.seconds
         assertEquals("ostrom launcher", login("gho_ostrom", null, "ip").token.token.name)
-        repeat(MAX_TOKENS_PER_USER - 2) { issue(ada.id, "t$it") }
-        assertFailsWith<TooManyTokensException> { login("gho_ostrom", null, "ip") }
+        repeat(48) {
+            clock.now += 1.seconds
+            issue(ada.id, "t$it")
+        }
+        clock.now += 1.seconds
+        val latest = login("gho_ostrom", null, "ip").token.token
+
+        val live = tokens.listLive(ada.id, setOf(TokenKind.CLI), clock.now)
+        assertEquals(50, live.size, "Fifty workstations at most, the new one never refused")
+        assertEquals(latest, live.first())
+        assertNull(live.firstOrNull { it.id == oldest.id }, "The oldest login is signed out")
+        val revoked = audit.entries.single { it.action == "token.revoked" }
+        assertEquals(mapOf("kind" to "cli", "reason" to "device_limit"), revoked.details)
     }
 
     @Test
