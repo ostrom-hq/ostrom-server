@@ -110,15 +110,18 @@ class ListSessionsUseCaseImpl(private val repository: SessionsRepository) : List
         val own = actor.kind != ActorKind.AGENT_SESSION && !SessionAccess.readsTeam(actor)
         val dev = if (own) SessionAccess.person(actor) else query.dev
         if (query.dev != null && query.dev != dev) throw NotYourSessionException()
-        // A `before` that names no session the caller reads (forged, or another's) is a 400, before any page: its
-        // start would otherwise order the caller's own sessions against another's.
+        // A `before` that names no session the caller reads (forged, or another's) is a 400. A member's is checked
+        // before any page, whose start would otherwise order their own sessions against another's; the others' only
+        // on an empty page, so a page by its cursor stays one query.
         val before = query.before
-        if (before != null && repository.get(actor.orgId, before)?.let { SessionAccess.canRead(actor, it) } != true) {
-            Pages.unknownCursor("before")
-        }
-        return repository.list(
+        if (own && before != null && !readable(actor, before)) Pages.unknownCursor("before")
+        val page = repository.list(
             actor.orgId,
             query.copy(dev = dev, launchId = actor.launchId, limit = query.limit.coerceIn(1, SessionQuery.PAGE)),
         )
+        return Pages.checked("before", before, page) { readable(actor, it) }
     }
+
+    private suspend fun readable(actor: GateActor, id: String): Boolean =
+        repository.get(actor.orgId, id)?.let { SessionAccess.canRead(actor, it) } == true
 }
