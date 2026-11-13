@@ -96,7 +96,7 @@ class ProcessInferenceTest {
                 key = "process:api:pull-request",
                 name = "Pull request checks (api)",
                 description = "2 CI jobs on each pull request. The pull request template lists 2 items.",
-                repo = "api",
+                repo = "acme/api",
                 nodes = listOf(
                     ProcessNode("n1", ProcessNodeKind.TRIGGER, "A pull request is opened or updated"),
                     ProcessNode("n2", ProcessNodeKind.STEP, "Tests"),
@@ -129,7 +129,7 @@ class ProcessInferenceTest {
                 key = "process:api:release",
                 name = "Release (api)",
                 description = "1 CI job on tags or releases. 4 release targets found.",
-                repo = "api",
+                repo = "acme/api",
                 nodes = listOf(
                     ProcessNode("n1", ProcessNodeKind.TRIGGER, "A tag is pushed or a release is published"),
                     ProcessNode(

@@ -265,7 +265,7 @@ object ProcessInference {
             key = "process:${context.name}:$kind",
             name = shown("${shown(title)} (${context.name})"),
             description = description,
-            repo = context.name,
+            repo = "${context.snapshot.repo.owner}/${context.name}",
             nodes = kept,
             sources = sources.distinct().take(MAX_SOURCES),
         )

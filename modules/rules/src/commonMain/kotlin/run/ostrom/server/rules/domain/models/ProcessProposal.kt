@@ -56,7 +56,7 @@ data class ProcessNode(
  *   key, so its id never changes and it is never proposed twice.
  * @property name Its name.
  * @property description What the analysis counted, in its own words.
- * @property repo The repository it was found in.
+ * @property repo The repository it was found in, as `owner/name` (the workflow's `repos`).
  * @property nodes Its nodes, in order: each leads to the next, the last ends it.
  * @property sources The files and lines it was read from.
  */
