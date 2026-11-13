@@ -41,6 +41,9 @@ class LaunchesRunLaunchesTest {
             stored.firstOrNull { it.orgId == orgId && it.id == id }
 
         override suspend fun purge(before: Instant): Long = error("Never written here.")
+
+        override suspend fun ofCloudSession(orgId: Uuid, cloudSessionId: Uuid, limit: Int): List<String> =
+            error("Never read here.")
     }
 
     @Test

@@ -3,6 +3,7 @@ package run.ostrom.server.workflowruns.presentation
 
 import run.ostrom.core.api.models.DeliverSessionRequest
 import run.ostrom.server.identity.domain.WORKFLOW_SESSION_SCOPE
+import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.outsideOrganization
 import run.ostrom.server.kernel.auth.requirePrincipal
@@ -46,18 +47,29 @@ private suspend fun WorkflowRunsRoutesDependencies.stepCallerOf(
 ): Pair<StepCaller, Uuid?> {
     val principal = call.requirePrincipal()
     return when (principal.kind) {
-        PrincipalKind.AGENT -> {
-            if (WORKFLOW_SESSION_SCOPE !in principal.scopes) throw CredentialScopeException()
-            val actor = actors.resolve(principal) ?: throw principal.outsideOrganization()
-            // An agent actor always names its launch and its person; without them it is nobody's (fail closed).
-            StepCaller(actor.orgId, actor.personId.orEmpty(), launchId = actor.launchId.orEmpty()) to null
-        }
+        PrincipalKind.AGENT -> agentCallerOf(principal)
         PrincipalKind.SERVICE -> throw CredentialScopeException()
-        else -> {
-            val actor = actorOf(call, RunScopes.starting)
-            val text = named ?: throw InvalidRunException("sessionId: the session the step runs in.")
-            val session = Uuid.parseOrNull(text) ?: throw RunSessionNotFoundException()
-            StepCaller(actor.orgId, actor.id) to session
-        }
+        else -> personCallerOf(call, named)
     }
+}
+
+// The session's agent token: only with `workflow:session`, which a token issued before deliveries lacks.
+private suspend fun WorkflowRunsRoutesDependencies.agentCallerOf(
+    principal: AuthenticatedPrincipal,
+): Pair<StepCaller, Uuid?> {
+    if (WORKFLOW_SESSION_SCOPE !in principal.scopes) throw CredentialScopeException()
+    val actor = actors.resolve(principal) ?: throw principal.outsideOrganization()
+    // An agent actor always names its launch and its person; without them it is nobody's (fail closed).
+    return StepCaller(actor.orgId, actor.personId.orEmpty(), launchId = actor.launchId.orEmpty()) to null
+}
+
+// A person who writes workflows, naming the session.
+private suspend fun WorkflowRunsRoutesDependencies.personCallerOf(
+    call: ApplicationCall,
+    named: String?,
+): Pair<StepCaller, Uuid?> {
+    val actor = actorOf(call, RunScopes.starting)
+    val text = named ?: throw InvalidRunException("sessionId: the session the step runs in.")
+    val session = Uuid.parseOrNull(text) ?: throw RunSessionNotFoundException()
+    return StepCaller(actor.orgId, actor.id) to session
 }

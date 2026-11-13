@@ -107,11 +107,8 @@ class RunDeliveries(
         session: Uuid? = null,
     ): WorkflowRun {
         val run = played.run
-        val (visit, _, deliverable) = awaitedStep(played) ?: throw NothingToDeliverException()
-        val sessionId = sessionOf(run.id, visit.seq)
-        if (session != null && session != sessionId) throw NothingToDeliverException()
-        if (agents.state(orgId, sessionId) == null) throw NothingToDeliverException()
-        todos?.refusal(orgId, sessionId.toString())?.let { throw TodoOpenException(it) }
+        val (step, _) = ready(orgId, played, session) ?: throw NothingToDeliverException()
+        val (visit, _, deliverable) = step
         val text = Deliverables.validate(deliverable, output)
         val now = clock.now()
         val next = RunMoves(DELIVERY, now).finish(run, RunMoves.DELIVERED, output = text).next
@@ -122,6 +119,16 @@ class RunDeliveries(
             throw NothingToDeliverException()
         }
         return next
+    }
+
+    // The step under way and its session, when it waits for this delivery: of the session named if any, its session
+    // started. A session with open todo items is refused.
+    private suspend fun ready(orgId: Uuid, played: PlayedRun, session: Uuid?): Pair<AwaitedStep, Uuid>? {
+        val step = awaitedStep(played) ?: return null
+        val sessionId = sessionOf(played.run.id, step.visit.seq)
+        val started = (session == null || session == sessionId) && agents.state(orgId, sessionId) != null
+        if (started) todos?.refusal(orgId, sessionId.toString())?.let { throw TodoOpenException(it) }
+        return (step to sessionId).takeIf { started }
     }
 }
 

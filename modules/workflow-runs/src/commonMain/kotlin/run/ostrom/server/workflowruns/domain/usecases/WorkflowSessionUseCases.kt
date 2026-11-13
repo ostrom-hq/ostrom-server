@@ -139,15 +139,24 @@ class PendingWorkflowSessionUseCaseImpl(
     private val steps: StepSessions,
 ) : PendingWorkflowSessionUseCase {
     override suspend fun invoke(caller: StepCaller, sessionId: Uuid?): WorkflowSessionPending {
-        val (session, played) = runs.of(caller, sessionId) ?: return NOTHING
-        val step = awaitedStep(played) ?: return NOTHING
-        if (sessionOf(played.run.id, step.visit.seq) != session || steps.asked(caller.orgId, session)) return NOTHING
-        return WorkflowSessionPending(
-            needsAction = true,
-            runId = played.run.id,
-            nodeTitle = step.node.label,
-            deliverable = WorkflowPendingDeliverable(step.deliverable.type, step.deliverable.domain),
-        )
+        val found = runs.of(caller, sessionId)
+        val step = found?.let { waiting(caller.orgId, it) }
+        return if (found == null || step == null) {
+            NOTHING
+        } else {
+            WorkflowSessionPending(
+                needsAction = true,
+                runId = found.played.run.id,
+                nodeTitle = step.node.label,
+                deliverable = WorkflowPendingDeliverable(step.deliverable.type, step.deliverable.domain),
+            )
+        }
+    }
+
+    // The step under way, when it is the session's and its agent asked nobody anything still open.
+    private suspend fun waiting(orgId: Uuid, found: SessionRun): AwaitedStep? {
+        val step = awaitedStep(found.played)?.takeIf { sessionOf(found.played.run.id, it.visit.seq) == found.sessionId }
+        return step?.takeUnless { steps.asked(orgId, found.sessionId) }
     }
 }
 
