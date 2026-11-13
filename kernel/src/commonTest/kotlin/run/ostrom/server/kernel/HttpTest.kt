@@ -439,6 +439,7 @@ class HttpTest {
             ErrorKind.CONFLICT to 409,
             ErrorKind.ORG_REQUIRED to 409,
             ErrorKind.PAYLOAD_TOO_LARGE to 413,
+            ErrorKind.UNPROCESSABLE to 422,
             ErrorKind.UNSUPPORTED_MEDIA_TYPE to 415,
             ErrorKind.RATE_LIMITED to 429,
             ErrorKind.GONE to 410,

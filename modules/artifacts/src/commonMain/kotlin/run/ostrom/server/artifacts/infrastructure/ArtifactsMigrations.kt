@@ -182,4 +182,47 @@ val ArtifactsMigrations: List<SchemaMigration> = listOf(
             ALTER TABLE artifacts_blobs ALTER COLUMN bytes DROP NOT NULL;
         """.trimIndent(),
     ),
+    // TeamCode's uploads, without a byte: the chunks wait in the organization's bucket, these rows say which arrived
+    // so that any replica takes the next one. A draft is an artifact whose latest version is 0.
+    SchemaMigration(
+        version = 6,
+        name = "artifacts_uploads",
+        sql = """
+            CREATE TABLE artifacts_uploads (
+                id UUID PRIMARY KEY,
+                org_id UUID NOT NULL,
+                artifact_id UUID NOT NULL,
+                member_id TEXT NOT NULL,
+                credential_id TEXT,
+                created_at TIMESTAMPTZ NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                UNIQUE (id, org_id),
+                FOREIGN KEY (artifact_id, org_id) REFERENCES artifacts_artifacts (id, org_id) ON DELETE CASCADE
+            );
+            CREATE INDEX artifacts_uploads_member ON artifacts_uploads (org_id, member_id, expires_at);
+            CREATE INDEX artifacts_uploads_artifact ON artifacts_uploads (artifact_id);
+            CREATE TABLE artifacts_upload_blobs (
+                upload_id UUID NOT NULL,
+                org_id UUID NOT NULL,
+                sha256 TEXT NOT NULL,
+                size BIGINT NOT NULL,
+                state TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                PRIMARY KEY (upload_id, sha256),
+                FOREIGN KEY (upload_id, org_id) REFERENCES artifacts_uploads (id, org_id) ON DELETE CASCADE
+            );
+            CREATE TABLE artifacts_upload_chunks (
+                upload_id UUID NOT NULL,
+                org_id UUID NOT NULL,
+                sha256 TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                PRIMARY KEY (upload_id, sha256, chunk_index),
+                FOREIGN KEY (upload_id, sha256) REFERENCES artifacts_upload_blobs (upload_id, sha256) ON DELETE CASCADE
+            );
+            CREATE INDEX artifacts_artifacts_drafts ON artifacts_artifacts (org_id, owner_id) WHERE latest_version = 0;
+            ${tenantTableSql("artifacts_uploads")}
+            ${tenantTableSql("artifacts_upload_blobs")}
+            ${tenantTableSql("artifacts_upload_chunks")}
+        """.trimIndent(),
+    ),
 )

@@ -43,6 +43,7 @@ internal val SERVICE_KEY_ROUTES: Map<String, Set<String>> = mapOf(
     "artifacts:write" to ARTIFACT_READS + setOf(
         "POST /api/v1/artifacts", "POST /api/v1/artifacts/{id}/versions", "PUT /api/v1/artifacts/{id}/members/{login}",
         "DELETE /api/v1/artifacts/{id}/members/{login}", "PATCH /api/v1/artifacts/{id}",
+        "POST /api/v1/artifacts/uploads", "PUT /api/v1/artifacts/uploads/{upload}/blobs/{sha256}/{n}",
     ),
     "team:read" to setOf(
         "GET /api/v1/usage", "GET /api/v1/usage/summary", "GET /api/v1/usage/events", "GET /api/v1/usage/live",

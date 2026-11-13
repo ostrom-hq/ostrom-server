@@ -16,6 +16,7 @@ enum class ErrorKind(val type: String) {
     CONFLICT("conflict"),
     ORG_REQUIRED("org_required"),
     PAYLOAD_TOO_LARGE("payload_too_large"),
+    UNPROCESSABLE("unprocessable"),
     UNSUPPORTED_MEDIA_TYPE("unsupported_media_type"),
     RATE_LIMITED("rate_limited"),
     GONE("gone"),

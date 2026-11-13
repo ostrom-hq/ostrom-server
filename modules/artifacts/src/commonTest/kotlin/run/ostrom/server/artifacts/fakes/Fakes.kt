@@ -172,7 +172,7 @@ class InMemoryArtifacts : ArtifactsRepository {
 
     // After `before`, the ones that follow it; none after an artifact it does not hold, as the database.
     override suspend fun listReadable(caller: ArtifactCaller, before: Uuid?, limit: Int): List<Artifact> {
-        val all = artifacts.values.filter { it.orgId == caller.orgId }
+        val all = artifacts.values.filter { it.orgId == caller.orgId && !it.draft }
         val at = if (before == null) -1 else all.indexOfFirst { it.id == before }
         return if (before != null && at < 0) emptyList() else all.drop(at + 1).take(limit)
     }

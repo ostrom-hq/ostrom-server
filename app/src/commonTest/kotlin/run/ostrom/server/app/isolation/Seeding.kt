@@ -123,6 +123,8 @@ private suspend fun Seeder.content(party: Party) {
         val share = "PUT /api/v1/artifacts/$id/members/${party.member.memberId}"
         send("artifact share", share, owner, expected = NO_CONTENT)
     }
+    val upload = send("artifact upload", "POST /api/v1/artifacts/uploads", owner, UPLOAD_BODY)
+    keep(Seed.UPLOAD, upload, "uploadId")
     val link = send("link artifact", "POST /api/v1/artifacts", owner, artifact(party, "link"))
     val url = link?.at("publicUrl")
     if (link != null) {
@@ -278,3 +280,6 @@ internal suspend fun TestServer.anotherLaunch(party: Party): Map<Seed, String> {
         Seed.GATE to asked?.at("gate.id"),
     ).mapNotNull { (seed, value) -> value?.let { seed to it } }.toMap()
 }
+
+/** One file announced, its chunks never sent: the upload stays open for the hour the matrix runs. */
+internal val UPLOAD_BODY = """{"files": [{"sha256": "${"a".repeat(64)}", "size": 1}]}"""

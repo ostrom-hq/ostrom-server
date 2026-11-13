@@ -185,6 +185,7 @@ data class ListedObject(val key: String, val size: Long)
  * ```text
  * <prefix>/<org>/artifacts/<artifact>/blobs/<sha256>        content, immutable
  * <prefix>/<org>/artifacts/<artifact>/versions/<n>.json     copy of the manifest
+ * <prefix>/<org>/uploads/<upload>/<sha256>/<n>             a chunk, until its file is assembled
  * ```
  */
 object ArtifactKeys {
@@ -210,6 +211,21 @@ object ArtifactKeys {
      */
     fun blob(prefix: String, orgId: String, artifactId: String, sha256: String): String =
         artifactRoot(prefix, orgId, artifactId) + "blobs/$sha256"
+
+    /**
+     * An upload's folder, where its chunks wait until their file is assembled.
+     *
+     * @return `<prefix>/<org>/uploads/<upload>/`.
+     */
+    fun upload(prefix: String, orgId: String, uploadId: String): String = orgRoot(prefix, orgId) + "uploads/$uploadId/"
+
+    /**
+     * A chunk of a file of an upload.
+     *
+     * @return `<upload folder><sha256>/<index>`.
+     */
+    fun chunk(prefix: String, orgId: String, uploadId: String, sha256: String, index: Int): String =
+        upload(prefix, orgId, uploadId) + "$sha256/$index"
 
     /**
      * A version's manifest copy.

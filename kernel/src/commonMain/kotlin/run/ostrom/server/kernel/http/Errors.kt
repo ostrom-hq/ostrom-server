@@ -28,6 +28,7 @@ val ErrorKind.httpStatus: HttpStatusCode
         ErrorKind.NOT_FOUND -> HttpStatusCode.NotFound
         ErrorKind.CONFLICT, ErrorKind.ORG_REQUIRED -> HttpStatusCode.Conflict
         ErrorKind.PAYLOAD_TOO_LARGE -> HttpStatusCode.PayloadTooLarge
+        ErrorKind.UNPROCESSABLE -> HttpStatusCode.UnprocessableEntity
         ErrorKind.UNSUPPORTED_MEDIA_TYPE -> HttpStatusCode.UnsupportedMediaType
         ErrorKind.RATE_LIMITED -> HttpStatusCode.TooManyRequests
         ErrorKind.GONE -> HttpStatusCode.Gone

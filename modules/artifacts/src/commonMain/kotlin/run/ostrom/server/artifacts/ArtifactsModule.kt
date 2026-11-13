@@ -22,7 +22,14 @@ import run.ostrom.server.artifacts.domain.storage.ArtifactContents
 import run.ostrom.server.artifacts.domain.storage.ArtifactObjectStore
 import run.ostrom.server.artifacts.domain.storage.ArtifactStorageRepository
 import run.ostrom.server.artifacts.domain.storage.BucketArtifactContents
+import run.ostrom.server.artifacts.domain.storage.BucketUploadChunks
 import run.ostrom.server.artifacts.domain.storage.LegacyContentsMover
+import run.ostrom.server.artifacts.domain.storage.UploadChunks
+import run.ostrom.server.artifacts.domain.uploads.ArtifactUploadsRepository
+import run.ostrom.server.artifacts.domain.uploads.UploadArtifactUseCase
+import run.ostrom.server.artifacts.domain.uploads.UploadArtifactUseCaseImpl
+import run.ostrom.server.artifacts.domain.uploads.UploadStores
+import run.ostrom.server.artifacts.infrastructure.ArtifactUploadsRepositoryImpl
 import run.ostrom.server.artifacts.infrastructure.ArtifactsConfig
 import run.ostrom.server.artifacts.infrastructure.ArtifactsMigrations
 import run.ostrom.server.artifacts.infrastructure.ArtifactsRepositoryImpl
@@ -36,6 +43,7 @@ import run.ostrom.server.artifacts.presentation.ArtifactsRoutesDependencies
 import run.ostrom.server.artifacts.presentation.StorageRoutesDependencies
 import run.ostrom.server.artifacts.presentation.artifactContentRoutes
 import run.ostrom.server.artifacts.presentation.artifactStorageRoutes
+import run.ostrom.server.artifacts.presentation.artifactUploadRoutes
 import run.ostrom.server.artifacts.presentation.artifactsRoutes
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.database.SchemaMigration
@@ -95,6 +103,11 @@ object ArtifactsModule : ServerModule {
             ArtifactAdministrationUseCaseImpl(get(), get(), LegacyContentsMover(get(), get(), get(), sha256), sha256)
         }
         single { StorageRoutesDependencies(get(), get()) }
+        single<ArtifactUploadsRepository> { ArtifactUploadsRepositoryImpl(get()) }
+        single<UploadChunks> { BucketUploadChunks(get(), get()) }
+        single<UploadArtifactUseCase> {
+            UploadArtifactUseCaseImpl(get(), UploadStores(get(), get()), get(), get(), get(), get())
+        }
     }
 
     private const val CONNECT_TIMEOUT_MILLIS = 10_000L
@@ -107,6 +120,7 @@ object ArtifactsModule : ServerModule {
         route.artifactsRoutes(dependencies)
         route.artifactContentRoutes(dependencies.view, dependencies.locations)
         route.artifactStorageRoutes { koin.get<StorageRoutesDependencies>() }
+        route.artifactUploadRoutes(koin.get(), dependencies.orgResolver)
     }
 
     /** Shared artifacts, their viewer and their MCP server. */
