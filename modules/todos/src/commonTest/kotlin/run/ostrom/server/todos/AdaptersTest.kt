@@ -204,6 +204,7 @@ class AdaptersTest {
         override suspend fun legacyBlobs(orgId: Uuid, limit: Int): List<LegacyBlob> = unused()
         override suspend fun releaseLegacyBlob(orgId: Uuid, artifactId: Uuid, sha256: String) = unused<Unit>()
         override suspend fun blobDigests(orgId: Uuid, artifactId: Uuid): Set<String> = unused()
+        override suspend fun blobSizes(orgId: Uuid, artifactId: Uuid): Map<String, Long> = unused()
         override suspend fun members(orgId: Uuid, artifactId: Uuid): List<String> = unused()
         override suspend fun setMember(orgId: Uuid, artifactId: Uuid, memberId: String, share: Boolean) =
             unused<Unit>()
