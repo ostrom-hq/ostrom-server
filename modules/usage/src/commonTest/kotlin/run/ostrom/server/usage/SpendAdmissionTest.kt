@@ -85,7 +85,7 @@ class SpendAdmissionTest {
     }
 
     @Test
-    fun holdsCountUntilTheirCallIsRecordedOrTheyExpire() = runTest {
+    fun holdsCountUntilTheirCallIsRecordedAndALostCallStaysCharged() = runTest {
         val limits = SpendLimits(orgMicros = 10_000, memberMicros = null)
         val first = hold(6_000)
         assertEquals(Admission.Admitted, admission.admit(first, limits, since))
@@ -99,8 +99,8 @@ class SpendAdmissionTest {
         assertEquals(Admission.Admitted, admission.admit(hold(8_000), limits, since))
 
         clock.advance(61.minutes)
-        val again = admission.admit(hold(8_000), limits, since)
-        assertEquals(Admission.Admitted, again, "An expired hold no longer counts")
+        val again = admission.admit(hold(1), limits, since)
+        assertEquals(Admission.Exhausted(SpendScope.ORG, 10_000), again, "A lost call's expired hold stays charged")
 
         val shortLived = SpendAdmissionImpl(repository, clock, holdFor = 5.minutes)
         val brief = hold(1)

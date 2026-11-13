@@ -64,7 +64,8 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
         driver.inTenant(hold.orgId) {
             fetchAll(Statement.create(UsageQueries.LOCK_HOLDS).bind("key", "usage_holds:${hold.orgId}")).getOrThrow()
             execute(
-                Statement.create(UsageQueries.DROP_EXPIRED_HOLDS).bind("org_id", hold.orgId).bind("now", window.now),
+                Statement.create(UsageQueries.DROP_RETIRED_HOLDS).bind("org_id", hold.orgId)
+                    .bind("retained_since", window.now - HoldWindow.RETENTION),
             ).getOrThrow()
             val row = fetchAll(holdTotals(hold, limits, window)).getOrThrow().first()
             val totals = SpendTotals(
@@ -83,7 +84,7 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
                     val put = Statement.create(UsageQueries.PUT_HOLD).bind("call_id", hold.callId)
                         .bind("org_id", hold.orgId).bind("member_id", hold.memberId).bind("micros", hold.micros)
                         .bindNullable("workflow_id", hold.workflowId, String::class)
-                        .bind("expires_at", window.expiresAt)
+                        .bind("expires_at", window.expiresAt).bind("now", window.now)
                     execute(put).getOrThrow()
                 }
             }

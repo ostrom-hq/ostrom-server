@@ -9,6 +9,7 @@ import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.usage.domain.Admission
 import run.ostrom.server.usage.domain.DailySpendLimits
+import run.ostrom.server.usage.domain.HoldWindow
 import run.ostrom.server.usage.domain.SpendAdmission
 import run.ostrom.server.usage.domain.SpendHold
 import run.ostrom.server.usage.domain.SpendLimits
@@ -104,7 +105,7 @@ class SpendHoldsPostgresTest {
     }
 
     @Test
-    fun aRetryHoldsOnceAnExpiredHoldGoesAndAnotherOrgIsApart() = serverTest(modules, overrides) { server ->
+    fun aRetryHoldsOnceAKilledReplicasHoldStaysChargedAndOrgsApart() = serverTest(modules, overrides) { server ->
         val first = hold(6_000)
         assertEquals(Admission.Admitted, server.admit(first))
         assertEquals(Admission.Admitted, server.admit(first.copy(micros = 9_000)), "The same call asks again")
@@ -112,9 +113,14 @@ class SpendHoldsPostgresTest {
         assertEquals(Admission.Insufficient(SpendScope.ORG, 10_000, 1_000), server.admit(hold(2_000)))
         assertEquals(Admission.Admitted, server.admit(hold(9_000, orgId = TestCallers.orgB)), "Org B holds its own")
 
+        // The replica of the first call is killed: its call is never recorded, and what it held stays charged.
         clock.advance(61.minutes)
-        assertEquals(Admission.Admitted, server.admit(hold(9_000)), "An expired hold no longer counts")
-        assertEquals(2, server.holdRows(), "Org A's expired hold is dropped; org B's waits for org B")
+        assertEquals(Admission.Insufficient(SpendScope.ORG, 10_000, 1_000), server.admit(hold(2_000)), "Uncertain")
+        assertEquals(2, server.holdRows(), "Its hold is kept, and org B's waits for org B")
+        // Past the 90 days of retention, no month counts it any more: it goes.
+        clock.advance(HoldWindow.RETENTION)
+        assertEquals(Admission.Admitted, server.admit(hold(9_000)))
+        assertEquals(2, server.holdRows(), "Org A's retired hold is dropped; org B's waits for org B")
         val seen = server.driver.fetchInOrg(TestCallers.orgA, Statement.create("SELECT org_id FROM usage_holds"))
             .getOrThrow().map { it.get("org_id").asString() }
         assertEquals(listOf(TestCallers.orgA.toString()), seen, "Under row-level security, org A sees its holds only")
@@ -132,6 +138,25 @@ class SpendHoldsPostgresTest {
             server.admit(hold(600, memberId = one), limits),
         )
     }
+
+    @Test
+    fun aCallRecordedAfterItsHoldExpiredIsChargedItsCostOnceAndADayCountsTheUncertain() =
+        serverTest(modules, overrides) { server ->
+            val late = hold(6_000)
+            val lost = hold(3_000)
+            assertEquals(Admission.Admitted, server.admit(late))
+            assertEquals(Admission.Admitted, server.admit(lost))
+            clock.advance(61.minutes)
+            // The first call is recorded at last: its cost replaces its hold, as TeamCode settles an expired lease.
+            server.settle(late, 1_000)
+            assertEquals(1, server.holdRows(), "Only the lost call's hold is left")
+            assertEquals(Admission.Insufficient(SpendScope.ORG, 10_000, 6_000), server.admit(hold(7_000)))
+            val daily = SpendLimits(null, null, DailySpendLimits(TestCallers.epoch, 5_000, null))
+            val left = Admission.Insufficient(SpendScope.ORG, 5_000, 1_000, daily = true)
+            assertEquals(left, server.admit(hold(2_000), daily), "The lost call counts on the day it was held")
+            val tomorrow = SpendLimits(null, null, DailySpendLimits(TestCallers.epoch + 1.days, 5_000, null))
+            assertEquals(Admission.Admitted, server.admit(hold(2_000), tomorrow), "Held yesterday, charged yesterday")
+        }
 
     @Test
     fun aCallThatPlaysAWorkflowWithoutALimitIsAdmittedOnTheOthersAlone() = serverTest(modules, overrides) { server ->
