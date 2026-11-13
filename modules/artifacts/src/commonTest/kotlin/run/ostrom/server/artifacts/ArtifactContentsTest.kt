@@ -13,7 +13,6 @@ import run.ostrom.server.artifacts.domain.storage.ArtifactStorageUnavailableExce
 import run.ostrom.server.artifacts.domain.storage.ArtifactsInactiveException
 import run.ostrom.server.artifacts.domain.storage.BucketArtifactContents
 import run.ostrom.server.artifacts.domain.storage.InactiveReason
-import run.ostrom.server.artifacts.domain.storage.LegacyContentsMover
 import run.ostrom.server.artifacts.domain.storage.ObjectStoreException
 import run.ostrom.server.artifacts.fakes.CONTENT_ORIGIN
 import run.ostrom.server.artifacts.fakes.InMemoryArtifacts
@@ -111,32 +110,6 @@ class ArtifactContentsTest {
         assertFailsWith<CancellationException> { contents.remove(ORG_A, artifact) }
     }
 
-    @Test
-    fun contentsPublishedBeforeTheBucketMoveThereVerified() = runTest {
-        val repository = InMemoryArtifacts()
-        val bytes = (1..5).map { "content $it".encodeToByteArray() }
-        bytes.forEach { repository.legacy[artifact to digest.sha256(it)] = it }
-        val mover = LegacyContentsMover(repository, storage, bucket, { digest.sha256(it) }, batch = 2)
-        mover.moveToBucket(ORG_A)
-        assertTrue(repository.legacy.isEmpty())
-        bytes.forEach { assertContentEquals(it, bucket.objects[key(digest.sha256(it))]) }
-        mover.moveToBucket(ORG_A)
-
-        assertFailsWith<ArtifactsInactiveException> { mover.moveToBucket(ORG_B) }
-        // A copy that does not read back the same stays in PostgreSQL, to move again.
-        val pending = "pending".encodeToByteArray()
-        repository.legacy[artifact to digest.sha256(pending)] = pending
-        for (faulty in listOf(InMemoryBucket().apply { corrupt = true }, InMemoryBucket().apply { forget = true })) {
-            assertFailsWith<ArtifactStorageUnavailableException> {
-                LegacyContentsMover(repository, storage, faulty, { digest.sha256(it) }).moveToBucket(ORG_A)
-            }
-        }
-        bucket.beforeEach = { throw ObjectStoreException(403, "AccessDenied") }
-        assertFailsWith<ArtifactStorageUnavailableException> { mover.moveToBucket(ORG_A) }
-        bucket.beforeEach = { throw CancellationException("stopped") }
-        assertFailsWith<CancellationException> { mover.moveToBucket(ORG_A) }
-        assertEquals(1, repository.legacy.size)
-    }
 
     @Test
     fun whileInactiveEveryActionButDeletionIsRefusedAndPagesAreNotFound() = runTest {

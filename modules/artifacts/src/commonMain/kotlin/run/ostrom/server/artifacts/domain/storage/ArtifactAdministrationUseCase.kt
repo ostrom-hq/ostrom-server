@@ -87,7 +87,6 @@ interface ArtifactAdministrationUseCase {
  *
  * @param repository The bucket and the settings.
  * @param objects The bucket's operations.
- * @param legacy Moves the contents published before the bucket into it when artifacts are turned on.
  * @param digest SHA-256, to compare the probe read back.
  * @param clock The time of saves and tests.
  * @param probeId The probe object's name.
@@ -95,7 +94,6 @@ interface ArtifactAdministrationUseCase {
 class ArtifactAdministrationUseCaseImpl(
     private val repository: ArtifactStorageRepository,
     private val objects: ArtifactObjectStore,
-    private val legacy: LegacyContents,
     private val digest: suspend (ByteArray) -> String,
     private val clock: Clock = Clock.System,
     private val probeId: () -> String = { Uuid.random().toString() },
@@ -163,8 +161,6 @@ class ArtifactAdministrationUseCaseImpl(
             val storage = repository.overview(caller.orgId).storage
                 ?: throw ArtifactsInactiveException(InactiveReason.STORAGE_MISSING)
             if (storage.verifiedAt == null) throw ArtifactsInactiveException(InactiveReason.STORAGE_UNVERIFIED)
-            // What was published before the bucket moves there first, so no file is ever read from PostgreSQL.
-            legacy.moveToBucket(caller.orgId)
         }
         return repository.saveSettings(caller.orgId, settings, clock.now()) ?: throw ArtifactSettingsConflictException()
     }

@@ -7,7 +7,6 @@ import run.ostrom.server.artifacts.domain.ArtifactCaller
 import run.ostrom.server.artifacts.domain.ArtifactFile
 import run.ostrom.server.artifacts.domain.ArtifactVersion
 import run.ostrom.server.artifacts.domain.ArtifactsRepository
-import run.ostrom.server.artifacts.domain.LegacyBlob
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.QueryExecutor
 import io.github.smyrgeorge.sqlx4k.ResultSet
@@ -17,7 +16,6 @@ import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asIntOrNull
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
-import io.github.smyrgeorge.sqlx4k.postgres.extensions.asByteArray
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -155,26 +153,6 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
         ).bind("id", artifactId).bind("number", number),
     ).getOrThrow().firstOrNull()?.toVersion()
 
-    override suspend fun legacyBlobs(orgId: Uuid, limit: Int): List<LegacyBlob> = driver.fetchInOrg(
-        orgId,
-        Statement.create(
-            """
-            SELECT artifact_id, sha256, bytes FROM artifacts_blobs WHERE bytes IS NOT NULL
-            ORDER BY artifact_id, sha256 LIMIT :limit
-            """,
-        ).bind("limit", limit),
-    ).getOrThrow().map {
-        LegacyBlob(it.get("artifact_id").asUuid(), it.get("sha256").asString(), it.get("bytes").asByteArray())
-    }
-
-    override suspend fun releaseLegacyBlob(orgId: Uuid, artifactId: Uuid, sha256: String) {
-        driver.inTenant(orgId) {
-            execute(
-                Statement.create("UPDATE artifacts_blobs SET bytes = NULL WHERE artifact_id = :id AND sha256 = :sha")
-                    .bind("id", artifactId).bind("sha", sha256),
-            ).getOrThrow()
-        }
-    }
 
     override suspend fun blobDigests(orgId: Uuid, artifactId: Uuid): Set<String> = driver.fetchInOrg(
         orgId,
