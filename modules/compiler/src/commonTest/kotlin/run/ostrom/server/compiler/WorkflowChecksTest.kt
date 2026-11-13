@@ -151,6 +151,7 @@ class WorkflowChecksTest {
         refused(withInputs(listOf(WorkflowInput("1a", "A"))), "Input 1a: an id starts with a letter")
         refused(withInputs(listOf(WorkflowInput("a-b", "A"))), "Input a-b")
         refused(withInputs(listOf(WorkflowInput("a", " "))), "Input a: a label of 1 to 200.")
+        refused(withInputs(listOf(WorkflowInput("a", "x".repeat(201)))), "Input a: a label of 1 to 200.")
         refused(withInputs(listOf(WorkflowInput("a", "A", maxLength = 0))), "Input a: maxLength is 1 to 32000.")
         val wide = WorkflowInput("a", "A", maxLength = 32_001)
         refused(withInputs(listOf(wide)), "maxLength is 1 to 32000.")
@@ -180,6 +181,7 @@ class WorkflowChecksTest {
     fun aNodeHasAnIdATitleAndVisitsInBounds() {
         refused(flow(listOf(agent("a b"))), "an id is letters, digits, _ or - (64 at most).")
         refused(flow(listOf(agent("a").copy(label = " "))), "Node a: a label of 1 to 200 characters.")
+        refused(flow(listOf(agent("a").copy(label = "x".repeat(201)))), "Node a: a label of 1 to 200 characters.")
         refused(flow(listOf(agent("a").copy(maxVisits = 0))), "Node a: maxVisits is 1 to 20.")
         refused(flow(listOf(agent("a").copy(maxVisits = 21))), "Node a: maxVisits is 1 to 20.")
     }
@@ -228,6 +230,7 @@ class WorkflowChecksTest {
             listOf(edge("a", "q"), edge("q", null)),
         )
         refused(asking(" "), "the question's title is 1 to 200")
+        refused(asking("x".repeat(201)), "the question's title is 1 to 200")
         refused(asking("T", *Array(9) { "a$it" }), "at most 8 actions.")
         refused(asking("T", "x", "x"), "action ids are unique.")
         refused(asking("T", "1x"), "an action id is a letter then letters, digits or _.")
@@ -352,6 +355,8 @@ class WorkflowChecksTest {
         callRefused(calling("a", "b"), chain, "nested 4 deep; this workflow allows 3.")
         CallChecks.check(calling("a", "b", maxDepth = 5), chain.associateBy { it.id })
         callRefused(calling("a", "e", maxDepth = 0), chain, "nested 1 deep; this workflow allows 0.")
+        // Limits that leave the depth out keep the default.
+        callRefused(calling("a", "b").copy(limits = WorkflowLimits(maxNodes = 10)), chain, "this workflow allows 3.")
         // A workflow that went missing under another one ends the chain there.
         CallChecks.check(calling("a", "b"), listOf(calling("b", "gone")).associateBy { it.id })
     }

@@ -82,10 +82,11 @@ internal object NodeChecks {
     }
 
     private fun agent(at: String, node: WorkflowNode): Set<String> {
-        require(!node.run?.instructions.isNullOrBlank()) {
+        val run = node.run
+        require(run != null && !run.instructions.isNullOrBlank()) {
             "$at: an agent node run by the server needs run.instructions."
         }
-        node.run?.deliverable?.let { deliverable(at, it) }
+        run.deliverable?.let { deliverable(at, it) }
         return setOf(DELIVERED)
     }
 

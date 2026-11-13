@@ -135,6 +135,7 @@ class RunNodesPostgresTest {
      * Stores an accepted workflow of [team]'s organization without the checks of a save: a save refuses a wait as the
      * start node, and these tests play the wait node itself.
      */
+    @Suppress("LongParameterList") // A workflow document: its team, id, nodes, start, inputs and edges.
     private suspend fun TestServer.unchecked(
         team: Team,
         id: String,

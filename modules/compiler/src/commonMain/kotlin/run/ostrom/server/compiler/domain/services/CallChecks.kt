@@ -28,7 +28,7 @@ object CallChecks {
             }
         }
         val maxDepth = workflow.limits?.maxDepth ?: WorkflowChecks.DEFAULT_DEPTH
-        val deepest = calls.maxOfOrNull { depth(it.id, listOf(workflow.id), others) } ?: 0
+        val deepest = calls.fold(0) { most, call -> maxOf(most, depth(call.id, listOf(workflow.id), others)) }
         require(deepest <= maxDepth) { "Sub-workflows are nested $deepest deep; this workflow allows $maxDepth." }
         calls.forEach { arguments(it, others.getValue(it.id)) }
     }
@@ -47,7 +47,7 @@ object CallChecks {
         require(id != path.first()) { "Workflow calls loop back to this one ($trail)." }
         require(id !in path) { "Workflow calls loop ($trail)." }
         val next = others[id]?.let(::calls).orEmpty().map { it.id }.toSet()
-        return 1 + (next.maxOfOrNull { depth(it, path + id, others) } ?: 0)
+        return 1 + next.fold(0) { most, called -> maxOf(most, depth(called, path + id, others)) }
     }
 
     private fun arguments(call: Call, called: Workflow) {
