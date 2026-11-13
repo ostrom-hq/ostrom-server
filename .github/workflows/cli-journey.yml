@@ -201,7 +201,7 @@ jobs:
             # Until main's last commits are all JVM images on Docker Hub, a commit merged before the JVM has its
             # native image on GHCR only (docs/decisions/0001): docker.io first, then ghcr.io. To drop once done.
             for commit in $(git -C server rev-list --first-parent --max-count=10 origin/main); do
-              for candidate in docker.io/ostromhq/ostrom-server:sha-${commit} ghcr.io/ostrom-hq/ostrom-server:sha-${commit}; do
+              for candidate in docker.io/ostromhq/ostrom-server:sha-${commit} ghcr.io/ostrom-hq/ostrom-server:sha-${commit:0:7}; do
                 if error=$(docker pull --quiet "$candidate" 2>&1 >/dev/null); then
                   image=$candidate
                   break 2
