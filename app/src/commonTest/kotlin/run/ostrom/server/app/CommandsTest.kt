@@ -7,6 +7,7 @@ import run.ostrom.server.kernel.module.SetupLinkOutput
 import run.ostrom.server.kernel.module.TestAccount
 import run.ostrom.server.kernel.module.TestAccountSeeder
 import kotlinx.coroutines.test.runTest
+import kotlin.coroutines.cancellation.CancellationException
 import org.koin.dsl.koinApplication
 import org.koin.dsl.module
 import kotlin.test.Test
@@ -118,5 +119,8 @@ class CommandsTest {
             "No module makes setup links: the identity module binds InstanceBootstrapper.",
             assertFailsWith<UsageException> { bootstrapInstance(koinApplication {}.koin) }.message,
         )
+        assertFailsWith<CancellationException>("A cancellation is not a refusal") {
+            bootstrapInstance(koinWith(Bootstrapper(CancellationException("stopped"))))
+        }
     }
 }

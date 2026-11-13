@@ -12,6 +12,7 @@ import run.ostrom.server.identity.presentation.IdentityConfig
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.logging.Logger
 import kotlinx.coroutines.test.TestScope
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.koin.dsl.koinApplication
@@ -75,5 +76,15 @@ class BootstrapHintTest {
         start(down, SignUpMode.INVITE)
 
         assertEquals(listOf("account check failed"), warnings)
+    }
+
+    @Test
+    fun aCancelledCheckSaysNothing() = runTest {
+        val stopping = object : UsersRepository by InMemoryUsersRepository() {
+            override suspend fun any(): Boolean = throw CancellationException("stopping")
+        }
+        start(stopping, SignUpMode.INVITE)
+
+        assertEquals(emptyList(), warnings)
     }
 }

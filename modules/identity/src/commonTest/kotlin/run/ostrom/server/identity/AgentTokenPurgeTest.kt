@@ -51,7 +51,9 @@ class AgentTokenPurgeTest {
                     single<ApiTokensRepository> { tokens }
                     single<Clock> { clock }
                     single<Logger> { logger }
-                    single { IdentityConfig("http://localhost:8080", "http://localhost:5173", signUp = SignUpMode.OPEN) }
+                    single {
+                        IdentityConfig("http://localhost:8080", "http://localhost:5173", signUp = SignUpMode.OPEN)
+                    }
                 },
             )
         }
