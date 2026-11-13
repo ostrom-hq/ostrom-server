@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.workflowruns.presentation
 
+import run.ostrom.core.api.models.DeliverRequest
 import run.ostrom.core.api.models.RunStatus
 import run.ostrom.server.gates.domain.models.GateActor
 import run.ostrom.server.kernel.auth.requirePrincipal
@@ -18,7 +19,8 @@ import kotlin.uuid.Uuid
 
 /**
  * The runs of workflows: started and cancelled by an owner or an admin with a person's credential, read by any member;
- * never by an agent token. Mounted inside the authenticated routes of [workflowRunsRoutes].
+ * never by an agent token. A run's starter hands in what its current agent node asks for (`deliverRun`), with a
+ * person's credential that writes workflows. Mounted inside the authenticated routes of [workflowRunsRoutes].
  *
  * @param dependencies The use cases.
  */
@@ -42,6 +44,11 @@ internal fun Route.startedRunsRoutes(dependencies: WorkflowRunsRoutesDependencie
     post<RunCancelApi> { params ->
         val actor = actorOf(call, RunScopes.starting)
         call.respond(cancelRun(actor, params.id, personOf(call)))
+    }
+    post<RunDeliverApi> { params ->
+        val actor = actorOf(call, RunScopes.starting)
+        val body = call.receive<DeliverRequest>()
+        call.respond(deliverRun(actor, params.id, body.output, personOf(call)))
     }
 }
 

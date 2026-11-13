@@ -90,7 +90,8 @@ interface RunWaits {
  * @property parent The run whose node starts it.
  * @property seq The visit: with the parent, the key that makes a child started twice (after a restart) the first one.
  * @property workflowId The child's workflow, of the same organization.
- * @property arguments The child's inputs, where `{{inputs.<id>}}` stands for the parent's input.
+ * @property arguments The child's inputs, templates rendered on the parent run (`{{inputs.<id>}}`,
+ *   `{{nodes.<id>.output}}`).
  */
 data class ChildRequest(
     val parent: WorkflowRun,

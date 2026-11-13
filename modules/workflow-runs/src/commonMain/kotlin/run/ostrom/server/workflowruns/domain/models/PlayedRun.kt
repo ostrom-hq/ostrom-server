@@ -27,7 +27,7 @@ data class PlayedRun(val run: WorkflowRun, val graph: RunGraph)
  * A line of the organization's signed audit log about a run, written in the transaction that changes the run.
  *
  * @property event What happened, after `workflow_run.` (`started`, `node_started`, `gate_opened`, `wait_asked`,
- *   `child_started`, `ended`, `cancelled`).
+ *   `child_started`, `delivered`, `ended`, `cancelled`).
  * @property details Extra facts (node, kind, session, gate, wait, child run, status), never an input's value nor a
  *   prompt.
  * @property actor The person who did it, or null for the server's engine.

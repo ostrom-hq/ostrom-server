@@ -62,7 +62,15 @@ class RunMoves(private val owner: String, now: Instant) {
     private fun visit(run: WorkflowRun, node: WorkflowNode): RunChange {
         val seq = run.visits.size + 1
         val session = if (node.kind == WorkflowNodeKind.AGENT) sessionOf(run.id, seq).toString() else null
-        val visit = NodeVisit(seq, node.id, node.kind, RUNNING, sessionId = session, startedAt = at)
+        val visit = NodeVisit(
+            seq,
+            node.id,
+            node.kind,
+            RUNNING,
+            sessionId = session,
+            nodeTitle = node.label,
+            startedAt = at,
+        )
         val next = run.copy(
             status = RunStatus.RUNNING,
             currentNodeId = node.id,
@@ -79,7 +87,7 @@ class RunMoves(private val owner: String, now: Instant) {
      * @param run The run.
      * @param outcome What the node did: the outcome that chooses the next edge.
      * @param failed True when the node failed (the visit is `failed`, else `done`).
-     * @param output What the visit says, cut to a line.
+     * @param output What the visit says: a delivery whole (its node bounds it), anything else cut to a line.
      *
      * @return The change.
      */
@@ -87,7 +95,7 @@ class RunMoves(private val owner: String, now: Instant) {
         val done = run.visits.last().copy(
             status = if (failed) FAILED else DONE,
             outcome = outcome,
-            output = output?.take(OUTPUT),
+            output = if (outcome == DELIVERED) output else output?.take(OUTPUT),
             endedAt = at,
         )
         return RunChange(run, run.copy(status = RunStatus.RUNNING, visits = run.visits.dropLast(1) + done), owner)
@@ -113,8 +121,9 @@ class RunMoves(private val owner: String, now: Instant) {
 
     /**
      * Follows the edge the last visit's outcome takes: its own `on`, else, for a positive outcome (`next`,
-     * `approved`, or any answer of a wait: the action its person chose), an edge without `on`. A node without any edge
-     * ends the run on a positive outcome; an outcome no edge takes fails it.
+     * `delivered`, `approved`, or any answer of a wait: the action its person chose), an edge without `on`. A node
+     * without any edge ends the run on a positive outcome, whose output is the run's; an outcome no edge takes fails
+     * it, with the stable code of the failure when it has one ([failureCodeOf]).
      *
      * @param run The run, its last visit finished.
      * @param graph The graph it copied.
@@ -128,9 +137,14 @@ class RunMoves(private val owner: String, now: Instant) {
             ?: out.firstOrNull { it.on in DEFAULT_ON && positive(last) }
         val to = edge?.to
         return when {
-            edge == null && out.isEmpty() && positive(last) -> end(run, RunStatus.SUCCEEDED, null)
-            edge == null -> end(run, RunStatus.FAILED, "Node ${last.nodeId}: ${last.outcome}${detail(last.output)}")
-            to == null -> end(run, RunStatus.SUCCEEDED, null)
+            edge == null && out.isEmpty() && positive(last) -> end(run, RunStatus.SUCCEEDED, null, output = last.output)
+            edge == null -> end(
+                run,
+                RunStatus.FAILED,
+                "Node ${last.nodeId}: ${last.outcome}${detail(last.output)}",
+                failureCodeOf(last),
+            )
+            to == null -> end(run, RunStatus.SUCCEEDED, null, output = last.output)
             else -> begin(run, graph, to)
         }
     }
@@ -141,12 +155,27 @@ class RunMoves(private val owner: String, now: Instant) {
      * @param run The run.
      * @param status `succeeded` or `failed`.
      * @param failure Why it failed.
+     * @param code Why it failed, as a stable code, when it has one.
+     * @param output What the run says: its last visit's output, when it succeeds.
      *
      * @return The change.
      */
-    fun end(run: WorkflowRun, status: RunStatus, failure: String?): RunChange {
-        val next = run.copy(status = status, currentNodeId = null, failure = failure, endedAt = at)
-        val details = auditDetails("status" to status.value, "failure" to failure)
+    fun end(
+        run: WorkflowRun,
+        status: RunStatus,
+        failure: String?,
+        code: String? = null,
+        output: String? = null,
+    ): RunChange {
+        val next = run.copy(
+            status = status,
+            currentNodeId = null,
+            failure = failure,
+            failureCode = code,
+            output = output,
+            endedAt = at,
+        )
+        val details = auditDetails("status" to status.value, "failure" to failure, "code" to code)
         return RunChange(run, next, owner, audit = listOf(RunAudit("ended", details)))
     }
 
@@ -154,7 +183,7 @@ class RunMoves(private val owner: String, now: Instant) {
     private fun positive(last: NodeVisit): Boolean =
         last.outcome in POSITIVE || last.kind == WorkflowNodeKind.WAIT && last.status == DONE
 
-    private fun detail(output: String?): String = if (output == null) "." else " ($output)."
+    private fun detail(output: String?): String = if (output == null) "." else " (${output.take(OUTPUT)})."
 
     /** The vocabulary of a run's visits and outcomes. */
     companion object {
@@ -172,6 +201,15 @@ class RunMoves(private val owner: String, now: Instant) {
 
         /** The outcome of a node that did its part. */
         const val NEXT: String = "next"
+
+        /** The outcome of an agent node whose delivery came, and of a workflow node whose child run succeeded. */
+        const val DELIVERED: String = "delivered"
+
+        /** Why an agent visit fails when its session failed to start. */
+        const val SESSION_FAILED: String = "The agent session failed to start."
+
+        /** Why an agent visit that asks for a delivery fails when its session stopped working with none. */
+        const val ENDED_WITHOUT_DELIVERY: String = "The agent stopped without delivering what the step asks for."
 
         /** The outcome of a gate an approver said yes to. */
         const val APPROVED: String = "approved"
@@ -192,7 +230,22 @@ class RunMoves(private val owner: String, now: Instant) {
 
 // Top-level, not in the companion: a private companion property has a getter nothing calls.
 private val DEFAULT_ON = setOf(null, RunMoves.NEXT)
-private val POSITIVE = setOf(RunMoves.NEXT, RunMoves.APPROVED)
+private val POSITIVE = setOf(RunMoves.NEXT, RunMoves.DELIVERED, RunMoves.APPROVED)
+private val FAILURE_CODES = mapOf(
+    RunMoves.SESSION_FAILED to "session_failed",
+    RunMoves.ENDED_WITHOUT_DELIVERY to "ended_without_delivery",
+)
+
+/**
+ * The stable code of a failed visit (`WorkflowRun.failureCode`): the failures an agent visit names, read from what it
+ * says; null for any other visit.
+ *
+ * @param visit The visit.
+ *
+ * @return The code, or null.
+ */
+fun failureCodeOf(visit: NodeVisit): String? =
+    visit.output?.takeIf { visit.status == RunMoves.FAILED }?.let { FAILURE_CODES[it] }
 
 /**
  * The cloud session of an agent node's visit: derived from the run and the visit, so the key exists before the

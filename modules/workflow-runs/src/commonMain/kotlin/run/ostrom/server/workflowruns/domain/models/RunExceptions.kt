@@ -72,3 +72,25 @@ class RunEndedException : OstromException(ErrorKind.CONFLICT, "run_ended: the ru
 
 /** The run kept changing while it was cancelled (the engine played it meanwhile). */
 class RunBusyException : OstromException(ErrorKind.CONFLICT, "run_busy: the run changed meanwhile, try again.")
+
+/**
+ * A delivery that is not what the agent node asks for: nothing is stored.
+ *
+ * @param reason What to deliver instead.
+ */
+class InvalidDeliverableException(reason: String) :
+    OstromException(ErrorKind.INVALID_REQUEST, reason, "invalid_deliverable")
+
+/** The run's current node waits for no delivery, or its delivery already came. */
+class NothingToDeliverException : OstromException(
+    ErrorKind.CONFLICT,
+    "This run is not waiting for a delivery.",
+    "nothing_to_deliver",
+)
+
+/**
+ * The session of the step still has open todo items: the step delivers once its list is done.
+ *
+ * @param reason Which, as the todos say it.
+ */
+class TodoOpenException(reason: String) : OstromException(ErrorKind.CONFLICT, reason, "todo_open")

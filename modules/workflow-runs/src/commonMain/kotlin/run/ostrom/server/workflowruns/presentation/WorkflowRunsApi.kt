@@ -190,6 +190,15 @@ class RunApi(val id: String)
 class RunCancelApi(val id: String)
 
 /**
+ * Hands in what a run's current agent node asks for.
+ *
+ * @property id The run.
+ */
+@Serializable
+@Resource("/api/v1/runs/{id}/deliver")
+class RunDeliverApi(val id: String)
+
+/**
  * The body of `POST /api/v1/workflows/{id}/runs`.
  *
  * @property inputs The inputs, by id.

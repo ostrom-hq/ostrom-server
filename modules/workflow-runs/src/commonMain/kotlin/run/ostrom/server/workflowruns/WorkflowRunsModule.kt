@@ -21,10 +21,13 @@ import run.ostrom.server.workflowruns.domain.services.RunGates
 import run.ostrom.server.workflowruns.domain.services.RunLaunches
 import run.ostrom.server.workflowruns.domain.services.RunPackages
 import run.ostrom.server.workflowruns.domain.services.RunSessions
+import run.ostrom.server.workflowruns.domain.services.RunTodos
 import run.ostrom.server.workflowruns.domain.services.RunWaits
 import run.ostrom.server.workflowruns.domain.services.RunWorkflows
 import run.ostrom.server.workflowruns.domain.usecases.CancelWorkflowRunUseCase
 import run.ostrom.server.workflowruns.domain.usecases.CancelWorkflowRunUseCaseImpl
+import run.ostrom.server.workflowruns.domain.usecases.DeliverRunUseCase
+import run.ostrom.server.workflowruns.domain.usecases.DeliverRunUseCaseImpl
 import run.ostrom.server.workflowruns.domain.usecases.GetReceiptBundleUseCase
 import run.ostrom.server.workflowruns.domain.usecases.GetReceiptBundleUseCaseImpl
 import run.ostrom.server.workflowruns.domain.usecases.GetWorkflowRunUseCase
@@ -111,10 +114,12 @@ object WorkflowRunsModule : ServerModule {
         single<RunWorkflows> { CompilerRunWorkflows(get()) }
         single<StartWorkflowRunUseCase> { StartWorkflowRunUseCaseImpl(get(), get(), get()) }
         single<ListWorkflowRunsUseCase> { ListWorkflowRunsUseCaseImpl(get(), get()) }
+        // No module keeps the sessions' todos yet: no RunTodos is bound, and a delivery is never refused `todo_open`.
+        single<DeliverRunUseCase> { DeliverRunUseCaseImpl(get(), get(), getOrNull<RunTodos>(), get()) }
         single {
             WorkflowRunsRoutesDependencies(
                 get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
-                get(),
+                get(), get(),
             )
         }
     }
