@@ -81,8 +81,11 @@ token="$(sed -nE 's/.*"token":"([^"]+)".*/\1/p' <<<"$account" | tail -1)"
 
 echo "1. Both replicas start at once on the same database."
 replica ostrom-replica-a 8082 &
+a=$!
 replica ostrom-replica-b 8083 &
-wait
+b=$!
+# Their two `docker run` only: the proxy runs in the background too.
+wait "$a" "$b"
 await_status localhost:8082/ready 30 200
 await_status localhost:8083/ready 30 200
 
