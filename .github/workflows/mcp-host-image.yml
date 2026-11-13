@@ -1,18 +1,26 @@
 name: MCP host image
 
 # Builds the MCP stdio host image (mcp-host/Dockerfile, docs/mcp-host.md) for amd64 and arm64, checks its contract
-# (scripts/smoke-mcp-host-image.py: probes, token, protocol, real npx and uvx servers, SIGTERM) and, from main only,
-# pushes it to GHCR. Pull requests stay on the one `ci` job (org CI rules), which builds and tests :mcp-host; a branch
-# is checked by a manual run, which never pushes.
+# (scripts/smoke-mcp-host-image.py: probes, token, protocol, real npx and uvx servers, SIGTERM) and pushes it to GHCR:
+# `latest` and the SHA from main, the version from a release tag, the server's, since both are deployed at the same
+# version. Pull requests stay on the one `ci` job (org CI rules), which builds and tests :mcp-host; a branch is
+# checked by a manual run, which never pushes.
 on:
   push:
     branches: [main]
-    paths: ["mcp-host/**", "scripts/smoke-mcp-host-image.py", ".github/workflows/mcp-host-image.yml"]
+    tags: ['[0-9]*']
+    paths:
+      - "mcp-host/**"
+      - "build-logic/**"
+      - "gradle/libs.versions.toml"
+      - "scripts/smoke-mcp-host-image.py"
+      - ".github/workflows/mcp-host-image.yml"
   workflow_dispatch:
 
+# On main a run in progress finishes, so no merged commit loses its image to a later one.
 concurrency:
   group: mcp-host-image-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions: {}
 
@@ -37,8 +45,12 @@ jobs:
           kotlin-version: ${{ env.KOTLIN_VERSION }}
           build-cache: jvm
 
+      # The version /v1/status answers: the release tag, else `0.0.0-edge.<time>.<sha7>` as the server image's.
       - name: Host jars
-        run: ./gradlew :mcp-host:installHost
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then v="${GITHUB_REF_NAME}"; else v="0.0.0-edge.$(date -u +%Y%m%d%H%M%S).${GITHUB_SHA::7}"; fi
+          echo "HOST_VERSION=$v" >> "$GITHUB_ENV"
+          ./gradlew -PostromVersion="$v" :mcp-host:installHost
 
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -52,13 +64,13 @@ jobs:
         run: docker buildx build --platform linux/arm64 mcp-host
 
       - name: Push to GHCR
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' || github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ACTOR: ${{ github.actor }}
           SHA: ${{ github.sha }}
+          IMAGE: ghcr.io/ostrom-hq/ostrom-mcp-host
         run: |
           echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
-          docker buildx build --platform linux/amd64,linux/arm64 \
-            --tag "ghcr.io/ostrom-hq/ostrom-mcp-host:$SHA" --tag ghcr.io/ostrom-hq/ostrom-mcp-host:latest \
-            --push mcp-host
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then set -- --tag "$IMAGE:$HOST_VERSION"; else set -- --tag "$IMAGE:$SHA" --tag "$IMAGE:latest"; fi
+          docker buildx build --platform linux/amd64,linux/arm64 "$@" --push mcp-host

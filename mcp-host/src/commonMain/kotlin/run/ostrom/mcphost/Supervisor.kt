@@ -555,7 +555,8 @@ class Supervisor(
     private suspend fun sweep(now: Long) {
         for (entry in snapshot()) {
             val process = entry.process ?: continue
-            process.refreshTree()
+            // ProcessHandle walks the whole process table: off the dispatcher that serves requests.
+            withContext(platform.io) { process.refreshTree() }
             when {
                 process.writeStalledMillis() > config.writeStallMillis -> retire(entry, process, StopReason.WRITE_STALL)
                 process.users.load() > 0 -> Unit

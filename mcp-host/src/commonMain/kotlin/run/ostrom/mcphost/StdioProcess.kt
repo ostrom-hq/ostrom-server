@@ -299,13 +299,16 @@ internal class StdioProcess(
         } catch (cancelled: CancellationException) {
             // Also when the answer came just before: a server ignores a cancellation of what it already answered.
             withContext(NonCancellable) { forget(id) }
-            notify(
-                "notifications/cancelled",
-                buildJsonObject {
-                    put("requestId", id)
-                    put("reason", "Cancelled by Ostrom.")
-                },
-            )
+            // The specification forbids cancelling initialize: a start that gives up stops the process instead.
+            if (method != "initialize") {
+                notify(
+                    "notifications/cancelled",
+                    buildJsonObject {
+                        put("requestId", id)
+                        put("reason", "Cancelled by Ostrom.")
+                    },
+                )
+            }
             throw cancelled
         }
         expect(answer.bytes <= maxResponseBytes, HostErrors.TOO_LARGE) {
