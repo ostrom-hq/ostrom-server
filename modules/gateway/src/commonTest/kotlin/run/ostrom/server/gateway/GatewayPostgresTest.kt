@@ -91,6 +91,7 @@ import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.ZERO
@@ -700,10 +701,12 @@ class GatewayPostgresTest {
             assertEquals(HttpStatusCode.TooManyRequests, budget.status)
             assertEquals("rate_limit_error", errorField(budget, "type"))
             assertTrue(assertNotNull(budget.headers["retry-after"]).toLong() in 3_500..3_600)
+            assertEquals("false", budget.headers["x-should-retry"], "Claude Code stops retrying a spent budget")
             val noKey = infer("messages", """{"model":"claude-opus-5"}""")
             assertEquals(HttpStatusCode.ServiceUnavailable, noKey.status)
             assertEquals("api_error", errorField(noKey, "type"))
             assertEquals("no_credential", noKey.headers["x-ostrom-error"], "The gateway's own refusal says so")
+            assertNull(noKey.headers["x-should-retry"])
             val tooLarge = infer("messages", "x".repeat((MAX_INFERENCE_REQUEST_BYTES + 1).toInt()))
             assertEquals(HttpStatusCode.BadRequest, tooLarge.status)
             assertEquals(

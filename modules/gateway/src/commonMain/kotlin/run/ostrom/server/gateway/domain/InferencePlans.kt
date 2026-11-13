@@ -65,7 +65,12 @@ private const val SERVICE_UNAVAILABLE = 503
  * @property anthropicType `error.type` of an Anthropic error.
  * @property openAiType `error.type` of an OpenAI error.
  */
-enum class RefusalKind(val status: Int, val anthropicType: String, val openAiType: String) {
+enum class RefusalKind(
+    val status: Int,
+    val anthropicType: String,
+    val openAiType: String,
+    val retryable: Boolean = true,
+) {
     /** The body is not a valid request. */
     INVALID(BAD_REQUEST, "invalid_request_error", "invalid_request_error"),
 
@@ -79,10 +84,10 @@ enum class RefusalKind(val status: Int, val anthropicType: String, val openAiTyp
     MODEL_NOT_ALLOWED(FORBIDDEN, "permission_error", "permission_error"),
 
     /** A monthly budget is reached. */
-    BUDGET_EXHAUSTED(TOO_MANY_REQUESTS, "rate_limit_error", "insufficient_quota"),
+    BUDGET_EXHAUSTED(TOO_MANY_REQUESTS, "rate_limit_error", "insufficient_quota", retryable = false),
 
     /** What is left of a budget does not cover what this call may cost. */
-    BUDGET_INSUFFICIENT(TOO_MANY_REQUESTS, "rate_limit_error", "insufficient_quota"),
+    BUDGET_INSUFFICIENT(TOO_MANY_REQUESTS, "rate_limit_error", "insufficient_quota", retryable = false),
 
     /** Every shared account is busy or at its limit. */
     NO_CAPACITY(TOO_MANY_REQUESTS, "rate_limit_error", "rate_limit_exceeded"),
