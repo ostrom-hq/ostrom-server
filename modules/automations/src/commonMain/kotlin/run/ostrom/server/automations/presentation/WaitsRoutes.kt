@@ -37,17 +37,7 @@ import kotlin.uuid.Uuid
 fun Route.waitsRoutes(dependencies: WaitsRoutesDependencies) = with(dependencies) {
     val mcp = WaitsMcpServer(dependencies)
     authenticated {
-        // Held up to 30 s, as a gate's wait: counted apart from the ordinary calls.
-        heldCalls {
-            post<WaitsWakeApi> { params ->
-                val principal = call.requirePrincipal()
-                if (principal.kind != PrincipalKind.AGENT) throw MissingWaitScopeException(AGENT_SESSION)
-                val session = params.session ?: throw AgentSessionRequiredException()
-                val caller = agents.agentWaitCallerOf(principal, session, WAITS_READ)
-                val woken = wake.wake(caller, wakeRequestOf(call.receiveText()).waitMillis)
-                call.respond(WaitWakeResponse(woken.open, woken.messages))
-            }
-        }
+        wakeRoute(dependencies)
         post<WaitsMcpApi> { params ->
             val callers = mcpCallers(call.requirePrincipal(), params)
             val reply = mcp.handle(call.receiveText(), params, callers)
@@ -101,6 +91,18 @@ fun Route.waitsRoutes(dependencies: WaitsRoutesDependencies) = with(dependencies
             val caller = orgResolver.waitCallerOf(call.requirePrincipal(), WAITS_ASK)
             call.respond(answer.cancel(caller, waitId(params.parent.id)).toResponse())
         }
+    }
+}
+
+/** The wake of an agent's session, held up to 30 s as a gate's wait: counted apart from the ordinary calls. */
+private fun Route.wakeRoute(dependencies: WaitsRoutesDependencies) = heldCalls {
+    post<WaitsWakeApi> { params ->
+        val principal = call.requirePrincipal()
+        if (principal.kind != PrincipalKind.AGENT) throw MissingWaitScopeException(AGENT_SESSION)
+        val session = params.session ?: throw AgentSessionRequiredException()
+        val caller = dependencies.agents.agentWaitCallerOf(principal, session, WAITS_READ)
+        val woken = dependencies.wake.wake(caller, wakeRequestOf(call.receiveText()).waitMillis)
+        call.respond(WaitWakeResponse(woken.open, woken.messages))
     }
 }
 

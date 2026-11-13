@@ -42,7 +42,11 @@ internal object WaitMessages {
             add("wait: ${wait.id}")
             wait.answer?.let { answer ->
                 val action = wait.question.actions.firstOrNull { it.id == answer.action }
-                add("action: ${action?.label ?: answer.action} (${answer.action})")
+                val label = when (action) {
+                    null -> answer.action
+                    else -> action.label
+                }
+                add("action: $label (${answer.action})")
                 add("answered by: ${author ?: answer.author}")
                 wait.question.fields.forEach { field ->
                     text(answer.values[field.id])?.let { add("${field.label}: ${indented(it)}") }

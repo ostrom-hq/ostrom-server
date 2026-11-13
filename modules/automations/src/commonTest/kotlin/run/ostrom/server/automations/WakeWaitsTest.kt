@@ -36,6 +36,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import kotlin.time.Clock
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
@@ -71,6 +72,17 @@ class WakeWaitsTest {
 
     private suspend fun asked(session: String = "s-1", question: WaitSpec = review): Wait =
         ask.ask(agent.copy(session = session), AskWait(question, session, assignee = ALICE.toString()), null).wait
+
+    @Test
+    fun byDefaultAWakeWaitsOnTheCoroutineClockAndAWaitWithoutAnswerSaysOnlyItsId() = runTest {
+        val open = asked()
+        val held = WakeWaitsUseCaseImpl(repository, testWaitSessions, Clock.System)
+        assertEquals(WaitWakeResult(true, emptyList()), held.wake(agent, 1))
+        // A wait handed over without an answer (cancelled meanwhile) names only itself.
+        repository.wakePending += open.id
+        val bare = held.wake(agent, 0).messages.single()
+        assertEquals("${WaitMessages.PREFIX} Review the plan\nwait: ${open.id}", bare)
+    }
 
     @Test
     fun onlyAnAgentInItsSessionIsWokenAndWithinBounds() = runTest {
