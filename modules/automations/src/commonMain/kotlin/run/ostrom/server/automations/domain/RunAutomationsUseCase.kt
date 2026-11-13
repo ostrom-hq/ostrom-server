@@ -129,7 +129,7 @@ interface RunAutomationsUseCase {
  * @param maxRunning How many sessions of one member's automation runs may work at once; a run over it waits, queued.
  * @param workflows Starts, follows and cancels the workflow runs of workflow actions (TC-AUT-5).
  */
-@Suppress("TooManyFunctions") // The steps of one run pipeline, shared by its three triggers.
+@Suppress("TooManyFunctions", "LongParameterList") // The steps of one run pipeline, shared by its three triggers; its ports.
 class RunAutomationsUseCaseImpl(
     private val repository: AutomationsRepository,
     private val launcher: AutomationLauncher,

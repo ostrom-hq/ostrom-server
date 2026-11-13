@@ -44,15 +44,15 @@ internal const val AUTOMATION_STARTING_SQL = """
     SELECT name FROM automations_automations WHERE org_id = :org_id AND workflow_id = :workflow_id ORDER BY name LIMIT 1
 """
 
+private const val RUN_SELECT = """
+    id, automation_id, org_id, source, status, version, delivery_key, session_id, reason, problems, slot_at,
+    created_at, updated_at, workflow_run_id
+"""
+
 /** The started runs of workflow actions of one organization, oldest first (on `automations_runs_followed`). */
 internal const val FOLLOWED_SQL = """
     SELECT $RUN_SELECT FROM automations_runs WHERE org_id = :org_id AND status = 'started' AND workflow_run_id IS NOT
     NULL ORDER BY created_at, id LIMIT :limit
-"""
-
-private const val RUN_SELECT = """
-    id, automation_id, org_id, source, status, version, delivery_key, session_id, reason, problems, slot_at,
-    created_at, updated_at, workflow_run_id
 """
 
 /**

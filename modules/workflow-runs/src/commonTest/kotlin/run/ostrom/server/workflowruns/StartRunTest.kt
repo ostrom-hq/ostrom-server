@@ -56,12 +56,17 @@ class StartRunTest {
             key: String,
             maxUnfinished: Int,
         ): KeyedAdd {
-            keys[run.startedBy to key]?.let { return KeyedAdd.Existing(it) }
+            val existing = keys[run.startedBy to key]
             val unfinished = stored.count { it.second.startedBy == run.startedBy }
-            if (unfinished >= maxUnfinished) return KeyedAdd.AtLimit
-            add(orgId, run, startedAt, graph, audit)
-            keys[run.startedBy to key] = run
-            return KeyedAdd.Added(run)
+            return when {
+                existing != null -> KeyedAdd.Existing(existing)
+                unfinished >= maxUnfinished -> KeyedAdd.AtLimit
+                else -> {
+                    add(orgId, run, startedAt, graph, audit)
+                    keys[run.startedBy to key] = run
+                    KeyedAdd.Added(run)
+                }
+            }
         }
 
         override suspend fun add(orgId: Uuid, run: WorkflowRun, startedAt: Instant, graph: RunGraph, audit: RunAudit) {

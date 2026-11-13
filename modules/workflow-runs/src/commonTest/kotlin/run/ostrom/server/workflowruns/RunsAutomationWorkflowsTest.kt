@@ -64,7 +64,7 @@ class RunsAutomationWorkflowsTest {
     }
 
     private class Starts : StartWorkflowRunUseCase {
-        val starts = mutableListOf<MemberStart>()
+        val calls = mutableListOf<MemberStart>()
         var next: (MemberStart) -> StartedRun = { StartedRun(run("wfr_1", it.starter), replayed = false) }
 
         override suspend fun invoke(
@@ -75,7 +75,7 @@ class RunsAutomationWorkflowsTest {
         ): WorkflowRun = error("An automation starts as a member.")
 
         override suspend fun startFor(start: MemberStart): StartedRun {
-            starts += start
+            calls += start
             return next(start)
         }
     }
@@ -164,7 +164,7 @@ class RunsAutomationWorkflowsTest {
                 source = "automation",
                 automationId = "00000000-0000-0000-0000-0000000a0701",
             ),
-            starts.starts.single(),
+            starts.calls.single(),
         )
         val refusals = listOf(
             RunWorkflowNotFoundException() to "workflow_missing",

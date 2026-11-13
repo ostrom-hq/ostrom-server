@@ -170,7 +170,7 @@ class ManageAutomationsUseCaseImpl(
     private suspend fun checked(caller: AutomationCaller, definition: AutomationDefinition): AutomationDefinition {
         val checked = AutomationRules.check(definition)
         val workflowId = checked.action.workflowId ?: return checked
-        AutomationRules.checkWorkflowInputs(checked.action, workflows.inputs(caller.orgId, workflowId))
+        WorkflowActionRules.checkInputs(checked.action, workflows.inputs(caller.orgId, workflowId))
         return checked
     }
 
