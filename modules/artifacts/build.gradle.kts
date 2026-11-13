@@ -9,6 +9,8 @@ kotlin {
         commonMain.dependencies {
             implementation(project(":kernel"))
             implementation(libs.cryptography.core)
+            // The organization's S3-compatible bucket, reached through the outbound client the module is given.
+            implementation(libs.ktor.client.core)
         }
         nativeMain.dependencies {
             implementation(libs.cryptography.openssl3.prebuilt)
@@ -18,6 +20,7 @@ kotlin {
         }
         commonTest.dependencies {
             implementation(project(":testing"))
+            implementation(libs.ktor.client.mock)
         }
     }
 }
