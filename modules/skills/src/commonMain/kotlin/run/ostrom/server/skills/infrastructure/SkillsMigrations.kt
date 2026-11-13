@@ -100,6 +100,7 @@ val SkillsMigrations: List<SchemaMigration> = listOf(
                 FOREIGN KEY (skill_id, org_id) REFERENCES skills_skills (id, org_id) ON DELETE CASCADE
             );
             CREATE INDEX skills_installations_org_member ON skills_installations (org_id, member_id, reported_at DESC);
+            CREATE INDEX skills_installations_org_skill ON skills_installations (org_id, skill_id);
             ${TABLES.joinToString("\n") { tenantTable(it) }}
         """.trimIndent(),
     ),

@@ -40,7 +40,7 @@ data class SkillDetail(val skill: Skill, val versions: List<SkillVersion>)
  */
 @Suppress("TooManyFunctions") // One operation per route of the catalog.
 interface ManageSkillCatalogUseCase {
-    /** Every skill of the organization, team and personal. */
+    /** The organization's skills: every team skill, then members' personal skills, at most [SkillLimits.ROWS]. */
     suspend fun catalog(caller: CatalogCaller): List<Skill>
 
     /** A skill's versions; a personal skill's too, as metadata. */
@@ -97,7 +97,7 @@ internal class ManageSkillCatalogUseCaseImpl(
 ) : ManageSkillCatalogUseCase {
     override suspend fun catalog(caller: CatalogCaller): List<Skill> {
         CatalogAccess.requireConsoleAdministrator(caller)
-        return repository.read(caller.orgId) { catalog((SkillLimits.SKILLS + SkillLimits.PERSONAL).toInt()) }
+        return repository.read(caller.orgId) { catalog(SkillLimits.ROWS) }
     }
 
     override suspend fun versions(caller: CatalogCaller, name: String): SkillDetail {
@@ -205,6 +205,9 @@ internal class ManageSkillCatalogUseCaseImpl(
             val skill = skill(name) ?: throw CatalogNotFoundException()
             if (skill.ownerId == null) {
                 throw CatalogConflictException("skill_not_personal", "This skill already belongs to the team.")
+            }
+            if (countTeamSkills() >= SkillLimits.SKILLS) {
+                throw CatalogConflictException("skill_limit", "The catalog is limited to ${SkillLimits.SKILLS} skills.")
             }
             val team = skill.copy(
                 ownerId = null,

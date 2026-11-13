@@ -106,6 +106,9 @@ class SkillsPersonalPostgresTest {
         assertEquals(409 to "skill_limit", team.status to team.error)
         val personal = client.call(post, "ada-cli", "$ME/one-more/versions", publication("1"))
         assertEquals(409 to "skill_limit", personal.status to personal.error)
+        val promoted = client.call(post, "owner", "$TEAM/mine-0/promote")
+        assertEquals(409 to "skill_limit", promoted.status to promoted.error, "A promotion counts toward the team's")
+        assertEquals(550, client.call(get, "owner", TEAM).list().size)
 
         // The 200th version is the last.
         repeat(199) { client.call(post, "owner", "$TEAM/team-0/versions", publication("1.0.$it")) }

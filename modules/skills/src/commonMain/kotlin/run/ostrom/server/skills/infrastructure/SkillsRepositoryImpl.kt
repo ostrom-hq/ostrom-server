@@ -64,9 +64,11 @@ private class PostgresSkillsStore(private val tx: Transaction, private val orgId
             .firstOrNull()?.toSkill()
 
     override suspend fun catalog(limit: Int): List<Skill> =
-        rows("$SKILL_SELECT WHERE s.org_id = :org_id ORDER BY s.updated_at DESC, s.name LIMIT :limit") {
-            bind("limit", limit)
-        }.map { it.toSkill() }
+        // Team skills first (at most SkillLimits.SKILLS), so personal skills never push one out of the page.
+        rows(
+            "$SKILL_SELECT WHERE s.org_id = :org_id " +
+                "ORDER BY s.owner_id IS NOT NULL, s.updated_at DESC, s.name LIMIT :limit",
+        ) { bind("limit", limit) }.map { it.toSkill() }
 
     override suspend fun personal(ownerId: String, limit: Int): List<Skill> = rows(
         "$SKILL_SELECT WHERE s.org_id = :org_id AND s.owner_id = :owner " +
