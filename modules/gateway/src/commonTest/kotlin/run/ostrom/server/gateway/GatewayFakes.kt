@@ -42,6 +42,7 @@ import run.ostrom.server.sharing.domain.NoAccountSpendReader
 import run.ostrom.server.sharing.domain.OAuthRefresher
 import run.ostrom.server.sharing.domain.QuotaWindow
 import run.ostrom.server.sharing.domain.QuotaWindowRepository
+import run.ostrom.server.sharing.domain.RefreshOwnership
 import run.ostrom.server.sharing.domain.RefreshResult
 import run.ostrom.server.sharing.domain.RefreshState
 import run.ostrom.server.sharing.domain.RefreshWrite
@@ -131,7 +132,10 @@ class InMemoryAccounts :
     override suspend fun list(orgId: Uuid) = accounts.filter { it.orgId == orgId }
 
     override suspend fun ready(orgId: Uuid, provider: AccountProvider) =
-        accounts.filter { it.orgId == orgId && it.provider == provider && it.status == AccountStatus.READY }
+        accounts.filter { it.orgId == orgId && it.provider == provider && it.serves }
+
+    override suspend fun setOwnership(orgId: Uuid, id: Uuid, ownership: RefreshOwnership): SharedAccount? =
+        get(orgId, id)?.let { update(it.copy(ownership = ownership)) }
 
     override suspend fun update(account: SharedAccount, expectedVersion: Long?): SharedAccount? {
         val index = accounts.indexOfFirst { it.id == account.id }
@@ -150,7 +154,9 @@ class InMemoryAccounts :
         decide: suspend (RefreshState?) -> Pair<RefreshWrite, T>,
     ): T {
         val account = get(orgId, id)
-        val state = account?.let { RefreshState(it.status, envelopes.getValue(id), id in pending, false, 1) }
+        val state = account?.let {
+            RefreshState(it.status, envelopes.getValue(id), id in pending, false, 1, it.ownership)
+        }
         val (write, result) = decide(state)
         when (write) {
             RefreshWrite.Keep -> Unit

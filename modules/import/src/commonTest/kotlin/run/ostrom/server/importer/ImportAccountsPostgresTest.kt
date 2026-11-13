@@ -27,6 +27,7 @@ import run.ostrom.server.sharing.domain.ListSharedAccountsUseCase
 import run.ostrom.server.sharing.domain.ListSharedAccountsUseCaseImpl
 import run.ostrom.server.sharing.domain.NoAccountSpendReader
 import run.ostrom.server.sharing.domain.OAuthRefresher
+import run.ostrom.server.sharing.domain.RefreshOwnership
 import run.ostrom.server.sharing.domain.RemoveSharedAccountUseCase
 import run.ostrom.server.sharing.domain.ShareAccountPayload
 import run.ostrom.server.sharing.domain.ShareAccountUseCase
@@ -49,6 +50,8 @@ class ImportAccountsPostgresTest {
     private val modules = Importing.modules + SharingModule
 
     private companion object {
+        const val WAITS_FOR_HANDOVER = "TeamCode may still renew this account's tokens: it serves nothing in " +
+            "Ostrom until it is handed over (the cutover run, or a handover once TeamCode no longer uses it)."
         const val WAITS = "This account waits for a reconnection. It is left so while TeamCode runs (testing " +
             "TeamCode's tokens would disconnect TeamCode): the cutover run revives it."
         const val REFUSED = "TeamCode's tokens for this account are refused too: it keeps waiting for its owner to " +
@@ -99,53 +102,137 @@ class ImportAccountsPostgresTest {
         single<AuditLog> { audit }
     }
 
+    /** Hands the accounts over to Ostrom, as an admin does once TeamCode no longer renews them. */
+    private suspend fun TestServer.handedOver(vararg ids: String) {
+        val repository = koin.get<SharedAccountRepository>()
+        val shared = accounts()
+        for (id in ids) repository.setOwnership(adminA.orgId, shared.getValue(id).id, RefreshOwnership.OSTROM)
+    }
+
+    /** Ostrom's accounts lose their tokens: handed over, then a refresh refused. */
     private suspend fun TestServer.reconnectRequired(vararg ids: String) {
+        handedOver(*ids)
         val repository = koin.get<SharedAccountRepository>()
         val shared = accounts()
         for (id in ids) repository.setStatus(adminA.orgId, shared.getValue(id).id, AccountStatus.RECONNECT_REQUIRED)
     }
 
-    @Test
-    fun teamCodesAccountsAreSharedOnceAndNeverOverwritten() = serverTest(modules, importOverrides()) { server ->
-        with(server) {
-            val unknown = "Ostrom shares claude and codex accounts, not gemini."
-            assertEquals(
-                listOf(
-                    line("account", "claude/Lena claude-1", CREATED),
-                    line("account", "codex/Lena codex-1", CREATED),
-                    line("account", "gemini/Lena gemini-1", SKIPPED, unknown),
-                    line("account", "claude/Lena claude-3", CREATED),
-                ),
-                accountLines(
-                    account("claude", "claude-1"),
-                    account("codex", "codex-1", disabled = true),
-                    account("gemini", "gemini-1"),
-                    account(" CLAUDE", "claude-3").copy(providerAccountId = " claude-3 "),
-                ),
-            )
-            val shared = accounts()
-            assertEquals(AccountProvider.CLAUDE, shared.getValue("claude-3").provider, "Case and spaces are ignored")
-            assertEquals(listOf(AccountStatus.READY, AccountStatus.DISABLED), statuses("claude-1", "codex-1"))
-            assertEquals(adminA.memberId, shared.getValue("claude-1").ownerMemberId)
-            assertEquals("access-claude-1-token-1", accessToken("claude-1"))
+    private suspend fun TestServer.ownerships(vararg ids: String): List<RefreshOwnership> =
+        accounts().let { shared -> ids.map { shared.getValue(it).ownership } }
 
-            // A second run, TeamCode's tokens having changed: what the org shares already is left alone.
-            assertEquals(
-                listOf(
-                    line("account", "claude/Lena claude-1", UNCHANGED),
-                    line("account", "codex/Lena codex-1", UNCHANGED),
-                    line("account", "claude/Lena claude-2", CREATED),
-                ),
-                accountLines(
-                    account("claude", "claude-1", run = 2).copy(providerAccountId = " CLAUDE-1 "),
-                    account("codex", "codex-1", disabled = true, run = 2),
-                    account("claude", "claude-2", run = 2),
-                ),
-            )
-            assertEquals("access-claude-1-token-1", accessToken("claude-1"), "Its tokens are not overwritten")
-            assertEquals(4, accounts().size, "The same account in other case is the same account")
+    /** A line of an account the run leaves waiting for its handover. */
+    private fun pending(name: String, action: ImportAction) =
+        line("account", name, action, WAITS_FOR_HANDOVER, "pending_handover")
+
+    @Test
+    fun teamCodesAccountsWaitForTheirHandoverTakeTeamCodesTokensMeanwhileAndAreNeverOverwrittenAfter() =
+        serverTest(modules, importOverrides()) { server ->
+            with(server) {
+                val unknown = "Ostrom shares claude and codex accounts, not gemini."
+                val first = report(
+                    TeamCodeImportRequest(
+                        accounts = listOf(
+                            account("claude", "claude-1"),
+                            account("codex", "codex-1", disabled = true),
+                            account("gemini", "gemini-1"),
+                            account(" CLAUDE", "claude-3").copy(providerAccountId = " claude-3 "),
+                        ),
+                    ),
+                )
+                assertEquals(
+                    listOf(
+                        pending("claude/Lena claude-1", CREATED),
+                        pending("codex/Lena codex-1", CREATED),
+                        line("account", "gemini/Lena gemini-1", SKIPPED, unknown),
+                        pending("claude/Lena claude-3", CREATED),
+                    ),
+                    first.items.filter { it.kind == "account" },
+                )
+                assertEquals(3, first.pendingHandover)
+                val shared = accounts()
+                val provider = shared.getValue("claude-3").provider
+                assertEquals(AccountProvider.CLAUDE, provider, "Case and spaces are ignored")
+                assertEquals(listOf(AccountStatus.READY, AccountStatus.DISABLED), statuses("claude-1", "codex-1"))
+                val waiting = RefreshOwnership.PENDING_HANDOVER
+                assertEquals(listOf(waiting, waiting), ownerships("claude-1", "codex-1"), "TeamCode still renews them")
+                assertEquals(adminA.memberId, shared.getValue("claude-1").ownerMemberId)
+                assertEquals("access-claude-1-token-1", accessToken("claude-1"))
+
+                // TeamCode renewed them since: a waiting account takes TeamCode's current tokens, and keeps waiting.
+                assertEquals(
+                    listOf(
+                        pending("claude/Lena claude-1", UPDATED),
+                        pending("codex/Lena codex-1", UPDATED),
+                        pending("claude/Lena claude-2", CREATED),
+                    ),
+                    accountLines(
+                        account("claude", "claude-1", run = 2).copy(providerAccountId = " CLAUDE-1 "),
+                        account("codex", "codex-1", disabled = true, run = 2),
+                        account("claude", "claude-2", run = 2),
+                    ),
+                )
+                assertEquals("access-claude-1-token-2", accessToken("claude-1"), "TeamCode's current pair")
+                assertEquals(AccountStatus.DISABLED, statuses("codex-1").single(), "Off as in TeamCode")
+                assertEquals(4, accounts().size, "The same account in other case is the same account")
+
+                // Handed over, Ostrom renews it: TeamCode's older pair never overwrites it again.
+                handedOver("claude-1")
+                assertEquals(
+                    listOf(line("account", "claude/Lena claude-1", UNCHANGED)),
+                    accountLines(account("claude", "claude-1", run = 3)),
+                )
+                assertEquals("access-claude-1-token-2", accessToken("claude-1"), "Its tokens are not overwritten")
+            }
         }
-    }
+
+    @Test
+    fun theAccessOnlyTrialServesTeamCodesAccessTokenAndTheCutoverHandsEveryWaitingAccountOver() =
+        serverTest(modules, withAudit(RecordingAuditLog())) { server ->
+            with(server) {
+                accountLines(account("claude", "claude-1"), account("claude", "claude-2"))
+                handedOver("claude-2")
+                val request = TeamCodeImportRequest(
+                    accounts = listOf(account("claude", "claude-1", run = 2), account("claude", "claude-3", run = 2)),
+                )
+                val trial = report(request, accessOnly = true)
+                val accessOnly = "Serves with TeamCode's access token, never renewed by Ostrom: import again when it " +
+                    "expires."
+                assertEquals(
+                    listOf(
+                        line("account", "claude/Lena claude-1", UPDATED, accessOnly, "access_only"),
+                        line("account", "claude/Lena claude-3", CREATED, accessOnly, "access_only"),
+                    ),
+                    trial.items.filter { it.kind == "account" },
+                )
+                assertEquals(listOf(2, 0), listOf(trial.accessOnly, trial.pendingHandover))
+                val only = RefreshOwnership.ACCESS_ONLY
+                val ostrom = RefreshOwnership.OSTROM
+                assertEquals(listOf(only, ostrom, only), ownerships("claude-1", "claude-2", "claude-3"))
+                assertEquals("access-claude-1-token-2", accessToken("claude-1"))
+                // A normal run keeps the trial's accounts access-only, with TeamCode's newer tokens.
+                val again = report(TeamCodeImportRequest(accounts = listOf(account("claude", "claude-1", run = 3))))
+                assertEquals(1, again.accessOnly)
+                assertEquals("access-claude-1-token-3", accessToken("claude-1"))
+
+                // The cutover, TeamCode stopped: every account left to TeamCode is Ostrom's, with TeamCode's tokens.
+                val cutover = accountLines(
+                    account("claude", "claude-1", run = 4),
+                    account("claude", "claude-3", run = 4),
+                    cutover = true,
+                )
+                assertEquals(
+                    listOf(
+                        line("account", "claude/Lena claude-1", UPDATED),
+                        line("account", "claude/Lena claude-3", UPDATED),
+                    ),
+                    cutover,
+                )
+                assertEquals(listOf(ostrom, ostrom, ostrom), ownerships("claude-1", "claude-2", "claude-3"))
+                assertEquals("access-claude-1-token-4", accessToken("claude-1"))
+                val both = import(request, "owner-a", cutover = true, accessOnly = true)
+                assertEquals(HttpStatusCode.BadRequest, both.status, "The cutover hands over: never access-only")
+            }
+        }
 
     @Test
     fun aRunCountsItsEarlierAccountsInADryRunTooTheCapAndDuplicatesIncluded() =
@@ -163,15 +250,15 @@ class ImportAccountsPostgresTest {
                 val cap = line("account", "codex/Lena codex-3", SKIPPED, "An organization shares at most 100 accounts.")
                 fun lines(vararg actions: ImportAction): List<ImportItemDto> =
                     listOf("codex-1", "codex-1", "codex-2", "codex-3", "codex-2").zip(actions)
-                        .map { (id, action) -> if (id == "codex-3") cap else line("account", "codex/Lena $id", action) }
+                        .map { (id, action) -> if (id == "codex-3") cap else pending("codex/Lena $id", action) }
 
                 assertEquals(
-                    lines(PLANNED, PLANNED, PLANNED, SKIPPED, UNCHANGED),
+                    lines(PLANNED, PLANNED, PLANNED, SKIPPED, PLANNED),
                     accountLines(*batch, dryRun = true),
-                    "Shared then turned off; shared off; over the cap; already off",
+                    "Shared then turned off; shared off; over the cap; TeamCode's tokens again, off as Ostrom has it",
                 )
                 assertEquals(98, accounts().size, "A dry run writes nothing")
-                assertEquals(lines(CREATED, UPDATED, CREATED, SKIPPED, UNCHANGED), accountLines(*batch))
+                assertEquals(lines(CREATED, UPDATED, CREATED, SKIPPED, UPDATED), accountLines(*batch))
                 assertEquals(listOf(AccountStatus.DISABLED, AccountStatus.DISABLED), statuses("codex-1", "codex-2"))
             }
         }
@@ -182,7 +269,8 @@ class ImportAccountsPostgresTest {
         serverTest(modules, withAudit(audit)) { server ->
             with(server) {
                 accountLines(*(1..5).map { account("claude", "claude-$it") }.toTypedArray())
-                // claude-2 serves although TeamCode has since disabled it; the others lost their tokens.
+                // Handed over: claude-2 serves although TeamCode has since disabled it; the others lost their tokens.
+                handedOver("claude-2")
                 reconnectRequired("claude-1", "claude-3", "claude-4", "claude-5")
                 val again = arrayOf(
                     account("claude", "claude-1", run = 2).copy(label = "Renamed in TeamCode"),
@@ -252,6 +340,7 @@ class ImportAccountsPostgresTest {
             with(server) {
                 val request = TeamCodeImportRequest(accounts = (1..3).map { account("claude", "claude-$it") })
                 report(request)
+                handedOver("claude-3")
                 reconnectRequired("claude-1", "claude-2")
                 val normal = report(request)
                 // Unchanged: claude-3, and the agent prefix the first run set to TeamCode's.
@@ -301,6 +390,7 @@ class ImportAccountsPostgresTest {
         serverTest(modules, module { includes(withAudit(RecordingAuditLog()), racing) }) { server ->
             with(server) {
                 accountLines(account("claude", "claude-1"), account("claude", "claude-2"))
+                handedOver("claude-2")
                 reconnectRequired("claude-1")
                 val claude2 = accounts().getValue("claude-2").id
                 // Right after the run reads the org's accounts, claude-1's owner reconnects it and an admin renames
@@ -382,6 +472,7 @@ class ImportAccountsPostgresTest {
         serverTest(modules, withAudit(RecordingAuditLog())) { server ->
             with(server) {
                 accountLines(*(1..3).map { account("claude", "claude-$it") }.toTypedArray())
+                handedOver("claude-3")
                 reconnectRequired("claude-1", "claude-2")
                 // claude-3 was found serving another subscription's tokens: the cutover revives it like the others.
                 val repository = koin.get<SharedAccountRepository>()

@@ -19,7 +19,20 @@ class AccountsApi {
      */
     @Serializable
     @Resource("{id}")
-    class Id(val parent: AccountsApi = AccountsApi(), val id: String)
+    class Id(val parent: AccountsApi = AccountsApi(), val id: String) {
+        /** `/api/v1/accounts/{id}/handover`: Ostrom renews its tokens from now on (`handOverSharedAccount`). */
+        @Serializable
+        @Resource("handover")
+        class Handover(val parent: Id)
+
+        /**
+         * `/api/v1/accounts/{id}/access-only`: it serves its access token, never renewed
+         * (`makeSharedAccountAccessOnly`).
+         */
+        @Serializable
+        @Resource("access-only")
+        class AccessOnly(val parent: Id)
+    }
 }
 
 /** `/api/v1/capacity`: what the shared accounts have left (`getCapacity`). */
@@ -104,7 +117,8 @@ data class QuotaWindowDto(
  * @property sharedWith The logins of the members allowed to use it (ids for members without one); empty for the whole
  *   org.
  * @property paused Whether it is switched off.
- * @property status `ready`, `reconnect_required`, `disabled` or `wrong_account`.
+ * @property status `ready`, `reconnect_required`, `disabled`, `wrong_account`, `pending_handover` or `access_only`.
+ * @property refreshOwnership `ostrom`, `pending_handover` or `access_only`; for admins and its owner only.
  * @property dailyAllocationUsd What it may serve per UTC day, in USD; absent when unlimited, and for another member's
  *   account.
  */
@@ -128,6 +142,7 @@ data class SharedAccountResponse(
     val spentMicros: Long = 0,
     val createdAt: String,
     val dailyAllocationUsd: Double? = null,
+    val refreshOwnership: String? = null,
 )
 
 /** The org's accounts. */

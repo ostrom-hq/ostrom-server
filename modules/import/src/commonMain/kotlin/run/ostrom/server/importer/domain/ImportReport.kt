@@ -46,6 +46,15 @@ enum class ImportAction {
     REVIVE_AT_CUTOVER,
 }
 
+/** A shared account the import leaves to TeamCode's refresh (TeamCode's refresh ownership). */
+enum class ImportHandover {
+    /** Waits for a handover: TeamCode may still renew its tokens, so it serves nothing in Ostrom yet. */
+    PENDING_HANDOVER,
+
+    /** Serves with TeamCode's access token, never renewed by Ostrom: TeamCode keeps renewing its own copy. */
+    ACCESS_ONLY,
+}
+
 /**
  * One line of the report.
  *
@@ -53,8 +62,15 @@ enum class ImportAction {
  * @property name Its name in Ostrom (or in TeamCode when skipped before getting one).
  * @property action What was done.
  * @property reason Why it was skipped, or a warning.
+ * @property handover For a shared account left to TeamCode's refresh, how.
  */
-data class ImportItem(val kind: ImportKind, val name: String, val action: ImportAction, val reason: String? = null)
+data class ImportItem(
+    val kind: ImportKind,
+    val name: String,
+    val action: ImportAction,
+    val reason: String? = null,
+    val handover: ImportHandover? = null,
+)
 
 /**
  * The report of an import: one line per item, in the order they were applied. Running the import again reports
@@ -69,4 +85,11 @@ data class ImportReport(val items: List<ImportItem>) {
      * @param action The action.
      */
     fun count(action: ImportAction): Int = items.count { it.action == action }
+
+    /**
+     * How many shared accounts are left to TeamCode's refresh this way.
+     *
+     * @param handover How.
+     */
+    fun count(handover: ImportHandover): Int = items.count { it.handover == handover }
 }

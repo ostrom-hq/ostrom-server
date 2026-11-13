@@ -35,7 +35,14 @@ fun Route.importRoutes(dependencies: ImportRoutesDependencies) = with(dependenci
                 val cutoverBy = if (params.cutover) call.requirePrincipal().person() else null
                 val request = call.receive<TeamCodeImportRequest>()
                 val export = request.toExport()
-                val report = importTeamCode(caller, export, request.memberIds(), params.dryRun, cutoverBy)
+                val report = importTeamCode(
+                    caller,
+                    export,
+                    request.memberIds(),
+                    params.dryRun,
+                    cutoverBy,
+                    params.accessOnly,
+                )
                 call.respond(report.toDto())
             }
         }

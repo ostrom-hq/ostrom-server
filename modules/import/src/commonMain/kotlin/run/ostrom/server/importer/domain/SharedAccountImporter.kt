@@ -10,6 +10,7 @@ import run.ostrom.server.sharing.domain.AccountProvider
 import run.ostrom.server.sharing.domain.AccountStatus
 import run.ostrom.server.sharing.domain.ListSharedAccountsUseCase
 import run.ostrom.server.sharing.domain.OAuthRefresher
+import run.ostrom.server.sharing.domain.RefreshOwnership
 import run.ostrom.server.sharing.domain.RefreshResult
 import run.ostrom.server.sharing.domain.ShareAccountPayload
 import run.ostrom.server.sharing.domain.ShareAccountUseCase
@@ -56,17 +57,25 @@ class TeamCodeTokensUntestedException :
  * in a dry run too. Every run can be repeated after a failure midway: each one checks what the org has rather than
  * trusting what an earlier run did. Provider and provider account id match without case or surrounding spaces.
  *
- * - An account the org does not share yet is shared, stored turned off in the same write when TeamCode had it
+ * Refresh ownership, as TeamCode's (docs/capacity.md « Refresh ownership »): TeamCode keeps renewing the tokens of
+ * the accounts it still runs, and providers rotate refresh tokens, so two refreshers disconnect the account. So:
+ *
+ * - An account the org does not share yet is shared waiting for its handover ([RefreshOwnership.PENDING_HANDOVER]:
+ *   it serves nothing), or access-only for the `accessOnly` trial (served with TeamCode's access token, never
+ *   renewed), or Ostrom's at the cutover (TeamCode stopped); stored turned off in the same write when TeamCode had it
  *   disabled.
+ * - An account still left to TeamCode (waiting for its handover, or access-only) gets TeamCode's current tokens,
+ *   TeamCode being the one that renews them: a normal run keeps it so (the `accessOnly` trial makes a waiting one
+ *   access-only), the cutover run hands it over to Ostrom. It is turned off when TeamCode has it disabled.
  * - An account waiting for a reconnection is left so while TeamCode runs ([ImportAction.REVIVE_AT_CUTOVER]): testing
  *   TeamCode's tokens rotates them, which would disconnect TeamCode. The cutover run revives it, only if TeamCode's
  *   tokens still renew and the provider's answer names that same provider account: they are renewed first (a dry run
  *   cannot: renewing rotates them), then stored, turned off in the same write when TeamCode had it disabled; its label
  *   and email stay the org's.
  * - A serving account TeamCode has disabled is turned off, its tokens kept: it is never left serving.
- * - Any other account is left alone: its tokens may have been refreshed since TeamCode last stored them, and the
- *   provider rotates refresh tokens, so TeamCode's older pair could disconnect it. An account turned off in Ostrom
- *   stays off.
+ * - Any other account (Ostrom renews it) is left alone: its tokens may have been refreshed since TeamCode last stored
+ *   them, and the provider rotates refresh tokens, so TeamCode's older pair could disconnect it. An account turned
+ *   off in Ostrom stays off.
  *
  * Every write names the version it read: a reconnection or an edit made meanwhile is never overwritten (the line is
  * skipped, and the next run sees the change).
@@ -82,9 +91,19 @@ class SharedAccountImporter(
     private val update: UpdateSharedAccountUseCase,
     private val refresher: OAuthRefresher,
 ) : AccountImporter {
-    override suspend fun begin(caller: Caller, dryRun: Boolean, cutover: Boolean): AccountImportRun {
+    override suspend fun begin(
+        caller: Caller,
+        dryRun: Boolean,
+        cutover: Boolean,
+        accessOnly: Boolean,
+    ): AccountImportRun {
         val known = list(caller).map { Known(it.account) }.associateBy { it.key }.toMutableMap()
-        return Run(caller, dryRun, cutover, known)
+        val ownership = when {
+            cutover -> RefreshOwnership.OSTROM
+            accessOnly -> RefreshOwnership.ACCESS_ONLY
+            else -> RefreshOwnership.PENDING_HANDOVER
+        }
+        return Run(caller, dryRun, cutover, ownership, known)
     }
 
     /** What the run knows of one of the org's accounts, as read or as it wrote (or would write) it. */
@@ -96,6 +115,7 @@ class SharedAccountImporter(
         val email: String?,
         val status: AccountStatus,
         val version: Long,
+        val ownership: RefreshOwnership,
     ) {
         constructor(account: SharedAccount) : this(
             account.id,
@@ -105,6 +125,7 @@ class SharedAccountImporter(
             account.email,
             account.status,
             account.version,
+            account.ownership,
         )
 
         val key get() = keyOf(provider, providerAccountId)
@@ -120,26 +141,33 @@ class SharedAccountImporter(
 
         /** Turns off a serving account. */
         class TurnOff(val known: Known) : Change
+
+        /** Gives TeamCode's current tokens to an account TeamCode still renews, turning it off when TeamCode has. */
+        class Refresh(val known: Known, val payload: ShareAccountPayload) : Change
     }
 
     private inner class Run(
         private val caller: Caller,
         private val dryRun: Boolean,
         private val cutover: Boolean,
+        // What the run makes of an account it shares or leaves to TeamCode's refresh.
+        private val ownership: RefreshOwnership,
         private val known: MutableMap<Pair<AccountProvider, String>, Known>,
     ) : AccountImportRun {
-        override suspend fun import(account: TeamCodeAccount): ImportAction {
+        override suspend fun import(account: TeamCodeAccount): AccountImportOutcome {
             val provider = AccountProvider.entries.firstOrNull { it.wire == account.provider.trim().lowercase() }
                 ?: throw UnknownAccountProviderException(account.provider)
             val key = keyOf(provider, account.providerAccountId)
             val existing = known[key]
-            return when {
-                existing != null && existing.status.awaitsSignIn && !cutover -> ImportAction.REVIVE_AT_CUTOVER
+            val action = when {
+                existing != null && existing.ownership == RefreshOwnership.OSTROM && existing.status.awaitsSignIn &&
+                    !cutover -> ImportAction.REVIVE_AT_CUTOVER
                 else -> {
                     val change = change(provider, account, existing)
                     if (change == null) ImportAction.UNCHANGED else carryOut(key, change)
                 }
             }
+            return AccountImportOutcome(action, known.getValue(key).ownership.handover())
         }
 
         private suspend fun carryOut(key: Pair<AccountProvider, String>, change: Change): ImportAction {
@@ -154,9 +182,22 @@ class SharedAccountImporter(
         }
 
         private fun change(provider: AccountProvider, account: TeamCodeAccount, existing: Known?): Change? = when {
-            existing == null -> Change.Create(payload(provider, account, account.providerAccountId.trim(), 0))
+            existing == null ->
+                Change.Create(payload(provider, account, account.providerAccountId.trim(), 0, ownership))
+            existing.ownership != RefreshOwnership.OSTROM -> {
+                // Only the trial makes a waiting account access-only; a normal run keeps an access-only one so.
+                val next = if (ownership == RefreshOwnership.PENDING_HANDOVER) existing.ownership else ownership
+                val payload = payload(provider, account, existing.providerAccountId, existing.version, next)
+                Change.Refresh(existing, payload.copy(label = existing.label, email = existing.email))
+            }
             existing.status.awaitsSignIn -> {
-                val payload = payload(provider, account, existing.providerAccountId, existing.version)
+                val payload = payload(
+                    provider,
+                    account,
+                    existing.providerAccountId,
+                    existing.version,
+                    RefreshOwnership.OSTROM,
+                )
                 Change.Revive(existing, payload.copy(label = existing.label, email = existing.email))
             }
             existing.status == AccountStatus.READY && account.disabled -> Change.TurnOff(existing)
@@ -171,21 +212,28 @@ class SharedAccountImporter(
                     share.check(caller, change.payload)
                 }
                 is Change.Revive -> share.check(caller, change.payload)
+                is Change.Refresh -> share.check(caller, change.payload)
                 is Change.TurnOff -> Unit
             }
         }
 
         private fun planned(change: Change): Known = when (change) {
             is Change.Create -> change.payload.let {
-                Known(Uuid.random(), it.provider, it.providerAccountId, it.label, it.email, statusOf(it), 0)
+                Known(Uuid.random(), it.provider, it.providerAccountId, it.label, it.email, statusOf(it), 0, ownership)
             }
-            is Change.Revive -> change.known.copy(status = statusOf(change.payload))
+            is Change.Revive ->
+                change.known.copy(status = statusOf(change.payload), ownership = RefreshOwnership.OSTROM)
+            is Change.Refresh -> change.known.copy(
+                status = refreshedStatus(change.known.status, change.payload.disabled),
+                ownership = change.payload.ownership ?: RefreshOwnership.OSTROM,
+            )
             is Change.TurnOff -> change.known.copy(status = AccountStatus.DISABLED)
         }
 
         private suspend fun write(change: Change): Known = when (change) {
             is Change.Create -> Known(share(caller, change.payload))
             is Change.Revive -> Known(revived(change))
+            is Change.Refresh -> Known(refreshed(change))
             is Change.TurnOff -> Known(
                 update(
                     caller,
@@ -193,6 +241,19 @@ class SharedAccountImporter(
                     UpdateAccountPayload(disabled = true, ifVersion = change.known.version),
                 ),
             )
+        }
+
+        /**
+         * Stores TeamCode's current tokens for [change], at the version read (an edit meanwhile is never overwritten),
+         * then turns it off when TeamCode has it disabled and it serves.
+         */
+        private suspend fun refreshed(change: Change.Refresh): SharedAccount {
+            val shared = share(caller, change.payload)
+            return if (change.payload.disabled && shared.status == AccountStatus.READY) {
+                update(caller, shared.id, UpdateAccountPayload(disabled = true, ifVersion = shared.version))
+            } else {
+                shared
+            }
         }
 
         /**
@@ -252,7 +313,23 @@ class SharedAccountImporter(
         fun statusOf(payload: ShareAccountPayload) =
             if (payload.disabled) AccountStatus.DISABLED else AccountStatus.READY
 
-        fun payload(provider: AccountProvider, account: TeamCodeAccount, providerAccountId: String, version: Long) =
+        /** The status after TeamCode's tokens: turned off when TeamCode has it disabled, as it was otherwise. */
+        fun refreshedStatus(status: AccountStatus, disabled: Boolean) = if (disabled) AccountStatus.DISABLED else status
+
+        fun RefreshOwnership.handover() = when (this) {
+            RefreshOwnership.OSTROM -> null
+            RefreshOwnership.PENDING_HANDOVER -> ImportHandover.PENDING_HANDOVER
+            RefreshOwnership.ACCESS_ONLY -> ImportHandover.ACCESS_ONLY
+        }
+
+        @Suppress("LongParameterList") // The payload's own fields, as TeamCode's account gives them.
+        fun payload(
+            provider: AccountProvider,
+            account: TeamCodeAccount,
+            providerAccountId: String,
+            version: Long,
+            ownership: RefreshOwnership,
+        ) =
             ShareAccountPayload(
                 provider = provider,
                 label = account.label,
@@ -263,6 +340,7 @@ class SharedAccountImporter(
                 expiresAt = account.expiresAt,
                 disabled = account.disabled,
                 ifVersion = version,
+                ownership = ownership,
             )
     }
 }

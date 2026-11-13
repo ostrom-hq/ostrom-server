@@ -161,6 +161,8 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     ),
     "PATCH /api/v1/accounts/{id}" to target("id" to ACCOUNT, body = """{"label": "Taken"}"""),
     "DELETE /api/v1/accounts/{id}" to target("id" to ACCOUNT),
+    "POST /api/v1/accounts/{id}/handover" to target("id" to ACCOUNT),
+    "POST /api/v1/accounts/{id}/access-only" to target("id" to ACCOUNT),
     "GET /api/v1/capacity" to Case.Target(),
     "GET /api/v1/policy/models" to Case.Target(),
     "PUT /api/v1/policy/models" to Case.Target(body = """{"default": ["claude-sonnet-4-5"]}""", admin = true),

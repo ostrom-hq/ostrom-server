@@ -136,4 +136,11 @@ val SharingMigrations: List<SchemaMigration> = listOf(
             CREATE INDEX sharing_affinities_expiry ON sharing_affinities (org_id, expires_at)
         """.trimIndent() + ";\n" + tenantTableSql("sharing_slots") + "\n" + tenantTableSql("sharing_affinities"),
     ),
+    // Who renews an account's tokens (TeamCode's refresh ownership): OSTROM, PENDING_HANDOVER (imported, its source may
+    // still renew them) or ACCESS_ONLY. Every account shared so far is Ostrom's.
+    SchemaMigration(
+        version = 9,
+        name = "sharing_refresh_ownership",
+        sql = "ALTER TABLE sharing_accounts ADD COLUMN ownership TEXT NOT NULL DEFAULT 'OSTROM'",
+    ),
 )

@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.importer
 
+import run.ostrom.server.importer.domain.AccountImportOutcome
 import run.ostrom.server.importer.domain.AccountImportRun
 import run.ostrom.server.importer.domain.AccountImporter
 import run.ostrom.server.importer.domain.ImportAction
+import run.ostrom.server.importer.domain.ImportHandover
 import run.ostrom.server.importer.domain.TeamCodeAccount
 import run.ostrom.server.importer.presentation.ImportItemDto
 import run.ostrom.server.importer.presentation.ImportReportDto
@@ -151,23 +153,30 @@ object Importing {
 }
 
 /** A line of the report, as the API says it. */
-fun line(kind: String, name: String, action: ImportAction, reason: String? = null) =
-    ImportItemDto(kind, name, action.name.lowercase(), reason)
+fun line(kind: String, name: String, action: ImportAction, reason: String? = null, ownership: String? = null) =
+    ImportItemDto(kind, name, action.name.lowercase(), reason, ownership)
 
 /** The sharing module's import as a fake: Claude accounts are created, the others refused. */
 class FakeAccountImporter : AccountImporter {
     /** The providers imported. */
     val imported = mutableListOf<String>()
 
-    override suspend fun begin(caller: Caller, dryRun: Boolean, cutover: Boolean): AccountImportRun =
-        object : AccountImportRun {
-            override suspend fun import(account: TeamCodeAccount): ImportAction {
-                if (account.provider != "claude") throw RefusedAccountException()
-                if (dryRun) return ImportAction.PLANNED
-                imported += "${caller.orgId}/${account.provider}/${account.accessToken.reveal()}"
-                return ImportAction.CREATED
-            }
+    override suspend fun begin(
+        caller: Caller,
+        dryRun: Boolean,
+        cutover: Boolean,
+        accessOnly: Boolean,
+    ): AccountImportRun = object : AccountImportRun {
+        // As the sharing module does: the trial leaves its accounts access-only, a normal run waiting.
+        private val handover = if (accessOnly) ImportHandover.ACCESS_ONLY else ImportHandover.PENDING_HANDOVER
+
+        override suspend fun import(account: TeamCodeAccount): AccountImportOutcome {
+            if (account.provider != "claude") throw RefusedAccountException()
+            if (dryRun) return AccountImportOutcome(ImportAction.PLANNED, handover)
+            imported += "${caller.orgId}/${account.provider}/${account.accessToken.reveal()}"
+            return AccountImportOutcome(ImportAction.CREATED, handover)
         }
+    }
 }
 
 /**
@@ -285,7 +294,8 @@ suspend fun TestServer.import(
     token: String = "admin-a",
     dryRun: Boolean = false,
     cutover: Boolean = false,
-): HttpResponse = client.post("/api/v1/import/teamcode?dryRun=$dryRun&cutover=$cutover") {
+    accessOnly: Boolean = false,
+): HttpResponse = client.post("/api/v1/import/teamcode?dryRun=$dryRun&cutover=$cutover&accessOnly=$accessOnly") {
     bearerAuth(token)
     contentType(ContentType.Application.Json)
     setBody(request)
@@ -297,8 +307,9 @@ suspend fun TestServer.report(
     token: String = "admin-a",
     dryRun: Boolean = false,
     cutover: Boolean = false,
+    accessOnly: Boolean = false,
 ): ImportReportDto {
-    val response = import(request, token, dryRun, cutover)
+    val response = import(request, token, dryRun, cutover, accessOnly)
     assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
     return response.body()
 }

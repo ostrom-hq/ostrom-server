@@ -5,6 +5,7 @@ import run.ostrom.server.secrets.infrastructure.executeInOrg
 import run.ostrom.server.sharing.domain.AccountLimits
 import run.ostrom.server.sharing.domain.AccountProvider
 import run.ostrom.server.sharing.domain.AccountStatus
+import run.ostrom.server.sharing.domain.RefreshOwnership
 import run.ostrom.server.sharing.domain.SharedAccount
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.ResultSet
@@ -27,7 +28,7 @@ import kotlin.uuid.Uuid
 internal const val ACCOUNT_COLUMNS: String =
     "id, org_id, provider, label, email, provider_account_id, owner_member_id, priority, status, max_concurrent, " +
         "utilization_ceiling, monthly_budget_micros, allowed_members, cooldown_until, created_at, version, " +
-        "daily_budget_micros"
+        "daily_budget_micros, ownership"
 
 private val MEMBERS = SetSerializer(String.serializer())
 
@@ -92,4 +93,5 @@ internal fun ResultSet.Row.toAccount() = SharedAccount(
     cooldownUntil = get("cooldown_until").asInstantOrNull(),
     createdAt = get("created_at").asInstant(),
     version = get("version").asLong(),
+    ownership = RefreshOwnership.valueOf(get("ownership").asString()),
 )

@@ -13,7 +13,9 @@ import run.ostrom.server.sharing.domain.AccountProvider
 import run.ostrom.server.sharing.domain.AccountStatus
 import run.ostrom.server.sharing.domain.EnrollAccountPayload
 import run.ostrom.server.sharing.domain.InvalidAccountException
+import run.ostrom.server.sharing.domain.RefreshOwnership
 import run.ostrom.server.sharing.domain.ShareAccountPayload
+import run.ostrom.server.sharing.domain.SharedAccount
 import run.ostrom.server.sharing.domain.SharedAccountView
 import run.ostrom.server.sharing.domain.UpdateAccountPayload
 import io.ktor.http.HttpStatusCode
@@ -70,6 +72,16 @@ fun Route.sharingRoutes(dependencies: SharingRoutesDependencies) = with(dependen
             )
             call.respond(view(caller, update(caller, id, payload)).toResponse(caller))
         }
+        post<AccountsApi.Id.Handover> { params ->
+            val caller = call.requireCaller(callers, RelayScopes.ACCOUNTS_WRITE)
+            val id = params.parent.id.toIdOr(::AccountNotFoundException)
+            call.respond(view(caller, handOver(caller, id, RefreshOwnership.OSTROM)).toResponse(caller))
+        }
+        post<AccountsApi.Id.AccessOnly> { params ->
+            val caller = call.requireCaller(callers, RelayScopes.ACCOUNTS_WRITE)
+            val id = params.parent.id.toIdOr(::AccountNotFoundException)
+            call.respond(view(caller, handOver(caller, id, RefreshOwnership.ACCESS_ONLY)).toResponse(caller))
+        }
         delete<AccountsApi.Id> { params ->
             val caller = call.requireCaller(callers, RelayScopes.ACCOUNTS_WRITE)
             remove(caller, params.id.toIdOr(::AccountNotFoundException))
@@ -79,7 +91,7 @@ fun Route.sharingRoutes(dependencies: SharingRoutesDependencies) = with(dependen
             val caller = call.requireCaller(callers, RelayScopes.ACCOUNTS_READ, ServiceKeyScopes.TEAM_READ)
             val views = list(caller)
             val pools = views.groupBy { it.account.provider }.map { (provider, accounts) ->
-                val ready = accounts.count { it.account.status == AccountStatus.READY }
+                val ready = accounts.count { it.account.serves }
                 CapacityPoolDto(provider.wire, accounts.size, ready, accounts.sumOf { it.inFlight })
             }
             call.respond(CapacityResponse(views.map { it.toResponse(caller) }, pools, clock.now().toString()))
@@ -179,7 +191,7 @@ private fun SharedAccountView.toResponse(caller: Caller) = SharedAccountResponse
     paused = account.status == AccountStatus.DISABLED,
     mine = identityVisible && account.ownerMemberId == caller.memberId,
     priority = account.priority,
-    status = account.status.name.lowercase(),
+    status = account.wireStatus(),
     limits = if (identityVisible) {
         account.limits.toDto()
     } else {
@@ -196,4 +208,13 @@ private fun SharedAccountView.toResponse(caller: Caller) = SharedAccountResponse
     spentMicros = spentMicros,
     createdAt = account.createdAt.toString(),
     dailyAllocationUsd = account.limits.dailyBudgetMicros?.takeIf { identityVisible }?.let { it / MICROS_PER_USD },
+    refreshOwnership = account.ownership.name.lowercase().takeIf { identityVisible },
 )
+
+/** Its status, `pending_handover` or `access_only` in place of `ready` while Ostrom does not renew its tokens. */
+private fun SharedAccount.wireStatus(): String =
+    if (status == AccountStatus.READY && ownership != RefreshOwnership.OSTROM) {
+        ownership.name.lowercase()
+    } else {
+        status.name.lowercase()
+    }

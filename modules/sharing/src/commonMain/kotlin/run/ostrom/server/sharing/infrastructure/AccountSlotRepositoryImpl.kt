@@ -88,7 +88,7 @@ private const val HASH = "encode(sha256(convert_to(:session, 'UTF8')), 'hex')"
 /** The rows of the candidates still serving, locked in id order. */
 internal const val SLOT_LOCK_SQL =
     "SELECT id FROM sharing_accounts WHERE org_id = :org_id AND id = $IDS AND status = 'READY' " +
-        "ORDER BY id FOR UPDATE"
+        "AND ownership <> 'PENDING_HANDOVER' ORDER BY id FOR UPDATE"
 
 /** The unexpired slots of the candidates. */
 internal const val SLOT_ACTIVE_OF_SQL =

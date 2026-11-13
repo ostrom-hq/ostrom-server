@@ -25,6 +25,9 @@ import kotlin.uuid.Uuid
  *   never does); re-sharing a serving account never turns it off, and sharing again never turns one back on.
  * @property ifVersion Shares only if the org's account is still at this [SharedAccount.version] (0: only if the org
  *   does not have it), so a reconnection or an edit made since it was read is never overwritten; null shares anyway.
+ * @property ownership Who renews the stored tokens. Null for a share from a sign-in, whose tokens nothing else holds:
+ *   Ostrom renews them, and it takes over an account waiting for its handover (an admin's share only, see
+ *   [AccountInUseException]). Only an import sets it, to what it decided for the account ([RefreshOwnership]).
  */
 data class ShareAccountPayload(
     val provider: AccountProvider,
@@ -37,6 +40,7 @@ data class ShareAccountPayload(
     val limits: AccountLimits = AccountLimits(),
     val disabled: Boolean = false,
     val ifVersion: Long? = null,
+    val ownership: RefreshOwnership? = null,
 ) {
     override fun toString(): String =
         "ShareAccountPayload(provider=$provider, label=$label, providerAccountId=$providerAccountId, tokens=[REDACTED])"
@@ -156,18 +160,24 @@ class ShareAccountUseCaseImpl(
             expected != null && (same?.version ?: 0) != expected -> AccountChangedException()
             same == null && existing.size >= SharingRules.MAX_ACCOUNTS -> TooManyAccountsException()
             same != null && !caller.mayChange(same) -> AccountOwnedByAnotherMemberException()
+            same != null && takesOver(caller, payload, same) -> AccountInUseException()
             else -> null
         }
         if (refusal != null) throw refusal
         return same
     }
+
+    /** A member's fresh share would give Ostrom an account an admin left waiting, or serving access-only. */
+    private fun takesOver(caller: Caller, payload: ShareAccountPayload, same: SharedAccount): Boolean =
+        payload.ownership == null && same.ownership != RefreshOwnership.OSTROM && !caller.role.isAdmin
 }
 
 /**
  * The account a share stores: a new one owned by the caller with the requested limits, or [this] with new tokens and
  * label (its owner, priority, limits, creation and a READY or DISABLED status kept: an admin's restrictions survive
  * the owner sharing again after a reconnection; limits change through an update). An account waiting for a
- * reconnection comes back READY, or DISABLED when the payload asks it.
+ * reconnection comes back READY, or DISABLED when the payload asks it. Its refresh ownership is the payload's, Ostrom's
+ * for a share from a sign-in.
  */
 private fun SharedAccount?.sharedAgain(caller: Caller, payload: ShareAccountPayload, clock: Clock): SharedAccount {
     val fresh = SharedAccount(
@@ -183,6 +193,7 @@ private fun SharedAccount?.sharedAgain(caller: Caller, payload: ShareAccountPayl
         limits = payload.limits,
         cooldownUntil = null,
         createdAt = clock.now(),
+        ownership = payload.ownership ?: RefreshOwnership.OSTROM,
     )
     return if (this == null) {
         fresh
@@ -311,4 +322,32 @@ private suspend fun SharedAccountRepository.writable(caller: Caller, id: Uuid): 
     val account = get(caller.orgId, id) ?: throw AccountNotFoundException()
     if (!caller.mayChange(account)) throw AccountNotFoundException()
     return account
+}
+
+/** Changes who renews an account's tokens: TeamCode's refresh-ownership handover. */
+interface HandOverSharedAccountUseCase {
+    /**
+     * Gives the account to [ownership]: [RefreshOwnership.OSTROM] (the handover, once every other refresher stopped)
+     * or [RefreshOwnership.ACCESS_ONLY]. Admins only; an account already so is answered as it is.
+     *
+     * @throws AccountNotFoundException When the account is not the org's, or the caller is neither an admin nor its
+     *   owner.
+     * @throws AccountHandoverForbiddenException When the caller owns it but is not an admin.
+     * @throws AccountRefreshUncertainException While a refresh of it is in flight or left it uncertain.
+     */
+    suspend operator fun invoke(caller: Caller, id: Uuid, ownership: RefreshOwnership): SharedAccount
+}
+
+/** [HandOverSharedAccountUseCase]. */
+class HandOverSharedAccountUseCaseImpl(private val repository: SharedAccountRepository) :
+    HandOverSharedAccountUseCase {
+    override suspend fun invoke(caller: Caller, id: Uuid, ownership: RefreshOwnership): SharedAccount {
+        if (ownership == RefreshOwnership.PENDING_HANDOVER) {
+            throw InvalidAccountException("An account is handed over to Ostrom, or made access-only.")
+        }
+        val account = repository.writable(caller, id)
+        if (!caller.role.isAdmin) throw AccountHandoverForbiddenException()
+        if (account.ownership == ownership) return account
+        return repository.setOwnership(caller.orgId, id, ownership) ?: throw AccountRefreshUncertainException()
+    }
 }

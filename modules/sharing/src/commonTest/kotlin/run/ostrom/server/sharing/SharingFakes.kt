@@ -19,6 +19,7 @@ import run.ostrom.server.sharing.domain.AccountTokens
 import run.ostrom.server.sharing.domain.OAuthRefresher
 import run.ostrom.server.sharing.domain.QuotaWindow
 import run.ostrom.server.sharing.domain.QuotaWindowRepository
+import run.ostrom.server.sharing.domain.RefreshOwnership
 import run.ostrom.server.sharing.domain.RefreshResult
 import run.ostrom.server.sharing.domain.RefreshState
 import run.ostrom.server.sharing.domain.RefreshWrite
@@ -129,7 +130,14 @@ class InMemoryAccounts :
         val state = if (account == null || envelope == null) {
             null
         } else {
-            RefreshState(account.status, envelope, id in pending, id in staleIntents, credentialVersion(id))
+            RefreshState(
+                account.status,
+                envelope,
+                id in pending,
+                id in staleIntents,
+                credentialVersion(id),
+                account.ownership,
+            )
         }
         val (write, result) = decide(state)
         when (write) {
@@ -164,7 +172,10 @@ class InMemoryAccounts :
         .sortedWith(compareByDescending<SharedAccount> { it.priority }.thenBy { it.label })
 
     override suspend fun ready(orgId: Uuid, provider: AccountProvider) =
-        accounts.filter { it.orgId == orgId && it.provider == provider && it.status == AccountStatus.READY }
+        accounts.filter { it.orgId == orgId && it.provider == provider && it.serves }
+
+    override suspend fun setOwnership(orgId: Uuid, id: Uuid, ownership: RefreshOwnership): SharedAccount? =
+        get(orgId, id)?.takeIf { id !in pending }?.let { update(it.copy(ownership = ownership)) }
 
     override suspend fun update(account: SharedAccount, expectedVersion: Long?): SharedAccount? {
         val index = accounts.indexOfFirst { it.orgId == account.orgId && it.id == account.id }
@@ -226,7 +237,7 @@ class InMemorySlots(private val clock: Clock, private val accounts: InMemoryAcco
     ): AccountSlot? {
         val now = clock.now()
         val serving = candidates.filter { candidate ->
-            accounts == null || accounts.get(orgId, candidate.id)?.status == AccountStatus.READY
+            accounts == null || accounts.get(orgId, candidate.id)?.serves == true
         }.map { it.id }.toSet()
         val key = session?.let { Triple(orgId, memberId, it) }
         val remembered = key?.let { affinities[it] }?.takeIf { it.expiresAt > now }?.accountId

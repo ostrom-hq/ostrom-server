@@ -22,6 +22,8 @@ import run.ostrom.server.sharing.domain.GroupMembersUseCaseImpl
 import run.ostrom.server.sharing.domain.GroupRepository
 import run.ostrom.server.sharing.domain.GroupsUseCase
 import run.ostrom.server.sharing.domain.GroupsUseCaseImpl
+import run.ostrom.server.sharing.domain.HandOverSharedAccountUseCase
+import run.ostrom.server.sharing.domain.HandOverSharedAccountUseCaseImpl
 import run.ostrom.server.sharing.domain.ListSharedAccountsUseCase
 import run.ostrom.server.sharing.domain.ListSharedAccountsUseCaseImpl
 import run.ostrom.server.sharing.domain.MemberNames
@@ -102,6 +104,7 @@ object SharingModule : ServerModule {
         single<CredentialSecrets> { SecretsCredentialSecrets(get(), get()) }
         single<EnrollSharedAccountUseCase> { EnrollSharedAccountUseCaseImpl(get(), get(), get(), get()) }
         single<RemoveSharedAccountUseCase> { RemoveSharedAccountUseCaseImpl(get()) }
+        single<HandOverSharedAccountUseCase> { HandOverSharedAccountUseCaseImpl(get()) }
         single<GroupRepository> { GroupRepositoryImpl(get()) }
         single<GroupsUseCase> { GroupsUseCaseImpl(get(), get(), logins(), get()) }
         single<GroupMembersUseCase> { GroupMembersUseCaseImpl(get(), logins()) }
@@ -111,6 +114,7 @@ object SharingModule : ServerModule {
         single {
             SharingRoutesDependencies(
                 getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get()),
+                get(),
                 get(),
                 get(),
                 get(),
@@ -140,6 +144,7 @@ object SharingModule : ServerModule {
         route.groupRoutes(koin.get())
     }
 
-    /** Shared accounts, their capacity and the groups they are shared with. */
-    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.SHARING)
+    /** Shared accounts, their capacity and the groups they are shared with, and their refresh-ownership handover. */
+    override suspend fun features(koin: Koin): Set<String> =
+        setOf(ServerFeatures.SHARING, ServerFeatures.SHARING_HANDOVER)
 }

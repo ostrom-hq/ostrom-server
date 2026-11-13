@@ -3,6 +3,7 @@ package run.ostrom.server.sharing.presentation
 
 import run.ostrom.server.secrets.domain.CallerResolver
 import run.ostrom.server.sharing.domain.EnrollSharedAccountUseCase
+import run.ostrom.server.sharing.domain.HandOverSharedAccountUseCase
 import run.ostrom.server.sharing.domain.ListSharedAccountsUseCase
 import run.ostrom.server.sharing.domain.RemoveSharedAccountUseCase
 import run.ostrom.server.sharing.domain.ShareAccountUseCase
@@ -21,6 +22,7 @@ import kotlin.time.Clock
  * @property clock The time of the capacity answer.
  * @property enroll Enrolls an account from a secret (the contract's body).
  * @property view Names the people of an account just written.
+ * @property handOver Changes who renews an account's tokens.
  */
 data class SharingRoutesDependencies(
     val callers: CallerResolver,
@@ -31,4 +33,5 @@ data class SharingRoutesDependencies(
     val clock: Clock,
     val enroll: EnrollSharedAccountUseCase,
     val view: ViewSharedAccountUseCase,
+    val handOver: HandOverSharedAccountUseCase,
 )

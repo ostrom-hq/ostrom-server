@@ -70,9 +70,12 @@ fun interface AccountImporter {
      *   earlier accounts of the same run counted as if written.
      * @param cutover Whether this is the final run, TeamCode stopped: only then are accounts waiting for a
      *   reconnection revived with TeamCode's tokens (testing them rotates them); otherwise they are reported
-     *   [ImportAction.REVIVE_AT_CUTOVER] and no token is touched at the provider.
+     *   [ImportAction.REVIVE_AT_CUTOVER] and no token is touched at the provider. It also hands every account still
+     *   waiting for its handover over to Ostrom, with TeamCode's tokens (TeamCode's `--take-ownership`).
+     * @param accessOnly TeamCode's `--access-only` trial: the accounts it creates, and those still waiting for their
+     *   handover, serve with TeamCode's access tokens and are never renewed by Ostrom. Never with [cutover].
      */
-    suspend fun begin(caller: Caller, dryRun: Boolean, cutover: Boolean): AccountImportRun
+    suspend fun begin(caller: Caller, dryRun: Boolean, cutover: Boolean, accessOnly: Boolean): AccountImportRun
 }
 
 /** Records the cutover run in the audit log (the identity module's, when it is installed). */
@@ -93,7 +96,17 @@ fun interface AccountImportRun {
      * Imports the account, or says what it would do.
      *
      * @return [ImportAction.CREATED], [ImportAction.UPDATED], [ImportAction.UNCHANGED] or
-     *   [ImportAction.REVIVE_AT_CUTOVER]; [ImportAction.PLANNED] instead of a write in a dry run.
+     *   [ImportAction.REVIVE_AT_CUTOVER]; [ImportAction.PLANNED] instead of a write in a dry run; with whether the
+     *   account waits for its handover or serves access-only after the run.
      */
-    suspend fun import(account: TeamCodeAccount): ImportAction
+    suspend fun import(account: TeamCodeAccount): AccountImportOutcome
 }
+
+/**
+ * What a run did with one of TeamCode's accounts.
+ *
+ * @property action What it did.
+ * @property handover Whether the account waits for its handover or serves access-only after the run (or would, in a
+ *   dry run); null when Ostrom renews its tokens.
+ */
+data class AccountImportOutcome(val action: ImportAction, val handover: ImportHandover? = null)
