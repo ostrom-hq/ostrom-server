@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.automations
 
 import run.ostrom.server.automations.domain.AutomationAction
@@ -95,6 +95,8 @@ class WorkflowActionTest {
             action(workflowId = "gone") to "action.workflowId: no workflow gone that a run may start.",
             action(inputs = mapOf("ticket" to "T", "zzz" to "x")) to "action.inputs.zzz: not an input of the workflow.",
             action(inputs = mapOf("ticket" to " ")) to
+                "action.inputs.ticket: required by the workflow, which has no default.",
+            action(inputs = mapOf("label" to "x")) to
                 "action.inputs.ticket: required by the workflow, which has no default.",
         )
         for ((definition, message) in refused) {

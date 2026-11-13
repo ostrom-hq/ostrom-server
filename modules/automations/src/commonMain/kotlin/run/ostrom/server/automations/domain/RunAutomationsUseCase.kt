@@ -266,12 +266,13 @@ class RunAutomationsUseCaseImpl(
     private suspend fun followWorkflows() {
         val now = clock.now().truncatedToMillis()
         for ((run, workflowRunId) in repository.followed(BATCH)) {
-            val (status, reason) = when (workflows.state(run.orgId, workflowRunId)) {
+            val state = workflows.state(run.orgId, workflowRunId)
+            if (state == WorkflowRunState.RUNNING) continue
+            val (status, reason) = when (state) {
                 null -> RunStatus.FAILED to WORKFLOW_MISSING
-                WorkflowRunState.RUNNING -> continue
                 WorkflowRunState.SUCCEEDED -> RunStatus.SUCCEEDED to null
                 WorkflowRunState.FAILED -> RunStatus.FAILED to "workflow_failed"
-                WorkflowRunState.CANCELLED -> RunStatus.CANCELLED to "workflow_cancelled"
+                else -> RunStatus.CANCELLED to "workflow_cancelled"
             }
             repository.endRun(run.copy(status = status, reason = reason, updatedAt = now), RunStatus.STARTED)
         }

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.workflowruns.infrastructure
 
 import run.ostrom.core.api.models.RunStatus
@@ -40,10 +40,10 @@ class RunsAutomationWorkflows(
     private val runs: StartedRunsRepository,
     private val logins: MemberLogins,
 ) : AutomationWorkflows {
-    override suspend fun inputs(orgId: Uuid, workflowId: String): List<WorkflowInputSpec>? =
-        workflows.find(orgId, workflowId)?.takeIf { it.status in RUNNABLE }?.inputs?.map {
-            WorkflowInputSpec(it.id, it.required, !it.default.isNullOrBlank())
-        }
+    override suspend fun inputs(orgId: Uuid, workflowId: String): List<WorkflowInputSpec>? {
+        val workflow = workflows.find(orgId, workflowId)?.takeIf { it.status in RUNNABLE } ?: return null
+        return workflow.inputs.map { WorkflowInputSpec(it.id, it.required, !it.default.isNullOrBlank()) }
+    }
 
     override suspend fun start(request: WorkflowStartRequest): WorkflowStart {
         val starter = loginOf(request.orgId, request.owner) ?: return WorkflowStart.Refused(OWNER_UNAVAILABLE)
