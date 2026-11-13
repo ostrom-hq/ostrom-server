@@ -205,8 +205,10 @@ class SessionLifecycleTest {
         assertEquals(listOf("s-2"), bench.list(member("mia"), SessionQuery()).map { it.id })
         assertEquals(listOf("s-2"), bench.list(member("mia"), SessionQuery(dev = "mia")).map { it.id })
         assertFailsWith<NotYourSessionException> { bench.list(member("mia"), SessionQuery(dev = "lyes")) }
-        // Another's session as a cursor names nothing the member reads: a 400, as a forged one.
+        // Another's session as a cursor names nothing the member reads: a 400, as a forged one, before any page.
         assertFailsWith<InvalidPageException> { bench.list(member("mia"), SessionQuery(before = "s-1")) }
+        val nobody = GateActor("nobody", ORG, ActorKind.USER)
+        assertFailsWith<NotYourSessionException>("No person, no session") { bench.list(nobody, SessionQuery()) }
         assertFailsWith<NotYourSessionException> { bench.end(member("rev-b", OrgRole.ADMIN), session.id, EndSession()) }
     }
 
