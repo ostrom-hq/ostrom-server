@@ -95,7 +95,7 @@ internal class CommitArtifactUploadUseCaseImpl(
     override suspend fun commit(caller: ArtifactCaller, artifactId: Uuid, commit: UploadCommit): CommittedVersion {
         contents.requireActive(caller.orgId)
         val artifact = rules.owned(caller, artifactId)
-        val now = clock.now()
+        val now = clock.now().toMicroseconds()
         val files = filesOf(commit)
         val entry = entryOf(commit.entry, files)
         val manifest = digest.sha256(manifestOf(entry, files).encodeToByteArray())
@@ -188,3 +188,9 @@ private fun manifestOf(entry: String, files: List<ArtifactFile>): String =
 
 private val REPLAY_WINDOW = 10.minutes
 private val PAGES = listOf(".html", ".htm", ".md")
+
+// PostgreSQL keeps microseconds: the version answered is the version a replay reads back.
+private fun Instant.toMicroseconds(): Instant =
+    Instant.fromEpochSeconds(epochSeconds, nanosecondsOfSecond / NANOS_PER_MICRO * NANOS_PER_MICRO)
+
+private const val NANOS_PER_MICRO = 1_000
