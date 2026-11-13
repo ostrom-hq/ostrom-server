@@ -127,7 +127,7 @@ private fun Route.workflowsRoutes(dependencies: CompilerRoutesDependencies) = wi
     }
     delete<WorkflowsApi.Id> { params ->
         val actor = personOf(call, CompilerScopes.writingWorkflows)
-        val gate = repository.workflow(actor.orgId, params.id)?.doc?.raw?.let(::gated) ?: false
+        val gate = repository.workflow(actor.orgId, params.id)?.let { gated(it.doc.raw) } == true
         if (holds(call, actor, gate, proposal = false)) {
             return@delete call.hold(actor, WorkflowWrites.DELETE, CompilerGovernanceChange.payload(params.id, null))
         }

@@ -47,7 +47,7 @@ internal suspend fun CompilerRoutesDependencies.saveWorkflow(
     if ((body.workflow["id"] as? JsonPrimitive)?.content != id) {
         throw OstromException(ErrorKind.INVALID_REQUEST, "The workflow's id is not the path's.")
     }
-    val stored = repository.workflow(actor.orgId, id)?.doc?.raw
+    val stored = repository.workflow(actor.orgId, id)?.let { it.doc.raw }
     val gate = gated(body.workflow) || (stored != null && gated(stored))
     if (!call.decides(mayDecide(actor, gate))) {
         val proposal = proposed(body.workflow) && proposed(stored ?: workflows.get(actor.orgId, id).doc.raw)
