@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 // Module usage: the central ledger of everything the org's members spend (model calls, MCP calls, skills, hooks,
 // sessions), its live feed, and the spend the budgets and the gateway read.
 plugins {

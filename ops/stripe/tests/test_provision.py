@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Unit tests of the Stripe provisioning: a stateful fake Stripe proves idempotency, a local HTTP server proves the
 wire format (auth, version, form encoding, errors). The stripe-mock integration test lives in test_stripe_mock.py."""
 from __future__ import annotations

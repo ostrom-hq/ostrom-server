@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 // The Kotlin plugins come from build-logic (convention plugin `ostrom.native-module`), not from here.
 
 // The server version (CONVENTIONS section 12): `-PostromVersion` in CI, the tag of a release or the

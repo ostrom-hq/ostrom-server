@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 // A small MCP server over stdio (one JSON-RPC message per line) for the host's tests. The tests install it as `npx`
 // and `uvx`, so it runs through the host's real launch path. FIXTURE_MODE: banner (non-JSON stdout line first),
 // no-tools (no tools capability), exit-at-start, ignore-term (ignores SIGTERM and the end of stdin), slow-start

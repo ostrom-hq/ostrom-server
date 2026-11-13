@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Integration test against stripe-mock (Stripe's official mock, validated against Stripe's OpenAPI): every request
 the provisioning sends must be accepted as Stripe would accept it. Required in CI (STRIPE_MOCK_REQUIRED=true)."""
 from __future__ import annotations

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 // Module gates: gates: the human approvals a workflow step waits for.
 plugins {
     id("ostrom.native-module")

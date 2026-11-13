@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.gates.domain.models
 
 /** Where the person reading an approval holds their credential: only the console and the app say yes (S2-31). */

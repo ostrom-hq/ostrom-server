@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 // Module secrets: the org's encrypted secrets (AES-256-GCM under the instance's secrets key), injected server side
 // into MCP servers and providers, never returned to a client. Also the caller resolution every RELAY module shares.
 plugins {

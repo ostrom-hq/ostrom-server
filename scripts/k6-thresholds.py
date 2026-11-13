@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Which k6 thresholds a run crossed, and whether that fails the Build.
 
     python3 scripts/k6-thresholds.py <summary.json>...   # files of `k6 run --summary-export`

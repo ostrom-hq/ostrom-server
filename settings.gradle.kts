@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 rootProject.name = "ostrom-server"
 
 // No TYPESAFE_PROJECT_ACCESSORS (CONVENTIONS section 9): the module `artifacts` would generate an accessor that
@@ -52,7 +52,7 @@ file("modules").listFiles()
     ?.forEach { include(":modules:${it.name}") }
 
 // Every directory of ee/modules/ with a build file is an enterprise module (:ee:modules:<name>, licensed under
-// ee/LICENSE). Discovered the same way, so that deleting ee/ gives the AGPL build with nothing else to edit; the app
+// ee/LICENSE). Discovered the same way, so that deleting ee/ gives the Apache-2.0 build with nothing else to edit; the app
 // registers what it finds (app/build.gradle.kts, ee/README.md).
 file("ee/modules").listFiles()
     ?.filter { it.isDirectory && it.resolve("build.gradle.kts").exists() }

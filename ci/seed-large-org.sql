@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: Apache-2.0
 --
 -- Two organizations for the console's members search against the real server (ostrom-web
 -- e2e-real/membersSearch.spec.ts), written by console-journey.yml once the image has migrated, as the migration role.

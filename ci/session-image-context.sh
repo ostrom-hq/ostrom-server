@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # Lays out the build context of the cloud session image (runner/Dockerfile) in $1:
 #   Dockerfile, bin/ostrom-runner ($2), bin/ostrom ($3, when given), agents/ (the pinned agents' CLIs) and npm-cache/.
 # npm-cache/ is a copy of $SESSION_IMAGE_NPM_CACHE when it names a directory (the CI keeps one per lockfile, see

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 // Module sharing: personal subscription accounts (Claude Max, ChatGPT/Codex) pooled within an org, with their
 // quota windows, per-account limits and token refresh. The gateway leases an account per request.
 plugins {

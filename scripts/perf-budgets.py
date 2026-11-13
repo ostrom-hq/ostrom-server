@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """The times the tests measured, against their budgets (testing module, TimeBudget.kt).
 
     python3 scripts/perf-budgets.py summary <root>...    # the Build: a table for the job's summary, never fails

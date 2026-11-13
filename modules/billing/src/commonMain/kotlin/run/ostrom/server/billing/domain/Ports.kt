@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.billing.domain
 
 import kotlin.time.Instant
@@ -150,7 +150,7 @@ interface LicenseProvider {
     suspend fun current(): LicenseGrant?
 }
 
-/** No license: the default of an AGPL build without `ee/`. */
+/** No license: the default of an Apache-2.0 build without `ee/`. */
 class NoLicenseProvider : LicenseProvider {
     override suspend fun current(): LicenseGrant? = null
 }

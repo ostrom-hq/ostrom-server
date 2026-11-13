@@ -1,0 +1,11 @@
+Ostrom
+Copyright 2026 The Ostrom Authors
+
+This product includes software developed by The Ostrom Authors (https://ostrom.run), licensed under the Apache License,
+Version 2.0 (LICENSE), except the ee/ directory, if present (ee/LICENSE).
+
+It includes code ported from TeamCode (https://github.com/nathanfallet/teamcode), Copyright Nathan Fallet, also licensed
+under the Apache License, Version 2.0. The ported code was modified: renamed into the run.ostrom namespace, adapted to
+Ostrom's API, sign-in and brand. A file ported from TeamCode may name its origin in its header.
+
+Third party components keep their own license, stated in their files or in their distribution.

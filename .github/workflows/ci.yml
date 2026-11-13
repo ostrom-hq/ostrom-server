@@ -240,7 +240,7 @@ jobs:
           path: '**/build/reports/**'
           retention-days: 7
 
-  # The release binary, the session image, the server image and its smoke tests against PostgreSQL, then the AGPL build.
+  # The release binary, the session image, the server image and its smoke tests against PostgreSQL, then the Apache-2.0 build.
   ci-image:
     name: Binary, images and smoke tests
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
@@ -440,9 +440,9 @@ jobs:
           name: reports-image
           path: '**/build/reports/**'
           retention-days: 7
-      # Last, because it deletes ee/ from the checkout: the AGPL build must compile without the enterprise code, and
+      # Last, because it deletes ee/ from the checkout: the Apache-2.0 build must compile without the enterprise code, and
       # nothing outside ee/ may name it (app/build.gradle.kts generates the only reference, from ee/ itself).
-      - name: AGPL build without ee/
+      - name: Apache-2.0 build without ee/
         run: |
           if grep -rn "dev\.ostrom\.server\.ee\." --include='*.kt' --include='*.kts' --exclude-dir=build app kernel modules testing; then
             echo "Code outside ee/ references the enterprise modules." >&2
@@ -452,7 +452,7 @@ jobs:
           ./gradlew :app:compileKotlinLinuxX64
           grep -q 'listOf<ServerModule>($' app/build/generated/ee-modules/kotlin/run/ostrom/server/app/EeModules.kt
           if grep -q 'LicenseModule' app/build/generated/ee-modules/kotlin/run/ostrom/server/app/EeModules.kt; then
-            echo "The AGPL build still registers an enterprise module." >&2
+            echo "The Apache-2.0 build still registers an enterprise module." >&2
             exit 1
           fi
         env:

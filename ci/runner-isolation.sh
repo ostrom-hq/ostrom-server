@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # S2-49: in a cloud session, the agent cannot read the runner token. Builds the session image (runner/Dockerfile)
 # around the runner binary given as $1, and runs one session as the Docker runtime driver does: the agent host as
 # UID 1000 with the workspace and the agent socket, the check host as UID 1000 in a container of its own with the

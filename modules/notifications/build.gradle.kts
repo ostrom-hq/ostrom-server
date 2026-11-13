@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 // Module notifications: the phones a person registers for push notifications, per organization and per phone, and the
 // push and e-mail that tell an approver a gate waits for their yes.
 plugins {

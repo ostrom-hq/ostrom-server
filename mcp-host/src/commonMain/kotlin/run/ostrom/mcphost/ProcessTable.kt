@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 package run.ostrom.mcphost
 
 /** What the host reads and does about processes it did not start itself: the descendants of its children. */
