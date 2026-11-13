@@ -95,7 +95,7 @@ object BuildFacts {
      */
     fun runScript(paths: List<String>, name: String): String {
         val root = paths.filter { '/' !in it }.toSet()
-        return script(lockfiles.firstOrNull { it.second in root }?.first ?: "npm", name)
+        return script((lockfiles.firstOrNull { it.second in root } ?: ("npm" to "")).first, name)
     }
 
     private fun script(manager: String, name: String): String = when {
@@ -110,12 +110,6 @@ object BuildFacts {
         return ((parsed as? JsonObject)?.get("scripts") as? JsonObject)?.keys.orEmpty()
     }
 
-    // A manifest that is not JSON names no script; the tool is still found by its file.
-    private fun parse(text: String): JsonElement? = try {
-        Json.parseToJsonElement(text)
-    } catch (_: SerializationException) {
-        null
-    }
 
     private fun python(paths: List<String>, root: Set<String>): BuildTool? {
         val manifest = listOf("pyproject.toml", "requirements.txt", "setup.py").firstOrNull { it in root }
@@ -134,4 +128,11 @@ object BuildFacts {
         val locked = lock != null && lock in root
         return BuildTool(name, command, listOfNotNull(lock?.takeIf { locked }, file), locked)
     }
+}
+
+// A manifest that is not JSON names no script; the tool is still found by its file.
+private fun parse(text: String): JsonElement? = try {
+    Json.parseToJsonElement(text)
+} catch (_: SerializationException) {
+    null
 }

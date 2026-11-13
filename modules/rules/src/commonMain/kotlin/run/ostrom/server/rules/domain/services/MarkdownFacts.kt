@@ -61,8 +61,8 @@ object MarkdownFacts {
         var open: InstructionList? = null
         var listing = false
         for ((number, line) in prose(text)) {
-            val title = heading.find(line)?.groupValues?.get(1)
-            val item = numbered.find(line)?.groupValues?.get(1)
+            val title = heading.find(line)?.let { it.groupValues[1] }
+            val item = numbered.find(line)?.let { it.groupValues[1] }
             val current = open
             when {
                 title != null -> {

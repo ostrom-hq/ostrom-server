@@ -95,8 +95,7 @@ object CiFacts {
 
     private fun github(path: String, top: List<YamlEntry>): CiFile {
         val on = top.firstOrNull { !it.item && it.key == "on" }
-        val names = on?.let { trigger -> trigger.scalars().map { it.second } + trigger.children.mapNotNull { it.key } }
-            .orEmpty()
+        val names = if (on == null) emptyList() else on.scalars().map { it.second } + on.children.mapNotNull { it.key }
         val pullRequest = names.any { it in pullRequestEvents }
         val release = "release" in names || on?.child("push")?.child("tags") != null
         val jobs = top.firstOrNull { !it.item && it.key == "jobs" }?.children.orEmpty()

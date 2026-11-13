@@ -10,7 +10,6 @@ package run.ostrom.server.rules.domain.services
  * @property key Its key, or null for a list item that holds only a value.
  * @property value Its value on the same line, without quotes or comment; null when it has none.
  * @property block The lines of its block scalar (`|`, `>`), with their numbers; empty otherwise.
- * @property children The entries indented under it.
  */
 class YamlEntry(
     val line: Int,
@@ -19,8 +18,15 @@ class YamlEntry(
     val key: String?,
     val value: String?,
     val block: List<Pair<Int, String>>,
-    val children: MutableList<YamlEntry> = mutableListOf(),
 ) {
+    /** The entries indented under it. */
+    val children: MutableList<YamlEntry> = mutableListOf()
+
+    // Whether an entry at this indentation ends this one: a list may sit at its key's own indentation (`steps:` then
+    // `- run: x` under the same column).
+    internal fun closedBy(indent: Int, item: Boolean): Boolean =
+        this.indent > indent || this.indent == indent && (!item || this.item)
+
     /**
      * The first child with this key, not a list item.
      *
@@ -72,29 +78,30 @@ object YamlOutline {
         val lines = text.lines()
         var index = 0
         while (index < lines.size) {
-            val raw = lines[index]
             val number = ++index
-            val content = raw.trimStart()
-            if (content.isEmpty() || content.startsWith("#") || content in separators) continue
-            val indent = raw.length - content.length
-            val item = content == "-" || content.startsWith("- ")
-            val rest = if (item) content.drop(2).trimStart() else content
-            val (key, value) = keyValue(rest)
-            val marker = value != null && blockMarker.matches(value)
-            // A block scalar's lines are indented past its key (`- run: |`: past the dash and its space), or past the
-            // dash of an item that is only the block (`- |`).
-            val column = if (item && key != null) indent + 2 else indent
-            val block = if (marker) blockLines(lines, index, column) else emptyList()
-            index += block.lastOrNull()?.let { it.first - index } ?: 0
-            val entry = YamlEntry(number, indent, item, key, if (marker) null else value, block)
-            // A list may sit at its key's own indentation (`steps:` then `- run: x` under the same column).
-            while (stack.last().let { it.indent > indent || it.indent == indent && (!item || it.item) }) {
-                stack.removeLast()
-            }
+            val entry = entry(lines, number) ?: continue
+            entry.block.lastOrNull()?.let { index = it.first }
+            while (stack.last().closedBy(entry.indent, entry.item)) stack.removeLast()
             stack.last().children += entry
             stack += entry
         }
         return root.children
+    }
+
+    // The entry of a line (numbered from 1) with its block, or null for a blank line, a comment or a separator.
+    private fun entry(lines: List<String>, number: Int): YamlEntry? {
+        val raw = lines[number - 1]
+        val content = raw.trimStart()
+        if (content.isEmpty() || content.startsWith("#") || content in separators) return null
+        val indent = raw.length - content.length
+        val item = content == "-" || content.startsWith("- ")
+        val (key, value) = keyValue(if (item) content.drop(2).trimStart() else content)
+        val marker = value != null && blockMarker.matches(value)
+        // A block scalar's lines are indented past its key (`- run: |`: past the dash and its space), or past the dash
+        // of an item that is only the block (`- |`).
+        val column = if (item && key != null) indent + 2 else indent
+        val block = if (marker) blockLines(lines, number, column) else emptyList()
+        return YamlEntry(number, indent, item, key, if (marker) null else value, block)
     }
 
     // The lines of a block scalar from `start`: blank, or indented past `column`.

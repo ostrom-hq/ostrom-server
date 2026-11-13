@@ -25,6 +25,57 @@ import kotlin.test.assertTrue
 internal fun lineOf(text: String, fragment: String): Int = text.lines().indexOfFirst { fragment in it } + 1
 
 class ProcessReadersTest {
+    private val github = """
+        - top: item
+        name: CI
+        "on":
+          pull_request:
+          push:
+            tags: ['v*']
+        jobs:
+          - stray
+          - keyed: item
+          test:
+            name: Unit tests
+            runs-on: ubuntu-latest
+            env:
+              TOKEN: ghp_abcdefghijklmnopqrstuvwxyz0123
+            steps:
+            - uses: actions/checkout@v4
+              with:
+                token: run-this-never
+            - plain
+            - run: ./gradlew check
+            - uses:
+            - name: Lint
+              run: |
+                # comment
+                npm ci
+                npm run lint \
+                  --fix
+                export API_KEY=abc
+                curl -H "Authorization: Bearer abcdefghijkl" x
+                echo ${'$'}{{ secrets.X }}
+          publish:
+            name: ${'$'}{{ matrix.os }}
+            if: startsWith(github.ref, 'refs/tags/')
+            steps:
+              - run: ./gradlew publish
+              - uses: slackapi/slack-github-action@v1
+              - uses: Ilshidur/action-discord@master
+          announce:
+            name:
+            if: github.event_name == 'release'
+            uses: ./.github/workflows/announce.yml
+          docs:
+            if: github.ref == 'refs/heads/main'
+            steps:
+              - run: make docs
+          pushed:
+            if: github.event_name == 'push'
+          plainline
+        """.trimIndent()
+
     @Test
     fun theYamlOutlineReadsKeysValuesListsAndBlocks() {
         val text = """
@@ -70,6 +121,8 @@ class ProcessReadersTest {
         assertEquals(lineOf(text, "items:"), top[7].line)
         assertEquals(null, top[7].child("missing"))
         assertEquals(listOf("whole"), YamlOutline.flow("whole"))
+        assertEquals(listOf("[open"), YamlOutline.flow("[open"))
+        assertEquals(list.children, list.fields(), "A key's fields are its children")
     }
 
     @Test
@@ -118,54 +171,7 @@ class ProcessReadersTest {
 
     @Test
     fun aGitHubWorkflowGivesItsPullRequestAndReleaseJobs() {
-        val text = """
-            name: CI
-            "on":
-              pull_request:
-              push:
-                tags: ['v*']
-            jobs:
-              - stray
-              test:
-                name: Unit tests
-                runs-on: ubuntu-latest
-                env:
-                  TOKEN: ghp_abcdefghijklmnopqrstuvwxyz0123
-                steps:
-                - uses: actions/checkout@v4
-                  with:
-                    token: run-this-never
-                - plain
-                - run: ./gradlew check
-                - uses:
-                - name: Lint
-                  run: |
-                    # comment
-                    npm ci
-                    npm run lint \
-                      --fix
-                    export API_KEY=abc
-                    curl -H "Authorization: Bearer abcdefghijkl" x
-                    echo ${'$'}{{ secrets.X }}
-              publish:
-                name: ${'$'}{{ matrix.os }}
-                if: startsWith(github.ref, 'refs/tags/')
-                steps:
-                  - run: ./gradlew publish
-                  - uses: slackapi/slack-github-action@v1
-                  - uses: Ilshidur/action-discord@master
-              announce:
-                name:
-                if: github.event_name == 'release'
-                uses: ./.github/workflows/announce.yml
-              docs:
-                if: github.ref == 'refs/heads/main'
-                steps:
-                  - run: make docs
-              pushed:
-                if: github.event_name == 'push'
-              plainline
-        """.trimIndent()
+        val text = github
         val file = CiFacts.read(".github/workflows/ci.yml", text)
         val path = ".github/workflows/ci.yml"
         assertEquals(
@@ -221,6 +227,7 @@ class ProcessReadersTest {
     fun aGitLabPipelineGivesItsMergeRequestAndTagJobs() {
         val text = """
             - stray
+            - keyed: item
             stages: [test]
             variables:
               TOKEN: abc
@@ -315,6 +322,10 @@ class ProcessReadersTest {
             ),
             ReleaseFacts.makefile(makefile),
         )
+    }
+
+    @Test
+    fun releaseScriptsOfTheManifestAreRunByItsPackageManager() {
         val manifest = """
             {
               "name": "web",
@@ -338,6 +349,10 @@ class ProcessReadersTest {
         assertEquals(emptyList(), ReleaseFacts.packageJson("{", ::error))
         assertEquals(emptyList(), ReleaseFacts.packageJson("[]", ::error))
         assertEquals(emptyList(), ReleaseFacts.packageJson("{\"scripts\": 1}", ::error))
+    }
+
+    @Test
+    fun releaseLanesAreFoundUnderTheirPlatform() {
         val fastfile = """
             lane :release_all do
             end
@@ -383,6 +398,7 @@ class ProcessReadersTest {
 
             1. Bump the version
                in gradle.properties
+            ${"\t"}and a tab
                - a nested note
 
             2) Run `./gradlew check` and [the docs](https://x)
@@ -425,6 +441,10 @@ class ProcessReadersTest {
             ),
             MarkdownFacts.lists(text),
         )
+    }
+
+    @Test
+    fun anItemsWordsAndCommandsAreReadAsMarkdownShowsThem() {
         assertEquals(
             "Run `./gradlew check` and the docs",
             MarkdownFacts.words("Run `./gradlew check` and [the docs](https://x)"),

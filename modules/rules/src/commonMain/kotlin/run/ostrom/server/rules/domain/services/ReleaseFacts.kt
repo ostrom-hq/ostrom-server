@@ -95,7 +95,7 @@ object ReleaseFacts {
         val found = mutableListOf<ReleaseTarget>()
         text.lines().forEachIndexed { index, line ->
             platform.find(line)?.let { current = it.groupValues[1] }
-            val name = lane.find(line)?.groupValues?.get(1)
+            val name = lane.find(line)?.let { it.groupValues[1] }
             if (name != null && releaseLane.containsMatchIn(name.lowercase())) {
                 val command = listOfNotNull("fastlane", current, name).joinToString(" ")
                 found += ReleaseTarget(FASTFILE, index + 1, command)

@@ -3,11 +3,9 @@ package run.ostrom.server.rules.domain.services
 
 import run.ostrom.server.rules.domain.models.GatedRule
 import run.ostrom.server.rules.domain.models.ProcessCommand
-import run.ostrom.server.rules.domain.models.ProcessNode
 import run.ostrom.server.rules.domain.models.ProcessNodeKind
 import run.ostrom.server.rules.domain.models.ProcessProposal
 import run.ostrom.server.rules.domain.models.RepositorySnapshot
-import run.ostrom.server.rules.domain.models.RuleSource
 import run.ostrom.server.rules.domain.services.RepositoryContext.Companion.counted
 import run.ostrom.server.rules.domain.services.RepositoryContext.Companion.shown
 
@@ -64,7 +62,6 @@ object ProcessInference {
     private const val CONFIG = "config"
     private val mergeClasses = setOf("merge", "push-main")
     private val releaseClasses = setOf("push-tag", "deploy")
-    private val bounded = setOf(ProcessNodeKind.TRIGGER, ProcessNodeKind.GATE, ProcessNodeKind.NOTIFY)
     private val skill = Regex("^\\.claude/skills/([^/]+)/SKILL\\.md$")
     private val command = Regex("^\\.claude/commands/([^/]+)\\.md$")
     private val testCommand = Regex("\\b(test|check|verify)\\b")
@@ -110,7 +107,7 @@ object ProcessInference {
         val files = snapshot.files.mapValues { bounded(it.value) }
         val ci = files.keys.filter(CiFacts::isCiFile).sorted().map { CiFacts.read(it, files.getValue(it)) }
         val jobs = ci.flatMap { it.jobs }
-        val seen = jobs.flatMap { job -> job.commands.map { (line, text) -> text to evidence(job.path, line) } }
+        val seen = jobs.flatMap { job -> job.commands.map { (line, text) -> text to lineEvidence(job.path, line) } }
             .distinctBy { it.first }.toMap()
         val proposals = listOfNotNull(
             pullRequest(context, jobs, files, gated),
@@ -129,17 +126,17 @@ object ProcessInference {
         val template = template(files.keys.toList())?.let { it to MarkdownFacts.checklist(files.getValue(it)) }
         val items = template?.second.orEmpty()
         if (checks.isEmpty() && items.isEmpty()) return null
-        val nodes = listOf(node(ProcessNodeKind.TRIGGER, "A pull request is opened or updated")) +
-            items.map { node(ProcessNodeKind.STEP, shown(MarkdownFacts.words(it.text))) } +
-            checks.map { node(ProcessNodeKind.CHECK, shown(it.name), joined(it)) } +
-            gates(context, gated, mergeClasses, "A yes before merging")
+        val nodes = listOf(processNode(ProcessNodeKind.TRIGGER, "A pull request is opened or updated")) +
+            items.map { processNode(ProcessNodeKind.STEP, shown(MarkdownFacts.words(it.text))) } +
+            checks.map { processNode(ProcessNodeKind.CHECK, shown(it.name), joinedCommand(it)) } +
+            processGates(context, gated, mergeClasses, "A yes before merging")
         val sources = template?.let { (path, listed) -> listed.map { context.line(path, it.line, DOC) } }.orEmpty() +
             checks.map { context.line(it.path, it.line, CI) }
         val description = listOfNotNull(
             "${counted(checks.size, "CI job")} on each pull request.".takeIf { checks.isNotEmpty() },
             "The pull request template lists ${counted(items.size, "item")}.".takeIf { items.isNotEmpty() },
         ).joinToString(" ")
-        return proposal(context, "pull-request", "Pull request checks", description, nodes, sources)
+        return context.proposal("pull-request", context.named("Pull request checks"), description, nodes, sources)
     }
 
     private fun release(
@@ -160,15 +157,17 @@ object ProcessInference {
         if (released.isEmpty() && targets.isEmpty()) return null
         val tested = jobs.filter { it.event == CiEvent.PULL_REQUEST }.firstNotNullOfOrNull { job ->
             job.commands.firstOrNull { testCommand.containsMatchIn(it.second) }
-                ?.let { ProcessCommand(it.second, evidence(job.path, it.first)) }
+                ?.let { ProcessCommand(it.second, lineEvidence(job.path, it.first)) }
         }
         val trigger = if (released.isEmpty()) MANUAL_RELEASE else TAGGED_RELEASE
-        val nodes = listOf(node(ProcessNodeKind.TRIGGER, trigger)) +
-            listOfNotNull(tested?.let { node(ProcessNodeKind.CHECK, "The tests pass", it) }) +
-            gates(context, gated, releaseClasses, "A yes before releasing") +
-            released.map { node(ProcessNodeKind.STEP, shown(it.name), joined(it)) } +
-            targets.map { node(ProcessNodeKind.STEP, shown(it.command), ProcessCommand(it.command, target(it))) } +
-            notices.map { node(ProcessNodeKind.NOTIFY, "Tell the team on ${it.service}") }
+        val nodes = listOf(processNode(ProcessNodeKind.TRIGGER, trigger)) +
+            listOfNotNull(tested?.let { processNode(ProcessNodeKind.CHECK, "The tests pass", it) }) +
+            processGates(context, gated, releaseClasses, "A yes before releasing") +
+            released.map { processNode(ProcessNodeKind.STEP, shown(it.name), joinedCommand(it)) } +
+            targets.map {
+                processNode(ProcessNodeKind.STEP, shown(it.command), ProcessCommand(it.command, targetEvidence(it)))
+            } +
+            notices.map { processNode(ProcessNodeKind.NOTIFY, "Tell the team on ${it.service}") }
         val sources = released.map { context.line(it.path, it.line, CI) } +
             targets.map { context.line(it.path, it.line, CONFIG) } +
             notices.map { context.line(it.path, it.line, CI) }
@@ -176,7 +175,7 @@ object ProcessInference {
             "${counted(released.size, "CI job")} on tags or releases.".takeIf { released.isNotEmpty() },
             "${counted(targets.size, "release target")} found.".takeIf { targets.isNotEmpty() },
         ).joinToString(" ")
-        return proposal(context, "release", "Release", description, nodes, sources)
+        return context.proposal("release", context.named("Release"), description, nodes, sources)
     }
 
     private fun instructions(
@@ -190,14 +189,18 @@ object ProcessInference {
                 val run = MarkdownFacts.codeSpans(item.text).firstNotNullOfOrNull { span ->
                     seen[span]?.let { ProcessCommand(span, it) }
                 }
-                if (run == null) node(ProcessNodeKind.STEP, label) else node(ProcessNodeKind.CHECK, label, run)
+                if (run == null) {
+                    processNode(ProcessNodeKind.STEP, label)
+                } else {
+                    processNode(ProcessNodeKind.CHECK, label, run)
+                }
             }
             val sources = listOf(context.line(path, list.line, DOC)) +
                 list.items.map { context.line(path, it.line, DOC) }
-            proposal(
-                context,
+            // Two files of a repository may hold the same heading: the file keeps their names apart.
+            context.proposal(
                 "list:$path:${list.heading}",
-                MarkdownFacts.words(list.heading),
+                context.named(MarkdownFacts.words(list.heading), "${context.name}, $path"),
                 "${counted(list.items.size, "step")} listed in $path.",
                 nodes,
                 sources,
@@ -207,67 +210,18 @@ object ProcessInference {
 
     private fun skills(context: RepositoryContext, files: Map<String, String>): List<ProcessProposal> =
         files.keys.sorted().mapNotNull { path ->
-            val skillName = skill.find(path)?.groupValues?.get(1)
-            val commandName = command.find(path)?.groupValues?.get(1)?.let { "/$it" }
+            val skillName = skill.find(path)?.let { it.groupValues[1] }
+            val commandName = command.find(path)?.let { "/" + it.groupValues[1] }
             val fallback = skillName ?: commandName ?: return@mapNotNull null
             val front = MarkdownFacts.frontMatter(files.getValue(path))
-            val name = front.name?.let { if (commandName != null) "/$it" else it } ?: fallback
+            val written = front.name
+            val name = when {
+                written == null -> fallback
+                commandName != null -> "/$written"
+                else -> written
+            }
             val source = context.line(path, front.line, DOC)
-            val nodes = listOf(node(ProcessNodeKind.STEP, shown(name)))
-            proposal(context, "skill:$path", name, front.description?.let(::shown), nodes, listOf(source))
+            val nodes = listOf(processNode(ProcessNodeKind.STEP, shown(name)))
+            context.proposal("skill:$path", context.named(name), front.description?.let(::shown), nodes, listOf(source))
         }
-
-    // The rules of the same analysis that gate this boundary in this repository, one gate node each.
-    private fun gates(
-        context: RepositoryContext,
-        gated: List<GatedRule>,
-        classes: Set<String>,
-        label: String,
-    ): List<ProcessNode> = gated.filter { rule ->
-        rule.gate.actions.any { it.cls in classes && (it.repos.isEmpty() || context.name in it.repos) }
-    }.take(MAX_GATES).map { ProcessNode("", ProcessNodeKind.GATE, label, rule = it) }
-
-    // A job's commands, joined while they fit a suggestion.
-    private fun joined(job: CiJob): ProcessCommand? {
-        val first = job.commands.firstOrNull() ?: return null
-        var text = first.second
-        for ((_, next) in job.commands.drop(1)) {
-            val longer = "$text && $next"
-            if (longer.length > ProcessCommands.MAX_COMMAND) break
-            text = longer
-        }
-        return ProcessCommand(text, evidence(job.path, first.first))
-    }
-
-    private fun evidence(path: String, line: Int): String = "${RepositoryContext.clean(path)}:$line"
-
-    private fun target(target: ReleaseTarget): String =
-        RepositoryContext.clean(target.path) + target.line?.let { ":$it" }.orEmpty()
-
-    private fun node(kind: ProcessNodeKind, label: String, command: ProcessCommand? = null) =
-        ProcessNode("", kind, label, command)
-
-    // The trigger, gates and notifications are kept; the steps and checks fill what is left of MAX_NODES. Each node is
-    // then numbered in order.
-    private fun proposal(
-        context: RepositoryContext,
-        kind: String,
-        title: String,
-        description: String?,
-        nodes: List<ProcessNode>,
-        sources: List<RuleSource>,
-    ): ProcessProposal {
-        var left = MAX_NODES - nodes.count { it.kind in bounded }
-        val kept = nodes.filter { it.kind in bounded || left-- > 0 }.mapIndexed { index, node ->
-            node.copy(id = "n${index + 1}")
-        }
-        return ProcessProposal(
-            key = "process:${context.name}:$kind",
-            name = shown("${shown(title)} (${context.name})"),
-            description = description,
-            repo = "${context.snapshot.repo.owner}/${context.name}",
-            nodes = kept,
-            sources = sources.distinct().take(MAX_SOURCES),
-        )
-    }
 }
