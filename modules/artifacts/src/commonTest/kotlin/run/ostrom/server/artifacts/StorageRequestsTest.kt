@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.artifacts
 
 import run.ostrom.server.artifacts.domain.storage.ArtifactsInactiveException
@@ -12,7 +12,8 @@ import kotlin.test.assertTrue
 
 /** TC-ART-4: a bucket as the dashboard sends it, and the refusal while artifacts are off. */
 class StorageRequestsTest {
-    private val request = SaveArtifactStorageRequest(0, " https://s3.example.com ", " auto ", " b ", accessKeyId = " k ")
+    private val request =
+        SaveArtifactStorageRequest(0, " https://s3.example.com ", " auto ", " b ", accessKeyId = " k ")
 
     @Test
     fun aRequestIsTrimmedAndABlankSecretKeepsTheStoredOne() {
