@@ -2,6 +2,9 @@
 package run.ostrom.runner
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
@@ -159,5 +162,13 @@ class GitHubCliConfigTest {
         val running = GitHubCliRenewal(source, config, clock, { logs += it }, sleep = { throw CancellationException() })
         assertFailsWith<CancellationException> { running.run(1.minutes) }
         assertEquals(listOf("the gh configuration could not be removed"), logs)
+    }
+
+    @Test
+    fun theRenewalWaitsWithTheCoroutinesClockByDefault() = runTest {
+        val running = launch { renewal.run(1.minutes) }
+        runCurrent()
+        assertTrue(running.isActive, "Waiting")
+        running.cancelAndJoin()
     }
 }

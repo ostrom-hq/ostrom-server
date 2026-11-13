@@ -86,7 +86,7 @@ object CredentialSocket {
             log("credential source failed: ${error::class.simpleName}")
             null
         }
-        val line = credential?.let { JSON.encodeToString(Credential.serializer(), it) } ?: "{}"
+        val line = if (credential == null) "{}" else JSON.encodeToString(Credential.serializer(), credential)
         try {
             output.writeByteArray("$line\n".encodeToByteArray())
             output.flush()

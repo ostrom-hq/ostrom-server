@@ -12,6 +12,7 @@ import run.ostrom.server.runners.domain.CloudSessionsRepository
 import run.ostrom.server.runners.domain.DesiredState
 import run.ostrom.server.runners.domain.ExecutionFencedException
 import run.ostrom.server.runners.domain.GitHubAccessMode
+import run.ostrom.server.runners.domain.GitHubOwnerOnlyException
 import run.ostrom.server.runners.domain.InvalidCloudSessionRequestException
 import run.ostrom.server.runners.domain.NoRunnerGitHubTokens
 import run.ostrom.server.runners.domain.RunnerGitHubRequest
@@ -150,6 +151,10 @@ class RunnerGitHubTest {
     fun anUnknownModeAnotherMembersOrAFinishedSessionChangesNothing() = runTest {
         val session = execution()
         assertFailsWith<InvalidCloudSessionRequestException> { access(alice, principal, session.id, "everyone") }
+        for (kind in listOf(PrincipalKind.AGENT, PrincipalKind.SERVICE)) {
+            val other = AuthenticatedPrincipal("alice", kind, setOf("cloud:write"))
+            assertFailsWith<GitHubOwnerOnlyException>("$kind") { access(alice, other, session.id, "shared") }
+        }
         assertFailsWith<CloudSessionNotFoundException> { access(Caller(ORG_A, "bob"), principal, session.id, "none") }
         repository.put(session.copy(state = SessionState.TERMINATED))
         assertFailsWith<CloudSessionStateException> { access(alice, principal, session.id, "shared") }

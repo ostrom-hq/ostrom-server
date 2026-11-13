@@ -5,6 +5,7 @@ import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.audit.OrgAuditTrail
 import run.ostrom.server.kernel.audit.auditDetails
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import run.ostrom.server.kernel.auth.PrincipalKind
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -114,6 +115,7 @@ interface SetCloudSessionGitHubAccessUseCase {
      * @param id The session.
      * @param access The mode's wire name.
      * @return The session after the change.
+     * @throws GitHubOwnerOnlyException For an agent or a service key.
      * @throws InvalidCloudSessionRequestException For an unknown mode.
      * @throws CloudSessionNotFoundException When it does not exist or is not the caller's.
      * @throws CloudSessionStateException When the session is over.
@@ -146,6 +148,8 @@ class SetCloudSessionGitHubAccessUseCaseImpl(
         id: Uuid,
         access: String,
     ): CloudSession {
+        // An agent could lend itself its owner's token, a service key acts for nobody in person.
+        if (principal.kind != PrincipalKind.USER) throw GitHubOwnerOnlyException()
         val mode = GitHubAccessMode.fromWire(access)
             ?: throw InvalidCloudSessionRequestException("The access must be owner, shared or none.")
         val session = repository.ownedBy(caller, id)

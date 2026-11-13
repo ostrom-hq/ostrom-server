@@ -106,10 +106,10 @@ class GitHubCredentialSource(private val fetch: suspend () -> GitHubToken?, priv
         const val USERNAME = "x-access-token"
 
         /** How long before its expiry a token is asked for again. */
-        val RENEW_MARGIN: Duration = 5.minutes
+        private val RENEW_MARGIN: Duration = 5.minutes
 
         /** How long a token whose expiry the server did not say is kept. */
-        val UNKNOWN_EXPIRY: Duration = 5.minutes
+        private val UNKNOWN_EXPIRY: Duration = 5.minutes
 
         /** How long after a refusal (or a token about to expire) the server is not asked again. */
         val RETRY: Duration = 30.seconds
