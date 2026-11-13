@@ -236,4 +236,11 @@ val ArtifactsMigrations: List<SchemaMigration> = listOf(
             ALTER TABLE artifacts_versions ADD COLUMN credential_id TEXT;
         """.trimIndent(),
     ),
+    // No file byte is kept in PostgreSQL: they are in the organization's bucket, and artifacts are off without one.
+    // Ostrom had no organization in production when the column went, so nothing published before it is moved.
+    SchemaMigration(
+        version = 8,
+        name = "artifacts_blobs_without_bytes",
+        sql = "ALTER TABLE artifacts_blobs DROP COLUMN bytes;",
+    ),
 )

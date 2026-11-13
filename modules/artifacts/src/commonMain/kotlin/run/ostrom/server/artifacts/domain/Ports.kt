@@ -85,20 +85,6 @@ interface ArtifactsRepository {
     suspend fun version(orgId: Uuid, artifactId: Uuid, number: Int): ArtifactVersion?
 
     /**
-     * Contents stored in PostgreSQL before artifacts moved to the bucket, still to move.
-     *
-     * @param limit The most returned.
-     *
-     * @return Some of them.
-     */
-    suspend fun legacyBlobs(orgId: Uuid, limit: Int): List<LegacyBlob>
-
-    /**
-     * Forgets a content's bytes once the bucket holds them, verified.
-     */
-    suspend fun releaseLegacyBlob(orgId: Uuid, artifactId: Uuid, sha256: String)
-
-    /**
      * The digests the artifact already holds.
      *
      * @return The SHA-256s.
@@ -133,15 +119,6 @@ interface ArtifactsRepository {
      */
     suspend fun delete(orgId: Uuid, id: Uuid): Boolean
 }
-
-/**
- * A content stored in PostgreSQL before artifacts moved to the bucket.
- *
- * @property artifactId Its artifact.
- * @property sha256 Its digest, which the bucket's copy must match.
- * @property bytes Its bytes.
- */
-class LegacyBlob(val artifactId: Uuid, val sha256: String, val bytes: ByteArray)
 
 /** SHA-256 of a file's bytes. */
 fun interface ContentDigest {

@@ -96,8 +96,6 @@ class ArtifactsPostgresTest {
         assertEquals(mine, repository.getById(mine.id))
         assertEquals(mine, repository.getByLinkSlug("slug-1"))
         assertNull(repository.getByLinkSlug("nope"))
-        // The contents' sizes only: their bytes are in the bucket.
-        assertEquals(emptyList(), repository.legacyBlobs(ORG_A, 10))
 
         val second = version(mine, 2, "a.txt" to "sha-a", "b.txt" to "sha-b")
         val updated = assertNotNull(
@@ -163,26 +161,16 @@ class ArtifactsPostgresTest {
     }
 
     @Test
-    fun contentsStoredBeforeTheBucketAreReadOnceThenForgotten() = serverTest(listOf(ArtifactsModule)) { server ->
-        val repository = server.koin.get<ArtifactsRepository>()
-        val mine = artifact()
-        repository.create(mine, version(mine, 1, "a.txt" to "sha-a", "b.txt" to "sha-b"))
-        // As a row published before the bucket holds it: its bytes are still here.
-        server.driver.inTenant(ORG_A) {
-            execute(
-                Statement.create("UPDATE artifacts_blobs SET bytes = CAST(:bytes AS BYTEA) WHERE sha256 = 'sha-a'")
-                    .bind("bytes", byteArrayOf(0, 1, 2)),
-            ).getOrThrow()
+    fun noFileByteIsKeptInPostgreSql() = serverTest(listOf(ArtifactsModule)) { server ->
+        val columns = server.driver.inTenant(ORG_A) {
+            fetchAll(
+                Statement.create(
+                    "SELECT column_name FROM information_schema.columns WHERE table_name = 'artifacts_blobs'",
+                ),
+            ).getOrThrow().map { it.get("column_name").asString() }
         }
-        assertEquals(emptyList(), repository.legacyBlobs(ORG_B, 10))
-        val legacy = repository.legacyBlobs(ORG_A, 10).single()
-        assertEquals(mine.id to "sha-a", legacy.artifactId to legacy.sha256)
-        assertContentEquals(byteArrayOf(0, 1, 2), legacy.bytes)
-        repository.releaseLegacyBlob(ORG_B, mine.id, "sha-a")
-        assertEquals(1, repository.legacyBlobs(ORG_A, 10).size)
-        repository.releaseLegacyBlob(ORG_A, mine.id, "sha-a")
-        assertEquals(emptyList(), repository.legacyBlobs(ORG_A, 10))
-        assertEquals(setOf("sha-a", "sha-b"), repository.blobDigests(ORG_A, mine.id))
+        assertTrue("size" in columns)
+        assertFalse("bytes" in columns)
     }
 
     @Test

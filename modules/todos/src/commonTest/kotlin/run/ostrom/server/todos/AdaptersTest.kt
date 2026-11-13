@@ -6,7 +6,6 @@ import run.ostrom.server.artifacts.domain.ArtifactAccess
 import run.ostrom.server.artifacts.domain.ArtifactCaller
 import run.ostrom.server.artifacts.domain.ArtifactVersion
 import run.ostrom.server.artifacts.domain.ArtifactsRepository
-import run.ostrom.server.artifacts.domain.LegacyBlob
 import run.ostrom.server.automations.domain.AnswerWaitUseCase
 import run.ostrom.server.automations.domain.AskWait
 import run.ostrom.server.automations.domain.AskWaitUseCase
@@ -201,8 +200,6 @@ class AdaptersTest {
         override suspend fun listReadable(caller: ArtifactCaller, before: Uuid?, limit: Int): List<Artifact> = unused()
         override suspend fun versions(orgId: Uuid, artifactId: Uuid): List<ArtifactVersion> = unused()
         override suspend fun version(orgId: Uuid, artifactId: Uuid, number: Int): ArtifactVersion? = unused()
-        override suspend fun legacyBlobs(orgId: Uuid, limit: Int): List<LegacyBlob> = unused()
-        override suspend fun releaseLegacyBlob(orgId: Uuid, artifactId: Uuid, sha256: String) = unused<Unit>()
         override suspend fun blobDigests(orgId: Uuid, artifactId: Uuid): Set<String> = unused()
         override suspend fun blobSizes(orgId: Uuid, artifactId: Uuid): Map<String, Long> = unused()
         override suspend fun members(orgId: Uuid, artifactId: Uuid): List<String> = unused()

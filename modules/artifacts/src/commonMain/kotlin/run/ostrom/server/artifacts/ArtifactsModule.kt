@@ -23,7 +23,6 @@ import run.ostrom.server.artifacts.domain.storage.ArtifactObjectStore
 import run.ostrom.server.artifacts.domain.storage.ArtifactStorageRepository
 import run.ostrom.server.artifacts.domain.storage.BucketArtifactContents
 import run.ostrom.server.artifacts.domain.storage.BucketUploadChunks
-import run.ostrom.server.artifacts.domain.storage.LegacyContentsMover
 import run.ostrom.server.artifacts.domain.storage.UploadChunks
 import run.ostrom.server.artifacts.domain.uploads.ArtifactUploadsRepository
 import run.ostrom.server.artifacts.domain.uploads.CommitArtifactUploadUseCase
@@ -101,8 +100,7 @@ object ArtifactsModule : ServerModule {
         single<ArtifactObjectStore> { S3ObjectStore(get(BUCKET_CLIENT)) }
         single<ArtifactAdministrationUseCase> {
             val digest = get<ContentDigest>()
-            val sha256: suspend (ByteArray) -> String = { bytes -> digest.sha256(bytes) }
-            ArtifactAdministrationUseCaseImpl(get(), get(), LegacyContentsMover(get(), get(), get(), sha256), sha256)
+            ArtifactAdministrationUseCaseImpl(get(), get(), { bytes -> digest.sha256(bytes) })
         }
         single { StorageRoutesDependencies(get(), get()) }
         single<ArtifactUploadsRepository> { ArtifactUploadsRepositoryImpl(get()) }
