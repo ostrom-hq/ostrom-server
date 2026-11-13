@@ -108,21 +108,35 @@ class BucketArtifactContents(
         }
     }
 
-    private suspend fun connection(orgId: Uuid): ArtifactStorageConnection =
-        storage.connection(orgId) ?: throw ArtifactsInactiveException(InactiveReason.STORAGE_MISSING)
+    private suspend fun connection(orgId: Uuid): ArtifactStorageConnection = storage.openConnection(orgId)
 
     private fun key(connection: ArtifactStorageConnection, orgId: Uuid, artifactId: Uuid, sha256: String) =
         ArtifactKeys.blob(connection.prefix, orgId.toString(), artifactId.toString(), sha256)
 
-    private suspend fun <T> bucket(failure: String, block: suspend () -> T): T = try {
-        block()
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (_: ObjectStoreException) {
-        throw ArtifactStorageUnavailableException(failure)
-    }
+}
 
-    private companion object {
-        const val OCTET_STREAM = "application/octet-stream"
-    }
+/** The type every object is written with: the bucket never serves them, the server does. */
+internal const val OCTET_STREAM = "application/octet-stream"
+
+/**
+ * Opens the organization's bucket.
+ *
+ * @throws ArtifactsInactiveException When none is stored.
+ */
+internal suspend fun ArtifactStorageRepository.openConnection(orgId: Uuid): ArtifactStorageConnection =
+    connection(orgId) ?: throw ArtifactsInactiveException(InactiveReason.STORAGE_MISSING)
+
+/**
+ * Runs a call of the bucket.
+ *
+ * @param failure What to tell the caller when the bucket fails.
+ *
+ * @throws ArtifactStorageUnavailableException When the bucket refuses it or cannot be reached.
+ */
+internal suspend fun <T> bucket(failure: String, block: suspend () -> T): T = try {
+    block()
+} catch (cancelled: CancellationException) {
+    throw cancelled
+} catch (_: ObjectStoreException) {
+    throw ArtifactStorageUnavailableException(failure)
 }

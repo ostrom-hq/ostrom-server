@@ -123,7 +123,8 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
         }
         val statement = Statement.create(
             """
-            SELECT $COLUMNS FROM artifacts_artifacts a WHERE a.org_id = :org_id AND (a.owner_id = :member OR
+            SELECT $COLUMNS FROM artifacts_artifacts a WHERE a.org_id = :org_id AND a.latest_version > 0 AND
+            (a.owner_id = :member OR
             a.access <> 'personal' OR EXISTS (SELECT 1 FROM artifacts_members m WHERE m.artifact_id = a.id AND
             m.member_id = :member))$cursor ORDER BY a.updated_at DESC, a.id DESC LIMIT :limit
             """,

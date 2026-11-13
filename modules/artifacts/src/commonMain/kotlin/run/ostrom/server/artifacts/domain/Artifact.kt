@@ -45,7 +45,7 @@ enum class ArtifactAccess(val wire: String) {
  * @property ownerId The member it was published for.
  * @property title Its title.
  * @property access Who reads it.
- * @property latestVersion The newest version's number, from 1.
+ * @property latestVersion The newest version's number, from 1; 0 for a draft.
  * @property linkSlug The secret of its public link, set while [access] is [ArtifactAccess.LINK].
  * @property createdAt When it was first published.
  * @property updatedAt When its last version or setting changed.
@@ -60,7 +60,10 @@ data class Artifact(
     val linkSlug: String?,
     val createdAt: Instant,
     val updatedAt: Instant,
-)
+) {
+    /** An upload created it and no version was committed yet: nobody reads it, its owner publishes to it. */
+    val draft: Boolean get() = latestVersion == 0
+}
 
 /**
  * One file of a version, as recorded (its bytes are stored once per artifact, by digest).

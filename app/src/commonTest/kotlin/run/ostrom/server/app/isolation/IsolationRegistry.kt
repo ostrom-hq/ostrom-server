@@ -27,6 +27,7 @@ import run.ostrom.server.app.isolation.Seed.RULE
 import run.ostrom.server.app.isolation.Seed.RUN
 import run.ostrom.server.app.isolation.Seed.RUNNER
 import run.ostrom.server.app.isolation.Seed.SECRET
+import run.ostrom.server.app.isolation.Seed.UPLOAD
 import run.ostrom.server.app.isolation.Seed.SERVICE_KEY
 import run.ostrom.server.app.isolation.Seed.SESSION
 import run.ostrom.server.app.isolation.Seed.TOKEN
@@ -256,6 +257,11 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/artifacts/settings" to Case.Target(admin = true),
     "PUT /api/v1/artifacts/settings" to Case.Target(body = "{}", admin = true),
     "GET /api/v1/artifacts/policy" to Case.Target(),
+    // An upload is its opener's credential's alone.
+    "POST /api/v1/artifacts/uploads" to Case.Target(body = UPLOAD_BODY),
+    "PUT /api/v1/artifacts/uploads/{upload}/blobs/{sha256}/{n}" to Case.Target(
+        mapOf("upload" to of(UPLOAD), "sha256" to Param.Fixed("a".repeat(64)), "n" to Param.Fixed("0")),
+    ),
     "GET /api/v1/artifacts/{id}" to target("id" to ARTIFACT),
     "PATCH /api/v1/artifacts/{id}" to target("id" to ARTIFACT, body = """{"title": "Taken"}"""),
     "DELETE /api/v1/artifacts/{id}" to target("id" to ARTIFACT),
