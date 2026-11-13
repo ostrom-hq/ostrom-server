@@ -10,13 +10,16 @@ import kotlin.uuid.Uuid
  * @property wire The contract's value.
  */
 enum class ArtifactAccess(val wire: String) {
-    /** The owner, the members they invited and the organization's administrators. */
+    /** The owner and the members they shared it with: a role opens nobody's personal artifact (TeamCode #238). */
     PERSONAL("personal"),
 
     /** Every member of the organization. */
     TEAM("team"),
 
-    /** Anyone with its link, on the isolated content origin; members of the organization through the API. */
+    /**
+     * Anyone with its link, on the isolated content origin; members of the organization through the API. Only a
+     * person turns it on ([ArtifactCaller.person]).
+     */
     LINK("link"),
     ;
 
@@ -101,17 +104,54 @@ data class ArtifactVersion(
 class UploadedFile(val path: String, val bytes: ByteArray)
 
 /**
- * The member a request acts for.
+ * The member a request acts for. Their role in the organization gives them nothing here: an owner or an
+ * administrator reads another member's personal artifact only when it is shared with them, and changes none.
  *
  * @property orgId Their organization.
  * @property memberId Their id.
- * @property admin Whether they administer the organization (they read every artifact and delete any).
+ * @property person Whether a person presents the credential (a browser session or the unlocked app), not a token a
+ *   program can present: only a person changes an artifact's access, makes one public or deletes one, so an agent
+ *   never does (TeamCode `docs/artifacts.md`, "An agent never makes an artifact public and never deletes one").
+ * @property credentialId The credential the request presented, which a reading ticket is bound to; null when unknown.
  */
 data class ArtifactCaller(
     val orgId: Uuid,
     val memberId: String,
-    val admin: Boolean,
+    val person: Boolean,
+    val credentialId: String? = null,
 )
+
+/**
+ * What a caller is to an artifact they read.
+ *
+ * @property wire The contract's value (`Artifact.relation`).
+ */
+enum class ArtifactRelation(val wire: String) {
+    /** They published it: they alone change, share and delete it. */
+    OWNER("owner"),
+
+    /** A personal artifact shared with them. */
+    VIEWER("viewer"),
+
+    /** A team or linked artifact of their organization. */
+    TEAM("team"),
+    ;
+
+    /** How a reader relates to an artifact. */
+    companion object {
+        /**
+         * The relation of a caller who reads [artifact].
+         *
+         * @return [OWNER], [TEAM] for a `team` or `link` artifact of someone else, [VIEWER] otherwise (a personal
+         *   artifact is read only by its owner and the members it is shared with).
+         */
+        fun of(caller: ArtifactCaller, artifact: Artifact): ArtifactRelation = when {
+            artifact.ownerId == caller.memberId -> OWNER
+            artifact.access == ArtifactAccess.PERSONAL -> VIEWER
+            else -> TEAM
+        }
+    }
+}
 
 /**
  * A file served to a reader.

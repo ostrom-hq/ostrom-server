@@ -8,6 +8,7 @@ import run.ostrom.server.artifacts.domain.ArtifactsRepository
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.OrgPrincipal
 import run.ostrom.server.kernel.auth.OrgRole
+import run.ostrom.server.kernel.auth.PrincipalChannel
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.TokenAuthenticator
@@ -25,10 +26,13 @@ val BOB: Uuid = Uuid.parse("00000000-0000-0000-0000-000000000b0b")
 val DAVE: Uuid = Uuid.parse("00000000-0000-0000-0000-00000000da7e")
 val CAROL: Uuid = Uuid.parse("00000000-0000-0000-0000-00000000ca01")
 
-val alice = ArtifactCaller(ORG_A, ALICE.toString(), admin = false)
-val bob = ArtifactCaller(ORG_A, BOB.toString(), admin = false)
-val dave = ArtifactCaller(ORG_A, DAVE.toString(), admin = true)
-val carol = ArtifactCaller(ORG_B, CAROL.toString(), admin = true)
+val alice = ArtifactCaller(ORG_A, ALICE.toString(), person = true, credentialId = "alice-session")
+val bob = ArtifactCaller(ORG_A, BOB.toString(), person = true, credentialId = "bob-session")
+val dave = ArtifactCaller(ORG_A, DAVE.toString(), person = true, credentialId = "dave-session")
+val carol = ArtifactCaller(ORG_B, CAROL.toString(), person = true, credentialId = "carol-session")
+
+/** Alice through a token a program presents (her agent's): never a person. */
+val aliceAgent = ArtifactCaller(ORG_A, ALICE.toString(), person = false, credentialId = "alice-token")
 
 /** The content origin and viewer of the tests. */
 const val CONTENT_ORIGIN = "http://artifacts.test"
@@ -37,14 +41,23 @@ const val VIEWER = "https://app.test/artifacts"
 /**
  * The test identities: `alice`, `bob` (members of org A), `dave` (admin of org A), `carol` (owner of org B) and
  * `nobody` (no org) are browser sessions; `reader` and `writer` are alice's service tokens with `artifacts:read`
- * and `artifacts:write`; `cloud` is alice's with no artifact scope.
+ * and `artifacts:write`; `cloud` is alice's with no artifact scope; `agent` and `dave-agent` are personal tokens
+ * with `artifacts:write` that alice and dave hand to their agents.
  */
 val testIdentities = module {
     single<TokenAuthenticator> {
         object : TokenAuthenticator {
             override suspend fun authenticate(token: String): AuthenticatedPrincipal? = when (token) {
-                "alice", "bob", "dave", "carol", "nobody" ->
-                    AuthenticatedPrincipal(token, PrincipalKind.USER, setOf("user:*"))
+                "alice", "bob", "dave", "carol", "nobody" -> AuthenticatedPrincipal(
+                    token,
+                    PrincipalKind.USER,
+                    setOf("user:*"),
+                    credentialId = "$token-session",
+                    channel = PrincipalChannel.BROWSER,
+                )
+                "agent" -> AuthenticatedPrincipal("alice", PrincipalKind.USER, setOf("artifacts:write"), "alice-token")
+                "dave-agent" ->
+                    AuthenticatedPrincipal("dave", PrincipalKind.USER, setOf("artifacts:write"), "dave-token")
                 "reader" -> AuthenticatedPrincipal("alice", PrincipalKind.SERVICE, setOf("artifacts:read"))
                 "writer" -> AuthenticatedPrincipal("alice", PrincipalKind.SERVICE, setOf("artifacts:write"))
                 "cloud" -> AuthenticatedPrincipal("alice", PrincipalKind.SERVICE, setOf("cloud:read"))

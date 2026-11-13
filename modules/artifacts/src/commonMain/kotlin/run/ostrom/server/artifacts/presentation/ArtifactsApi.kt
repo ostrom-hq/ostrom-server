@@ -130,6 +130,7 @@ data class TicketRequest(val version: Int? = null)
  * @property title Its title.
  * @property owner The member it belongs to.
  * @property access `personal`, `team` or `link`.
+ * @property relation What the caller is to it: `owner`, `viewer` or `team`.
  * @property latestVersion Its newest version.
  * @property url The console's page for it.
  * @property publicUrl Its public link, for `link` access on a server that serves pages.
@@ -142,6 +143,7 @@ data class ArtifactResponse(
     val title: String,
     val owner: String,
     val access: String,
+    val relation: String? = null,
     val latestVersion: Int,
     val url: String,
     val publicUrl: String? = null,

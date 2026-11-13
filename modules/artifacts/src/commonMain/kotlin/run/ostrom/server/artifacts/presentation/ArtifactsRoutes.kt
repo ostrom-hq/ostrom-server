@@ -2,7 +2,9 @@
 package run.ostrom.server.artifacts.presentation
 
 import run.ostrom.server.artifacts.domain.Artifact
+import run.ostrom.server.artifacts.domain.ArtifactCaller
 import run.ostrom.server.artifacts.domain.ArtifactNotFoundException
+import run.ostrom.server.artifacts.domain.ArtifactRelation
 import run.ostrom.server.artifacts.domain.ArtifactRules
 import run.ostrom.server.artifacts.domain.ArtifactVersion
 import run.ostrom.server.artifacts.domain.InvalidArtifactRequestException
@@ -55,7 +57,7 @@ fun Route.artifactsRoutes(dependencies: ArtifactsRoutesDependencies) = with(depe
                 val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), ARTIFACTS_WRITE)
                 val request = call.receive<PublishArtifactRequest>()
                 val artifact = publish.create(caller, request.title, request.access, request.files.toUploads())
-                call.respond(HttpStatusCode.Created, toResponse(artifact))
+                call.respond(HttpStatusCode.Created, toResponse(artifact, caller))
             }
             post<ArtifactsApi.Id.Versions> { params ->
                 val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), ARTIFACTS_WRITE)
@@ -69,16 +71,17 @@ fun Route.artifactsRoutes(dependencies: ArtifactsRoutesDependencies) = with(depe
             val page = read.list(caller, params.before?.let { parseId(it) }, params.limit)
             val limit = params.limit ?: DEFAULT_LIMIT
             val next = page.lastOrNull()?.let { last -> last.id.toString().takeIf { page.size == limit } }
-            call.respond(ArtifactsResponse(page.map { toResponse(it) }, next))
+            call.respond(ArtifactsResponse(page.map { toResponse(it, caller) }, next))
         }
         get<ArtifactsApi.Id> { params ->
             val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), ARTIFACTS_READ)
-            call.respond(toResponse(read.get(caller, artifactId(params.id))))
+            call.respond(toResponse(read.get(caller, artifactId(params.id)), caller))
         }
         patch<ArtifactsApi.Id> { params ->
             val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), ARTIFACTS_WRITE)
             val request = call.receive<UpdateArtifactRequest>()
-            call.respond(toResponse(manage.update(caller, artifactId(params.id), request.title, request.access)))
+            val updated = manage.update(caller, artifactId(params.id), request.title, request.access)
+            call.respond(toResponse(updated, caller))
         }
         delete<ArtifactsApi.Id> { params ->
             val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), ARTIFACTS_WRITE)
@@ -164,18 +167,22 @@ internal fun artifactId(raw: String): Uuid = Uuid.parseOrNull(raw) ?: throw Arti
 private fun parseId(raw: String): Uuid =
     Uuid.parseOrNull(raw) ?: throw InvalidArtifactRequestException("Malformed artifact id.")
 
-/** Maps an artifact to the API. */
-internal fun ArtifactsRoutesDependencies.toResponse(artifact: Artifact) = ArtifactResponse(
+/** Maps an artifact to the API, as [caller] sees it. */
+internal fun ArtifactsRoutesDependencies.toResponse(artifact: Artifact, caller: ArtifactCaller) = ArtifactResponse(
     id = artifact.id.toString(),
     title = artifact.title,
     owner = artifact.ownerId,
     access = artifact.access.wire,
+    relation = ArtifactRelation.of(caller, artifact).wire,
     latestVersion = artifact.latestVersion,
-    url = "${locations.viewerUrl}/${artifact.id}",
+    url = viewerUrl(artifact),
     publicUrl = view.publicUrl(artifact),
     createdAt = artifact.createdAt.toString(),
     updatedAt = artifact.updatedAt.toString(),
 )
+
+/** The console's page of an artifact. */
+internal fun ArtifactsRoutesDependencies.viewerUrl(artifact: Artifact) = "${locations.viewerUrl}/${artifact.id}"
 
 /** Maps a version to the API. */
 internal fun ArtifactVersion.toResponse() = ArtifactVersionResponse(
