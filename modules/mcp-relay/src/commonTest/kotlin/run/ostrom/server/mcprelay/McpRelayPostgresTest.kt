@@ -46,6 +46,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Instant
@@ -138,7 +139,8 @@ class McpRelayPostgresTest : RelayPostgresHarness() {
                 val listed = Json.parseToJsonElement(
                     rpc("grafana", "member-a", """{"jsonrpc":"2.0","id":2,"method":"tools/list"}""").bodyAsText(),
                 )
-                val names = listed.jsonObject["result"]!!.jsonObject["tools"]!!.jsonArray.map {
+                val result = assertNotNull(listed.jsonObject["result"], listed.toString())
+                val names = result.jsonObject["tools"]!!.jsonArray.map {
                     it.jsonObject["name"]!!.jsonPrimitive.content
                 }
                 assertEquals(listOf("query_loki_logs"), names)
