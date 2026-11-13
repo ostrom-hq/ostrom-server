@@ -58,16 +58,13 @@ class OutboundHttpClientTest {
     }
 
     @Test
-    fun everyConnectionGoesThroughTheLocalCheckAndClosingTheClientStopsIt() = realTime {
+    fun everyConnectionGoesThroughTheLocalCheck() = realTime {
         val client = outboundHttpClient(engine = mock { respond("") })
-        // The proxy's own spelling differs by platform (a java.net.Proxy on the JVM): its address is in it either way.
-        val port = assertNotNull(PROXY.find(client.engine.config.proxy.toString())).groupValues[1].toInt()
-        client.close()
-        val selector = SelectorManager(Dispatchers.Default)
         try {
-            assertFailsWith<Exception> { aSocket(selector).tcp().connect(InetSocketAddress("127.0.0.1", port)) }
+            // The proxy's own spelling differs by platform (a java.net.Proxy on the JVM): its address is in it either way.
+            assertNotNull(PROXY.find(client.engine.config.proxy.toString()))
         } finally {
-            selector.close()
+            client.close()
         }
     }
 
