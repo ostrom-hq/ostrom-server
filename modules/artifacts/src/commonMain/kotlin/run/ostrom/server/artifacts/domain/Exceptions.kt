@@ -37,9 +37,20 @@ class ArtifactTooLargeException(message: String) : OstromException(ErrorKind.PAY
  * A token a program can present asks what only a person does: change an artifact's access, publish one as `link` or
  * delete one. An agent never makes an artifact public nor deletes one.
  */
-class ArtifactPersonRequiredException : OstromException(
-    ErrorKind.FORBIDDEN,
-    "Only a person changes who reads an artifact, makes it public or deletes it: do it in the console.",
+class ArtifactPersonRequiredException(message: String = CHANGES_FOR_PEOPLE) :
+    OstromException(ErrorKind.FORBIDDEN, message)
+
+private const val CHANGES_FOR_PEOPLE =
+    "Only a person changes who reads an artifact, makes it public or deletes it: do it in the console."
+
+/**
+ * A credential asked for more reading tickets in a minute than a person opens pages.
+ *
+ * @property retryAfterSeconds When to try again, for `Retry-After`.
+ */
+class ArtifactTicketsRateLimitedException(val retryAfterSeconds: Long) : OstromException(
+    ErrorKind.RATE_LIMITED,
+    "Too many artifact pages were opened in a minute. Try again in a moment.",
 )
 
 /** The caller acts for no organization: answered like an unknown organization. */

@@ -8,6 +8,7 @@ import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.TokenAuthenticator
 import kotlin.time.Clock
 import kotlin.time.Instant
+import kotlin.uuid.Uuid
 
 /**
  * The server's [TokenAuthenticator]: resolves API tokens (`Authorization: Bearer`) and browser sessions (cookie +
@@ -102,6 +103,16 @@ class CredentialAuthenticatorImpl(
         )
     }
 
+    override suspend fun isLive(subjectId: String, credentialId: String): Boolean {
+        val user = Uuid.parseOrNull(subjectId)
+        val id = Uuid.parseOrNull(credentialId)
+        if (user == null || id == null) return false
+        val now = clock.now()
+        if (sessions.listLive(user, now, LIVE_SESSIONS).any { it.id == id }) return true
+        val token = tokens.get(user, id) ?: return false
+        return token.revokedAt == null && token.expiresAt.let { it == null || it > now }
+    }
+
     /** The live token a bearer secret names: its prefix says its kind, and the stored token must agree. */
     private suspend fun liveToken(token: String): ApiToken? {
         val kind = TokenKind.entries.firstOrNull { token.startsWith(it.prefix + "_") }
@@ -137,6 +148,9 @@ class CredentialAuthenticatorImpl(
     private companion object {
         /** No secret we issue is longer: a longer value is refused before it is hashed. */
         const val MAX_SECRET_LENGTH = 128
+
+        /** The browser sessions read to find one: more than a person keeps open. */
+        const val LIVE_SESSIONS = 200
     }
 }
 

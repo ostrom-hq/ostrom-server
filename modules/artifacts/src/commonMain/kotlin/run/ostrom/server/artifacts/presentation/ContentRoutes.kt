@@ -91,7 +91,8 @@ private suspend fun ApplicationCall.serve(file: ServedFile?, headers: Map<String
         respondText("Not found.", ContentType.Text.Plain, HttpStatusCode.NotFound)
         return
     }
-    response.header("Cache-Control", "private, max-age=600")
+    // No longer than a ticket's recheck: a reader who lost access is not served from the browser's cache for long.
+    response.header("Cache-Control", "private, max-age=30, no-transform")
     if (file.contentType.startsWith("text/markdown")) {
         respondText(MarkdownPage.render(file.bytes.decodeToString()), ContentType.Text.Html)
     } else {

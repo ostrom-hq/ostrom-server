@@ -16,6 +16,7 @@ import run.ostrom.server.kernel.auth.ALL_USER_SCOPES
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.PrincipalChannel
 import run.ostrom.server.kernel.auth.PrincipalKind
+import run.ostrom.server.kernel.auth.RejectingTokenAuthenticator
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -301,5 +302,30 @@ class CredentialAuthenticatorTest {
         agentToken("osa_b", setOf("gates:answer", AGENT_SCOPE), session = "run-2")
 
         assertEquals(setOf(AGENT_SCOPE), authenticator.authenticate("osa_b")?.scopes)
+    }
+
+    @Test
+    fun aCredentialIsLiveWhileNeitherRevokedNorExpired() = runTest {
+        val user = userId.toString()
+        val open = session("oss_open")
+        val closed = session("oss_closed", revoked = true)
+        val over = session("oss_over", expired = true)
+        val app = token("osm_app", TokenKind.MOBILE)
+        val forever = token("osp_forever", TokenKind.PERSONAL, expiresIn = null)
+        val ended = token("osp_ended", TokenKind.PERSONAL).copy(revokedAt = clock.now)
+        tokens.tokens["h(osp_ended)"] = ended
+        assertTrue(authenticator.isLive(user, open.id.toString()))
+        assertTrue(authenticator.isLive(user, app.id.toString()))
+        assertTrue(authenticator.isLive(user, forever.id.toString()))
+        assertFalse(authenticator.isLive(user, closed.id.toString()))
+        assertFalse(authenticator.isLive(user, over.id.toString()))
+        assertFalse(authenticator.isLive(user, ended.id.toString()))
+        assertFalse(authenticator.isLive(user, Uuid.random().toString()))
+        assertFalse(authenticator.isLive(Uuid.random().toString(), open.id.toString()), "Another person's")
+        assertFalse(authenticator.isLive("not-a-user", open.id.toString()))
+        assertFalse(authenticator.isLive(user, "not-a-credential"))
+        clock.now += 11.days
+        assertFalse(authenticator.isLive(user, app.id.toString()), "Expired")
+        assertFalse(RejectingTokenAuthenticator().isLive(user, open.id.toString()), "Nothing is live by default")
     }
 }

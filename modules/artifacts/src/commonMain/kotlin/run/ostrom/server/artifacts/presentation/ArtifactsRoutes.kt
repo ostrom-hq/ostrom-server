@@ -6,6 +6,7 @@ import run.ostrom.server.artifacts.domain.ArtifactCaller
 import run.ostrom.server.artifacts.domain.ArtifactNotFoundException
 import run.ostrom.server.artifacts.domain.ArtifactRelation
 import run.ostrom.server.artifacts.domain.ArtifactRules
+import run.ostrom.server.artifacts.domain.ArtifactTicketsRateLimitedException
 import run.ostrom.server.artifacts.domain.ArtifactVersion
 import run.ostrom.server.artifacts.domain.InvalidArtifactRequestException
 import run.ostrom.server.kernel.auth.authenticated
@@ -123,7 +124,12 @@ fun Route.artifactsRoutes(dependencies: ArtifactsRoutesDependencies) = with(depe
         post<ArtifactsApi.Id.Tickets> { params ->
             val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), ARTIFACTS_READ)
             val request = parseTicketRequest(call.receiveText())
-            val ticket = view.ticket(caller, artifactId(params.parent.id), request.version)
+            val ticket = try {
+                view.ticket(caller, artifactId(params.parent.id), request.version)
+            } catch (limited: ArtifactTicketsRateLimitedException) {
+                call.response.header(HttpHeaders.RetryAfter, limited.retryAfterSeconds.toString())
+                throw limited
+            }
             call.respond(
                 HttpStatusCode.Created,
                 ArtifactTicketResponse(

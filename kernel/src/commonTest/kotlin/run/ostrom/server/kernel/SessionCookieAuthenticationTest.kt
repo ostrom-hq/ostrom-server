@@ -34,6 +34,7 @@ import org.koin.dsl.koinApplication
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 
 /** The browser-session path of the token provider: what the kernel hands the authenticator (audit S2-08). */
@@ -152,5 +153,6 @@ class SessionCookieAuthenticationTest {
     fun theDefaultAuthenticatorRefusesEverySession() = runTest {
         assertNull(RejectingTokenAuthenticator().authenticateSession("oss_1", "csrf-1", true, "https://app.test"))
         assertEquals("", RejectingTokenAuthenticator().sessionCookiePrefix, "Plain names by default")
+        assertFalse(RejectingTokenAuthenticator().isLive("u", "s"), "No credential is live by default")
     }
 }

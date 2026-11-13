@@ -113,12 +113,15 @@ class UploadedFile(val path: String, val bytes: ByteArray)
  *   program can present: only a person changes an artifact's access, makes one public or deletes one, so an agent
  *   never does (TeamCode `docs/artifacts.md`, "An agent never makes an artifact public and never deletes one").
  * @property credentialId The credential the request presented, which a reading ticket is bound to; null when unknown.
+ * @property subjectId The person behind the credential (the principal's `subjectId`), whose credential a reading
+ *   ticket checks is still live; null when unknown.
  */
 data class ArtifactCaller(
     val orgId: Uuid,
     val memberId: String,
     val person: Boolean,
     val credentialId: String? = null,
+    val subjectId: String? = null,
 )
 
 /**
