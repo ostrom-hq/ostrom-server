@@ -88,20 +88,32 @@ internal object UsageQueries {
         "AND expires_at > :now AND call_id <> :call_id$filter), 0)"
 
     /** What is recorded since [since], plus what the calls never recorded held then ([filter] on both). */
-    private fun spent(since: String, filter: String) =
-        "COALESCE((SELECT SUM(cost_micros) FROM usage_events WHERE org_id = :org_id AND at >= $since$filter), 0) + " +
-            "COALESCE((SELECT SUM(micros) FROM usage_holds WHERE org_id = :org_id AND held_at >= $since " +
-            "AND expires_at <= :now$filter), 0)"
+    private fun spent(since: String, filter: String) = "${recorded(since, filter)} + " +
+        "COALESCE((SELECT SUM(micros) FROM usage_holds WHERE org_id = :org_id AND held_at >= $since " +
+        "AND expires_at <= :now$filter), 0)"
+
+    /**
+     * What is recorded since [since] ([filter] on it), TeamCode #163: the spend of the whole UTC days from the first
+     * midnight at or after [since] (`usage_spend_days`, at most 31 rows of each member and workflow for a month),
+     * plus the calls before that midnight, none when [since] is one (the start of a month or a day).
+     */
+    private fun recorded(since: String, filter: String): String {
+        // The first midnight at or after `since`, as a UTC date: a day less a microsecond later, truncated.
+        val firstDay = "CAST(CAST($since AS TIMESTAMPTZ) AT TIME ZONE 'UTC' + INTERVAL '86399.999999 seconds' AS DATE)"
+        return "COALESCE((SELECT SUM(cost_micros) FROM usage_spend_days WHERE org_id = :org_id " +
+            "AND day >= $firstDay$filter), 0) + " +
+            "COALESCE((SELECT SUM(cost_micros) FROM usage_events WHERE org_id = :org_id AND at >= $since " +
+            "AND at < (CAST($firstDay AS TIMESTAMP) AT TIME ZONE 'UTC')$filter), 0)"
+    }
 
     /** The account's spend since `:since`: `:org_id`, `:account_id`, `:since`. */
     const val ACCOUNT_SPENT: String =
         "SELECT CAST(COALESCE(SUM(cost_micros), 0) AS BIGINT) AS spent FROM usage_events " +
             "WHERE org_id = :org_id AND account_id = :account_id AND at >= :since"
 
-    /** A workflow's spend since `:since`: `:org_id`, `:workflow_id`, `:since` (index `usage_events_workflow`). */
-    const val WORKFLOW_SPENT: String =
-        "SELECT CAST(COALESCE(SUM(cost_micros), 0) AS BIGINT) AS spent FROM usage_events " +
-            "WHERE org_id = :org_id AND workflow_id = :workflow_id AND at >= :since"
+    /** A workflow's spend since `:since`: `:org_id`, `:workflow_id`, `:since` (index `usage_spend_days_workflow`). */
+    val WORKFLOW_SPENT: String =
+        "SELECT CAST(${recorded(":since", " AND workflow_id = :workflow_id")} AS BIGINT) AS spent"
 
     /**
      * What a launch spent in a window, NULL for nothing priced: `:org_id`, `:launch_id`, `:from`, `:to`. Half open, so
@@ -116,8 +128,7 @@ internal object UsageQueries {
      *
      * @param member Whether one member's.
      */
-    fun spent(member: Boolean): String = "SELECT CAST(COALESCE(SUM(cost_micros), 0) AS BIGINT) AS spent " +
-        "FROM usage_events WHERE org_id = :org_id AND at >= :since" + memberFilter(member)
+    fun spent(member: Boolean): String = "SELECT CAST(${recorded(":since", memberFilter(member))} AS BIGINT) AS spent"
 
     /**
      * Totals by [groupBy]: `:org_id`, `:since`, `:limit`, `:until` if [until], `:member_id` if [member].

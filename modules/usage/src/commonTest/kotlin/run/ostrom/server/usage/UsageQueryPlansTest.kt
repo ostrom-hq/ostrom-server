@@ -69,6 +69,7 @@ class UsageQueryPlansTest {
         fixtures.execute(holds(TestCallers.orgA, 200)).getOrThrow()
         fixtures.execute("VACUUM ANALYZE usage_events").getOrThrow()
         fixtures.execute("VACUUM ANALYZE usage_holds").getOrThrow()
+        fixtures.execute("VACUUM ANALYZE usage_spend_days").getOrThrow()
     }
 
     @Test
@@ -128,6 +129,7 @@ class UsageQueryPlansTest {
             for ((name, plan) in plans) {
                 assertFalse("Seq Scan on usage_events" in plan, "$name scans the table:\n$plan")
                 assertFalse("Seq Scan on usage_holds" in plan, "$name scans the holds:\n$plan")
+                assertFalse("Seq Scan on usage_spend_days" in plan, "$name scans the spend of the days:\n$plan")
             }
         }
 
