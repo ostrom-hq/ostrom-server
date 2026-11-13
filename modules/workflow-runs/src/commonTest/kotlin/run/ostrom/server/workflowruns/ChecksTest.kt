@@ -14,6 +14,7 @@ import run.ostrom.server.workflowruns.domain.models.NotInPackageException
 import run.ostrom.server.workflowruns.domain.models.RunPackageMismatchException
 import run.ostrom.server.workflowruns.domain.models.RunPackageNotFoundException
 import run.ostrom.server.workflowruns.domain.models.RunSessionNotFoundException
+import run.ostrom.server.workflowruns.domain.repositories.RunAudience
 import run.ostrom.server.workflowruns.domain.repositories.RunQuery
 import run.ostrom.server.workflowruns.domain.usecases.ListChecksUseCaseImpl
 import run.ostrom.server.workflowruns.domain.usecases.ReportCheckUseCaseImpl
@@ -232,6 +233,46 @@ class ChecksTest {
         assertTrue(list(AGENT, RunQuery()).isEmpty(), "An agent names its own session")
         assertFailsWith<RunSessionNotFoundException> { list(OTHER_AGENT, bySession) }
         assertFailsWith<RunSessionNotFoundException> { list(BOB, RunQuery(sessionId = "s-9")) }
+    }
+
+    @Test
+    fun theOrganizationsRunsAreListedToTheirPersonTheApproversOfTheirSessionAndTheAdministrators() = runTest {
+        // TeamCode #238: without a session, a member lists their own runs and those of the sessions they approve.
+        val carol = GateActor("carol", ORG, ActorKind.USER, personId = "carol")
+        val list = ListChecksUseCaseImpl(access(FakeSessions(approvals = mapOf("carol" to listOf("s-1")))), runs)
+        val ada = report(AGENT, request())
+        val bob = report(BOB, request(sessionId = null))
+        assertEquals(listOf(bob.id, ada.id), list(ADMIN, RunQuery()).map { it.id })
+        assertNull(runs.queries.last().audience, "An administrator reads every run")
+        assertEquals(listOf(ada.id), list(ADA, RunQuery()).map { it.id })
+        assertEquals(listOf(bob.id), list(BOB, RunQuery()).map { it.id }, "Their own outside a session")
+        assertEquals(listOf(ada.id), list(carol, RunQuery()).map { it.id }, "A session whose gate they approve")
+        assertEquals(RunAudience("carol", listOf("s-1")), runs.queries.last().audience)
+        assertEquals(listOf(ada.id), list(carol, RunQuery(sessionId = "s-1")).map { it.id })
+        assertEquals(null, runs.queries.last().audience, "A session they read is read whole")
+        val nobody = GateActor("nobody", ORG, ActorKind.USER)
+        assertEquals(emptyList(), list(nobody, RunQuery()), "No person, no run")
+        // Another's run as a cursor names nothing the member reads: a 400, before any page.
+        val read = runs.queries.size
+        assertFailsWith<InvalidPageException> { list(BOB, RunQuery(before = ada.id)) }
+        assertEquals(read, runs.queries.size, "No page was read")
+        assertEquals(emptyList(), list(carol, RunQuery(before = ada.id)))
+        assertEquals(listOf(ada.id), list(ADMIN, RunQuery(before = bob.id)).map { it.id })
+    }
+
+    @Test
+    fun anApproverReadsTheRunsOfTheSessionWhoseGateTheyAnswerOnly() = runTest {
+        val carol = GateActor("carol", ORG, ActorKind.USER, personId = "carol")
+        val approvals = mapOf("carol" to listOf("s-1"), "agent-lch_2" to listOf("s-1"))
+        val list = ListChecksUseCaseImpl(access(FakeSessions(approvals = approvals)), runs)
+        report(AGENT, request())
+        assertEquals(1, list(carol, RunQuery(sessionId = "s-1")).size)
+        assertFailsWith<RunSessionNotFoundException>("Only a person approves") {
+            list(OTHER_AGENT.copy(personId = "carol"), RunQuery(sessionId = "s-1"))
+        }
+        assertFailsWith<RunSessionNotFoundException>("A person without a login") {
+            list(GateActor("x", ORG, ActorKind.USER), RunQuery(sessionId = "s-1"))
+        }
     }
 
     @Test

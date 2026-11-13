@@ -52,4 +52,42 @@ val ReceiptsMigrations: List<SchemaMigration> = listOf(
         ALTER TABLE receipts_receipts ENABLE ALWAYS TRIGGER receipts_receipts_append_only
         """.trimIndent(),
     ),
+    // TeamCode #238 (parity TC-NEW-675a530-2): a receipt about a session is read by the session's person, the
+    // organization's owners and administrators, and the approvers of the session's gates. Each receipt names the
+    // session it is about (its signed `sessionId`, else the subject of a session receipt) and that session's person,
+    // its owner (`member`, the session's `dev`). The receipts signed before are filled in by the one UPDATE the
+    // append-only trigger ever lets through: the migration disables it, fills the two columns and enables it again
+    // `ALWAYS`, in its own transaction, whose ACCESS EXCLUSIVE lock (taken by the first ALTER TABLE) keeps any other
+    // statement off the table until it commits; the signed bodies are not touched. The owner reads every
+    // organization's rows for that one statement, with the policies no longer forced on it (as gates migration 3). A
+    // database where the sessions module has not run yet has no session to read: the owners stay unknown there.
+    SchemaMigration(
+        3,
+        "receipts_session_and_member",
+        """
+        ALTER TABLE receipts_receipts ADD COLUMN session_id TEXT;
+        ALTER TABLE receipts_receipts ADD COLUMN member TEXT;
+        ALTER TABLE receipts_receipts DISABLE TRIGGER receipts_receipts_append_only;
+        ALTER TABLE receipts_receipts NO FORCE ROW LEVEL SECURITY;
+        UPDATE receipts_receipts SET session_id = COALESCE(
+            NULLIF(CAST(body AS JSONB) ->> 'sessionId', ''),
+            CASE WHEN subject_kind = 'session' THEN subject_id END
+        );
+        DO $$
+        BEGIN
+            IF to_regclass('sessions_sessions') IS NOT NULL THEN
+                ALTER TABLE sessions_sessions NO FORCE ROW LEVEL SECURITY;
+                UPDATE receipts_receipts r SET member = s.dev
+                    FROM sessions_sessions s
+                    WHERE s.org_id = r.org_id AND s.id = r.session_id;
+                ALTER TABLE sessions_sessions FORCE ROW LEVEL SECURITY;
+            END IF;
+        END
+        $$;
+        ALTER TABLE receipts_receipts FORCE ROW LEVEL SECURITY;
+        ALTER TABLE receipts_receipts ENABLE ALWAYS TRIGGER receipts_receipts_append_only;
+        CREATE INDEX receipts_by_session ON receipts_receipts (org_id, session_id, created_at DESC, id DESC);
+        CREATE INDEX receipts_by_member ON receipts_receipts (org_id, member, created_at DESC, id DESC)
+        """.trimIndent(),
+    ),
 )

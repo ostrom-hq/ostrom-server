@@ -15,6 +15,7 @@ import kotlin.uuid.Uuid
  * @property status Only these (notifications), or every one.
  * @property before The id the previous page ended on, or null for the newest.
  * @property limit At most this many.
+ * @property audience Only those this audience reads, when set; every one of the organization otherwise.
  */
 data class RunQuery(
     val sessionId: String? = null,
@@ -22,6 +23,7 @@ data class RunQuery(
     val status: NotificationStatus? = null,
     val before: String? = null,
     val limit: Int = PAGE,
+    val audience: RunAudience? = null,
 ) {
     /** The page size. */
     companion object {
@@ -29,6 +31,16 @@ data class RunQuery(
         const val PAGE: Int = 50
     }
 }
+
+/**
+ * The runs and notifications a member reads beside their own (TeamCode #238): those of the sessions whose gates they
+ * approve.
+ *
+ * @property dev The member, whose own runs and notifications they read (their sessions' and those outside a
+ *   session), or null when unknown.
+ * @property sessions The sessions whose gates they approve.
+ */
+data class RunAudience(val dev: String?, val sessions: List<String>)
 
 /** Storage of the check runs and notifications, isolated by organization. */
 interface WorkflowRunsRepository {
@@ -62,13 +74,14 @@ interface WorkflowRunsRepository {
     suspend fun checks(orgId: Uuid, query: RunQuery): List<CheckRun>
 
     /**
-     * Whether the organization holds a check run.
+     * Whether the organization holds a check run [audience] reads.
      *
      * @param orgId The organization.
      * @param id The run's id.
+     * @param audience Who reads it, or null for anyone of the organization.
      * @return True when it does.
      */
-    suspend fun hasCheck(orgId: Uuid, id: String): Boolean
+    suspend fun hasCheck(orgId: Uuid, id: String, audience: RunAudience? = null): Boolean
 
     /**
      * Stores a notification, unless the same action of the same session already had it: a hook may pass twice.
@@ -100,11 +113,12 @@ interface WorkflowRunsRepository {
     suspend fun notifications(orgId: Uuid, query: RunQuery): List<Notification>
 
     /**
-     * Whether the organization holds a notification.
+     * Whether the organization holds a notification [audience] reads.
      *
      * @param orgId The organization.
      * @param id The notification's id.
+     * @param audience Who reads it, or null for anyone of the organization.
      * @return True when it does.
      */
-    suspend fun hasNotification(orgId: Uuid, id: String): Boolean
+    suspend fun hasNotification(orgId: Uuid, id: String, audience: RunAudience? = null): Boolean
 }

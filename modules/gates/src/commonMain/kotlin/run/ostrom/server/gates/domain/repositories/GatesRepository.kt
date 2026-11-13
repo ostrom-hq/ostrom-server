@@ -92,6 +92,25 @@ interface GatesRepository {
      * @return The gates.
      */
     suspend fun ofSession(orgId: Uuid, sessionId: String): List<Gate>
+
+    /**
+     * Whether [approver] was asked to answer a gate of [sessionId] (a request of theirs on it, whatever became of it).
+     *
+     * @param orgId The organization.
+     * @param approver The approver's login, any case.
+     * @param sessionId The session segment.
+     * @return True when they were.
+     */
+    suspend fun approves(orgId: Uuid, approver: String, sessionId: String): Boolean
+
+    /**
+     * The sessions whose gates [approver] was asked to answer.
+     *
+     * @param orgId The organization.
+     * @param approver The approver's login, any case.
+     * @return The sessions, each once.
+     */
+    suspend fun sessionsApprovedBy(orgId: Uuid, approver: String): List<String>
 }
 
 /**

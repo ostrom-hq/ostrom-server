@@ -6,8 +6,10 @@ import run.ostrom.server.gates.domain.models.ActorKind
 import run.ostrom.server.gates.domain.models.GateActor
 import run.ostrom.server.receipts.domain.models.ReceiptKey
 import run.ostrom.server.receipts.domain.models.ReceiptNotFoundException
+import run.ostrom.server.receipts.domain.models.ReceiptReader
 import run.ostrom.server.receipts.domain.repositories.ReceiptsRepository
 import run.ostrom.server.receipts.domain.usecases.ListReceiptKeysUseCase
+import run.ostrom.server.receipts.domain.usecases.ReceiptAccess
 import run.ostrom.server.receipts.domain.usecases.isoMillis
 import run.ostrom.server.sessions.domain.models.Session
 import run.ostrom.server.sessions.domain.models.SessionAccess
@@ -41,7 +43,8 @@ interface GetReceiptBundleUseCase {
     /**
      * Gathers the bundle.
      *
-     * @param actor The caller: a person who reads receipts, or the agent token of the receipt's session's launch.
+     * @param actor The caller: a person who reads the receipt (its session's person, an owner or an administrator, an
+     *   approver of the session's gates), or the agent token of the receipt's session's launch.
      * @param id The receipt.
      *
      * @return The bundle.
@@ -55,6 +58,7 @@ interface GetReceiptBundleUseCase {
  * [GetReceiptBundleUseCase] on the receipts, sessions and compiler modules.
  *
  * @param receipts The receipts.
+ * @param access Who reads a receipt: a session's person, the owners and administrators, its gates' approvers.
  * @param keys The instance's keys.
  * @param sessions The sessions and their gates.
  * @param packages The packages.
@@ -62,6 +66,7 @@ interface GetReceiptBundleUseCase {
  */
 class GetReceiptBundleUseCaseImpl(
     private val receipts: ReceiptsRepository,
+    private val access: ReceiptAccess,
     private val keys: ListReceiptKeysUseCase,
     private val sessions: RunSessions,
     private val packages: RunPackages,
@@ -69,11 +74,18 @@ class GetReceiptBundleUseCaseImpl(
 ) : GetReceiptBundleUseCase {
     override suspend fun invoke(actor: GateActor, id: String): ReceiptBundle {
         val orgId = actor.orgId
-        val receipt = (receipts.get(orgId, id) ?: throw ReceiptNotFoundException()).body
+        val stored = receipts.get(orgId, id) ?: throw ReceiptNotFoundException()
+        val receipt = stored.body
         val subject = receipt["subject"] as? JsonObject
         val session = sessionOf(orgId, subject?.text("kind"), subject?.text("id"))
-        // An agent token reads the receipts of its own launch's sessions only, answered as absent otherwise.
-        val readable = actor.kind != ActorKind.AGENT_SESSION || session != null && SessionAccess.canRead(actor, session)
+        // An agent token reads the receipts of its own launch's sessions only; a person those of the sessions they
+        // read for receipts (TeamCode #238); anyone else is answered as absent.
+        val reader = readerOf(actor)
+        val readable = if (reader == null) {
+            session != null && SessionAccess.canRead(actor, session)
+        } else {
+            access.canRead(reader, stored)
+        }
         if (!readable) throw ReceiptNotFoundException()
         val cited = linkedSetOf<String>()
         (receipt["nodes"] as? JsonArray).orEmpty().mapNotNullTo(cited) { node ->
@@ -84,11 +96,18 @@ class GetReceiptBundleUseCaseImpl(
             sessions.gates(orgId, session.id).mapNotNullTo(cited) { it.receiptId }
         }
         cited -= id
-        val chain = cited.mapNotNull { receipts.get(orgId, it) }.map { it.body }
+        // A cited receipt is the same session's, but a node may cite any: the chain keeps those the caller reads.
+        val chain = cited.mapNotNull { receipts.get(orgId, it) }
+            .filter { reader == null || access.canRead(reader, it) }
+            .map { it.body }
         val digest = (receipt["package"] as? JsonObject)?.text("digest")
         val envelope = digest?.let { packages.find(orgId, it) }?.let { it.envelope.copy(pinned = false) }
         return ReceiptBundle(receipt, chain, envelope, keys(), clock.now().isoMillis())
     }
+
+    // A person reads receipts as the receipts routes do; an agent token is no reader of its own.
+    private fun readerOf(actor: GateActor): ReceiptReader? = actor.takeIf { it.kind != ActorKind.AGENT_SESSION }
+        ?.let { ReceiptReader(it.orgId, it.personId, SessionAccess.readsTeam(it)) }
 
     // The session a receipt is about: its own for a session receipt, the one before `@version` for a workflow receipt.
     private suspend fun sessionOf(orgId: Uuid, kind: String?, subjectId: String?): Session? {

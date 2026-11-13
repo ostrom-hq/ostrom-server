@@ -48,7 +48,7 @@ class ReceiptCompatTest {
         val body = JsonObject(draft() + mapOf("id" to JsonPrimitive("rcpt_1"), "createdAt" to JsonPrimitive("now")))
         val signed = InstanceReceiptSigner(instance).sign(body)
         val keys = FakeKeys(listOf(ReceiptKey(instance.keyId, instance.algorithm, instance.publicKeyPem)))
-        val verify = VerifyReceiptUseCaseImpl(FakeReceipts(), keys)
+        val verify = VerifyReceiptUseCaseImpl(access(FakeReceipts()), keys)
 
         val outcome = verify.verify(ORG_A, signed)
         assertTrue(outcome.ok)

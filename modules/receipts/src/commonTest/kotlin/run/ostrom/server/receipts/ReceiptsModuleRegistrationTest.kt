@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.receipts
 
+import run.ostrom.server.receipts.domain.services.ReceiptOwners
+import run.ostrom.server.receipts.domain.services.ReceiptReaders
 import run.ostrom.server.receipts.domain.services.ReceiptRule
 import run.ostrom.server.receipts.domain.services.ReceiptRules
 import run.ostrom.server.receipts.domain.services.receiptRulesJson
+import run.ostrom.server.receipts.infrastructure.NoReceiptOwners
 import run.ostrom.server.receipts.infrastructure.NoReceiptRules
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -43,6 +46,25 @@ class ReceiptsModuleRegistrationTest {
             Json.parseToJsonElement("""[{"id":"r1","digest":"sha256:1"}]"""),
             receiptRulesJson(decided.rulesFor(Uuid.random(), null)),
         )
+        app.close()
+    }
+
+    @Test
+    fun theReadersAndOwnersOfTheGatesAndSessionsModulesAreKeptAndNoneByDefault() = runTest {
+        val bare = koinApplication { modules(ReceiptsModule.koinModule) }
+        ReceiptsModule.initialize(bare.koin)
+        assertIs<NoReceiptOwners>(bare.koin.get<ReceiptOwners>())
+        bare.close()
+        val readers = FakeReaders()
+        val owners = FakeOwners()
+        val bound = module {
+            single<ReceiptReaders> { readers }
+            single<ReceiptOwners> { owners }
+        }
+        val app = koinApplication { modules(ReceiptsModule.koinModule, bound) }
+        ReceiptsModule.initialize(app.koin)
+        assertSame(readers, app.koin.get<ReceiptReaders>())
+        assertSame(owners, app.koin.get<ReceiptOwners>())
         app.close()
     }
 }

@@ -3,12 +3,15 @@ package run.ostrom.server.workflowruns
 
 import run.ostrom.core.api.models.NotificationStatus
 import run.ostrom.core.api.models.PackageMode
+import run.ostrom.server.gates.domain.models.ActorKind
+import run.ostrom.server.gates.domain.models.GateActor
 import run.ostrom.server.kernel.errors.InvalidPageException
 import run.ostrom.server.sessions.domain.models.NotYourSessionException
 import run.ostrom.server.sessions.domain.models.SessionClosedException
 import run.ostrom.server.workflowruns.domain.models.NotInPackageException
 import run.ostrom.server.workflowruns.domain.models.RunPackageRevokedException
 import run.ostrom.server.workflowruns.domain.models.RunSessionNotFoundException
+import run.ostrom.server.workflowruns.domain.repositories.RunAudience
 import run.ostrom.server.workflowruns.domain.repositories.RunQuery
 import run.ostrom.server.workflowruns.domain.usecases.ListNotificationsUseCaseImpl
 import run.ostrom.server.workflowruns.domain.usecases.NotificationRequest
@@ -21,6 +24,7 @@ import run.ostrom.server.workflowruns.fakes.FakePackages
 import run.ostrom.server.workflowruns.fakes.FakeSessions
 import run.ostrom.server.workflowruns.fakes.FixedClock
 import run.ostrom.server.workflowruns.fakes.InMemoryRuns
+import run.ostrom.server.workflowruns.fakes.ORG
 import run.ostrom.server.workflowruns.fakes.OTHER_AGENT
 import run.ostrom.server.workflowruns.fakes.PACKAGE
 import run.ostrom.server.workflowruns.fakes.RecordingChannels
@@ -148,5 +152,24 @@ class NotificationsTest {
         assertEquals(1, list(AGENT, RunQuery(sessionId = "s-1")).size)
         assertTrue(list(AGENT, RunQuery()).isEmpty())
         assertFailsWith<RunSessionNotFoundException> { list(OTHER_AGENT, RunQuery(sessionId = "s-1")) }
+    }
+
+    @Test
+    fun theOrganizationsNotificationsAreListedToTheirPersonTheApproversAndTheAdministrators() = runTest {
+        // TeamCode #238: without a session, a member lists their own and those of the sessions whose gates they
+        // approve; an owner or an administrator every one.
+        val carol = GateActor("carol", ORG, ActorKind.USER, personId = "carol")
+        val list = ListNotificationsUseCaseImpl(access(FakeSessions(approvals = mapOf("carol" to listOf("s-1")))), runs)
+        val ada = send(AGENT, request())
+        val bob = send(BOB, request(notifyId = "nt-1", sessionId = null))
+        assertEquals(listOf(bob.id, ada.id), list(ADMIN, RunQuery()).map { it.id })
+        assertEquals(listOf(ada.id), list(ADA, RunQuery()).map { it.id })
+        assertEquals(listOf(bob.id), list(BOB, RunQuery()).map { it.id })
+        assertEquals(listOf(ada.id), list(carol, RunQuery()).map { it.id })
+        assertEquals(RunAudience("carol", listOf("s-1")), runs.queries.last().audience)
+        assertEquals(listOf(ada.id), list(carol, RunQuery(sessionId = "s-1")).map { it.id })
+        assertFailsWith<InvalidPageException> { list(BOB, RunQuery(before = ada.id)) }
+        assertEquals(emptyList(), list(carol, RunQuery(before = ada.id)))
+        assertEquals(listOf(ada.id), list(ADMIN, RunQuery(before = bob.id)).map { it.id })
     }
 }

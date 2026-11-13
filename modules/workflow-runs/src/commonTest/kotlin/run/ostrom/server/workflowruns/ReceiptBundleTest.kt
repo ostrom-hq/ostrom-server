@@ -2,15 +2,24 @@
 package run.ostrom.server.workflowruns
 
 import run.ostrom.server.receipts.domain.models.ReceiptKey
+import run.ostrom.server.gates.domain.models.ActorKind
+import run.ostrom.server.gates.domain.models.GateActor
+import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.receipts.domain.models.ReceiptNotFoundException
+import run.ostrom.server.receipts.domain.models.ReceiptReader
+import run.ostrom.server.receipts.domain.services.ReceiptReaders
 import run.ostrom.server.receipts.domain.usecases.ListReceiptKeysUseCase
+import run.ostrom.server.receipts.domain.usecases.ReceiptAccess
 import run.ostrom.server.workflowruns.domain.usecases.GetReceiptBundleUseCaseImpl
 import run.ostrom.server.workflowruns.fakes.ADA
+import run.ostrom.server.workflowruns.fakes.ADMIN
 import run.ostrom.server.workflowruns.fakes.AGENT
+import run.ostrom.server.workflowruns.fakes.BOB
 import run.ostrom.server.workflowruns.fakes.FakePackages
 import run.ostrom.server.workflowruns.fakes.FakeSessions
 import run.ostrom.server.workflowruns.fakes.FixedClock
 import run.ostrom.server.workflowruns.fakes.InMemoryReceipts
+import run.ostrom.server.workflowruns.fakes.ORG
 import run.ostrom.server.workflowruns.fakes.OTHER_AGENT
 import run.ostrom.server.workflowruns.fakes.gate
 import run.ostrom.server.workflowruns.fakes.session
@@ -21,6 +30,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlin.uuid.Uuid
 
 class ReceiptBundleTest {
     private fun json(text: String) = Json.parseToJsonElement(text) as JsonObject
@@ -57,7 +67,17 @@ class ReceiptBundleTest {
         listOf(session(receiptId = "rcpt_session_s-1"), session(id = "s-3")),
         gates = listOf(gate(true, false, receiptId = "rcpt_gate_1"), gate(false, false, receiptId = null)),
     )
-    private val bundle = GetReceiptBundleUseCaseImpl(receipts, keys, sessions, FakePackages(), FixedClock())
+    // Carol approves a gate of session s-1.
+    private val readers = object : ReceiptReaders {
+        override suspend fun resolve(principal: AuthenticatedPrincipal): ReceiptReader? = null
+
+        override suspend fun approves(orgId: Uuid, person: String, sessionId: String): Boolean =
+            person == "carol" && sessionId == "s-1"
+
+        override suspend fun approvedSessions(orgId: Uuid, person: String): List<String> = emptyList()
+    }
+    private val access = ReceiptAccess(receipts, readers)
+    private val bundle = GetReceiptBundleUseCaseImpl(receipts, access, keys, sessions, FakePackages(), FixedClock())
 
     @Test
     fun aWorkflowReceiptComesWithItsSessionsGatesAndNodesReceiptsAndItsPackage() = runTest {
@@ -89,5 +109,21 @@ class ReceiptBundleTest {
         assertFailsWith<ReceiptNotFoundException> { bundle(AGENT, "rcpt_bare") }
         assertFailsWith<ReceiptNotFoundException> { bundle(AGENT, "rcpt_session_s-7") }
         assertFailsWith<ReceiptNotFoundException> { bundle(ADA, "rcpt_absent") }
+    }
+
+    @Test
+    fun aSessionsBundleIsReadByItsPersonItsApproversAndTheAdministratorsOnly() = runTest {
+        // TeamCode #238: the receipt names its session and person; a cited receipt another member's is left out.
+        val mine = json("""{"id":"rcpt_mine","subject":{"kind":"gate","id":"g"},"nodes":[{"ref":"rcpt_bobs"}]}""")
+        val bobs = json("""{"id":"rcpt_bobs","subject":{"kind":"gate","id":"g2"}}""")
+        receipts.about("rcpt_mine", mine, sessionId = "s-1", member = "ada")
+        receipts.about("rcpt_bobs", bobs, sessionId = "s-9", member = "bob")
+        val carol = GateActor("carol", ORG, ActorKind.USER, personId = "carol")
+        assertEquals(mine, bundle(ADA, "rcpt_mine").receipt)
+        assertEquals(emptyList(), bundle(ADA, "rcpt_mine").chain, "Bob's receipt is not Ada's to read")
+        assertEquals(mine, bundle(carol, "rcpt_mine").receipt, "An approver of the session's gates")
+        assertEquals(listOf(bobs), bundle(ADMIN, "rcpt_mine").chain, "An administrator reads every one")
+        assertFailsWith<ReceiptNotFoundException>("Another member") { bundle(BOB, "rcpt_mine") }
+        assertEquals(bobs, bundle(BOB, "rcpt_bobs").receipt)
     }
 }

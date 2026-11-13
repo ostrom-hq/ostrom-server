@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.receipts.domain.models
 
+import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
 import kotlinx.serialization.json.JsonObject
@@ -17,6 +18,9 @@ import kotlin.uuid.Uuid
  * @property subjectId The id of what it is about.
  * @property body The signed receipt, `signature` included.
  * @property createdAt When it was signed.
+ * @property sessionId The session it is about (its `sessionId`, or the subject of a session receipt), or null for a
+ *   receipt about no session (a harness, a decision, a gate of a pull request's CI): the organization's.
+ * @property member The person of that session, its owner, or null when unknown.
  */
 data class StoredReceipt(
     val orgId: Uuid,
@@ -25,7 +29,31 @@ data class StoredReceipt(
     val subjectId: String,
     val body: JsonObject,
     val createdAt: Instant,
+    val sessionId: String? = null,
+    val member: String? = null,
 )
+
+/**
+ * Who reads receipts (TeamCode #238): an owner or an administrator reads every receipt of the organization; anyone
+ * else the receipts about no session, those of their own sessions, and those of the sessions whose gates they approve.
+ *
+ * @property orgId The organization.
+ * @property person The person's login, or null when unknown (they then read the receipts about no session only).
+ * @property readsAll True for an owner or an administrator.
+ */
+data class ReceiptReader(val orgId: Uuid, val person: String?, val readsAll: Boolean)
+
+/** The roles that read every receipt of their organization, as every session (TeamCode #238). */
+val TEAM_READERS: Set<OrgRole> = setOf(OrgRole.OWNER, OrgRole.ADMIN)
+
+/**
+ * The receipts a list keeps for a reader who does not read them all: those about no session, those whose [member] is
+ * the reader, and those of [sessions].
+ *
+ * @property member The reader, or null when unknown.
+ * @property sessions The sessions whose gates the reader approves.
+ */
+data class ReceiptAudience(val member: String?, val sessions: List<String>)
 
 /**
  * Which receipts to list, newest first.
@@ -34,12 +62,14 @@ data class StoredReceipt(
  * @property subjectId Only this subject, when set.
  * @property before Only the receipts signed before this one (the cursor of the previous page), when set.
  * @property limit At most this many.
+ * @property audience Only the receipts this audience reads, when set; every receipt of the organization otherwise.
  */
 data class ReceiptQuery(
     val subjectKind: String? = null,
     val subjectId: String? = null,
     val before: String? = null,
     val limit: Int = DEFAULT_PAGE,
+    val audience: ReceiptAudience? = null,
 ) {
     /** The page bounds. */
     companion object {

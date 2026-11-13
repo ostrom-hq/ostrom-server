@@ -12,6 +12,7 @@ import run.ostrom.server.workflowruns.domain.models.RunPackageMismatchException
 import run.ostrom.server.workflowruns.domain.models.RunPackageNotFoundException
 import run.ostrom.server.workflowruns.domain.models.RunSessionNotFoundException
 import run.ostrom.server.workflowruns.domain.models.SessionStillOpenException
+import run.ostrom.server.workflowruns.domain.repositories.RunAudience
 import run.ostrom.server.workflowruns.domain.services.RunLaunches
 import run.ostrom.server.workflowruns.domain.services.RunPackages
 import run.ostrom.server.workflowruns.domain.services.RunSessions
@@ -87,8 +88,8 @@ class RunAccess(
         owned(actor, sessionId).takeIf { it.endedAt != null } ?: throw SessionStillOpenException(sessionId)
 
     /**
-     * The session a read is about: its person, an owner or an administrator reads it, an agent token its own launch's
-     * only; anyone else is answered as absent (TeamCode #238).
+     * The session a read is about: its person, an owner or an administrator reads it, and a person a gate of it was
+     * sent to; an agent token its own launch's only; anyone else is answered as absent (TeamCode #238).
      *
      * @param actor The caller.
      * @param sessionId The session.
@@ -97,9 +98,31 @@ class RunAccess(
      *
      * @throws RunSessionNotFoundException When it is absent or not readable by the caller.
      */
-    suspend fun reading(actor: GateActor, sessionId: String): Session =
-        sessions.find(actor.orgId, sessionId)?.takeIf { SessionAccess.canRead(actor, it) }
-            ?: throw RunSessionNotFoundException()
+    suspend fun reading(actor: GateActor, sessionId: String): Session {
+        val session = sessions.find(actor.orgId, sessionId) ?: throw RunSessionNotFoundException()
+        if (SessionAccess.canRead(actor, session) || approves(actor, session.id)) return session
+        throw RunSessionNotFoundException()
+    }
+
+    /**
+     * The runs and notifications a list of the whole organization keeps for the caller (TeamCode #238): every one for
+     * an owner or an administrator; a person's own and those of the sessions whose gates they approve otherwise.
+     *
+     * @param actor The caller: a person (an agent token lists its own session's only).
+     *
+     * @return Null for an owner or an administrator, the caller's audience otherwise.
+     */
+    suspend fun audience(actor: GateActor): RunAudience? {
+        if (SessionAccess.readsTeam(actor)) return null
+        val person = actor.personId ?: return RunAudience(null, emptyList())
+        return RunAudience(person, sessions.approvedBy(actor.orgId, person))
+    }
+
+    // Only a person approves: an agent token, a device or a service key never reads a session for its gates.
+    private suspend fun approves(actor: GateActor, sessionId: String): Boolean {
+        val person = actor.personId?.takeIf { actor.kind == ActorKind.USER } ?: return false
+        return sessions.approves(actor.orgId, person, sessionId)
+    }
 
     /**
      * The package a report names, which must be its session's: an agent never reports under another package, nor

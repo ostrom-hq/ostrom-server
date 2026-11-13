@@ -9,6 +9,7 @@ import run.ostrom.server.kernel.observability.CachedCount
 import run.ostrom.server.kernel.observability.OstromMetrics
 import run.ostrom.server.kernel.sessions.AgentSessions
 import run.ostrom.server.kernel.sessions.SessionEndListener
+import run.ostrom.server.receipts.domain.services.ReceiptOwners
 import run.ostrom.server.sessions.domain.repositories.SessionsRepository
 import run.ostrom.server.sessions.domain.services.NoSessionCosts
 import run.ostrom.server.sessions.domain.services.SessionCosts
@@ -34,6 +35,7 @@ import run.ostrom.server.sessions.domain.usecases.SweepStaleSessionsUseCaseImpl
 import run.ostrom.server.sessions.infrastructure.ActiveSessionsCount
 import run.ostrom.server.sessions.infrastructure.PostgresSessionsRepository
 import run.ostrom.server.sessions.infrastructure.SessionsAgentDirectory
+import run.ostrom.server.sessions.infrastructure.SessionsReceiptOwners
 import run.ostrom.server.sessions.infrastructure.SessionsGateGuard
 import run.ostrom.server.sessions.infrastructure.SessionsMigrations
 import run.ostrom.server.sessions.presentation.SessionsRoutesDependencies
@@ -67,6 +69,7 @@ object SessionsModule : ServerModule {
         single<StartSessionUseCase> { StartSessionUseCaseImpl(get(), get()) }
         single<EndSessionUseCase> { EndSessionUseCaseImpl(get(), get(), getAll<SessionEndListener>()) }
         single<AgentSessions> { SessionsAgentDirectory(get()) }
+        single<ReceiptOwners> { SessionsReceiptOwners(get()) }
         single<SessionAliveUseCase> { SessionAliveUseCaseImpl(get(), get()) }
         single<ReopenSessionUseCase> { ReopenSessionUseCaseImpl(get(), get()) }
         single<ReportSeenUseCase> { ReportSeenUseCaseImpl(get(), get()) }

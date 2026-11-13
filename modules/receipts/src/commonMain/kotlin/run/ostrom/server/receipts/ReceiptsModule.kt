@@ -6,9 +6,14 @@ import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.receipts.domain.repositories.ReceiptsRepository
 import run.ostrom.server.receipts.domain.services.ReceiptBodySigner
+import run.ostrom.server.receipts.domain.services.ReceiptOwners
+import run.ostrom.server.receipts.domain.services.ReceiptReaders
 import run.ostrom.server.receipts.domain.services.ReceiptRules
 import run.ostrom.server.receipts.domain.services.TrustedReceiptKeys
 import run.ostrom.server.receipts.domain.usecases.GetReceiptUseCase
+import run.ostrom.server.receipts.domain.usecases.ReadReceiptUseCase
+import run.ostrom.server.receipts.domain.usecases.ReadReceiptUseCaseImpl
+import run.ostrom.server.receipts.domain.usecases.ReceiptAccess
 import run.ostrom.server.receipts.domain.usecases.GetReceiptUseCaseImpl
 import run.ostrom.server.receipts.domain.usecases.ListReceiptKeysUseCase
 import run.ostrom.server.receipts.domain.usecases.ListReceiptKeysUseCaseImpl
@@ -20,8 +25,9 @@ import run.ostrom.server.receipts.domain.usecases.VerifyReceiptUseCase
 import run.ostrom.server.receipts.domain.usecases.VerifyReceiptUseCaseImpl
 import run.ostrom.server.receipts.infrastructure.InstanceReceiptSigner
 import run.ostrom.server.receipts.infrastructure.InstanceTrustedReceiptKeys
+import run.ostrom.server.receipts.infrastructure.NoReceiptOwners
 import run.ostrom.server.receipts.infrastructure.NoReceiptRules
-
+import run.ostrom.server.receipts.infrastructure.OrgReceiptReaders
 import run.ostrom.server.receipts.infrastructure.PostgresReceiptsRepository
 import run.ostrom.server.receipts.infrastructure.ReceiptsMigrations
 import run.ostrom.server.receipts.presentation.ReceiptsRoutesDependencies
@@ -43,9 +49,11 @@ object ReceiptsModule : ServerModule {
         single<ReceiptsRepository> { PostgresReceiptsRepository(get()) }
         single<ReceiptBodySigner> { InstanceReceiptSigner(get()) }
         single<TrustedReceiptKeys> { InstanceTrustedReceiptKeys(get()) }
-        single<SignReceiptUseCase> { SignReceiptUseCaseImpl(get(), get(), get()) }
+        single<SignReceiptUseCase> { SignReceiptUseCaseImpl(get(), get(), get(), get()) }
+        single { ReceiptAccess(get(), get()) }
         single<GetReceiptUseCase> { GetReceiptUseCaseImpl(get()) }
-        single<ListReceiptsUseCase> { ListReceiptsUseCaseImpl(get()) }
+        single<ReadReceiptUseCase> { ReadReceiptUseCaseImpl(get()) }
+        single<ListReceiptsUseCase> { ListReceiptsUseCaseImpl(get(), get()) }
         single<VerifyReceiptUseCase> { VerifyReceiptUseCaseImpl(get(), get()) }
         single<ListReceiptKeysUseCase> { ListReceiptKeysUseCaseImpl(get()) }
         single { ReceiptsRoutesDependencies(get(), get(), get(), get(), get()) }
@@ -53,11 +61,17 @@ object ReceiptsModule : ServerModule {
 
     override val migrations: List<SchemaMigration> = ReceiptsMigrations
 
-    /** Binds [NoReceiptRules] unless a loaded module binds the rules. */
+    /**
+     * Binds [NoReceiptRules], [OrgReceiptReaders] and [NoReceiptOwners] unless a loaded module binds the rules (the
+     * rules module), the readers (the gates module) or the owners (the sessions module).
+     */
     override suspend fun initialize(koin: Koin) {
-        if (koin.getOrNull<ReceiptRules>() == null) {
-            koin.loadModules(listOf(module { single<ReceiptRules> { NoReceiptRules() } }))
+        val defaults = module {
+            if (koin.getOrNull<ReceiptRules>() == null) single<ReceiptRules> { NoReceiptRules() }
+            if (koin.getOrNull<ReceiptReaders>() == null) single<ReceiptReaders> { OrgReceiptReaders(get()) }
+            if (koin.getOrNull<ReceiptOwners>() == null) single<ReceiptOwners> { NoReceiptOwners() }
         }
+        koin.loadModules(listOf(defaults))
     }
 
     override fun routes(route: Route, koin: Koin) {

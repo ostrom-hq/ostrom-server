@@ -5,6 +5,7 @@ import run.ostrom.server.receipts.domain.models.InvalidReceiptException
 import run.ostrom.server.receipts.domain.models.StoredReceipt
 import run.ostrom.server.receipts.domain.repositories.ReceiptsRepository
 import run.ostrom.server.receipts.domain.services.ReceiptBodySigner
+import run.ostrom.server.receipts.domain.services.ReceiptOwners
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlin.time.Clock
@@ -38,11 +39,13 @@ interface SignReceiptUseCase {
  * @param repository The receipts.
  * @param signer The instance key.
  * @param clock The clock.
+ * @param owners The person of the session a receipt is about, stored beside it: who reads it (TeamCode #238).
  */
 class SignReceiptUseCaseImpl(
     private val repository: ReceiptsRepository,
     private val signer: ReceiptBodySigner,
     private val clock: Clock,
+    private val owners: ReceiptOwners,
 ) : SignReceiptUseCase {
     override suspend fun invoke(orgId: Uuid, draft: JsonObject, id: String?): JsonObject {
         val (kind, subjectId) = subjectOf(draft)
@@ -64,10 +67,17 @@ class SignReceiptUseCaseImpl(
             ),
         )
 
+        val session = sessionOf(draft, kind, subjectId)
+        val member = session?.let { owners.ownerOf(orgId, it) }
         return repository.insertIfAbsent(
-            StoredReceipt(orgId, receiptId, kind, subjectId, signer.sign(body), now),
+            StoredReceipt(orgId, receiptId, kind, subjectId, signer.sign(body), now, session, member),
         ).body
     }
+
+    // The session a receipt is about: the one it names, else the subject of a session receipt (as the receipts
+    // migration 3 reads the receipts signed before).
+    private fun sessionOf(draft: JsonObject, kind: String, subjectId: String): String? =
+        draft.text(SESSION_ID) ?: subjectId.takeIf { kind == SESSION }
 
     private fun subjectOf(draft: JsonObject): Pair<String, String> {
         val subject = draft["subject"] as? JsonObject
@@ -99,7 +109,9 @@ fun Instant.isoMillis(): String {
 
 // Top-level, not in the private companion: a companion property has a getter nothing calls, which Kover counts.
 private val SERVER_FIELDS = listOf("id", "createdAt", "signature")
-private val BOUND_FIELDS = listOf("launchId", "sessionId")
+private const val SESSION_ID = "sessionId"
+private const val SESSION = "session"
+private val BOUND_FIELDS = listOf("launchId", SESSION_ID)
 
 /** The field of a signed receipt that names its organization (contract `Receipt.orgId`). */
 const val ORG_ID: String = "orgId"

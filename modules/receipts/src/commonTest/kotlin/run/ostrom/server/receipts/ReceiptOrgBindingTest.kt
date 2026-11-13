@@ -21,8 +21,8 @@ class ReceiptOrgBindingTest {
     private val receipts = FakeReceipts()
     private val instance = SeedSigner(hex(GoldenVectors.SEED_HEX))
     private val clock = FixedClock()
-    private val sign = SignReceiptUseCaseImpl(receipts, InstanceReceiptSigner(instance), clock)
-    private val verify = VerifyReceiptUseCaseImpl(receipts, FakeKeys(listOf(instance.receiptKey())))
+    private val sign = SignReceiptUseCaseImpl(receipts, InstanceReceiptSigner(instance), clock, FakeOwners())
+    private val verify = VerifyReceiptUseCaseImpl(access(receipts), FakeKeys(listOf(instance.receiptKey())))
 
     @Test
     fun twoOrganizationsWithTheSameSourcesInTheSameMinuteSignDifferentBodies() = runTest {
@@ -39,10 +39,10 @@ class ReceiptOrgBindingTest {
         // A's receipt, byte for byte, presented to B: B's store holds it under the same id.
         receipts.rows += StoredReceipt(ORG_B, HARNESS, "gate", "harness", ofA, clock.now)
 
-        val asB = verify(ORG_B, HARNESS)
+        val asB = verify(admin(ORG_B), HARNESS)
         assertFalse(asB.ok, "A's receipt is not B's")
         assertEquals("This receipt was signed for another organization.", asB.reason)
-        assertTrue(verify(ORG_A, HARNESS).ok, "It stays A's")
+        assertTrue(verify(admin(ORG_A), HARNESS).ok, "It stays A's")
     }
 
     @Test
@@ -51,7 +51,7 @@ class ReceiptOrgBindingTest {
         val draft = JsonObject(draft("s-1", "session") + bound)
         val receipt = sign(ORG_A, draft)
         assertEquals("lch_1" to "s-1", receipt.text("launchId") to receipt.text("sessionId"))
-        assertTrue(verify(ORG_A, receipt.text("id")).orgBound)
+        assertTrue(verify(admin(ORG_A), receipt.text("id")).orgBound)
         val moved = JsonObject(receipt + ("sessionId" to str("s-2")))
         assertFalse(verify.verify(ORG_A, moved).ok, "Signed: another session breaks the signature")
         assertFalse(verify.verify(ORG_A, moved).orgBound, "A receipt that does not verify is bound to nothing")

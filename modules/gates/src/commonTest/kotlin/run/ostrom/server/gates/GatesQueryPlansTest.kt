@@ -112,6 +112,12 @@ class GatesQueryPlansTest {
             "end of a session (asking, reserving)" to serving.explain(GatesQueries.SESSION_ENDED) {
                 bind("session", sessionOf(7))
             },
+            "an approver of a session's gates (receipts, TeamCode #238)" to serving.explain(GatesQueries.APPROVES) {
+                bind("session", sessionOf(7)).bind("approver", "rev-5@acme.test")
+            },
+            "the sessions of an approver's gates (receipts list)" to serving.explain(GatesQueries.APPROVED_SESSIONS) {
+                bind("approver", "rev-5@acme.test")
+            },
         )
     }
 

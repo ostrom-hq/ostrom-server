@@ -151,10 +151,16 @@ class ListNotificationsUseCaseImpl(
         val sessionId = query.sessionId
         if (sessionId != null) access.reading(actor, sessionId)
         if (sessionId == null && actor.kind == ActorKind.AGENT_SESSION) return emptyList()
-        // A `before` that names no notification of the organization (forged, or another's) is a 400, not an empty page.
-        return Pages.checked("before", query.before, repository.notifications(actor.orgId, query)) {
-            repository.hasNotification(actor.orgId, it)
+        // TeamCode #238: without a session, a member lists their own and those of the sessions whose gates they
+        // approve. A `before` that names none the caller reads (forged, another organization's or member's) is a 400,
+        // not an empty page: a member's before any page, whose start would otherwise order theirs against another's.
+        val audience = if (sessionId == null) access.audience(actor) else null
+        val before = query.before
+        if (audience != null && before != null && !repository.hasNotification(actor.orgId, before, audience)) {
+            Pages.unknownCursor("before")
         }
+        val page = repository.notifications(actor.orgId, query.copy(audience = audience))
+        return Pages.checked("before", before, page) { repository.hasNotification(actor.orgId, it, audience) }
     }
 }
 

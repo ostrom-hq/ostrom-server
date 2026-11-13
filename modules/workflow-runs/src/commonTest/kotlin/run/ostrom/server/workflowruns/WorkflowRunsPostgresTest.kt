@@ -49,6 +49,7 @@ import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.sessions.SessionsModule
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
+import run.ostrom.server.workflowruns.domain.repositories.RunAudience
 import run.ostrom.server.workflowruns.domain.repositories.RunQuery
 import run.ostrom.server.workflowruns.domain.repositories.WorkflowRunsRepository
 import run.ostrom.server.workflowruns.infrastructure.RunQueries
@@ -594,6 +595,22 @@ class WorkflowRunsPostgresTest {
                 server.call(agent, "/api/v1/checks", CHECK)
                 server.call(agent, "/api/v1/notifications", NOTIFY.replace("git push", "git push $it"))
             }
+            // A member reads Ada's runs as an approver of her session's gates, nobody else's.
+            val repository = server.koin.get<WorkflowRunsRepository>()
+            val member = RunAudience("mia", listOf("s-1", "s-2"))
+            val stranger = RunAudience(null, listOf("s-9"))
+            val all = repository.checks(ada.org.id, RunQuery(limit = PAGE))
+            assertEquals(all, repository.checks(ada.org.id, RunQuery(limit = PAGE, audience = member)))
+            val own = RunAudience("ada", emptyList())
+            assertEquals(all, repository.checks(ada.org.id, RunQuery(limit = PAGE, audience = own)))
+            assertEquals(emptyList(), repository.checks(ada.org.id, RunQuery(audience = stranger)))
+            assertEquals(ROWS, repository.notifications(ada.org.id, RunQuery(audience = member)).size)
+            assertEquals(emptyList(), repository.notifications(ada.org.id, RunQuery(audience = stranger)))
+            assertTrue(repository.hasCheck(ada.org.id, all.first().id, member))
+            assertFalse(repository.hasCheck(ada.org.id, all.first().id, stranger))
+            val notified = repository.notifications(ada.org.id, RunQuery()).first().id
+            assertTrue(repository.hasNotification(ada.org.id, notified, own))
+            assertFalse(repository.hasNotification(ada.org.id, notified, stranger))
             // Statistics only: the serving role owns no table, the owner analyzes them.
             server.database.owner.execute("ANALYZE workflow_runs_checks").getOrThrow()
             server.database.owner.execute("ANALYZE workflow_runs_notifications").getOrThrow()
@@ -610,6 +627,10 @@ class WorkflowRunsPostgresTest {
                     "workflow_runs_notifications_",
                 ),
                 Triple("an action's first notification", RunQueries.FIRST_NOTIFICATION, "once"),
+                // TeamCode #238: a member's own (`dev`), and those of the sessions whose gates they approve.
+                Triple("checks of a member", RunQueries.checks(RunQuery(audience = member)), "dev"),
+                Triple("notifications of a member", RunQueries.notifications(RunQuery(audience = member)), "dev"),
+                Triple("a member's cursor", RunQueries.holds("workflow_runs_checks", member), "pkey"),
                 Triple("the attested runs of a session", RunQueries.ATTESTED, "session"),
             )
             plans.forEach { (name, sql, index) ->
@@ -619,7 +640,8 @@ class WorkflowRunsPostgresTest {
                         .bindIfPresent(sql, "limit", PAGE).bindIfPresent(sql, "session_id", "s-1")
                         .bindIfPresent(sql, "before", "chk_x").bindIfPresent(sql, "notify_id", "nt-1")
                         .bindIfPresent(sql, "action_key", "k").bindIfPresent(sql, "node_id", "n-check")
-                        .bindIfPresent(sql, "status", "sent")
+                        .bindIfPresent(sql, "status", "sent").bindIfPresent(sql, "dev", "ada")
+                        .bindIfPresent(sql, "sessions", """["s-1", "s-2"]""").bindIfPresent(sql, "id", "chk_x")
                     tx.fetchAll(explain).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
                 }
                 println("-- $name\n$plan")
