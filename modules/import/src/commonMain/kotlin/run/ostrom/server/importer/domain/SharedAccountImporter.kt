@@ -167,7 +167,7 @@ class SharedAccountImporter(
                     if (change == null) ImportAction.UNCHANGED else carryOut(key, change)
                 }
             }
-            return AccountImportOutcome(action, known[key]?.ownership?.handover())
+            return AccountImportOutcome(action, known[key]?.let { it.ownership.handover() })
         }
 
         private suspend fun carryOut(key: Pair<AccountProvider, String>, change: Change): ImportAction {

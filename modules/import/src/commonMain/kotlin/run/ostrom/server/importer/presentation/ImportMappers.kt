@@ -78,7 +78,7 @@ fun ImportReport.toDto() = ImportReportDto(
             it.name,
             it.action.name.lowercase(),
             it.reason,
-            it.handover?.name?.lowercase(),
+            it.handover?.let { handover -> handover.name.lowercase() },
         )
     },
     created = count(ImportAction.CREATED),

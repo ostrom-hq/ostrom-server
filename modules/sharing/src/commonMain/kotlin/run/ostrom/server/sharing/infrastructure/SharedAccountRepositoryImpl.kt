@@ -57,26 +57,12 @@ class SharedAccountRepositoryImpl(private val driver: Driver) : SharedAccountRep
                 .bind("envelope", envelope),
         ).getOrThrow().singleOrNull()
             ?: throw when {
-                refreshing(account) -> AccountRefreshingException()
+                driver.refreshing(account) -> AccountRefreshingException()
                 expectedVersion == null -> AccountOwnedByAnotherMemberException()
                 else -> AccountChangedException()
             }
         return row.toAccount()
     }
-
-    /** Whether the org's row of [account]'s provider account is being refreshed now. */
-    private suspend fun refreshing(account: SharedAccount): Boolean = driver.fetchInOrg(
-        account.orgId,
-        Statement.create(
-            "SELECT 1 FROM sharing_accounts WHERE org_id = :org_id AND provider = :provider " +
-                "AND provider_account_id = :provider_account_id " +
-                "AND (owner_member_id IS NULL OR owner_member_id = :owner) AND ${refreshingSql("sharing_accounts")}",
-        )
-            .bind("org_id", account.orgId)
-            .bindNullable("owner", account.ownerMemberId, Uuid::class)
-            .bind("provider", account.provider.name)
-            .bind("provider_account_id", account.providerAccountId),
-    ).getOrThrow().firstOrNull() != null
 
     override suspend fun get(orgId: Uuid, id: Uuid): SharedAccount? = driver.fetchInOrg(
         orgId,
@@ -157,6 +143,20 @@ class SharedAccountRepositoryImpl(private val driver: Driver) : SharedAccountRep
                 .bind("ownership", ownership.name),
         ).getOrThrow().firstOrNull()?.toAccount()
 }
+
+/** Whether the org's row of [account]'s provider account is being refreshed now. */
+private suspend fun Driver.refreshing(account: SharedAccount): Boolean = fetchInOrg(
+    account.orgId,
+    Statement.create(
+        "SELECT 1 FROM sharing_accounts WHERE org_id = :org_id AND provider = :provider " +
+            "AND provider_account_id = :provider_account_id " +
+            "AND (owner_member_id IS NULL OR owner_member_id = :owner) AND ${refreshingSql("sharing_accounts")}",
+    )
+        .bind("org_id", account.orgId)
+        .bindNullable("owner", account.ownerMemberId, Uuid::class)
+        .bind("provider", account.provider.name)
+        .bind("provider_account_id", account.providerAccountId),
+).getOrThrow().firstOrNull() != null
 
 /**
  * Whether [table]'s row is being refreshed now: an intent younger than [AccountTokens.PENDING_LIMIT] by the

@@ -160,14 +160,16 @@ class ShareAccountUseCaseImpl(
             expected != null && (same?.version ?: 0) != expected -> AccountChangedException()
             same == null && existing.size >= SharingRules.MAX_ACCOUNTS -> TooManyAccountsException()
             same != null && !caller.mayChange(same) -> AccountOwnedByAnotherMemberException()
-            // A member's fresh share would give Ostrom an account an admin left waiting, or serving access-only.
-            same != null && payload.ownership == null && same.ownership != RefreshOwnership.OSTROM &&
-                !caller.role.isAdmin -> AccountInUseException()
+            same != null && takesOver(caller, payload, same) -> AccountInUseException()
             else -> null
         }
         if (refusal != null) throw refusal
         return same
     }
+
+    /** A member's fresh share would give Ostrom an account an admin left waiting, or serving access-only. */
+    private fun takesOver(caller: Caller, payload: ShareAccountPayload, same: SharedAccount): Boolean =
+        payload.ownership == null && same.ownership != RefreshOwnership.OSTROM && !caller.role.isAdmin
 }
 
 /**

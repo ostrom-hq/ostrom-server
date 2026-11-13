@@ -34,13 +34,14 @@ interface ImportTeamCodeUseCase {
      *   accounts.
      * @throws AccessOnlyCutoverException When both [accessOnly] and [cutoverBy] are given.
      */
+    @Suppress("LongParameterList") // TeamCode's import: what it reads, how it maps it, and the three ways it runs.
     suspend operator fun invoke(
         caller: Caller,
         export: TeamCodeExport,
         memberMap: Map<String, Uuid>,
         dryRun: Boolean,
         cutoverBy: Uuid?,
-        accessOnly: Boolean = false,
+        accessOnly: Boolean,
     ): ImportReport
 }
 
