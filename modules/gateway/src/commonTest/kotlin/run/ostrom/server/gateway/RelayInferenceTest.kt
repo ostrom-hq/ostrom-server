@@ -6,6 +6,7 @@ import run.ostrom.server.gateway.domain.AdmissionRequest
 import run.ostrom.server.gateway.domain.AllowAllSpend
 import run.ostrom.server.gateway.domain.AwaitAdmissionUseCase
 import run.ostrom.server.gateway.domain.AwaitAdmissionUseCaseImpl
+import run.ostrom.server.gateway.domain.CancellationWatch
 import run.ostrom.server.gateway.domain.GatewaySettings
 import run.ostrom.server.gateway.domain.InferenceCall
 import run.ostrom.server.gateway.domain.InferencePlan
@@ -45,6 +46,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.uuid.Uuid
 
 /** The relay with a fake provider: bytes untouched, usage metered, retries on shared accounts, failures recorded. */
 class RelayInferenceTest {
@@ -262,6 +264,38 @@ class RelayInferenceTest {
             held += request
             return block()
         }
+    }
+
+    private fun watched(upstream: FakeUpstream, markers: InMemoryCancellations) = RelayInferenceUseCaseImpl(
+        planner(settings, shared, keys = InstanceProviderKeys(anthropic = "sk-an")),
+        upstream,
+        PriceTable(),
+        { sink.record(it) },
+        { observed += it },
+        clock,
+        cancellations = CancellationWatch(markers),
+    )
+
+    @Test
+    fun aCallWithTheClientsIdStopsOnItsMarkerAndOneWithoutIsNeverWatched() = runTest {
+        val markers = InMemoryCancellations()
+        val id = Uuid.random()
+        val body = """{"model":"claude-opus-5"}"""
+        val withId = InferenceCall(WireProtocol.MESSAGES, body, emptyMap(), null, clientRequestId = id)
+        watched(FakeUpstream(eventAnswer()), markers)(Gw.memberA, withId, RecordingResponder())
+        assertEquals(1, markers.reads, "Read once before it starts; it ended before the first poll")
+        watched(FakeUpstream(eventAnswer()), markers)(Gw.memberA, call(), RecordingResponder())
+        assertEquals(1, markers.reads, "A call without an id reads no marker")
+        relay(FakeUpstream(eventAnswer()))(Gw.memberA, withId, RecordingResponder())
+        assertEquals(1, markers.reads, "Nor does a gateway without cancellations")
+
+        markers.cancel(Gw.orgA, Gw.memberA.memberId, id)
+        val upstream = FakeUpstream(eventAnswer())
+        assertFailsWith<CancellationException> {
+            watched(upstream, markers)(Gw.memberA, withId, RecordingResponder())
+        }
+        assertTrue(upstream.requests.isEmpty(), "A call cancelled before it starts never reaches the provider")
+        assertEquals(3, records.size, "Nor is it recorded")
     }
 
     private fun queued(upstream: FakeUpstream, admission: AwaitAdmissionUseCase) = RelayInferenceUseCaseImpl(

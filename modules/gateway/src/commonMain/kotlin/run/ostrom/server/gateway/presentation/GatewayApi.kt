@@ -21,6 +21,16 @@ class InferenceSettingsApi
 class InferenceQueueApi
 
 /**
+ * `/api/v1/inference/requests/{id}/cancel`: stops one of the caller's inference calls (contract
+ * `cancelInferenceRequest`).
+ *
+ * @property id The call's `x-ostrom-client-request-id`.
+ */
+@Serializable
+@Resource("/api/v1/inference/requests/{id}/cancel")
+class InferenceRequestCancelApi(val id: String)
+
+/**
  * The waiting calls (contract `InferenceQueue`).
  *
  * @property waiting The org's.

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.gateway.presentation
 
+import run.ostrom.server.gateway.domain.CancelInferenceRequestUseCase
 import run.ostrom.server.gateway.domain.GetGatewaySettingsUseCase
 import run.ostrom.server.gateway.domain.GetInferenceQueueUseCase
 import run.ostrom.server.gateway.domain.GetModelPolicyUseCase
@@ -25,6 +26,7 @@ import kotlin.time.Clock
  * @property clock The time.
  * @property audit Writes a change of the policy or the settings to the organization's audit log.
  * @property getQueue Reads the admission queue's waiting calls.
+ * @property cancel Stops one of the caller's inference calls.
  */
 data class GatewayRoutesDependencies(
     val tokens: TokenAuthenticator,
@@ -37,4 +39,5 @@ data class GatewayRoutesDependencies(
     val clock: Clock,
     val audit: OrgAuditTrail,
     val getQueue: GetInferenceQueueUseCase,
+    val cancel: CancelInferenceRequestUseCase,
 )

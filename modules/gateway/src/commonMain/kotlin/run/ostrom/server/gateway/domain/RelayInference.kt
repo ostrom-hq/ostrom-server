@@ -81,8 +81,9 @@ interface RelayInferenceUseCase {
  * @param tracer The span of each call, from before its first try to its record.
  * @param admission The admission queue: a call waits there for a busy account or its member's limit. Without one, a
  *   call no account can take now is refused with 429 `no_capacity`.
+ * @param cancellations Stops a call its client cancels by its `x-ostrom-client-request-id`; without it, none stops.
  */
-@Suppress("LongParameterList") // Six collaborators, the tracer and the queue, named at the composition root.
+@Suppress("LongParameterList") // Six collaborators, the tracer, the queue and the cancellations, named at the root.
 class RelayInferenceUseCaseImpl(
     private val planner: InferencePlanner,
     private val upstream: InferenceUpstream,
@@ -92,8 +93,19 @@ class RelayInferenceUseCaseImpl(
     private val clock: Clock,
     private val tracer: ModelCallTracer = NoModelCallTracer,
     private val admission: AwaitAdmissionUseCase? = null,
+    private val cancellations: CancellationWatch? = null,
 ) : RelayInferenceUseCase {
     override suspend fun invoke(caller: Caller, call: InferenceCall, responder: InferenceResponder) {
+        val watch = cancellations
+        val requestId = call.clientRequestId
+        if (watch == null || requestId == null) {
+            serve(caller, call, responder)
+        } else {
+            watch.run(caller, requestId) { serve(caller, call, responder) }
+        }
+    }
+
+    private suspend fun serve(caller: Caller, call: InferenceCall, responder: InferenceResponder) {
         val started = clock.now()
         val exchange = Exchange(caller, call, responder, started, planner.configOf(caller), trace())
         val queue = admission

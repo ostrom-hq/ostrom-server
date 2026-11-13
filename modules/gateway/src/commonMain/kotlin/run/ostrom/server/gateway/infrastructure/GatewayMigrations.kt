@@ -7,7 +7,7 @@ import run.ostrom.server.secrets.infrastructure.tenantTableSql
 
 /**
  * The schema of the gateway module; its tables start with `gateway_`. Version 2 confines both tables to their org
- * (row-level security, SECURITY-AUDIT S2-01); version 3 adds the admission queue.
+ * (row-level security, SECURITY-AUDIT S2-01); version 3 adds the admission queue, version 4 the cancellation markers.
  */
 val GatewayMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -69,5 +69,21 @@ val GatewayMigrations: List<SchemaMigration> = listOf(
             ALTER TABLE gateway_settings ADD COLUMN member_concurrency TEXT NOT NULL DEFAULT '{}'
         """.trimIndent() + ";\n" + tenantTableSql("gateway_admissions") + "\n" +
             tenantTableSql("gateway_admission_turns"),
+    ),
+    // The cancellation markers of inference calls (TeamCode's `request_cancellations`): a member's own ids, kept ten
+    // minutes, read by every replica that runs one of their calls.
+    SchemaMigration(
+        version = 4,
+        name = "create_gateway_cancellations",
+        sql = """
+            CREATE TABLE gateway_cancellations (
+                org_id UUID NOT NULL,
+                member_id UUID NOT NULL,
+                request_id UUID NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                PRIMARY KEY (org_id, member_id, request_id)
+            );
+            CREATE INDEX gateway_cancellations_expiry ON gateway_cancellations (org_id, expires_at)
+        """.trimIndent() + ";\n" + tenantTableSql("gateway_cancellations"),
     ),
 )

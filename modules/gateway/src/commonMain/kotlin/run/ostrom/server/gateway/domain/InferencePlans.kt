@@ -99,6 +99,9 @@ enum class RefusalKind(val status: Int, val anthropicType: String, val openAiTyp
     /** `x-ostrom-workload` is neither `interactive` nor `background`, or is sent twice. */
     INVALID_WORKLOAD(BAD_REQUEST, "invalid_request_error", "invalid_request_error"),
 
+    /** `x-ostrom-client-request-id` is not one lowercase UUID. */
+    INVALID_REQUEST_ID(BAD_REQUEST, "invalid_request_error", "invalid_request_error"),
+
     /**
      * The org's admission queue, or the member's share of it, is full. Never `overloaded_error`: Claude Code retries it
      * whatever the headers say.
