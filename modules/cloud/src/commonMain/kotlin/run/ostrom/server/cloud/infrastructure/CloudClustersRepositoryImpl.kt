@@ -32,9 +32,10 @@ class CloudClustersRepositoryImpl(private val driver: Driver) : CloudClustersRep
                     ":pods, :storage, :version, :created_at, :updated_at) ON CONFLICT DO NOTHING",
             ),
             stored,
-        ),
+        ).bind("created_at", stored.cluster.createdAt),
     ).getOrThrow() == 1L
 
+    // Only the names the statement has: the driver refuses a value bound to none.
     override suspend fun update(stored: StoredCloudCluster): Boolean = driver.execute(
         bind(
             Statement.create(
@@ -52,7 +53,7 @@ class CloudClustersRepositoryImpl(private val driver: Driver) : CloudClustersRep
             .bind("ca", stored.sealedCaCertificate).bind("token", stored.sealedServiceAccountToken)
             .bind("namespaces", OstromJson.encodeToString(NAMES, allowedNamespaces))
             .bind("pods", maxRunningPods).bind("storage", defaultStorageClass).bind("version", version)
-            .bind("created_at", createdAt).bind("updated_at", updatedAt)
+            .bind("updated_at", updatedAt)
     }
 
     private fun ResultSet.Row.toStored(): StoredCloudCluster {

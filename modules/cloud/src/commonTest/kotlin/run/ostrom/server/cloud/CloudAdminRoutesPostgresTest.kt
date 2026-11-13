@@ -52,7 +52,7 @@ class CloudAdminRoutesPostgresTest {
             object : TokenAuthenticator {
                 override suspend fun authenticate(token: String): AuthenticatedPrincipal? = when (token) {
                     "alice", "bob", "carol" -> person(token)
-                    "alicekey" -> AuthenticatedPrincipal(ALICE.toString(), PrincipalKind.USER, setOf("cloud:write"))
+                    "alicekey" -> AuthenticatedPrincipal(ALICE.toString(), PrincipalKind.USER, CLOUD_SCOPES)
                     else -> null
                 }
             }
@@ -189,6 +189,8 @@ class CloudAdminRoutesPostgresTest {
         val clusterId = http.send("POST", "/api/v1/cloud/clusters", "alice", cluster("prod", 0))
             .body<CloudClusterResponse>().id
         assertEquals(HttpStatusCode.Unauthorized, http.get("/api/v1/cloud/profiles").status)
+        // A key never reads nor writes a team's profiles, whatever its scopes (TeamCode: they are its people's).
+        assertEquals(HttpStatusCode.Forbidden, http.get("/api/v1/cloud/profiles") { bearerAuth("alicekey") }.status)
         assertEquals(
             HttpStatusCode.Forbidden,
             http.send("POST", "/api/v1/cloud/profiles", "bob", profile(clusterId, 0)).status,
@@ -229,6 +231,7 @@ class CloudAdminRoutesPostgresTest {
     }
 
     private companion object {
+        val CLOUD_SCOPES = setOf("cloud:read", "cloud:write")
         val CAROL: Uuid = Uuid.parse("00000000-0000-0000-0000-00000000ca20")
         val PEM_JSON = PEM.replace("\n", "\\n")
     }

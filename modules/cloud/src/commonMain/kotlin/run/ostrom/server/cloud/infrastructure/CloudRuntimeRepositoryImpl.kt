@@ -7,6 +7,7 @@ import run.ostrom.server.kernel.http.OstromJson
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
+import kotlinx.serialization.json.Json
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -15,7 +16,7 @@ class CloudRuntimeRepositoryImpl(private val driver: Driver) : CloudRuntimeRepos
     override suspend fun get(): CloudRuntime? = driver
         .fetchAll("SELECT body, updated_at FROM cloud_runtime WHERE id = 1")
         .getOrThrow().firstOrNull()?.let { row ->
-            OstromJson.decodeFromString(CloudRuntime.serializer(), row.get("body").asString())
+            BODY.decodeFromString(CloudRuntime.serializer(), row.get("body").asString())
                 .copy(updatedAt = row.get("updated_at").asInstant())
         }
 
@@ -28,10 +29,16 @@ class CloudRuntimeRepositoryImpl(private val driver: Driver) : CloudRuntimeRepos
                 "WHERE id = 1 AND updated_at = :expected"
         }
         val statement = Statement.create(sql)
-            .bind("body", OstromJson.encodeToString(CloudRuntime.serializer(), runtime.copy(updatedAt = null)))
+            .bind("body", BODY.encodeToString(CloudRuntime.serializer(), runtime.copy(updatedAt = null)))
             .bind("at", runtime.updatedAt)
             .bind("by", by)
             .let { if (expectedUpdatedAt == null) it else it.bind("expected", expectedUpdatedAt) }
         return driver.execute(statement).getOrThrow() == 1L
     }
+}
+
+// Every field written, nulls included: a retention an administrator turned off (null) is not read back as the default.
+private val BODY = Json(OstromJson) {
+    encodeDefaults = true
+    explicitNulls = true
 }

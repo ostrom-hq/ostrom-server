@@ -16,6 +16,7 @@ import run.ostrom.server.kernel.auth.WriteAccess
 import run.ostrom.server.kernel.auth.authenticated
 import run.ostrom.server.kernel.auth.mayWrite
 import run.ostrom.server.kernel.auth.requirePrincipal
+import run.ostrom.server.kernel.auth.requireWrite
 import run.ostrom.server.secrets.presentation.requireCaller
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.request.receive
@@ -66,10 +67,13 @@ fun Route.cloudAdminRoutes(dependencies: CloudAdminRoutesDependencies) = with(de
         }
         get<CloudProfilesApi> {
             val caller = call.requireCaller(callers, CLOUD_READ)
+            // A team's profiles are its people's, as TeamCode's: never a key's, whatever its scopes.
+            call.requirePrincipal().requireWrite(WriteAccess.PERSON)
             call.respond(CloudProfileListResponse(profiles.list(caller).map { it.toResponse() }))
         }
         post<CloudProfilesApi> {
             val caller = call.requireCaller(callers, CLOUD_WRITE)
+            call.requirePrincipal().requireWrite(WriteAccess.PERSON)
             caller.requireAdmin()
             val profile = profiles.create(caller, call.receive<SaveCloudProfileRequest>().toInput())
             audit.record(profile.audit(call.requirePrincipal(), "cloud.profile.created"))
@@ -77,6 +81,7 @@ fun Route.cloudAdminRoutes(dependencies: CloudAdminRoutesDependencies) = with(de
         }
         put<CloudProfilesApi.One> { params ->
             val caller = call.requireCaller(callers, CLOUD_WRITE)
+            call.requirePrincipal().requireWrite(WriteAccess.PERSON)
             caller.requireAdmin()
             val id = Uuid.parseOrNull(params.id) ?: throw CloudProfileNotFoundException()
             val profile = profiles.update(caller, id, call.receive<SaveCloudProfileRequest>().toInput())
