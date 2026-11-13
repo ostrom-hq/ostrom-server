@@ -1,3 +1,7 @@
+---
+status: coming-soon
+---
+
 # Decision: one workflow system (onboarding processes, TeamCode workflows and automations)
 
 - **Goal, set by Nathan (2026-11-13):** the processes the Ostrom onboarding finds become the workflows, and that
