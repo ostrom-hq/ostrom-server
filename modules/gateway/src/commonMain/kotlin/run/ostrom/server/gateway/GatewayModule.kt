@@ -8,6 +8,9 @@ import run.ostrom.server.gateway.domain.AllowAllSpend
 import run.ostrom.server.gateway.domain.AwaitAdmissionUseCase
 import run.ostrom.server.gateway.domain.AwaitAdmissionUseCaseImpl
 import run.ostrom.server.gateway.domain.BudgetCheck
+import run.ostrom.server.gateway.domain.CancelInferenceRequestUseCase
+import run.ostrom.server.gateway.domain.CancelInferenceRequestUseCaseImpl
+import run.ostrom.server.gateway.domain.CancellationWatch
 import run.ostrom.server.gateway.domain.GatewaySettingsRepository
 import run.ostrom.server.gateway.domain.GetGatewaySettingsUseCase
 import run.ostrom.server.gateway.domain.GetGatewaySettingsUseCaseImpl
@@ -29,6 +32,7 @@ import run.ostrom.server.gateway.domain.PutModelPolicyUseCase
 import run.ostrom.server.gateway.domain.PutModelPolicyUseCaseImpl
 import run.ostrom.server.gateway.domain.RelayInferenceUseCase
 import run.ostrom.server.gateway.domain.RelayInferenceUseCaseImpl
+import run.ostrom.server.gateway.domain.RequestCancellationRepository
 import run.ostrom.server.gateway.domain.SpendGuard
 import run.ostrom.server.gateway.domain.UpstreamRequests
 import run.ostrom.server.gateway.infrastructure.AdmissionQueueRepositoryImpl
@@ -36,6 +40,7 @@ import run.ostrom.server.gateway.infrastructure.GatewayMigrations
 import run.ostrom.server.gateway.infrastructure.GatewaySettingsRepositoryImpl
 import run.ostrom.server.gateway.infrastructure.KtorInferenceUpstream
 import run.ostrom.server.gateway.infrastructure.MeteredModelCallObserver
+import run.ostrom.server.gateway.infrastructure.RequestCancellationRepositoryImpl
 import run.ostrom.server.gateway.infrastructure.SpanModelCallTracer
 import run.ostrom.server.gateway.presentation.GatewayGovernanceChange
 import run.ostrom.server.gateway.presentation.GatewayRoutesDependencies
@@ -104,6 +109,8 @@ object GatewayModule : ServerModule {
         single<AdmissionQueueRepository> { AdmissionQueueRepositoryImpl(get()) }
         single<AwaitAdmissionUseCase> { AwaitAdmissionUseCaseImpl(get(), get()) }
         single<GetInferenceQueueUseCase> { GetInferenceQueueUseCaseImpl(get()) }
+        single<RequestCancellationRepository> { RequestCancellationRepositoryImpl(get()) }
+        single<CancelInferenceRequestUseCase> { CancelInferenceRequestUseCaseImpl(get()) }
         single<RelayInferenceUseCase> {
             RelayInferenceUseCaseImpl(
                 planner = get(),
@@ -114,6 +121,7 @@ object GatewayModule : ServerModule {
                 clock = get(),
                 tracer = SpanModelCallTracer(get<Telemetry>().tracer),
                 admission = get(),
+                cancellations = CancellationWatch(get()),
             )
         }
         single<GetGatewaySettingsUseCase> { GetGatewaySettingsUseCaseImpl(get()) }
@@ -136,6 +144,7 @@ object GatewayModule : ServerModule {
                 clock = get(),
                 audit = get(),
                 getQueue = get(),
+                cancel = get(),
             )
         }
     }
@@ -151,7 +160,10 @@ object GatewayModule : ServerModule {
         route.gatewayRoutes(koin.get())
     }
 
-    /** The inference gateway and its admission queue: an org configures its own provider keys, so both are served. */
+    /**
+     * The inference gateway, its admission queue and the cancellation of a call: an org configures its own provider
+     * keys, so all are served.
+     */
     override suspend fun features(koin: Koin): Set<String> =
-        setOf(ServerFeatures.INFERENCE, ServerFeatures.INFERENCE_QUEUE)
+        setOf(ServerFeatures.INFERENCE, ServerFeatures.INFERENCE_QUEUE, ServerFeatures.INFERENCE_CANCEL)
 }

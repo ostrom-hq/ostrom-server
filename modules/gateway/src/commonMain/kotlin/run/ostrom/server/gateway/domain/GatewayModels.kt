@@ -63,6 +63,7 @@ enum class InferenceProvider(val wire: String, val family: String, val label: St
  * @property headers The agent's headers, names in lowercase, without its Ostrom credential.
  * @property sessionId The agent session, for account affinity, when the agent named it.
  * @property workload Its class in the admission queue (`x-ostrom-workload`).
+ * @property clientRequestId The client's own id of the call (`x-ostrom-client-request-id`), by which it may cancel it.
  */
 class InferenceCall(
     val protocol: WireProtocol,
@@ -70,6 +71,7 @@ class InferenceCall(
     val headers: Map<String, String>,
     val sessionId: String?,
     val workload: Workload = Workload.INTERACTIVE,
+    val clientRequestId: Uuid? = null,
 ) {
     override fun toString(): String = "InferenceCall($protocol, ${body.length} chars)"
 }

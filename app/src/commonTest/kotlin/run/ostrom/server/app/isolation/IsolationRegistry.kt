@@ -169,6 +169,9 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/policy/models" to Case.Target(),
     "PUT /api/v1/policy/models" to Case.Target(body = """{"default": ["claude-sonnet-4-5"]}""", admin = true),
     "GET /api/v1/inference/queue" to Case.Target(),
+    // A cancel names the caller's own call id, never a resource: the same id in both requests.
+    "POST /api/v1/inference/requests/{id}/cancel" to
+        Case.Target(mapOf("id" to Param.Fixed("6f1c2b0e-9a4d-4c3e-8b7a-2d5e1f0a9c41"))),
     "GET /api/v1/inference/settings" to Case.Target(),
     "PUT /api/v1/inference/settings" to Case.Target(body = "{}", admin = true),
     "GET /api/v1/inference/v1/models" to Case.Target(),

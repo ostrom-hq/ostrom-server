@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.gateway.presentation
 
+import run.ostrom.server.gateway.domain.ClientRequestIds
 import run.ostrom.server.gateway.domain.GatewaySettings
 import run.ostrom.server.gateway.domain.InferenceCall
 import run.ostrom.server.gateway.domain.InferenceRefusal
@@ -67,6 +68,9 @@ private val INFERENCE_SCOPES = arrayOf(RelayScopes.AGENT_SESSION, RelayScopes.IN
 /** The header naming a call's class in the admission queue. */
 private const val WORKLOAD_HEADER = "x-ostrom-workload"
 
+/** The client's own id of a call, by which it cancels it; never sent to a provider. */
+private const val REQUEST_ID_HEADER = "x-ostrom-client-request-id"
+
 /** Who changes the policy and the settings besides a browser session (S2-52, declared): an `inference:admin` key. */
 private val INFERENCE_ADMINS = WriteAccess.tokens(PrincipalKind.SERVICE)
 
@@ -95,8 +99,8 @@ private fun overloaded(clock: Clock) = InferenceRefusal(
     clock.now() + OVERLOADED_RETRY,
 )
 
-/** The agent headers never passed down, not even to the planner: its credentials. */
-private val CREDENTIAL_HEADERS = setOf("authorization", "x-api-key", "cookie")
+/** The agent headers never passed down, not even to the planner: its credentials, and its own id of the call. */
+private val CREDENTIAL_HEADERS = setOf("authorization", "x-api-key", "cookie", REQUEST_ID_HEADER)
 
 /**
  * The gateway routes. The inference endpoints speak the providers' APIs (Anthropic Messages, OpenAI Responses and
@@ -134,15 +138,7 @@ fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependen
             call.respond(getPolicy(caller).toDto())
         }
         put<ModelPolicyApi> { call.putModelPolicy(dependencies) }
-        get<InferenceQueueApi> {
-            // Whoever may call models or read usage.
-            val reader = call.requireCaller(
-                callers, RelayScopes.INFERENCE_USE, RelayScopes.AGENT_SESSION, RelayScopes.INFERENCE_READ,
-                RelayScopes.USAGE_READ,
-            )
-            val counts = getQueue(reader)
-            call.respond(InferenceQueueDto(counts.waiting, counts.waitingMine))
-        }
+        inferenceControlRoutes(dependencies)
         get<InferenceSettingsApi> {
             call.respond(getSettings(call.requireCaller(callers, RelayScopes.INFERENCE_ADMIN)).toDto())
         }
@@ -244,10 +240,15 @@ private suspend fun RoutingContext.infer(dependencies: GatewayRoutesDependencies
     val responder = KtorInferenceResponder(call, dependencies.clock)
     // Sent twice, the values are joined and name no class.
     val workload = Workload.named(call.request.headers.getAll(WORKLOAD_HEADER)?.joinToString(","))
+    val requestIdHeader = call.request.headers.getAll(REQUEST_ID_HEADER)?.joinToString(",")
+    val requestId = requestIdHeader?.let { ClientRequestIds.parse(it) }
     if (bytes == null) {
         responder.refuse(protocol, InferenceRefusal(RefusalKind.INVALID, "The request exceeds 32 MiB."))
     } else if (workload == null) {
         val refusal = InferenceRefusal(RefusalKind.INVALID_WORKLOAD, "x-ostrom-workload is interactive or background.")
+        responder.refuse(protocol, refusal)
+    } else if (requestIdHeader != null && requestId == null) {
+        val refusal = InferenceRefusal(RefusalKind.INVALID_REQUEST_ID, "$REQUEST_ID_HEADER is one lowercase UUID.")
         responder.refuse(protocol, refusal)
     } else {
         val headers = call.request.headers.entries()
@@ -255,7 +256,8 @@ private suspend fun RoutingContext.infer(dependencies: GatewayRoutesDependencies
         // The session comes from the token, never from a header the agent sets (S2-53): an agent session's token is
         // its launch; any other credential has no session, so no account affinity.
         val session = principal.subjectId.takeIf { RelayScopes.AGENT_SESSION in principal.scopes }
-        val inference = InferenceCall(protocol, bytes.decodeToString(), headers, session?.take(MAX_SESSION), workload)
+        val inference =
+            InferenceCall(protocol, bytes.decodeToString(), headers, session?.take(MAX_SESSION), workload, requestId)
         dependencies.relay(caller, inference, responder)
     }
 }

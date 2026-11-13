@@ -301,6 +301,11 @@ waiting calls; every gateway refusal carries its code in `x-ostrom-error`. A spe
 `budget_insufficient`) also sends `x-should-retry: false`, as TeamCode does: Claude Code and the Anthropic SDKs then
 show the cause at once instead of retrying a state only a new period or an admin changes.
 
+A call sent with `x-ostrom-client-request-id` (a lowercase UUID) can be stopped by its member, on whichever replica
+runs it, through the inference API's cancel route (TeamCode's `requests.cancel.v1`): a marker in
+`gateway_cancellations`, kept 10 minutes (256 per member, 4,096 per org, then 503 `cancellation_limit`), read before
+the call starts and every 500 ms while it waits or streams. A call without that header reads no marker.
+
 ### Module `governance`
 
 A governance write (the rules, the gate policy, the model policy, a workflow's decision) made with a person's API
@@ -407,7 +412,7 @@ anonymous call gets 401 `unauthorized`. A module lists a key of ostrom-core's `S
 | `budgets` | `budgets.v1` | — |
 | `compiler` | `packages.v1`, `workflows.v1` | — |
 | `gates` | `gates.v1` | — |
-| `gateway` | `inference.v1`, `inference.queue.v1` | — (an organization can set its own provider keys) |
+| `gateway` | `inference.v1`, `inference.queue.v1`, `inference.cancel.v1` | — (an organization can set its own provider keys) |
 | `governance` | `governance.v1` | — |
 | `identity` | `audit.v1` | — |
 | `import` | `import.teamcode.v1` | — |
