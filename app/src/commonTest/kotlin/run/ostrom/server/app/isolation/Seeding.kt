@@ -52,6 +52,11 @@ private suspend fun Seeder.agents(party: Party) {
         expected = OK,
     )
     keep(Seed.SESSION, session, opened)
+    val todo = """{"sessionId": "$session", "reference": "${party.marker} plan", "items": [{"id": "plan",""" +
+        """ "name": "${party.marker} plan", "description": "Write the plan of ${party.marker}: what, where, why""" +
+        """ and what is out of scope, for a new agent.", "doneWhen": {"text": "Merged",""" +
+        """ "checks": [{"type": "pr_merged", "repo": "acme/api"}]}}]}"""
+    send("todo", "POST /api/v1/todos/session", agent, todo)
     val event = """{"kind": "skill", "name": "${party.marker}-skill", "sessionId": "$session", "durationMillis": 1}"""
     send("usage event", "POST /api/v1/usage/events", agent, """{"events": [$event]}""", expected = ACCEPTED)
 }

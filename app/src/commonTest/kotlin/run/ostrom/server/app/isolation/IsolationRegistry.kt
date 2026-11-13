@@ -393,6 +393,27 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     // GitHub App.
     "GET /api/v1/github/app" to Case.Target(),
     "GET /api/v1/github/app/install/start" to Case.Target(),
+    // A session's todo (todos.v1): every route names B's session, in its query or its body; B's item is `plan`.
+    "GET /api/v1/todos/session" to Case.Target(query = "sessionId={{SESSION}}"),
+    "POST /api/v1/todos/session" to Case.Target(body = TODO_BODY),
+    "POST /api/v1/todos/session/items" to Case.Target(
+        body = """{"sessionId": "{{SESSION}}", "item": $TODO_ITEM, "reason": "Taken"}""",
+    ),
+    "POST /api/v1/todos/session/items/{item}/start" to todoItem("""{"sessionId": "{{SESSION}}"}"""),
+    "POST /api/v1/todos/session/items/{item}/notes" to todoItem("""{"sessionId": "{{SESSION}}", "text": "Taken"}"""),
+    "POST /api/v1/todos/session/items/{item}/proof" to todoItem(
+        """{"sessionId": "{{SESSION}}", "checks": [{"index": 0, "passed": true, "observed": "Taken"}]}""",
+    ),
+    "POST /api/v1/todos/session/items/{item}/link" to todoItem(
+        """{"sessionId": "{{SESSION}}", "kind": "pr", "ref": "https://github.com/acme/api/pull/1"}""",
+    ),
+    "POST /api/v1/todos/session/items/{item}/drop" to todoItem("""{"sessionId": "{{SESSION}}", "reason": "Taken"}"""),
+    "GET /api/v1/todos/session/context" to Case.Target(query = "sessionId={{SESSION}}"),
+    "POST /api/v1/todos/session/stop" to Case.Target(body = """{"sessionId": "{{SESSION}}", "phase": "begin"}"""),
+    "POST /api/v1/todos/session/hook-error" to Case.Target(body = """{"sessionId": "{{SESSION}}", "text": "Taken"}"""),
+    "GET /api/v1/todos/stop-hook" to Case.Target(),
+    "PUT /api/v1/todos/stop-hook/members/{memberId}" to
+        target("memberId" to MEMBER_ID, body = """{"enabled": false}""", admin = true),
     "GET /api/v1/github/app/install/callback" to Case.Exempt(CALLBACK),
     "GET /api/v1/github/app/manifest/start" to Case.Target(),
     "GET /api/v1/github/app/manifest/callback" to Case.Exempt(CALLBACK),
@@ -420,6 +441,16 @@ private const val GATE_BODY = """{"sessionId": "{{SESSION}}", "repo": "acme/api"
 // The hook's report of a refusal on the workstation (audit A6), naming B's session: answered as for no session.
 private const val LOCAL_DENIAL_BODY = """{"sessionId": "{{SESSION}}", "repo": "acme/api", "class": "push-main",""" +
     """ "reason": "redirected", "command": "git push origin main"}"""
+
+// An item of a todo: a complete description and one typed check.
+private const val TODO_ITEM = """{"id": "plan", "name": "Plan", "description": "Write the plan of the change:""" +
+    """ what, where, why and what is out of scope, for a new agent.", "doneWhen": {"text": "Merged",""" +
+    """ "checks": [{"type": "pr_merged", "repo": "acme/api"}]}}"""
+
+private const val TODO_BODY = """{"sessionId": "{{SESSION}}", "reference": "Taken", "items": [$TODO_ITEM]}"""
+
+// A route of B's todo item `plan` (the item id is a slug of the list, not a secret), naming B's session in [body].
+private fun todoItem(body: String): Case = Case.Target(mapOf("item" to Param.Fixed("plan")), body)
 
 // A JSON-RPC call of the MCP tool [tool], its one argument [argument] naming B's seed of the same name.
 private fun mcpCall(tool: String, argument: String): String {

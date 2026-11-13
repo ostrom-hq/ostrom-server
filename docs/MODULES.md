@@ -415,6 +415,7 @@ anonymous call gets 401 `unauthorized`. A module lists a key of ostrom-core's `S
 | `secrets` | `secrets.v1` | — |
 | `sessions` | `sessions.v1` | — |
 | `sharing` | `sharing.v1` | — |
+| `todos` | `todos.v1` | — |
 | `usage` | `usage.v1` | — |
 | `workflow-runs` | `workflows.v1`, `notifications.v1` (the hooks' notifications) | — |
 

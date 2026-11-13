@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.todos
 
+import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.todos.domain.ChangeTodoUseCase
@@ -22,6 +23,11 @@ import run.ostrom.server.todos.infrastructure.AutomationsTodoWaits
 import run.ostrom.server.todos.infrastructure.SessionsTodoSessions
 import run.ostrom.server.todos.infrastructure.TodosMigrations
 import run.ostrom.server.todos.infrastructure.TodosRepositoryImpl
+import run.ostrom.server.todos.presentation.TodoCallers
+import run.ostrom.server.todos.presentation.TodosRoutesDependencies
+import run.ostrom.server.todos.presentation.todosRoutes
+import io.ktor.server.routing.Route
+import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.dsl.module
 
@@ -45,7 +51,16 @@ object TodosModule : ServerModule {
         single<ChangeTodoUseCase> { ChangeTodoUseCaseImpl(get(), get(), get(), get()) }
         single<StopTodoUseCase> { StopTodoUseCaseImpl(get(), get(), get(), get()) }
         single<StopHookSettingsUseCase> { StopHookSettingsUseCaseImpl(get(), get()) }
+        single { TodoCallers(get(), get()) }
+        single { TodosRoutesDependencies(get(), get(), get(), get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = TodosMigrations
+
+    override fun routes(route: Route, koin: Koin) {
+        route.todosRoutes(koin.get())
+    }
+
+    /** A session's todo and its Stop hook. */
+    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.TODOS)
 }
