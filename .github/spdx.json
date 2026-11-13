@@ -4,6 +4,10 @@
     {
       "prefix": "ee/",
       "license": "LicenseRef-Ostrom-Enterprise"
+    },
+    {
+      "prefix": "api-package/",
+      "license": "Apache-2.0"
     }
   ],
   "allowed": [

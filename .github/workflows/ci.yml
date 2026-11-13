@@ -486,10 +486,88 @@ jobs:
       e2e_ref: ${{ inputs.e2e_ref || 'main' }}
     secrets: inherit
 
+  # The API package (CS-02, ostrom-core docs/decisions/0002-generated-openapi.md): the server's OpenAPI document
+  # (openapi.json) and its TypeScript types, built on every run and published from main as @ostrom-hq/openapi
+  # 0.1.<run> once `ci` is green. The web console and the site generate their clients from it. Until the server
+  # generates the document from its own routes (ktor-server-routing-openapi, on the JVM), it is the contract of the
+  # ostrom-core this server pins (gradle/ostrom-core.ref).
+  api-package:
+    name: API package (@ostrom-hq/openapi)
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The ostrom-core commit this server pins
+        id: core
+        run: echo "ref=$(tr -d '[:space:]' < gradle/ostrom-core.ref)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-core
+          ref: ${{ steps.core.outputs.ref }}
+          ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
+          path: contract-core
+          sparse-checkout: api/openapi.yaml
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: The OpenAPI document
+        run: |
+          mv contract-core "$RUNNER_TEMP/contract-core"
+          yq -o=json "$RUNNER_TEMP/contract-core/api/openapi.yaml" > api-package/openapi.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: api-package/package-lock.json
+      - name: Build and pack @ostrom-hq/openapi 0.1.<run>
+        working-directory: api-package
+        env:
+          VERSION: 0.1.${{ github.run_number }}
+          CORE: ${{ steps.core.outputs.ref }}
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          npm version --no-git-tag-version "$VERSION"
+          npm pack
+          echo "- API package: @ostrom-hq/openapi $VERSION (contract of ostrom-core $CORE)" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: api-package
+          path: api-package/ostrom-hq-openapi-*.tgz
+          retention-days: 7
+
+  # From main only, after the required check: the package built above, as is.
+  api-package-publish:
+    name: Publish @ostrom-hq/openapi
+    needs: [ci]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: api-package
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          registry-url: https://npm.pkg.github.com
+          scope: '@ostrom-hq'
+      - name: Publish to GitHub Packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npm publish ostrom-hq-openapi-*.tgz
+          echo "Published $(ls ostrom-hq-openapi-*.tgz)" >> "$GITHUB_STEP_SUMMARY"
+
   # The required check of main, still named `ci` (branch protection, .coord/squash.sh).
   ci:
     if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
-    needs: [ci-jvm, ci-native, ci-image, ci-e2e]
+    needs: [ci-jvm, ci-native, ci-image, ci-e2e, api-package]
     timeout-minutes: 5
     runs-on: ubuntu-24.04
     steps:
@@ -499,6 +577,7 @@ jobs:
           NATIVE: ${{ needs.ci-native.result }}
           IMAGE: ${{ needs.ci-image.result }}
           E2E: ${{ needs.ci-e2e.result }}
+          API: ${{ needs.api-package.result }}
         run: |
-          echo "JVM tests and Kover: $JVM; native tests: $NATIVE; binary, images and smoke tests: $IMAGE; e2e: $E2E"
-          test "$JVM" = success && test "$NATIVE" = success && test "$IMAGE" = success && test "$E2E" = success
+          echo "JVM tests and Kover: $JVM; native tests: $NATIVE; binary, images and smoke tests: $IMAGE; e2e: $E2E; API package: $API"
+          test "$JVM" = success && test "$NATIVE" = success && test "$IMAGE" = success && test "$E2E" = success && test "$API" = success
