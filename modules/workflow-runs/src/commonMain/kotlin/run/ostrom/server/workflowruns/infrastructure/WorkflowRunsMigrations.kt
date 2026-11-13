@@ -189,4 +189,19 @@ val WorkflowRunsMigrations: List<SchemaMigration> = listOf(
             WHERE session_id IS NOT NULL;
         """.trimIndent(),
     ),
+    // A run started under an idempotency key (an automation's workflow action, `automation-run:<run id>`; the
+    // `Idempotency-Key` of a start): unique per starter, so a start retried finds its first run. The starter is read
+    // from the body into a column, which also counts their unfinished runs (the cap of 20) on an index.
+    SchemaMigration(
+        8,
+        "keyed_runs",
+        """
+        ALTER TABLE workflow_runs_started ADD COLUMN started_by TEXT GENERATED ALWAYS AS (body ->> 'startedBy') STORED;
+        ALTER TABLE workflow_runs_started ADD COLUMN idempotency_key TEXT;
+        CREATE UNIQUE INDEX workflow_runs_started_key ON workflow_runs_started (org_id, started_by, idempotency_key)
+            WHERE idempotency_key IS NOT NULL;
+        CREATE INDEX workflow_runs_started_unfinished ON workflow_runs_started (org_id, started_by)
+            WHERE status IN ('queued', 'running', 'waiting') AND parent_run_id IS NULL;
+        """.trimIndent(),
+    ),
 )

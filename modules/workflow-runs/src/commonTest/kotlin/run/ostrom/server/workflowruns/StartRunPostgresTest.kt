@@ -27,6 +27,14 @@ import run.ostrom.server.sessions.SessionsModule
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.workflowruns.domain.repositories.RunsQuery
+import run.ostrom.server.workflowruns.domain.models.RunLimitException
+import run.ostrom.server.workflowruns.domain.models.RunNotFoundException
+import run.ostrom.server.workflowruns.domain.models.RunWorkflowNotFoundException
+import run.ostrom.server.workflowruns.domain.usecases.CancelWorkflowRunUseCase
+import run.ostrom.server.workflowruns.domain.usecases.MAX_UNFINISHED
+import run.ostrom.server.workflowruns.domain.usecases.MemberStart
+import run.ostrom.server.workflowruns.domain.usecases.StartWorkflowRunUseCase
+import run.ostrom.server.workflowruns.domain.usecases.StartedRun
 import run.ostrom.server.workflowruns.infrastructure.StartedRunQueries
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.request.get
@@ -47,6 +55,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Instant
@@ -320,6 +330,45 @@ class StartRunPostgresTest {
             }
             println("-- $name\n$plan")
             assertTrue("Index" in plan && index in plan && "Sort" !in plan, "$name\n$plan")
+        }
+    }
+
+    @Test
+    fun aKeyedStartFindsItsFirstRunAndAMemberHasAtMostTwentyUnfinishedRuns() = runsTest { server ->
+        server.workflow()
+        val start = server.koin.get<StartWorkflowRunUseCase>()
+        fun member(key: String, starter: String = "bob", org: Uuid = orgA) = MemberStart(
+            org, starter, SHIP, mapOf("branch" to "main"), "acme/api", key, "automation", "auto-1",
+        )
+        val first = start.startFor(member("automation-run:1"))
+        assertEquals(StartedRun(first.run, replayed = true), start.startFor(member("automation-run:1")))
+        assertEquals("acme/api", first.run.repository)
+        val other = start.startFor(member("automation-run:1", starter = "carol"))
+        assertTrue(other.run.id != first.run.id, "A key is unique per starter")
+        repeat(MAX_UNFINISHED - 1) { start.startFor(member("k$it")) }
+        assertFailsWith<RunLimitException> { start.startFor(member("k-over")) }
+        assertEquals(first.run, start.startFor(member("automation-run:1")).run, "A replay at the cap finds its run")
+        val cancel = server.koin.get<CancelWorkflowRunUseCase>()
+        assertFailsWith<RunNotFoundException> { cancel.cancelAsStarter(orgA, "carol", first.run.id) }
+        assertEquals(RunStatus.CANCELLED, cancel.cancelAsStarter(orgA, "bob", first.run.id).status)
+        assertFalse(start.startFor(member("k-after")).replayed, "An ended run frees a place")
+        assertFailsWith<RunWorkflowNotFoundException> { start.startFor(member("k-b", org = orgB)) }
+        server.database.owner.execute("ANALYZE workflow_runs_started").getOrThrow()
+        val plans = listOf(
+            "the run of a key" to StartedRunQueries.KEYED,
+            "the unfinished runs of a starter" to StartedRunQueries.UNFINISHED,
+        )
+        for ((name, sql) in plans) {
+            val plan = server.driver.withOrganization(orgA) { tx ->
+                tx.execute("SET LOCAL enable_seqscan = off").getOrThrow()
+                var explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org_id", orgA)
+                    .bind("started_by", "bob")
+                explain = if (":key" in sql) explain.bind("key", "k1") else explain.bind("limit", MAX_UNFINISHED)
+                tx.fetchAll(explain).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
+            }
+            println("-- $name\n$plan")
+            assertTrue("workflow_runs_started_key" in plan || "workflow_runs_started_unfinished" in plan, plan)
+            assertFalse("Seq Scan" in plan, plan)
         }
     }
 

@@ -56,6 +56,9 @@ import run.ostrom.server.workflowruns.domain.usecases.SignWorkflowReceiptUseCase
 import run.ostrom.server.workflowruns.domain.usecases.SignWorkflowReceiptUseCaseImpl
 import run.ostrom.server.workflowruns.domain.usecases.StartWorkflowRunUseCase
 import run.ostrom.server.workflowruns.domain.usecases.StartWorkflowRunUseCaseImpl
+import run.ostrom.server.workflowruns.domain.repositories.KeyedRunsRepository
+import run.ostrom.server.workflowruns.infrastructure.RunsAutomationWorkflows
+import run.ostrom.server.automations.domain.AutomationWorkflows
 import run.ostrom.server.workflowruns.infrastructure.AutomationsRunWaits
 import run.ostrom.server.workflowruns.infrastructure.CloudRunAgents
 import run.ostrom.server.workflowruns.infrastructure.CloudStepSessions
@@ -108,7 +111,9 @@ object WorkflowRunsModule : ServerModule {
         single<RunLaunches> { LaunchesRunLaunches(get()) }
         single<ReportRunnerCheckUseCase> { ReportRunnerCheckUseCaseImpl(get(), get(), get()) }
         single<GateCheckProofs> { RunsGateCheckProofs(get()) { get() } }
-        single<StartedRunsRepository> { PostgresStartedRunsRepository(get(), get()) }
+        single { PostgresStartedRunsRepository(get(), get()) }
+        single<StartedRunsRepository> { get<PostgresStartedRunsRepository>() }
+        single<KeyedRunsRepository> { get<PostgresStartedRunsRepository>() }
         single<RunEngineRepository> { PostgresRunEngineRepository(get(), get()) }
         single<RunAgents> { CloudRunAgents(get(), get(), get(), get()) }
         single<RunGates> { GatesRunGates(get(), get()) }
@@ -120,7 +125,8 @@ object WorkflowRunsModule : ServerModule {
         single<GetWorkflowRunUseCase> { GetWorkflowRunUseCaseImpl(get()) }
         single<CancelWorkflowRunUseCase> { CancelWorkflowRunUseCaseImpl(get(), get(), get()) }
         single<RunWorkflows> { CompilerRunWorkflows(get()) }
-        single<StartWorkflowRunUseCase> { StartWorkflowRunUseCaseImpl(get(), get(), get()) }
+        single<StartWorkflowRunUseCase> { StartWorkflowRunUseCaseImpl(get(), get(), get(), get()) }
+        single<AutomationWorkflows> { RunsAutomationWorkflows(get(), get(), get(), get(), get()) }
         single<ListWorkflowRunsUseCase> { ListWorkflowRunsUseCaseImpl(get(), get()) }
         // No module keeps the sessions' todos yet: no RunTodos is bound, and a delivery is never refused `todo_open`.
         single { RunDeliveries(get(), get(), getOrNull<RunTodos>(), get()) }

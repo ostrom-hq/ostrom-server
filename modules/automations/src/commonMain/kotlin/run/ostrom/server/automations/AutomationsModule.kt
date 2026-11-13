@@ -4,6 +4,9 @@ package run.ostrom.server.automations
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.automations.domain.AnswerWaitUseCase
 import run.ostrom.server.automations.domain.AutomationLauncher
+import run.ostrom.server.automations.domain.AutomationWorkflows
+import run.ostrom.server.automations.domain.NoWorkflows
+import run.ostrom.server.automations.domain.WorkflowsStartedByAutomations
 import run.ostrom.server.automations.domain.CancelSessionWaitsUseCaseImpl
 import run.ostrom.server.automations.domain.AutomationsRepository
 import run.ostrom.server.automations.domain.ManageAutomationsUseCase
@@ -55,6 +58,7 @@ import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.sessions.AgentSessions
 import run.ostrom.server.kernel.sessions.SessionEndListener
+import run.ostrom.server.kernel.workflows.AutomationUsage
 import io.ktor.server.routing.Route
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -69,7 +73,9 @@ import org.koin.dsl.module
  * A [MemberDirectory], [MemberLogins], [AgentSessions], [WaitEvents], [AutomationLauncher] or [WaitAgentResolver]
  * bound by another module replaces the defaults: until then a wait is only asked of its asker and by id, a member asks
  * in no session, no one is told of it, an automation's runs fail `cloud_sessions_unavailable`, and no agent token asks
- * through the waits MCP server. Its [SessionEndListener] cancels the open waits of a session that ends.
+ * through the waits MCP server. An [AutomationWorkflows] bound by the module that runs workflows lets an action start
+ * a workflow run; until then no workflow exists for one. It binds [AutomationUsage], so a workflow an automation
+ * starts is not deleted under it. Its [SessionEndListener] cancels the open waits of a session that ends.
  */
 object AutomationsModule : ServerModule {
     override val name: String = "automations"
@@ -127,7 +133,10 @@ object AutomationsModule : ServerModule {
         }
         single<AutomationsRepository> { AutomationsRepositoryImpl(get()) }
         single<WebhookSecrets> { WebhookSecretsImpl(get()) }
-        single<ManageAutomationsUseCase> { ManageAutomationsUseCaseImpl(get(), get(), get()) }
+        single<ManageAutomationsUseCase> {
+            ManageAutomationsUseCaseImpl(get(), get(), get(), getOrNull<AutomationWorkflows>() ?: NoWorkflows)
+        }
+        single<AutomationUsage> { WorkflowsStartedByAutomations(get()) }
         single<RunAutomationsUseCase> {
             RunAutomationsUseCaseImpl(
                 get(),
@@ -135,6 +144,7 @@ object AutomationsModule : ServerModule {
                 get(),
                 getOrNull<MemberDirectory>(),
                 get(),
+                workflows = getOrNull<AutomationWorkflows>() ?: NoWorkflows,
             )
         }
         single { AutomationScheduler(get(), get()) }

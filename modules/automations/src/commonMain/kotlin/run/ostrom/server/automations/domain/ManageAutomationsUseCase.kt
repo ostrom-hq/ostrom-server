@@ -70,11 +70,13 @@ interface ManageAutomationsUseCase {
  * @param repository The automations.
  * @param secrets The webhook secrets.
  * @param clock The time.
+ * @param workflows The workflows a workflow action is checked against.
  */
 class ManageAutomationsUseCaseImpl(
     private val repository: AutomationsRepository,
     private val secrets: WebhookSecrets,
     private val clock: Clock,
+    private val workflows: AutomationWorkflows = NoWorkflows,
 ) : ManageAutomationsUseCase {
     override suspend fun create(caller: AutomationCaller, definition: AutomationDefinition): AutomationWithSecret {
         val now = clock.now().truncatedToMillis()
@@ -82,7 +84,7 @@ class ManageAutomationsUseCaseImpl(
             id = Uuid.random(),
             orgId = caller.orgId,
             owner = caller.memberId,
-            definition = AutomationRules.check(definition),
+            definition = checked(caller, definition),
             enabled = false,
             version = 1,
             secretGeneration = 1,
@@ -116,7 +118,7 @@ class ManageAutomationsUseCaseImpl(
     ): Automation {
         val current = repository.ownedBy(caller, id)
         if (current.version != version) throw StaleAutomationException()
-        val checked = AutomationRules.check(definition)
+        val checked = checked(caller, definition)
         val now = clock.now().truncatedToMillis()
         val updated = current.copy(
             definition = checked,
@@ -162,6 +164,14 @@ class ManageAutomationsUseCaseImpl(
         )
         val saved = repository.update(rotated, current) ?: throw StaleAutomationException()
         return RotatedSecret(saved, secrets.secret(saved.id, saved.secretGeneration), previousValidUntil)
+    }
+
+    /** The definition's rules, and a workflow action's against its workflow as it is now. */
+    private suspend fun checked(caller: AutomationCaller, definition: AutomationDefinition): AutomationDefinition {
+        val checked = AutomationRules.check(definition)
+        val workflowId = checked.action.workflowId ?: return checked
+        AutomationRules.checkWorkflowInputs(checked.action, workflows.inputs(caller.orgId, workflowId))
+        return checked
     }
 
     private suspend fun secretOf(automation: Automation): String? =

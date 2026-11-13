@@ -138,7 +138,7 @@ class AutomationsApiTest {
         val first = client.get("/api/v1/automations?limit=1") { bearerAuth("alice") }.body<AutomationsResponse>()
         assertEquals(listOf(second.id), first.items.map { item -> item.id })
         assertNotNull(first.next)
-        // An action needs a prompt: workflows are not available yet.
+        // A session action needs a prompt.
         val promptless = cron.copy(action = AutomationActionRequest())
         assertEquals(HttpStatusCode.BadRequest, client.create("alice", promptless).status)
         val armed = client.send("autowriter", "POST", "$path/enable").body<AutomationResponse>()
@@ -339,6 +339,7 @@ class AutomationsApiTest {
         assertEquals(HttpStatusCode.Forbidden, client.send("dave", "POST", "$path/enable").status)
         assertEquals(HttpStatusCode.BadRequest, client.send("alice", "POST", "$path/webhook/rotate-secret").status)
         assertEquals(HttpStatusCode.BadRequest, client.run("alice", path, TestRunRequest()).status)
+        // A workflow action names a workflow a run may start: none here.
         val workflow = cron.copy(action = AutomationActionRequest(workflowId = "wf"))
         assertEquals(HttpStatusCode.BadRequest, client.create("alice", workflow).status)
         assertEquals(HttpStatusCode.BadRequest, client.create("alice", cron.copy(overlap = "queue")).status)

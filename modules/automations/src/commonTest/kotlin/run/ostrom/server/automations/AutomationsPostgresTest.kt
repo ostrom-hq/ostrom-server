@@ -14,8 +14,12 @@ import run.ostrom.server.automations.fakes.ORG_A
 import run.ostrom.server.automations.fakes.ORG_B
 import run.ostrom.server.automations.fakes.cronDefinition
 import run.ostrom.server.automations.fakes.webhookDefinition
+import run.ostrom.server.automations.fakes.workflowDefinition
+import run.ostrom.server.automations.infrastructure.AUTOMATION_STARTING_SQL
+import run.ostrom.server.automations.infrastructure.FOLLOWED_SQL
 import run.ostrom.server.automations.infrastructure.STARTED_SESSIONS_SQL
 import run.ostrom.server.automations.infrastructure.inTenant
+import run.ostrom.server.kernel.workflows.AutomationUsage
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
@@ -275,5 +279,56 @@ class AutomationsPostgresTest {
         val job = Job()
         AutomationsModule.start(CoroutineScope(job), it.koin)
         job.cancel()
+    }
+
+    @Test
+    fun workflowActionsAreStoredFollowedAndFoundOnTheirIndexes() = serverTest(listOf(AutomationsModule)) {
+        val repository = it.koin.get<AutomationsRepository>()
+        val triage = automation().copy(definition = workflowDefinition())
+        repository.createWithinLimit(triage, 20)
+        repository.createWithinLimit(automation(BOB, "Bob's"), 20)
+        val ofB = automation(org = ORG_B).copy(definition = workflowDefinition())
+        repository.createWithinLimit(ofB, 20)
+        val runOfB = repository.insertRun(run(ofB, "b1", t0))
+        repository.updateRun(runOfB.copy(status = RunStatus.STARTED, workflowRunId = "wfr_b"))
+        assertEquals(triage, repository.get(ORG_A, triage.id))
+        assertEquals("Triage", repository.automationStarting(ORG_A, "triage"))
+        val usage = it.koin.get<AutomationUsage>()
+        assertEquals("Triage", usage.automationStarting(ORG_A, "triage"), "Bound for the compiler")
+        assertNull(repository.automationStarting(ORG_A, "other"))
+        val renamed = triage.copy(definition = workflowDefinition().copy(action = cronDefinition().action), version = 2)
+        repository.update(renamed, triage)
+        assertNull(repository.automationStarting(ORG_A, "triage"), "The column follows the definition")
+        repository.update(triage.copy(version = 3), renamed)
+        val first = repository.insertRun(run(triage, "w1", t0))
+        assertTrue(repository.updateRun(first.copy(status = RunStatus.STARTED, workflowRunId = "wfr_1")))
+        val second = repository.insertRun(run(triage, "w2", t0 + 1.minutes))
+        repository.updateRun(second.copy(status = RunStatus.STARTED, workflowRunId = "wfr_2"))
+        repository.insertRun(run(triage, "w3", t0 + 2.minutes))
+        assertEquals("wfr_1", repository.findRun(ORG_A, triage.id, first.id)?.workflowRunId)
+        assertEquals("wfr_2", repository.latestWorkflowRun(ORG_A, triage.id, Uuid.random()))
+        assertEquals("wfr_1", repository.latestWorkflowRun(ORG_A, triage.id, second.id))
+        assertNull(repository.latestWorkflowRun(ORG_A, Uuid.random(), Uuid.random()))
+        val followed = repository.followed(10)
+        assertEquals(setOf("wfr_1", "wfr_2", "wfr_b"), followed.map { run -> run.workflowRunId }.toSet())
+        val ofA = followed.filter { run -> run.run.orgId == ORG_A }
+        assertEquals(listOf(first.id, second.id), ofA.map { run -> run.run.id }, "Oldest first")
+        assertEquals(1, repository.followed(1).size)
+        val ended = first.copy(status = RunStatus.SUCCEEDED, workflowRunId = "wfr_1", updatedAt = t0 + 5.minutes)
+        assertTrue(repository.endRun(ended, RunStatus.STARTED))
+        assertEquals(setOf("wfr_2", "wfr_b"), repository.followed(10).map { run -> run.workflowRunId }.toSet())
+        it.database.owner.execute("ANALYZE automations_automations").getOrThrow()
+        it.database.owner.execute("ANALYZE automations_runs").getOrThrow()
+        suspend fun plan(sql: String, bind: (Statement) -> Statement) = it.driver.inTenant(ORG_A) {
+            execute("SET LOCAL enable_seqscan = off").getOrThrow()
+            fetchAll(bind(Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql"))).getOrThrow()
+                .joinToString("\n") { row -> row.get("QUERY PLAN").asString() }
+        }
+        val starting = plan(AUTOMATION_STARTING_SQL) { st -> st.bind("org_id", ORG_A).bind("workflow_id", "triage") }
+        println("-- the automation that starts a workflow (DELETE /api/v1/workflows/{id})\n$starting")
+        assertTrue("automations_automations_workflow" in starting, starting)
+        val follow = plan(FOLLOWED_SQL) { st -> st.bind("org_id", ORG_A).bind("limit", 20) }
+        println("-- the started runs of workflow actions (the scheduler)\n$follow")
+        assertTrue("automations_runs_followed" in follow, follow)
     }
 }

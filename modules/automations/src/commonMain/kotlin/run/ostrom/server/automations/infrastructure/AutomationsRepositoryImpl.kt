@@ -7,6 +7,7 @@ import run.ostrom.server.automations.domain.AutomationRun
 import run.ostrom.server.automations.domain.AutomationsRepository
 import run.ostrom.server.automations.domain.ClaimedRun
 import run.ostrom.server.automations.domain.CronClaim
+import run.ostrom.server.automations.domain.FollowedRun
 import run.ostrom.server.automations.domain.PayloadProblem
 import run.ostrom.server.automations.domain.RunSource
 import run.ostrom.server.automations.domain.RunStatus
@@ -33,6 +34,25 @@ internal const val STARTED_SESSIONS_SQL = """
     SELECT r.session_id FROM automations_runs r JOIN automations_automations a ON a.id = r.automation_id AND a.org_id =
     r.org_id WHERE r.org_id = :org_id AND r.status = 'started' AND r.created_at > :since AND a.owner = :owner AND
     r.session_id IS NOT NULL ORDER BY r.created_at DESC, r.id DESC LIMIT :limit
+"""
+
+/**
+ * The name of an automation whose action starts a workflow: what refuses the workflow's deletion
+ * (`workflow_in_use`), one lookup on `automations_automations_workflow`.
+ */
+internal const val AUTOMATION_STARTING_SQL = """
+    SELECT name FROM automations_automations WHERE org_id = :org_id AND workflow_id = :workflow_id ORDER BY name LIMIT 1
+"""
+
+/** The started runs of workflow actions of one organization, oldest first (on `automations_runs_followed`). */
+internal const val FOLLOWED_SQL = """
+    SELECT $RUN_SELECT FROM automations_runs WHERE org_id = :org_id AND status = 'started' AND workflow_run_id IS NOT
+    NULL ORDER BY created_at, id LIMIT :limit
+"""
+
+private const val RUN_SELECT = """
+    id, automation_id, org_id, source, status, version, delivery_key, session_id, reason, problems, slot_at,
+    created_at, updated_at, workflow_run_id
 """
 
 /**
@@ -66,7 +86,7 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
                     """
                     INSERT INTO automations_automations ($COLUMNS) VALUES (:id, :org_id, :owner, :name,
                     :trigger_kind, :definition, :enabled, :version, :secret_generation,
-                    :previous_secret_valid_until, :next_run_at, :created_at, :updated_at)
+                    :previous_secret_valid_until, :next_run_at, :created_at, :updated_at, :workflow_id)
                     """,
                 ).bindAutomation(automation).bind("created_at", automation.createdAt),
             ).getOrThrow()
@@ -115,8 +135,9 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
                     UPDATE automations_automations SET name = :name, trigger_kind = :trigger_kind, definition =
                     :definition, enabled = :enabled, version = :version, secret_generation = :secret_generation,
                     previous_secret_valid_until = :previous_secret_valid_until, next_run_at = :next_run_at,
-                    updated_at = :updated_at WHERE id = :id AND org_id = :org_id AND owner = :owner AND version =
-                    :expected_version AND updated_at = :expected_updated_at RETURNING $COLUMNS
+                    updated_at = :updated_at, workflow_id = :workflow_id WHERE id = :id AND org_id = :org_id AND
+                    owner = :owner AND version = :expected_version AND updated_at = :expected_updated_at
+                    RETURNING $COLUMNS
                     """,
                 ).bindAutomation(automation)
                     .bind("expected_version", expected.version)
@@ -141,12 +162,13 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
         fetchAll(
             Statement.create(
                 """
-                UPDATE automations_runs SET status = :status, session_id = :session_id, reason = :reason,
-                updated_at = :updated_at, prompt = NULL WHERE id = :id AND org_id = :org_id AND status = 'queued'
-                RETURNING id
+                UPDATE automations_runs SET status = :status, session_id = :session_id, workflow_run_id =
+                :workflow_run_id, reason = :reason, updated_at = :updated_at, prompt = NULL WHERE id = :id AND org_id =
+                :org_id AND status = 'queued' RETURNING id
                 """,
             ).bind("status", run.status.wire)
                 .bind("session_id", run.sessionId)
+                .bind("workflow_run_id", run.workflowRunId)
                 .bind("reason", run.reason)
                 .bind("updated_at", run.updatedAt)
                 .bind("id", run.id)
@@ -234,6 +256,37 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
                     .bind("org_id", orgId).bind("since", since).bind("owner", owner).bind("limit", limit),
             ).getOrThrow().map { it.get("session_id").asString() }
         }
+
+    override suspend fun followed(limit: Int): List<FollowedRun> {
+        val found = mutableListOf<FollowedRun>()
+        for (orgId in organizations()) {
+            if (found.size >= limit) break
+            found += driver.inTenant(orgId) {
+                fetchAll(
+                    Statement.create(FOLLOWED_SQL).bind("org_id", orgId).bind("limit", limit - found.size),
+                ).getOrThrow().map { FollowedRun(it.toRun(), it.get("workflow_run_id").asString()) }
+            }
+        }
+        return found
+    }
+
+    override suspend fun latestWorkflowRun(orgId: Uuid, automationId: Uuid, except: Uuid): String? =
+        driver.inTenant(orgId) {
+            fetchAll(
+                Statement.create(
+                    """
+                    SELECT workflow_run_id FROM automations_runs WHERE automation_id = :automation_id AND status =
+                    'started' AND id <> :except ORDER BY created_at DESC, id DESC LIMIT 1
+                    """,
+                ).bind("automation_id", automationId).bind("except", except),
+            ).getOrThrow().firstOrNull()?.let { it.get("workflow_run_id").asStringOrNull() }
+        }
+
+    override suspend fun automationStarting(orgId: Uuid, workflowId: String): String? = driver.inTenant(orgId) {
+        fetchAll(
+            Statement.create(AUTOMATION_STARTING_SQL).bind("org_id", orgId).bind("workflow_id", workflowId),
+        ).getOrThrow().firstOrNull()?.let { it.get("name").asString() }
+    }
 
     override suspend fun findRunByDelivery(orgId: Uuid, automationId: Uuid, deliveryKey: String): AutomationRun? =
         driver.inTenant(orgId) {
@@ -400,7 +453,8 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
         Statement.create(
             """
             INSERT INTO automations_runs ($RUN_COLUMNS) VALUES (:id, :automation_id, :org_id, :source, :status,
-            :version, :delivery_key, :session_id, :reason, :problems, :slot_at, :created_at, :updated_at) ON CONFLICT
+            :version, :delivery_key, :session_id, :reason, :problems, :slot_at, :created_at, :updated_at,
+            :workflow_run_id) ON CONFLICT
             (automation_id, delivery_key) DO UPDATE SET delivery_key = EXCLUDED.delivery_key RETURNING $RUN_COLUMNS
             """,
         ).bind("id", run.id)
@@ -411,6 +465,7 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
             .bind("version", run.version)
             .bind("delivery_key", run.deliveryKey)
             .bind("session_id", run.sessionId)
+            .bind("workflow_run_id", run.workflowRunId)
             .bind("reason", run.reason)
             .bind("problems", OstromJson.encodeToString(PROBLEMS, run.problems))
             .bind("slot_at", run.slotAt)
@@ -431,6 +486,7 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
         .bind("previous_secret_valid_until", automation.previousSecretValidUntil)
         .bind("next_run_at", automation.nextRunAt)
         .bind("updated_at", automation.updatedAt)
+        .bind("workflow_id", automation.definition.action.workflowId)
 
     private fun ResultSet.Row.toAutomation(): Automation = Automation(
         id = get("id").asUuid(),
@@ -455,6 +511,7 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
         version = get("version").asInt(),
         deliveryKey = get("delivery_key").asString(),
         sessionId = get("session_id").asStringOrNull(),
+        workflowRunId = get("workflow_run_id").asStringOrNull(),
         reason = get("reason").asStringOrNull(),
         problems = OstromJson.decodeFromString(PROBLEMS, get("problems").asString()),
         slotAt = get("slot_at").asInstantOrNull(),
@@ -467,11 +524,11 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
 
         const val COLUMNS = """
             id, org_id, owner, name, trigger_kind, definition, enabled, version, secret_generation,
-            previous_secret_valid_until, next_run_at, created_at, updated_at
+            previous_secret_valid_until, next_run_at, created_at, updated_at, workflow_id
         """
         const val RUN_COLUMNS = """
             id, automation_id, org_id, source, status, version, delivery_key, session_id, reason, problems, slot_at,
-            created_at, updated_at
+            created_at, updated_at, workflow_run_id
         """
     }
 }
