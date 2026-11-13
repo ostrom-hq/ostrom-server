@@ -204,11 +204,10 @@ private suspend fun OrgsRoutesDependencies.member(
     browserOnly: Boolean = false,
     teamRead: Boolean = false,
 ): Pair<Uuid, Uuid> {
-    val key = call.requirePrincipal().takeIf {
+    val principal = call.requirePrincipal().takeIf {
         teamRead && it.kind == PrincipalKind.SERVICE && ServiceKeyScopes.TEAM_READ in it.scopes
-    }
-    val principal = key ?: call.requireScope(scope)
-    val userId = key?.let { it.onBehalfOf?.let(Uuid::parseOrNull) } ?: principal.userId()
+    } ?: call.requireScope(scope)
+    val userId = principal.userId()
     if (browserOnly && !principal.isBrowserSession) {
         throw OstromException(
             ErrorKind.FORBIDDEN,
@@ -226,7 +225,13 @@ private suspend fun OrgsRoutesDependencies.member(
  *   people.
  */
 internal fun AuthenticatedPrincipal.userId(): Uuid {
-    val id = Uuid.parseOrNull(subjectId).takeIf { kind == PrincipalKind.USER }
+    // A service key of member scopes acts as the person who created it; any other key or agent is nobody here.
+    val person = when (kind) {
+        PrincipalKind.USER -> subjectId
+        PrincipalKind.SERVICE -> onBehalfOf
+        else -> null
+    }
+    val id = Uuid.parseOrNull(person.orEmpty())
     return id
         ?: throw OstromException(
             ErrorKind.FORBIDDEN,
