@@ -235,7 +235,8 @@ class TodoRulesTest {
         val nothing = assertIs<TodoCompletion.Refused>(TodoRules.complete(l, "c", emptyList(), at(300)))
         val proof = nothing.list.item("c")!!.proof!!
         assertTrue(proof.text.startsWith("not every check ran"), "the reason is the proof when nothing was seen")
-        val passing = checks.map { TodoCheckResult(it, true, "merged", listOf("https://x/1")) }
+        val foreign = TodoCheckResult(TodoCheck.PrMerged("other/repo"), false, "not this item's", listOf("https://y/1"))
+        val passing = checks.map { TodoCheckResult(it, true, "merged", listOf("https://x/1")) } + foreign
         val ok = assertIs<TodoCompletion.Done>(TodoRules.complete(l, "c", passing, at(300)))
         val finished = ok.list.item("c")!!
         assertEquals(TodoItemStatus.DONE, finished.status)
@@ -249,6 +250,8 @@ class TodoRulesTest {
         assertEquals("item_closed", code { TodoRules.complete(l, "a", pass(l, "a"), at(1)) })
         val dropped = TodoRules.resolveDrop(l, "a", true)
         assertEquals("item_closed", code { TodoRules.complete(dropped, "a", pass(l, "a"), at(1)) })
+        val finished = done(plan, "a")
+        assertEquals("item_closed", code { TodoRules.complete(finished, "a", emptyList(), at(1)) }, "the proof is kept")
     }
 
     @Test
@@ -476,6 +479,7 @@ class TodoRulesTest {
         assertEquals(l, TodoRules.addOrphan(l, "https://example.com/acme/x/pull/9", at(3)), "only a GitHub PR")
         val other = TodoRules.addOrphan(orphan, "https://github.com/acme/y/pull/7", at(4))
         assertEquals("finish-pr-7-2", other.items.last().id, "another repository's PR of the same number")
+        assertEquals(l, TodoRules.addOrphan(l, "$X_PULL/99999999999", at(3)), "not a PR number")
     }
 
     @Test

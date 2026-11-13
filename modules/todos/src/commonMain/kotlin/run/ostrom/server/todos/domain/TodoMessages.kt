@@ -96,10 +96,13 @@ object TodoMessages {
         val text = listOfNotNull(head, "Plan reference:\n$reference", nextBlock, "Items:\n$items", tail)
             .joinToString("\n")
         if (text.length <= MAX_CHARS) return text
-        // Too long: the item list gives way (the reference and the next item are what the agent needs).
+        // Too long: the item list gives way (the reference and the next item are what the agent needs), then what
+        // still overflows is cut between the head and the instruction, which are always kept whole.
         val short = list.items.joinToString("\n") { "  ${mark(it, next)} ${it.id}" }
-        return listOfNotNull(head, "Plan reference:\n$reference", nextBlock, "Items:\n$short", tail)
-            .joinToString("\n").take(MAX_CHARS)
+        val body = listOf("Plan reference:\n$reference", nextBlock, "Items:\n$short").joinToString("\n")
+        val room = MAX_CHARS - head.length - (tail?.length?.plus(1) ?: 0) - 1
+        val cut = if (body.length > room) body.take(room - 1) + "…" else body
+        return listOfNotNull(head, cut, tail).joinToString("\n")
     }
 
     private fun nextBlock(list: TodoList, next: TodoItem?): String = when {

@@ -82,7 +82,7 @@ object TodoRules {
     const val MAX_HOOK_TEXT: Int = 500
 
     private val markerPattern = Regex("""<!-- ostrom-todo: ([A-Za-z0-9]+)/([a-z0-9][a-z0-9-]*) -->""")
-    private val pullRequest = Regex("https://github\\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/(\\d+)")
+    private val pullRequest = Regex("https://github\\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/([1-9]\\d{0,8})")
 
     /**
      * The marker an agent puts in the body of an item's PR, so the PR is found whatever number it gets.
@@ -272,13 +272,16 @@ object TodoRules {
     fun complete(list: TodoList, id: String, results: List<TodoCheckResult>, now: Instant): TodoCompletion {
         requireActive(list)
         val item = requireItem(list, id)
-        if (item.status == TodoItemStatus.DROP_REQUESTED || item.status == TodoItemStatus.DROPPED) {
+        // A done item keeps the proof it was done with: only the final verification reopens it.
+        if (item.status.closed || item.status == TodoItemStatus.DROP_REQUESTED) {
             throw todoConflict("item_closed", "Item $id is ${item.status.wire}.")
         }
-        val failed = results.filter { it.passed != true }
-        val missing = item.doneWhen.checks.filterNot { check -> results.any { it.check == check } }
-        val summary = results.joinToString("; ") { it.observed }.take(MAX_PROOF)
-        val urls = results.flatMap { it.urls }.distinct().take(MAX_PROOF_URLS)
+        // Only the item's own checks count, and only they make its proof.
+        val own = results.filter { it.check in item.doneWhen.checks }
+        val failed = own.filter { it.passed != true }
+        val missing = item.doneWhen.checks.filterNot { check -> own.any { it.check == check } }
+        val summary = own.joinToString("; ") { it.observed }.take(MAX_PROOF)
+        val urls = own.flatMap { it.urls }.distinct().take(MAX_PROOF_URLS)
         if (failed.isEmpty() && missing.isEmpty()) {
             val proof = TodoProof(now, true, summary, urls)
             return TodoCompletion.Done(withItem(list, id) { it.copy(status = TodoItemStatus.DONE, proof = proof) })

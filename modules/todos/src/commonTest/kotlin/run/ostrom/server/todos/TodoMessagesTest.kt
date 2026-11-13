@@ -102,7 +102,14 @@ class TodoMessagesTest {
         assertTrue(text.contains("Next item: item-1"))
         assertTrue(text.contains("\n  · item-200"), "every item keeps its line, without its name")
         val huge = l.copy(reference = "r".repeat(9_000))
-        assertEquals(TodoMessages.MAX_CHARS, TodoMessages.resume(huge).length)
+        val cut = TodoMessages.resume(huge)
+        assertEquals(TodoMessages.MAX_CHARS, cut.length)
+        assertTrue(cut.startsWith("[Ostrom todo] 0 of 200 items done."))
+        assertTrue(cut.endsWith("todo_drop. Each of these ends the turn properly."), "the instruction is kept whole")
+        assertTrue(cut.contains("r…\nDo the next item now."), cut.takeLast(300))
+        val context = TodoMessages.context(huge)
+        assertEquals(TodoMessages.MAX_CHARS, context.length)
+        assertTrue(context.endsWith("r…"))
     }
 
     @Test
