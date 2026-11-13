@@ -123,7 +123,11 @@ object AutomationsModule : ServerModule {
     }
 
     /** Automations, and the waits (`/api/v1/waits`) it serves. */
-    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.AUTOMATIONS, ServerFeatures.WAITS)
+    override suspend fun features(koin: Koin): Set<String> = setOf(
+        ServerFeatures.AUTOMATIONS,
+        ServerFeatures.WAITS,
+        ServerFeatures.WAITS_WAKE,
+    )
 
     override fun start(scope: CoroutineScope, koin: Koin) {
         val scheduler = koin.get<AutomationScheduler>()
