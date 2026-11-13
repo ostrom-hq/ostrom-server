@@ -477,6 +477,67 @@ class RunEnginePostgresTest {
     }
 
     @Test
+    fun theStarterDeliversTheAgentStepOnceAndTheRunEndsWithItsDelivery() = engineTest { server ->
+        val ada = server.person("ada")
+        val reader = server.person("rex", setOf("workflows:read"))
+        val eve = server.person("eve")
+        server.workflow(ada, DELIVERING, DELIVERING_EDGES, "build")
+        val run = server.start(ada)
+        val engine = server.engine()
+        val deliver = "/api/v1/runs/${run.id}/deliver"
+        val early = server.call(ada.token, deliver, """{"output":"https://github.com/acme/api/pull/7"}""")
+        assertEquals(HttpStatusCode.Conflict, early.status, "Nothing is asked before the step's session exists")
+        engine.next()
+        val sessions = server.koin.get<CloudSessionsRepository>()
+        val instructions = assertNotNull(sessions.get(ada.org.id, sessionOf(run.id, 1)))
+        assertTrue(instructions.prompt.orEmpty().endsWith("as its `output`, then end your turn."), instructions.prompt)
+        val pr = "https://github.com/acme/api/pull/" + "7".repeat(600)
+
+        assertEquals(HttpStatusCode.Unauthorized, server.client.post(deliver).status)
+        val body = """{"output":"$pr"}"""
+        assertEquals(HttpStatusCode.Forbidden, server.call(reader.token, deliver, body).status)
+        assertEquals(HttpStatusCode.NotFound, server.call(eve.token, deliver, body).status)
+        assertEquals(HttpStatusCode.NotFound, server.call(ada.token, "/api/v1/runs/wfr_unknown/deliver", body).status)
+        val wrong = server.call(ada.token, deliver, """{"output":"https://gitlab.com/acme/api/-/merge_requests/7"}""")
+        assertEquals(HttpStatusCode.BadRequest, wrong.status, wrong.bodyAsText())
+        assertTrue("invalid_deliverable" in wrong.bodyAsText(), wrong.bodyAsText())
+        assertEquals(HttpStatusCode.BadRequest, server.call(ada.token, deliver, "{}").status)
+
+        val delivered = server.call(ada.token, deliver, body)
+
+        assertEquals(HttpStatusCode.OK, delivered.status, delivered.bodyAsText())
+        val visit = delivered.run().visits.single()
+        assertEquals(
+            listOf<Any?>("done", "delivered", pr, "Build"),
+            listOf(visit.status, visit.outcome, visit.output, visit.nodeTitle),
+        )
+        val again = server.call(ada.token, deliver, body)
+        assertEquals(HttpStatusCode.Conflict, again.status)
+        assertTrue("nothing_to_deliver" in again.bodyAsText(), again.bodyAsText())
+        engine.next()
+        val ended = server.read(ada, run.id)
+        assertEquals(listOf<Any?>(RunStatus.SUCCEEDED, pr), listOf(ended.status, ended.output))
+        assertTrue("workflow_run.delivered" in server.audit(ada.org.id, run.id))
+        assertEquals(HttpStatusCode.Conflict, server.call(ada.token, deliver, body).status, "The run ended")
+    }
+
+    @Test
+    fun anAgentStepWhoseSessionStopsWithNothingDeliveredFailsEndedWithoutDelivery() = engineTest { server ->
+        val ada = server.person("ada")
+        server.workflow(ada, DELIVERING, DELIVERING_EDGES, "build")
+        val run = server.start(ada)
+        val engine = server.engine()
+        engine.next()
+        server.endSession(ada.org.id, sessionOf(run.id, 1))
+
+        engine.next()
+
+        val ended = server.read(ada, run.id)
+        assertEquals(listOf<Any?>(RunStatus.FAILED, "ended_without_delivery"), listOf(ended.status, ended.failureCode))
+        assertEquals("Node build: failed (${RunMoves.ENDED_WITHOUT_DELIVERY}).", ended.failure)
+    }
+
+    @Test
     fun anotherOrganizationNeitherReadsNorCancelsARun() = engineTest { server ->
         val ada = server.person("ada")
         val eve = server.person("eve")
@@ -597,6 +658,10 @@ class RunEnginePostgresTest {
             """{"id":"review","kind":"gate","label":"Review","approvers":["bea"]}]"""
         const val AGENT_THEN_GATE_EDGES =
             """[{"from":"build","to":"review"},{"from":"review","to":null,"on":"approved"}]"""
+        const val DELIVERING = """[{"id":"build","kind":"agent","label":"Build",""" +
+            """"run":{"instructions":"Open a pull request on {{inputs.branch}}",""" +
+            """"deliverable":{"type":"url","domain":"github.com"}}}]"""
+        const val DELIVERING_EDGES = """[{"from":"build","to":null,"on":"delivered"}]"""
         const val GATE_ONLY = """[{"id":"review","kind":"gate","label":"Review","approvers":["bea"]}]"""
     }
 }

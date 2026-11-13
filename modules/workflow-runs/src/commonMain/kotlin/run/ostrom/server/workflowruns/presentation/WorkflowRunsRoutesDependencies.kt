@@ -6,6 +6,7 @@ import run.ostrom.server.kernel.auth.ServiceKeyAudit
 import run.ostrom.server.runners.domain.AuthenticateRunnerUseCase
 import run.ostrom.server.runners.domain.CheckRunnerTokenUseCase
 import run.ostrom.server.workflowruns.domain.usecases.CancelWorkflowRunUseCase
+import run.ostrom.server.workflowruns.domain.usecases.DeliverRunUseCase
 import run.ostrom.server.workflowruns.domain.usecases.GetReceiptBundleUseCase
 import run.ostrom.server.workflowruns.domain.usecases.GetWorkflowRunUseCase
 import run.ostrom.server.workflowruns.domain.usecases.ListChecksUseCase
@@ -35,6 +36,7 @@ import run.ostrom.server.workflowruns.domain.usecases.StartWorkflowRunUseCase
  * @property listRuns Lists the runs of workflows.
  * @property getRun Reads a run of a workflow.
  * @property cancelRun Cancels a run of a workflow.
+ * @property deliverRun Hands in what a run's current agent node asks for.
  */
 data class WorkflowRunsRoutesDependencies(
     val actors: GateActorResolver,
@@ -52,4 +54,5 @@ data class WorkflowRunsRoutesDependencies(
     val listRuns: ListWorkflowRunsUseCase,
     val getRun: GetWorkflowRunUseCase,
     val cancelRun: CancelWorkflowRunUseCase,
+    val deliverRun: DeliverRunUseCase,
 )

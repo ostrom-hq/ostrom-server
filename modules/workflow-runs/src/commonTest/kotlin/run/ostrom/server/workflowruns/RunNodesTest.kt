@@ -266,6 +266,7 @@ class RunNodesTest {
 
         assertEquals(RunStatus.SUCCEEDED, ended.status)
         assertEquals(listOf("next" to "built"), ended.visits.map { it.outcome to it.output })
+        assertEquals("built", ended.output, "The run says what its last node handed on")
         assertEquals(1, children.started.size)
         val started = runs.audits.first { it.event == "child_started" }
         assertEquals(mapOf("node" to "c", "seq" to "1", "child" to CHILD), started.details)

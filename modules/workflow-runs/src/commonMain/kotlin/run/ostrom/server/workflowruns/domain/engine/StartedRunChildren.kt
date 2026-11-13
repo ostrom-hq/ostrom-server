@@ -26,7 +26,8 @@ import kotlin.uuid.Uuid
  * [RunChildren] on the runs: a child run is a run of another workflow of the organization, stored as a start stores
  * one (queued, its workflow's graph copied, its audit line) with its parent and the parent's visit, so the same engine
  * plays it and a visit played again finds it. A chain of runs nests at most [MAX_DEPTH] deep and never runs a workflow
- * already running above (no cycle); the child runs as the parent's starter, with the node's arguments as its inputs.
+ * already running above (no cycle); the child runs as the parent's starter, with the node's arguments as its inputs,
+ * rendered on the parent run ([RunTemplates]: its inputs and its nodes' outputs).
  *
  * @param workflows The organization's workflows.
  * @param runs The runs, to store and read one.
@@ -86,9 +87,7 @@ class StartedRunChildren(
 
     private suspend fun started(orgId: Uuid, request: ChildRequest, workflow: RunWorkflow): ChildOpening {
         val parent = request.parent
-        val arguments = request.arguments.mapValues { (_, value) ->
-            parent.inputs.entries.fold(value) { text, (id, input) -> text.replace("{{inputs.$id}}", input) }
-        }
+        val arguments = request.arguments.mapValues { (_, value) -> RunTemplates.render(value, parent) }
         val child = WorkflowRun(
             id = "wfr_" + Uuid.random().toHexString(),
             workflowId = workflow.id,

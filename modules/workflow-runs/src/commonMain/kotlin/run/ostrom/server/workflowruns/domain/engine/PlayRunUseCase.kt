@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package run.ostrom.server.workflowruns.domain.engine
 
+import run.ostrom.core.api.models.Deliverable
 import run.ostrom.core.api.models.RunStatus
 import run.ostrom.core.api.models.WorkflowNode
 import run.ostrom.core.api.models.WorkflowRun
@@ -114,7 +115,7 @@ private val OPEN = setOf(RunMoves.RUNNING, RunMoves.WAITING)
 /** The cloud session an agent node asks for. */
 object AgentRequests {
     /** The longest first message of a session (the runners module's bound). */
-    const val MAX_PROMPT: Int = 20_000
+    const val MAX_PROMPT: Int = RunTemplates.MAX_TEXT
 
     /** The longest label of a session (the runners module's bound). */
     const val MAX_NAME: Int = 120
@@ -123,8 +124,11 @@ object AgentRequests {
     const val DEFAULT_AGENT: String = "claude"
 
     /**
-     * The session of a visit: the node's instructions (else its detail, else its label), with the run's inputs in
-     * place of `{{inputs.<id>}}`, run by the node's agent (Claude Code when it names none) and model.
+     * The session of a visit, run by the node's agent (Claude Code when it names none) and model. Its first message
+     * is the node's instructions (else its detail, else its label) rendered ([RunTemplates]), then what the earlier
+     * steps delivered (each node starts its own session, TeamCode's `handoff`), then, for a node that asks for a
+     * deliverable, the sentence that tells the agent how the step ends: the instructions give way when it all does not
+     * fit.
      *
      * @param run The run.
      * @param node The agent node.
@@ -135,14 +139,46 @@ object AgentRequests {
     fun of(run: WorkflowRun, node: WorkflowNode, sessionId: Uuid): AgentRequest {
         val spec = node.run
         val text = spec?.instructions ?: node.detail ?: node.label
-        val prompt = run.inputs.entries.fold(text) { prompt, (id, value) -> prompt.replace("{{inputs.$id}}", value) }
+        val prompt = RunTemplates.cut(handoff(RunTemplates.render(text, run), run))
+        val closing = spec?.deliverable?.let(::closing)
         return AgentRequest(
             sessionId = sessionId,
             starter = run.startedBy,
             name = "${run.workflowName} · ${node.label}".take(MAX_NAME),
             agent = spec?.agent ?: DEFAULT_AGENT,
             model = spec?.model,
-            prompt = prompt.take(MAX_PROMPT),
+            prompt = if (closing == null) prompt else prompt.take(MAX_PROMPT - closing.length - 2) + "\n\n" + closing,
         )
+    }
+
+    /**
+     * What ends an agent step: one call of the `deliver` tool of the `ostrom-workflow` MCP server with what the
+     * node's deliverable asks for, then the end of the turn (TeamCode's sentence, with Ostrom's names).
+     *
+     * @param deliverable What the node asks for.
+     *
+     * @return The sentence.
+     */
+    fun closing(deliverable: Deliverable): String {
+        val what = when (deliverable.type) {
+            "artifact" -> "the id of the artifact that holds it, as a string"
+            "url" -> "an https address${deliverable.domain?.let { " on $it" }.orEmpty()}, as a string"
+            "json" -> "a JSON value${if (deliverable.schema != null) " that matches the step's schema" else ""}, " +
+                "not a string holding JSON"
+            else -> "the text, as a string"
+        }
+        val label = deliverable.label?.let { " ($it)" }.orEmpty()
+        return "When this step is done, call the `deliver` tool of the ostrom-workflow MCP server once, with " +
+            "$what$label as its `output`, then end your turn."
+    }
+
+    // A new session starts without the conversation: what the earlier steps delivered goes in its first message.
+    private fun handoff(prompt: String, run: WorkflowRun): String {
+        val done = run.visits.filter { it.status == RunMoves.DONE }.mapNotNull { v -> v.output?.let { v.nodeId to it } }
+        if (done.isEmpty()) return prompt
+        return buildString {
+            append(prompt).append("\n\nWhat the earlier steps delivered:")
+            done.forEach { (node, output) -> append("\n- ").append(node).append(": ").append(output) }
+        }
     }
 }

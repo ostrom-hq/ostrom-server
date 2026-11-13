@@ -147,8 +147,10 @@ object CheckPlayer : NodePlayer {
 }
 
 /**
- * An agent node: a cloud session of the run's starter, keyed by the visit; the node is done once the session no longer
- * holds an execution.
+ * An agent node: a cloud session of the run's starter, keyed by the visit. A node that asks for a deliverable
+ * (`run.deliverable`) ends `delivered` only by its delivery (`deliverRun`, which finishes the visit), and fails
+ * `ended_without_delivery` when its session stops holding an execution with nothing delivered; a node that asks for
+ * none (a workflow written before deliveries) is done once its session no longer holds an execution.
  *
  * @param agents The agent sessions.
  */
@@ -163,7 +165,8 @@ class AgentPlayer(private val agents: RunAgents) : NodePlayer {
                 if (refusal == null) null else visit.failed(refusal)
             }
             state == AgentState.WORKING -> null
-            state == AgentState.FAILED -> visit.failed("The agent session failed to start.")
+            state == AgentState.FAILED -> visit.failed(RunMoves.SESSION_FAILED)
+            visit.node.run?.deliverable != null -> visit.failed(RunMoves.ENDED_WITHOUT_DELIVERY)
             else -> visit.done(RunMoves.NEXT)
         }
     }
@@ -219,9 +222,10 @@ class GatePlayer(private val gates: RunGates) : NodePlayer {
 }
 
 /**
- * A wait node: its question, asked of its first approver (else its owner, else the run's starter) for the run's
- * starter, keyed by the visit. The run waits without holding anything: the wait is stored, and the engine looks at it
- * again until it is answered, also after a restart. The answer's action is the visit's outcome, its values its output.
+ * A wait node: its question (its body rendered as the run's texts are, [RunTemplates]), asked of its first approver
+ * (else its owner, else the run's starter) for the run's starter, keyed by the visit. The run waits without holding
+ * anything: the wait is stored, and the engine looks at it again until it is answered, also after a restart. The
+ * answer's action is the visit's outcome, its values its output.
  *
  * @param waits The waits.
  */
@@ -238,7 +242,8 @@ class WaitPlayer(private val waits: RunWaits) : NodePlayer {
         val opening = if (question == null) {
             WaitOpening(refusal = "The wait node asks no question.")
         } else {
-            val request = WaitRequest(visit.run.id, visit.last.seq, visit.run.startedBy, assignee, question)
+            val asked = question.copy(body = question.body?.let { RunTemplates.render(it, visit.run) })
+            val request = WaitRequest(visit.run.id, visit.last.seq, visit.run.startedBy, assignee, asked)
             waits.ask(visit.ref.orgId, request)
         }
         val waitId = opening.waitId
@@ -264,7 +269,8 @@ class WaitPlayer(private val waits: RunWaits) : NodePlayer {
 
 /**
  * A workflow node: a child run of another workflow of the organization, with the node's arguments as its inputs,
- * keyed by the visit; the node is done when the child succeeds, and fails when the child fails or is cancelled.
+ * keyed by the visit; the node is done, with the child's output, when the child succeeds, and fails when the child
+ * fails or is cancelled.
  *
  * @param children The child runs.
  */
