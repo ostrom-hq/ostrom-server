@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 // Module skills: the organization's skill catalog (TeamCode's), its members' personal skills and their delivery.
 plugins {
     id("ostrom.native-module")

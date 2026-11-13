@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.skills.domain
 
 /** SHA-256 of bytes, lower-case hex: the platform's cryptography provider in production. */
