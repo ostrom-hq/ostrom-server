@@ -26,6 +26,7 @@ import run.ostrom.server.runners.RunnersModule
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.sessions.SessionsModule
 import run.ostrom.server.sharing.SharingModule
+import run.ostrom.server.todos.TodosModule
 import run.ostrom.server.usage.UsageModule
 import run.ostrom.server.workflowruns.WorkflowRunsModule
 
@@ -56,6 +57,8 @@ fun serverModules(): List<ServerModule> = listOf(
     RunnersModule,
     AutomationsModule,
     ArtifactsModule,
+    // After the sessions, automations (waits) and artifacts it reads.
+    TodosModule,
     GitHubIntegrationModule,
     SlackIntegrationModule,
     SharingModule,
