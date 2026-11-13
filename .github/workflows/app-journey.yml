@@ -229,7 +229,10 @@ jobs:
       # The app builds ostrom-core from source at the commit it pins, as its own CI does.
       - name: Read the ostrom-core commit the app pins
         id: core
-        run: echo "sha=$(tr -d '[:space:]' < app/gradle/ostrom-core.ref)" >> "$GITHUB_OUTPUT"
+        # An app ref from before the Kotlin Multiplatform app (ostrom-app#65) pins none: it has no journey to run here.
+        run: |
+          [ -s app/gradle/ostrom-core.ref ] || { echo "::error::ostrom-app $APP_REF pins no ostrom-core (gradle/ostrom-core.ref): it predates the Kotlin Multiplatform app"; exit 1; }
+          echo "sha=$(tr -d '[:space:]' < app/gradle/ostrom-core.ref)" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ostrom-hq/ostrom-core
