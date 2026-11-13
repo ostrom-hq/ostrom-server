@@ -17,7 +17,7 @@ import org.koin.dsl.module
 /**
  * The enterprise license module: verifies the license key (`OSTROM_LICENSE_KEY` or `_FILE`) offline against the
  * public keys compiled in, and binds billing's [LicenseProvider] (billing falls back to no license without it). It
- * comes after the billing and instance modules (`eeModules()` follows every AGPL module). An invalid key fails the
+ * comes after the billing and instance modules (`eeModules()` follows every Apache-2.0 module). An invalid key fails the
  * start with the reason; no key means no license. It serves no route, so it lists no feature in
  * `/api/v1/capabilities` (`license.v1` comes with a route that shows the license).
  */
