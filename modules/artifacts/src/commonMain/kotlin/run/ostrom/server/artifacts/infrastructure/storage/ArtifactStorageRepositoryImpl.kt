@@ -43,7 +43,7 @@ internal class ArtifactStorageRepositoryImpl(
         val storage = fetchAll(select(STORAGE_COLUMNS, "artifacts_storage", orgId)).getOrThrow()
             .firstOrNull()?.toStorage()
         val settings = fetchAll(select(SETTINGS_COLUMNS, "artifacts_settings", orgId)).getOrThrow()
-            .firstOrNull()?.toSettings() ?: ArtifactSettings()
+            .firstOrNull().let { row -> if (row == null) ArtifactSettings() else row.toSettings() }
         val inUse = fetchAll(
             Statement.create("SELECT EXISTS (SELECT 1 FROM artifacts_artifacts WHERE org_id = :org) AS used")
                 .bind("org", orgId),

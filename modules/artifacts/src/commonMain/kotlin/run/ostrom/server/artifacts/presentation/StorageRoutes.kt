@@ -101,7 +101,7 @@ internal fun SaveArtifactStorageRequest.toInput(): ArtifactStorageInput = Artifa
     prefix = prefix.trim(),
     pathStyle = pathStyle,
     accessKeyId = accessKeyId.trim(),
-    secretAccessKey = secretAccessKey?.trim()?.takeIf { it.isNotEmpty() },
+    secretAccessKey = secretAccessKey?.let { secret -> secret.trim().takeIf { it.isNotEmpty() } },
     serverSideEncryption = ServerSideEncryption.parse(serverSideEncryption)
         ?: throw InvalidArtifactStorageException("Server-side encryption is none or AES256."),
 )

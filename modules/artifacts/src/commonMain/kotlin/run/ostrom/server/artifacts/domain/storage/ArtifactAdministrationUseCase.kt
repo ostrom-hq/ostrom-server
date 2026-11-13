@@ -168,11 +168,14 @@ class ArtifactAdministrationUseCaseImpl(
 
     override suspend fun policy(caller: StorageCaller): ArtifactPolicy {
         val overview = repository.overview(caller.orgId)
-        val reason = overview.availability.reason?.wire
-            ?: PublishRefusal.FORBIDDEN.wire.takeIf {
-                overview.settings.whoCanPublish == WhoCanPublish.ADMINS && !caller.administrator
-            }
-            ?: PublishRefusal.CREDENTIAL_SCOPE.wire.takeIf { !caller.mayWrite }
+        val inactive = overview.availability.reason
+        val reason = when {
+            inactive != null -> inactive.wire
+            overview.settings.whoCanPublish == WhoCanPublish.ADMINS && !caller.administrator ->
+                PublishRefusal.FORBIDDEN.wire
+            !caller.mayWrite -> PublishRefusal.CREDENTIAL_SCOPE.wire
+            else -> null
+        }
         return ArtifactPolicy(reason)
     }
 
