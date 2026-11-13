@@ -28,3 +28,15 @@ class TodoAdminRequiredException : OstromException(
     ErrorKind.FORBIDDEN,
     "Only an administrator of the organization changes the todo Stop hook of a member.",
 )
+
+/** A service key, a device or a runner token: a session's todo is its person's and their agent's only. */
+class TodoCredentialRefusedException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "This credential does not reach a session's todo: its person or the session's agent token does.",
+)
+
+/** An agent token named no session: it acts only in one of its launch's sessions, which it names. */
+class TodoAgentSessionRequiredException : OstromException(
+    ErrorKind.INVALID_REQUEST,
+    "Name the session (sessionId): an agent token acts only in its own session.",
+)
