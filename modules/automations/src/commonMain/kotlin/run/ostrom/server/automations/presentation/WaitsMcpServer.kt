@@ -6,6 +6,7 @@ import run.ostrom.server.automations.domain.Wait
 import run.ostrom.server.automations.domain.WaitAction
 import run.ostrom.server.automations.domain.WaitCaller
 import run.ostrom.server.automations.domain.WaitField
+import run.ostrom.server.automations.domain.WaitMessages
 import run.ostrom.server.automations.domain.WaitNotFoundException
 import run.ostrom.server.automations.domain.WaitQuery
 import run.ostrom.server.automations.domain.WaitRef
@@ -111,7 +112,8 @@ internal class WaitsMcpServer(private val dependencies: WaitsRoutesDependencies)
         val request = AskWait(question, caller.session ?: bound.binding.session, bound.binding.run, arguments.assignee)
         val wait = dependencies.ask.ask(caller, request, null).wait
         return "Asked: wait ${wait.id} is open, for member ${wait.assignee}. End your turn now: the answer comes " +
-            "back to this session when the member gives it, and get_wait reads it."
+            "back to this session as a message starting with ${WaitMessages.PREFIX} when the member gives it, and " +
+            "get_wait reads it."
     }
 
     private suspend fun list(bound: Bound, arguments: ListArguments): String {
@@ -183,7 +185,8 @@ internal class WaitsMcpServer(private val dependencies: WaitsRoutesDependencies)
 
         const val INSTRUCTIONS = "When you need an answer, a decision, an approval or a setup only a person can " +
             "give, call ask_human with typed fields instead of guessing, then end your turn. The person answers " +
-            "from Waiting for you; you never answer a wait yourself."
+            "from Waiting for you, and the answer comes back as a message starting with ${WaitMessages.PREFIX}; " +
+            "you never answer a wait yourself."
 
         private val TOOLS: JsonArray = buildJsonArray {
             add(tool("ask_human", "Ask a member (the session's owner by default) and wait for the answer.", ASK_SCHEMA))

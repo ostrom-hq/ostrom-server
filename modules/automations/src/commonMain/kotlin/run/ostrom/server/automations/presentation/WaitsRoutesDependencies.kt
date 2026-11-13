@@ -5,6 +5,7 @@ import run.ostrom.server.automations.domain.AnswerWaitUseCase
 import run.ostrom.server.automations.domain.AskWaitUseCase
 import run.ostrom.server.automations.domain.ReadWaitsUseCase
 import run.ostrom.server.automations.domain.WaitAgentResolver
+import run.ostrom.server.automations.domain.WakeWaitsUseCase
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 
 /**
@@ -14,7 +15,8 @@ import run.ostrom.server.kernel.auth.PrincipalOrgResolver
  * @property read Reads.
  * @property answer Answers and cancels.
  * @property orgResolver The member a request acts for.
- * @property agents The member an agent token asks for, on the waits MCP server only.
+ * @property agents The member an agent token asks for, on the waits MCP server and the wake only.
+ * @property wake Wakes an agent's session with the answers to its waits.
  */
 data class WaitsRoutesDependencies(
     val ask: AskWaitUseCase,
@@ -22,4 +24,5 @@ data class WaitsRoutesDependencies(
     val answer: AnswerWaitUseCase,
     val orgResolver: PrincipalOrgResolver,
     val agents: WaitAgentResolver,
+    val wake: WakeWaitsUseCase,
 )

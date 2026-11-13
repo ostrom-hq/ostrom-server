@@ -249,6 +249,53 @@ class WaitsMcpAgentTest {
             )
         }
 
+    private suspend fun HttpClient.wake(
+        token: String? = "launch",
+        path: String = "$WAKE?session=$LAUNCH_SESSION",
+        body: String = """{"waitMillis":0}""",
+    ): HttpResponse = post(path) {
+        if (token != null) bearerAuth(token)
+        contentType(ContentType.Application.Json)
+        setBody(body)
+    }
+
+    @Test
+    fun theStopHookOfALaunchHoldsWhileAWaitIsOpenThenGetsItsAnswerOnce() =
+        serverTest(listOf(AutomationsModule), withAgents) { server ->
+            val client = server.client
+            val ship = """{"title":"Ship it?","actions":[{"id":"ship","label":"Ship"}]}"""
+            val asked = client.call("ask_human", ship, OWN)
+            val id = asked.text().substringAfter("wait ").substringBefore(" ")
+            val held = client.wake()
+            assertEquals(HttpStatusCode.OK, held.status, held.bodyAsText())
+            assertEquals("""{"open":true,"messages":[]}""", held.bodyAsText())
+
+            val answered = client.post("/api/v1/waits/$id/answer") {
+                bearerAuth("bob")
+                contentType(ContentType.Application.Json)
+                setBody("""{"action":"ship"}""")
+            }
+            assertEquals(HttpStatusCode.OK, answered.status, answered.bodyAsText())
+            val woken = Json.parseToJsonElement(client.wake(body = "").bodyAsText()).jsonObject
+            assertEquals(false, woken.getValue("open").jsonPrimitive.boolean)
+            val message = woken.getValue("messages").jsonArray.single().jsonPrimitive.content
+            assertEquals("[Ostrom wait answered] Ship it?\nwait: $id\naction: Ship (ship)\nanswered by: bob", message)
+            assertEquals("""{"open":false,"messages":[]}""", client.wake().bodyAsText(), "Once")
+        }
+
+    @Test
+    fun onlyAnAgentTokenInItsSessionIsWoken() =
+        serverTest(listOf(AutomationsModule), withAgents) { server ->
+            val client = server.client
+            assertEquals(HttpStatusCode.Unauthorized, client.wake(token = null).status)
+            assertEquals(HttpStatusCode.Forbidden, client.wake(token = "bob").status, "A person never takes the wake")
+            assertEquals(HttpStatusCode.BadRequest, client.wake(path = WAKE).status, "It names its session")
+            assertEquals(HttpStatusCode.Forbidden, client.wake(path = "$WAKE?session=$FOREIGN_SESSION").status)
+            assertEquals(HttpStatusCode.BadRequest, client.wake(body = "{").status)
+            assertEquals(HttpStatusCode.BadRequest, client.wake(body = """{"waitMillis":30001}""").status)
+            assertEquals(HttpStatusCode.Forbidden, client.wake(token = "ended").status, "A launch that is over")
+        }
+
     @Test
     fun withoutTheLaunchesModuleNoAgentTokenIsAnyone() =
         serverTest(listOf(AutomationsModule), testIdentities) { server ->
@@ -260,6 +307,7 @@ class WaitsMcpAgentTest {
     private companion object {
         const val UNBOUND = "/api/v1/waits/mcp"
         const val OWN = "/api/v1/waits/mcp?session=$LAUNCH_SESSION"
+        const val WAKE = "/api/v1/waits/wake"
         const val ALICES = "/api/v1/waits/mcp?session=alice-1"
         const val FOREIGN = "/api/v1/waits/mcp?session=$FOREIGN_SESSION"
     }

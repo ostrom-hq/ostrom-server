@@ -72,6 +72,32 @@ class WaitsApi(
 class WaitsMcpApi(val session: String? = null, val run: String? = null)
 
 /**
+ * `POST /api/v1/waits/wake`: what the waits of an agent's session have to say to the Stop hook of its launch.
+ *
+ * @property session The session the agent runs in: any of its segments.
+ */
+@Serializable
+@Resource("/api/v1/waits/wake")
+class WaitsWakeApi(val session: String? = null)
+
+/**
+ * The body of `POST /api/v1/waits/wake`, optional.
+ *
+ * @property waitMillis How long the call may be held, 0 to 30 000; 25 000 when absent.
+ */
+@Serializable
+data class WaitWakeRequest(val waitMillis: Long? = null)
+
+/**
+ * The answer of `POST /api/v1/waits/wake`, as the contract's `WaitWake`.
+ *
+ * @property open A wait of the session is still open.
+ * @property messages The answers that arrived, oldest first, each handed over once.
+ */
+@Serializable
+data class WaitWakeResponse(val open: Boolean, val messages: List<String>)
+
+/**
  * The body of `POST /api/v1/waits`.
  *
  * @property question The question.
