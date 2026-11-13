@@ -86,6 +86,18 @@ object BuildFacts {
         return BuildTool(manager, command.ifEmpty { null }, evidence, lockfile != null)
     }
 
+    /**
+     * How the repository's package manager runs a script of the root `package.json`, from its lockfile.
+     *
+     * @param paths The repository's files.
+     * @param name The script.
+     * @return The command (`pnpm release`, `npm run release`).
+     */
+    fun runScript(paths: List<String>, name: String): String {
+        val root = paths.filter { '/' !in it }.toSet()
+        return script(lockfiles.firstOrNull { it.second in root }?.first ?: "npm", name)
+    }
+
     private fun script(manager: String, name: String): String = when {
         manager == "npm" && name == "test" -> "npm test"
         // `bun test` runs Bun's own test runner, not the script: `bun run test` runs the script.
