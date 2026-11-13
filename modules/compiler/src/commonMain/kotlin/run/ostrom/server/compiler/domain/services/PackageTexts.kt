@@ -7,7 +7,6 @@ import run.ostrom.core.api.models.CompiledScript
 import run.ostrom.core.api.models.Workflow
 import run.ostrom.core.api.models.WorkflowNode
 import run.ostrom.core.api.models.WorkflowNodeKind
-import run.ostrom.core.api.models.WorkflowStatus
 import run.ostrom.server.compiler.domain.models.RuleDoc
 
 /** The texts a session package carries for a workflow (`compiler/compile.ts`), byte for byte. */
@@ -124,7 +123,7 @@ object PackageTexts {
             "",
             "# ${workflow.name}",
             "",
-            if (workflow.status == WorkflowStatus.PROPOSED) PROPOSED else DECIDED,
+            DECIDED,
             "",
         )
         for (node in ordered) {
@@ -193,6 +192,4 @@ object PackageTexts {
     }
 
     private const val DECIDED = "Decided by the team: Ostrom enforces it in this session."
-    private const val PROPOSED = "**Proposed, not decided yet**: Ostrom only logs what this workflow would do; " +
-        "nothing is blocked or run because of it."
 }

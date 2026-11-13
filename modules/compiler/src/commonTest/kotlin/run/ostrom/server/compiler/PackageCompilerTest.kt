@@ -122,6 +122,25 @@ class PackageCompilerTest {
     }
 
     @Test
+    fun aProposedWorkflowWritesNoSkillAndNoSubAgentUntilItIsAccepted() = runTest {
+        val step = node("s", STEP, label = "Write the notes")
+        val agent = node("a", AGENT, label = "Look", detail = "Read it.")
+        val decided = workflow("w", listOf(step, agent), name = "Ship")
+        val proposed = compiled(inputs(listOf(decided.copy(status = WorkflowStatus.PROPOSED))))
+
+        val written = proposed.files.map { it.path }
+        assertTrue(written.none { it.startsWith("skills/ostrom-wf-") || "agents/" in it }, written.toString())
+        assertTrue(proposed.nodes.all { node -> node.artifacts.none { "skills/" in it || "agents/" in it } })
+        val context = proposed.body.getValue("context").jsonPrimitive.content
+        assertTrue(context.endsWith("\n- Ship [proposed: logged only]"), context)
+
+        val accepted = compiled(inputs(listOf(decided))).files.map { it.path }
+        assertTrue("skills/ostrom-wf-ship/SKILL.md" in accepted)
+        assertTrue("agents/ostrom-look.md" in accepted)
+        assertTrue(accepted.any { it.startsWith("codex/agents/") })
+    }
+
+    @Test
     fun gatesNotifiesAndAgentsCompileWithTheirDefaults() = runTest {
         val gate = node("g", GATE, label = "Ship it")
         val notify = node("n", NOTIFY, label = "push done", owner = "ops")

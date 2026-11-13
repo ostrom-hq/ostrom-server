@@ -24,8 +24,30 @@ import kotlin.uuid.Uuid
  *
  * @param driver The connection pool.
  */
-class PostgresWorkflowsRepository(private val driver: Driver) : WorkflowsRepository {
-    private suspend fun <T> scoped(orgId: Uuid, block: suspend CompilerTx.() -> T): T = driver.inOrg(orgId, block)
+class PostgresWorkflowsRepository private constructor(
+    private val driver: Driver,
+    // The transaction of the workflow lock, when this is the repository [underWorkflowLock] hands to its block.
+    private val held: CompilerTx?,
+) : WorkflowsRepository {
+    /**
+     * Creates the repository.
+     *
+     * @param driver The connection pool.
+     */
+    constructor(driver: Driver) : this(driver, null)
+
+    private suspend fun <T> scoped(orgId: Uuid, block: suspend CompilerTx.() -> T): T =
+        if (held == null) driver.inOrg(orgId, block) else held.block()
+
+    // `pg_advisory_xact_lock` on a key of the organization: held until the transaction ends, by every replica.
+    override suspend fun <T> underWorkflowLock(orgId: Uuid, block: suspend (WorkflowsRepository) -> T): T =
+        driver.inOrg(orgId) {
+            fetch(
+                Statement.create("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))")
+                    .bind("key", "$LOCK_KEY:$orgId"),
+            )
+            block(PostgresWorkflowsRepository(driver, this))
+        }
 
     override suspend fun workflows(orgId: Uuid): List<StoredWorkflow> = scoped(orgId) {
         fetch(
@@ -117,6 +139,7 @@ class PostgresWorkflowsRepository(private val driver: Driver) : WorkflowsReposit
 
     private companion object {
         // Two creations at the limit at once may both pass the count: the read keeps room for them, and stays bounded.
+        const val LOCK_KEY = "ostrom.compiler.workflows"
         const val READ_GUARD = 2 * MAX_WORKFLOWS
         const val WORKFLOW_COLUMNS = "doc, version, updated_by, updated_at"
 
