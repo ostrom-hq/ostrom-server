@@ -262,8 +262,16 @@ class RunAutomationsUseCaseImpl(
         val trigger = automation.definition.trigger
         val late = now - slot
         val skip = late > LATE && (trigger.catchup == Catchup.SKIP || late > trigger.catchupGraceMinutes.minutes)
+        val next = try {
+            AutomationRules.nextRun(automation.definition, now)
+        } catch (expected: InvalidAutomationException) {
+            // A schedule saved valid that no longer reads (a zone the time-zone database dropped, a cron an older
+            // version accepted) pauses its automation without running the slot, rather than failing the claim of every
+            // organization's due crons at each pass (TeamCode 9ade0c25). Enabling it again checks the definition.
+            return CronClaim(nextRunAt = null, run = null, pause = true)
+        }
         val run = if (skip) null else newRun(automation, RunSource.CRON, "cron:${slot.epochSeconds}", now, slot)
-        return CronClaim(AutomationRules.nextRun(automation.definition, now), run)
+        return CronClaim(next, run)
     }
 
     /** Records a webhook or test run, then starts it unless its payload is refused or it is a duplicate. */

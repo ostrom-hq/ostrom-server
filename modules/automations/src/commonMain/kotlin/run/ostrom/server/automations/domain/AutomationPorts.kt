@@ -119,8 +119,9 @@ interface AutomationsRepository {
  *
  * @property nextRunAt Its next slot (none when it never runs again).
  * @property run The run to record, or none when the slot is skipped.
+ * @property pause Pauses the automation (its stored schedule no longer reads).
  */
-data class CronClaim(val nextRunAt: Instant?, val run: AutomationRun?)
+data class CronClaim(val nextRunAt: Instant?, val run: AutomationRun?, val pause: Boolean = false)
 
 /**
  * A cron run recorded by a claim.
