@@ -28,9 +28,9 @@ class CloudStepSessions(
     private val waits: WaitsRepository,
 ) : StepSessions {
     override suspend fun ownedBy(orgId: Uuid, sessionId: Uuid, login: String): Boolean {
-        val owner = cloud.get(orgId, sessionId)?.ownerId ?: return false
+        val session = cloud.get(orgId, sessionId) ?: return false
         val member = members.colleague(orgId, login)?.let { members.member(orgId, it.userId) }
-        return member?.memberId?.toString() == owner
+        return member != null && member.memberId.toString() == session.ownerId
     }
 
     override suspend fun asked(orgId: Uuid, sessionId: Uuid): Boolean {

@@ -59,8 +59,9 @@ private suspend fun WorkflowRunsRoutesDependencies.agentCallerOf(
 ): Pair<StepCaller, Uuid?> {
     if (WORKFLOW_SESSION_SCOPE !in principal.scopes) throw CredentialScopeException()
     val actor = actors.resolve(principal) ?: throw principal.outsideOrganization()
-    // An agent actor always names its launch and its person; without them it is nobody's (fail closed).
-    return StepCaller(actor.orgId, actor.personId.orEmpty(), launchId = actor.launchId.orEmpty()) to null
+    // An agent actor always names its launch and its person; were one missing, "null" names no launch and no person,
+    // so the caller would find no session (fail closed).
+    return StepCaller(actor.orgId, actor.personId.toString(), launchId = actor.launchId.toString()) to null
 }
 
 // A person who writes workflows, naming the session.

@@ -658,6 +658,10 @@ class RunEnginePostgresTest {
         }
         println("-- run of a session\n$plan")
         assertTrue("workflow_runs_visits_session" in plan, plan)
+        // Once the session stops, its agent token acts in no organization.
+        server.endSession(ada.org.id, session)
+        val over = server.call(token, SESSION_DELIVER, """{"output":"$pr"}""")
+        assertEquals(HttpStatusCode.Forbidden to true, over.status to ("no organization" in over.bodyAsText()))
     }
 
     private suspend fun TestServer.agentScopes(orgId: Uuid, scopes: String) {
