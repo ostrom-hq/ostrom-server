@@ -108,7 +108,7 @@ private suspend fun ApplicationTestBuilder.serve(
             val migrations = koin.get<MigrationRunner>()
             modules.forEach { migrations.verify(it.name, it.migrations) }
             modules.forEach { it.initialize(koin) }
-            // Every answer is checked against ostrom-core main's contract when CI gives it (ContractObserver).
+            // Every answer is checked against the pinned ostrom-core's contract when CI gives it (ContractObserver).
             val observer = ContractObserver(Contract.from(environment))
             application {
                 install(observer.plugin)

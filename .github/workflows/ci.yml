@@ -20,7 +20,7 @@ on:
       # A core PR that touches an answer (schema, status, enum) is squashed only after this server's strict contract
       # test ran green against it: core#96 turned every server PR red with three drifts (JOURNAL 03/11 15:1x).
       core_ref:
-        description: The ostrom-core commit (full SHA) whose contract the tests check, instead of main
+        description: The ostrom-core commit (full SHA) whose contract the tests check, instead of gradle/ostrom-core.ref
         type: string
         default: ''
       # A server change that an e2e scenario proves, while main's scenario still waits for it (a temporary skip):
@@ -71,17 +71,24 @@ jobs:
       OSTROM_STRIPE_MOCK_REQUIRED: 'true'
       OSTROM_STRIPE_E2E_KEY: ${{ secrets.STRIPE_TEST_KEY }}
       OSTROM_STRIPE_E2E_REQUIRED: 'true'
-      # The contract tests (ContractSchema) compare real answers with ostrom-core main's schemas, written as JSON by
+      # The contract tests (ContractSchema) compare real answers with the pinned ostrom-core's schemas, written as JSON by
       # the contract step below; they fail instead of being skipped here.
       OSTROM_CONTRACT_REQUIRED: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # docs-truth (ostrom-core's tools/docs-truth) at a pinned commit, whose api/contract/served-routes.txt says what
-      # ostrom-server main serves; moved out of the workspace, so that no check of this repository scans it.
+      # One ostrom-core for the whole run (CS-03): the commit gradle/ostrom-core.ref pins, which the Kotlin library is
+      # built from too. Only a manual run naming core_ref (squash.sh, before it squashes a core PR) checks another one.
+      - name: The ostrom-core commit this run checks against
+        id: core
+        env:
+          CORE_REF: ${{ inputs.core_ref }}
+        run: echo "ref=${CORE_REF:-$(tr -d '[:space:]' < gradle/ostrom-core.ref)}" >> "$GITHUB_OUTPUT"
+      # docs-truth (ostrom-core's tools/docs-truth) and api/contract/served-routes.txt at that commit; moved out of the
+      # workspace, so that no check of this repository scans it.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ostrom-hq/ostrom-core
-          ref: 386c70b2798d08c28657b3e4592f79425d00a2a1 # docs-truth and served-routes.txt; move it forward by pull request
+          ref: ${{ steps.core.outputs.ref }}
           ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
           path: docs-truth-core
           persist-credentials: false
@@ -91,13 +98,13 @@ jobs:
           core="$RUNNER_TEMP/docs-truth-core"
           node "$core/tools/docs-truth/bin/docs-truth.mjs" --routes "$core/api/contract/served-routes.txt" \
             --tests --source . --source "$core/telemetry" README.md docs
-      # The contract at ostrom-core main against the routes this server mounts, read from the sources (no build): fails
+      # The contract at that ostrom-core commit against the routes this server mounts, read from the sources (no build): fails
       # for a mounted route the contract lacks and for a `served` operation not mounted; warns for a mounted route
       # still `planned` (the server may merge before core).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ostrom-hq/ostrom-core
-          ref: ${{ inputs.core_ref }}
+          ref: ${{ steps.core.outputs.ref }}
           ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
           path: contract-core
           persist-credentials: false
