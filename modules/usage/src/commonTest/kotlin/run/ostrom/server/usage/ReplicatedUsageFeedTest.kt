@@ -126,12 +126,13 @@ class ReplicatedUsageFeedTest {
             "v1 $other",
             "v2 $other ${TestCallers.orgA}:$unknown",
             "v1 $other not-an-org:$unknown ${TestCallers.orgA}:not-an-id ${TestCallers.orgA}",
+            "v1 $other ${Uuid.random()}:$unknown",
             "v1 $other ${TestCallers.orgA}:$unknown",
         ).forEach { launch { database.notify(ReplicatedUsageFeed.CHANNEL, it) } }
         runCurrent()
 
         assertEquals(emptyList(), onB)
-        assertEquals(listOf(TestCallers.orgA to listOf(unknown)), read, "Only the well-formed one is read")
+        assertEquals(listOf(TestCallers.orgA to listOf(unknown)), read, "Only the well-formed one of a watched org is read")
     }
 
     @Test

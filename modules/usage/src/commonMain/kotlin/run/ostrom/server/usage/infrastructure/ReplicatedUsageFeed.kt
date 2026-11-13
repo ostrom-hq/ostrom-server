@@ -109,8 +109,8 @@ class ReplicatedUsageFeed(
 
     private suspend fun heard(payload: String) {
         val parts = payload.split(' ')
-        if (parts.size < 3 || parts[0] != VERSION || parts[1] == replica.toString()) return
-        val named = parts.drop(2).mapNotNull { named ->
+        if (parts.size <= HEADER || parts[0] != VERSION || parts[1] == replica.toString()) return
+        val named = parts.drop(HEADER).mapNotNull { named ->
             val org = Uuid.parseOrNull(named.substringBefore(':'))
             val id = Uuid.parseOrNull(named.substringAfter(':', ""))
             if (org == null || id == null) null else org to id
@@ -148,5 +148,8 @@ class ReplicatedUsageFeed(
         const val OUTGOING = 4096
 
         private const val VERSION = "v1"
+
+        /** The version and the replica, before the events named. */
+        private const val HEADER = 2
     }
 }
