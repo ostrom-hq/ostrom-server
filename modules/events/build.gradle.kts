@@ -14,9 +14,7 @@ kotlin {
             // The webhooks' signatures and secrets.
             implementation(libs.cryptography.core)
         }
-        nativeMain.dependencies {
-            implementation(libs.cryptography.openssl3.prebuilt)
-        }
+        // The JDK provides HMAC-SHA256 there.
         jvmMain.dependencies {
             implementation(libs.cryptography.jdk)
         }
