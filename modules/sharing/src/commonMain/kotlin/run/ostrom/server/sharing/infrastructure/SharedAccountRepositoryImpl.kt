@@ -71,7 +71,7 @@ class SharedAccountRepositoryImpl(private val driver: Driver) : SharedAccountRep
             .bind("org_id", account.orgId)
             .bind("provider", account.provider.name)
             .bind("provider_account_id", account.providerAccountId),
-    ).getOrThrow().isNotEmpty()
+    ).getOrThrow().firstOrNull() != null
 
     override suspend fun get(orgId: Uuid, id: Uuid): SharedAccount? = driver.fetchInOrg(
         orgId,
