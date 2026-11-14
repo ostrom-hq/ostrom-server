@@ -5,7 +5,13 @@ import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.OrgDeletionListener
 import run.ostrom.server.kernel.module.ServerModule
+import run.ostrom.server.kernel.database.ScheduledWork
+import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.memory.domain.MemoryAudit
+import run.ostrom.server.memory.domain.MemoryCurationRuns
+import run.ostrom.server.memory.domain.MemoryCurationService
+import run.ostrom.server.memory.domain.MemoryCurationServiceImpl
+import run.ostrom.server.memory.domain.MemoryCurationStore
 import run.ostrom.server.memory.domain.MemoryProposalStore
 import run.ostrom.server.memory.domain.MemoryProposalWaits
 import run.ostrom.server.memory.domain.MemoryProposalsService
@@ -14,14 +20,18 @@ import run.ostrom.server.memory.domain.MemoryRepository
 import run.ostrom.server.memory.domain.MemoryService
 import run.ostrom.server.memory.domain.MemoryServiceImpl
 import run.ostrom.server.memory.infrastructure.AutomationsMemoryProposals
+import run.ostrom.server.memory.infrastructure.MemoryCurationRunsImpl
+import run.ostrom.server.memory.infrastructure.MemoryCurationStoreImpl
 import run.ostrom.server.memory.infrastructure.MemoryMigrations
 import run.ostrom.server.memory.infrastructure.MemoryOrgDeletionListener
 import run.ostrom.server.memory.infrastructure.MemoryProposalStoreImpl
 import run.ostrom.server.memory.infrastructure.MemoryRepositoryImpl
-import run.ostrom.server.memory.infrastructure.MemorySettleWorker
+import run.ostrom.server.memory.infrastructure.MemorySchedule
+import run.ostrom.server.memory.infrastructure.MemoryWorker
 import run.ostrom.server.memory.infrastructure.OrgMemoryAudit
 import run.ostrom.server.memory.presentation.MemoryCallers
 import run.ostrom.server.memory.presentation.MemoryRoutesDependencies
+import run.ostrom.server.memory.presentation.memoryCurationRoutes
 import run.ostrom.server.memory.presentation.memoryRoutes
 import io.ktor.server.routing.Route
 import kotlinx.coroutines.CoroutineScope
@@ -30,6 +40,7 @@ import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
+import kotlin.uuid.Uuid
 
 /**
  * The memory module (TeamCode docs/memory.md): the organization's entries, which every member reads, and each member's
@@ -46,9 +57,11 @@ object MemoryModule : ServerModule {
         single<MemoryAudit> { OrgMemoryAudit(get()) }
         single<MemoryProposalsService> { MemoryProposalsServiceImpl(get(), get(), get(), get(), get()) }
         single<MemoryService> { MemoryServiceImpl(get(), get(), get(), get()) }
+        single<MemoryCurationStore> { MemoryCurationStoreImpl(get(), get()) }
+        single<MemoryCurationRuns> { MemoryCurationRunsImpl(get()) }
+        single<MemoryCurationService> { MemoryCurationServiceImpl(get(), get(), get(), get()) }
         single { MemoryCallers(get()) }
-        single { MemoryRoutesDependencies(get(), get(), get()) }
-        single { MemorySettleWorker(get(), get(), get()) }
+        single { MemoryRoutesDependencies(get(), get(), get(), get()) }
         single<OrgDeletionListener>(named("memory")) { MemoryOrgDeletionListener(get()) }
     }
 
@@ -56,12 +69,19 @@ object MemoryModule : ServerModule {
 
     override fun routes(route: Route, koin: Koin) {
         route.memoryRoutes(koin.get())
+        route.memoryCurationRoutes(koin.get())
     }
 
-    /** The settling of the agents' proposals, one replica at a time. */
+    /** The settling of the agents' proposals and the hourly curation, each on the lease, one replica at a time. */
     override fun start(scope: CoroutineScope, koin: Koin) {
-        val settle = koin.get<MemorySettleWorker>()
+        val work = koin.get<ScheduledWork>()
+        val logger = koin.get<Logger>()
+        val proposals = koin.get<MemoryProposalsService>()
+        val curation = koin.get<MemoryCurationService>()
+        val settle = MemoryWorker(MemorySchedule.SETTLE, work, logger) { proposals.settle() }
+        val curate = MemoryWorker(MemorySchedule.CURATE, work, logger) { curation.run(Uuid.random().toString()) }
         scope.launch { settle.run() }
+        scope.launch { curate.run() }
     }
 
     /** The memory, always served. */

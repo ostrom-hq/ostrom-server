@@ -256,6 +256,15 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/memory/proposals" to Case.Target(),
     "POST /api/v1/memory/proposals/{id}/accept" to target("id" to MEMORY),
     "POST /api/v1/memory/proposals/{id}/reject" to target("id" to MEMORY),
+    // The curation (TeamCode #273): its setting, the reviews and the superseded entries are the caller's
+    // organization's; a review is only made by a run, so an entry of B stands for one (404 either way).
+    "GET /api/v1/memory/curation" to Case.Target(),
+    "PUT /api/v1/memory/curation" to Case.Target(body = """{"enabled": false}""", admin = true),
+    "GET /api/v1/memory/reviews" to Case.Target(),
+    "POST /api/v1/memory/reviews/{id}/apply" to target("id" to MEMORY),
+    "POST /api/v1/memory/reviews/{id}/dismiss" to target("id" to MEMORY),
+    "GET /api/v1/memory/superseded" to Case.Target(),
+    "POST /api/v1/memory/{id}/restore" to target("id" to MEMORY),
 
     // Environment variants: the caller's own values, the administrators' variants, assignments and exclusions.
     "GET /api/v1/environment" to Case.Target(),

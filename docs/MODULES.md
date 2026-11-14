@@ -629,6 +629,22 @@ member rejects their own. Text
 that looks like a credential is refused (422 `memory_secret`). A memory holds 5 000 organization entries and 2 000 per
 member. The index and the search never read `content`; the audit names ids only.
 
+The curation (TeamCode #273, coming soon in the contract and the console) is off for an organization until an
+administrator turns it on (`PUT /api/v1/memory/curation`, a person's, audited `memory.curation_enabled` or
+`memory.curation_disabled`); the setting is a row of `memory_settings`, never an environment variable. Every hour
+(`memory/curate`, on the same lease, 4 minutes at most), a run reads at most 20 scopes of the organizations that turned
+it on (the organization's entries, or one member's personal entries alone), each changed since its last pass or curated
+over a week ago, one per transaction. It never calls a model: entries whose title is equal once case and spaces are
+ignored form a group (20 a scope, 8 entries each); the older of two with equal text is superseded by the newer
+(`superseded_by_id`, nothing deleted, audited `memory.superseded` with the run's id); a pair with different text, a
+person's older entry against an agent's newer one, or an entry tagged `external`, goes to a review queue
+(`GET /api/v1/memory/reviews`, `POST …/reviews/{id}/apply` or `/dismiss`) instead. A superseded entry is listed
+(`GET /api/v1/memory/superseded`) and restored (`POST /api/v1/memory/{id}/restore`, audited `memory.restored`) by its
+owner, or for the organization's by its author or an administrator; the entry that replaced it becomes the superseded
+one. These routes are a person's only. The retention runs for every organization, curation on or off: an entry
+expired for 7 days is deleted (audited `memory.expired`), a superseded one 90 days after, an answered review 30 days
+after. The run finds the organizations through `memory_kept_orgs` (docs/tenancy.md).
+
 ## Commands
 
 | Command | What it does | Exit |

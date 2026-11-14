@@ -192,8 +192,11 @@ internal class MemoryRepositoryImpl(private val driver: Driver, private val cloc
 
     override suspend fun purge(orgId: Uuid) {
         driver.inOrg(orgId) {
-            execute(Statement.create("DELETE FROM memory_entries WHERE org_id = :org_id").bind("org_id", orgId))
-                .getOrThrow()
+            // The reviews and tags go with their entries.
+            for (table in listOf("memory_entries", "memory_settings", "memory_curation_state")) {
+                execute(Statement.create("DELETE FROM $table WHERE org_id = :org_id").bind("org_id", orgId))
+                    .getOrThrow()
+            }
         }
     }
 

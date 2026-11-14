@@ -4,11 +4,8 @@ package run.ostrom.server.memory
 import run.ostrom.server.kernel.database.ScheduledWork
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.logging.Logger
-import run.ostrom.server.memory.domain.MemoryCaller
-import run.ostrom.server.memory.domain.MemoryEntry
-import run.ostrom.server.memory.domain.MemoryProposalsService
-import run.ostrom.server.memory.domain.NewMemory
-import run.ostrom.server.memory.infrastructure.MemorySettleWorker
+import run.ostrom.server.memory.infrastructure.MemorySchedule
+import run.ostrom.server.memory.infrastructure.MemoryWorker
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
@@ -17,11 +14,12 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
-import kotlin.uuid.Uuid
 
-/** The settling pass, every ten seconds on the instance's lease, its failures logged by type. */
-class MemorySettleWorkerTest {
+/** The memory's periodic jobs on the instance's lease: the settling every ten seconds, the curation hourly. */
+class MemoryWorkerTest {
     private val logged = mutableListOf<Pair<String, Map<String, Any?>>>()
     private val logger = object : Logger {
         override fun log(level: LogLevel, message: String, fields: Map<String, Any?>, error: Throwable?) {
@@ -42,42 +40,33 @@ class MemorySettleWorkerTest {
             }
     }
 
-    private class Settle(var failure: Throwable? = null) : MemoryProposalsService {
-        var count = 0
-
-        override suspend fun settle(): Int {
-            count++
-            failure?.let { throw it }
-            return 0
-        }
-
-        override suspend fun propose(caller: MemoryCaller, entry: NewMemory, sessionId: String?): MemoryEntry =
-            error("unused")
-        override suspend fun proposals(caller: MemoryCaller): List<MemoryEntry> = error("unused")
-        override suspend fun decide(caller: MemoryCaller, id: Uuid, accept: Boolean): MemoryEntry = error("unused")
-    }
-
     @Test
-    fun aPassSettlesOnTheLeaseEveryTenSecondsUntilCancelled() = runTest {
-        val settle = Settle()
+    fun aJobAsksTheLeaseEveryTickUntilCancelled() = runTest {
+        var count = 0
         val lease = Lease()
-        val job = launch { MemorySettleWorker(settle, lease, logger).run() }
+        val job = launch { MemoryWorker(MemorySchedule.SETTLE, lease, logger) { count++ }.run() }
         advanceTimeBy(21.seconds)
         job.cancel()
-        assertEquals(3, settle.count)
+        assertEquals(3, count)
         assertEquals(Triple("memory/settle", 10.seconds, 60.seconds), lease.asked.first())
         lease.held = true
-        MemorySettleWorker(settle, lease, logger).pass()
-        assertEquals(3, settle.count, "another replica holds it")
+        MemoryWorker(MemorySchedule.SETTLE, lease, logger) { count++ }.pass()
+        assertEquals(3, count, "another replica holds it")
+        val curate = MemorySchedule.CURATE
+        assertEquals(
+            listOf("memory/curate", 1.minutes, 1.hours, 240.seconds),
+            listOf(curate.job, curate.tick, curate.interval, curate.timeout),
+        )
     }
 
     @Test
     fun aFailedPassIsLoggedByItsTypeOnlyAndACancellationIsNeverSwallowed() = runTest {
-        MemorySettleWorker(Settle(IllegalStateException("secret")), Lease(), logger).pass()
-        val failed = "memory settle pass failed" to mapOf<String, Any?>("error" to "IllegalStateException")
+        MemoryWorker(MemorySchedule.CURATE, Lease(), logger) { throw IllegalStateException("secret") }.pass()
+        val fields = mapOf<String, Any?>("job" to "memory/curate", "error" to "IllegalStateException")
+        val failed = "memory pass failed" to fields
         assertEquals(listOf(failed), logged)
         assertFailsWith<CancellationException> {
-            MemorySettleWorker(Settle(CancellationException("stop")), Lease(), logger).pass()
+            MemoryWorker(MemorySchedule.SETTLE, Lease(), logger) { throw CancellationException("stop") }.pass()
         }
     }
 }

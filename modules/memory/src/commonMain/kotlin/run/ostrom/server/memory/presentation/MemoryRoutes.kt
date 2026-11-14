@@ -85,7 +85,7 @@ fun Route.memoryRoutes(dependencies: MemoryRoutesDependencies) = with(dependenci
     }
 }
 
-private suspend fun ApplicationCall.caller(callers: MemoryCallers): MemoryCaller =
+internal suspend fun ApplicationCall.caller(callers: MemoryCallers): MemoryCaller =
     callers.of(requirePrincipal(), request.headers[MemoryApi.ORIGIN_HEADER])
 
 /** A session id longer than any Ostrom session's is cut, never stored whole. */

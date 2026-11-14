@@ -68,6 +68,39 @@ class MemoryResource {
         class Reject(val parent: Proposals = Proposals(), val id: String)
     }
 
+    /** `GET` and `PUT /api/v1/memory/curation` (`getMemoryCuration`, `setMemoryCuration`). */
+    @Serializable
+    @Resource("curation")
+    class Curation(val parent: MemoryResource = MemoryResource())
+
+    /** `GET /api/v1/memory/reviews` (`listMemoryReviews`). */
+    @Serializable
+    @Resource("reviews")
+    class Reviews(val parent: MemoryResource = MemoryResource()) {
+        /**
+         * `POST /api/v1/memory/reviews/{id}/apply` (`applyMemoryReview`).
+         *
+         * @property id The review's id.
+         */
+        @Serializable
+        @Resource("{id}/apply")
+        class Apply(val parent: Reviews = Reviews(), val id: String)
+
+        /**
+         * `POST /api/v1/memory/reviews/{id}/dismiss` (`dismissMemoryReview`).
+         *
+         * @property id The review's id.
+         */
+        @Serializable
+        @Resource("{id}/dismiss")
+        class Dismiss(val parent: Reviews = Reviews(), val id: String)
+    }
+
+    /** `GET /api/v1/memory/superseded` (`listSupersededMemory`). */
+    @Serializable
+    @Resource("superseded")
+    class Superseded(val parent: MemoryResource = MemoryResource())
+
     /**
      * `GET`, `PATCH` and `DELETE /api/v1/memory/{id}` (`readMemory`, `updateMemory`, `forgetMemory`).
      *
@@ -75,5 +108,10 @@ class MemoryResource {
      */
     @Serializable
     @Resource("{id}")
-    class Entry(val parent: MemoryResource = MemoryResource(), val id: String)
+    class Entry(val parent: MemoryResource = MemoryResource(), val id: String) {
+        /** `POST /api/v1/memory/{id}/restore` (`restoreMemory`). */
+        @Serializable
+        @Resource("restore")
+        class Restore(val parent: Entry)
+    }
 }

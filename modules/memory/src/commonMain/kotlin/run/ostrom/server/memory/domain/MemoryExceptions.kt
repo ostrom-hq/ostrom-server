@@ -69,3 +69,23 @@ class MemoryProposalForbiddenException : OstromException(
 
 /** The session a proposal names is not the caller's, or does not exist: 404, the same answer either way. */
 class MemorySessionNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Session not found.")
+
+/** No such review, or one the caller may not act on: 404, the same answer either way. */
+class MemoryReviewNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Review not found.")
+
+/** The review was already answered: 409 `memory_review_closed`. */
+class MemoryReviewClosedException : OstromException(
+    ErrorKind.CONFLICT,
+    "This review was already answered.",
+    "memory_review_closed",
+)
+
+/** One entry of the review is no longer active: 409 `memory_review_stale`. */
+class MemoryReviewStaleException : OstromException(
+    ErrorKind.CONFLICT,
+    "One of the two entries is no longer active. Dismiss this review.",
+    "memory_review_stale",
+)
+
+/** A member reading or changing the curation setting, or restoring a team entry not theirs: 403 `forbidden`. */
+class MemoryCurationForbiddenException(message: String) : OstromException(ErrorKind.FORBIDDEN, message)

@@ -29,6 +29,25 @@ object MemoryRules {
 
     /** The proposals a queue lists, oldest first. */
     const val PROPOSALS_PAGE: Int = 100
+
+    /** A superseded entry is kept, restorable, this long; an answered review is kept [REJECTED_DAYS]. */
+    const val SUPERSEDED_DAYS: Int = 90
+
+    /** An entry past its expiry this long is deleted (until then it is only hidden). */
+    const val EXPIRED_DAYS: Int = 7
+
+    /** A scope that did not change is curated again after this long. */
+    const val RECURATE_DAYS: Int = 7
+
+    /** The scopes one curation run reads, every organization together. */
+    const val CURATION_SCOPES: Int = 20
+
+    /** The same-title groups curation looks at in a scope per run, and the entries of a group it compares. */
+    const val CURATION_GROUPS: Int = 20
+    const val CURATION_GROUP_SIZE: Int = 8
+
+    /** The reviews and the superseded entries a list shows. */
+    const val CURATION_PAGE: Int = 100
     private const val TERM_MIN = 2
     private const val TERM_MAX = 40
 

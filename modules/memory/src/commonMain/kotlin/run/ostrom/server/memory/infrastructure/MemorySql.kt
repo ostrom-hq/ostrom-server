@@ -6,6 +6,7 @@ import run.ostrom.server.memory.domain.MemoryScope
 import io.github.smyrgeorge.sqlx4k.QueryExecutor
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -51,3 +52,31 @@ internal suspend fun QueryExecutor.proposalsOf(orgId: Uuid, author: String): Int
             "AND status = 'proposed' AND author_id = :author",
     ).bind("org_id", orgId).bind("author", author),
 ).getOrThrow().first().get("n").asInt()
+
+/**
+ * The older entry becomes `superseded` by the newer one, once: a concurrent change loses on its status and version.
+ * The newer entry names it (`supersedes_id`) unless it already names another. Nothing is deleted. One statement.
+ *
+ * @return The older entry's id when this call superseded it; nothing otherwise.
+ */
+internal suspend fun QueryExecutor.supersede(
+    orgId: Uuid,
+    older: Uuid,
+    version: Int,
+    newer: Uuid,
+    now: Instant,
+): List<Uuid> = fetchAll(
+    Statement.create(
+        """
+        WITH changed AS (
+            UPDATE memory_entries SET status = 'superseded', superseded_by_id = :newer, updated_at = :now,
+                version = version + 1
+            WHERE org_id = :org_id AND id = :older AND status = 'active' AND version = :version RETURNING id
+        ), named AS (
+            UPDATE memory_entries SET supersedes_id = :older WHERE org_id = :org_id AND id = :newer
+                AND supersedes_id IS NULL AND EXISTS (SELECT 1 FROM changed)
+        )
+        SELECT id FROM changed
+        """.trimIndent(),
+    ).bind("newer", newer).bind("now", now).bind("org_id", orgId).bind("older", older).bind("version", version),
+).getOrThrow().map { it.get("id").asUuid() }
