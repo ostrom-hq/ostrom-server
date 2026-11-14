@@ -83,6 +83,11 @@ class PackagesApi(val repo: String? = null) {
     @Resource("current")
     class Current(val parent: PackagesApi = PackagesApi())
 
+    /** How the organization compiles (contract `getCompilerSettings`, `saveCompilerSettings`). */
+    @Serializable
+    @Resource("settings")
+    class Settings(val parent: PackagesApi = PackagesApi())
+
     /** Compiled now, neither stored nor signed. */
     @Serializable
     @Resource("preview")

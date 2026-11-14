@@ -2,6 +2,11 @@
 package run.ostrom.server.compiler
 
 import run.ostrom.core.api.models.ServerFeatures
+import run.ostrom.server.compiler.domain.repositories.CompilerSettingsRepository
+import run.ostrom.server.compiler.domain.usecases.CompilerSettingsUseCase
+import run.ostrom.server.compiler.domain.usecases.CompilerSettingsUseCaseImpl
+import run.ostrom.server.compiler.infrastructure.PostgresCompilerSettingsRepository
+import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.compiler.domain.repositories.CompilerRepository
 import run.ostrom.server.compiler.domain.repositories.WorkflowSettingsRepository
 import run.ostrom.server.compiler.infrastructure.PostgresWorkflowSettingsRepository
@@ -57,8 +62,9 @@ import org.koin.dsl.module
 /**
  * The compiler module: the organization's workflows, compiled with the decided rules into a signed session package
  * per repository (version, pin, revocation, audit), and the gates catalogue the hooks and the gates module share. It
- * binds the gates module's [GateNodeResolver]. Its sources (rules, repositories, settings) have a default here, read
- * from the server's configuration, until the module that owns them binds its own.
+ * binds the gates module's [GateNodeResolver]. Its sources (rules, repositories) have a default here until the module
+ * that owns them binds its own; its settings are each organization's, saved by its owners and admins in the console
+ * (`/api/v1/packages/settings`).
  */
 object CompilerModule : ServerModule {
     override val name: String = "compiler"
@@ -89,6 +95,8 @@ object CompilerModule : ServerModule {
                 get(),
             )
         }
+        single<CompilerSettingsRepository> { PostgresCompilerSettingsRepository(get()) }
+        single<CompilerSettingsUseCase> { CompilerSettingsUseCaseImpl(get(), get<OrgAuditTrail>(), get()) }
         single<WorkflowDirectory> { CompilerWorkflowDirectory(get<CompilerRepository>()) }
         single<GovernanceChange>(named("compiler")) { CompilerGovernanceChange(get(), get()) }
         // Created when the gates module looks for it, possibly before this module's initialize has bound the
@@ -99,15 +107,28 @@ object CompilerModule : ServerModule {
         }
         single {
             val publicUrl = get<ConfigSource>()["OSTROM_PUBLIC_URL"]
-            CompilerRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), publicUrl)
+            CompilerRoutesDependencies(
+                get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), publicUrl,
+            )
         }
     }
 
     override val migrations: List<SchemaMigration> = CompilerMigrations
 
-    /** Binds the default sources when no module bound its own (Koin refuses two bindings of one type). */
+    /**
+     * Binds the default sources when no module bound its own (Koin refuses two bindings of one type), and says that the
+     * former instance-wide compile policy is no longer read: each organization sets its own in the console.
+     */
     override suspend fun initialize(koin: Koin) {
         koin.loadModules(listOf(defaultPorts(koin)))
+        val config = koin.get<ConfigSource>()
+        val ignored = FORMER_VARIABLES.filter { config[it] != null }
+        if (ignored.isNotEmpty()) {
+            koin.get<Logger>().warn(
+                "compile policy variables ignored: each organization sets its own in the console",
+                mapOf("variables" to ignored.joinToString(",")),
+            )
+        }
     }
 
     internal fun defaultPorts(koin: Koin): Module = module {
@@ -125,6 +146,9 @@ object CompilerModule : ServerModule {
         ServerFeatures.WORKFLOWS_SETTINGS,
     )
 }
+
+// The instance-wide compile policy of the prototype, before each organization set its own (`PUT /packages/settings`).
+private val FORMER_VARIABLES = listOf("OSTROM_PIN", "OSTROM_CODE_PUBLISHERS", "OSTROM_PROD_APPROVER")
 
 /** The members when no module knows them: nobody is a member, so no editor is named and none is let in. */
 internal object NoMembers : MemberDirectory, MemberLogins {

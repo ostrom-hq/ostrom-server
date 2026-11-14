@@ -8,9 +8,11 @@ import run.ostrom.server.compiler.domain.models.ListedPackage
 import run.ostrom.server.compiler.domain.models.PackageAudit
 import run.ostrom.server.compiler.domain.models.PackagePin
 import run.ostrom.server.compiler.domain.models.RuleDoc
+import run.ostrom.server.compiler.domain.models.StoredCompilerSettings
 import run.ostrom.server.compiler.domain.models.StoredPackage
 import run.ostrom.server.compiler.domain.models.StoredWorkflow
 import run.ostrom.server.compiler.domain.repositories.CompilerRepository
+import run.ostrom.server.compiler.domain.repositories.CompilerSettingsRepository
 import run.ostrom.server.compiler.domain.repositories.WorkflowsRepository
 import run.ostrom.server.compiler.domain.services.CompilerDocs
 import run.ostrom.server.compiler.domain.services.CompilerSources
@@ -163,5 +165,24 @@ internal class RecordingDecisionSigner : WorkflowDecisionSigner {
     ): String {
         signed += Triple(action, before, after)
         return "rcpt_wf_${signed.size}"
+    }
+}
+
+/** The compiler settings in memory, with the same optimistic save as PostgreSQL's. */
+internal class FakeCompilerSettingsRepository : CompilerSettingsRepository {
+    val stored: MutableMap<Uuid, StoredCompilerSettings> = mutableMapOf()
+
+    override suspend fun read(orgId: Uuid): StoredCompilerSettings? = stored[orgId]
+
+    override suspend fun save(
+        orgId: Uuid,
+        settings: CompilerSettings,
+        by: String,
+        at: Instant,
+        expected: Instant?,
+    ): StoredCompilerSettings? = if (stored[orgId]?.updatedAt == expected) {
+        StoredCompilerSettings(settings, by, at).also { stored[orgId] = it }
+    } else {
+        null
     }
 }
