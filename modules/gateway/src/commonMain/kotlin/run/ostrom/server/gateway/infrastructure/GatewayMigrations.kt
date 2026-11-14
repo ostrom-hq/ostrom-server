@@ -103,4 +103,23 @@ val GatewayMigrations: List<SchemaMigration> = listOf(
                 WHERE launch_id IS NOT NULL
         """.trimIndent(),
     ),
+    // The org's API price table (TeamCode's `api_prices`, ADR 0002 step 1): empty means the built-in prices apply. At
+    // most 200 rows an org, read whole by the primary key's prefix.
+    SchemaMigration(
+        version = 7,
+        name = "create_gateway_api_prices",
+        sql = """
+            CREATE TABLE gateway_api_prices (
+                org_id UUID NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                effective_from_day BIGINT NOT NULL,
+                input_micros BIGINT NOT NULL,
+                cache_write_micros BIGINT NOT NULL,
+                cache_read_micros BIGINT NOT NULL,
+                output_micros BIGINT NOT NULL,
+                PRIMARY KEY (org_id, provider, model, effective_from_day)
+            )
+        """.trimIndent() + ";\n" + tenantTableSql("gateway_api_prices"),
+    ),
 )

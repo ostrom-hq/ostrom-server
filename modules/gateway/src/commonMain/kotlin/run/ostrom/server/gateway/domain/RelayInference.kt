@@ -194,7 +194,7 @@ interface RelayInferenceUseCase {
 class RelayInferenceUseCaseImpl(
     private val planner: InferencePlanner,
     private val upstream: InferenceUpstream,
-    private val prices: PriceTable,
+    private val prices: OrgPrices,
     private val usage: ModelUsageSink,
     private val observer: ModelCallObserver,
     private val clock: Clock,
@@ -483,7 +483,8 @@ class RelayInferenceUseCaseImpl(
         state.exchange.recorded = true
         val started = state.exchange.started
         val tokens = state.usage
-        val cost = state.provider?.let { provider -> tokens?.let { prices.costMicros(provider, state.model, it) } }
+        val table = prices.of(state.exchange.caller.orgId)
+        val cost = state.provider?.let { provider -> tokens?.let { table.costMicros(provider, state.model, it) } }
         val record = ModelCallRecord(
             id = state.exchange.id,
             orgId = state.exchange.caller.orgId,

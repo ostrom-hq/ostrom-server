@@ -70,3 +70,40 @@ data class InferenceSettingsDto(
     val useSharedAccounts: Boolean = true,
     val memberConcurrency: Map<String, Int> = emptyMap(),
 )
+
+/** `/api/v1/policy/api-prices`: the org's price table (contract `getApiPrices`, `setApiPrices`). */
+@Serializable
+@Resource("/api/v1/policy/api-prices")
+class ApiPricesApi
+
+/** `/api/v1/policy/api-prices/load-defaults`: adds the built-in prices (contract `loadApiPriceDefaults`). */
+@Serializable
+@Resource("/api/v1/policy/api-prices/load-defaults")
+class ApiPriceDefaultsApi
+
+/**
+ * One row of the price table: USD millionths per million tokens.
+ *
+ * @property provider `anthropic` or `openai`.
+ * @property model A lowercase model or family prefix.
+ * @property effectiveFrom The UTC date (`YYYY-MM-DD`) from which it applies.
+ */
+@Serializable
+data class ApiPriceDto(
+    val provider: String,
+    val model: String,
+    val effectiveFrom: String,
+    val inputMicros: Long,
+    val cacheWriteMicros: Long,
+    val cacheReadMicros: Long,
+    val outputMicros: Long,
+)
+
+/**
+ * The org's price table.
+ *
+ * @property prices The rows.
+ * @property defaults On a read, true when the org has no row and the built-in prices apply; ignored on a write.
+ */
+@Serializable
+data class ApiPriceTableDto(val prices: List<ApiPriceDto>, val defaults: Boolean? = null)

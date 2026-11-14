@@ -57,7 +57,7 @@ internal object GatewayAdmissions : Table("gateway_admissions") {
     val turnTaken = long("turn_taken").nullable()
     val turnBefore = long("turn_before").nullable()
 
-    /** The launch the call belongs to (version 6), counted against its `maxConcurrent`. */
+    /** The launch the call belongs to (version 7), counted against its `maxConcurrent`. */
     val launchId = text("launch_id").nullable()
 
     override val primaryKey = PrimaryKey(id)
@@ -81,4 +81,18 @@ internal object GatewayCancellations : Table("gateway_cancellations") {
     val expiresAt = instant("expires_at")
 
     override val primaryKey = PrimaryKey(orgId, memberId, requestId)
+}
+
+/** One row of an org's price table (version 7): USD millionths per million tokens, from a UTC day on. */
+internal object GatewayApiPrices : Table("gateway_api_prices") {
+    val orgId = uuid("org_id")
+    val provider = text("provider")
+    val model = text("model")
+    val effectiveFromDay = long("effective_from_day")
+    val inputMicros = long("input_micros")
+    val cacheWriteMicros = long("cache_write_micros")
+    val cacheReadMicros = long("cache_read_micros")
+    val outputMicros = long("output_micros")
+
+    override val primaryKey = PrimaryKey(orgId, provider, model, effectiveFromDay)
 }

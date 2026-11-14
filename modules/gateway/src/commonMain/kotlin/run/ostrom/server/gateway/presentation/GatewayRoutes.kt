@@ -139,6 +139,7 @@ fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependen
         }
         put<ModelPolicyApi> { call.putModelPolicy(dependencies) }
         inferenceControlRoutes(dependencies)
+        apiPriceRoutes(dependencies)
         get<InferenceSettingsApi> {
             call.respond(getSettings(call.requireCaller(callers, RelayScopes.INFERENCE_ADMIN)).toDto())
         }
