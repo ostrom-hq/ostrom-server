@@ -5,12 +5,16 @@ import run.ostrom.server.artifacts.domain.Artifact
 import run.ostrom.server.artifacts.domain.ArtifactAccess
 import run.ostrom.server.artifacts.domain.ArtifactFile
 import run.ostrom.server.artifacts.domain.ArtifactUsage
+import run.ostrom.server.artifacts.domain.ArtifactUsageReport
+import run.ostrom.server.artifacts.domain.ArtifactUsageReports
 import run.ostrom.server.artifacts.domain.ArtifactUsageRepository
 import run.ostrom.server.artifacts.domain.ArtifactVersion
 import run.ostrom.server.artifacts.domain.ArtifactsRepository
+import run.ostrom.server.artifacts.domain.MemberArtifactUsage
 import run.ostrom.server.artifacts.domain.storage.ArtifactStorageRepository
 import run.ostrom.server.artifacts.fakes.ALICE
 import run.ostrom.server.artifacts.fakes.BOB
+import run.ostrom.server.artifacts.fakes.DAVE
 import run.ostrom.server.artifacts.fakes.ORG_A
 import run.ostrom.server.artifacts.fakes.ORG_B
 import run.ostrom.server.artifacts.fakes.activateArtifacts
@@ -20,6 +24,7 @@ import run.ostrom.server.artifacts.infrastructure.fetchInOrg
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.request.bearerAuth
+import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
@@ -61,6 +66,48 @@ class ArtifactUsagePostgresTest {
     }
 
     @Test
+    fun theReportListsTheLargestOwnersOfPublishedArtifacts() = serverTest(listOf(ArtifactsModule)) { server ->
+        val artifacts = server.koin.get<ArtifactsRepository>()
+        val reports = server.koin.get<ArtifactUsageReports>()
+        val owners = listOf(
+            ALICE to longArrayOf(10, 20),
+            ALICE to longArrayOf(5),
+            BOB to longArrayOf(100),
+            DAVE to longArrayOf(),
+        )
+        for ((owner, sizes) in owners) {
+            val made = artifact(owner)
+            artifacts.create(made, version(made, *sizes))
+        }
+        // A draft and another organization's artifact are not counted.
+        val draft = artifact(BOB, latest = 0)
+        artifacts.create(draft, version(draft, 1000))
+        val elsewhere = artifact(ALICE, ORG_B)
+        artifacts.create(elsewhere, version(elsewhere, 1000))
+        val usage = reports.report(ORG_A, 10)
+        assertEquals(135, usage.orgBytes)
+        assertEquals(
+            listOf(
+                MemberArtifactUsage("$BOB", 1, 100),
+                MemberArtifactUsage("$ALICE", 2, 35),
+                MemberArtifactUsage("$DAVE", 1, 0),
+            ),
+            usage.members,
+        )
+        assertEquals(listOf("$BOB"), reports.report(ORG_A, 1).members.map { it.memberId })
+        assertEquals(ArtifactUsageReport(0, emptyList()), reports.report(Uuid.random(), 10))
+    }
+
+    @Test
+    fun anAdministratorReadsTheUsage() = serverTest(listOf(ArtifactsModule), testIdentities) { server ->
+        val dave = server.client.get("/api/v1/artifacts/usage") { bearerAuth("dave") }
+        assertEquals(HttpStatusCode.OK, dave.status)
+        assertEquals("""{"orgBytes":0,"members":[]}""", dave.bodyAsText().filterNot { it.isWhitespace() })
+        val alice = server.client.get("/api/v1/artifacts/usage") { bearerAuth("alice") }
+        assertEquals(HttpStatusCode.Forbidden, alice.status)
+    }
+
+    @Test
     fun aPublicationOverTheOwnersBytesIsRefused() = serverTest(listOf(ArtifactsModule), testIdentities) { server ->
         server.koin.activateArtifacts()
         val storage = server.koin.get<ArtifactStorageRepository>()
@@ -93,9 +140,12 @@ class ArtifactUsagePostgresTest {
         for (table in listOf("artifacts_artifacts", "artifacts_blobs")) {
             fixtures.execute("VACUUM ANALYZE $table").getOrThrow()
         }
-        for (sql in listOf(UsageQueries.BYTES, UsageQueries.ARTIFACTS)) {
-            val statement = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql")
-                .bind("org_id", ORG_A).bind("owner", ALICE.toString())
+        val queries =
+            listOf(UsageQueries.BYTES, UsageQueries.ARTIFACTS, UsageQueries.PUBLISHED_BYTES, UsageQueries.OWNERS)
+        for (sql in queries) {
+            var statement = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org_id", ORG_A)
+            if (":owner" in sql) statement = statement.bind("owner", ALICE.toString())
+            if (":limit" in sql) statement = statement.bind("limit", 200)
             val plan = server.driver.fetchInOrg(ORG_A, statement).getOrThrow()
                 .joinToString("\n") { it.get("QUERY PLAN").asString() }
             for (table in listOf("artifacts_artifacts", "artifacts_blobs")) {

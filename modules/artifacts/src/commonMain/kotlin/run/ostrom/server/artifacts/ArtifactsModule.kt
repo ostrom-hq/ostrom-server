@@ -5,11 +5,13 @@ import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.artifacts.domain.ArtifactEvents
 import run.ostrom.server.artifacts.domain.ArtifactLocations
 import run.ostrom.server.artifacts.domain.ArtifactPublicationsRepository
+import run.ostrom.server.artifacts.domain.ArtifactUsageReports
 import run.ostrom.server.artifacts.domain.ArtifactUsageRepository
 import run.ostrom.server.artifacts.domain.ArtifactsRepository
 import run.ostrom.server.artifacts.domain.ContentDigest
 import run.ostrom.server.artifacts.domain.ManageArtifactUseCase
 import run.ostrom.server.artifacts.domain.ManageArtifactUseCaseImpl
+import run.ostrom.server.artifacts.domain.ReadArtifactUsageUseCase
 import run.ostrom.server.artifacts.domain.PublicationGate
 import run.ostrom.server.artifacts.domain.PublicationGateImpl
 import run.ostrom.server.artifacts.domain.PublishArtifactUseCase
@@ -111,7 +113,9 @@ object ArtifactsModule : ServerModule {
             val digest = get<ContentDigest>()
             ArtifactAdministrationUseCaseImpl(get(), get(), { bytes -> digest.sha256(bytes) })
         }
-        single { StorageRoutesDependencies(get(), get()) }
+        single<ArtifactUsageReports> { ArtifactUsageRepositoryImpl(get()) }
+        single { ReadArtifactUsageUseCase(get()) }
+        single { StorageRoutesDependencies(get(), get(), get()) }
         single<ArtifactUploadsRepository> { ArtifactUploadsRepositoryImpl(get()) }
         single<UploadChunks> { BucketUploadChunks(get(), get()) }
         single<CommitArtifactUploadUseCase> {
