@@ -6,6 +6,7 @@ import run.ostrom.server.kernel.events.JournalEntry
 import run.ostrom.server.kernel.events.JournalPosition
 import run.ostrom.server.kernel.events.JournalSlice
 import run.ostrom.server.kernel.events.OrgEventType
+import run.ostrom.server.kernel.events.GateSummary
 import run.ostrom.server.kernel.events.WaitSummary
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -27,5 +28,7 @@ class OrgEventJournalTest {
         assertEquals(2, position.from)
         val wait = WaitSummary("w-3", "mia", null, "ask_human", "human", true, "Deploy?")
         assertEquals(wait, wait.copy())
+        val gate = GateSummary("g-1", true, listOf("ana"), "Push to main", null, listOf("bob"))
+        assertEquals(gate, gate.copy())
     }
 }

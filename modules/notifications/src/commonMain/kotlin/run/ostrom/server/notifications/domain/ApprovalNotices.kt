@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.notifications.domain
 
-import run.ostrom.server.gates.domain.models.ApprovalRequest
-import run.ostrom.server.gates.domain.models.Gate
 import run.ostrom.server.identity.domain.Mail
+import run.ostrom.server.kernel.events.GateSummary
+import kotlin.uuid.Uuid
 
 /**
  * The texts that tell an approver a request waits for their yes, on a phone and by e-mail. They name who asks, what
@@ -14,51 +14,37 @@ import run.ostrom.server.identity.domain.Mail
  */
 class ApprovalNotices(private val webOrigin: String) {
     /**
-     * @param gate The gate.
-     *
-     * @return `<asker> asks for your yes`.
-     */
-    fun title(gate: Gate): String = "${clip(gate.askedBy.joinToString(", ").ifEmpty { "Someone" })} asks for your yes"
-
-    /**
-     * @param gate The gate.
-     *
-     * @return What the gate covers, and in which repository.
-     */
-    fun body(gate: Gate): String = clip(listOfNotNull(gate.label, gate.subject.repo).joinToString(" · "))
-
-    /**
-     * @param request The approver's request.
+     * @param approvalId The approver's request.
      *
      * @return The console's page of the request, where the yes is given (`/yes/{approvalId}`).
      */
-    fun link(request: ApprovalRequest): String = "$webOrigin/yes/${request.id}"
+    fun link(approvalId: Uuid): String = "$webOrigin/yes/$approvalId"
 
     /**
-     * @param request The approver's request.
+     * @param approvalId The approver's request.
      * @param device The approver's phone.
      *
      * @return The push, which opens the request in the app. Its text is the same for every request: a lock screen
      *   shows it to whoever holds the phone, so it names neither the asker, nor the label, nor the repository.
      */
-    fun push(request: ApprovalRequest, device: PushDevice): PushMessage = PushMessage(
+    fun push(approvalId: Uuid, device: PushDevice): PushMessage = PushMessage(
         device = device,
         title = PUSH_TITLE,
         body = PUSH_BODY,
-        data = mapOf("kind" to "approval", "approvalId" to request.id.toString()),
+        data = mapOf("kind" to ApprovalRules.KIND, "approvalId" to approvalId.toString()),
     )
 
     /**
      * @param gate The gate.
-     * @param request The approver's request.
+     * @param approvalId The approver's request.
      * @param to The approver's address.
      *
      * @return The e-mail, with the link to the request.
      */
-    fun email(gate: Gate, request: ApprovalRequest, to: String): Mail {
+    fun email(gate: GateSummary, approvalId: Uuid, to: String): Mail {
         val title = title(gate)
         val body = body(gate)
-        val link = link(request)
+        val link = link(approvalId)
         val html = """
             <!doctype html>
             <html lang="en">
@@ -80,6 +66,24 @@ class ApprovalNotices(private val webOrigin: String) {
         val text = "$headline.\n\nOpen the request: $link\n\n" +
             "You answer in Ostrom, after proving it is you. Nothing is approved from this e-mail."
         return Mail(to, headline, html, text)
+    }
+
+    /** The texts that need no console. */
+    companion object {
+        /**
+         * @param gate The gate.
+         *
+         * @return `<asker> asks for your yes`.
+         */
+        fun title(gate: GateSummary): String =
+            "${clip(gate.askedBy.joinToString(", ").ifEmpty { "Someone" })} asks for your yes"
+
+        /**
+         * @param gate The gate.
+         *
+         * @return What the gate covers, and in which repository.
+         */
+        fun body(gate: GateSummary): String = clip(listOfNotNull(gate.label, gate.repo).joinToString(" · "))
     }
 }
 

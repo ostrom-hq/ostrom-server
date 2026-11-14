@@ -825,6 +825,14 @@ owner, so the serving role reads the history (the start-up check) and never rewr
   registered a key and whose credential still works, through the provider of the instance's `push` settings (nobody
   while it is `off`); `sendTestPush` sends a member a test now, once every ten seconds per
   member on each replica.
+  The same router tells the approvers (`ApprovalRules`, apart from `NotificationRules`): each
+  `cloud.approval.requested` becomes rows of kind `approval` in `notifications_deliveries` (notifications v7 adds
+  `approval_id`, `gate_id`, `approver`), a push unless the approver turned `requests` off in `/me/notifications` and
+  an e-mail to their proven address while the instance sends mail. The gate is read through the kernel's
+  `GateSummaries` (gates module) when the page is queued and again at each attempt: a gate decided since, or an
+  approver no longer asked (the self-approval rule), fails its rows unsent (`gate_decided`). Approval rows reuse the
+  queue's lease, backoff, give-up and purge, but are no `NotificationKind`: the members' switches never govern them
+  and `/notifications/settings` never lists them.
   The MCP relay publishes the state transitions of its hosted processes (subject `mcp`) in the transaction that records
   them: `mcp.stdio.failed` and `mcp.stdio.recovered` (a per-member process's belong to the member), and
   `mcp.unreachable`, an event of the whole organization with an empty subject id, at most one every ten minutes per

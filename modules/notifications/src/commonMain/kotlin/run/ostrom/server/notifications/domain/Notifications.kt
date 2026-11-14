@@ -31,12 +31,12 @@ interface PushSender {
 
 /**
  * The push service refused or did not answer: the request still waits in the console and the app's queue, and the
- * notification is tried again (NotificationOutbox).
+ * notification is tried again (the router's backoff).
  *
- * @param reason What failed, naming the service and its status only: never a token.
+ * @property reason What failed, naming the service and its status only: never a token.
  * @property forGood Whether another attempt would only be refused again ([PushRejectedException]).
  */
-open class PushNotSentException(reason: String, val forGood: Boolean = false) : Exception(reason)
+open class PushNotSentException(val reason: String, val forGood: Boolean = false) : Exception(reason)
 
 /**
  * The push service refused the notification for good (its credentials, the message): it is not tried again.
@@ -59,11 +59,12 @@ data class Approver(val userId: Uuid, val memberId: Uuid, val email: String?, va
 interface Approvers {
     /**
      * @param orgId The gate's organization.
-     * @param login The approver's login, any case.
+     * @param logins The approvers' logins, any case.
      *
-     * @return The approver, or null when nobody has that login or they are not a member of the organization.
+     * @return The approver of each login asked that names a member of the organization, keyed as asked; a login of
+     *   nobody, or of someone who is not a member, is absent.
      */
-    suspend fun reach(orgId: Uuid, login: String): Approver?
+    suspend fun reach(orgId: Uuid, logins: Set<String>): Map<String, Approver>
 }
 
 /** Whether the credential a phone was registered with still works: a revoked or expired one notifies nobody. */

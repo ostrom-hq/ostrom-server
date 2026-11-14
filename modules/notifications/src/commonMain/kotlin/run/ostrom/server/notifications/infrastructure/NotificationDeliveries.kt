@@ -5,8 +5,8 @@ import run.ostrom.server.kernel.database.instant
 import org.jetbrains.exposed.v1.core.Table
 
 /**
- * The router's delivery queue of [NotificationsMigrations] version 6, as Exposed reads and writes it. The migrations
- * create the schema; this object only names its columns and their types.
+ * The router's delivery queue of [NotificationsMigrations] versions 6 and 7, as Exposed reads and writes it. The
+ * migrations create the schema; this object only names its columns and their types.
  */
 internal object NotificationDeliveries : Table("notifications_deliveries") {
     val orgId = uuid("org_id")
@@ -27,6 +27,11 @@ internal object NotificationDeliveries : Table("notifications_deliveries") {
     val lastError = text("last_error").nullable()
     val createdAt = instant("created_at")
     val deliveredAt = instant("delivered_at").nullable()
+
+    // Version 7: an approval's row (kind `approval`) names the request, its gate and the approver's login.
+    val approvalId = uuid("approval_id").nullable()
+    val gateId = uuid("gate_id").nullable()
+    val approver = text("approver").nullable()
 
     override val primaryKey = PrimaryKey(orgId, id)
 }
