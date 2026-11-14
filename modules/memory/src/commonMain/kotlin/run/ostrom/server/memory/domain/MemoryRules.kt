@@ -17,6 +17,18 @@ object MemoryRules {
     const val PAGE_LIMIT: Int = 50
     const val SEARCH_LIMIT: Int = 20
     const val SEARCH_TERMS: Int = 5
+
+    /** The proposals of one member that wait for an answer at once, all their agents together. */
+    const val PROPOSALS_LIMIT: Long = 20
+
+    /** A proposal unanswered this long is rejected and its wait cancelled. */
+    const val PROPOSAL_DAYS: Int = 14
+
+    /** A rejected proposal is kept this long for the audit, then deleted. */
+    const val REJECTED_DAYS: Int = 30
+
+    /** The proposals a queue lists, oldest first. */
+    const val PROPOSALS_PAGE: Int = 100
     private const val TERM_MIN = 2
     private const val TERM_MAX = 40
 

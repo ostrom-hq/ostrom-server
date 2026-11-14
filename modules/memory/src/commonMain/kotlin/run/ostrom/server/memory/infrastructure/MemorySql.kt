@@ -3,7 +3,9 @@ package run.ostrom.server.memory.infrastructure
 
 import run.ostrom.server.memory.domain.MemoryCaller
 import run.ostrom.server.memory.domain.MemoryScope
+import io.github.smyrgeorge.sqlx4k.QueryExecutor
 import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -41,3 +43,11 @@ internal fun Statement.bindTags(tags: List<String>): Statement =
 
 /** A `LIKE` pattern's own characters, matched literally. */
 internal fun escape(term: String): String = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+/** The organization's proposals of [author] that wait for an answer. */
+internal suspend fun QueryExecutor.proposalsOf(orgId: Uuid, author: String): Int = fetchAll(
+    Statement.create(
+        "SELECT COUNT(*) AS n FROM memory_entries WHERE org_id = :org_id AND scope = 'team' AND owner_id = '' " +
+            "AND status = 'proposed' AND author_id = :author",
+    ).bind("org_id", orgId).bind("author", author),
+).getOrThrow().first().get("n").asInt()

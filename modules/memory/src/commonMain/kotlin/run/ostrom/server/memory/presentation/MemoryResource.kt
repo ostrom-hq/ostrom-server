@@ -45,6 +45,29 @@ class MemoryResource {
         val limit: String? = null,
     )
 
+    /** `GET /api/v1/memory/proposals` (`listMemoryProposals`). */
+    @Serializable
+    @Resource("proposals")
+    class Proposals(val parent: MemoryResource = MemoryResource()) {
+        /**
+         * `POST /api/v1/memory/proposals/{id}/accept` (`acceptMemoryProposal`).
+         *
+         * @property id The proposal's id.
+         */
+        @Serializable
+        @Resource("{id}/accept")
+        class Accept(val parent: Proposals = Proposals(), val id: String)
+
+        /**
+         * `POST /api/v1/memory/proposals/{id}/reject` (`rejectMemoryProposal`).
+         *
+         * @property id The proposal's id.
+         */
+        @Serializable
+        @Resource("{id}/reject")
+        class Reject(val parent: Proposals = Proposals(), val id: String)
+    }
+
     /**
      * `GET`, `PATCH` and `DELETE /api/v1/memory/{id}` (`readMemory`, `updateMemory`, `forgetMemory`).
      *

@@ -7,8 +7,10 @@ import run.ostrom.core.api.models.MemorySearchResult
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.kernel.auth.TokenAuthenticator
 import run.ostrom.server.kernel.http.ApiError
+import run.ostrom.server.memory.domain.MemoryProposalWaits
 import run.ostrom.server.memory.fakes.ADA
 import run.ostrom.server.memory.fakes.Callers
+import run.ostrom.server.memory.fakes.FakeProposalWaits
 import run.ostrom.server.memory.fakes.Tokens
 import run.ostrom.server.secrets.domain.CallerResolver
 import run.ostrom.server.testing.TestServer
@@ -43,6 +45,7 @@ class MemoryRoutesPostgresTest {
     private val overrides = module {
         single<TokenAuthenticator> { Tokens }
         single<CallerResolver> { Callers }
+        single<MemoryProposalWaits> { FakeProposalWaits() }
     }
 
     private fun memoryTest(block: suspend HttpClient.(TestServer) -> Unit) =
@@ -120,14 +123,20 @@ class MemoryRoutesPostgresTest {
 
     @Test
     fun onlyAPersonWritesOrChangesTheOrganizationsMemory() = memoryTest {
-        for (token in listOf("agent", "adakey", "service")) {
+        for (token in listOf("adakey", "service")) {
             val refused = create(token, entry("Team note", "team", "[]"))
             assertEquals(HttpStatusCode.Forbidden, refused.status, token)
             assertEquals("memory_team_forbidden", refused.errorType())
+        }
+        for (token in listOf("agent", "adakey", "service")) {
             assertEquals("agent", created(token, entry("Mine", "personal", "[]")).origin)
         }
+        // An agent's organization entry is a proposal of the session it names (MemoryProposalsRoutesPostgresTest).
+        val unnamed = create("agent", entry("Team note", "team", "[]"))
+        assertEquals(HttpStatusCode.BadRequest, unnamed.status)
+        assertEquals("memory_proposal_session", unnamed.errorType())
         val relayed = create("adacli", entry("Team note", "team", "[]"), agent = true)
-        assertEquals("memory_team_forbidden", relayed.errorType(), "a call the relay forwards is an agent's")
+        assertEquals("memory_proposal_session", relayed.errorType(), "a call the relay forwards is an agent's")
         val mine = create("adacli", entry("Mine", "personal", "[]"), agent = true).body<MemoryEntry>()
         assertEquals("agent", mine.origin)
         assertEquals("human", created("adaapp", entry("From the phone", "team", "[]")).origin)

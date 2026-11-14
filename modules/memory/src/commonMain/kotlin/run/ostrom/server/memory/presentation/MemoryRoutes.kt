@@ -3,6 +3,7 @@ package run.ostrom.server.memory.presentation
 
 import run.ostrom.core.api.models.CreateMemoryRequest
 import run.ostrom.core.api.models.MemoryApi
+import run.ostrom.core.api.models.MemoryProposals
 import run.ostrom.core.api.models.MemorySearchResult
 import run.ostrom.core.api.models.UpdateMemoryRequest
 import run.ostrom.server.kernel.auth.authenticated
@@ -53,6 +54,18 @@ fun Route.memoryRoutes(dependencies: MemoryRoutesDependencies) = with(dependenci
             val request = call.receive<CreateMemoryRequest>()
             val created = memory.create(caller, request.toDomain(), request.sessionId?.take(MAX_SESSION_ID))
             call.respond(HttpStatusCode.Created, created.toDto())
+        }
+        get<MemoryResource.Proposals> {
+            val caller = call.caller(callers)
+            call.respond(MemoryProposals(proposals.proposals(caller).map { it.toDto() }))
+        }
+        post<MemoryResource.Proposals.Accept> { params ->
+            val caller = call.caller(callers)
+            call.respond(proposals.decide(caller, entryId(params.id), accept = true).toDto())
+        }
+        post<MemoryResource.Proposals.Reject> { params ->
+            val caller = call.caller(callers)
+            call.respond(proposals.decide(caller, entryId(params.id), accept = false).toDto())
         }
         get<MemoryResource.Entry> { params ->
             val caller = call.caller(callers)

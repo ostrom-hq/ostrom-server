@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.memory.fakes
 
+import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.memory.domain.MemoryAudit
 import run.ostrom.server.memory.domain.MemoryCaller
 import run.ostrom.server.memory.domain.MemoryCursor
@@ -99,11 +100,19 @@ class FakeRepository : MemoryRepository {
     }
 }
 
-/** The audit events written, as `event id facts`. */
+/** The audit events written, as `event facts`, and who wrote them. */
 class RecordingAudit : MemoryAudit {
     val events = mutableListOf<String>()
+    val actors = mutableListOf<String>()
 
-    override suspend fun record(caller: MemoryCaller, event: String, id: Uuid, vararg facts: Pair<String, String>) {
+    override suspend fun record(
+        orgId: Uuid,
+        actor: AuthenticatedPrincipal,
+        event: String,
+        id: Uuid,
+        vararg facts: Pair<String, String>,
+    ) {
         events += "$event ${facts.joinToString(",") { "${it.first}=${it.second}" }}".trim()
+        actors += actor.subjectId
     }
 }
