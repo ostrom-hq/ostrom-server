@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.artifacts
 
+import run.ostrom.server.artifacts.domain.ArtifactUsageReport
+import run.ostrom.server.artifacts.domain.MemberArtifactUsage
+import run.ostrom.server.artifacts.domain.ReadArtifactUsageUseCase
 import run.ostrom.server.artifacts.domain.storage.ArtifactAdministrationUseCaseImpl
 import run.ostrom.server.artifacts.domain.storage.ArtifactAdministratorRequiredException
 import run.ostrom.server.artifacts.domain.storage.ArtifactSettings
@@ -38,6 +41,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
+import kotlin.uuid.Uuid
 
 /** TC-ART-1/3/4/5/25: the bucket, its connection test, the settings and the publication policy. */
 class ArtifactAdministrationTest {
@@ -259,5 +263,17 @@ class ArtifactAdministrationTest {
         assertEquals(PublishRefusal.FORBIDDEN.wire, administration.policy(member).reason)
         assertNotNull(administration.policy(admin.copy(mayWrite = false)).reason)
         assertNull(administration.policy(admin).reason)
+    }
+
+    @Test
+    fun onlyAPersonWhoAdministersReadsTheUsageOfItsTwoHundredLargestOwners() = runTest {
+        val report = ArtifactUsageReport(35, listOf(MemberArtifactUsage("dave", 1, 35)))
+        var asked: Pair<Uuid, Int>? = null
+        val usage = ReadArtifactUsageUseCase { org, limit -> report.also { asked = org to limit } }
+        for (caller in listOf(admin.copy(administrator = false), admin.copy(person = false))) {
+            assertFailsWith<ArtifactAdministratorRequiredException> { usage.usage(caller) }
+        }
+        assertEquals(report, usage.usage(admin))
+        assertEquals(ORG_A to 200, asked)
     }
 }

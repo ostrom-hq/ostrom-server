@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.artifacts.presentation
 
+import run.ostrom.server.artifacts.domain.ReadArtifactUsageUseCase
 import run.ostrom.server.artifacts.domain.storage.ArtifactAdministrationUseCase
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import io.ktor.resources.Resource
@@ -24,6 +25,30 @@ class ArtifactStorageApi {
 @Serializable
 @Resource("/api/v1/artifacts/settings")
 class ArtifactSettingsApi
+
+/** `GET /api/v1/artifacts/usage` (`getArtifactUsage`). */
+@Serializable
+@Resource("/api/v1/artifacts/usage")
+class ArtifactUsageApi
+
+/**
+ * What the organization stores, and per owner, largest first (`ArtifactUsage`).
+ *
+ * @property orgBytes The bytes of the published artifacts.
+ * @property members The 200 largest owners.
+ */
+@Serializable
+data class ArtifactUsageResponse(val orgBytes: Long, val members: List<ArtifactMemberUsageResponse>)
+
+/**
+ * One owner (`ArtifactMemberUsage`).
+ *
+ * @property memberId The owner.
+ * @property artifacts Their published artifacts.
+ * @property bytes Their folders' bytes.
+ */
+@Serializable
+data class ArtifactMemberUsageResponse(val memberId: String, val artifacts: Int, val bytes: Long)
 
 /** `GET /api/v1/artifacts/policy` (`getArtifactPolicy`). */
 @Serializable
@@ -202,4 +227,5 @@ data class ArtifactPolicyResponse(val canPublish: Boolean, val reason: String? =
 data class StorageRoutesDependencies(
     val administration: ArtifactAdministrationUseCase,
     val orgResolver: PrincipalOrgResolver,
+    val usage: ReadArtifactUsageUseCase,
 )

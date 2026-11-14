@@ -32,8 +32,8 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 
 /**
- * The bucket, the settings (a person who owns or administers the organization) and the publication policy (any
- * member credential with `artifacts:read`), under `/api/v1/artifacts`.
+ * The bucket, the settings and the usage (a person who owns or administers the organization), and the publication
+ * policy (any member credential with `artifacts:read`), under `/api/v1/artifacts`.
  *
  * @param dependencies Read at the first request, so a server without the secrets module still starts.
  */
@@ -68,6 +68,11 @@ fun Route.artifactStorageRoutes(dependencies: () -> StorageRoutesDependencies) {
             val request = call.receive<SaveArtifactSettingsRequest>()
             resolved.administration.saveSettings(caller, request.toSettings())
             call.respond(resolved.administration.overview(caller).toSettingsResponse())
+        }
+        get<ArtifactUsageApi> {
+            val usage = resolved.usage.usage(resolved.orgResolver.storageCallerOf(call.requirePrincipal()))
+            val members = usage.members.map { ArtifactMemberUsageResponse(it.memberId, it.artifacts, it.bytes) }
+            call.respond(ArtifactUsageResponse(usage.orgBytes, members))
         }
         get<ArtifactPolicyApi> {
             val principal = call.requirePrincipal()
