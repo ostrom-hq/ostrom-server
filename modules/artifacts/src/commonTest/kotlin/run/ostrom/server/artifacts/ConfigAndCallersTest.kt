@@ -192,6 +192,7 @@ class ConfigAndCallersTest {
         assertNull(resolver.resolve(agent.copy(subjectId = "ended"), null))
         assertNull(ArtifactOrgResolver(TestOrgResolver, null).resolve(agent, null))
         assertEquals(TestOrgResolver.resolve(person, null), resolver.resolve(person, null))
+        assertNull(resolver.agentOf(person, null), "A person's credential is never read as an agent")
         assertEquals(TestOrgResolver.profile(ORG_A), resolver.profile(ORG_A), "The organization is the kernel's")
     }
 

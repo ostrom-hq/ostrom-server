@@ -31,11 +31,11 @@ class ArtifactOrgResolver(
     /**
      * Reads an agent token ([PrincipalKind.AGENT]) with its launch and cloud session, the origin of what it publishes.
      *
-     * @return The agent's member and launch, or null for an agent token nobody binds or a launch that is no longer
-     *   live.
+     * @return The agent's member and launch, or null for another credential, an agent token nobody binds or a launch
+     *   that is no longer live.
      */
     suspend fun agentOf(principal: AuthenticatedPrincipal, orgId: Uuid?): AgentMember? =
-        agents?.resolve(principal, orgId)
+        if (principal.kind == PrincipalKind.AGENT) agents?.resolve(principal, orgId) else null
 
     override suspend fun profile(orgId: Uuid): OrgProfile? = orgs.profile(orgId)
 }
