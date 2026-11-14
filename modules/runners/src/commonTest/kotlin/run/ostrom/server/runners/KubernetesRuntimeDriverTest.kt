@@ -177,7 +177,7 @@ class KubernetesRuntimeDriverTest {
         assertEquals("false", spec["shareProcessNamespace"]!!.jsonPrimitive.content)
         val pod = spec["securityContext"]!!.jsonObject
         assertNull(pod["runAsUser"])
-        assertEquals("2000", pod["fsGroup"]!!.jsonPrimitive.content)
+        assertEquals("1000", pod["fsGroup"]!!.jsonPrimitive.content)
         val (install, agent, checks) = spec["initContainers"]!!.jsonArray.map { it.jsonObject }
         // The runner image's `ostrom` is copied first, as the runner's uid, into the volume the others read only.
         assertEquals("ostrom", install["name"]!!.jsonPrimitive.content)
@@ -197,20 +197,23 @@ class KubernetesRuntimeDriverTest {
             agent["command"]!!.jsonArray.map { it.jsonPrimitive.content },
         )
         fun uid(container: JsonObject) = container["securityContext"]!!.jsonObject["runAsUser"]!!.jsonPrimitive.content
-        assertEquals("1001", uid(install))
+        fun gid(container: JsonObject) = container["securityContext"]!!.jsonObject["runAsGroup"]!!.jsonPrimitive.content
+        // TeamCode's image contract: the runner 1000, the agent 1001, every container in group 1000.
+        assertEquals("1000", uid(install))
         assertEquals(
             listOf("/opt/ostrom/ostrom", "cloud", "runner"),
             runner["command"]!!.jsonArray.map { it.jsonPrimitive.content },
         )
-        assertEquals("1000", uid(agent))
-        assertEquals("1001", uid(runner))
+        assertEquals("1001", uid(agent))
+        assertEquals("1000", uid(runner))
         assertEquals("checks", checks["name"]!!.jsonPrimitive.content)
         assertEquals("Always", checks["restartPolicy"]!!.jsonPrimitive.content)
         assertEquals(
             listOf("/opt/ostrom/ostrom", "cloud", "check-host"),
             checks["command"]!!.jsonArray.map { it.jsonPrimitive.content },
         )
-        assertEquals("1000", uid(checks))
+        assertEquals("1001", uid(checks))
+        assertEquals(listOf("1000", "1000", "1000", "1000"), listOf(install, agent, checks, runner).map(::gid))
         assertFalse("secretKeyRef" in checks.toString())
         assertTrue("/run/ostrom-check/check.sock" in checks.toString())
         // The agent's container has no variable from the Secret, and only the runner's has the server's address.

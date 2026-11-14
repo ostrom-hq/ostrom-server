@@ -99,7 +99,7 @@ class DockerExecutionPlan(
         }
     }
 
-    /** The runner's container: its own uid, the shared group for the sockets, the token, and no workspace. */
+    /** The runner's container: its own uid in the session's group, the token, and no workspace. */
     private fun runnerManifest(spec: ExecutionSpec, secrets: Boolean): JsonObject =
         container(spec, Role.RUNNER, RUNNER_MEMORY_BYTES) {
             putJsonArray("Entrypoint") { add(JsonPrimitive(RUNNER_BINARY)) }
@@ -136,9 +136,6 @@ class DockerExecutionPlan(
                 if (role != Role.CHECKS) add(JsonPrimitive(socket))
                 if (role != Role.AGENT) add(JsonPrimitive(check))
             }
-            if (role == Role.RUNNER) {
-                putJsonArray("GroupAdd") { add(JsonPrimitive(KubernetesRuntimeDriver.SHARED_GID.toString())) }
-            }
             network?.let { put("NetworkMode", it) }
             putJsonArray("ExtraHosts") { add(JsonPrimitive("host.docker.internal:host-gateway")) }
             putJsonObject("RestartPolicy") { put("Name", "no") }
@@ -163,8 +160,9 @@ class DockerExecutionPlan(
         private const val MEMORY_BYTES = 4L * 1024 * 1024 * 1024
         private const val RUNNER_MEMORY_BYTES = 256L * 1024 * 1024
         private const val CHECK_MEMORY_BYTES = 2L * 1024 * 1024 * 1024
-        private const val AGENT_USER = "${KubernetesRuntimeDriver.AGENT_UID}:${KubernetesRuntimeDriver.AGENT_UID}"
-        private const val RUNNER_USER = "${KubernetesRuntimeDriver.RUNNER_UID}:${KubernetesRuntimeDriver.RUNNER_UID}"
+        // Both in the session's group, as in the pod: the agent socket's volume is the agent's, setgid to that group.
+        private const val AGENT_USER = "${KubernetesRuntimeDriver.AGENT_UID}:${KubernetesRuntimeDriver.SHARED_GID}"
+        private const val RUNNER_USER = "${KubernetesRuntimeDriver.RUNNER_UID}:${KubernetesRuntimeDriver.SHARED_GID}"
         private const val NANO_CPUS = 2_000_000_000L
         private const val PIDS_LIMIT = 4096
 

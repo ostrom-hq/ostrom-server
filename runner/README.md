@@ -3,18 +3,18 @@
 `ostrom-runner` is the process of a cloud session (module `runners` on the server side). A session runs the image
 three times, as three containers; each pair shares at most one socket directory:
 
-- **The agent host** (`ostrom-runner agent-host`, UID 1000, the agent's container). It owns the workspace and runs
+- **The agent host** (`ostrom-runner agent-host`, UID 1001, the agent's container). It owns the workspace and runs
   each terminal the runner asks for on a PTY: `/bin/sh -c` cloning the repository and starting the agent, then a
   login shell once the agent exits. It never has the runner token.
-- **The runner** (`ostrom-runner`, UID 1001). It holds the runner token, relays the terminal to the server's
+- **The runner** (`ostrom-runner`, UID 1000). It holds the runner token, relays the terminal to the server's
   WebSocket `/api/v1/cloud/runner/terminal`, and heartbeats the execution on `/api/v1/cloud/runner/heartbeat`. It
   reaches the agent host through the Unix socket `/run/ostrom/agent.sock` (`OSTROM_AGENT_SOCKET`), opened to the
-  group the containers share (2000). For every agent but the plain shell, it opens the agent's launch on
+  group the containers share (1000). For every agent but the plain shell, it opens the agent's launch on
   `/api/v1/cloud/runner/launch` before starting the terminal, and gives the agent `OSTROM_LAUNCH_ID`,
   `OSTROM_AGENT_TOKEN`, `OSTROM_URL` and `OSTROM_RUNNER_CHECKS`. When the server refuses the launch (the
   organization's policy, a limit) or never answers it, the agent does not start: the terminal says why and leaves a
   shell (`OSTROM_LAUNCH_REFUSED`).
-- **The check host** (`ostrom-runner check-host`, UID 1000, a container of its own). It mounts the workspace and runs
+- **The check host** (`ostrom-runner check-host`, UID 1001, a container of its own). It mounts the workspace and runs
   the hooks' checks the runner sends it, without a terminal (`/bin/sh -c`, stdin from `/dev/null`, stdout and stderr
   on one pipe), and reports each exit code. The runner listens on `/run/ostrom-check/check.sock`
   (`OSTROM_CHECK_HOST_SOCKET`), on a volume only the runner's container also mounts, and the check host links to it
@@ -152,7 +152,14 @@ The first terminal's clone and checkout run with hooks, fsmonitor and submodules
 
 ## The agent cannot read the runner token (S2-49)
 
-The agent and the runner never share a UID, a container, a process namespace or the token. CI proves it on the real
+The agent and the runner never share a UID, a container, a process namespace or the token. They do share a group:
+the UIDs and the group are TeamCode's image contract (runner 1000, agent and check host 1001, every container in
+group 1000, the pod's fsGroup), so a team image built for TeamCode runs on Ostrom. The group gives the runner nothing
+of the agent's to read that it does not already reach, and the agent nothing of the runner's: the runner mounts no
+workspace and no temporary directory of the agent's, its root file system is read-only, the token and the first message
+are only in its process environment (which another container's processes cannot read), and the only volume it shares
+with the agent is the socket directory `/run/ostrom`, which holds the sockets (the agent's at mode 0660) and the `gh`
+configuration written for the agent. CI proves it on the real
 image (`ci/runner-isolation.sh`, step "Session image, the agent cannot read the runner token" of the `ci` job). It
 runs one session as the Docker driver does, then checks:
 

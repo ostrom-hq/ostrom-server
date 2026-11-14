@@ -105,7 +105,7 @@ class DockerRuntimeDriverTest {
         assertEquals(name, api.calls[4].query["name"])
         // The agent: its own uid, the workspace and the socket, and no secret (S2-49).
         val agent = body(0)
-        assertEquals("1000:1000", agent["User"]!!.jsonPrimitive.content)
+        assertEquals("1001:1000", agent["User"]!!.jsonPrimitive.content)
         assertEquals(
             listOf("/usr/local/bin/ostrom-runner", "agent-host"),
             agent["Entrypoint"]!!.jsonArray.map { it.jsonPrimitive.content },
@@ -121,7 +121,7 @@ class DockerRuntimeDriverTest {
         assertFalse("ostrom_runner_xyz" in agent.toString())
         // The check host: the agent's uid, the workspace and the check socket only, no secret.
         val checks = body(2)
-        assertEquals("1000:1000", checks["User"]!!.jsonPrimitive.content)
+        assertEquals("1001:1000", checks["User"]!!.jsonPrimitive.content)
         assertEquals(
             listOf("/usr/local/bin/ostrom-runner", "check-host"),
             checks["Entrypoint"]!!.jsonArray.map { it.jsonPrimitive.content },
@@ -142,12 +142,11 @@ class DockerRuntimeDriverTest {
     @Test
     fun theRunnerHasItsOwnUidTheTokenAndBothSocketsButNoWorkspace() = runTest {
         driver.startExecution(spec)
-        // The runner: another uid, the shared group for the sockets, the token, and no workspace.
+        // The runner: another uid in the session's group (no extra group), the token, and no workspace.
         val container = body(4)
         assertEquals("ghcr.io/ostrom-hq/ostrom-runner:1.2", container["Image"]!!.jsonPrimitive.content)
-        assertEquals("1001:1001", container["User"]!!.jsonPrimitive.content)
-        val groups = container["HostConfig"]!!.jsonObject["GroupAdd"]!!.jsonArray
-        assertEquals("2000", groups.single().jsonPrimitive.content)
+        assertEquals("1000:1000", container["User"]!!.jsonPrimitive.content)
+        assertNull(container["HostConfig"]!!.jsonObject["GroupAdd"])
         val env = container["Env"]!!.jsonArray.map { it.jsonPrimitive.content }
         assertTrue("OSTROM_RUNNER_TOKEN=ostrom_runner_xyz" in env)
         assertTrue("OSTROM_AGENT_COMMAND=bash" in env)
