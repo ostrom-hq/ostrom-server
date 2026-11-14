@@ -273,6 +273,8 @@ object NotificationsModule : ServerModule {
             val work = koin.scheduledWork()
             scope.launch { work.repeatDue(DELIVER, logger, "notification delivery failed") { deliver() } }
             scope.launch { work.repeatDue(MAINTAIN, logger, "notification maintenance failed") { deliver.maintain() } }
+        } else {
+            logger.warn("notification router off: no event journal, approvers are not told", emptyMap())
         }
     }
 }

@@ -257,7 +257,7 @@ class ApprovalRoutingTest {
             mail.failures = 1
             assertEquals(ChannelResult.retry("mail"), sender.send(delivery, gate))
             mails = false
-            assertEquals(ChannelResult.failed("mail_off"), sender.send(delivery, gate))
+            assertEquals(ChannelResult.retry("mail_off"), sender.send(delivery, gate))
             val dans = approvalDelivery(org, gate, approver = "dan", channel = "email")
             assertEquals(ChannelResult.failed("no_email"), sender.send(dans, gate))
             assertEquals(2, mail.calls.size)

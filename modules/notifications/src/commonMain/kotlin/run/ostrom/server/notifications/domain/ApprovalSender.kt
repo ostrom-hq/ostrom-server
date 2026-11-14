@@ -91,7 +91,8 @@ class ApprovalSender(
         val to = approver.email
         return when {
             to == null -> ChannelResult.failed(NO_EMAIL)
-            !mailing.available() -> ChannelResult.failed(MAIL_OFF)
+            // Queued while the instance sent mail: a setting off for now is tried again, then given up.
+            !mailing.available() -> ChannelResult.retry(MAIL_OFF)
             else -> mailTo(notices.email(gate, delivery.approvalId, to))
         }
     }
