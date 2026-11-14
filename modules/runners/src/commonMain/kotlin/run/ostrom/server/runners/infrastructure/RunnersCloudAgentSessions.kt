@@ -22,7 +22,8 @@ internal class RunnersCloudAgentSessions(
 ) : CloudAgentSessions {
     override suspend fun find(orgId: Uuid, sessionId: String): AgentSession? {
         val session = Uuid.parseOrNull(sessionId)?.let { sessions.get(orgId, it) } ?: return null
-        val login = Uuid.parseOrNull(session.ownerId)?.let { logins?.loginsOf(orgId, listOf(it))?.get(it) }
+        val owner = Uuid.parseOrNull(session.ownerId)
+        val login = if (owner == null || logins == null) null else logins.loginsOf(orgId, listOf(owner))[owner]
         return login?.let { AgentSession(it, session.state.holdsExecution, listOf(session.id.toString())) }
     }
 }
