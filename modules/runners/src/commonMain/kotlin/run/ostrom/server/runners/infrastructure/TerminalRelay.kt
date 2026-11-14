@@ -67,9 +67,10 @@ class TerminalRelay(
              * @return The cursor, or null when [text] is null or not one.
              */
             fun parse(text: String?): Cursor? {
-                val (room, offset) = text?.split('.', limit = 2)?.takeIf { it.size == 2 } ?: return null
-                val id = Uuid.parseOrNull(room) ?: return null
-                return offset.toLongOrNull()?.takeIf { it >= 0 }?.let { Cursor(id, it) }
+                val parts = text.orEmpty().split('.', limit = 2)
+                val id = Uuid.parseOrNull(parts.first())
+                val offset = parts.getOrNull(1)?.toLongOrNull()?.takeIf { it >= 0 }
+                return if (id != null && offset != null) Cursor(id, offset) else null
             }
         }
     }

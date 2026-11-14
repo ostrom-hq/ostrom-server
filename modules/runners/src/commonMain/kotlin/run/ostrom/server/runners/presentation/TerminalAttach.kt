@@ -74,8 +74,7 @@ internal class MemberAttachment(
     private val replica = dependencies.replica
 
     /** Where the member is in the output of the room they are attached to (or were last), once they joined one. */
-    internal var cursor: TerminalRelay.Cursor? = null
-        private set
+    private var cursor: TerminalRelay.Cursor? = null
 
     /** How the member's attachment to one place of the terminal (this replica's room, or another replica) ended. */
     sealed interface Ended {
@@ -217,10 +216,9 @@ internal class MemberAttachment(
                 TerminalJson.decodeFromString(TerminalControl.serializer(), text)
             } catch (_: IllegalArgumentException) {
                 // SerializationException included: it extends IllegalArgumentException.
-                return null
+                null
             }
-            val joined = control as? TerminalControl.Joined ?: return null
-            return TerminalRelay.Cursor.parse("${joined.room}.${joined.offset}")
+            return (control as? TerminalControl.Joined)?.let { TerminalRelay.Cursor.parse("${it.room}.${it.offset}") }
         }
 
         /** The first close code of the terminal protocol (4000 + an HTTP status). */
