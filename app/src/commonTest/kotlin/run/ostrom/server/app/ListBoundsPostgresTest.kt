@@ -211,9 +211,8 @@ class ListBoundsPostgresTest {
     }
 
     // Two rules and two artifacts (a page of one has a next), an automation and an MCP server (their sub-lists), an
-    // accepted workflow and one run of it (the runs, listed by the organization and by the workflow), a webhook with one
-    // test delivery: the ids of the
-    // created resources by their collection, for the paths that name one.
+    // accepted workflow and one run of it (the runs, listed by the organization and by the workflow), a webhook with
+    // one test delivery: the ids of the created resources by their collection, for the paths that name one.
     private suspend fun TestServer.seed(ada: Person): Map<String, String> {
         repeat(2) { n ->
             write(ada, "/api/v1/rules", """{"statement": "Rule $n of the lists", "group": "Lists"}""")
