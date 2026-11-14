@@ -216,8 +216,10 @@ class FlywayMigrationRunnerTest {
             }
             assertEquals(3, applied(), "Each version applied by one pass only")
             val locks = database.superuser.fetchAll(
+                // This test's database only: other tests' passes take the same key on theirs at the same time.
                 "SELECT count(*) AS n FROM pg_locks WHERE locktype = 'advisory' AND objid = " +
-                    (MIGRATION_LOCK_KEY and 0xFFFFFFFFL),
+                    (MIGRATION_LOCK_KEY and 0xFFFFFFFFL) +
+                    " AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
             ).getOrThrow().single().get("n").asLong()
             assertEquals(0, locks, "The migration lock is released")
         }
