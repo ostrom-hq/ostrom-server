@@ -126,7 +126,11 @@ object ApiPrices {
     fun dayOf(clock: Clock): Long = clock.now().toLocalDateTime(TimeZone.UTC).date.toEpochDays()
 
     /** The UTC day number of a `YYYY-MM-DD` date, null when it is not one. */
-    fun dayOf(date: String): Long? = runCatching { LocalDate.parse(date).toEpochDays() }.getOrNull()
+    fun dayOf(date: String): Long? = try {
+        LocalDate.parse(date).toEpochDays()
+    } catch (_: IllegalArgumentException) {
+        null
+    }
 
     /** The date of a UTC day number, `YYYY-MM-DD`. */
     fun dateOf(day: Long): String = LocalDate.fromEpochDays(day).toString()
