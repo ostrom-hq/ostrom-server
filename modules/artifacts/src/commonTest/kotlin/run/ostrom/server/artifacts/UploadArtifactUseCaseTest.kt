@@ -69,7 +69,7 @@ class UploadArtifactUseCaseTest {
     private val chunks = BucketUploadChunks(storage, bucket)
     private val use = UploadArtifactUseCaseImpl(
         artifacts,
-        UploadStores(uploads, chunks),
+        UploadStores(uploads, chunks, gateOf(storage, clock)),
         contents,
         digest,
         clock,

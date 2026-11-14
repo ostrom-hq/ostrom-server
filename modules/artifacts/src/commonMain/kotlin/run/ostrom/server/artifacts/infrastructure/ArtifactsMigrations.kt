@@ -259,4 +259,13 @@ val ArtifactsMigrations: List<SchemaMigration> = listOf(
             ${tenantTableSql("artifacts_publications")}
         """.trimIndent(),
     ),
+    // The quotas read on each publication: the folders' bytes by organization, an owner's published artifacts.
+    SchemaMigration(
+        version = 10,
+        name = "artifacts_usage_indexes",
+        sql = """
+            CREATE INDEX artifacts_blobs_org ON artifacts_blobs (org_id) INCLUDE (artifact_id, size);
+            CREATE INDEX artifacts_artifacts_owner ON artifacts_artifacts (org_id, owner_id) WHERE latest_version > 0;
+        """.trimIndent(),
+    ),
 )

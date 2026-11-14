@@ -63,7 +63,7 @@ class CommitArtifactUploadUseCaseTest {
     }
     private val upload = UploadArtifactUseCaseImpl(
         artifacts,
-        UploadStores(uploads, BucketUploadChunks(storage, bucket)),
+        UploadStores(uploads, BucketUploadChunks(storage, bucket), gateOf(storage, clock)),
         contents,
         digest,
         clock,

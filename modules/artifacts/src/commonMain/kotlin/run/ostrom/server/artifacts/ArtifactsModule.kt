@@ -5,6 +5,7 @@ import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.artifacts.domain.ArtifactEvents
 import run.ostrom.server.artifacts.domain.ArtifactLocations
 import run.ostrom.server.artifacts.domain.ArtifactPublicationsRepository
+import run.ostrom.server.artifacts.domain.ArtifactUsageRepository
 import run.ostrom.server.artifacts.domain.ArtifactsRepository
 import run.ostrom.server.artifacts.domain.ContentDigest
 import run.ostrom.server.artifacts.domain.ManageArtifactUseCase
@@ -35,6 +36,7 @@ import run.ostrom.server.artifacts.domain.uploads.UploadArtifactUseCaseImpl
 import run.ostrom.server.artifacts.domain.uploads.UploadStores
 import run.ostrom.server.artifacts.infrastructure.ArtifactPublicationsRepositoryImpl
 import run.ostrom.server.artifacts.infrastructure.ArtifactUploadsRepositoryImpl
+import run.ostrom.server.artifacts.infrastructure.ArtifactUsageRepositoryImpl
 import run.ostrom.server.artifacts.infrastructure.ArtifactsConfig
 import run.ostrom.server.artifacts.infrastructure.ArtifactsMigrations
 import run.ostrom.server.artifacts.infrastructure.ArtifactsRepositoryImpl
@@ -83,7 +85,8 @@ object ArtifactsModule : ServerModule {
         single<ArtifactEvents> { AuditedArtifactEvents(get()) }
         single<ArtifactContents> { BucketArtifactContents(get(), get()) }
         single<ArtifactPublicationsRepository> { ArtifactPublicationsRepositoryImpl(get()) }
-        single<PublicationGate> { PublicationGateImpl(get(), get()) }
+        single<ArtifactUsageRepository> { ArtifactUsageRepositoryImpl(get()) }
+        single<PublicationGate> { PublicationGateImpl(get(), get(), get()) }
         single<PublishArtifactUseCase> { PublishArtifactUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single<ReadArtifactsUseCase> { ReadArtifactsUseCaseImpl(get(), get()) }
         single<ManageArtifactUseCase> { ManageArtifactUseCaseImpl(get(), get(), get(), get()) }
@@ -115,7 +118,7 @@ object ArtifactsModule : ServerModule {
             CommitArtifactUploadUseCaseImpl(get(), get(), get(), get(), get(), get())
         }
         single<UploadArtifactUseCase> {
-            UploadArtifactUseCaseImpl(get(), UploadStores(get(), get()), get(), get(), get(), get())
+            UploadArtifactUseCaseImpl(get(), UploadStores(get(), get(), get()), get(), get(), get(), get())
         }
     }
 

@@ -2,6 +2,8 @@
 package run.ostrom.server.artifacts.fakes
 
 import run.ostrom.server.artifacts.domain.ArtifactPublicationsRepository
+import run.ostrom.server.artifacts.domain.ArtifactUsage
+import run.ostrom.server.artifacts.domain.ArtifactUsageRepository
 import run.ostrom.server.artifacts.domain.PublicationGateImpl
 import run.ostrom.server.artifacts.domain.storage.ArtifactStorageRepository
 import kotlin.time.Clock
@@ -21,6 +23,9 @@ class InMemoryPublications : ArtifactPublicationsRepository {
     }
 }
 
-/** A gate on [storage]'s settings with publications in memory. */
-fun gateOf(storage: ArtifactStorageRepository, clock: Clock) =
-    PublicationGateImpl(storage, InMemoryPublications(), clock)
+/** Nothing held yet. */
+val NO_USAGE = ArtifactUsageRepository { _, _ -> ArtifactUsage(0, 0, 0) }
+
+/** A gate on [storage]'s settings with publications in memory, and [usage]. */
+fun gateOf(storage: ArtifactStorageRepository, clock: Clock, usage: ArtifactUsageRepository = NO_USAGE) =
+    PublicationGateImpl(storage, InMemoryPublications(), usage, clock)

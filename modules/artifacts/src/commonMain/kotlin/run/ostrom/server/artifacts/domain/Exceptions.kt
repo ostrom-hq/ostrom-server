@@ -71,6 +71,14 @@ class ArtifactPublishRateLimitedException(val retryAfterSeconds: Long) : OstromE
     "artifact_rate_limited",
 )
 
+/**
+ * A publication would put its owner or the organization over a quota of its settings.
+ *
+ * @param message Which quota.
+ */
+class ArtifactQuotaExceededException(message: String) :
+    OstromException(ErrorKind.CONFLICT, message, "artifact_quota_exceeded")
+
 /** The caller acts for no organization: answered like an unknown organization. */
 class NotAMemberException : OstromException(ErrorKind.NOT_FOUND, "Organization not found.")
 
