@@ -17,7 +17,7 @@ import kotlin.uuid.Uuid
 /**
  * The event of [type] about this wait, as [OrgEventType] documents it: `{waitId, sessionId?, waitKind, assigneeId}`,
  * and the [action] of an answer. It belongs to the assignee (who sees it besides the owners and the admins); an
- * assignee that is not a member id leaves it to them. Never the question, the answer's values or a secret.
+ * assignee that is not a member id (an agent) leaves it to the owners and the admins. Never the question, the answer's values or a secret.
  */
 internal fun Wait.event(type: OrgEventType, action: String? = null): OrgEventDraft {
     val data = buildMap {
@@ -27,14 +27,7 @@ internal fun Wait.event(type: OrgEventType, action: String? = null): OrgEventDra
         put("assigneeId", JsonPrimitive(assignee))
         action?.let { put("action", JsonPrimitive(it)) }
     }
-    return OrgEventDraft(type, id.toString(), memberIdOf(assignee), JsonObject(data))
-}
-
-/** A member's id, or null for an assignee written otherwise. */
-private fun memberIdOf(assignee: String): Uuid? = try {
-    Uuid.parse(assignee)
-} catch (_: IllegalArgumentException) {
-    null
+    return OrgEventDraft(type, id.toString(), Uuid.parseOrNull(assignee), JsonObject(data))
 }
 
 /**
