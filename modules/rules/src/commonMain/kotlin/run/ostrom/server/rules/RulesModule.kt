@@ -2,6 +2,7 @@
 package run.ostrom.server.rules
 
 import run.ostrom.core.api.models.ServerFeatures
+import run.ostrom.server.compiler.domain.repositories.CompilerRepository
 import run.ostrom.server.compiler.domain.services.CompilerSources
 import run.ostrom.server.compiler.infrastructure.DefaultCompilerSources
 import run.ostrom.server.gates.domain.services.GateCheckNeeds
@@ -14,6 +15,7 @@ import run.ostrom.server.rules.domain.repositories.RulesRepository
 import run.ostrom.server.rules.domain.services.AnalysisEngine
 import run.ostrom.server.rules.domain.services.RepositoryReader
 import run.ostrom.server.rules.domain.services.DecisionSigner
+import run.ostrom.server.rules.domain.services.WorkflowProposals
 import run.ostrom.server.rules.domain.usecases.AnalyzeOrganizationUseCase
 import run.ostrom.server.rules.domain.usecases.AnalyzeOrganizationUseCaseImpl
 import run.ostrom.server.rules.domain.usecases.ReplayRulesUseCase
@@ -49,6 +51,7 @@ import run.ostrom.server.rules.infrastructure.PostgresAnalysisRepository
 import run.ostrom.server.rules.infrastructure.PostgresRulesRepository
 import run.ostrom.server.rules.infrastructure.RepositoryAnalysisEngine
 import run.ostrom.server.rules.infrastructure.ReceiptsDecisionSigner
+import run.ostrom.server.rules.infrastructure.CompilerWorkflowProposals
 import run.ostrom.server.rules.infrastructure.RulesCompilerSources
 import run.ostrom.server.rules.infrastructure.RulesGateCheckNeeds
 import run.ostrom.server.rules.infrastructure.RulesGatePolicies
@@ -108,7 +111,10 @@ object RulesModule : ServerModule {
         single<StartAnalysisUseCase> { StartAnalysisUseCaseImpl(get(), get(), get(), get(), get()) }
         single<GetAnalysisStateUseCase> { GetAnalysisStateUseCaseImpl(get(), get(), get()) }
         single<GetReplayUseCase> { GetReplayUseCaseImpl(get()) }
-        single<AnalyzeOrganizationUseCase> { AnalyzeOrganizationUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<WorkflowProposals> { CompilerWorkflowProposals(get<CompilerRepository>(), get()) }
+        single<AnalyzeOrganizationUseCase> {
+            AnalyzeOrganizationUseCaseImpl(get(), get(), get(), get(), get(), get())
+        }
         single<ReplayRulesUseCase> { ReplayRulesUseCaseImpl(get(), get(), get(), get(), get()) }
         single { RepositoryAnalysisEngine(get(), get(), get(), get()) }
         single { AnalysisRoutesDependencies(callerResolver(), get(), get(), get(), get()) }

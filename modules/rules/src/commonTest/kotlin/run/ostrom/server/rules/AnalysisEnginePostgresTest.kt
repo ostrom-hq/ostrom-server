@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.rules
 
+import run.ostrom.core.api.models.WorkflowNodeKind
+import run.ostrom.core.receipts.Digests
+import run.ostrom.core.api.models.WorkflowStatus
 import run.ostrom.server.compiler.CompilerModule
+import run.ostrom.server.compiler.domain.repositories.CompilerRepository
+import run.ostrom.server.compiler.domain.services.CompilerDocs
+import run.ostrom.server.compiler.domain.usecases.WorkflowsUseCase
 import run.ostrom.server.gates.GatesModule
 import run.ostrom.server.instance.InstanceModule
 import run.ostrom.server.receipts.ReceiptsModule
@@ -12,7 +18,9 @@ import run.ostrom.server.rules.domain.models.RuleStatus
 import run.ostrom.server.rules.domain.services.RepositoryReader
 import run.ostrom.server.rules.domain.usecases.AnalyzeOrganizationUseCaseImpl
 import run.ostrom.server.rules.fakes.FakeRepositoryReader
+import run.ostrom.server.rules.fakes.FakeWorkflowProposals
 import run.ostrom.server.rules.fakes.RecordingLogger
+import run.ostrom.server.rules.fakes.RepositoryFixture
 import run.ostrom.server.rules.fakes.RepositoryFixtures
 import run.ostrom.server.rules.fakes.RulesCallers
 import run.ostrom.server.rules.fakes.RulesFixtures
@@ -38,6 +46,7 @@ import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -55,8 +64,11 @@ class AnalysisEnginePostgresTest {
     private val modules = listOf(InstanceModule, GatesModule, ReceiptsModule, CompilerModule, RulesModule)
     private val branch = "rule_learned_96cd39a4b8216a1472494c1f"
 
-    private fun engineTest(block: suspend (TestServer) -> Unit) {
-        val reader = FakeRepositoryReader().apply { connect(orgA, RepositoryFixtures.api, RepositoryFixtures.web) }
+    private fun engineTest(
+        repos: List<RepositoryFixture> = listOf(RepositoryFixtures.api, RepositoryFixtures.web),
+        block: suspend (TestServer) -> Unit,
+    ) {
+        val reader = FakeRepositoryReader().apply { connect(orgA, *repos.toTypedArray()) }
         val overrides = module {
             includes(RulesCallers.overrides(), RulesCallers.gateSessions)
             single<RepositoryReader> { reader }
@@ -129,6 +141,49 @@ class AnalysisEnginePostgresTest {
         assertEquals("github", server.state("owner-b").failure?.get("stage"), "Org B has no GitHub App")
     }
 
+    private val app = RepositoryFixture(
+        RepositoryFixtures.ref("app"),
+        listOf(".github/workflows/ci.yml", "CLAUDE.md", "Makefile"),
+        mapOf(
+            ".github/workflows/ci.yml" to "on: pull_request\njobs:\n  test:\n    steps:\n      - run: make test\n",
+            "CLAUDE.md" to "# Ship\n1. Run `make test`\n2. Tag it\n",
+            "Makefile" to "test:\n\techo\nrelease:\n\techo\n",
+        ),
+    )
+
+    // Decision "one workflow system", section 4: an analysis proposes the processes as workflows, never decided, and a
+    // later analysis never rewrites one, even one still proposed.
+    @Test
+    fun anAnalysisProposesTheProcessesAsWorkflowsAndNeverRewritesThem() = engineTest(listOf(app)) { server ->
+        server.analyse()
+        val state = server.state("reader-a")
+        assertEquals(JsonPrimitive(3), state.repos.single()["processes"])
+        val workflows = state.workflows.map { CompilerDocs.workflow(JsonObject(it - "version" - "updatedBy")).workflow }
+        assertEquals(
+            listOf("Pull request checks (app)", "Release (app)", "Ship (app, CLAUDE.md)"),
+            workflows.map { it.name }.sorted(),
+        )
+        assertTrue(workflows.all { it.id.startsWith("wf_learned_") && it.status == WorkflowStatus.PROPOSED })
+        assertTrue(workflows.all { it.repos == listOf("acme/app") })
+        val checks = workflows.single { it.name == "Pull request checks (app)" }
+        val gate = checks.nodes.single { it.kind == WorkflowNodeKind.GATE }
+        val branch = "rule_learned_" + Digests.sha256Hex("branch:app".encodeToByteArray()).take(24)
+        assertEquals(listOf(branch), gate.ruleIds)
+        assertEquals("proposed", server.call("GET", "/api/v1/rules/$branch", "admin-a").body<RuleDto>().status)
+        val compiler = server.koin.get<CompilerRepository>()
+        assertEquals(emptyList(), compiler.lastDecisions(orgA), "A proposal is not a decision: nothing is signed")
+
+        // A person edits a proposal; the next analysis leaves it as it is and adds nothing twice.
+        val stored = compiler.workflow(orgA, checks.id) ?: error("stored")
+        val edited = JsonObject(stored.doc.raw + ("name" to JsonPrimitive("Our checks")))
+        server.koin.get<WorkflowsUseCase>().save(orgA, edited, stored.version, "lyes", create = false)
+        server.analyse("restart")
+        val after = server.state().workflows
+        assertEquals(3, after.size)
+        assertEquals(JsonPrimitive("Our checks"), after.first { it["id"] == JsonPrimitive(checks.id) }["name"])
+        assertEquals(emptyList(), server.state("owner-b").workflows, "Org B sees none of A's proposals")
+    }
+
     @Test
     fun theEngineWritesUnderTheServingRoleOnlyForItsOrganization() = runTest {
         val database = TestDatabase.create() ?: return@runTest
@@ -138,7 +193,9 @@ class AnalysisEnginePostgresTest {
             val runs = PostgresAnalysisRepository(database.driver)
             val rules = PostgresRulesRepository(database.driver)
             val reader = FakeRepositoryReader().apply { connect(orgA, RepositoryFixtures.docs) }
-            val analyze = AnalyzeOrganizationUseCaseImpl(runs, rules, reader, RecordingLogger(), TestClock())
+            val analyze = AnalyzeOrganizationUseCaseImpl(
+                runs, rules, reader, FakeWorkflowProposals(), RecordingLogger(), TestClock(),
+            )
             val run = AnalysisRun(
                 orgA, AnalysisKind.ANALYSIS, "run_1", AnalysisRun.CONNECT, 0.0, null, "lyes",
                 RulesFixtures.epoch, RulesFixtures.epoch,

@@ -1,17 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.rules
 
+import run.ostrom.core.receipts.Digests
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.rules.domain.models.AnalysisFailure
 import run.ostrom.server.rules.domain.models.AnalysisKind
 import run.ostrom.server.rules.domain.models.AnalysisRun
+import run.ostrom.server.rules.domain.models.ProcessNodeKind
 import run.ostrom.server.rules.domain.models.RuleStatus
 import run.ostrom.server.rules.domain.models.RuleStrength
+import run.ostrom.server.rules.domain.services.ProcessInference
 import run.ostrom.server.rules.domain.services.RuleInference
 import run.ostrom.server.rules.domain.usecases.AnalyzeOrganizationUseCaseImpl
 import run.ostrom.server.rules.fakes.FakeAnalysisRepository
 import run.ostrom.server.rules.fakes.FakeRepositoryReader
 import run.ostrom.server.rules.fakes.FakeRulesRepository
+import run.ostrom.server.rules.fakes.FakeWorkflowProposals
 import run.ostrom.server.rules.fakes.RecordingLogger
 import run.ostrom.server.rules.fakes.RepositoryFixture
 import run.ostrom.server.rules.fakes.RepositoryFixtures
@@ -38,7 +42,8 @@ class AnalyzeOrganizationUseCaseTest {
     private val rules = FakeRulesRepository()
     private val reader = FakeRepositoryReader()
     private val logger = RecordingLogger()
-    private val analyze = AnalyzeOrganizationUseCaseImpl(runs, rules, reader, logger, clock)
+    private val workflows = FakeWorkflowProposals()
+    private val analyze = AnalyzeOrganizationUseCaseImpl(runs, rules, reader, workflows, logger, clock)
     private val previous = JsonObject(mapOf("name" to JsonPrimitive("last")))
     private val run = AnalysisRun(
         orgId = org,
@@ -71,7 +76,14 @@ class AnalyzeOrganizationUseCaseTest {
 
         assertEquals(listOf("web", "api", "docs", "tools"), reader.trees, "Most recently pushed first")
         assertEquals(listOf("read" to 0, "read" to 225, "read" to 450, "read" to 675), seen)
-        assertEquals(listOf("web/package.json", "api/.github/CODEOWNERS"), reader.files, "Only the wanted files")
+        assertEquals(
+            listOf(
+                "web/package.json", "web/.gitlab-ci.yml", "api/.github/CODEOWNERS", "api/.github/workflows/ci.yml",
+                "api/.github/workflows/deploy.yml", "docs/Makefile",
+            ),
+            reader.files,
+            "Only the wanted files",
+        )
         val ready = recorded()
         assertEquals(AnalysisRun.READY, ready?.phase)
         assertEquals(1.0, ready?.progress)
@@ -80,17 +92,21 @@ class AnalyzeOrganizationUseCaseTest {
             listOf(
                 json(
                     """{"name":"web","description":"The web service","language":"TypeScript","defaultBranch":"develop",
-                    |"archived":false,"pushedAt":"2026-10-30T09:00:00Z","owners":[]}""".trimMargin(),
+                    |"archived":false,"pushedAt":"2026-10-30T09:00:00Z","owners":[],"processes":0}""".trimMargin(),
                 ),
                 json(
                     """{"name":"api","description":"The api service","language":"Kotlin","defaultBranch":"main",
-                    |"archived":false,"pushedAt":"2026-10-29T10:00:00Z","owners":["lyes"]}""".trimMargin(),
+                    |"archived":false,"pushedAt":"2026-10-29T10:00:00Z","owners":["lyes"],
+                    |"processes":0}""".trimMargin(),
                 ),
                 json(
                     """{"name":"docs","description":"The docs service","defaultBranch":"main","archived":false,
-                    |"pushedAt":"2026-10-01T00:00:00Z","owners":[]}""".trimMargin(),
+                    |"pushedAt":"2026-10-01T00:00:00Z","owners":[],"processes":0}""".trimMargin(),
                 ),
-                json("""{"name":"tools","language":"Python","defaultBranch":"main","archived":false,"owners":[]}"""),
+                json(
+                    """{"name":"tools","language":"Python","defaultBranch":"main","archived":false,"owners":[],
+                    |"processes":0}""".trimMargin(),
+                ),
             ),
             ready?.items,
         )
@@ -279,5 +295,68 @@ class AnalyzeOrganizationUseCaseTest {
         assertEquals("The analysis took longer than 15 minutes; start it again.", recorded()?.failure?.reason)
         assertEquals(listOf(previous), recorded()?.items, "The last results stay")
         assertTrue(rules.rules.isEmpty(), "Nothing half-written")
+    }
+
+    private fun digestId(prefix: String, key: String) =
+        prefix + Digests.sha256Hex(key.encodeToByteArray()).take(24)
+
+    private fun app(name: String = "app") = RepositoryFixture(
+        RepositoryFixtures.ref(name),
+        listOf(".github/workflows/ci.yml", "CLAUDE.md"),
+        mapOf(
+            ".github/workflows/ci.yml" to "on: pull_request\njobs:\n  test:\n    steps:\n      - run: make test\n",
+            "CLAUDE.md" to "# Release\n1. Run `make test`\n2. Tag it\n",
+        ),
+    )
+
+    // Decision "one workflow system", section 4: the processes are proposed after the rules, their gates naming them.
+    @Test
+    fun theProcessesOfARepositoryAreProposedAfterItsRulesWithTheirGates() = runTest {
+        analyse(app())
+        val (orgId, learned, at) = workflows.proposed.single()
+        assertEquals(org, orgId)
+        assertEquals(clock.now(), at)
+        assertEquals(
+            listOf(
+                digestId("wf_learned_", "process:app:pull-request"),
+                digestId("wf_learned_", "process:app:list:CLAUDE.md:Release"),
+            ),
+            learned.map { it.id },
+        )
+        val branch = digestId("rule_learned_", "branch:app")
+        val gate = learned[0].proposal.nodes.single { it.kind == ProcessNodeKind.GATE }
+        assertEquals(branch, gate.rule?.id)
+        assertTrue((org to branch) in rules.rules, "The gate names a rule of the same run")
+        assertEquals(JsonPrimitive(2), recorded()?.items?.single()?.get("processes"), "The run counts them")
+        assertEquals(AnalysisRun.READY, recorded()?.phase)
+    }
+
+    @Test
+    fun aGateNamesNoRuleTheRunLeftOut() = runTest {
+        analyse(app("a".repeat(301)))
+        val checks = workflows.proposed.single().second.first()
+        assertEquals(
+            listOf(ProcessNodeKind.TRIGGER, ProcessNodeKind.CHECK),
+            checks.proposal.nodes.map { it.kind },
+            "The branch rule's scope is too long: its gate is not named",
+        )
+        assertTrue(logger.events.isNotEmpty(), "The rules left out are told")
+        assertEquals(setOf(LogLevel.WARN to "analysis left out a proposal"), logger.events.toSet())
+    }
+
+    @Test
+    fun aRunProposesAtMostFiftyWorkflows() = runTest {
+        val lists = (0 until 100).joinToString("\n") { "# H$it\n1. a\n2. b" }
+        val repos = (0 until 3).map {
+            RepositoryFixture(
+                RepositoryFixtures.ref("r$it"),
+                listOf("CLAUDE.md", "AGENTS.md"),
+                mapOf("CLAUDE.md" to lists, "AGENTS.md" to lists),
+            )
+        }
+        analyse(*repos.toTypedArray())
+        val learned = workflows.proposed.single().second
+        assertEquals(ProcessInference.MAX_PROPOSALS, learned.size)
+        assertEquals(learned.size, learned.map { it.id }.distinct().size)
     }
 }

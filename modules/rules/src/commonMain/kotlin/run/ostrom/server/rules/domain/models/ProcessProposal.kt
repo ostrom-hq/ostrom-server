@@ -68,3 +68,11 @@ data class ProcessProposal(
     val nodes: List<ProcessNode>,
     val sources: List<RuleSource>,
 )
+
+/**
+ * A process proposal under the workflow id the analysis gives it.
+ *
+ * @property id `wf_learned_` and the digest of the proposal's key: the same finding always has the same id.
+ * @property proposal The proposal.
+ */
+data class LearnedWorkflow(val id: String, val proposal: ProcessProposal)
