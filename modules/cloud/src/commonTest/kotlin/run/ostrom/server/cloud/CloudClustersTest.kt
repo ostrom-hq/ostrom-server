@@ -127,6 +127,10 @@ class CloudClustersTest {
         val moved = kept.copy(apiUrl = "https://other.acme.dev", version = 2)
         val refused = assertFailsWith<InvalidCloudClusterException> { clusters.update(alice, cluster.id, moved) }
         assertTrue("needed for a new apiUrl" in refused.message.orEmpty())
+        val half = assertFailsWith<InvalidCloudClusterException> {
+            clusters.update(alice, cluster.id, moved.copy(caCertificate = PEM))
+        }
+        assertTrue("needed for a new apiUrl" in half.message.orEmpty())
         val renewed = clusters.update(alice, cluster.id, moved.copy(caCertificate = PEM, serviceAccountToken = "new"))
         assertEquals("https://other.acme.dev", renewed.apiUrl)
         assertEquals("new", clusters.credentials(cluster.id)?.serviceAccountToken)
