@@ -141,7 +141,8 @@ class HttpMcpUpstream(
     // certificate is not a wrong credential. Never the exception's message, which may name what it was sent.
     private fun unreachable(target: UpstreamTarget, error: Exception): UpstreamResult.Failure {
         val tls = generateSequence<Throwable>(error) { it.cause }.take(MAX_CAUSES).any { cause ->
-            val name = cause::class.simpleName.orEmpty()
+            // The class's full name, never its message: `javax.net.ssl.SSLHandshakeException`, a certificate error.
+            val name = cause::class.toString()
             TLS_NAMES.any { it in name }
         }
         val fields = mapOf(
