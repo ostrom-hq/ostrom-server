@@ -13,6 +13,7 @@ import run.ostrom.server.kernel.events.JournalEntry
 import run.ostrom.server.kernel.events.JournalPosition
 import run.ostrom.server.kernel.events.OrgEventJournal
 import run.ostrom.server.kernel.events.OrgEventType
+import run.ostrom.server.kernel.events.SessionNames
 import run.ostrom.server.kernel.events.WaitSummaries
 import run.ostrom.server.kernel.logging.Logger
 import kotlin.time.Clock
@@ -21,16 +22,17 @@ import kotlin.uuid.Uuid
 
 /**
  * [DeliverNotificationsUseCase] as TeamCode's: the fan-out reads each organization's page, the waits it names, the
- * members each channel reaches and the switches turned off, then queues one delivery per event, member and channel
- * with the cursor's move. The attempts send one batch per organization and channel, together, each under its
- * deadline: a slow provider delays neither the others nor its own backoff. One organization's failure is logged and
- * skipped, so it never holds the others' notifications back. A delivery about a wait answered or withdrawn since is
- * not sent (`wait_closed`). The same pass routes the requests for a yes ([ApprovalRouter]): queued with the page,
- * attempted with the batch, and not sent once their gate is decided or their approver no longer asked
- * (`gate_decided`).
+ * names of their sessions (a notification's title), the members each channel reaches and the switches turned off, then
+ * queues one delivery per event, member and channel with the cursor's move. The attempts send one batch per
+ * organization and channel, together, each under its deadline: a slow provider delays neither the others nor its own
+ * backoff. One organization's failure is logged and skipped, so it never holds the others' notifications back. A
+ * delivery about a wait answered or withdrawn since is not sent (`wait_closed`). The same pass routes the requests for
+ * a yes ([ApprovalRouter]): queued with the page, attempted with the batch, and not sent once their gate is decided or
+ * their approver no longer asked (`gate_decided`).
  *
  * @param journal The organizations' event journal.
  * @param waits The waits the events name.
+ * @param sessions The names of the sessions the waits belong to; null when no session has a name.
  * @param settings The members' switches.
  * @param deliveries The queue.
  * @param channels The channels this server offers.
@@ -43,6 +45,7 @@ import kotlin.uuid.Uuid
 class DeliverNotificationsUseCaseImpl(
     private val journal: OrgEventJournal,
     private val waits: WaitSummaries,
+    private val sessions: SessionNames?,
     private val settings: NotificationSettingsRepository,
     private val deliveries: NotificationDeliveriesRepository,
     private val channels: () -> List<NotificationChannel>,
@@ -143,8 +146,17 @@ class DeliverNotificationsUseCaseImpl(
     ): List<NotificationDelivery> {
         val waitIds = entries.map(NotificationRules::waitIdOf).toSet()
         val known = if (waitIds.isEmpty()) emptyMap() else waits.of(orgId, waitIds).associateBy { it.id }
+        // Only the waits that tell someone need their session's name, read once for the page (TeamCode).
+        val sessionIds = known.values.filter { it.open }.mapNotNull { it.sessionId }.toSet()
+        // A title is only words: a failed read of the names keeps the default title, it never holds the page back.
+        val names = if (sessions == null || sessionIds.isEmpty()) {
+            emptyMap()
+        } else {
+            guarded(NAMES_FAILED, emptyMap()) { sessions.of(orgId, sessionIds) }
+        }
         val drafts = entries.mapNotNull { entry ->
-            NotificationRules.draft(NotificationSource(entry, known[NotificationRules.waitIdOf(entry)]))
+            val wait = known[NotificationRules.waitIdOf(entry)]
+            NotificationRules.draft(NotificationSource(entry, wait, wait?.sessionId?.let(names::get)))
         }
         val members = drafts.map { it.memberId }.toSet()
         if (members.isEmpty()) return emptyList()
@@ -231,6 +243,7 @@ class DeliverNotificationsUseCaseImpl(
         const val WAIT_CLOSED = "wait_closed"
         const val GATE_DECIDED = "gate_decided"
         const val FANOUT_FAILED = "notification fan-out failed"
+        const val NAMES_FAILED = "notification session names read failed"
         const val CLAIM_FAILED = "notification claim failed"
         const val RECORD_FAILED = "notification record failed"
         const val APPROVAL_NOT_SENT = "approval notification not sent"

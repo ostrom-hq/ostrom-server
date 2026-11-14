@@ -24,6 +24,7 @@ import run.ostrom.server.billing.domain.GetAgentUsageUseCase
 import run.ostrom.server.billing.domain.GetPlanLimitsUseCase
 import run.ostrom.server.cloud.domain.CloudSettingsSource
 import run.ostrom.server.kernel.config.ConfigSource
+import run.ostrom.server.kernel.events.SessionNames
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
@@ -125,6 +126,7 @@ import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.sessions.CloudAgentSessions
 import run.ostrom.server.kernel.sessions.SessionEndListener
 import run.ostrom.server.runners.infrastructure.RunnersCloudAgentSessions
+import run.ostrom.server.runners.infrastructure.RunnersSessionNames
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
@@ -139,7 +141,8 @@ private val REPLICA_HTTP = named("runners.replica.http")
  * registered runners, `ostrom-runner machine`), with a workspace volume that survives
  * pauses; the runner in the pod reports through the runner channel; the free plan's guards pause idle, overlong or
  * over-budget sessions. Its cloud sessions are agent sessions to the other modules (the kernel's
- * [CloudAgentSessions]): a cloud agent's todo, waits and proposals are its cloud session's.
+ * [CloudAgentSessions]): a cloud agent's todo, waits and proposals are its cloud session's. Their names title the
+ * notifications about them ([SessionNames]).
  */
 object RunnersModule : ServerModule {
     override val name: String = "runners"
@@ -161,6 +164,8 @@ object RunnersModule : ServerModule {
         single(named(CLOUD_ACCESS_SETTINGS.name)) { CLOUD_ACCESS_SETTINGS }
         single<CloudSessionsRepository> { CloudSessionsRepositoryImpl(get()) }
         single<CloudAgentSessions> { RunnersCloudAgentSessions(get(), getOrNull<MemberLogins>()) }
+        // The notification router titles a notification with its cloud session's name.
+        single<SessionNames> { RunnersSessionNames(get()) }
         single<RunnerTokens> { RunnerTokensImpl() }
         // Billing's plans and hours counter when the billing module is there (always on a full server); the free
         // plan and the sessions' own monthly counter otherwise.

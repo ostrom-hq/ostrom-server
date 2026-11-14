@@ -218,6 +218,8 @@ object NotificationsModule : ServerModule {
             DeliverNotificationsUseCaseImpl(
                 journal = get(),
                 waits = getOrNull() ?: NO_WAITS,
+                // Without the runners module, no session has a name.
+                sessions = getOrNull(),
                 settings = get(),
                 deliveries = get(),
                 channels = { scope.getAll<NotificationChannel>().distinctBy { it.id } },
