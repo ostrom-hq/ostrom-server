@@ -70,11 +70,10 @@ internal fun JdbcTransaction.lockUntilCommit(key: String) {
  * Runs one write built by [body] in this transaction.
  *
  * @param body The statement.
- *
- * @return What it returns: the rows changed of a write.
  */
-internal fun <T : Any> JdbcTransaction.write(body: StatementBuilder.() -> Statement<T>): T? =
+internal fun <T : Any> JdbcTransaction.write(body: StatementBuilder.() -> Statement<T>) {
     buildStatement(body).toExecutable().execute(this)
+}
 
 /**
  * A read and how its rows become what a repository decides on: the [query] alone for a plan.

@@ -113,7 +113,11 @@ class UsageQueryPlansTest {
                         window,
                     ).query,
                 "spend and holds of a launch over its life (gateway admission)" to
-                    holdTotalsRead(hold.copy(launchId = "lch_1"), SpendLimits(null, null, launchMicros = 1), window).query,
+                    holdTotalsRead(
+                        hold.copy(launchId = "lch_1"),
+                        SpendLimits(null, null, launchMicros = 1),
+                        window,
+                    ).query,
                 "summary of 30 days by model" to
                     summaryRead(UsageWindow(org, null, since), UsageGroupBy.MODEL, 1000).query,
             )

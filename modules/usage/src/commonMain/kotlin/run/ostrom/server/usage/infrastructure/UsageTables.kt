@@ -85,4 +85,7 @@ internal class DateColumnType : ColumnType<LocalDate>() {
     override fun sqlType(): String = "DATE"
 
     override fun valueFromDB(value: Any): LocalDate = LocalDate.parse(value.toString())
+
+    // Quoted where Exposed inlines a value (an expression's text, a logged statement): a date, never arithmetic.
+    override fun nonNullValueToString(value: LocalDate): String = "'$value'"
 }

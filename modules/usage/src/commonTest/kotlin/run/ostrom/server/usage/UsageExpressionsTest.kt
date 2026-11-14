@@ -33,5 +33,6 @@ class UsageExpressionsTest {
         assertEquals("DATE", date.sqlType())
         assertEquals(LocalDate.of(2026, 11, 1), date.valueFromDB(java.sql.Date.valueOf("2026-11-01")))
         assertEquals(LocalDate.of(2026, 11, 1), date.valueFromDB(LocalDate.of(2026, 11, 1)))
+        assertEquals("'2026-11-01'", date.nonNullValueToString(LocalDate.of(2026, 11, 1)), "Inlined, a date")
     }
 }

@@ -43,15 +43,17 @@ class UsageRepositoryImpl(private val database: JdbcDatabase) : UsageRepository 
         events: List<UsageEvent>,
         perMinute: Int,
     ): Boolean {
-        if (events.isEmpty()) return true
-        return database.inOrg(orgId) {
-            write { ingestMinutesPurge(orgId, memberId) }
-            // A batch larger than the minute holds is refused before it is counted, as a minute not started yet.
-            if (events.size > perMinute) return@inOrg false
-            // Under the row's lock: two batches of the member, on any replica, count one after the other.
-            val counted = ingestMinuteCount(orgId, memberId, events.size, perMinute).toList().isNotEmpty()
-            if (counted) insertEvents(events)
-            counted
+        // A batch larger than the minute holds is refused before it is counted, as a minute not started yet.
+        return when {
+            events.isEmpty() -> true
+            events.size > perMinute -> false
+            else -> database.inOrg(orgId) {
+                write { ingestMinutesPurge(orgId, memberId) }
+                // Under the row's lock: two batches of the member, on any replica, count one after the other.
+                val counted = ingestMinuteCount(orgId, memberId, events.size, perMinute).toList().isNotEmpty()
+                if (counted) insertEvents(events)
+                counted
+            }
         }
     }
 

@@ -86,6 +86,15 @@ private fun sumRead(sum: ExpressionWithColumnType<Long>): Read<Long> {
     return Read(Table.Dual.select(spent)) { it[spent] }
 }
 
+/** The workflow's sums of [holdTotalsRead]: spent this month, held, spent today. */
+private const val WORKFLOW_SUMS = 3
+
+/** The launch's sums of [holdTotalsRead]: spent over its life, held. */
+private const val LAUNCH_SUMS = 2
+
+/** How long a launch lives, plus a margin: its lifetime spend is read from this far back. */
+internal const val LAUNCH_LIFE_HOURS: Long = 26
+
 /**
  * What is spent since the month's start and since the day's, and held by the other calls now, for the org, the
  * member and the workflow, each read only when a limit needs it (0 otherwise). The holds are read for a side with a
@@ -101,12 +110,22 @@ internal fun holdTotalsRead(hold: SpendHold, limits: SpendLimits, window: HoldWi
     val orgDay = daily?.orgMicros != null
     val memberDay = daily?.memberMicros != null
     val workflowId = hold.workflowId
-    val workflow = workflowId != null && limits.workflowMicros != null
-    val workflowDay = workflowId != null && daily?.workflowMicros != null
     // The day's start, read only with a daily limit.
     val daySince = if (daily == null) window.since else daily.since
     val mine = Spender(memberId = hold.memberId)
-    val its = Spender(workflowId = workflowId)
+    // A workflow's sums are read only for a call of a launch that plays it: none is ever the whole org's.
+    val workflowSums = if (workflowId == null) {
+        List(WORKFLOW_SUMS) { longLiteral(0) }
+    } else {
+        val its = Spender(workflowId = workflowId)
+        val workflow = limits.workflowMicros != null
+        val workflowDay = daily?.workflowMicros != null
+        listOf(
+            sums.spent(workflow, window.since, its),
+            sums.held(workflow || workflowDay, its),
+            sums.spent(workflowDay, daySince, its),
+        )
+    }
     // A launch's budget applies only to a call of that launch; its sums are read only then.
     val launchId = hold.launchId
     val launchSums = if (launchId == null || limits.launchMicros == null) {
@@ -121,10 +140,7 @@ internal fun holdTotalsRead(hold: SpendHold, limits: SpendLimits, window: HoldWi
         sums.held(member || memberDay, mine),
         sums.spent(orgDay, daySince, Spender.ORG),
         sums.spent(memberDay, daySince, mine),
-        sums.spent(workflow, window.since, its),
-        sums.held(workflow || workflowDay, its),
-        sums.spent(workflowDay, daySince, its),
-    )
+    ) + workflowSums + launchSums
     return Read(Table.Dual.select(columns)) { row ->
         val values = columns.map { row[it] }
         SpendTotals(
