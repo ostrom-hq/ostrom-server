@@ -207,8 +207,8 @@ class MemoryRoutesPostgresTest {
         const val FAR = "2099-01-01T00:00:00Z"
 
         fun entry(title: String, scope: String, tags: String) =
-            """{"title": "$title", "summary": "Core first", "content": "Merge core, repin, then merge the server.",""" +
-                """ "scope": "$scope", "tags": $tags, "refs": ["ostrom-core#192"]}"""
+            """{"title": "$title", "summary": "Steps to follow", "scope": "$scope", "tags": $tags,""" +
+                """ "content": "Merge core, repin, then merge the server.", "refs": ["ostrom-core#192"]}"""
 
         fun update(version: Int) =
             """{"expectedVersion": $version, "title": "Deploy order", "summary": "Core first", "content": "New",""" +
