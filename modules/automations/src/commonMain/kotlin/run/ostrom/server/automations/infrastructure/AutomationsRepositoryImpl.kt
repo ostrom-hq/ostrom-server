@@ -335,8 +335,12 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
                 .getOrThrow().map { it.toAutomation() }.mapNotNull { automation ->
                     val claim = decide(automation, slot)
                     execute(
-                        Statement.create("""UPDATE automations_automations SET next_run_at = :next WHERE id = :id""")
-                            .bind("next", claim.nextRunAt).bind("id", id),
+                        Statement.create(
+                            """
+                            UPDATE automations_automations SET next_run_at = :next,
+                            enabled = enabled AND NOT CAST(:pause AS BOOLEAN) WHERE id = :id
+                            """,
+                        ).bind("next", claim.nextRunAt).bind("pause", claim.pause).bind("id", id),
                     ).getOrThrow()
                     schedule(id, claim.nextRunAt)
                     claim.run?.let { ClaimedRun(automation, storeRun(it), slot) }

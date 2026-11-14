@@ -235,6 +235,22 @@ class AutomationsPostgresTest {
     }
 
     @Test
+    fun aClaimThatPausesLeavesTheAutomationDisabledWithoutANextSlot() = serverTest(listOf(AutomationsModule)) {
+        val repository = it.koin.get<AutomationsRepository>()
+        val broken = automation(name = "Broken").copy(enabled = true, nextRunAt = t0)
+        val healthy = automation(name = "Healthy").copy(enabled = true, nextRunAt = t0)
+        listOf(broken, healthy).forEach { automation -> repository.createWithinLimit(automation, 20) }
+        repository.claimDue(t0, 10) { automation, _ ->
+            if (automation.id == broken.id) CronClaim(null, null, pause = true) else CronClaim(t0 + 1.minutes, null)
+        }
+        val paused = repository.get(ORG_A, broken.id)
+        assertEquals(false, paused?.enabled)
+        assertNull(paused?.nextRunAt)
+        assertEquals(true, repository.get(ORG_A, healthy.id)?.enabled, "A claim that does not pause keeps it enabled")
+        assertEquals(emptyList(), repository.claimDue(t0, 10) { _, _ -> error("nothing is due") })
+    }
+
+    @Test
     fun aDueCronIsClaimedOnceWithItsNextSlotAndRun() = serverTest(listOf(AutomationsModule)) {
         val repository = it.koin.get<AutomationsRepository>()
         val due = automation().copy(enabled = true, nextRunAt = t0)
