@@ -21,7 +21,8 @@ import kotlin.uuid.Uuid
  * Exposed transactions over a bounded HikariCP pool, as TeamCode's `Database` (docs/decisions/0001, step 2), with the
  * settings of `.parity/audit/controlresell-lessons.md` (CRL-01, CRL-02, CRL-03).
  *
- * The only way in is [query], whose block is not `suspend`: no network call can run inside a transaction, and
+ * The only ways in are [query] and [inOrg] (the same, confined to one organization), whose blocks are not `suspend`:
+ * no network call can run inside a transaction, nor another of these calls (a transaction never nests), and
  * `idle_in_transaction_session_timeout` ends one that waits anyway. A transaction is never replayed by Exposed
  * (`defaultMaxAttempts = 1`): a retry is a named, idempotent call site's decision. Exposed's statement log is SLF4J's
  * debug level, which the server never enables (logback comes with step 3, its `Exposed` logger off as TeamCode's).

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.kernel.database
 
+import java.sql.Timestamp
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import org.jetbrains.exposed.v1.core.Column
@@ -24,6 +25,9 @@ class InstantColumnType : ColumnType<Instant>() {
     override fun valueFromDB(value: Any): Instant = when (value) {
         is Instant -> value
         is OffsetDateTime -> value.toInstant().toKotlinInstant()
+        is java.time.Instant -> value.toKotlinInstant()
+        // What pgjdbc gives for a TIMESTAMPTZ read without a target type (an expression's): an instant, zone-free.
+        is Timestamp -> value.toInstant().toKotlinInstant()
         else -> error("Unexpected value for a TIMESTAMPTZ column: ${value::class.simpleName}")
     }
 

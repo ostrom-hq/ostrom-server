@@ -9,6 +9,7 @@ Copy to scripts/check-conventions.py of a Kotlin repository, fill MODULE_GRAPH, 
 
 Like teamcode/scripts/check-module-graph.py, it reads sources only: no Gradle, no network.
 """
+import functools
 import pathlib
 import re
 import sys
@@ -170,7 +171,12 @@ def jvm_only_project(root: pathlib.Path, path: pathlib.Path) -> bool:
     """Whether the project of [path] has no native target: `ostrom.nativeTargets` empty in the gradle.properties
     nearest to it, as Gradle reads it per project (the root's when the project sets none, all targets when no file
     sets it)."""
-    directory = path.parent
+    return jvm_only_directory(root, path.parent)
+
+
+@functools.lru_cache(maxsize=None)
+def jvm_only_directory(root: pathlib.Path, directory: pathlib.Path) -> bool:
+    """[jvm_only_project] for the files of [directory], read once per directory."""
     while True:
         properties = directory / "gradle.properties"
         if properties.exists():

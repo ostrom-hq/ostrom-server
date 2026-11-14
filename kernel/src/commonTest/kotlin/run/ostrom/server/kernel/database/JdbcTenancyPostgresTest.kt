@@ -3,6 +3,9 @@ package run.ostrom.server.kernel.database
 
 import run.ostrom.server.testing.TestDatabase
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import org.jetbrains.exposed.v1.core.Table
@@ -13,13 +16,17 @@ import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.update
+import java.sql.Timestamp
 import java.time.OffsetDateTime
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.time.ZoneOffset
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.time.Instant
+import kotlin.time.toJavaInstant
 import kotlin.uuid.Uuid
 
 /**
@@ -98,15 +105,26 @@ class JdbcTenancyPostgresTest {
 
     @Test
     fun neitherTheRoleNorTheOrganizationOutliveTheTransaction() = asServingRole { jdbc ->
-        // A pool of 2: the next transactions run on the connection inOrg used, or on its one neighbor.
-        repeat(2) { jdbc.inOrg(alpha) { count() } }
-        repeat(2) {
-            val (role, org) = jdbc.query {
-                exec("SELECT current_user, current_setting('ostrom.org_id', true)") { result ->
-                    result.next()
-                    result.getString(1) to result.getString(2)
-                }!!
-            }
+        repeat(JdbcDatabase.MIN_POOL_SIZE) { jdbc.inOrg(alpha) { count() } }
+        // As many transactions at once as the pool has connections: each one runs on its own, so every connection
+        // inOrg may have used is read.
+        val together = CountDownLatch(JdbcDatabase.MIN_POOL_SIZE)
+        val sessions = coroutineScope {
+            List(JdbcDatabase.MIN_POOL_SIZE) {
+                async {
+                    jdbc.query {
+                        together.countDown()
+                        together.await(LATCH_SECONDS, TimeUnit.SECONDS)
+                        exec("SELECT pg_backend_pid(), current_user, current_setting('ostrom.org_id', true)") { result ->
+                            result.next()
+                            Triple(result.getInt(1), result.getString(2), result.getString(3))
+                        }!!
+                    }
+                }
+            }.awaitAll()
+        }
+        assertEquals(JdbcDatabase.MIN_POOL_SIZE, sessions.map { it.first }.toSet().size, "every connection is read")
+        for ((_, role, org) in sessions) {
             assertEquals(false, role == TENANT_ROLE, "the role is back to the serving one")
             assertNull(org?.ifEmpty { null }, "no organization is left on the connection")
         }
@@ -140,7 +158,13 @@ class JdbcTenancyPostgresTest {
         assertEquals(t0, type.valueFromDB(t0))
         assertEquals(t0, type.valueFromDB(OffsetDateTime.parse("2026-11-14T11:30:00.123456+02:00")))
         assertFailsWith<IllegalStateException> { type.valueFromDB("2026-11-14") }
+        assertEquals(t0, type.valueFromDB(t0.toJavaInstant()))
+        assertEquals(t0, type.valueFromDB(Timestamp.from(t0.toJavaInstant())))
         assertEquals(OffsetDateTime.of(2026, 11, 14, 9, 30, 0, 123_456_000, ZoneOffset.UTC), type.notNullValueToDB(t0))
         assertEquals("'2026-11-14T09:30:00.123456Z'", type.nonNullValueToString(t0))
+    }
+
+    private companion object {
+        const val LATCH_SECONDS = 10L
     }
 }
