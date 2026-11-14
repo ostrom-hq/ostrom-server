@@ -38,6 +38,7 @@ import run.ostrom.server.identity.domain.GetNotificationPreferencesUseCase
 import run.ostrom.server.identity.domain.GetNotificationPreferencesUseCaseImpl
 import run.ostrom.server.identity.domain.GetProfileUseCase
 import run.ostrom.server.identity.domain.GetProfileUseCaseImpl
+import run.ostrom.server.identity.domain.GitHubAppSignIn
 import run.ostrom.server.identity.domain.GitHubTokenVerifier
 import run.ostrom.server.identity.domain.IssueAgentTokenUseCase
 import run.ostrom.server.identity.domain.IssueAgentTokenUseCaseImpl
@@ -62,6 +63,7 @@ import run.ostrom.server.identity.domain.MailAvailability
 import run.ostrom.server.identity.domain.MailSender
 import run.ostrom.server.identity.domain.MobileCodesRepository
 import run.ostrom.server.identity.domain.MobileTokensRepository
+import run.ostrom.server.identity.domain.NoGitHubAppSignIn
 import run.ostrom.server.identity.domain.NotificationPreferencesRepository
 import run.ostrom.server.identity.domain.OAuthAttemptsRepository
 import run.ostrom.server.identity.domain.PollDeviceAuthorizationUseCase
@@ -248,7 +250,8 @@ object IdentityModule : ServerModule {
         single(named(GITHUB_SIGN_IN_SETTINGS.name)) { GITHUB_SIGN_IN_SETTINGS }
         single(named(GOOGLE_SIGN_IN_SETTINGS.name)) { GOOGLE_SIGN_IN_SETTINGS }
         single(named(SIGN_UP_SETTINGS.name)) { SIGN_UP_SETTINGS }
-        single { SignInSettings(get()) }
+        // The integrations-github module's App, when it is in the server: its OAuth client signs people in first.
+        single { SignInSettings(get(), getOrNull<GitHubAppSignIn>() ?: NoGitHubAppSignIn) }
         single<SignUpPolicy> {
             val settings = get<SignInSettings>()
             // The orgs module binds the invitations: absent (a server without it), only the setup link admits.

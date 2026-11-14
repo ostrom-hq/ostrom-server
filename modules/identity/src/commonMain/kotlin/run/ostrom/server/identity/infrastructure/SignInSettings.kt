@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.identity.infrastructure
 
+import run.ostrom.server.identity.domain.GitHubAppSignIn
 import run.ostrom.server.identity.domain.SignUpMode
 import run.ostrom.server.identity.domain.trimmedOrNull
 import run.ostrom.server.kernel.settings.InstanceSettings
@@ -24,9 +25,11 @@ val GOOGLE_SIGN_IN_SETTINGS: SettingsSection = SettingsSection(
 )
 
 /**
- * Sign-in with GitHub, set by an administrator of the instance in the console: the OAuth client of the GitHub App
- * people sign in with, and GitHub's web and API URLs (GitHub Enterprise Server, or a fake GitHub in end-to-end tests).
- * Offered once the client id and secret are set; `ostrom login` with a GitHub token checks it against the same client.
+ * Sign-in with GitHub, set by an administrator of the instance in the console: the OAuth client people sign in with,
+ * and GitHub's web and API URLs (GitHub Enterprise Server, or a fake GitHub in end-to-end tests). Used only while the
+ * instance's GitHub App has no usable OAuth client ([GitHubAppSignIn]): the App's is used first, as TeamCode signs in
+ * through its App. Offered once the client id and secret are set; `ostrom login` with a GitHub token checks it against
+ * the same client.
  */
 val GITHUB_SIGN_IN_SETTINGS: SettingsSection = SettingsSection(
     "github-sign-in",
@@ -70,14 +73,20 @@ data class GoogleSignIn(val client: OAuthClient, val endpoints: OidcEndpoints)
  * seconds per replica): a provider is offered once its client id and secret are set, without a restart.
  *
  * @param settings The instance's settings.
+ * @param app The instance's GitHub App, whose OAuth client GitHub's sign-in uses first.
  */
-class SignInSettings(private val settings: InstanceSettings) {
+class SignInSettings(private val settings: InstanceSettings, private val app: GitHubAppSignIn) {
     /**
-     * GitHub's sign-in.
+     * GitHub's sign-in: through the instance's GitHub App when its OAuth client is known (its id and a secret that
+     * opens), as TeamCode does; otherwise the `github-sign-in` settings. Closed when neither is usable.
      *
-     * @return It, or null while its client id or secret is unset.
+     * @return It, or null while neither the App's client nor the settings' is set.
      */
-    suspend fun github(): GitHubSignIn? {
+    suspend fun github(): GitHubSignIn? = app.client()?.let {
+        GitHubSignIn(OAuthClient(it.clientId, it.clientSecret), it.webUrl.trimEnd('/'), it.apiUrl.trimEnd('/'))
+    } ?: gitHubSettings()
+
+    private suspend fun gitHubSettings(): GitHubSignIn? {
         val values = settings.read(GITHUB_SIGN_IN_SETTINGS.name)
         val client = values.client() ?: return null
         val webUrl = values.value("webUrl") ?: "https://github.com"

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.identity
 
+import run.ostrom.server.identity.domain.GitHubAppOAuthClient
 import run.ostrom.server.identity.domain.IdentityProvider
+import run.ostrom.server.identity.domain.NoGitHubAppSignIn
 import run.ostrom.server.identity.domain.SignUpMode
 import run.ostrom.server.identity.infrastructure.GITHUB_SIGN_IN_SETTINGS
 import run.ostrom.server.identity.infrastructure.GOOGLE_SIGN_IN_SETTINGS
@@ -27,7 +29,8 @@ import kotlin.time.Clock
 /** The sign-in providers and the sign-up mode an administrator sets in the console (Admin → Settings). */
 class SignInSettingsTest {
     private val stored = TestInstanceSettings()
-    private val settings = SignInSettings(stored)
+    private var app: GitHubAppOAuthClient? = null
+    private val settings = SignInSettings(stored) { app }
 
     @Test
     fun aProviderIsUnsetUntilItsClientIdAndSecretAre() = runTest {
@@ -57,6 +60,26 @@ class SignInSettingsTest {
         )
         val fake = GitHubSignIn(OAuthClient("Iv1.a", "s1"), "http://fake:9000", "http://fake:9000/api")
         assertEquals(fake, settings.github())
+    }
+
+    @Test
+    fun theInstancesGitHubAppSignsPeopleInFirstThenTheSettingsThenNobody() = runTest {
+        stored.save("github-sign-in", mapOf("clientId" to "Iv1.settings", "clientSecret" to "s1"))
+        app = GitHubAppOAuthClient("Iv1.app", "app-secret", "https://ghe.example/", "https://ghe.example/api/v3/")
+        assertEquals(
+            GitHubSignIn(OAuthClient("Iv1.app", "app-secret"), "https://ghe.example", "https://ghe.example/api/v3"),
+            settings.github(),
+            "As TeamCode, through the App's OAuth client",
+        )
+        assertFalse("app-secret" in app.toString())
+        // No App client (none stored, or its secret no longer opens): the settings.
+        app = null
+        assertEquals("Iv1.settings", settings.github()?.client?.clientId)
+        stored.save("github-sign-in", mapOf("clientId" to "", "clientSecret" to ""))
+        assertNull(settings.github(), "Neither: GitHub sign-in is off")
+        // A server without the integrations-github module: no App, ever.
+        assertNull(NoGitHubAppSignIn.client())
+        assertNull(SignInSettings(stored, NoGitHubAppSignIn).github())
     }
 
     @Test

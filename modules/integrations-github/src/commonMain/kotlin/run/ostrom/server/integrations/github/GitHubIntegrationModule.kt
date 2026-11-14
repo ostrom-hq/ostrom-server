@@ -6,6 +6,7 @@ import run.ostrom.server.gates.domain.services.CiChecks
 import run.ostrom.server.gates.domain.services.GateChannel
 import run.ostrom.server.gates.domain.services.GateGitHubAccounts
 import run.ostrom.server.gates.domain.services.PullRequestHeads
+import run.ostrom.server.identity.domain.GitHubAppSignIn
 import run.ostrom.server.integrations.github.domain.CloudSessionsSwitch
 import run.ostrom.server.integrations.github.domain.GitHubAccessResolver
 import run.ostrom.server.integrations.github.domain.GitHubAccounts
@@ -48,6 +49,7 @@ import run.ostrom.server.integrations.github.domain.StoredInstanceAdmins
 import run.ostrom.server.integrations.github.domain.appCallbackUrls
 import run.ostrom.server.integrations.github.domain.installPage
 import run.ostrom.server.integrations.github.domain.oauthApp
+import run.ostrom.server.integrations.github.infrastructure.AppGitHubSignIn
 import run.ostrom.server.integrations.github.infrastructure.AppJwts
 import run.ostrom.server.integrations.github.infrastructure.GITHUB_SETTINGS
 import run.ostrom.server.integrations.github.infrastructure.GitHubAppSetup
@@ -223,6 +225,8 @@ object GitHubIntegrationModule : ServerModule {
             GitHubAccessResolver(get(), get(), get(), members, get(), get(), get())
         }
         single<RunnerGitHubTokens> { LinkedRunnerGitHubTokens(get(), get()) }
+        // Sign-in with GitHub through the App's OAuth client, read by the identity module through its port.
+        single<GitHubAppSignIn> { AppGitHubSignIn(get(), get()) }
         single { GitHubLinkRoutesDependencies(get(), get(), get<GitHubSettings>().webOrigin) }
         single {
             val host = get<GitHubHost>()
