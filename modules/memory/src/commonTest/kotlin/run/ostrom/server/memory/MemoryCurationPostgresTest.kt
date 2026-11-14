@@ -87,20 +87,26 @@ class MemoryCurationPostgresTest {
         val runs = server.koin.get<MemoryCurationRuns>()
         private var minutesAgo = 600
 
-        /** An entry written [MINUTE] after the one before, so that the newest of a pair is known. */
+        /**
+         * An entry written a minute after the one before, so that the newest of a pair is known; an agent's when [by]
+         * is one. Its time is in the past, so a scope curated since needs [changed] to be read again.
+         */
         suspend fun note(
             title: String,
             content: String = "Connect to the VPN first.",
             by: MemoryCaller = caller(),
             scope: MemoryScope = MemoryScope.PERSONAL,
             tags: List<String> = emptyList(),
-            origin: MemoryOrigin = MemoryOrigin.HUMAN,
         ): Uuid {
+            val origin = if (by.agent) MemoryOrigin.AGENT else MemoryOrigin.HUMAN
             val id = repository.create(by, NewMemory(scope, title, "About $title", content, tags), origin, null).id
             minutesAgo--
             sql("UPDATE memory_entries SET updated_at = now() - INTERVAL '$minutesAgo minutes' WHERE id = '$id'")
             return id
         }
+
+        /** Every scope is read again at the next run, as if it had changed since its last pass. */
+        suspend fun changed() = sql("DELETE FROM memory_curation_state")
 
         suspend fun sql(statement: String) {
             server.database.superuser.execute(statement).getOrThrow()
@@ -186,6 +192,7 @@ class MemoryCurationPostgresTest {
         assertTrue(reviews("root").isEmpty() && reviews("ben").isEmpty(), "a personal review is its owner's")
         assertEquals(HttpStatusCode.Forbidden, client.get("$MEMORY/reviews") { bearerAuth("agent") }.status)
         note("Later", "Anything.")
+        changed()
         assertEquals(0, curation.run("run-2").queued, "a pair is queued once")
         assertEquals(HttpStatusCode.NotFound, answer("root", review.id, "apply").status)
         assertEquals(HttpStatusCode.NotFound, answer("ada", "not-an-id", "apply").status)
@@ -197,17 +204,19 @@ class MemoryCurationPostgresTest {
         // Dismissed: both stay, and the pair is never queued again.
         val vim = note("Editor", "Vim.")
         note("Editor", "Emacs.")
+        changed()
         curation.run("run-3")
         assertEquals(HttpStatusCode.OK, answer("ada", reviews("ada").single().id, "dismiss").status)
-        sql("DELETE FROM memory_curation_state")
+        changed()
         assertEquals(0, curation.run("run-4").queued)
         assertTrue(vim.toString() in index("ada"))
 
         // A person's older entry against an agent's newer one, or anything tagged external, is queued, never applied.
         val human = note("Branch naming", "Use feat/ prefixes.")
-        note("Branch naming", "Use feat/ prefixes.", caller(agent = true), origin = MemoryOrigin.AGENT)
+        note("Branch naming", "Use feat/ prefixes.", caller(agent = true))
         val outside = note("Release freeze", "No Friday releases.", scope = MemoryScope.TEAM, tags = listOf("external"))
         note("Release freeze", "No Friday releases.", scope = MemoryScope.TEAM)
+        changed()
         val run = curation.run("run-5")
         assertEquals(0 to 2, run.superseded to run.queued)
         val personal = reviews("ada").single { it.olderId == human.toString() }
