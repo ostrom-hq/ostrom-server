@@ -39,7 +39,6 @@ import run.ostrom.server.runners.domain.ListRunnersUseCase
 import run.ostrom.server.runners.domain.ListRunnersUseCaseImpl
 import run.ostrom.server.runners.domain.MeteredCreateCloudSession
 import run.ostrom.server.runners.domain.NoRunnerGitHubTokens
-import run.ostrom.server.runners.domain.NoRunnerVariables
 import run.ostrom.server.runners.domain.OpenTerminalUseCase
 import run.ostrom.server.runners.domain.OpenTerminalUseCaseImpl
 import run.ostrom.server.runners.domain.ReconcileCloudSessionUseCase
@@ -78,7 +77,6 @@ import run.ostrom.server.runners.infrastructure.KtorTerminalForwarder
 import run.ostrom.server.runners.infrastructure.ReconcilerWorker
 import run.ostrom.server.runners.infrastructure.RegisteredRunnersRepositoryImpl
 import run.ostrom.server.runners.infrastructure.RegisteredRuntimeDriver
-import run.ostrom.server.runners.infrastructure.ResolvedRunnerVariables
 import run.ostrom.server.runners.infrastructure.RunnerAssignmentsRepositoryImpl
 import run.ostrom.server.runners.infrastructure.RunnerTokensImpl
 import run.ostrom.server.runners.infrastructure.RunnersConfig
@@ -89,6 +87,7 @@ import run.ostrom.server.runners.infrastructure.TerminalRelay
 import run.ostrom.server.runners.infrastructure.TerminalReplica
 import run.ostrom.server.runners.infrastructure.TerminalTicketsImpl
 import run.ostrom.server.runners.infrastructure.replicaHttpClient
+import run.ostrom.server.runners.infrastructure.runnerVariables
 import run.ostrom.server.runners.presentation.CloudSessionsRoutesDependencies
 import run.ostrom.server.runners.presentation.RunnerRuntime
 import run.ostrom.server.runners.presentation.RunnersRoutesDependencies
@@ -164,10 +163,7 @@ object RunnersModule : ServerModule {
         single<RunnerGitHubTokenUseCase> {
             RunnerGitHubTokenUseCaseImpl(get(), get(), getOrNull<RunnerGitHubTokens>() ?: NoRunnerGitHubTokens)
         }
-        // The members' environment values when the secrets module is there (always on a full server).
-        single<RunnerVariables> {
-            getOrNull<ResolveEnvironmentUseCase>()?.let(::ResolvedRunnerVariables) ?: NoRunnerVariables
-        }
+        single<RunnerVariables> { runnerVariables(getOrNull<ResolveEnvironmentUseCase>()) }
         single<RunnerVariablesUseCase> { RunnerVariablesUseCaseImpl(get(), get(), get()) }
         single { CloudSessionsRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single<ListRunnersUseCase> { ListRunnersUseCaseImpl(get(), get()) }

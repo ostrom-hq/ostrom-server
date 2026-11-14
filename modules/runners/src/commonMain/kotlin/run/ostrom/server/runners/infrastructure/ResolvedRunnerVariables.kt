@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners.infrastructure
 
+import run.ostrom.server.runners.domain.NoRunnerVariables
 import run.ostrom.server.runners.domain.RunnerVariableValues
 import run.ostrom.server.runners.domain.RunnerVariables
 import run.ostrom.server.secrets.domain.ResolveEnvironmentUseCase
@@ -20,3 +21,7 @@ class ResolvedRunnerVariables(private val resolve: ResolveEnvironmentUseCase) : 
         return RunnerVariableValues(values.values.mapValues { it.value.reveal() }, values.unavailable)
     }
 }
+
+/** The members' values when the secrets module resolves them (always on a full server), none otherwise. */
+fun runnerVariables(resolve: ResolveEnvironmentUseCase?): RunnerVariables =
+    resolve?.let(::ResolvedRunnerVariables) ?: NoRunnerVariables
