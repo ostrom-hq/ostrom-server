@@ -39,7 +39,7 @@ modules/<name>/
 
 ```kotlin
 object OrgsModule : ServerModule {
-    override val name = "orgs"                       // [a-z][a-z0-9-]*, also the migration table: _migrations_orgs
+    override val name = "orgs"                       // [a-z][a-z0-9-]*, also the history table: flyway_orgs
     override val koinModule = module {
         single<OrgsRepository> { OrgsRepositoryImpl(get(), get()) }    // get() = the JdbcDatabase, kotlin.time.Clock
         single<CreateOrgUseCase> { CreateOrgUseCaseImpl(get(), get()) } // get() = repository, kotlin.time.Clock
@@ -110,8 +110,9 @@ val OrgsMigrations = listOf(
   role their queries switch to (`SET LOCAL ROLE`): the owner that runs `migrate` needs `CREATEROLE`, and the serving
   role must be a member of `ostrom_tenant` (ci/database-roles.sql creates it beforehand and grants it to both, as a
   deployment must). On Exposed, the kernel's `JdbcDatabase.inOrg` does that switch (section 4).
-- Plain PostgreSQL. Statements are split on `;`. **No `::type` casts** (write `CAST(x AS type)`): the driver reads
-  `:name` as a named parameter.
+- Plain PostgreSQL. **No `::type` casts** (write `CAST(x AS type)`), and no `;` inside a statement other than a
+  `DO $$ … $$` block: sqlx4k's runner, which reads `:name` as a parameter and splits on `;`, still applies the same
+  migrations in the tests of the modules not moved to Flyway yet.
 - Modules migrate in the order of `serverModules()`: a module whose tables reference another module's tables comes
   after it.
 

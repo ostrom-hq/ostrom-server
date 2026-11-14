@@ -43,7 +43,7 @@ class PoolHealthCheckPostgresTest {
         }
     }
 
-    // Both connections held for HOLD by two blocking transactions, and a caller every 100 ms that waits for one.
+    // Both connections held for HOLD by two blocking transactions, and a caller every 250 ms that waits for one.
     private suspend fun saturate(jdbc: JdbcDatabase, check: PoolHealthCheck) = coroutineScope {
         val holders = List(JdbcDatabase.MIN_POOL_SIZE) {
             // Exposed takes its connection at the first statement.
@@ -64,7 +64,7 @@ class PoolHealthCheckPostgresTest {
                         // Hikari's connectionTimeout: the caller gave up, another one waits already.
                     }
                 }
-                delay(100.milliseconds)
+                delay(250.milliseconds)
             }
         }
         delay(1.seconds)
