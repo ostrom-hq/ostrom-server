@@ -104,7 +104,10 @@ class RegisteredSessionsPostgresTest {
             val plan = work.executions.single().plan!!
             assertEquals(1, work.executions.single().epoch)
             assertEquals(listOf(created.id.toString()), work.workspaces)
-            assertEquals(3, plan.volumes.size)
+            // The session's three volumes and the execution's binary, which the delivery container fills first.
+            assertEquals(4, plan.volumes.size)
+            assertEquals("ostrom-ws-${created.id.toHexString()}-e1-bin", plan.volumes.last().name)
+            assertTrue(plan.containers.first().name.endsWith("-e1-bin"))
             val runner = plan.containers.last().body
             val env = runner["Env"]!!.jsonArray.map { it.jsonPrimitive.content }
             val token = env.single { it.startsWith("OSTROM_RUNNER_TOKEN=") }.substringAfter('=')
