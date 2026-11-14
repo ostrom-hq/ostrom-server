@@ -156,6 +156,17 @@ class SessionActivityTest {
     }
 
     @Test
+    fun aSegmentItsLauncherEndedCarriesNothingOver() = runTest {
+        val bench = SessionBench()
+        bench.start(agent(), start)
+        bench.activity(agent(), "s-1", WAITING_FOR_HUMAN, bench.clock.now)
+        bench.end(agent(), "s-1", EndSession(source = "launcher"))
+        val reopened = bench.reopen(agent(), "s-1").session
+        assertNull(reopened.activity)
+        assertNull(bench.stored(reopened.id).activityObservedAt)
+    }
+
+    @Test
     fun anEndedSegmentAnotherPersonAndAnUnknownOneAreRefused() = runTest {
         val bench = SessionBench()
         bench.start(agent(), start)

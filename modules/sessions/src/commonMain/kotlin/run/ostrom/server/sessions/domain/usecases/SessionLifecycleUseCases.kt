@@ -169,9 +169,10 @@ class ReopenSessionUseCaseImpl(
         }
     }
 
-    // A person still has to answer the agent of a segment closed while it waited: the reopened one waits too.
+    // A person still has to answer the agent of a segment lost while it waited: the reopened one waits too. A segment
+    // its launcher ended carries nothing over.
     private suspend fun waitingCarried(tx: SessionsTransaction, last: Session, opened: Session): Session {
-        if (last.activity != SessionActivityState.WAITING_FOR_HUMAN) return opened
+        if (!last.lost || last.activity != SessionActivityState.WAITING_FOR_HUMAN) return opened
         val carried = opened.copy(
             activity = last.activity,
             activityAt = last.activityAt,
