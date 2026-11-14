@@ -6,17 +6,23 @@ import run.ostrom.server.artifacts.domain.InvalidArtifactRequestException
 import run.ostrom.server.artifacts.domain.MissingScopeException
 import run.ostrom.server.artifacts.domain.NotAMemberException
 import run.ostrom.server.artifacts.fakes.ALICE
+import run.ostrom.server.artifacts.fakes.DAVE
 import run.ostrom.server.artifacts.fakes.ORG_A
 import run.ostrom.server.artifacts.fakes.TestOrgResolver
 import run.ostrom.server.artifacts.infrastructure.ArtifactsConfig
 import run.ostrom.server.artifacts.presentation.ARTIFACTS_READ
 import run.ostrom.server.artifacts.presentation.ARTIFACTS_WRITE
+import run.ostrom.server.artifacts.presentation.ArtifactOrgResolver
 import run.ostrom.server.artifacts.presentation.FileDto
 import run.ostrom.server.artifacts.presentation.artifactCallerOf
 import run.ostrom.server.artifacts.presentation.contentHeaders
 import run.ostrom.server.artifacts.presentation.parseTicketRequest
 import run.ostrom.server.artifacts.presentation.toUploads
+import run.ostrom.server.kernel.auth.AgentMember
+import run.ostrom.server.kernel.auth.AgentMembers
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import run.ostrom.server.kernel.auth.OrgPrincipal
+import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.auth.PrincipalChannel.BROWSER
 import run.ostrom.server.kernel.auth.PrincipalChannel.MOBILE_APP
 import run.ostrom.server.kernel.auth.PrincipalKind
@@ -33,6 +39,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.uuid.Uuid
 
 class ConfigAndCallersTest {
     private fun config(vararg values: Pair<String, String>) = ArtifactsConfig.from(MapConfigSource(values.toMap()))
@@ -136,6 +143,42 @@ class ConfigAndCallersTest {
             ARTIFACTS_WRITE,
         )
         assertTrue(cli.person, "The CLI's sign-in is a person, as TeamCode's interactive login")
+    }
+
+    @Test
+    fun anAgentTokenIsTheMemberWhoLaunchedItAndNeverAPerson() = runTest {
+        // TC-ART-14, 38: the launches module's reading of an agent token (the kernel's AgentMembers).
+        val launches = object : AgentMembers {
+            override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): AgentMember? {
+                val role = if (principal.subjectId == "launch-1") OrgRole.ADMIN else OrgRole.MEMBER
+                val launched = AgentMember(OrgPrincipal(ORG_A, DAVE, role), principal.subjectId)
+                return launched.takeIf { principal.subjectId != "ended" }
+            }
+        }
+        val resolver = ArtifactOrgResolver(TestOrgResolver, launches)
+        val scopes = setOf("agent:session", ARTIFACTS_WRITE)
+        val agent = AuthenticatedPrincipal("launch-1", PrincipalKind.AGENT, scopes, "a1")
+        val caller = resolver.artifactCallerOf(agent, ARTIFACTS_WRITE)
+        assertEquals(ORG_A, caller.orgId)
+        assertEquals(DAVE.toString(), caller.memberId)
+        assertTrue(caller.administrator, "An administrator's agent publishes where only administrators do")
+        assertFalse(caller.person, "An agent never makes an artifact public nor deletes one")
+        assertEquals("a1", caller.credentialId)
+        assertFalse(resolver.artifactCallerOf(agent.copy(subjectId = "launch-2"), ARTIFACTS_READ).administrator)
+        // A person's credential is still the kernel's resolver's.
+        val person = AuthenticatedPrincipal("dave", PrincipalKind.USER, setOf("user:*"))
+        assertTrue(resolver.artifactCallerOf(person, ARTIFACTS_WRITE).administrator)
+        // An ended launch, a token issued before the scope, or a server without the launches module: refused.
+        assertFailsWith<NotAMemberException> {
+            resolver.artifactCallerOf(agent.copy(subjectId = "ended"), ARTIFACTS_READ)
+        }
+        assertFailsWith<MissingScopeException> {
+            resolver.artifactCallerOf(agent.copy(scopes = setOf("agent:session")), ARTIFACTS_READ)
+        }
+        assertFailsWith<NotAMemberException> {
+            ArtifactOrgResolver(TestOrgResolver, null).artifactCallerOf(agent, ARTIFACTS_WRITE)
+        }
+        assertEquals(TestOrgResolver.profile(ORG_A), resolver.profile(ORG_A), "The organization is the kernel's")
     }
 
     @Test
