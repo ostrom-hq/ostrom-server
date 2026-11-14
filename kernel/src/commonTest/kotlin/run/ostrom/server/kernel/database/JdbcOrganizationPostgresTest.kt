@@ -2,6 +2,7 @@
 package run.ostrom.server.kernel.database
 
 import run.ostrom.server.testing.TestDatabase
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -34,7 +35,7 @@ class JdbcOrganizationPostgresTest {
     }
 
     // On the real clock: the transactions really wait for each other.
-    private fun asServingRole(block: suspend (JdbcDatabase) -> Unit) {
+    private fun asServingRole(block: suspend TestDatabase.(JdbcDatabase) -> Unit) {
         runTest {
             withContext(Dispatchers.Default) {
                 val database = TestDatabase.create() ?: return@withContext
@@ -51,7 +52,7 @@ class JdbcOrganizationPostgresTest {
                     ).forEach { database.owner.execute(it).getOrThrow() }
                     val jdbc = JdbcDatabase(database.servingConfig, JdbcDatabase.MIN_POOL_SIZE)
                     try {
-                        block(jdbc)
+                        database.block(jdbc)
                     } finally {
                         jdbc.close()
                     }
@@ -96,6 +97,26 @@ class JdbcOrganizationPostgresTest {
             assertEquals(false, jdbc.query { tryLock("chain") }, "taken by the other transaction")
             assertEquals(true, jdbc.query { tryLock("another chain") }, "another key is free")
             tried.countDown()
+            holder.await()
+        }
+        assertEquals(true, jdbc.query { tryLock("chain") }, "released at the commit")
+    }
+
+    @Test
+    fun aSqlx4kTransactionTakesTheSameLock() = asServingRole { jdbc ->
+        val held = CompletableDeferred<Unit>()
+        val tried = CompletableDeferred<Unit>()
+        coroutineScope {
+            val holder = async {
+                driver.transaction {
+                    lockUntilCommit("chain")
+                    held.complete(Unit)
+                    tried.await()
+                }
+            }
+            held.await()
+            assertEquals(false, jdbc.query { tryLock("chain") }, "taken by the sqlx4k transaction")
+            tried.complete(Unit)
             holder.await()
         }
         assertEquals(true, jdbc.query { tryLock("chain") }, "released at the commit")

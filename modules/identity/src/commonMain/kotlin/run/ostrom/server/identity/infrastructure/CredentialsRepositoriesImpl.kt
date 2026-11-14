@@ -122,8 +122,7 @@ class ApiTokensRepositoryImpl(
     }
 
     override suspend fun findBySecretHash(secretHash: String): ApiToken? = database.query {
-        val found = TokenByHash(secretHash)
-        found.select(found.read).firstOrNull()?.toApiToken(found)
+        TokenByHash.of(secretHash).select(TokenByHash.read).firstOrNull()?.toApiToken(TokenByHash)
     }
 
     override suspend fun get(userId: Uuid, id: Uuid): ApiToken? = database.query {

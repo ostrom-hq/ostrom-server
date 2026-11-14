@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.kernel.database
 
+import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.Transaction
 import org.jetbrains.exposed.v1.core.TextColumnType
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import kotlin.uuid.Uuid
@@ -22,11 +24,27 @@ suspend fun <T> JdbcDatabase.withOrganization(orgId: Uuid, block: JdbcTransactio
 }
 
 /**
- * Takes the PostgreSQL advisory lock of [key] until this transaction ends (`pg_advisory_xact_lock(hashtext(key))`):
- * the same lock a sqlx4k transaction takes with the same SQL, so writers on either pool take turns.
+ * The SQL of [lockUntilCommit], one for both pools: `pg_advisory_xact_lock(hashtext(key))`, the key bound as the one
+ * positional parameter. A writer on either pool takes the same lock of the same key, so they take turns.
+ */
+const val LOCK_UNTIL_COMMIT_SQL = "SELECT pg_advisory_xact_lock(hashtext(?))"
+
+/**
+ * Takes the PostgreSQL advisory lock of [key] until this transaction ends ([LOCK_UNTIL_COMMIT_SQL]): the same lock as
+ * a sqlx4k transaction's [Transaction.lockUntilCommit], so writers on either pool take turns.
  *
  * @param key What is locked (an audit chain).
  */
 fun JdbcTransaction.lockUntilCommit(key: String) {
-    exec("SELECT pg_advisory_xact_lock(hashtext(?))", listOf(TextColumnType() to key)) {}
+    exec(LOCK_UNTIL_COMMIT_SQL, listOf(TextColumnType() to key)) {}
+}
+
+/**
+ * Takes the PostgreSQL advisory lock of [key] until this sqlx4k transaction ends ([LOCK_UNTIL_COMMIT_SQL]): the same
+ * lock as an Exposed transaction's [JdbcTransaction.lockUntilCommit]. For the modules still on sqlx4k.
+ *
+ * @param key What is locked (an audit chain).
+ */
+suspend fun Transaction.lockUntilCommit(key: String) {
+    execute(Statement.create(LOCK_UNTIL_COMMIT_SQL).bind(0, key)).getOrThrow()
 }

@@ -58,16 +58,14 @@ class SetupLinksRepositoryImpl(private val database: JdbcDatabase) : SetupLinksR
         !IdentityUsers.select(IdentityUsers.id).limit(1).empty()
     }
 
-    // The accounts a setup link created: one per `ostrom-server bootstrap` that was used, a handful at most.
+    // The accounts a setup link created. No LIMIT, on purpose: a cut would silently drop an administrator from the
+    // instance's owners. The set is bounded by construction (SetupLinksRepository.anyAccount): only an operator's
+    // `ostrom-server bootstrap` makes a setup link, and it makes none once the instance has an account, so only the
+    // links made before the first sign-up can ever be used, a handful at most.
     override suspend fun owners(): Map<Uuid, Instant> = database.query {
         t.select(t.usedBy, t.usedAt)
             .where { t.usedBy.isNotNull() }
             .orderBy(t.usedAt)
-            .limit(MAX_OWNERS)
-            .associate { it.present(t.usedBy) to it.present(t.usedAt) }
-    }
-
-    private companion object {
-        const val MAX_OWNERS = 1_000
+            .associate { it.present(t.usedBy, t.usedAt) to it.present(t.usedAt, t.usedBy) }
     }
 }

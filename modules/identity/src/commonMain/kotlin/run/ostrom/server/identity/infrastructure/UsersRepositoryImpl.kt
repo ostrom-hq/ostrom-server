@@ -166,7 +166,12 @@ private fun JdbcTransaction.upsertEmail(userId: Uuid, email: UserEmail, at: Inst
 private const val UNIQUE_VIOLATION = "23505"
 
 // Not inline: one copy, whichever repository method fails. Another sign-in that verified the same e-mail at the same
-// moment breaks the partial unique index `identity_user_emails_verified`, which no ON CONFLICT target covers.
+// moment breaks the partial unique index `identity_user_emails_verified` (one verified owner per e-mail). Kept as a
+// catch, not an insertIgnore and a count: the e-mail's write must update the user's own row on its primary key
+// (`verified OR EXCLUDED.verified`), and a DO UPDATE has that one arbiter, so the same statement cannot also skip the
+// partial index. Splitting it (update the own row, insert ignoring every conflict, then read which conflict it was)
+// takes three statements and leaves a window between the insert and the read; the violation is the database's own
+// answer, atomic, and rolls the whole transaction back (user, identity, e-mail) as the caller expects.
 private suspend fun <T> uniqueGuard(block: suspend () -> T): T = try {
     block()
 } catch (error: ExposedSQLException) {

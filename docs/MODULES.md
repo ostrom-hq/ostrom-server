@@ -168,7 +168,10 @@ override suspend fun rename(orgId: Uuid, id: Uuid, name: String): Boolean = data
   `ostrom_tenant` only read it (identity's `identity_api_tokens`) is written in `database.withOrganization(orgId) { }`,
   the serving role with the organization set, as the sqlx4k `withOrganization`. The identity audit chain has two
   writers until orgs and workflow-runs move: identity's own on Exposed, theirs in their sqlx4k transaction
-  (`TransactionalAuditLog`); both take the kernel's advisory lock on the chain (`lockUntilCommit`).
+  (`TransactionalAuditLog`); both take the kernel's advisory lock on the chain with the same SQL
+  (`lockUntilCommit`, on a `JdbcTransaction` and on a sqlx4k `Transaction`, both `LOCK_UNTIL_COMMIT_SQL`). The
+  Exposed writer signs an event between two transactions, never inside one (a transaction block is not `suspend`),
+  and signs it again if another writer appended meanwhile.
 - A change that reads then writes locks what it read: `select(…).where { … }.forUpdate()` in the same transaction.
 - Exposed never retries a transaction (`defaultMaxAttempts = 1`). A refusal the domain expects (a duplicate) is an
   `insertIgnore`/`upsert` or a check in the same transaction, not a caught exception.

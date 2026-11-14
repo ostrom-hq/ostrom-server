@@ -3,6 +3,7 @@ package run.ostrom.server.identity.infrastructure
 
 import run.ostrom.server.kernel.database.instant
 import org.jetbrains.exposed.v1.core.Column
+import org.jetbrains.exposed.v1.core.ColumnSet
 import org.jetbrains.exposed.v1.core.QueryBuilder
 import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.core.TextColumnType
@@ -77,12 +78,16 @@ internal interface TokenColumns {
     val revokedAt: Column<Instant?>
     val authenticatedAt: Column<Instant?>
 
-    /** What a read of a token selects. */
+    /** What a read of a token selects: built once per table, after its columns ([readOf]). */
     val read: List<Column<*>>
-        get() = listOf(
-            id, userId, orgId, name, kind, scopes, hint, agentSessionId, createdAt, expiresAt, lastUsedAt, revokedAt,
-            authenticatedAt,
-        )
+}
+
+/** The columns [TokenColumns.read] lists, in order. */
+private fun readOf(t: TokenColumns): List<Column<*>> = with(t) {
+    listOf(
+        id, userId, orgId, name, kind, scopes, hint, agentSessionId, createdAt, expiresAt, lastUsedAt, revokedAt,
+        authenticatedAt,
+    )
 }
 
 /**
@@ -108,6 +113,7 @@ internal object IdentityApiTokens : Table("identity_api_tokens"), TokenColumns {
     val unlockRequestId = text("unlock_request_id").nullable()
 
     override val primaryKey = PrimaryKey(id)
+    override val read = readOf(this)
 }
 
 /**
@@ -115,9 +121,11 @@ internal object IdentityApiTokens : Table("identity_api_tokens"), TokenColumns {
  * organization by its hash, read as a table: `SELECT … FROM identity_token_by_hash(?)`, the hash bound. PostgreSQL
  * names a function in `FROM` after it, so the columns read as `identity_token_by_hash.id`.
  *
- * @param hash The SHA-256 of the secret.
+ * On the authentication of every request: the columns and [read] are built once, here; a lookup only makes the
+ * [of] its `FROM` names, a table without columns that holds the hash. Exposed binds an argument of the `FROM` only
+ * from the column set's `describe`, so the hash cannot be a parameter of one shared object.
  */
-internal class TokenByHash(private val hash: String) : Table("identity_token_by_hash"), TokenColumns {
+internal object TokenByHash : Table("identity_token_by_hash"), TokenColumns {
     override val id = uuid("id")
     override val userId = uuid("user_id")
     override val orgId = uuid("org_id").nullable()
@@ -131,12 +139,22 @@ internal class TokenByHash(private val hash: String) : Table("identity_token_by_
     override val lastUsedAt = instant("last_used_at").nullable()
     override val revokedAt = instant("revoked_at").nullable()
     override val authenticatedAt = instant("authenticated_at").nullable()
+    override val read = readOf(this)
 
-    override fun describe(s: Transaction, queryBuilder: QueryBuilder): Unit = queryBuilder {
-        append(tableName)
-        append('(')
-        registerArgument(TextColumnType(), hash)
-        append(')')
+    /**
+     * The function called with [hash], to select [read] from.
+     *
+     * @param hash The SHA-256 of the secret.
+     */
+    fun of(hash: String): ColumnSet = Call(hash)
+
+    private class Call(private val hash: String) : Table(TokenByHash.tableName) {
+        override fun describe(s: Transaction, queryBuilder: QueryBuilder): Unit = queryBuilder {
+            append(tableName)
+            append('(')
+            registerArgument(TextColumnType(), hash)
+            append(')')
+        }
     }
 }
 

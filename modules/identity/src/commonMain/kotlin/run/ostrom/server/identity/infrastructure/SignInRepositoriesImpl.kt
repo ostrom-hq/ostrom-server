@@ -69,7 +69,11 @@ class OAuthAttemptsRepositoryImpl(private val database: JdbcDatabase) : OAuthAtt
         linkUserId = this[t.linkUserId],
         // The three are written together: an app's attempt has all of them, a browser's none.
         mobile = this[t.mobileRedirectUri]?.let { uri ->
-            MobileClient(uri, present(t.mobileCodeChallenge), present(t.mobileState))
+            MobileClient(
+                uri,
+                present(t.mobileCodeChallenge, t.mobileRedirectUri),
+                present(t.mobileState, t.mobileRedirectUri),
+            )
         },
     )
 }

@@ -134,7 +134,11 @@ class NotificationPreferencesRepositoryImpl(private val database: JdbcDatabase) 
                     spending = row[t.spending],
                     // The three are written together: all set, or none.
                     quietHours = row[t.quietStart]?.let { start ->
-                        QuietHours(start, row.present(t.quietEnd), row.present(t.quietTimeZone))
+                        QuietHours(
+                            start,
+                            row.present(t.quietEnd, t.quietStart),
+                            row.present(t.quietTimeZone, t.quietStart),
+                        )
                     },
                 )
             }

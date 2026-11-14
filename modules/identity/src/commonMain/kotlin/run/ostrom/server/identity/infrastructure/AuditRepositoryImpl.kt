@@ -11,7 +11,6 @@ import run.ostrom.server.kernel.database.lockUntilCommit
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.Transaction
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
-import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
@@ -51,13 +50,30 @@ private const val ACCOUNT_CHAIN = "account"
 class AuditRepositoryImpl(private val database: JdbcDatabase) : AuditRepository {
     private val t = IdentityAuditEvents
 
+    /**
+     * Builds the event on the chain's head, read first, then appends it in a second transaction if that head is still
+     * the chain's under the lock ([appendOnHead]); if another writer appended meanwhile, the event is built again on
+     * the new head. [build] is `suspend` (it signs through the instance's [run.ostrom.server.kernel.signing
+     * .InstanceSigner], whose contract may reach a key held elsewhere) and an Exposed block is not, so it runs between
+     * the transactions, never inside one: no thread blocks on it while holding a connection and the chain's lock.
+     * Each round where the head moved is another writer's append, so the chains always progress.
+     */
     override suspend fun append(
         orgId: Uuid?,
         build: suspend (previousHash: String?, sequence: Long) -> AuditEvent,
     ): AuditEvent {
-        if (orgId == null) return database.query { appendAudit(ACCOUNT_CHAIN, null, build) }
-        return database.inOrg(orgId) { appendAudit(orgId.toString(), orgId, build) }
+        val chain = if (orgId == null) ACCOUNT_CHAIN else orgId.toString()
+        var head = inChain(orgId) { headOf(chain, orgId) }
+        while (true) {
+            val event = build(head?.hash, (head?.sequence ?: 0L) + 1)
+            head = inChain(orgId) { appendOnHead(chain, orgId, event) }
+            if (head.sequence == event.sequence && head.hash == event.hash) return event
+        }
     }
+
+    /** An organization's chain is written in the organization ([JdbcDatabase.inOrg]), the account-level one outside. */
+    private suspend fun <T> inChain(orgId: Uuid?, block: JdbcTransaction.() -> T): T =
+        if (orgId == null) database.query(block) else database.inOrg(orgId, block)
 
     override suspend fun list(orgId: Uuid?, actorId: Uuid?, beforeSequence: Long?, limit: Int): List<AuditEvent> {
         val before = beforeSequence ?: Long.MAX_VALUE
@@ -164,32 +180,39 @@ internal class OrgAuditPage(private val orgId: Uuid, private val filters: OrgAud
         row.getOrNull(priorHash).takeIf { row.getOrNull(priorSequence) == row[t.sequence] - 1 }
 }
 
-/**
- * Appends an event to [chain] inside this Exposed transaction, as [Transaction.appendAudit] does in a sqlx4k one: the
- * same advisory lock on the chain (`pg_advisory_xact_lock(hashtext(chain))`) until the transaction ends, the same read
- * of its head, so two writers on either pool never give two events the same sequence nor fork the chain.
- *
- * The event is built (hashed and signed: CPU only, no network) under the lock, as the sqlx4k writer does; the
- * transaction's block is not `suspend`, so [build] runs on this thread ([runBlocking]).
- *
- * @param chain An organization's id, or the account-level chain.
- * @param orgId The chain's organization, null for the account-level chain.
- * @param build Builds the event from the previous event's hash (null for the first) and the next sequence.
- */
-private fun JdbcTransaction.appendAudit(
-    chain: String,
-    orgId: Uuid?,
-    build: suspend (previousHash: String?, sequence: Long) -> AuditEvent,
-): AuditEvent {
+/** The last event of a chain: what the next one is chained to. */
+private class Head(val sequence: Long, val hash: String)
+
+/** The head of [chain], null while it is empty; [orgId] is the chain's organization, null for the account's. */
+private fun JdbcTransaction.headOf(chain: String, orgId: Uuid?): Head? {
     val t = IdentityAuditEvents
-    lockUntilCommit(chain)
     val ofChain = if (orgId == null) t.orgId.isNull() else t.orgId eq orgId
-    val last = t.select(t.sequence, t.hash)
+    return t.select(t.sequence, t.hash)
         .where { (t.chain eq chain) and ofChain }
         .orderBy(t.sequence, SortOrder.DESC)
         .limit(1)
         .singleOrNull()
-    val event = runBlocking { if (last == null) build(null, 1L) else build(last[t.hash], last[t.sequence] + 1) }
+        ?.let { Head(it[t.sequence], it[t.hash]) }
+}
+
+/**
+ * Appends [event] to [chain] if it is chained to the chain's head, inside this Exposed transaction, as
+ * [Transaction.appendAudit] does in a sqlx4k one: the same advisory lock on the chain ([lockUntilCommit]) until the
+ * transaction ends, the same read of its head, so two writers on either pool never give two events the same sequence
+ * nor fork the chain.
+ *
+ * @param chain An organization's id, or the account-level chain.
+ * @param orgId The chain's organization, null for the account-level chain.
+ * @param event The event, built on the head read before this transaction.
+ *
+ * @return The chain's head after this transaction: [event] if it was appended, else the head it was not chained to.
+ */
+private fun JdbcTransaction.appendOnHead(chain: String, orgId: Uuid?, event: AuditEvent): Head {
+    val t = IdentityAuditEvents
+    lockUntilCommit(chain)
+    val head = headOf(chain, orgId)
+    // The hash of an event covers its sequence: chained to the head's hash, it is the head's next.
+    if (head != null && head.hash != event.previousHash) return head
     t.insert {
         it[id] = event.id
         it[this.chain] = chain
@@ -206,7 +229,7 @@ private fun JdbcTransaction.appendAudit(
         it[signature] = event.signature
         it[keyId] = event.keyId
     }
-    return event
+    return Head(event.sequence, event.hash)
 }
 
 /**
@@ -222,8 +245,7 @@ internal suspend fun Transaction.appendAudit(
     build: suspend (previousHash: String?, sequence: Long) -> AuditEvent,
 ): AuditEvent {
     // Serializes the appends of one chain until the transaction ends: no two events get the same sequence.
-    val lock = Statement.create("SELECT pg_advisory_xact_lock(hashtext(:chain))").bind("chain", chain)
-    execute(lock).getOrThrow()
+    lockUntilCommit(chain)
     val last = fetchAll(
         Statement.create(
             "SELECT sequence, hash FROM identity_audit_events WHERE chain = :chain ORDER BY sequence " +

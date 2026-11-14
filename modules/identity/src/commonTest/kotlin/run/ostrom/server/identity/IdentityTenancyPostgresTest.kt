@@ -226,6 +226,28 @@ class IdentityTenancyPostgresTest {
         assertEquals(List(24) { AuditIntegrity.VERIFIED }, lines.map { verifier.integrity(it) })
     }
 
+    // The Exposed writer builds (signs) an event between two transactions, never inside one: when another writer
+    // appends in between, the event is built again on the new head, and the chain keeps no gap and no fork.
+    @Test
+    fun anEventWhoseHeadMovedWhileItWasBuiltIsBuiltAgainOnTheNewHead() = serverTest(listOf(IdentityModule)) { s ->
+        val log = s.koin.get<AuditLog>()
+        val events = s.koin.get<AuditRepository>()
+        log.record(AuditEntry(orgA, null, "first", "t", "1"))
+        val heads = mutableListOf<Long>()
+        val late = events.append(orgA) { previousHash, sequence ->
+            heads += sequence
+            if (heads.size == 1) log.record(AuditEntry(orgA, null, "meanwhile", "t", "2"))
+            log.sign(AuditEntry(orgA, null, "late", "t", "3"))(previousHash, sequence)
+        }
+        assertEquals(listOf(2L, 3L), heads, "built on the head read first, then on the one another writer appended")
+        assertEquals(3L, late.sequence)
+
+        val lines = events.listOrg(orgA, OrgAuditQuery(limit = 10))
+        assertEquals(listOf("late", "meanwhile", "first"), lines.map { it.event.entry.action })
+        val verifier = s.koin.get<AuditVerifier>()
+        assertEquals(List(3) { AuditIntegrity.VERIFIED }, lines.map { verifier.integrity(it) })
+    }
+
     @Test
     fun theAuditLogIsAppendOnlyForEveryRole() = serverTest(listOf(IdentityModule)) { s ->
         s.seed()

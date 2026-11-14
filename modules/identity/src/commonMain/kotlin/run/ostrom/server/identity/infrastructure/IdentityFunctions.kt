@@ -52,12 +52,14 @@ internal fun JdbcTransaction.call(name: String, vararg arguments: Expression<*>)
 }
 
 /**
- * The value of a nullable [column] that this row holds by construction (written together with the one the caller
- * checked: an app's sign-in has all its three columns, a used setup link its account and its date).
+ * The value of a nullable [column] that this row holds by construction, written together with [with], the one the
+ * caller checked (an app's sign-in has all its three columns, a used setup link its account and its date). A row
+ * that breaks it fails here, the column named, rather than later on a null.
  *
  * @param column The column.
+ * @param with The column it is written with.
  *
- * @return Its value, as the row holds it.
+ * @return Its value.
  */
-@Suppress("UNCHECKED_CAST") // The column is nullable in general, never on the rows this is called for.
-internal fun <T : Any> ResultRow.present(column: Column<T?>): T = this[column] as T
+internal fun <T : Any> ResultRow.present(column: Column<T?>, with: Column<*>): T =
+    requireNotNull(this[column]) { "${column.name} is set with ${with.name}" }

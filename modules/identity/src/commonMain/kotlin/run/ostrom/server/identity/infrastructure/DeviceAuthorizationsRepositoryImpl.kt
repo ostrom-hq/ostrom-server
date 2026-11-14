@@ -79,15 +79,15 @@ class DeviceAuthorizationsRepositoryImpl(private val database: JdbcDatabase) : D
     override suspend fun consume(id: Uuid, token: ApiToken, secretHash: String): Boolean {
         val orgId = token.orgId
         return if (orgId == null) {
-            database.query { consume(id, token, secretHash) }
+            database.query { consumeIn(id, token, secretHash) }
         } else {
             // An organization's token is written in it (RLS): the authorization itself belongs to no organization.
-            database.withOrganization(orgId) { consume(id, token, secretHash) }
+            database.withOrganization(orgId) { consumeIn(id, token, secretHash) }
         }
     }
 
     // One update marks it consumed only if it was approved: two concurrent polls never both get a token.
-    private fun JdbcTransaction.consume(id: Uuid, token: ApiToken, secretHash: String): Boolean {
+    private fun JdbcTransaction.consumeIn(id: Uuid, token: ApiToken, secretHash: String): Boolean {
         val consumed = t.update({ (t.id eq id) and (t.status eq DeviceAuthorizationStatus.APPROVED.name) }) {
             it[status] = DeviceAuthorizationStatus.CONSUMED.name
         } == 1

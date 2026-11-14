@@ -124,7 +124,7 @@ private suspend fun ApplicationTestBuilder.serve(
                 modules,
             )
             // The read benches count and replay the statements of the modules on Exposed too.
-            ExposedRecorder(driver).installed {
+            ExposedRecorder.into(driver) {
                 serveWith(serverKoin(kernel, modules, overrides), modules, driver, database, environment, block)
             }
         } finally {
