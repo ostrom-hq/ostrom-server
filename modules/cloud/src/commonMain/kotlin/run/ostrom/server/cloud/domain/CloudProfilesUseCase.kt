@@ -93,12 +93,14 @@ class CloudProfilesUseCaseImpl(
     private suspend fun check(orgId: Uuid, input: CloudProfileInput, expectedVersion: Int) {
         if (input.version != expectedVersion) throw CloudProfileConflictException()
         val cluster = Uuid.parseOrNull(input.spec.clusterId)?.let { clusters.get(it)?.cluster }
-        profileProblem(input, cluster)?.let { throw InvalidCloudProfileException(it) }
-        // Only the organization's members: an id of someone else, or of a member who left, never gets the profile.
-        val directory = members ?: return
-        if (input.assignedMemberIds.any { !directory.isActiveMember(orgId, it) }) {
-            throw InvalidCloudProfileException("assignedMemberIds names someone not a member of the organization.")
-        }
+        (profileProblem(input, cluster) ?: membersProblem(orgId, input))?.let { throw InvalidCloudProfileException(it) }
+    }
+
+    // Only the organization's members: an id of someone else, or of a member who left, never gets the profile.
+    private suspend fun membersProblem(orgId: Uuid, input: CloudProfileInput): String? {
+        val directory = members ?: return null
+        return "assignedMemberIds names someone not a member of the organization."
+            .takeIf { input.assignedMemberIds.any { !directory.isActiveMember(orgId, it) } }
     }
 
     private companion object {
