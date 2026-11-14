@@ -54,7 +54,7 @@ class ArtifactMaintenancePostgresTest {
             )
             sql(
                 "INSERT INTO artifacts_blobs (artifact_id, org_id, sha256, size) VALUES " +
-                    "('$artifact', '$org', '$sha', 1)",
+                    "('$artifact', '$org', '$sha', 1) ON CONFLICT DO NOTHING",
             )
         }
         return id
@@ -108,6 +108,23 @@ class ArtifactMaintenancePostgresTest {
     }
 
     @Test
+    fun theMarkedContentsAreFoundThenForgottenUnlessUsedAgain() = serverTest(listOf(ArtifactsModule)) { server ->
+        val maintenance = server.koin.get<ArtifactMaintenanceRepository>()
+        val artifact = server.artifact(ORG_A, 1, 1.hours)
+        server.upload(ORG_A, artifact, now - 1.minutes, "old", "reused", "announced")
+        server.upload(ORG_A, artifact, now + 10.minutes, "announced")
+        server.sql("UPDATE artifacts_blobs SET marked_at = '${now - 1.minutes}'")
+        val marked = maintenance.markedBlobs(ORG_A, now, 10)
+        // A live upload counts on `announced`: it is not collected.
+        assertEquals(setOf("old", "reused"), marked.map { it.sha256 }.toSet())
+        assertEquals(emptyList(), maintenance.markedBlobs(ORG_B, now, 10))
+        // A version used `reused` again before the deletion was forgotten: its mark is cleared, its row stays.
+        server.sql("UPDATE artifacts_blobs SET marked_at = NULL WHERE sha256 = 'reused'")
+        maintenance.forgetBlobs(ORG_A, marked)
+        assertEquals(setOf("reused", "announced"), server.ids("SELECT sha256 AS id FROM artifacts_blobs"))
+    }
+
+    @Test
     fun theMaintenanceReadsItsIndexes() = serverTest(listOf(ArtifactsModule)) { server ->
         // 20 000 artifacts of 2 000 organizations, an upload, a content and two publications each, none of them due.
         server.sql(
@@ -142,12 +159,15 @@ class ArtifactMaintenancePostgresTest {
             MaintenanceQueries.EXPIRED_UPLOADS,
             MaintenanceQueries.EXPIRED,
             MaintenanceQueries.DELETE_EXPIRED,
+            MaintenanceQueries.MARKED,
+            MaintenanceQueries.FORGET,
             "DELETE FROM artifacts_publications WHERE published_at < :publications",
         )
         for (sql in statements) {
             var statement = Statement.create("EXPLAIN $sql")
             binds.filterKeys { ":$it" in sql }.forEach { (name, value) -> statement = statement.bind(name, value) }
             if (":id" in sql) statement = statement.bind("id", Uuid.random())
+            if (":sha" in sql) statement = statement.bind("sha", "x")
             plans += sql to server.driver.fetchInOrg(ORG_A, statement).getOrThrow()
                 .joinToString("\n") { it.get("QUERY PLAN").asString() }
         }

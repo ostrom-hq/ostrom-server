@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.artifacts.domain.storage
 
+import run.ostrom.server.artifacts.domain.ArtifactBlob
 import run.ostrom.server.artifacts.domain.ArtifactFile
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.uuid.Uuid
@@ -51,6 +52,13 @@ interface ArtifactContents {
      * @return True when its folder was emptied.
      */
     suspend fun remove(orgId: Uuid, artifactId: Uuid): Boolean
+
+    /**
+     * Deletes contents of artifacts' folders, as far as the bucket answers.
+     *
+     * @return Those it deleted: none without a bucket or when the bucket fails.
+     */
+    suspend fun collect(orgId: Uuid, blobs: List<ArtifactBlob>): List<ArtifactBlob>
 }
 
 /**
@@ -93,6 +101,19 @@ class BucketArtifactContents(
         val connection = storage.connection(orgId) ?: return false
         val root = ArtifactKeys.artifactRoot(connection.prefix, orgId.toString(), artifactId.toString())
         return objects.empty(connection, root)
+    }
+
+    override suspend fun collect(orgId: Uuid, blobs: List<ArtifactBlob>): List<ArtifactBlob> {
+        val connection = storage.connection(orgId) ?: return emptyList()
+        val keys = blobs.associateBy { key(connection, orgId, it.artifactId, it.sha256) }
+        return try {
+            val refused = objects.delete(connection, keys.keys.toList()).toSet()
+            keys.filterKeys { it !in refused }.values.toList()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: ObjectStoreException) {
+            emptyList()
+        }
     }
 
     private suspend fun connection(orgId: Uuid): ArtifactStorageConnection = storage.openConnection(orgId)

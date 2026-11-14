@@ -65,11 +65,34 @@ class ArtifactPublishForbiddenException : OstromException(
  *
  * @property retryAfterSeconds When the oldest of them leaves the hour, for `Retry-After`.
  */
-class ArtifactPublishRateLimitedException(val retryAfterSeconds: Long) : OstromException(
+class ArtifactPublishRateLimitedException(retryAfterSeconds: Long) : ArtifactRetryLaterException(
     ErrorKind.RATE_LIMITED,
     "Too many versions were published in the last hour. Try again later.",
     "artifact_rate_limited",
+    retryAfterSeconds,
 )
+
+/**
+ * A refusal the caller may try again after [retryAfterSeconds], answered with `Retry-After`.
+ *
+ * @property retryAfterSeconds When to try again.
+ */
+open class ArtifactRetryLaterException(kind: ErrorKind, message: String, type: String, val retryAfterSeconds: Long) :
+    OstromException(kind, message, type)
+
+/**
+ * A content of the artifact is being deleted from its folder (TeamCode's `artifact_busy`): no upload to it opens and no
+ * version is published to it until the maintenance is done, so a content is never collected under a publication that
+ * counts on it.
+ */
+class ArtifactBusyException : ArtifactRetryLaterException(
+    ErrorKind.CONFLICT,
+    "A file of this publication is being cleaned up from the artifact's storage. Try again in a minute.",
+    "artifact_busy",
+    BUSY_RETRY_SECONDS,
+)
+
+private const val BUSY_RETRY_SECONDS = 60L
 
 /**
  * A publication would put its owner or the organization over a quota of its settings.

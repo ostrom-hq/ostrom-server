@@ -31,6 +31,7 @@ interface PublishArtifactUseCase {
      * @return The version.
      *
      * @throws ArtifactConflictException When another version was published at the same time.
+     * @throws ArtifactBusyException While contents of its folder are collected.
      */
     suspend fun addVersion(caller: ArtifactCaller, id: Uuid, files: List<UploadedFile>): ArtifactVersion
 }
@@ -91,6 +92,7 @@ internal class PublishArtifactUseCaseImpl(
         gate.admit(caller)
         val artifact = rules.owned(caller, id)
         checked(caller, id, files)
+        gate.requireIdle(caller.orgId, id)
         val (recorded, blobs) = record(files)
         val known = repository.blobDigests(artifact.orgId, id)
         gate.withinQuotas(caller.orgId, artifact.ownerId, (blobs - known).bytes(), newArtifact = false)

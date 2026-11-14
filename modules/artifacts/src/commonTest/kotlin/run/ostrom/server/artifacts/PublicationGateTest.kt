@@ -3,6 +3,7 @@ package run.ostrom.server.artifacts
 
 import run.ostrom.server.artifacts.domain.Artifact
 import run.ostrom.server.artifacts.domain.ArtifactAccess
+import run.ostrom.server.artifacts.domain.ArtifactBusyException
 import run.ostrom.server.artifacts.domain.ArtifactLifecycleRepository
 import run.ostrom.server.artifacts.domain.ArtifactPublishForbiddenException
 import run.ostrom.server.artifacts.domain.ArtifactPublishRateLimitedException
@@ -51,6 +52,10 @@ class PublicationGateTest {
         override suspend fun expire(orgId: Uuid, artifactId: Uuid, expiresAt: Instant?) {
             expired += expiresAt
         }
+
+        override suspend fun busy(orgId: Uuid, artifactId: Uuid) = artifactId in collecting
+
+        val collecting = mutableSetOf<Uuid>()
     }
 
     private fun artifact(access: ArtifactAccess = ArtifactAccess.TEAM) =
@@ -125,5 +130,14 @@ class PublicationGateTest {
         storage.settings[ORG_A] = storage.settings.getValue(ORG_A).copy(retention = ArtifactRetention())
         gate.accessChanged(artifact(ArtifactAccess.PERSONAL), clock.now)
         assertEquals(listOf(clock.now + 30.days, null), lifecycle.expired)
+    }
+
+    @Test
+    fun noUploadOrVersionReachesAnArtifactWhileItsContentsAreCollected() = runTest {
+        val (busy, idle) = Uuid.random() to Uuid.random()
+        lifecycle.collecting += busy
+        val refused = assertFailsWith<ArtifactBusyException> { gate.requireIdle(ORG_A, busy) }
+        assertEquals(60L to "artifact_busy", refused.retryAfterSeconds to refused.type)
+        gate.requireIdle(ORG_A, idle)
     }
 }

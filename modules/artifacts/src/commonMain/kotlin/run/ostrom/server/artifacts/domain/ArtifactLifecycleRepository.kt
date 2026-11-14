@@ -17,4 +17,7 @@ interface ArtifactLifecycleRepository {
 
     /** Sets when the artifact expires, or null to keep it. */
     suspend fun expire(orgId: Uuid, artifactId: Uuid, expiresAt: Instant?)
+
+    /** Whether a content of the artifact's folder is marked for collection. */
+    suspend fun busy(orgId: Uuid, artifactId: Uuid): Boolean
 }

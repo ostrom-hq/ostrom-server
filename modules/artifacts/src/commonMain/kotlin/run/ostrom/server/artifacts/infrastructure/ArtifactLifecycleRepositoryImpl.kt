@@ -26,6 +26,11 @@ internal class ArtifactLifecycleRepositoryImpl(private val driver: Driver) : Art
         driver.inTenant(orgId) { execute(expiry(artifactId, expiresAt)).getOrThrow() }
     }
 
+    override suspend fun busy(orgId: Uuid, artifactId: Uuid): Boolean = driver.fetchInOrg(
+        orgId,
+        Statement.create(LifecycleQueries.BUSY).bind("id", artifactId),
+    ).getOrThrow().any()
+
     private fun expiry(artifactId: Uuid, expiresAt: Instant?) =
         Statement.create("UPDATE artifacts_artifacts SET expires_at = :expires WHERE id = :id")
             .bind("id", artifactId).bind("expires", expiresAt)
@@ -36,6 +41,9 @@ internal object LifecycleQueries {
     /** The versions older than the newest [keep]: the primary key `(artifact_id, number)`. */
     const val PRUNE = "DELETE FROM artifacts_versions WHERE artifact_id = :id AND number <= " +
         "(SELECT latest_version FROM artifacts_artifacts WHERE id = :id) - :keep"
+
+    /** A content of the folder marked: the primary key `(artifact_id, sha256)`. */
+    const val BUSY = "SELECT 1 FROM artifacts_blobs WHERE artifact_id = :id AND marked_at IS NOT NULL LIMIT 1"
 
     /** The folder's contents no kept version lists and no live upload announced, marked once. */
     const val MARK = "UPDATE artifacts_blobs b SET marked_at = :now WHERE b.artifact_id = :id AND " +

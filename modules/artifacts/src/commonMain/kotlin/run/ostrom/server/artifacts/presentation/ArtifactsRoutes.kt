@@ -5,7 +5,7 @@ import run.ostrom.server.artifacts.domain.Artifact
 import run.ostrom.server.artifacts.domain.ArtifactCaller
 import run.ostrom.server.artifacts.domain.ArtifactConflictException
 import run.ostrom.server.artifacts.domain.ArtifactNotFoundException
-import run.ostrom.server.artifacts.domain.ArtifactPublishRateLimitedException
+import run.ostrom.server.artifacts.domain.ArtifactRetryLaterException
 import run.ostrom.server.artifacts.domain.ArtifactRelation
 import run.ostrom.server.artifacts.domain.ArtifactRules
 import run.ostrom.server.artifacts.domain.ArtifactTicketsRateLimitedException
@@ -258,11 +258,11 @@ private suspend fun ApplicationCall.respondCommit(
     respond(status, committed.version.toResponse().copy(replayed = committed.replayed))
 }
 
-// A publication over the hourly limit says when to try again, as TeamCode's `Retry-After`.
-private suspend fun <T> ApplicationCall.publishing(block: suspend () -> T): T = try {
+// A refusal to try later (the hourly limit, a busy artifact) says when, as TeamCode's `Retry-After`.
+internal suspend fun <T> ApplicationCall.publishing(block: suspend () -> T): T = try {
     block()
-} catch (limited: ArtifactPublishRateLimitedException) {
-    response.header(HttpHeaders.RetryAfter, limited.retryAfterSeconds.toString())
-    throw limited
+} catch (later: ArtifactRetryLaterException) {
+    response.header(HttpHeaders.RetryAfter, later.retryAfterSeconds.toString())
+    throw later
 }
 

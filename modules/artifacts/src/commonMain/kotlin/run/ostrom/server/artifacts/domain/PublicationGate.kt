@@ -63,6 +63,13 @@ interface PublicationGate {
 
     /** Sets when [artifact] expires after its access changed at [at]: a change never expires it at once. */
     suspend fun accessChanged(artifact: Artifact, at: Instant)
+
+    /**
+     * Refuses an upload or a version to an artifact while the maintenance collects contents of its folder.
+     *
+     * @throws ArtifactBusyException While it does.
+     */
+    suspend fun requireIdle(orgId: Uuid, artifactId: Uuid)
 }
 
 /**
@@ -121,6 +128,10 @@ class PublicationGateImpl(
     override suspend fun accessChanged(artifact: Artifact, at: Instant) {
         val retention = storage.overview(artifact.orgId).settings.retention
         lifecycle.expire(artifact.orgId, artifact.id, retention.expiryOf(artifact.access, at))
+    }
+
+    override suspend fun requireIdle(orgId: Uuid, artifactId: Uuid) {
+        if (lifecycle.busy(orgId, artifactId)) throw ArtifactBusyException()
     }
 
     private suspend fun activeSettings(orgId: Uuid) = storage.overview(orgId).let { overview ->

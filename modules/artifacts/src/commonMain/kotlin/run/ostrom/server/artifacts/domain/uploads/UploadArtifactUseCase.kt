@@ -38,6 +38,7 @@ interface UploadArtifactUseCase {
      * @throws run.ostrom.server.artifacts.domain.ArtifactNotFoundException When the artifact is not readable.
      * @throws run.ostrom.server.artifacts.domain.ArtifactNotWritableException When it is not the caller's.
      * @throws ArtifactUploadsBusyException When the caller holds too many uploads or drafts.
+     * @throws run.ostrom.server.artifacts.domain.ArtifactBusyException While contents of the artifact are collected.
      */
     suspend fun open(caller: ArtifactCaller, artifactId: Uuid?, files: List<AnnouncedFile>): ArtifactUpload
 
@@ -93,7 +94,11 @@ internal class UploadArtifactUseCaseImpl(
         val now = clock.now()
         val existing = artifactId?.let { rules.owned(caller, it) }
         // A new artifact counts in `artifactsPerMember` from its draft on: TeamCode checks it here and at its commit.
-        if (existing == null) stores.gate.withinQuotas(caller.orgId, caller.memberId, 0, newArtifact = true)
+        if (existing == null) {
+            stores.gate.withinQuotas(caller.orgId, caller.memberId, 0, newArtifact = true)
+        } else {
+            stores.gate.requireIdle(caller.orgId, existing.id)
+        }
         val target = existing ?: draftOf(caller, now)
         val draft = target.takeIf { existing == null }
         val held = if (existing == null) emptySet() else artifacts.blobDigests(caller.orgId, existing.id)
