@@ -36,6 +36,8 @@ import kotlin.time.Clock
  * @param metrics The server's instruments, created on [telemetry]'s meter.
  * @param notifications What the replicas tell each other through the database ([DatabaseNotifications]); a test
  *   whose [driver] wraps the pool gives the pool's.
+ * @param databaseCheck `/ready`'s database check: the JDBC pool's state in the server (CRL-11), `SELECT 1` on [driver]
+ *   when none is given.
  *
  * @return The module.
  */
@@ -49,6 +51,7 @@ fun kernelModule(
     telemetry: Telemetry = Telemetry.disabled(clock),
     metrics: OstromMetrics = OstromMetrics(telemetry.meter),
     notifications: DatabaseNotifications = databaseNotifications(driver),
+    databaseCheck: HealthCheck? = null,
 ): Module = module {
     single { logger }
     single { config }
@@ -66,5 +69,5 @@ fun kernelModule(
     // P1 memory: the calls this replica runs at once, under a ceiling taken from its container's limit.
     single { CallsInProgress(ServerConfig.callCeilings(config), ProcessMemory::limitBytes) }
     single<MigrationRunner> { MigrationRunnerImpl(get(), get()) }
-    single<HealthCheck>(named("database")) { DatabaseHealthCheck(get()) }
+    single<HealthCheck>(named("database")) { databaseCheck ?: DatabaseHealthCheck(get()) }
 }

@@ -435,8 +435,10 @@ refresh intent is on the row, in flight or left by a failure: new tokens clear i
 | `ostrom-server seed-test-account <email>` | With `OSTROM_ALLOW_TEST_ACCOUNTS=true`, creates a test account through the module that binds `TestAccountSeeder` (identity) and prints `{"email","token","organizationId"}` on one line | 0, 2 when refused or when no module binds the seeder |
 
 The probes: `GET /health` (liveness: 200 `ok` while the process answers HTTP, with no check, also while draining and
-during a database outage, as TeamCode's, audit SD-04) and `GET /ready` (readiness: the database checked, 200 `ready`,
-503 `degraded` or `draining`), both unauthenticated.
+during a database outage, as TeamCode's, audit SD-04) and `GET /ready` (readiness, 200 `ready`, 503 `degraded` or
+`draining`), both unauthenticated. `/ready` reads the JDBC pool's state without any query (CRL-11): it is `degraded` when
+the pool is closed, or when callers have waited for a connection for 30 s without a break, so a short database stall
+gives slow answers instead of every replica leaving the Service at once.
 
 `GET /api/v1/capabilities` (`Capabilities` and `ServerFeatures` in ostrom-core), served by the kernel, answers what
 clients read after signing in: `apiVersion` (the contract version of the ostrom-core the server is built on,

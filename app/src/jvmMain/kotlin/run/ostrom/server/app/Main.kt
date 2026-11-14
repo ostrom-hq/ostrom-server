@@ -9,6 +9,8 @@ import run.ostrom.server.kernel.database.MigrationRunner
 import run.ostrom.server.kernel.database.MigrationRunnerImpl
 import run.ostrom.server.kernel.database.MigrationsNotAppliedException
 import run.ostrom.server.kernel.database.UnsafeDatabaseRoleException
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.PoolHealthCheck
 import run.ostrom.server.kernel.database.connectPostgres
 import run.ostrom.server.kernel.database.migrateUnderLock
 import run.ostrom.server.kernel.database.requireRowLevelSecurity
@@ -37,7 +39,6 @@ private const val EXIT_FAILURE = 1
 private const val EXIT_USAGE = 2
 private const val STOP_GRACE_MILLIS = 5_000L
 private const val STOP_TIMEOUT_MILLIS = 15_000L
-private const val MIB = 1024L * 1024
 
 /**
  * The `ostrom-server` process on the JVM (docs/decisions/0001; commands in [parseCommand], configuration keys in
@@ -87,6 +88,7 @@ private fun serve() {
     val modules = serverModules()
     var driver: Driver? = null
     var koin: Koin? = null
+    var jdbc: JdbcDatabase? = null
     // A failing background job is logged with its class only (its message may quote a provider error), and the other
     // jobs keep running.
     val failures = CoroutineExceptionHandler { _, error ->
@@ -96,8 +98,18 @@ private fun serve() {
     try {
         val database = connectPostgres(config.database).also { driver = it }
         runBlocking { database.requireRowLevelSecurity() }
+        // The JVM pool (docs/decisions/0001, step 2): `/ready` reads its state; the modules move onto it one by one.
+        val pool = JdbcDatabase(config.database, JdbcDatabase.MIN_POOL_SIZE).also { jdbc = it }
         val signer = runBlocking { Ed25519InstanceSigner.loadOrCreate(config.signingKeyFile) }
-        val kernel = kernelModule(logger, database, signer, source, telemetry = telemetry, metrics = metrics)
+        val kernel = kernelModule(
+            logger,
+            database,
+            signer,
+            source,
+            telemetry = telemetry,
+            metrics = metrics,
+            databaseCheck = PoolHealthCheck(pool::state),
+        )
         val server = serverKoin(kernel, modules).also { koin = it }
         runBlocking {
             val migrations = server.get<MigrationRunner>()
@@ -105,17 +117,7 @@ private fun serve() {
             modules.forEach { it.initialize(server) }
         }
         modules.forEach { it.start(workers, server) }
-        logger.info(
-            "server starting",
-            mapOf(
-                "version" to SERVER_VERSION,
-                "host" to config.host,
-                "port" to config.port,
-                "key_id" to signer.keyId,
-                "runtime" to "jvm ${System.getProperty("java.version")}",
-                "max_heap_mib" to Runtime.getRuntime().maxMemory() / MIB,
-            ),
-        )
+        logStart(logger, config, signer.keyId)
         val engine = serverEngine(config.port, config.host) { configureHttp(server, modules) }.start(wait = false)
         // From now on SIGTERM and SIGINT start the drain; before, they end a start at once (the JVM's own handling).
         drain(awaitStopSignal(), config, server, logger)
@@ -123,10 +125,10 @@ private fun serve() {
         logger.info("server stopped")
     } catch (error: Throwable) { // not coroutine-reachable: the process entry point, outside any coroutine.
         failed(logger, "server stopped on a failure", error)
-        stopThenFlush(telemetry, exporters) { shutDown(workers, koin, driver) }
+        stopThenFlush(telemetry, exporters) { shutDown(workers, koin, driver).also { jdbc?.close() } }
         exitProcess(EXIT_FAILURE)
     }
-    stopThenFlush(telemetry, exporters) { shutDown(workers, koin, driver) }
+    stopThenFlush(telemetry, exporters) { shutDown(workers, koin, driver).also { jdbc?.close() } }
 }
 
 /** Applies every module's migrations under the migration lock, with the owner's connection, then exits. */

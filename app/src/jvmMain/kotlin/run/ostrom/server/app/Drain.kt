@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.app
 
+import run.ostrom.server.kernel.SERVER_VERSION
 import run.ostrom.server.kernel.config.ServerConfig
 import run.ostrom.server.kernel.http.CallsInProgress
 import run.ostrom.server.kernel.http.Readiness
@@ -10,6 +11,8 @@ import java.util.concurrent.LinkedBlockingQueue
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.koin.core.Koin
+
+private const val MIB = 1024L * 1024
 
 /**
  * Blocks until SIGTERM or SIGINT arrives, and replaces the JVM's handling of both (an immediate exit through the
@@ -45,4 +48,19 @@ internal fun drain(signal: String, config: ServerConfig, server: Koin, logger: L
     if (!ended) {
         logger.warn("calls still running after the grace", mapOf("grace_s" to config.drainGrace.inWholeSeconds))
     }
+}
+
+/** The start-up log line: what runs, where, and the JVM's heap bound. */
+internal fun logStart(logger: Logger, config: ServerConfig, keyId: String) {
+    logger.info(
+        "server starting",
+        mapOf(
+            "version" to SERVER_VERSION,
+            "host" to config.host,
+            "port" to config.port,
+            "key_id" to keyId,
+            "runtime" to "jvm ${System.getProperty("java.version")}",
+            "max_heap_mib" to Runtime.getRuntime().maxMemory() / MIB,
+        ),
+    )
 }
