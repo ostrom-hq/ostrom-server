@@ -15,6 +15,7 @@ import run.ostrom.core.api.models.CreateWebhookRequest
 import run.ostrom.core.api.models.UpdateWebhookRequest
 import run.ostrom.core.api.models.WebhookDeliveryList
 import run.ostrom.core.api.models.WebhookList
+import run.ostrom.server.events.domain.InvalidWebhookException
 import run.ostrom.server.events.domain.WebhookNotFoundException
 import run.ostrom.server.events.domain.WebhookRules
 import run.ostrom.server.events.domain.WebhookTestRateException
@@ -71,6 +72,8 @@ private fun Route.actionRoutes(dependencies: WebhooksRoutesDependencies) = with(
     get<WebhooksApi.Id.Deliveries> { params ->
         val actor = orgs.webhookActorOf(call.requirePrincipal())
         val limit = params.limit ?: WebhookRules.DEFAULT_LOG_PAGE
+        // 1 to 200 as the contract says: a page of none or fewer is refused, not quietly made a page of one.
+        if (limit < 1) throw InvalidWebhookException("limit: 1 to ${WebhookRules.MAX_LOG_PAGE}.")
         val log = webhooks.deliveries(actor, webhookId(params.parent.id), limit)
         call.respond(WebhookDeliveryList(log.map { it.toResponse() }))
     }
