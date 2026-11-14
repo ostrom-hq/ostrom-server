@@ -179,7 +179,7 @@ class SessionLifecycleTest {
         val gate = Uuid.parse("00000000-0000-0000-0000-0000000000a1")
         bench.gates.gates["s-1"] =
             listOf(SessionGate(gate, "push-main", GateMode.ENFORCED, GateStatus.PENDING, null, emptyList()))
-        val open = bench.get(member("rev-b", OrgRole.ADMIN), session.id)
+        val open = bench.get(member("lyes"), session.id)
         assertEquals(listOf(gate.toString()), open.gates)
         assertNull(open.receipt)
 

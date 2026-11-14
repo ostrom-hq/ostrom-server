@@ -142,9 +142,9 @@ class NotificationsTest {
     }
 
     @Test
-    fun theNotificationsAreReadByTheirPersonAnAdministratorAndTheSessionsAgentOnly() = runTest {
+    fun theNotificationsAreReadByTheirPersonAndTheSessionsAgentOnly() = runTest {
         val sent = send(AGENT, request())
-        assertEquals(1, list(ADMIN, RunQuery(sessionId = "s-1")).size)
+        assertFailsWith<RunSessionNotFoundException>("An administrator") { list(ADMIN, RunQuery(sessionId = "s-1")) }
         assertFailsWith<RunSessionNotFoundException> { list(BOB, RunQuery(sessionId = "s-1")) }
         assertTrue(list(ADA, RunQuery(before = sent.id)).isEmpty(), "After the last notification")
         assertFailsWith<InvalidPageException> { list(ADA, RunQuery(before = "nope")) }

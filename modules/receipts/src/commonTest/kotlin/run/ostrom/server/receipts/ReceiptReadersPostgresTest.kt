@@ -8,6 +8,7 @@ import run.ostrom.server.kernel.auth.TokenAuthenticator
 import run.ostrom.server.receipts.domain.models.ReceiptAudience
 import run.ostrom.server.receipts.domain.models.ReceiptQuery
 import run.ostrom.server.receipts.domain.models.ReceiptReader
+import run.ostrom.server.receipts.domain.repositories.ReceiptsRepository
 import run.ostrom.server.receipts.domain.services.ReceiptOwners
 import run.ostrom.server.receipts.domain.services.ReceiptReaders
 import run.ostrom.server.receipts.domain.usecases.SignReceiptUseCase
@@ -91,6 +92,9 @@ class ReceiptReadersPostgresTest {
         assertEquals(HttpStatusCode.OK, server.call("mia", "/api/v1/receipts/$harness").status, "The organization's")
 
         assertEquals(listOf(harness), server.ids("root"), "An administrator lists no member's session receipts")
+        // The repository still reads the whole organization for a query without an audience (no route asks it).
+        val whole = server.koin.get<ReceiptsRepository>().list(ORG_A, ReceiptQuery()).map { it.id }
+        assertEquals(listOf(harness, mia, gate, lyes), whole)
         assertEquals(listOf(harness, gate, lyes), server.ids("lyes"))
         assertEquals(listOf(harness, gate, lyes), server.ids("rev"))
         assertEquals(listOf(harness, mia), server.ids("mia"))
