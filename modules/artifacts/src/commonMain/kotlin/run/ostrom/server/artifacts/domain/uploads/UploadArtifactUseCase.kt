@@ -217,6 +217,7 @@ internal class UploadArtifactUseCaseImpl(
         linkSlug = null,
         createdAt = now,
         updatedAt = now,
+        origin = caller.origin,
     )
 }
 

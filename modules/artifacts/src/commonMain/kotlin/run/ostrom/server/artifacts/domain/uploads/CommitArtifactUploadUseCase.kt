@@ -125,6 +125,7 @@ internal class CommitArtifactUploadUseCaseImpl(
             digest = manifest,
             baseVersion = base,
             credentialId = caller.credentialId,
+            origin = caller.origin,
         )
         if (base != artifact.latestVersion || artifacts.addVersion(caller.orgId, version, now) == null) {
             // The live version, newest first, for the publisher to merge (none for a draft).

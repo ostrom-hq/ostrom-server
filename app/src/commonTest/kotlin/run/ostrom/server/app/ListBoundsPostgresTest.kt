@@ -128,7 +128,7 @@ class ListBoundsPostgresTest {
         ids: Map<String, String>,
         f: Findings,
     ) {
-        val path = path(list.operation.path, ada.orgId, ids)
+        val path = path(list.operation.path, ada.orgId, ids) + required(list)
         val plain = read(ada, path, "")
         if (plain.status != HttpStatusCode.OK) {
             f.unreached[list.operation.id] = plain.status.value
@@ -191,14 +191,20 @@ class ListBoundsPostgresTest {
         } else {
             setOf(HttpStatusCode.BadRequest)
         }
-        val bobs = path(list.operation.path, bob.orgId, emptyMap())
+        val bobs = path(list.operation.path, bob.orgId, emptyMap()) + required(list)
         list.cursors.forEach { name ->
             val replayed = read(bob, bobs, "$name=${cursor.encodeURLParameter()}")
             val text = replayed.bodyAsText()
-            if (replayed.status !in refused) f.broken += "$id $name=<A's>: ${replayed.status}, not 400"
+            if (!refusedOrPosition(id, replayed.status, refused)) {
+                f.broken += "$id $name=<A's>: ${replayed.status}, not 400"
+            }
             if (seen.any { it in text }) f.broken += "$id $name=<A's>: B was answered A's rows"
         }
     }
+
+    // A replayed cursor of A is refused, or answered B's own page for a position cursor ([POSITION_CURSORS]).
+    private fun refusedOrPosition(id: String, status: HttpStatusCode, refused: Set<HttpStatusCode>): Boolean =
+        status in refused || (id in POSITION_CURSORS && status == HttpStatusCode.OK)
 
     private suspend fun TestServer.person(login: String): Person {
         val user = koin.get<ResolveUserUseCase>()(
@@ -212,13 +218,20 @@ class ListBoundsPostgresTest {
         return Person(org.id, member.id, koin.get<StartWebSessionUseCase>()(user.id))
     }
 
-    // Two rules and two artifacts (a page of one has a next), an automation and an MCP server (their sub-lists), an
-    // accepted workflow and one run of it (the runs, listed by the organization and by the workflow), a webhook with
-    // one test delivery: the ids of the created resources by their collection, for the paths that name one.
+    // Two rules, two artifacts and two memory entries (a page of one has a next), an automation and an MCP server
+    // (their sub-lists), an accepted workflow and one run of it (the runs, listed by the organization and by the
+    // workflow), a webhook with one test delivery: the ids of the created resources by their collection, for the paths
+    // that name one.
     private suspend fun TestServer.seed(ada: Person): Map<String, String> {
         repeat(2) { n ->
             write(ada, "/api/v1/rules", """{"statement": "Rule $n of the lists", "group": "Lists"}""")
             write(ada, "/api/v1/artifacts", """{"title": "Page $n", "files": [{"path": "a.html", "content": "$n"}]}""")
+            // Two team entries of the memory (a page of one has a next), which the search finds by their title.
+            write(
+                ada,
+                "/api/v1/memory",
+                """{"title": "Lists $n", "summary": "Lists", "scope": "team", "tags": [], "content": "Lists"}""",
+            )
         }
         val automation = write(
             ada,
@@ -283,7 +296,10 @@ class ListBoundsPostgresTest {
     }
 
     private suspend fun TestServer.read(person: Person, path: String, query: String): HttpResponse =
-        client.get(if (query.isEmpty()) path else "$path?$query") { session(person) }
+        client.get(if (query.isEmpty()) path else "$path${if ('?' in path) "&" else "?"}$query") { session(person) }
+
+    // The query parameters a list requires, so that the walk reaches it.
+    private fun required(list: ListOperation): String = REQUIRED_QUERY[list.operation.id]?.let { "?$it" }.orEmpty()
 
     private fun HttpRequestBuilder.session(person: Person) {
         val session = person.session
@@ -323,6 +339,15 @@ class ListBoundsPostgresTest {
         val SUCCESS = 200..299
         val PARAMETER = Regex("\\{(\\w+)}")
         val RESOURCE = Regex("\\{(?!org\\b|orgId\\b)\\w+}")
+
+        /**
+         * The lists whose cursor is a position (`<updatedAt>_<id>` of the memory), not a row of A: B replaying A's is
+         * answered B's own page, which row-level security keeps to B's rows (A's rows are still checked absent).
+         */
+        val POSITION_CURSORS = setOf("listMemory")
+
+        /** The query a list requires: the words of a search. */
+        val REQUIRED_QUERY = mapOf("searchMemory" to "q=lists")
 
         /** The lists a minimal bootstrap cannot reach, with the status they answer. */
         val UNREACHED = mapOf(

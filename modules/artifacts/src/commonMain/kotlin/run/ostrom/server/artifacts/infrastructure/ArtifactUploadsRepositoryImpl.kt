@@ -161,14 +161,17 @@ internal class ArtifactUploadsRepositoryImpl(private val driver: Driver) : Artif
             Statement.create(
                 """
                 INSERT INTO artifacts_artifacts (id, org_id, owner_id, title, access, latest_version, link_slug,
-                created_at, updated_at) VALUES (:id, :org_id, :owner_id, :title, :access, 0, NULL, :now, :now)
+                created_at, updated_at, origin_launch_id, origin_session_id) VALUES (:id, :org_id, :owner_id, :title,
+                :access, 0, NULL, :now, :now, :origin_launch_id, :origin_session_id)
                 """,
             ).bind("id", draft.id)
                 .bind("org_id", draft.orgId)
                 .bind("owner_id", draft.ownerId)
                 .bind("title", draft.title)
                 .bind("access", draft.access.wire)
-                .bind("now", draft.createdAt),
+                .bind("now", draft.createdAt)
+                .bind("origin_launch_id", draft.origin?.launchId)
+                .bind("origin_session_id", draft.origin?.cloudSessionId),
         ).getOrThrow()
         execute(
             Statement.create("INSERT INTO artifacts_routes (artifact_id, org_id) VALUES (:id, :org_id)")

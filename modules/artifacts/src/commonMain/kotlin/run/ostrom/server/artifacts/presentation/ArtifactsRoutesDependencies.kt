@@ -7,7 +7,6 @@ import run.ostrom.server.artifacts.domain.PublishArtifactUseCase
 import run.ostrom.server.artifacts.domain.ReadArtifactsUseCase
 import run.ostrom.server.artifacts.domain.ViewArtifactUseCase
 import run.ostrom.server.artifacts.domain.uploads.CommitArtifactUploadUseCase
-import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 
 /**
  * What the artifact routes need.
@@ -26,6 +25,6 @@ data class ArtifactsRoutesDependencies(
     val manage: ManageArtifactUseCase,
     val view: ViewArtifactUseCase,
     val locations: ArtifactLocations,
-    val orgResolver: PrincipalOrgResolver,
+    val orgResolver: ArtifactOrgResolver,
     val commit: CommitArtifactUploadUseCase,
 )

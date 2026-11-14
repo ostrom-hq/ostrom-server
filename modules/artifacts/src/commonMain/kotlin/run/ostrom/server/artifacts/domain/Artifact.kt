@@ -38,6 +38,15 @@ enum class ArtifactAccess(val wire: String) {
 }
 
 /**
+ * Where an agent's publication came from (TeamCode's `cloud_session` origin): taken from its agent token, never from
+ * the request. A person's publication has none.
+ *
+ * @property launchId The launch whose agent token published.
+ * @property cloudSessionId The cloud session the launch was opened for; null for `ostrom <agent>` on a machine.
+ */
+data class ArtifactOrigin(val launchId: String, val cloudSessionId: String? = null)
+
+/**
  * A published page or file set: an agent's report, plan or dashboard, for people to read.
  *
  * @property id Its id.
@@ -49,6 +58,7 @@ enum class ArtifactAccess(val wire: String) {
  * @property linkSlug The secret of its public link, set while [access] is [ArtifactAccess.LINK].
  * @property createdAt When it was first published.
  * @property updatedAt When its last version or setting changed.
+ * @property origin Where an agent created it; set at creation only, a later version never changes it.
  */
 data class Artifact(
     val id: Uuid,
@@ -60,6 +70,7 @@ data class Artifact(
     val linkSlug: String?,
     val createdAt: Instant,
     val updatedAt: Instant,
+    val origin: ArtifactOrigin? = null,
 ) {
     /** An upload created it and no version was committed yet: nobody reads it, its owner publishes to it. */
     val draft: Boolean get() = latestVersion == 0
@@ -92,6 +103,7 @@ data class ArtifactFile(
  * @property digest The SHA-256 of its canonical manifest, for a version committed from an upload.
  * @property baseVersion The version its publisher started from, for a version committed from an upload.
  * @property credentialId The credential that committed it, to answer the same commit again ([digest]).
+ * @property origin Where an agent committed it: this version's own, whatever the artifact's.
  */
 data class ArtifactVersion(
     val artifactId: Uuid,
@@ -103,6 +115,7 @@ data class ArtifactVersion(
     val digest: String? = null,
     val baseVersion: Int? = null,
     val credentialId: String? = null,
+    val origin: ArtifactOrigin? = null,
 )
 
 /**
@@ -128,6 +141,7 @@ class UploadedFile(val path: String, val bytes: ByteArray)
  * @property principal The credential itself, named as the actor of the audit log's lines; null when unknown.
  * @property administrator Whether they are an owner or an administrator of the organization, who publish when
  *   `whoCanPublish` is `admins`.
+ * @property origin The launch and cloud session of an agent token, read from the credential; null for a person.
  */
 data class ArtifactCaller(
     val orgId: Uuid,
@@ -137,6 +151,7 @@ data class ArtifactCaller(
     val subjectId: String? = null,
     val principal: AuthenticatedPrincipal? = null,
     val administrator: Boolean = false,
+    val origin: ArtifactOrigin? = null,
 )
 
 /**

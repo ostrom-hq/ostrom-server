@@ -33,7 +33,7 @@ maven-publish = "0.37.0"
 zodable = "1.7.6"
 # ostrom-core, from GitHub Packages (0.1.<run number of its main build>). CI builds it from the commit that published
 # this version, written in gradle/ostrom-core.ref: change both together.
-ostrom-core = "0.1.643"
+ostrom-core = "0.1.698"
 
 [plugins]
 multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }

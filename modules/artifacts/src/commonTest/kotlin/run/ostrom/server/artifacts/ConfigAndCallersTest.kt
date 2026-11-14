@@ -2,6 +2,7 @@
 package run.ostrom.server.artifacts
 
 import run.ostrom.server.artifacts.domain.ArtifactLocations
+import run.ostrom.server.artifacts.domain.ArtifactOrigin
 import run.ostrom.server.artifacts.domain.InvalidArtifactRequestException
 import run.ostrom.server.artifacts.domain.MissingScopeException
 import run.ostrom.server.artifacts.domain.NotAMemberException
@@ -98,7 +99,9 @@ class ConfigAndCallersTest {
             kind: PrincipalKind,
             vararg scopes: String,
         ) = AuthenticatedPrincipal("alice", kind, scopes.toSet())
-        val caller = TestOrgResolver.artifactCallerOf(principal(PrincipalKind.SERVICE, ARTIFACTS_WRITE), ARTIFACTS_READ)
+        // A person's or a program's credential is the kernel's resolver's.
+        val kernel = ArtifactOrgResolver(TestOrgResolver, null)
+        val caller = kernel.artifactCallerOf(principal(PrincipalKind.SERVICE, ARTIFACTS_WRITE), ARTIFACTS_READ)
         assertEquals(ORG_A, caller.orgId)
         assertEquals(ALICE.toString(), caller.memberId)
         assertFalse(caller.person, "A token a program presents is no person")
@@ -106,39 +109,39 @@ class ConfigAndCallersTest {
         // Owners and administrators publish when only they may.
         for (who in listOf("dave", "carol")) {
             val person = AuthenticatedPrincipal(who, PrincipalKind.USER, setOf("user:*"))
-            assertTrue(TestOrgResolver.artifactCallerOf(person, ARTIFACTS_WRITE).administrator)
+            assertTrue(kernel.artifactCallerOf(person, ARTIFACTS_WRITE).administrator)
         }
-        TestOrgResolver.artifactCallerOf(principal(PrincipalKind.SERVICE, ARTIFACTS_READ), ARTIFACTS_READ)
-        TestOrgResolver.artifactCallerOf(principal(PrincipalKind.USER, "user:*"), ARTIFACTS_WRITE)
+        kernel.artifactCallerOf(principal(PrincipalKind.SERVICE, ARTIFACTS_READ), ARTIFACTS_READ)
+        kernel.artifactCallerOf(principal(PrincipalKind.USER, "user:*"), ARTIFACTS_WRITE)
         assertFailsWith<MissingScopeException> {
-            TestOrgResolver.artifactCallerOf(principal(PrincipalKind.SERVICE, ARTIFACTS_READ), ARTIFACTS_WRITE)
+            kernel.artifactCallerOf(principal(PrincipalKind.SERVICE, ARTIFACTS_READ), ARTIFACTS_WRITE)
         }
         assertFailsWith<MissingScopeException> {
-            TestOrgResolver.artifactCallerOf(principal(PrincipalKind.SERVICE, "user:*"), ARTIFACTS_READ)
+            kernel.artifactCallerOf(principal(PrincipalKind.SERVICE, "user:*"), ARTIFACTS_READ)
         }
         assertFailsWith<NotAMemberException> {
-            TestOrgResolver.artifactCallerOf(
+            kernel.artifactCallerOf(
                 AuthenticatedPrincipal("nobody", PrincipalKind.USER, setOf("user:*")),
                 ARTIFACTS_READ,
             )
         }
-        val browser = TestOrgResolver.artifactCallerOf(
+        val browser = kernel.artifactCallerOf(
             AuthenticatedPrincipal("dave", PrincipalKind.USER, setOf("user:*"), "s1", channel = BROWSER),
             ARTIFACTS_READ,
         )
         assertTrue(browser.person)
         assertEquals("s1", browser.credentialId)
-        val app = TestOrgResolver.artifactCallerOf(
+        val app = kernel.artifactCallerOf(
             AuthenticatedPrincipal("carol", PrincipalKind.USER, setOf(ARTIFACTS_READ), channel = MOBILE_APP),
             ARTIFACTS_READ,
         )
         assertTrue(app.person)
-        val personalToken = TestOrgResolver.artifactCallerOf(
+        val personalToken = kernel.artifactCallerOf(
             AuthenticatedPrincipal("dave", PrincipalKind.USER, setOf(ARTIFACTS_WRITE), "t1"),
             ARTIFACTS_WRITE,
         )
         assertFalse(personalToken.person, "A personal token, an administrator's included, is no person")
-        val cli = TestOrgResolver.artifactCallerOf(
+        val cli = kernel.artifactCallerOf(
             AuthenticatedPrincipal("dave", PrincipalKind.USER, setOf(ARTIFACTS_WRITE), "c1", signedIn = true),
             ARTIFACTS_WRITE,
         )
@@ -151,7 +154,8 @@ class ConfigAndCallersTest {
         val launches = object : AgentMembers {
             override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): AgentMember? {
                 val role = if (principal.subjectId == "launch-1") OrgRole.ADMIN else OrgRole.MEMBER
-                val launched = AgentMember(OrgPrincipal(ORG_A, DAVE, role), principal.subjectId)
+                val session = "session-1".takeIf { principal.subjectId == "launch-1" }
+                val launched = AgentMember(OrgPrincipal(ORG_A, DAVE, role), principal.subjectId, session)
                 return launched.takeIf { principal.subjectId != "ended" }
             }
         }
@@ -164,10 +168,15 @@ class ConfigAndCallersTest {
         assertTrue(caller.administrator, "An administrator's agent publishes where only administrators do")
         assertFalse(caller.person, "An agent never makes an artifact public nor deletes one")
         assertEquals("a1", caller.credentialId)
+        // TC-ART-39: its launch and cloud session are the origin of what it publishes; a machine launch has no session.
+        assertEquals(ArtifactOrigin("launch-1", "session-1"), caller.origin)
+        val machine = resolver.artifactCallerOf(agent.copy(subjectId = "launch-2"), ARTIFACTS_READ)
+        assertEquals(ArtifactOrigin("launch-2"), machine.origin)
         assertFalse(resolver.artifactCallerOf(agent.copy(subjectId = "launch-2"), ARTIFACTS_READ).administrator)
         // A person's credential is still the kernel's resolver's.
         val person = AuthenticatedPrincipal("dave", PrincipalKind.USER, setOf("user:*"))
         assertTrue(resolver.artifactCallerOf(person, ARTIFACTS_WRITE).administrator)
+        assertNull(resolver.artifactCallerOf(person, ARTIFACTS_WRITE).origin, "A person's publication has no origin")
         // An ended launch, a token issued before the scope, or a server without the launches module: refused.
         assertFailsWith<NotAMemberException> {
             resolver.artifactCallerOf(agent.copy(subjectId = "ended"), ARTIFACTS_READ)
@@ -178,6 +187,12 @@ class ConfigAndCallersTest {
         assertFailsWith<NotAMemberException> {
             ArtifactOrgResolver(TestOrgResolver, null).artifactCallerOf(agent, ARTIFACTS_WRITE)
         }
+        // The resolver itself: an agent token as its launch's member, a person as the kernel's.
+        assertEquals(DAVE, resolver.resolve(agent, null)?.memberId)
+        assertNull(resolver.resolve(agent.copy(subjectId = "ended"), null))
+        assertNull(ArtifactOrgResolver(TestOrgResolver, null).resolve(agent, null))
+        assertEquals(TestOrgResolver.resolve(person, null), resolver.resolve(person, null))
+        assertNull(resolver.agentOf(person, null), "A person's credential is never read as an agent")
         assertEquals(TestOrgResolver.profile(ORG_A), resolver.profile(ORG_A), "The organization is the kernel's")
     }
 

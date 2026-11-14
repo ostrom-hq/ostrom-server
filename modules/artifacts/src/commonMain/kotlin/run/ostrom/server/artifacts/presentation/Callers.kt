@@ -2,6 +2,7 @@
 package run.ostrom.server.artifacts.presentation
 
 import run.ostrom.server.artifacts.domain.ArtifactCaller
+import run.ostrom.server.artifacts.domain.ArtifactOrigin
 import run.ostrom.server.artifacts.domain.InvalidArtifactRequestException
 import run.ostrom.server.artifacts.domain.MissingScopeException
 import run.ostrom.server.artifacts.domain.NotAMemberException
@@ -9,7 +10,6 @@ import run.ostrom.server.artifacts.domain.UploadedFile
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.auth.PrincipalKind
-import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.WriteAccess
 import run.ostrom.server.kernel.auth.mayWrite
 import kotlin.io.encoding.Base64
@@ -41,9 +41,13 @@ fun AuthenticatedPrincipal.allowsArtifacts(scope: String): Boolean =
  * @throws MissingScopeException When the credential lacks [scope].
  * @throws NotAMemberException When it acts for no organization.
  */
-suspend fun PrincipalOrgResolver.artifactCallerOf(principal: AuthenticatedPrincipal, scope: String): ArtifactCaller {
+suspend fun ArtifactOrgResolver.artifactCallerOf(principal: AuthenticatedPrincipal, scope: String): ArtifactCaller {
     if (!principal.allowsArtifacts(scope)) throw MissingScopeException(scope)
-    val member = resolve(principal, null) ?: throw NotAMemberException()
+    // The origin of a publication is the agent token's launch, read here from the credential and nowhere else; an
+    // agent token is read once, a dead launch's refused without a second lookup.
+    // An agent token is its launch's member, null when it is no longer live; any other credential the kernel's.
+    val agent = agentOf(principal, null)
+    val member = (if (agent != null) agent.member else orgOf(principal)) ?: throw NotAMemberException()
     return ArtifactCaller(
         orgId = member.orgId,
         memberId = member.memberId.toString(),
@@ -52,6 +56,7 @@ suspend fun PrincipalOrgResolver.artifactCallerOf(principal: AuthenticatedPrinci
         subjectId = principal.subjectId,
         principal = principal,
         administrator = member.role == OrgRole.OWNER || member.role == OrgRole.ADMIN,
+        origin = agent?.let { ArtifactOrigin(it.launchId, it.cloudSessionId) },
     )
 }
 
@@ -78,3 +83,7 @@ private fun decode(content: String, encoding: String?, path: String): ByteArray 
 }
 
 private const val MAX_ECHO = 200
+
+/** The member a credential other than an agent token acts for; an agent token is never resolved twice. */
+private suspend fun ArtifactOrgResolver.orgOf(principal: AuthenticatedPrincipal) =
+    if (principal.kind == PrincipalKind.AGENT) null else resolve(principal, null)
