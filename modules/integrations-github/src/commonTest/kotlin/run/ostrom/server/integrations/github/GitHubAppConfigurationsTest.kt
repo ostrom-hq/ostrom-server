@@ -70,14 +70,7 @@ class GitHubAppConfigurationsTest {
         clock,
     )
 
-    private fun input(
-        appId: Long = 7,
-        clientId: String = CLIENT,
-        clientSecret: String? = SECRET,
-        privateKey: String? = KEY,
-        webhookSecret: String? = "hook-secret",
-        version: Int? = null,
-    ) = GitHubAppInput(appId, clientId, clientSecret, privateKey, webhookSecret, version)
+    private val base = GitHubAppInput(7, CLIENT, SECRET, KEY, "hook-secret", null)
 
     private fun storedApp(clientSecret: String? = SECRET, webhookSecret: String? = "hook-secret") =
         GitHubAppCredentials("7", "ostrom-acme", KEY, webhookSecret, CLIENT, clientSecret, "acme", 1, NOW)
@@ -104,7 +97,7 @@ class GitHubAppConfigurationsTest {
         val view = empty.toResponse()
         assertFalse(view.configured || view.privateKeySet || view.clientSecretSet || view.webhookSecretSet)
 
-        val saved = configurations().save(admin, input())
+        val saved = configurations().save(admin, base)
         assertEquals("ostrom-acme" to "acme", saved.app?.slug to saved.app?.owner, "GitHub names the slug and owner")
         assertEquals(1 to NOW, saved.app?.version to saved.app?.updatedAt)
         assertEquals(1, source.forgotten, "Every replica reads the new App")
@@ -134,7 +127,7 @@ class GitHubAppConfigurationsTest {
         )
         for (caller in listOf(key, token, stranger)) {
             assertFailsWith<NotAnInstanceAdminException> { configurations().read(caller) }
-            assertFailsWith<NotAnInstanceAdminException> { configurations().save(caller, input()) }
+            assertFailsWith<NotAnInstanceAdminException> { configurations().save(caller, base) }
         }
         assertNull(store.stored)
     }
@@ -144,39 +137,40 @@ class GitHubAppConfigurationsTest {
         var asked = 0
         verified = { id, _ -> asked++; VerifiedGitHubApp(id, "ostrom-acme", "acme", CLIENT) }
         val refused = listOf(
-            input(appId = 0),
-            input(appId = GitHubAppConfigurations.MAX_APP_ID + 1),
-            input(clientId = "abc"),
-            input(clientId = "Iv"),
-            input(clientSecret = "s".repeat(19)),
-            input(clientSecret = "s".repeat(257)),
-            input(clientSecret = "s".repeat(19) + " x"),
-            input(clientSecret = "s".repeat(20) + "\u0001"),
-            input(webhookSecret = ""),
-            input(webhookSecret = "h".repeat(257)),
-            input(webhookSecret = "hook secret"),
-            input(privateKey = "not a key"),
-            input(privateKey = "-----BEGIN CERTIFICATE-----"),
-            input(privateKey = KEY + "x".repeat(GitHubAppConfigurations.MAX_KEY)),
+            base.copy(appId = 0),
+            base.copy(appId = GitHubAppConfigurations.MAX_APP_ID + 1),
+            base.copy(clientId = "abc"),
+            base.copy(clientId = "Iv"),
+            base.copy(clientSecret = "s".repeat(19)),
+            base.copy(clientSecret = "s".repeat(257)),
+            base.copy(clientSecret = "s".repeat(19) + " x"),
+            base.copy(clientSecret = "s".repeat(20) + "\u0001"),
+            base.copy(webhookSecret = ""),
+            base.copy(webhookSecret = "h".repeat(257)),
+            base.copy(webhookSecret = "hook secret"),
+            base.copy(privateKey = "not a key"),
+            base.copy(privateKey = "-----BEGIN CERTIFICATE-----"),
+            base.copy(privateKey = KEY + "x".repeat(GitHubAppConfigurations.MAX_KEY)),
             // A first App needs its client secret and its key.
-            input(clientSecret = null),
-            input(privateKey = null),
+            base.copy(clientSecret = null),
+            base.copy(privateKey = null),
         )
         for (wrong in refused) {
             assertEquals("invalid_github_app", typeOf { configurations().save(admin, wrong) }, wrong.toString())
         }
         assertEquals(0, asked)
         // The bounds themselves pass.
-        configurations().save(admin, input(appId = GitHubAppConfigurations.MAX_APP_ID, clientSecret = "s".repeat(256)))
+        val bounds = base.copy(appId = GitHubAppConfigurations.MAX_APP_ID, clientSecret = "s".repeat(256))
+        configurations().save(admin, bounds)
         assertEquals(1, asked)
     }
 
     @Test
     fun aSaveNamesTheStoredVersionOrConflicts() = runTest {
-        assertEquals("github_app_conflict", typeOf { configurations().save(admin, input(version = 1)) })
+        assertEquals("github_app_conflict", typeOf { configurations().save(admin, base.copy(version = 1)) })
         store.stored = storedApp()
-        assertEquals("github_app_conflict", typeOf { configurations().save(admin, input()) }, "Reload before saving")
-        assertEquals("github_app_conflict", typeOf { configurations().save(admin, input(version = 2)) })
+        assertEquals("github_app_conflict", typeOf { configurations().save(admin, base) }, "Reload before saving")
+        assertEquals("github_app_conflict", typeOf { configurations().save(admin, base.copy(version = 2)) })
         // Another replica saved between the read and the write.
         val racing = object : GitHubAppStore by store {
             override suspend fun replaceApp(app: CreatedGitHubApp, expectedVersion: Int?, by: String, at: Instant) =
@@ -192,28 +186,28 @@ class GitHubAppConfigurationsTest {
             emptyList(),
             clock,
         )
-        assertEquals("github_app_conflict", typeOf { raced.save(admin, input(version = 1)) })
+        assertEquals("github_app_conflict", typeOf { raced.save(admin, base.copy(version = 1)) })
         assertTrue(audit.records.isEmpty())
     }
 
     @Test
     fun aChangeKeepsTheSecretsItDoesNotReplace() = runTest {
         store.stored = storedApp()
-        val keepAll = input(clientSecret = null, privateKey = null, webhookSecret = null, version = 1)
+        val keepAll = base.copy(clientSecret = null, privateKey = null, webhookSecret = null, version = 1)
         val kept = configurations().save(admin, keepAll)
         assertEquals(SECRET to KEY, kept.app?.clientSecret to kept.app?.privateKeyPem)
         assertEquals("hook-secret" to 2, kept.app?.webhookSecret to kept.app?.version)
         assertTrue(logger.lines.isEmpty() && github.revoked.isEmpty(), "Same App, same client: nothing else changes")
 
         // Another client needs its own secret, and so does a kept one that no longer opens.
-        val other = input(clientId = "Iv1.other", clientSecret = null, version = 2)
+        val other = base.copy(clientId = "Iv1.other", clientSecret = null, version = 2)
         assertEquals("invalid_github_app", typeOf { configurations().save(admin, other) })
         store.stored = storedApp(clientSecret = null).copy(version = 2)
-        val unopened = input(clientSecret = null, version = 2)
+        val unopened = base.copy(clientSecret = null, version = 2)
         assertEquals("invalid_github_app", typeOf { configurations().save(admin, unopened) })
         // A webhook secret that no longer opens stays absent until one is given.
         store.stored = storedApp(webhookSecret = null)
-        val noHook = configurations().save(admin, input(webhookSecret = null, version = 1))
+        val noHook = configurations().save(admin, base.copy(webhookSecret = null, version = 1))
         assertNull(noHook.app?.webhookSecret)
         assertFalse(noHook.toResponse().webhookSecretSet)
     }
@@ -221,19 +215,19 @@ class GitHubAppConfigurationsTest {
     @Test
     fun gitHubDecidesWhetherTheKeyIsTheApps() = runTest {
         verified = { _, _ -> null }
-        assertEquals("github_app_rejected", typeOf { configurations().save(admin, input()) })
+        assertEquals("github_app_rejected", typeOf { configurations().save(admin, base) })
         verified = { _, _ -> throw GitHubCallException("GitHub did not answer GET /app.") }
-        assertEquals("unavailable", typeOf { configurations().save(admin, input()) })
+        assertEquals("unavailable", typeOf { configurations().save(admin, base) })
         verified = { _, _ -> VerifiedGitHubApp(8, "other", null, CLIENT) }
-        assertEquals("github_app_mismatch", typeOf { configurations().save(admin, input()) }, "Another App's key")
+        assertEquals("github_app_mismatch", typeOf { configurations().save(admin, base) }, "Another App's key")
         verified = { id, _ -> VerifiedGitHubApp(id, "other", null, "Iv1.other") }
-        assertEquals("github_app_mismatch", typeOf { configurations().save(admin, input()) }, "Another App's client")
+        assertEquals("github_app_mismatch", typeOf { configurations().save(admin, base) }, "Another App's client")
         verified = { _, _ -> throw CancellationException("stopped") }
-        assertFailsWith<CancellationException> { configurations().save(admin, input()) }
+        assertFailsWith<CancellationException> { configurations().save(admin, base) }
         assertNull(store.stored)
         // An answer without the client is checked on the id alone (TeamCode's verifyApp).
         verified = { id, _ -> VerifiedGitHubApp(id, "other", null, null) }
-        assertEquals(CLIENT, configurations().save(admin, input()).app?.clientId)
+        assertEquals(CLIENT, configurations().save(admin, base).app?.clientId)
     }
 
     @Test
@@ -245,7 +239,7 @@ class GitHubAppConfigurationsTest {
         link(OTHER_ORG, CLIENT, "ghu_former_b")
         link(OTHER_ORG, "Iv1.next", "ghu_already_next")
         verified = { id, _ -> VerifiedGitHubApp(id, "ostrom-next", "acme", "Iv1.next") }
-        val next = input(8, "Iv1.next", "n".repeat(40), privateKey = null, webhookSecret = null, version = 1)
+        val next = base.copy(8, "Iv1.next", "n".repeat(40), privateKey = null, webhookSecret = null, version = 1)
         val saved = configurations().save(admin, next)
         assertEquals("8" to "hook-secret", saved.app?.appId to saved.app?.webhookSecret)
         val message = logger.lines.single().second
@@ -260,7 +254,7 @@ class GitHubAppConfigurationsTest {
         store.stored = storedApp(clientSecret = null)
         link(ORG, CLIENT, "ghu_former")
         verified = { id, _ -> VerifiedGitHubApp(id, "ostrom-acme", "acme", "Iv1.next") }
-        configurations().save(admin, input(clientId = "Iv1.next", version = 1))
+        configurations().save(admin, base.copy(clientId = "Iv1.next", version = 1))
         assertTrue(links.links.isEmpty())
         assertTrue(github.revoked.isEmpty(), "Only the client that issued a token revokes it")
         assertTrue(logger.lines.isEmpty(), "Same App ID")
@@ -273,7 +267,7 @@ class GitHubAppConfigurationsTest {
             assertFalse(SECRET in text || "PRIVATE KEY" in text || "hook-secret" in text, text)
             assertTrue(CLIENT in text, text)
         }
-        assertEquals(input(version = 3), request.toInput())
+        assertEquals(base.copy(version = 3), request.toInput())
     }
 
     @Test

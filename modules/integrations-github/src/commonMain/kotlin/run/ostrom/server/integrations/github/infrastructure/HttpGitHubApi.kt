@@ -66,6 +66,7 @@ import kotlin.time.Instant
  * @param webUrl GitHub's web address, where the OAuth code of the install is exchanged, read at each call.
  * @param oauth The App's OAuth client, read at each exchange, or null when it has none: then the install fails.
  */
+@Suppress("TooManyFunctions") // GitHub's App endpoints, one call each, and their shared signing and readers.
 class HttpGitHubApi(
     private val http: HttpClient,
     private val apiUrl: () -> String,

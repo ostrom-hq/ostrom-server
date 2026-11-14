@@ -66,6 +66,9 @@ class ImportGitHubAppTest {
 
             override suspend fun saveApp(app: CreatedGitHubApp, by: String, at: Instant) = false
 
+            override suspend fun replaceApp(app: CreatedGitHubApp, expectedVersion: Int?, by: String, at: Instant) =
+                false
+
             override suspend fun saveState(stateHash: String, by: String, expiresAt: Instant) = Unit
 
             override suspend fun takeState(stateHash: String, now: Instant): String? = null

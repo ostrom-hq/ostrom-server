@@ -19,6 +19,7 @@ import kotlin.uuid.Uuid
  *
  * @param driver The connection pool.
  */
+@Suppress("TooManyFunctions") // One implementation of the port: installations, states and the App's count.
 class PostgresGitHubRepository(private val driver: Driver) : GitHubRepository {
     private suspend fun <T> keyed(setting: String, value: String, block: suspend Tx.() -> T): T = driver.transaction {
         val tx = Tx(this)
