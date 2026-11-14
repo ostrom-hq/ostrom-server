@@ -236,8 +236,8 @@ Every request is already logged once by the kernel (method, route template — n
 | `OTEL_RESOURCE_ATTRIBUTES` | — | `deployment.environment.name=production` |
 | `OTEL_TRACES_SAMPLER_ARG` | `1` | Share of new traces recorded (0 to 1); a caller's sampled trace is always continued |
 | `OTEL_SDK_DISABLED` | `false` | The standard OpenTelemetry variable, read as every SDK reads it (not an Ostrom feature switch): `true` exports nothing even with an endpoint |
-| `OSTROM_LANGFUSE_HOST`, `_PUBLIC_KEY`, `_SECRET_KEY` | — | Model calls to Langfuse (the three together) |
-| `OSTROM_POSTHOG_API_KEY`, `OSTROM_POSTHOG_HOST` | —, EU cloud | Product events to PostHog |
+| `OSTROM_LANGFUSE_HOST`, `_PUBLIC_KEY`, `_SECRET_KEY` | — | Model calls to Langfuse (the three together); read at start, before the database, as `OTEL_*` (keep the secret key in a Secret) |
+| `OSTROM_POSTHOG_API_KEY`, `OSTROM_POSTHOG_HOST` | —, EU cloud | Product events to PostHog; read at start, before the database, as `OTEL_*` |
 | `OSTROM_POD_NAME` | random | `service.instance.id` (`ServerConfig.instanceId`; the chart sets it from the pod name) |
 | `OSTROM_USAGE_RETENTION_DAYS` | `400` | Days the usage ledger keeps its events (1 to 3650); older ones are purged every hour |
 | `OSTROM_STRIPE_SECRET_KEY` (or `_FILE`) | — | Billing: Stripe secret key (`sk_test_…` or `sk_live_…`). Unset: self-hosted, limits come from the license key |
@@ -254,7 +254,7 @@ environment, then `OSTROM_CONFIG_FILE`), with the `OSTROM_<MODULE>_…` prefix, 
 ### Settings in the console
 
 The environment holds only what the server needs to start (the table above: address, database, keys, public URLs,
-proxies, per-replica ceilings, OpenTelemetry). Everything else is set by an administrator of the instance in the
+proxies, per-replica ceilings, and where its telemetry goes: OpenTelemetry, Langfuse and PostHog). Everything else is set by an administrator of the instance in the
 console (**Admin → Settings**, the `admin` tag of the contract) and stored in PostgreSQL by the `admin` module, as TeamCode
 keeps its dashboard settings: plain values in `admin_settings.plain_values`, secrets sealed with the secrets key and
 bound to their section and field (`instance-setting:<section>:<field>`), never returned, only whether they are set.
@@ -274,6 +274,13 @@ or removes one (never the last). Only a person signed in (a browser session or t
 instance reaches the admin routes, never a key whatever its scopes. `GET /auth/me` answers `instanceAdmin: true` for
 them. `OSTROM_INSTANCE_ADMINS` is deprecated: its user ids are imported once, and a person an administrator removed is
 never brought back by it.
+
+The telemetry destinations stay in the environment because the server needs them before it reads any setting: it
+starts its telemetry (ostrom-core's `Telemetry.start`, from the app's `startTelemetry`) before it connects to the database
+and builds its modules, so that the start itself, a failed connection or a failed migration are traced and logged, and
+the exporters are built once, from `TelemetrySettings`, for the life of the process. Langfuse receives the model calls'
+spans through that same telemetry. They are an operator's observability, as `OTEL_*` is, never a product setting; the
+server itself sends no product event to PostHog (`OSTROM_POSTHOG_*` only configures the exporter ostrom-core builds).
 
 What lives in the console so far:
 
