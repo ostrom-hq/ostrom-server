@@ -2,6 +2,7 @@
 package run.ostrom.server.kernel
 
 import run.ostrom.server.kernel.database.EveryCallScheduledWork
+import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.ScheduledWork
 import run.ostrom.server.kernel.database.repeatDue
 import run.ostrom.server.kernel.database.scheduledWork
@@ -60,7 +61,8 @@ class ScheduledJobsTest {
     fun aJobNotDueHereIsAskedAgainEveryPollThenWaitsItsIntervalAfterARun() = runTest {
         val work = Scripted(false, false)
         var runs = 0
-        val job = launch { work.repeatDue("usage/purge", 1.hours, 5.minutes, Lines(), "failed") { runs++ } }
+        val purge = ScheduledJob("usage/purge", 1.hours, 5.minutes)
+        val job = launch { work.repeatDue(purge, Lines(), "failed") { runs++ } }
         runCurrent()
         assertEquals(0, runs, "Another replica holds it")
         advanceTimeBy(1.minutes)
@@ -83,7 +85,7 @@ class ScheduledJobsTest {
         val lines = Lines()
         var runs = 0
         val job = launch {
-            Scripted().repeatDue("sessions/sweep", 30.seconds, 10.seconds, lines, "sweep failed") {
+            Scripted().repeatDue(ScheduledJob("sessions/sweep", 30.seconds, 10.seconds), lines, "sweep failed") {
                 runs++
                 when (runs) {
                     1 -> error("secret row value")
@@ -103,7 +105,7 @@ class ScheduledJobsTest {
     @Test
     fun aCancellationIsNeverSwallowed() = runTest {
         assertFailsWith<CancellationException> {
-            Scripted().repeatDue("events/purge", 1.minutes, 1.seconds, Lines(), "failed") {
+            Scripted().repeatDue(ScheduledJob("events/purge", 1.minutes, 1.seconds), Lines(), "failed") {
                 throw CancellationException("stopping")
             }
         }

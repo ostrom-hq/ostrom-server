@@ -5,6 +5,7 @@ import kotlinx.coroutines.CancellationException
 import run.ostrom.server.events.domain.EventRules
 import run.ostrom.server.events.domain.OrgEventsRepository
 import run.ostrom.server.kernel.database.EveryCallScheduledWork
+import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.ScheduledWork
 import run.ostrom.server.kernel.database.repeatDue
 import run.ostrom.server.kernel.logging.Logger
@@ -36,7 +37,7 @@ class EventsPurgeWorker(
      * @param work The lease of the job, `events/purge`.
      */
     suspend fun run(work: ScheduledWork = EveryCallScheduledWork): Nothing =
-        work.repeatDue("events/purge", interval, timeout, logger, "events purge failed") { pass() }
+        work.repeatDue(ScheduledJob("events/purge", interval, timeout), logger, "events purge failed") { pass() }
 
     /** One pass: a batch of old events deleted; a failure is logged and the next pass tries again. */
     suspend fun pass() {

@@ -5,6 +5,7 @@ import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.InvalidConfigException
+import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.database.repeatDue
 import run.ostrom.server.kernel.database.scheduledWork
@@ -249,19 +250,15 @@ object McpRelayModule : ServerModule {
         // Each periodic job on one replica at a time (ScheduledWork, TeamCode's SqlScheduledWork).
         val work = koin.scheduledWork()
         scope.launch {
-            work.repeatDue(
-                "mcp/purge",
-                1.hours,
-                PURGE_TIMEOUT,
-                logger,
-                "mcp journal purge failed",
-            ) { repository.purgeCalls(clock.now() - 30.days) }
+            work.repeatDue(ScheduledJob("mcp/purge", 1.hours, PURGE_TIMEOUT), logger, "mcp journal purge failed") {
+                repository.purgeCalls(clock.now() - 30.days)
+            }
         }
         val host = koin.getOrNull<HostedRuntime>()?.host ?: return
         val retain = RetainHostedMcpProcessesUseCaseImpl(repository, koin.getOrNull<MemberDirectory>(), host, clock)
         scope.launch {
             var last: HostedSweep? = null
-            work.repeatDue("mcp/retain", 1.minutes, RETAIN_TIMEOUT, logger, "mcp retain sweep failed") {
+            work.repeatDue(ScheduledJob("mcp/retain", 1.minutes, RETAIN_TIMEOUT), logger, "mcp retain sweep failed") {
                 val sweep = try {
                     retain()
                 } catch (error: CancellationException) {

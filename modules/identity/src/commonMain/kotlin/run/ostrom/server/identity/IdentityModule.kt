@@ -167,6 +167,7 @@ import run.ostrom.server.kernel.auth.PhoneUnlockProofs
 import run.ostrom.server.kernel.auth.ServiceKeyAudit
 import run.ostrom.server.kernel.auth.SignOutListener
 import run.ostrom.server.kernel.auth.TokenAuthenticator
+import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.database.repeatDue
 import run.ostrom.server.kernel.database.scheduledWork
@@ -353,7 +354,7 @@ object IdentityModule : ServerModule {
         val logger = koin.get<Logger>()
         val work = koin.scheduledWork()
         scope.launch {
-            work.repeatDue("identity/purge", 1.hours, PURGE_TIMEOUT, logger, "identity purge failed") {
+            work.repeatDue(ScheduledJob("identity/purge", 1.hours, PURGE_TIMEOUT), logger, "identity purge failed") {
                 val before = clock.now() - AGENT_TOKEN_RETENTION
                 logger.purging("agent token purge failed") { tokens.purgeAgentTokens(before) }
                 logger.purging("rate limit purge failed") { windows.purgeExpired() }

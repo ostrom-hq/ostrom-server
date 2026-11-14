@@ -4,6 +4,7 @@ package run.ostrom.server.launches
 import run.ostrom.server.automations.domain.WaitAgentResolver
 import run.ostrom.server.gates.domain.services.GateActorResolver
 import run.ostrom.server.kernel.auth.ModelAccess
+import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.database.repeatDue
 import run.ostrom.server.kernel.database.scheduledWork
@@ -106,7 +107,7 @@ object LaunchesModule : ServerModule {
         val logger = koin.get<Logger>()
         val work = koin.scheduledWork()
         scope.launch {
-            work.repeatDue("launches/purge", 1.hours, PURGE_TIMEOUT, logger, "launch purge failed") {
+            work.repeatDue(ScheduledJob("launches/purge", 1.hours, PURGE_TIMEOUT), logger, "launch purge failed") {
                 launches.purge(clock.now() - LAUNCH_RETENTION)
             }
         }

@@ -7,6 +7,7 @@ import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.EnvironmentConfigSource
 import run.ostrom.server.kernel.config.InvalidConfigException
 import run.ostrom.server.kernel.database.EveryCallScheduledWork
+import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.ScheduledWork
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.database.repeatDue
@@ -157,7 +158,9 @@ object UsageModule : ServerModule {
         logger: Logger,
         work: ScheduledWork = EveryCallScheduledWork,
         interval: Duration = 1.hours,
-    ): Nothing = work.repeatDue("usage/purge", interval, PURGE_TIMEOUT, logger, "usage purge failed") { purge() }
+    ): Nothing = work.repeatDue(ScheduledJob("usage/purge", interval, PURGE_TIMEOUT), logger, "usage purge failed") {
+        purge()
+    }
 
     /** The longest a purge may take. */
     private val PURGE_TIMEOUT: Duration = 5.minutes

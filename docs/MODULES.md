@@ -55,7 +55,7 @@ module on its `instance_scheduled_work` table, TeamCode's `SqlScheduledWork`): t
 every replica, the lease claimed and released on the database's clock. A module that needs it lists the instance
 module before it (it always does: the instance module comes first).
 `koin.scheduledWork()` gives that lease, or, in a test that loads a module without the instance module, one that runs
-every call; `work.repeatDue(name, interval, timeout, logger, failure) { … }` is the loop: it runs the job when it is
+every call; `work.repeatDue(ScheduledJob(name, interval, timeout), logger, failure) { … }` is the loop: it runs the job when it is
 due, waits its interval after a run and asks again every minute at most while another replica holds it, and logs a
 failed or overrunning run by its type only. The jobs on it: `mcp/purge` (hourly) and `mcp/retain` (each minute),
 `identity/purge`, `launches/purge` and `usage/purge` (hourly), `events/purge` (each minute) and `sessions/sweep`

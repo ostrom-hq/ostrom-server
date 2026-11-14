@@ -3,6 +3,7 @@ package run.ostrom.server.sessions
 
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.gates.domain.services.GateSessions
+import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.database.repeatDue
 import run.ostrom.server.kernel.database.scheduledWork
@@ -100,7 +101,9 @@ object SessionsModule : ServerModule {
         val work = koin.scheduledWork()
         val every = SweepStaleSessionsUseCaseImpl.EVERY
         scope.launch {
-            work.repeatDue("sessions/sweep", every, every, logger, "stale session sweep failed") { sweep() }
+            work.repeatDue(ScheduledJob("sessions/sweep", every, every), logger, "stale session sweep failed") {
+                sweep()
+            }
         }
         val active = koin.get<CachedCount>(named(ACTIVE_SESSIONS))
         koin.get<OstromMetrics>().observeSessionsActive("local", active::value)

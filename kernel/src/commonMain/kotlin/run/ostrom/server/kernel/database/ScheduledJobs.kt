@@ -10,27 +10,33 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 
 /**
- * Runs the periodic job [name] on one replica at a time ([ScheduledWork.runDue]) until the calling coroutine is
- * cancelled: after a run here, it waits [interval]; while the job is not due or another replica holds it, it asks
- * again every minute (every [interval] when shorter). A run that fails or overruns its [timeout] is logged as [failure] (the error's type only, never
- * its message: PostgreSQL quotes row values in it), and the next one runs at its time: a periodic job never stops the
- * server.
+ * A periodic job: its name, how often it runs across every replica, and the longest one run may take.
  *
- * @param name The job (`mcp/retain`, `usage/purge`).
- * @param interval The time between two runs, across every replica.
- * @param timeout The longest a run may take (at most 5 minutes).
+ * @property name The job (`mcp/retain`, `usage/purge`).
+ * @property interval The time between two runs, across every replica.
+ * @property timeout The longest a run may take (at most 5 minutes).
+ */
+data class ScheduledJob(val name: String, val interval: Duration, val timeout: Duration)
+
+/**
+ * Runs the periodic [job] on one replica at a time ([ScheduledWork.runDue]) until the calling coroutine is cancelled:
+ * after a run here, it waits the job's interval; while the job is not due or another replica holds it, it asks again
+ * every minute (every interval when shorter). A run that fails or overruns its timeout is logged as [failure] (the
+ * error's type only, never its message: PostgreSQL quotes row values in it), and the next one runs at its time: a
+ * periodic job never stops the server.
+ *
+ * @param job The job.
  * @param logger Where a failed run is reported.
  * @param failure The warning a failed run logs.
  * @param block The work.
  */
 suspend fun ScheduledWork.repeatDue(
-    name: String,
-    interval: Duration,
-    timeout: Duration,
+    job: ScheduledJob,
     logger: Logger,
     failure: String,
     block: suspend () -> Unit,
 ): Nothing {
+    val (name, interval, timeout) = job
     val poll = minOf(interval, 1.minutes)
     while (true) {
         val ran = try {
