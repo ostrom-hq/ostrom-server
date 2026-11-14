@@ -260,7 +260,11 @@ class RunAutomationsUseCaseImpl(
             }
         }
         for (waiting in steps.step { repository.parked(BATCH) }.orEmpty()) steps.step { startParked(waiting) }
-        for (followed in steps.step { repository.followed(now, BATCH) }.orEmpty()) steps.step { follow(followed, now) }
+        // The clock again: the crons and the starts before may have taken a while.
+        val followedAt = clock.now().truncatedToMillis()
+        for (followed in steps.step { repository.followed(followedAt, BATCH) }.orEmpty()) {
+            steps.step { follow(followed, followedAt) }
+        }
         steps.end()
         return claimed.size
     }

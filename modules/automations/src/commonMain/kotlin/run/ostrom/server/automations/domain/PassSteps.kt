@@ -5,7 +5,8 @@ import kotlinx.coroutines.CancellationException
 
 /**
  * The steps of one scheduler pass, each under its own handler (TeamCode d7cc0b49): a step that fails never stops the
- * steps after it, and [end] throws the first failure once every step ran, for the scheduler to report.
+ * steps after it, and [end] throws the first failure once every step ran, for the scheduler to report, with the
+ * later ones suppressed in it.
  * Cancellation is never held back.
  */
 internal class PassSteps {
@@ -22,7 +23,8 @@ internal class PassSteps {
     } catch (error: CancellationException) {
         throw error
     } catch (error: Exception) {
-        failure = failure ?: error
+        val first = failure
+        if (first == null) failure = error else first.addSuppressed(error)
         null
     }
 

@@ -600,6 +600,7 @@ class RunAutomationsTest {
         repository.failing += setOf("deleteRunsBefore", "failQueuedBefore")
         val purge = assertFailsWith<IllegalStateException> { runs.tick() }
         assertEquals("deleteRunsBefore", purge.message, "The first failure")
+        assertEquals(listOf("failQueuedBefore"), purge.suppressed.map { it.message }, "The later ones in it")
         assertEquals("Summarize 2026-10-30 at 21:00", launcher.launched.single().prompt, "The due cron still ran")
         assertNull(repository.failedBefore)
         repository.failing.clear()
