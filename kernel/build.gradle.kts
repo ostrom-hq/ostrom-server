@@ -49,7 +49,8 @@ kotlin {
             api(libs.ktor.serialization.json)
             // The client of a URL someone else supplied, and the proxy that checks its connections.
             api(libs.ktor.client.core)
-            api(libs.ktor.network)
+            // The engine of that client: its `dnsResolver` is where the address is checked and pinned.
+            implementation(libs.ktor.client.cio)
             api(libs.koin.core)
             api(libs.sqlx4k.postgres)
             api(libs.kotlinx.io)
@@ -78,7 +79,6 @@ kotlin {
             // The client address test runs a real server (Netty, the production engine) and client on 127.0.0.1: the
             // test engine has no peer address.
             implementation(libs.ktor.server.netty)
-            implementation(libs.ktor.client.cio)
             implementation(libs.ktor.client.mock)
         }
     }
