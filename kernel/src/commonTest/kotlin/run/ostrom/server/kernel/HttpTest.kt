@@ -153,6 +153,10 @@ class HttpTest {
                 throw SQLException("Key (email)=(alice@example.com) is locked", "40P01")
             }
             route.get("/probe/jdbc-closed") { throw SQLException("connection of alice@example.com closed") }
+            route.get("/probe/jdbc-pool-wrapped-duplicate") {
+                // A pool's own SQLException, no SQLSTATE, around PostgreSQL's unique violation.
+                throw SQLException("pool", null, SQLException("Key (email)=(alice@example.com) exists", "23505"))
+            }
             route.get("/probe/origin") { call.respondText(call.request.origin.remoteAddress) }
             route.get("/probe/cancelled") { throw CancellationException("client gone") }
             route.get("/probe/unprotected-me") { call.respondText(call.requirePrincipal().subjectId) }
@@ -442,6 +446,8 @@ class HttpTest {
         val closed = lines.last { "database failure" in it }
         assertTrue("\"error\":\"SQLException\"" in closed && "sql_state" !in closed, closed)
         assertFalse("alice@example.com" in closed, closed)
+
+        assertEquals(HttpStatusCode.Conflict, client.get("/probe/jdbc-pool-wrapped-duplicate").status)
     }
 
     @Test

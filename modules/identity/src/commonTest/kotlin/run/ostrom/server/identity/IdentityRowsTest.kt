@@ -14,7 +14,7 @@ class IdentityRowsTest {
     fun aRowMissingAColumnWrittenWithAnotherFailsAtTheReadWithTheColumnNamed() {
         val t = IdentitySetupLinks
         val malformed = ResultRow.createAndFillValues(mapOf(t.usedBy to null, t.usedAt to null))
-        val error = assertFailsWith<IllegalArgumentException> { malformed.present(t.usedBy, t.usedAt) }
+        val error = assertFailsWith<IllegalStateException> { malformed.present(t.usedBy, t.usedAt) }
         assertEquals("used_by is set with used_at", error.message)
     }
 }

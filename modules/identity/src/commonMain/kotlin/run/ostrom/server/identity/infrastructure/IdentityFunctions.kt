@@ -62,4 +62,4 @@ internal fun JdbcTransaction.call(name: String, vararg arguments: Expression<*>)
  * @return Its value.
  */
 internal fun <T : Any> ResultRow.present(column: Column<T?>, with: Column<*>): T =
-    requireNotNull(this[column]) { "${column.name} is set with ${with.name}" }
+    checkNotNull(this[column]) { "${column.name} is set with ${with.name}" }

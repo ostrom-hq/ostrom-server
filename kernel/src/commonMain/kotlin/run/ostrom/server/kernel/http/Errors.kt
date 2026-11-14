@@ -128,8 +128,11 @@ private const val UNIQUE_VIOLATION = "23505"
  * SQLSTATE is its cause's), a [SQLException] itself, or one wrapped in another exception's causes. Null when no
  * cause is a database failure.
  */
-private fun Throwable.jdbcFailure(): SQLException? =
-    generateSequence(this) { it.cause }.take(MAX_CAUSES).filterIsInstance<SQLException>().firstOrNull()
+private fun Throwable.jdbcFailure(): SQLException? {
+    val failures = generateSequence(this) { it.cause }.take(MAX_CAUSES).filterIsInstance<SQLException>().toList()
+    // A unique violation anywhere in the causes wins over a wrapper's own SQLSTATE (a pool's, or none).
+    return failures.firstOrNull { it.sqlState == UNIQUE_VIOLATION } ?: failures.firstOrNull()
+}
 
 /** How deep the causes are searched: a cycle of causes never loops. */
 private const val MAX_CAUSES = 8
