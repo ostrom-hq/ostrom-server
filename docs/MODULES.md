@@ -110,9 +110,8 @@ val OrgsMigrations = listOf(
   role their queries switch to (`SET LOCAL ROLE`): the owner that runs `migrate` needs `CREATEROLE`, and the serving
   role must be a member of `ostrom_tenant` (ci/database-roles.sql creates it beforehand and grants it to both, as a
   deployment must). On Exposed, the kernel's `JdbcDatabase.inOrg` does that switch (section 4).
-- Plain PostgreSQL. **No `::type` casts** (write `CAST(x AS type)`), and no `;` inside a statement other than a
-  `DO $$ … $$` block: sqlx4k's runner, which reads `:name` as a parameter and splits on `;`, still applies the same
-  migrations in the tests of the modules not moved to Flyway yet.
+- Plain PostgreSQL, run by Flyway over JDBC as written (Java migrations: no placeholder replacement, no splitting).
+  Write `CAST(x AS type)` rather than `::type`, as the existing migrations do.
 - Modules migrate in the order of `serverModules()`: a module whose tables reference another module's tables comes
   after it.
 
@@ -229,12 +228,12 @@ Every request is already logged once by the kernel (method, route template — n
   test cases).
 - **Unit tests** (use cases): hand-written fakes (`InMemoryOrgsRepository`), no MockK (CONVENTIONS).
   Coroutines with `runTest`; time from an injected `Clock`.
-- **Database and route tests**: `serverTest(listOf(OrgsModule), migrations = TestMigrations.FLYWAY) { server -> … }`
+- **Database and route tests**: `serverTest(listOf(OrgsModule)) { server -> server.client.get("/api/v1/orgs") … }`
   starts a fresh PostgreSQL database, applies the migrations with Flyway as `ostrom-server migrate` does, starts the
-  kernel with its `JdbcDatabase` as the serving role, runs `initialize`, serves the routes, and drops the database
-  afterwards. A module on Exposed always passes `TestMigrations.FLYWAY` (the server checks Flyway's histories at
-  start); the default, sqlx4k's runner, is for the modules not moved yet. Fakes replace real bindings through
-  `overrides = module { single<TokenAuthenticator> { … } }`. Name these classes `*PostgresTest`.
+  kernel with its `JdbcDatabase` as the serving role (which checks Flyway's histories), runs `initialize`, serves the
+  routes, and drops the database afterwards. A test that applies migrations itself (a part of them first, to test a
+  data migration) uses `database.migrationRunner(logger)`, Flyway on the owner's connections. Fakes replace real
+  bindings through `overrides = module { single<TokenAuthenticator> { … } }`. Name these classes `*PostgresTest`.
 - **Isolation tests** (one per tenant table, CONVENTIONS 16.1): `serverTest`'s repositories and routes run as the
   test database's serving role, which bypasses nothing, as a deployment's. To prove a policy on its own, as another
   role: `database.withRole { role, serving -> … }` creates a login role that owns nothing (grant it the module's tables),

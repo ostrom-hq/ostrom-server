@@ -20,7 +20,6 @@ import run.ostrom.server.kernel.auth.PrincipalChannel
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.TokenAuthenticator
-import run.ostrom.server.testing.TestMigrations
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.todos.domain.TodoArtifacts
@@ -77,9 +76,9 @@ class TodosRoutesPostgresTest {
         single<TodoArtifacts> { FakeArtifacts() }
     }
 
-    /** The module's server, its tables migrated by Flyway as `ostrom-server migrate` does. */
+    /** The module's server. */
     private fun todosServer(overrides: Module, block: suspend ApplicationTestBuilder.(TestServer) -> Unit) =
-        serverTest(listOf(TodosModule), overrides, TestMigrations.FLYWAY, block)
+        serverTest(listOf(TodosModule), overrides, block)
 
     private fun todoTest(block: suspend HttpClient.() -> Unit) =
         todosServer(overrides) { server -> server.client.block() }

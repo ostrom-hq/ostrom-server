@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.receipts
 
-import run.ostrom.server.kernel.database.MigrationRunnerImpl
 import run.ostrom.server.kernel.logging.JsonLogger
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.receipts.infrastructure.ReceiptsMigrations
@@ -36,7 +35,7 @@ class ReceiptsOwnerMigrationPostgresTest {
     fun theReceiptsSignedBeforeNameTheirSessionAndItsPerson() = runTest {
         val database = TestDatabase.create() ?: return@runTest
         try {
-            val migrator = MigrationRunnerImpl(database.owner, JsonLogger(LogLevel.WARN))
+            val migrator = database.migrationRunner(JsonLogger(LogLevel.WARN))
             migrator.migrate("receipts", ReceiptsMigrations.take(2))
             database.owner.execute(sessions).getOrThrow()
             val fixtures = database.superuser
@@ -81,7 +80,7 @@ class ReceiptsOwnerMigrationPostgresTest {
     fun aDatabaseWithoutSessionsYetLeavesTheOwnersUnknown() = runTest {
         val database = TestDatabase.create() ?: return@runTest
         try {
-            val migrator = MigrationRunnerImpl(database.owner, JsonLogger(LogLevel.WARN))
+            val migrator = database.migrationRunner(JsonLogger(LogLevel.WARN))
             migrator.migrate("receipts", ReceiptsMigrations.take(2))
             database.superuser.execute(receipt("rcpt_session", "session", "s-1", "{}")).getOrThrow()
             migrator.migrate("receipts", ReceiptsMigrations)

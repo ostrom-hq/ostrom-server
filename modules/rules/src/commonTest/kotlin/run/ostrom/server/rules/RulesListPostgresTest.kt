@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.rules
 
-import run.ostrom.server.kernel.database.MigrationRunnerImpl
 import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.rules.domain.models.RuleCursor
 import run.ostrom.server.rules.domain.models.RuleQuery
@@ -37,7 +36,7 @@ class RulesListPostgresTest {
     ) = runTest(timeout = 5.minutes) {
         val database = TestDatabase.create() ?: return@runTest
         try {
-            MigrationRunnerImpl(database.owner, RecordingLogger()).migrate("rules", RulesMigrations)
+            database.migrationRunner(RecordingLogger()).migrate("rules", RulesMigrations)
             block(database.superuser, PostgresRulesRepository(database.driver), database.driver)
         } finally {
             database.close()

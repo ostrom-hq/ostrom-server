@@ -24,7 +24,7 @@ suspend fun migrateModules(
     config: DatabaseConfig,
     logger: Logger,
     modules: List<ServerModule>,
-    runner: MigrationRunner = FlywayMigrationRunner(migrationSource(config), logger),
+    runner: MigrationRunner = ownerMigrationRunner(config, logger),
 ) {
     val lock = withContext(Dispatchers.IO) { migrationSource(config).connection }
     try {
@@ -39,6 +39,18 @@ suspend fun migrateModules(
         withContext(NonCancellable + Dispatchers.IO) { lock.close() }
     }
 }
+
+/**
+ * Flyway on the owner's connections ([migrationSource]), as [migrateModules] runs it, for a caller that applies one
+ * module's migrations itself (a test that migrates part of them first).
+ *
+ * @param config The owner's database.
+ * @param logger Where applied migrations are reported.
+ *
+ * @return The runner.
+ */
+fun ownerMigrationRunner(config: DatabaseConfig, logger: Logger): MigrationRunner =
+    FlywayMigrationRunner(migrationSource(config), logger)
 
 /** The owner's connections for migrations, without a pool: Flyway opens the few it needs. */
 internal fun migrationSource(config: DatabaseConfig): PGSimpleDataSource = PGSimpleDataSource().apply {

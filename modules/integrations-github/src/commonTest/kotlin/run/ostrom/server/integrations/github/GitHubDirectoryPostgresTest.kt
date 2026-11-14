@@ -43,7 +43,6 @@ import run.ostrom.server.kernel.auth.PrincipalChannel
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.TokenAuthenticator
-import run.ostrom.server.kernel.database.MigrationRunnerImpl
 import run.ostrom.server.orgs.domain.FindOrgUseCase
 import run.ostrom.server.orgs.domain.OrgNotFoundException
 import run.ostrom.server.rules.domain.models.AnalysisKind
@@ -539,7 +538,7 @@ class GitHubDirectoryPostgresTest {
     fun theEngineProposesRulesFromGitHubForItsOrganizationOnly() = gitHubTest { server ->
         server.installBoth()
         // The rules tables, migrated by their owner as `ostrom-server migrate` does; the driver serves them.
-        MigrationRunnerImpl(server.database.owner, RecordingLogger()).migrate("rules", RulesMigrations)
+        server.database.migrationRunner(RecordingLogger()).migrate("rules", RulesMigrations)
         val runs = PostgresAnalysisRepository(server.driver)
         val rules = PostgresRulesRepository(server.driver)
         val reader = server.koin.get<RepositoryReader>()
