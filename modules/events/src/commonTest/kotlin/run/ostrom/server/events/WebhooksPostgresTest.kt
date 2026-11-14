@@ -75,6 +75,7 @@ class WebhooksPostgresTest {
         "owner-a" to OrgPrincipal(orgA, ownerA, OrgRole.OWNER),
         "member-a" to OrgPrincipal(orgA, Uuid.random(), OrgRole.MEMBER),
         "reader-a" to OrgPrincipal(orgA, ownerA, OrgRole.ADMIN),
+        "cli-a" to OrgPrincipal(orgA, ownerA, OrgRole.ADMIN),
         "key-a" to OrgPrincipal(orgA, ownerA, OrgRole.ADMIN),
         "teamkey-a" to OrgPrincipal(orgA, ownerA, OrgRole.ADMIN),
         "agent-a" to OrgPrincipal(orgA, ownerA, OrgRole.OWNER),
@@ -82,7 +83,8 @@ class WebhooksPostgresTest {
     )
 
     private fun principal(token: String): AuthenticatedPrincipal? = when (token) {
-        "reader-a" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf("cloud:read"))
+        "reader-a" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf("cloud:read", "cloud:write"))
+        "cli-a" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf("user:*"), signedIn = true)
         "key-a" -> AuthenticatedPrincipal(token, PrincipalKind.SERVICE, setOf("cloud:admin"))
         "teamkey-a" -> AuthenticatedPrincipal(token, PrincipalKind.SERVICE, setOf("team:read", "cloud:read"))
         "agent-a" -> AuthenticatedPrincipal(token, PrincipalKind.AGENT, setOf("agent:session"))
@@ -160,13 +162,13 @@ class WebhooksPostgresTest {
         assertEquals(setOf(ServerFeatures.EVENTS, ServerFeatures.WEBHOOKS), EventsModule.features(server.koin))
         assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/webhooks").status)
         assertEquals(HttpStatusCode.NotFound, server.client.get("/api/v1/webhooks") { bearerAuth("stranger") }.status)
-        for (token in listOf("member-a", "teamkey-a", "agent-a")) {
+        // A personal token made in the console never manages them, whatever its cloud scopes (TeamCode).
+        for (token in listOf("member-a", "teamkey-a", "agent-a", "reader-a")) {
             val read = server.client.get("/api/v1/webhooks") { bearerAuth(token) }
             assertEquals(HttpStatusCode.Forbidden, read.status, token)
             assertEquals(HttpStatusCode.Forbidden, server.create(token).status, token)
         }
-        assertEquals(HttpStatusCode.OK, server.client.get("/api/v1/webhooks") { bearerAuth("reader-a") }.status)
-        assertEquals(HttpStatusCode.Forbidden, server.create("reader-a").status, "cloud:read does not change them")
+        assertEquals(HttpStatusCode.Created, server.create("cli-a").status, "An admin's ostrom login does")
         assertEquals(HttpStatusCode.Created, server.create("key-a").status, "An admin's cloud:admin key does")
     }
 
@@ -211,7 +213,7 @@ class WebhooksPostgresTest {
         val limited = server.client.post("/api/v1/webhooks/$id/test") { bearerAuth("owner-a") }
         assertEquals(HttpStatusCode.TooManyRequests, limited.status)
         assertEquals("10", limited.headers[HttpHeaders.RetryAfter])
-        val log = server.client.get("/api/v1/webhooks/$id/deliveries?limit=2") { bearerAuth("reader-a") }
+        val log = server.client.get("/api/v1/webhooks/$id/deliveries?limit=2") { bearerAuth("key-a") }
             .body<WebhookDeliveryList>()
         assertEquals(2, log.items.size)
         assertTrue(log.items.all { it.state == "pending" && it.eventType == "webhook.test" })

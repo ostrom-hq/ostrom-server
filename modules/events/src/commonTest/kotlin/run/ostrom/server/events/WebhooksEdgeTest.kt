@@ -21,6 +21,7 @@ import run.ostrom.server.events.infrastructure.WebhooksConfig
 import run.ostrom.server.events.presentation.managesWebhooks
 import run.ostrom.server.events.presentation.toResponse
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import run.ostrom.server.kernel.auth.PrincipalChannel
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.config.MapConfigSource
 import run.ostrom.server.kernel.network.PinnedDnsRefusal
@@ -69,12 +70,17 @@ class WebhooksEdgeTest {
     }
 
     @Test
-    fun aPersonsTokenReadsWithCloudReadAndWritesOnlyWithCloudWrite() {
-        fun user(vararg scopes: String) = AuthenticatedPrincipal("u", PrincipalKind.USER, scopes.toSet())
-        assertTrue(user("cloud:read").managesWebhooks(write = false))
-        assertFalse(user("cloud:read").managesWebhooks(write = true))
-        assertTrue(user("cloud:write").managesWebhooks(write = true))
-        assertFalse(user("usage:read").managesWebhooks(write = false))
+    fun onlyAPersonsInteractiveLoginOrACloudAdminKeyManagesWebhooks() {
+        fun user(channel: PrincipalChannel, signedIn: Boolean = false) = AuthenticatedPrincipal(
+            "u", PrincipalKind.USER, setOf("cloud:write"), channel = channel, signedIn = signedIn,
+        )
+        assertTrue(user(PrincipalChannel.BROWSER).managesWebhooks())
+        assertTrue(user(PrincipalChannel.MOBILE_APP).managesWebhooks())
+        assertTrue(user(PrincipalChannel.API_TOKEN, signedIn = true).managesWebhooks(), "ostrom login")
+        assertFalse(user(PrincipalChannel.API_TOKEN).managesWebhooks(), "A personal token, whatever its cloud scopes")
+        assertTrue(AuthenticatedPrincipal("k", PrincipalKind.SERVICE, setOf("cloud:admin")).managesWebhooks())
+        assertFalse(AuthenticatedPrincipal("k", PrincipalKind.SERVICE, setOf("cloud:write")).managesWebhooks())
+        assertFalse(AuthenticatedPrincipal("a", PrincipalKind.AGENT, setOf("cloud:admin")).managesWebhooks())
     }
 
     private fun sender(

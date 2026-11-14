@@ -8,22 +8,24 @@ import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.ServiceKeyScopes
+import run.ostrom.server.kernel.auth.WriteAccess
+import run.ostrom.server.kernel.auth.mayWrite
 import run.ostrom.server.kernel.auth.outsideOrganization
 
 /** The roles that manage webhooks: a webhook receives the whole organization's events. */
 private val WEBHOOK_ROLES = setOf(OrgRole.OWNER, OrgRole.ADMIN)
 
 /**
- * Whether a credential may read (or, with [write], change) webhooks, before its role is known: a person's browser
- * session or token holding `cloud:read` (`cloud:write` to change), or a service key holding `cloud:admin`. Never an
- * agent's or a device's token, nor a `team:read` key.
- *
- * @param write True for a change.
+ * Whether a credential may manage webhooks, before its role is known, as TeamCode decides it
+ * (`requireCloudAdministrator`): a person's interactive login (a browser session, the unlocked mobile app or the
+ * token of `ostrom login`), or a service key holding `cloud:admin` (TeamCode's `admin:cloud`). Never a personal token
+ * made in the console whatever its `cloud:*` scopes, an agent's or a device's token, nor a `team:read` key: a webhook
+ * receives the whole organization's events.
  *
  * @return True when it may.
  */
-internal fun AuthenticatedPrincipal.managesWebhooks(write: Boolean): Boolean = when (kind) {
-    PrincipalKind.USER -> allows(CLOUD_WRITE) || (!write && allows(CLOUD_READ))
+internal fun AuthenticatedPrincipal.managesWebhooks(): Boolean = when (kind) {
+    PrincipalKind.USER -> mayWrite(WriteAccess.PERSON)
     PrincipalKind.SERVICE -> ServiceKeyScopes.CLOUD_ADMIN in scopes
     else -> false
 }
@@ -33,17 +35,13 @@ internal fun AuthenticatedPrincipal.managesWebhooks(write: Boolean): Boolean = w
  * nothing about its organization.
  *
  * @param principal The caller.
- * @param write True for a change.
  *
  * @return The actor.
  *
  * @throws WebhooksForbiddenException When the credential or the member's role may not.
  */
-internal suspend fun PrincipalOrgResolver.webhookActorOf(
-    principal: AuthenticatedPrincipal,
-    write: Boolean,
-): WebhookActor {
-    val member = if (principal.managesWebhooks(write)) {
+internal suspend fun PrincipalOrgResolver.webhookActorOf(principal: AuthenticatedPrincipal): WebhookActor {
+    val member = if (principal.managesWebhooks()) {
         resolve(principal, null) ?: throw principal.outsideOrganization()
     } else {
         null
@@ -52,5 +50,3 @@ internal suspend fun PrincipalOrgResolver.webhookActorOf(
     return WebhookActor(member.orgId, member.memberId, principal)
 }
 
-private const val CLOUD_READ = "cloud:read"
-private const val CLOUD_WRITE = "cloud:write"
