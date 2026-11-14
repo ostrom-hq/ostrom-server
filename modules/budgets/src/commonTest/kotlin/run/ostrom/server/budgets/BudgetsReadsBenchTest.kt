@@ -74,9 +74,9 @@ class BudgetsReadsBenchTest {
     private companion object {
         const val ORGS = 10
 
-        // The queries of the busiest read today (the organization's and the member's limits, Build 41717982170):
-        // one more is an N+1, on any runner.
-        const val MAX_QUERIES = 2
+        // The queries of the busiest read: the limits, the member's month and the organization's month, read at every
+        // call since no decision is cached in a process (TeamCode: no process cache); one more is an N+1.
+        const val MAX_QUERIES = 3
         const val USAGE_PER_ORG = 100_000
         const val LIMIT_MICROS = 1_000_000_000_000L
         const val MEMBER_LIMIT_MICROS = LIMIT_MICROS / 2

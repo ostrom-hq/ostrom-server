@@ -121,7 +121,8 @@ class GetMyBudgetUseCaseImpl(
 ) : GetMyBudgetUseCase {
     override suspend fun invoke(caller: Caller): MyBudget {
         val period = BudgetPeriod.of(clock.now())
-        val limit = repository.limits(caller.orgId, caller.memberId).memberLimitMicros
+        val limits = repository.limits(caller.orgId, caller.memberId)
+        val limit = limits.memberLimitMicros
         val spent = spend.spentMicros(caller.orgId, caller.memberId, period.start)
         return MyBudget(
             limitMicros = limit,
@@ -130,7 +131,7 @@ class GetMyBudgetUseCaseImpl(
             resetsAt = period.end,
             // The member's budget: its limit, spend and decision are the member's and the org's. A workflow's is
             // not shown here (`MyBudget.exhaustedScope` is `org` or `member` in the contract); its refusal says so.
-            decision = guard.check(caller.orgId, caller.memberId),
+            decision = guard.checkRead(caller.orgId, caller.memberId, limits, spent),
         )
     }
 }

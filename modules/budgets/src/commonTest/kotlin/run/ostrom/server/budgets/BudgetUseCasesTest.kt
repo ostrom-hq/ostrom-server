@@ -6,6 +6,7 @@ import run.ostrom.server.budgets.domain.BudgetAlert
 import run.ostrom.server.budgets.domain.BudgetDecision
 import run.ostrom.server.budgets.domain.BudgetGuard
 import run.ostrom.server.budgets.domain.BudgetLimit
+import run.ostrom.server.budgets.domain.BudgetLimits
 import run.ostrom.server.budgets.domain.BudgetPeriod
 import run.ostrom.server.budgets.domain.BudgetRules
 import run.ostrom.server.budgets.domain.BudgetScope
@@ -98,7 +99,10 @@ class BudgetUseCasesTest {
         )
         val guard = object : BudgetGuard {
             override suspend fun check(orgId: Uuid, memberId: Uuid, workflowId: String?): BudgetDecision =
-                decisions.removeFirst()
+                error("the page's reads are handed over")
+
+            override suspend fun checkRead(orgId: Uuid, memberId: Uuid, limits: BudgetLimits, monthSpent: Long) =
+                decisions.removeFirst().also { assertEquals(1_500, monthSpent, "The spend read once, handed over") }
         }
         val mine = GetMyBudgetUseCaseImpl(repository, spend, guard, clock)
         repository.defaultLimits[TestCallers.orgA] = 1_000
@@ -128,6 +132,9 @@ class BudgetUseCasesTest {
     fun aMemberWithoutLimitHasNoRemaining() = runTest {
         val guard = object : BudgetGuard {
             override suspend fun check(orgId: Uuid, memberId: Uuid, workflowId: String?): BudgetDecision =
+                BudgetDecision.Allowed(null)
+
+            override suspend fun checkRead(orgId: Uuid, memberId: Uuid, limits: BudgetLimits, monthSpent: Long) =
                 BudgetDecision.Allowed(null)
         }
         val budget = GetMyBudgetUseCaseImpl(repository, spend, guard, clock)(TestCallers.memberA)

@@ -45,7 +45,11 @@ class LedgerSpendGuard(
             // No limit that stops applies.
             BudgetDecision.Allowed(null) -> Admission.Admitted
             is BudgetDecision.Exhausted ->
-                Admission.Exhausted(decided.scope.toSpendScope(), decided.limitMicros, decided.window == BudgetWindow.DAY)
+                Admission.Exhausted(
+                    decided.scope.toSpendScope(),
+                    decided.limitMicros,
+                    decided.window == BudgetWindow.DAY,
+                )
             else -> admission.admit(
                 SpendHold(request.orgId, request.memberId, request.callId, request.reserveMicros, request.workflowId),
                 repository.limits(request.orgId, request.memberId, request.workflowId).stopping(day.start),

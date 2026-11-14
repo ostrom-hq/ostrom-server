@@ -30,6 +30,19 @@ interface BudgetGuard {
      * @return The decision.
      */
     suspend fun check(orgId: Uuid, memberId: Uuid, workflowId: String? = null): BudgetDecision
+
+    /**
+     * As [check] without a workflow, on what the caller already read (a member's own budget page), so that nothing is
+     * read twice: the member's limits and their spend since the start of the month.
+     *
+     * @param orgId The org.
+     * @param memberId The member.
+     * @param limits The org's and the member's limits, as [BudgetsRepository.limits] gave them.
+     * @param monthSpent The member's spend since the start of this month.
+     *
+     * @return The decision.
+     */
+    suspend fun checkRead(orgId: Uuid, memberId: Uuid, limits: BudgetLimits, monthSpent: Long): BudgetDecision
 }
 
 /**
@@ -72,9 +85,27 @@ class BudgetGuardImpl(
     private val alerted = HashSet<AlertKey>()
     private var alertedMonth: Instant? = null
 
-    override suspend fun check(orgId: Uuid, memberId: Uuid, workflowId: String?): BudgetDecision {
+    override suspend fun check(orgId: Uuid, memberId: Uuid, workflowId: String?): BudgetDecision =
+        decide(orgId, memberId, workflowId, repository.limits(orgId, memberId, workflowId), null)
+
+    override suspend fun checkRead(
+        orgId: Uuid,
+        memberId: Uuid,
+        limits: BudgetLimits,
+        monthSpent: Long,
+    ): BudgetDecision =
+        decide(orgId, memberId, null, limits, monthSpent)
+
+    /** The decision on [limits], the member's spend of the month being [monthSpent] when already read. */
+    private suspend fun decide(
+        orgId: Uuid,
+        memberId: Uuid,
+        workflowId: String?,
+        limits: BudgetLimits,
+        monthSpent: Long?,
+    ): BudgetDecision {
         val now = clock.now()
-        val limits = repository.limits(orgId, memberId, workflowId)
+        val monthStart = BudgetPeriod.of(now).start
         val org = Subject(orgId, null, BudgetScope.ORG)
         val member = Subject(orgId, memberId, BudgetScope.MEMBER)
         val measured = limits.org.map { limit ->
@@ -82,10 +113,11 @@ class BudgetGuardImpl(
             Measured(org, limit, period, spend.spentMicros(orgId, null, period.start))
         } + limits.member.map { limit ->
             val period = limit.window.periodOf(now)
-            Measured(member, limit, period, spend.spentMicros(orgId, memberId, period.start))
+            val spent = monthSpent?.takeIf { period.start == monthStart }
+                ?: spend.spentMicros(orgId, memberId, period.start)
+            Measured(member, limit, period, spent)
         } + workflowId?.let { measuredWorkflow(orgId, it, limits.workflow, now) }.orEmpty()
-        val month = BudgetPeriod.of(now).start
-        for (each in measured) alertCrossings(each, month, now)
+        for (each in measured) alertCrossings(each, monthStart, now)
         val stopping = measured.filter { it.limit.action == BudgetAction.BLOCK }
         val reached = stopping.firstOrNull { it.exhausted }
             ?: return BudgetDecision.Allowed(stopping.minOfOrNull { it.remaining })

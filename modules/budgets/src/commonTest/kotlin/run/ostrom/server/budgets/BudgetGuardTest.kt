@@ -178,6 +178,19 @@ class BudgetGuardTest {
     }
 
     @Test
+    fun aMembersMonthAlreadyReadIsNotReadAgainButTheirDayIs() = runTest {
+        overrideMember(1_000)
+        spend.spent[orgA to member] = 400
+        val limits = repository.limits(orgA, member)
+        assertEquals(BudgetDecision.Allowed(700), guard.checkRead(orgA, member, limits, 300), "The month handed over")
+        assertEquals(emptyList(), spend.reads)
+
+        val daily = limits.copy(member = limits.member + BudgetLimit(500, BudgetWindow.DAY))
+        assertEquals(BudgetDecision.Allowed(100), guard.checkRead(orgA, member, daily, 300), "The day read: 400")
+        assertEquals(listOf<Pair<Uuid, Uuid?>>(orgA to member), spend.reads)
+    }
+
+    @Test
     fun theOrgSpendIsReadAtEveryCheck() = runTest {
         repository.orgLimits[orgA] = 1_000_000
         spend.spent[orgA to null] = 10
