@@ -69,8 +69,9 @@ data class ArtifactBlob(val artifactId: Uuid, val sha256: String)
  * The scheduled work of artifacts, TeamCode's `ArtifactMaintenance`: the publications the hourly limit no longer
  * counts are forgotten; an expired upload ends and its folder of chunks is deleted from the bucket; a draft never
  * committed for 24 hours and an artifact past its retention are deleted, the latter audited as
- * `artifact.retention_expired` by the system; a deleted artifact's folder is deleted until it is listed empty (TeamCode's
- * proof); the contents marked for collection are deleted from the bucket, then forgotten. Each organization on its own: a failure is tried again at the next pass.
+ * `artifact.retention_expired` by the system; a deleted artifact's folder is deleted until it is listed empty
+ * (TeamCode's proof); the contents marked for collection are deleted from the bucket, then forgotten. Each
+ * organization on its own: a failure is tried again at the next pass.
  *
  * @param repository The rows.
  * @param contents The artifacts' folders.
