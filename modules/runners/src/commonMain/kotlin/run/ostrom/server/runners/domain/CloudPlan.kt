@@ -15,7 +15,7 @@ import kotlin.uuid.Uuid
  * @property maxRunMinutes Minutes one execution may run before it pauses.
  * @property restrictedEgress Whether pods get the restricted outbound network.
  * @property available Whether the organization may run cloud sessions at all: on a shared cluster they are open only
- *   to the organizations of `OSTROM_RUNNERS_ALLOWED_ORGS` (audit S2-10), whatever their plan.
+ *   to the organizations an administrator of the instance lists in the console (audit S2-10), whatever their plan.
  */
 data class CloudPlan(
     val maxRunningSessions: Int,
@@ -79,21 +79,46 @@ data class AllowedOrgs(val all: Boolean, val orgs: Set<Uuid>) {
     companion object {
         /** No organization: the default. */
         val NONE = AllowedOrgs(all = false, orgs = emptySet())
+
+        /**
+         * Reads a list as an administrator writes it: `*`, or organization ids separated by commas (blanks ignored).
+         *
+         * @param raw The list.
+         *
+         * @return The organizations, or null when an entry is neither `*` alone nor an organization id.
+         */
+        fun parse(raw: String): AllowedOrgs? {
+            val entries = raw.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+            if (entries == listOf("*")) return AllowedOrgs(all = true, orgs = emptySet())
+            val orgs = entries.map { Uuid.parseOrNull(it) ?: return null }
+            return AllowedOrgs(all = false, orgs = orgs.toSet())
+        }
     }
 }
 
+/** The organizations cloud sessions are open to now. */
+fun interface AllowedOrgsSource {
+    /**
+     * Reads them.
+     *
+     * @return The organizations allowed.
+     */
+    suspend fun allowedOrgs(): AllowedOrgs
+}
+
 /**
- * Closes cloud sessions to the organizations [allowed] does not name, whatever [delegate] says of their plan.
+ * Closes cloud sessions to the organizations [allowed] does not name, whatever [delegate] says of their plan; the list
+ * is read at each call, so a change in the console applies without a restart.
  *
  * @param allowed The organizations allowed.
  * @param delegate The plans.
  */
 class AllowlistedCloudPlanProvider(
-    private val allowed: AllowedOrgs,
+    private val allowed: AllowedOrgsSource,
     private val delegate: CloudPlanProvider,
 ) : CloudPlanProvider {
     override suspend fun planFor(orgId: Uuid): CloudPlan {
         val plan = delegate.planFor(orgId)
-        return if (orgId in allowed) plan else plan.copy(available = false)
+        return if (orgId in allowed.allowedOrgs()) plan else plan.copy(available = false)
     }
 }

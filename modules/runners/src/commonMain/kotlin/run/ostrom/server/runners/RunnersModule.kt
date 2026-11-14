@@ -3,7 +3,9 @@ package run.ostrom.server.runners
 
 import run.ostrom.server.cloud.domain.CloudRuntimeSource
 import run.ostrom.server.runners.domain.RunnerDeliverySource
+import run.ostrom.server.runners.infrastructure.CLOUD_ACCESS_SETTINGS
 import run.ostrom.server.runners.infrastructure.CloudRuntimeRunnerDelivery
+import run.ostrom.server.runners.infrastructure.SettingsAllowedOrgs
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.automations.domain.AutomationLauncher
 import run.ostrom.server.billing.domain.GetAgentUsageUseCase
@@ -120,6 +122,7 @@ object RunnersModule : ServerModule {
 
     override val koinModule: Module = module {
         single<RunnersConfig> { RunnersConfig.from(get<ConfigSource>()) }
+        single(named(CLOUD_ACCESS_SETTINGS.name)) { CLOUD_ACCESS_SETTINGS }
         single<CloudSessionsRepository> { CloudSessionsRepositoryImpl(get()) }
         single<RunnerTokens> { RunnerTokensImpl() }
         // Billing's plans and hours counter when the billing module is there (always on a full server); the free
@@ -127,7 +130,7 @@ object RunnersModule : ServerModule {
         single<CloudPlanProvider> {
             val limits = getOrNull<GetPlanLimitsUseCase>()
             val plans = if (limits == null) FreeCloudPlanProvider() else BillingCloudPlanProvider(limits)
-            AllowlistedCloudPlanProvider(get<RunnersConfig>().allowedOrgs, plans)
+            AllowlistedCloudPlanProvider(SettingsAllowedOrgs(get()), plans)
         }
         single<CloudUsageMeter> {
             val read = getOrNull<GetAgentUsageUseCase>()

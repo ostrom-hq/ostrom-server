@@ -8,6 +8,7 @@ import run.ostrom.server.billing.domain.RecordAgentUsageUseCase
 import run.ostrom.server.billing.domain.Usage
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.MapConfigSource
+import run.ostrom.server.kernel.settings.InstanceSettings
 import run.ostrom.server.runners.domain.CloudPlan
 import run.ostrom.server.runners.domain.CloudPlanProvider
 import run.ostrom.server.runners.domain.CloudSessionsRepository
@@ -15,8 +16,10 @@ import run.ostrom.server.runners.domain.CloudUsageMeter
 import run.ostrom.server.runners.domain.RepositoryCloudUsageMeter
 import run.ostrom.server.runners.fakes.InMemoryCloudSessionsRepository
 import run.ostrom.server.runners.fakes.ORG_A
+import run.ostrom.server.runners.fakes.ORG_A_ALLOWED
 import run.ostrom.server.runners.fakes.ORG_B
 import run.ostrom.server.runners.infrastructure.BillingCloudUsageMeter
+import run.ostrom.server.testing.TestInstanceSettings
 import kotlinx.coroutines.test.runTest
 import org.koin.core.Koin
 import org.koin.core.module.Module
@@ -59,7 +62,8 @@ class BillingCloudPlansTest {
      */
     private suspend fun withKoin(withBilling: Boolean, block: suspend (Koin) -> Unit) {
         val ports: Module = module {
-            single<ConfigSource> { MapConfigSource(mapOf("OSTROM_RUNNERS_ALLOWED_ORGS" to ORG_A.toString())) }
+            single<ConfigSource> { MapConfigSource(emptyMap()) }
+            single<InstanceSettings> { TestInstanceSettings(ORG_A_ALLOWED) }
             single<CloudSessionsRepository> { InMemoryCloudSessionsRepository() }
             if (withBilling) {
                 single<GetPlanLimitsUseCase> { billing }

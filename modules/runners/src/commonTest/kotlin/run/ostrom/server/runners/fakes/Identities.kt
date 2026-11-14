@@ -2,6 +2,8 @@
 package run.ostrom.server.runners.fakes
 
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import run.ostrom.server.kernel.settings.InstanceSettings
+import run.ostrom.server.testing.TestInstanceSettings
 import run.ostrom.server.kernel.auth.OrgPrincipal
 import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.auth.PrincipalChannel
@@ -24,10 +26,10 @@ val DANA: Uuid = Uuid.parse("00000000-0000-0000-0000-00000000da0a")
  * `cloud:read` only, `dana-cli` a personal API token of dana's with `cloud:write`. Cloud sessions are open to org A
  * only. A request whose `Ostrom-Org` header names an organization the caller is not a member of resolves to no one.
  */
-val testIdentities = testIdentitiesWith(mapOf("OSTROM_RUNNERS_ALLOWED_ORGS" to ORG_A.toString()))
+val testIdentities = testIdentitiesWith(emptyMap())
 
 /**
- * [testIdentities] with another configuration of the runners module.
+ * [testIdentities] with another configuration of the runners module; cloud sessions stay open to org A only.
  *
  * @param config The configuration.
  *
@@ -49,7 +51,11 @@ fun testIdentitiesWith(config: Map<String, String>) = module {
     }
     single<PrincipalOrgResolver> { TestOrgResolver }
     single<ConfigSource> { MapConfigSource(config) }
+    single<InstanceSettings> { TestInstanceSettings(ORG_A_ALLOWED) }
 }
+
+/** The console's cloud access opening cloud sessions to org A only. */
+val ORG_A_ALLOWED: Map<String, Map<String, String>> = mapOf("cloud-access" to mapOf("allowedOrgs" to ORG_A.toString()))
 
 /** Resolves the test identities' organizations (the credential's own: the cloud routes name none). */
 object TestOrgResolver : PrincipalOrgResolver {

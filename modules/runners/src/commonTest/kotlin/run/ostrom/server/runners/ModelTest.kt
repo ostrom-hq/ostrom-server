@@ -34,6 +34,10 @@ import run.ostrom.server.runners.fakes.TestOrgResolver
 import kotlinx.coroutines.test.runTest
 import org.koin.dsl.koinApplication
 import org.koin.dsl.module
+import run.ostrom.server.runners.infrastructure.SettingsAllowedOrgs
+import run.ostrom.server.runners.infrastructure.CLOUD_ACCESS_SETTINGS
+import run.ostrom.server.testing.TestInstanceSettings
+import kotlin.test.assertNotNull
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -315,19 +319,30 @@ class ModelTest {
 
     @Test
     fun cloudSessionsAreOpenOnlyToTheAllowedOrganizations() = runTest {
-        assertEquals(AllowedOrgs.NONE, RunnersConfig.from(MapConfigSource(emptyMap())).allowedOrgs)
-        val everyone = RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_ALLOWED_ORGS" to " * "))).allowedOrgs
-        assertTrue(ORG_B in everyone)
-        val listed = RunnersConfig.from(
-            MapConfigSource(mapOf("OSTROM_RUNNERS_ALLOWED_ORGS" to "$ORG_A, ,")),
-        ).allowedOrgs
+        val settings = TestInstanceSettings()
+        val source = SettingsAllowedOrgs(settings)
+        assertEquals(AllowedOrgs.NONE, source.allowedOrgs())
+        settings.save("cloud-access", mapOf("allowedOrgs" to " * "))
+        assertTrue(ORG_B in source.allowedOrgs())
+        settings.save("cloud-access", mapOf("allowedOrgs" to "$ORG_A, ,"))
+        val listed = source.allowedOrgs()
         assertTrue(ORG_A in listed)
         assertFalse(ORG_B in listed)
-        assertFailsWith<InvalidConfigException> {
-            RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_ALLOWED_ORGS" to "acme")))
-        }
-        val plans = AllowlistedCloudPlanProvider(listed, FreeCloudPlanProvider())
+        settings.save("cloud-access", mapOf("allowedOrgs" to "acme"))
+        assertEquals(AllowedOrgs.NONE, source.allowedOrgs())
+        val plans = AllowlistedCloudPlanProvider({ listed }, FreeCloudPlanProvider())
         assertTrue(plans.planFor(ORG_A).available)
         assertFalse(plans.planFor(ORG_B).available)
+    }
+
+    @Test
+    fun theConsoleRefusesAnAllowedOrgsListItCannotRead() {
+        val field = assertNotNull(CLOUD_ACCESS_SETTINGS.field("allowedOrgs"))
+        assertEquals("OSTROM_RUNNERS_ALLOWED_ORGS", field.legacyVariable)
+        assertFalse(field.secret)
+        assertNull(field.check("*"))
+        assertNull(field.check("$ORG_A,$ORG_B"))
+        assertEquals("* or organization ids separated by commas.", field.check("*,$ORG_A"))
+        assertEquals("* or organization ids separated by commas.", field.check("acme"))
     }
 }

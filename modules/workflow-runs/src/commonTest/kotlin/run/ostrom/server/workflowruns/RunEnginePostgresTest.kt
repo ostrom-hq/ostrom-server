@@ -120,7 +120,7 @@ class RunEnginePostgresTest {
         RunnersModule, LaunchesModule, AutomationsModule, WorkflowRunsModule,
     )
 
-    // Cloud sessions are closed to every organization unless listed (OSTROM_RUNNERS_ALLOWED_ORGS): the free plan here.
+    // Cloud sessions are closed to every organization the console does not list (cloud-access): the free plan here.
     private val overrides = module { single<CloudPlanProvider> { FreeCloudPlanProvider() } }
 
     /** A member of a new organization, and a token of theirs that starts, cancels and reads the runs. */
