@@ -124,9 +124,10 @@ class BucketArtifactContents(
 }
 
 /**
- * Deletes every object under [root], page by page, as far as the bucket answers.
+ * Deletes every object under [root], page by page, as far as the bucket answers, then lists it again (TeamCode's
+ * proof: a bucket that kept an object it reported deleted is not taken at its word).
  *
- * @return True when each page was deleted, false when the bucket refused one or failed.
+ * @return True when the folder is listed empty, false when the bucket refused, failed or still lists an object.
  */
 internal suspend fun ArtifactObjectStore.empty(connection: ArtifactStorageConnection, root: String): Boolean = try {
     var token: String? = null
@@ -136,7 +137,7 @@ internal suspend fun ArtifactObjectStore.empty(connection: ArtifactStorageConnec
         if (page.keys.isNotEmpty()) emptied = delete(connection, page.keys.map { it.key }).isEmpty()
         token = page.nextContinuationToken
     } while (token != null && emptied)
-    emptied
+    emptied && list(connection, root, maxKeys = 1).keys.isEmpty()
 } catch (cancelled: CancellationException) {
     throw cancelled
 } catch (_: ObjectStoreException) {

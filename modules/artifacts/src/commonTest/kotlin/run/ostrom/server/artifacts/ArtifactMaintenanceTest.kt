@@ -76,8 +76,19 @@ class ArtifactMaintenanceTest {
 
         override suspend fun expired(orgId: Uuid, now: Instant, drafts: Instant, limit: Int) = expired[orgId].orEmpty()
 
+        // As the trigger does, each deletion leaves its folder to delete.
         override suspend fun deleteExpired(orgId: Uuid, artifactId: Uuid, now: Instant, drafts: Instant) =
-            latest.remove(artifactId)
+            latest.remove(artifactId)?.also { folders.getOrPut(orgId) { mutableListOf() } += artifactId }
+
+        val folders = mutableMapOf<Uuid, MutableList<Uuid>>()
+        val removedFolders = mutableListOf<Uuid>()
+
+        override suspend fun deletedFolders(orgId: Uuid, limit: Int) = folders[orgId].orEmpty().toList()
+
+        override suspend fun folderRemoved(orgId: Uuid, artifactId: Uuid) {
+            removedFolders += artifactId
+            folders[orgId]?.remove(artifactId)
+        }
 
         val marked = mutableMapOf<Uuid, List<ArtifactBlob>>()
         val collected = mutableListOf<ArtifactBlob>()
@@ -111,6 +122,7 @@ class ArtifactMaintenanceTest {
         assertEquals(listOf(ORG_B to now - 1.hours, ORG_A to now - 1.hours), rows.forgotten)
         assertEquals(listOf(upload), rows.ended)
         assertEquals(setOf(blob(raced)), bucket.objects.keys)
+        assertEquals(listOf(retained, draft), rows.removedFolders)
         // A draft goes silently; an artifact past its retention is audited, by the system.
         assertEquals(listOf<Triple<String, String, Uuid?>>(Triple("system", "retention_expired", retained)), events)
     }
@@ -145,9 +157,14 @@ class ArtifactMaintenanceTest {
         val upload = Uuid.random()
         rows.uploads[ORG_A] = listOf(upload)
         bucket.objects[chunk(upload)] = byteArrayOf(1)
+        // A deleted artifact's folder the bucket keeps is deleted again at the next pass.
+        val deleted = Uuid.random()
+        rows.folders[ORG_A] = mutableListOf(deleted)
+        bucket.objects[blob(deleted)] = byteArrayOf(1)
         bucket.refuseDelete = true
         maintenance.run()
         assertEquals(emptyList(), rows.ended)
+        assertEquals(emptyList(), rows.removedFolders)
         // Without a bucket there is nothing left to delete.
         rows.uploads[ORG_B] = listOf(upload)
         rows.uploads.remove(ORG_A)

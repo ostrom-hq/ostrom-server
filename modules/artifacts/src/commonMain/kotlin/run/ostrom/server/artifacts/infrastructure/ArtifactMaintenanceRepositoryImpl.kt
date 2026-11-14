@@ -77,6 +77,18 @@ internal class ArtifactMaintenanceRepositoryImpl(private val driver: Driver) : A
             }
         }
     }
+
+    override suspend fun deletedFolders(orgId: Uuid, limit: Int): List<Uuid> = driver.fetchInOrg(
+        orgId,
+        Statement.create(MaintenanceQueries.DELETED_FOLDERS).bind("limit", limit),
+    ).getOrThrow().map { it.get("artifact_id").asUuid() }
+
+    override suspend fun folderRemoved(orgId: Uuid, artifactId: Uuid) {
+        driver.inTenant(orgId) {
+            val removed = Statement.create("DELETE FROM artifacts_folder_deletions WHERE artifact_id = :id")
+            execute(removed.bind("id", artifactId)).getOrThrow()
+        }
+    }
 }
 
 /** The statements of the maintenance, each run in one organization. */
@@ -97,6 +109,10 @@ internal object MaintenanceQueries {
         "NOT EXISTS (SELECT 1 FROM artifacts_uploads u JOIN artifacts_upload_blobs ub ON ub.upload_id = u.id " +
         "WHERE u.artifact_id = b.artifact_id AND u.expires_at > :now AND ub.sha256 = b.sha256) " +
         "ORDER BY b.marked_at LIMIT :limit"
+
+    /** The folders to delete: `artifacts_folder_deletions_org`. */
+    const val DELETED_FOLDERS =
+        "SELECT artifact_id FROM artifacts_folder_deletions ORDER BY deleted_at LIMIT :limit"
 
     /** A content deleted from the bucket, still marked. */
     const val FORGET = "DELETE FROM artifacts_blobs WHERE artifact_id = :id AND sha256 = :sha AND marked_at IS NOT NULL"

@@ -105,6 +105,11 @@ class ArtifactContentsTest {
         contents.write(ORG_A, artifact, (1..3).associate { "sha-$it" to byteArrayOf(it.toByte()) })
         bucket.refuseDelete = true
         assertFalse(contents.remove(ORG_A, artifact))
+        // A bucket that reports a deletion it did not make: listed again, the folder is not empty.
+        bucket.refuseDelete = false
+        bucket.keepDeleted = true
+        assertFalse(contents.remove(ORG_A, artifact))
+        bucket.keepDeleted = false
         bucket.beforeEach = { throw ObjectStoreException(null, "timeout") }
         assertFalse(contents.remove(ORG_A, artifact))
         bucket.beforeEach = { throw CancellationException("stopped") }
