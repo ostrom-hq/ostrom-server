@@ -49,6 +49,12 @@ object OrgsModule : ServerModule {
 }
 ```
 
+**Periodic work that one replica runs at a time** goes through the kernel's `ScheduledWork` (bound by the instance
+module on its `instance_scheduled_work` table, TeamCode's `SqlScheduledWork`): the module's `start` loop calls
+`work.runDue("module/job", interval, timeout) { … }` (TeamCode used 60 s and 45 s by default) as often as it likes, and the job runs once per interval across
+every replica, the lease claimed and released on the database's clock. A module that needs it lists the instance
+module before it (it always does: the instance module comes first).
+
 The kernel binds, for every module: `Logger`, `Driver` (database), `InstanceSigner`, `kotlin.time.Clock`,
 `TokenAuthenticator`, `PrincipalOrgResolver`, `MigrationRunner`, and the `HealthCheck`s. Use `Clock` from Koin, never `Clock.System`
 directly, so tests can fix the time.

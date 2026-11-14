@@ -66,6 +66,7 @@ admitted by their prefix: the owner role writes them when it migrates.
 | `identity_users` | identity | serving role | the people, members of any number of organizations |
 | `identity_web_sessions` | identity | serving role | a person's browser sessions, by hash, read before an organization is chosen |
 | `instance_info` | instance | serving role | the instance's one identity row |
+| `instance_scheduled_work` | instance | serving role | the leases of the periodic jobs one replica runs at a time, one row per job |
 | `instance_signing_keys` | instance | serving role | the public keys of the instance's receipt signatures |
 
 ## The queries

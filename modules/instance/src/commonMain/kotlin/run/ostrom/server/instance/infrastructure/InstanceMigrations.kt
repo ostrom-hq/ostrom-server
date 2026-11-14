@@ -32,4 +32,17 @@ val InstanceMigrations: List<SchemaMigration> = listOf(
             ALTER TABLE instance_signing_keys ADD COLUMN rotation_signature TEXT
         """.trimIndent(),
     ),
+    // The leases of the periodic work one replica runs at a time (kernel ScheduledWork, TeamCode's scheduled_work).
+    SchemaMigration(
+        version = 3,
+        name = "scheduled_work",
+        sql = """
+            CREATE TABLE instance_scheduled_work (
+                name TEXT PRIMARY KEY,
+                owner UUID,
+                available_at TIMESTAMPTZ NOT NULL DEFAULT '-infinity',
+                last_started_at TIMESTAMPTZ
+            )
+        """.trimIndent(),
+    ),
 )
