@@ -152,15 +152,15 @@ interface CloudSessionsRepository {
 
     /**
      * The sessions of every organization created before cloud profiles, still without one, but the terminated ones:
-     * read across organizations through `runners_sessions_without_profile` (owned by `ostrom_router`), each then in
-     * its own.
+     * read across organizations through `runners_sessions_without_profile` (owned by `ostrom_router`), each session
+     * then read and written in its own.
      *
      * @param after The last session of the page before, or null for the first page.
      * @param limit How many at most.
      *
-     * @return They, by id.
+     * @return Their ids and organizations, by id: exactly [limit] unless it is the last page.
      */
-    suspend fun withoutProfile(after: Uuid?, limit: Int): List<CloudSession>
+    suspend fun withoutProfile(after: Uuid?, limit: Int): List<SessionRef>
 
     /**
      * Reads the execution seconds an organization used in a month.
@@ -183,6 +183,14 @@ interface CloudSessionsRepository {
 }
 
 /** What [CloudSessionsRepository.resumeWithinCap] did. */
+/**
+ * A session as a cross-organization read names it.
+ *
+ * @property orgId Its organization.
+ * @property id The session.
+ */
+data class SessionRef(val orgId: Uuid, val id: Uuid)
+
 sealed interface ResumeOutcome {
     /**
      * The desired state is now running.

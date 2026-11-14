@@ -18,6 +18,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.time.Instant
+import kotlin.uuid.Uuid
 
 /** The former sessions given their profile at a server's start: every one, by pages, by compare-and-set, once. */
 class BackfillSessionProfilesTest {
@@ -59,6 +60,20 @@ class BackfillSessionProfilesTest {
         assertEquals(0, backfill()(), "A second start is a no-op")
         assertEquals(1, asked, "Nothing lacks one: not even the former profile is read")
         assertEquals(List(4) { 1L }, former.map { stored(it).generation })
+    }
+
+    @Test
+    fun aSessionGoneBeforeItIsReadNeverEndsThePagesEarly() = runTest {
+        val former = List(3) { session(state = SessionState.PAUSED) }.sortedBy { it.id.toString() }
+        former.forEach(repository::put)
+        // The first of a full page is deleted between the page and its read.
+        val gone = former.first()
+        val deleting = object : CloudSessionsRepository by repository {
+            override suspend fun get(orgId: Uuid, id: Uuid): CloudSession? =
+                if (id == gone.id) null else repository.get(orgId, id)
+        }
+        assertEquals(2, backfill(deleting)())
+        assertEquals(listOf(null, profile, profile), former.map { stored(it).profile })
     }
 
     @Test

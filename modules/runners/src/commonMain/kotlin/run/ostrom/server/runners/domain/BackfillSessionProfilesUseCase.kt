@@ -42,15 +42,16 @@ class BackfillSessionProfilesUseCaseImpl(
             // Asked once, and only when a session lacks one: where all have theirs, the first page is all it reads.
             val profile = legacy ?: page.firstOrNull()?.let { profiles.legacy() } ?: return given
             legacy = profile
-            given += page.count { give(it, profile) }
+            // Read in its organization: one deleted or ended since is skipped, never the pages after it.
+            given += page.count { ref -> give(repository.get(ref.orgId, ref.id), profile) }
             after = page.lastOrNull()?.id
         } while (page.size == pageSize)
         return given
     }
 
     // Another writer came first (an API call, a step): read again, unless it gave the profile itself.
-    private suspend fun give(session: CloudSession, profile: SessionProfile): Boolean {
-        var read: CloudSession? = session
+    private suspend fun give(session: CloudSession?, profile: SessionProfile): Boolean {
+        var read = session
         repeat(ATTEMPTS) {
             val current = read?.takeIf { it.profile == null } ?: return false
             val written = repository.compareAndSet(current.copy(profile = profile, updatedAt = clock.now()), null)

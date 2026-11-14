@@ -15,6 +15,7 @@ import run.ostrom.server.runners.domain.RunnerTokens
 import run.ostrom.server.runners.domain.RuntimeDriver
 import run.ostrom.server.runners.domain.RuntimeUnreachableException
 import run.ostrom.server.runners.domain.SessionLimits
+import run.ostrom.server.runners.domain.SessionRef
 import run.ostrom.server.runners.domain.SessionState
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -235,11 +236,12 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
         sessions.values.filter { s -> next[s.id]?.let { it <= now } == true }.take(limit)
 
     // By id as PostgreSQL orders UUIDs: their lowercase text sorts the same.
-    override suspend fun withoutProfile(after: Uuid?, limit: Int): List<CloudSession> = sessions.values
+    override suspend fun withoutProfile(after: Uuid?, limit: Int): List<SessionRef> = sessions.values
         .filter { it.profile == null && it.state != SessionState.TERMINATED }
         .sortedBy { it.id.toString() }
         .filter { after == null || it.id.toString() > after.toString() }
         .take(limit)
+        .map { SessionRef(it.orgId, it.id) }
 
     override suspend fun release(id: Uuid, owner: String, nextReconcileAt: Instant?) {
         released += id to nextReconcileAt

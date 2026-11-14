@@ -9,6 +9,7 @@ import run.ostrom.server.runners.domain.DesiredState
 import run.ostrom.server.runners.domain.GitHubAccessMode
 import run.ostrom.server.runners.domain.RepositorySpec
 import run.ostrom.server.runners.domain.ResumeOutcome
+import run.ostrom.server.runners.domain.SessionRef
 import run.ostrom.server.runners.domain.SessionFailure
 import run.ostrom.server.runners.domain.SessionLimits
 import run.ostrom.server.runners.domain.SessionProfile
@@ -213,14 +214,14 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         ).getOrThrow().mapNotNull { get(it.get("org_id").asUuid(), it.get("session_id").asUuid()) }
 
     // The function returns ids and organizations only; each session is then read in its own organization.
-    override suspend fun withoutProfile(after: Uuid?, limit: Int): List<CloudSession> = driver.fetchAll(
+    override suspend fun withoutProfile(after: Uuid?, limit: Int): List<SessionRef> = driver.fetchAll(
         Statement.create(
             """
             SELECT session_id, org_id FROM runners_sessions_without_profile(CAST(:after AS UUID),
             CAST(:limit AS INTEGER))
             """,
         ).bind("after", after).bind("limit", limit),
-    ).getOrThrow().mapNotNull { get(it.get("org_id").asUuid(), it.get("session_id").asUuid()) }
+    ).getOrThrow().map { SessionRef(it.get("org_id").asUuid(), it.get("session_id").asUuid()) }
 
     override suspend fun release(id: Uuid, owner: String, nextReconcileAt: Instant?) {
         // An API write or a heartbeat during the pass moves next_reconcile_at after claimed_at: that request for a

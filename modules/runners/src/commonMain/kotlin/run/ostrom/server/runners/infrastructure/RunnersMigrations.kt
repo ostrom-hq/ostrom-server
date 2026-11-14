@@ -83,15 +83,16 @@ private const val WITHOUT_PROFILE_FUNCTION = "runners_sessions_without_profile(U
  * Version 15: the sessions of every organization created before cloud profiles and still without one (but the
  * terminated ones), by id after a cursor, ids and organizations only (BackfillSessionProfilesUseCase); each is then
  * read and written in its own organization. A partial index holds them alone, so the pass reads nothing once all have
- * their profile. The router reads `runners_sessions` inside its functions only (RLS audit R9).
+ * their profile. The router reads the four columns it needs of `runners_sessions`, inside its functions only (RLS audit
+ * R9).
  */
 private val SESSIONS_WITHOUT_PROFILE_SQL: String =
     """
-    CREATE INDEX runners_sessions_without_profile ON runners_sessions (id)
+    CREATE INDEX runners_sessions_profile_missing ON runners_sessions (id)
         WHERE profile IS NULL AND state <> 'terminated';
     CREATE POLICY runners_sessions_router ON runners_sessions FOR SELECT TO ostrom_router
         USING (current_user = 'ostrom_router');
-    GRANT SELECT ON runners_sessions TO ostrom_router;
+    GRANT SELECT (id, org_id, profile, state) ON runners_sessions TO ostrom_router;
     CREATE FUNCTION runners_sessions_without_profile(p_after UUID, p_limit INTEGER)
         RETURNS TABLE (session_id UUID, org_id UUID)
         LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
