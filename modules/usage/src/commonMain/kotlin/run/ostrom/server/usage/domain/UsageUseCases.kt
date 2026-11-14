@@ -5,8 +5,6 @@ import run.ostrom.server.secrets.domain.Caller
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.onSubscription
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
@@ -92,27 +90,27 @@ interface IngestUsageEventsUseCase {
  * @param repository The ledger.
  * @param feed The live feed.
  * @param clock The time.
- * @param maxMembers Members whose minute is counted at once; past it, finished minutes are forgotten, then all.
  */
 class IngestUsageEventsUseCaseImpl(
     private val repository: UsageRepository,
     private val feed: UsageFeed,
     private val clock: Clock,
-    private val maxMembers: Int = 10_000,
 ) : IngestUsageEventsUseCase {
-    private class Minute(val start: Instant, var count: Int)
-
-    private val lock = Mutex()
-    private val minutes = HashMap<Pair<Uuid, Uuid>, Minute>()
-
     override suspend fun invoke(caller: Caller, events: List<ClientUsageEvent>): Int {
         if (events.size > UsageRules.MAX_EVENTS_PER_REQUEST) throw TooManyUsageEventsException()
         if (events.isEmpty()) return 0
         val now = clock.now()
         val validated = events.map { it.validated(now) }
-        admit(caller, validated.size, now)
         val recorded = validated.map { it.toEvent(caller, now) }
-        repository.insert(caller.orgId, recorded)
+        // The member's minute is a row of the database, counted by its clock: the same on every replica, as TeamCode
+        // keeps no counter in a process (docs/replicas.md). The ledger and the live feed are not a free sink.
+        val admitted = repository.insertWithinMinute(
+            caller.orgId,
+            caller.memberId,
+            recorded,
+            UsageRules.MAX_EVENTS_PER_MINUTE,
+        )
+        if (!admitted) throw UsageRateLimitedException()
         recorded.forEach { feed.publish(it) }
         return recorded.size
     }
@@ -138,22 +136,6 @@ class IngestUsageEventsUseCaseImpl(
             at < now - UsageRules.MAX_EVENT_AGE -> "The event is older than a week."
             else -> null
         }
-    }
-
-    /** Counts the events against the member's minute; the ledger and the live feed are not a free sink. */
-    private suspend fun admit(caller: Caller, count: Int, now: Instant) = lock.withLock {
-        val key = caller.orgId to caller.memberId
-        var minute = minutes[key]
-        if (minute == null || now - minute.start >= 1.minutes) {
-            if (minutes.size >= maxMembers) {
-                minutes.entries.removeAll { now - it.value.start >= 1.minutes }
-                if (minutes.size >= maxMembers) minutes.clear()
-            }
-            minute = Minute(now, 0)
-            minutes[key] = minute
-        }
-        if (minute.count + count > UsageRules.MAX_EVENTS_PER_MINUTE) throw UsageRateLimitedException()
-        minute.count += count
     }
 
     private fun ClientUsageEvent.toEvent(caller: Caller, now: Instant) = UsageEvent(

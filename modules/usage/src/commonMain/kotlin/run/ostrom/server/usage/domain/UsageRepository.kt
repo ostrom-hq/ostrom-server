@@ -58,6 +58,19 @@ interface UsageRepository {
     suspend fun insert(orgId: Uuid, events: List<UsageEvent>)
 
     /**
+     * Writes a member's events if their minute (by the database's clock) holds them, counting them in it, in one
+     * transaction: every replica counts the same minute, and a refused batch writes and counts nothing.
+     *
+     * @param orgId The org of every event.
+     * @param memberId The member whose minute counts them.
+     * @param events The events.
+     * @param perMinute The events the member may record in a minute.
+     *
+     * @return False, with nothing written, when the minute would go over [perMinute].
+     */
+    suspend fun insertWithinMinute(orgId: Uuid, memberId: Uuid, events: List<UsageEvent>, perMinute: Int): Boolean
+
+    /**
      * Writes a model call's event and drops its budget hold ([holdWithin]), in one transaction: what the call cost
      * replaces what it held, with no instant where both or neither count.
      *

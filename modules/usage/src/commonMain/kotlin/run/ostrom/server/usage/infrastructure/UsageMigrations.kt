@@ -356,4 +356,20 @@ val UsageMigrations: List<SchemaMigration> = listOf(
         """.trimIndent(),
     ),
     SchemaMigration(version = 10, name = "usage_spend_days", sql = SPEND_DAYS_SQL),
+    // The events a member recorded in a minute of the database's clock (UsageRepositoryImpl.insertWithinMinute): every
+    // replica counts the same minute, as TeamCode keeps no counter in a process (docs/replicas.md). A member's past
+    // minutes of the org are deleted by its next batch, so a member leaves one row at most.
+    SchemaMigration(
+        version = 11,
+        name = "usage_ingest_minutes",
+        sql = """
+            CREATE TABLE usage_ingest_minutes (
+                org_id UUID NOT NULL,
+                member_id UUID NOT NULL,
+                minute BIGINT NOT NULL,
+                events INTEGER NOT NULL,
+                PRIMARY KEY (org_id, member_id, minute)
+            );
+        """.trimIndent() + "\n" + tenantTableSql("usage_ingest_minutes"),
+    ),
 )
