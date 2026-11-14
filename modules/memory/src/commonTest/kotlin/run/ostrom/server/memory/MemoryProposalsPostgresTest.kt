@@ -197,6 +197,6 @@ class MemoryProposalsPostgresTest {
     private companion object {
         const val MEMORY = "/api/v1/memory"
 
-        fun note(title: String) = NewMemory(MemoryScope.TEAM, title, "s", "c")
+        fun note(title: String) = NewMemory(MemoryScope.TEAM, title, "s", "c", listOf("deploy"))
     }
 }

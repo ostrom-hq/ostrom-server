@@ -7,6 +7,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlin.time.Clock
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
@@ -80,24 +81,31 @@ class MemoryProposalsServiceImpl(
         val named = sessionId?.takeIf { it.isNotBlank() } ?: throw MemoryProposalSessionException()
         val session = waits.session(caller, named)
         val stored = repository.create(caller, entry, MemoryOrigin.AGENT, session.segment, MemoryStatus.PROPOSED)
+        ask(caller, session, stored)
+        audit.record(caller, "memory.proposed", stored.id, "scope" to stored.scope.wire, "origin" to "agent")
+        return stored
+    }
+
+    /** Asks [session]'s person about [stored] and binds the wait to it; on any failure, it is withdrawn whole. */
+    private suspend fun ask(caller: MemoryCaller, session: ProposalSession, stored: MemoryEntry) {
         var waitId: Uuid? = null
-        var asked = false
+
+        // Nobody can ever accept it: it must not wait for the expiry, nor its wait stay open for nothing.
+        suspend fun withdraw() = withContext(NonCancellable) {
+            store.close(caller.orgId, stored.id, accept = false, null)
+            waitId?.let { waits.cancel(caller.orgId, caller.memberId, it) }
+        }
         try {
             val opened = waits.open(caller, session, stored)
             waitId = opened
             store.attach(caller.orgId, stored.id, opened)
-            asked = true
-        } finally {
-            // Nobody can ever accept it: it must not wait for the expiry, nor its wait stay open for nothing.
-            if (!asked) {
-                withContext(NonCancellable) {
-                    store.close(caller.orgId, stored.id, accept = false, null)
-                    waitId?.let { waits.cancel(caller.orgId, caller.memberId, it) }
-                }
-            }
+        } catch (error: CancellationException) {
+            withdraw()
+            throw error
+        } catch (error: Exception) {
+            withdraw()
+            throw error
         }
-        audit.record(caller, "memory.proposed", stored.id, "scope" to stored.scope.wire, "origin" to "agent")
-        return stored
     }
 
     override suspend fun proposals(caller: MemoryCaller): List<MemoryEntry> {
@@ -212,7 +220,7 @@ class MemoryProposalsServiceImpl(
     private companion object {
         const val SYSTEM = "ostrom"
         const val SETTLE_PAGE = 100
-        val OPENING = 1.minutes
+        private val OPENING: Duration = 1.minutes
     }
 }
 

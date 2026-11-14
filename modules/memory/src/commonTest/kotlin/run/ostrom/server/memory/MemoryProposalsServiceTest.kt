@@ -24,6 +24,7 @@ import run.ostrom.server.memory.fakes.ORG_B
 import run.ostrom.server.memory.fakes.ROOT
 import run.ostrom.server.memory.fakes.RecordingAudit
 import run.ostrom.server.memory.fakes.caller
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -98,6 +99,11 @@ class MemoryProposalsServiceTest {
         assertFailsWith<IllegalStateException> { proposals.propose(agent, note(), "s1") }
         assertEquals(List(2) { MemoryStatus.REJECTED }, repository.entries.values.map { it.status })
         assertEquals(listOf(ADA to waits.states.keys.single()), waits.cancelled)
+        // A cancelled call withdraws it all the same.
+        store.failAttach = false
+        waits.cancelOpen = true
+        assertFailsWith<CancellationException> { proposals.propose(agent, note(), "s1") }
+        assertEquals(List(3) { MemoryStatus.REJECTED }, repository.entries.values.map { it.status })
         assertTrue(audit.events.isEmpty())
     }
 

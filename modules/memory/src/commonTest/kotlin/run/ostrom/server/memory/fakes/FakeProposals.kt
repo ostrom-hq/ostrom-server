@@ -15,6 +15,7 @@ import run.ostrom.server.memory.domain.PendingProposal
 import run.ostrom.server.memory.domain.ProposalEdits
 import run.ostrom.server.memory.domain.ProposalSession
 import run.ostrom.server.memory.domain.ProposalWait
+import kotlinx.coroutines.CancellationException
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -31,6 +32,9 @@ class FakeProposalWaits : MemoryProposalWaits {
     val waitOf = mutableMapOf<Uuid, Uuid>()
     var failOpen = false
 
+    /** The asking coroutine is cancelled while the wait opens. */
+    var cancelOpen = false
+
     override suspend fun session(caller: MemoryCaller, requested: String): ProposalSession =
         if (requested.startsWith("s1")) {
             ProposalSession(requested, listOf(requested))
@@ -40,6 +44,7 @@ class FakeProposalWaits : MemoryProposalWaits {
 
     override suspend fun open(caller: MemoryCaller, session: ProposalSession, entry: MemoryEntry): Uuid {
         check(!failOpen) { "The waits are down." }
+        if (cancelOpen) throw CancellationException("The call was cancelled.")
         opened += session to entry
         return Uuid.random().also {
             states[it] = ProposalWait(it, open = true)
