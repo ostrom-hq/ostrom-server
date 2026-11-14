@@ -14,7 +14,7 @@ import kotlin.uuid.Uuid
  * @throws RunnerUnauthenticatedException When absent.
  */
 fun ApplicationCall.runnerToken(): String {
-    val token = request.headers[HttpHeaders.Authorization]?.substringAfter("Bearer ", "")?.trim().orEmpty()
+    val token = request.headers[HttpHeaders.Authorization].orEmpty().substringAfter("Bearer ", "").trim()
     if (token.isEmpty()) throw RunnerUnauthenticatedException()
     return token
 }

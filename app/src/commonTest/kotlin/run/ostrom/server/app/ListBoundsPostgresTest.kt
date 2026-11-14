@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.app
 
+import run.ostrom.server.app.isolation.HOOK_BODY
 import run.ostrom.server.app.isolation.MatrixBucket
 import run.ostrom.server.app.isolation.activateArtifacts
 import run.ostrom.server.artifacts.domain.storage.ArtifactObjectStore
@@ -58,7 +59,7 @@ import kotlin.uuid.Uuid
  * and replays A's cursors. Runs only where CI gives the contract (`OSTROM_CONTRACT_OPENAPI`).
  */
 class ListBoundsPostgresTest {
-    private class Person(val orgId: Uuid, val session: StartedSession)
+    private class Person(val orgId: Uuid, val memberId: Uuid, val session: StartedSession)
 
     /** What the walk found: one line per broken rule, the lists it could not reach, the cursors it could not get. */
     private class Findings {
@@ -182,9 +183,10 @@ class ListBoundsPostgresTest {
         )
         val now = Clock.System.now()
         val org = Org(Uuid.random(), "$login-lists", "$login lists", null, null, now)
-        koin.get<OrgsRepository>().create(org, Member(Uuid.random(), org.id, user.id, OrgRole.OWNER, now)) { false }
+        val member = Member(Uuid.random(), org.id, user.id, OrgRole.OWNER, now)
+        koin.get<OrgsRepository>().create(org, member) { false }
         check(activateArtifacts(org.id, login)) { "The artifacts of $login are not on." }
-        return Person(org.id, koin.get<StartWebSessionUseCase>()(user.id))
+        return Person(org.id, member.id, koin.get<StartWebSessionUseCase>()(user.id))
     }
 
     // Two rules and two artifacts (a page of one has a next), an automation and an MCP server (their sub-lists), an
@@ -215,11 +217,19 @@ class ListBoundsPostgresTest {
         )
         workflow?.let { write(ada, "/api/v1/workflows/$it/runs", "{}") }
         val artifact = read(ada, "/api/v1/artifacts", "").let { items(it)?.firstOrNull()?.id() }
+        // A team skill, a personal skill and a team hook, each with one version (their versions and assignments).
+        write(ada, "/api/v1/skills/lists/versions", SKILL_VERSION)
+        write(ada, "/api/v1/me/skills/mine/versions", SKILL_VERSION)
+        write(ada, "/api/v1/hooks/lists/versions", HOOK_BODY)
         return listOfNotNull(
             automation?.let { "/api/v1/automations" to it },
             workflow?.let { "/api/v1/workflows" to it },
             artifact?.let { "/api/v1/artifacts" to it },
             "/api/v1/mcp/servers" to "lists",
+            "/api/v1/skills" to "lists",
+            "/api/v1/me/skills" to "mine",
+            "/api/v1/hooks" to "lists",
+            "/api/v1/members" to "${ada.memberId}",
         ).toMap()
     }
 
@@ -267,15 +277,22 @@ class ListBoundsPostgresTest {
         const val MANY = 1_000
         const val SERVER_ERROR = 500
         const val GARBAGE = "not a cursor%~/"
+
+        // A skill version: its one file, SKILL.md, base64 of "# Skill".
+        const val SKILL_VERSION = """{"version": "1.0.0",""" +
+            """ "files": [{"path": "SKILL.md", "contentBase64": "IyBTa2lsbA=="}]}"""
         val SUCCESS = 200..299
         val PARAMETER = Regex("\\{(\\w+)}")
         val RESOURCE = Regex("\\{(?!org\\b|orgId\\b)\\w+}")
 
-        /**
-         * The lists a minimal bootstrap cannot reach, with the status they answer: the instance's administration
-         * (ostrom-core#186), for an instance administrator only, which no organization's person is here.
-         */
-        val UNREACHED = mapOf("listInstanceAdmins" to 403, "listInstanceSettings" to 403)
+        /** The lists a minimal bootstrap cannot reach, with the status they answer. */
+        val UNREACHED = mapOf(
+            // The instance's administration, served since ostrom-core#186 and #199: an instance administrator's, whom a
+            // minimal bootstrap does not make.
+            "listCloudClusters" to 403,
+            "listInstanceAdmins" to 403,
+            "listInstanceSettings" to 403,
+        )
 
         /**
          * The paged lists whose page of A is empty after the minimal bootstrap: nothing of A to replay in B. Their
