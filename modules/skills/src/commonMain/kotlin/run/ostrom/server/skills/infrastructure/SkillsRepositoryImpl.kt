@@ -301,19 +301,17 @@ private class PostgresSkillsStore(private val tx: Transaction, private val orgId
     private fun mode(wire: String) = FileMode.entries.first { it.wire == wire }
 
     private fun status(wire: String) = InstallationStatus.entries.first { it.wire == wire }
-
-    private companion object {
-        val SKILL_COLUMNS = listOf(
-            "id", "org_id", "name", "owner_id", "pinned_version_id", "all_members", "retired_at", "created_at",
-            "updated_at",
-        )
-        val SKILL_SELECT = "SELECT ${SKILL_COLUMNS.joinToString { "s.$it" }}, p.version AS pinned_label " +
-            "FROM skills_skills s LEFT JOIN skills_versions p ON p.org_id = s.org_id AND p.id = s.pinned_version_id"
-        val VERSION_COLUMN_NAMES = listOf(
-            "id", "skill_id", "version", "digest", "size_bytes", "file_count", "published_by", "published_at",
-            "retired_at",
-        )
-        val VERSION_COLUMNS = VERSION_COLUMN_NAMES.joinToString()
-        const val ASSIGNMENT_COLUMNS = "id, skill_id, member_id, decision, updated_at"
-    }
 }
+
+private val SKILL_COLUMNS = listOf(
+    "id", "org_id", "name", "owner_id", "pinned_version_id", "all_members", "retired_at", "created_at",
+    "updated_at",
+)
+private val SKILL_SELECT = "SELECT ${SKILL_COLUMNS.joinToString { "s.$it" }}, p.version AS pinned_label " +
+    "FROM skills_skills s LEFT JOIN skills_versions p ON p.org_id = s.org_id AND p.id = s.pinned_version_id"
+private val VERSION_COLUMN_NAMES = listOf(
+    "id", "skill_id", "version", "digest", "size_bytes", "file_count", "published_by", "published_at",
+    "retired_at",
+)
+private val VERSION_COLUMNS = VERSION_COLUMN_NAMES.joinToString()
+private const val ASSIGNMENT_COLUMNS = "id, skill_id, member_id, decision, updated_at"

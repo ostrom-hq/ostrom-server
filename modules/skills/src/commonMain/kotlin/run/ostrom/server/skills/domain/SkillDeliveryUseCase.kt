@@ -131,12 +131,16 @@ internal class SkillDeliveryUseCaseImpl(
  * access policy's yes. A personal skill reaches its owner without a decision row, and nobody else.
  */
 internal fun Candidate.effectiveFor(memberId: String): EffectiveSkill? {
-    val version = pinned
+    val version = pinned ?: return null
     val owner = skill.ownerId
     val allowed = when {
+        skill.retired || version.retired -> false
         owner != null -> owner == memberId
         else -> AccessPolicy.allowed(decision, skill.allMembers)
     }
-    if (version == null || skill.retired || version.retired || !allowed) return null
-    return EffectiveSkill(skill.name, version.id, version.version, version.digest, version.sizeBytes, version.fileCount)
+    return if (allowed) {
+        EffectiveSkill(skill.name, version.id, version.version, version.digest, version.sizeBytes, version.fileCount)
+    } else {
+        null
+    }
 }

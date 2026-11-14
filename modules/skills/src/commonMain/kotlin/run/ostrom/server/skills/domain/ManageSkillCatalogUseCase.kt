@@ -181,14 +181,15 @@ internal class ManageSkillCatalogUseCaseImpl(
         val saved = repository.write(caller.orgId) {
             val skill = owned(name, Ownership.Team)
             val current = assignment(skill.id, memberId)
-            val row = Assignment(current?.id ?: Uuid.random(), skill.id, memberId, decision, clock.now())
+            val id = if (current == null) Uuid.random() else current.id
+            val row = Assignment(id, skill.id, memberId, decision, clock.now())
             // Nothing changes: no write, no event (clearing a decision never set included).
             if ((current?.decision) == decision) return@write current ?: row
             saveAssignment(row, caller.memberId)
-            val event = when (decision) {
-                Decision.ALLOW -> "skill.access.allowed"
-                Decision.DENY -> "skill.access.denied"
-                null -> "skill.access.cleared"
+            val event = when {
+                decision == null -> "skill.access.cleared"
+                decision == Decision.ALLOW -> "skill.access.allowed"
+                else -> "skill.access.denied"
             }
             events += CatalogEvent(event, "skill_assignment", row.id)
             row
