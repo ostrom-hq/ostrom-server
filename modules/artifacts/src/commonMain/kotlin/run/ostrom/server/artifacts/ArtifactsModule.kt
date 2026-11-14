@@ -7,6 +7,8 @@ import run.ostrom.server.artifacts.domain.ArtifactLocations
 import run.ostrom.server.artifacts.domain.ArtifactPublicationsRepository
 import run.ostrom.server.artifacts.domain.ArtifactUsageReports
 import run.ostrom.server.artifacts.domain.ArtifactLifecycleRepository
+import run.ostrom.server.artifacts.domain.ArtifactMaintenance
+import run.ostrom.server.artifacts.domain.ArtifactMaintenanceRepository
 import run.ostrom.server.artifacts.domain.ArtifactUsageRepository
 import run.ostrom.server.artifacts.domain.ArtifactsRepository
 import run.ostrom.server.artifacts.domain.ContentDigest
@@ -40,6 +42,8 @@ import run.ostrom.server.artifacts.domain.uploads.UploadStores
 import run.ostrom.server.artifacts.infrastructure.ArtifactPublicationsRepositoryImpl
 import run.ostrom.server.artifacts.infrastructure.ArtifactUploadsRepositoryImpl
 import run.ostrom.server.artifacts.infrastructure.ArtifactLifecycleRepositoryImpl
+import run.ostrom.server.artifacts.infrastructure.ArtifactMaintenanceRepositoryImpl
+import run.ostrom.server.artifacts.infrastructure.ArtifactMaintenanceSweeper
 import run.ostrom.server.artifacts.infrastructure.ArtifactUsageRepositoryImpl
 import run.ostrom.server.artifacts.infrastructure.ArtifactsConfig
 import run.ostrom.server.artifacts.infrastructure.ArtifactsMigrations
@@ -63,6 +67,8 @@ import run.ostrom.server.kernel.network.outboundHttpClient
 import run.ostrom.server.secrets.domain.SecretCipher
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.server.routing.Route
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
@@ -127,6 +133,8 @@ object ArtifactsModule : ServerModule {
         single<UploadArtifactUseCase> {
             UploadArtifactUseCaseImpl(get(), UploadStores(get(), get(), get()), get(), get(), get(), get())
         }
+        single<ArtifactMaintenanceRepository> { ArtifactMaintenanceRepositoryImpl(get()) }
+        single { ArtifactMaintenance(get(), get(), get(), get()) }
     }
 
     private const val CONNECT_TIMEOUT_MILLIS = 10_000L
@@ -144,4 +152,10 @@ object ArtifactsModule : ServerModule {
 
     /** Shared artifacts, their viewer and their MCP server. */
     override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.ARTIFACTS)
+
+    override fun start(scope: CoroutineScope, koin: Koin) {
+        val maintenance = koin.get<ArtifactMaintenance>()
+        val sweeper = ArtifactMaintenanceSweeper({ maintenance.run() }, koin.get())
+        scope.launch { sweeper.run() }
+    }
 }

@@ -29,6 +29,13 @@ interface UploadChunks {
 
     /** Deletes the chunks of a file, as far as the bucket answers: what remains goes with the upload's folder. */
     suspend fun drop(orgId: Uuid, uploadId: Uuid, sha256: String, count: Int)
+
+    /**
+     * Deletes the upload's folder (`<org>/uploads/<id>/`), once it expired.
+     *
+     * @return True when it is empty, or no bucket is stored any more; false when the bucket failed (tried again later).
+     */
+    suspend fun discard(orgId: Uuid, uploadId: Uuid): Boolean
 }
 
 /**
@@ -75,6 +82,11 @@ class BucketUploadChunks(
         } catch (_: ObjectStoreException) {
             // Left for the collection of the upload's folder.
         }
+    }
+
+    override suspend fun discard(orgId: Uuid, uploadId: Uuid): Boolean {
+        val connection = storage.connection(orgId) ?: return true
+        return objects.empty(connection, ArtifactKeys.upload(connection.prefix, orgId.toString(), uploadId.toString()))
     }
 
     private fun key(connection: ArtifactStorageConnection, orgId: Uuid, uploadId: Uuid, sha256: String, index: Int) =

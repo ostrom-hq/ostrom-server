@@ -118,6 +118,7 @@ functions (the owner, a member of `ostrom_router` to hand the functions over, do
 | `sessions_active_count(since)` | sessions | counts the open sessions of every organization seen since, for `ostrom.sessions.active` | `SessionsPostgresTest` |
 | `artifacts_route_by_id(id)` | artifacts | an artifact's organization by its id, for the content origin | `ArtifactsRoutesTenancyPostgresTest` |
 | `artifacts_route_by_slug(slug)` | artifacts | an artifact's organization by its public link | `ArtifactsRoutesTenancyPostgresTest` |
+| `artifacts_due_organizations(now, drafts, publications, limit)` | artifacts | the organizations with expired uploads or artifacts, old drafts or publications the hourly limit no longer counts, for the maintenance | `ArtifactMaintenancePostgresTest` |
 | `runners_session_org(id)` | runners | a session's organization | `RunnersRoutesTenancyPostgresTest` |
 | `runners_session_by_token(hash)` | runners | the session a runner token belongs to, for the runner channel | `RunnersRoutesTenancyPostgresTest` |
 | `runners_claim_due(owner, until, now, limit)` | runners | leases the due sessions of every organization to one reconciler (`FOR UPDATE SKIP LOCKED`) | `CloudSessionsPostgresTest` |

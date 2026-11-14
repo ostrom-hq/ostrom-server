@@ -51,6 +51,50 @@ private val ROUTES_UNDER_ROW_LEVEL_SECURITY_SQL: String =
         .trimIndent()
 
 /**
+ * The organizations with expired uploads, expired artifacts, drafts created before `p_drafts`, publications made
+ * before `p_publications`, or contents marked for collection, each found on its own index. Frozen: migration 12 is
+ * written from it.
+ */
+internal fun dueOrganizationsSql(now: String, drafts: String, publications: String, limit: String): String =
+    "SELECT DISTINCT d.org_id FROM (SELECT u.org_id FROM artifacts_uploads u WHERE u.expires_at <= $now " +
+        "UNION ALL SELECT a.org_id FROM artifacts_artifacts a WHERE a.expires_at <= $now " +
+        "UNION ALL SELECT a.org_id FROM artifacts_artifacts a WHERE a.latest_version = 0 AND a.created_at < $drafts " +
+        "UNION ALL SELECT p.org_id FROM artifacts_publications p WHERE p.published_at < $publications " +
+        "UNION ALL SELECT b.org_id FROM artifacts_blobs b WHERE b.marked_at IS NOT NULL) d LIMIT $limit"
+
+private val MAINTAINED_TABLES =
+    listOf("artifacts_uploads", "artifacts_artifacts", "artifacts_publications", "artifacts_blobs")
+
+private const val DUE_FUNCTION = "artifacts_due_organizations(TIMESTAMPTZ, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER)"
+
+/** Version 12: the indexes of the maintenance and its cross-organization function, owned by `ostrom_router`. */
+private val MAINTENANCE_SQL: String =
+    """
+    CREATE INDEX artifacts_uploads_expiry ON artifacts_uploads (expires_at);
+    CREATE INDEX artifacts_artifacts_draft_age ON artifacts_artifacts (created_at) WHERE latest_version = 0;
+    CREATE INDEX artifacts_publications_age ON artifacts_publications (published_at);
+    ${MAINTAINED_TABLES.joinToString("\n") {
+        "CREATE POLICY ${it}_router ON $it FOR SELECT TO ostrom_router USING (current_user = 'ostrom_router');\n" +
+            "GRANT SELECT ON $it TO ostrom_router;"
+    }}
+    CREATE FUNCTION artifacts_due_organizations(p_now TIMESTAMPTZ, p_drafts TIMESTAMPTZ, p_publications TIMESTAMPTZ,
+        p_limit INTEGER) RETURNS SETOF UUID
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        ${dueOrganizationsSql("p_now", "p_drafts", "p_publications", "p_limit")};
+    $$;
+    REVOKE EXECUTE ON FUNCTION $DUE_FUNCTION FROM PUBLIC;
+    DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+            GRANT EXECUTE ON FUNCTION $DUE_FUNCTION TO ostrom_app;
+        END IF;
+    END $$;
+    GRANT CREATE ON SCHEMA public TO ostrom_router;
+    ALTER FUNCTION $DUE_FUNCTION OWNER TO ostrom_router;
+    REVOKE CREATE ON SCHEMA public FROM ostrom_router;
+    """
+        .trimIndent()
+
+/**
  * The schema of the artifacts module; its tables start with `artifacts_`, and each is confined by row-level security
  * to the organization of the transaction (S2-01). `artifacts_routes` (an artifact's id, organization and link slug,
  * no customer content) is also read across organizations by the content origin, which finds an artifact by its signed
@@ -281,4 +325,7 @@ val ArtifactsMigrations: List<SchemaMigration> = listOf(
             CREATE INDEX artifacts_blobs_marked ON artifacts_blobs (marked_at) WHERE marked_at IS NOT NULL;
         """.trimIndent(),
     ),
+    // The maintenance (TeamCode's ArtifactMaintenance) finds the organizations with work due through one narrow
+    // function of the router, then works in each under row-level security.
+    SchemaMigration(version = 12, name = "artifacts_maintenance", sql = MAINTENANCE_SQL),
 )
