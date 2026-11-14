@@ -103,6 +103,8 @@ class CloudClustersTest {
         assertTrue("allowedNamespaces" in refused(input.copy(allowedNamespaces = listOf("a", "a"))))
         assertTrue("allowedNamespaces" in refused(input.copy(allowedNamespaces = listOf("Not_A_Label"))))
         assertTrue("maxRunningPods" in refused(input.copy(maxRunningPods = 0)))
+        assertTrue("maxRunningPods" in refused(input.copy(maxRunningPods = 100_001)))
+        assertTrue("allowedNamespaces" in refused(input.copy(allowedNamespaces = (1..101).map { "n$it" })))
         assertTrue("defaultStorageClass" in refused(input.copy(defaultStorageClass = "Bad Class")))
         assertTrue("version" in refused(input.copy(version = 3)))
         assertEquals("fast", clusters.create(alice, input.copy(defaultStorageClass = "fast")).defaultStorageClass)

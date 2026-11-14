@@ -84,6 +84,9 @@ class CloudClustersUseCaseImpl(
     override suspend fun create(caller: CloudAdminCaller, input: CloudClusterInput): CloudCluster {
         val userId = gate.require(caller)
         val clean = normalize(input)
+        val ca = clean.caCertificate
+        val token = clean.serviceAccountToken
+        if (ca == null || token == null) throw InvalidCloudClusterException(NEEDS_CREDENTIALS)
         clusterProblem(clean, null)?.let { throw InvalidCloudClusterException(it) }
         val now = clock.nowMillis()
         val id = Uuid.random()
@@ -91,8 +94,7 @@ class CloudClustersUseCaseImpl(
             id, clean.name, clean.apiUrl, clean.allowedNamespaces, clean.maxRunningPods, clean.defaultStorageClass,
             1, hasCaCertificate = true, hasServiceAccountToken = true, createdAt = now, updatedAt = now,
         )
-        val sealedCa = seal(id, CA, clean.caCertificate)
-        val stored = StoredCloudCluster(cluster, sealedCa, seal(id, TOKEN, clean.serviceAccountToken))
+        val stored = StoredCloudCluster(cluster, seal(id, CA, ca), seal(id, TOKEN, token))
         if (!repository.insert(stored)) throw CloudClusterConflictException()
         record(userId, "cloud.cluster.created", cluster, newCredentials = true)
         return cluster
@@ -116,8 +118,12 @@ class CloudClustersUseCaseImpl(
         )
         val stored = StoredCloudCluster(
             cluster,
-            clean.caCertificate?.let { seal(id, CA, it) } ?: before.sealedCaCertificate,
-            clean.serviceAccountToken?.let { seal(id, TOKEN, it) } ?: before.sealedServiceAccountToken,
+            if (clean.caCertificate == null) before.sealedCaCertificate else seal(id, CA, clean.caCertificate),
+            if (clean.serviceAccountToken == null) {
+                before.sealedServiceAccountToken
+            } else {
+                seal(id, TOKEN, clean.serviceAccountToken)
+            },
         )
         if (!repository.update(stored)) throw CloudClusterConflictException()
         val renewed = clean.caCertificate != null || clean.serviceAccountToken != null
@@ -136,8 +142,8 @@ class CloudClustersUseCaseImpl(
         }
     }
 
-    private suspend fun seal(id: Uuid, field: String, value: String?): String =
-        cipher.seal(value.orEmpty().encodeToByteArray(), context(id, field))
+    private suspend fun seal(id: Uuid, field: String, value: String): String =
+        cipher.seal(value.encodeToByteArray(), context(id, field))
 
     private suspend fun record(userId: Uuid, event: String, cluster: CloudCluster, newCredentials: Boolean) {
         val details = mapOf(
@@ -150,6 +156,7 @@ class CloudClustersUseCaseImpl(
 
     private companion object {
         const val CA = "ca"
+        const val NEEDS_CREDENTIALS = "caCertificate and serviceAccountToken are needed for a new apiUrl."
         const val TOKEN = "token"
         const val MAX_DETAIL = 100
 

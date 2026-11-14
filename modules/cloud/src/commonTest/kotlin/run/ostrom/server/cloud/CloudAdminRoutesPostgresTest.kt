@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.cloud
 
+import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.cloud.domain.CloudClusterAccess
 import run.ostrom.server.cloud.domain.CloudProfilesRepository
 import run.ostrom.server.cloud.domain.CloudRuntimeSource
@@ -218,7 +219,39 @@ class CloudAdminRoutesPostgresTest {
         )
         val repository = server.koin.get<CloudProfilesRepository>()
         assertNull(repository.get(ORG_B, Uuid.parse(first.id)))
-        assertEquals(2, repository.get(ORG_A, Uuid.parse(first.id))?.version)
+        val current = repository.get(ORG_A, Uuid.parse(first.id))
+        assertEquals(2, current?.version)
+        // A version published meanwhile: nothing is written over it.
+        assertFalse(repository.publish(checkNotNull(current)))
+    }
+
+    @Test
+    fun withNothingSetTheRuntimeIsTheDefaultsAndItsFirstSaveNamesNoPreviousOne() = serverTest(
+        listOf(CloudModule),
+        module {
+            single<TokenAuthenticator> {
+                object : TokenAuthenticator {
+                    override suspend fun authenticate(token: String): AuthenticatedPrincipal? =
+                        person("alice").takeIf { token == "alice" }
+                }
+            }
+            single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
+            single<InstanceAdministrators> { InstanceAdministrators { it == ALICE } }
+        },
+    ) { server ->
+        val http = server.client
+        assertEquals(setOf(ServerFeatures.CLOUD_ADMIN), CloudModule.features(server.koin))
+        val empty = http.get("/api/v1/cloud/runtime") { bearerAuth("alice") }.body<CloudRuntimeResponse>()
+        assertNull(empty.updatedAt)
+        assertFalse(empty.enabled)
+        val body = """{"enabled":false,"runnerBinary":"/usr/local/bin/ostrom",""" +
+            """"workspaceAccessMode":"ReadWriteOncePod",""" +
+            """"failedWorkspaceRetentionDays":7,"maxRunningSessionsPerMember":2,"maxRetainedSessionsPerMember":20,""" +
+            """"memberTransfers":"offer"}"""
+        val saved = http.send("PUT", "/api/v1/cloud/runtime", "alice", body).body<CloudRuntimeResponse>()
+        assertTrue(saved.updatedAt != null)
+        // No organization resolves anyone here: a team's profiles are nobody's.
+        assertEquals(HttpStatusCode.NotFound, http.get("/api/v1/cloud/profiles") { bearerAuth("alice") }.status)
     }
 
     @Test

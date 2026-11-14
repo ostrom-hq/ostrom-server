@@ -140,7 +140,7 @@ class CloudRuntimeUseCaseImpl(
     }
 
     private fun seeded(environment: (String) -> String?): CloudRuntime {
-        val enabled = environment(DRIVER)?.trim()?.lowercase() == "kubernetes"
+        val enabled = environment(DRIVER).trimmedOrNull()?.lowercase() == "kubernetes"
         // The image the runners module used when the variable was unset.
         return seededRuntime(enabled, environment(IMAGE) ?: DEFAULT_IMAGE.takeIf { enabled }, environment)
     }

@@ -70,6 +70,8 @@ class CloudRuntimeTest {
         assertTrue("pausedRetentionDays" in refused(on.copy(pausedRetentionDays = 0)))
         assertTrue("failedWorkspaceRetentionDays" in refused(on.copy(failedWorkspaceRetentionDays = 3651)))
         assertTrue("maxRunningSessionsPerMember" in refused(on.copy(maxRunningSessionsPerMember = 0)))
+        assertTrue("maxRunningSessionsPerMember" in refused(on.copy(maxRunningSessionsPerMember = 1001)))
+        assertTrue("maxRetainedSessionsPerMember" in refused(on.copy(maxRetainedSessionsPerMember = 0)))
         assertTrue("maxRetainedSessionsPerMember" in refused(on.copy(maxRetainedSessionsPerMember = 10_001)))
         assertTrue("transcriptRetentionDays" in refused(on.copy(transcriptRetentionDays = 0)))
         assertTrue("memberTransfers" in refused(on.copy(memberTransfers = "always")))

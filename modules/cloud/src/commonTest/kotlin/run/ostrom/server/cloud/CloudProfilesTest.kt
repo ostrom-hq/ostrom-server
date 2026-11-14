@@ -114,11 +114,17 @@ class CloudProfilesTest {
         assertTrue("imagePullSecrets" in refused(with(spec.copy(imagePullSecrets = (1..21).map { "s$it" }))))
         assertTrue("resources" in refused(with(spec.copy(resources = CloudResources(cpuMillis = 50)))))
         assertTrue("resources" in refused(with(spec.copy(resources = CloudResources(memoryMebibytes = 64)))))
+        assertTrue("resources" in refused(with(spec.copy(resources = CloudResources(cpuMillis = 64_001)))))
+        assertTrue("resources" in refused(with(spec.copy(resources = CloudResources(memoryMebibytes = 262_145)))))
         assertTrue("workspaceSizeGibibytes" in refused(with(spec.copy(workspaceSizeGibibytes = 0))))
+        assertTrue("workspaceSizeGibibytes" in refused(with(spec.copy(workspaceSizeGibibytes = 2049))))
         assertTrue("storageClass" in refused(with(spec.copy(storageClass = "Bad Class"))))
         assertTrue("agentKind" in refused(with(spec.copy(agentKind = "other"))))
         assertTrue("idle" in refused(with(spec.copy(minIdleTimeoutMinutes = 0))))
+        assertTrue("idle" in refused(with(spec.copy(minIdleTimeoutMinutes = 1441))))
+        assertTrue("idle" in refused(with(spec.copy(maxIdleTimeoutMinutes = 0, minIdleTimeoutMinutes = 1))))
         assertTrue("idle" in refused(with(spec.copy(maxIdleTimeoutMinutes = 1441))))
+        assertTrue("idle" in refused(with(spec.copy(idleTimeoutMinutes = 100, maxIdleTimeoutMinutes = 60))))
         assertTrue("idle" in refused(with(spec.copy(idleTimeoutMinutes = 2, minIdleTimeoutMinutes = 5))))
         assertTrue(
             "assignedMemberIds" in refused(input.copy(assignedMemberIds = (1..1001).map { "m$it" }.toSet())),

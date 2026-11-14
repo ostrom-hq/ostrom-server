@@ -67,8 +67,9 @@ class CloudClustersRepositoryImpl(private val driver: Driver) : CloudClustersRep
             maxRunningPods = get("max_running_pods").asInt(),
             defaultStorageClass = get("default_storage_class").asStringOrNull(),
             version = get("version").asInt(),
-            hasCaCertificate = ca.isNotEmpty(),
-            hasServiceAccountToken = token.isNotEmpty(),
+            // A cluster is never stored without both (a new one, or a new apiUrl, brings them).
+            hasCaCertificate = true,
+            hasServiceAccountToken = true,
             createdAt = get("created_at").asInstant(),
             updatedAt = get("updated_at").asInstant(),
         )
