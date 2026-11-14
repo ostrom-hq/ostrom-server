@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // The wait events of TeamCode's team feed (https://github.com/nathanfallet/teamcode, Apache-2.0,
-// domain/src/main/kotlin/me/nathanfallet/teamcode/domain/team/TeamEvents.kt): `cloud.wait.created`, `.resolved`, `.cancelled`.
+// domain/src/main/kotlin/me/nathanfallet/teamcode/domain/team/TeamEvents.kt): `cloud.wait.created`, `.resolved`,
+// `.cancelled`.
 package run.ostrom.server.automations.infrastructure
 
 import run.ostrom.server.automations.domain.Wait

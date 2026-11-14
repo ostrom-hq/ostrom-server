@@ -28,7 +28,10 @@ import kotlin.uuid.Uuid
  * @param driver The database.
  * @param events The organization's event feed.
  */
-internal class WaitsRepositoryImpl(private val driver: Driver, private val events: OrgEventPublisher) : WaitsRepository {
+internal class WaitsRepositoryImpl(
+    private val driver: Driver,
+    private val events: OrgEventPublisher,
+) : WaitsRepository {
     override suspend fun createWithinLimit(wait: Wait, maxOpen: Int, sessions: List<String>): CreateOutcome =
         driver.inTenant(wait.orgId) {
             // Serialize the count and the insert of one scope, so that two concurrent asks never both pass the limit.

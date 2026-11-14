@@ -131,11 +131,14 @@ class WaitsPostgresTest {
             val repository = server.koin.get<WaitsRepository>()
             val asked = wait(key = "e1")
             assertEquals(CreateOutcome.CREATED, repository.createWithinLimit(asked, 5))
-            assertEquals(CreateOutcome.DUPLICATE, repository.createWithinLimit(wait(key = "e1"), 5), "A duplicate is not heard")
+            val again = repository.createWithinLimit(wait(key = "e1"), 5)
+            assertEquals(CreateOutcome.DUPLICATE, again, "A duplicate is not heard")
             val alone = wait(session = null).copy(assignee = "agent:x")
             assertEquals(CreateOutcome.CREATED, repository.createWithinLimit(alone, 5))
-            repository.resolve(ORG_A, asked.id, WaitAnswer("approve", mapOf("feedback" to JsonPrimitive("secret words")), ALICE.toString(), t0))
-            assertNull(repository.resolve(ORG_A, asked.id, WaitAnswer("approve", emptyMap(), ALICE.toString(), t0)), "Once")
+            val values = mapOf("feedback" to JsonPrimitive("secret words"))
+            repository.resolve(ORG_A, asked.id, WaitAnswer("approve", values, ALICE.toString(), t0))
+            val twice = repository.resolve(ORG_A, asked.id, WaitAnswer("approve", emptyMap(), ALICE.toString(), t0))
+            assertNull(twice, "Once")
             repository.cancel(ORG_A, alone.id, t0)
             val ended = wait(session = "s9")
             assertEquals(CreateOutcome.CREATED, repository.createWithinLimit(ended, 5))
@@ -143,8 +146,12 @@ class WaitsPostgresTest {
 
             assertEquals(
                 listOf(
-                    OrgEventType.WAIT_CREATED to asked.id, OrgEventType.WAIT_CREATED to alone.id, OrgEventType.WAIT_RESOLVED to asked.id,
-                    OrgEventType.WAIT_CANCELLED to alone.id, OrgEventType.WAIT_CREATED to ended.id, OrgEventType.WAIT_CANCELLED to ended.id,
+                    OrgEventType.WAIT_CREATED to asked.id,
+                    OrgEventType.WAIT_CREATED to alone.id,
+                    OrgEventType.WAIT_RESOLVED to asked.id,
+                    OrgEventType.WAIT_CANCELLED to alone.id,
+                    OrgEventType.WAIT_CREATED to ended.id,
+                    OrgEventType.WAIT_CANCELLED to ended.id,
                 ),
                 feed.published.map { (_, event) -> event.type to Uuid.parse(event.subjectId) },
             )
@@ -152,7 +159,12 @@ class WaitsPostgresTest {
             val (created, otherAssignee, resolved) = feed.published.map { it.second }
             assertEquals(ALICE, created.memberId, "The assignee's event")
             assertEquals(
-                mapOf("waitId" to asked.id.toString(), "sessionId" to "s1", "waitKind" to "human_request", "assigneeId" to ALICE.toString()),
+                mapOf(
+                    "waitId" to asked.id.toString(),
+                    "sessionId" to "s1",
+                    "waitKind" to "human_request",
+                    "assigneeId" to ALICE.toString(),
+                ),
                 created.data.mapValues { it.value.jsonPrimitive.content },
             )
             assertNull(otherAssignee.memberId, "An assignee that is not a member id")

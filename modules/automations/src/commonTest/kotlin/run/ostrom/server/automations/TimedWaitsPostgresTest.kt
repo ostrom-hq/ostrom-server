@@ -322,8 +322,12 @@ class TimedWaitsPostgresTest {
             assertEquals(WaitStatus.RESOLVED, timedWaits.settle(ORG_B, event.id, received, due = false)?.status)
             assertNull(timedWaits.eventTarget(event.id), "Closed")
             val settled = feed.published.filter { it.second.type == OrgEventType.WAIT_RESOLVED }
-            assertEquals(listOf(ORG_A to time.id.toString(), ORG_B to event.id.toString()), settled.map { it.first to it.second.subjectId })
-            assertEquals(listOf("time_reached", "event_received"), settled.map { it.second.data["action"]?.jsonPrimitive?.content })
+            assertEquals(
+                listOf(ORG_A to time.id.toString(), ORG_B to event.id.toString()),
+                settled.map { it.first to it.second.subjectId },
+            )
+            val actions = settled.map { it.second.data["action"]?.jsonPrimitive?.content }
+            assertEquals(listOf("time_reached", "event_received"), actions)
             assertEquals(emptyList(), timedWaits.due(t0 + 5.minutes, 50))
             val timedOnly = WaitFilter(ORG_A, resolver = WaitResolver.TIME)
             assertEquals(setOf(time.id, later.id), repository.list(timedOnly, null, 10).map { it.id }.toSet())

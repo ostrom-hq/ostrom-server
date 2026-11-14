@@ -24,7 +24,10 @@ import kotlin.uuid.Uuid
  * @param driver The database.
  * @param events The organization's event feed.
  */
-internal class TimedWaitsRepositoryImpl(private val driver: Driver, private val events: OrgEventPublisher) : TimedWaitsRepository {
+internal class TimedWaitsRepositoryImpl(
+    private val driver: Driver,
+    private val events: OrgEventPublisher,
+) : TimedWaitsRepository {
     override suspend fun due(now: Instant, limit: Int): List<DueWait> = driver.fetchAll(
         // The serving role alone runs the function; it returns ids and organizations, nothing of a wait's content.
         Statement.create(
