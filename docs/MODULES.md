@@ -360,7 +360,7 @@ What lives in the console so far:
 | Sign-in with Google (`google`): the OAuth client, its secret sealed, and Google's issuer, consent page and token endpoint, each replaced alone (a fake Google in end-to-end tests). Offered once the client id and secret are set, without a restart | `OSTROM_GOOGLE_CLIENT_ID`, `OSTROM_GOOGLE_CLIENT_SECRET`, `OSTROM_GOOGLE_ISSUER`, `OSTROM_GOOGLE_AUTHORIZATION_URL`, `OSTROM_GOOGLE_TOKEN_URL` | the `identity` module |
 | Sign-in with GitHub (`github-sign-in`): the OAuth client people sign in with (and `ostrom login` checks a GitHub token against), its secret sealed, GitHub's web and API URLs (GitHub Enterprise Server, a fake GitHub). Offered once the client id and secret are set | `OSTROM_GITHUB_CLIENT_ID`, `OSTROM_GITHUB_CLIENT_SECRET`, `OSTROM_GITHUB_WEB_URL`, `OSTROM_GITHUB_API_URL` | the `identity` module |
 | GitHub (`github`: API URL, web URL, the name of the App the manifest flow creates) | `OSTROM_GITHUB_API`, `OSTROM_GITHUB_WEB`, `OSTROM_GITHUB_APP_NAME` | the `integrations-github` module |
-| GitHub App (id, slug, sealed private key, webhook secret and OAuth client secret, OAuth client id; created by the manifest flow on **Admin → GitHub**) | `OSTROM_GITHUB_APP_ID`, `OSTROM_GITHUB_APP_SLUG`, `OSTROM_GITHUB_APP_PEM`, `OSTROM_GITHUB_WEBHOOK_SECRET`, `OSTROM_GITHUB_APP_CLIENT_ID`, `OSTROM_GITHUB_APP_CLIENT_SECRET` | the `integrations-github` module |
+| GitHub App (id, slug, sealed private key, webhook secret and OAuth client secret, OAuth client id; created by the manifest flow on **Admin → GitHub**, or entered by hand with `GET`/`PUT /api/v1/github/app/configuration`) | `OSTROM_GITHUB_APP_ID`, `OSTROM_GITHUB_APP_SLUG`, `OSTROM_GITHUB_APP_PEM`, `OSTROM_GITHUB_WEBHOOK_SECRET`, `OSTROM_GITHUB_APP_CLIENT_ID`, `OSTROM_GITHUB_APP_CLIENT_SECRET` | the `integrations-github` module |
 | Mail (`mail`): Resend's API key, sealed, and the sender (`Ostrom <login@mail.ostrom.run>` while unset). Sign-in links, invitations and approval e-mails go once the key is set, and e-mailed sign-in is offered then, without a restart. A developer's machine or an end-to-end test writes them to `OSTROM_MAIL_DIR` instead, which stays in the environment | `OSTROM_RESEND_API_KEY`, `OSTROM_MAIL_FROM` | the `identity` module |
 | Usage (`usage`: days the ledger keeps its events, 1 to 3650, 400 by default), read at each hourly purge | `OSTROM_USAGE_RETENTION_DAYS` | the `usage` module |
 | Stripe (`stripe`: the sealed secret key and webhook signing secrets, Stripe's API), read at each use; billing is on while the key and a webhook secret are stored | `OSTROM_STRIPE_SECRET_KEY`, `OSTROM_STRIPE_WEBHOOK_SECRET` (or their `_FILE`), `OSTROM_STRIPE_API_BASE` | the `billing` module |
@@ -374,6 +374,21 @@ not in a settings section: the manifest flow creates it once, and the stored App
 start, when no App is stored and the former variables name a complete one (an id, a slug and a private key), it is
 imported once, with a warning that the variables are deprecated; afterwards they are ignored with a warning. GitHub's
 address is read again every 30 seconds, so a change in the console reaches every replica within a minute.
+
+An administrator of the instance, signed in as a person (never a key or a token, even an administrator's), may also
+enter the App by hand, as on TeamCode's GitHub page: `GET /api/v1/github/app/configuration` returns it without its key
+or secrets (only whether each is set) and the callback URLs to register on it (the install's return, the members'
+links and the sign-in with GitHub, which the manifest also sets); `PUT` enters or changes it. A first App needs its
+client secret and private key; a change names the version it read (`409 github_app_conflict` otherwise) and keeps any
+secret it leaves null, but another client ID needs its own secret. TeamCode's bounds are refused with `400
+invalid_github_app`, then GitHub is asked which App the key signs for (`GET /app` with the App's JWT): `422
+github_app_rejected` when it refuses the key for that App ID, `422 github_app_mismatch` when the key or the client ID
+is another App's, `503` when it does not answer. The save seals every secret again under the App's id, is audited
+(`github.app.saved`) and reaches every replica within a minute. A new App ID is logged with the number of the former
+App's installations: **those installations stop working until each organization installs the new App**. A new client
+ID removes the members' links of the former client in every organization and revokes their tokens with it while its
+secret still opens (TeamCode does the same). Both reads across organizations go through functions of `ostrom_router`
+(docs/tenancy.md).
 
 The `cloud` module follows TeamCode's cloud model. The instance's administrators set the runtime and connect clusters:
 a cluster's API URL is an https URL that is never a link-local, unspecified or metadata address in any numeric

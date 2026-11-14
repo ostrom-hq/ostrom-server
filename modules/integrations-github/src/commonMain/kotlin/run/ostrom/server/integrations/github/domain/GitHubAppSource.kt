@@ -15,6 +15,9 @@ import kotlin.time.Instant
  * @property webhookSecret The secret GitHub signs its webhooks with.
  * @property clientId Its OAuth client id.
  * @property clientSecret Its OAuth client secret.
+ * @property owner The GitHub account that owns it, when known.
+ * @property version The stored version, raised by each change by hand; null for an App not stored.
+ * @property updatedAt The last save; null for an App not stored.
  */
 data class GitHubAppCredentials(
     val appId: String? = null,
@@ -23,6 +26,9 @@ data class GitHubAppCredentials(
     val webhookSecret: String? = null,
     val clientId: String? = null,
     val clientSecret: String? = null,
+    val owner: String? = null,
+    val version: Int? = null,
+    val updatedAt: Instant? = null,
 ) {
     /** Whether an App is named at all: an id or a slug. */
     val named: Boolean get() = appId != null || slug != null
@@ -81,6 +87,18 @@ interface GitHubAppStore {
      * @return False when an App was already stored: the first one stays.
      */
     suspend fun saveApp(app: CreatedGitHubApp, by: String, at: Instant): Boolean
+
+    /**
+     * Stores the App an administrator entered by hand: a first one, or a change of the stored one at [expectedVersion]
+     * (its version is then raised by one). Every key and secret is sealed again, bound to the App's (maybe new) id.
+     *
+     * @param app The App, every secret given (the kept ones opened by the caller).
+     * @param expectedVersion The stored version it replaces, or null for a first App.
+     * @param by Who saved it.
+     * @param at When.
+     * @return False when another save came first: an App is stored for a first one, or another version.
+     */
+    suspend fun replaceApp(app: CreatedGitHubApp, expectedVersion: Int?, by: String, at: Instant): Boolean
 
     /**
      * Stores the hash of a manifest state.

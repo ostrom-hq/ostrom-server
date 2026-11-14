@@ -101,6 +101,15 @@ interface GitHubLinkStore {
     suspend fun removeLink(orgId: Uuid, memberId: Uuid): GitHubRevocable?
 
     /**
+     * Removes, in every organization, the links another client than [clientId] issued: the App's client changed, and
+     * their tokens can never be refreshed again (TeamCode's `removeLinksOfOtherApps`).
+     *
+     * @param clientId The client the App keeps.
+     * @return The last access token of each link removed that still opens, for a best-effort revocation.
+     */
+    suspend fun removeLinksOfOtherClients(clientId: String): List<GitHubRevocable>
+
+    /**
      * The member's token when it stays valid past [validUntil]; otherwise the right to refresh it, committed before
      * GitHub is called so two replicas never spend the same rotating refresh token. An owner silent for [staleAfter]
      * is taken over. While another caller refreshes, a token still valid past [usableUntil] is returned rather than

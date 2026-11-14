@@ -9,6 +9,7 @@ import io.github.smyrgeorge.sqlx4k.QueryExecutor
 import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -70,6 +71,11 @@ class PostgresGitHubRepository(private val driver: Driver) : GitHubRepository {
             )
         }
     }
+
+    // Across organizations, through the function of `ostrom_router` (docs/tenancy.md).
+    override suspend fun installationCount(): Long =
+        driver.fetchAll(Statement.create("SELECT github_installations_count() AS installations")).getOrThrow()
+            .first().get("installations").asLong()
 
     override suspend fun saveState(orgId: Uuid, stateHash: String, by: String, expiresAt: Instant) {
         scoped(orgId) {

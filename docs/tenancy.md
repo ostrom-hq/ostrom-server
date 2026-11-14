@@ -133,6 +133,8 @@ functions (the owner, a member of `ostrom_router` to hand the functions over, do
 | `governance_expired_organizations(now, limit)` | governance | the organizations with confirmations past their 15 minutes, for the sweep | `GovernancePostgresTest` |
 | `memory_settling_orgs(after, limit)` | memory | the organizations with proposals waiting or rejected ones to delete (ids only, by id after the cursor), for the settling pass; each is settled in its organization | `MemoryProposalsPostgresTest` |
 | `memory_kept_orgs(after, limit)` | memory | the organizations holding memory entries (ids only, by id after the cursor, a loose scan of the leading `org_id`), for the hourly curation and retention; each is curated in its organization | `MemoryCurationPostgresTest` |
+| `github_installations_count()` | integrations-github | counts the installations of every organization (sees `installation_id` alone), for the warning when an administrator changes the App ID | `GitHubDirectoryPostgresTest` |
+| `github_links_of_other_clients(client)` | integrations-github | the organizations and members whose GitHub link another client than the App's issued (ids only), when an administrator changes the App's client; each link is then removed in its own organization | `GitHubDirectoryPostgresTest` |
 
 One function is not the router's: the member search, `orgs_search_members(org, prefix, after, limit)` (orgs, version
 7; `MemberSearchPostgresTest`). It is owned by **`ostrom_member_search`** (`NOLOGIN`, no RLS bypass) and run by

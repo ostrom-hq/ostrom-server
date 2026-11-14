@@ -14,12 +14,16 @@ import run.ostrom.server.gates.presentation.GateScopes
 import run.ostrom.server.identity.domain.LinkedIdentities
 import run.ostrom.server.identity.domain.UsersRepository
 import run.ostrom.server.integrations.github.domain.GitHubApi
+import run.ostrom.server.integrations.github.domain.GitHubAppVerifier
+import run.ostrom.server.integrations.github.domain.GitHubCallException
 import run.ostrom.server.integrations.github.domain.GitHubContentsApi
 import run.ostrom.server.integrations.github.domain.GitHubAppStore
 import run.ostrom.server.integrations.github.domain.GitHubDirectory
 import run.ostrom.server.integrations.github.domain.GitHubDirectoryApi
 import run.ostrom.server.integrations.github.domain.GitHubDirectoryRepository
+import run.ostrom.server.integrations.github.domain.GitHubIdentity
 import run.ostrom.server.integrations.github.domain.GitHubInstallation
+import run.ostrom.server.integrations.github.domain.GitHubLinkStore
 import run.ostrom.server.integrations.github.domain.GitHubManifestApi
 import run.ostrom.server.integrations.github.domain.GitHubOriginsRepository
 import run.ostrom.server.integrations.github.domain.GitHubRepo
@@ -27,10 +31,12 @@ import run.ostrom.server.integrations.github.domain.GitHubRepository
 import run.ostrom.server.integrations.github.domain.GitHubRepositoryReader
 import run.ostrom.server.integrations.github.domain.GitHubTeam
 import run.ostrom.server.integrations.github.domain.InstanceAdmins
+import run.ostrom.server.integrations.github.domain.VerifiedGitHubApp
 import run.ostrom.server.integrations.github.infrastructure.GitHubAppSetup
 import run.ostrom.server.integrations.github.infrastructure.GitHubDirectoryQueries
 import run.ostrom.server.integrations.github.infrastructure.GitHubSettings
 import run.ostrom.server.integrations.github.infrastructure.PostgresGitHubAppStore
+import run.ostrom.server.integrations.github.presentation.GitHubAppConfigurationResponse
 import run.ostrom.server.integrations.github.presentation.GitHubAppStatus
 import run.ostrom.server.integrations.github.presentation.RepoResponse
 import run.ostrom.server.integrations.github.presentation.ReposResponse
@@ -72,6 +78,7 @@ import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
+import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
@@ -87,6 +94,8 @@ import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.writeString
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -115,6 +124,9 @@ class GitHubDirectoryPostgresTest {
         teams[43] = listOf(GitHubTeam("globex-team", "Globex", listOf("spy"), listOf("globex-secret")))
     }
     private val contentsApi = FakeGitHubContentsApi().acmeApi()
+    private var verified: suspend (Long, String) -> VerifiedGitHubApp? = { id, _ ->
+        VerifiedGitHubApp(id, "ostrom-by-hand", "acme", "Iv1.byhand")
+    }
 
     // Tokens are `<kind>:<org letter>:<id>`: `user:a:owner` (a browser session, the instance's administrator),
     // `admin:a:ops` (a browser session), `reader:a:ops` (an API token with `orgs:read`), `agent:a:x` (no scope).
@@ -189,6 +201,7 @@ class GitHubDirectoryPostgresTest {
         single<LinkedIdentities> { users }
         single<GitHubDirectoryApi> { directoryApi }
         single<GitHubManifestApi> { directoryApi }
+        single<GitHubAppVerifier> { GitHubAppVerifier { id, key -> verified(id, key) } }
         single<GitHubContentsApi> { contentsApi }
         // The orgs module's lookup: acme is org A, globex org B, by short name or id.
         single<FindOrgUseCase> {
@@ -422,6 +435,96 @@ class GitHubDirectoryPostgresTest {
     }
 
     @Test
+    fun anAdministratorEntersTheAppByHandWhichOnlyTheyReadAndTheServerUsesAtOnce() = gitHubTest { server ->
+        val path = "/api/v1/github/app/configuration"
+        assertEquals(HttpStatusCode.Unauthorized, server.get(null, path).status)
+        for (caller in listOf("admin:a:ops", "reader:a:ops", "agent:a:x")) {
+            assertEquals(HttpStatusCode.Forbidden, server.get(caller, path).status, caller)
+            assertEquals(HttpStatusCode.Forbidden, server.save(caller, appJson()).status, caller)
+        }
+        val empty = server.get("user:a:owner", path).body<GitHubAppConfigurationResponse>()
+        assertFalse(empty.configured)
+        assertTrue("https://api.example/api/v1/auth/github/callback" in empty.callbackUrls)
+
+        val created = server.save("user:a:owner", appJson())
+        assertEquals(HttpStatusCode.OK, created.status)
+        val text = created.bodyAsText()
+        assertFalse(APP_SECRET in text || "PRIVATE KEY" in text || "whsec-by-hand" in text, "No secret is returned")
+        val view = Json.decodeFromString(GitHubAppConfigurationResponse.serializer(), text)
+        assertEquals(Triple(91L, "ostrom-by-hand", "acme"), Triple(view.appId, view.slug, view.owner))
+        assertEquals(1 to true, view.version to (view.privateKeySet && view.clientSecretSet && view.webhookSecretSet))
+        // The organization's page sees the App at once, and its webhooks are checked with the secret entered.
+        val status = server.get("user:a:owner", "/api/v1/github/app").body<GitHubAppStatus>()
+        assertEquals("ostrom-by-hand", status.slug)
+        val body = """{"action":"deleted","installation":{"id":99}}"""
+        val delivered = server.client.post("/webhooks/github") {
+            header("X-GitHub-Event", "installation")
+            header("X-GitHub-Delivery", "72f2a3c0-0000-0000-0000-000000000002")
+            header("X-Hub-Signature-256", sign("whsec-by-hand", body))
+            contentType(ContentType.Application.Json)
+            setBody(body)
+        }
+        assertEquals(HttpStatusCode.NoContent, delivered.status)
+
+        assertEquals(HttpStatusCode.Conflict, server.save("user:a:owner", appJson()).status, "Reload before saving")
+        val badClient = appJson(client = "abc", version = 1)
+        assertEquals(HttpStatusCode.BadRequest, server.save("user:a:owner", badClient).status)
+        verified = { _, _ -> null }
+        assertEquals(HttpStatusCode.UnprocessableEntity, server.save("user:a:owner", appJson(version = 1)).status)
+        verified = { _, _ -> throw GitHubCallException("GitHub did not answer GET /app.") }
+        assertEquals(HttpStatusCode.ServiceUnavailable, server.save("user:a:owner", appJson(version = 1)).status)
+
+        // Another App ID with its own key: every secret is sealed again under it, the kept ones too.
+        verified = { id, _ -> VerifiedGitHubApp(id, "ostrom-next", "acme", "Iv1.byhand") }
+        val next = """{"appId":92,"clientId":"Iv1.byhand","privateKey":${JsonPrimitive(NEXT_KEY)},"version":1}"""
+        val changed = server.save("user:a:owner", next).body<GitHubAppConfigurationResponse>()
+        assertEquals(92L to 2, changed.appId to changed.version)
+        val stored = PostgresGitHubAppStore(server.driver, AesGcmSecretCipher(ByteArray(32) { 7 })).app()
+        assertEquals(NEXT_KEY to APP_SECRET, stored?.privateKeyPem to stored?.clientSecret)
+        assertEquals("whsec-by-hand" to "ostrom-next", stored?.webhookSecret to stored?.slug)
+        val row = server.driver.fetchAll("SELECT updated_by, version FROM github_apps").getOrThrow().single()
+        assertEquals("user:a:owner" to "2", row.get("updated_by").asString() to row.get("version").asString())
+    }
+
+    @Test
+    fun aChangeOfTheAppReadsOtherOrganizationsOnlyThroughTheRoutersFunctions() = gitHubTest { server ->
+        server.installBoth()
+        assertEquals(2L, server.koin.get<GitHubRepository>().installationCount(), "Every organization's")
+        val links = server.koin.get<GitHubLinkStore>()
+        val members = List(3) { Uuid.random() }
+        links.saveLink(ORG, members[0], GitHubIdentity(1, "dev-a"), "Iv1.former", tokens("ghu_a"), NOW)
+        links.saveLink(OTHER_ORG, members[1], GitHubIdentity(2, "dev-b"), "Iv1.former", tokens("ghu_b"), NOW)
+        links.saveLink(OTHER_ORG, members[2], GitHubIdentity(3, "dev-c"), "Iv1.kept", tokens("ghu_c"), NOW)
+        // A link whose tokens no longer open goes too, with nothing to revoke.
+        val member = Uuid.random()
+        links.saveLink(ORG, member, GitHubIdentity(4, "dev-d"), "Iv1.former", tokens("ghu_d"), NOW)
+        server.database.superuser.execute("UPDATE github_links SET tokens_sealed = 'x' WHERE github_login = 'dev-d'")
+            .getOrThrow()
+
+        val removed = links.removeLinksOfOtherClients("Iv1.kept")
+        assertEquals(setOf("ghu_a", "ghu_b"), removed.map { it.accessToken }.toSet())
+        assertEquals(setOf("Iv1.former"), removed.map { it.clientId }.toSet())
+        val left = server.database.superuser.fetchAll("SELECT github_login FROM github_links").getOrThrow()
+        assertEquals(listOf("dev-c"), left.map { it.get("github_login").asString() })
+        assertEquals(emptyList(), links.removeLinksOfOtherClients("Iv1.kept"))
+        // The serving role never reads the functions' rows directly.
+        val direct = server.driver.asTenant(null) { count("github_links") }
+        assertEquals("0", direct)
+    }
+
+    private suspend fun TestServer.save(token: String, json: String): HttpResponse =
+        client.put("/api/v1/github/app/configuration") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody(json)
+        }
+
+    private fun appJson(client: String = "Iv1.byhand", version: Int? = null): String =
+        """{"appId":91,"clientId":"$client","clientSecret":"$APP_SECRET",""" +
+            """"privateKey":${JsonPrimitive(BY_HAND_KEY)},"webhookSecret":"whsec-by-hand",""" +
+            """"version":${version ?: "null"}}"""
+
+    @Test
     fun theStoredAppIsSealedAndOpensOnlyWithItsKey() = gitHubTest { server ->
         val sealed = PostgresGitHubAppStore(server.driver, AesGcmSecretCipher(ByteArray(32) { 7 }))
         assertNull(sealed.app())
@@ -592,3 +695,7 @@ private suspend fun attempt(block: suspend () -> Result<Long>): Result<Long> = t
 } catch (expected: Exception) {
     Result.failure(expected)
 }
+
+private val APP_SECRET = "s".repeat(40)
+private const val BY_HAND_KEY = "-----BEGIN RSA PRIVATE KEY-----\nby-hand\n-----END RSA PRIVATE KEY-----"
+private const val NEXT_KEY = "-----BEGIN RSA PRIVATE KEY-----\nnext\n-----END RSA PRIVATE KEY-----"

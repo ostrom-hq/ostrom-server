@@ -62,6 +62,20 @@ class StoredInstanceAdmins(private val administrators: InstanceAdministrators) :
 }
 
 /**
+ * The callback URLs the instance's App must name, as the manifest sets them and as an administrator who enters the App
+ * by hand registers them: the install's return, the members' links of the cloud sessions (the web flow; Device Flow is
+ * an App setting no manifest sets), and the sign-in with GitHub through the App's OAuth client (the identity module's).
+ *
+ * @param publicUrl The API's public URL.
+ * @return The URLs.
+ */
+fun appCallbackUrls(publicUrl: String): List<String> = listOf(
+    "$publicUrl/api/v1/github/app/install/callback",
+    "$publicUrl/api/v1/github/link/callback",
+    "$publicUrl/api/v1/auth/github/callback",
+)
+
+/**
  * The form that sends the manifest to GitHub: GitHub only takes it by a POST of the browser.
  *
  * @property action Where the form posts, with the state.
@@ -188,11 +202,7 @@ class GitHubAppManifests(
         put("url", target.webOrigin)
         put("description", "Ostrom asks a person before an agent ships, and signs the answer.")
         put("redirect_url", "$api/api/v1/github/app/manifest/callback")
-        putJsonArray("callback_urls") {
-            add("$api/api/v1/github/app/install/callback")
-            // The members' links of the cloud sessions (the web flow); Device Flow is an App setting no manifest sets.
-            add("$api/api/v1/github/link/callback")
-        }
+        putJsonArray("callback_urls") { appCallbackUrls(api).forEach { add(it) } }
         // Where GitHub returns after an install if the authorization on install is turned off.
         put("setup_url", "$api/api/v1/github/app/install/callback")
         put("request_oauth_on_install", true)
