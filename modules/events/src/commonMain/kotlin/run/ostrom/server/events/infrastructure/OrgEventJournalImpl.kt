@@ -22,9 +22,9 @@ import run.ostrom.server.kernel.events.OrgEventJournal
 import run.ostrom.server.kernel.events.OrgEventType
 
 /**
- * [OrgEventJournal] on PostgreSQL (version 3 of [EventsMigrations]): the readers' cursors in `events_readers`, found
- * across organizations only through `events_readers_behind`, read and moved inside each organization, in a sqlx4k or
- * an Exposed transaction of the reader's.
+ * [OrgEventJournal] on PostgreSQL (versions 3 and 4 of [EventsMigrations]): the readers' cursors in
+ * `events_readers`, found across organizations only through `events_readers_behind`, read and moved inside each
+ * organization, in a sqlx4k or an Exposed transaction of the reader's.
  *
  * @param driver The database.
  */

@@ -48,6 +48,7 @@ listed table that gained one. The migrator's own tables, one per module (`flyway
 | `admin_settings` | admin | serving role | the instance's settings sections (mail, push, sign-in providers...), their secrets sealed with the secrets key |
 | `cloud_clusters` | cloud | serving role | the instance's Kubernetes clusters for cloud sessions, their CA bundle and token sealed with the secrets key |
 | `cloud_runtime` | cloud | serving role | how the instance runs cloud sessions (TeamCode's cloud runtime), one row |
+| `events_reader_starts` | events | `ostrom_router`, inside `events_readers_behind` only | the journal readers that have asked once: a reader that has, starts an organization it sees later at its beginning |
 | `billing_stripe_events` | billing | serving role, Stripe webhook | the Stripe events already handled, by Stripe's id, before the organization is known |
 | `github_apps` | integrations-github | serving role | the instance's one GitHub App, its secrets sealed |
 | `github_installation_origins` | integrations-github | serving role, GitHub webhook | who installed an installation, read before its organization is known; row-level security forced, one row opened by `ostrom.github_installation` (R7) |
@@ -110,7 +111,7 @@ functions (the owner, a member of `ostrom_router` to hand the functions over, do
 | `events_purge(before, limit)` | events | deletes one batch of the event feed's events older than the retention (7 days) | `EventsPostgresTest` |
 | `events_webhook_orgs(now, limit)` | events | the organizations whose webhooks have work (an enabled webhook behind the journal, a delivery due), ids only | `WebhooksPostgresTest` |
 | `events_webhook_maintain(now, give_up_before, delete_before, limit)` | events | gives up on the webhook deliveries pending for 24 hours and deletes the finished ones past the 14 days of the log | `WebhooksPostgresTest` |
-| `events_readers_behind(reader, limit)` | events | starts a reader of the journal at the head of each organization it has not seen, then lists the organizations it is behind on with its cursor and their head | `OrgEventJournalPostgresTest` |
+| `events_readers_behind(reader, limit)` | events | starts a reader of the journal at each organization it has not seen (at its head on the reader's first call, at its beginning once the reader has asked before, `events_reader_starts`), then lists the organizations it is behind on with its cursor and their head | `OrgEventJournalPostgresTest` |
 | `usage_daily_add()`, `usage_daily_remove()`, `usage_daily_change()`, `usage_daily_clear()` | usage | trigger functions of `usage_events` (no `EXECUTE` grant): keep the daily totals `usage_daily`, which an organization only reads, in the transaction of every write of the ledger | `UsageDailyTotalsPostgresTest` |
 | `usage_spend_days_add()`, `usage_spend_days_remove()`, `usage_spend_days_change()`, `usage_spend_days_clear()` | usage | trigger functions of `usage_events` (no `EXECUTE` grant): keep the spend of each day `usage_spend_days` (by member and workflow), which a budget's admission reads and an organization only reads, in the transaction of every write of the ledger | `UsageSpendDaysPostgresTest` |
 | `mcp_relay_purge(before)` | mcp-relay | deletes the calls older than the retention | `McpRelayPostgresTest` |

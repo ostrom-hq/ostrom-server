@@ -809,9 +809,9 @@ owner, so the serving role reads the history (the start-up check) and never rewr
   `events_webhook_deliveries`), and every replica's worker claims due deliveries under a one-minute lease, so a
   crashed replica's claims come back to the others. They are sent only through the kernel's outbound client.
   A module that turns the journal's events into its own work after they commit (the notification router) reads it
-  through the kernel's `OrgEventJournal`: one cursor per reader and organization (`events_readers`), moved in the
-  reader's own transaction with the work it writes and guarded by its previous value, so two replicas never handle a
-  page twice. The waits an event names are read through the kernel's `WaitSummaries` (automations module).
+  through the kernel's `OrgEventJournal`: one cursor per reader and organization (`events_readers`; an organization
+  whose journal begins after the reader first asked starts at its beginning, events v4), moved in the reader's own
+  transaction with the work it writes and guarded by its previous value, so two replicas never handle a page twice. The waits an event names are read through the kernel's `WaitSummaries` (automations module).
   The gates publish theirs in the gate's own transaction: `cloud.approval.requested` when an enforced gate asks its
   approvers and `cloud.approval.decided` when it is answered, one per approval request with its own status, events of
   the whole organization naming the approver's login (no other module is read inside the gate's transaction), never

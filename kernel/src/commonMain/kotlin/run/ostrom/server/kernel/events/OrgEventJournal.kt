@@ -53,8 +53,9 @@ data class JournalSlice(val entries: List<JournalEntry>, val through: Long)
  */
 interface OrgEventJournal {
     /**
-     * The organizations whose journal is ahead of [reader]'s cursor, at most [limit]. An organization the reader has
-     * never seen starts at its journal's head: what happened before the reader existed is not handed to it.
+     * The organizations whose journal is ahead of [reader]'s cursor, at most [limit]. The organizations that had a
+     * journal when the reader first asked start at their head (what happened before the reader existed is not handed
+     * to it); an organization whose journal begins later starts at its beginning, so its first events are handed.
      *
      * @param reader The reader's name (`notifications`): `[a-z][a-z0-9-]*`, at most 32 characters.
      * @param limit The most organizations.

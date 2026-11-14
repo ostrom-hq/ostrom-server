@@ -55,7 +55,11 @@ class OrgEventJournalPostgresTest {
         server.publish(orgA, wait("w-3"), OrgEventDraft(OrgEventType.TODO_UPDATED, "s-1", mia), wait("w-4", null))
         server.publish(orgB, wait("w-5"))
         val position = JournalPosition(orgA, 2, 5)
-        assertEquals(listOf(position), journal.behind(reader, 10), "B started at its head when first seen")
+        assertEquals(
+            listOf(position, JournalPosition(orgB, 0, 1)),
+            journal.behind(reader, 10),
+            "B, new since the reader, from its beginning",
+        )
         assertEquals(emptyList(), journal.behind("webhooks-2", 10), "Another reader has its own cursors")
 
         val first = journal.read(position, setOf(OrgEventType.WAIT_CREATED), 1)
@@ -79,13 +83,30 @@ class OrgEventJournalPostgresTest {
                 error("The work fails")
             }
         }
-        assertEquals(listOf(position), journal.behind(reader, 10))
+        assertEquals(listOf(position, JournalPosition(orgB, 0, 1)), journal.behind(reader, 10))
         server.driver.withOrganization(orgA) { tx ->
             assertTrue(journal.advanceIn(tx, reader, position, 5))
             assertFalse(journal.advanceIn(tx, reader, position, 5), "A page is handled once")
         }
-        assertEquals(emptyList(), journal.behind(reader, 10))
+        assertEquals(listOf(JournalPosition(orgB, 0, 1)), journal.behind(reader, 10), "B is still to read")
         assertFailsWith<IllegalArgumentException> { journal.behind("Not a reader", 10) }
+    }
+
+    @Test
+    fun aNewOrganizationsFirstEventsReachAnExistingReader() = serverTest(listOf(EventsModule), overrides) { server ->
+        val journal = server.koin.get<OrgEventJournal>()
+        assertEquals(emptyList(), journal.behind(reader, 10), "No organization yet: the reader only starts")
+        server.publish(orgA, wait("w-1"))
+        assertEquals(listOf(JournalPosition(orgA, 0, 1)), journal.behind(reader, 10), "Its very first event")
+
+        // A reader whose cursors predate the starts' table (version 3) counts as started.
+        server.database.superuser.execute("DELETE FROM events_reader_starts").getOrThrow()
+        server.publish(orgB, wait("w-2"), wait("w-3"))
+        assertEquals(
+            listOf(JournalPosition(orgA, 0, 1), JournalPosition(orgB, 0, 2)),
+            journal.behind(reader, 10),
+        )
+        assertEquals(emptyList(), journal.behind("later", 10), "A new reader still starts at the heads")
     }
 
     @Test
