@@ -25,8 +25,9 @@ data class MappedAutomation(val automation: ImportedAutomation?, val notes: List
 /**
  * Maps a TeamCode automation to an Ostrom one (docs/decisions/workflows-one-system.md, sections 3 and 5): the owner
  * through the member map, the workflow action's workflow rewritten to the imported one, the profile's first repository
- * as `action.repository`, the overlap `queue` as `skip` until Ostrom queues. It is armed only by the cutover run, as
- * TeamCode had it; otherwise a new one lands paused and an existing one keeps its state. Pure.
+ * as `action.repository` and the Ostrom cloud profile it matches as `action.profileId`, the overlap `queue` as `skip`
+ * until Ostrom queues. It is armed only by the cutover run, as TeamCode had it; otherwise a new one lands paused and
+ * an existing one keeps its state. Pure.
  */
 object TeamCodeAutomationMapper {
     /**
@@ -36,6 +37,7 @@ object TeamCodeAutomationMapper {
      * @param owner The Ostrom member its owner is mapped to, or null.
      * @param profiles TeamCode's profiles, by id.
      * @param cutover Whether this is the cutover run.
+     * @param cloudProfiles The Ostrom cloud profile each TeamCode profile matches, or null where sessions run on none.
      * @return The automation, or the reason it is not imported.
      */
     fun map(
@@ -43,6 +45,7 @@ object TeamCodeAutomationMapper {
         owner: Uuid?,
         profiles: Map<String, TeamCodeProfile>,
         cutover: Boolean,
+        cloudProfiles: Map<String, String>? = null,
     ): MappedAutomation {
         val trigger = TriggerKind.entries.firstOrNull { it.wire == automation.triggerKind }
         val refusal = when {
@@ -56,7 +59,7 @@ object TeamCodeAutomationMapper {
         return if (owner == null || trigger == null || refusal != null) {
             MappedAutomation(null, listOfNotNull(refusal))
         } else {
-            mapAccepted(automation, owner, trigger, profiles, cutover)
+            mapAccepted(automation, owner, trigger, TeamCodeMapping(emptyMap(), profiles, cloudProfiles), cutover)
         }
     }
 
@@ -65,12 +68,12 @@ object TeamCodeAutomationMapper {
         automation: TeamCodeAutomation,
         owner: Uuid,
         trigger: TriggerKind,
-        profiles: Map<String, TeamCodeProfile>,
+        mapping: TeamCodeMapping,
         cutover: Boolean,
     ): MappedAutomation {
         val variables = variablesOf(automation) ?: return MappedAutomation(null, listOf(UNREADABLE_VARIABLES))
         val notes = mutableListOf<String>()
-        val action = actionOf(automation, profiles, notes)
+        val action = actionOf(automation, mapping, notes)
         if (automation.overlap == QUEUE) notes += QUEUED
         if (trigger == TriggerKind.WEBHOOK) notes += WEBHOOK
         val imported = ImportedAutomation(
@@ -91,10 +94,11 @@ object TeamCodeAutomationMapper {
 
     private fun actionOf(
         automation: TeamCodeAutomation,
-        profiles: Map<String, TeamCodeProfile>,
+        mapping: TeamCodeMapping,
         notes: MutableList<String>,
     ): AutomationAction {
-        val repository = automation.profileId?.let { repositoryOf(it, profiles, "Its action", notes) }
+        val repository = automation.profileId?.let { repositoryOf(it, mapping.profiles, "Its action", notes) }
+        val profileId = automation.profileId?.let { cloudProfileOf(it, mapping.cloudProfiles, "Its action", notes) }
         val workflowId = automation.workflowId?.takeIf { automation.actionKind == WORKFLOW_ACTION }
         return if (workflowId == null) {
             AutomationAction(
@@ -103,6 +107,7 @@ object TeamCodeAutomationMapper {
                 effort = automation.effort,
                 maxRuntimeMinutes = automation.maxRuntimeMinutes ?: AutomationAction.DEFAULT_RUNTIME_MINUTES,
                 repository = repository,
+                profileId = profileId,
             )
         } else {
             AutomationAction(
@@ -110,6 +115,7 @@ object TeamCodeAutomationMapper {
                 workflowId = TeamCodeWorkflowMapper.idOf(workflowId),
                 inputs = automation.workflowInputs,
                 repository = repository,
+                profileId = profileId,
             )
         }
     }

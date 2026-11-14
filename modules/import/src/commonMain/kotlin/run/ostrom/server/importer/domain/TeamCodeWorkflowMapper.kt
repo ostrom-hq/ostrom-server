@@ -15,6 +15,7 @@ import run.ostrom.core.api.models.WorkflowNode
 import run.ostrom.core.api.models.WorkflowNodeKind
 import run.ostrom.core.api.models.WorkflowStatus
 import run.ostrom.server.kernel.http.withNulls
+import run.ostrom.server.kernel.sessions.NamedCloudProfile
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -38,8 +39,14 @@ data class MappedWorkflow(val id: String, val raw: JsonObject?, val calls: Set<S
  *
  * @property logins The Ostrom login of each mapped TeamCode member.
  * @property profiles TeamCode's profiles, by id.
+ * @property cloudProfiles The Ostrom cloud profile each TeamCode profile matches ([matchCloudProfiles]), or null
+ *   where sessions run on no profile.
  */
-data class TeamCodeMapping(val logins: Map<String, String>, val profiles: Map<String, TeamCodeProfile>)
+data class TeamCodeMapping(
+    val logins: Map<String, String>,
+    val profiles: Map<String, TeamCodeProfile>,
+    val cloudProfiles: Map<String, String>? = null,
+)
 
 /**
  * Maps a TeamCode workflow to Ostrom's `Workflow` (docs/decisions/workflows-one-system.md, sections 1 and 5): an agent
@@ -145,6 +152,7 @@ object TeamCodeWorkflowMapper {
         model = node.model,
         deliverable = node.deliverable,
         repository = node.profileId?.let { repositoryOf(it, mapping.profiles, "Node ${node.id}", notes) },
+        profileId = node.profileId?.let { cloudProfileOf(it, mapping.cloudProfiles, "Node ${node.id}", notes) },
     )
 
     private fun approvers(node: Node, mapping: TeamCodeMapping, notes: MutableList<String>): List<String>? {
@@ -205,6 +213,47 @@ internal fun repositoryOf(
     }
     return profile?.let { it.repositories.first() }
 }
+
+/**
+ * The Ostrom cloud profile a TeamCode profile stands for ([matchCloudProfiles]). One that matches none is noted: what
+ * names it runs on its owner's only usable profile.
+ *
+ * @param profileId TeamCode's profile.
+ * @param matched TeamCode's profiles matched to Ostrom's, or null where sessions run on no profile (nothing noted).
+ * @param what What names it, for the note.
+ * @param notes Where the note goes.
+ * @return The Ostrom profile's id, or null.
+ */
+internal fun cloudProfileOf(
+    profileId: String,
+    matched: Map<String, String>?,
+    what: String,
+    notes: MutableList<String>,
+): String? {
+    if (matched == null) return null
+    val id = matched[profileId]
+    if (id == null) {
+        notes += "$what: no Ostrom cloud profile has its TeamCode profile's id or name, so it runs on its " +
+            "owner's only usable profile; name one in Ostrom."
+    }
+    return id
+}
+
+/**
+ * Matches TeamCode's profiles to the organization's Ostrom cloud profiles: the same id first, else the one profile of
+ * the same name (any case, trimmed). A name two Ostrom profiles share matches neither.
+ *
+ * @param teamCode TeamCode's profiles.
+ * @param ostrom The organization's profiles.
+ * @return TeamCode's profile id to Ostrom's, for those that match.
+ */
+fun matchCloudProfiles(teamCode: List<TeamCodeProfile>, ostrom: List<NamedCloudProfile>): Map<String, String> =
+    teamCode.mapNotNull { profile ->
+        val name = profile.name?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
+        val match = ostrom.firstOrNull { it.id.toString() == profile.id }
+            ?: ostrom.filter { it.name.trim().lowercase() == name }.singleOrNull()
+        match?.let { profile.id to it.id.toString() }
+    }.toMap()
 
 private const val PREFIX = "tc-"
 private const val DOMAIN = "TeamCode"
