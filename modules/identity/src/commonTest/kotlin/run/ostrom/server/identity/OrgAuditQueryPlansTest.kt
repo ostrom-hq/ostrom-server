@@ -14,7 +14,8 @@ import kotlin.uuid.Uuid
  * The read of `GET /api/v1/audit` under `EXPLAIN ANALYZE`, as the route runs it (`inOrg`: the tenant role, row-level
  * security), over a log where the organization read holds 5 000 lines and another one 20 000: the page walks the
  * unique index `(chain, sequence)` backwards and finds the line before each one through the same index, never a scan
- * of the table. The plans are printed in the test's output.
+ * of the table, nor a sort of the chain read whole (the statistics of IdentityMigrations version 19). The plans are
+ * printed in the test's output.
  */
 class OrgAuditQueryPlansTest {
     private val orgA = Uuid.parse("00000000-0000-4000-8000-0000000000a2")
