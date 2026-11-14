@@ -127,7 +127,7 @@ data class SendResult(val status: Int?, val error: String?) {
 
     private companion object {
         const val SERVER_ERROR = 500
-        val SLOW_DOWN = setOf(408, 429)
+        private val SLOW_DOWN = setOf(408, 429)
     }
 }
 

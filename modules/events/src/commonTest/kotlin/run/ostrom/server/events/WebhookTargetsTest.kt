@@ -29,6 +29,7 @@ class WebhookTargetsTest {
             "https://user:pw@hooks.example.com/",
             "https://hooks.example.com/#frag",
             "https://hooks.example.com/a b",
+            "https://hooks.example.com/a\nb",
             "https:///path",
             "https://" + "a".repeat(2_048) + ".com/",
             "https://169.254.169.254/latest",

@@ -18,7 +18,10 @@ import run.ostrom.server.events.domain.WebhookTargets
 import run.ostrom.server.events.infrastructure.HmacWebhookSigner
 import run.ostrom.server.events.infrastructure.HttpWebhookSender
 import run.ostrom.server.events.infrastructure.WebhooksConfig
+import run.ostrom.server.events.presentation.managesWebhooks
 import run.ostrom.server.events.presentation.toResponse
+import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.config.MapConfigSource
 import run.ostrom.server.kernel.network.PinnedDnsRefusal
 import run.ostrom.server.kernel.network.PinnedDnsTimeout
@@ -62,6 +65,16 @@ class WebhooksEdgeTest {
         for (status in listOf(400, 404, 301)) assertFalse(SendResult(status, null).retryable, "$status")
         assertTrue(SendResult(299, null).delivered)
         assertFalse(SendResult(300, null).delivered)
+        assertFalse(SendResult(199, null).delivered)
+    }
+
+    @Test
+    fun aPersonsTokenReadsWithCloudReadAndWritesOnlyWithCloudWrite() {
+        fun user(vararg scopes: String) = AuthenticatedPrincipal("u", PrincipalKind.USER, scopes.toSet())
+        assertTrue(user("cloud:read").managesWebhooks(write = false))
+        assertFalse(user("cloud:read").managesWebhooks(write = true))
+        assertTrue(user("cloud:write").managesWebhooks(write = true))
+        assertFalse(user("usage:read").managesWebhooks(write = false))
     }
 
     private fun sender(

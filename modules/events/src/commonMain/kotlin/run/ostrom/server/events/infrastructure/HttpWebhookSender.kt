@@ -82,6 +82,6 @@ class HttpWebhookSender(
         const val TLS = "tls"
         const val CONNECT = "connect"
         const val MAX_CAUSES = 8
-        val TLS_NAMES = Regex("SSL|Tls|TLS|Certificate|Handshake")
+        private val TLS_NAMES = Regex("SSL|Tls|TLS|Certificate|Handshake")
     }
 }

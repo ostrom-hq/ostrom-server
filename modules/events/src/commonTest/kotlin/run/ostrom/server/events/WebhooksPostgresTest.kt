@@ -32,6 +32,7 @@ import run.ostrom.server.events.domain.DeliveryState
 import run.ostrom.server.events.domain.JournalEvent
 import run.ostrom.server.events.domain.SendResult
 import run.ostrom.server.events.domain.WebhookActor
+import run.ostrom.server.events.domain.WebhookNotFoundException
 import run.ostrom.server.events.domain.WebhookRules
 import run.ostrom.server.events.domain.WebhookSender
 import run.ostrom.server.events.domain.WebhookSigner
@@ -53,6 +54,7 @@ import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -120,12 +122,15 @@ class WebhooksPostgresTest {
 
     private val modules = listOf(EventsModule)
 
-    private suspend fun TestServer.create(token: String, url: String = "https://hooks.example.com/in"): HttpResponse =
-        client.post("/api/v1/webhooks") {
-            bearerAuth(token)
-            contentType(ContentType.Application.Json)
-            setBody(CreateWebhookRequest(url, listOf("cloud.wait.created"), "Support"))
-        }
+    private suspend fun TestServer.create(
+        token: String,
+        url: String = "https://hooks.example.com/in",
+        description: String? = "Support",
+    ): HttpResponse = client.post("/api/v1/webhooks") {
+        bearerAuth(token)
+        contentType(ContentType.Application.Json)
+        setBody(CreateWebhookRequest(url, listOf("cloud.wait.created"), description))
+    }
 
     /** Organization B neither sees nor changes A's webhook [id]. */
     private suspend fun TestServer.assertOrganizationBCannotReach(id: String, url: String) {
@@ -183,7 +188,7 @@ class WebhooksPostgresTest {
         val odd = server.client.get("/api/v1/webhooks/not-a-uuid") { bearerAuth("owner-a") }
         assertEquals(HttpStatusCode.NotFound, odd.status)
 
-        assertTrue("invalid_webhook" in server.create("owner-a", "http://hooks.example.com/").bodyAsText())
+        assertTrue("invalid_webhook" in server.create("owner-a", "http://hooks.example.com/", null).bodyAsText())
         assertTrue("webhook_host_not_allowed" in server.create("owner-a", "https://10.0.0.1/").bodyAsText())
 
         val stale = server.change("owner-a", id, UpdateWebhookRequest(9, url, todo))
@@ -359,5 +364,15 @@ class WebhooksPostgresTest {
         val recorded = repository.deliveries(orgA, webhook.id, 10).single { it.id == first.id }
         assertEquals(null to "connect", recorded.lastStatus to recorded.lastError)
         assertEquals(0, repository.find(orgA, webhook.id)!!.failures, "A retry is not a final failure")
+
+        // A test's failure says nothing of the webhook's health; a paused webhook counts failures, stays paused.
+        val failed = DeliveryOutcome(DeliveryState.FAILED, 1, clock.now, SendResult(500, null), clock.now)
+        repository.record(orgA, service.test(actor, webhook.id).id, failed)
+        assertEquals(0, repository.find(orgA, webhook.id)!!.failures)
+        service.update(actor, webhook.id, 1, webhook.url, webhook.types.toList(), "", false)
+        repository.record(orgA, claimed.last().delivery.id, failed)
+        val paused = repository.find(orgA, webhook.id)!!
+        assertEquals(Triple(1, false, "disabled"), Triple(paused.failures, paused.enabled, paused.disabledReason))
+        assertFailsWith<WebhookNotFoundException> { repository.rotateSecret(orgA, Uuid.random(), "x", clock.now) }
     }
 }

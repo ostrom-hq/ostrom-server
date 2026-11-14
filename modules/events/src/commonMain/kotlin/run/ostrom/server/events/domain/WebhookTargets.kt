@@ -64,6 +64,6 @@ class WebhookTargets(val allowPrivate: Boolean) {
     private companion object {
         const val HTTPS = "https://"
         const val LOCALHOST = "localhost"
-        val NUMERIC_LABEL = Regex("[0-9]+|0x[0-9a-f]*")
+        private val NUMERIC_LABEL = Regex("[0-9]+|0x[0-9a-f]*")
     }
 }

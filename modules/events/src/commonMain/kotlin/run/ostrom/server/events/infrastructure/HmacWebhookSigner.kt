@@ -22,6 +22,6 @@ class HmacWebhookSigner : WebhookSigner {
     private companion object {
         const val PREFIX = "whsec_"
         const val BYTES = 32
-        val URL = Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT)
+        private val URL = Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT)
     }
 }

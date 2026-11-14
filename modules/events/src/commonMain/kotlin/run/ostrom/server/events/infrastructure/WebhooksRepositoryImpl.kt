@@ -266,7 +266,7 @@ class WebhooksRepositoryImpl(private val driver: Driver) : WebhooksRepository {
                 "last_error, created_at, delivered_at, test"
         const val SELECT_DELIVERY = "SELECT $DELIVERY_COLUMNS FROM events_webhook_deliveries"
         const val COUNT_SQL = "SELECT COUNT(*) AS n FROM events_webhooks WHERE org_id = :org_id"
-        const val HEAD_SQL = "SELECT last_seq FROM events_cursors WHERE org_id = :org_id"
+        const val HEAD_SQL = "SELECT COALESCE(max(last_seq), 0) AS last_seq FROM events_cursors WHERE org_id = :org_id"
         const val LOCK_HEAD_SQL =
             "INSERT INTO events_cursors (org_id, last_seq) VALUES (:org_id, 0) " +
                 "ON CONFLICT (org_id) DO UPDATE SET last_seq = events_cursors.last_seq RETURNING last_seq"
@@ -341,8 +341,7 @@ class WebhooksRepositoryImpl(private val driver: Driver) : WebhooksRepository {
         fun encode(types: Set<String>): String = types.sorted().joinToString(",")
 
         suspend fun QueryExecutor.headOf(orgId: Uuid): Long =
-            fetchAll(Statement.create(HEAD_SQL).bind("org_id", orgId)).getOrThrow().firstOrNull()
-                ?.get("last_seq")?.asLong() ?: 0L
+            fetchAll(Statement.create(HEAD_SQL).bind("org_id", orgId)).getOrThrow().first().get("last_seq").asLong()
 
         suspend fun QueryExecutor.webhook(orgId: Uuid, id: Uuid, lock: Boolean): WebhookSubscription? = fetchAll(
             Statement.create("$SELECT_WEBHOOK WHERE org_id = :org_id AND id = :id${if (lock) " FOR UPDATE" else ""}")
@@ -379,7 +378,7 @@ class WebhooksRepositoryImpl(private val driver: Driver) : WebhooksRepository {
             id = get("id").asUuid(),
             orgId = get("org_id").asUuid(),
             url = get("url").asString(),
-            types = get("types").asString().split(',').filter { it.isNotEmpty() }.toSet(),
+            types = get("types").asString().split(',').toSet(),
             description = get("description").asString(),
             enabled = get("enabled").asBoolean(),
             disabledReason = get("disabled_reason").asStringOrNull(),
