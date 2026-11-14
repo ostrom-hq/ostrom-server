@@ -5,6 +5,7 @@ import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.notifications.infrastructure.DELETE_SQL
 import run.ostrom.server.notifications.infrastructure.FORGET_BROWSERS_SQL
 import run.ostrom.server.notifications.infrastructure.FORGET_CREDENTIAL_SQL
+import run.ostrom.server.notifications.infrastructure.FORGET_TOKEN_SQL
 import run.ostrom.server.notifications.infrastructure.KEEP_LATEST_SQL
 import run.ostrom.server.notifications.infrastructure.OF_MEMBER_SQL
 import run.ostrom.server.testing.serverTest
@@ -47,6 +48,8 @@ class PushDevicesQueryPlansTest {
             explain(OF_MEMBER_SQL).bind("member_id", member),
             explain(FORGET_CREDENTIAL_SQL).bind("user_id", member).bind("credential_id", Uuid.random()),
             explain(FORGET_BROWSERS_SQL).bind("user_id", member),
+            // A token FCM no longer knows: its device, by the primary key.
+            explain(FORGET_TOKEN_SQL).bind("id", Uuid.random()).bind("push_token", "fcm-token"),
         )
         for (statement in statements) {
             val plan = server.driver.withOrganization(orgA) { tx ->

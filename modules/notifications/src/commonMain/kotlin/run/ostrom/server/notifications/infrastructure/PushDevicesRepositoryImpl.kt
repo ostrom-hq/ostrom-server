@@ -25,6 +25,9 @@ class PushDevicesRepositoryImpl(private val driver: Driver) : PushDevicesReposit
         val upsert = Statement.create(UPSERT).let {
             if (device.locale == null) it.bindNull("locale", String::class) else it.bind("locale", device.locale)
         }.let {
+            val key = device.publicKey
+            if (key == null) it.bindNull("public_key", String::class) else it.bind("public_key", key)
+        }.let {
             if (credential == null) {
                 it.bindNull("user_id", Uuid::class).bindNull("credential_id", Uuid::class)
             } else {
@@ -66,6 +69,14 @@ class PushDevicesRepositoryImpl(private val driver: Driver) : PushDevicesReposit
         }
     }
 
+    override suspend fun forgetToken(orgId: Uuid, id: Uuid, pushToken: String) {
+        driver.withOrganization(orgId) { tx ->
+            tx.execute(
+                Statement.create(FORGET_TOKEN_SQL).bind("org_id", orgId).bind("id", id).bind("push_token", pushToken),
+            ).getOrThrow()
+        }
+    }
+
     override suspend fun deleteAll(orgId: Uuid) {
         driver.withOrganization(orgId) { tx ->
             tx.execute(Statement.create(DELETE_ALL_SQL).bind("org_id", orgId)).getOrThrow()
@@ -86,19 +97,22 @@ class PushDevicesRepositoryImpl(private val driver: Driver) : PushDevicesReposit
             credential = get("credential_id").asStringOrNull()?.let { credentialId ->
                 PushCredential(get("user_id").asUuid(), Uuid.parse(credentialId), get("browser").asBoolean())
             },
+            publicKey = get("public_key").asStringOrNull(),
         )
     }
 }
 
 private const val COLUMNS = "org_id, id, member_id, push_token, provider, platform, locale, created_at, seen_at, " +
-    "user_id, credential_id, browser"
+    "user_id, credential_id, browser, public_key"
 
 // A token registered again (a new language, a reinstall, another member signing in on the phone) keeps its row, its id
 // and its creation date.
 private const val UPSERT = "INSERT INTO notifications_push_devices ($COLUMNS) VALUES (:org_id, :id, :member_id, " +
-    ":push_token, :provider, :platform, :locale, :created_at, :seen_at, :user_id, :credential_id, :browser) " +
+    ":push_token, :provider, :platform, :locale, :created_at, :seen_at, :user_id, :credential_id, :browser, " +
+    ":public_key) " +
     "ON CONFLICT (org_id, push_token) DO UPDATE SET member_id = EXCLUDED.member_id, provider = EXCLUDED.provider, " +
     "platform = EXCLUDED.platform, locale = EXCLUDED.locale, seen_at = EXCLUDED.seen_at, " +
+    "public_key = EXCLUDED.public_key, " +
     // A registration without a credential (an older app, another kind of caller) keeps the one the phone had.
     "user_id = COALESCE(EXCLUDED.user_id, notifications_push_devices.user_id), " +
     "credential_id = COALESCE(EXCLUDED.credential_id, notifications_push_devices.credential_id), " +
@@ -125,5 +139,9 @@ internal const val FORGET_CREDENTIAL_SQL = "DELETE FROM notifications_push_devic
 /** The phones a person registered with a browser session (`:org_id`, `:user_id`). */
 internal const val FORGET_BROWSERS_SQL = "DELETE FROM notifications_push_devices WHERE org_id = :org_id " +
     "AND user_id = :user_id AND browser"
+
+/** A phone whose token the provider no longer knows, while it still has it (`:org_id`, `:id`, `:push_token`). */
+internal const val FORGET_TOKEN_SQL = "DELETE FROM notifications_push_devices WHERE org_id = :org_id " +
+    "AND id = :id AND push_token = :push_token"
 
 private const val DELETE_ALL_SQL = "DELETE FROM notifications_push_devices WHERE org_id = :org_id"

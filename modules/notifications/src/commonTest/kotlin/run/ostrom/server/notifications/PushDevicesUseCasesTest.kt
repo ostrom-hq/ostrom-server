@@ -8,6 +8,7 @@ import run.ostrom.server.notifications.domain.PushCredential
 import run.ostrom.server.notifications.domain.PushDeviceNotFoundException
 import run.ostrom.server.notifications.domain.PushRegistration
 import run.ostrom.server.notifications.domain.RegisterPushDeviceUseCaseImpl
+import run.ostrom.server.notifications.infrastructure.EciesPushEncryption
 import run.ostrom.server.notifications.infrastructure.PushDevicesOrgDeletionListener
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -20,7 +21,7 @@ import kotlin.uuid.Uuid
 class PushDevicesUseCasesTest {
     private val repository = InMemoryPushDevicesRepository()
     private val clock = TestClock()
-    private val register = RegisterPushDeviceUseCaseImpl(repository, clock)
+    private val register = RegisterPushDeviceUseCaseImpl(repository, EciesPushEncryption(), clock)
     private val remove = DeletePushDeviceUseCaseImpl(repository)
     private val org = Uuid.random()
     private val member = Uuid.random()
@@ -52,13 +53,31 @@ class PushDevicesUseCasesTest {
     }
 
     @Test
-    fun anythingButAnExpoTokenOfAnIosOrAndroidPhoneInALanguageIsRefused() = runTest {
+    fun anFcmPhoneIsRegisteredWithItsTokenAndItsTrimmedPublicKey() = runTest {
+        val key = phoneKey()
+        val registration = PushRegistration(" $FCM_TOKEN ", "fcm", "android", null, " $key ")
+        val device = register(org, member, registration, null)
+
+        assertEquals(FCM_TOKEN to key, device.pushToken to device.publicKey)
+        assertEquals("fcm" to "android", device.provider to device.platform)
+    }
+
+    @Test
+    fun anythingButAnFcmTokenWithItsKeyOrAnExpoTokenOfAnIosOrAndroidPhoneInALanguageIsRefused() = runTest {
+        val key = phoneKey()
         val refused = listOf(
             PushRegistration("not-a-push-token", "expo", "ios", null),
             PushRegistration("ExponentPushToken[short]", "expo", "ios", null),
-            PushRegistration("ExponentPushToken[abcdefgh]", "fcm", "ios", null),
+            PushRegistration("ExponentPushToken[abcdefgh]", "expo", "ios", null, key),
             PushRegistration("ExponentPushToken[abcdefgh]", "expo", "web", null),
             PushRegistration("ExponentPushToken[abcdefgh]", "expo", "ios", "not a language"),
+            PushRegistration("ExponentPushToken[abcdefgh]", "apns", "ios", null),
+            PushRegistration(FCM_TOKEN, "fcm", "ios", null),
+            PushRegistration(FCM_TOKEN, "fcm", "ios", null, "  "),
+            PushRegistration(FCM_TOKEN, "fcm", "ios", null, "bm90IGEga2V5"),
+            PushRegistration("short", "fcm", "ios", null, key),
+            PushRegistration("$FCM_TOKEN with spaces", "fcm", "ios", null, key),
+            PushRegistration(FCM_TOKEN, "fcm", "web", null, key),
         )
         for (registration in refused) {
             assertFailsWith<InvalidPushDeviceException>(registration.toString()) {
@@ -91,5 +110,9 @@ class PushDevicesUseCasesTest {
         register(org, member, PushRegistration("ExpoPushToken[deleted2]", "expo", "ios", null), null)
         listener.purge(org)
         assertEquals(listOf(other), repository.devices)
+    }
+
+    private companion object {
+        const val FCM_TOKEN = "dGVzdC1mY20tdG9rZW4:APA91bH-0123456789_abcdef.ghij"
     }
 }

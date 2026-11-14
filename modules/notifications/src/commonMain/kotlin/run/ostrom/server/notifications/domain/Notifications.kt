@@ -6,21 +6,25 @@ import kotlin.uuid.Uuid
 /**
  * What one phone is asked to show.
  *
- * @property to The phone's push token: sent to the push service only, never logged.
+ * @property device The phone: its push token goes to the push provider only, never logged.
  * @property title The title.
  * @property body The text.
  * @property data What the app opens: `{kind: "approval", approvalId}` (`registerPushDevice` in the contract).
  */
-data class PushMessage(val to: String, val title: String, val body: String, val data: Map<String, String>)
+data class PushMessage(val device: PushDevice, val title: String, val body: String, val data: Map<String, String>) {
+    /** The phone's push token. */
+    val to: String get() = device.pushToken
+}
 
-/** Sends push notifications (Expo's push service, which hands them to APNs and FCM). */
+/** Sends push notifications to the phones, through their provider. */
 interface PushSender {
     /**
      * Sends the notifications of one approver, together.
      *
      * @param messages One per phone.
      *
-     * @throws PushNotSentException When the service refuses them or does not answer.
+     * @throws PushNotSentException When the service refuses them for now or does not answer: tried again.
+     * @throws PushRejectedException When the service refuses them for good: given up at once.
      */
     suspend fun send(messages: List<PushMessage>)
 }
@@ -30,8 +34,16 @@ interface PushSender {
  * notification is tried again (NotificationOutbox).
  *
  * @param reason What failed, naming the service and its status only: never a token.
+ * @property forGood Whether another attempt would only be refused again ([PushRejectedException]).
  */
-class PushNotSentException(reason: String) : Exception(reason)
+open class PushNotSentException(reason: String, val forGood: Boolean = false) : Exception(reason)
+
+/**
+ * The push service refused the notification for good (its credentials, the message): it is not tried again.
+ *
+ * @param reason What failed, a short code of ours (`fcm_403`): never a token nor the provider's answer.
+ */
+class PushRejectedException(reason: String) : PushNotSentException(reason, forGood = true)
 
 /**
  * An approver, as the notifications reach them in one organization.

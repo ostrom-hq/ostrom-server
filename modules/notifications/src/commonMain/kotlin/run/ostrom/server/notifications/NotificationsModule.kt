@@ -14,15 +14,23 @@ import run.ostrom.server.notifications.domain.ApproverNotificationsChannel
 import run.ostrom.server.notifications.domain.Approvers
 import run.ostrom.server.notifications.domain.DeletePushDeviceUseCase
 import run.ostrom.server.notifications.domain.DeletePushDeviceUseCaseImpl
+import run.ostrom.server.notifications.domain.EncryptedPushSender
+import run.ostrom.server.notifications.domain.FirebaseSenders
 import run.ostrom.server.notifications.domain.LiveCredentials
 import run.ostrom.server.notifications.domain.NotificationOutbox
+import run.ostrom.server.notifications.domain.PUSH_SETTINGS
 import run.ostrom.server.notifications.domain.PersonOrganizations
+import run.ostrom.server.notifications.domain.ProviderPushSender
+import run.ostrom.server.notifications.domain.PushEncryption
 import run.ostrom.server.notifications.domain.PushDevicesRepository
 import run.ostrom.server.notifications.domain.PushDevicesSignOutListener
 import run.ostrom.server.notifications.domain.PushSender
 import run.ostrom.server.notifications.domain.RegisterPushDeviceUseCase
 import run.ostrom.server.notifications.domain.RegisterPushDeviceUseCaseImpl
+import run.ostrom.server.notifications.infrastructure.CachedFirebaseSenders
+import run.ostrom.server.notifications.infrastructure.EciesPushEncryption
 import run.ostrom.server.notifications.infrastructure.ExpoPushSender
+import run.ostrom.server.notifications.infrastructure.FirebasePushSender
 import run.ostrom.server.notifications.infrastructure.IdentityLiveCredentials
 import run.ostrom.server.notifications.infrastructure.MemberApprovers
 import run.ostrom.server.notifications.infrastructure.MemberOrganizations
@@ -44,6 +52,7 @@ import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import org.koin.dsl.onClose
+import kotlin.time.Clock
 
 /**
  * The notifications module: the phones a person registers for push notifications, one per push token in each
@@ -61,7 +70,10 @@ object NotificationsModule : ServerModule {
     override val koinModule: Module = module {
         single { NotificationSettings.from(get()) }
         single<PushDevicesRepository> { PushDevicesRepositoryImpl(get()) }
-        single<RegisterPushDeviceUseCase> { RegisterPushDeviceUseCaseImpl(get(), get()) }
+        single<PushEncryption> { EciesPushEncryption() }
+        single<RegisterPushDeviceUseCase> { RegisterPushDeviceUseCaseImpl(get(), get(), get()) }
+        // Admin → Settings → push: the provider and the Firebase service account, sealed (the admin module).
+        single(named("notifications-push")) { PUSH_SETTINGS }
         single<DeletePushDeviceUseCase> { DeletePushDeviceUseCaseImpl(get()) }
         single { PushDevicesRoutesDependencies(get(), get(), get()) }
         // A deleted organization's phones are forgotten at once (OrgsModule calls every bound listener).
@@ -78,9 +90,17 @@ object NotificationsModule : ServerModule {
                 }
             }
         } onClose { it?.close() }
+        single<FirebaseSenders> {
+            val http = get<HttpClient>(HTTP)
+            val clock = get<Clock>()
+            CachedFirebaseSenders { account -> FirebasePushSender(account, http, clock) }
+        }
         single<PushSender> {
             val settings = get<NotificationSettings>()
-            ExpoPushSender(get(HTTP), settings.expoPushUrl, settings.expoAccessToken)
+            ProviderPushSender(
+                expo = ExpoPushSender(get(HTTP), settings.expoPushUrl, settings.expoAccessToken),
+                fcm = EncryptedPushSender(get(), get(), get(), get(), settings.publicUrl, get()),
+            )
         }
         single { NotificationOutbox(get(), get(), get()) }
         single<Approvers> { MemberApprovers(get(), get(), get()) }
@@ -105,8 +125,9 @@ object NotificationsModule : ServerModule {
     }
 
     /**
-     * Approval notifications, and push to the phones: the Expo push service needs no configuration (its URL has a
-     * default, `OSTROM_EXPO_ACCESS_TOKEN` only for a project that requires one), so a push sender is always there.
+     * Approval notifications, and push to the phones: a phone registers its FCM token and public key whatever the
+     * provider, and its pushes go out once an administrator chooses one (Admin → Settings → push); the deprecated
+     * Expo push service needs no configuration.
      */
     override suspend fun features(koin: Koin): Set<String> =
         setOf(ServerFeatures.NOTIFICATIONS, ServerFeatures.NOTIFICATIONS_PUSH)

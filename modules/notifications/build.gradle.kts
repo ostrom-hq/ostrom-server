@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Module notifications: the phones a person registers for push notifications, per organization and per phone, and the
-// push and e-mail that tell an approver a gate waits for their yes.
+// push and e-mail that tell an approver a gate waits for their yes. FCM pushes are encrypted for the phone's key.
 plugins {
     id("ostrom.native-module")
 }
@@ -16,9 +16,15 @@ kotlin {
             implementation(project(":modules:orgs"))
             // The gate channel the gates module tells of each request.
             implementation(project(":modules:gates"))
-            // Outbound HTTPS to Expo's push service: the app's CIO client, with the JDK's TLS.
+            // Outbound HTTPS to FCM, Google's token endpoint and Expo's push service: the app's CIO client.
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.engine.defaults)
+            // The pushes' end-to-end encryption (ECDH P-256, HKDF, AES-GCM) and the service account's RS256 assertion.
+            implementation(libs.cryptography.core)
+        }
+        // The JDK provides them there.
+        jvmMain.dependencies {
+            implementation(libs.cryptography.jdk)
         }
         commonTest.dependencies {
             implementation(project(":testing"))

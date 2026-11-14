@@ -22,10 +22,11 @@ class PushDevicesApi {
 /**
  * Body of `registerPushDevice`: a phone, as the app registers it.
  *
- * @property pushToken The Expo push token.
- * @property provider `expo`.
+ * @property pushToken The FCM registration token (`fcm`), or the Expo push token (`expo`, deprecated).
+ * @property provider `fcm`, or `expo` (deprecated).
  * @property platform `ios` or `android`.
  * @property locale The phone's language.
+ * @property publicKey The phone's P-256 public key (SubjectPublicKeyInfo, DER, base64), required with `fcm`.
  */
 @Serializable
 data class PushDeviceRequest(
@@ -33,6 +34,7 @@ data class PushDeviceRequest(
     val provider: String,
     val platform: String,
     val locale: String? = null,
+    val publicKey: String? = null,
 )
 
 /**

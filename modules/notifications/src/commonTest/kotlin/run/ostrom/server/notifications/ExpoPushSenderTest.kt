@@ -33,7 +33,7 @@ import kotlin.test.assertTrue
 class ExpoPushSenderTest {
     private val url = "https://expo.test/--/api/v2/push/send"
     private val message = PushMessage(
-        "ExponentPushToken[bob-phone-1]",
+        testPhone("ExponentPushToken[bob-phone-1]"),
         "ana asks for your yes",
         "Push to main · acme/app",
         mapOf("kind" to "approval", "approvalId" to "a1"),
@@ -68,7 +68,8 @@ class ExpoPushSenderTest {
         val requests = mutableListOf<HttpRequestData>()
         val http = HttpClient(MockEngine { requests += it; respond("{}") })
 
-        ExpoPushSender(http, url, null).send(List(MAX_BATCH + 1) { message.copy(to = "ExponentPushToken[p$it]") })
+        val phones = List(MAX_BATCH + 1) { message.copy(device = testPhone("ExponentPushToken[p$it]")) }
+        ExpoPushSender(http, url, null).send(phones)
 
         assertEquals(listOf(MAX_BATCH, 1), requests.map { body(it).size })
         assertTrue(requests.all { it.headers[HttpHeaders.Authorization] == null })
@@ -140,6 +141,7 @@ class ExpoPushSenderTest {
         assertEquals("https://exp.host/--/api/v2/push/send", defaults.expoPushUrl)
         assertNull(defaults.expoAccessToken)
         assertEquals("http://localhost:5173", defaults.webOrigin)
+        assertEquals("", defaults.publicUrl, "No public URL set")
         assertTrue(defaults.toString().contains("expoAccessToken=none"))
 
         val set = NotificationSettings.from(
@@ -148,6 +150,7 @@ class ExpoPushSenderTest {
                     "OSTROM_EXPO_PUSH_URL" to " http://127.0.0.1:4621/--/api/v2/push/send ",
                     "OSTROM_EXPO_ACCESS_TOKEN" to "expo-secret",
                     "OSTROM_WEB_ORIGIN" to "https://console.ostrom.test/",
+                    "OSTROM_PUBLIC_URL" to "https://ostrom.test/",
                 ),
             ),
         )
@@ -156,6 +159,7 @@ class ExpoPushSenderTest {
                 "http://127.0.0.1:4621/--/api/v2/push/send",
                 "expo-secret",
                 "https://console.ostrom.test",
+                "https://ostrom.test",
             ),
             set,
         )

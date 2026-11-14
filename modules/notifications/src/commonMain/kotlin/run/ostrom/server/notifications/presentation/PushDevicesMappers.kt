@@ -5,7 +5,8 @@ import run.ostrom.server.notifications.domain.PushDevice
 import run.ostrom.server.notifications.domain.PushRegistration
 
 /** The registration the body describes. */
-fun PushDeviceRequest.toRegistration(): PushRegistration = PushRegistration(pushToken, provider, platform, locale)
+fun PushDeviceRequest.toRegistration(): PushRegistration =
+    PushRegistration(pushToken, provider, platform, locale, publicKey)
 
 /** The contract's `PushDevice`: the push token stays on the server. */
 fun PushDevice.toDto(): PushDeviceDto = PushDeviceDto(id.toString(), provider, platform, locale, createdAt.toString())
