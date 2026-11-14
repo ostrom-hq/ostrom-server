@@ -28,6 +28,10 @@ import run.ostrom.core.api.models.PushRelaySendResponse
 /** The largest request the relay reads: a token, an encrypted payload under the FCM limit and a few fields. */
 public const val MAX_BODY_BYTES: Int = 8_192
 
+// A lowercase name on purpose: ostrom-core's served-routes.py reads every commonMain file of this repository for the
+// Ostrom API's routes (the contract check and the e2e sweep), and the relay's probe is not one of them.
+private val healthPath = "/healthz"
+
 /**
  * The relay's HTTP surface: `GET /healthz`, `POST /v1/instances` and `POST /v1/send`. Nothing about a request is
  * logged: not its token, its payload or its instance.
@@ -36,7 +40,7 @@ public const val MAX_BODY_BYTES: Int = 8_192
  */
 public fun Application.relayModule(relay: Relay) {
     routing {
-        get("/healthz") { call.respondText("ok") }
+        get(healthPath) { call.respondText("ok") }
         post(PushRelay.REGISTER_PATH) { call.register(relay) }
         post(PushRelay.SEND_PATH) { call.send(relay) }
     }

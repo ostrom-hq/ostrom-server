@@ -4,9 +4,11 @@ package run.ostrom.server.push
 
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.MockRequestHandleScope
 import io.ktor.client.engine.mock.respond
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.HttpRequestData
+import io.ktor.client.request.HttpResponseData
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -35,34 +37,36 @@ class FirebaseFcmTest {
         override suspend fun fetchProjectId() = "ostrom-push"
     }
 
+    /** FCM as the relay builds it, with [handler] standing for Google. */
+    private fun firebase(handler: suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData): FirebaseFcm =
+        FirebaseFcm(
+            FakeCredentials(),
+            HttpClient(MockEngine(handler)) {
+                expectSuccess = true
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; explicitNulls = false }) }
+            },
+        )
+
     private fun firebase(
         status: HttpStatusCode,
         seen: MutableList<HttpRequestData> = mutableListOf(),
         headers: Headers = headersOf(),
-    ): FirebaseFcm = FirebaseFcm(
-        FakeCredentials(),
-        HttpClient(
-            MockEngine { request ->
-                seen += request
-                val body = if (status.isSuccess()) {
-                    """{"name":"projects/ostrom-push/messages/1"}"""
-                } else {
-                    """{"error":{"code":${status.value}}}"""
-                }
-                respond(
-                    body,
-                    status,
-                    Headers.build {
-                        appendAll(headers)
-                        append(HttpHeaders.ContentType, "application/json")
-                    },
-                )
+    ): FirebaseFcm = firebase { request ->
+        seen += request
+        val body = if (status.isSuccess()) {
+            """{"name":"projects/ostrom-push/messages/1"}"""
+        } else {
+            """{"error":{"code":${status.value}}}"""
+        }
+        respond(
+            body,
+            status,
+            Headers.build {
+                appendAll(headers)
+                append(HttpHeaders.ContentType, "application/json")
             },
-        ) {
-            expectSuccess = true
-            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; explicitNulls = false }) }
-        },
-    )
+        )
+    }
 
     @Test
     fun aSentMessageGoesToTheProjectWithTheServiceAccountsToken() = runTest {
@@ -108,7 +112,7 @@ class FirebaseFcmTest {
 
     @Test
     fun aCancellationIsNeverAnswered() = runTest {
-        val fcm = FirebaseFcm(FakeCredentials(), HttpClient(MockEngine { throw CancellationException("stopped") }))
+        val fcm = firebase { throw CancellationException("stopped") }
         assertFailsWith<CancellationException> { fcm.send(request) }
     }
 

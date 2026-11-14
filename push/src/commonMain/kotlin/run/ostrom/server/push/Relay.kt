@@ -25,12 +25,9 @@ private const val SIGNATURE_BYTES = 64
 private const val BYTE_MASK = 0xff
 private const val HEX_RADIX = 16
 
-/** What the signature of a request came to: a refusal to answer as is, or the instance that signed it. */
-private sealed interface Verdict
+private fun rejected(error: String) = PushRelaySendResponse("rejected", error = error)
 
-private class Refused(val answer: RelayAnswer) : Verdict
-
-private class Signed(val id: String, val at: Long, val signature: String) : Verdict
+private fun unauthorized(error: String) = Verdict.Refused(RelayAnswer(STATUS_UNAUTHORIZED, rejected(error)))
 
 /**
  * The relay (push/README.md, "Relay protocol"). It keeps no registry: an instance's
@@ -83,8 +80,8 @@ public class Relay(
         body: ByteArray,
         parse: (ByteArray) -> PushRelaySendRequest?,
     ): RelayAnswer = when (val verdict = authenticate(instanceId, timestamp, signature.orEmpty(), body)) {
-        is Refused -> verdict.answer
-        is Signed -> admit(verdict, body, parse)
+        is Verdict.Refused -> verdict.answer
+        is Verdict.Signed -> admit(verdict, body, parse)
     }
 
     private suspend fun authenticate(
@@ -103,7 +100,7 @@ public class Relay(
             abs(now() - at) > PushRelay.MAX_SKEW_SECONDS -> unauthorized("stale_request")
             signed == null -> unauthorized("bad_signature")
             !verifies(key, signed, at, body) -> unauthorized("bad_signature")
-            else -> Signed(id, at, signature)
+            else -> Verdict.Signed(id, at, signature)
         }
     }
 
@@ -113,7 +110,7 @@ public class Relay(
     }
 
     private suspend fun admit(
-        signed: Signed,
+        signed: Verdict.Signed,
         body: ByteArray,
         parse: (ByteArray) -> PushRelaySendRequest?,
     ): RelayAnswer =
@@ -151,10 +148,6 @@ public class Relay(
 
     private fun parseKey(base64: String): EdDSA.PublicKey? = decode(base64)?.takeIf { it.size == PUBLIC_KEY_BYTES }
         ?.let { keys.decodeFromByteArrayBlocking(EdDSA.PublicKey.Format.RAW, it) }
-
-    private fun unauthorized(error: String) = Refused(RelayAnswer(STATUS_UNAUTHORIZED, rejected(error)))
-
-    private fun rejected(error: String) = PushRelaySendResponse("rejected", error = error)
 
     /** The relay's validation of a request, and the codecs of the protocol. */
     public companion object {
