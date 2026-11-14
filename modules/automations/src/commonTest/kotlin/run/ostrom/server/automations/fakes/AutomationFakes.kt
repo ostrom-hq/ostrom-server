@@ -9,9 +9,15 @@ import run.ostrom.server.automations.domain.AutomationLauncher
 import run.ostrom.server.automations.domain.AutomationRun
 import run.ostrom.server.automations.domain.AutomationTrigger
 import run.ostrom.server.automations.domain.AutomationVariable
+import run.ostrom.server.automations.domain.AutomationWorkflows
+import run.ostrom.server.automations.domain.WorkflowInputSpec
+import run.ostrom.server.automations.domain.WorkflowRunState
+import run.ostrom.server.automations.domain.WorkflowStart
+import run.ostrom.server.automations.domain.WorkflowStartRequest
 import run.ostrom.server.automations.domain.AutomationsRepository
 import run.ostrom.server.automations.domain.ClaimedRun
 import run.ostrom.server.automations.domain.CronClaim
+import run.ostrom.server.automations.domain.FollowedRun
 import run.ostrom.server.automations.domain.LaunchRequest
 import run.ostrom.server.automations.domain.LaunchResult
 import run.ostrom.server.automations.domain.RunSource
@@ -138,6 +144,27 @@ class InMemoryAutomations : AutomationsRepository {
                 automations[it.automationId]?.owner == owner
         }.mapNotNull { it.sessionId }.take(limit)
 
+    /** When each run was last followed, as [followed] marks it. */
+    val followedAt = mutableMapOf<Uuid, Instant>()
+
+    override suspend fun followed(now: Instant, limit: Int): List<FollowedRun> = runs.values
+        .filter { it.status == RunStatus.STARTED && it.workflowRunId != null }
+        .groupBy { it.orgId }.values
+        .flatMap { ofOrg -> ofOrg.sortedBy { followedAt[it.id] ?: Instant.DISTANT_PAST }.take(limit) }
+        .onEach { followedAt[it.id] = now }
+        .map { FollowedRun(it, it.workflowRunId.orEmpty()) }
+
+    override suspend fun latestWorkflowRun(orgId: Uuid, automationId: Uuid, except: Uuid): String? =
+        runs.values.reversed()
+            .firstOrNull {
+                it.automationId == automationId && it.status == RunStatus.STARTED && it.workflowRunId != null &&
+                    it.id != except
+            }?.workflowRunId
+
+    override suspend fun automationStarting(orgId: Uuid, workflowId: String): String? = automations.values
+        .filter { it.orgId == orgId && it.definition.action.workflowId == workflowId }
+        .minOfOrNull { it.definition.name }
+
     override suspend fun findRunByDelivery(orgId: Uuid, automationId: Uuid, deliveryKey: String): AutomationRun? =
         runs.values.firstOrNull {
             it.orgId == orgId && it.automationId == automationId && it.deliveryKey == deliveryKey
@@ -164,8 +191,9 @@ class InMemoryAutomations : AutomationsRepository {
     }
 
     override suspend fun latestSession(orgId: Uuid, automationId: Uuid, except: Uuid): String? = runs.values.reversed()
-        .firstOrNull { it.automationId == automationId && it.status == RunStatus.STARTED && it.id != except }
-        ?.sessionId
+        .firstOrNull {
+            it.automationId == automationId && it.status == RunStatus.STARTED && it.sessionId != null && it.id != except
+        }?.sessionId
 
     override suspend fun claimDue(
         now: Instant,
@@ -229,3 +257,43 @@ object PlainSecrets : WebhookSecrets {
 
     override suspend fun digest(data: ByteArray): String = "digest-" + data.decodeToString()
 }
+
+/** Workflows in memory: [inputs] by workflow id, [states] by workflow run id; records starts and cancels. */
+class RecordingWorkflows : AutomationWorkflows {
+    val inputs = mutableMapOf<String, List<WorkflowInputSpec>>()
+    val started = mutableListOf<WorkflowStartRequest>()
+    val states = mutableMapOf<String, WorkflowRunState>()
+    val cancelled = mutableListOf<String>()
+    var cancels = true
+    var next: (WorkflowStartRequest) -> WorkflowStart = { WorkflowStart.Started("wfr_${started.size}") }
+
+    override suspend fun inputs(orgId: Uuid, workflowId: String): List<WorkflowInputSpec>? = inputs[workflowId]
+
+    override suspend fun start(request: WorkflowStartRequest): WorkflowStart {
+        started += request
+        return next(request)
+    }
+
+    /** What reading the state of a workflow run throws, by its id. */
+    val failures = mutableMapOf<String, Exception>()
+
+    override suspend fun state(orgId: Uuid, workflowRunId: String): WorkflowRunState? {
+        failures[workflowRunId]?.let { throw it }
+        return states[workflowRunId]
+    }
+
+    override suspend fun cancel(orgId: Uuid, owner: String, workflowRunId: String): Boolean {
+        cancelled += "$owner:$workflowRunId"
+        return cancels
+    }
+}
+
+/** A nightly cron that starts the workflow `triage` with [inputs]. */
+fun workflowDefinition(
+    inputs: Map<String, String> = mapOf("ticket" to "T-{{run.date}}", "note" to ""),
+    repository: String? = "acme/api",
+) = AutomationDefinition(
+    name = "Triage",
+    trigger = AutomationTrigger(TriggerKind.CRON, cron = "0 21 * * *", timezone = "Europe/Paris"),
+    action = AutomationAction(prompt = "", workflowId = "triage", inputs = inputs, repository = repository),
+)

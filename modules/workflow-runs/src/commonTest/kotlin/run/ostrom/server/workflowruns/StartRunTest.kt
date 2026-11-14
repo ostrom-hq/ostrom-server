@@ -16,27 +16,58 @@ import run.ostrom.server.workflowruns.domain.models.RunWorkflow
 import run.ostrom.server.workflowruns.domain.models.RunWorkflowNotFoundException
 import run.ostrom.server.workflowruns.domain.models.StartRunForbiddenException
 import run.ostrom.server.workflowruns.domain.models.WorkflowNotAcceptedException
+import run.ostrom.server.workflowruns.domain.models.RunLimitException
+import run.ostrom.server.workflowruns.domain.repositories.KeyedAdd
+import run.ostrom.server.workflowruns.domain.repositories.KeyedRunsRepository
 import run.ostrom.server.workflowruns.domain.repositories.RunsQuery
 import run.ostrom.server.workflowruns.domain.repositories.StartedRunsRepository
 import run.ostrom.server.workflowruns.domain.services.RunWorkflows
 import run.ostrom.server.workflowruns.domain.usecases.ListWorkflowRunsUseCaseImpl
 import run.ostrom.server.workflowruns.domain.usecases.RunInputs
+import run.ostrom.server.workflowruns.domain.usecases.MAX_UNFINISHED
+import run.ostrom.server.workflowruns.domain.usecases.MemberStart
 import run.ostrom.server.workflowruns.domain.usecases.StartWorkflowRunUseCaseImpl
+import run.ostrom.server.workflowruns.domain.usecases.StartedRun
 import run.ostrom.server.workflowruns.fakes.FixedClock
 import run.ostrom.server.workflowruns.fakes.ORG
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 class StartRunTest {
-    private class InMemoryStartedRuns : StartedRunsRepository {
+    private class InMemoryStartedRuns : StartedRunsRepository, KeyedRunsRepository {
         val stored = mutableListOf<Triple<Uuid, WorkflowRun, Instant>>()
 
         val audits = mutableListOf<RunAudit>()
+
+        val keys = mutableMapOf<Pair<String, String>, WorkflowRun>()
+
+        override suspend fun addKeyed(
+            orgId: Uuid,
+            run: WorkflowRun,
+            startedAt: Instant,
+            graph: RunGraph,
+            audit: RunAudit,
+            key: String,
+            maxUnfinished: Int,
+        ): KeyedAdd {
+            val existing = keys[run.startedBy to key]
+            val unfinished = stored.count { it.second.startedBy == run.startedBy }
+            return when {
+                existing != null -> KeyedAdd.Existing(existing)
+                unfinished >= maxUnfinished -> KeyedAdd.AtLimit
+                else -> {
+                    add(orgId, run, startedAt, graph, audit)
+                    keys[run.startedBy to key] = run
+                    KeyedAdd.Added(run)
+                }
+            }
+        }
 
         override suspend fun add(orgId: Uuid, run: WorkflowRun, startedAt: Instant, graph: RunGraph, audit: RunAudit) {
             stored += Triple(orgId, run, startedAt)
@@ -75,7 +106,7 @@ class StartRunTest {
     private val idea = RunWorkflow("idea", "Idea", 1, WorkflowStatus.PROPOSED, emptyList())
     private val runs = InMemoryStartedRuns()
     private val clock = FixedClock()
-    private val start = StartWorkflowRunUseCaseImpl(Workflows(ship, idea), runs, clock)
+    private val start = StartWorkflowRunUseCaseImpl(Workflows(ship, idea), runs, runs, clock)
     private val list = ListWorkflowRunsUseCaseImpl(Workflows(ship, idea), runs)
 
     private fun person(role: OrgRole?) = GateActor("ada", ORG, ActorKind.USER, personId = "ada", role = role)
@@ -117,6 +148,55 @@ class StartRunTest {
             assertFailsWith<StartRunForbiddenException> { start(actor, "absent", emptyMap()) }
         }
         assertEquals(emptyList(), runs.stored)
+    }
+
+    private fun memberStart(key: String = "automation-run:1", workflowId: String = "ship") = MemberStart(
+        orgId = ORG,
+        starter = "bob",
+        workflowId = workflowId,
+        inputs = mapOf("branch" to "main"),
+        repository = "acme/api",
+        key = key,
+        source = "automation",
+        automationId = "auto-1",
+    )
+
+    @Test
+    fun anyMemberStartsARunForWhatActsInTheirNameOnceAKey() = runTest {
+        val first = start.startFor(memberStart())
+        assertFalse(first.replayed)
+        assertEquals(
+            WorkflowRun(
+                id = first.run.id,
+                workflowId = "ship",
+                workflowName = "Ship",
+                workflowVersion = 3,
+                status = RunStatus.QUEUED,
+                startedBy = "bob",
+                source = "automation",
+                automationId = "auto-1",
+                inputs = mapOf("branch" to "main", "note" to "none"),
+                repository = "acme/api",
+                startedAt = "2026-10-30T10:05:00.123Z",
+            ),
+            first.run,
+        )
+        val details = mapOf("workflow" to "ship", "version" to "3", "source" to "automation")
+        assertEquals(details, runs.audits.single().details)
+        val again = start.startFor(memberStart())
+        assertEquals(StartedRun(first.run, replayed = true), again)
+        assertEquals(1, runs.stored.size, "A replay stores nothing")
+    }
+
+    @Test
+    fun aMemberHasAtMostTwentyUnfinishedRunsAndAnUnknownOrProposedWorkflowStartsNothing() = runTest {
+        repeat(MAX_UNFINISHED) { start.startFor(memberStart("k$it")) }
+        val limit = assertFailsWith<RunLimitException> { start.startFor(memberStart("k20")) }
+        assertEquals("run_limit", limit.type)
+        assertEquals(StartedRun(runs.keys.getValue("bob" to "k0"), true), start.startFor(memberStart("k0")))
+        assertFailsWith<RunWorkflowNotFoundException> { start.startFor(memberStart(workflowId = "absent")) }
+        assertFailsWith<WorkflowNotAcceptedException> { start.startFor(memberStart(workflowId = "idea")) }
+        assertFailsWith<InvalidRunException> { start.startFor(memberStart().copy(inputs = emptyMap())) }
     }
 
     @Test

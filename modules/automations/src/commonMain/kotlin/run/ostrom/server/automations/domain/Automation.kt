@@ -65,13 +65,18 @@ data class AutomationTrigger(
 }
 
 /**
- * What an automation starts: a cloud agent session on [prompt], whose `{{…}}` are the run's variables.
+ * What an automation starts: a cloud agent session on [prompt], whose `{{…}}` are the run's variables; or, with
+ * [workflowId], a run of that workflow with [inputs] rendered the same way (TC-AUT-5), the prompt then empty and the
+ * agent, model, effort and runtime unused.
  *
- * @property prompt The agent's first message.
+ * @property prompt The agent's first message; empty for a workflow action.
  * @property agent The agent (`claude`, `codex`…).
  * @property model The model, the agent's default when null.
  * @property effort The reasoning effort, the agent's default when null.
  * @property maxRuntimeMinutes How long a run may work.
+ * @property workflowId The workflow a run starts, or null for a session.
+ * @property inputs The workflow's inputs, as templates; one that renders empty is left out.
+ * @property repository `owner/name`: a workflow run's repository for its agent nodes that name none.
  */
 @Serializable
 data class AutomationAction(
@@ -80,6 +85,9 @@ data class AutomationAction(
     val model: String? = null,
     val effort: String? = null,
     val maxRuntimeMinutes: Int = DEFAULT_RUNTIME_MINUTES,
+    val workflowId: String? = null,
+    val inputs: Map<String, String> = emptyMap(),
+    val repository: String? = null,
 ) {
     /** Constants and readers of the enclosing type. */
     companion object {
@@ -203,7 +211,7 @@ enum class RunStatus(val wire: String) {
     /** Recorded, its session not created yet. */
     QUEUED("queued"),
 
-    /** Its session was created. */
+    /** Its session, or its workflow run, was created. */
     STARTED("started"),
 
     /** Its session could not be created ([AutomationRun.reason] says why). */
@@ -218,8 +226,14 @@ enum class RunStatus(val wire: String) {
     /** The payload did not fit the variables ([AutomationRun.problems]). */
     INVALID_PAYLOAD("invalid_payload"),
 
-    /** Cancelled by the owner or an administrator: a queued run at once, a started one with its session paused. */
+    /**
+     * Cancelled by the owner or an administrator: a queued run at once, a started one with its session paused or its
+     * workflow run cancelled; or its workflow run was cancelled (`workflow_cancelled`).
+     */
     CANCELLED("cancelled"),
+
+    /** Its workflow run succeeded (a workflow action only: a session's run stays [STARTED]). */
+    SUCCEEDED("succeeded"),
 }
 
 /**
@@ -242,6 +256,7 @@ data class PayloadProblem(val path: String, val rule: String)
  * @property version The automation's version it ran.
  * @property deliveryKey What deduplicates a webhook delivery or a test.
  * @property sessionId The cloud session it created.
+ * @property workflowRunId The workflow run it started (a workflow action).
  * @property reason Why it failed.
  * @property problems Why its payload was refused.
  * @property slotAt The cron slot it ran for.
@@ -257,6 +272,7 @@ data class AutomationRun(
     val version: Int,
     val deliveryKey: String? = null,
     val sessionId: String? = null,
+    val workflowRunId: String? = null,
     val reason: String? = null,
     val problems: List<PayloadProblem> = emptyList(),
     val slotAt: Instant? = null,

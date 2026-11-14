@@ -249,4 +249,21 @@ val AutomationsMigrations: List<SchemaMigration> = listOf(
                 WHERE status = 'started';
         """.trimIndent(),
     ),
+    // A workflow action (TC-AUT-5): the workflow its automation starts, a column so that deleting a workflow finds the
+    // automation that starts it in one indexed lookup (`workflow_in_use`); the workflow run a run started, and the
+    // started ones the scheduler follows until their workflow run ends, least recently followed first (`followed_at`),
+    // so that runs waiting for days never hold back the ones behind them.
+    SchemaMigration(
+        version = 8,
+        name = "workflow_actions",
+        sql = """
+            ALTER TABLE automations_automations ADD COLUMN workflow_id TEXT;
+            CREATE INDEX automations_automations_workflow ON automations_automations (org_id, workflow_id)
+                WHERE workflow_id IS NOT NULL;
+            ALTER TABLE automations_runs ADD COLUMN workflow_run_id TEXT;
+            ALTER TABLE automations_runs ADD COLUMN followed_at TIMESTAMPTZ;
+            CREATE INDEX automations_runs_followed ON automations_runs (org_id, followed_at NULLS FIRST, id)
+                WHERE status = 'started' AND workflow_run_id IS NOT NULL;
+        """.trimIndent(),
+    ),
 )

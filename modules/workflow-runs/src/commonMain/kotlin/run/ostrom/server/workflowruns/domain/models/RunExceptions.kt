@@ -101,3 +101,10 @@ class CredentialScopeException : OstromException(
     "This credential cannot deliver a workflow step.",
     "credential_scope",
 )
+
+/** The member already has [max] unfinished runs (TeamCode's cap): one must end before another starts. */
+class RunLimitException(max: Int) : OstromException(
+    ErrorKind.CONFLICT,
+    "run_limit: a member has at most $max unfinished workflow runs; wait for one to end.",
+    type = "run_limit",
+)

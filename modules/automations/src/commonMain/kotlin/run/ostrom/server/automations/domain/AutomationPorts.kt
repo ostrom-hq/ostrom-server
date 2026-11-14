@@ -37,7 +37,8 @@ interface AutomationsRepository {
     suspend fun insertRun(run: AutomationRun): AutomationRun
 
     /**
-     * Writes the end of a queued [run] (started, failed or skipped), and drops the prompt it kept.
+     * Writes the end of a queued [run] (started, with its session or workflow run, failed or skipped), and drops the
+     * prompt it kept.
      *
      * @return False when the run is no longer queued (it was cancelled meanwhile): nothing is written.
      */
@@ -70,6 +71,19 @@ interface AutomationsRepository {
 
     /** The sessions of the started runs of [owner]'s automations recorded since [since], newest first. */
     suspend fun startedSessions(orgId: Uuid, owner: String, since: Instant, limit: Int): List<String>
+
+    /**
+     * The started runs of workflow actions, whose workflow run has not ended yet as far as they know: those the
+     * scheduler follows until their workflow run ends. At most [limit] of each organization, least recently followed
+     * first, each marked followed at [now]: a run still waiting goes behind the others, so every run is seen in turn.
+     */
+    suspend fun followed(now: Instant, limit: Int): List<FollowedRun>
+
+    /** The workflow run of the latest started run of [automationId] (of [orgId]) other than [except]. */
+    suspend fun latestWorkflowRun(orgId: Uuid, automationId: Uuid, except: Uuid): String?
+
+    /** The name of an automation of [orgId] whose action starts [workflowId], or null when none does. */
+    suspend fun automationStarting(orgId: Uuid, workflowId: String): String?
 
     /** The run of [automationId] (of [orgId]) with [deliveryKey]. */
     suspend fun findRunByDelivery(orgId: Uuid, automationId: Uuid, deliveryKey: String): AutomationRun?
@@ -113,6 +127,14 @@ interface AutomationsRepository {
      */
     suspend fun failQueuedBefore(before: Instant, now: Instant)
 }
+
+/**
+ * A started run of a workflow action, which the scheduler follows until its workflow run ends.
+ *
+ * @property run The run.
+ * @property workflowRunId Its workflow run.
+ */
+data class FollowedRun(val run: AutomationRun, val workflowRunId: String)
 
 /**
  * What a due cron does.

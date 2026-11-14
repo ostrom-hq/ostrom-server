@@ -92,12 +92,13 @@ class AutomationsApi(val owner: String? = null, val before: String? = null, val 
 }
 
 /**
- * The action of a request: a prompt for a cloud agent session. `workflowId` is in the contract and refused until
- * workflow runs can be started.
+ * The action of a request: a prompt for a cloud agent session, or a workflow with its inputs (TC-AUT-5).
  */
 @Serializable
 data class AutomationActionRequest(
     val workflowId: String? = null,
+    val inputs: Map<String, String> = emptyMap(),
+    val repository: String? = null,
     val prompt: String? = null,
     val agent: String = AutomationAction.DEFAULT_AGENT,
     val model: String? = null,
@@ -120,9 +121,6 @@ data class AutomationRequest(
 
 /** The definition of a request. */
 fun AutomationRequest.toDefinition(): AutomationDefinition {
-    if (action.workflowId != null) {
-        throw InvalidAutomationException("Workflow actions are not available yet: give the action a prompt.")
-    }
     val overlapMode = when (overlap) {
         Overlap.SKIP.wire -> Overlap.SKIP
         Overlap.ALLOW.wire -> Overlap.ALLOW
@@ -137,6 +135,9 @@ fun AutomationRequest.toDefinition(): AutomationDefinition {
             model = action.model,
             effort = action.effort,
             maxRuntimeMinutes = action.maxRuntimeMinutes,
+            workflowId = action.workflowId,
+            inputs = action.inputs,
+            repository = action.repository,
         ),
         variables = variables,
         samplePayload = samplePayload,
@@ -209,6 +210,7 @@ data class RunResponse(
     val status: String,
     val version: Int,
     val sessionId: String?,
+    val workflowRunId: String? = null,
     val reason: String?,
     val problems: List<PayloadProblem>,
     val slotAt: String?,
@@ -224,6 +226,7 @@ fun AutomationRun.toResponse(): RunResponse = RunResponse(
     status = status.wire,
     version = version,
     sessionId = sessionId,
+    workflowRunId = workflowRunId,
     reason = reason,
     problems = problems,
     slotAt = slotAt?.toString(),
@@ -247,6 +250,7 @@ data class DryRunVariableResponse(val name: String, val value: String?, val sens
 @Serializable
 data class DryRunResponse(
     val renderedPrompt: String,
+    val renderedInputs: Map<String, String>? = null,
     val variables: List<DryRunVariableResponse>,
     val problems: List<PayloadProblem>,
     val wouldSkip: String?,
@@ -256,6 +260,7 @@ data class DryRunResponse(
 /** The response of a dry run. */
 fun DryRun.toResponse(): DryRunResponse = DryRunResponse(
     renderedPrompt = renderedPrompt,
+    renderedInputs = renderedInputs.takeIf { it.isNotEmpty() },
     variables = variables.map { DryRunVariableResponse(it.name, it.value, it.sensitive) },
     problems = problems,
     wouldSkip = wouldSkip,

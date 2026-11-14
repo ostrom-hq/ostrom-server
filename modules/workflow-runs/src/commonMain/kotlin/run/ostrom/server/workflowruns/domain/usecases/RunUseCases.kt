@@ -64,6 +64,21 @@ interface CancelWorkflowRunUseCase {
      * @throws RunBusyException When the engine kept changing the run while it was cancelled.
      */
     suspend operator fun invoke(actor: GateActor, id: String, person: Uuid?): WorkflowRun
+
+    /**
+     * Cancels a run as its starter, for what acts in their name (an automation's cancelled run, TC-AUT-5).
+     *
+     * @param orgId The organization.
+     * @param starter The starter's login.
+     * @param id The run.
+     *
+     * @return The run, cancelled.
+     *
+     * @throws RunNotFoundException When the organization has no such run of [starter].
+     * @throws RunEndedException When the run already ended.
+     * @throws RunBusyException When the engine kept changing the run while it was cancelled.
+     */
+    suspend fun cancelAsStarter(orgId: Uuid, starter: String, id: String): WorkflowRun
 }
 
 /**
@@ -81,18 +96,31 @@ class CancelWorkflowRunUseCaseImpl(
 ) : CancelWorkflowRunUseCase {
     override suspend fun invoke(actor: GateActor, id: String, person: Uuid?): WorkflowRun {
         requireStarter(actor)
+        return cancel(actor.orgId, id, actor.id, person) { true }
+    }
+
+    override suspend fun cancelAsStarter(orgId: Uuid, starter: String, id: String): WorkflowRun =
+        cancel(orgId, id, starter, null) { it.startedBy == starter }
+
+    private suspend fun cancel(
+        orgId: Uuid,
+        id: String,
+        by: String,
+        person: Uuid?,
+        mine: (WorkflowRun) -> Boolean,
+    ): WorkflowRun {
         repeat(ATTEMPTS) {
-            val run = current(actor.orgId, id)
+            val run = current(orgId, id, mine)
             val now = clock.now()
             val next = cancelledRun(run, now.isoMillis())
-            val audit = RunAudit("cancelled", auditDetails("by" to actor.id, "node" to run.currentNodeId), person)
-            if (engine.write(actor.orgId, RunChange(run, next, null, audit = listOf(audit), dueAt = now))) return next
+            val audit = RunAudit("cancelled", auditDetails("by" to by, "node" to run.currentNodeId), person)
+            if (engine.write(orgId, RunChange(run, next, null, audit = listOf(audit), dueAt = now))) return next
         }
         throw RunBusyException()
     }
 
-    private suspend fun current(orgId: Uuid, id: String): WorkflowRun {
-        val run = runs.find(orgId, id) ?: throw RunNotFoundException()
+    private suspend fun current(orgId: Uuid, id: String, mine: (WorkflowRun) -> Boolean): WorkflowRun {
+        val run = runs.find(orgId, id)?.takeIf(mine) ?: throw RunNotFoundException()
         if (run.status in ENDED) throw RunEndedException()
         return run
     }

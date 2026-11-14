@@ -380,6 +380,17 @@ class RunEngineTest {
         assertEquals(cancelled, GetWorkflowRunUseCaseImpl(runs)(person(OrgRole.MEMBER), RUN))
     }
 
+    @Test
+    fun itsStarterCancelsTheirOwnRunForWhatActsInTheirNameAndNobodyElsesRun() = runTest {
+        val cancel = CancelWorkflowRunUseCaseImpl(runs, runs, clock)
+        stored(RunGraph(), run(status = RunStatus.RUNNING))
+        assertFailsWith<RunNotFoundException> { cancel.cancelAsStarter(ORG, "bob", RUN) }
+        assertFailsWith<RunNotFoundException> { cancel.cancelAsStarter(ORG, "ada", "wfr_none") }
+        val cancelled = cancel.cancelAsStarter(ORG, "ada", RUN)
+        assertEquals(RunStatus.CANCELLED, cancelled.status)
+        assertFailsWith<RunEndedException> { cancel.cancelAsStarter(ORG, "ada", RUN) }
+    }
+
     private fun person(role: OrgRole) = GateActor.person("ada", ORG, role)
 
     private companion object {

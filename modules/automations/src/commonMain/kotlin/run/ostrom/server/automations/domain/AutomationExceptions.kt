@@ -8,8 +8,10 @@ import run.ostrom.server.kernel.errors.OstromException
  * The definition of an automation is invalid; nothing is stored.
  *
  * @param message What is wrong, safe to show.
+ * @param type The error key: `invalid_request`, or `invalid_automation` for a workflow action.
  */
-class InvalidAutomationException(message: String) : OstromException(ErrorKind.INVALID_REQUEST, message)
+class InvalidAutomationException(message: String, type: String = ErrorKind.INVALID_REQUEST.type) :
+    OstromException(ErrorKind.INVALID_REQUEST, message, type)
 
 /** No such automation for the caller (another member's, another organization's, or none). */
 class AutomationNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Automation not found.")
@@ -77,3 +79,15 @@ class AutomationRunNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Run
 /** The run is over (finished, failed, skipped or already cancelled): there is nothing to cancel. */
 class AutomationRunEndedException :
     OstromException(ErrorKind.CONFLICT, "This run has already ended.", type = "run_ended")
+
+/** A workflow action that does not fit its workflow: `400 invalid_automation`, naming the workflow or the input. */
+internal fun invalidWorkflowAction(message: String): InvalidAutomationException =
+    InvalidAutomationException(message, INVALID_AUTOMATION)
+
+/** Throws [invalidWorkflowAction] with [message] unless [condition]. */
+internal inline fun requireWorkflow(condition: Boolean, message: () -> String) {
+    if (!condition) throw invalidWorkflowAction(message())
+}
+
+/** The key of a workflow action's refusals (TeamCode's). */
+internal const val INVALID_AUTOMATION = "invalid_automation"

@@ -7,6 +7,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlin.math.abs
@@ -46,7 +48,8 @@ data class DryRunVariable(val name: String, val value: String?, val sensitive: B
 /**
  * What a run would do now, without running.
  *
- * @property renderedPrompt The prompt with its values.
+ * @property renderedPrompt The prompt with its values (empty for a workflow action).
+ * @property renderedInputs A workflow action's inputs with their values, those that render empty left out.
  * @property variables The payload variables.
  * @property problems Why the payload would be refused.
  * @property wouldSkip `disabled`, `budget` or `overlap` when a real trigger would not start now.
@@ -54,6 +57,7 @@ data class DryRunVariable(val name: String, val value: String?, val sensitive: B
  */
 data class DryRun(
     val renderedPrompt: String,
+    val renderedInputs: Map<String, String>,
     val variables: List<DryRunVariable>,
     val problems: List<PayloadProblem>,
     val wouldSkip: String?,
@@ -123,8 +127,10 @@ interface RunAutomationsUseCase {
  * @param members Tells whether an owner is still a member; every owner is when null (no directory bound).
  * @param clock The time.
  * @param maxRunning How many sessions of one member's automation runs may work at once; a run over it waits, queued.
+ * @param workflows Starts, follows and cancels the workflow runs of workflow actions (TC-AUT-5).
  */
-@Suppress("TooManyFunctions") // The steps of one run pipeline, shared by its three triggers.
+// The steps of one run pipeline, shared by its three triggers, and its ports.
+@Suppress("TooManyFunctions", "LongParameterList")
 class RunAutomationsUseCaseImpl(
     private val repository: AutomationsRepository,
     private val launcher: AutomationLauncher,
@@ -132,6 +138,7 @@ class RunAutomationsUseCaseImpl(
     private val members: MemberDirectory?,
     private val clock: Clock,
     private val maxRunning: Int = DEFAULT_MAX_RUNNING,
+    private val workflows: AutomationWorkflows = NoWorkflows,
 ) : RunAutomationsUseCase {
     override suspend fun trigger(id: Uuid, delivery: WebhookDelivery, body: ByteArray, version: String): Triggered {
         val now = clock.now().truncatedToMillis()
@@ -186,8 +193,10 @@ class RunAutomationsUseCaseImpl(
             overlapping(automation, runId) -> "overlap"
             else -> null
         }
+        val values = runVariables(automation, runId, RunSource.TEST, now) + read.values
         return DryRun(
-            renderedPrompt = render(automation, runId, RunSource.TEST, now, read.values),
+            renderedPrompt = Prompts.render(automation.definition.action.prompt, values),
+            renderedInputs = renderInputs(automation.definition.action, values),
             variables = automation.definition.variables.map {
                 val value = read.values[it.name]
                 DryRunVariable(it.name, if (it.sensitive && value != null) MASK else value, it.sensitive)
@@ -211,15 +220,21 @@ class RunAutomationsUseCaseImpl(
     override suspend fun cancel(caller: AutomationCaller, id: Uuid, runId: Uuid): AutomationRun {
         val automation = repository.visibleTo(caller, id)
         val run = repository.findRun(automation.orgId, automation.id, runId) ?: throw AutomationRunNotFoundException()
-        when (run.status) {
-            RunStatus.QUEUED -> Unit
-            RunStatus.STARTED -> pauseSession(automation, run)
-            else -> throw AutomationRunEndedException()
+        when {
+            run.status == RunStatus.QUEUED -> Unit
+            run.status != RunStatus.STARTED -> throw AutomationRunEndedException()
+            run.workflowRunId != null -> cancelWorkflowRun(automation, run.workflowRunId)
+            else -> pauseSession(automation, run)
         }
         val now = clock.now().truncatedToMillis()
         val ended = run.copy(status = RunStatus.CANCELLED, reason = CANCELLED, updatedAt = now)
         if (!repository.endRun(ended, run.status)) throw AutomationRunEndedException()
         return ended
+    }
+
+    /** Cancels the workflow run of a started run; one already over means the run is over already. */
+    private suspend fun cancelWorkflowRun(automation: Automation, workflowRunId: String) {
+        if (!workflows.cancel(automation.orgId, automation.owner, workflowRunId)) throw AutomationRunEndedException()
     }
 
     /** Pauses the session of a started run; one that no longer works means the run is over already. */
@@ -239,7 +254,42 @@ class RunAutomationsUseCaseImpl(
             proceed(entry.automation, entry.run, render(entry.automation, entry.run.id, RunSource.CRON, entry.slot))
         }
         startParked()
+        followWorkflows()
         return claimed.size
+    }
+
+    /**
+     * Ends the started runs of workflow actions whose workflow run ended: `succeeded`, `failed` (`workflow_failed`),
+     * `cancelled` (`workflow_cancelled`), or `failed` (`workflow_missing`) when it no longer exists. A run cancelled
+     * meanwhile stays cancelled (the write is conditional on `started`). A run that fails to be followed does not stop
+     * the others: the first failure is thrown once all were tried, and that run is tried again on a later pass.
+     */
+    private suspend fun followWorkflows() {
+        val now = clock.now().truncatedToMillis()
+        var failure: Exception? = null
+        for (followed in repository.followed(now, BATCH)) {
+            try {
+                follow(followed, now)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                failure = failure ?: error
+            }
+        }
+        failure?.let { throw it }
+    }
+
+    private suspend fun follow(followed: FollowedRun, now: Instant) {
+        val (run, workflowRunId) = followed
+        val state = workflows.state(run.orgId, workflowRunId)
+        if (state == WorkflowRunState.RUNNING) return
+        val (status, reason) = when (state) {
+            null -> RunStatus.FAILED to WORKFLOW_MISSING
+            WorkflowRunState.SUCCEEDED -> RunStatus.SUCCEEDED to null
+            WorkflowRunState.FAILED -> RunStatus.FAILED to "workflow_failed"
+            else -> RunStatus.CANCELLED to "workflow_cancelled"
+        }
+        repository.endRun(run.copy(status = status, reason = reason, updatedAt = now), RunStatus.STARTED)
     }
 
     /** Starts, oldest first, the runs that waited for their owner's capacity, while it has room. */
@@ -298,11 +348,13 @@ class RunAutomationsUseCaseImpl(
 
     /**
      * Starts a queued run, records why it does not start, or leaves it queued with its prompt when its owner's
-     * sessions of automation runs are at their cap (it starts when one ends, or fails after 30 minutes).
+     * sessions of automation runs are at their cap (it starts when one ends, or fails after 30 minutes). A workflow
+     * action never waits for that cap: its workflow runs are capped by their own rule (`run_limit`), as in TeamCode.
      */
     private suspend fun proceed(automation: Automation, run: AutomationRun, prompt: String): AutomationRun {
         val refused = refusal(automation, run)
-        if (refused == null && atCapacity(automation)) {
+        val session = automation.definition.action.workflowId == null
+        if (refused == null && session && atCapacity(automation)) {
             repository.park(run.orgId, run.id, prompt)
             return run
         }
@@ -310,13 +362,17 @@ class RunAutomationsUseCaseImpl(
         return if (repository.updateRun(outcome)) outcome else cancelledMeanwhile(automation, run, outcome)
     }
 
-    /** The run was cancelled while its session was being created: that session is paused, not left working. */
+    /**
+     * The run was cancelled while its session or workflow run was being created: that session is paused, that
+     * workflow run cancelled, not left working.
+     */
     private suspend fun cancelledMeanwhile(
         automation: Automation,
         run: AutomationRun,
         outcome: AutomationRun,
     ): AutomationRun {
         outcome.sessionId?.let { launcher.pause(automation.orgId, automation.owner, it) }
+        outcome.workflowRunId?.let { workflows.cancel(automation.orgId, automation.owner, it) }
         return run.copy(status = RunStatus.CANCELLED, reason = CANCELLED, updatedAt = outcome.updatedAt)
     }
 
@@ -358,6 +414,8 @@ class RunAutomationsUseCaseImpl(
     }
 
     private suspend fun launch(automation: Automation, run: AutomationRun, prompt: String): AutomationRun {
+        val workflowId = automation.definition.action.workflowId
+        if (workflowId != null) return startWorkflow(automation, run, workflowId, prompt)
         val request = LaunchRequest(
             orgId = automation.orgId,
             owner = automation.owner,
@@ -381,18 +439,60 @@ class RunAutomationsUseCaseImpl(
         }
     }
 
+    /**
+     * Starts the workflow run of a workflow action as the owner, under the key `automation-run:<run id>`: a start
+     * retried finds the first workflow run, never a second. A refusal ends the run `failed` with its code.
+     *
+     * @param rendered The rendered inputs, as [render] wrote them.
+     */
+    private suspend fun startWorkflow(
+        automation: Automation,
+        run: AutomationRun,
+        workflowId: String,
+        rendered: String,
+    ): AutomationRun {
+        val action = automation.definition.action
+        val request = WorkflowStartRequest(
+            orgId = automation.orgId,
+            owner = automation.owner,
+            automationId = automation.id,
+            workflowId = workflowId,
+            inputs = Json.decodeFromString(INPUTS, rendered),
+            repository = action.repository,
+            idempotencyKey = "automation-run:${run.id}",
+        )
+        val result = try {
+            workflows.start(request)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            // The message may quote an input: only its type is kept, as a stable code.
+            WorkflowStart.Refused("start_failed:" + error::class.simpleName.orEmpty())
+        }
+        return when (result) {
+            is WorkflowStart.Started -> run.copy(status = RunStatus.STARTED, workflowRunId = result.workflowRunId)
+            is WorkflowStart.Refused -> run.copy(status = RunStatus.FAILED, reason = result.reason)
+        }
+    }
+
     /** Cron and webhook runs that count towards the day's budget, recorded over the 24 hours before [at]. */
     private suspend fun runsOfDay(automation: Automation, at: Instant): Int = repository.countRuns(
         automation.orgId,
         automation.id,
         at - 1.days,
         setOf(RunSource.CRON, RunSource.WEBHOOK),
-        setOf(RunStatus.QUEUED, RunStatus.STARTED, RunStatus.FAILED, RunStatus.CANCELLED),
+        setOf(RunStatus.QUEUED, RunStatus.STARTED, RunStatus.FAILED, RunStatus.CANCELLED, RunStatus.SUCCEEDED),
     )
 
+    /** Whether the latest started run still works: its session, or its workflow run (waiting for a person too). */
     private suspend fun overlapping(automation: Automation, except: Uuid): Boolean =
-        repository.latestSession(automation.orgId, automation.id, except)
-            ?.let { launcher.isWorking(automation.orgId, it) } ?: false
+        if (automation.definition.action.workflowId == null) {
+            repository.latestSession(automation.orgId, automation.id, except)
+                ?.let { launcher.isWorking(automation.orgId, it) } ?: false
+        } else {
+            repository.latestWorkflowRun(automation.orgId, automation.id, except)
+                ?.let { workflows.state(automation.orgId, it) == WorkflowRunState.RUNNING } ?: false
+        }
 
     private suspend fun verify(automation: Automation, delivery: WebhookDelivery, body: ByteArray, now: Instant) {
         val timestamp = delivery.timestamp?.toLongOrNull()
@@ -421,6 +521,10 @@ class RunAutomationsUseCaseImpl(
         return "delivery:$header"
     }
 
+    /**
+     * What a run starts with: the rendered prompt of a session; the rendered inputs of a workflow action, as JSON (so
+     * that a run waiting for capacity keeps one text either way).
+     */
     private fun render(
         automation: Automation,
         runId: Uuid,
@@ -429,7 +533,12 @@ class RunAutomationsUseCaseImpl(
         payload: Map<String, String> = emptyMap(),
     ): String {
         val values = runVariables(automation, runId, source, at) + payload
-        return Prompts.render(automation.definition.action.prompt, values)
+        val action = automation.definition.action
+        return if (action.workflowId == null) {
+            Prompts.render(action.prompt, values)
+        } else {
+            Json.encodeToString(INPUTS, renderInputs(action, values))
+        }
     }
 
     /** Constants and readers of the enclosing type. */
@@ -447,6 +556,11 @@ class RunAutomationsUseCaseImpl(
         const val DEFAULT_MAX_RUNNING = 2
 
         private const val CANCELLED = "cancelled"
+
+        /** A workflow action whose workflow no longer exists. */
+        private const val WORKFLOW_MISSING = "workflow_missing"
+
+        private val INPUTS = MapSerializer(String.serializer(), String.serializer())
 
         /** How far back a started run may still have a working session: its runtime is at most 24 hours. */
         private val WORKING_WINDOW = 25.hours
@@ -467,6 +581,10 @@ class RunAutomationsUseCaseImpl(
         private val DELIVERY_KEY = Regex("[A-Za-z0-9._:-]{1,128}")
     }
 }
+
+/** A workflow action's inputs rendered with [values]; one that renders empty is left out (its default applies). */
+private fun renderInputs(action: AutomationAction, values: Map<String, String>): Map<String, String> =
+    action.inputs.mapValues { Prompts.render(it.value, values) }.filterValues { it.isNotBlank() }
 
 /** A queued run of [automation]. */
 private fun newRun(automation: Automation, source: RunSource, key: String, now: Instant, slot: Instant?) =

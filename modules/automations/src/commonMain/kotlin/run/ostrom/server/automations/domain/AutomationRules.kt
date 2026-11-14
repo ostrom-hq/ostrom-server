@@ -45,11 +45,16 @@ internal object AutomationRules {
             TriggerKind.CRON -> checkCron(definition)
             TriggerKind.WEBHOOK -> checkWebhook(definition)
         }
-        checkAction(definition.action)
         val known = Prompts.RUN_VARIABLES + definition.variables.map { it.name }
-        val unknown = Prompts.placeholders(definition.action.prompt) - known
-        requireAutomation(unknown.isEmpty()) {
-            "The prompt names unknown variables: ${unknown.sorted().joinToString()}."
+        val workflowId = definition.action.workflowId
+        if (workflowId == null) {
+            checkAction(definition.action)
+            val unknown = Prompts.placeholders(definition.action.prompt) - known
+            requireAutomation(unknown.isEmpty()) {
+                "The prompt names unknown variables: ${unknown.sorted().joinToString()}."
+            }
+        } else {
+            WorkflowActionRules.check(definition.action, workflowId, known)
         }
         return definition.copy(name = name)
     }
