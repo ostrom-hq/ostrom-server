@@ -92,8 +92,10 @@ internal class SkillDeliveryUseCaseImpl(
         if (reports.isEmpty()) return
         repository.write(caller.orgId) {
             val ids = reportable(reports.map { it.name }.toSet(), caller.memberId)
-            val missing = reports.firstOrNull { it.name !in ids }
-            if (missing != null) throw CatalogNotFoundException("Skill ${missing.name} is not in the catalog.")
+            // The same answer for another organization's skill and a missing one: the body names neither.
+            if (reports.any { it.name !in ids }) {
+                throw CatalogNotFoundException("A reported skill is not in the catalog.")
+            }
             // A reported version is a published one, with its digest: a status never names unknown content.
             val published = digests(ids.values, reports.mapNotNull { it.version }.toSet())
             reports.forEach { report ->
