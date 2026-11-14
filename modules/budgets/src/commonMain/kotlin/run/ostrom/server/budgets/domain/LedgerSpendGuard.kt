@@ -43,9 +43,14 @@ class LedgerSpendGuard(
         val day = BudgetPeriod.day(now)
         val answer = when (val decided = guard.check(request.orgId, request.memberId, request.workflowId)) {
             // No limit that stops applies, but the launch's own budget may.
-            BudgetDecision.Allowed(null) -> request.launchBudgetMicros?.let {
-                admission.admit(hold(request), SpendLimits(null, null, null, null, it), month.start)
-            } ?: Admission.Admitted
+            BudgetDecision.Allowed(null) -> {
+                val budget = request.launchBudgetMicros
+                if (budget == null) {
+                    Admission.Admitted
+                } else {
+                    admission.admit(hold(request), SpendLimits(null, null, null, null, budget), month.start)
+                }
+            }
             is BudgetDecision.Exhausted ->
                 Admission.Exhausted(
                     decided.scope.toSpendScope(),

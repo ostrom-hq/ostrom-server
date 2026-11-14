@@ -95,7 +95,9 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
                 Statement.create(UsageQueries.DROP_RETIRED_HOLDS).bind("org_id", hold.orgId)
                     .bind("retained_since", window.now - HoldWindow.RETENTION),
             ).getOrThrow()
-            val row = fetchAll(holdTotals(hold, limits, window)).getOrThrow().first()
+            // A call of no launch has no launch budget, whatever the limits say.
+            val applying = if (hold.launchId == null) limits.copy(launchMicros = null) else limits
+            val row = fetchAll(holdTotals(hold, applying, window)).getOrThrow().first()
             val totals = SpendTotals(
                 orgSpent = row.get("org_spent").asLong(),
                 orgHeld = row.get("org_held").asLong(),
@@ -109,7 +111,7 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
                 launchSpent = row.get("launch_spent").asLong(),
                 launchHeld = row.get("launch_held").asLong(),
             )
-            limits.admit(totals, hold.micros).also { admission ->
+            applying.admit(totals, hold.micros).also { admission ->
                 if (admission == Admission.Admitted) {
                     val put = Statement.create(UsageQueries.PUT_HOLD).bind("call_id", hold.callId)
                         .bind("org_id", hold.orgId).bind("member_id", hold.memberId).bind("micros", hold.micros)

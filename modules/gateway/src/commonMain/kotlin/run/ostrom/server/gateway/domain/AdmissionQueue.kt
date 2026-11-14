@@ -122,8 +122,8 @@ object QueueTurns {
         running: Int,
         limit: Int?,
         limited: Set<String>,
-        launchRunning: Int = 0,
-        launchLimit: Int? = null,
+        launchRunning: Int,
+        launchLimit: Int?,
     ): AdmissionEntry = when {
         limit != null && running >= limit -> AdmissionEntry.Waiting(blocked = true)
         launchLimit != null && launchRunning >= launchLimit -> AdmissionEntry.Waiting(blocked = true)

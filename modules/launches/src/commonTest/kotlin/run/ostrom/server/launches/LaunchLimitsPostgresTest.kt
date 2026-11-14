@@ -69,7 +69,8 @@ class LaunchLimitsPostgresTest {
             koin.get<OrgsRepository>().create(team, member) { false }
         } else {
             val expires = now + 1.hours
-            val invitation = Invitation(Uuid.random(), team.id, null, role, requireNotNull(invitedBy), now, expires, null, 0, null)
+            val inviter = requireNotNull(invitedBy)
+            val invitation = Invitation(Uuid.random(), team.id, null, role, inviter, now, expires, null, 0, null)
             val invitations = koin.get<InvitationsRepository>()
             invitations.create(invitation, "hash-" + Uuid.random().toHexString())
             invitations.accept(invitation, member, now)

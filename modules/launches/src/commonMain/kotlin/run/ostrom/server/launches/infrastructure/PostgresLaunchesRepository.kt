@@ -12,6 +12,7 @@ import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.Transaction
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
@@ -134,7 +135,7 @@ class PostgresLaunchesRepository(
         caps = LaunchCaps(
             get("budget_micros").asLong(),
             get("max_concurrent").asString().toInt(),
-            get("paused").asString().toBoolean(),
+            get("paused").asBoolean(),
         ),
     )
 
