@@ -41,6 +41,7 @@ class RunnerHeartbeatUseCaseTest {
         ).copy(epoch = 3, runnerTokenHash = "hash(tok)", executionStartedAt = startedAt)
             .also { repository.put(it) }
 
+    @Suppress("LongParameterList") // Every field of a heartbeat, all named at the call sites.
     private fun beat(
         id: Uuid,
         epoch: Long = 3,

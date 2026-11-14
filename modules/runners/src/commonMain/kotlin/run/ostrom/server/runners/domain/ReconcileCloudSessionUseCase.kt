@@ -40,7 +40,8 @@ interface ReconcileCloudSessionUseCase {
  */
 // Each step is a decision table read top to bottom: an early return per outcome reads better than nested branches,
 // and one small function per state and per check keeps each table short.
-@Suppress("ReturnCount", "TooManyFunctions")
+// Its seven collaborators are the ports a step reads and writes, each named at its one call site.
+@Suppress("ReturnCount", "TooManyFunctions", "LongParameterList")
 class ReconcileCloudSessionUseCaseImpl(
     private val repository: CloudSessionsRepository,
     private val driver: RuntimeDriver,
@@ -48,7 +49,7 @@ class ReconcileCloudSessionUseCaseImpl(
     private val plans: CloudPlanProvider,
     private val usage: CloudUsageMeter,
     private val clock: Clock,
-    private val backgroundWork: BackgroundWorkLimit = BackgroundWorkLimit { BackgroundWork.DEFAULT_MAX_MINUTES },
+    private val backgroundWork: BackgroundWorkLimit,
 ) : ReconcileCloudSessionUseCase {
     override suspend fun invoke(session: CloudSession): Instant? {
         val now = clock.now()

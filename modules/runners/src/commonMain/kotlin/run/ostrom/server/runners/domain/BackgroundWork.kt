@@ -44,10 +44,10 @@ object BackgroundWork {
      */
     fun heartbeat(session: CloudSession, background: Boolean, now: Instant): CloudSession {
         if (!background) return session
-        val since = session.backgroundSince
-        val continued = since != null && session.backgroundSeenAt != null &&
-            session.backgroundSeenAt == session.lastHeartbeatAt
-        return session.copy(backgroundSince = if (continued) since else now, backgroundSeenAt = now)
+        // The previous heartbeat reported it too: its time is the last report's.
+        val continued = session.backgroundSeenAt != null && session.backgroundSeenAt == session.lastHeartbeatAt
+        val since = session.backgroundSince?.takeIf { continued } ?: now
+        return session.copy(backgroundSince = since, backgroundSeenAt = now)
     }
 
     /**
@@ -60,9 +60,8 @@ object BackgroundWork {
      *   cap of 0.
      */
     fun activity(session: CloudSession, maxMinutes: Int): Instant? {
-        val seen = session.backgroundSeenAt ?: return null
-        val since = session.backgroundSince ?: return null
-        if (maxMinutes <= 0) return null
-        return minOf(seen, since + maxMinutes.minutes)
+        val seen = session.backgroundSeenAt
+        val since = session.backgroundSince
+        return if (seen == null || since == null || maxMinutes <= 0) null else minOf(seen, since + maxMinutes.minutes)
     }
 }
