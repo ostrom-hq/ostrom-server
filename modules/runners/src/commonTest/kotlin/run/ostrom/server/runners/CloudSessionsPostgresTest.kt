@@ -77,9 +77,12 @@ class CloudSessionsPostgresTest {
             runnerTokenHash = "h1",
             readyAt = t0,
             lastActivityAt = t0 + 5.seconds,
+            backgroundSince = t0 + 1.seconds,
+            backgroundSeenAt = t0 + 2.seconds,
         )
         val stored = assertNotNull(repository.compareAndSet(next, t0))
         assertEquals(1, stored.generation)
+        assertEquals(t0 + 1.seconds to t0 + 2.seconds, stored.backgroundSince to stored.backgroundSeenAt)
         assertEquals(stored, repository.findByRunnerTokenHash("h1"))
         assertNull(repository.findByRunnerTokenHash("h2"))
         // A stale generation loses.

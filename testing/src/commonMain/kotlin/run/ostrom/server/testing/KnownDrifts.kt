@@ -22,10 +22,5 @@ object KnownDrifts {
         "createArtifactUpload 413 \$ STATUS" to
             "an upload over the bound answers 413, which ostrom-core#188 did not declare when it marked the route " +
                 "served",
-        "getWorkflowSettings 404 \$ STATUS" to "another organization's answer, undeclared by ostrom-core#187",
-        "saveWorkflowSettings 404 \$ STATUS" to "another organization's answer, undeclared by ostrom-core#187",
-        // Served since ostrom-core#199, met once the pin passed it: a 404 the contract does not declare yet.
-        "listCloudProfiles 404 \$ STATUS" to "the cloud profiles' 404, to declare in ostrom-core",
-        "createCloudProfile 404 \$ STATUS" to "the cloud profiles' 404, to declare in ostrom-core",
     )
 }

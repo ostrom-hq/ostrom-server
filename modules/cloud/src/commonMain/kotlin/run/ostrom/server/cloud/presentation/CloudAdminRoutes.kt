@@ -31,7 +31,8 @@ import kotlin.uuid.Uuid
 /**
  * TeamCode's cloud administration (`/dashboard/cloud`): the runtime and the clusters are the instance's, for a person
  * who administers it, signed in; the profiles an organization's, read by its members (`cloud:read`), written by an
- * owner or an admin signed in (`cloud:write`). The caller is checked before a body is read (TeamCode 3b716702).
+ * owner or an admin signed in (`cloud:write`), as are the organization's cloud settings. The caller is checked
+ * before a body is read (TeamCode 3b716702).
  *
  * @param dependencies The use cases.
  */
@@ -88,11 +89,13 @@ fun Route.cloudAdminRoutes(dependencies: CloudAdminRoutesDependencies) = with(de
             audit.record(profile.audit(call.requirePrincipal(), "cloud.profile.published"))
             call.respond(profile.toResponse())
         }
+        cloudSettingsRoutes(dependencies)
     }
 }
 
-private const val CLOUD_READ = "cloud:read"
-private const val CLOUD_WRITE = "cloud:write"
+
+internal const val CLOUD_READ = "cloud:read"
+internal const val CLOUD_WRITE = "cloud:write"
 
 /** The caller of the instance's cloud administration: a person only when the credential is a person's own. */
 internal fun AuthenticatedPrincipal.cloudAdmin(): CloudAdminCaller = CloudAdminCaller(

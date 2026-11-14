@@ -236,6 +236,7 @@ data class CloudSessionsResponse(
  * @property ready Whether the agent is started.
  * @property stopped Whether the agent stopped after a `stop` instruction.
  * @property lastModelRequestAt The agent's last request to the model (ISO 8601), if seen.
+ * @property background Whether the agent has background work; an older runner never says it.
  */
 @Serializable
 data class RunnerHeartbeatRequest(
@@ -244,6 +245,7 @@ data class RunnerHeartbeatRequest(
     val ready: Boolean = false,
     val stopped: Boolean = false,
     val lastModelRequestAt: String? = null,
+    val background: Boolean = false,
 )
 
 /**

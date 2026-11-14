@@ -10,6 +10,7 @@ import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.automations.domain.AutomationLauncher
 import run.ostrom.server.billing.domain.GetAgentUsageUseCase
 import run.ostrom.server.billing.domain.GetPlanLimitsUseCase
+import run.ostrom.server.cloud.domain.CloudSettingsSource
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
@@ -72,6 +73,7 @@ import run.ostrom.server.runners.domain.TerminalTickets
 import run.ostrom.server.runners.infrastructure.BillingCloudPlanProvider
 import run.ostrom.server.runners.infrastructure.BillingCloudUsageMeter
 import run.ostrom.server.runners.infrastructure.CloudSessionAutomationLauncher
+import run.ostrom.server.runners.infrastructure.CloudSettingsBackgroundWorkLimit
 import run.ostrom.server.runners.infrastructure.CloudSessionsRepositoryImpl
 import run.ostrom.server.runners.infrastructure.DockerExecutionPlan
 import run.ostrom.server.runners.infrastructure.InProcessRunnerWorkSignals
@@ -158,7 +160,9 @@ object RunnersModule : ServerModule {
         single<RunnerHeartbeatUseCase> { RunnerHeartbeatUseCaseImpl(get(), get(), get(), get()) }
         single<RecordCloudSessionActivityUseCase> { RecordCloudSessionActivityUseCaseImpl(get(), get()) }
         single<ReconcileCloudSessionUseCase> {
-            ReconcileCloudSessionUseCaseImpl(get(), get(), get(), get(), get(), get())
+            // The organization's cloud settings when the cloud module is there (always on a full server).
+            val limit = CloudSettingsBackgroundWorkLimit(getOrNull<CloudSettingsSource>())
+            ReconcileCloudSessionUseCaseImpl(get(), get(), get(), get(), get(), get(), limit)
         }
         single { ReconcilerWorker(get(), get(), get(), get()) }
         // The members' GitHub access when the GitHub integration is there (always on a full server).

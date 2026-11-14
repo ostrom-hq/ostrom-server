@@ -157,7 +157,8 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
                     ready_at = :ready_at, last_heartbeat_at = :last_heartbeat_at, last_activity_at =
                     GREATEST(last_activity_at, :last_activity_at), paused_at = :paused_at, terminated_at =
                     :terminated_at, pausing_since = :pausing_since, runner_stopped_at = :runner_stopped_at,
-                    runner_token_hash = :runner_token_hash WHERE id = :id AND generation = :generation RETURNING
+                    runner_token_hash = :runner_token_hash, background_since = :background_since,
+                    background_seen_at = :background_seen_at WHERE id = :id AND generation = :generation RETURNING
                     $COLUMNS
                     """,
                 ).bindUpdate(session).bind("generation", session.generation),
@@ -316,6 +317,8 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         .bind("pausing_since", session.pausingSince)
         .bind("runner_stopped_at", session.runnerStoppedAt)
         .bind("runner_token_hash", session.runnerTokenHash)
+        .bind("background_since", session.backgroundSince)
+        .bind("background_seen_at", session.backgroundSeenAt)
 
     private fun ResultSet.Row.toSession(): CloudSession {
         val url = get("repository_url").asStringOrNull()
@@ -349,6 +352,8 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             pausingSince = get("pausing_since").asInstantOrNull(),
             runnerStoppedAt = get("runner_stopped_at").asInstantOrNull(),
             runnerTokenHash = get("runner_token_hash").asStringOrNull(),
+            backgroundSince = get("background_since").asInstantOrNull(),
+            backgroundSeenAt = get("background_seen_at").asInstantOrNull(),
             model = get("model").asStringOrNull(),
             prompt = get("prompt").asStringOrNull(),
             // A name this version does not know grants nothing.
@@ -365,14 +370,14 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             phase, epoch, generation, failure_code, failure_message, idle_timeout_minutes, max_run_minutes,
             restricted_egress, created_at, updated_at, execution_started_at, ready_at, last_heartbeat_at,
             last_activity_at, paused_at, terminated_at, pausing_since, runner_stopped_at, runner_token_hash,
-            github_access
+            github_access, background_since, background_seen_at
         """
         const val VALUES = """
             :id, :org_id, :owner_id, :name, :agent, :model, :prompt, :repository_url, :repository_ref, :state,
             :desired_state, :phase, :epoch, 0, :failure_code, :failure_message, :idle_timeout_minutes,
             :max_run_minutes, :restricted_egress, :created_at, :updated_at, :execution_started_at, :ready_at,
             :last_heartbeat_at, :last_activity_at, :paused_at, :terminated_at, :pausing_since, :runner_stopped_at,
-            :runner_token_hash, :github_access
+            :runner_token_hash, :github_access, :background_since, :background_seen_at
         """
     }
 }

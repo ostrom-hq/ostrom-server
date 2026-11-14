@@ -5,11 +5,14 @@ import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.cloud.domain.CloudClusterAccess
 import run.ostrom.server.cloud.domain.CloudProfilesRepository
 import run.ostrom.server.cloud.domain.CloudRuntimeSource
+import run.ostrom.server.cloud.domain.CloudSettingsRepository
+import run.ostrom.server.cloud.domain.CloudSettingsSource
 import run.ostrom.server.cloud.presentation.CloudClusterListResponse
 import run.ostrom.server.cloud.presentation.CloudClusterResponse
 import run.ostrom.server.cloud.presentation.CloudProfileListResponse
 import run.ostrom.server.cloud.presentation.CloudProfileResponse
 import run.ostrom.server.cloud.presentation.CloudRuntimeResponse
+import run.ostrom.server.cloud.presentation.CloudSettingsResponse
 import run.ostrom.server.cloud.presentation.cloudAdmin
 import run.ostrom.server.kernel.auth.ALL_USER_SCOPES
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -230,6 +233,45 @@ class CloudAdminRoutesPostgresTest {
         assertEquals(2, current?.version)
         // A version published meanwhile: nothing is written over it.
         assertFalse(repository.publish(checkNotNull(current)))
+    }
+
+    @Test
+    fun theCloudSettingsAreTheOrganizationsSavedByAnAdminOverTheOnesRead() = serverTest(
+        listOf(CloudModule),
+        overrides,
+    ) { server ->
+        val http = server.client
+        val path = "/api/v1/cloud/settings"
+        assertEquals(HttpStatusCode.Unauthorized, http.get(path).status)
+        assertEquals(HttpStatusCode.Forbidden, http.get(path) { bearerAuth("alicekey") }.status)
+        val defaults = http.get(path) { bearerAuth("bob") }.body<CloudSettingsResponse>()
+        assertEquals(CloudSettingsResponse(240), defaults)
+
+        val first = """{"backgroundWorkMaxMinutes":60}"""
+        assertEquals(HttpStatusCode.Forbidden, http.send("PUT", path, "bob", first).status)
+        assertEquals(HttpStatusCode.Forbidden, http.send("PUT", path, "alicekey", first).status)
+        val saved = http.send("PUT", path, "alice", first).body<CloudSettingsResponse>()
+        assertEquals(60 to ALICE.toString(), saved.backgroundWorkMaxMinutes to saved.updatedBy)
+        assertEquals(saved, http.get(path) { bearerAuth("bob") }.body<CloudSettingsResponse>())
+        assertEquals(60, server.koin.get<CloudSettingsSource>().current(ORG_A).backgroundWorkMaxMinutes)
+
+        val stale = http.send("PUT", path, "alice", first)
+        assertEquals(HttpStatusCode.Conflict, stale.status)
+        assertTrue("cloud_settings_conflict" in stale.bodyAsText())
+        val next = """{"backgroundWorkMaxMinutes":0,"updatedAt":"${saved.updatedAt}"}"""
+        assertEquals(0, http.send("PUT", path, "alice", next).body<CloudSettingsResponse>().backgroundWorkMaxMinutes)
+        val invalid = http.send("PUT", path, "alice", """{"backgroundWorkMaxMinutes":5,"updatedAt":"soon"}""")
+        assertEquals(HttpStatusCode.BadRequest, invalid.status)
+        assertTrue("invalid_cloud_settings" in invalid.bodyAsText())
+        val outOfRange = http.send("PUT", path, "alice", """{"backgroundWorkMaxMinutes":2000}""")
+        assertEquals(HttpStatusCode.BadRequest, outOfRange.status)
+
+        // Organization B sees its own defaults and its save never touches A's.
+        assertEquals(CloudSettingsResponse(240), http.get(path) { bearerAuth("carol") }.body<CloudSettingsResponse>())
+        http.send("PUT", path, "carol", """{"backgroundWorkMaxMinutes":15}""")
+        val repository = server.koin.get<CloudSettingsRepository>()
+        assertEquals(0, repository.get(ORG_A)?.backgroundWorkMaxMinutes)
+        assertEquals(15, repository.get(ORG_B)?.backgroundWorkMaxMinutes)
     }
 
     @Test

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.runners.domain.BackgroundWork
 import run.ostrom.server.runners.domain.CloudPlan
 import run.ostrom.server.runners.domain.CloudSession
 import run.ostrom.server.runners.domain.DesiredState
@@ -31,7 +32,10 @@ class ReconcileCloudSessionUseCaseTest {
     private val plans = FixedPlans()
     private val clock = SettableClock()
     private val meter = RepositoryCloudUsageMeter(repository)
-    private val reconcile = ReconcileCloudSessionUseCaseImpl(repository, driver, tokens, plans, meter, clock)
+    private var backgroundCap = BackgroundWork.DEFAULT_MAX_MINUTES
+    private val reconcile = ReconcileCloudSessionUseCaseImpl(repository, driver, tokens, plans, meter, clock) {
+        backgroundCap
+    }
     private val t0 = clock.now
 
     private fun put(session: CloudSession) = session.also { repository.put(it) }
@@ -297,6 +301,39 @@ class ReconcileCloudSessionUseCaseTest {
         assertEquals(SessionState.PAUSING, after.state)
         assertEquals(t0, after.pausingSince)
         assertEquals("draining", after.phase)
+    }
+
+    @Test
+    fun backgroundWorkHoldsOffTheIdlePauseUpToTheOrganizationsCap() = runTest {
+        driver.status = ExecutionStatus.RUNNING
+        // A session last active at t0, its runner heard now, with background work since [since], last seen at [seen].
+        suspend fun stateAt(minutes: Int, since: Int?, seen: Int): CloudSession {
+            clock.now = t0 + minutes.minutes
+            val session = runningSession().copy(
+                lastHeartbeatAt = clock.now,
+                backgroundSince = since?.let { t0 + it.minutes },
+                backgroundSeenAt = t0 + seen.minutes,
+            ).also { put(it) }
+            reconcile(session)
+            return stored(session)
+        }
+        // Reported a minute ago, or ended less than the idle timeout ago: not idle.
+        assertEquals(SessionState.RUNNING, stateAt(60, since = 1, seen = 59).state)
+        assertEquals(SessionState.RUNNING, stateAt(88, since = 1, seen = 59).state)
+        // Ended the idle timeout ago: idle.
+        assertEquals("idle_timeout", stateAt(89, since = 1, seen = 59).failure?.code)
+
+        // Never ending: it counts up to the cap after its start, then the idle timeout runs.
+        assertEquals(SessionState.RUNNING, stateAt(239, since = 0, seen = 239).state)
+        backgroundCap = 200
+        assertEquals(SessionState.RUNNING, stateAt(229, since = 0, seen = 229).state)
+        assertEquals("idle_timeout", stateAt(230, since = 0, seen = 230).failure?.code)
+
+        // A cap of 0, or a report without the start of its stretch, holds nothing off.
+        backgroundCap = 0
+        assertEquals("idle_timeout", stateAt(60, since = 1, seen = 59).failure?.code)
+        backgroundCap = BackgroundWork.DEFAULT_MAX_MINUTES
+        assertEquals("idle_timeout", stateAt(60, since = null, seen = 59).failure?.code)
     }
 
     @Test

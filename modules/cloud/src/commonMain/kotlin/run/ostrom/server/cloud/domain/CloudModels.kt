@@ -2,6 +2,7 @@
 package run.ostrom.server.cloud.domain
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -222,3 +223,29 @@ data class CloudProfileInput(
     val spec: CloudProfileSpec,
     val assignedMemberIds: Set<String>,
 )
+
+/**
+ * An organization's cloud session settings (TeamCode's team `cloud_settings`), edited by its owners and admins in the
+ * console; the defaults apply while nothing is stored.
+ *
+ * @property backgroundWorkMaxMinutes How long the agent's background work (background subagents and commands,
+ *   monitors, scheduled wake-ups) holds off the idle pause, from the start of its unbroken stretch; 0 never holds it
+ *   off (TeamCode af1a5f7b).
+ * @property updatedAt When it was saved last; null while nothing is stored.
+ * @property updatedBy The member who saved it last; null while nothing is stored.
+ */
+@Serializable
+data class CloudSettings(
+    val backgroundWorkMaxMinutes: Int = DEFAULT_BACKGROUND_WORK_MAX_MINUTES,
+    @Transient val updatedAt: Instant? = null,
+    @Transient val updatedBy: Uuid? = null,
+) {
+    /** Constants of the enclosing type. */
+    companion object {
+        /** The cap while the organization saved none, TeamCode's. */
+        const val DEFAULT_BACKGROUND_WORK_MAX_MINUTES = 240
+
+        /** The largest cap: a day. */
+        const val MAX_BACKGROUND_WORK_MINUTES = 1440
+    }
+}

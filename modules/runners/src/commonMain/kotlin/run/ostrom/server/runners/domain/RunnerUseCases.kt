@@ -14,6 +14,8 @@ import kotlin.uuid.Uuid
  * @property ready Whether the workspace is prepared and the agent started.
  * @property stopped Whether the agent was stopped after a stop instruction (the pause is drained).
  * @property lastModelRequestAt The agent's last request to the model, if the runner saw one.
+ * @property background Whether the agent has background work (background subagents and commands, monitors, scheduled
+ *   wake-ups), which holds off the idle pause for a bounded time ([BackgroundWork]).
  */
 data class RunnerHeartbeat(
     val sessionId: Uuid,
@@ -21,6 +23,7 @@ data class RunnerHeartbeat(
     val ready: Boolean,
     val stopped: Boolean,
     val lastModelRequestAt: Instant?,
+    val background: Boolean = false,
 )
 
 /** What the runner must do after a heartbeat. */
@@ -130,7 +133,7 @@ class RunnerHeartbeatUseCaseImpl(
 
     private fun apply(session: CloudSession, heartbeat: RunnerHeartbeat, now: Instant): CloudSession {
         val modelActivity = heartbeat.lastModelRequestAt?.takeIf { it <= now }
-        var next = session.copy(
+        var next = BackgroundWork.heartbeat(session, heartbeat.background, now).copy(
             lastHeartbeatAt = now,
             lastActivityAt = maxOfNullable(session.lastActivityAt, modelActivity),
             updatedAt = now,
