@@ -207,8 +207,8 @@ private val SPEND_DAYS_SQL: String = listOf(
         workflow_id TEXT,
         cost_micros BIGINT NOT NULL
     );
-    CREATE UNIQUE INDEX usage_spend_days_key ON usage_spend_days ($SPEND_DAY_KEY) NULLS NOT DISTINCT
-        INCLUDE (cost_micros);
+    CREATE UNIQUE INDEX usage_spend_days_key ON usage_spend_days ($SPEND_DAY_KEY) INCLUDE (cost_micros)
+        NULLS NOT DISTINCT;
     CREATE INDEX usage_spend_days_member ON usage_spend_days (org_id, member_id, day) INCLUDE (cost_micros);
     CREATE INDEX usage_spend_days_workflow ON usage_spend_days (org_id, workflow_id, day) INCLUDE (cost_micros)
         WHERE workflow_id IS NOT NULL;
