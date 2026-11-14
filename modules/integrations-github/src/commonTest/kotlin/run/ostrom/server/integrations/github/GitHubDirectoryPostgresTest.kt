@@ -476,14 +476,16 @@ class GitHubDirectoryPostgresTest {
         verified = { _, _ -> throw GitHubCallException("GitHub did not answer GET /app.") }
         assertEquals(HttpStatusCode.ServiceUnavailable, server.save("user:a:owner", appJson(version = 1)).status)
 
-        // Another App ID with its own key: every secret is sealed again under it, the kept ones too.
+        // Another App ID with its own key and webhook secret: every secret is sealed again under it, the kept client
+        // secret too.
         verified = { id, _ -> VerifiedGitHubApp(id, "ostrom-next", "acme", "Iv1.byhand") }
-        val next = """{"appId":92,"clientId":"Iv1.byhand","privateKey":${JsonPrimitive(NEXT_KEY)},"version":1}"""
+        val next = """{"appId":92,"clientId":"Iv1.byhand","privateKey":${JsonPrimitive(NEXT_KEY)},""" +
+            """"webhookSecret":"whsec-next","version":1}"""
         val changed = server.save("user:a:owner", next).body<GitHubAppConfigurationResponse>()
         assertEquals(92L to 2, changed.appId to changed.version)
         val stored = PostgresGitHubAppStore(server.driver, AesGcmSecretCipher(ByteArray(32) { 7 })).app()
         assertEquals(NEXT_KEY to APP_SECRET, stored?.privateKeyPem to stored?.clientSecret)
-        assertEquals("whsec-by-hand" to "ostrom-next", stored?.webhookSecret to stored?.slug)
+        assertEquals("whsec-next" to "ostrom-next", stored?.webhookSecret to stored?.slug)
         val row = server.driver.fetchAll("SELECT updated_by, version FROM github_apps").getOrThrow().single()
         assertEquals("user:a:owner" to "2", row.get("updated_by").asString() to row.get("version").asString())
     }
