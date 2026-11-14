@@ -20,7 +20,7 @@ times less memory, about 2 times slower on allocation-heavy loops), and the earl
 case, a process that runs for weeks. The server took the rule as it was.
 
 TeamCode, which Ostrom replaces, runs its server on the JVM: Ktor Netty, Exposed + JDBC + HikariCP, Flyway, MySQL,
-koin-ktor, logback, a 1 GiB pod (`-XX:MaxRAMPercentage=70`).
+Koin (koin-core in its composition root), logback, a 1 GiB pod (`-XX:MaxRAMPercentage=70`).
 
 ### What Kotlin/Native cost the server (from its history)
 
@@ -102,7 +102,7 @@ slower, in all three runs. That is regular expressions and allocations, the work
    the session runner (`runner/`, a per-session process with a PTY and no project dependency) and ostrom-core stay
    Kotlin Multiplatform with their native targets: start-up time is what they need.
 2. **Align the server with TeamCode's libraries**, Nathan's choice: Ktor **Netty**, **Exposed** (DSL) with **JDBC**
-   and **HikariCP**, **Flyway** migrations, **koin-ktor**, **logback**, and `ktor-server-routing-openapi` where it
+   and **HikariCP**, **Flyway** migrations, **Koin**, **logback**, and `ktor-server-routing-openapi` where it
    fits. Every other server-side library follows TeamCode's `gradle/libs.versions.toml` wherever it has an
    equivalent. ostrom-core's `api/openapi.yaml` stays the contract the clients use.
 3. **PostgreSQL stays** (TeamCode is on MySQL). **Typed Exposed only, no hand-written SQL anywhere**, decided by
@@ -154,6 +154,11 @@ the same time, so build and kernel changes land first and module conversions go 
    660 s grace for streaming calls, SD-09). Liveness without the database and `/ready` with it (SD-04).
 3. **Netty, koin-ktor and logback in `app` and `kernel`.** The memory workarounds made for Native come out with them:
    the call ceilings sized for 256 MiB, `MALLOC_ARENA_MAX`, thread names, the Curl settings.
+   - Done 14/11/2026: Netty serves, logback is the SLF4J backend of the libraries' logs (on stderr, Exposed off, as
+     TeamCode's `logback.xml`); the server's own logs stay JSON on stdout. **koin-ktor is not installed**: TeamCode's
+     catalog declares it, but its app wires Koin with `koin-core` alone in the composition root (`Application.kt`,
+     `koinApplication { }`, no `install(Koin)`), which is what Ostrom already does; the plugin's per-call scope is the
+     leak ostrom-core CONVENTIONS.md section 1.5 forbids. The native memory workarounds were already gone with step 1.
 4. **One reference module converted** to Exposed tables and repositories and Flyway migrations, with its tests on
    PostgreSQL. Then the "Server stack" section of `.parity/AGENT-BRIEF.md`, so that new code is written for the new
    stack.

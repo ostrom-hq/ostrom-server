@@ -1,0 +1,14 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!--
+  The libraries' logs (Ktor, Netty, HikariCP, Flyway) through SLF4J, on stderr, as TeamCode's app: stdout stays the
+  server's own JSON lines (JsonLogger). Exposed is off: its failure diagnostics may expand bound values, credentials
+  among them.
+-->
+<configuration>
+    <logger name="Exposed" level="OFF"/>
+    <appender name="STDERR" class="ch.qos.logback.core.ConsoleAppender">
+        <target>System.err</target>
+        <encoder><pattern>%d{HH:mm:ss} %-5level %logger{30} - %msg%n</pattern></encoder>
+    </appender>
+    <root level="INFO"><appender-ref ref="STDERR"/></root>
+</configuration>

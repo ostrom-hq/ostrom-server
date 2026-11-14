@@ -59,10 +59,12 @@ kotlin {
                 .forEach { implementation(project(it.path)) }
             eeProjects.forEach { implementation(project(it.path)) }
         }
-        // The JVM process: Ktor's CIO server (Netty comes with the next step of docs/decisions/0001), and the CIO
-        // client of the telemetry and of every module's engine-less HttpClient { }, with the JDK's TLS.
+        // The JVM process, as TeamCode's app (docs/decisions/0001, step 3): Ktor's Netty server, logback behind SLF4J
+        // for the libraries' logs, and the CIO client of the telemetry and of every module's engine-less
+        // HttpClient { }, with the JDK's TLS.
         jvmMain.dependencies {
-            implementation(libs.ktor.server.cio)
+            implementation(libs.ktor.server.netty)
+            implementation(libs.logback)
             implementation(libs.ktor.client.cio)
         }
         commonTest.dependencies {
