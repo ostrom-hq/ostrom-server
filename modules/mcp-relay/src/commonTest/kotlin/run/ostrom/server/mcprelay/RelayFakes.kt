@@ -1,14 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.mcprelay
 
+import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.mcprelay.domain.ArgumentPolicy
 import run.ostrom.server.mcprelay.domain.EffectiveServer
+import run.ostrom.server.mcprelay.domain.HostStatus
 import run.ostrom.server.mcprelay.domain.HostedAssignment
+import run.ostrom.server.mcprelay.domain.HostedProcessChange
+import run.ostrom.server.mcprelay.domain.HostedProcessRecord
+import run.ostrom.server.mcprelay.domain.HostedProcessStatus
 import run.ostrom.server.mcprelay.domain.McpAssignment
 import run.ostrom.server.mcprelay.domain.McpCall
 import run.ostrom.server.mcprelay.domain.McpCallCursor
 import run.ostrom.server.mcprelay.domain.McpCallSlot
 import run.ostrom.server.mcprelay.domain.McpCallSlotRepository
+import run.ostrom.server.mcprelay.domain.McpHostControl
 import run.ostrom.server.mcprelay.domain.McpLoad
 import run.ostrom.server.mcprelay.domain.McpOperation
 import run.ostrom.server.mcprelay.domain.McpOutcome
@@ -283,8 +289,90 @@ class InMemoryRelayRepository : McpRelayRepository {
         }
     }.takeIf { it.size <= limit }
 
+    /** The recorded process states. */
+    val states = mutableListOf<HostedProcessRecord>()
+
+    /** Thrown by the state reads when set: the database failing. */
+    var failStates = false
+
+    override suspend fun orgHostedAssignments(orgId: Uuid, limit: Int): List<EffectiveServer>? =
+        assignments.filter { it.orgId == orgId }.mapNotNull { a ->
+            servers.firstOrNull { it.id == a.serverId && it.transport == McpTransport.STDIO }
+                ?.let { EffectiveServer(it, a) }
+        }.takeIf { it.size <= limit }
+
+    override suspend fun stdioStates(orgId: Uuid, limit: Int): List<HostedProcessRecord>? =
+        states.filter { it.orgId == orgId }.takeIf { it.size <= limit }
+
+    override suspend fun memberStdioStates(
+        orgId: Uuid,
+        serverIds: Collection<Uuid>,
+        memberId: Uuid,
+    ): List<HostedProcessRecord> {
+        if (failStates) error("database down")
+        return states.filter {
+            it.orgId == orgId && it.serverId in serverIds && (it.memberId == null || it.memberId == memberId)
+        }
+    }
+
+    override suspend fun applyStdioStates(
+        orgId: Uuid,
+        changes: List<HostedProcessChange>,
+        removals: List<HostedProcessRecord>,
+    ): Int {
+        var applied = 0
+        for (change in changes) {
+            val next = change.next
+            val current = states.firstOrNull { it.serverId == next.serverId && it.memberId == next.memberId }
+            if (current == change.previous) {
+                states.remove(current)
+                states += change.next
+                applied++
+            }
+        }
+        states.removeAll(removals.toSet())
+        return applied
+    }
+
     /** Assigns [server] to [member] (null: the whole org). */
     fun assign(server: McpServer, member: Uuid?, tools: Set<String>? = null, credential: Uuid? = null) {
         assignments += McpAssignment(server.orgId, server.id, member, ToolPolicy(tools), credential, Relay.epoch)
     }
+}
+
+/** The MCP host's control operations, recorded; [processes] is its status, by relay key. */
+class FakeHostControl(var fail: Boolean = false) : McpHostControl {
+    val retained = mutableListOf<Set<String>>()
+    val warmed = mutableListOf<UpstreamTarget>()
+    val stopped = mutableListOf<String>()
+    val processes = mutableMapOf<String, HostedProcessStatus>()
+    var statusFails = false
+
+    override suspend fun warm(target: UpstreamTarget) {
+        warmed += target
+    }
+
+    override suspend fun retain(keys: Collection<String>): Int {
+        if (fail) error("host down")
+        retained += keys.toSet()
+        return 3
+    }
+
+    override suspend fun status(): HostStatus {
+        if (fail || statusFails) error("host down")
+        return HostStatus("1.2.3") { processes[it] }
+    }
+
+    override suspend fun stop(key: String): Boolean {
+        if (fail) error("host down")
+        stopped += key
+        return key in processes
+    }
+}
+
+/** An org's members, or null when they cannot be listed. */
+class FakeMembers(var ids: List<String>?) : MemberDirectory {
+    override suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean = true
+
+    override suspend fun memberIds(orgId: Uuid, limit: Int): List<String>? = ids
 }

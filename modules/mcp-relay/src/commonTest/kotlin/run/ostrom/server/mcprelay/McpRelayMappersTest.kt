@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.mcprelay
 
+import run.ostrom.server.mcprelay.domain.HostedProcess
+import run.ostrom.server.mcprelay.domain.HostedProcessStatus
+import run.ostrom.server.mcprelay.domain.HostedProcesses
 import run.ostrom.server.mcprelay.domain.InvalidMcpServerException
 import run.ostrom.server.mcprelay.domain.McpCall
 import run.ostrom.server.mcprelay.domain.McpOperation
@@ -8,10 +11,12 @@ import run.ostrom.server.mcprelay.domain.McpOutcome
 import run.ostrom.server.mcprelay.domain.McpSecretNotFoundException
 import run.ostrom.server.mcprelay.domain.McpSharing
 import run.ostrom.server.mcprelay.domain.McpTransport
+import run.ostrom.server.mcprelay.domain.MemberServer
 import run.ostrom.server.mcprelay.domain.StdioLauncher
 import run.ostrom.server.mcprelay.domain.StdioSpec
 import run.ostrom.server.mcprelay.presentation.ArgumentConditionDto
 import run.ostrom.server.mcprelay.presentation.ArgumentPolicyRequest
+import run.ostrom.server.mcprelay.presentation.McpHostedProcessDto
 import run.ostrom.server.mcprelay.presentation.McpServerDto
 import run.ostrom.server.mcprelay.presentation.StdioSpecDto
 import run.ostrom.server.mcprelay.presentation.secretIds
@@ -104,5 +109,27 @@ class McpRelayMappersTest {
         assertNull(call.copy(policyId = null).toDto().policyId)
         assertNull(call.toDto().launchId)
         assertEquals("lch_1", call.copy(launchId = "lch_1").toDto().launchId)
+    }
+
+    @Test
+    fun aMembersServerCarriesItsStateAndTheHostedProcessesTheirFigures() {
+        val member = MemberServer("fs", "ostrom-fs", McpTransport.STDIO, null, "failed", "crashed").toDto()
+        assertEquals("failed" to "crashed", member.state to member.failure)
+        val memberId = Uuid.random()
+        val live = HostedProcessStatus("ready", "npm", "a@1", 2, 1, 0, null, 900, 1024, "boom")
+        val dto = HostedProcesses(
+            hostReachable = true,
+            hostVersion = "1.2.3",
+            processes = listOf(
+                HostedProcess("a", memberId, "npm", "a@1", "ready", null, live),
+                HostedProcess("b", null, "pypi", "b==1", "idle", "crashed", null),
+            ),
+        ).toDto()
+        assertEquals(
+            McpHostedProcessDto("a", memberId.toString(), "npm", "a@1", "ready", null, 2, 1, 0, 900, 1024, "boom"),
+            dto.items.first(),
+        )
+        assertEquals(McpHostedProcessDto("b", null, "pypi", "b==1", "idle", "crashed", 0, 0), dto.items.last())
+        assertEquals(true to "1.2.3", dto.hostReachable to dto.hostVersion)
     }
 }

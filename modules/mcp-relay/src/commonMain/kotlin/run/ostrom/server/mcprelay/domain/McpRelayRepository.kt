@@ -100,4 +100,48 @@ interface McpRelayRepository {
      * @return The assignments, or null when there are more than [limit].
      */
     suspend fun hostedAssignments(limit: Int): List<HostedAssignment>?
+
+    /**
+     * The org's stdio servers with their assignments, for the hosted processes' administration.
+     *
+     * @param orgId The org.
+     * @param limit The most rows.
+     *
+     * @return Each server with one of its assignments, or null when there are more than [limit].
+     */
+    suspend fun orgHostedAssignments(orgId: Uuid, limit: Int): List<EffectiveServer>?
+
+    /**
+     * The org's recorded process states.
+     *
+     * @param orgId The org.
+     * @param limit The most rows.
+     *
+     * @return The states, or null when there are more than [limit].
+     */
+    suspend fun stdioStates(orgId: Uuid, limit: Int): List<HostedProcessRecord>?
+
+    /**
+     * The recorded states of one member's processes: for each server, the member's row and the shared one.
+     *
+     * @param orgId The org.
+     * @param serverIds The servers.
+     * @param memberId The member.
+     */
+    suspend fun memberStdioStates(orgId: Uuid, serverIds: Collection<Uuid>, memberId: Uuid): List<HostedProcessRecord>
+
+    /**
+     * Applies the changes whose previous row is still stored (compare-and-set), and deletes the removals still as read.
+     *
+     * @param orgId The org.
+     * @param changes The writes of the state sweep.
+     * @param removals The states of processes no longer assigned.
+     *
+     * @return How many changes were applied.
+     */
+    suspend fun applyStdioStates(
+        orgId: Uuid,
+        changes: List<HostedProcessChange>,
+        removals: List<HostedProcessRecord>,
+    ): Int
 }

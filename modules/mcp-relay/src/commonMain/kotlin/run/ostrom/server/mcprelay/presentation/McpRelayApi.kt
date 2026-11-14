@@ -11,6 +11,7 @@ import run.ostrom.server.mcprelay.domain.DeleteArgumentPolicyUseCase
 import run.ostrom.server.mcprelay.domain.DeleteMcpServerUseCase
 import run.ostrom.server.mcprelay.domain.GetMcpSettingsUseCase
 import run.ostrom.server.mcprelay.domain.ListArgumentPoliciesUseCase
+import run.ostrom.server.mcprelay.domain.ListHostedProcessesUseCase
 import run.ostrom.server.mcprelay.domain.ListMcpAssignmentsUseCase
 import run.ostrom.server.mcprelay.domain.ListMcpCallsUseCase
 import run.ostrom.server.mcprelay.domain.ListMcpServersUseCase
@@ -18,6 +19,7 @@ import run.ostrom.server.mcprelay.domain.ListMemberServersUseCase
 import run.ostrom.server.mcprelay.domain.McpUsageUseCase
 import run.ostrom.server.mcprelay.domain.PutMcpSettingsUseCase
 import run.ostrom.server.mcprelay.domain.RelayMcpMessageUseCase
+import run.ostrom.server.mcprelay.domain.RestartHostedProcessUseCase
 import run.ostrom.server.mcprelay.domain.UnassignMcpServerUseCase
 import run.ostrom.server.mcprelay.domain.UpdateMcpServerUseCase
 import run.ostrom.server.secrets.domain.Caller
@@ -25,6 +27,7 @@ import run.ostrom.server.secrets.domain.CallerResolver
 import run.ostrom.server.secrets.domain.SecretDirectoryUseCase
 import io.ktor.resources.Resource
 import io.ktor.server.application.ApplicationCall
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /**
@@ -112,6 +115,16 @@ class McpApi {
     @Serializable
     @Resource("usage")
     class Usage(val parent: McpApi = McpApi(), val days: Int = 7)
+
+    /** `/api/v1/mcp/hosted`: the org's hosted stdio processes, read live from the MCP host. */
+    @Serializable
+    @Resource("hosted")
+    class Hosted(val parent: McpApi = McpApi()) {
+        /** `/api/v1/mcp/hosted/restart`: restarts one. */
+        @Serializable
+        @Resource("restart")
+        class Restart(val parent: Hosted = Hosted())
+    }
 }
 
 /**
@@ -148,6 +161,8 @@ data class StdioSpecDto(
  * @property stdio The command of a stdio server.
  * @property version Bumped at each change.
  * @property createdAt Creation time.
+ * @property state A stdio server's process in a member's list, as the minute sweep last recorded it.
+ * @property failure That process's last failure not yet followed by a successful start, in a member's list.
  */
 @Serializable
 data class McpServerDto(
@@ -164,6 +179,8 @@ data class McpServerDto(
     val stdio: StdioSpecDto? = null,
     val version: Int? = null,
     val createdAt: String? = null,
+    val state: String? = null,
+    val failure: String? = null,
 )
 
 /**
@@ -309,6 +326,61 @@ data class McpUsageRow(
 @Serializable
 data class McpUsageResponse(val byServer: Map<String, Long>, val byTool: Map<String, Long>, val rows: List<McpUsageRow>)
 
+/**
+ * One hosted process (contract `McpHostedProcess`): no secret, argument value or environment.
+ *
+ * @property server The server's name.
+ * @property member The member's id, for a per-member server's process.
+ * @property launcher npm or pypi.
+ * @property packageName The pinned package.
+ * @property state idle, starting, ready, failed, backoff or unknown.
+ * @property failure The last failure not yet followed by a successful start.
+ * @property starts How many times it started.
+ * @property failures How many times it failed.
+ * @property lastExitCode The exit code of its last process.
+ * @property coldStartMs How long its last start took.
+ * @property memoryBytes The resident memory of its tree.
+ * @property stderr The last 4 KiB of its scrubbed stderr.
+ */
+@Serializable
+data class McpHostedProcessDto(
+    val server: String,
+    val member: String? = null,
+    val launcher: String,
+    @SerialName("package") val packageName: String,
+    val state: String,
+    val failure: String? = null,
+    val starts: Int,
+    val failures: Int,
+    val lastExitCode: Int? = null,
+    val coldStartMs: Long? = null,
+    val memoryBytes: Long? = null,
+    val stderr: String? = null,
+)
+
+/**
+ * The org's hosted processes (contract `McpHostedProcesses`).
+ *
+ * @property hostReachable False when the MCP host did not answer.
+ * @property hostVersion The host's version, when it answered.
+ * @property items The processes, by server then member.
+ */
+@Serializable
+data class McpHostedProcessesDto(
+    val hostReachable: Boolean,
+    val hostVersion: String? = null,
+    val items: List<McpHostedProcessDto>,
+)
+
+/**
+ * The process to restart (contract `McpHostedRestart`).
+ *
+ * @property server The stdio server's name.
+ * @property member The member's id, for a per-member server.
+ */
+@Serializable
+data class McpHostedRestartDto(val server: String, val member: String? = null)
+
 /** What the relay routes need; [audit] writes each change of the MCP governance to the organization's audit log. */
 data class McpRelayRoutesDependencies(
     val callers: CallerResolver,
@@ -327,6 +399,8 @@ data class McpRelayRoutesDependencies(
     val listCalls: ListMcpCallsUseCase,
     val usage: McpUsageUseCase,
     val listMemberServers: ListMemberServersUseCase,
+    val listHosted: ListHostedProcessesUseCase,
+    val restartHosted: RestartHostedProcessUseCase,
     val relay: RelayMcpMessageUseCase,
     val directory: SecretDirectoryUseCase,
     val audit: OrgAuditTrail,

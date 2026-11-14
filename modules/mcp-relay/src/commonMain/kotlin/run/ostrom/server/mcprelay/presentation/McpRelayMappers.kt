@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.mcprelay.presentation
 
+import run.ostrom.server.mcprelay.domain.HostedProcesses
 import run.ostrom.server.mcprelay.domain.InvalidMcpServerException
 import run.ostrom.server.mcprelay.domain.McpAssignment
 import run.ostrom.server.mcprelay.domain.McpSecretNotFoundException
@@ -97,6 +98,30 @@ fun MemberServer.toDto() = McpServerDto(
     tools = tools?.sorted(),
     agentName = agentName,
     path = "/api/v1/mcp/$name",
+    state = state,
+    failure = failure,
+)
+
+/** Maps the org's hosted processes to the contract. */
+fun HostedProcesses.toDto() = McpHostedProcessesDto(
+    hostReachable = hostReachable,
+    hostVersion = hostVersion,
+    items = processes.map { process ->
+        McpHostedProcessDto(
+            server = process.server,
+            member = process.memberId?.toString(),
+            launcher = process.launcher,
+            packageName = process.packageName,
+            state = process.state,
+            failure = process.failure,
+            starts = process.status?.starts ?: 0,
+            failures = process.status?.failures ?: 0,
+            lastExitCode = process.status?.lastExitCode,
+            coldStartMs = process.status?.coldStartMillis,
+            memoryBytes = process.status?.rssBytes,
+            stderr = process.status?.stderr,
+        )
+    },
 )
 
 /** The enum constant named [value], case-insensitively, or a 400 naming [field]. */

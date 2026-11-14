@@ -39,6 +39,18 @@ interface McpHostControl {
      * @return How many processes the host stopped.
      */
     suspend fun retain(keys: Collection<String>): Int
+
+    /** Every process the host knows (`GET /v1/status`). */
+    suspend fun status(): HostStatus
+
+    /**
+     * Stops one process and lifts its backoff (`POST /v1/stop`); the next operation starts it again.
+     *
+     * @param key Its relay key.
+     *
+     * @return Whether a process was running.
+     */
+    suspend fun stop(key: String): Boolean
 }
 
 /**
@@ -183,12 +195,13 @@ data class HostedAssignment(
 /** What one retain sweep did. */
 sealed interface HostedSweep {
     /**
-     * The host was told the keys.
+     * The host was told the keys, and the states were recorded.
      *
      * @property keys How many keys are still assigned.
      * @property stopped How many processes the host stopped.
+     * @property changed How many recorded states changed.
      */
-    data class Done(val keys: Int, val stopped: Int) : HostedSweep
+    data class Done(val keys: Int, val stopped: Int, val changed: Int = 0) : HostedSweep
 
     /** The assignments could not be listed completely: nothing is sent, so no assigned process is stopped. */
     data object Incomplete : HostedSweep
@@ -198,10 +211,10 @@ sealed interface HostedSweep {
 }
 
 /**
- * The retain sweep, run each minute (TeamCode's `RetainHostedMcpProcessesUseCase`): it tells the host which processes
- * are still assigned, so the process of a deleted server, a new version, a removed assignment or a removed member
- * stops within a minute (the relay refuses their calls at once anyway; this frees the process and the secrets it
- * holds).
+ * The retain and state sweep, run each minute (TeamCode's `RetainHostedMcpProcessesUseCase`): it tells the host which
+ * processes are still assigned, so the process of a deleted server, a new version, a removed assignment or a removed
+ * member stops within a minute (the relay refuses their calls at once anyway; this frees the process and the secrets
+ * it holds), then records the state of each assigned process (`mcp_relay_stdio_states`) for the member's list.
  */
 interface RetainHostedMcpProcessesUseCase {
     /** Runs one sweep. */
@@ -211,21 +224,27 @@ interface RetainHostedMcpProcessesUseCase {
 /**
  * [RetainHostedMcpProcessesUseCase] on the repository and the org's members.
  *
- * @param repository The relay's servers and assignments.
+ * @param repository The relay's servers, assignments and recorded states.
  * @param members Who belongs to an org, for a per-member server assigned to the whole org; null when no module binds
  * it, and such an assignment then makes the sweep incomplete.
  * @param host The MCP host.
+ * @param clock When a state changed.
  */
 class RetainHostedMcpProcessesUseCaseImpl(
     private val repository: McpRelayRepository,
     private val members: MemberDirectory?,
     private val host: McpHostControl,
+    private val clock: Clock,
 ) : RetainHostedMcpProcessesUseCase {
     override suspend fun invoke(): HostedSweep {
         // A truncated list would stop processes that are still assigned: rather keep everything until it fits.
-        val keys = repository.hostedAssignments(MAX_KEYS)?.let { keys(it) } ?: return HostedSweep.Incomplete
+        val processes = repository.hostedAssignments(MAX_KEYS)
+            ?.let { HostedProcessExpansion.expand(it, MAX_KEYS) { orgId -> roster(orgId) } }
+            ?: return HostedSweep.Incomplete
+        val keys = processes.mapTo(HashSet()) { it.key }
         return try {
-            HostedSweep.Done(keys.size, host.retain(keys))
+            val stopped = host.retain(keys)
+            HostedSweep.Done(keys.size, stopped, record(processes, host.status()))
         } catch (error: CancellationException) {
             throw error
         } catch (_: Exception) {
@@ -233,45 +252,29 @@ class RetainHostedMcpProcessesUseCaseImpl(
         }
     }
 
-    private suspend fun keys(assignments: List<HostedAssignment>): Set<String>? {
-        val keys = HashSet<String>()
-        val rosters = HashMap<Uuid, Set<Uuid>?>()
-        // Past the bound the sweep sends nothing anyway: stop building keys.
-        for (rows in assignments.groupBy { it.serverId }.values) {
-            val first = rows.first()
-            val serverKeys = if (first.sharing == McpSharing.SHARED) {
-                listOf(StdioProcessKey.shared(first.orgId, first.serverId, first.version))
-            } else {
-                perMemberKeys(rows, rosters.getOrPut(first.orgId) { roster(first.orgId) })
+    // Each org's states in its own transactions. The rows of an org left without hosted assignments stay until its
+    // servers go (their foreign key); no view shows them, since every view starts from current assignments.
+    private suspend fun record(processes: List<HostedProcessRef>, status: HostStatus): Int {
+        val now = clock.now()
+        var changed = 0
+        for ((orgId, current) in processes.groupBy { it.orgId }) {
+            val records = repository.stdioStates(orgId, MAX_KEYS * 2) ?: continue
+            val stored = records.associateBy { it.serverId to it.memberId }
+            val changes = current.mapNotNull {
+                HostedProcessStateRules.change(it, status.of(it.key), stored[it.serverId to it.memberId], now)
             }
-            if (serverKeys == null || keys.size + serverKeys.size > MAX_KEYS) return null
-            keys += serverKeys
+            val live = current.mapTo(HashSet()) { it.serverId to it.memberId }
+            val removals = records.filter { (it.serverId to it.memberId) !in live }
+            if (changes.isNotEmpty() || removals.isNotEmpty()) {
+                changed += repository.applyStdioStates(orgId, changes, removals)
+            }
         }
-        return keys
+        return changed
     }
 
-    // The org's members, once per org and sweep; null without a directory or past the bound.
+    // The org's members, for a per-member server; null without a directory or past the bound.
     private suspend fun roster(orgId: Uuid): Set<Uuid>? =
         members?.memberIds(orgId, MAX_KEYS)?.mapNotNullTo(HashSet()) { Uuid.parseOrNull(it) }
-
-    // A member's own row wins over the org-wide one, which applies to every other member of the org. A member who
-    // left the org keeps no process; without the member list, the own rows are all kept and the org-wide one cannot be
-    // expanded.
-    private fun perMemberKeys(rows: List<HostedAssignment>, roster: Set<Uuid>?): List<String>? {
-        val first = rows.first()
-        val own = rows.mapNotNull { row -> row.memberId?.takeIf { roster == null || it in roster }?.let { it to row } }
-            .toMap()
-        val everyone = rows.firstOrNull { it.memberId == null }
-        val others = if (everyone == null) {
-            emptyList()
-        } else {
-            (roster ?: return null).filter { it !in own }.map { everyone.key(it) }
-        }
-        return own.map { (memberId, row) -> row.key(memberId) } + others
-    }
-
-    private fun HostedAssignment.key(memberId: Uuid) =
-        StdioProcessKey.of(orgId, serverId, version, sharing, memberId, assignedAt)
 
     /** The sweep's bounds. */
     companion object {

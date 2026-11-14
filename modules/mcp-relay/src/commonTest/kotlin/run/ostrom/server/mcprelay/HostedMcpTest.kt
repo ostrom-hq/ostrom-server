@@ -2,10 +2,12 @@
 package run.ostrom.server.mcprelay
 
 import run.ostrom.server.kernel.auth.MemberDirectory
+import run.ostrom.server.mcprelay.domain.HostStatus
 import run.ostrom.server.mcprelay.domain.HostedSweep
 import run.ostrom.server.mcprelay.domain.HostedWarmup
 import run.ostrom.server.mcprelay.domain.ListMemberServersUseCaseImpl
 import run.ostrom.server.mcprelay.domain.McpHostControl
+import run.ostrom.server.mcprelay.domain.McpRelayRepository
 import run.ostrom.server.mcprelay.domain.McpServer
 import run.ostrom.server.mcprelay.domain.McpSharing
 import run.ostrom.server.mcprelay.domain.McpTransport
@@ -27,28 +29,10 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
 class HostedMcpTest {
-    private class FakeHost(var fail: Boolean = false) : McpHostControl {
-        val retained = mutableListOf<Set<String>>()
-        val warmed = mutableListOf<UpstreamTarget>()
-
-        override suspend fun warm(target: UpstreamTarget) {
-            warmed += target
-        }
-
-        override suspend fun retain(keys: Collection<String>): Int {
-            if (fail) error("host down")
-            retained += keys.toSet()
-            return 3
-        }
-    }
-
-    private class FakeMembers(var ids: List<String>?) : MemberDirectory {
-        override suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean = true
-
-        override suspend fun memberIds(orgId: Uuid, limit: Int): List<String>? = ids
-    }
-
     private val secretId = Uuid.random()
+
+    private fun sweeper(repository: McpRelayRepository, members: MemberDirectory?, host: McpHostControl) =
+        RetainHostedMcpProcessesUseCaseImpl(repository, members, host, TestClock())
 
     private fun stdio(name: String, sharing: McpSharing) =
         Relay.server(name, transport = McpTransport.STDIO, sharing = sharing).copy(
@@ -88,9 +72,9 @@ class HostedMcpTest {
         // A member who left the org keeps no process, though the row is still there.
         repository.assign(ownOnly, Uuid.random())
         repository.assign(http, null)
-        val host = FakeHost()
+        val host = FakeHostControl()
         val members = FakeMembers(listOf(Relay.memberA.memberId.toString(), Relay.otherA.memberId.toString(), "x"))
-        val sweep = RetainHostedMcpProcessesUseCaseImpl(repository, members, host)()
+        val sweep = sweeper(repository, members, host)()
         val expected = setOf(
             shared.key(Relay.memberA.memberId),
             personal.key(Relay.memberA.memberId, later),
@@ -107,29 +91,29 @@ class HostedMcpTest {
         val personal = stdio("personal", McpSharing.PER_MEMBER)
         repository.servers += personal
         repository.assign(personal, null)
-        val host = FakeHost()
+        val host = FakeHostControl()
         // Without a directory the org-wide assignment cannot be expanded: nothing is sent.
-        assertEquals(HostedSweep.Incomplete, RetainHostedMcpProcessesUseCaseImpl(repository, null, host)())
-        assertEquals(HostedSweep.Incomplete, RetainHostedMcpProcessesUseCaseImpl(repository, FakeMembers(null), host)())
+        assertEquals(HostedSweep.Incomplete, sweeper(repository, null, host)())
+        assertEquals(HostedSweep.Incomplete, sweeper(repository, FakeMembers(null), host)())
         val crowd = FakeMembers(List(RetainHostedMcpProcessesUseCaseImpl.MAX_KEYS + 1) { Uuid.random().toString() })
-        assertEquals(HostedSweep.Incomplete, RetainHostedMcpProcessesUseCaseImpl(repository, crowd, host)())
+        assertEquals(HostedSweep.Incomplete, sweeper(repository, crowd, host)())
         // Past the bound, the keys of the next servers are not built: one org-wide server already fills it.
         val half = FakeMembers(List(RetainHostedMcpProcessesUseCaseImpl.MAX_KEYS / 2 + 1) { Uuid.random().toString() })
         val second = stdio("second", McpSharing.PER_MEMBER)
         repository.servers += second
         repository.assign(second, null)
         repository.servers += stdio("third", McpSharing.PER_MEMBER).also { repository.assign(it, null) }
-        assertEquals(HostedSweep.Incomplete, RetainHostedMcpProcessesUseCaseImpl(repository, half, host)())
-        val full = object : run.ostrom.server.mcprelay.domain.McpRelayRepository by repository {
+        assertEquals(HostedSweep.Incomplete, sweeper(repository, half, host)())
+        val full = object : McpRelayRepository by repository {
             override suspend fun hostedAssignments(limit: Int) = null
         }
-        val unlisted = RetainHostedMcpProcessesUseCaseImpl(full, FakeMembers(emptyList()), host)
+        val unlisted = sweeper(full, FakeMembers(emptyList()), host)
         assertEquals(HostedSweep.Incomplete, unlisted())
         assertTrue(host.retained.isEmpty())
         host.fail = true
         assertEquals(
             HostedSweep.HostUnavailable,
-            RetainHostedMcpProcessesUseCaseImpl(repository, FakeMembers(emptyList()), host)(),
+            sweeper(repository, FakeMembers(emptyList()), host)(),
         )
     }
 
@@ -142,8 +126,8 @@ class HostedMcpTest {
         val gone = Uuid.random()
         repository.assign(personal, gone)
         repository.assign(shared, gone)
-        val host = FakeHost()
-        assertEquals(HostedSweep.Done(2, 3), RetainHostedMcpProcessesUseCaseImpl(repository, null, host)())
+        val host = FakeHostControl()
+        assertEquals(HostedSweep.Done(2, 3), sweeper(repository, null, host)())
         assertEquals(setOf(personal.key(gone), shared.key(gone)), host.retained.single())
     }
 
@@ -159,7 +143,7 @@ class HostedMcpTest {
         val underscored = stdio("a_b", McpSharing.SHARED)
         repository.servers += listOf(broken, personal, Relay.server("http"), dotted, underscored)
         repository.servers.forEach { repository.assign(it, null) }
-        val host = FakeHost()
+        val host = FakeHostControl()
         val reveal = FakeReveal(mutableMapOf(secretId to "s3cret-value"))
         val clock = TestClock()
         val listing = ListMemberServersUseCaseImpl(repository, HostedWarmup(reveal, host, backgroundScope, clock))
@@ -199,6 +183,10 @@ class HostedMcpTest {
             }
 
             override suspend fun retain(keys: Collection<String>): Int = 0
+
+            override suspend fun status(): HostStatus = HostStatus("1") { null }
+
+            override suspend fun stop(key: String): Boolean = false
         }
         val clock = TestClock()
         val warmup = HostedWarmup(FakeReveal(mutableMapOf(secretId to "s3cret-value")), host, backgroundScope, clock)
@@ -239,6 +227,10 @@ class HostedMcpTest {
             }
 
             override suspend fun retain(keys: Collection<String>): Int = 0
+
+            override suspend fun status(): HostStatus = HostStatus("1") { null }
+
+            override suspend fun stop(key: String): Boolean = false
         }
         val effective = repository.effectiveServers(Relay.orgA, Relay.memberA.memberId, 10)
         val reveal = FakeReveal(mutableMapOf(secretId to "s3cret-value"))

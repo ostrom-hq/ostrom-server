@@ -14,7 +14,7 @@ object McpRules {
     const val MAX_TOOLS: Int = 256
 
     /** Names kept for the routes next to `POST /api/v1/mcp/{server}`. */
-    val RESERVED_NAMES: Set<String> = setOf("servers", "settings", "calls", "usage")
+    val RESERVED_NAMES: Set<String> = setOf("servers", "settings", "calls", "usage", "hosted")
 
     /** The most argument policies per server. */
     const val MAX_POLICIES: Int = 64
