@@ -39,6 +39,8 @@ class ApproverNotificationsChannel(
     override suspend fun decided(gate: Gate, requests: List<ApprovalRequest>) = outbox.close(gate.id)
 
     private suspend fun plan(gate: Gate, requests: List<ApprovalRequest>): List<Notice> = buildList {
+        // Read once per plan: the same answer for every approver of the gate.
+        val mails = mailing.available()
         for (request in answerable(gate, requests)) {
             val approver = approvers.reach(gate.orgId, request.approverId) ?: continue
             if (approver.pushes) {
@@ -46,7 +48,7 @@ class ApproverNotificationsChannel(
                     .forEach { add(Notice.Push(gate.id, listOf(notices.push(request, it)))) }
             }
             val email = approver.email
-            if (email != null && mailing.available()) add(Notice.Email(gate.id, notices.email(gate, request, email)))
+            if (email != null && mails) add(Notice.Email(gate.id, notices.email(gate, request, email)))
         }
     }
 
