@@ -89,7 +89,8 @@ class SignInSettingsTest {
         assertEquals("OSTROM_GOOGLE_TOKEN_URL", google["tokenUrl"])
         assertEquals(
             listOf(
-                "OSTROM_GITHUB_CLIENT_ID", "OSTROM_GITHUB_CLIENT_SECRET", "OSTROM_GITHUB_WEB_URL", "OSTROM_GITHUB_API_URL",
+                "OSTROM_GITHUB_CLIENT_ID", "OSTROM_GITHUB_CLIENT_SECRET",
+                "OSTROM_GITHUB_WEB_URL", "OSTROM_GITHUB_API_URL",
             ),
             GITHUB_SIGN_IN_SETTINGS.fields.map { it.legacyVariable },
         )
