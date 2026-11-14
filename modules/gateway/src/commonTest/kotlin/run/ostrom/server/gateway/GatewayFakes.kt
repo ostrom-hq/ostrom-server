@@ -23,6 +23,7 @@ import run.ostrom.server.gateway.domain.UpstreamRequests
 import run.ostrom.server.gateway.domain.WireProtocol
 import run.ostrom.server.kernel.logging.JsonLogger
 import run.ostrom.server.kernel.logging.LogLevel
+import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.secrets.domain.Caller
 import run.ostrom.server.secrets.domain.MemberRole
 import run.ostrom.server.secrets.domain.RevealSecretsUseCase
@@ -241,7 +242,11 @@ class InMemorySlots : AccountSlotRepository {
 }
 
 /** The pool over [accounts]. */
-fun pool(accounts: InMemoryAccounts, clock: Clock) = SharedAccountPool(
+fun pool(
+    accounts: InMemoryAccounts,
+    clock: Clock,
+    logger: Logger = JsonLogger(LogLevel.ERROR, sink = {}),
+) = SharedAccountPool(
     accounts,
     accounts,
     AccountTokens(accounts, Gw.cipher, NoRefresh(), clock, JsonLogger(LogLevel.ERROR, sink = {})),
@@ -249,6 +254,7 @@ fun pool(accounts: InMemoryAccounts, clock: Clock) = SharedAccountPool(
     ProviderQuotaHeaderParser(),
     NoAccountSpendReader(),
     clock,
+    logger = logger,
 )
 
 /** Org key secrets by name. */

@@ -290,7 +290,16 @@ fun pool(
     spend: AccountSpendReader,
     clock: TestClock,
     slots: AccountSlotRepository = InMemorySlots(clock, repository),
-) = SharedAccountPool(repository, repository, tokens, slots, ProviderQuotaHeaderParser(), spend, clock)
+) = SharedAccountPool(
+    repository,
+    repository,
+    tokens,
+    slots,
+    ProviderQuotaHeaderParser(),
+    spend,
+    clock,
+    logger = JsonLogger(LogLevel.ERROR, sink = {}),
+)
 
 /** The tokens over [repository], warnings written to [logged]. */
 fun tokens(

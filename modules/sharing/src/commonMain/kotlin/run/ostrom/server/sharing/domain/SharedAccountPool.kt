@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.sharing.domain
 
+import run.ostrom.server.kernel.logging.Logger
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -55,6 +56,38 @@ class AccountLease internal constructor(
             }
             else -> null
         }
+    }
+
+    /**
+     * Whether an answer of [status] may be a refusal of the account itself named in its body ([action]): a 400 of a
+     * Claude account, the only one whose body is read before it is relayed.
+     */
+    fun inspects(status: Int): Boolean = status == BAD_REQUEST && account.provider == AccountProvider.CLAUDE
+
+    /**
+     * What the whole body of a refusal [inspects] asked to read asks of the account's owner, or null for a refusal of
+     * the call: another account would answer it the same.
+     *
+     * @param body The whole body, at most [ClaudeAccountRefusals.MAX_BYTES].
+     */
+    fun action(body: ByteArray): AccountAction? = ClaudeAccountRefusals.classify(body)
+
+    /**
+     * Rests the account [AccountAction.cooldown] until its owner does [action] on the provider's site, its tokens
+     * untouched, and logs it by its code and the account, never the provider's text.
+     */
+    suspend fun required(action: AccountAction) {
+        pool.accounts.rest(account, pool.clock.now() + action.cooldown)
+        pool.logger.warn(
+            "A shared account refused a call until its owner acts on the provider's site.",
+            mapOf(
+                "org_id" to account.orgId.toString(),
+                "account_id" to account.id.toString(),
+                "provider" to account.provider.wire,
+                "code" to action.code,
+                "cooldown_seconds" to action.cooldown.inWholeSeconds,
+            ),
+        )
     }
 
     /**
@@ -141,10 +174,12 @@ sealed interface LeaseResult {
  * @param clock The time.
  * @param groups The accounts lent to the member through their groups: an account that does not name the member serves
  *   them when one of their groups, where they are not paused, holds it.
+ * @param logger Where an account resting until its owner acts is reported.
  */
-@Suppress("LongParameterList") // One port per owner: accounts, windows, tokens, slots, headers, spend, time, groups.
+// One port per owner: accounts, windows, tokens, slots, headers, spend, time, groups, logs.
+@Suppress("LongParameterList")
 class SharedAccountPool(
-    private val accounts: SharedAccountRepository,
+    internal val accounts: SharedAccountRepository,
     private val windows: QuotaWindowRepository,
     private val tokens: AccountTokens,
     private val slots: AccountSlotRepository,
@@ -152,6 +187,7 @@ class SharedAccountPool(
     private val spend: AccountSpendReader,
     internal val clock: Clock,
     private val groups: AccountGroups = NoAccountGroups,
+    internal val logger: Logger,
 ) {
     /**
      * Leases an account.
@@ -308,6 +344,7 @@ class SharedAccountPool(
  */
 private const val NO_ANSWER = 0
 
+private const val BAD_REQUEST = 400
 private const val TOO_MANY_REQUESTS = 429
 private const val UNAUTHORIZED = 401
 

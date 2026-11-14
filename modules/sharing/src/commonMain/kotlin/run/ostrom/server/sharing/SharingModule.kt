@@ -101,7 +101,7 @@ object SharingModule : ServerModule {
         single { AccountTokens(get(), get(), get(), get(), get()) }
         single<AccountGroups> { AccountGroupsImpl(get()) }
         single<AccountSlotRepository> { AccountSlotRepositoryImpl(get()) }
-        single { SharedAccountPool(get(), get(), get(), get(), get(), spend(), get(), get()) }
+        single { SharedAccountPool(get(), get(), get(), get(), get(), spend(), get(), get(), get()) }
         single<ShareAccountUseCase> { ShareAccountUseCaseImpl(get(), get(), get()) }
         single { MemberNames(logins(), get()) }
         single<ListSharedAccountsUseCase> {
