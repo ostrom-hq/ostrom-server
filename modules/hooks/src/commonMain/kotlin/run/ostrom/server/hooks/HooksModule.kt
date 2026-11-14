@@ -15,7 +15,9 @@ import run.ostrom.server.hooks.presentation.HooksRoutesDependencies
 import run.ostrom.server.hooks.presentation.hooksRoutes
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
+import run.ostrom.server.runners.infrastructure.RunnersConfig
 import run.ostrom.server.skills.infrastructure.JdkSha256
+import run.ostrom.server.skills.infrastructure.RunnersRunnerSessions
 import io.ktor.server.routing.Route
 import org.koin.core.Koin
 import org.koin.core.module.Module
@@ -37,7 +39,7 @@ object HooksModule : ServerModule {
             ManageHookCatalogUseCaseImpl(get(), get(), JdkSha256(), get(), get())
         }
         single<HookDeliveryUseCase> { HookDeliveryUseCaseImpl(get(), get(), JdkSha256()) }
-        single { HooksRoutesDependencies(get(), get(), get(), get()) }
+        single { HooksRoutesDependencies(get(), get(), get(), get(), RunnersRunnerSessions(get(), get())) }
     }
 
     override val migrations: List<SchemaMigration> = HooksMigrations
@@ -46,6 +48,9 @@ object HooksModule : ServerModule {
         route.hooksRoutes(koin.get())
     }
 
-    /** The hook catalog and its delivery. */
-    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.HOOKS)
+    /** The hook catalog and its delivery; into cloud sessions only with cloud runners. */
+    override suspend fun features(koin: Koin): Set<String> {
+        val cloud = koin.getOrNull<RunnersConfig>()?.driver.let { it != null && it != RunnersConfig.DriverKind.NONE }
+        return setOfNotNull(ServerFeatures.HOOKS, ServerFeatures.RUNNERS_CLOUD_HOOKS.takeIf { cloud })
+    }
 }

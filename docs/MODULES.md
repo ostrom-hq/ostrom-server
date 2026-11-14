@@ -498,6 +498,11 @@ run one after the other on any replica, and the audit events are written once th
 is the workstation (`GET /api/v1/devices`): it alone reports what it installed, a report never grants nor revokes
 anything, and the rows go with the skill.
 
+A cloud session receives its owner's skills too (TeamCode's cloud agent, `cli/cloud/agent/Skills.kt`): the runner
+asks with its runner token and its execution (`sessionId`, `epoch`), fenced as its other calls, and gets the owner's
+manifest and artifacts; a session that holds no execution gets 409 `delivery_unavailable`, an owner who left gets
+nothing.
+
 ### Module `hooks`
 
 The organization's team hooks, ported from TeamCode (`docs/hooks.md`). A hook runs code on members' computers with
@@ -519,6 +524,10 @@ hook. An administrator reads any version's code before pinning it (`readHookVers
 a member downloads only their effective pinned version, and both are checked against the digest (500
 `hook_integrity`). There is no retirement and no personal hook, as in TeamCode. The catalog's writes take the
 organization's hook lock, as the skills' do, and each change is audited once committed, a key's with its id.
+
+A cloud session receives its owner's delivered hooks as it receives skills, with no member approval: the pod is the
+team's infrastructure, and the administrator's pin and the owner's yes approve it (TeamCode's `docs/hooks.md`, Cloud
+sessions).
 
 ### Module `memory`
 
@@ -567,7 +576,7 @@ anonymous call gets 401 `unauthorized`. A module lists a key of ostrom-core's `S
 | `gates` | `gates.v1` | — |
 | `gateway` | `inference.v1`, `inference.queue.v1`, `inference.cancel.v1` | — (an organization can set its own provider keys) |
 | `governance` | `governance.v1` | — |
-| `hooks` | `hooks.v1` | — |
+| `hooks` | `hooks.v1`; `runners.cloud.hooks.v1` | the second with a runtime driver (`OSTROM_RUNNERS_DRIVER` not `none`) |
 | `identity` | `audit.v1` | — |
 | `import` | `import.teamcode.v1` | — |
 | `integrations-github` | `github.v1`; `github.link.v1` | a stored GitHub App (created by the manifest flow, or imported once from the former variables); the second once that App's OAuth client (id and secret) is known |
@@ -581,7 +590,7 @@ anonymous call gets 401 `unauthorized`. A module lists a key of ostrom-core's `S
 | `secrets` | `secrets.v1`, `environment.v1` (environment variants) | — |
 | `sessions` | `sessions.v1` | — |
 | `sharing` | `sharing.v1` | — |
-| `skills` | `skills.v1` | — |
+| `skills` | `skills.v1`; `runners.cloud.skills.v1` | the second with a runtime driver (`OSTROM_RUNNERS_DRIVER` not `none`) |
 | `todos` | `todos.v1` | — |
 | `usage` | `usage.v1` | — |
 | `workflow-runs` | `workflows.v1`, `notifications.v1` (the hooks' notifications) | — |

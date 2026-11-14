@@ -563,6 +563,10 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "POST /api/v1/cloud/runner/variables" to Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1}"""),
     "POST /api/v1/cloud/runner/launch" to Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1}"""),
     "POST /api/v1/cloud/runner/checks" to Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1}"""),
+    "POST /api/v1/cloud/runner/skills" to Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1}"""),
+    "POST /api/v1/cloud/runner/skills/artifact" to Case.Target(body = RUNNER_ARTIFACT),
+    "POST /api/v1/cloud/runner/hooks" to Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1}"""),
+    "POST /api/v1/cloud/runner/hooks/artifact" to Case.Target(body = RUNNER_ARTIFACT),
     "GET /api/v1/cloud/runner/terminal" to Case.Exempt(WEBSOCKET),
 
     // GitHub App.
@@ -619,6 +623,10 @@ internal const val HOOK_BODY = """{"version": "1.0.0", "definition": {"events": 
 private const val WEBHOOK_FIELDS = """"url": "https://example.com/taken", "types": ["cloud.wait.created"]"""
 
 private const val WEBHOOK_BODY = "{$WEBHOOK_FIELDS}"
+
+// A cloud session's request for one skill or hook version it was delivered.
+private const val RUNNER_ARTIFACT = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1,""" +
+    """ "name": "review", "version": "1.0.0"}"""
 
 private const val AUTOMATION_BODY = """{"name": "Taken", "trigger": {"kind": "webhook"},""" +
     """ "action": {"prompt": "Fix"}, "variables": [], "overlap": "allow"}"""

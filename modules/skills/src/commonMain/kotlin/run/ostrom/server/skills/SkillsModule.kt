@@ -4,15 +4,18 @@ package run.ostrom.server.skills
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
+import run.ostrom.server.runners.infrastructure.RunnersConfig
 import run.ostrom.server.skills.domain.ManageSkillCatalogUseCase
 import run.ostrom.server.skills.domain.ManageSkillCatalogUseCaseImpl
 import run.ostrom.server.skills.domain.PublishSkillVersionUseCase
 import run.ostrom.server.skills.domain.PublishSkillVersionUseCaseImpl
+import run.ostrom.server.skills.domain.RunnerSessions
 import run.ostrom.server.skills.domain.Sha256
 import run.ostrom.server.skills.domain.SkillDeliveryUseCase
 import run.ostrom.server.skills.domain.SkillDeliveryUseCaseImpl
 import run.ostrom.server.skills.domain.SkillsRepository
 import run.ostrom.server.skills.infrastructure.JdkSha256
+import run.ostrom.server.skills.infrastructure.RunnersRunnerSessions
 import run.ostrom.server.skills.infrastructure.SkillsMigrations
 import run.ostrom.server.skills.infrastructure.SkillsRepositoryImpl
 import run.ostrom.server.skills.presentation.SkillsRoutesDependencies
@@ -37,7 +40,8 @@ object SkillsModule : ServerModule {
         single<PublishSkillVersionUseCase> { PublishSkillVersionUseCaseImpl(get(), get(), get(), get()) }
         single<ManageSkillCatalogUseCase> { ManageSkillCatalogUseCaseImpl(get(), get(), get(), get()) }
         single<SkillDeliveryUseCase> { SkillDeliveryUseCaseImpl(get(), get(), get(), get()) }
-        single { SkillsRoutesDependencies(get(), get(), get(), get()) }
+        single<RunnerSessions> { RunnersRunnerSessions(get(), get()) }
+        single { SkillsRoutesDependencies(get(), get(), get(), get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = SkillsMigrations
@@ -46,6 +50,9 @@ object SkillsModule : ServerModule {
         route.skillsRoutes(koin.get())
     }
 
-    /** The skill catalog and its delivery. */
-    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.SKILLS)
+    /** The skill catalog and its delivery; into cloud sessions only with cloud runners. */
+    override suspend fun features(koin: Koin): Set<String> {
+        val cloud = koin.getOrNull<RunnersConfig>()?.driver.let { it != null && it != RunnersConfig.DriverKind.NONE }
+        return setOfNotNull(ServerFeatures.SKILLS, ServerFeatures.RUNNERS_CLOUD_SKILLS.takeIf { cloud })
+    }
 }

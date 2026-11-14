@@ -221,3 +221,20 @@ data class HookArtifactDto(
     val definition: HookDefinitionDto,
     val files: List<ArtifactFileContentDto>,
 )
+
+/**
+ * `POST /api/v1/cloud/runner/hooks` (`fetchRunnerHooks`): the hooks a cloud session's owner receives, asked by its
+ * runner with the execution's runner token.
+ */
+@Serializable
+@Resource("/api/v1/cloud/runner/hooks")
+class RunnerHooksApi {
+    /**
+     * `POST /api/v1/cloud/runner/hooks/artifact` (`downloadRunnerHook`).
+     *
+     * @property parent The runner's delivery.
+     */
+    @Serializable
+    @Resource("artifact")
+    class Artifact(val parent: RunnerHooksApi = RunnerHooksApi())
+}
