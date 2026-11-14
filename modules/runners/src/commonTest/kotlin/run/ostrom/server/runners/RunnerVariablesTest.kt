@@ -2,7 +2,12 @@
 package run.ostrom.server.runners
 
 import run.ostrom.server.runners.domain.NoRunnerVariables
+import run.ostrom.server.runners.domain.RunnerExecutionRequest
+import run.ostrom.server.runners.domain.RunnerUnauthenticatedException
 import run.ostrom.server.runners.domain.RunnerVariableValues
+import run.ostrom.server.runners.domain.RunnerVariablesUseCaseImpl
+import run.ostrom.server.runners.fakes.FakeRunnerTokens
+import run.ostrom.server.runners.fakes.InMemoryCloudSessionsRepository
 import run.ostrom.server.runners.fakes.ALICE
 import run.ostrom.server.runners.fakes.ORG_A
 import run.ostrom.server.runners.infrastructure.ResolvedRunnerVariables
@@ -12,6 +17,7 @@ import run.ostrom.server.secrets.domain.SecretValue
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertSame
 import kotlin.uuid.Uuid
@@ -34,5 +40,11 @@ class RunnerVariablesTest {
         assertEquals(1, seen.size)
         val response = RunnerVariablesResponse(mapOf("TOKEN" to "s3cret"), emptyList())
         assertEquals("RunnerVariablesResponse([TOKEN], unavailable=[])", response.toString())
+    }
+
+    @Test
+    fun aTokenNoSessionHoldsIsUnauthenticated() = runTest {
+        val use = RunnerVariablesUseCaseImpl(InMemoryCloudSessionsRepository(), FakeRunnerTokens(), NoRunnerVariables)
+        assertFailsWith<RunnerUnauthenticatedException> { use("token-1", RunnerExecutionRequest(Uuid.random(), 1)) }
     }
 }
