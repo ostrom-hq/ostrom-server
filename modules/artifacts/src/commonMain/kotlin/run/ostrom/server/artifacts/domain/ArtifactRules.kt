@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.artifacts.domain
 
+import run.ostrom.server.kernel.text.TranscriptMask
+
 /** What a publication may hold, checked before anything is stored (TeamCode's artifact rules, simplified). */
 object ArtifactRules {
     /** Files per version. */
@@ -47,19 +49,14 @@ object ArtifactRules {
     )
     private val PAGE_EXTENSIONS = listOf(".html", ".htm", ".md")
 
-    /** Credentials a page must never carry; the same families as TeamCode's transcript mask. */
-    private val SECRETS = listOf(
-        Regex("sk-ant-[A-Za-z0-9_-]{20,}"),
-        Regex("sk-(?:proj-|or-v1-)?[A-Za-z0-9_-]{32,}"),
-        Regex("gh[pousr]_[A-Za-z0-9]{36,}"),
-        Regex("github_pat_[A-Za-z0-9_]{40,}"),
-        Regex("AKIA[0-9A-Z]{16}"),
-        Regex("xox[abprs]-[A-Za-z0-9-]{10,}"),
-        Regex("-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+    /**
+     * Credentials a page must never carry, beyond [TranscriptMask.detect]'s shapes (the transcript mask's, as in
+     * TeamCode): Ostrom's long-form tokens, Google API keys and live payment keys.
+     */
+    private val EXTRA_SECRETS = listOf(
         Regex("ostrom_[a-z]+_[A-Za-z0-9]{32,}"),
         Regex("AIza[0-9A-Za-z_-]{35}"),
         Regex("[rs]k_live_[0-9a-zA-Z]{24,}"),
-        Regex("eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}"),
     )
 
     /**
@@ -156,7 +153,7 @@ object ArtifactRules {
     fun holdsSecret(bytes: ByteArray): Boolean {
         if (bytes.any { it == NUL }) return false
         val text = bytes.decodeToString()
-        return SECRETS.any { it.containsMatchIn(text) }
+        return TranscriptMask.detect(text) != null || EXTRA_SECRETS.any { it.containsMatchIn(text) }
     }
 
     private const val MIB = 1024 * 1024
