@@ -42,7 +42,7 @@ class McpPersonalServersPostgresTest : RelayPostgresHarness() {
     private suspend fun TestServer.page(path: String, token: String) =
         client.get(path) { bearerAuth(token) }.body<McpServersPage>().items
 
-    private fun HttpResponse.expect(status: HttpStatusCode) = assertEquals(status, this.status)
+    private suspend fun HttpResponse.expect(status: HttpStatusCode) = assertEquals(status, this.status, bodyAsText())
 
     private suspend fun HttpResponse.refusedAs(status: HttpStatusCode, type: String) {
         val text = bodyAsText()
@@ -141,11 +141,11 @@ class McpPersonalServersPostgresTest : RelayPostgresHarness() {
                 assertTrue("MCP host" in noHost.bodyAsText(), noHost.bodyAsText())
 
                 // The org's secret is not the member's: their own personal secret is.
-                sendJson(HttpMethod.Post, "/api/v1/secrets", SecretWriteRequest("TEAM_TOKEN", "t"))
+                sendJson(HttpMethod.Post, "/api/v1/secrets", SecretWriteRequest("TEAM_TOKEN", "team_token_value"))
                     .expect(HttpStatusCode.Created)
                 sendJson(HttpMethod.Post, MINE, remote("sentry", listOf("TEAM_TOKEN")), "member-a")
                     .expect(HttpStatusCode.BadRequest)
-                sendJson(HttpMethod.Post, "/api/v1/secrets", SecretWriteRequest("MINE", "m", "personal"), "member-a")
+                sendJson(HttpMethod.Post, "/api/v1/secrets", SecretWriteRequest("MINE", "member_own_token", "personal"), "member-a")
                     .expect(HttpStatusCode.Created)
                 val withSecret = sendJson(HttpMethod.Post, MINE, remote("sentry", listOf("MINE")), "member-a")
                 assertEquals(listOf("MINE"), withSecret.body<McpServerDto>().secretNames)
