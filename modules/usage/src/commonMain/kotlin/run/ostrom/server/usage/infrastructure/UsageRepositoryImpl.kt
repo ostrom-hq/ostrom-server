@@ -258,14 +258,15 @@ private fun holdTotals(hold: SpendHold, limits: SpendLimits, window: HoldWindow)
     val workflow = hold.workflowId != null && limits.workflowMicros != null
     val workflowDay = hold.workflowId != null && daily?.workflowMicros != null
     // A launch's budget applies only to a call of that launch; its sums are read only then.
-    val launch = hold.launchId != null && limits.launchMicros != null
+    val launchId = hold.launchId?.takeIf { limits.launchMicros != null }
+    val launch = launchId != null
     val sums = Statement.create(UsageQueries.holdTotals(org, member, orgDay, memberDay, workflow, workflowDay, launch))
         .bind("org_id", hold.orgId).bind("call_id", hold.callId).bind("now", window.now)
     if (org || member || workflow) sums.bind("since", window.since)
     if (daily != null) sums.bind("day_since", daily.since)
     if (member || memberDay) sums.bind("member_id", hold.memberId)
     hold.workflowId?.takeIf { workflow || workflowDay }?.let { sums.bind("workflow_id", it) }
-    hold.launchId?.takeIf { launch }?.let {
+    launchId?.let {
         sums.bind("launch_id", it).bind("launch_since", window.now - UsageQueries.LAUNCH_LIFE_HOURS.hours)
     }
     return sums

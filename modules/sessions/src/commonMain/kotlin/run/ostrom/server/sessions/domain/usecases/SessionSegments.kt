@@ -40,6 +40,8 @@ class SessionSegments(
      * @param dev The person.
      * @param start What the launch says.
      * @param opening Why the segment opens, and whether the caller may replace another launch's live segment.
+     * @param labels The launch's labels ([labelsOf], read before the transaction: a read in it would take a second
+     *   connection of the pool).
      * @return The open segment.
      */
     suspend fun open(
@@ -48,12 +50,13 @@ class SessionSegments(
         dev: String,
         start: StartSession,
         opening: Opening,
+        labels: Map<String, String>,
     ): Session {
         val last = tx.segments(start.id).lastOrNull()
         if (last != null && last.dev != dev) throw NotYourSessionException()
         val open = last?.takeIf { it.endedAt == null }
         if (open != null && sameLaunch(open.launchId, start.launchId) && !lateAdoption(open, start)) {
-            return found(tx, open, start)
+            return found(tx, open, start, labels)
         }
         // S2-48: an agent token never closes a live launch's segment (nor its yes); a silent one, as the sweep would.
         if (open != null && !opening.mayReplace && !silent(open)) throw NotYourSessionException()
@@ -79,7 +82,7 @@ class SessionSegments(
             source = source,
             startedAt = now(),
             lastSeenAt = if (source != null) now() else null,
-            labels = labelsOf(orgId, start.launchId),
+            labels = labels,
         )
         tx.insert(session)
         // Counted once written: only a commit that fails after it would leave one too many.
@@ -87,18 +90,24 @@ class SessionSegments(
         return session
     }
 
-    private suspend fun found(tx: SessionsTransaction, last: Session, start: StartSession): Session {
+    private suspend fun found(
+        tx: SessionsTransaction,
+        last: Session,
+        start: StartSession,
+        labels: Map<String, String>,
+    ): Session {
         if (last.launchId != null || start.launchId == null) return last
         val named = last.copy(
             launchId = start.launchId,
             packageDigest = last.packageDigest ?: start.packageDigest,
-            labels = labelsOf(last.orgId, start.launchId),
+            labels = labels,
         )
         tx.update(named)
         return named
     }
 
-    private suspend fun labelsOf(orgId: Uuid, launchId: String?): Map<String, String> =
+    /** The labels of [launchId], none for no launch or when labels are not kept; read outside any transaction. */
+    suspend fun labelsOf(orgId: Uuid, launchId: String?): Map<String, String> =
         if (labels == null || launchId == null) emptyMap() else labels.of(orgId, launchId)
 
     // Second audit L3: a launch names the segment its own hook opened a moment before, never an older unnamed one (a
