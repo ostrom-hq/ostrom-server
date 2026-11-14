@@ -84,6 +84,17 @@ class GitHubCryptoTest {
         assertEquals("123", settings.appId)
         assertEquals("-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----", settings.privateKeyPem)
         assertEquals("https://console.example", settings.webOrigin)
+        assertTrue(settings.webOriginDeprecated, "Only the former variable: read, and said deprecated")
+        val logger = RecordingLogger()
+        settings.warnDeprecated(logger)
+        assertEquals(1, logger.lines.size)
+        val current = GitHubSettings.from(
+            source(mapOf("OSTROM_CONSOLE_URL" to "https://app.example/", "OSTROM_WEB_ORIGIN" to "https://old.example")),
+        )
+        assertEquals("https://app.example", current.webOrigin, "OSTROM_CONSOLE_URL wins")
+        assertFalse(current.webOriginDeprecated)
+        current.warnDeprecated(logger)
+        assertEquals(1, logger.lines.size, "Nothing said with OSTROM_CONSOLE_URL")
         assertTrue(settings.configured)
         assertEquals("Iv1.abc", settings.clientId)
         assertEquals("client-s3cret", settings.clientSecret)

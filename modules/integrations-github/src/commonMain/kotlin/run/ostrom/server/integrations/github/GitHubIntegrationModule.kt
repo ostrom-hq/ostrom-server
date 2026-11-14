@@ -106,7 +106,7 @@ val GITHUB_HTTP = named("github-http")
  * [RepositoryReader], which reads the files, CODEOWNERS and branch protection of the installation's
  * repositories; and the members' GitHub links, which give each member's cloud sessions their own Git and `gh` access
  * (device flow, web flow, refresh, unlink). GitHub's address and the App's name are the console's settings
- * ([GITHUB_SETTINGS]); only `OSTROM_PUBLIC_URL` and `OSTROM_WEB_ORIGIN` come from the environment (the instance's
+ * ([GITHUB_SETTINGS]); only `OSTROM_PUBLIC_URL` and `OSTROM_CONSOLE_URL` come from the environment (the instance's
  * administrators are the admin module's).
  */
 object GitHubIntegrationModule : ServerModule {
@@ -250,7 +250,9 @@ object GitHubIntegrationModule : ServerModule {
      * settings (the admin module, before this one, imported their former variables).
      */
     override suspend fun initialize(koin: Koin) {
-        koin.get<ImportGitHubAppUseCase>()(koin.get<GitHubSettings>().credentials())
+        val settings = koin.get<GitHubSettings>()
+        settings.warnDeprecated(koin.get())
+        koin.get<ImportGitHubAppUseCase>()(settings.credentials())
         // Whatever was read before the import is read again.
         koin.get<GitHubAppSource>().forget()
         koin.get<GitHubHost>().refresh()

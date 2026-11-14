@@ -10,7 +10,7 @@ import run.ostrom.server.identity.domain.Mail
  * and where, never the evidence (the diff, the command's output): the approver reads it in Ostrom, where the yes is
  * given after a fresh proof of who they are.
  *
- * @param webOrigin The console's origin (`OSTROM_WEB_ORIGIN`), without a trailing slash.
+ * @param webOrigin The console's origin (`OSTROM_CONSOLE_URL`), without a trailing slash.
  */
 class ApprovalNotices(private val webOrigin: String) {
     /**

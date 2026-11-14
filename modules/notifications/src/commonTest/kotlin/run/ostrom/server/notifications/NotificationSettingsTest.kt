@@ -33,7 +33,18 @@ class NotificationSettingsTest {
                 ),
             ),
         )
-        assertEquals(NotificationSettings("https://console.ostrom.test", "https://ostrom.test"), set)
+        assertEquals(NotificationSettings("https://console.ostrom.test", "https://ostrom.test", true), set)
+        val logger = RecordingLogger()
+        set.warnDeprecated(logger)
+        assertEquals(1, logger.events.size, "Only the former variable: read, and said deprecated")
+        val current = NotificationSettings.from(
+            config(
+                mapOf("OSTROM_CONSOLE_URL" to "https://app.ostrom.test/", "OSTROM_WEB_ORIGIN" to "https://old.test"),
+            ),
+        )
+        assertEquals(NotificationSettings("https://app.ostrom.test"), current, "OSTROM_CONSOLE_URL wins")
+        current.warnDeprecated(logger)
+        assertEquals(1, logger.events.size, "Nothing said with OSTROM_CONSOLE_URL")
     }
 
     private fun config(values: Map<String, String>) = object : ConfigSource {
