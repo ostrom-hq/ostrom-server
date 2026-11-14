@@ -19,6 +19,14 @@ import run.ostrom.server.notifications.domain.FirebaseSenders
 import run.ostrom.server.notifications.domain.LiveCredentials
 import run.ostrom.server.notifications.domain.NotificationOutbox
 import run.ostrom.server.notifications.domain.PUSH_SETTINGS
+import run.ostrom.server.notifications.domain.NotificationChannel
+import run.ostrom.server.notifications.domain.NotificationSettingsRepository
+import run.ostrom.server.notifications.domain.NotificationSettingsService
+import run.ostrom.server.notifications.domain.NotificationSettingsServiceImpl
+import run.ostrom.server.notifications.infrastructure.NotificationSettingsOrgDeletionListener
+import run.ostrom.server.notifications.infrastructure.NotificationSettingsRepositoryImpl
+import run.ostrom.server.notifications.presentation.NotificationSettingsRoutesDependencies
+import run.ostrom.server.notifications.presentation.notificationSettingsRoutes
 import run.ostrom.server.notifications.domain.PersonOrganizations
 import run.ostrom.server.notifications.domain.PushEncryption
 import run.ostrom.server.notifications.domain.PushDevicesRepository
@@ -56,7 +64,8 @@ import kotlin.time.Clock
  * The notifications module: the phones a person registers for push notifications, one per push token in each
  * organization, and what tells an approver a gate waits for their yes (a push to those phones and an e-mail), sent
  * apart from the request by [NotificationOutbox]. A phone is forgotten when its organization is deleted or its person
- * signs out with the credential that registered it.
+ * signs out with the credential that registered it. Each member's switches of the notification router
+ * (`/api/v1/notifications/settings`, TeamCode's `notifications.v1`) are kept here, per channel and kind.
  */
 object NotificationsModule : ServerModule {
     // Declared before koinModule: the object initializes in order, and the module lambda runs at once.
@@ -77,6 +86,7 @@ object NotificationsModule : ServerModule {
         // A deleted organization's phones are forgotten at once (OrgsModule calls every bound listener).
         single<OrgDeletionListener>(named("notifications")) { PushDevicesOrgDeletionListener(get()) }
         single<PersonOrganizations> { MemberOrganizations(get()) }
+        router()
         // The identity module tells every bound listener after a sign-out.
         single<SignOutListener>(named("notifications")) { PushDevicesSignOutListener(get(), get(), get()) }
         single(HTTP) {
@@ -115,8 +125,22 @@ object NotificationsModule : ServerModule {
 
     override val migrations: List<SchemaMigration> = NotificationsMigrations
 
+    /**
+     * The notification router's half this module owns (docs/notifications.md): the members' switches and their
+     * routes, and the channels the server offers, the [NotificationChannel]s bound in Koin.
+     */
+    private fun Module.router() {
+        single<NotificationSettingsRepository> { NotificationSettingsRepositoryImpl(get()) }
+        single<NotificationSettingsService> {
+            NotificationSettingsServiceImpl(get(), getAll<NotificationChannel>().map { it.id }.distinct().sorted())
+        }
+        single { NotificationSettingsRoutesDependencies(get(), get()) }
+        single<OrgDeletionListener>(named("notifications-settings")) { NotificationSettingsOrgDeletionListener(get()) }
+    }
+
     override fun routes(route: Route, koin: Koin) {
         route.pushDevicesRoutes(koin.get())
+        route.notificationSettingsRoutes(koin.get())
     }
 
     /**

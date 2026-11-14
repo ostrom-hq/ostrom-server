@@ -10,7 +10,9 @@ private const val ORG = "CAST(NULLIF(current_setting('ostrom.org_id', TRUE), '')
  * security (docs/tenancy.md). Version 2 keeps who registered each phone and with which credential (`user_id`,
  * `credential_id`, `browser`): a phone is notified while that credential works, and forgotten when the person signs
  * out with it. A phone of version 1 has none and is notified again once the app registers it anew. Version 3 keeps an
- * `fcm` phone's P-256 public key (`public_key`), which every push to it is encrypted for.
+ * `fcm` phone's P-256 public key (`public_key`), which every push to it is encrypted for. Version 4 holds the
+ * members' switches of the notification router (TeamCode's `member_notification_settings`): one row per member,
+ * channel and kind a member changed, no row meaning on.
  */
 val NotificationsMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -52,5 +54,23 @@ val NotificationsMigrations: List<SchemaMigration> = listOf(
         3,
         "push_devices_public_key",
         "ALTER TABLE notifications_push_devices ADD COLUMN public_key TEXT",
+    ),
+    SchemaMigration(
+        4,
+        "create_member_settings",
+        """
+        CREATE TABLE notifications_member_settings (
+            org_id UUID NOT NULL,
+            member_id UUID NOT NULL,
+            channel TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            enabled BOOLEAN NOT NULL,
+            PRIMARY KEY (org_id, member_id, channel, kind)
+        );
+        ALTER TABLE notifications_member_settings ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE notifications_member_settings FORCE ROW LEVEL SECURITY;
+        CREATE POLICY notifications_member_settings_org ON notifications_member_settings
+            USING (org_id = $ORG) WITH CHECK (org_id = $ORG)
+        """.trimIndent(),
     ),
 )

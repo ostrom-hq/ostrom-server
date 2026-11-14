@@ -21,7 +21,7 @@ class NotificationsModuleRegistrationTest {
     fun registersUnderItsNameWithItsMigrationAndDefinitionsThatLoad() {
         assertEquals("notifications", NotificationsModule.name)
         assertEquals(NotificationsMigrations, NotificationsModule.migrations)
-        assertEquals(listOf(1L, 2L, 3L), NotificationsMigrations.map { it.version })
+        assertEquals(listOf(1L, 2L, 3L, 4L), NotificationsMigrations.map { it.version })
         koinApplication { modules(NotificationsModule.koinModule) }.close()
     }
 
