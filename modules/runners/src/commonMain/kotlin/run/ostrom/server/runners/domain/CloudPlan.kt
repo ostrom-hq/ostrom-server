@@ -4,8 +4,9 @@ package run.ostrom.server.runners.domain
 import kotlin.uuid.Uuid
 
 /**
- * What an organization's plan allows for cloud sessions. The free plan's guards (Lyes, 30/10/2026): 5 agents at
- * once, 300 hours a month, a pause without requests to the model, a limited outbound network and a maximum duration.
+ * What an organization's plan allows for cloud sessions. The free plan's guards (Lyes, 30/10/2026): 300 hours a month,
+ * a pause without requests to the model, a limited outbound network and a maximum duration. No plan caps the agents
+ * running at once (Nathan, 14/11/2026, as TeamCode): the cluster and the per-member cloud settings do.
  *
  * @property maxRunningSessions Sessions that may hold an execution at once (creating, running, pausing, resuming);
  *   [UNLIMITED_SESSIONS] for no limit.
@@ -33,9 +34,9 @@ data class CloudPlan(
         /** [maxRunningSessions] of a plan without a limit. */
         const val UNLIMITED_SESSIONS: Int = Int.MAX_VALUE
 
-        /** The free plan: 5 agents at once, 300 hours a month, 30 minutes idle, 4 hours per run, limited egress. */
+        /** The free plan: uncapped agents, 300 hours a month, 30 minutes idle, 4 hours a run, limited egress. */
         val FREE: CloudPlan = CloudPlan(
-            maxRunningSessions = 5,
+            maxRunningSessions = UNLIMITED_SESSIONS,
             monthlyHours = 300,
             idleTimeoutMinutes = 30,
             maxRunMinutes = 240,

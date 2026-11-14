@@ -4,6 +4,7 @@ package run.ostrom.server.runners.infrastructure
 import run.ostrom.server.billing.domain.GetAgentUsageUseCase
 import run.ostrom.server.billing.domain.GetPlanLimitsUseCase
 import run.ostrom.server.billing.domain.RecordAgentUsageUseCase
+import run.ostrom.server.billing.domain.UNLIMITED_CLOUD_AGENTS
 import run.ostrom.server.runners.domain.CloudPlan
 import run.ostrom.server.runners.domain.CloudPlanProvider
 import run.ostrom.server.runners.domain.CloudUsageMeter
@@ -21,8 +22,9 @@ import kotlin.uuid.Uuid
 class BillingCloudPlanProvider(private val limits: GetPlanLimitsUseCase) : CloudPlanProvider {
     override suspend fun planFor(orgId: Uuid): CloudPlan {
         val plan = limits(orgId)
+        val agents = plan.maxConcurrentCloudAgents
         return CloudPlan.FREE.copy(
-            maxRunningSessions = plan.maxConcurrentCloudAgents ?: CloudPlan.UNLIMITED_SESSIONS,
+            maxRunningSessions = if (agents == UNLIMITED_CLOUD_AGENTS) CloudPlan.UNLIMITED_SESSIONS else agents,
             monthlyHours = plan.agentHoursPerPeriod,
         )
     }

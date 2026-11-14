@@ -25,9 +25,9 @@ import kotlin.uuid.Uuid
 
 class PlansAndPeriodsTest {
     @Test
-    fun freeIsFivePeopleFiveAgentsThreeHundredHours() {
+    fun freeIsFivePeopleUnlimitedAgentsThreeHundredHours() {
         assertEquals(
-            PlanLimits(5, 5, 300, sso = false, policies = false, receiptRetentionDays = 30),
+            PlanLimits(5, 0, 300, sso = false, policies = false, receiptRetentionDays = 30),
             PlanCatalog.limits(Plan.FREE, 3),
         )
     }
@@ -35,11 +35,11 @@ class PlansAndPeriodsTest {
     @Test
     fun teamGrowsWithPeopleButNeverBelowFree() {
         assertEquals(
-            PlanLimits(null, 5, 300, sso = false, policies = false, receiptRetentionDays = 90),
+            PlanLimits(null, 0, 300, sso = false, policies = false, receiptRetentionDays = 90),
             PlanCatalog.limits(Plan.TEAM, 0),
         )
         assertEquals(
-            PlanLimits(null, 50, 1000, sso = false, policies = false, receiptRetentionDays = 90),
+            PlanLimits(null, 0, 1000, sso = false, policies = false, receiptRetentionDays = 90),
             PlanCatalog.limits(Plan.TEAM, 10),
         )
     }
@@ -47,11 +47,11 @@ class PlansAndPeriodsTest {
     @Test
     fun businessAddsSsoPoliciesAndAYearOfReceipts() {
         assertEquals(
-            PlanLimits(null, 10, 600, sso = true, policies = true, receiptRetentionDays = 365),
+            PlanLimits(null, 0, 600, sso = true, policies = true, receiptRetentionDays = 365),
             PlanCatalog.limits(Plan.BUSINESS, 1),
         )
         assertEquals(
-            PlanLimits(null, 100, 3000, sso = true, policies = true, receiptRetentionDays = 365),
+            PlanLimits(null, 0, 3000, sso = true, policies = true, receiptRetentionDays = 365),
             PlanCatalog.limits(Plan.BUSINESS, 20),
         )
     }
@@ -59,7 +59,7 @@ class PlansAndPeriodsTest {
     @Test
     fun enterpriseIsUnlimited() {
         assertEquals(
-            PlanLimits(null, null, null, sso = true, policies = true, receiptRetentionDays = null),
+            PlanLimits(null, 0, null, sso = true, policies = true, receiptRetentionDays = null),
             PlanCatalog.limits(Plan.ENTERPRISE, 1),
         )
     }

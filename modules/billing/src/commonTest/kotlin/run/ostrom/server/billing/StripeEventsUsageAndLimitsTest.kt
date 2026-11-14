@@ -2,8 +2,10 @@
 package run.ostrom.server.billing
 
 import run.ostrom.server.billing.domain.BillingInterval
+import run.ostrom.server.billing.domain.CheckEntitlementUseCaseImpl
 import run.ostrom.server.billing.domain.Entitlement
 import run.ostrom.server.billing.domain.EventOutcome
+import run.ostrom.server.billing.domain.GetPlanLimitsUseCase
 import run.ostrom.server.billing.domain.LicenseGrant
 import run.ostrom.server.billing.domain.OrgBilling
 import run.ostrom.server.billing.domain.OutboxKind
@@ -11,7 +13,9 @@ import run.ostrom.server.billing.domain.OutboxTask
 import run.ostrom.server.billing.domain.PaymentIssue
 import run.ostrom.server.billing.domain.PaymentIssueKind
 import run.ostrom.server.billing.domain.Plan
+import run.ostrom.server.billing.domain.PlanCatalog
 import run.ostrom.server.billing.domain.PlanLimitException
+import run.ostrom.server.billing.domain.PlanLimits
 import run.ostrom.server.billing.domain.SubscriptionStatus
 import run.ostrom.server.billing.fakes.NOW
 import run.ostrom.server.billing.fakes.stripeSubscription
@@ -390,14 +394,25 @@ class StripeEventsUsageAndLimitsTest {
     }
 
     @Test
-    fun theSixthCloudAgentOfFreeIsRefused() = runTest {
+    fun noPlanCapsTheCloudAgentsRunningAtOnce() = runTest {
         val world = World()
-        world.entitlements(world.org, Entitlement.StartCloudAgent(4))
-        val error = assertFailsWith<PlanLimitException> {
-            world.entitlements(world.org, Entitlement.StartCloudAgent(5))
+        world.entitlements(world.org, Entitlement.StartCloudAgent(10_000))
+        world.subscribe(Plan.TEAM)
+        world.entitlements(world.org, Entitlement.StartCloudAgent(10_000))
+    }
+
+    @Test
+    fun aCapOnCloudAgentsWouldStillBeHeld() = runTest {
+        val world = World()
+        val capped = object : GetPlanLimitsUseCase {
+            override suspend fun invoke(orgId: Uuid): PlanLimits =
+                PlanCatalog.limits(Plan.FREE, 1).copy(maxConcurrentCloudAgents = 2)
         }
+        val entitlements = CheckEntitlementUseCaseImpl(world.repository, capped, world.settings, world.clock)
+        entitlements(world.org, Entitlement.StartCloudAgent(1))
+        val error = assertFailsWith<PlanLimitException> { entitlements(world.org, Entitlement.StartCloudAgent(2)) }
         assertEquals(
-            "The Free plan runs 5 cloud agents at the same time and 5 are running. " +
+            "The Free plan runs 2 cloud agents at the same time and 2 are running. " +
                 "Wait for one to finish, or upgrade at https://app.ostrom.run/billing.",
             error.message,
         )

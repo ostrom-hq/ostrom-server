@@ -26,18 +26,42 @@ object EnvironmentRules {
 
     private val variablePattern = Regex("[A-Z_][A-Z0-9_]{0,127}")
 
-    /** Names that would let a value take over the process, its loader, its proxies or the agent's own connection. */
+    /**
+     * Names that would let a value take over the process, its loader, its proxies or the agent's own connection:
+     * TeamCode's list, then (Nathan, 14/11/2026, also proposed upstream) what else steers the loader or a runtime, the
+     * shell, Git, SSH and `gh`, or an agent's tools. Most come from the CLI's `ProgramVariables.PINNED` and the MCP
+     * host's `Launchers`; the runner withholds at least these.
+     */
     val RESERVED_NAMES: Set<String> = setOf(
         "PATH", "HOME", "USER", "LOGNAME", "SHELL", "PWD", "TMPDIR", "TMP", "TEMP", "IFS", "ENV", "BASH_ENV",
         "PROMPT_COMMAND", "NODE_OPTIONS", "NODE_PATH", "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS",
         "PYTHONPATH", "PYTHONSTARTUP", "PYTHONHOME", "PERL5OPT", "PERL5LIB", "RUBYOPT", "RUBYLIB", "GIT_SSH",
         "GIT_SSH_COMMAND", "GIT_EXEC_PATH", "GIT_CONFIG_GLOBAL", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
         "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE",
+        // the loader and the runtimes: glibc's tunables, TLS checks and key logs, code a runtime loads
+        "GLIBC_TUNABLES", "NODE_TLS_REJECT_UNAUTHORIZED", "NODE_ICU_DATA", "ELECTRON_RUN_AS_NODE", "PYTHONUSERBASE",
+        "PYTHONEXECUTABLE", "PYTHONPLATLIBDIR", "PYTHONBREAKPOINT", "PERL5DB", "CLASSPATH", "DOTNET_STARTUP_HOOKS",
+        "CORECLR_PROFILER", "CORECLR_PROFILER_PATH", "CORECLR_ENABLE_PROFILING", "CURL_CA_BUNDLE", "SSLKEYLOGFILE",
+        "GCONV_PATH",
+        // the shell
+        "OLDPWD", "SHELLOPTS", "BASHOPTS", "CDPATH", "GLOBIGNORE", "PS4", "ZDOTDIR",
+        // Git, SSH and the GitHub CLI: the programs they run and where they read a repository
+        "GIT_TERMINAL_PROMPT", "GH_CONFIG_DIR", "GIT_ASKPASS", "SSH_ASKPASS", "GIT_PROXY_COMMAND", "GIT_EXTERNAL_DIFF",
+        "GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_TEMPLATE_DIR", "GIT_DIR", "GIT_WORK_TREE",
+        "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR",
+        // what weakens Git's TLS or protocols
+        "GIT_SSL_NO_VERIFY", "GIT_SSL_CAINFO", "GIT_SSL_CAPATH", "GIT_ALLOW_PROTOCOL",
+        // an agent's tools: ripgrep's file can name a `--pre` program
+        "RIPGREP_CONFIG_PATH",
     )
 
-    /** Prefixes reserved the same way; `OSTROM_` and `TEAMCODE_` are the agent's own connection to the server. */
+    /**
+     * Prefixes reserved the same way; `OSTROM_` and `TEAMCODE_` are the agent's own connection to the server, and
+     * `BASH_FUNC_` names an exported shell function.
+     */
     val RESERVED_PREFIXES: List<String> = listOf(
         "LD_", "DYLD_", "OSTROM_", "TEAMCODE_", "ANTHROPIC_", "CLAUDE_", "OPENAI_", "CODEX_", "XDG_", "GIT_CONFIG_",
+        "BASH_FUNC_",
     )
 
     /**
@@ -46,14 +70,24 @@ object EnvironmentRules {
      * @throws InvalidEnvironmentVariantException When it is malformed or reserved.
      */
     fun requireVariable(variable: String) {
-        if (!variablePattern.matches(variable)) {
-            throw InvalidEnvironmentVariantException(
-                "Use an environment variable name of uppercase letters, digits and underscores (at most 128).",
-            )
-        }
+        requireWellFormed(variable)
         if (isReserved(variable)) {
             throw InvalidEnvironmentVariantException(
                 "$variable is reserved for the runtime, its loader or the agent's own connection.",
+            )
+        }
+    }
+
+    /**
+     * Checks a variable name's form only: what removing an assignment or an exclusion needs, so a name reserved
+     * after it was stored can still be cleaned up.
+     *
+     * @throws InvalidEnvironmentVariantException When it is malformed.
+     */
+    fun requireWellFormed(variable: String) {
+        if (!variablePattern.matches(variable)) {
+            throw InvalidEnvironmentVariantException(
+                "Use an environment variable name of uppercase letters, digits and underscores (at most 128).",
             )
         }
     }

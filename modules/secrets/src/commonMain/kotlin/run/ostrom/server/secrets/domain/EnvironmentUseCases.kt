@@ -275,7 +275,7 @@ class ManageEnvironmentAssignmentsUseCaseImpl(
 
     override suspend fun unassign(actor: EnvironmentActor, memberId: Uuid, variable: String) {
         actor.caller.requireAdmin()
-        EnvironmentRules.requireVariable(variable)
+        EnvironmentRules.requireWellFormed(variable)
         requireMember(members, actor.caller.orgId, memberId)
         if (repository.unassign(actor.caller.orgId, memberId, variable)) {
             recordMember(audit, actor, "environment.unassigned", memberId, variable)
@@ -293,7 +293,7 @@ class ManageEnvironmentAssignmentsUseCaseImpl(
 
     override suspend fun include(actor: EnvironmentActor, memberId: Uuid, variable: String) {
         actor.caller.requireAdmin()
-        EnvironmentRules.requireVariable(variable)
+        EnvironmentRules.requireWellFormed(variable)
         requireMember(members, actor.caller.orgId, memberId)
         if (repository.include(actor.caller.orgId, memberId, variable)) {
             recordMember(audit, actor, "environment.included", memberId, variable)
@@ -410,7 +410,9 @@ class ResolveEnvironmentUseCaseImpl(
         if (!members.isActiveMember(orgId, memberId.toString())) return EnvironmentValues.NONE
         val values = mutableMapOf<String, SecretValue>()
         val unavailable = mutableListOf<String>()
-        for (assigned in repository.assignedValues(orgId, memberId)) {
+        // A name reserved after it was assigned is never served (contract, createEnvironmentVariant).
+        val served = repository.assignedValues(orgId, memberId).filterNot { EnvironmentRules.isReserved(it.variable) }
+        for (assigned in served) {
             val binding = assigned.binding
             val envelope = assigned.envelope
             val plaintext = if (binding == null || envelope == null) {

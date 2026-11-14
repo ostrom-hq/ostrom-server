@@ -155,6 +155,7 @@ class SessionUseCasesTest {
 
     @Test
     fun createRefusesBeyondTheRunningCap() = runTest {
+        plans.plan = CloudPlan.FREE.copy(maxRunningSessions = 5)
         repeat(5) { create(alice, payload()) }
 
         assertFailsWith<CloudSessionLimitException> { create(alice, payload()) }
@@ -164,6 +165,7 @@ class SessionUseCasesTest {
 
     @Test
     fun pausedAndFinalSessionsDoNotCountTowardsTheCap() = runTest {
+        plans.plan = CloudPlan.FREE.copy(maxRunningSessions = 5)
         repeat(4) { create(alice, payload()) }
         repository.put(session(state = SessionState.PAUSED))
         repository.put(session(state = SessionState.TERMINATED))
@@ -171,6 +173,12 @@ class SessionUseCasesTest {
 
         create(alice, payload())
         assertFailsWith<CloudSessionLimitException> { create(alice, payload()) }
+    }
+
+    @Test
+    fun theFreePlanCapsNoAgentsAtOnce() = runTest {
+        assertEquals(CloudPlan.UNLIMITED_SESSIONS, CloudPlan.FREE.maxRunningSessions)
+        repeat(20) { create(alice, payload()) }
     }
 
     @Test
@@ -281,6 +289,7 @@ class SessionUseCasesTest {
     fun resumeRefusesBeyondTheCapAndWithoutHours() = runTest {
         val paused = session(state = SessionState.PAUSED, desired = DesiredState.PAUSED)
         repository.put(paused)
+        plans.plan = CloudPlan.FREE.copy(maxRunningSessions = 5)
         repeat(5) { create(alice, payload()) }
 
         assertFailsWith<CloudSessionLimitException> { change.resume(alice, paused.id) }

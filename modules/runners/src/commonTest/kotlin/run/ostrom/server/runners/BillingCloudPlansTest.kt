@@ -36,7 +36,7 @@ private val PERIOD = Instant.parse("2026-10-15T00:00:00Z")
 
 /** Billing's answers, set by the test, and what it was told. */
 private class FakeBilling : GetPlanLimitsUseCase, RecordAgentUsageUseCase {
-    var limits = PlanLimits(null, null, null, sso = true, policies = true, receiptRetentionDays = null)
+    var limits = PlanLimits(null, 0, null, sso = true, policies = true, receiptRetentionDays = null)
     var seconds = 0L
     val recorded = mutableListOf<Triple<Uuid, Long, Long>>()
 
@@ -90,8 +90,8 @@ class BillingCloudPlansTest {
     private suspend fun paidPlans(plans: CloudPlanProvider) {
         billing.limits = billing.limits.copy(maxConcurrentCloudAgents = 15, agentHoursPerPeriod = 300 * 3)
         assertEquals(CloudPlan.FREE.copy(maxRunningSessions = 15, monthlyHours = 900), plans.planFor(ORG_A))
-        // Enterprise, or a self-hosted license: no limit.
-        billing.limits = billing.limits.copy(maxConcurrentCloudAgents = null, agentHoursPerPeriod = null)
+        // Every plan since 14/11/2026, Enterprise, or a self-hosted license: no limit.
+        billing.limits = billing.limits.copy(maxConcurrentCloudAgents = 0, agentHoursPerPeriod = null)
         val unlimited = plans.planFor(ORG_A)
         assertEquals(CloudPlan.UNLIMITED_SESSIONS, unlimited.maxRunningSessions)
         assertEquals(null, unlimited.monthlyHours)

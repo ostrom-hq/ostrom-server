@@ -46,7 +46,7 @@ class UseCasesTest {
     fun anOrganizationWithoutBillingIsOnFree() = runTest {
         val world = World()
         assertEquals(
-            PlanLimits(5, 5, 300, sso = false, policies = false, receiptRetentionDays = 30),
+            PlanLimits(5, 0, 300, sso = false, policies = false, receiptRetentionDays = 30),
             world.limits(world.org),
         )
     }
@@ -64,7 +64,7 @@ class UseCasesTest {
     fun selfHostedWithoutLicenseIsUnlimitedButWithoutEnterpriseFeatures() = runTest {
         val world = World(stripeEnabled = false)
         assertEquals(
-            PlanLimits(null, null, null, sso = false, policies = false, receiptRetentionDays = 30),
+            PlanLimits(null, 0, null, sso = false, policies = false, receiptRetentionDays = 30),
             world.limits(world.org),
         )
     }
@@ -74,7 +74,7 @@ class UseCasesTest {
         val world = World(stripeEnabled = false)
         world.license.grant = LicenseGrant(setOf("sso", "policies", "retention"), maxPeople = 50, expiresAt = null)
         assertEquals(
-            PlanLimits(50, null, null, sso = true, policies = true, receiptRetentionDays = null),
+            PlanLimits(50, 0, null, sso = true, policies = true, receiptRetentionDays = null),
             world.limits(world.org),
         )
     }

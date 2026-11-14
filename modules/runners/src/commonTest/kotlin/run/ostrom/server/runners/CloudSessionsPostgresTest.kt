@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.runners.domain.AllowlistedCloudPlanProvider
+import run.ostrom.server.runners.domain.CloudPlan
+import run.ostrom.server.runners.domain.CloudPlanProvider
 import run.ostrom.server.runners.domain.CloudSession
 import run.ostrom.server.runners.domain.CloudSessionsRepository
 import run.ostrom.server.runners.domain.DesiredState
@@ -13,6 +16,7 @@ import run.ostrom.server.runners.fakes.ORG_B
 import run.ostrom.server.runners.fakes.ALICE
 import run.ostrom.server.runners.fakes.testIdentities
 import run.ostrom.server.runners.fakes.session
+import run.ostrom.server.runners.infrastructure.SettingsAllowedOrgs
 import run.ostrom.server.runners.infrastructure.TENANT_ROLE
 import run.ostrom.server.runners.infrastructure.inTenant
 import run.ostrom.server.runners.presentation.CloudSessionResponse
@@ -42,6 +46,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
+import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -55,6 +60,17 @@ import kotlin.uuid.Uuid
 /** Against a real PostgreSQL: the repository's SQL and the routes, with a fake identity. */
 class CloudSessionsPostgresTest {
     private val identities = testIdentities
+
+    /** No plan caps the agents at once since 14/11/2026: a cap of five, to see the route answer 402 past it. */
+    private val cappedAtFive = module {
+        includes(identities)
+        single<CloudPlanProvider> {
+            val capped = object : CloudPlanProvider {
+                override suspend fun planFor(orgId: Uuid): CloudPlan = CloudPlan.FREE.copy(maxRunningSessions = 5)
+            }
+            AllowlistedCloudPlanProvider(SettingsAllowedOrgs(get()), capped)
+        }
+    }
 
     private val t0 = Instant.parse("2026-10-30T10:00:00Z")
 
@@ -384,7 +400,7 @@ class CloudSessionsPostgresTest {
     }
 
     @Test
-    fun routesMapRefusalsToStatuses() = serverTest(listOf(RunnersModule), identities) { server ->
+    fun routesMapRefusalsToStatuses() = serverTest(listOf(RunnersModule), cappedAtFive) { server ->
         val bad = server.client.post("/api/v1/cloud/sessions") {
             bearerAuth("alice")
             contentType(ContentType.Application.Json)
