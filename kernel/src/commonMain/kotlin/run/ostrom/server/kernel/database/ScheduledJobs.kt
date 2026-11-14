@@ -12,7 +12,7 @@ import kotlin.time.Duration.Companion.minutes
 /**
  * Runs the periodic job [name] on one replica at a time ([ScheduledWork.runDue]) until the calling coroutine is
  * cancelled: after a run here, it waits [interval]; while the job is not due or another replica holds it, it asks
- * again every [poll]. A run that fails or overruns its [timeout] is logged as [failure] (the error's type only, never
+ * again every minute (every [interval] when shorter). A run that fails or overruns its [timeout] is logged as [failure] (the error's type only, never
  * its message: PostgreSQL quotes row values in it), and the next one runs at its time: a periodic job never stops the
  * server.
  *
@@ -21,7 +21,6 @@ import kotlin.time.Duration.Companion.minutes
  * @param timeout The longest a run may take (at most 5 minutes).
  * @param logger Where a failed run is reported.
  * @param failure The warning a failed run logs.
- * @param poll How often to ask while the job is not due here: the interval, at most a minute.
  * @param block The work.
  */
 suspend fun ScheduledWork.repeatDue(
@@ -30,9 +29,9 @@ suspend fun ScheduledWork.repeatDue(
     timeout: Duration,
     logger: Logger,
     failure: String,
-    poll: Duration = minOf(interval, 1.minutes),
     block: suspend () -> Unit,
 ): Nothing {
+    val poll = minOf(interval, 1.minutes)
     while (true) {
         val ran = try {
             runDue(name, interval, timeout, block)

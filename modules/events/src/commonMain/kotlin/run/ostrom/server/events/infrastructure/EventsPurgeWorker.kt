@@ -21,12 +21,14 @@ import kotlin.time.Duration.Companion.seconds
  * @param clock The time.
  * @param logger Where a failed pass is reported (its type only).
  * @param interval The pause between two passes.
+ * @param timeout The longest a pass may take.
  */
 class EventsPurgeWorker(
     private val events: OrgEventsRepository,
     private val clock: Clock,
     private val logger: Logger,
     private val interval: Duration = 1.minutes,
+    private val timeout: Duration = 45.seconds,
 ) {
     /**
      * Runs passes until the calling coroutine is cancelled.
@@ -34,7 +36,7 @@ class EventsPurgeWorker(
      * @param work The lease of the job, `events/purge`.
      */
     suspend fun run(work: ScheduledWork = EveryCallScheduledWork): Nothing =
-        work.repeatDue("events/purge", interval, PASS_TIMEOUT, logger, "events purge failed") { pass() }
+        work.repeatDue("events/purge", interval, timeout, logger, "events purge failed") { pass() }
 
     /** One pass: a batch of old events deleted; a failure is logged and the next pass tries again. */
     suspend fun pass() {
@@ -49,8 +51,5 @@ class EventsPurgeWorker(
 
     private companion object {
         const val BATCH = 1_000
-
-        /** The longest a pass may take. */
-        val PASS_TIMEOUT: Duration = 45.seconds
     }
 }

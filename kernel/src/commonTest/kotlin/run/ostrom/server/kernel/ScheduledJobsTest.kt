@@ -29,10 +29,10 @@ import kotlin.time.Duration.Companion.seconds
 /** The loop that runs a periodic job on one replica at a time ([repeatDue]), on a scripted lease. */
 class ScheduledJobsTest {
     private class Lines : Logger {
-        val lines = mutableListOf<Pair<String, Map<String, Any?>>>()
+        val said = mutableListOf<Pair<String, Map<String, Any?>>>()
 
         override fun log(level: LogLevel, message: String, fields: Map<String, Any?>, error: Throwable?) {
-            lines += message to fields
+            said += message to fields
         }
 
         override fun with(fields: Map<String, Any?>): Logger = this
@@ -96,7 +96,7 @@ class ScheduledJobsTest {
         val type = { error: String ->
             "sweep failed" to mapOf<String, Any?>("job" to "sessions/sweep", "error" to error)
         }
-        assertEquals(listOf(type("IllegalStateException"), type("TimeoutCancellationException")), lines.lines)
+        assertEquals(listOf(type("IllegalStateException"), type("TimeoutCancellationException")), lines.said)
         job.cancel()
     }
 
