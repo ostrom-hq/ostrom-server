@@ -14,6 +14,8 @@ import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
+import org.jetbrains.exposed.v1.core.Column
+import org.jetbrains.exposed.v1.core.Expression
 import org.jetbrains.exposed.v1.core.JoinType
 import org.jetbrains.exposed.v1.core.Op
 import org.jetbrains.exposed.v1.core.ResultRow
@@ -100,7 +102,7 @@ class AuditRepositoryImpl(private val database: JdbcDatabase) : AuditRepository 
     override suspend fun listOrg(orgId: Uuid, query: OrgAuditQuery): List<ChainedAuditEvent> {
         val page = OrgAuditPage(orgId, query)
         return database.inOrg(orgId) {
-            page.query().map { row -> ChainedAuditEvent(row.toEvent(), page.predecessorHash(row)) }
+            page.query().map { row -> ChainedAuditEvent(page.event(row), page.predecessorHash(row)) }
         }
     }
 }
@@ -112,72 +114,96 @@ private val IdentityAuditEvents.read
         keyId,
     )
 
-private fun ResultRow.toEvent(): AuditEvent {
+private fun ResultRow.toEvent(): AuditEvent = toEvent(ColumnsOf.TABLE)
+
+/** Where a read finds the event's columns: the table's own, or a subquery's that selected them ([OrgAuditPage]). */
+private interface ColumnsOf {
+    operator fun <T> get(column: Column<T>): Expression<T>
+
+    /** The table's own columns. */
+    object TABLE : ColumnsOf {
+        override fun <T> get(column: Column<T>): Expression<T> = column
+    }
+}
+
+private fun ResultRow.toEvent(at: ColumnsOf): AuditEvent {
     val t = IdentityAuditEvents
     return AuditEvent(
-        id = this[t.id],
-        sequence = this[t.sequence],
+        id = this[at[t.id]],
+        sequence = this[at[t.sequence]],
         entry = AuditEntry(
-            orgId = this[t.orgId],
-            actorId = this[t.actorId],
-            action = this[t.action],
-            targetType = this[t.targetType],
-            targetId = this[t.targetId],
-            details = DETAILS_JSON.decodeFromString(DETAILS, this[t.details]),
+            orgId = this[at[t.orgId]],
+            actorId = this[at[t.actorId]],
+            action = this[at[t.action]],
+            targetType = this[at[t.targetType]],
+            targetId = this[at[t.targetId]],
+            details = DETAILS_JSON.decodeFromString(DETAILS, this[at[t.details]]),
         ),
-        occurredAt = this[t.occurredAt],
-        previousHash = this[t.previousHash],
-        hash = this[t.hash],
-        signature = this[t.signature],
-        keyId = this[t.keyId],
+        occurredAt = this[at[t.occurredAt]],
+        previousHash = this[at[t.previousHash]],
+        hash = this[at[t.hash]],
+        signature = this[at[t.signature]],
+        keyId = this[at[t.keyId]],
     )
 }
 
 /**
  * The read of `GET /api/v1/audit`: an organization's lines, newest first, each with the hash of the line before it in
- * the chain (`sequence - 1`) whatever the filters, so its link can be checked. That hash comes from a `LATERAL` read of
- * the nearest earlier line of the same chain (`q.sequence < sequence ORDER BY q.sequence DESC LIMIT 1`), run only for
- * the lines of the page, each one step backwards in the unique index `(chain, sequence)`; it counts only if that line
- * is `sequence - 1` ([predecessorHash]), so a gap gives no predecessor. A join let the planner read and materialize the
- * whole chain for every page (1.5 s at p95 over 10 000 lines, IdentityReadsBenchTest). An equality on `sequence - 1`
- * reached the index on the PostgreSQL 17 image of 2026-11-09 only: under row-level security, 17.12 (image of
- * 2026-11-13) leaves that computed comparison out of the index condition and scans the table for each line of the
- * page, while a plain `<` between the two columns stays an index condition. Only the filters asked for are in the
- * SQL, each value bound.
+ * the chain (`sequence - 1`) whatever the filters, so its link can be checked.
+ *
+ * The page is read first, alone, in a subquery (`e`: its filters, its order, its limit), then each of its lines reads
+ * its predecessor in a `LATERAL` subquery (`p`: the nearest earlier line of the same chain, `q.sequence < e.sequence
+ * ORDER BY q.sequence DESC LIMIT 1`, one step backwards in the unique index `(chain, sequence)`), which counts only if
+ * that line is `sequence - 1` ([predecessorHash]), so a gap gives no predecessor. The limit comes before the lateral
+ * read by construction: with the page's filters in the same query as the lateral read, the organization filter and
+ * row-level security made the planner expect 49 rows of 4 999, sort after the join, and run the lateral read once per
+ * line older than the cursor (once per line of the chain for `?before=` deep in it, IdentityReadsBenchTest).
+ * A plain join read and materialized the whole chain (1.5 s at p95 over 10 000 lines); an equality on `sequence - 1`
+ * left the index condition under row-level security on PostgreSQL 17.12, while a plain `<` between the two columns
+ * stays one. Only the filters asked for are in the SQL, each value bound.
  *
  * @param orgId The organization.
  * @param filters The filters, the page's cursor and its size.
  */
 internal class OrgAuditPage(private val orgId: Uuid, private val filters: OrgAuditQuery) {
     private val t = IdentityAuditEvents
+    private val page = run {
+        var where: Op<Boolean> = (t.chain eq orgId.toString()) and (t.orgId eq orgId) and
+            (t.sequence less (filters.beforeSequence ?: Long.MAX_VALUE))
+        filters.actorId?.let { actor -> where = where and (t.actorId eq actor) }
+        filters.action?.let { action -> where = where and (t.action eq action) }
+        t.select(t.read + t.chain)
+            .where { where }
+            .orderBy(t.sequence, SortOrder.DESC)
+            .limit(filters.limit)
+            .alias("e")
+    }
     private val q = t.alias("q")
     private val prior = q.select(q[t.sequence], q[t.hash])
-        .where { (q[t.chain] eq t.chain) and (q[t.sequence] less t.sequence) }
+        .where { (q[t.chain] eq page[t.chain]) and (q[t.sequence] less page[t.sequence]) }
         .orderBy(q[t.sequence], SortOrder.DESC)
         .limit(1)
         .alias("p")
     private val priorSequence = prior[q[t.sequence]]
     private val priorHash = prior[q[t.hash]]
+    private val columns = object : ColumnsOf {
+        override fun <T> get(column: Column<T>): Expression<T> = page[column]
+    }
 
     /** The page's query, to run in the organization. */
-    fun query(): Query {
-        var where: Op<Boolean> = (t.chain eq orgId.toString()) and (t.orgId eq orgId) and
-            (t.sequence less (filters.beforeSequence ?: Long.MAX_VALUE))
-        filters.actorId?.let { actor -> where = where and (t.actorId eq actor) }
-        filters.action?.let { action -> where = where and (t.action eq action) }
-        return t.join(prior, JoinType.LEFT, lateral = true, additionalConstraint = { Op.TRUE })
-            .select(t.read + listOf(priorSequence, priorHash))
-            .where { where }
-            .orderBy(t.sequence, SortOrder.DESC)
-            .limit(filters.limit)
-    }
+    fun query(): Query = page.join(prior, JoinType.LEFT, lateral = true, additionalConstraint = { Op.TRUE })
+        .select(t.read.map { page[it] } + listOf(priorSequence, priorHash))
+        .orderBy(page[t.sequence], SortOrder.DESC)
+
+    /** The event of [row]. */
+    fun event(row: ResultRow): AuditEvent = row.toEvent(columns)
 
     /**
      * The hash of the line just before [row]'s in its chain, or null when that line is missing (a gap, or the first
      * line: the left join then reads nulls, hence `getOrNull`).
      */
     fun predecessorHash(row: ResultRow): String? =
-        row.getOrNull(priorHash).takeIf { row.getOrNull(priorSequence) == row[t.sequence] - 1 }
+        row.getOrNull(priorHash).takeIf { row.getOrNull(priorSequence) == row[page[t.sequence]] - 1 }
 }
 
 /** The last event of a chain: what the next one is chained to. */

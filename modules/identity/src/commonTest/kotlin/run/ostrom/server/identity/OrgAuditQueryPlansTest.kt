@@ -14,7 +14,8 @@ import kotlin.uuid.Uuid
  * The read of `GET /api/v1/audit` under `EXPLAIN ANALYZE`, as the route runs it (`inOrg`: the tenant role, row-level
  * security), over a log where the organization read holds 5 000 lines and another one 20 000: the page walks the
  * unique index `(chain, sequence)` backwards and finds the line before each one through the same index, never a scan
- * of the table. The plans are printed in the test's output.
+ * of the table, nor a sort of the chain read whole (the statistics of IdentityMigrations version 19). The plans are
+ * printed in the test's output.
  */
 class OrgAuditQueryPlansTest {
     private val orgA = Uuid.parse("00000000-0000-4000-8000-0000000000a2")
@@ -51,10 +52,23 @@ class OrgAuditQueryPlansTest {
             assertTrue("identity_audit_events_chain_sequence_key" in plan, "$name skips the chain's index:\n$plan")
             // The line before each one is looked up for the page's lines only, never the chain read whole.
             assertFalse("Materialize" in plan || "Join Filter" in plan, "$name reads the whole chain:\n$plan")
+            // The page is cut before the lateral read: it runs once per line of the page, never once per line older
+            // than the cursor.
+            val loops = checkNotNull(LOOPS.findAll(plan).maxOfOrNull { it.groupValues[1].toInt() }) {
+                "$name has no loops: is the plan ANALYZEd?\n$plan"
+            }
+            assertTrue(loops <= PAGE + 1, "$name reads the line before $loops lines, not the page's:\n$plan")
+        }
+        // Without a filter the page walks the chain's index backwards and stops at its limit, never sorting the chain
+        // read whole (IdentityMigrations version 19 tells the planner that the chain decides the organization).
+        for (name in listOf("newest page", "page by its cursor")) {
+            val plan = plans.getValue(name)
+            assertFalse("Sort" in plan, "$name sorts the chain:\n$plan")
         }
     }
 
     private companion object {
         const val PAGE = 50
+        val LOOPS = Regex("loops=(\\d+)")
     }
 }
