@@ -63,7 +63,9 @@ due, waits its interval after a run and asks again every minute at most while an
 failed or overrunning run by its type only. The jobs on it: `mcp/purge` (hourly) and `mcp/retain` (each minute),
 `identity/purge`, `launches/purge` and `usage/purge` (hourly), `events/purge` (each minute), `sessions/sweep`
 (every 30 s), and the notification router's `notifications/deliver` (every second: the journal's new events become
-rows of `notifications_deliveries`, then the due ones are sent) and `notifications/maintain` (each minute).
+rows of `notifications_deliveries`, then up to 50 due ones are sent, each organization with deliveries due given an
+even share of them before any takes more, so one organization's burst never holds the others back) and
+`notifications/maintain` (each minute).
 
 The kernel binds, for every module: `Logger`, `JdbcDatabase` (Exposed over the HikariCP pool), `Driver` (sqlx4k, for
 the modules not yet on Exposed), `InstanceSigner`, `kotlin.time.Clock`,

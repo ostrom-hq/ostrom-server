@@ -205,6 +205,13 @@ object DeliveryRules {
     /** The deliveries a pass attempts. */
     const val BATCH: Int = 50
 
+    /**
+     * @param orgs The organizations with deliveries due in a pass.
+     *
+     * @return The deliveries each may claim before any claims more: an even part of the [BATCH], at least one.
+     */
+    fun fairShare(orgs: Int): Int = maxOf(1, BATCH / maxOf(1, orgs))
+
     /** The rows of each kind a maintenance pass gives up or deletes. */
     const val MAINTAIN_BATCH: Int = 1_000
 

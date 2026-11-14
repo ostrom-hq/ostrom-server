@@ -26,9 +26,11 @@ import kotlin.uuid.Uuid
  * queues one delivery per event, member and channel with the cursor's move. The attempts send one batch per
  * organization and channel, together, each under its deadline: a slow provider delays neither the others nor its own
  * backoff. One organization's failure is logged and skipped, so it never holds the others' notifications back. A
- * delivery about a wait answered or withdrawn since is not sent (`wait_closed`). The same pass routes the requests for
- * a yes ([ApprovalRouter]): queued with the page, attempted with the batch, and not sent once their gate is decided or
- * their approver no longer asked (`gate_decided`).
+ * delivery about a wait answered or withdrawn since is not sent (`wait_closed`). Each organization with deliveries due
+ * is given its share of the pass's batch before any takes more (TeamCode claims the batch across teams, the oldest due
+ * first: one team's burst there delays the others). The same pass routes the requests for a yes ([ApprovalRouter]):
+ * queued with the page, attempted with the batch, and not sent once their gate is decided or their approver no longer
+ * asked (`gate_decided`).
  *
  * @param journal The organizations' event journal.
  * @param waits The waits the events name.
@@ -60,14 +62,29 @@ class DeliverNotificationsUseCaseImpl(
         val now = clock.now()
         val due = mutableListOf<NotificationDelivery>()
         val asks = mutableListOf<Pair<ApprovalDelivery, GateSummary>>()
-        for (org in deliveries.workingOrgs(now, DeliveryRules.ORGS_PER_PASS)) {
-            val room = DeliveryRules.BATCH - due.size - asks.size
+        // The rows claimed, sent or not (one about a closed wait is failed unsent): the batch bounds the claims.
+        var taken = 0
+        suspend fun claim(org: Uuid, limit: Int): Boolean = guarded(CLAIM_FAILED, false) {
+            val claimed = deliveries.claimDue(org, limit, now, LEASE)
+            taken += claimed.size
+            due += stillOpen(org, claimed.filterIsInstance<NotificationDelivery>())
+            asks += stillAsked(org, claimed.filterIsInstance<ApprovalDelivery>())
+            claimed.size >= limit
+        }
+        val orgs = deliveries.workingOrgs(now, DeliveryRules.ORGS_PER_PASS)
+        // Each organization's share first, the longest waiting first, so one organization's burst never fills the
+        // batch while others wait; the room left then goes to those that filled their share, in the same order.
+        val share = DeliveryRules.fairShare(orgs.size)
+        val more = mutableListOf<Uuid>()
+        for (org in orgs) {
+            val room = DeliveryRules.BATCH - taken
             if (room <= 0) break
-            guarded(CLAIM_FAILED, Unit) {
-                val claimed = deliveries.claimDue(org, room, now, LEASE)
-                due += stillOpen(org, claimed.filterIsInstance<NotificationDelivery>())
-                asks += stillAsked(org, claimed.filterIsInstance<ApprovalDelivery>())
-            }
+            if (claim(org, minOf(share, room))) more += org
+        }
+        for (org in more) {
+            val room = DeliveryRules.BATCH - taken
+            if (room <= 0) break
+            claim(org, room)
         }
         val offered = channels().associateBy { it.id }
         // The sends run together and only return results: the records follow, one failing record losing no other.

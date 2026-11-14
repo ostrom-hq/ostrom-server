@@ -84,6 +84,9 @@ class MemoryDeliveries : NotificationDeliveriesRepository {
     val maintained = mutableListOf<List<Instant>>()
     val deleted = mutableListOf<Uuid>()
 
+    /** Each claim: the organization and the most it asked for. */
+    val claims = mutableListOf<Pair<Uuid, Int>>()
+
     /** The organizations refusing their page (another replica queued it). */
     var refused: Set<Uuid> = emptySet()
 
@@ -111,6 +114,7 @@ class MemoryDeliveries : NotificationDeliveriesRepository {
         now: Instant,
         lease: Duration,
     ): List<QueuedDelivery> {
+        claims += orgId to limit
         check(orgId !in failingClaims) { "The database is down" }
         val rows = due.getValue(orgId)
         val claimed = rows.take(limit)
