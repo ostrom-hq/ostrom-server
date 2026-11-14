@@ -118,6 +118,24 @@ jobs:
           # Stripe's test mode only when the key is there.
           if [ -s "$RUNNER_TEMP/stripe-test.key" ]; then export OSTROM_DEMO_STRIPE_KEY_FILE="$RUNNER_TEMP/stripe-test.key"; fi
           helm/compose/demo/demo.sh up
+      # The JVM server takes seconds to listen, and its image has no HEALTHCHECK: `up --wait` calls it healthy as soon as
+      # it runs, so the journey used to start against a closed port (S0 502, every later step cascading). Wait for the
+      # two answers S0 checks, through Caddy; a server that never answers fails here, named, with its own logs.
+      - name: The stack answers through Caddy
+        run: |
+          deadline=$((SECONDS + 180))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            api=$(curl -fsS --max-time 3 http://api.localhost/health 2> /dev/null || true)
+            app=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://app.localhost/api/v1/health 2> /dev/null || true)
+            if printf %s "$api" | grep -q '"status":"ok"' && [ "$app" = 200 ]; then
+              echo "api /health $api, app /api/v1/health $app after ${SECONDS} s"
+              exit 0
+            fi
+            sleep 2
+          done
+          # The logs follow in "Logs on failure".
+          echo "::error::The server did not answer through Caddy within 180 s: api /health '${api}', app /api/v1/health ${app}"
+          exit 1
       - name: The customer's journey
         working-directory: helm/compose
         env:
