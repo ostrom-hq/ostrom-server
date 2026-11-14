@@ -28,7 +28,10 @@ class DefaultCompilerSources(
 
     override suspend fun repos(orgId: Uuid): List<String> = emptyList()
 
-    override suspend fun settings(orgId: Uuid): CompilerSettings = settings.read(orgId)?.settings ?: legacy
+    override suspend fun settings(orgId: Uuid): CompilerSettings = when (val stored = settings.read(orgId)) {
+        null -> legacy
+        else -> stored.settings
+    }
 
     /** The former instance-wide compile policy, read once at start. */
     companion object {

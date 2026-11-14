@@ -71,7 +71,7 @@ internal fun StoredCompilerSettings?.toResponse(): CompilerSettingsResponse {
         pin = if (settings?.manualPin == true) CompilerSettingsUseCaseImpl.MANUAL else CompilerSettingsUseCaseImpl.AUTO,
         codePublishers = settings?.codePublishers,
         prodApprover = settings?.prodApprover,
-        updatedAt = this?.updatedAt?.toString(),
+        updatedAt = if (this == null) null else updatedAt.toString(),
         updatedBy = this?.updatedBy,
     )
 }
