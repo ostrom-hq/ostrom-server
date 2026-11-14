@@ -25,5 +25,9 @@ object KnownDrifts {
         // A person outside any organization is answered 404: ostrom-core declares it when it marks these served.
         "getCompilerSettings 404 \$ STATUS" to "the 404 outside an organization, declared in ostrom-core next",
         "saveCompilerSettings 404 \$ STATUS" to "the 404 outside an organization, declared in ostrom-core next",
+        // Met once gradle/ostrom-core.ref passed ostrom-core#232 (the runner's environment served): a server without
+        // the organizations module answers 404 without the JSON body the contract declares.
+        "fetchRunnerEnvironment 404 \$ BODY" to "the bodiless 404 without the organizations module",
+        "reportRunnerPreparation 404 \$ BODY" to "the bodiless 404 without the organizations module",
     )
 }

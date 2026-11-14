@@ -329,6 +329,8 @@ class ListBoundsPostgresTest {
             "listCloudClusters" to 403,
             "listInstanceAdmins" to 403,
             "listInstanceSettings" to 403,
+            // The memory search needs its terms (`q`), which the walk does not give.
+            "searchMemory" to 400,
         )
 
         /**
@@ -343,6 +345,7 @@ class ListBoundsPostgresTest {
             "listChecks",
             "listCloudSessions",
             "listMcpCalls",
+            "listMemory",
             "listNotifications",
             "listRepos",
             "listSessions",
