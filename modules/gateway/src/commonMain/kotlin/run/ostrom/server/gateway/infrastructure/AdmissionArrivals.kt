@@ -80,6 +80,7 @@ private fun GatewayAdmissions.arrival(it: InsertStatement<Number>, request: Admi
     it[memberId] = request.memberId
     it[scope] = request.scope
     it[workload] = request.workload.name
+    it[launchId] = request.launchId
     it[this.running] = running
     it[createdAt] = databaseNow()
     it[polledAt] = databaseNow()

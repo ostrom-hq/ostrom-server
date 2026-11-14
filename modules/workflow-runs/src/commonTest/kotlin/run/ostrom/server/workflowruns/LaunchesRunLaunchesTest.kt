@@ -4,6 +4,7 @@ package run.ostrom.server.workflowruns
 import run.ostrom.server.launches.domain.models.Launch
 import run.ostrom.server.launches.domain.models.LaunchLimit
 import run.ostrom.server.launches.domain.repositories.LaunchesRepository
+import run.ostrom.server.secrets.domain.LaunchCaps
 import run.ostrom.server.workflowruns.fakes.ORG
 import run.ostrom.server.workflowruns.fakes.STARTED
 import run.ostrom.server.workflowruns.infrastructure.LaunchesRunLaunches
@@ -39,6 +40,10 @@ class LaunchesRunLaunchesTest {
 
         override suspend fun find(orgId: Uuid, id: String): Launch? =
             stored.firstOrNull { it.orgId == orgId && it.id == id }
+
+        override suspend fun setCaps(orgId: Uuid, id: String, caps: LaunchCaps): Boolean = error("Never written here.")
+
+        override suspend fun labelsOf(orgId: Uuid, id: String): Map<String, String> = error("Never read here.")
 
         override suspend fun purge(before: Instant): Long = error("Never written here.")
 

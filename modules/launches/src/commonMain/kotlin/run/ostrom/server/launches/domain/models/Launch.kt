@@ -2,6 +2,7 @@
 package run.ostrom.server.launches.domain.models
 
 import run.ostrom.server.kernel.auth.OrgRole
+import run.ostrom.server.secrets.domain.LaunchCaps
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
@@ -24,6 +25,8 @@ import kotlin.uuid.Uuid
  *   runner reports the checks of its sessions as run by Ostrom.
  * @property workflowId The workflow it plays (`createLaunch.workflowId`), or null: every model call of its sessions
  *   counts under that workflow.
+ * @property labels The labels it was started with (`createLaunch.labels`), fixed at start.
+ * @property caps The limits an administrator set on it (`setLaunchLimits`): none until then.
  */
 data class Launch(
     val id: String,
@@ -37,6 +40,8 @@ data class Launch(
     val expiresAt: Instant,
     val cloudSessionId: Uuid? = null,
     val workflowId: String? = null,
+    val labels: Map<String, String> = emptyMap(),
+    val caps: LaunchCaps = LaunchCaps(),
 )
 
 /**
@@ -57,6 +62,7 @@ data class Launcher(val orgId: Uuid, val userId: Uuid, val login: String, val ro
  * @property model The model, or null.
  * @property cloudSessionId The cloud session whose runner asks for it, or null for the CLI.
  * @property workflowId The workflow it plays, one of the organization's, or null.
+ * @property labels Its labels, checked by [run.ostrom.server.kernel.launches.LaunchLabelRules].
  */
 data class NewLaunch(
     val repo: String?,
@@ -64,6 +70,7 @@ data class NewLaunch(
     val model: String?,
     val cloudSessionId: Uuid? = null,
     val workflowId: String? = null,
+    val labels: Map<String, String> = emptyMap(),
 )
 
 /**
@@ -119,3 +126,11 @@ data class LaunchLimit(val window: Duration, val perPerson: Int, val perOrg: Int
         val DEFAULT: LaunchLimit = LaunchLimit(window = 1.hours, perPerson = 60, perOrg = 600)
     }
 }
+
+/**
+ * A launch's limits and what it spent (contract `LaunchLimits`).
+ *
+ * @property caps The limits in force.
+ * @property spentMicros What the launch's model calls cost so far, USD millionths.
+ */
+data class LaunchLimitsView(val caps: LaunchCaps, val spentMicros: Long)

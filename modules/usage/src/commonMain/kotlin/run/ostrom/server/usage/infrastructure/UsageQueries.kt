@@ -33,11 +33,11 @@ internal object UsageQueries {
 
     /**
      * A call's hold, replaced when it asks again (its first time kept): `:call_id`, `:org_id`, `:member_id`,
-     * `:workflow_id`, `:micros`, `:expires_at`, `:now`.
+     * `:workflow_id`, `:launch_id`, `:micros`, `:expires_at`, `:now`.
      */
     const val PUT_HOLD: String =
-        "INSERT INTO usage_holds (call_id, org_id, member_id, workflow_id, micros, expires_at, held_at) " +
-        "VALUES (:call_id, :org_id, :member_id, :workflow_id, :micros, :expires_at, :now) " +
+        "INSERT INTO usage_holds (call_id, org_id, member_id, workflow_id, launch_id, micros, expires_at, held_at) " +
+        "VALUES (:call_id, :org_id, :member_id, :workflow_id, :launch_id, :micros, :expires_at, :now) " +
         "ON CONFLICT (call_id) DO UPDATE SET micros = EXCLUDED.micros, expires_at = EXCLUDED.expires_at"
 
     /** The hold a recorded call settles: `:call_id`. */
@@ -82,6 +82,7 @@ internal object UsageQueries {
         memberDay: Boolean,
         workflow: Boolean = false,
         workflowDay: Boolean = false,
+        launch: Boolean = false,
     ): String {
         val mine = " AND member_id = :member_id"
         val its = " AND workflow_id = :workflow_id"
@@ -95,11 +96,22 @@ internal object UsageQueries {
             Triple("workflow_spent", workflow, spent(":since", its)),
             Triple("workflow_held", workflow || workflowDay, held(its)),
             Triple("workflow_day_spent", workflowDay, spent(":day_since", its)),
+            Triple("launch_spent", launch, launchSpent()),
+            Triple("launch_held", launch, held(" AND launch_id = :launch_id")),
         )
         return "SELECT " + columns.joinToString(", ") { (name, read, sum) ->
             (if (read) "CAST($sum AS BIGINT)" else "CAST(0 AS BIGINT)") + " AS $name"
         }
     }
+
+    /**
+     * What a launch spent over its life (at most [LAUNCH_LIFE_HOURS] hours): its recorded events since
+     * `:launch_since`, plus what its calls never recorded held then (`:org_id`, `:launch_id`, `:now`).
+     */
+    private fun launchSpent() = "COALESCE((SELECT SUM(cost_micros) FROM usage_events WHERE org_id = :org_id " +
+        "AND launch_id = :launch_id AND at >= :launch_since), 0) + " +
+        "COALESCE((SELECT SUM(micros) FROM usage_holds WHERE org_id = :org_id AND launch_id = :launch_id " +
+        "AND held_at >= :launch_since AND expires_at <= :now), 0)"
 
     /** What the other calls in flight hold at `:now` ([filter] on them). */
     private fun held(filter: String) = "COALESCE((SELECT SUM(micros) FROM usage_holds WHERE org_id = :org_id " +
@@ -123,6 +135,9 @@ internal object UsageQueries {
             "COALESCE((SELECT SUM(cost_micros) FROM usage_events WHERE org_id = :org_id AND at >= $since " +
             "AND at < (CAST($firstDay AS TIMESTAMP) AT TIME ZONE 'UTC')$filter), 0)"
     }
+
+    /** How long a launch lives, plus a margin: its lifetime spend is read from this far back. */
+    const val LAUNCH_LIFE_HOURS: Long = 26
 
     /** The account's spend since `:since`: `:org_id`, `:account_id`, `:since`. */
     const val ACCOUNT_SPENT: String =

@@ -4,6 +4,7 @@ package run.ostrom.server.launches
 import run.ostrom.server.identity.domain.MAX_AGENT_TOKEN_LIFETIME
 import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.errors.ErrorKind
+import run.ostrom.server.kernel.launches.InvalidLabelException
 import run.ostrom.server.launches.domain.models.HooksCheck
 import run.ostrom.server.launches.domain.models.InvalidLaunchException
 import run.ostrom.server.launches.domain.models.LaunchLimit
@@ -95,6 +96,20 @@ class CreateLaunchTest {
         assertEquals("Too many launches: try again in 91 s.", refused.message)
         assertEquals(1, launches.launches.size)
         assertEquals(1, tokens.issued.size, "Only the launch that was stored has a token")
+    }
+
+    @Test
+    fun aLaunchKeepsItsLabelsAndARefusedLabelStoresNothing() = runTest {
+        val labels = mapOf("task" to "1234", "team" to "payments")
+        val created = create(ADA, NewLaunch("acme/api", "codex", null, labels = labels)).launch
+        assertEquals(labels, created.labels)
+        assertEquals(labels, launches.labelsOf(ORG, created.id))
+        assertEquals(emptyMap(), create(ADA, NewLaunch(null, "codex", null)).launch.labels)
+        val refused = assertFailsWith<InvalidLabelException> {
+            create(ADA, NewLaunch(null, "codex", null, labels = mapOf("Task" to "1")))
+        }
+        assertEquals("invalid_label", refused.type)
+        assertEquals(2, launches.launches.size)
     }
 
     @Test

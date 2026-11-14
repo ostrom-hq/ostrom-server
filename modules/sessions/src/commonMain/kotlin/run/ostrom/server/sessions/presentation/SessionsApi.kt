@@ -15,6 +15,7 @@ import kotlinx.serialization.json.JsonObject
  * @property open Only the open (true) or ended (false) ones.
  * @property before The cursor of the previous page.
  * @property limit At most this many.
+ * @property label `key=value`, repeatable: only the sessions whose launch carries every label given.
  */
 @Serializable
 @Resource("/api/v1/sessions")
@@ -24,6 +25,7 @@ class SessionsApi(
     val open: Boolean? = null,
     val before: String? = null,
     val limit: Int? = null,
+    val label: List<String>? = null,
 ) {
     /**
      * One segment.
@@ -94,6 +96,7 @@ class SessionsApi(
  * @property lost True when closed for lack of a sign of life: its launcher reopens a segment.
  * @property activity `working` or `waiting_for_human`, only while the segment is open.
  * @property activitySince When [activity] began.
+ * @property labels The labels of its launch, absent when it has none.
  */
 @Serializable
 data class SessionDto(
@@ -126,6 +129,7 @@ data class SessionDto(
     val lost: Boolean? = null,
     val activity: String? = null,
     val activitySince: String? = null,
+    val labels: Map<String, String>? = null,
 )
 
 /**

@@ -10,6 +10,7 @@ import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.database.repeatDue
 import run.ostrom.server.kernel.database.scheduledWork
 import run.ostrom.server.kernel.logging.Logger
+import run.ostrom.server.kernel.launches.LaunchSpend
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.settings.InstanceSettings
 import run.ostrom.server.kernel.settings.SettingsSection
@@ -38,6 +39,7 @@ import run.ostrom.server.usage.domain.UsageSummaryUseCaseImpl
 import run.ostrom.server.usage.domain.WatchUsageUseCase
 import run.ostrom.server.usage.domain.WatchUsageUseCaseImpl
 import run.ostrom.server.usage.infrastructure.LedgerModelUsageSink
+import run.ostrom.server.usage.infrastructure.LedgerLaunchSpend
 import run.ostrom.server.usage.infrastructure.LedgerSessionCosts
 import run.ostrom.server.usage.infrastructure.ReplicatedUsageFeed
 import run.ostrom.server.usage.infrastructure.UsageFeedImpl
@@ -76,6 +78,7 @@ object UsageModule : ServerModule {
         // The ports of the gateway and the sessions, which fall back to dropping everything without this module.
         single<ModelUsageSink> { LedgerModelUsageSink(get()) }
         single<SessionCosts> { LedgerSessionCosts(get()) }
+        single<LaunchSpend> { LedgerLaunchSpend(get(), get()) }
         single<SpendReader> { SpendReaderImpl(get()) }
         single<SpendAdmission> { SpendAdmissionImpl(get(), get()) }
         single<IngestUsageEventsUseCase> { IngestUsageEventsUseCaseImpl(get(), get(), get()) }

@@ -5,10 +5,12 @@ import run.ostrom.core.telemetry.Attributes
 import run.ostrom.core.telemetry.metrics.MetricData
 import run.ostrom.server.gates.domain.models.ActorKind
 import run.ostrom.server.gates.domain.models.GateActor
+import run.ostrom.server.kernel.sessions.LaunchLabels
 import run.ostrom.server.sessions.domain.models.EndSession
 import run.ostrom.server.sessions.domain.models.InvalidSessionRequestException
 import run.ostrom.server.sessions.domain.models.NotYourSessionException
 import run.ostrom.server.sessions.domain.models.Session
+import run.ostrom.server.sessions.domain.models.SessionQuery
 import run.ostrom.server.sessions.domain.models.SessionClosedException
 import run.ostrom.server.sessions.domain.models.StartSession
 import run.ostrom.server.sessions.domain.usecases.SessionSegments
@@ -71,6 +73,25 @@ class StartSessionTest {
         assertEquals(named, bench.start(agent(), start.copy(packageDigest = "pkg-2")))
         assertEquals(named, bench.start(user(), start.copy(launchId = null)))
         assertEquals(1, bench.repository.rows.size)
+    }
+
+    @Test
+    fun aSegmentCarriesTheLabelsOfItsLaunchFromTheMomentItNamesIt() = runTest {
+        val bench = SessionBench(
+            LaunchLabels { _, launchId -> if (launchId == "launch-1") mapOf("task" to "1234") else emptyMap() },
+        )
+        assertEquals(mapOf("task" to "1234"), bench.start(agent(), start).labels)
+        assertEquals(emptyMap(), bench.start(user(), start.copy(id = "s-2", launchId = null)).labels, "No launch yet")
+        assertEquals(emptyMap(), bench.start(user("rev-b"), start.copy(id = "s-3")).labels, "Another launch's")
+        val named = bench.start(agent(), start.copy(id = "s-2"))
+        assertEquals(mapOf("task" to "1234"), named.labels, "The launcher names the segment its hook opened")
+        assertEquals(
+            listOf("s-2", "s-1"),
+            bench.list(user(), SessionQuery(labels = mapOf("task" to "1234"))).map { it.id }.sortedDescending(),
+        )
+        assertEquals(listOf("s-3"), bench.list(user("rev-b"), SessionQuery(labels = emptyMap())).map { it.id })
+        assertEquals(emptyList(), bench.list(user(), SessionQuery(labels = mapOf("task" to "9"))).map { it.id })
+        assertEquals(emptyMap(), SessionBench().start(agent(), start.copy(id = "s-4")).labels, "No directory, none")
     }
 
     @Test

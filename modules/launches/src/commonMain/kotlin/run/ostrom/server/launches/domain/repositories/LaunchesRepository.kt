@@ -3,6 +3,7 @@ package run.ostrom.server.launches.domain.repositories
 
 import run.ostrom.server.launches.domain.models.Launch
 import run.ostrom.server.launches.domain.models.LaunchLimit
+import run.ostrom.server.secrets.domain.LaunchCaps
 import kotlin.time.Duration
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -29,6 +30,27 @@ interface LaunchesRepository {
      * @return The launch, or null when it is not one of the organization's.
      */
     suspend fun find(orgId: Uuid, id: String): Launch?
+
+    /**
+     * Sets the limits of a launch.
+     *
+     * @param orgId The organization.
+     * @param id The launch.
+     * @param caps The new limits.
+     *
+     * @return Whether the launch exists in the organization.
+     */
+    suspend fun setCaps(orgId: Uuid, id: String, caps: LaunchCaps): Boolean
+
+    /**
+     * The labels of a launch.
+     *
+     * @param orgId The organization.
+     * @param id The launch.
+     *
+     * @return Its labels, empty for a launch without any or an unknown one.
+     */
+    suspend fun labelsOf(orgId: Uuid, id: String): Map<String, String>
 
     /**
      * The launches a cloud session's runner opened, one per execution, at most [limit]: the newest first.

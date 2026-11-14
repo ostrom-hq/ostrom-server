@@ -47,6 +47,14 @@ internal fun admissionRunning(orgId: Uuid, memberId: Uuid): Read<Int> {
     return Read(query) { it[running].toInt() }
 }
 
+/** The calls a launch runs now (`maxConcurrent` of `launches.limits.v1`). */
+internal fun admissionLaunchRunning(orgId: Uuid, launchId: String): Read<Int> {
+    val a = GatewayAdmissions
+    val running = a.id.count()
+    val query = a.select(running).where { (a.orgId eq orgId) and (a.launchId eq launchId) and (a.running eq true) }
+    return Read(query) { it[running].toInt() }
+}
+
 /**
  * The other calls of the scope that wait and may run: not blocked by their member's limit, and polled lately (a call
  * whose replica stopped never holds the turn for long), oldest first, with their member's last turn.

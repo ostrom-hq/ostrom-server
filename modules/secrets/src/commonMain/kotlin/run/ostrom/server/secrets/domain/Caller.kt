@@ -29,6 +29,8 @@ enum class MemberRole {
  *   credential: the journal and the usage events keep it, so an agent's call is told from the person's.
  * @property workflowId The workflow that launch plays (`createLaunch.workflowId`), or null: the model calls of an agent
  *   whose launch names a workflow count under it, for its budgets and its spending.
+ * @property caps The limits an administrator set on that launch (`PUT /launches/{launchId}/limits`), or null for a
+ *   launch without any: the gateway applies them to the launch's model calls, besides the member's own limits.
  */
 data class Caller(
     val orgId: Uuid,
@@ -36,6 +38,7 @@ data class Caller(
     val role: MemberRole,
     val launchId: String? = null,
     val workflowId: String? = null,
+    val caps: LaunchCaps? = null,
 ) {
     /**
      * Refuses a member who does not administer the org.
@@ -45,6 +48,19 @@ data class Caller(
     fun requireAdmin() {
         if (!role.isAdmin) throw AdminRequiredException()
     }
+}
+
+/**
+ * The limits of one launch (`launches.limits.v1`, TeamCode's run policy): additional caps on the model calls of its
+ * agent token, never a substitute for the member's own limits. Zero adds no cap.
+ *
+ * @property budgetMicros What the launch may spend over its life, USD millionths; 0 for no cap.
+ * @property maxConcurrent The most calls the launch runs at once; 0 for no cap.
+ * @property paused Whether the launch's next calls are refused.
+ */
+data class LaunchCaps(val budgetMicros: Long = 0, val maxConcurrent: Int = 0, val paused: Boolean = false) {
+    /** Whether any limit applies. */
+    val any: Boolean get() = budgetMicros > 0 || maxConcurrent > 0 || paused
 }
 
 /**

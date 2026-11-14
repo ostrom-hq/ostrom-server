@@ -21,6 +21,31 @@ class LaunchesApi
 class LaunchApi(val launchId: String)
 
 /**
+ * The limits of one launch (contract `getLaunchLimits` and `setLaunchLimits`).
+ *
+ * @property launchId The launch.
+ */
+@Serializable
+@Resource("/api/v1/launches/{launchId}/limits")
+class LaunchLimitsApi(val launchId: String)
+
+/**
+ * The limits of a launch, as the contract's `LaunchLimits`.
+ *
+ * @property budgetMicros What the launch may spend over its life, USD millionths; 0 for no cap.
+ * @property maxConcurrent The most calls it runs at once; 0 for no cap.
+ * @property paused Whether its next calls are refused.
+ * @property spentMicros On a read, what it spent so far; ignored on a write.
+ */
+@Serializable
+data class LaunchLimitsBody(
+    val budgetMicros: Long,
+    val maxConcurrent: Int,
+    val paused: Boolean,
+    val spentMicros: Long? = null,
+)
+
+/**
  * The CLI's report that no hook ran in a launch's session (contract `reportHooksMissing`, not in the contract yet).
  *
  * @property launchId The launch.
@@ -48,6 +73,7 @@ class AgentPolicyApi(val agent: String? = null, val dev: String? = null, val mod
  * @property agent The agent's name in Ostrom.
  * @property model The model.
  * @property workflowId The workflow the launch plays, one of the organization's.
+ * @property labels Its labels (`sessions.labels.v1`).
  */
 @Serializable
 data class CreateLaunchRequest(
@@ -55,6 +81,7 @@ data class CreateLaunchRequest(
     val agent: String,
     val model: String? = null,
     val workflowId: String? = null,
+    val labels: Map<String, String> = emptyMap(),
 )
 
 /**

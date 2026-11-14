@@ -6,14 +6,19 @@ import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.launches.domain.models.Launch
 import run.ostrom.server.launches.domain.models.LaunchLimit
 import run.ostrom.server.launches.domain.repositories.LaunchesRepository
+import run.ostrom.server.secrets.domain.LaunchCaps
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.Transaction
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
+import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.json.Json
 import kotlin.time.Duration
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -25,6 +30,7 @@ import kotlin.uuid.Uuid
  *
  * @param driver The connection pool.
  */
+@Suppress("TooManyFunctions") // One function per statement of the launches table.
 class PostgresLaunchesRepository(
     private val driver: Driver,
     private val clock: Clock = Clock.System,
@@ -70,7 +76,8 @@ class PostgresLaunchesRepository(
                 .bind("created_at", launch.createdAt)
                 .bind("expires_at", launch.expiresAt)
                 .cloud(launch.cloudSessionId)
-                .nullable("workflow_id", launch.workflowId),
+                .nullable("workflow_id", launch.workflowId)
+                .bind("labels", json.encodeToString(labelsSerializer, launch.labels)),
         ).getOrThrow()
     }
 
@@ -87,6 +94,17 @@ class PostgresLaunchesRepository(
         tx.fetchAll(Statement.create(FIND).bind("org_id", orgId).bind("id", id)).getOrThrow()
             .firstOrNull()?.toLaunch()
     }
+
+    override suspend fun setCaps(orgId: Uuid, id: String, caps: LaunchCaps): Boolean =
+        driver.withOrganization(orgId) { tx ->
+            tx.fetchAll(
+                Statement.create(SET_CAPS).bind("org_id", orgId).bind("id", id)
+                    .bind("budget_micros", caps.budgetMicros).bind("max_concurrent", caps.maxConcurrent)
+                    .bind("paused", caps.paused),
+            ).getOrThrow().firstOrNull() != null
+        }
+
+    override suspend fun labelsOf(orgId: Uuid, id: String): Map<String, String> = find(orgId, id)?.labels.orEmpty()
 
     override suspend fun ofCloudSession(orgId: Uuid, cloudSessionId: Uuid, limit: Int): List<String> =
         driver.withOrganization(orgId) { tx ->
@@ -113,13 +131,19 @@ class PostgresLaunchesRepository(
         expiresAt = get("expires_at").asInstant(),
         cloudSessionId = get("cloud_session_id").asUuidOrNull(),
         workflowId = get("workflow_id").asStringOrNull(),
+        labels = json.decodeFromString(labelsSerializer, get("labels").asString()),
+        caps = LaunchCaps(
+            get("budget_micros").asLong(),
+            get("max_concurrent").asString().toInt(),
+            get("paused").asBoolean(),
+        ),
     )
 
     /** The SQL of the repository, also read by the query plans test. */
     companion object {
         private val COLUMN_NAMES = listOf(
             "org_id", "id", "user_id", "dev", "repo", "agent", "model", "created_at", "expires_at",
-            "cloud_session_id", "workflow_id",
+            "cloud_session_id", "workflow_id", "labels",
         )
         private val COLUMNS = COLUMN_NAMES.joinToString(", ")
         private val VALUES = COLUMN_NAMES.joinToString(", ") { ":$it" }
@@ -137,7 +161,15 @@ class PostgresLaunchesRepository(
             "WHERE org_id = :org_id AND created_at > :since"
 
         /** A launch by its primary key. */
-        val FIND: String = "SELECT $COLUMNS FROM launches_launches WHERE org_id = :org_id AND id = :id"
+        val FIND: String = "SELECT $COLUMNS, budget_micros, max_concurrent, paused FROM launches_launches " +
+            "WHERE org_id = :org_id AND id = :id"
+
+        /** The limits of a launch; a row when the launch exists. */
+        const val SET_CAPS: String = "UPDATE launches_launches SET budget_micros = :budget_micros, " +
+            "max_concurrent = :max_concurrent, paused = :paused WHERE org_id = :org_id AND id = :id RETURNING id"
+
+        private val json = Json
+        private val labelsSerializer = MapSerializer(String.serializer(), String.serializer())
 
         /** The launches of a cloud session, newest first: the index on the cloud session. */
         const val OF_CLOUD_SESSION: String = "SELECT id FROM launches_launches WHERE org_id = :org_id " +
