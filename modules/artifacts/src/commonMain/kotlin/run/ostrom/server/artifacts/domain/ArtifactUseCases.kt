@@ -79,8 +79,17 @@ internal class PublishArtifactUseCaseImpl(
             linkSlug = linkSlugFor(checkedAccess),
             createdAt = now,
             updatedAt = now,
+            origin = caller.origin,
         )
-        val version = ArtifactVersion(id, 1, ArtifactRules.entry(files.map { it.path }), recorded, now, caller.memberId)
+        val version = ArtifactVersion(
+            artifactId = id,
+            number = 1,
+            entry = ArtifactRules.entry(files.map { it.path }),
+            files = recorded,
+            createdAt = now,
+            createdBy = caller.memberId,
+            origin = caller.origin,
+        )
         contents.write(caller.orgId, id, blobs)
         repository.create(artifact, version)
         gate.published(caller, artifact, now)
@@ -104,6 +113,7 @@ internal class PublishArtifactUseCaseImpl(
             files = recorded,
             createdAt = now,
             createdBy = caller.memberId,
+            origin = caller.origin,
         )
         // The contents go to the bucket first: a version is never recorded without them (a lost race leaves objects
         // the artifact's folder already holds, or that the collection removes).

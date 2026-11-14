@@ -5,6 +5,7 @@ import run.ostrom.server.artifacts.domain.Artifact
 import run.ostrom.server.artifacts.domain.ArtifactAccess
 import run.ostrom.server.artifacts.domain.ArtifactCaller
 import run.ostrom.server.artifacts.domain.ArtifactFile
+import run.ostrom.server.artifacts.domain.ArtifactOrigin
 import run.ostrom.server.artifacts.domain.ArtifactVersion
 import run.ostrom.server.artifacts.domain.ArtifactsRepository
 import io.github.smyrgeorge.sqlx4k.Driver
@@ -42,7 +43,7 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
                 Statement.create(
                     """
                     INSERT INTO artifacts_artifacts ($COLUMNS) VALUES (:id, :org_id, :owner_id, :title, :access,
-                    :latest_version, :link_slug, :created_at, :updated_at)
+                    :latest_version, :link_slug, :created_at, :updated_at, :origin_launch_id, :origin_session_id)
                     """,
                 ).bind("id", artifact.id)
                     .bind("org_id", artifact.orgId)
@@ -52,7 +53,9 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
                     .bind("latest_version", artifact.latestVersion)
                     .bind("link_slug", artifact.linkSlug)
                     .bind("created_at", artifact.createdAt)
-                    .bind("updated_at", artifact.updatedAt),
+                    .bind("updated_at", artifact.updatedAt)
+                    .bind("origin_launch_id", artifact.origin?.launchId)
+                    .bind("origin_session_id", artifact.origin?.cloudSessionId),
             ).getOrThrow()
             execute(
                 Statement.create(
@@ -226,9 +229,12 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
             Statement.create(
                 """
                 INSERT INTO artifacts_versions (org_id, $VERSION_COLUMNS) VALUES (:org_id, :id, :number, :entry,
-                :files, :created_at, :created_by, :digest, :base_version, :credential_id)
+                :files, :created_at, :created_by, :digest, :base_version, :credential_id, :origin_launch_id,
+                :origin_session_id)
                 """,
             ).bind("org_id", orgId)
+                .bind("origin_launch_id", version.origin?.launchId)
+                .bind("origin_session_id", version.origin?.cloudSessionId)
                 .bind("digest", version.digest)
                 .bind("base_version", version.baseVersion)
                 .bind("credential_id", version.credentialId)
@@ -251,7 +257,11 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
         linkSlug = get("link_slug").asStringOrNull(),
         createdAt = get("created_at").asInstant(),
         updatedAt = get("updated_at").asInstant(),
+        origin = originOf(get("origin_launch_id").asStringOrNull(), get("origin_session_id").asStringOrNull()),
     )
+
+    private fun originOf(launchId: String?, cloudSessionId: String?) =
+        launchId?.let { ArtifactOrigin(it, cloudSessionId) }
 
     /** Reads a stored access level; anything unexpected is read as the narrowest, `personal`. */
     private fun storedAccess(wire: String): ArtifactAccess = when (wire) {
@@ -271,6 +281,7 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
         digest = get("digest").asStringOrNull(),
         baseVersion = get("base_version").asIntOrNull(),
         credentialId = get("credential_id").asStringOrNull(),
+        origin = originOf(get("origin_launch_id").asStringOrNull(), get("origin_session_id").asStringOrNull()),
     )
 
     /** A file as stored in `artifacts_versions.files`. */
@@ -282,10 +293,12 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
         private val FILES = ListSerializer(FileRow.serializer())
 
         const val COLUMNS = """
-            id, org_id, owner_id, title, access, latest_version, link_slug, created_at, updated_at
+            id, org_id, owner_id, title, access, latest_version, link_slug, created_at, updated_at, origin_launch_id,
+            origin_session_id
         """
         const val VERSION_COLUMNS = """
-            artifact_id, number, entry, files, created_at, created_by, digest, base_version, credential_id
+            artifact_id, number, entry, files, created_at, created_by, digest, base_version, credential_id,
+            origin_launch_id, origin_session_id
         """
     }
 }

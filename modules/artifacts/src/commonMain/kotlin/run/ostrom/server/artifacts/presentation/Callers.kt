@@ -2,6 +2,7 @@
 package run.ostrom.server.artifacts.presentation
 
 import run.ostrom.server.artifacts.domain.ArtifactCaller
+import run.ostrom.server.artifacts.domain.ArtifactOrigin
 import run.ostrom.server.artifacts.domain.InvalidArtifactRequestException
 import run.ostrom.server.artifacts.domain.MissingScopeException
 import run.ostrom.server.artifacts.domain.NotAMemberException
@@ -43,7 +44,9 @@ fun AuthenticatedPrincipal.allowsArtifacts(scope: String): Boolean =
  */
 suspend fun PrincipalOrgResolver.artifactCallerOf(principal: AuthenticatedPrincipal, scope: String): ArtifactCaller {
     if (!principal.allowsArtifacts(scope)) throw MissingScopeException(scope)
-    val member = resolve(principal, null) ?: throw NotAMemberException()
+    // The origin of a publication is the agent token's launch, read here from the credential and nowhere else.
+    val agent = (this as? ArtifactOrgResolver)?.agentOf(principal, null)
+    val member = if (agent != null) agent.member else resolve(principal, null) ?: throw NotAMemberException()
     return ArtifactCaller(
         orgId = member.orgId,
         memberId = member.memberId.toString(),
@@ -52,6 +55,7 @@ suspend fun PrincipalOrgResolver.artifactCallerOf(principal: AuthenticatedPrinci
         subjectId = principal.subjectId,
         principal = principal,
         administrator = member.role == OrgRole.OWNER || member.role == OrgRole.ADMIN,
+        origin = agent?.let { ArtifactOrigin(it.launchId, it.cloudSessionId) },
     )
 }
 

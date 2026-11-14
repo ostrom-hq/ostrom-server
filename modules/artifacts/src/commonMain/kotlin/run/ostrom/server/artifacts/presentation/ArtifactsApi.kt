@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.artifacts.presentation
 
+import run.ostrom.server.artifacts.domain.ArtifactOrigin
 import run.ostrom.server.kernel.http.ErrorDetail
 import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
@@ -157,6 +158,7 @@ data class TicketRequest(val version: Int? = null)
  * @property publicUrl Its public link, for `link` access on a server that serves pages.
  * @property createdAt ISO 8601.
  * @property updatedAt ISO 8601.
+ * @property origin Where an agent created it, from its agent token; absent for a person's publication.
  */
 @Serializable
 data class ArtifactResponse(
@@ -170,7 +172,20 @@ data class ArtifactResponse(
     val publicUrl: String? = null,
     val createdAt: String,
     val updatedAt: String,
+    val origin: ArtifactOriginResponse? = null,
 )
+
+/**
+ * The launch an agent published from, taken from its agent token (core's `ArtifactOrigin`).
+ *
+ * @property launchId The launch whose agent token published.
+ * @property cloudSessionId The cloud session the launch was opened for; absent for `ostrom <agent>` on a machine.
+ */
+@Serializable
+data class ArtifactOriginResponse(val launchId: String, val cloudSessionId: String? = null)
+
+/** Maps an origin to the API. */
+internal fun ArtifactOrigin.toResponse() = ArtifactOriginResponse(launchId, cloudSessionId)
 
 /**
  * A page of artifacts.
@@ -192,6 +207,7 @@ data class ArtifactsResponse(val items: List<ArtifactResponse>, val next: String
  * @property digest The SHA-256 of its canonical manifest, for a version committed from an upload.
  * @property baseVersion The version its publisher started from, for a version committed from an upload.
  * @property replayed The same commit again within ten minutes, answered with the version it made.
+ * @property origin Where an agent committed it, from its agent token; absent for a person's publication.
  */
 @Serializable
 data class ArtifactVersionResponse(
@@ -203,6 +219,7 @@ data class ArtifactVersionResponse(
     val digest: String? = null,
     val baseVersion: Int? = null,
     val replayed: Boolean? = null,
+    val origin: ArtifactOriginResponse? = null,
 )
 
 /**

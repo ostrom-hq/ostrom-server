@@ -8,6 +8,8 @@ import run.ostrom.server.artifacts.domain.ArtifactsRepository
 import run.ostrom.server.artifacts.domain.ViewTicket
 import run.ostrom.server.artifacts.domain.ViewerChecks
 import run.ostrom.server.artifacts.domain.storage.ArtifactObjectStore
+import run.ostrom.server.kernel.auth.AgentMember
+import run.ostrom.server.kernel.auth.AgentMembers
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.auth.OrgPrincipal
@@ -88,6 +90,12 @@ val testIdentities = module {
                 "agent" -> AuthenticatedPrincipal("alice", PrincipalKind.USER, setOf("artifacts:write"), "alice-token")
                 "dave-agent" ->
                     AuthenticatedPrincipal("dave", PrincipalKind.USER, setOf("artifacts:write"), "dave-token")
+                "agent-cloud" -> AuthenticatedPrincipal(
+                    "launch-cloud", PrincipalKind.AGENT, setOf("artifacts:write"), "agent-cloud-token",
+                )
+                "agent-machine" -> AuthenticatedPrincipal(
+                    "launch-machine", PrincipalKind.AGENT, setOf("artifacts:write"), "agent-machine-token",
+                )
                 "reader" -> AuthenticatedPrincipal("alice", PrincipalKind.SERVICE, setOf("artifacts:read"))
                 "writer" -> AuthenticatedPrincipal("alice", PrincipalKind.SERVICE, setOf("artifacts:write"))
                 "cloud" -> AuthenticatedPrincipal("alice", PrincipalKind.SERVICE, setOf("cloud:read"))
@@ -110,6 +118,29 @@ val testIdentities = module {
             mapOf("OSTROM_ARTIFACTS_CONTENT_ORIGIN" to CONTENT_ORIGIN, "OSTROM_ARTIFACTS_VIEWER_URL" to VIEWER),
         )
     }
+}
+
+/**
+ * Alice's agents, read as the launches module reads an agent token: `agent-cloud` is the launch `launch-cloud` opened
+ * for the cloud session [CLOUD_SESSION], `agent-machine` is `ostrom <agent>` on a machine (no session).
+ */
+object TestAgents : AgentMembers {
+    const val CLOUD_SESSION = "session-1"
+
+    private val alice = OrgPrincipal(ORG_A, ALICE, OrgRole.MEMBER)
+
+    override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): AgentMember? =
+        when (principal.subjectId) {
+            "launch-cloud" -> AgentMember(alice, "launch-cloud", CLOUD_SESSION)
+            "launch-machine" -> AgentMember(alice, "launch-machine")
+            else -> null
+        }
+}
+
+/** [testIdentities] with the launches module's reading of agent tokens bound ([TestAgents]). */
+val agentIdentities = module {
+    includes(testIdentities)
+    single<AgentMembers> { TestAgents }
 }
 
 /** The test identities' organizations. */

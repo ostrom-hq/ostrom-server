@@ -199,6 +199,7 @@ internal fun ArtifactsRoutesDependencies.toResponse(artifact: Artifact, caller: 
     publicUrl = view.publicUrl(artifact),
     createdAt = artifact.createdAt.toString(),
     updatedAt = artifact.updatedAt.toString(),
+    origin = artifact.origin?.toResponse(),
 )
 
 /** The console's page of an artifact. */
@@ -213,6 +214,7 @@ internal fun ArtifactVersion.toResponse() = ArtifactVersionResponse(
     createdBy = createdBy,
     digest = digest,
     baseVersion = baseVersion,
+    origin = origin?.toResponse(),
 )
 
 /**

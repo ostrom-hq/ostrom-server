@@ -372,4 +372,20 @@ val ArtifactsMigrations: List<SchemaMigration> = listOf(
     // function of the router, then works in each under row-level security.
     SchemaMigration(version = 12, name = "artifacts_maintenance", sql = MAINTENANCE_SQL),
     SchemaMigration(version = 13, name = "artifacts_folder_deletions", sql = FOLDER_DELETIONS_SQL),
+    // Where an agent's publication came from (TeamCode's `artifact_versions.origin_session_id`): the launch of the
+    // agent token and the cloud session it was opened for, read from the credential. An artifact's pair is set when
+    // it is created and never changed by a later version; each version records its own. A person's publication has
+    // none (NULL), and so does a launch on a machine for the session. The versions' session column is indexed.
+    SchemaMigration(
+        version = 14,
+        name = "artifacts_origin",
+        sql = """
+            ALTER TABLE artifacts_artifacts ADD COLUMN origin_launch_id TEXT;
+            ALTER TABLE artifacts_artifacts ADD COLUMN origin_session_id TEXT;
+            ALTER TABLE artifacts_versions ADD COLUMN origin_launch_id TEXT;
+            ALTER TABLE artifacts_versions ADD COLUMN origin_session_id TEXT;
+            CREATE INDEX artifacts_versions_origin_session ON artifacts_versions (origin_session_id)
+                WHERE origin_session_id IS NOT NULL;
+        """.trimIndent(),
+    ),
 )

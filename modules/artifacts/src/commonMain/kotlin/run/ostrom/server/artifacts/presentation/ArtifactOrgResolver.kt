@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.artifacts.presentation
 
+import run.ostrom.server.kernel.auth.AgentMember
 import run.ostrom.server.kernel.auth.AgentMembers
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.OrgPrincipal
@@ -25,11 +26,16 @@ class ArtifactOrgResolver(
     private val agents: AgentMembers?,
 ) : PrincipalOrgResolver {
     override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): OrgPrincipal? =
-        if (principal.kind == PrincipalKind.AGENT) {
-            agents?.resolve(principal, orgId)?.member
-        } else {
-            orgs.resolve(principal, orgId)
-        }
+        if (principal.kind == PrincipalKind.AGENT) agentOf(principal, orgId)?.member else orgs.resolve(principal, orgId)
+
+    /**
+     * Reads an agent token with its launch and cloud session, the origin of what it publishes.
+     *
+     * @return The agent's member and launch, or null for another credential, an agent token nobody binds, or a
+     *   launch that is no longer live.
+     */
+    suspend fun agentOf(principal: AuthenticatedPrincipal, orgId: Uuid?): AgentMember? =
+        if (principal.kind == PrincipalKind.AGENT) agents?.resolve(principal, orgId) else null
 
     override suspend fun profile(orgId: Uuid): OrgProfile? = orgs.profile(orgId)
 }

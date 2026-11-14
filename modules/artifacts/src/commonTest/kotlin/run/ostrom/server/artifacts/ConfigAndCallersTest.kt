@@ -2,6 +2,7 @@
 package run.ostrom.server.artifacts
 
 import run.ostrom.server.artifacts.domain.ArtifactLocations
+import run.ostrom.server.artifacts.domain.ArtifactOrigin
 import run.ostrom.server.artifacts.domain.InvalidArtifactRequestException
 import run.ostrom.server.artifacts.domain.MissingScopeException
 import run.ostrom.server.artifacts.domain.NotAMemberException
@@ -151,7 +152,8 @@ class ConfigAndCallersTest {
         val launches = object : AgentMembers {
             override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): AgentMember? {
                 val role = if (principal.subjectId == "launch-1") OrgRole.ADMIN else OrgRole.MEMBER
-                val launched = AgentMember(OrgPrincipal(ORG_A, DAVE, role), principal.subjectId)
+                val session = "session-1".takeIf { principal.subjectId == "launch-1" }
+                val launched = AgentMember(OrgPrincipal(ORG_A, DAVE, role), principal.subjectId, session)
                 return launched.takeIf { principal.subjectId != "ended" }
             }
         }
@@ -164,10 +166,15 @@ class ConfigAndCallersTest {
         assertTrue(caller.administrator, "An administrator's agent publishes where only administrators do")
         assertFalse(caller.person, "An agent never makes an artifact public nor deletes one")
         assertEquals("a1", caller.credentialId)
+        // TC-ART-39: its launch and cloud session are the origin of what it publishes; a machine launch has no session.
+        assertEquals(ArtifactOrigin("launch-1", "session-1"), caller.origin)
+        val machine = resolver.artifactCallerOf(agent.copy(subjectId = "launch-2"), ARTIFACTS_READ)
+        assertEquals(ArtifactOrigin("launch-2"), machine.origin)
         assertFalse(resolver.artifactCallerOf(agent.copy(subjectId = "launch-2"), ARTIFACTS_READ).administrator)
         // A person's credential is still the kernel's resolver's.
         val person = AuthenticatedPrincipal("dave", PrincipalKind.USER, setOf("user:*"))
         assertTrue(resolver.artifactCallerOf(person, ARTIFACTS_WRITE).administrator)
+        assertNull(resolver.artifactCallerOf(person, ARTIFACTS_WRITE).origin, "A person's publication has no origin")
         // An ended launch, a token issued before the scope, or a server without the launches module: refused.
         assertFailsWith<NotAMemberException> {
             resolver.artifactCallerOf(agent.copy(subjectId = "ended"), ARTIFACTS_READ)
