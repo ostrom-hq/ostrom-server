@@ -45,6 +45,8 @@ import run.ostrom.server.mcprelay.domain.McpHostAvailability
 import run.ostrom.server.mcprelay.domain.McpLimits
 import run.ostrom.server.mcprelay.domain.McpRelayRepository
 import run.ostrom.server.mcprelay.domain.McpServerAdministration
+import run.ostrom.server.mcprelay.domain.PersonalMcpServersUseCase
+import run.ostrom.server.mcprelay.domain.PersonalMcpServersUseCaseImpl
 import run.ostrom.server.mcprelay.domain.McpUpstream
 import run.ostrom.server.mcprelay.domain.McpUsageUseCase
 import run.ostrom.server.mcprelay.domain.McpUsageUseCaseImpl
@@ -211,6 +213,7 @@ object McpRelayModule : ServerModule {
         single { HostedProcessAdministration(get(), getOrNull<MemberDirectory>(), get<HostedRuntime>().host) }
         single<ListHostedProcessesUseCase> { get<HostedProcessAdministration>() }
         single<RestartHostedProcessUseCase> { get<HostedProcessAdministration>() }
+        single<PersonalMcpServersUseCase> { PersonalMcpServersUseCaseImpl(get(), get(), get()) }
         single<RelayMcpMessageUseCase> {
             RelayMcpMessageUseCaseImpl(
                 repository = get(),
@@ -224,7 +227,7 @@ object McpRelayModule : ServerModule {
         single {
             McpRelayRoutesDependencies(
                 getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get()),
-                get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
+                get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
                 get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
             )
         }
@@ -240,8 +243,8 @@ object McpRelayModule : ServerModule {
         route.mcpRelayRoutes(koin.get())
     }
 
-    /** The MCP relay. */
-    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.MCP)
+    /** The MCP relay, and the members' own servers. */
+    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.MCP, ServerFeatures.MCP_PERSONAL)
 
     override fun start(scope: CoroutineScope, koin: Koin) {
         val repository = koin.get<McpRelayRepository>()

@@ -17,6 +17,7 @@ import run.ostrom.server.app.isolation.Seed.HOOK
 import run.ostrom.server.app.isolation.Seed.INVITATION
 import run.ostrom.server.app.isolation.Seed.LAUNCH
 import run.ostrom.server.app.isolation.Seed.LINK_SLUG
+import run.ostrom.server.app.isolation.Seed.MCP_PERSONAL
 import run.ostrom.server.app.isolation.Seed.MCP_POLICY
 import run.ostrom.server.app.isolation.Seed.MCP_SERVER
 import run.ostrom.server.app.isolation.Seed.MEMORY
@@ -302,6 +303,16 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     ),
     "DELETE /api/v1/mcp/servers/{name}/policies/{policyId}" to
         target("name" to MCP_SERVER, "policyId" to MCP_POLICY, admin = true),
+    "POST /api/v1/mcp/servers/{name}/promote" to target("name" to MCP_PERSONAL, admin = true),
+    "GET /api/v1/me/mcp/servers" to Case.Target(),
+    "POST /api/v1/me/mcp/servers" to Case.Target(
+        body = """{"name": "taken-mine", "url": "https://mcp.example.com/x", "transport": "http"}""",
+    ),
+    "PUT /api/v1/me/mcp/servers/{name}" to target(
+        "name" to MCP_PERSONAL,
+        body = """{"name": "{{MCP_PERSONAL}}", "url": "https://mcp.example.com/x", "transport": "http"}""",
+    ),
+    "DELETE /api/v1/me/mcp/servers/{name}" to target("name" to MCP_PERSONAL),
     "GET /api/v1/mcp/settings" to Case.Target(),
     "PUT /api/v1/mcp/settings" to Case.Target(body = "{}", admin = true),
     "GET /api/v1/mcp/calls" to Case.Target(),

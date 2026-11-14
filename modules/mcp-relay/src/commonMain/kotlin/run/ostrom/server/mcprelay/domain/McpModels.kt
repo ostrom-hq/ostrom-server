@@ -60,6 +60,8 @@ data class StdioSpec(
  * @property sharing Whether members share the credential and process, or bring their own.
  * @property version Bumped at each change, so a changed definition always reaches a new stdio process.
  * @property createdAt Creation time; also the npm/PyPI cut-off date of a stdio package.
+ * @property ownerMemberId The member a personal server belongs to (TeamCode #269), relayed to them alone; null for a
+ *   team server.
  */
 data class McpServer(
     val id: Uuid,
@@ -73,7 +75,11 @@ data class McpServer(
     val sharing: McpSharing,
     val version: Int,
     val createdAt: Instant,
-)
+    val ownerMemberId: Uuid? = null,
+) {
+    /** Whether it is a member's own server. */
+    val personal: Boolean get() = ownerMemberId != null
+}
 
 /**
  * Which tools of a server a member may list and call: all of them, or an allowlist. Hiding a tool is not the
@@ -213,8 +219,10 @@ data class McpUsage(
  * @property agentPrefix The prefix of agent-side server names: the agent sees `<prefix>-<server>`, so tools are
  *   `mcp__<prefix>-<server>__<tool>`. Stable names keep skills and permissions working; an org imported from
  *   TeamCode keeps `teamcode`.
+ * @property memberHostedMcp Whether members may declare a hosted stdio server of their own; off by default, since it
+ *   runs package code on the MCP host.
  */
-data class McpSettings(val agentPrefix: String) {
+data class McpSettings(val agentPrefix: String, val memberHostedMcp: Boolean = false) {
     /** The defaults. */
     companion object {
         /** The default prefix. */

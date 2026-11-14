@@ -58,10 +58,13 @@ interface DeleteMcpServerUseCase {
     suspend operator fun invoke(caller: Caller, id: Uuid)
 }
 
-/** Lists the org's servers (admins). */
+/** Lists the org's team servers, or finds one server by name (admins). */
 interface ListMcpServersUseCase {
     /** Lists them, by name. */
     suspend operator fun invoke(caller: Caller): List<McpServer>
+
+    /** The server, team or a member's own, named [name], or null. */
+    suspend fun find(caller: Caller, name: String): McpServer?
 }
 
 /**
@@ -94,7 +97,7 @@ class McpServerAdministration(
     /** See [UpdateMcpServerUseCase]. */
     suspend fun update(caller: Caller, id: Uuid, payload: McpServerPayload): McpServer {
         caller.requireAdmin()
-        val current = repository.getServer(caller.orgId, id) ?: throw McpServerNotFoundException()
+        val current = requireTeamServer(repository, caller, id)
         val next = payload.toServer(id, caller.orgId, current.version + 1, current.createdAt)
         check(caller, next)
         return repository.updateServer(next) ?: throw McpServerNotFoundException()
@@ -112,7 +115,17 @@ class McpServerAdministration(
         return repository.listServers(caller.orgId, McpRules.MAX_SERVERS)
     }
 
-    private suspend fun check(caller: Caller, server: McpServer) {
+    /** See [ListMcpServersUseCase.find]. */
+    suspend fun find(caller: Caller, name: String): McpServer? {
+        caller.requireAdmin()
+        return repository.getServerByName(caller.orgId, name)
+    }
+
+    /**
+     * The checks of a server before it is stored: its definition, its secrets (named by the caller's route, an org
+     * secret for a team server, the owner's personal one for theirs) and the name the agent sees.
+     */
+    internal suspend fun check(caller: Caller, server: McpServer) {
         McpRules.requireServer(server)
         if (server.transport == McpTransport.STDIO && !host.isConfigured()) throw McpHostDisabledException()
         if (server.sharing == McpSharing.PER_MEMBER && server.credentialSecretId != null) {
@@ -125,10 +138,18 @@ class McpServerAdministration(
         requireDistinctAgentName(caller, server)
     }
 
-    /** `a.b` and `a_b` reach the agent as the same `<prefix>-a_b`: the second would shadow the first. */
+    /**
+     * `a.b` and `a_b` reach the agent as the same `<prefix>-a_b`: the second would shadow the first. A team server is
+     * checked against every server, a member's own against the team's and their own (no one else reaches both).
+     */
     private suspend fun requireDistinctAgentName(caller: Caller, server: McpServer) {
         val seen = McpRules.agentName("", server.name)
-        val clash = repository.listServers(caller.orgId, McpRules.MAX_SERVERS)
+        val personal = repository.listPersonalServers(
+            caller.orgId,
+            server.ownerMemberId,
+            McpRules.MAX_PERSONAL_LISTED,
+        )
+        val clash = (repository.listServers(caller.orgId, McpRules.MAX_SERVERS) + personal)
             .firstOrNull { it.id != server.id && it.name != server.name && McpRules.agentName("", it.name) == seen }
         if (clash != null) {
             throw McpServerNameTakenException(
@@ -136,21 +157,29 @@ class McpServerAdministration(
             )
         }
     }
-
-    private fun McpServerPayload.toServer(id: Uuid, orgId: Uuid, version: Int, createdAt: Instant) = McpServer(
-        id = id,
-        orgId = orgId,
-        name = name,
-        transport = transport,
-        url = url,
-        credentialSecretId = credentialSecretId,
-        credentialHeader = credentialHeader,
-        stdio = stdio,
-        sharing = sharing,
-        version = version,
-        createdAt = createdAt,
-    )
 }
+
+/** The server a payload declares; [owner] for a member's own. */
+internal fun McpServerPayload.toServer(
+    id: Uuid,
+    orgId: Uuid,
+    version: Int,
+    createdAt: Instant,
+    owner: Uuid? = null,
+) = McpServer(
+    id = id,
+    orgId = orgId,
+    name = name,
+    transport = transport,
+    url = url,
+    credentialSecretId = credentialSecretId,
+    credentialHeader = credentialHeader,
+    stdio = stdio,
+    sharing = sharing,
+    version = version,
+    createdAt = createdAt,
+    ownerMemberId = owner,
+)
 
 /** [CreateMcpServerUseCase] through [McpServerAdministration]. */
 class CreateMcpServerUseCaseImpl(private val administration: McpServerAdministration) : CreateMcpServerUseCase {
@@ -172,6 +201,8 @@ class DeleteMcpServerUseCaseImpl(private val administration: McpServerAdministra
 /** [ListMcpServersUseCase] through [McpServerAdministration]. */
 class ListMcpServersUseCaseImpl(private val administration: McpServerAdministration) : ListMcpServersUseCase {
     override suspend fun invoke(caller: Caller): List<McpServer> = administration.list(caller)
+
+    override suspend fun find(caller: Caller, name: String): McpServer? = administration.find(caller, name)
 }
 
 /** Assigns a server, and the tools allowed, to a member or to the whole org (admins). */
@@ -212,7 +243,7 @@ class AssignMcpServerUseCaseImpl(
         credentialSecretId: Uuid?,
     ): McpAssignment {
         caller.requireAdmin()
-        val server = repository.getServer(caller.orgId, serverId) ?: throw McpServerNotFoundException()
+        val server = requireTeamServer(repository, caller, serverId)
         McpRules.requirePolicy(policy)
         if (credentialSecretId != null && (server.sharing != McpSharing.PER_MEMBER || memberId == null)) {
             throw InvalidMcpServerException("Only a member's assignment to a per-member server carries a credential.")
@@ -234,6 +265,7 @@ interface UnassignMcpServerUseCase {
 class UnassignMcpServerUseCaseImpl(private val repository: McpRelayRepository) : UnassignMcpServerUseCase {
     override suspend fun invoke(caller: Caller, serverId: Uuid, memberId: Uuid?) {
         caller.requireAdmin()
+        requireTeamServer(repository, caller, serverId)
         if (!repository.deleteAssignment(caller.orgId, serverId, memberId)) throw McpServerNotFoundException()
     }
 }
@@ -279,7 +311,7 @@ class CreateArgumentPolicyUseCaseImpl(private val repository: McpRelayRepository
     CreateArgumentPolicyUseCase {
     override suspend fun invoke(caller: Caller, serverId: Uuid, payload: ArgumentPolicyPayload): ArgumentPolicy {
         caller.requireAdmin()
-        repository.getServer(caller.orgId, serverId) ?: throw McpServerNotFoundException()
+        requireTeamServer(repository, caller, serverId)
         if (repository.listPolicies(caller.orgId, serverId).size >= McpRules.MAX_POLICIES) {
             throw InvalidMcpServerException("A server has at most ${McpRules.MAX_POLICIES} policies.")
         }
@@ -310,6 +342,7 @@ interface DeleteArgumentPolicyUseCase {
 class DeleteArgumentPolicyUseCaseImpl(private val repository: McpRelayRepository) : DeleteArgumentPolicyUseCase {
     override suspend fun invoke(caller: Caller, serverId: Uuid, policyId: Uuid) {
         caller.requireAdmin()
+        requireTeamServer(repository, caller, serverId)
         if (!repository.deletePolicy(caller.orgId, serverId, policyId)) throw McpServerNotFoundException()
     }
 }
@@ -395,6 +428,13 @@ class McpUsageUseCaseImpl(private val repository: McpRelayRepository, private va
         clock.now() - days.coerceIn(1, MAX_USAGE_DAYS).days,
         if (caller.role.isAdmin) null else caller.memberId,
     )
+}
+
+/** A member's own server is theirs to change: an administrator only reviews, promotes or deletes it. */
+private suspend fun requireTeamServer(repository: McpRelayRepository, caller: Caller, serverId: Uuid): McpServer {
+    val server = repository.getServer(caller.orgId, serverId) ?: throw McpServerNotFoundException()
+    if (server.personal) throw McpServerPersonalException()
+    return server
 }
 
 private suspend fun requireSecrets(revealSecrets: RevealSecretsUseCase, caller: Caller, ids: List<Uuid>) {

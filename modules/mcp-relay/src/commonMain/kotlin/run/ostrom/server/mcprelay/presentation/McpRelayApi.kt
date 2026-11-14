@@ -17,6 +17,7 @@ import run.ostrom.server.mcprelay.domain.ListMcpCallsUseCase
 import run.ostrom.server.mcprelay.domain.ListMcpServersUseCase
 import run.ostrom.server.mcprelay.domain.ListMemberServersUseCase
 import run.ostrom.server.mcprelay.domain.McpUsageUseCase
+import run.ostrom.server.mcprelay.domain.PersonalMcpServersUseCase
 import run.ostrom.server.mcprelay.domain.PutMcpSettingsUseCase
 import run.ostrom.server.mcprelay.domain.RelayMcpMessageUseCase
 import run.ostrom.server.mcprelay.domain.RestartHostedProcessUseCase
@@ -39,13 +40,15 @@ import kotlinx.serialization.Serializable
 class McpApi {
     /**
      * `/api/v1/mcp/servers`: every server of the org (admins), or with `mine=true` the servers the caller reaches
-     * (what `ostrom claude` connects; members always get these).
+     * (what `ostrom claude` connects; members always get these), or with `personal=true` the members' own servers
+     * for an administrator's review.
      *
      * @property mine Only the caller's servers.
+     * @property personal The members' own servers (admins).
      */
     @Serializable
     @Resource("servers")
-    class Servers(val parent: McpApi = McpApi(), val mine: Boolean = false) {
+    class Servers(val parent: McpApi = McpApi(), val mine: Boolean = false, val personal: Boolean = false) {
         /**
          * `/api/v1/mcp/servers/{name}`: one server.
          *
@@ -67,6 +70,11 @@ class McpApi {
                 @Resource("{member}")
                 class Member(val parent: Assignments, val member: String)
             }
+
+            /** `…/promote`: a member's own server becomes a team server. */
+            @Serializable
+            @Resource("promote")
+            class Promote(val parent: Name)
 
             /** `…/policies`: argument policies. */
             @Serializable
@@ -127,6 +135,20 @@ class McpApi {
     }
 }
 
+/** `/api/v1/me/mcp/servers`: the caller's own MCP servers (TeamCode #269). */
+@Serializable
+@Resource("/api/v1/me/mcp/servers")
+class MyMcpServersApi {
+    /**
+     * `/api/v1/me/mcp/servers/{name}`: one of them.
+     *
+     * @property name Its name.
+     */
+    @Serializable
+    @Resource("{name}")
+    class Name(val parent: MyMcpServersApi = MyMcpServersApi(), val name: String)
+}
+
 /**
  * A stdio command (an addition to the contract's `McpServer`).
  *
@@ -163,6 +185,7 @@ data class StdioSpecDto(
  * @property createdAt Creation time.
  * @property state A stdio server's process in a member's list, as the minute sweep last recorded it.
  * @property failure That process's last failure not yet followed by a successful start, in a member's list.
+ * @property owner The member a personal server belongs to; absent for a team server, and ignored in a request.
  */
 @Serializable
 data class McpServerDto(
@@ -181,6 +204,7 @@ data class McpServerDto(
     val createdAt: String? = null,
     val state: String? = null,
     val failure: String? = null,
+    val owner: String? = null,
 )
 
 /**
@@ -255,9 +279,14 @@ data class ArgumentPolicyResponse(
 @Serializable
 data class ArgumentPoliciesResponse(val policies: List<ArgumentPolicyResponse>)
 
-/** The relay settings. */
+/**
+ * The relay settings.
+ *
+ * @property agentPrefix The prefix of the agent's server names.
+ * @property memberHostedMcp Whether members may declare a hosted command; absent in a change keeps the stored value.
+ */
 @Serializable
-data class McpSettingsDto(val agentPrefix: String)
+data class McpSettingsDto(val agentPrefix: String, val memberHostedMcp: Boolean? = null)
 
 /**
  * A journal row (contract `McpCall`, with additions): outcomes only, never arguments or results.
@@ -401,6 +430,7 @@ data class McpRelayRoutesDependencies(
     val listMemberServers: ListMemberServersUseCase,
     val listHosted: ListHostedProcessesUseCase,
     val restartHosted: RestartHostedProcessUseCase,
+    val personal: PersonalMcpServersUseCase,
     val relay: RelayMcpMessageUseCase,
     val directory: SecretDirectoryUseCase,
     val audit: OrgAuditTrail,

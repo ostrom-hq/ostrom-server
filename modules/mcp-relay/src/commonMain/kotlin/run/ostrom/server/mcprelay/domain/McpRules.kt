@@ -7,8 +7,17 @@ import run.ostrom.server.kernel.text.SafePattern
 
 /** Validation of what an admin declares; the MCP host checks the stdio rules again. */
 object McpRules {
-    /** The most servers per org, and per member listing. */
+    /** The most team servers per org. */
     const val MAX_SERVERS: Int = 64
+
+    /** The most personal servers per member (TeamCode's 20 personal variants). */
+    const val MAX_PERSONAL_SERVERS: Int = 20
+
+    /** The most personal servers an administrator's review lists. */
+    const val MAX_PERSONAL_LISTED: Int = 500
+
+    /** The most servers one member reaches: every team server and their own. */
+    const val MAX_REACHED: Int = MAX_SERVERS + MAX_PERSONAL_SERVERS
 
     /** The most tools listed per server and allowlisted per assignment. */
     const val MAX_TOOLS: Int = 256
@@ -242,3 +251,26 @@ class McpHostDisabledException :
         ErrorKind.CONFLICT,
         "No MCP host is configured on this server (OSTROM_MCP_HOST_URL), so it cannot run a stdio server.",
     )
+
+/** A member's personal server: an administrator may review, promote or delete it, never change or assign it. */
+class McpServerPersonalException :
+    OstromException(
+        ErrorKind.CONFLICT,
+        "This MCP server is a member's own: promote it before changing or assigning it.",
+        "mcp_server_personal",
+    )
+
+/** Too many servers: [limit] personal ones per member, or the team's when a promotion would exceed it. */
+class McpServerLimitException(message: String) : OstromException(ErrorKind.CONFLICT, message, "mcp_server_limit")
+
+/** A member declared a hosted stdio server while the team's `memberHostedMcp` setting is off. */
+class McpHostedNotAllowedException :
+    OstromException(
+        ErrorKind.FORBIDDEN,
+        "Members may not declare a hosted MCP command here: an administrator allows it in the MCP settings.",
+        "hosted_not_allowed",
+    )
+
+/** A member's server that cannot become a team server as it is. */
+class McpServerNotPromotedException(reason: String) :
+    OstromException(ErrorKind.CONFLICT, "This MCP server is not promoted. $reason")

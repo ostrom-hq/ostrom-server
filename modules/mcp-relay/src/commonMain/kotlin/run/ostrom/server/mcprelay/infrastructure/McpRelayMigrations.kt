@@ -224,4 +224,17 @@ val McpRelayMigrations: List<SchemaMigration> = listOf(
             CREATE INDEX mcp_relay_stdio_states_org ON mcp_relay_stdio_states (org_id, server_id, member_id)
         """.trimIndent() + ";\n" + tenantTableSql("mcp_relay_stdio_states"),
     ),
+    // A member's own servers (TeamCode #269): the owner, empty for a team server, in the organization's one name
+    // space (the unique (org_id, name) stays); and the team's setting that lets members declare a hosted command.
+    SchemaMigration(
+        version = 9,
+        name = "mcp_relay_personal_servers",
+        sql = """
+            ALTER TABLE mcp_relay_servers ADD COLUMN owner_member_id UUID;
+            CREATE INDEX mcp_relay_servers_owner ON mcp_relay_servers (org_id, owner_member_id, name)
+                WHERE owner_member_id IS NOT NULL;
+            CREATE INDEX mcp_relay_servers_team ON mcp_relay_servers (org_id, name) WHERE owner_member_id IS NULL;
+            ALTER TABLE mcp_relay_settings ADD COLUMN member_hosted_mcp BOOLEAN NOT NULL DEFAULT false
+        """.trimIndent(),
+    ),
 )

@@ -116,6 +116,15 @@ private suspend fun Seeder.sharing(party: Party) {
         """{"tool": "query", "conditions": [], "effect": "deny", "message": "${party.marker} says no."}""",
     )
     keep(Seed.MCP_POLICY, policy, "id")
+    // The member's own server (TeamCode #269), relayed to them alone.
+    val mine = "${party.marker}-mine"
+    val personal = send(
+        "personal MCP server",
+        "POST /api/v1/me/mcp/servers",
+        party.memberBrowser,
+        """{"name": "$mine", "url": "https://mcp.example.com/mine", "transport": "http"}""",
+    )
+    keep(Seed.MCP_PERSONAL, mine, personal)
 }
 
 // A shared environment variant holding the marker, assigned to the member, and the member's personal variant.

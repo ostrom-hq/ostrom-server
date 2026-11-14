@@ -79,6 +79,7 @@ fun McpServer.toDto(names: Map<Uuid, String>) = McpServerDto(
     },
     version = version,
     createdAt = createdAt.toString(),
+    owner = ownerMemberId?.toString(),
 )
 
 /** Maps an assignment to the API. */
