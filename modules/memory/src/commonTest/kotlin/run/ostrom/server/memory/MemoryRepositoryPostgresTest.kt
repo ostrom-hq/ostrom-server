@@ -6,12 +6,14 @@ import run.ostrom.server.kernel.module.OrgDeletionListener
 import run.ostrom.server.memory.domain.MemoryLimitException
 import run.ostrom.server.memory.domain.MemoryNotFoundException
 import run.ostrom.server.memory.domain.MemoryOrigin
+import run.ostrom.server.memory.domain.MemoryProposalWaits
 import run.ostrom.server.memory.domain.MemoryRepository
 import run.ostrom.server.memory.domain.MemoryScope
 import run.ostrom.server.memory.domain.MemoryStatus
 import run.ostrom.server.memory.domain.NewMemory
 import run.ostrom.server.memory.fakes.Callers
 import run.ostrom.server.memory.fakes.EVE
+import run.ostrom.server.memory.fakes.FakeProposalWaits
 import run.ostrom.server.memory.fakes.ORG_A
 import run.ostrom.server.memory.fakes.ORG_B
 import run.ostrom.server.memory.fakes.Tokens
@@ -35,6 +37,7 @@ class MemoryRepositoryPostgresTest {
     private val overrides = module {
         single<TokenAuthenticator> { Tokens }
         single<CallerResolver> { Callers }
+        single<MemoryProposalWaits> { FakeProposalWaits() }
     }
 
     private fun repositoryTest(block: suspend (TestServer, MemoryRepository) -> Unit) =

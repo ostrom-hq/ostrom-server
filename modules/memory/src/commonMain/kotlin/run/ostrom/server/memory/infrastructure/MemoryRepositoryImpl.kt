@@ -10,6 +10,7 @@ import run.ostrom.server.memory.domain.MemoryLimitException
 import run.ostrom.server.memory.domain.MemoryNotFoundException
 import run.ostrom.server.memory.domain.MemoryOrigin
 import run.ostrom.server.memory.domain.MemoryPage
+import run.ostrom.server.memory.domain.MemoryProposalsLimitException
 import run.ostrom.server.memory.domain.MemoryRepository
 import run.ostrom.server.memory.domain.MemoryRules
 import run.ostrom.server.memory.domain.MemoryScope
@@ -119,6 +120,11 @@ internal class MemoryRepositoryImpl(private val driver: Driver, private val cloc
             ).bind("org_id", caller.orgId).bind("scope", entry.scope.wire).bind("owner", owner).bind("now", now),
         ).getOrThrow().first().get("n").asInt()
         if (held >= limit) throw MemoryLimitException(limit)
+        // Per member: the proposals of all their agents, so one runaway agent cannot fill the organization's room.
+        val proposing = status == MemoryStatus.PROPOSED
+        if (proposing && proposalsOf(caller.orgId, caller.memberId) >= MemoryRules.PROPOSALS_LIMIT) {
+            throw MemoryProposalsLimitException(MemoryRules.PROPOSALS_LIMIT)
+        }
         val id = Uuid.random()
         execute(
             Statement.create(

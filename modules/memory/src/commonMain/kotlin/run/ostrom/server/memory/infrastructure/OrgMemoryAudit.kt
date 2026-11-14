@@ -3,8 +3,8 @@ package run.ostrom.server.memory.infrastructure
 
 import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.audit.OrgAuditTrail
+import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.memory.domain.MemoryAudit
-import run.ostrom.server.memory.domain.MemoryCaller
 import kotlin.uuid.Uuid
 
 /**
@@ -14,7 +14,13 @@ import kotlin.uuid.Uuid
  * @param trail The organization's audit log.
  */
 internal class OrgMemoryAudit(private val trail: OrgAuditTrail) : MemoryAudit {
-    override suspend fun record(caller: MemoryCaller, event: String, id: Uuid, vararg facts: Pair<String, String>) {
-        trail.record(OrgAuditRecord(caller.orgId, caller.principal, event, "memory", id.toString(), facts.toMap()))
+    override suspend fun record(
+        orgId: Uuid,
+        actor: AuthenticatedPrincipal,
+        event: String,
+        id: Uuid,
+        facts: Map<String, String>,
+    ) {
+        trail.record(OrgAuditRecord(orgId, actor, event, "memory", id.toString(), facts))
     }
 }

@@ -247,6 +247,9 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
         body = """{"expectedVersion": 1, "title": "Taken", "summary": "Taken", "content": "Taken"}""",
     ),
     "DELETE /api/v1/memory/{id}" to target("id" to MEMORY),
+    "GET /api/v1/memory/proposals" to Case.Target(),
+    "POST /api/v1/memory/proposals/{id}/accept" to target("id" to MEMORY),
+    "POST /api/v1/memory/proposals/{id}/reject" to target("id" to MEMORY),
 
     // Environment variants: the caller's own values, the administrators' variants, assignments and exclusions.
     "GET /api/v1/environment" to Case.Target(),

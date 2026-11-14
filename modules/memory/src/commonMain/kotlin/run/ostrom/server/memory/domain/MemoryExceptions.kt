@@ -39,3 +39,33 @@ class MemoryScopeException : OstromException(
     "This credential does not grant memory:use.",
     "credential_scope",
 )
+
+/** An agent's team entry names no session whose person could answer it: 400 `memory_proposal_session`. */
+class MemoryProposalSessionException : OstromException(
+    ErrorKind.INVALID_REQUEST,
+    "A team entry is proposed from a session, whose owner decides: send the session id, or write a personal entry.",
+    "memory_proposal_session",
+)
+
+/** Too many of a member's proposals wait for an answer: 409 `memory_proposals_limit`. */
+class MemoryProposalsLimitException(limit: Long) : OstromException(
+    ErrorKind.CONFLICT,
+    "$limit proposals of yours are waiting for an answer. Answer or wait for them first.",
+    "memory_proposals_limit",
+)
+
+/** The entry is no proposal waiting for an answer: 409 `memory_not_proposed`. */
+class MemoryNotProposedException : OstromException(
+    ErrorKind.CONFLICT,
+    "This entry is not a proposal waiting for an answer.",
+    "memory_not_proposed",
+)
+
+/** A member accepting a proposal, or rejecting another's: 403 `forbidden`. */
+class MemoryProposalForbiddenException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "Only an administrator accepts a proposal; its author or an administrator rejects it.",
+)
+
+/** The session a proposal names is not the caller's, or does not exist: 404, the same answer either way. */
+class MemorySessionNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Session not found.")

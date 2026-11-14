@@ -4,14 +4,18 @@ package run.ostrom.server.memory
 import run.ostrom.server.memory.domain.InvalidMemoryException
 import run.ostrom.server.memory.domain.MemoryConflictException
 import run.ostrom.server.memory.domain.MemoryOrigin
+import run.ostrom.server.memory.domain.MemoryProposalsServiceImpl
 import run.ostrom.server.memory.domain.MemoryScope
 import run.ostrom.server.memory.domain.MemorySecretException
 import run.ostrom.server.memory.domain.MemoryServiceImpl
+import run.ostrom.server.memory.domain.MemoryStatus
 import run.ostrom.server.memory.domain.MemoryTeamForbiddenException
 import run.ostrom.server.memory.domain.MemoryUpdate
 import run.ostrom.server.memory.domain.NewMemory
 import run.ostrom.server.memory.fakes.ADA
 import run.ostrom.server.memory.fakes.BEN
+import run.ostrom.server.memory.fakes.FakeProposalStore
+import run.ostrom.server.memory.fakes.FakeProposalWaits
 import run.ostrom.server.memory.fakes.FakeRepository
 import run.ostrom.server.memory.fakes.ROOT
 import run.ostrom.server.memory.fakes.RecordingAudit
@@ -30,7 +34,9 @@ class MemoryServiceTest {
     private val clock = object : Clock {
         override fun now(): Instant = FakeRepository.AT
     }
-    private val memory = MemoryServiceImpl(repository, audit, clock)
+    private val waits = FakeProposalWaits()
+    private val proposals = MemoryProposalsServiceImpl(repository, FakeProposalStore(repository), waits, audit, clock)
+    private val memory = MemoryServiceImpl(repository, proposals, audit, clock)
 
     private fun entry(scope: MemoryScope = MemoryScope.PERSONAL, tags: List<String> = listOf("b", "a")) =
         NewMemory(scope, "Deploy order", "Core first", "Merge core, then the server.", tags)
@@ -57,9 +63,12 @@ class MemoryServiceTest {
         assertEquals(MemoryOrigin.AGENT, memory.create(caller(agent = true), entry()).origin)
         val key = caller(person = false)
         assertEquals(MemoryOrigin.AGENT, memory.create(key, entry()).origin)
-        for (who in listOf(agent, caller(agent = true), key)) {
-            assertFailsWith<MemoryTeamForbiddenException> { memory.create(who, entry(MemoryScope.TEAM)) }
+        // An agent's organization entry is a proposal of its session; a key is no agent's session.
+        for (who in listOf(agent, caller(agent = true))) {
+            assertEquals(MemoryStatus.PROPOSED, memory.create(who, entry(MemoryScope.TEAM), "s1").status)
         }
+        assertEquals(listOf("a", "b"), waits.opened.last().second.tags)
+        assertFailsWith<MemoryTeamForbiddenException> { memory.create(key, entry(MemoryScope.TEAM), "s1") }
     }
 
     @Test

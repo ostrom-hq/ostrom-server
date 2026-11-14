@@ -9,11 +9,13 @@ import kotlin.uuid.Uuid
  * with the entry's id, scope and origin, never its text.
  *
  * @param repository The memory's storage.
+ * @param proposals Where an agent's organization entry goes: a proposal its session's person answers.
  * @param audit The organization's audit log.
  * @param clock The time an expiry is checked against.
  */
 class MemoryServiceImpl(
     private val repository: MemoryRepository,
+    private val proposals: MemoryProposalsService,
     private val audit: MemoryAudit,
     private val clock: Clock,
 ) : MemoryService {
@@ -41,13 +43,10 @@ class MemoryServiceImpl(
         val now = clock.now()
         MemoryRules.validate(entry.title, entry.summary, entry.content, entry.tags, entry.refs, entry.expiresAt, now)
         val agent = caller.agent || !caller.person
-        if (entry.scope == MemoryScope.TEAM && agent) {
-            throw MemoryTeamForbiddenException(
-                "An agent cannot write to the team memory here. Write a personal entry, or ask a member to add it.",
-            )
-        }
+        val sorted = entry.copy(tags = entry.tags.sorted())
+        if (entry.scope == MemoryScope.TEAM && agent) return proposals.propose(caller, sorted, sessionId)
         val origin = if (agent) MemoryOrigin.AGENT else MemoryOrigin.HUMAN
-        val created = repository.create(caller, entry.copy(tags = entry.tags.sorted()), origin, sessionId)
+        val created = repository.create(caller, sorted, origin, sessionId)
         audit.record(caller, "memory.created", created.id, "scope" to created.scope.wire, "origin" to origin.wire)
         return created
     }

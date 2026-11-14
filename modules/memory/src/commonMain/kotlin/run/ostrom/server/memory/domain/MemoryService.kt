@@ -38,7 +38,8 @@ interface MemoryService {
 
     /**
      * Remembers something. A personal entry is written directly by any caller. An organization's entry is written
-     * directly by a person only; an agent or a key is refused ([MemoryTeamForbiddenException]) until proposals land.
+     * directly by a person; an agent's is a proposal its session's person answers ([MemoryProposalsService.propose]),
+     * and a key that is no agent's session is refused ([MemoryTeamForbiddenException]).
      *
      * @param sessionId The session an agent writes from, kept as provenance.
      */

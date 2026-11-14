@@ -130,6 +130,7 @@ functions (the owner, a member of `ostrom_router` to hand the functions over, do
 | `billing_claim_due_tasks(now, lease, limit)` | billing | leases the due outbox tasks of every organization (`FOR UPDATE SKIP LOCKED`) | `BillingPostgresTest` |
 | `billing_complete_task(id, at)`, `billing_fail_task(id, retry)` | billing | ends or retries an outbox task | `BillingPostgresTest` |
 | `governance_expired_organizations(now, limit)` | governance | the organizations with confirmations past their 15 minutes, for the sweep | `GovernancePostgresTest` |
+| `memory_settling_orgs(after, limit)` | memory | the organizations with proposals waiting or rejected ones to delete (ids only, by id after the cursor), for the settling pass; each is settled in its organization | `MemoryProposalsPostgresTest` |
 
 One function is not the router's: the member search, `orgs_search_members(org, prefix, after, limit)` (orgs, version
 7; `MemberSearchPostgresTest`). It is owned by **`ostrom_member_search`** (`NOLOGIN`, no RLS bypass) and run by

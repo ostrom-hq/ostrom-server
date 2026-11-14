@@ -3,8 +3,10 @@ package run.ostrom.server.memory
 
 import run.ostrom.core.api.models.MemoryIndexPage
 import run.ostrom.server.kernel.auth.TokenAuthenticator
+import run.ostrom.server.memory.domain.MemoryProposalWaits
 import run.ostrom.server.memory.fakes.ADA
 import run.ostrom.server.memory.fakes.Callers
+import run.ostrom.server.memory.fakes.FakeProposalWaits
 import run.ostrom.server.memory.fakes.ORG_A
 import run.ostrom.server.memory.fakes.ORG_B
 import run.ostrom.server.memory.fakes.Tokens
@@ -31,6 +33,7 @@ class MemoryReadsBenchTest {
     private val overrides = module {
         single<TokenAuthenticator> { Tokens }
         single<CallerResolver> { Callers }
+        single<MemoryProposalWaits> { FakeProposalWaits() }
     }
     private val orgs = listOf(ORG_A, ORG_B) + List(ORGS - 2) { Uuid.random() }
 
