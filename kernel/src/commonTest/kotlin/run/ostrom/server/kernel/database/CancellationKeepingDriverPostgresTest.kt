@@ -3,7 +3,9 @@ package run.ostrom.server.kernel.database
 
 import run.ostrom.server.testing.TestDatabase
 import io.github.smyrgeorge.sqlx4k.Driver
+import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.SQLError
+import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.Transaction
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -51,6 +53,8 @@ class CancellationKeepingDriverPostgresTest {
         }
 
         override suspend fun <T> transaction(f: suspend Transaction.() -> T): T = begin().getOrThrow().f()
+
+        override suspend fun fetchAll(sql: String): Result<ResultSet> = begin().map { error("Never reached") }
     }
 
     /** How a call ends when its coroutine is cancelled once the call is under way. */
@@ -84,9 +88,26 @@ class CancellationKeepingDriverPostgresTest {
     }
 
     @Test
-    fun aCancelledBeginEndsCancelled() = databaseTest { pool ->
+    fun aCancelledBeginEndsCancelledWithTheLibrarysErrorKept() = databaseTest { pool ->
         val driver = CancellationKeepingDriver(SwallowingDriver(pool))
-        assertIs<CancellationException>(cancelled { driver.begin() })
+        val cause = assertIs<CancellationException>(cancelled { driver.begin() })
+        assertIs<SQLError>(cause.suppressedExceptions.single())
+    }
+
+    @Test
+    fun aCancelledStatementOnThePoolEndsCancelled() = databaseTest { pool ->
+        val driver = CancellationKeepingDriver(SwallowingDriver(pool))
+        assertIs<CancellationException>(cancelled { driver.fetchAll("SELECT 1") })
+    }
+
+    @Test
+    fun theStatementsOfAnActiveCallerAnswerAsThePoolDoes() = databaseTest { pool ->
+        val driver = CancellationKeepingDriver(pool)
+        assertEquals(1, driver.fetchAll("SELECT 1 AS n").getOrThrow().rows.size)
+        assertEquals(1, driver.fetchAll(Statement.create("SELECT 1 AS n")).getOrThrow().rows.size)
+        driver.execute("SELECT 1").getOrThrow()
+        driver.execute(Statement.create("SELECT 1")).getOrThrow()
+        assertTrue(driver.fetchAll("SELECT no_such_column").exceptionOrNull() is SQLError)
     }
 
     @Test
