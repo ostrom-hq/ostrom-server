@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.kernel.events.SessionNames
 import run.ostrom.server.runners.domain.AllowlistedCloudPlanProvider
 import run.ostrom.server.runners.domain.CloudPlan
 import run.ostrom.server.runners.domain.CloudPlanProvider
@@ -73,6 +74,24 @@ class CloudSessionsPostgresTest {
     }
 
     private val t0 = Instant.parse("2026-10-30T10:00:00Z")
+
+    @Test
+    fun theNotificationRouterReadsTheNamesOfAnOrganizationsCloudSessionsInOneStatement() =
+        serverTest(listOf(RunnersModule)) { server ->
+            val repository = server.koin.get<CloudSessionsRepository>()
+            val login = session(createdAt = t0).copy(name = "Fix the login page")
+            val other = session(createdAt = t0).copy(name = "Upgrade Gradle")
+            val elsewhere = session(orgId = ORG_B, createdAt = t0)
+            for (created in listOf(login, other, elsewhere)) assertTrue(repository.createWithinCap(created, 5))
+            val names = server.koin.get<SessionNames>()
+
+            assertEquals(
+                mapOf(login.id.toString() to "Fix the login page", other.id.toString() to "Upgrade Gradle"),
+                names.of(ORG_A, setOf(login.id.toString(), other.id.toString(), elsewhere.id.toString(), "s-local")),
+                "Another organization's session and an agent session's id name none",
+            )
+            assertEquals(emptyMap(), names.of(ORG_A, setOf("s-local")))
+        }
 
     @Test
     fun repositoryStoresReadsAndComparesAndSets() = serverTest(listOf(RunnersModule)) { server ->

@@ -22,6 +22,7 @@ import run.ostrom.server.kernel.events.OrgEventDraft
 import run.ostrom.server.kernel.events.OrgEventJournal
 import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.events.OrgEventType
+import run.ostrom.server.kernel.events.SessionNames
 import run.ostrom.server.kernel.events.WaitSummaries
 import run.ostrom.server.kernel.events.WaitSummary
 import run.ostrom.server.kernel.module.OrgDeletionListener
@@ -71,6 +72,7 @@ class NotificationDeliveriesPostgresTest {
                 ids.map { WaitSummary(it, mia.toString(), "s-1", "ask_human", "human", true, "Ship?") }
             }
         }
+        single<SessionNames> { SessionNames { _, ids -> ids.associateWith { "Release $it" } } }
     }
 
     private fun delivery(org: Uuid, seq: Long, at: Instant = t0, member: Uuid = mia, channel: String = "push") =
@@ -271,6 +273,7 @@ class NotificationDeliveriesPostgresTest {
             }
             assertEquals(listOf("w-1"), told.map { it.waitId }, "What came before the router is not sent")
             assertEquals(listOf("Ship?"), told.map { it.body })
+            assertEquals(listOf("Release s-1"), told.map { it.title }, "Titled with its session's name")
             withContext(Dispatchers.Default) {
                 withTimeout(10.seconds) { while (server.count("state = 'delivered'") == 0L) delay(100) }
             }

@@ -6,6 +6,7 @@ import kotlinx.coroutines.test.runTest
 import run.ostrom.server.kernel.events.JournalPosition
 import run.ostrom.server.kernel.events.JournalSlice
 import run.ostrom.server.kernel.events.OrgEventType
+import run.ostrom.server.kernel.events.SessionNames
 import run.ostrom.server.kernel.events.WaitSummaries
 import run.ostrom.server.kernel.events.WaitSummary
 import run.ostrom.server.identity.domain.MailAvailability
@@ -22,6 +23,7 @@ import run.ostrom.server.notifications.domain.DeliveryState
 import run.ostrom.server.notifications.domain.NotificationChannel
 import run.ostrom.server.notifications.domain.NotificationDelivery
 import run.ostrom.server.notifications.domain.NotificationKind
+import run.ostrom.server.notifications.domain.NotificationRules
 import run.ostrom.server.notifications.domain.PushCredential
 import run.ostrom.server.notifications.domain.PushDevice
 import run.ostrom.server.notifications.domain.PushDevicesRepository
@@ -65,6 +67,9 @@ class DeliverNotificationsUseCaseTest {
     private val mail = RecordingMailSender()
     private val devices = InMemoryPushDevicesRepository()
 
+    /** The session names of the next use case. */
+    private var names: SessionNames? = SessionNames { _, _ -> emptyMap() }
+
     /** The approvals' router of the next use case, the default one when null. */
     private var router: ApprovalRouter? = null
 
@@ -86,7 +91,7 @@ class DeliverNotificationsUseCaseTest {
     ): DeliverNotificationsUseCaseImpl {
         val made = ids.iterator()
         return DeliverNotificationsUseCaseImpl(
-            journal, waits, settings, deliveries, { channels }, router ?: approvals(), clock, logger,
+            journal, waits, names, settings, deliveries, { channels }, router ?: approvals(), clock, logger,
         ) { made.next() }
     }
 
@@ -141,6 +146,80 @@ class DeliverNotificationsUseCaseTest {
             assertEquals(orgB to emptyList<NotificationDelivery>(), b.first.orgId to b.second, "B moves on")
             assertEquals(listOf(setOf("w-1", "w-2", "w-3", "w-9"), setOf("w-1")), waits.asked, "No read without a wait")
             assertEquals(listOf(setOf(mia, leo), setOf(mia)), settings.asked, "No read without a member")
+        }
+    }
+
+    @Test
+    fun aNotificationIsTitledWithItsSessionsNameReadOnceForThePage() {
+        runTest {
+            val waits = CountingWaits(
+                listOf(
+                    summary("w-1", mia),
+                    summary("w-2", leo).copy(sessionId = "s-2"),
+                    summary("w-3", mia).copy(sessionId = null),
+                    summary("w-4", mia, open = false).copy(sessionId = "s-4"),
+                ),
+            )
+            val journal = FakeJournal(
+                positions = listOf(JournalPosition(orgA, 0, 4)),
+                slices = mapOf(
+                    orgA to JournalSlice(
+                        listOf("w-1", "w-2", "w-3", "w-4").mapIndexed { i, id -> waitCreated(i + 1L, id) },
+                        4,
+                    ),
+                ),
+            )
+            val asked = mutableListOf<Pair<Uuid, Set<String>>>()
+            names = SessionNames { orgId, ids ->
+                asked += orgId to ids
+                mapOf("s-1" to "Fix the login page", "s-9" to "Elsewhere").filterKeys { it in ids }
+            }
+            val deliveries = MemoryDeliveries()
+
+            useCase(journal, waits, deliveries, listOf(FakeChannel("push", setOf(mia, leo)))).fanOut()
+
+            val told = deliveries.enqueued.single().second.filterIsInstance<NotificationDelivery>()
+            assertEquals(
+                listOf("w-1" to "Fix the login page", "w-2" to "Ostrom", "w-3" to "Ostrom"),
+                told.map { it.notification.waitId to it.notification.title },
+                "A session without a name, and a wait in no session, keep the default title",
+            )
+            assertEquals(listOf(orgA to setOf("s-1", "s-2")), asked, "Only the sessions of the waits that tell someone")
+        }
+    }
+
+    @Test
+    fun aPageWhoseWaitsNameNoSessionReadsNoName() {
+        runTest {
+            val waits = CountingWaits(listOf(summary("w-1", mia).copy(sessionId = null)))
+            val journal = FakeJournal(
+                positions = listOf(JournalPosition(orgA, 0, 1)),
+                slices = mapOf(orgA to JournalSlice(listOf(waitCreated(1, "w-1")), 1)),
+            )
+            names = SessionNames { _, _ -> error("No session to name") }
+            val deliveries = MemoryDeliveries()
+
+            val queued = useCase(journal, waits, deliveries, listOf(FakeChannel("push", setOf(mia)))).fanOut()
+
+            assertEquals(1, queued)
+        }
+    }
+
+    @Test
+    fun withoutTheRunnersModuleNoSessionHasAName() {
+        runTest {
+            val journal = FakeJournal(
+                positions = listOf(JournalPosition(orgA, 0, 1)),
+                slices = mapOf(orgA to JournalSlice(listOf(waitCreated(1, "w-1")), 1)),
+            )
+            names = null
+            val deliveries = MemoryDeliveries()
+
+            val waits = CountingWaits(listOf(summary("w-1", mia)))
+            useCase(journal, waits, deliveries, listOf(FakeChannel("push", setOf(mia)))).fanOut()
+
+            val told = deliveries.enqueued.single().second.filterIsInstance<NotificationDelivery>()
+            assertEquals(listOf(NotificationRules.DEFAULT_TITLE), told.map { it.notification.title })
         }
     }
 
