@@ -74,11 +74,6 @@ class RelayPushSender(
         }
     }
 
-    private fun body(push: EncryptedPush): String = RELAY_JSON.encodeToString(
-        PushRelaySendRequest.serializer(),
-        PushRelaySendRequest(push.token, push.platform, push.payload, push.collapseKey, push.ttlSeconds),
-    )
-
     // A status family rather than a range: no bound of a range a real answer never reaches is left for Kover.
     private suspend fun verdict(signer: Signer, response: HttpResponse): PushResult {
         val status = response.status.value
@@ -96,18 +91,19 @@ class RelayPushSender(
         }
     }
 
-    private suspend fun outcome(response: HttpResponse): PushResult = when (statusOf(response)) {
-        "sent" -> PushResult.SENT
-        "unregistered" -> PushResult.UNREGISTERED
-        "retry" -> PushResult.retry("provider_unavailable")
-        else -> PushResult.rejected("relay_rejected")
-    }
-
-    // The relay's verdict, or null when its answer is not one (a SerializationException is an IllegalArgument one).
-    private suspend fun statusOf(response: HttpResponse): String? = try {
-        RELAY_JSON.decodeFromString(PushRelaySendResponse.serializer(), response.bodyAsText()).status
-    } catch (_: IllegalArgumentException) {
-        null
+    // The relay's verdict; an answer that is not one is a refusal (a SerializationException is an IllegalArgument one).
+    private suspend fun outcome(response: HttpResponse): PushResult {
+        val verdict = try {
+            RELAY_JSON.decodeFromString(PushRelaySendResponse.serializer(), response.bodyAsText()).status
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+        return when (verdict) {
+            "sent" -> PushResult.SENT
+            "unregistered" -> PushResult.UNREGISTERED
+            "retry" -> PushResult.retry("provider_unavailable")
+            else -> PushResult.rejected("relay_rejected")
+        }
     }
 
     // The signer, or null when the key does not open or the relay refused or missed the registration.
@@ -189,6 +185,11 @@ class RelayPushSender(
         fun context(relayUrl: String): String = "push-relay:$relayUrl"
     }
 }
+
+private fun body(push: EncryptedPush): String = RELAY_JSON.encodeToString(
+    PushRelaySendRequest.serializer(),
+    PushRelaySendRequest(push.token, push.platform, push.payload, push.collapseKey, push.ttlSeconds),
+)
 
 private val EDDSA get() = CryptographyProvider.Default.get(EdDSA)
 private val SHA get() = CryptographyProvider.Default.get(SHA256)

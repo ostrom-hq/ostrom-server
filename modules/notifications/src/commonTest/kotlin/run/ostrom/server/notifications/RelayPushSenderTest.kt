@@ -85,13 +85,13 @@ class RelayPushSenderTest {
     private fun HttpRequestData.text(): String = (body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
 
     private suspend fun verified(request: HttpRequestData): Boolean {
-        val key = urlSafe.decode(request.headers.getValue(PushRelay.INSTANCE_HEADER))
+        val key = urlSafe.decode(checkNotNull(request.headers[PushRelay.INSTANCE_HEADER]))
         val body = request.text()
         val digest = CryptographyProvider.Default.get(SHA256).hasher().hash(body.encodeToByteArray()).toHexString()
         val signing = PushRelay.signingString(
-            "POST", PushRelay.SEND_PATH, request.headers.getValue(PushRelay.TIMESTAMP_HEADER).toLong(), digest,
+            "POST", PushRelay.SEND_PATH, checkNotNull(request.headers[PushRelay.TIMESTAMP_HEADER]).toLong(), digest,
         )
-        val signature = urlSafe.decode(request.headers.getValue(PushRelay.SIGNATURE_HEADER))
+        val signature = urlSafe.decode(checkNotNull(request.headers[PushRelay.SIGNATURE_HEADER]))
         return CryptographyProvider.Default.get(EdDSA).publicKeyDecoder(EdDSA.Curve.Ed25519)
             .decodeFromByteArray(EdDSA.PublicKey.Format.RAW, key)
             .signatureVerifier()
