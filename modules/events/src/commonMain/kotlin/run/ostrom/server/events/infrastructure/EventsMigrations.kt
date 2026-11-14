@@ -195,6 +195,60 @@ private val WEBHOOKS_SQL: String =
 private val READER_ROUTER_FUNCTIONS = listOf("events_readers_behind(TEXT, INTEGER)")
 
 /**
+ * Version 4: a reader starts at the beginning of the journal of an organization created after the reader existed, so
+ * the first events of a new organization (its first approval request) are never skipped; only the organizations that
+ * already had a journal when the reader first asked (the upgrade that brings the reader) start at their head, as in
+ * version 3. `events_reader_starts` remembers, across organizations, the readers that have asked once; a reader with
+ * cursors from version 3 counts as started. Only `events_readers_behind` (`ostrom_router`) reads or writes it. The
+ * readers it starts are in its answer at once (the statement's snapshot does not show its own inserts).
+ * TeamCode starts every team it sees for the first time at its head (`SqlNotificationStore.behind`); Ostrom's
+ * approvals, which TeamCode lacks, make that gap a lost request for a yes.
+ */
+private val READER_STARTS_SQL: String =
+    """
+    CREATE TABLE events_reader_starts (
+        reader TEXT PRIMARY KEY,
+        started_at TIMESTAMPTZ NOT NULL
+    );
+    ALTER TABLE events_reader_starts ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE events_reader_starts FORCE ROW LEVEL SECURITY;
+    CREATE POLICY events_reader_starts_router ON events_reader_starts TO ostrom_router
+        USING (current_user = 'ostrom_router') WITH CHECK (current_user = 'ostrom_router');
+    GRANT SELECT, INSERT ON events_reader_starts TO ostrom_router;
+    CREATE OR REPLACE FUNCTION events_readers_behind(p_reader TEXT, p_limit INTEGER)
+        RETURNS TABLE (org_id UUID, from_seq BIGINT, head BIGINT)
+        LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        WITH known AS (
+            SELECT EXISTS (SELECT 1 FROM events_reader_starts s WHERE s.reader = p_reader)
+                OR EXISTS (SELECT 1 FROM events_readers r WHERE r.reader = p_reader) AS seen
+        ), registered AS (
+            INSERT INTO events_reader_starts (reader, started_at)
+            SELECT p_reader, now() FROM known WHERE NOT known.seen
+            ON CONFLICT DO NOTHING
+            RETURNING 1
+        ), started AS (
+            INSERT INTO events_readers (org_id, reader, seq)
+            SELECT c.org_id, p_reader, CASE WHEN k.seen THEN 0 ELSE c.last_seq END
+            FROM events_cursors c CROSS JOIN known k
+            WHERE NOT EXISTS (
+                SELECT 1 FROM events_readers r WHERE r.org_id = c.org_id AND r.reader = p_reader
+            )
+            ON CONFLICT DO NOTHING
+            RETURNING events_readers.org_id, events_readers.seq
+        ), positions AS (
+            SELECT r.org_id, r.seq FROM events_readers r WHERE r.reader = p_reader
+            UNION ALL
+            SELECT s.org_id, s.seq FROM started s
+        )
+        SELECT p.org_id, p.seq, c.last_seq FROM positions p
+            JOIN events_cursors c ON c.org_id = p.org_id
+            WHERE p.seq < c.last_seq
+            ORDER BY p.org_id LIMIT p_limit;
+    $$
+    """
+        .trimIndent()
+
+/**
  * Version 3: the cursors of the journal's readers (the kernel's `OrgEventJournal`, TeamCode's `notification_cursors`):
  * one row per organization and reader, the last sequence the reader turned into its own work, moved in the reader's
  * own transaction. Confined to the organization of the transaction; `events_readers_behind`, owned by `ostrom_router`,
@@ -257,4 +311,5 @@ val EventsMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(1, "create_journal", TENANT_ROLE_SQL + "\n" + JOURNAL_SQL),
     SchemaMigration(2, "create_webhooks", WEBHOOKS_SQL),
     SchemaMigration(3, "create_readers", READERS_SQL),
+    SchemaMigration(4, "readers_start_new_organizations_at_zero", READER_STARTS_SQL),
 )
