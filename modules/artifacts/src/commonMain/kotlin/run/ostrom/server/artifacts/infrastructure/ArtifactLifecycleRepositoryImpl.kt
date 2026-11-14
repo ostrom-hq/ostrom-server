@@ -37,9 +37,11 @@ internal object LifecycleQueries {
     const val PRUNE = "DELETE FROM artifacts_versions WHERE artifact_id = :id AND number <= " +
         "(SELECT latest_version FROM artifacts_artifacts WHERE id = :id) - :keep"
 
-    /** The folder's contents no kept version lists, marked once. */
+    /** The folder's contents no kept version lists and no live upload announced, marked once. */
     const val MARK = "UPDATE artifacts_blobs b SET marked_at = :now WHERE b.artifact_id = :id AND " +
         "b.marked_at IS NULL AND NOT EXISTS (SELECT 1 FROM artifacts_versions v, " +
         "jsonb_array_elements(CAST(v.files AS jsonb)) f WHERE v.artifact_id = b.artifact_id AND " +
-        "f ->> 'sha256' = b.sha256)"
+        "f ->> 'sha256' = b.sha256) AND NOT EXISTS (SELECT 1 FROM artifacts_uploads u JOIN " +
+        "artifacts_upload_blobs ub ON ub.upload_id = u.id WHERE u.artifact_id = b.artifact_id AND " +
+        "u.expires_at > :now AND ub.sha256 = b.sha256)"
 }

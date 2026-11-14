@@ -31,11 +31,13 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** TC-ART-29 against a real PostgreSQL: the versions kept, the contents marked, the expiry. */
 class ArtifactLifecyclePostgresTest {
+    private val upload = Uuid.random()
     private val t0 = Instant.parse("2026-11-14T10:00:00Z")
 
     private fun version(artifact: Artifact, number: Int, vararg shas: String) = ArtifactVersion(
@@ -78,6 +80,20 @@ class ArtifactLifecyclePostgresTest {
         assertEquals(null, server.driver.expiry(made.id))
         lifecycle.expire(ORG_A, made.id, expires)
         assertEquals(expires, server.driver.expiry(made.id))
+        // A content a live upload announced is left for its commit; an expired upload holds nothing.
+        artifacts.addVersion(ORG_A, version(made, 5, "d"), t0)
+        server.database.superuser.execute(
+            "INSERT INTO artifacts_uploads (id, org_id, artifact_id, member_id, created_at, expires_at) VALUES " +
+                "('$upload', '$ORG_A', '${made.id}', 'm', '$t0', '${t0 + 1.hours}')",
+        ).getOrThrow()
+        server.database.superuser.execute(
+            "INSERT INTO artifacts_upload_blobs (upload_id, org_id, sha256, size, state, position) VALUES " +
+                "('$upload', '$ORG_A', 'c', 10, 'held', 0)",
+        ).getOrThrow()
+        lifecycle.retain(ORG_A, made.id, 2, null, t0)
+        assertEquals(setOf("b", "shared"), server.driver.marked(made.id))
+        lifecycle.retain(ORG_A, made.id, 1, null, t0 + 2.hours)
+        assertEquals(setOf("a", "b", "c", "shared"), server.driver.marked(made.id))
     }
 
     @Test
@@ -121,7 +137,7 @@ class ArtifactLifecyclePostgresTest {
             "INSERT INTO artifacts_blobs (artifact_id, org_id, sha256, size) SELECT CAST(md5('a' || i) AS uuid), " +
                 "CAST('$ORG_A' AS uuid), '' || n, 1 FROM generate_series(0, 1999) AS i, generate_series(1, 10) AS n",
         ).getOrThrow()
-        for (table in listOf("artifacts_artifacts", "artifacts_versions", "artifacts_blobs")) {
+        for (table in listOf("artifacts_artifacts", "artifacts_versions", "artifacts_blobs", "artifacts_uploads")) {
             fixtures.execute("VACUUM ANALYZE $table").getOrThrow()
         }
         val id = Uuid.random()
