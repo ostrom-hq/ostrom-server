@@ -21,8 +21,9 @@ import kotlin.uuid.Uuid
 
 /**
  * The service keys of an organization (its owners and admins) and the caller's signed-in workstations. Every route
- * needs a browser session, like the personal tokens: a token never mints a key nor signs a machine out (S2-52), so a
- * leaked one cannot spread. The organization of the keys is the one `Ostrom-Org` names, or the caller's only one; the
+ * needs a browser session, like the personal tokens: a token never signs a machine out (S2-52). The service keys also
+ * take the person's own CLI sign-in (`ostrom keys`, as TeamCode's), never a service key, an agent's token nor a
+ * personal token, so a leaked one cannot spread. The organization of the keys is the one `Ostrom-Org` names, or the caller's only one; the
  * tokens of `ostrom login --admin` are listed and signed out only in the one `Ostrom-Org` names, a member's own, any
  * member's for an owner or an admin. A member of another organization, an unknown key or a device the caller may not
  * sign out is answered 404.
@@ -32,19 +33,19 @@ import kotlin.uuid.Uuid
 fun Route.keysAndDevicesRoutes(dependencies: KeysAndDevicesRoutesDependencies) = with(dependencies) {
     authenticated {
         get<ServiceKeysApi> {
-            call.requireBrowserSession()
+            call.requireInteractiveLogin()
             val member = call.requireOrgPrincipal(orgs, null)
             call.respond(ServiceKeysResponse(listServiceKeys(member).map { it.toServiceKeyResponse() }))
         }
         post<ServiceKeysApi, CreateServiceKeyRequest> { _, request ->
-            val userId = call.requireBrowserSession().userId()
+            val userId = call.requireInteractiveLogin().userId()
             val member = call.requireOrgPrincipal(orgs, null)
             call.requireRecentSignIn("create a service key")
             val issued = createServiceKey(member, userId, request.name, request.scopes, request.expiresInDays?.days)
             call.respond(HttpStatusCode.Created, issued.toCreatedServiceKeyResponse())
         }
         delete<ServiceKeysApi.Id> { params ->
-            val userId = call.requireBrowserSession().userId()
+            val userId = call.requireInteractiveLogin().userId()
             val member = call.requireOrgPrincipal(orgs, null)
             deleteServiceKey(member, userId, Uuid.parseOrNull(params.id) ?: throw ServiceKeyNotFoundException())
             call.respond(HttpStatusCode.NoContent)

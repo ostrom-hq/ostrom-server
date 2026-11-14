@@ -9,16 +9,19 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import kotlin.uuid.Uuid
 
-/** The person's browser sessions (the console's settings), from a browser session only. */
+/**
+ * The person's browser sessions (the console's settings), from a browser session or the person's own CLI sign-in
+ * (`ostrom auth sessions`, as TeamCode's).
+ */
 internal fun Route.webSessionRoutes(dependencies: IdentityRoutesDependencies) = with(dependencies) {
     get<AuthApi.Sessions> {
-        val principal = call.requireBrowserSession()
+        val principal = call.requireInteractiveLogin()
         val current = principal.credentialUuid()
         val sessions = webSessions.list(principal.userId()).map { it.toAuthSessionResponse(current) }
         call.respond(AuthSessionsResponse(sessions))
     }
     delete<AuthApi.Sessions.Id> { params ->
-        val principal = call.requireBrowserSession()
+        val principal = call.requireInteractiveLogin()
         val sessionId = Uuid.parseOrNull(params.id) ?: throw WebSessionNotFoundException()
         webSessions.revoke(principal.userId(), sessionId)
         // Ending the session making the request is signing out here.

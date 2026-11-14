@@ -5,6 +5,7 @@ package run.ostrom.server.identity
 import run.ostrom.server.identity.domain.IdentityProvider
 import run.ostrom.server.identity.domain.IssueAgentTokenUseCase
 import run.ostrom.server.identity.domain.PERSONAL_TOKEN_SCOPES
+import run.ostrom.server.identity.domain.IssueCliTokenUseCase
 import run.ostrom.server.identity.domain.ResolveUserUseCase
 import run.ostrom.server.identity.domain.StartWebSessionUseCase
 import run.ostrom.server.identity.domain.StartedSession
@@ -413,7 +414,7 @@ class IdentityRoutesPostgresTest {
     fun aPersonSeesAndEndsOnlyTheirOwnBrowserSessions() = serverTest(listOf(IdentityModule)) { server ->
         val (ada, here) = server.signIn("1")
         val elsewhere = server.koin.get<StartWebSessionUseCase>()(ada.id)
-        val (_, bobs) = server.signIn("2")
+        val (bob, bobs) = server.signIn("2")
         val token = server.client.post("/api/v1/tokens") {
             session(here)
             json(CreateTokenRequest("ci", listOf("profile:read")))
@@ -424,7 +425,24 @@ class IdentityRoutesPostgresTest {
         val items = listed.body<AuthSessionsResponse>().items
         assertEquals(setOf(here.session.id.toString(), elsewhere.session.id.toString()), items.map { it.id }.toSet())
         assertEquals(listOf(here.session.id.toString()), items.filter { it.current }.map { it.id })
-        // A token is not a browser session: it neither lists nor ends one.
+        // The CLI's own sign-in lists and ends them as TeamCode's `auth sessions` does (14/11/2026)...
+        val laptop = server.koin.get<IssueCliTokenUseCase>()(ada.id, "laptop")
+        val byCli = server.client.get("/api/v1/auth/sessions") { bearerAuth(laptop.secret) }
+        assertEquals(HttpStatusCode.OK, byCli.status)
+        val cliItems = byCli.body<AuthSessionsResponse>().items
+        assertEquals(setOf(here.session.id.toString(), elsewhere.session.id.toString()), cliItems.map { it.id }.toSet())
+        assertTrue(cliItems.none { it.current }, "none of them is the CLI's own")
+        val third = server.koin.get<StartWebSessionUseCase>()(ada.id)
+        val endedByCli = server.client.delete("/api/v1/auth/sessions/${third.session.id}") { bearerAuth(laptop.secret) }
+        assertEquals(HttpStatusCode.NoContent, endedByCli.status)
+        assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/auth/me") { session(third) }.status)
+        val bobsByCli = server.koin.get<IssueCliTokenUseCase>()(bob.id, "bob's")
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.client.delete("/api/v1/auth/sessions/${here.session.id}") { bearerAuth(bobsByCli.secret) }.status,
+            "never someone else's",
+        )
+        // ...but a personal token is not a sign-in: it neither lists nor ends one.
         assertEquals(HttpStatusCode.Forbidden, server.client.get("/api/v1/auth/sessions") { bearerAuth(token) }.status)
         assertEquals(
             HttpStatusCode.Forbidden,
