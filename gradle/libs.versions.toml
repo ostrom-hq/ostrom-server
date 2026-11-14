@@ -17,6 +17,10 @@ mordant = "3.0.2"
 cryptography = "0.6.0"
 bouncycastle = "1.86"
 sqlx4k = "1.17.0"
+# The JVM database stack of docs/decisions/0001, TeamCode's versions (step 2).
+exposed = "1.5.0"
+hikari = "5.1.0"
+postgresql-jdbc = "42.7.7"
 junit = "5.11.4"
 junit-platform = "1.11.4"
 kover = "0.9.11"
@@ -37,6 +41,10 @@ maven = { id = "com.vanniktech.maven.publish", version.ref = "maven-publish" }
 zodable = { id = "dev.zodable", version.ref = "zodable" }
 
 [libraries]
+exposed-core = { module = "org.jetbrains.exposed:exposed-core", version.ref = "exposed" }
+exposed-jdbc = { module = "org.jetbrains.exposed:exposed-jdbc", version.ref = "exposed" }
+hikari = { module = "com.zaxxer:HikariCP", version.ref = "hikari" }
+postgresql-jdbc = { module = "org.postgresql:postgresql", version.ref = "postgresql-jdbc" }
 ostrom-receipts = { module = "run.ostrom:ostrom-receipts", version.ref = "ostrom-core" }
 ostrom-api = { module = "run.ostrom:ostrom-api", version.ref = "ostrom-core" }
 # Gradle plugins as libraries, for build-logic/build.gradle.kts
