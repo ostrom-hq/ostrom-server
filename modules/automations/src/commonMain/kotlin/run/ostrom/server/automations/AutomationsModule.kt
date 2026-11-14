@@ -56,8 +56,6 @@ import run.ostrom.server.automations.presentation.AutomationsRoutesDependencies
 import run.ostrom.server.automations.presentation.automationsRoutes
 import run.ostrom.server.automations.presentation.WaitsRoutesDependencies
 import run.ostrom.server.automations.presentation.waitsRoutes
-import run.ostrom.server.kernel.audit.DiscardingOrgAuditTrail
-import run.ostrom.server.kernel.audit.OrgAuditTrail
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.config.ConfigSource
@@ -160,7 +158,7 @@ object AutomationsModule : ServerModule {
                 get(),
                 workflows = getOrNull<AutomationWorkflows>() ?: NoWorkflows,
                 limits = getOrNull<AutomationLimits>() ?: DefaultAutomationLimits,
-                audit = getOrNull<OrgAuditTrail>() ?: DiscardingOrgAuditTrail(),
+                audit = get(),
             )
         }
         single { AutomationScheduler(get(), get()) }

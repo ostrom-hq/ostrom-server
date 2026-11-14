@@ -14,5 +14,5 @@ import kotlin.uuid.Uuid
  */
 internal class CloudRuntimeAutomationLimits(private val runtime: CloudRuntimeSource?) : AutomationLimits {
     override suspend fun maxRunningPerMember(orgId: Uuid): Int =
-        (runtime?.current() ?: CloudRuntime()).maxRunningAutomationsPerMember
+        (if (runtime == null) CloudRuntime() else runtime.current()).maxRunningAutomationsPerMember
 }

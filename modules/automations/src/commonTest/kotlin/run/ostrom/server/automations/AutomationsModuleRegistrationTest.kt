@@ -16,6 +16,8 @@ import run.ostrom.server.automations.fakes.RecordingWorkflows
 import run.ostrom.server.automations.fakes.TestClock
 import run.ostrom.server.automations.fakes.aliceAuto
 import run.ostrom.server.automations.fakes.workflowDefinition
+import run.ostrom.server.kernel.audit.DiscardingOrgAuditTrail
+import run.ostrom.server.kernel.audit.OrgAuditTrail
 import run.ostrom.server.kernel.config.MapConfigSource
 import kotlinx.coroutines.test.runTest
 import org.koin.dsl.koinApplication
@@ -46,6 +48,7 @@ class AutomationsModuleRegistrationTest {
                     single<WebhookSecrets> { PlainSecrets }
                     single<Clock> { TestClock() }
                     single<AutomationWorkflows> { workflows }
+                    single<OrgAuditTrail> { DiscardingOrgAuditTrail() }
                 },
             )
         }.koin
