@@ -1,0 +1,46 @@
+# The Cloud Run service of the Ostrom Push relay (push/README.md). Not applied by any pipeline: an operator deploys it
+# with `gcloud run services replace push/cloudrun.yaml --region <region>` after replacing the placeholders.
+#
+# One instance at most: the relay's quotas and replay guard live in its memory (push/README.md, "Choices"), and one
+# instance carries far more than the published apps need.
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: ostrom-push
+  annotations:
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "1"
+        run.googleapis.com/execution-environment: gen2
+    spec:
+      # The service account of the Firebase project, with the "Firebase Cloud Messaging API Admin" role only.
+      serviceAccountName: ostrom-push@PROJECT_ID.iam.gserviceaccount.com
+      containerConcurrency: 200
+      timeoutSeconds: 30
+      containers:
+        # Published by CI to Docker Hub (`latest` and `sha-<commit>` from main, the version from tags), and pulled
+        # through the project's Artifact Registry remote repository `dockerhub`: Cloud Run's own anonymous pulls from
+        # docker.io fail ("Container import failed").
+        - image: REGION-docker.pkg.dev/PROJECT_ID/dockerhub/ostromhq/ostrom-push:VERSION
+          ports:
+            - containerPort: 8080
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi  # The gen2 environment refuses less.
+          env:
+            - name: OSTROM_PUSH_PROJECT_ID
+              value: PROJECT_ID
+            # Instance ids cut off by hand, comma separated.
+            - name: OSTROM_PUSH_BLOCKED_INSTANCES
+              value: ""
+          startupProbe:
+            httpGet:
+              path: /healthz
+          livenessProbe:
+            httpGet:
+              path: /healthz

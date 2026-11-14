@@ -168,11 +168,12 @@ jobs:
           path: '**/build/reports/**'
           retention-days: 7
 
-  # The session runner (runner/) is the one Kotlin/Native program left (docs/decisions/0001): its tests run natively.
+  # The session runner (runner/) and the push relay (push/) are the Kotlin/Native programs (docs/decisions/0001): their
+  # tests run natively. The relay's binary is linked, put in its image and checked by scripts/smoke-push-relay.py.
   ci-native:
-    name: Runner native tests (linuxX64)
+    name: Native tests and push relay image (linuxX64)
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    timeout-minutes: 30
+    timeout-minutes: 45
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -189,6 +190,21 @@ jobs:
       - name: Runner native tests (linuxX64)
         if: ${{ !cancelled() }}
         run: ./gradlew --continue :runner:linuxX64Test
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push relay native tests (linuxX64)
+        if: ${{ !cancelled() }}
+        run: ./gradlew --continue :push:linuxX64Test
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # The image push-image.yml publishes, built and checked here before it can be: the real native binary, read-only
+      # as Cloud Run runs it (protocol, signatures, quotas, nothing logged).
+      - name: Push relay binary, image and contract
+        if: ${{ !cancelled() }}
+        run: |
+          ./gradlew :push:linkReleaseExecutableLinuxX64
+          docker build --platform linux/amd64 --file push/Dockerfile --tag ostrom-push:contract push
+          python3 scripts/smoke-push-relay.py ostrom-push:contract
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Measured times and their budgets (reported, held by perf.yml)
@@ -526,5 +542,5 @@ jobs:
           E2E: ${{ needs.ci-e2e.result }}
           API: ${{ needs.api-package.result }}
         run: |
-          echo "JVM tests and Kover: $JVM; runner native tests: $NATIVE; binary, images and smoke tests: $IMAGE; e2e: $E2E; API package: $API"
+          echo "JVM tests and Kover: $JVM; native tests and push relay image: $NATIVE; binary, images and smoke tests: $IMAGE; e2e: $E2E; API package: $API"
           test "$JVM" = success && test "$NATIVE" = success && test "$IMAGE" = success && test "$E2E" = success && test "$API" = success
