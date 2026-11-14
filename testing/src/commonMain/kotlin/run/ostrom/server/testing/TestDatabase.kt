@@ -70,8 +70,9 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
     val servingRole: String get() = servingRoleName(id)
 
     /**
-     * Flyway on the owner's connections, as `ostrom-server migrate` runs: for a test that applies a module's
-     * migrations itself (a part of them first, or a module its test server does not load).
+     * Flyway on the owner's connections, as `ostrom-server migrate` runs, but without its advisory lock: for a test
+     * that applies a module's migrations itself, one pass at a time (a part of them first, or a module its test server
+     * does not load).
      *
      * @param logger Where applied migrations are reported.
      *

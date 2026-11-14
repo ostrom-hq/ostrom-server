@@ -111,7 +111,7 @@ val OrgsMigrations = listOf(
   role must be a member of `ostrom_tenant` (ci/database-roles.sql creates it beforehand and grants it to both, as a
   deployment must). On Exposed, the kernel's `JdbcDatabase.inOrg` does that switch (section 4).
 - Plain PostgreSQL, run by Flyway over JDBC as written (Java migrations: no placeholder replacement, no splitting).
-  Write `CAST(x AS type)` rather than `::type`, as the existing migrations do.
+  Write `CAST(x AS type)` rather than `::type`: style only now, kept so that every migration reads alike.
 - Modules migrate in the order of `serverModules()`: a module whose tables reference another module's tables comes
   after it.
 
