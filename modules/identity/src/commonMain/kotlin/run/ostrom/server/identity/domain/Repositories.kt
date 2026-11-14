@@ -69,8 +69,8 @@ interface UsersRepository {
      * @param email Their first e-mail, if the identity gave one.
      * @param at When.
      *
-     * @throws io.github.smyrgeorge.sqlx4k.SQLError A unique violation when another sign-in created the same identity
-     *   or verified the same e-mail at the same moment (the caller retries once).
+     * @throws DuplicateIdentityException When another sign-in created the same identity or verified the same e-mail
+     *   at the same moment (the caller retries once).
      */
     suspend fun create(user: User, identity: VerifiedIdentity, email: UserEmail?, at: Instant)
 

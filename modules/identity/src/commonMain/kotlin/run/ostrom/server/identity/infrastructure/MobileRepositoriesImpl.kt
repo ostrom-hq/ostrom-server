@@ -10,57 +10,73 @@ import run.ostrom.server.identity.domain.NotificationPreferencesRepository
 import run.ostrom.server.identity.domain.QuietHours
 import run.ostrom.server.identity.domain.TokenKind
 import run.ostrom.server.kernel.auth.PhoneUnlockProofs
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
+import run.ostrom.server.kernel.database.JdbcDatabase
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.core.greaterEq
+import org.jetbrains.exposed.v1.core.isNull
+import org.jetbrains.exposed.v1.core.or
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
+import org.jetbrains.exposed.v1.jdbc.updateReturning
+import org.jetbrains.exposed.v1.jdbc.upsert
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * [MobileCodesRepository] on PostgreSQL (`identity_mobile_codes`, migration 5).
+ * [MobileCodesRepository] on PostgreSQL through Exposed ([IdentityMobileCodes], migration 5).
  *
- * @param driver The database.
+ * @param database The JDBC pool.
  */
-class MobileCodesRepositoryImpl(private val driver: Driver) : MobileCodesRepository {
+class MobileCodesRepositoryImpl(private val database: JdbcDatabase) : MobileCodesRepository {
+    private val t = IdentityMobileCodes
+
     override suspend fun create(code: MobileCode, codeHash: String) {
-        driver.execute(
-            Statement.create(
-                "INSERT INTO identity_mobile_codes (id, code_hash, user_id, code_challenge, redirect_uri, " +
-                    "created_at, expires_at) VALUES (:id, :hash, :user, :challenge, :uri, :created, :expires)",
-            ).bind("id", code.id).bind("hash", codeHash).bind("user", code.userId)
-                .bind("challenge", code.codeChallenge).bind("uri", code.redirectUri)
-                .bind("created", code.createdAt).bind("expires", code.expiresAt),
-        ).getOrThrow()
+        database.query {
+            t.insert {
+                it[id] = code.id
+                it[this.codeHash] = codeHash
+                it[userId] = code.userId
+                it[codeChallenge] = code.codeChallenge
+                it[redirectUri] = code.redirectUri
+                it[createdAt] = code.createdAt
+                it[expiresAt] = code.expiresAt
+            }
+        }
     }
 
-    override suspend fun consume(codeHash: String, now: Instant): MobileCode? = driver.fetchAll(
-        // One statement marks it used and returns it: two exchanges of the same code cannot both get it.
-        Statement.create(
-            "UPDATE identity_mobile_codes SET used_at = :now WHERE code_hash = :hash AND used_at IS NULL " +
-                "AND expires_at > :now RETURNING id, user_id, code_challenge, redirect_uri, created_at, expires_at",
-        ).bind("hash", codeHash).bind("now", now),
-    ).getOrThrow().firstOrNull()?.let {
-        MobileCode(
-            id = it.get("id").asUuid(),
-            userId = it.get("user_id").asUuid(),
-            codeChallenge = it.get("code_challenge").asString(),
-            redirectUri = it.get("redirect_uri").asString(),
-            createdAt = it.get("created_at").asInstant(),
-            expiresAt = it.get("expires_at").asInstant(),
-        )
+    // One statement marks it used and returns it: two exchanges of the same code cannot both get it.
+    override suspend fun consume(codeHash: String, now: Instant): MobileCode? = database.query {
+        t.updateReturning(
+            listOf(t.id, t.userId, t.codeChallenge, t.redirectUri, t.createdAt, t.expiresAt),
+            where = { (t.codeHash eq codeHash) and t.usedAt.isNull() and (t.expiresAt greater now) },
+        ) { it[usedAt] = now }.singleOrNull()?.let {
+            MobileCode(
+                id = it[t.id],
+                userId = it[t.userId],
+                codeChallenge = it[t.codeChallenge],
+                redirectUri = it[t.redirectUri],
+                createdAt = it[t.createdAt],
+                expiresAt = it[t.expiresAt],
+            )
+        }
     }
 }
 
 /**
- * [MobileTokensRepository] on PostgreSQL: the app's tokens are rows of `identity_api_tokens` with an unlock key.
+ * [MobileTokensRepository] on PostgreSQL through Exposed: the app's tokens are rows of `identity_api_tokens` with an
+ * unlock key, no organization's.
  *
- * @param driver The database.
+ * @param database The JDBC pool.
  */
-class MobileTokensRepositoryImpl(private val driver: Driver) : MobileTokensRepository {
-    override suspend fun create(token: ApiToken, secretHash: String, unlockKeyHash: String) =
-        insert(driver, token, secretHash, unlockKeyHash)
+class MobileTokensRepositoryImpl(private val database: JdbcDatabase) : MobileTokensRepository {
+    private val t = IdentityApiTokens
+
+    override suspend fun create(token: ApiToken, secretHash: String, unlockKeyHash: String) {
+        database.query { insertToken(token, secretHash, unlockKeyHash) }
+    }
 
     override suspend fun unlock(
         tokenId: Uuid,
@@ -68,69 +84,80 @@ class MobileTokensRepositoryImpl(private val driver: Driver) : MobileTokensRepos
         unlockKeyHash: String,
         at: Instant,
         requestId: String?,
-    ): Boolean = driver.execute(
-        Statement.create(
-            "UPDATE identity_api_tokens SET authenticated_at = :at, unlock_request_id = :request WHERE id = :id " +
-                "AND user_id = :user AND kind = :kind AND unlock_key_hash = :unlock AND revoked_at IS NULL " +
-                "AND (expires_at IS NULL OR expires_at > :at)",
-        ).bind("at", at).bind("request", requestId).bind("id", tokenId).bind("user", userId)
-            .bind("kind", TokenKind.MOBILE.name).bind("unlock", unlockKeyHash),
-    ).getOrThrow() == 1L
+    ): Boolean = database.query {
+        t.update({
+            (t.id eq tokenId) and (t.userId eq userId) and (t.kind eq TokenKind.MOBILE.name) and
+                (t.unlockKeyHash eq unlockKeyHash) and t.revokedAt.isNull() and
+                (t.expiresAt.isNull() or (t.expiresAt greater at))
+        }) {
+            it[authenticatedAt] = at
+            it[unlockRequestId] = requestId
+        } == 1
+    }
 }
 
 /**
  * [PhoneUnlockProofs] on the app's tokens (`identity_api_tokens.unlock_request_id`, migration 16): one statement
  * checks and clears the binding, by the token's primary key, so two yeses sent at once cannot both use it.
  *
- * @param driver The database.
+ * @param database The JDBC pool.
  */
-class PhoneUnlockProofsImpl(private val driver: Driver) : PhoneUnlockProofs {
+class PhoneUnlockProofsImpl(private val database: JdbcDatabase) : PhoneUnlockProofs {
     override suspend fun consume(credentialId: String, requestId: String, since: Instant): Boolean {
         val id = Uuid.parseOrNull(credentialId) ?: return false
-        return driver.execute(
-            Statement.create(
-                "UPDATE identity_api_tokens SET unlock_request_id = NULL WHERE id = :id AND kind = :kind " +
-                    "AND unlock_request_id = :request AND authenticated_at >= :since AND revoked_at IS NULL",
-            ).bind("id", id).bind("kind", TokenKind.MOBILE.name).bind("request", requestId).bind("since", since),
-        ).getOrThrow() == 1L
+        val t = IdentityApiTokens
+        return database.query {
+            t.update({
+                (t.id eq id) and (t.kind eq TokenKind.MOBILE.name) and (t.unlockRequestId eq requestId) and
+                    (t.authenticatedAt greaterEq since) and t.revokedAt.isNull()
+            }) { it[unlockRequestId] = null } == 1
+        }
     }
 }
 
 /**
- * [NotificationPreferencesRepository] on PostgreSQL (`identity_notification_preferences`, migration 5).
+ * [NotificationPreferencesRepository] on PostgreSQL through Exposed ([IdentityNotificationPreferences], migration 5).
  *
- * @param driver The database.
+ * @param database The JDBC pool.
  */
-class NotificationPreferencesRepositoryImpl(private val driver: Driver) : NotificationPreferencesRepository {
-    override suspend fun get(userId: Uuid): NotificationPreferences? = driver.fetchAll(
-        Statement.create(
-            "SELECT requests, decisions, spending, quiet_start, quiet_end, quiet_time_zone " +
-                "FROM identity_notification_preferences WHERE user_id = :user",
-        ).bind("user", userId),
-    ).getOrThrow().firstOrNull()?.let {
-        NotificationPreferences(
-            requests = it.get("requests").asBoolean(),
-            decisions = it.get("decisions").asBoolean(),
-            spending = it.get("spending").asBoolean(),
-            quietHours = it.get("quiet_start").asStringOrNull()?.let { start ->
-                QuietHours(start, it.get("quiet_end").asString(), it.get("quiet_time_zone").asString())
-            },
-        )
+class NotificationPreferencesRepositoryImpl(private val database: JdbcDatabase) : NotificationPreferencesRepository {
+    private val t = IdentityNotificationPreferences
+
+    override suspend fun get(userId: Uuid): NotificationPreferences? = database.query {
+        t.select(t.requests, t.decisions, t.spending, t.quietStart, t.quietEnd, t.quietTimeZone)
+            .where { t.userId eq userId }
+            .singleOrNull()
+            ?.let { row ->
+                NotificationPreferences(
+                    requests = row[t.requests],
+                    decisions = row[t.decisions],
+                    spending = row[t.spending],
+                    // The three are written together: all set, or none.
+                    quietHours = row[t.quietStart]?.let { start ->
+                        QuietHours(
+                            start,
+                            row.present(t.quietEnd, t.quietStart),
+                            row.present(t.quietTimeZone, t.quietStart),
+                        )
+                    },
+                )
+            }
     }
 
     override suspend fun put(userId: Uuid, preferences: NotificationPreferences, at: Instant) {
         val quiet = preferences.quietHours
-        driver.execute(
-            Statement.create(
-                "INSERT INTO identity_notification_preferences (user_id, requests, decisions, spending, quiet_start, " +
-                    "quiet_end, quiet_time_zone, updated_at) VALUES (:user, :requests, :decisions, :spending, " +
-                    ":start, :end, :zone, :at) ON CONFLICT (user_id) DO UPDATE SET requests = EXCLUDED.requests, " +
-                    "decisions = EXCLUDED.decisions, spending = EXCLUDED.spending, " +
-                    "quiet_start = EXCLUDED.quiet_start, quiet_end = EXCLUDED.quiet_end, " +
-                    "quiet_time_zone = EXCLUDED.quiet_time_zone, updated_at = EXCLUDED.updated_at",
-            ).bind("user", userId).bind("requests", preferences.requests).bind("decisions", preferences.decisions)
-                .bind("spending", preferences.spending).bind("start", quiet?.start).bind("end", quiet?.end)
-                .bind("zone", quiet?.timeZone).bind("at", at),
-        ).getOrThrow()
+        database.query {
+            // ON CONFLICT (user_id) DO UPDATE: every column takes the new value.
+            t.upsert {
+                it[this.userId] = userId
+                it[requests] = preferences.requests
+                it[decisions] = preferences.decisions
+                it[spending] = preferences.spending
+                it[quietStart] = quiet?.start
+                it[quietEnd] = quiet?.end
+                it[quietTimeZone] = quiet?.timeZone
+                it[updatedAt] = at
+            }
+        }
     }
 }

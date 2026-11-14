@@ -29,7 +29,8 @@ fun Route.eventsRoutes(dependencies: EventsRoutesDependencies) = with(dependenci
         authenticated {
             get<EventsApi> { params ->
                 val principal = call.requirePrincipal()
-                val (member, audience) = orgs.readerOf(principal)
+                val (member, reader) = orgs.readerOf(principal)
+                val audience = reader.withLogin(member.orgId, logins)
                 val after = cursorOf(call.request.headers[LAST_EVENT_ID], params.after)
                 val feed = openFeed(member.orgId, audience, after, typesOf(params.types)) {
                     orgs.stillReads(credentials, principal, member, audience)

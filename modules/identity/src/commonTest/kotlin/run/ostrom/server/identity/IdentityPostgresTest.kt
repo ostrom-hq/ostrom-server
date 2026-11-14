@@ -22,11 +22,11 @@ import run.ostrom.server.identity.domain.WebSession
 import run.ostrom.server.identity.domain.WebSessionsRepository
 import run.ostrom.server.kernel.database.inOrg
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.SQLError
 import io.github.smyrgeorge.sqlx4k.Statement
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -90,7 +90,7 @@ class IdentityPostgresTest {
         // Linking an identity of another user changes nothing and fails, so the caller retries.
         assertFailsWith<DuplicateIdentityException> { users.link(bob.id, github("1"), null, now) }
         // Any other database refusal (here, a user that does not exist) is not dressed up as a duplicate.
-        assertFailsWith<SQLError> { users.link(Uuid.random(), github("9"), null, now) }
+        assertFailsWith<ExposedSQLException> { users.link(Uuid.random(), github("9"), null, now) }
         assertEquals(ada, users.findByIdentity("github", "1"))
     }
 

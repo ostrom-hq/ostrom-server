@@ -47,11 +47,13 @@ import run.ostrom.server.orgs.domain.FindOrgUseCase
 import run.ostrom.server.orgs.domain.OrgNotFoundException
 import run.ostrom.server.rules.domain.models.AnalysisKind
 import run.ostrom.server.rules.domain.models.AnalysisRun
+import run.ostrom.server.rules.domain.models.LearnedWorkflow
 import run.ostrom.server.rules.domain.models.RepositoryListing
 import run.ostrom.server.rules.domain.models.RepositoryReadException
 import run.ostrom.server.rules.domain.models.RuleQuery
 import run.ostrom.server.rules.domain.models.RuleStatus
 import run.ostrom.server.rules.domain.services.RepositoryReader
+import run.ostrom.server.rules.domain.services.WorkflowProposals
 import run.ostrom.server.rules.domain.usecases.AnalyzeOrganizationUseCaseImpl
 import run.ostrom.server.rules.infrastructure.PostgresAnalysisRepository
 import run.ostrom.server.rules.infrastructure.PostgresRulesRepository
@@ -96,6 +98,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
@@ -549,7 +552,11 @@ class GitHubDirectoryPostgresTest {
             put(run)
         }
 
-        AnalyzeOrganizationUseCaseImpl(runs, rules, reader, RecordingLogger(), clock)(run, acme)
+        // The processes are proposed through the compiler's workflows, which this test does not hold.
+        val proposals = object : WorkflowProposals {
+            override suspend fun propose(orgId: Uuid, workflows: List<LearnedWorkflow>, at: Instant) = 0
+        }
+        AnalyzeOrganizationUseCaseImpl(runs, rules, reader, proposals, RecordingLogger(), clock)(run, acme)
 
         assertEquals(AnalysisRun.READY, runs.run(ORG, AnalysisKind.ANALYSIS)?.phase)
         val proposed = rules.rules(ORG, RuleQuery(), 50)

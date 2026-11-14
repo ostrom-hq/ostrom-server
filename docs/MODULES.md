@@ -165,7 +165,14 @@ override suspend fun rename(orgId: Uuid, id: Uuid, name: String): Boolean = data
 - **Tenant tables, two walls**: every query filters on `T.orgId eq orgId` itself (the typed org filter, SD-08), and
   runs in `database.inOrg(orgId) { }`, which switches the transaction to `ostrom_tenant` and sets `ostrom.org_id`, so
   the table's row-level security policy still refuses another organization's rows. Keep both until the step that
-  drops row-level security; outside `inOrg` a tenant table shows no row and accepts none.
+  drops row-level security; outside `inOrg` a tenant table shows no row and accepts none. A table whose migration lets
+  `ostrom_tenant` only read it (identity's `identity_api_tokens`) is written in `database.withOrganization(orgId) { }`,
+  the serving role with the organization set, as the sqlx4k `withOrganization`. The identity audit chain has two
+  writers until orgs and workflow-runs move: identity's own on Exposed, theirs in their sqlx4k transaction
+  (`TransactionalAuditLog`); both take the kernel's advisory lock on the chain with the same SQL
+  (`lockUntilCommit`, on a `JdbcTransaction` and on a sqlx4k `Transaction`, both `LOCK_UNTIL_COMMIT_SQL`). The
+  Exposed writer signs an event between two transactions, never inside one (a transaction block is not `suspend`),
+  and signs it again if another writer appended meanwhile.
 - A change that reads then writes locks what it read: `select(…).where { … }.forUpdate()` in the same transaction.
 - Exposed never retries a transaction (`defaultMaxAttempts = 1`). A refusal the domain expects (a duplicate) is an
   `insertIgnore`/`upsert` or a check in the same transaction, not a caught exception.
@@ -779,7 +786,9 @@ owner, so the serving role reads the history (the start-up check) and never rewr
   The gates publish theirs in the gate's own transaction: `cloud.approval.requested` when an enforced gate asks its
   approvers and `cloud.approval.decided` when it is answered, one per approval request with its own status, events of
   the whole organization naming the approver's login (no other module is read inside the gate's transaction), never
-  the gate's label or evidence.
+  the gate's label or evidence. The feed shows an approver, whatever their role, the approval events that name their login
+  (TeamCode's wait events belong to the person asked, not only to the session's owner): the login of the reader is
+  resolved when the stream opens, outside any gate's transaction, and an event of another approver is never shown.
   The notifications module holds the router's rules (`NotificationRules`: a wait a person resolves tells its
   assignee, a failed turn's wait its owner), each member's switches per channel and kind
   (`notifications_member_settings`, contract `getNotificationSettings`, no row meaning on) and the channels the server

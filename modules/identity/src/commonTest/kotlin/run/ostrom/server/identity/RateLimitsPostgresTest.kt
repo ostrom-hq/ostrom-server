@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.identity
 
-import run.ostrom.server.identity.infrastructure.RATE_LIMIT_ATTEMPT_SQL
-import run.ostrom.server.identity.infrastructure.RATE_LIMIT_PURGE_SQL
+import run.ostrom.server.identity.infrastructure.IdentityRateLimits
 import run.ostrom.server.identity.infrastructure.RateLimiterImpl
 import run.ostrom.server.identity.infrastructure.Sha256SecretHasher
+import run.ostrom.server.identity.infrastructure.attempt
+import run.ostrom.server.identity.infrastructure.windowsOver
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import org.jetbrains.exposed.v1.core.statements.Statement
+import org.jetbrains.exposed.v1.core.statements.StatementBuilder
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -24,7 +27,7 @@ import kotlin.time.Duration.Companion.minutes
  * windows over are purged.
  */
 class RateLimitsPostgresTest {
-    private fun TestServer.replica() = RateLimiterImpl(driver, Sha256SecretHasher())
+    private fun TestServer.replica() = RateLimiterImpl(koin.get<JdbcDatabase>(), Sha256SecretHasher())
 
     private suspend fun TestServer.count(sql: String): Long =
         database.superuser.fetchAll(sql).getOrThrow().single().get("n").asLong()
@@ -90,17 +93,14 @@ class RateLimitsPostgresTest {
 
         val counted = fixtures.fetchAll("SELECT key_hash FROM identity_rate_limits LIMIT 1").getOrThrow()
             .single().get("key_hash").asString()
-        fun attempt(key: String) =
-            Statement.create("EXPLAIN (ANALYZE, BUFFERS) $RATE_LIMIT_ATTEMPT_SQL").bind("key", key)
-                .bind("seconds", 600L)
-        mapOf(
-            "a first attempt" to attempt(Sha256SecretHasher().hash("device-start:198.51.100.1")),
-            "a counted attempt" to attempt(counted),
-            "the purge" to Statement.create("EXPLAIN (ANALYZE, BUFFERS) $RATE_LIMIT_PURGE_SQL"),
-        ).forEach { (what, statement) ->
-            val plan = server.driver.fetchAll(statement).getOrThrow().joinToString("\n") {
-                it.get("QUERY PLAN").asString()
-            }
+        val first = Sha256SecretHasher().hash("device-start:198.51.100.1")
+        val attempts: Map<String, StatementBuilder.() -> Statement<*>> = mapOf(
+            "a first attempt" to { attempt(first, 600L) },
+            "a counted attempt" to { attempt(counted, 600L) },
+            "the purge" to { IdentityRateLimits.deleteWhere(op = windowsOver) },
+        )
+        attempts.forEach { (what, statement) ->
+            val plan = server.koin.get<JdbcDatabase>().query { plan(statement) }
             assertFalse("Seq Scan" in plan, "$what scans the table:\n$plan")
         }
     }

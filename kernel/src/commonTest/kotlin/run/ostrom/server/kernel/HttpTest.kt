@@ -87,6 +87,7 @@ import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.uuid.Uuid
+import java.sql.SQLException
 
 @OptIn(ExperimentalAtomicApi::class)
 class HttpTest {
@@ -144,6 +145,18 @@ class HttpTest {
                 )
             }
             route.get("/probe/pool") { throw SQLError(SQLError.Code.PoolTimedOut, "pool of alice@example.com") }
+            // The modules on Exposed fail with a JDBC SQLException (ExposedSQLException is one), often wrapped.
+            route.get("/probe/jdbc-duplicate") {
+                throw IllegalStateException("wrapped", SQLException("Key (email)=(alice@example.com) exists", "23505"))
+            }
+            route.get("/probe/jdbc-deadlock") {
+                throw SQLException("Key (email)=(alice@example.com) is locked", "40P01")
+            }
+            route.get("/probe/jdbc-closed") { throw SQLException("connection of alice@example.com closed") }
+            route.get("/probe/jdbc-pool-wrapped-duplicate") {
+                // A pool's own SQLException, no SQLSTATE, around PostgreSQL's unique violation.
+                throw SQLException("pool", null, SQLException("Key (email)=(alice@example.com) exists", "23505"))
+            }
             route.get("/probe/origin") { call.respondText(call.request.origin.remoteAddress) }
             route.get("/probe/cancelled") { throw CancellationException("client gone") }
             route.get("/probe/unprotected-me") { call.respondText(call.requirePrincipal().subjectId) }
@@ -415,6 +428,26 @@ class HttpTest {
         val pool = lines.last { "database failure" in it }
         assertTrue("\"sql_code\":\"PoolTimedOut\"" in pool && "sql_state" !in pool, pool)
         assertFalse("alice@example.com" in pool, pool)
+    }
+
+    @Test
+    fun aJdbcUniqueViolationEvenWrappedIsA409AndAnyOtherJdbcFailureA500() = probeServer {
+        val duplicate = client.get("/probe/jdbc-duplicate")
+        assertEquals(HttpStatusCode.Conflict, duplicate.status)
+        assertEquals("conflict", duplicate.error().error.type)
+        assertFalse(lines.any { "alice@example.com" in it }, "A conflict logs no row value")
+
+        assertEquals(HttpStatusCode.InternalServerError, client.get("/probe/jdbc-deadlock").status)
+        val line = lines.single { "database failure" in it }
+        assertTrue("\"error\":\"SQLException\"" in line && "\"sql_state\":\"40P01\"" in line, line)
+        assertFalse("alice@example.com" in line, "A database error message quotes row values: never logged")
+
+        assertEquals(HttpStatusCode.InternalServerError, client.get("/probe/jdbc-closed").status)
+        val closed = lines.last { "database failure" in it }
+        assertTrue("\"error\":\"SQLException\"" in closed && "sql_state" !in closed, closed)
+        assertFalse("alice@example.com" in closed, closed)
+
+        assertEquals(HttpStatusCode.Conflict, client.get("/probe/jdbc-pool-wrapped-duplicate").status)
     }
 
     @Test

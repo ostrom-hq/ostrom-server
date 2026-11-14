@@ -13,12 +13,14 @@ import run.ostrom.server.rules.domain.repositories.RulesRepository
 import run.ostrom.server.rules.domain.services.AnalysisEngine
 import run.ostrom.server.rules.domain.services.AnalysisStart
 import run.ostrom.server.rules.domain.services.RepositoryReader
+import run.ostrom.server.rules.domain.services.WorkflowProposals
 import run.ostrom.server.rules.domain.usecases.AnalyzeOrganizationUseCase
 import run.ostrom.server.rules.fakes.FakeAnalysisEngine
 import run.ostrom.server.rules.fakes.FakeAnalysisRepository
 import run.ostrom.server.rules.fakes.FakeGateHistory
 import run.ostrom.server.rules.fakes.FakeRepositoryReader
 import run.ostrom.server.rules.fakes.FakeRulesRepository
+import run.ostrom.server.rules.fakes.FakeWorkflowProposals
 import run.ostrom.server.rules.fakes.RecordingLogger
 import run.ostrom.server.rules.fakes.RepositoryFixtures
 import run.ostrom.server.rules.fakes.RulesFixtures
@@ -127,6 +129,8 @@ class RulesModuleRegistrationTest {
         single<AnalysisRepository> { FakeAnalysisRepository() }
         single<RulesRepository> { FakeRulesRepository() }
         single<GateHistory> { FakeGateHistory() }
+        // The compiler's workflows are another module's: the proposals are recorded here.
+        single<WorkflowProposals> { FakeWorkflowProposals() }
     }
 
     @Test
