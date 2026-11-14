@@ -73,7 +73,7 @@ internal suspend fun PrincipalOrgResolver.readerOf(
  * @return The audience, with the login when the reader is a member of [orgId].
  */
 internal suspend fun EventAudience.withLogin(orgId: Uuid, logins: MemberLogins?): EventAudience =
-    copy(login = logins?.loginsOf(orgId, listOf(memberId))?.get(memberId))
+    if (logins == null) this else copy(login = logins.loginsOf(orgId, listOf(memberId))[memberId])
 
 /**
  * Whether an open stream's reader still reads what it was opened with: a person's credential still works, and the

@@ -18,5 +18,5 @@ data class EventsRoutesDependencies(
     val orgs: PrincipalOrgResolver,
     val credentials: TokenAuthenticator,
     val openFeed: OpenEventFeedUseCase,
-    val logins: MemberLogins? = null,
+    val logins: MemberLogins?,
 )
