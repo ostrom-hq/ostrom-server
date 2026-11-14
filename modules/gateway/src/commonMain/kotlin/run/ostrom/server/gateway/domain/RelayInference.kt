@@ -37,6 +37,17 @@ private fun accountActionRefusal(action: AccountAction): InferenceRefusal =
     InferenceRefusal(RefusalKind.PROVIDER_TERMS_REQUIRED, action.explanation)
 
 /**
+ * Whether a refused try may go on to another account: within [RelayInferenceUseCaseImpl.MAX_ATTEMPTS], or, for an
+ * account that asked its owner to act and now rests, within [RelayInferenceUseCaseImpl.MAX_ACCOUNT_ACTION_TRIES]
+ * (TeamCode's 64 accounts): a few such accounts must not hide a healthy one. One whose rest was not written stops the
+ * call, rather than meet the same account again.
+ */
+private fun mayRetry(tries: Int, asked: AccountAction?, rested: Boolean): Boolean = when {
+    asked == null -> tries < RelayInferenceUseCaseImpl.MAX_ATTEMPTS
+    else -> rested && tries < RelayInferenceUseCaseImpl.MAX_ACCOUNT_ACTION_TRIES
+}
+
+/**
  * How a try that will not go to another account ends, when the gateway answers it itself: a second plain rate limit
  * stops the call with the shortest wait, and the last account asking its owner to act, with Ostrom's explanation. Null
  * when the provider's answer is relayed, or when [retry].
@@ -284,7 +295,8 @@ class RelayInferenceUseCaseImpl(
             }
             return when (plan) {
                 is InferencePlan.Refused -> refuse(explained(plan.refusal, action), plan.model)
-                is InferencePlan.Busy -> refuse(explained(plan.refusal, action), plan.model)
+                // Busy is a wait for a slot, not an empty pool: it keeps its own answer, as a queue's refusal does.
+                is InferencePlan.Busy -> refuse(plan.refusal, plan.model)
                 is InferencePlan.Ready -> send(plan, tries)
             }
         }
@@ -365,18 +377,22 @@ class RelayInferenceUseCaseImpl(
             // A refusal of the account named in its body (Claude's terms) is read before anything reaches the agent.
             var relayed = answer
             var asked: AccountAction? = null
+            var rested = false
             if (lease != null && lease.inspects(answer.status)) {
                 val read = peek(answer)
                 asked = read.whole?.let(lease::action)?.also { found ->
                     this.action = found
-                    deliver { lease.required(found) }
+                    deliver {
+                        lease.required(found)
+                        rested = true
+                    }
                 }
                 relayed = read.answer
             }
             // An account that cannot serve sends the call to the next one; a plain rate limit, once only.
             val refusal = if (asked != null) ProviderRefusal.Account else lease?.refusal(answer.status, answer.headers)
             if (refusal is ProviderRefusal.RateLimit) rateLimits += refusal.wait
-            val retry = refusal != null && tries < MAX_ATTEMPTS && rateLimits.size <= RATE_LIMIT_SWITCHES
+            val retry = refusal != null && rateLimits.size <= RATE_LIMIT_SWITCHES && mayRetry(tries, asked, rested)
             val stop = stopOf(retry, rateLimits, asked, clock.now())
             if (stop != null) {
                 state.status = stop.kind.status
@@ -526,6 +542,12 @@ class RelayInferenceUseCaseImpl(
     companion object {
         /** Tries per call when shared accounts refuse. */
         const val MAX_ATTEMPTS = 3
+
+        /**
+         * Tries per call while each account refused it until its owner acts (Claude's terms) and rests: TeamCode's
+         * bound of 64 accounts per request.
+         */
+        const val MAX_ACCOUNT_ACTION_TRIES = 64
 
         /** Switches of account per call on a plain rate limit (TeamCode's `RATE_LIMIT_SWITCHES`). */
         const val RATE_LIMIT_SWITCHES = 1

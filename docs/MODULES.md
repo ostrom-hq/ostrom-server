@@ -484,7 +484,9 @@ provider gave. Either way the account rests as after any 429.
 
 A shared Claude account whose 400 asks its owner to accept Claude's updated Consumer Terms and Privacy Policy is an
 account refusal too (TeamCode #277): only that account rests 60 s, through the same shared cool-down, its tokens
-untouched, and the call tries the next account, then a key. Ostrom never accepts the terms for the owner, and the
+untouched, and the call tries the next account, then a key. Such refusals are not held to the three accounts: a call
+goes on through up to 64 accounts, as TeamCode's bound, so a few accounts awaiting their owner never hide a healthy
+one; if the rest cannot be written, the call stops there rather than meet the same account again. Ostrom never accepts the terms for the owner, and the
 account serves again after its rest, with nothing to reactivate. The gateway reads such a body only on a Claude
 account's 400, at most 4 KiB within 2 s, and recognizes only Claude's error envelope, `invalid_request_error` and the
 whole published message, case and whitespace aside; any other body (a keyword, a request error quoting the message,
@@ -507,8 +509,8 @@ every 5. Waiting holds no account, no budget and no database connection. The inf
 waiting calls; every gateway refusal carries its code in `x-ostrom-error`. A refusal retrying does not change also sends
 `x-should-retry: false`, as TeamCode does (e7dbca54): a spent budget (`budget_exhausted`, `budget_insufficient`), an
 invalid request, credential or model, no account nor key (`no_credential`), Claude's terms to accept
-(`provider_terms_required`), and any refusal whose `retry-after` is more than two minutes away. Claude Code and the Anthropic SDKs then show the cause at once instead of retrying a
-state only a new period or an admin changes.
+(`provider_terms_required`), and any refusal whose `retry-after` is more than two minutes away. Claude Code and the
+Anthropic SDKs then show the cause at once instead of retrying a state only a new period or an admin changes.
 
 A call sent with `x-ostrom-client-request-id` (a lowercase UUID) can be stopped by its member, on whichever replica
 runs it, through the inference API's cancel route (TeamCode's `requests.cancel.v1`): a marker in

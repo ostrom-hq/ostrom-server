@@ -104,12 +104,46 @@ class ClaudeTermsRelayTest {
         val upstream = FakeUpstream(terms(), terms(), terms())
         val responder = RecordingResponder()
         relay(upstream)(Gw.memberA, call(), responder)
-        assertEquals(RelayInferenceUseCaseImpl.MAX_ATTEMPTS, upstream.requests.size, "Not a plain rate limit's hop")
+        assertEquals(3, upstream.requests.size, "Each account once, then no account is left")
         assertEquals(3, cooled.size)
         assertTerms(responder.refusal)
         assertNull(responder.status, "Nothing of the provider's answer is relayed")
         assertEquals("provider_terms_required", records.single().outcome)
         assertEquals(503, records.single().status)
+    }
+
+    @Test
+    fun accountsAwaitingTheirOwnerNeverHideAHealthyOneBeyondThreeTries() = runTest {
+        repeat(5) { accounts.share(AccountProvider.CLAUDE, "a$it", clock) }
+        val upstream = FakeUpstream(terms(), terms(), terms(), terms(), served())
+        val responder = RecordingResponder()
+        relay(upstream)(Gw.memberA, call(), responder)
+        assertEquals(5, upstream.requests.size, "TeamCode's bound is 64 accounts, not the three of other refusals")
+        assertEquals(200, responder.status)
+        assertEquals(4, cooled.size)
+    }
+
+    @Test
+    fun aCallStopsAtSixtyFourAccountsAwaitingTheirOwner() = runTest {
+        val bound = RelayInferenceUseCaseImpl.MAX_ACCOUNT_ACTION_TRIES
+        repeat(bound + 1) { accounts.share(AccountProvider.CLAUDE, "a$it", clock) }
+        val upstream = FakeUpstream(*Array(bound + 1) { terms() })
+        val responder = RecordingResponder()
+        relay(upstream)(Gw.memberA, call(), responder)
+        assertEquals(bound, upstream.requests.size)
+        assertTerms(responder.refusal)
+    }
+
+    @Test
+    fun aRestThatCannotBeWrittenStopsTheCallRatherThanMeetTheSameAccountAgain() = runTest {
+        repeat(2) { accounts.share(AccountProvider.CLAUDE, "a$it", clock) }
+        accounts.answerWrites = IllegalStateException("lock wait timeout")
+        val upstream = FakeUpstream(terms(), served())
+        val responder = RecordingResponder()
+        relay(upstream)(Gw.memberA, call(), responder)
+        assertEquals(1, upstream.requests.size)
+        assertTerms(responder.refusal)
+        assertEquals("provider_terms_required", records.single().outcome)
     }
 
     @Test
