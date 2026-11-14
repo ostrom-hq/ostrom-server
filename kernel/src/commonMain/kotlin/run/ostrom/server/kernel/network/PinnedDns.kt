@@ -57,7 +57,7 @@ object PinnedDns {
             val addresses = try {
                 withTimeoutOrNull(deadlineMillis) { pending.await() }
             } finally {
-                if (!pending.isCompleted) pending.cancel()
+                pending.cancel()
             } ?: throw PinnedDnsTimeout(host)
             if (addresses.isEmpty() || addresses.any { !allowed(it.address) }) throw PinnedDnsRefusal(host)
             addresses.map { it.hostAddress }
