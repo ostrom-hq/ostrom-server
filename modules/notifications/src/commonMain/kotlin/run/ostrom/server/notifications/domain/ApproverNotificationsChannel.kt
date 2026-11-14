@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.notifications.domain
 
+import run.ostrom.server.identity.domain.MailAvailability
 import run.ostrom.server.gates.domain.models.ApprovalRequest
 import run.ostrom.server.gates.domain.models.Gate
 import run.ostrom.server.gates.domain.models.RequestStatus
@@ -17,7 +18,7 @@ import run.ostrom.server.gates.domain.services.GateChannel
  * @param credentials Whether a phone's credential still works.
  * @param notices The texts.
  * @param outbox Sends them.
- * @param mailing Whether the instance sends e-mails at all (`OSTROM_RESEND_API_KEY` or `OSTROM_MAIL_DIR`).
+ * @param mailing Whether the instance sends e-mails now (a mail provider set in the console, or a mail directory).
  */
 class ApproverNotificationsChannel(
     private val approvers: Approvers,
@@ -25,7 +26,7 @@ class ApproverNotificationsChannel(
     private val credentials: LiveCredentials,
     private val notices: ApprovalNotices,
     private val outbox: NotificationOutbox,
-    private val mailing: Boolean,
+    private val mailing: MailAvailability,
 ) : GateChannel {
     override val name: String = "notifications"
 
@@ -45,7 +46,7 @@ class ApproverNotificationsChannel(
                     .forEach { add(Notice.Push(gate.id, listOf(notices.push(request, it)))) }
             }
             val email = approver.email
-            if (mailing && email != null) add(Notice.Email(gate.id, notices.email(gate, request, email)))
+            if (email != null && mailing.available()) add(Notice.Email(gate.id, notices.email(gate, request, email)))
         }
     }
 

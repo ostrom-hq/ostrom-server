@@ -5,19 +5,15 @@ import run.ostrom.server.identity.domain.trimmedOrNull
 import run.ostrom.server.kernel.config.ConfigSource
 
 /**
- * How sign-in e-mails are sent, read once at start. The sign-in providers (GitHub, Google) and who may sign up are an
- * administrator's, in the console ([run.ostrom.server.identity.infrastructure.SignInSettings]).
+ * Where a developer's machine or an end-to-end test writes its sign-in e-mails, read once at start. The sign-in
+ * providers, who may sign up and the mail provider are an administrator's, in the console
+ * ([run.ostrom.server.identity.infrastructure.SignInSettings],
+ * [run.ostrom.server.identity.infrastructure.MAIL_SETTINGS]).
  *
- * @property resendApiKey Resend's key (`OSTROM_RESEND_API_KEY`).
- * @property mailFrom The sender of sign-in e-mails (`OSTROM_MAIL_FROM`).
- * @property mailDirectory A directory sign-in e-mails are written to instead of sent (`OSTROM_MAIL_DIR`), for a
- *   developer's machine and end-to-end tests; ignored when Resend is configured.
+ * @property mailDirectory A directory sign-in e-mails are written to instead of sent (`OSTROM_MAIL_DIR`); ignored once
+ *   Resend is set in the console.
  */
-data class SignInConfig(
-    val resendApiKey: String?,
-    val mailFrom: String,
-    val mailDirectory: String?,
-) {
+data class SignInConfig(val mailDirectory: String?) {
     /** Reads the configuration from the environment. */
     companion object {
         /**
@@ -27,12 +23,7 @@ data class SignInConfig(
          *
          * @return The configuration.
          */
-        fun from(source: ConfigSource): SignInConfig = SignInConfig(
-            resendApiKey = value(source, "OSTROM_RESEND_API_KEY"),
-            mailFrom = value(source, "OSTROM_MAIL_FROM") ?: "Ostrom <login@mail.ostrom.run>",
-            mailDirectory = value(source, "OSTROM_MAIL_DIR"),
-        )
-
-        private fun value(source: ConfigSource, key: String): String? = trimmedOrNull(source[key], Int.MAX_VALUE)
+        fun from(source: ConfigSource): SignInConfig =
+            SignInConfig(mailDirectory = trimmedOrNull(source["OSTROM_MAIL_DIR"], Int.MAX_VALUE))
     }
 }

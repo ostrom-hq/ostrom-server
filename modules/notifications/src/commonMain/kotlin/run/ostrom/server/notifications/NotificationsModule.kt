@@ -3,7 +3,7 @@ package run.ostrom.server.notifications
 
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.gates.domain.services.GateChannel
-import run.ostrom.server.identity.presentation.SignInConfig
+import run.ostrom.server.identity.domain.MailAvailability
 import run.ostrom.server.kernel.auth.SignOutListener
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.logging.Logger
@@ -36,6 +36,7 @@ import run.ostrom.server.notifications.presentation.pushDevicesRoutes
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.server.routing.Route
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.koin.core.Koin
@@ -92,7 +93,7 @@ object NotificationsModule : ServerModule {
                 credentials = get(),
                 notices = ApprovalNotices(get<NotificationSettings>().webOrigin),
                 outbox = get(),
-                mailing = get<SignInConfig>().sendsMail(),
+                mailing = get(),
             )
         }
     }
@@ -114,20 +115,24 @@ object NotificationsModule : ServerModule {
     override fun start(scope: CoroutineScope, koin: Koin) {
         val outbox = koin.get<NotificationOutbox>()
         val settings = koin.get<NotificationSettings>()
-        val mailing = koin.get<SignInConfig>().sendsMail()
-        koin.get<Logger>().log(
-            settings.startLevel(mailing),
-            "approval notifications started; e-mail links open OSTROM_WEB_ORIGIN",
-            mapOf("settings" to settings.toString(), "emails" to mailing),
-        )
+        val mailing = koin.get<MailAvailability>()
+        val logger = koin.get<Logger>()
+        scope.launch {
+            // Whether e-mails go now: an administrator may set the mail provider in the console later. A failed read
+            // (the database at start) only makes the line quieter.
+            val emails = try {
+                mailing.available()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                false
+            }
+            logger.log(
+                settings.startLevel(emails),
+                "approval notifications started; e-mail links open OSTROM_WEB_ORIGIN",
+                mapOf("settings" to settings.toString(), "emails" to emails),
+            )
+        }
         scope.launch { outbox.run() }
     }
 }
-
-/**
- * Whether the instance sends e-mails at all: the identity module's provider is Resend or a directory. Without one, no
- * e-mail is queued (it could only fail).
- *
- * @return True with `OSTROM_RESEND_API_KEY` or `OSTROM_MAIL_DIR`.
- */
-internal fun SignInConfig.sendsMail(): Boolean = resendApiKey != null || mailDirectory != null

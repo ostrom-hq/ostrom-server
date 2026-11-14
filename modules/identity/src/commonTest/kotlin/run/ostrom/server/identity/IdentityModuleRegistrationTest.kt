@@ -5,9 +5,8 @@ import run.ostrom.server.identity.domain.MailSender
 import run.ostrom.server.identity.domain.SignInMethodsSource
 import run.ostrom.server.identity.domain.SignUpMode
 import run.ostrom.server.identity.infrastructure.SignInSettings
-import run.ostrom.server.identity.infrastructure.DirectoryMailSender
-import run.ostrom.server.identity.infrastructure.ResendMailSender
-import run.ostrom.server.identity.infrastructure.UnconfiguredMailSender
+import run.ostrom.server.identity.domain.MailAvailability
+import run.ostrom.server.identity.infrastructure.InstanceMailSender
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.MapConfigSource
 import run.ostrom.server.kernel.settings.InstanceSettings
@@ -19,7 +18,9 @@ import org.koin.dsl.koinApplication
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlin.time.Clock
 
 class IdentityModuleRegistrationTest {
@@ -35,12 +36,14 @@ class IdentityModuleRegistrationTest {
     fun theSignInAndSignUpSectionsAreDeclaredForTheConsole() = withIdentity { koin ->
         val sections = koin.getAll<SettingsSection>().map { it.name }.sorted()
 
-        assertEquals(listOf("github-sign-in", "google", "sign-up"), sections)
+        assertEquals(listOf("github-sign-in", "google", "mail", "sign-up"), sections)
     }
 
     @Test
     fun providersSetInTheConsoleAreOfferedWithoutARestart() = withIdentity("OSTROM_RESEND_API_KEY" to "re_x") { koin ->
         val methods = koin.get<SignInMethodsSource>()
+        assertEquals(emptyList(), methods.current().keys, "The former variable is the admin module's to import")
+        settings.save("mail", mapOf("apiKey" to "re_x"))
         assertEquals(listOf("email"), methods.current().keys)
         assertEquals(SignUpMode.INVITE, koin.get<SignInSettings>().signUp())
 
@@ -52,19 +55,19 @@ class IdentityModuleRegistrationTest {
         assertEquals(SignUpMode.OPEN, koin.get<SignInSettings>().signUp())
         settings.save("google", mapOf("clientId" to "g", "clientSecret" to "s2"))
         assertEquals(listOf("github", "google", "email"), methods.current().keys)
-        assertIs<ResendMailSender>(koin.get<MailSender>())
+        assertIs<InstanceMailSender>(koin.get<MailSender>())
     }
 
     @Test
     fun aMailDirectoryAloneOffersTheEmailLink() = withIdentity("OSTROM_MAIL_DIR" to "/tmp/ostrom-mail") { koin ->
         assertEquals(listOf("email"), koin.get<SignInMethodsSource>().current().keys)
-        assertIs<DirectoryMailSender>(koin.get<MailSender>())
+        assertTrue(koin.get<MailAvailability>().available())
     }
 
     @Test
     fun withoutConfigurationNothingIsOffered() = withIdentity { koin ->
         assertEquals(emptyList(), koin.get<SignInMethodsSource>().current().keys)
-        assertIs<UnconfiguredMailSender>(koin.get<MailSender>())
+        assertFalse(koin.get<MailAvailability>().available())
     }
 
     private fun withIdentity(vararg config: Pair<String, String>, block: suspend (Koin) -> Unit) = runTest {

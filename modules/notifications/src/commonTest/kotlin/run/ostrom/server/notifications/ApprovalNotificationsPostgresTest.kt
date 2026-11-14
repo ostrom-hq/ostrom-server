@@ -26,7 +26,7 @@ import run.ostrom.server.identity.domain.User
 import run.ostrom.server.identity.domain.VerifiedIdentity
 import run.ostrom.server.identity.presentation.MobileTokenRequest
 import run.ostrom.server.identity.presentation.MobileTokenResponse
-import run.ostrom.server.identity.presentation.SignInConfig
+import run.ostrom.server.identity.domain.MailAvailability
 import run.ostrom.server.instance.InstanceModule
 import run.ostrom.server.kernel.auth.ORG_HEADER
 import run.ostrom.server.kernel.auth.OrgRole
@@ -86,7 +86,7 @@ class ApprovalNotificationsPostgresTest {
     private val overrides = module {
         single<MailSender> { mail }
         single<PushSender> { push }
-        single { SignInConfig.from(get()).copy(mailDirectory = "unused-by-the-fake") }
+        single<MailAvailability> { MailAvailability { true } }
         single { NotificationOutbox(get(), get(), get(), listOf(200.milliseconds)) }
         single<GateNodeResolver> {
             object : GateNodeResolver {
