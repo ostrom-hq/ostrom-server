@@ -178,6 +178,7 @@ class ConfigAndCallersTest {
         assertFailsWith<NotAMemberException> {
             ArtifactOrgResolver(TestOrgResolver, null).artifactCallerOf(agent, ARTIFACTS_WRITE)
         }
+        assertEquals(TestOrgResolver.profile(ORG_A), resolver.profile(ORG_A), "The organization is the kernel's")
     }
 
     @Test
