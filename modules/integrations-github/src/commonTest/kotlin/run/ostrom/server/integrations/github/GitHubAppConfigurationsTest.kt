@@ -227,7 +227,9 @@ class GitHubAppConfigurationsTest {
         assertNull(store.stored)
         // An answer without the client is checked on the id alone (TeamCode's verifyApp).
         verified = { id, _ -> VerifiedGitHubApp(id, "other", null, null) }
-        assertEquals(CLIENT, configurations().save(admin, base).app?.clientId)
+        val noHook = configurations().save(admin, base.copy(webhookSecret = null)).app
+        assertEquals(CLIENT, noHook?.clientId)
+        assertNull(noHook?.webhookSecret, "A first App may come without a webhook secret")
     }
 
     @Test
