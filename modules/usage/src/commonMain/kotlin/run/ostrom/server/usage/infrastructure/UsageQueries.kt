@@ -43,6 +43,24 @@ internal object UsageQueries {
     /** The hold a recorded call settles: `:call_id`. */
     const val DROP_HOLD: String = "DELETE FROM usage_holds WHERE call_id = :call_id"
 
+    /** The minute of the database's clock, as a number of minutes since the epoch. */
+    private const val MINUTE = "CAST(FLOOR(EXTRACT(EPOCH FROM now()) / 60) AS BIGINT)"
+
+    /** A member's past minutes. */
+    const val INGEST_MINUTES_PURGE: String =
+        "DELETE FROM usage_ingest_minutes WHERE org_id = :org_id AND member_id = :member_id AND minute < $MINUTE"
+
+    /**
+     * Counts a batch in the member's minute, only if it stays within :per_minute: a row back when counted, none when
+     * refused. The batch's own size is checked first, for a minute not started yet.
+     */
+    const val INGEST_MINUTE_COUNT: String =
+        "INSERT INTO usage_ingest_minutes AS counted (org_id, member_id, minute, events) " +
+            "SELECT CAST(:org_id AS UUID), CAST(:member_id AS UUID), $MINUTE, CAST(:events AS INTEGER) " +
+            "WHERE CAST(:events AS INTEGER) <= CAST(:per_minute AS INTEGER) " +
+            "ON CONFLICT (org_id, member_id, minute) DO UPDATE SET events = counted.events + EXCLUDED.events " +
+            "WHERE counted.events + EXCLUDED.events <= CAST(:per_minute AS INTEGER) RETURNING counted.events"
+
     /**
      * What is spent since `:since` (the month) and since `:day_since` (the day), and held by the other calls at `:now`
      * (`:org_id`, `:call_id`), for the org, for `:member_id` and for `:workflow_id`; 0 for a sum not asked. The holds

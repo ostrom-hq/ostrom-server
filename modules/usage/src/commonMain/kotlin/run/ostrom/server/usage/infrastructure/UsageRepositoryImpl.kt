@@ -37,14 +37,41 @@ import kotlin.uuid.Uuid
 class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
     override suspend fun insert(orgId: Uuid, events: List<UsageEvent>) {
         if (events.isEmpty()) return
+        // Under the org's policy, a row of another org is refused (WITH CHECK).
+        driver.executeInOrg(orgId, insertStatement(events)).getOrThrow()
+    }
+
+    /** One statement writing [events]. */
+    private fun insertStatement(events: List<UsageEvent>): Statement {
         // Parameters are named e<index>_<column>: ":e1_id" is never a prefix of ":e10_id".
         val rows = events.indices.joinToString(", ") { index ->
             PARAMETERS.joinToString(", ", prefix = "(", postfix = ")") { ":e${index}_$it" }
         }
         val statement = Statement.create("INSERT INTO usage_events ($COLUMNS) VALUES $rows")
         events.forEachIndexed { index, event -> statement.bindEvent("e${index}_", event) }
-        // Under the org's policy, a row of another org is refused (WITH CHECK).
-        driver.executeInOrg(orgId, statement).getOrThrow()
+        return statement
+    }
+
+    override suspend fun insertWithinMinute(
+        orgId: Uuid,
+        memberId: Uuid,
+        events: List<UsageEvent>,
+        perMinute: Int,
+    ): Boolean {
+        if (events.isEmpty()) return true
+        return driver.inTenant(orgId) {
+            execute(
+                Statement.create(UsageQueries.INGEST_MINUTES_PURGE).bind("org_id", orgId).bind("member_id", memberId),
+            ).getOrThrow()
+            // Under the row's lock: two batches of the member, on any replica, count one after the other.
+            val counted = fetchAll(
+                Statement.create(UsageQueries.INGEST_MINUTE_COUNT).bind("org_id", orgId).bind("member_id", memberId)
+                    .bind("events", events.size).bind("per_minute", perMinute),
+            ).getOrThrow()
+            if (counted.firstOrNull() == null) return@inTenant false
+            execute(insertStatement(events)).getOrThrow()
+            true
+        }
     }
 
     override suspend fun settle(event: UsageEvent) {

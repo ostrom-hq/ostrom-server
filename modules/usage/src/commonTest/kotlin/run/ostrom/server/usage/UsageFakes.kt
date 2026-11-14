@@ -158,6 +158,27 @@ class InMemoryUsageRepository : UsageRepository {
     /** When each hold was first put. */
     private val heldAt = mutableMapOf<Uuid, Instant>()
 
+    /** The minute of the database's clock: tests move it on by hand. */
+    var minute: Long = 0
+
+    /** The events counted per (org, member, minute). */
+    private val minutes = mutableMapOf<Triple<Uuid, Uuid, Long>, Int>()
+
+    override suspend fun insertWithinMinute(
+        orgId: Uuid,
+        memberId: Uuid,
+        events: List<UsageEvent>,
+        perMinute: Int,
+    ): Boolean {
+        failure?.let { throw it }
+        val key = Triple(orgId, memberId, minute)
+        val counted = minutes.getOrElse(key) { 0 } + events.size
+        if (counted > perMinute) return false
+        insert(orgId, events)
+        minutes[key] = counted
+        return true
+    }
+
     override suspend fun settle(event: UsageEvent) {
         insert(event.orgId, listOf(event))
         holds.remove(event.id)

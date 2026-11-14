@@ -111,20 +111,9 @@ class UsageUseCasesTest {
         assertFailsWith<UsageRateLimitedException> { ingest(TestCallers.memberA, batch.take(1)) }
         assertEquals(1, ingest(TestCallers.adminA, batch.take(1)), "Another member has their own minute")
 
-        clock.advance(1.minutes)
+        repository.minute++
         assertEquals(500, ingest(TestCallers.memberA, batch), "A new minute starts")
         assertEquals(6_501, repository.events.size, "The refused batch recorded nothing")
-    }
-
-    @Test
-    fun theCountersStayBoundedForgettingFinishedMinutesFirst() = runTest {
-        val bounded = IngestUsageEventsUseCaseImpl(repository, feed, clock, maxMembers = 2)
-        val one = listOf(ClientUsageEvent(UsageKind.HOOK, "Stop"))
-        fun member() = TestCallers.memberA.copy(memberId = Uuid.random())
-        repeat(3) { bounded(member(), one) }
-        clock.advance(1.minutes)
-        repeat(2) { bounded(member(), one) }
-        assertEquals(5, repository.events.size)
     }
 
     @Test

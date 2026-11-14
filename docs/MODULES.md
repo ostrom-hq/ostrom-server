@@ -528,7 +528,10 @@ owner, so the serving role reads the history (the start-up check) and never rewr
 ## Known limits of the foundation
 
 - **The in-memory limits are per replica**: the read limits (`OSTROM_READS_*`, `OSTROM_READ_WAITS_IN_FLIGHT`) count
-  each pod apart, as a protection of its own CPU and memory. The sign-in rate limits are not among them: their windows
+  each pod apart, as a protection of its own CPU and memory, the one kind of state TeamCode also keeps in a process
+  (docs/replicas.md: "local CPU-concurrency protection"). The events a member declares in a minute
+  (`POST /api/v1/usage/events`, 6 000 at most) are not among them: their count is a row of `usage_ingest_minutes`,
+  counted with the batch's write in one transaction, under the row's lock and by the database's clock. The sign-in rate limits are not among them: their windows
   (per client address, an IPv6 client by its /64, per e-mail recipient and per person) are rows of
   `identity_rate_limits`, by the hash of their key, counted in one statement under the key's row lock and timed by the
   database's clock, so every replica counts the same window; the windows over are purged every hour.
