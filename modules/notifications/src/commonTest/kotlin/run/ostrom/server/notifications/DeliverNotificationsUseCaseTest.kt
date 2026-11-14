@@ -34,6 +34,7 @@ class DeliverNotificationsUseCaseTest {
     private val mia = Uuid.parse("0000000a-0000-0000-0000-0000000000b1")
     private val leo = Uuid.parse("0000000a-0000-0000-0000-0000000000b2")
     private val clock = TestClock()
+    private val logger = RecordingLogger()
     private val ids = (1..10).map { Uuid.fromLongs(0, it.toLong()) }
 
     private fun summary(id: String, assignee: Uuid, open: Boolean = true) =
@@ -56,7 +57,7 @@ class DeliverNotificationsUseCaseTest {
         settings: OffSettings = OffSettings(),
     ): DeliverNotificationsUseCaseImpl {
         val made = ids.iterator()
-        return DeliverNotificationsUseCaseImpl(journal, waits, settings, deliveries, { channels }, clock) {
+        return DeliverNotificationsUseCaseImpl(journal, waits, settings, deliveries, { channels }, clock, logger) {
             made.next()
         }
     }
@@ -148,7 +149,7 @@ class DeliverNotificationsUseCaseTest {
                 DeliveryOutcome(DeliveryState.FAILED, 1, now, "channel_unavailable"),
                 deliveries.recorded[gone.id()],
             )
-            assertEquals(DeliveryOutcome(DeliveryState.FAILED, 1, now, "wait_closed"), deliveries.recorded[closed.id()])
+            assertEquals(DeliveryOutcome(DeliveryState.FAILED, 0, now, "wait_closed"), deliveries.recorded[closed.id()])
             assertEquals("channel_unavailable", deliveries.recorded[test.id()]?.error, "One naming no wait is sent")
             assertEquals(
                 DeliveryOutcome(DeliveryState.PENDING, 1, now + 10.seconds, "timeout"),
@@ -177,6 +178,40 @@ class DeliverNotificationsUseCaseTest {
             assertEquals(DeliveryRules.BATCH, attempted)
             assertEquals(1, deliveries.due.getValue(orgA).size)
             assertEquals(1, deliveries.due.getValue(orgB).size, "B waits for the next pass")
+        }
+    }
+
+    @Test
+    fun oneOrganizationsFailureHoldsNeitherTheOthersNorTheAttemptsBack() {
+        runTest {
+            val journal = FakeJournal(
+                positions = listOf(JournalPosition(orgA, 0, 2), JournalPosition(orgB, 0, 1)),
+                slices = mapOf(orgB to JournalSlice(listOf(waitCreated(1, "w-1")), 1)),
+            )
+            val deliveries = MemoryDeliveries().apply { failingClaims = setOf(orgC) }
+            val sent = NotificationDelivery(notification(orgA, null), "push", 0)
+            val lost = NotificationDelivery(notification(orgA, null), "push", 0)
+            deliveries.due[orgC] = mutableListOf()
+            deliveries.due[orgA] = mutableListOf(sent, lost)
+            deliveries.failingRecords = setOf(lost.id())
+            val waits = CountingWaits(listOf(summary("w-1", mia)))
+
+            assertEquals(2, useCase(journal, waits, deliveries, listOf(FakeChannel("push", setOf(mia))))())
+
+            assertEquals(listOf(orgB), deliveries.enqueued.map { it.first.orgId }, "A's page failed to read")
+            assertEquals(DeliveryState.DELIVERED, deliveries.recorded[sent.id()]?.state, "C's claim failed")
+            assertEquals(
+                listOf(
+                    "notification fan-out failed" to "NoSuchElementException",
+                    "notification claim failed" to "IllegalStateException",
+                    "notification record failed" to "IllegalStateException",
+                ),
+                logger.events.map { it.second to it.third["error"] },
+            )
+
+            journal.slices = emptyMap()
+            assertEquals(0, useCase(journal, waits, deliveries, emptyList()).fanOut(), "No channel, no read")
+            assertEquals(listOf(orgA, orgB), journal.read.map { it.first.orgId })
         }
     }
 

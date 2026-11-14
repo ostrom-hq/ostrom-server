@@ -87,6 +87,12 @@ class MemoryDeliveries : NotificationDeliveriesRepository {
     /** The organizations refusing their page (another replica queued it). */
     var refused: Set<Uuid> = emptySet()
 
+    /** The organizations whose claim fails. */
+    var failingClaims: Set<Uuid> = emptySet()
+
+    /** The deliveries whose record fails. */
+    var failingRecords: Set<Uuid> = emptySet()
+
     override suspend fun enqueue(
         position: JournalPosition,
         through: Long,
@@ -105,6 +111,7 @@ class MemoryDeliveries : NotificationDeliveriesRepository {
         now: Instant,
         lease: Duration,
     ): List<NotificationDelivery> {
+        check(orgId !in failingClaims) { "The database is down" }
         val rows = due.getValue(orgId)
         val claimed = rows.take(limit)
         rows.removeAll(claimed)
@@ -112,6 +119,7 @@ class MemoryDeliveries : NotificationDeliveriesRepository {
     }
 
     override suspend fun record(orgId: Uuid, id: Uuid, outcome: DeliveryOutcome, now: Instant) {
+        check(id !in failingRecords) { "The database is down" }
         recorded[id] = outcome
     }
 

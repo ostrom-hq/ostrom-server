@@ -12,6 +12,7 @@ import run.ostrom.server.kernel.events.JournalPosition
 import run.ostrom.server.kernel.events.OrgEventJournal
 import run.ostrom.server.kernel.events.OrgEventType
 import run.ostrom.server.kernel.events.WaitSummaries
+import run.ostrom.server.kernel.logging.Logger
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -19,8 +20,9 @@ import kotlin.uuid.Uuid
 /**
  * [DeliverNotificationsUseCase] as TeamCode's: the fan-out reads each organization's page, the waits it names, the
  * members each channel reaches and the switches turned off, then queues one delivery per event, member and channel
- * with the cursor's move. The attempts send one batch per channel, the channels together, each under its deadline: a
- * slow provider delays neither the others nor its own backoff. A delivery about a wait answered or withdrawn since is
+ * with the cursor's move. The attempts send one batch per organization and channel, together, each under its
+ * deadline: a slow provider delays neither the others nor its own backoff. One organization's failure is logged and
+ * skipped, so it never holds the others' notifications back. A delivery about a wait answered or withdrawn since is
  * not sent (`wait_closed`).
  *
  * @param journal The organizations' event journal.
@@ -29,6 +31,7 @@ import kotlin.uuid.Uuid
  * @param deliveries The queue.
  * @param channels The channels this server offers.
  * @param clock The time.
+ * @param logger Where an organization's failed pass is reported, by the error's type only.
  * @param newId Makes a delivery's id.
  */
 @Suppress("LongParameterList") // The pass's collaborators, each a port.
@@ -39,30 +42,44 @@ class DeliverNotificationsUseCaseImpl(
     private val deliveries: NotificationDeliveriesRepository,
     private val channels: () -> List<NotificationChannel>,
     private val clock: Clock,
+    private val logger: Logger,
     private val newId: () -> Uuid = Uuid::random,
 ) : DeliverNotificationsUseCase {
     override suspend fun invoke(): Int {
-        fanOut()
+        // A failed fan-out still lets the queued deliveries go out.
+        guarded(FANOUT_FAILED, Unit) { fanOut() }
         val now = clock.now()
         val due = mutableListOf<NotificationDelivery>()
         for (org in deliveries.workingOrgs(now, DeliveryRules.ORGS_PER_PASS)) {
             val room = DeliveryRules.BATCH - due.size
             if (room <= 0) break
-            due += stillOpen(org, deliveries.claimDue(org, room, now, DeliveryRules.LEASE))
+            due += guarded(CLAIM_FAILED, emptyList()) { stillOpen(org, deliveries.claimDue(org, room, now, LEASE)) }
         }
         val offered = channels().associateBy { it.id }
-        coroutineScope {
-            due.groupBy { it.channel }.map { (channel, batch) -> async { attempt(offered[channel], batch) } }.awaitAll()
+        // The sends run together and only return results: the records follow, one failing record losing no other.
+        val results = coroutineScope {
+            due.groupBy { it.notification.orgId to it.channel }
+                .map { (key, batch) -> async { attempt(offered[key.second], batch) } }
+                .awaitAll()
+                .flatten()
+        }
+        for ((delivery, result) in results) {
+            guarded(RECORD_FAILED, Unit) { record(delivery, DeliveryRules.outcome(delivery.attempts, result, now())) }
         }
         return due.size
     }
 
     override suspend fun fanOut(): Int {
         val offered = channels()
+        // Without a channel, the journal waits for one rather than being read past (TeamCode).
+        if (offered.isEmpty()) return 0
         var queued = 0
         for (position in journal.behind(DeliveryRules.READER, DeliveryRules.ORGS_PER_PASS)) {
-            val page = page(position, offered)
-            if (deliveries.enqueue(position, page.second, page.first)) queued += page.first.size
+            // One organization's failure delays neither the others nor the attempts.
+            queued += guarded(FANOUT_FAILED, 0) {
+                val page = page(position, offered)
+                if (deliveries.enqueue(position, page.through, page.deliveries)) page.deliveries.size else 0
+            }
         }
         return queued
     }
@@ -81,7 +98,7 @@ class DeliverNotificationsUseCaseImpl(
     private suspend fun page(
         position: JournalPosition,
         offered: List<NotificationChannel>,
-    ): Pair<List<NotificationDelivery>, Long> {
+    ): Page {
         val orgId = position.orgId
         val slice = journal.read(position, NotificationRules.SOURCE_TYPES, DeliveryRules.EVENTS_PER_FANOUT)
         val waitIds = slice.entries.filter { it.type == OrgEventType.WAIT_CREATED }
@@ -91,7 +108,7 @@ class DeliverNotificationsUseCaseImpl(
             NotificationRules.draft(NotificationSource(entry, known[NotificationRules.waitIdOf(entry)]))
         }
         val members = drafts.map { it.memberId }.toSet()
-        if (members.isEmpty()) return emptyList<NotificationDelivery>() to slice.through
+        if (members.isEmpty()) return Page(emptyList(), slice.through)
         val reachable = offered.associate { it.id to it.reachable(orgId, members) }
         val off = settings.disabled(orgId, members)
         val now = clock.now()
@@ -101,24 +118,27 @@ class DeliverNotificationsUseCaseImpl(
                 .filter { SwitchedOff(draft.memberId, it, draft.kind) !in off }
                 .map { channel -> NotificationDelivery(draft.toNotification(newId(), orgId, now), channel, 0) }
         }
-        return queued to slice.through
+        return Page(queued, slice.through)
     }
 
-    /** Of an organization's claimed deliveries, those whose wait is still open; the others are failed. */
+    /** Of an organization's claimed deliveries, those whose wait is still open; the others are failed, unsent. */
     private suspend fun stillOpen(orgId: Uuid, claimed: List<NotificationDelivery>): List<NotificationDelivery> {
         val waitIds = claimed.mapNotNull { it.notification.waitId }.toSet()
         if (waitIds.isEmpty()) return claimed
         val open = waits.of(orgId, waitIds).filter { it.open }.map { it.id }.toSet()
         val (send, closed) = claimed.partition { it.notification.waitId == null || it.notification.waitId in open }
-        for (delivery in closed) record(delivery, ChannelResult.failed(WAIT_CLOSED))
+        for (delivery in closed) {
+            record(delivery, DeliveryOutcome(DeliveryState.FAILED, delivery.attempts, now(), WAIT_CLOSED))
+        }
         return send
     }
 
-    private suspend fun attempt(channel: NotificationChannel?, batch: List<NotificationDelivery>) {
-        if (channel == null) {
-            for (delivery in batch) record(delivery, ChannelResult.failed(CHANNEL_UNAVAILABLE))
-            return
-        }
+    /** Sends one organization's batch on one channel; never throws but for cancellation. */
+    private suspend fun attempt(
+        channel: NotificationChannel?,
+        batch: List<NotificationDelivery>,
+    ): List<Pair<NotificationDelivery, ChannelResult>> {
+        if (channel == null) return batch.map { it to ChannelResult.failed(CHANNEL_UNAVAILABLE) }
         val results = try {
             withTimeoutOrNull(DeliveryRules.SEND_DEADLINE) { channel.deliver(batch.map { it.notification }) }
         } catch (error: CancellationException) {
@@ -127,31 +147,43 @@ class DeliverNotificationsUseCaseImpl(
             // A channel's own failure is retried like an unreachable provider; its message is never kept.
             emptyMap()
         }
-        for (delivery in batch) {
-            val result = when (results) {
+        return batch.map { delivery ->
+            delivery to when (results) {
                 null -> ChannelResult.retry(TIMEOUT)
                 else -> results[delivery.notification.id] ?: ChannelResult.retry(NO_RESULT)
             }
-            record(delivery, result)
         }
     }
 
-    private suspend fun record(delivery: NotificationDelivery, result: ChannelResult) {
-        val now = clock.now()
+    private suspend fun record(delivery: NotificationDelivery, outcome: DeliveryOutcome) {
         val notification = delivery.notification
-        deliveries.record(
-            notification.orgId,
-            notification.id,
-            DeliveryRules.outcome(delivery.attempts, result, now),
-            now,
-        )
+        deliveries.record(notification.orgId, notification.id, outcome, now())
     }
+
+    private fun now() = clock.now()
+
+    /** Runs [block]; a failure is logged by its type only (a database error quotes row values) and gives [fallback]. */
+    private suspend fun <T> guarded(message: String, fallback: T, block: suspend () -> T): T = try {
+        block()
+    } catch (error: CancellationException) {
+        throw error
+    } catch (error: Exception) {
+        logger.warn(message, mapOf("error" to error::class.simpleName))
+        fallback
+    }
+
+    /** The deliveries a page makes, and where the cursor moves once they are queued. */
+    private class Page(val deliveries: List<NotificationDelivery>, val through: Long)
 
     private companion object {
         const val CHANNEL_UNAVAILABLE = "channel_unavailable"
         const val TIMEOUT = "timeout"
         const val NO_RESULT = "no_result"
         const val WAIT_CLOSED = "wait_closed"
+        const val FANOUT_FAILED = "notification fan-out failed"
+        const val CLAIM_FAILED = "notification claim failed"
+        const val RECORD_FAILED = "notification record failed"
+        val LEASE = DeliveryRules.LEASE
     }
 }
 

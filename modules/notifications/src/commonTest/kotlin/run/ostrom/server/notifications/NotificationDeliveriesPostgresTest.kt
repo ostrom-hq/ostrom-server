@@ -126,6 +126,8 @@ class NotificationDeliveriesPostgresTest {
         val retry = DeliveryOutcome(DeliveryState.PENDING, 1, now + 10.seconds, error)
         repository.record(orgA, two.notification.id, retry, now)
         assertEquals("delivered:1:-:true", server.row(one.notification.id))
+        repository.record(orgA, one.notification.id, retry, now)
+        assertEquals("delivered:1:-:true", server.row(one.notification.id), "A late replica never overwrites it")
         assertEquals("pending:1:timeout-and-much-more-text-than-we-keep-:false", server.row(two.notification.id))
         assertEquals(emptyList(), repository.claimDue(orgA, 5, now + 9.seconds, 1.minutes), "Not before its backoff")
         assertEquals(listOf(two.copy(attempts = 1)), repository.claimDue(orgA, 5, now + 10.seconds, 1.minutes))

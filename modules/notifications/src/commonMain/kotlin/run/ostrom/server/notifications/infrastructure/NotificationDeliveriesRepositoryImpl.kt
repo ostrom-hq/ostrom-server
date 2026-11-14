@@ -120,7 +120,9 @@ class NotificationDeliveriesRepositoryImpl(
     override suspend fun record(orgId: Uuid, id: Uuid, outcome: DeliveryOutcome, now: Instant) {
         database.inOrg(orgId) {
             NotificationDeliveries.update({
-                (NotificationDeliveries.orgId eq orgId) and (NotificationDeliveries.id eq id)
+                // Only a pending row: a late replica whose lease ended never overwrites another's outcome.
+                (NotificationDeliveries.orgId eq orgId) and (NotificationDeliveries.id eq id) and
+                    (NotificationDeliveries.state eq DeliveryState.PENDING.wire)
             }) {
                 it[state] = outcome.state.wire
                 it[attempts] = outcome.attempts

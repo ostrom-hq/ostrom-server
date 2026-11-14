@@ -84,10 +84,13 @@ class OrgEventJournalImpl(private val driver: Driver) : OrgEventJournal {
         reader: String,
         position: JournalPosition,
         through: Long,
-    ): Boolean = EventsReaders.update({
-        (EventsReaders.orgId eq position.orgId) and (EventsReaders.reader eq reader) and
-            (EventsReaders.seq eq position.from)
-    }) { it[EventsReaders.seq] = through } > 0
+    ): Boolean {
+        require(READER.matches(reader)) { "A reader is named [a-z][a-z0-9-]*, at most 32 characters." }
+        return EventsReaders.update({
+            (EventsReaders.orgId eq position.orgId) and (EventsReaders.reader eq reader) and
+                (EventsReaders.seq eq position.from)
+        }) { it[EventsReaders.seq] = through } > 0
+    }
 
     private companion object {
         private val READER = Regex("[a-z][a-z0-9-]{0,31}")

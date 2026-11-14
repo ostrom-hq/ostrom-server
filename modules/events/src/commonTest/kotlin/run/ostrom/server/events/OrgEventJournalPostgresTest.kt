@@ -113,6 +113,9 @@ class OrgEventJournalPostgresTest {
             assertFalse(journal.advanceIn(this, reader, position, position.head), "A page is handled once")
         }
         assertEquals(emptyList(), journal.behind(reader, 10))
+        assertFailsWith<IllegalArgumentException> {
+            database.inOrg(orgA) { journal.advanceIn(this, "Not a reader", position, position.head) }
+        }
     }
 
     @Test

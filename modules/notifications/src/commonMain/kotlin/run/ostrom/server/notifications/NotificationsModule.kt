@@ -217,6 +217,7 @@ object NotificationsModule : ServerModule {
                 deliveries = get(),
                 channels = { scope.getAll<NotificationChannel>().distinctBy { it.id } },
                 clock = get(),
+                logger = get(),
             )
         }
         single<OrgDeletionListener>(named("notifications-deliveries")) {
