@@ -77,7 +77,8 @@ class CompilerSettingsUseCaseImpl(
             ?: throw OstromException(ErrorKind.CONFLICT, CONFLICT, type = "compiler_settings_conflict")
         val facts = auditDetails(
             "pin" to change.pin,
-            "code_publishers" to settings.codePublishers?.size,
+            // Who may publish code, in full: a later reading of the log sees who gained or lost the right.
+            "code_publishers" to settings.codePublishers?.joinToString(","),
             "prod_approver" to settings.prodApprover,
         )
         audit.record(OrgAuditRecord(orgId, principal, CHANGED, "compiler_settings", "$orgId", facts))
@@ -86,8 +87,8 @@ class CompilerSettingsUseCaseImpl(
 
     private fun checked(change: CompilerSettingsChange): CompilerSettings {
         invalid(change.pin !in PINS, "pin is auto or manual.")
+        invalid(change.codePublishers.orEmpty().size > MAX_PUBLISHERS, "At most $MAX_PUBLISHERS code publishers.")
         val publishers = change.codePublishers?.map { it.trim().lowercase() }?.distinct()
-        invalid(publishers.orEmpty().size > MAX_PUBLISHERS, "At most $MAX_PUBLISHERS code publishers.")
         invalid(publishers.orEmpty().any { !login(it) }, "A code publisher is a login of 1 to $MAX_LOGIN characters.")
         val approver = change.prodApprover?.trim()
         invalid(approver != null && !login(approver), "prodApprover is a login of 1 to $MAX_LOGIN characters.")

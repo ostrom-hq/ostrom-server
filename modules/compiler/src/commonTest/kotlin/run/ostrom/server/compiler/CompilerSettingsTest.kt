@@ -63,6 +63,25 @@ class CompilerSettingsTest {
     }
 
     @Test
+    fun theFormerVariablesStayTheDefaultOfAnOrganizationThatSavedNone() = runTest {
+        val config = MapConfigSource(
+            mapOf(
+                "OSTROM_PIN" to "manual",
+                "OSTROM_CODE_PUBLISHERS" to " Lead, ,ops ",
+                "OSTROM_PROD_APPROVER" to "ops",
+            ),
+        )
+        val legacy = DefaultCompilerSources.legacy(config)
+        assertEquals(CompilerSettings(true, listOf("lead", "ops"), "ops"), legacy)
+        val auto = MapConfigSource(mapOf("OSTROM_PIN" to "auto"))
+        assertEquals(CompilerSettings(), DefaultCompilerSources.legacy(auto))
+        val sources = DefaultCompilerSources(repository, legacy)
+        assertEquals(legacy, sources.settings(org))
+        repository.stored[org] = StoredCompilerSettings(CompilerSettings(), "lead", now)
+        assertEquals(CompilerSettings(), sources.settings(org), "what the organization saved wins")
+    }
+
+    @Test
     fun anOwnerOrAnAdminSavesTheSettingsTrimmedAndAudited() = runTest {
         val first = save(CompilerSettingsChange("manual", listOf(" Lead", "ops ", "lead"), " ops "), OrgRole.OWNER)
         assertEquals(StoredCompilerSettings(CompilerSettings(true, listOf("lead", "ops"), "ops"), "lead", now), first)
@@ -70,7 +89,8 @@ class CompilerSettingsTest {
         assertEquals("compiler.settings.changed", record.event)
         assertEquals("compiler_settings", record.subjectType)
         assertEquals("$org", record.subjectId)
-        assertEquals(mapOf("pin" to "manual", "code_publishers" to "2", "prod_approver" to "ops"), record.details)
+        val facts = mapOf("pin" to "manual", "code_publishers" to "lead,ops", "prod_approver" to "ops")
+        assertEquals(facts, record.details)
 
         now = Instant.parse("2026-11-14T11:00:00Z")
         val second = save(CompilerSettingsChange("auto", expected = first.updatedAt))
@@ -154,7 +174,7 @@ class CompilerSettingsTest {
     }
 
     @Test
-    fun theFormerCompilePolicyVariablesAreIgnoredWithAWarning() = runTest {
+    fun theFormerCompilePolicyVariablesWarnThatTheyAreDeprecated() = runTest {
         val lines = mutableListOf<String>()
         val logger = object : Logger {
             override fun log(level: LogLevel, message: String, fields: Map<String, Any?>, error: Throwable?) {
@@ -179,8 +199,8 @@ class CompilerSettingsTest {
         }
         assertEquals(
             listOf(
-                "WARN compile policy variables ignored: each organization sets its own in the console " +
-                    "{variables=OSTROM_PIN,OSTROM_PROD_APPROVER}",
+                "WARN compile policy variables deprecated: the default of every organization that saved none, " +
+                    "set it per organization in the console {variables=OSTROM_PIN,OSTROM_PROD_APPROVER}",
             ),
             lines,
         )

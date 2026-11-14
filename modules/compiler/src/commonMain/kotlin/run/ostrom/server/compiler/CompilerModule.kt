@@ -116,23 +116,26 @@ object CompilerModule : ServerModule {
     override val migrations: List<SchemaMigration> = CompilerMigrations
 
     /**
-     * Binds the default sources when no module bound its own (Koin refuses two bindings of one type), and says that the
-     * former instance-wide compile policy is no longer read: each organization sets its own in the console.
+     * Binds the default sources when no module bound its own (Koin refuses two bindings of one type), and warns while
+     * the former instance-wide compile policy is set: it still applies to every organization that saved none.
      */
     override suspend fun initialize(koin: Koin) {
         koin.loadModules(listOf(defaultPorts(koin)))
         val config = koin.get<ConfigSource>()
-        val ignored = FORMER_VARIABLES.filter { config[it] != null }
-        if (ignored.isNotEmpty()) {
+        val set = DefaultCompilerSources.VARIABLES.filter { config[it] != null }
+        if (set.isNotEmpty()) {
             koin.get<Logger>().warn(
-                "compile policy variables ignored: each organization sets its own in the console",
-                mapOf("variables" to ignored.joinToString(",")),
+                "compile policy variables deprecated: the default of every organization that saved none, " +
+                    "set it per organization in the console",
+                mapOf("variables" to set.joinToString(",")),
             )
         }
     }
 
     internal fun defaultPorts(koin: Koin): Module = module {
-        if (koin.getOrNull<CompilerSources>() == null) single<CompilerSources> { DefaultCompilerSources(get()) }
+        if (koin.getOrNull<CompilerSources>() == null) single<CompilerSources> {
+            DefaultCompilerSources(get(), DefaultCompilerSources.legacy(get()))
+        }
     }
 
     override fun routes(route: Route, koin: Koin) {
@@ -146,9 +149,6 @@ object CompilerModule : ServerModule {
         ServerFeatures.WORKFLOWS_SETTINGS,
     )
 }
-
-// The instance-wide compile policy of the prototype, before each organization set its own (`PUT /packages/settings`).
-private val FORMER_VARIABLES = listOf("OSTROM_PIN", "OSTROM_CODE_PUBLISHERS", "OSTROM_PROD_APPROVER")
 
 /** The members when no module knows them: nobody is a member, so no editor is named and none is let in. */
 internal object NoMembers : MemberDirectory, MemberLogins {
