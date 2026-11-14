@@ -5,6 +5,7 @@ import run.ostrom.server.governance.domain.Confirmation
 import run.ostrom.server.governance.domain.ConfirmationAudit
 import run.ostrom.server.governance.domain.ConfirmationError
 import run.ostrom.server.governance.domain.ConfirmationOutcome
+import run.ostrom.server.governance.domain.ConfirmationRules
 import run.ostrom.server.governance.domain.ConfirmationStatus
 import run.ostrom.server.governance.domain.ConfirmationStep
 import run.ostrom.server.governance.domain.ConfirmationWaits
@@ -51,9 +52,19 @@ class InMemoryConfirmations : ConfirmationsRepository {
             it.expiresAt > now
     }
 
-    override suspend fun expire(orgId: Uuid, now: Instant): List<Confirmation> = rows.values
-        .filter { it.orgId == orgId && it.status == ConfirmationStatus.PENDING && it.expiresAt <= now }
-        .map { it.copy(status = ConfirmationStatus.EXPIRED).also { expired -> rows[it.id] = expired } }
+    override suspend fun expire(orgId: Uuid, now: Instant): List<Confirmation> {
+        val overdue = rows.values
+            .filter { it.orgId == orgId && it.status == ConfirmationStatus.PENDING && it.expiresAt <= now }
+            .map { it.copy(status = ConfirmationStatus.EXPIRED) }
+        val lost = rows.values.filter {
+            it.orgId == orgId && it.status == ConfirmationStatus.CONFIRMED && !it.settled &&
+                it.expiresAt <= now - ConfirmationRules.RESULT_GRACE
+        }.map {
+            val error = ConfirmationError(ConfirmationRules.RESULT_LOST, ConfirmationRules.RESULT_LOST_MESSAGE)
+            it.copy(status = ConfirmationStatus.FAILED, error = error)
+        }
+        return (overdue + lost).onEach { rows[it.id] = it }
+    }
 
     override suspend fun answer(orgId: Uuid, id: String, outcome: ConfirmationOutcome): Boolean {
         val lost = loseNextAnswer
@@ -79,7 +90,8 @@ class InMemoryConfirmations : ConfirmationsRepository {
     override suspend fun settle(orgId: Uuid, id: String, result: JsonElement?, error: ConfirmationError?) {
         val row = rows.getValue(id)
         rows[id] = if (error == null) {
-            row.copy(result = result, settled = true)
+            // as in PostgreSQL: never on one the sweep already failed
+            if (row.status == ConfirmationStatus.CONFIRMED) row.copy(result = result, settled = true) else row
         } else {
             row.copy(status = ConfirmationStatus.FAILED, error = error)
         }

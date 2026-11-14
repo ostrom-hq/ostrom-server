@@ -3,6 +3,7 @@ package run.ostrom.server.governance
 
 import run.ostrom.server.governance.domain.ConfirmationOutcome
 import run.ostrom.server.governance.domain.ConfirmationPeople
+import run.ostrom.server.governance.domain.ConfirmationRules
 import run.ostrom.server.governance.domain.ConfirmationStatus
 import run.ostrom.server.governance.domain.ConfirmationsRepository
 import run.ostrom.server.governance.domain.ExpireConfirmationsUseCase
@@ -394,6 +395,31 @@ class GovernancePostgresTest {
     }
 
     @Test
+    fun theSweepFailsAConfirmedWriteWhoseResultWasLost() = governanceTest { server ->
+        // decision of 14/11/2026: confirmed with no result 5 minutes past its expiry is failed, result_lost
+        val id = server.ask("ada-token", "never").body<GovernanceConfirmationPending>().confirmationId
+        val repository = server.koin.get<ConfirmationsRepository>()
+        val asked = checkNotNull(repository.get(orgA, id))
+        val outcome = ConfirmationOutcome(ConfirmationStatus.CONFIRMED, asked.requestedBy, Time.now())
+        assertTrue(repository.answer(orgA, id, outcome))
+        val expire = server.koin.get<ExpireConfirmationsUseCase>()
+        Time.offset = 19.minutes
+        assertEquals(0, expire.everywhere(), "Within its grace: still being made")
+        assertEquals("pending", server.read("ada-token", id).body<ConfirmationDto>().status)
+        Time.offset = 21.minutes
+        assertEquals(1, expire.everywhere())
+        val failed = server.read("ada-token", id).body<ConfirmationDto>()
+        assertEquals("failed" to "result_lost", failed.status to failed.error?.type)
+        assertEquals(ConfirmationRules.RESULT_LOST_MESSAGE, failed.error?.message)
+        // a result that comes after changes nothing
+        repository.settle(orgA, id, JsonPrimitive("never"), null)
+        assertEquals(ConfirmationStatus.FAILED to null, repository.get(orgA, id)?.let { it.status to it.result })
+        assertEquals(0, expire.everywhere(), "Once")
+        val actions = server.koin.get<AuditRepository>().list(orgA, null, null, 50).map { it.entry.action }
+        assertTrue("governance.confirmation.failed" in actions, "$actions")
+    }
+
+    @Test
     fun theQueriesUseTheirIndexes() = governanceTest { server ->
         for ((org, count) in listOf(orgB to 6_000, orgA to 60)) {
             server.driver.withOrganization(org) { tx ->
@@ -416,7 +442,8 @@ class GovernancePostgresTest {
                 bind("user", "u7").bind("now", now)
             },
             "the overdue ones" to server.explain(PostgresConfirmationsRepository.EXPIRE, analyze = false) {
-                bind("now", now)
+                bind("now", now).bind("lost_before", now - ConfirmationRules.RESULT_GRACE)
+                    .bind("lost_type", ConfirmationRules.RESULT_LOST).bind("lost_message", "m")
             },
             "an answer" to server.explain(PostgresConfirmationsRepository.ANSWER, analyze = false) {
                 bind("id", "gcf_x").bind("status", "confirmed").bind("by_user", "u").bind("by_member", Uuid.random())
@@ -430,8 +457,7 @@ class GovernancePostgresTest {
             },
         )
         val sweep = server.database.superuser.fetchAll(
-            "EXPLAIN (ANALYZE, BUFFERS) SELECT DISTINCT c.org_id FROM governance_confirmations c " +
-                "WHERE c.status = 'pending' AND c.expires_at <= now() LIMIT 100",
+            "EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM governance_expired_organizations(now(), 100)",
         ).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
         plans["the sweep's organizations (the router function's query)"] = sweep
         val report = plans.entries.joinToString("\n\n") { (name, plan) -> "-- $name\n$plan" }

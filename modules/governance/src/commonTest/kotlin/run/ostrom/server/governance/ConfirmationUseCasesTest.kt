@@ -228,6 +228,25 @@ class ConfirmationUseCasesTest {
     }
 
     @Test
+    fun aConfirmedWriteWhoseResultWasLostFailsFiveMinutesPastItsExpiry() = runTest {
+        // its server stopped between the answer and the result: failed, result_lost, never pending for ever
+        val opened = open(request())
+        repository.rows[opened.id] = opened.copy(status = ConfirmationStatus.CONFIRMED, settled = false)
+        clock.now += ConfirmationRules.LIFETIME + ConfirmationRules.RESULT_GRACE - 1.seconds
+        assertEquals(ConfirmationStatus.PENDING, get(token("ada"), opened.id).shownAt(clock.now), "Still being made")
+        clock.now += 1.seconds
+        val lost = get(token("ada"), opened.id)
+        assertEquals(ConfirmationStatus.FAILED, lost.shownAt(clock.now))
+        assertEquals(ConfirmationRules.RESULT_LOST, lost.error?.type)
+        assertEquals("FAILED ${opened.id}", audit.steps.last())
+        assertNull(audit.actors.last(), "The server fails it")
+        assertTrue(opened.id in waits.changed, "A waiting read is woken")
+        // a result that comes after never turns it back into a written one
+        repository.settle(orgA, opened.id, JsonPrimitive("never"), null)
+        assertNull(repository.rows.getValue(opened.id).result)
+    }
+
+    @Test
     fun aConfirmationWithAFreshSignInMakesTheWriteAsTheConfirmersDecisionOnce() = runTest {
         val opened = open(request())
         val confirmed = confirm(browser("olga"), opened.id)

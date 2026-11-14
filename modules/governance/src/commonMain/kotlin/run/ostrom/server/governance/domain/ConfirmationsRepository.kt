@@ -36,7 +36,8 @@ interface ConfirmationsRepository {
     suspend fun waiting(orgId: Uuid, userId: String, now: Instant): List<Confirmation>
 
     /**
-     * Marks the pending confirmations past their expiry as expired.
+     * Marks the pending confirmations past their expiry as expired, and the confirmed ones whose result was never
+     * written, past their expiry and [ConfirmationRules.RESULT_GRACE], as failed ([ConfirmationRules.RESULT_LOST]).
      *
      * @param orgId The organization.
      * @param now The current time.

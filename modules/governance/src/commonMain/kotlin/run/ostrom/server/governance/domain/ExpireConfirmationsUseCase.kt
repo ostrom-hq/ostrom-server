@@ -5,7 +5,10 @@ import kotlinx.coroutines.CancellationException
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
 
-/** Writes the expiry of the confirmations left unanswered past their 15 minutes, each with its audit event. */
+/**
+ * Writes the expiry of the confirmations left unanswered past their 15 minutes, and the failure of those confirmed
+ * whose result was lost ([ConfirmationRules.RESULT_GRACE]), each with its audit event.
+ */
 interface ExpireConfirmationsUseCase {
     /**
      * Expires those of one organization: every use case does it first, so a confirmation is never read as pending
@@ -49,8 +52,10 @@ class ExpireConfirmationsUseCaseImpl(
         for (expired in repository.expire(orgId, clock.now())) {
             waits.changed(expired.id)
             // One failed event does not cost the others theirs: every expiry is tried, the first failure rethrown.
+            val lost = expired.status == ConfirmationStatus.FAILED
+            val step = if (lost) ConfirmationStep.FAILED else ConfirmationStep.EXPIRED
             try {
-                audit.record(expired, ConfirmationStep.EXPIRED, null)
+                audit.record(expired, step, null)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {

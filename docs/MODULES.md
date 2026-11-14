@@ -398,7 +398,9 @@ with a confirmation that an owner or an admin answers on the console, at
 tokens). A confirmation shows what the write replaces and what it writes, lives 15 minutes, is answered once, and
 each step (created, confirmed, refused, expired, failed) is an event of the organization's signed audit log. While a
 confirmed write is being made it still reads `pending`, and a waiting read goes on waiting: the CLI reads it once
-with its result (who was invited), never confirmed with none. A token never answers; a browser session and an `inference:admin` service key still write at once. A module that owns a
+with its result (who was invited), never confirmed with none. One still confirmed with no result 5 minutes past its expiry (its server stopped
+between the answer and the result) is failed by the sweep with `result_lost`, which the console and the CLI show:
+never pending for ever (decision of 14/11/2026). A token never answers; a browser session and an `inference:admin` service key still write at once. A module that owns a
 governance write binds a `GovernanceChange` named after itself (preview, apply) and calls `holdForConfirmation`
 for a token; without this module loaded, a token's governance write is refused.
 
