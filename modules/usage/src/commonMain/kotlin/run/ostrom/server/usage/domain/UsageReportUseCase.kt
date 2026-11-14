@@ -45,7 +45,7 @@ interface UsageReportUseCase {
         /** The default period. */
         const val DEFAULT_PERIOD_DAYS: Int = 30
 
-        /** The longest period: the retention, so that a report never scans more than the ledger keeps. */
+        /** The longest period: the default retention, so that a report never scans more than the ledger keeps. */
         const val MAX_PERIOD_DAYS: Int = 400
     }
 }

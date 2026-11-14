@@ -249,11 +249,7 @@ Every request is already logged once by the kernel (method, route template — n
 | `OSTROM_LANGFUSE_HOST`, `_PUBLIC_KEY`, `_SECRET_KEY` | — | Model calls to Langfuse (the three together); read at start, before the database, as `OTEL_*` (keep the secret key in a Secret) |
 | `OSTROM_POSTHOG_API_KEY`, `OSTROM_POSTHOG_HOST` | —, EU cloud | The PostHog exporter ostrom-core builds (the server itself sends no product event); read at start, before the database, as `OTEL_*` |
 | `OSTROM_POD_NAME` | random | `service.instance.id` (`ServerConfig.instanceId`; the chart sets it from the pod name) |
-| `OSTROM_USAGE_RETENTION_DAYS` | `400` | Days the usage ledger keeps its events (1 to 3650); older ones are purged every hour |
 | `OSTROM_WEBHOOKS_ALLOW_PRIVATE_TARGETS` | `false` | `true` lets outgoing webhooks reach loopback and private addresses (an internal receiver); link-local, unspecified and metadata addresses stay refused |
-| `OSTROM_STRIPE_SECRET_KEY` (or `_FILE`) | — | Billing: Stripe secret key (`sk_test_…` or `sk_live_…`). Unset: self-hosted, limits come from the license key |
-| `OSTROM_STRIPE_WEBHOOK_SECRET` (or `_FILE`) | required with a key | Billing: the endpoint's `whsec_…` signing secret; two comma-separated during a rotation |
-| `OSTROM_STRIPE_API_BASE` | `https://api.stripe.com` | Billing: Stripe's API (stripe-mock in tests) |
 | `OSTROM_CONSOLE_URL` | `https://app.ostrom.run` | Billing: the console, for Checkout and portal return pages and limit messages |
 | `OSTROM_LICENSE_KEY` | — | Enterprise (`ee/`): the license key, `ostrom-license.v1.…`, verified offline at start; an invalid, expired (past 14 days of grace) or foreign key fails the start. Unset: no license |
 | `OSTROM_LICENSE_KEY_FILE` | — | Enterprise (`ee/`): a file holding the license key, read when `OSTROM_LICENSE_KEY` is unset; missing or empty fails the start |
@@ -276,7 +272,8 @@ instance's audit chain with the names of the fields it changed, never a value. A
 A module declares a section by binding a `SettingsSection` in Koin (`kernel/settings`), and reads it through
 `InstanceSettings.read(section)`. A field that replaces a former variable names it (`legacyVariable`): at the first
 start where nothing is stored for the section, the variables set are imported once (secrets sealed), with a warning
-that they are deprecated; afterwards a variable still set is ignored with a warning. The pull request that moves a
+that they are deprecated; afterwards a variable still set is ignored with a warning. A former variable `X` is also
+read from the file `X_FILE` names (a mounted Secret); a missing file stops the start. The pull request that moves a
 setting removes its variable from the table above and from the chart once the import has shipped.
 
 The administrators of the instance (**Admin → Administrators**) are stored too: the
@@ -306,6 +303,8 @@ What lives in the console so far:
 | GitHub (`github`: API URL, web URL, the name of the App the manifest flow creates) | `OSTROM_GITHUB_API`, `OSTROM_GITHUB_WEB`, `OSTROM_GITHUB_APP_NAME` | the `integrations-github` module |
 | GitHub App (id, slug, sealed private key, webhook secret and OAuth client secret, OAuth client id; created by the manifest flow on **Admin → GitHub**) | `OSTROM_GITHUB_APP_ID`, `OSTROM_GITHUB_APP_SLUG`, `OSTROM_GITHUB_APP_PEM`, `OSTROM_GITHUB_WEBHOOK_SECRET`, `OSTROM_GITHUB_APP_CLIENT_ID`, `OSTROM_GITHUB_APP_CLIENT_SECRET` | the `integrations-github` module |
 | Mail (`mail`): Resend's API key, sealed, and the sender (`Ostrom <login@mail.ostrom.run>` while unset). Sign-in links, invitations and approval e-mails go once the key is set, and e-mailed sign-in is offered then, without a restart. A developer's machine or an end-to-end test writes them to `OSTROM_MAIL_DIR` instead, which stays in the environment | `OSTROM_RESEND_API_KEY`, `OSTROM_MAIL_FROM` | the `identity` module |
+| Usage (`usage`: days the ledger keeps its events, 1 to 3650, 400 by default), read at each hourly purge | `OSTROM_USAGE_RETENTION_DAYS` | the `usage` module |
+| Stripe (`stripe`: the sealed secret key and webhook signing secrets, Stripe's API), read at each use; billing is on while the key and a webhook secret are stored | `OSTROM_STRIPE_SECRET_KEY`, `OSTROM_STRIPE_WEBHOOK_SECRET` (or their `_FILE`), `OSTROM_STRIPE_API_BASE` | the `billing` module |
 
 The GitHub App is kept as TeamCode keeps it, in its own table (`github_apps`, one row, the key and secrets sealed),
 not in a settings section: the manifest flow creates it once, and the stored App is the only one the server uses. At
@@ -560,7 +559,7 @@ anonymous call gets 401 `unauthorized`. A module lists a key of ostrom-core's `S
 | `admin` | `admin.settings.v1` | — |
 | `artifacts` | `artifacts.v1` | — |
 | `automations` | `automations.v1`, `waits.v1` | — |
-| `billing` | `billing.v1` | Stripe configured (`OSTROM_STRIPE_SECRET_KEY`) |
+| `billing` | `billing.v1` | A Stripe account stored in the console's `stripe` settings (key and webhook secret) |
 | `budgets` | `budgets.v1` | — |
 | `cloud` | `cloud.admin.v1` | — |
 | `compiler` | `packages.v1`, `workflows.v1` | — |

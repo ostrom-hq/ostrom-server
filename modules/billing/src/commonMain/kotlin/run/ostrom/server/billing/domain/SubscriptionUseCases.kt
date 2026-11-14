@@ -36,7 +36,7 @@ class StartCheckoutUseCaseImpl(
 ) : StartCheckoutUseCase {
     override suspend fun invoke(caller: OrgPrincipal, orgId: Uuid, plan: Plan, interval: BillingInterval): String {
         caller.requireBillingAdminOf(orgId)
-        if (!settings.stripeEnabled) throw BillingNotConfiguredException()
+        if (!settings.stripeEnabled()) throw BillingNotConfiguredException()
         if (!plan.selfServe) throw PlanNotPurchasableException(plan)
         val now = clock.now()
         val existing = repository.get(orgId)
@@ -102,7 +102,7 @@ class OpenCustomerPortalUseCaseImpl(
 ) : OpenCustomerPortalUseCase {
     override suspend fun invoke(caller: OrgPrincipal, orgId: Uuid): String {
         caller.requireBillingAdminOf(orgId)
-        if (!settings.stripeEnabled) throw BillingNotConfiguredException()
+        if (!settings.stripeEnabled()) throw BillingNotConfiguredException()
         val customerId = repository.get(orgId)?.stripeCustomerId ?: throw NoActiveSubscriptionException()
         return stripe.createPortalSession(customerId, settings.billingPageUrl)
     }
@@ -171,7 +171,7 @@ class ChangePlanUseCaseImpl(
 ) : ChangePlanUseCase {
     override suspend fun invoke(caller: OrgPrincipal, orgId: Uuid, plan: Plan, interval: BillingInterval): OrgBilling {
         caller.requireBillingAdminOf(orgId)
-        if (!settings.stripeEnabled) throw BillingNotConfiguredException()
+        if (!settings.stripeEnabled()) throw BillingNotConfiguredException()
         if (!plan.selfServe) throw PlanNotPurchasableException(plan)
         val live = repository.get(orgId).live() ?: throw NoActiveSubscriptionException()
         val billing = live.billing
@@ -217,7 +217,7 @@ class SetCancellationUseCaseImpl(
 ) : SetCancellationUseCase {
     override suspend fun invoke(caller: OrgPrincipal, orgId: Uuid, cancel: Boolean): OrgBilling {
         caller.requireBillingAdminOf(orgId)
-        if (!settings.stripeEnabled) throw BillingNotConfiguredException()
+        if (!settings.stripeEnabled()) throw BillingNotConfiguredException()
         val live = repository.get(orgId).live() ?: throw NoActiveSubscriptionException()
         val billing = live.billing
         val subscriptionId = live.subscriptionId
@@ -266,7 +266,7 @@ class EndDeletedOrgSubscriptionUseCaseImpl(
     private val settings: BillingSettings,
 ) : EndDeletedOrgSubscriptionUseCase {
     override suspend fun invoke(orgId: Uuid) {
-        if (!settings.stripeEnabled) return
+        if (!settings.stripeEnabled()) return
         val (billing, subscriptionId) = notEnded(orgId) ?: return
         // Read first: a retry after a cancellation whose sync failed must not cancel twice.
         val current = sync(billing, subscriptionId)

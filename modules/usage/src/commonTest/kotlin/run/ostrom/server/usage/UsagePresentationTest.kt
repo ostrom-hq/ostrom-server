@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.usage
 
-import run.ostrom.server.kernel.config.InvalidConfigException
-import run.ostrom.server.kernel.config.MapConfigSource
+import run.ostrom.server.kernel.settings.InstanceSettings
+import run.ostrom.server.kernel.settings.SettingsValues
 import run.ostrom.server.usage.domain.InvalidUsageEventException
 import run.ostrom.server.usage.domain.InvalidUsageQueryException
 import run.ostrom.server.usage.domain.UsageCursor
@@ -17,6 +17,7 @@ import run.ostrom.server.usage.presentation.toGroupBy
 import run.ostrom.server.usage.presentation.toResponse
 import run.ostrom.server.usage.presentation.toUsageCursor
 import run.ostrom.server.usage.presentation.writeEventStream
+import run.ostrom.server.usage.domain.UsageSettings
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.readUTF8Line
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -103,15 +104,24 @@ class UsagePresentationTest {
     }
 
     @Test
-    fun theRetentionDefaultsToFourHundredDaysAndIsBounded() {
-        assertEquals(400.days, UsageConfig.from(MapConfigSource(emptyMap())).retention)
-        assertEquals(30.days, UsageConfig.from(MapConfigSource(mapOf("OSTROM_USAGE_RETENTION_DAYS" to "30"))).retention)
-        for (invalid in listOf("0", "3651", "forever")) {
-            assertFailsWith<InvalidConfigException> {
-                UsageConfig.from(MapConfigSource(mapOf("OSTROM_USAGE_RETENTION_DAYS" to invalid)))
-            }
+    fun theRetentionDefaultsToFourHundredDaysAndIsBounded() = runTest {
+        fun stored(days: String?) = InstanceSettings { section ->
+            assertEquals("usage", section)
+            SettingsValues(listOfNotNull(days?.let { "retentionDays" to it }).toMap())
         }
+        assertEquals(400.days, UsageSettings.retention(stored(null)))
+        assertEquals(30.days, UsageSettings.retention(stored("30")))
+        assertEquals(3650.days, UsageSettings.retention(stored("3650")))
+        for (invalid in listOf("0", "3651", "forever")) {
+            assertEquals(400.days, UsageSettings.retention(stored(invalid)), "Never stored, read as the default")
+            assertEquals("The retention is a whole number of days, 1 to 3650.", retentionField().check(invalid))
+        }
+        assertEquals(null, retentionField().check("1"))
+        assertEquals("OSTROM_USAGE_RETENTION_DAYS", retentionField().legacyVariable)
+        assertEquals(false, retentionField().secret)
     }
+
+    private fun retentionField() = checkNotNull(UsageSettings.SECTION.field("retentionDays"))
 
     @Test
     fun theStreamAnnouncesTheSubscriptionThenSendsEventsAndHeartbeats() = runTest {

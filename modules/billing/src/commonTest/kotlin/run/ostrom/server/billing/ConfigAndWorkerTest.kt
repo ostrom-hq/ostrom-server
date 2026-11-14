@@ -4,20 +4,18 @@ package run.ostrom.server.billing
 import run.ostrom.server.billing.domain.PaymentIssue
 import run.ostrom.server.billing.domain.PaymentIssueKind
 import run.ostrom.server.billing.domain.ProcessOutboxUseCase
+import run.ostrom.server.billing.domain.StripeSettings
 import run.ostrom.server.billing.fakes.NOW
 import run.ostrom.server.billing.infrastructure.LoggingBillingMetrics
 import run.ostrom.server.billing.infrastructure.LoggingBillingNotifier
-import run.ostrom.server.kernel.config.InvalidConfigException
-import run.ostrom.server.kernel.config.MapConfigSource
+import run.ostrom.server.billing.infrastructure.StripeAccount
+import run.ostrom.server.billing.infrastructure.StripeConfig
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.logging.Logger
+import run.ostrom.server.kernel.settings.InstanceSettings
+import run.ostrom.server.kernel.settings.SettingsValues
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
-import kotlinx.io.buffered
-import kotlinx.io.files.Path
-import kotlinx.io.files.SystemFileSystem
-import kotlinx.io.files.SystemTemporaryDirectory
-import kotlinx.io.writeString
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -35,72 +33,79 @@ private class RecordingLogger(val lines: MutableList<String> = mutableListOf()) 
 }
 
 class ConfigAndWorkerTest {
+    private fun stored(values: Map<String, String>) = StripeAccount(
+        InstanceSettings { section ->
+            assertEquals("stripe", section)
+            SettingsValues(values)
+        },
+    )
+
     @Test
-    fun withoutAStripeKeyTheInstanceIsSelfHosted() {
-        val config = BillingConfig.load(MapConfigSource(emptyMap()))
-        assertNull(config.stripeSecretKey)
-        assertEquals(emptyList(), config.webhookSecrets)
-        assertEquals("https://api.stripe.com", config.stripeApiBase)
-        assertEquals("https://app.ostrom.run", config.consoleUrl)
+    fun withoutAKeyAndAWebhookSecretTheInstanceIsSelfHosted() = runTest {
+        assertNull(stored(emptyMap()).read())
+        assertNull(stored(mapOf("secretKey" to "sk_test_x")).read(), "A key without a webhook secret is not enough")
+        assertNull(stored(mapOf("secretKey" to "sk_test_x", "webhookSecret" to " , ")).read())
+        assertNull(stored(mapOf("webhookSecret" to "whsec_x")).read())
     }
 
     @Test
-    fun keysAndSecretsComeFromTheEnvironmentOrFromFiles() {
-        val files = mapOf("/run/key" to "sk_test_file\n", "/run/hook" to " whsec_a , whsec_b ,")
-        val config = BillingConfig.load(
-            MapConfigSource(
-                mapOf(
-                    "OSTROM_STRIPE_SECRET_KEY_FILE" to "/run/key",
-                    "OSTROM_STRIPE_WEBHOOK_SECRET_FILE" to "/run/hook",
-                    "OSTROM_STRIPE_API_BASE" to "http://localhost:12111",
-                    "OSTROM_CONSOLE_URL" to "http://localhost:5173",
-                ),
-            ),
-        ) { files.getValue(it) }
-        assertEquals("sk_test_file", config.stripeSecretKey)
-        assertEquals(listOf("whsec_a", "whsec_b"), config.webhookSecrets)
-        assertEquals("http://localhost:12111", config.stripeApiBase)
-        assertEquals("http://localhost:5173", config.consoleUrl)
-        val direct = BillingConfig.load(
-            MapConfigSource(
-                mapOf("OSTROM_STRIPE_SECRET_KEY" to "sk_live_x", "OSTROM_STRIPE_WEBHOOK_SECRET" to "whsec_x")
-            )
+    fun theStoredAccountIsTheKeyTheWebhookSecretsAndTheApi() = runTest {
+        val account = stored(mapOf("secretKey" to "sk_test_x", "webhookSecret" to " whsec_a , whsec_b ,"))
+        assertEquals(
+            StripeConfig("sk_test_x", "https://api.stripe.com", webhookSecrets = listOf("whsec_a", "whsec_b")),
+            account.read(),
         )
-        assertEquals("sk_live_x", direct.stripeSecretKey)
+        val mock = stored(
+            mapOf("secretKey" to "sk_test_x", "webhookSecret" to "whsec_a", "apiBase" to "http://127.0.0.1:12111"),
+        )
+        assertEquals("http://127.0.0.1:12111", mock.read()?.baseUrl)
     }
 
     @Test
-    fun aKeyWithoutWebhookSecretFailsAtStartup() {
-        assertFailsWith<InvalidConfigException> {
-            BillingConfig.load(MapConfigSource(mapOf("OSTROM_STRIPE_SECRET_KEY" to "sk_test_x")))
-        }
-        assertFailsWith<InvalidConfigException> {
-            val source = mapOf("OSTROM_STRIPE_SECRET_KEY" to "sk_test_x", "OSTROM_STRIPE_WEBHOOK_SECRET_FILE" to "/e")
-            BillingConfig.load(MapConfigSource(source)) { "  " }
-        }
+    fun theConsolesStripeSectionSealsTheKeyAndTheWebhookSecret() {
+        val section = StripeSettings.SECTION
+        assertEquals("stripe", section.name)
+        assertEquals(listOf("secretKey", "webhookSecret", "apiBase"), section.fields.map { it.name })
+        assertEquals(listOf(true, true, false), section.fields.map { it.secret })
+        assertEquals(listOf(true, true, false), section.fields.map { it.required })
+        assertEquals(
+            listOf("OSTROM_STRIPE_SECRET_KEY", "OSTROM_STRIPE_WEBHOOK_SECRET", "OSTROM_STRIPE_API_BASE"),
+            section.fields.map { it.legacyVariable },
+        )
+        val key = checkNotNull(section.field("secretKey"))
+        assertNull(key.check("sk_test_e2e"))
+        assertNull(key.check("rk_live_x"))
+        assertEquals("A Stripe secret key starts with sk_ or rk_.", key.check("pk_live_x"))
+        val hook = checkNotNull(section.field("webhookSecret"))
+        val refusal = "One or two comma-separated webhook signing secrets, each starting with whsec_."
+        assertNull(hook.check("whsec_e2e_bench"))
+        assertNull(hook.check("whsec_a, whsec_b"))
+        assertEquals(refusal, hook.check(" , "))
+        assertEquals(refusal, hook.check("whsec_a,whsec_b,whsec_c"))
+        assertEquals(refusal, hook.check("whsec_a,secret"))
+        val api = checkNotNull(section.field("apiBase"))
+        assertNull(api.check("http://127.0.0.1:12111"))
+        assertEquals("Stripe's API is an http or https URL.", api.check("api.stripe.com"))
     }
 
     @Test
-    fun aSecretFileIsReadFromTheFilesystem() {
-        val file = Path(SystemTemporaryDirectory, "ostrom-billing-${Uuid.random()}.key")
-        SystemFileSystem.sink(file).buffered().use { it.writeString("sk_test_disk\n") }
-        try {
-            val source = MapConfigSource(
-                mapOf("OSTROM_STRIPE_SECRET_KEY_FILE" to file.toString(), "OSTROM_STRIPE_WEBHOOK_SECRET" to "w"),
-            )
-            assertEquals("sk_test_disk", BillingConfig.load(source).stripeSecretKey)
-        } finally {
-            SystemFileSystem.delete(file)
+    fun theWorkerSendsNothingWhileBillingIsOff() = runTest {
+        var calls = 0
+        val process = object : ProcessOutboxUseCase {
+            override suspend fun invoke(limit: Int): Int {
+                calls++
+                return 0
+            }
         }
-    }
-
-    @Test
-    fun aMissingSecretFileFailsAtStartup() {
-        assertFailsWith<InvalidConfigException> {
-            BillingConfig.load(
-                MapConfigSource(mapOf("OSTROM_STRIPE_SECRET_KEY_FILE" to "/nonexistent/ostrom-stripe.key"))
-            )
+        var enabled = false
+        var checks = 0
+        val worker = OutboxWorker(process, RecordingLogger(), interval = 1.seconds, passes = 2) {
+            checks++
+            enabled.also { enabled = true }
         }
+        worker.run()
+        assertEquals(2, checks)
+        assertEquals(1, calls, "The second pass, once an account is stored")
     }
 
     @Test

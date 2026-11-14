@@ -181,12 +181,24 @@ interface BillingNotifier {
 
 /**
  * How billing runs on this instance. [stripeEnabled] is false on a self-hosted instance: limits then come from the
- * license, and the purchase routes answer that billing is not enabled.
+ * license, and the purchase routes answer that billing is not enabled. It is read at each use: an administrator turns
+ * billing on or off by saving the instance's Stripe account in the console ([StripeSettings]).
  *
- * @property stripeEnabled Whether a Stripe key is configured (Ostrom Cloud).
  * @property consoleUrl The console, for Checkout and portal return pages (`https://app.ostrom.run`).
+ * @param stripe Whether a Stripe account is configured now (Ostrom Cloud).
  */
-data class BillingSettings(val stripeEnabled: Boolean, val consoleUrl: String) {
+class BillingSettings(val consoleUrl: String, private val stripe: suspend () -> Boolean) {
+    /**
+     * Billing that never changes (the tests').
+     *
+     * @param stripeEnabled Whether a Stripe account is configured.
+     * @param consoleUrl The console.
+     */
+    constructor(stripeEnabled: Boolean, consoleUrl: String) : this(consoleUrl, { stripeEnabled })
+
+    /** Whether a Stripe account is configured now (Ostrom Cloud). */
+    suspend fun stripeEnabled(): Boolean = stripe()
+
     /**
      * The billing page of the console (its route `/billing`), where Checkout and the portal bring people back and limit
      * messages send them.

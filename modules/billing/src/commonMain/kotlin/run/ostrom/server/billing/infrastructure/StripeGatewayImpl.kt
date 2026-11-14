@@ -6,6 +6,7 @@ import run.ostrom.server.billing.domain.CheckoutRequest
 import run.ostrom.server.billing.domain.Invoice
 import run.ostrom.server.billing.domain.Proration
 import run.ostrom.server.billing.domain.StripeGateway
+import run.ostrom.server.billing.domain.StripeSettings
 import run.ostrom.server.billing.domain.StripeSubscription
 import run.ostrom.server.billing.domain.SubscriptionStatus
 import io.ktor.client.HttpClient
@@ -50,17 +51,21 @@ private const val HEX = 16
 class StripeApiException(val status: Int, val code: String?, message: String) : Exception(message)
 
 /**
- * Where Stripe is and how to call it.
+ * Where Stripe is, how to call it, and how its webhooks are signed. Never printed: [toString] names no secret.
  *
  * @property secretKey The secret (or restricted) key; test or live, nothing else changes.
  * @property baseUrl `https://api.stripe.com`, or stripe-mock in tests.
  * @property meterEventName The meter of active people (`ops/stripe/catalog.json`).
+ * @property webhookSecrets The webhook endpoint's signing secrets (two during a rotation).
  */
 data class StripeConfig(
     val secretKey: String,
-    val baseUrl: String = "https://api.stripe.com",
+    val baseUrl: String = StripeSettings.DEFAULT_API_BASE,
     val meterEventName: String = "ostrom_active_person",
-)
+    val webhookSecrets: List<String> = emptyList(),
+) {
+    override fun toString(): String = "StripeConfig(baseUrl=$baseUrl, meterEventName=$meterEventName)"
+}
 
 /**
  * [StripeGateway] over Stripe's form-encoded HTTP API. A customer is created under a key derived from its
@@ -70,16 +75,31 @@ data class StripeConfig(
  * parameters would be wrong for them: cancel, reactivate, cancel again within 24 hours would replay the first answer.
  *
  * @param client The HTTP client (CIO in the server, MockEngine in unit tests).
- * @param config The key and base URL.
+ * @param account The key and base URL, read at each call ([StripeAccount]); null while billing is not configured.
  * @param idempotencyKey Generates the key of the writes other than a customer (random; fixed in tests).
  */
 @Suppress("TooManyFunctions") // implements StripeGateway, one function per Stripe call
 class StripeGatewayImpl(
     private val client: HttpClient,
-    private val config: StripeConfig,
+    private val account: suspend () -> StripeConfig?,
     private val idempotencyKey: () -> String = { Uuid.random().toString() },
 ) : StripeGateway {
+    /**
+     * A gateway on one account.
+     *
+     * @param client The HTTP client.
+     * @param config The key and base URL.
+     * @param idempotencyKey Generates the key of the writes other than a customer.
+     */
+    constructor(
+        client: HttpClient,
+        config: StripeConfig,
+        idempotencyKey: () -> String = { Uuid.random().toString() },
+    ) : this(client, { config }, idempotencyKey)
+
     private val priceIds = mutableMapOf<String, String>()
+    // The account (key and API) the cached price ids are of: a webhook secret's rotation keeps them.
+    private var pricesOf: Pair<String, String>? = null
     private val priceLock = Mutex()
 
     override suspend fun createCustomer(orgId: Uuid, name: String?, email: String?): String = call(
@@ -98,8 +118,17 @@ class StripeGatewayImpl(
     }
 
     override suspend fun priceId(lookupKey: String): String = priceLock.withLock {
+        // Another account (test to live, another API) has other price ids. One read of the account, so a price is
+        // never cached under an account it was not looked up in.
+        val current = config()
+        val of = current.secretKey to current.baseUrl
+        if (of != pricesOf) {
+            priceIds.clear()
+            pricesOf = of
+        }
         priceIds[lookupKey] ?: run {
-            val prices = call(HttpMethod.Get, "/v1/prices", listOf("lookup_keys[0]" to lookupKey, "active" to "true"))
+            val query = listOf("lookup_keys[0]" to lookupKey, "active" to "true")
+            val prices = call(HttpMethod.Get, "/v1/prices", query, using = current)
             val id = prices.array("data").map { it.jsonObject }.firstOrNull()?.string("id")
                 ?: throw BillingNotConfiguredException()
             priceIds[lookupKey] = id
@@ -183,7 +212,7 @@ class StripeGatewayImpl(
             HttpMethod.Post,
             "/v1/billing/meter_events",
             listOf(
-                "event_name" to config.meterEventName,
+                "event_name" to config().meterEventName,
                 "identifier" to identifier,
                 "timestamp" to at.epochSeconds.toString(),
                 "payload[stripe_customer_id]" to customerId,
@@ -203,12 +232,14 @@ class StripeGatewayImpl(
         path: String,
         params: List<Pair<String, String>>,
         key: String? = null,
+        using: StripeConfig? = null,
     ): JsonObject {
         val form = params.joinToString("&") { (key, value) ->
             "${key.encodeURLParameter()}=${value.encodeURLParameter()}"
         }
         // A GET carries its parameters in the query (a lookup key, an expansion, a limit); a customer read has none.
         val query = if (method == HttpMethod.Get && form.isNotEmpty()) "?$form" else ""
+        val config = using ?: config()
         val url = config.baseUrl.trimEnd('/') + path + query
         val response = client.request(url) {
             this.method = method
@@ -231,6 +262,9 @@ class StripeGatewayImpl(
         }
         return body ?: throw StripeApiException(response.status.value, null, "Stripe answered a body that is not JSON.")
     }
+
+    /** The account now; none while billing is not configured. */
+    private suspend fun config(): StripeConfig = account() ?: throw BillingNotConfiguredException()
 
     private fun parse(text: String): JsonObject? = try {
         STRIPE_JSON.parseToJsonElement(text) as? JsonObject

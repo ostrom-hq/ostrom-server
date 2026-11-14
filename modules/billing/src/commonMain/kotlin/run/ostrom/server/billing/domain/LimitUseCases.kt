@@ -24,7 +24,7 @@ class GetPlanLimitsUseCaseImpl(
     private val clock: Clock,
 ) : GetPlanLimitsUseCase {
     override suspend fun invoke(orgId: Uuid): PlanLimits {
-        if (!settings.stripeEnabled) return selfHostedLimits(licenses.current())
+        if (!settings.stripeEnabled()) return selfHostedLimits(licenses.current())
         val billing = repository.get(orgId)
         val period = billingPeriod(billing, clock.now())
         val plan = if (billing == null) Plan.FREE else billing.effectivePlan
@@ -71,7 +71,7 @@ class GetBillingOverviewUseCaseImpl(
             activePeople = repository.countActivePeople(orgId, period.start),
             usage = repository.usage(orgId, period.start),
             alerts = repository.alerts(orgId, period.start),
-            stripeEnabled = settings.stripeEnabled,
+            stripeEnabled = settings.stripeEnabled(),
         )
     }
 }
@@ -92,7 +92,7 @@ class CheckEntitlementUseCaseImpl(
     override suspend fun invoke(orgId: Uuid, entitlement: Entitlement) {
         val limits = limits(orgId)
         val billing = repository.get(orgId)
-        val words = LimitWords(billing, settings)
+        val words = LimitWords(billing, settings, settings.stripeEnabled())
         when (entitlement) {
             is Entitlement.AddPerson -> checkPeople(limits, entitlement.currentPeople, words)
             is Entitlement.StartCloudAgent -> {
@@ -141,13 +141,13 @@ class CheckEntitlementUseCaseImpl(
 }
 
 /** How a limit message names the plan and says where to go: the billing page on Ostrom Cloud, sales otherwise. */
-private class LimitWords(billing: OrgBilling?, settings: BillingSettings) {
-    val planName = if (settings.stripeEnabled) {
+private class LimitWords(billing: OrgBilling?, settings: BillingSettings, stripeEnabled: Boolean) {
+    val planName = if (stripeEnabled) {
         "The ${(if (billing == null) Plan.FREE else billing.effectivePlan).displayName} plan"
     } else {
         "This instance's license"
     }
-    val upgrade = if (settings.stripeEnabled) {
+    val upgrade = if (stripeEnabled) {
         "Upgrade at ${settings.billingPageUrl}"
     } else {
         "Contact sales@ostrom.run for a license"
