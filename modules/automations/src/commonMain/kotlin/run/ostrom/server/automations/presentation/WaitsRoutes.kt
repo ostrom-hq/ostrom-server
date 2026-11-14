@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.automations.presentation
 
-import run.ostrom.server.automations.domain.AgentSessionRequiredException
 import run.ostrom.server.automations.domain.InvalidWaitException
 import run.ostrom.server.automations.domain.MissingWaitScopeException
 import run.ostrom.server.automations.domain.TimedWaitRules
@@ -101,8 +100,7 @@ private fun Route.wakeRoute(dependencies: WaitsRoutesDependencies) = heldCalls {
     post<WaitsWakeApi> { params ->
         val principal = call.requirePrincipal()
         if (principal.kind != PrincipalKind.AGENT) throw MissingWaitScopeException(AGENT_SESSION)
-        val session = params.session ?: throw AgentSessionRequiredException()
-        val caller = dependencies.agents.agentWaitCallerOf(principal, session, WAITS_READ)
+        val caller = dependencies.agents.agentWaitCallerOf(principal, params.session, WAITS_READ)
         val woken = dependencies.wake.wake(caller, wakeRequestOf(call.receiveText()).waitMillis)
         call.respond(WaitWakeResponse(woken.open, woken.messages))
     }

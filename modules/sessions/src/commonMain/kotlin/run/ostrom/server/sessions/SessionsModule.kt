@@ -12,6 +12,7 @@ import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.observability.CachedCount
 import run.ostrom.server.kernel.observability.OstromMetrics
 import run.ostrom.server.kernel.sessions.AgentSessions
+import run.ostrom.server.kernel.sessions.CloudAgentSessions
 import run.ostrom.server.kernel.sessions.SessionEndListener
 import run.ostrom.server.receipts.domain.services.ReceiptOwners
 import run.ostrom.server.sessions.domain.repositories.SessionsRepository
@@ -68,9 +69,9 @@ object SessionsModule : ServerModule {
             CloseSessionUseCaseImpl(get(), get(), get(), get(), sessionCosts(), get())
         }
         single { SessionSegments(get(), get(), get()) }
-        single<StartSessionUseCase> { StartSessionUseCaseImpl(get(), get()) }
+        single<StartSessionUseCase> { StartSessionUseCaseImpl(get(), get(), getOrNull<CloudAgentSessions>()) }
         single<EndSessionUseCase> { EndSessionUseCaseImpl(get(), get(), getAll<SessionEndListener>()) }
-        single<AgentSessions> { SessionsAgentDirectory(get()) }
+        single<AgentSessions> { SessionsAgentDirectory(get(), getOrNull<CloudAgentSessions>()) }
         single<ReceiptOwners> { SessionsReceiptOwners(get()) }
         single<SessionAliveUseCase> { SessionAliveUseCaseImpl(get(), get()) }
         single<ReopenSessionUseCase> { ReopenSessionUseCaseImpl(get(), get()) }

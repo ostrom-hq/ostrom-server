@@ -35,7 +35,10 @@ class TodoCredentialRefusedException : OstromException(
     "This credential does not reach a session's todo: its person or the session's agent token does.",
 )
 
-/** An agent token named no session: it acts only in one of its launch's sessions, which it names. */
+/**
+ * The agent token of a launch on a machine named no session: it acts only in one of its launch's sessions, which it
+ * names (a cloud session's launch needs none).
+ */
 class TodoAgentSessionRequiredException : OstromException(
     ErrorKind.INVALID_REQUEST,
     "Name the session (sessionId): an agent token acts only in its own session.",

@@ -82,4 +82,22 @@ class LaunchWaitAgentsTest {
         assertNull(agents.resolve(person, "s-1"), "A person's credential named like a launch is no agent")
         assertTrue(sessions.checked.isEmpty(), "No session is read for a token that is nobody")
     }
+
+    @Test
+    fun aLaunchOnAMachineThatNamesNoSessionGetsTheCallersRefusal() = runTest {
+        launches.create(launch)
+        val missing = OstromException(ErrorKind.INVALID_REQUEST, "Name the session.")
+        assertEquals(missing, assertFailsWith<OstromException> { agents.resolve(agent(), null) { missing } })
+        assertTrue(sessions.checked.isEmpty(), "No session is read")
+    }
+
+    @Test
+    fun aCloudSessionsLaunchActsOnItsCloudSessionWhateverItNames() = runTest {
+        val cloud = Uuid.parse("00000000-0000-0000-0000-00000000c10d")
+        launches.create(launch.copy(cloudSessionId = cloud))
+        val agent = WaitAgent(ORG, memberOf(ADA.userId).toString(), cloud.toString(), listOf(cloud.toString()))
+        assertEquals(agent, agents.resolve(agent(), null) { error("A cloud session's launch needs no session.") })
+        assertEquals(agent, agents.resolve(agent(), "s-2"), "Another session it names is not read")
+        assertTrue(sessions.checked.isEmpty(), "The sessions module's guard is not asked")
+    }
 }

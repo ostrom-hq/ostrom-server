@@ -11,6 +11,7 @@ import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.InvalidPageException
 import run.ostrom.server.kernel.sessions.AgentSession
+import run.ostrom.server.kernel.sessions.CloudAgentSessions
 import run.ostrom.server.sessions.domain.models.EndSession
 import run.ostrom.server.sessions.domain.models.NotYourSessionException
 import run.ostrom.server.sessions.domain.models.Session
@@ -23,6 +24,7 @@ import run.ostrom.server.sessions.domain.repositories.SessionsTransaction
 import run.ostrom.server.sessions.domain.services.NoSessionCosts
 import run.ostrom.server.sessions.domain.usecases.CloseSessionUseCase
 import run.ostrom.server.sessions.domain.usecases.EndSessionUseCaseImpl
+import run.ostrom.server.sessions.domain.usecases.StartSessionUseCaseImpl
 import run.ostrom.server.sessions.domain.usecases.SweepStaleSessionsUseCaseImpl
 import run.ostrom.server.sessions.fakes.ORG
 import run.ostrom.server.sessions.fakes.OTHER_ORG
@@ -438,5 +440,27 @@ class SessionLifecycleTest {
         bench.end(agent(), "s-1~r2", EndSession())
         assertEquals(false, directory.find(ORG, "s-1~r2")?.open)
         assertNull(directory.find(OTHER_ORG, "s-1"))
+    }
+
+    @Test
+    fun anIdNoSegmentHasIsReadAsACloudSessions() = runTest {
+        val bench = SessionBench()
+        val cloud = AgentSession("ada", open = true, listOf("c-1"))
+        val directory = SessionsAgentDirectory(bench.repository) { _, id -> cloud.takeIf { id == "c-1" } }
+        assertEquals(cloud, directory.find(ORG, "c-1"))
+        assertNull(directory.find(ORG, "s-1"))
+        val session = bench.start(agent(), start)
+        assertEquals(listOf("s-1"), directory.find(ORG, session.id)?.segments, "A segment is read first")
+    }
+
+    @Test
+    fun aSessionNeverTakesTheIdOfAnotherPersonsCloudSession() = runTest {
+        val bench = SessionBench()
+        val cloud = CloudAgentSessions { _, id -> AgentSession("ada", open = true, listOf(id)).takeIf { id == "s-1" } }
+        val guarded = StartSessionUseCaseImpl(bench.repository, bench.segments, cloud)
+        assertFailsWith<NotYourSessionException> { guarded(agent(), start) }
+        assertNull(bench.repository.get(ORG, "s-1"), "Nothing is opened")
+        assertEquals("s-1", guarded(agent(person = "Ada"), start).id, "Its owner's own")
+        assertEquals("s-2", guarded(agent(), start.copy(id = "s-2")).id, "Any other id")
     }
 }

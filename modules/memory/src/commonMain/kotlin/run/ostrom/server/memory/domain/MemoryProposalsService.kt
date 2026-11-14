@@ -78,8 +78,7 @@ class MemoryProposalsServiceImpl(
                 "A key cannot write to the team memory. Write a personal entry, or ask a member to add it.",
             )
         }
-        val named = sessionId?.takeIf { it.isNotBlank() } ?: throw MemoryProposalSessionException()
-        val session = waits.session(caller, named)
+        val session = waits.session(caller, sessionId?.takeIf { it.isNotBlank() })
         val stored = repository.create(caller, entry, MemoryOrigin.AGENT, session.segment, MemoryStatus.PROPOSED)
         ask(caller, session, stored)
         audit.record(caller, "memory.proposed", stored.id, "scope" to stored.scope.wire, "origin" to "agent")

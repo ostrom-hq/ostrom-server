@@ -21,9 +21,10 @@ import run.ostrom.server.todos.domain.TodoCredentialRefusedException
 val TODO_WRITERS: WriteAccess = WriteAccess.tokens(PrincipalKind.USER, PrincipalKind.AGENT)
 
 /**
- * Who a todo request acts for. An agent token is the person who launched it, confined to the session it names, which
- * must be one of its launch's (the open segment is found); a person is the member the orgs module resolves, an
- * administrator if their role says so. Any other credential is refused.
+ * Who a todo request acts for. An agent token is the person who launched it, confined to its session: a launch on a
+ * machine to the session it names, which must be one of its launch's (the open segment is found), a cloud session's
+ * launch to its cloud session whatever it names (TeamCode's execution credential); a person is the member the orgs
+ * module resolves, an administrator if their role says so. Any other credential is refused.
  *
  * @param orgs The member a person's credential acts for.
  * @param agents The person and session of an agent token.
@@ -64,8 +65,8 @@ class TodoCallers(private val orgs: PrincipalOrgResolver, private val agents: Wa
     private suspend fun callerOf(principal: AuthenticatedPrincipal, sessionId: String?): TodoCaller =
         when (principal.kind) {
             PrincipalKind.AGENT -> {
-                val named = sessionId ?: throw TodoAgentSessionRequiredException()
-                val agent = agents.resolve(principal, named) ?: throw principal.outsideOrganization()
+                val agent = agents.resolve(principal, sessionId) { TodoAgentSessionRequiredException() }
+                    ?: throw principal.outsideOrganization()
                 TodoCaller(agent.orgId, agent.memberId, admin = false, agentSession = agent.sessionId)
             }
             PrincipalKind.USER -> {

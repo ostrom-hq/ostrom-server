@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners.domain
 
+import run.ostrom.server.kernel.sessions.SessionEndListener
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
@@ -36,11 +37,13 @@ interface ReconcileCloudSessionUseCase {
  * @param plans The organizations' plans, for their hours.
  * @param usage The hours used.
  * @param clock The time.
+ * @param ended Told once a session is terminated, so that what its agent asked there ends with it (its open waits are
+ *   cancelled): its agent asks in the cloud session itself.
  * @param backgroundWork How long the agent's background work holds off the idle pause, per organization.
  */
 // Each step is a decision table read top to bottom: an early return per outcome reads better than nested branches,
 // and one small function per state and per check keeps each table short.
-// Its seven collaborators are the ports a step reads and writes, each named at its one call site.
+// Its eight collaborators are the ports a step reads and writes, each named at its one call site.
 @Suppress("ReturnCount", "TooManyFunctions", "LongParameterList")
 class ReconcileCloudSessionUseCaseImpl(
     private val repository: CloudSessionsRepository,
@@ -49,6 +52,7 @@ class ReconcileCloudSessionUseCaseImpl(
     private val plans: CloudPlanProvider,
     private val usage: CloudUsageMeter,
     private val clock: Clock,
+    private val ended: List<SessionEndListener> = emptyList(),
     private val backgroundWork: BackgroundWorkLimit,
 ) : ReconcileCloudSessionUseCase {
     override suspend fun invoke(session: CloudSession): Instant? {
@@ -71,7 +75,10 @@ class ReconcileCloudSessionUseCaseImpl(
         val terminated = session.moveTo(SessionState.TERMINATED, now)
             .copy(terminatedAt = now, runnerTokenHash = null, phase = "cleaned")
         // A lost write (the runner's last heartbeat, sent while its container stopped) asks for a new look.
-        return write(terminated, null)
+        val next = write(terminated, null)
+        // Once written: a lost write is looked at again, and its listeners told then (they are idempotent).
+        if (next == null) ended.forEach { it.ended(session.orgId, listOf(session.id.toString())) }
+        return next
     }
 
     private suspend fun starting(session: CloudSession, now: Instant): Instant? {

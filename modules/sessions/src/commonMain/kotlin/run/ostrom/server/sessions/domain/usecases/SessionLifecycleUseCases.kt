@@ -2,8 +2,10 @@
 package run.ostrom.server.sessions.domain.usecases
 
 import run.ostrom.server.gates.domain.models.GateActor
+import run.ostrom.server.kernel.sessions.CloudAgentSessions
 import run.ostrom.server.kernel.sessions.SessionEndListener
 import run.ostrom.server.sessions.domain.models.EndSession
+import run.ostrom.server.sessions.domain.models.NotYourSessionException
 import run.ostrom.server.sessions.domain.models.Opening
 import run.ostrom.server.sessions.domain.models.Reopened
 import run.ostrom.server.sessions.domain.models.SeenItem
@@ -31,17 +33,25 @@ interface StartSessionUseCase {
 }
 
 /**
- * [StartSessionUseCase] on [SessionSegments].
+ * [StartSessionUseCase] on [SessionSegments]. A session never takes the id of another person's cloud session: the
+ * agent of a cloud session acts there by its id ([CloudAgentSessions]), and the segments are read first, so such a
+ * session would stand in for it.
  *
  * @param repository The sessions.
  * @param segments Opens the segments.
+ * @param cloud The cloud sessions, when the runners module is there.
  */
 class StartSessionUseCaseImpl(
     private val repository: SessionsRepository,
     private val segments: SessionSegments,
+    private val cloud: CloudAgentSessions? = null,
 ) : StartSessionUseCase {
     override suspend fun invoke(actor: GateActor, start: StartSession): Session {
         val bounded = SessionSegments.bounded(start.copy(launchId = actor.launchId ?: start.launchId))
+        val owner = cloud?.find(actor.orgId, bounded.id)?.owner
+        if (owner != null && !owner.equals(SessionAccess.person(actor), ignoreCase = true)) {
+            throw NotYourSessionException()
+        }
         return repository.transaction(actor.orgId) {
             lockRoot(bounded.id)
             segments.open(this, actor.orgId, SessionAccess.person(actor), bounded, Opening.of(actor, null))

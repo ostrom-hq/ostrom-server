@@ -12,7 +12,7 @@ import kotlin.uuid.Uuid
 
 /**
  * [StepSessions] on the runners module's cloud sessions (their owner), the launches that ran in one, the sessions
- * module's segments those launches opened, and the automations module's waits asked there.
+ * module's segments those launches opened, and the automations module's waits asked in the cloud session or there.
  *
  * @param cloud The cloud sessions.
  * @param members Resolves a login to its membership.
@@ -34,11 +34,13 @@ class CloudStepSessions(
     }
 
     override suspend fun asked(orgId: Uuid, sessionId: Uuid): Boolean {
-        // A cloud session is launched once, then again on each resume: the latest few hold any wait still open.
+        // Its agent asks in the cloud session itself (its launch's agent token is confined to it); a segment a launch
+        // of it opened may hold an older wait. A cloud session is launched once, then again on each resume: the
+        // latest few hold any wait still open.
         val segments = launches.ofCloudSession(orgId, sessionId, LAUNCHES).flatMap { launch ->
             sessions.list(orgId, SessionQuery(launchId = launch)).map { it.id }
         }
-        return segments.isNotEmpty() && waits.hasOpen(orgId, segments)
+        return waits.hasOpen(orgId, listOf(sessionId.toString()) + segments)
     }
 }
 
