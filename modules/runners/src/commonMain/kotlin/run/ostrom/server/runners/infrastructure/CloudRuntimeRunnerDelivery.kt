@@ -7,19 +7,16 @@ import run.ostrom.server.runners.domain.RunnerDelivery
 import run.ostrom.server.runners.domain.RunnerDeliverySource
 
 /**
- * The delivery the console's cloud runtime sets (`runnerImage`, `runnerBinary`, `serverUrl`), [fallbackImage] while
- * no runner image is stored and [publicUrl] while no server URL is.
+ * The delivery the console's cloud runtime sets (`runnerImage`, `runnerBinary`, `sessionImage`, `serverUrl`),
+ * [fallbackImage] while no runner image is stored and [publicUrl] while no server URL is.
  *
  * A Kubernetes session's containers run its profile's image. A Docker or registered session has no profile: its
- * containers run [fallbackImage] (`OSTROM_RUNNERS_IMAGE`), the instance's session image, whatever runner image the
- * runtime names. The runner image only delivers the binary: the CLI's slim `ostrom-runner` has no agent, git nor the
- * session's accounts. While the runtime names none, [fallbackImage] is both, as TeamCode's template image is
- * (docker/cloud-session-image of ostrom-cli, with `ostrom` at /usr/local/bin). A Kubernetes workspace claim gets the
- * runtime's access mode.
+ * containers run the runtime's session image (docker.io/ostromhq/ostrom-session:latest unless an administrator sets
+ * another), the agents, git and the session's accounts; the runner image only delivers the binary. A Kubernetes
+ * workspace claim gets the runtime's access mode.
  *
- * @param runtime The cloud runtime; null on a server without the cloud module, which then uses [fallbackImage].
- * @param fallbackImage The session image of Docker and registered sessions, and the runner image while the runtime
- *   names none.
+ * @param runtime The cloud runtime; null on a server without the cloud module, which then uses its defaults.
+ * @param fallbackImage The runner image while the runtime names none (`OSTROM_RUNNERS_IMAGE`).
  * @param publicUrl The URL used while the runtime names no server URL: `OSTROM_RUNNERS_SERVER_URL`, else the server's
  *   public URL (`OSTROM_PUBLIC_URL`).
  */
@@ -31,7 +28,8 @@ class CloudRuntimeRunnerDelivery(
     override suspend fun current(): RunnerDelivery {
         val current = if (runtime == null) CloudRuntime() else runtime.current()
         val image = current.runnerImage?.takeIf { it.isNotBlank() } ?: fallbackImage
+        val session = current.sessionImage.takeIf { it.isNotBlank() } ?: CloudRuntime.DEFAULT_SESSION_IMAGE
         val serverUrl = current.serverUrl?.takeIf { it.isNotBlank() } ?: publicUrl.trimEnd('/')
-        return RunnerDelivery(image, current.runnerBinary, fallbackImage, serverUrl, current.workspaceAccessMode)
+        return RunnerDelivery(image, current.runnerBinary, session, serverUrl, current.workspaceAccessMode)
     }
 }

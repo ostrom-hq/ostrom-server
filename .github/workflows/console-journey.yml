@@ -102,6 +102,8 @@ jobs:
       # Stripe's test mode only on a dispatch that asks for it: a schedule, a pull request or a call keeps stripe-mock.
       STRIPE_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.stripe || 'mock' }}
       RUNNER_IMAGE: ${{ inputs.runner_image || 'docker.io/ostromhq/ostrom-runner:latest' }}
+      # The server's default session image (its cloud runtime's `sessionImage`), which the machines pin.
+      SESSION_IMAGE: docker.io/ostromhq/ostrom-session:latest
       # A pull request that changes this file proves it with the /me journey (ostrom-web#42, on main) and the cloud
       # sessions on registered runners (line 6.2, ostrom-web#84); a dispatch or a call from ostrom-web runs what it
       # names, or all of e2e-real.
@@ -177,15 +179,17 @@ jobs:
             || { echo "::error::$image is ostrom-server@${revision:0:7}, older than $MIN_SERVER (server#223)"; exit 1; }
           # The database roles of the image's own commit, not of a main that may have moved past it.
           git -C server show "${revision}:ci/database-roles.sql" > "$RUNNER_TEMP/database-roles.sql"
-          # The cloud sessions' image, by digest: the server starts it on this runner's Docker (line 6.2).
+          # The runner image, by digest: the server delivers `ostrom` from it (line 6.2). The sessions' containers run
+          # the cloud runtime's default session image, by its tag (the name the server's plan uses), pulled here first.
           docker pull --quiet "$RUNNER_IMAGE" || { echo "::error::$RUNNER_IMAGE cannot be pulled"; exit 1; }
+          docker pull --quiet "$SESSION_IMAGE" || { echo "::error::$SESSION_IMAGE cannot be pulled"; exit 1; }
           runner=$(docker inspect -f '{{index .RepoDigests 0}}' "$RUNNER_IMAGE")
           echo "image=$image" >> "$GITHUB_OUTPUT"
           echo "runner=$runner" >> "$GITHUB_OUTPUT"
           {
             echo "### Images"
             echo "- server: \`$image\` (ostrom-server@${revision:0:7}; main is at ${main:0:7})"
-            echo "- cloud session: \`$runner\`, on this runner's Docker"
+            echo "- cloud session: runner \`$runner\`, session \`$SESSION_IMAGE\`, on this runner's Docker"
             echo "- console: ostrom-web $(git -C web rev-parse --short HEAD) ($WEB_REF), built here without mocks"
           } >> "$GITHUB_STEP_SUMMARY"
       # Stripe's TEST mode (line 6.5, the test card 4242 paid on Stripe's hosted Checkout). The Stripe CLI, pinned by
@@ -220,7 +224,7 @@ jobs:
       - name: Start the server (roles, migrate, serve as ostrom_app)
         env:
           IMAGE: ${{ steps.server.outputs.image }}
-          SESSION_IMAGE: ${{ steps.server.outputs.runner }}
+          RUNNER: ${{ steps.server.outputs.runner }}
           PGPASSWORD: ostrom
           OWNER_URL: postgresql://ostrom_owner:ostrom_owner@localhost:5432/ostrom
         run: |
@@ -280,7 +284,7 @@ jobs:
               OSTROM_STRIPE_API_BASE=http://127.0.0.1:12111 >> "$RUNNER_TEMP/server.env"
           fi
           # Cloud sessions (line 6.2: launch, stop, and the loss of a machine, from /cloud) on registered runners:
-          # the journeys register them and start `ostrom-runner machine` containers on this runner's Docker
+          # the journeys register them and start `ostrom cloud machine` containers on this runner's Docker
           # (ostrom-web e2e-real/machines.ts), which reach the Engine API through a socket proxy limited to
           # containers, volumes and images, on loopback. The server only plans; the session's containers reach it,
           # on the host network, through host.docker.internal (the plan adds it).
@@ -291,7 +295,7 @@ jobs:
           {
             echo "OSTROM_RUNNERS_DRIVER=registered"
             echo "OSTROM_RUNNERS_SERVER_URL=http://host.docker.internal:4600"
-            echo "OSTROM_RUNNERS_IMAGE=$SESSION_IMAGE"
+            echo "OSTROM_RUNNERS_IMAGE=$RUNNER"
             echo "OSTROM_RUNNERS_ALLOWED_ORGS=*"
           } >> "$RUNNER_TEMP/server.env"
           docker run -d --name ostrom-server --network host -v "$RUNNER_TEMP/ostrom-mail:/var/lib/ostrom/mail" \
@@ -341,8 +345,10 @@ jobs:
           OSTROM_E2E_REQUIRE_ORGS: 'true'
           # payment.spec.ts pays with the test card 4242 only against Stripe's test mode; it is skipped on stripe-mock.
           OSTROM_E2E_STRIPE: ${{ env.STRIPE_MODE }}
-          # The machines the journeys start run the cloud sessions' image (machines.ts).
+          # The machines the journeys start run the runner image and deliver `ostrom` from it; the sessions'
+          # containers run the session image (machines.ts).
           OSTROM_E2E_MACHINE_IMAGE: ${{ steps.server.outputs.runner }}
+          OSTROM_E2E_SESSION_IMAGE: ${{ env.SESSION_IMAGE }}
           OSTROM_E2E_MACHINE_SERVER_URL: http://127.0.0.1:4600
           OSTROM_E2E_MACHINE_DOCKER_API: http://127.0.0.1:2375
         # SPECS is split on spaces on purpose, each word one Playwright file filter, and never expanded as a path.

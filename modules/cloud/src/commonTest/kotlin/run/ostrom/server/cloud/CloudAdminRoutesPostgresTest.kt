@@ -132,8 +132,11 @@ class CloudAdminRoutesPostgresTest {
         val seeded = http.get("/api/v1/cloud/runtime") { bearerAuth("alice") }.body<CloudRuntimeResponse>()
         assertTrue(seeded.enabled)
         assertEquals("https://api.acme.dev", seeded.effectiveServerUrl)
+        // Never seeded from a variable: the session image is the default until an administrator sets another.
+        assertEquals("docker.io/ostromhq/ostrom-session:latest", seeded.sessionImage)
         val body = """
             {"enabled":false,"runnerBinary":"/usr/local/bin/ostrom","workspaceAccessMode":"ReadWriteOnce",
+            "sessionImage":" registry.acme.dev/session:7 ",
             "failedWorkspaceRetentionDays":7,"maxRunningSessionsPerMember":2,"maxRetainedSessionsPerMember":20,
             "memberTransfers":"disabled","serverUrl":"https://pods.acme.dev","updatedAt":"${seeded.updatedAt}"}
         """.trimIndent()
@@ -141,6 +144,7 @@ class CloudAdminRoutesPostgresTest {
         val saved = http.send("PUT", "/api/v1/cloud/runtime", "alice", body).body<CloudRuntimeResponse>()
         assertFalse(saved.enabled)
         assertEquals("https://pods.acme.dev", saved.effectiveServerUrl)
+        assertEquals("registry.acme.dev/session:7", saved.sessionImage)
         assertEquals("disabled", server.koin.get<CloudRuntimeSource>().current().memberTransfers)
         val stale = http.send("PUT", "/api/v1/cloud/runtime", "alice", body)
         assertEquals(HttpStatusCode.Conflict, stale.status)

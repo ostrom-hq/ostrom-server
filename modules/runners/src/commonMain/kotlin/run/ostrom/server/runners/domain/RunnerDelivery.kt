@@ -11,7 +11,7 @@ package run.ostrom.server.runners.domain
  * @property runnerImage The image holding the `ostrom` Linux binary (docker.io/ostromhq/ostrom-runner).
  * @property runnerBinary Where the binary is in [runnerImage].
  * @property sessionImage The image of the session's containers where the session names none: a Docker or registered
- *   session's (`OSTROM_RUNNERS_IMAGE`); a Kubernetes session's profile names its own.
+ *   session's, the cloud runtime's `sessionImage`; a Kubernetes session's profile names its own.
  * @property serverUrl The URL a Kubernetes session's runner calls back: the runtime's, else the server's public URL.
  * @property workspaceAccessMode The access mode of a new Kubernetes workspace claim: the runtime's
  *   `workspaceAccessMode`, `ReadWriteOncePod` by default (TeamCode's), `ReadWriteOnce` for storage drivers without it.

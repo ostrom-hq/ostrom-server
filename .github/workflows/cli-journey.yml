@@ -9,9 +9,10 @@ name: CLI journey
 # published, named in the run's summary, so a red night points at a commit; the hook's latency budgets of step 5.8 live
 # in ostrom-cli's e2e/journey.py), and, off the org's one-`ci`-job rule on purpose (as demo-stack.yml), on a pull
 # request only when the pull request changes this file. Cloud sessions (6.2: `ostrom claude --cloud`, `ostrom attach`)
-# run on this runner's Docker, on the session image docker.io/ostromhq/ostrom-runner (public) with the
-# `ostrom` built here added at /usr/local/bin: TeamCode's template image, the session and the runner image at once, as
-# the server delivers the binary from the runner image into /opt/ostrom and its containers run `ostrom cloud …`. Step 5.9
+# run on this runner's Docker: the runner image docker.io/ostromhq/ostrom-runner (public) with the `ostrom` built here
+# at /usr/local/bin, which the server delivers into /opt/ostrom (its cloud runtime's runner image, seeded from
+# OSTROM_RUNNERS_IMAGE), and the session image docker.io/ostromhq/ostrom-session:latest (the runtime's default
+# `sessionImage`: the agents, git), whose containers run `/opt/ostrom/ostrom cloud …`. Step 5.9
 # (the launch end to end, p50 and p95 by part, the server's share from `docker logs ostrom-server`) writes its tables
 # to the run's summary. A server pull request's own image, which is never published, is played with `server_run`: the
 # `ostrom-server-image` artifact its ci.yml run saved (ci-image), so that a pull request that changes what the CLI's
@@ -236,14 +237,17 @@ jobs:
       # console-journey.yml: the Engine API through a socket proxy limited to what the driver calls, on loopback; the
       # session's containers reach the server, on the host network, through host.docker.internal (the driver adds it).
       # Their settings go to the server alone (runners.env), not to the seed run that shares server.env.
-      # The session image is built after the CLI, from the base image's digest (BASE_IMAGE), as SESSION_IMAGE: the
-      # server reads only its name, at its start.
+      # The runner image is built after the CLI, from the base image's digest (BASE_IMAGE), as DELIVERY_IMAGE: the
+      # server reads only its name, at its start. The session image is the runtime's default, pulled here first so
+      # that the session's start is not a cold pull.
       - name: The cloud sessions' runtime (this runner's Docker, the session image's base by digest)
         env:
           DRIVER: ${{ matrix.driver }}
-          SESSION_IMAGE: ostrom-cloud-session:journey
+          DELIVERY_IMAGE: ostrom-cloud-runner:journey
+          SESSION_IMAGE: docker.io/ostromhq/ostrom-session:latest
         run: |
           docker pull --quiet "$RUNNER_IMAGE" || { echo "::error::$RUNNER_IMAGE cannot be pulled"; exit 1; }
+          docker pull --quiet "$SESSION_IMAGE" || { echo "::error::$SESSION_IMAGE cannot be pulled"; exit 1; }
           base_image=$(docker inspect -f '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' "$RUNNER_IMAGE")
           [ -n "$base_image" ] || { echo "::error::$RUNNER_IMAGE has no registry digest"; exit 1; }
           docker run -d --name docker-api -p 127.0.0.1:2375:2375 -v /var/run/docker.sock:/var/run/docker.sock:ro \
@@ -255,12 +259,14 @@ jobs:
             echo "OSTROM_RUNNERS_DRIVER=$DRIVER"
             [ "$DRIVER" = docker ] && echo "OSTROM_RUNNERS_DOCKER_API_URL=http://127.0.0.1:2375"
             echo "OSTROM_RUNNERS_SERVER_URL=http://host.docker.internal:4600"
-            echo "OSTROM_RUNNERS_IMAGE=$SESSION_IMAGE"
+            echo "OSTROM_RUNNERS_IMAGE=$DELIVERY_IMAGE"
             echo "OSTROM_RUNNERS_ALLOWED_ORGS=*"
           } > "$RUNNER_TEMP/runners.env"
-          { echo "SESSION_IMAGE=$SESSION_IMAGE"; echo "BASE_IMAGE=$base_image"; } >> "$GITHUB_ENV"
-          echo "- cloud session: \`$base_image\` and the CLI built here, driver \`$DRIVER\`, this runner's Docker" \
-            >> "$GITHUB_STEP_SUMMARY"
+          { echo "DELIVERY_IMAGE=$DELIVERY_IMAGE"; echo "SESSION_IMAGE=$SESSION_IMAGE"; echo "BASE_IMAGE=$base_image"; } \
+            >> "$GITHUB_ENV"
+          session=$(docker inspect -f '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' "$SESSION_IMAGE")
+          echo "- cloud session: runner \`$base_image\` with the CLI built here, session \`$session\`," \
+            "driver \`$DRIVER\`, this runner's Docker" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
@@ -279,18 +285,17 @@ jobs:
           sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
           ./gradlew -Postrom.core.local=true :cli:linkReleaseExecutableLinuxX64
       # The server delivers `ostrom` from the runner image (its cloud runtime's, seeded from OSTROM_RUNNERS_IMAGE) into
-      # /opt/ostrom, and every session container runs `/opt/ostrom/ostrom cloud …`: the session image gets this CLI at
-      # /usr/local/bin, so that it is the runner image too, and the registered leg's machine runs `ostrom cloud machine`
-      # from it. A server from before the delivery still runs the base image's ostrom-runner, which it keeps.
-      - name: The session image, with this CLI's ostrom
+      # /opt/ostrom, and every session container runs `/opt/ostrom/ostrom cloud …`: the runner image gets this CLI at
+      # /usr/local/bin, and the registered leg's machine runs `ostrom cloud machine` from it.
+      - name: The runner image, with this CLI's ostrom
         run: |
           context="$RUNNER_TEMP/session-image"
           mkdir -p "$context"
           cp cli/cli/build/bin/linuxX64/releaseExecutable/ostrom.kexe "$context/ostrom"
           printf 'FROM %s\nCOPY --chmod=0755 ostrom /usr/local/bin/ostrom\n' "$BASE_IMAGE" > "$context/Dockerfile"
-          docker build --quiet -t "$SESSION_IMAGE" "$context"
+          docker build --quiet -t "$DELIVERY_IMAGE" "$context"
           docker run --rm --user 1000:1000 --read-only --tmpfs /tmp -e HOME=/tmp --entrypoint /usr/local/bin/ostrom \
-            "$SESSION_IMAGE" --version
+            "$DELIVERY_IMAGE" --version
       - name: Start the server (roles, migrate, serve as ostrom_app)
         env:
           IMAGE: ${{ steps.server.outputs.image }}
@@ -361,9 +366,14 @@ jobs:
             # its machine is ostrom-runner's, which refuses the plan's delivery container (ostrom-cli#187)
             echo "- 6.2 on a registered runner: not played, ostrom-cli $CLI_REF's machine pins no delivery image" \
               >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$DRIVER" = registered ] && ! grep -q -e '"--cloud-session-image"' e2e/journey.py; then
+            # its machine would pin the runner image as the session image, which the server's plan no longer names
+            echo "- 6.2 on a registered runner: not played, ostrom-cli $CLI_REF has no --cloud-session-image" \
+              >> "$GITHUB_STEP_SUMMARY"
           elif grep -q -e '"--cloud-sessions"' e2e/journey.py; then
             cloud=(--cloud-sessions)
-            [ "$DRIVER" = registered ] && cloud+=(--cloud-machine-image "$SESSION_IMAGE")
+            [ "$DRIVER" = registered ] \
+              && cloud+=(--cloud-machine-image "$DELIVERY_IMAGE" --cloud-session-image "$SESSION_IMAGE")
           else
             echo "- 6.2 cloud sessions: not played, ostrom-cli $CLI_REF has no --cloud-sessions" >> "$GITHUB_STEP_SUMMARY"
           fi
