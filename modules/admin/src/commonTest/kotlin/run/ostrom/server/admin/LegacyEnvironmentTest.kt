@@ -46,6 +46,15 @@ class LegacyEnvironmentTest {
         } finally {
             SystemFileSystem.delete(file)
         }
+        val large = Path(SystemTemporaryDirectory, "ostrom-legacy-${Uuid.random()}.log")
+        SystemFileSystem.sink(large).buffered().use { it.writeString("x".repeat(64 * 1024 + 1)) }
+        try {
+            val read = LegacyEnvironment.of(MapConfigSource(mapOf("OSTROM_X_FILE" to large.toString())))
+            val error = assertFailsWith<InvalidConfigException> { read("OSTROM_X") }
+            assertEquals("The file $large is larger than 64 KiB: it holds no setting.", error.message)
+        } finally {
+            SystemFileSystem.delete(large)
+        }
         val missing = LegacyEnvironment.of(MapConfigSource(mapOf("OSTROM_X_FILE" to "/nonexistent/ostrom.key")))
         val error = assertFailsWith<InvalidConfigException> { missing("OSTROM_X") }
         assertEquals("The file /nonexistent/ostrom.key does not exist.", error.message)

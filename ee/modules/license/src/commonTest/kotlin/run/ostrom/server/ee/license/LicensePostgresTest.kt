@@ -6,8 +6,7 @@ import run.ostrom.server.billing.domain.GetPlanLimitsUseCase
 import run.ostrom.server.ee.license.domain.LicenseVerifier
 import run.ostrom.server.ee.license.infrastructure.LicenseVerifierImpl
 import run.ostrom.server.instance.InstanceModule
-import run.ostrom.server.kernel.config.ConfigSource
-import run.ostrom.server.kernel.config.MapConfigSource
+import run.ostrom.server.kernel.settings.InstanceSettings
 import run.ostrom.server.testing.serverTest
 import org.koin.dsl.module
 import kotlin.test.Test
@@ -22,14 +21,14 @@ import kotlin.uuid.Uuid
 class LicensePostgresTest {
     private val modules = listOf(InstanceModule, BillingModule, LicenseModule)
 
-    private fun overrides(config: Map<String, String>) = module {
-        single<ConfigSource> { MapConfigSource(config) }
+    private fun overrides(key: String?) = module {
+        single<InstanceSettings> { StoredLicense(key) }
         single<LicenseVerifier> { LicenseVerifierImpl(listOf(SIGN_PY_TEST_PUBLIC_KEY)) }
         single<Clock> { MutableClock() }
     }
 
     @Test
-    fun withoutAKeyASelfHostedInstanceHasNoEnterpriseFeatures() = serverTest(modules, overrides(emptyMap())) { server ->
+    fun withoutAKeyASelfHostedInstanceHasNoEnterpriseFeatures() = serverTest(modules, overrides(null)) { server ->
         val limits = server.koin.get<GetPlanLimitsUseCase>()(Uuid.random())
         assertFalse(limits.sso)
         assertFalse(limits.policies)
@@ -38,8 +37,8 @@ class LicensePostgresTest {
     }
 
     @Test
-    fun aLicenseKeyGrantsBillingItsFeaturesAndPeople() =
-        serverTest(modules, overrides(mapOf("OSTROM_LICENSE_KEY" to SIGN_PY_FIXTURE))) { server ->
+    fun aStoredLicenseKeyGrantsBillingItsFeaturesAndPeople() =
+        serverTest(modules, overrides(SIGN_PY_FIXTURE)) { server ->
             val limits = server.koin.get<GetPlanLimitsUseCase>()(Uuid.random())
             assertTrue(limits.sso)
             assertTrue(limits.policies)

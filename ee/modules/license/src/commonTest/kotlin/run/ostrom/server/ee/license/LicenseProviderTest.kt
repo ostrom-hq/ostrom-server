@@ -34,8 +34,12 @@ class LicenseProviderTest {
     private val instance = FakeInstance()
     private val fixtureVerifier = CountingVerifier(LicenseVerifierImpl(listOf(SIGN_PY_TEST_PUBLIC_KEY)))
 
-    private fun provider(key: String?, verifier: LicenseVerifier = fixtureVerifier) =
-        LicenseProviderImpl(key, verifier, instance, clock, logger)
+    private var stored: String? = null
+
+    private fun provider(key: String?, verifier: LicenseVerifier = fixtureVerifier): LicenseProviderImpl {
+        stored = key
+        return LicenseProviderImpl({ stored }, verifier, instance, clock, logger)
+    }
 
     @Test
     fun withoutAKeyThereIsNoLicenseAndNothingIsVerified() = runTest {
@@ -73,10 +77,50 @@ class LicenseProviderTest {
     }
 
     @Test
-    fun anInvalidKeyFailsTheLoadWithItsReason() = runTest {
-        val error = assertFailsWith<MalformedLicenseException> { provider("not-a-license").load() }
-        assertEquals("The license key is malformed: it does not start with ostrom-license.v1.", error.message)
-        assertEquals(listOf("ERROR license refused {reason=${error.message}}"), logger.lines)
+    fun anInvalidKeyGrantsNothingAndLogsItsReason() = runTest {
+        val provider = provider("not-a-license")
+        assertNull(provider.load())
+        assertNull(provider.current())
+        val reason = "The license key is malformed: it does not start with ostrom-license.v1."
+        assertEquals(listOf("ERROR license refused {reason=$reason}"), logger.lines, "refused once, then kept")
+        assertEquals(1, fixtureVerifier.calls)
+    }
+
+    @Test
+    fun anotherStoredKeyIsVerifiedAtItsFirstUse() = runTest {
+        val provider = provider("not-a-license")
+        assertNull(provider.current())
+        stored = SIGN_PY_FIXTURE
+        assertEquals(50, provider.current()?.maxPeople)
+        stored = null
+        assertNull(provider.current())
+        assertEquals(2, fixtureVerifier.calls, "no key is never verified")
+    }
+
+    @Test
+    fun aKeyChangeLogsTheEndOfAGraceAgain() = runTest {
+        val provider = provider(SIGN_PY_FIXTURE)
+        assertEquals(50, provider.current()?.maxPeople)
+        clock.now = Instant.parse("2027-11-14T00:00:00Z")
+        assertNull(provider.current())
+        stored = null
+        assertNull(provider.current())
+        clock.now = Instant.parse("2027-11-05T00:00:00Z")
+        stored = SIGN_PY_FIXTURE
+        assertEquals(50, provider.current()?.maxPeople, "in its grace period again")
+        clock.now = Instant.parse("2027-11-14T00:00:00Z")
+        assertNull(provider.current())
+        assertEquals(2, logger.lines.count { it.startsWith("WARN license grace period over") })
+    }
+
+    @Test
+    fun aKeyIsRefusedWithItsReasonWithoutBeingKept() = runTest {
+        val provider = provider(null)
+        val malformed = MalformedLicenseException("it does not start with ostrom-license.v1.").message
+        assertEquals(malformed, provider.refusal("not-a-license"))
+        assertNull(provider.refusal(SIGN_PY_FIXTURE))
+        assertNull(provider.load(), "a key checked is not stored")
+        assertEquals(emptyList(), logger.lines)
     }
 
     @Test
@@ -123,12 +167,12 @@ class LicenseProviderTest {
     }
 
     @Test
-    fun aLicenseBoundToAnotherInstanceFailsTheLoad() = runTest {
+    fun aLicenseBoundToAnotherInstanceGrantsNothing() = runTest {
         val key = TestSigningKey.generate()
         val verifier = LicenseVerifierImpl(listOf(key.publicKey))
-        val error = assertFailsWith<LicenseInstanceMismatchException> {
-            provider(key.license("instanceId" to q("11111111-1111-1111-1111-111111111111")), verifier).load()
-        }
+        val provider = provider(key.license("instanceId" to q("11111111-1111-1111-1111-111111111111")), verifier)
+        assertNull(provider.load())
+        val error = LicenseInstanceMismatchException("11111111-1111-1111-1111-111111111111", instance.id.toString())
         assertEquals(
             "The license is for instance 11111111-1111-1111-1111-111111111111, not this instance (${instance.id}). " +
                 "To have it re-issued for this instance, send this instance id (GET /api/v1/instance) " +
@@ -136,6 +180,15 @@ class LicenseProviderTest {
             error.message,
         )
         assertEquals(listOf("ERROR license refused {reason=${error.message}}"), logger.lines)
+    }
+
+    @Test
+    fun refusalWithCancellationPropagatesException() = runTest {
+        val cancelling = object : LicenseVerifier {
+            override suspend fun verify(licenseKey: String, now: Instant): License =
+                throw CancellationException("stopping")
+        }
+        assertFailsWith<CancellationException> { provider(null, cancelling).refusal(SIGN_PY_FIXTURE) }
     }
 
     @Test

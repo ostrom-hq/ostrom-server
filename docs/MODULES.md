@@ -251,8 +251,6 @@ Every request is already logged once by the kernel (method, route template — n
 | `OSTROM_POD_NAME` | random | `service.instance.id` (`ServerConfig.instanceId`; the chart sets it from the pod name) |
 | `OSTROM_WEBHOOKS_ALLOW_PRIVATE_TARGETS` | `false` | `true` lets outgoing webhooks reach loopback and private addresses (an internal receiver); link-local, unspecified and metadata addresses stay refused |
 | `OSTROM_CONSOLE_URL` | `https://app.ostrom.run` | Billing: the console, for Checkout and portal return pages and limit messages |
-| `OSTROM_LICENSE_KEY` | — | Enterprise (`ee/`): the license key, `ostrom-license.v1.…`, verified offline at start; an invalid, expired (past 14 days of grace) or foreign key fails the start. Unset: no license |
-| `OSTROM_LICENSE_KEY_FILE` | — | Enterprise (`ee/`): a file holding the license key, read when `OSTROM_LICENSE_KEY` is unset; missing or empty fails the start |
 
 A module that needs its own keys reads them from the `ConfigSource` bound in Koin (`get<ConfigSource>()`: the
 environment, then `OSTROM_CONFIG_FILE`), with the `OSTROM_<MODULE>_…` prefix, and adds them to this table. In a
@@ -309,6 +307,7 @@ What lives in the console so far:
 | Gateway (`gateway`: the instance's sealed Anthropic, OpenAI and OpenRouter keys, the providers' base URLs), read at each model call | `OSTROM_GATEWAY_ANTHROPIC_API_KEY`, `OSTROM_GATEWAY_OPENAI_API_KEY`, `OSTROM_GATEWAY_OPENROUTER_API_KEY`, `OSTROM_GATEWAY_ANTHROPIC_URL`, `OSTROM_GATEWAY_OPENAI_URL`, `OSTROM_GATEWAY_OPENROUTER_URL`, `OSTROM_GATEWAY_CODEX_URL` | the `gateway` module |
 | Sharing (`sharing`: the providers' OAuth token endpoints), read at each refresh | `OSTROM_SHARING_CLAUDE_TOKEN_URL`, `OSTROM_SHARING_CODEX_TOKEN_URL` | the `sharing` module |
 | Push (`push`): `provider` (`off` by default, or `firebase`) and the Firebase project's service account JSON key (`firebaseServiceAccount`, sealed) | new, never a variable | FCM push (`notifications`) |
+| License (`license`: the sealed enterprise license key, verified on save and at start; a key that does not verify is never stored, and one that stops verifying grants nothing, with its reason logged) | `OSTROM_LICENSE_KEY` (or its `_FILE`) | the `license` module (`ee/`) |
 
 The GitHub App is kept as TeamCode keeps it, in its own table (`github_apps`, one row, the key and secrets sealed),
 not in a settings section: the manifest flow creates it once, and the stored App is the only one the server uses. At

@@ -32,16 +32,19 @@ Enterprise features are switched on by the license key, in code, never by an env
 
 ## The license module (`ee/modules/license`)
 
-Binds billing's `LicenseProvider`. At start (`initialize`) it verifies the configured key once, offline, and caches
-it; billing reads `features` (`sso`, `policies`, `retention`), `maxPeople` and `expiresAt` from it.
+Binds billing's `LicenseProvider`. The key is an administrator's setting, in the console (Admin → Settings →
+`license`, sealed, never returned): it is verified offline when saved, and a key that does not verify is refused with
+its reason. At start (`initialize`) the stored key is verified again and the result cached until another key is
+stored; billing reads `features` (`sso`, `policies`, `retention`), `maxPeople` and `expiresAt` from it.
+`OSTROM_LICENSE_KEY` (or the file its `_FILE` names) is imported once into an empty section, only when it verifies.
 
 | Situation | Result |
 | --- | --- |
-| No `OSTROM_LICENSE_KEY` nor `OSTROM_LICENSE_KEY_FILE` | No license (billing's self-hosted defaults) |
+| No key stored | No license (billing's self-hosted defaults) |
 | Valid key | Logged once: `license_id`, `customer`, `expires_at`, `max_people`, `features`, `key_id` (never the key) |
 | Expired, within 14 days | Still valid; a warning at every start, with `grace_ends_at` |
 | Grace period ends while running | Features off from that moment, one warning, no restart needed |
-| Malformed, bad signature, unknown signing key, more than 14 days expired, not yet valid (5 min of clock skew allowed), bound to another instance, a sold license not bound to any | **The server refuses to start**, with the reason: an operator who set a key wants to know |
+| Malformed, bad signature, unknown signing key, more than 14 days expired, not yet valid (5 min of clock skew allowed), bound to another instance, a sold license not bound to any | Refused when saved or imported, with the reason. A stored key that stops verifying (a restore onto another instance, a grace period past while stopped) grants nothing: the server starts without a license and logs `license refused` with the reason, so an administrator stores another in the console |
 
 ### Format
 
@@ -62,8 +65,8 @@ never over a re-serialization. The payload is compact JSON:
 - `tier` (optional, `enterprise` when absent): the only tier today; any other value is refused. `trial` (optional,
   `false` when absent): a trial license.
 - `instanceId` (optional in the format): the `id` of `GET /v1/instance`; the license then only works on that instance,
-  and the server refuses to start on another one, with the instance id to send to sales@ostrom.run to have it
-  re-issued. **Required for a license that is not a trial**: a sold Enterprise license without it is refused. A trial
+  and another one refuses it (and starts without a license), with the instance id to send to sales@ostrom.run to have
+  it re-issued. **Required for a license that is not a trial**: a sold Enterprise license without it is refused. A trial
   needs none, and is checked like any other when it has one.
 - Signing: `sign.py --payload license.json --instance-id <id>` for a sold license, `--trial` for a trial (without
   `--trial`, `--instance-id` is required). The instance id, the tier and the trial flag are never read from the file.

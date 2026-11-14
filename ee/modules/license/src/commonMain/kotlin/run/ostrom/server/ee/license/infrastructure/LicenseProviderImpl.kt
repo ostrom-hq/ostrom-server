@@ -14,34 +14,48 @@ import kotlinx.coroutines.sync.withLock
 import kotlin.time.Clock
 
 /**
- * [VerifiedLicenseProvider] on the configured key. The key is verified the first time it is needed (at start, by
- * `LicenseModule.initialize`), then cached; [current] re-reads only the clock, so a license whose grace period ends
- * while the server runs stops granting its features without a restart.
+ * [VerifiedLicenseProvider] on the stored key. The key is verified the first time it is needed (at start, by
+ * `LicenseModule.initialize`) and each time an administrator stores another, then kept; [current] re-reads only the
+ * stored key and the clock, so a license whose grace period ends while the server runs stops granting its features
+ * without a restart. A stored key that cannot be used (expired past its grace, bound to another instance after a
+ * restore) grants nothing and is logged with its reason, so that the server still starts and an administrator stores
+ * another in the console.
  *
- * @param licenseKey The configured key, null when none is set (`OSTROM_LICENSE_KEY` or `_FILE`). Never logged.
+ * @param licenseKey Reads the stored key, null when none is stored. Never logged.
  * @param verifier Verifies the key.
  * @param getInstance This instance, for a license bound to one instance.
  * @param clock The clock.
  * @param logger Where the license's id, customer and expiry, or the reason it is refused, are logged (never the key).
  */
 class LicenseProviderImpl(
-    private val licenseKey: String?,
+    private val licenseKey: suspend () -> String?,
     private val verifier: LicenseVerifier,
     private val getInstance: GetOrCreateInstanceUseCase,
     private val clock: Clock,
     private val logger: Logger,
 ) : VerifiedLicenseProvider {
     private val mutex = Mutex()
-    private var loaded = false
-    private var license: License? = null
+    private var verified: Verified? = null
     private var endLogged = false
 
+    /** The key last verified and what it gave. */
+    private class Verified(val key: String?, val license: License?)
+
     override suspend fun load(): License? = mutex.withLock {
-        if (!loaded) {
-            license = licenseKey?.let { verified(it) }
-            loaded = true
-        }
+        val key = licenseKey()
+        val last = verified
+        if (last != null && last.key == key) return@withLock last.license
+        val license = key?.let { verifiedOrNone(it) }
+        verified = Verified(key, license)
+        endLogged = false
         license
+    }
+
+    override suspend fun refusal(licenseKey: String): String? = try {
+        accepted(licenseKey)
+        null
+    } catch (refused: LicenseException) {
+        refused.message
     }
 
     override suspend fun current(): LicenseGrant? {
@@ -63,14 +77,13 @@ class LicenseProviderImpl(
         }
     }
 
-    private suspend fun verified(key: String): License {
+    private suspend fun verifiedOrNone(key: String): License? {
         val license = try {
             accepted(key)
         } catch (refused: LicenseException) {
-            // The server's start failure logs the exception's class only: the reason, written for the operator and
-            // never quoting the key, is logged here.
+            // The reason is written for the operator and never quotes the key.
             logger.error("license refused", mapOf("reason" to refused.message))
-            throw refused
+            return null
         }
         logger.info("license verified", license.fields())
         if (clock.now() > license.expiresAt) {

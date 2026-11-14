@@ -356,18 +356,21 @@ jobs:
           heap=$(echo "$starting" | sed -n 's/.*"max_heap_mib":\([0-9]*\).*/\1/p')
           [ "$heap" -gt 600 ] && [ "$heap" -le 720 ] || { echo "the heap does not follow the limit: $starting"; exit 1; }
           test "$(docker inspect -f '{{.State.ExitCode}}' ostrom)" -eq 0
-      - name: Smoke test of the license check (an invalid key fails the start, without logging the key)
+      - name: Smoke test of the license check (an invalid key is refused with its reason, never logged nor stored)
         env:
           APP_URL: postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
         run: |
-          set +e
-          docker run --name ostrom-bad-license --network host -e OSTROM_DATABASE_URL="$APP_URL" \
-            -e OSTROM_PORT=8081 -e OSTROM_LICENSE_KEY=ostrom-license.v1.not-a-license \
-            ostrom-server:ci > license.log 2>&1
-          status=$?
-          set -e
+          # The key is imported into the console only when it verifies: this one is refused, the server starts
+          # without a license, and the reason (never the key) is logged for the operator.
+          docker run -d --name ostrom-bad-license --network host -e OSTROM_DATABASE_URL="$APP_URL" \
+            -e OSTROM_PORT=8081 -e OSTROM_LICENSE_KEY=ostrom-license.v1.not-a-license ostrom-server:ci
+          for i in $(seq 1 30); do curl -fsS localhost:8081/ready && break; sleep 1; done
+          echo
+          curl -fsS localhost:8081/ready | grep '"status":"ready"'
+          docker stop -t 30 ostrom-bad-license
+          docker logs ostrom-bad-license > license.log 2>&1
+          docker rm ostrom-bad-license
           cat license.log
-          test "$status" = 1
           grep -q 'The license key is malformed' license.log
           if grep -q 'not-a-license' license.log; then echo "The key was logged." >&2; exit 1; fi
       - name: Telemetry reaches an OpenTelemetry collector (traces, metrics, logs)

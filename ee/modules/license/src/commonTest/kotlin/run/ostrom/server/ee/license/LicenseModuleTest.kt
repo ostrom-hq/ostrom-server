@@ -2,29 +2,27 @@
 package run.ostrom.server.ee.license
 
 import run.ostrom.server.billing.domain.LicenseProvider
-import run.ostrom.server.ee.license.domain.ExpiredLicenseException
 import run.ostrom.server.ee.license.domain.LicenseVerifier
-import run.ostrom.server.ee.license.domain.UnknownLicenseKeyException
 import run.ostrom.server.ee.license.domain.VerifiedLicenseProvider
 import run.ostrom.server.ee.license.infrastructure.LicenseVerifierImpl
 import run.ostrom.server.instance.domain.GetOrCreateInstanceUseCase
-import run.ostrom.server.kernel.config.ConfigSource
-import run.ostrom.server.kernel.config.MapConfigSource
 import run.ostrom.server.kernel.logging.Logger
+import run.ostrom.server.kernel.settings.InstanceSettings
+import run.ostrom.server.kernel.settings.SettingsSection
 import kotlinx.coroutines.test.runTest
 import org.koin.core.Koin
+import org.koin.core.qualifier.named
 import org.koin.dsl.koinApplication
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Instant
 
-/** The module's wiring, without a database: the kernel and instance bindings are replaced by fakes. */
+/** The module's wiring, without a database: the kernel, instance and admin bindings are replaced by fakes. */
 class LicenseModuleTest {
     private val recorder = RecordingLogger()
 
@@ -33,7 +31,7 @@ class LicenseModuleTest {
      * Koin application, and its singletons stay cached in it until the application that created them is closed.
      */
     private suspend fun withKoin(
-        config: Map<String, String>?,
+        stored: StoredLicense,
         clock: Clock = MutableClock(),
         trustTestKey: Boolean = true,
         block: suspend (Koin) -> Unit,
@@ -45,7 +43,7 @@ class LicenseModuleTest {
                     single<Logger> { recorder }
                     single<Clock> { clock }
                     single<GetOrCreateInstanceUseCase> { FakeInstance() }
-                    if (config != null) single<ConfigSource> { MapConfigSource(config) }
+                    single<InstanceSettings> { stored }
                 },
                 LicenseModule.koinModule,
                 module {
@@ -67,26 +65,19 @@ class LicenseModuleTest {
     }
 
     @Test
-    fun withoutAKeyTheStartSucceedsWithoutALicense() = runTest {
-        withKoin(emptyMap()) { koin ->
+    fun withoutAStoredKeyTheStartSucceedsWithoutALicense() = runTest {
+        val stored = StoredLicense()
+        withKoin(stored) { koin ->
             LicenseModule.initialize(koin)
             assertNull(koin.get<LicenseProvider>().current())
             assertSame(koin.get<VerifiedLicenseProvider>(), koin.get<LicenseProvider>(), "billing reads this one")
+            assertEquals("license", stored.sections.first())
         }
     }
 
     @Test
-    fun withoutAConfigSourceTheEnvironmentIsRead() = runTest {
-        // Tests never set OSTROM_LICENSE_KEY: the environment has no license.
-        withKoin(null) { koin ->
-            LicenseModule.initialize(koin)
-            assertNull(koin.get<LicenseConfig>().licenseKey)
-        }
-    }
-
-    @Test
-    fun aValidKeyIsVerifiedAtStartAndBillingReadsIt() = runTest {
-        withKoin(mapOf("OSTROM_LICENSE_KEY" to SIGN_PY_FIXTURE)) { koin ->
+    fun aValidStoredKeyIsVerifiedAtStartAndBillingReadsIt() = runTest {
+        withKoin(StoredLicense(SIGN_PY_FIXTURE)) { koin ->
             LicenseModule.initialize(koin)
             assertTrue(recorder.lines.single().startsWith("INFO license verified {license_id=lic_fixture_0001"))
             assertEquals(setOf("sso", "policies", "retention"), koin.get<LicenseProvider>().current()?.features)
@@ -95,16 +86,36 @@ class LicenseModuleTest {
 
     @Test
     fun theDefaultVerifierTrustsOnlyThePinnedKeys() = runTest {
-        withKoin(mapOf("OSTROM_LICENSE_KEY" to SIGN_PY_FIXTURE), trustTestKey = false) { koin ->
-            assertFailsWith<UnknownLicenseKeyException> { LicenseModule.initialize(koin) }
+        withKoin(StoredLicense(SIGN_PY_FIXTURE), trustTestKey = false) { koin ->
+            LicenseModule.initialize(koin)
+            assertTrue(recorder.lines.single().startsWith("ERROR license refused {reason="), recorder.lines.single())
+            assertNull(koin.get<LicenseProvider>().current())
         }
     }
 
     @Test
-    fun anUnusableKeyFailsTheStart() = runTest {
+    fun anUnusableStoredKeyStartsWithoutALicenseAndLogsWhy() = runTest {
         val late = MutableClock(Instant.parse("2028-01-01T00:00:00Z"))
-        withKoin(mapOf("OSTROM_LICENSE_KEY" to SIGN_PY_FIXTURE), late) { koin ->
-            assertFailsWith<ExpiredLicenseException> { LicenseModule.initialize(koin) }
+        withKoin(StoredLicense(SIGN_PY_FIXTURE), late) { koin ->
+            LicenseModule.initialize(koin)
+            assertTrue(recorder.lines.single().startsWith("ERROR license refused {reason="), recorder.lines.single())
+            assertNull(koin.get<LicenseProvider>().current())
+        }
+    }
+
+    @Test
+    fun theConsoleVerifiesAKeyBeforeStoringIt() = runTest {
+        withKoin(StoredLicense()) { koin ->
+            val section = koin.get<SettingsSection>(named("license"))
+            val field = section.fields.single()
+            assertEquals("licenseKey", field.name)
+            assertTrue(field.secret)
+            assertEquals("OSTROM_LICENSE_KEY", field.legacyVariable)
+            assertNull(field.refusal(SIGN_PY_FIXTURE))
+            assertEquals(
+                "The license key is malformed: it does not start with ostrom-license.v1.",
+                field.refusal("not-a-license"),
+            )
         }
     }
 }

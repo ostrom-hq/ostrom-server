@@ -5,6 +5,8 @@ import run.ostrom.server.instance.domain.GetOrCreateInstanceUseCase
 import run.ostrom.server.instance.domain.Instance
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.logging.Logger
+import run.ostrom.server.kernel.settings.InstanceSettings
+import run.ostrom.server.kernel.settings.SettingsValues
 import dev.whyoleg.cryptography.CryptographyProvider
 import dev.whyoleg.cryptography.algorithms.EdDSA
 import dev.whyoleg.cryptography.algorithms.SHA256
@@ -131,5 +133,16 @@ class FakeInstance(val id: Uuid = Uuid.parse("6f1c2c47-3b7e-4a51-9a39-2f4f0f8c1d
     override suspend fun invoke(): Instance {
         calls++
         return Instance(id, NOW)
+    }
+}
+
+/** The license key an administrator stored in the console, or none. */
+class StoredLicense(var key: String? = null) : InstanceSettings {
+    /** The sections read. */
+    val sections: MutableList<String> = mutableListOf()
+
+    override suspend fun read(section: String): SettingsValues {
+        sections += section
+        return SettingsValues(listOfNotNull(key?.let { "licenseKey" to it }).toMap())
     }
 }
