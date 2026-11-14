@@ -25,7 +25,8 @@ class SettingsWorkflowEditors(private val settings: WorkflowSettingsUseCase) : W
     ): ImportAction {
         val role = if (caller.role == MemberRole.OWNER) OrgRole.OWNER else OrgRole.ADMIN
         val current = settings.settings(caller.orgId, by, role).editors
-        val ids = change.memberIds.map { it.toString() }.distinct()
+        // Only the `members` mode has a list: TeamCode may keep a stale one under another mode.
+        val ids = change.memberIds.map { it.toString() }.distinct().takeIf { change.mode == MEMBERS }.orEmpty()
         val same = current.mode == change.mode && current.memberIds.orEmpty().toSet() == ids.toSet()
         return when {
             same -> ImportAction.UNCHANGED
@@ -47,3 +48,5 @@ class SettingsWorkflowEditors(private val settings: WorkflowSettingsUseCase) : W
  */
 fun workflowEditorsOf(settings: WorkflowSettingsUseCase?): WorkflowEditorsImporter? =
     settings?.let(::SettingsWorkflowEditors)
+
+private const val MEMBERS = "members"

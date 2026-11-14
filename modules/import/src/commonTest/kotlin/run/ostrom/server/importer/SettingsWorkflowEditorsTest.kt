@@ -70,6 +70,9 @@ class SettingsWorkflowEditorsTest {
         assertEquals(ImportAction.UPDATED, editors.import(Importing.adminA, "nina", principal, all, false))
         assertEquals(WorkflowEditors("all", null), settings.saves.last().third)
         assertEquals(ImportAction.UNCHANGED, editors.import(Importing.adminA, "nina", principal, all, false))
+        val stale = EditorsChange("admins", listOf(vera))
+        assertEquals(ImportAction.UPDATED, editors.import(Importing.adminA, "nina", principal, stale, false))
+        assertEquals(WorkflowEditors("admins", null), settings.saves.last().third, "Only members has a list")
         assertEquals(listOf(OrgRole.ADMIN, OrgRole.OWNER, OrgRole.ADMIN), settings.readers.take(3))
     }
 
