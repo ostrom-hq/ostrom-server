@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.workflowruns.infrastructure
 
+import run.ostrom.core.api.models.WorkflowNodeKind
 import run.ostrom.core.api.models.WorkflowRun
 import run.ostrom.server.identity.infrastructure.TransactionalAuditLog
 import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.kernel.http.OstromJson
+import run.ostrom.server.workflowruns.domain.engine.sessionOf
 import run.ostrom.server.workflowruns.domain.models.PlayedRun
 import run.ostrom.server.workflowruns.domain.models.RunChange
 import run.ostrom.server.workflowruns.domain.models.RunGraph
@@ -64,10 +66,11 @@ class PostgresRunEngineRepository(
         }
     }
 
-    // The visit's key, inserted once: a second insert finds it and the change is dropped.
+    // The visit's key, inserted once: a second insert finds it and the change is dropped. An agent visit's key names
+    // its session from the start (the session's agent finds its run by it), before the run itself names it.
     private suspend fun begun(tx: Transaction, orgId: Uuid, change: RunChange): Boolean {
         val visit = change.visit ?: return true
-        val session = visit.sessionId?.let(Uuid::parseOrNull)
+        val session = if (visit.kind == WorkflowNodeKind.AGENT) sessionOf(change.next.id, visit.seq) else null
         val begin = Statement.create(EngineQueries.BEGIN).bind("org_id", orgId).bind("run_id", change.next.id)
             .bind("seq", visit.seq).bind("node_id", visit.nodeId).bind("at", Instant.parse(visit.startedAt))
         return tx.fetchAll(begin.uuid("session_id", session)).getOrThrow().any()

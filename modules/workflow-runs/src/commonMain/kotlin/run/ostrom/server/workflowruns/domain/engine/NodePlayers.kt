@@ -62,6 +62,15 @@ class Visit(
     fun done(outcome: String, output: String? = null): RunChange = moves.finish(run, outcome, output = output)
 
     /**
+     * Names the session the agent visit asked, once it exists.
+     *
+     * @param sessionId The session.
+     *
+     * @return The change.
+     */
+    fun dispatched(sessionId: Uuid): RunChange = moves.dispatched(run, sessionId)
+
+    /**
      * Marks the visit as holding what it started (a gate, a wait, a child run): the engine looks at it again later.
      *
      * @param held The visit, with what it holds.
@@ -149,11 +158,13 @@ object CheckPlayer : NodePlayer {
 }
 
 /**
- * An agent node: a cloud session of the run's starter, keyed by the visit. A node that asks for a deliverable
- * (`run.deliverable`) ends `delivered` only by its delivery (`deliverRun`, which finishes the visit), and fails
- * `ended_without_delivery` when its session stops holding an execution with nothing delivered and no question to a
- * person still open (TeamCode 83bb4a8f: an agent that asked waits for the answer, which wakes its session); a node
- * that asks for none (a workflow written before deliveries) is done once its session no longer holds an execution.
+ * An agent node: a cloud session of the run's starter, keyed by the visit; the visit and the run name it once it is
+ * asked, never before, so a reader that follows the id always finds the session (TeamCode's `dispatched`). A node
+ * that asks for a deliverable (`run.deliverable`) ends `delivered` only by its delivery (`deliverRun`, which
+ * finishes the visit), and fails `ended_without_delivery` when its session stops holding an execution with nothing
+ * delivered and no question to a person still open (TeamCode 83bb4a8f: an agent that asked waits for the answer,
+ * which wakes its session); a node that asks for none (a workflow written before deliveries) is done once its session
+ * no longer holds an execution.
  *
  * @param agents The agent sessions.
  * @param steps Whether the step's agent asked a person something still open.
@@ -163,11 +174,18 @@ class AgentPlayer(private val agents: RunAgents, private val steps: StepSessions
     override suspend fun play(visit: Visit): RunChange? {
         val sessionId = sessionOf(visit.run.id, visit.last.seq)
         val state = agents.state(visit.ref.orgId, sessionId)
+        val named = visit.last.sessionId != null
         return when {
             state == null -> {
                 val refusal = agents.start(visit.ref.orgId, AgentRequests.of(visit.run, visit.node, sessionId))
-                if (refusal == null) null else visit.failed(refusal)
+                when {
+                    refusal != null -> visit.failed(refusal)
+                    named -> null
+                    else -> visit.dispatched(sessionId)
+                }
             }
+            // A session asked but not yet named (the engine stopped in between) is named before anything else.
+            !named -> visit.dispatched(sessionId)
             state == AgentState.WORKING -> null
             state == AgentState.FAILED -> visit.failed(RunMoves.SESSION_FAILED)
             visit.node.run?.deliverable == null -> visit.done(RunMoves.NEXT)

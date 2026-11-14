@@ -61,22 +61,11 @@ class RunMoves(private val owner: String, now: Instant) {
 
     private fun visit(run: WorkflowRun, node: WorkflowNode): RunChange {
         val seq = run.visits.size + 1
+        // The session's key is in the audit and in the visit's row from the start; the run names it only once the
+        // session exists ([dispatched]), so a read in between never finds an id that no session has yet.
         val session = if (node.kind == WorkflowNodeKind.AGENT) sessionOf(run.id, seq).toString() else null
-        val visit = NodeVisit(
-            seq,
-            node.id,
-            node.kind,
-            RUNNING,
-            sessionId = session,
-            nodeTitle = node.label,
-            startedAt = at,
-        )
-        val next = run.copy(
-            status = RunStatus.RUNNING,
-            currentNodeId = node.id,
-            sessionId = session ?: run.sessionId,
-            visits = run.visits + visit,
-        )
+        val visit = NodeVisit(seq, node.id, node.kind, RUNNING, nodeTitle = node.label, startedAt = at)
+        val next = run.copy(status = RunStatus.RUNNING, currentNodeId = node.id, visits = run.visits + visit)
         val details = auditDetails("node" to node.id, "kind" to node.kind.value, "seq" to seq, "session" to session)
         return RunChange(run, next, owner, visit, listOf(RunAudit("node_started", details)))
     }
@@ -99,6 +88,21 @@ class RunMoves(private val owner: String, now: Instant) {
             endedAt = at,
         )
         return RunChange(run, run.copy(status = RunStatus.RUNNING, visits = run.visits.dropLast(1) + done), owner)
+    }
+
+    /**
+     * Names the cloud session the agent visit under way asked, once it exists: on the visit and on the run (TeamCode's
+     * `dispatched`). The visit's key already named it when it began, and its audit line too.
+     *
+     * @param run The run.
+     * @param sessionId The session.
+     *
+     * @return The change.
+     */
+    fun dispatched(run: WorkflowRun, sessionId: Uuid): RunChange {
+        val session = sessionId.toString()
+        val named = run.visits.last().copy(sessionId = session)
+        return RunChange(run, run.copy(sessionId = session, visits = run.visits.dropLast(1) + named), owner)
     }
 
     /**

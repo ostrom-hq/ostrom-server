@@ -301,6 +301,9 @@ class DeliveryTest {
             listOf<Any?>(RunMoves.DONE, "delivered", output),
             listOf(visit.status, visit.outcome, visit.output),
         )
+        // A delivery that comes before the engine named the step's session names it.
+        val session = sessionOf(RUN, 1).toString()
+        assertEquals(session to session, visit.sessionId to answer.sessionId)
         assertEquals(answer, runs.rows.getValue(RUN).run)
         val change = runs.changes.single()
         assertEquals(listOf<Any?>(null, clock.now), listOf(change.owner, change.dueAt))
@@ -315,6 +318,12 @@ class DeliveryTest {
         assertEquals("nothing_to_deliver", again.type)
         // The engine then follows the delivery's edge.
         assertEquals("t", played().visits.last().nodeId)
+        // A step whose session the engine named keeps it.
+        val named = run(visits = listOf(RUNNING_AGENT.copy(sessionId = session))).copy(sessionId = session)
+        stored(graph, named)
+        val kept = deliver(ADA, RUN, JsonPrimitive(output), PERSON)
+        val step = kept.visits.single()
+        assertEquals(listOf<Any?>("delivered", session, session), listOf(step.outcome, step.sessionId, kept.sessionId))
     }
 
     @Test
