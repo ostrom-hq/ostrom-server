@@ -144,14 +144,22 @@ class InMemoryAutomations : AutomationsRepository {
                 automations[it.automationId]?.owner == owner
         }.mapNotNull { it.sessionId }.take(limit)
 
-    override suspend fun followed(limit: Int): List<FollowedRun> = runs.values
+    /** When each run was last followed, as [followed] marks it. */
+    val followedAt = mutableMapOf<Uuid, Instant>()
+
+    override suspend fun followed(now: Instant, limit: Int): List<FollowedRun> = runs.values
         .filter { it.status == RunStatus.STARTED && it.workflowRunId != null }
-        .map { FollowedRun(it, it.workflowRunId.orEmpty()) }.take(limit)
+        .groupBy { it.orgId }.values
+        .flatMap { ofOrg -> ofOrg.sortedBy { followedAt[it.id] ?: Instant.DISTANT_PAST }.take(limit) }
+        .onEach { followedAt[it.id] = now }
+        .map { FollowedRun(it, it.workflowRunId.orEmpty()) }
 
     override suspend fun latestWorkflowRun(orgId: Uuid, automationId: Uuid, except: Uuid): String? =
         runs.values.reversed()
-            .firstOrNull { it.automationId == automationId && it.status == RunStatus.STARTED && it.id != except }
-            ?.workflowRunId
+            .firstOrNull {
+                it.automationId == automationId && it.status == RunStatus.STARTED && it.workflowRunId != null &&
+                    it.id != except
+            }?.workflowRunId
 
     override suspend fun automationStarting(orgId: Uuid, workflowId: String): String? = automations.values
         .filter { it.orgId == orgId && it.definition.action.workflowId == workflowId }
@@ -183,8 +191,9 @@ class InMemoryAutomations : AutomationsRepository {
     }
 
     override suspend fun latestSession(orgId: Uuid, automationId: Uuid, except: Uuid): String? = runs.values.reversed()
-        .firstOrNull { it.automationId == automationId && it.status == RunStatus.STARTED && it.id != except }
-        ?.sessionId
+        .firstOrNull {
+            it.automationId == automationId && it.status == RunStatus.STARTED && it.sessionId != null && it.id != except
+        }?.sessionId
 
     override suspend fun claimDue(
         now: Instant,
@@ -265,7 +274,13 @@ class RecordingWorkflows : AutomationWorkflows {
         return next(request)
     }
 
-    override suspend fun state(orgId: Uuid, workflowRunId: String): WorkflowRunState? = states[workflowRunId]
+    /** What reading the state of a workflow run throws, by its id. */
+    val failures = mutableMapOf<String, Exception>()
+
+    override suspend fun state(orgId: Uuid, workflowRunId: String): WorkflowRunState? {
+        failures[workflowRunId]?.let { throw it }
+        return states[workflowRunId]
+    }
 
     override suspend fun cancel(orgId: Uuid, owner: String, workflowRunId: String): Boolean {
         cancelled += "$owner:$workflowRunId"

@@ -73,10 +73,11 @@ interface AutomationsRepository {
     suspend fun startedSessions(orgId: Uuid, owner: String, since: Instant, limit: Int): List<String>
 
     /**
-     * The started runs of workflow actions, whose workflow run has not ended yet as far as they know, oldest first, at
-     * most [limit] across organizations: those the scheduler follows until their workflow run ends.
+     * The started runs of workflow actions, whose workflow run has not ended yet as far as they know: those the
+     * scheduler follows until their workflow run ends. At most [limit] of each organization, least recently followed
+     * first, each marked followed at [now]: a run still waiting goes behind the others, so every run is seen in turn.
      */
-    suspend fun followed(limit: Int): List<FollowedRun>
+    suspend fun followed(now: Instant, limit: Int): List<FollowedRun>
 
     /** The workflow run of the latest started run of [automationId] (of [orgId]) other than [except]. */
     suspend fun latestWorkflowRun(orgId: Uuid, automationId: Uuid, except: Uuid): String?

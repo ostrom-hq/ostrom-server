@@ -23,7 +23,8 @@ sealed interface KeyedAdd {
 interface KeyedRunsRepository {
     /**
      * Stores a run as [StartedRunsRepository.add] does, unless its starter ([WorkflowRun.startedBy]) already started
-     * one under [key] (that run is returned), or already has [maxUnfinished] unfinished runs that no other run started.
+     * one under [key] (that run is returned), or already has [maxUnfinished] unfinished runs. Those count whatever
+     * started them (by hand, this or another automation), child runs of a workflow run aside.
      * The look-up, the count and the write are one decision, whatever replica runs another start of the same starter.
      *
      * @param orgId The organization.

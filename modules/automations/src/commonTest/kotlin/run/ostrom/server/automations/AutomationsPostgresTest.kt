@@ -305,18 +305,25 @@ class AutomationsPostgresTest {
         val second = repository.insertRun(run(triage, "w2", t0 + 1.minutes))
         repository.updateRun(second.copy(status = RunStatus.STARTED, workflowRunId = "wfr_2"))
         repository.insertRun(run(triage, "w3", t0 + 2.minutes))
+        // A session run of the time its action was a session one: no workflow run to overlap with.
+        val asSession = repository.insertRun(run(triage, "s1", t0 + 3.minutes))
+        repository.updateRun(asSession.copy(status = RunStatus.STARTED, sessionId = "ses_1"))
+        assertEquals("ses_1", repository.latestSession(ORG_A, triage.id, Uuid.random()))
         assertEquals("wfr_1", repository.findRun(ORG_A, triage.id, first.id)?.workflowRunId)
-        assertEquals("wfr_2", repository.latestWorkflowRun(ORG_A, triage.id, Uuid.random()))
+        assertEquals("wfr_2", repository.latestWorkflowRun(ORG_A, triage.id, Uuid.random()), "Not the session run")
         assertEquals("wfr_1", repository.latestWorkflowRun(ORG_A, triage.id, second.id))
         assertNull(repository.latestWorkflowRun(ORG_A, Uuid.random(), Uuid.random()))
-        val followed = repository.followed(10)
+        val followed = repository.followed(t0 + 10.minutes, 10)
         assertEquals(setOf("wfr_1", "wfr_2", "wfr_b"), followed.map { run -> run.workflowRunId }.toSet())
-        val ofA = followed.filter { run -> run.run.orgId == ORG_A }
-        assertEquals(listOf(first.id, second.id), ofA.map { run -> run.run.id }, "Oldest first")
-        assertEquals(1, repository.followed(1).size)
+        val once = repository.followed(t0 + 11.minutes, 1)
+        assertEquals(setOf(ORG_A, ORG_B), once.map { run -> run.run.orgId }.toSet(), "A limit of each organization")
+        val nextOfA = repository.followed(t0 + 12.minutes, 1).single { run -> run.run.orgId == ORG_A }
+        val firstOfA = once.single { run -> run.run.orgId == ORG_A }
+        assertTrue(nextOfA.run.id != firstOfA.run.id, "The run followed last goes behind the other")
         val ended = first.copy(status = RunStatus.SUCCEEDED, workflowRunId = "wfr_1", updatedAt = t0 + 5.minutes)
         assertTrue(repository.endRun(ended, RunStatus.STARTED))
-        assertEquals(setOf("wfr_2", "wfr_b"), repository.followed(10).map { run -> run.workflowRunId }.toSet())
+        val left = repository.followed(t0 + 13.minutes, 10)
+        assertEquals(setOf("wfr_2", "wfr_b"), left.map { run -> run.workflowRunId }.toSet())
         it.database.owner.execute("ANALYZE automations_automations").getOrThrow()
         it.database.owner.execute("ANALYZE automations_runs").getOrThrow()
         suspend fun plan(sql: String, bind: (Statement) -> Statement) = it.driver.inTenant(ORG_A) {
@@ -327,7 +334,7 @@ class AutomationsPostgresTest {
         val starting = plan(AUTOMATION_STARTING_SQL) { st -> st.bind("org_id", ORG_A).bind("workflow_id", "triage") }
         println("-- the automation that starts a workflow (DELETE /api/v1/workflows/{id})\n$starting")
         assertTrue("automations_automations_workflow" in starting, starting)
-        val follow = plan(FOLLOWED_SQL) { st -> st.bind("org_id", ORG_A).bind("limit", 20) }
+        val follow = plan(FOLLOWED_SQL) { st -> st.bind("org_id", ORG_A).bind("now", t0).bind("limit", 20) }
         println("-- the started runs of workflow actions (the scheduler)\n$follow")
         assertTrue("automations_runs_followed" in follow, follow)
     }

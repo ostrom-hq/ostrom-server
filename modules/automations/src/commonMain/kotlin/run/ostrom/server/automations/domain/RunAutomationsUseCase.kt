@@ -261,21 +261,35 @@ class RunAutomationsUseCaseImpl(
     /**
      * Ends the started runs of workflow actions whose workflow run ended: `succeeded`, `failed` (`workflow_failed`),
      * `cancelled` (`workflow_cancelled`), or `failed` (`workflow_missing`) when it no longer exists. A run cancelled
-     * meanwhile stays cancelled (the write is conditional on `started`).
+     * meanwhile stays cancelled (the write is conditional on `started`). A run that fails to be followed does not stop
+     * the others: the first failure is thrown once all were tried, and that run is tried again on a later pass.
      */
     private suspend fun followWorkflows() {
         val now = clock.now().truncatedToMillis()
-        for ((run, workflowRunId) in repository.followed(BATCH)) {
-            val state = workflows.state(run.orgId, workflowRunId)
-            if (state == WorkflowRunState.RUNNING) continue
-            val (status, reason) = when (state) {
-                null -> RunStatus.FAILED to WORKFLOW_MISSING
-                WorkflowRunState.SUCCEEDED -> RunStatus.SUCCEEDED to null
-                WorkflowRunState.FAILED -> RunStatus.FAILED to "workflow_failed"
-                else -> RunStatus.CANCELLED to "workflow_cancelled"
+        var failure: Exception? = null
+        for (followed in repository.followed(now, BATCH)) {
+            try {
+                follow(followed, now)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                failure = failure ?: error
             }
-            repository.endRun(run.copy(status = status, reason = reason, updatedAt = now), RunStatus.STARTED)
         }
+        failure?.let { throw it }
+    }
+
+    private suspend fun follow(followed: FollowedRun, now: Instant) {
+        val (run, workflowRunId) = followed
+        val state = workflows.state(run.orgId, workflowRunId)
+        if (state == WorkflowRunState.RUNNING) return
+        val (status, reason) = when (state) {
+            null -> RunStatus.FAILED to WORKFLOW_MISSING
+            WorkflowRunState.SUCCEEDED -> RunStatus.SUCCEEDED to null
+            WorkflowRunState.FAILED -> RunStatus.FAILED to "workflow_failed"
+            else -> RunStatus.CANCELLED to "workflow_cancelled"
+        }
+        repository.endRun(run.copy(status = status, reason = reason, updatedAt = now), RunStatus.STARTED)
     }
 
     /** Starts, oldest first, the runs that waited for their owner's capacity, while it has room. */

@@ -49,10 +49,14 @@ private const val RUN_SELECT = """
     created_at, updated_at, workflow_run_id
 """
 
-/** The started runs of workflow actions of one organization, oldest first (on `automations_runs_followed`). */
+/**
+ * The started runs of workflow actions of one organization, least recently followed first, marked followed now (on
+ * `automations_runs_followed`). A run another replica follows at the same time is skipped, not waited for.
+ */
 internal const val FOLLOWED_SQL = """
-    SELECT $RUN_SELECT FROM automations_runs WHERE org_id = :org_id AND status = 'started' AND workflow_run_id IS NOT
-    NULL ORDER BY created_at, id LIMIT :limit
+    UPDATE automations_runs SET followed_at = :now WHERE org_id = :org_id AND id IN (SELECT id FROM automations_runs
+    WHERE org_id = :org_id AND status = 'started' AND workflow_run_id IS NOT NULL ORDER BY followed_at NULLS FIRST, id
+    LIMIT :limit FOR UPDATE SKIP LOCKED) RETURNING $RUN_SELECT
 """
 
 /**
@@ -257,17 +261,12 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
             ).getOrThrow().map { it.get("session_id").asString() }
         }
 
-    override suspend fun followed(limit: Int): List<FollowedRun> {
-        val found = mutableListOf<FollowedRun>()
-        for (orgId in organizations()) {
-            if (found.size >= limit) break
-            found += driver.inTenant(orgId) {
-                fetchAll(
-                    Statement.create(FOLLOWED_SQL).bind("org_id", orgId).bind("limit", limit - found.size),
-                ).getOrThrow().map { FollowedRun(it.toRun(), it.get("workflow_run_id").asString()) }
-            }
+    override suspend fun followed(now: Instant, limit: Int): List<FollowedRun> = organizations().flatMap { orgId ->
+        driver.inTenant(orgId) {
+            fetchAll(
+                Statement.create(FOLLOWED_SQL).bind("org_id", orgId).bind("now", now).bind("limit", limit),
+            ).getOrThrow().map { FollowedRun(it.toRun(), it.get("workflow_run_id").asString()) }
         }
-        return found
     }
 
     override suspend fun latestWorkflowRun(orgId: Uuid, automationId: Uuid, except: Uuid): String? =
@@ -276,10 +275,11 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
                 Statement.create(
                     """
                     SELECT workflow_run_id FROM automations_runs WHERE automation_id = :automation_id AND status =
-                    'started' AND id <> :except ORDER BY created_at DESC, id DESC LIMIT 1
+                    'started' AND workflow_run_id IS NOT NULL AND id <> :except ORDER BY created_at DESC, id DESC
+                    LIMIT 1
                     """,
                 ).bind("automation_id", automationId).bind("except", except),
-            ).getOrThrow().firstOrNull()?.let { it.get("workflow_run_id").asStringOrNull() }
+            ).getOrThrow().firstOrNull()?.let { it.get("workflow_run_id").asString() }
         }
 
     override suspend fun automationStarting(orgId: Uuid, workflowId: String): String? = driver.inTenant(orgId) {
@@ -352,10 +352,10 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
                 Statement.create(
                     """
                     SELECT session_id FROM automations_runs WHERE automation_id = :automation_id AND status =
-                    'started' AND id <> :except ORDER BY created_at DESC, id DESC LIMIT 1
+                    'started' AND session_id IS NOT NULL AND id <> :except ORDER BY created_at DESC, id DESC LIMIT 1
                     """,
                 ).bind("automation_id", automationId).bind("except", except),
-            ).getOrThrow().firstOrNull()?.let { it.get("session_id").asStringOrNull() }
+            ).getOrThrow().firstOrNull()?.let { it.get("session_id").asString() }
         }
 
     override suspend fun claimDue(

@@ -202,6 +202,25 @@ class WorkflowActionTest {
     }
 
     @Test
+    fun aRunThatFailsToBeFollowedLeavesTheOthersEndedAndItsFailureReported() = runTest {
+        val automation = manage.create(aliceAuto, workflowDefinition().copy(overlap = Overlap.ALLOW)).automation
+        val started = (1..3).map { runs.test(aliceAuto, automation.id, null, "t$it").run }
+        workflows.states += mapOf("wfr_1" to WorkflowRunState.SUCCEEDED, "wfr_3" to WorkflowRunState.SUCCEEDED)
+        val unreachable = IllegalStateException("database unreachable")
+        workflows.failures["wfr_2"] = unreachable
+        workflows.failures["wfr_3"] = IllegalArgumentException("second")
+        assertEquals(unreachable, assertFailsWith<IllegalStateException> { runs.tick() }, "The first failure")
+        val statuses = started.map { repository.runs.getValue(it.id).status }
+        assertEquals(listOf(RunStatus.SUCCEEDED, RunStatus.STARTED, RunStatus.STARTED), statuses)
+        workflows.failures.clear()
+        runs.tick()
+        assertEquals(RunStatus.SUCCEEDED, repository.runs.getValue(started[2].id).status, "Tried again")
+        runs.test(aliceAuto, automation.id, null, "t4")
+        workflows.failures["wfr_4"] = CancellationException("stopped")
+        assertFailsWith<CancellationException> { runs.tick() }
+    }
+
+    @Test
     fun cancellingAStartedRunCancelsItsWorkflowRunAsTheOwnerWhoeverCancels() = runTest {
         val automation = manage.create(aliceAuto, workflowDefinition()).automation
         val run = runs.test(aliceAuto, automation.id, null, "t1").run
