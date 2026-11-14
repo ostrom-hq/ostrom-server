@@ -29,8 +29,18 @@ import kotlin.uuid.Uuid
  * @property agentName The name to give the agent: `<prefix>-<name>`.
  * @property transport How the relay reaches it.
  * @property tools The allowlist, or null for every tool.
+ * @property state A stdio server's process, as the minute sweep last recorded it; null for an HTTP server, or when the
+ *   states cannot be read.
+ * @property failure That process's last failure not yet followed by a successful start.
  */
-data class MemberServer(val name: String, val agentName: String, val transport: McpTransport, val tools: Set<String>?)
+data class MemberServer(
+    val name: String,
+    val agentName: String,
+    val transport: McpTransport,
+    val tools: Set<String>?,
+    val state: String? = null,
+    val failure: String? = null,
+)
 
 /** The servers the calling member reaches: what `ostrom claude` connects. */
 interface ListMemberServersUseCase {
@@ -57,15 +67,38 @@ class ListMemberServersUseCaseImpl(
         val listed = servers.filter { agentNames.getValue(McpRules.agentName(prefix, it.server.name)).size == 1 }
         val hosted = listed.filter { it.server.transport == McpTransport.STDIO }
         if (hosted.isNotEmpty()) warmup?.warm(caller, hosted)
+        val records = if (hosted.isEmpty()) emptyMap() else states(caller, hosted)
         return listed.map {
+            val record = records?.let { byProcess -> byProcess[it.server.id to it.processMember(caller)] }
+            val key = StdioProcessKey.of(it.server, caller.memberId, it.assignment.assignedAt)
+            val (state, failure) = when {
+                it.server.transport != McpTransport.STDIO || records == null -> null to null
+                record == null -> HostedProcessStates.IDLE to null
+                else -> record.stateFor(key) to record.failureFor(key)
+            }
             MemberServer(
                 it.server.name,
                 McpRules.agentName(prefix, it.server.name),
                 it.server.transport,
                 it.assignment.policy.tools,
+                state = state,
+                failure = failure,
             )
         }
     }
+
+    // A state that cannot be read never hides a server from an agent: the states are then left out.
+    private suspend fun states(caller: Caller, hosted: List<EffectiveServer>) = try {
+        repository.memberStdioStates(caller.orgId, hosted.map { it.server.id }, caller.memberId)
+            .associateBy { it.serverId to it.memberId }
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun EffectiveServer.processMember(caller: Caller) =
+        if (server.sharing == McpSharing.SHARED) null else caller.memberId
 }
 
 /**

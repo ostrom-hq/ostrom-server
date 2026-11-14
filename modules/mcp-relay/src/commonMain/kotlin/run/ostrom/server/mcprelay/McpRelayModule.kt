@@ -22,10 +22,12 @@ import run.ostrom.server.mcprelay.domain.DeleteMcpServerUseCase
 import run.ostrom.server.mcprelay.domain.DeleteMcpServerUseCaseImpl
 import run.ostrom.server.mcprelay.domain.GetMcpSettingsUseCase
 import run.ostrom.server.mcprelay.domain.GetMcpSettingsUseCaseImpl
+import run.ostrom.server.mcprelay.domain.HostedProcessAdministration
 import run.ostrom.server.mcprelay.domain.HostedSweep
 import run.ostrom.server.mcprelay.domain.HostedWarmup
 import run.ostrom.server.mcprelay.domain.ListArgumentPoliciesUseCase
 import run.ostrom.server.mcprelay.domain.ListArgumentPoliciesUseCaseImpl
+import run.ostrom.server.mcprelay.domain.ListHostedProcessesUseCase
 import run.ostrom.server.mcprelay.domain.ListMcpAssignmentsUseCase
 import run.ostrom.server.mcprelay.domain.ListMcpAssignmentsUseCaseImpl
 import run.ostrom.server.mcprelay.domain.ListMcpCallsUseCase
@@ -50,6 +52,7 @@ import run.ostrom.server.mcprelay.domain.RelayDeadlines
 import run.ostrom.server.mcprelay.domain.RelayLimits
 import run.ostrom.server.mcprelay.domain.RelayMcpMessageUseCase
 import run.ostrom.server.mcprelay.domain.RelayMcpMessageUseCaseImpl
+import run.ostrom.server.mcprelay.domain.RestartHostedProcessUseCase
 import run.ostrom.server.mcprelay.domain.RetainHostedMcpProcessesUseCaseImpl
 import run.ostrom.server.mcprelay.domain.UnassignMcpServerUseCase
 import run.ostrom.server.mcprelay.domain.UnassignMcpServerUseCaseImpl
@@ -196,6 +199,9 @@ object McpRelayModule : ServerModule {
                 get<HostedRuntime>().host?.let { HostedWarmup(get(), it, get(WARMUP_SCOPE), get()) },
             )
         }
+        single { HostedProcessAdministration(get(), getOrNull<MemberDirectory>(), get<HostedRuntime>().host) }
+        single<ListHostedProcessesUseCase> { get<HostedProcessAdministration>() }
+        single<RestartHostedProcessUseCase> { get<HostedProcessAdministration>() }
         single<RelayMcpMessageUseCase> {
             RelayMcpMessageUseCaseImpl(
                 repository = get(),
@@ -209,8 +215,8 @@ object McpRelayModule : ServerModule {
         single {
             McpRelayRoutesDependencies(
                 getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get()),
-                get(), get(), get(), get(), get(), get(), get(), get(), get(),
-                get(), get(), get(), get(), get(), get(), get(), get(), get(),
+                get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
+                get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
             )
         }
     }
@@ -245,7 +251,7 @@ object McpRelayModule : ServerModule {
             }
         }
         val host = koin.getOrNull<HostedRuntime>()?.host ?: return
-        val retain = RetainHostedMcpProcessesUseCaseImpl(repository, koin.getOrNull<MemberDirectory>(), host)
+        val retain = RetainHostedMcpProcessesUseCaseImpl(repository, koin.getOrNull<MemberDirectory>(), host, clock)
         scope.launch {
             var last: HostedSweep? = null
             while (true) {

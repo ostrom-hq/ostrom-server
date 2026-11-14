@@ -6,6 +6,8 @@ import run.ostrom.server.mcprelay.domain.ArgumentPolicy
 import run.ostrom.server.mcprelay.domain.ConditionOperator
 import run.ostrom.server.mcprelay.domain.EffectiveServer
 import run.ostrom.server.mcprelay.domain.HostedAssignment
+import run.ostrom.server.mcprelay.domain.HostedProcessChange
+import run.ostrom.server.mcprelay.domain.HostedProcessRecord
 import run.ostrom.server.mcprelay.domain.McpAssignment
 import run.ostrom.server.mcprelay.domain.McpCall
 import run.ostrom.server.mcprelay.domain.McpCallCursor
@@ -335,6 +337,89 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
         )
     }.takeIf { it.size <= limit }
 
+    override suspend fun orgHostedAssignments(orgId: Uuid, limit: Int): List<EffectiveServer>? = driver.fetchInOrg(
+        orgId,
+        Statement.create(
+            MCP_ORG_HOSTED_SQL,
+        ).bind("org_id", orgId).bind("limit", limit + 1),
+    ).getOrThrow().map { EffectiveServer(it.toServer(), it.toAssignment()) }.takeIf { it.size <= limit }
+
+    override suspend fun stdioStates(orgId: Uuid, limit: Int): List<HostedProcessRecord>? = driver.fetchInOrg(
+        orgId,
+        Statement.create(
+            "SELECT $STATE_COLUMNS FROM mcp_relay_stdio_states WHERE org_id = :org_id ORDER BY server_id, member_id " +
+                "LIMIT :limit",
+        ).bind("org_id", orgId).bind("limit", limit + 1),
+    ).getOrThrow().map { it.toRecord() }.takeIf { it.size <= limit }
+
+    override suspend fun memberStdioStates(
+        orgId: Uuid,
+        serverIds: Collection<Uuid>,
+        memberId: Uuid,
+    ): List<HostedProcessRecord> {
+        if (serverIds.isEmpty()) return emptyList()
+        val ids = serverIds.distinct()
+        val names = ids.indices.joinToString { ":s$it" }
+        val statement = Statement.create(memberStatesSql(names)).bind("org_id", orgId).bind("member_id", memberId)
+        ids.forEachIndexed { index, id -> statement.bind("s$index", id) }
+        return driver.fetchInOrg(orgId, statement).getOrThrow().map { it.toRecord() }
+    }
+
+    override suspend fun applyStdioStates(
+        orgId: Uuid,
+        changes: List<HostedProcessChange>,
+        removals: List<HostedProcessRecord>,
+    ): Int {
+        var applied = 0
+        for (change in changes) {
+            val next = change.next
+            val previous = change.previous
+            val statement = if (previous == null) {
+                Statement.create(
+                    "INSERT INTO mcp_relay_stdio_states (org_id, server_id, member_id, process_key, state, failure, " +
+                        "changed_at) VALUES (:org_id, :server_id, :member_id, :process_key, :state, :failure, " +
+                        ":changed_at) ON CONFLICT DO NOTHING",
+                ).bindNullable("member_id", next.memberId, Uuid::class)
+            } else {
+                Statement.create(
+                    "UPDATE mcp_relay_stdio_states SET process_key = :process_key, state = :state, " +
+                        "failure = :failure, changed_at = :changed_at WHERE org_id = :org_id AND " +
+                        "server_id = :server_id AND " +
+                        "${previous.memberCondition()} AND changed_at = :previous_at",
+                ).bindMember(previous).bind("previous_at", previous.changedAt)
+            }
+            statement.bind("org_id", orgId).bind("server_id", next.serverId).bind("process_key", next.processKey)
+                .bind("state", next.state).bindNullable("failure", next.failure, String::class)
+                .bind("changed_at", next.changedAt)
+            applied += driver.executeInOrg(orgId, statement).getOrThrow().toInt()
+        }
+        for (removal in removals) {
+            val statement = Statement.create(
+                "DELETE FROM mcp_relay_stdio_states WHERE org_id = :org_id AND server_id = :server_id AND " +
+                    "${removal.memberCondition()} AND changed_at = :changed_at",
+            ).bind("org_id", orgId).bind("server_id", removal.serverId).bindMember(removal)
+                .bind("changed_at", removal.changedAt)
+            driver.executeInOrg(orgId, statement).getOrThrow()
+        }
+        return applied
+    }
+
+    private fun HostedProcessRecord.memberCondition() =
+        if (memberId == null) "member_id IS NULL" else "member_id = :member_id"
+
+    private fun Statement.bindMember(record: HostedProcessRecord): Statement =
+        if (record.memberId == null) this else bind("member_id", record.memberId)
+
+    private fun ResultSet.Row.toRecord() = HostedProcessRecord(
+        orgId = get("org_id").asUuid(),
+        serverId = get("server_id").asUuid(),
+        memberId = get("member_id").asUuidOrNull(),
+        processKey = get("process_key").asString(),
+        state = get("state").asString(),
+        failure = get("failure").asStringOrNull(),
+        changedAt = get("changed_at").asInstant(),
+    )
+
     // Every column but created_at, which only INSERT names: sqlx4k refuses a value for a parameter its SQL lacks.
     private fun Statement.bindServer(server: McpServer): Statement = bind("id", server.id)
         .bind("org_id", server.orgId)
@@ -414,13 +499,29 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
     private val toolSet = SetSerializer(String.serializer())
     private val conditionList = ListSerializer(StoredCondition.serializer())
 
-    private companion object {
+    internal companion object {
         const val SERVER_COLUMNS =
             "s.id AS s_id, s.org_id AS s_org_id, s.name AS s_name, s.transport AS s_transport, s.url AS s_url, " +
                 "s.credential_secret_id AS s_credential, s.credential_header AS s_header, s.stdio AS s_stdio, " +
                 "s.sharing AS s_sharing, s.version AS s_version, s.created_at AS s_created_at"
+        const val STATE_COLUMNS = "org_id, server_id, member_id, process_key, state, failure, changed_at"
         const val ASSIGNMENT_COLUMNS =
             "a.org_id AS a_org_id, a.server_id AS a_server_id, a.member_id AS a_member_id, a.tools AS a_tools, " +
                 "a.credential_secret_id AS a_credential, a.assigned_at AS a_assigned_at"
     }
 }
+
+/** The stdio servers of one org with their assignments, for the hosted processes' administration. */
+internal const val MCP_ORG_HOSTED_SQL: String =
+    "SELECT ${McpRelayRepositoryImpl.SERVER_COLUMNS}, ${McpRelayRepositoryImpl.ASSIGNMENT_COLUMNS} FROM " +
+        "mcp_relay_servers s JOIN mcp_relay_assignments a ON a.server_id = s.id AND a.org_id = s.org_id WHERE " +
+        "s.org_id = :org_id AND s.transport = 'STDIO' ORDER BY s.id, a.member_id NULLS FIRST LIMIT :limit"
+
+/**
+ * One member's recorded states of some servers, for the member's list.
+ *
+ * @param servers The server parameters, `:s0, :s1`.
+ */
+internal fun memberStatesSql(servers: String): String =
+    "SELECT ${McpRelayRepositoryImpl.STATE_COLUMNS} FROM mcp_relay_stdio_states WHERE org_id = :org_id AND " +
+        "server_id IN ($servers) AND (member_id = :member_id OR member_id IS NULL)"

@@ -2,6 +2,8 @@
 package run.ostrom.server.mcprelay
 
 import run.ostrom.server.mcprelay.infrastructure.MCP_MINUTE_COUNT_SQL
+import run.ostrom.server.mcprelay.infrastructure.MCP_ORG_HOSTED_SQL
+import run.ostrom.server.mcprelay.infrastructure.memberStatesSql
 import run.ostrom.server.mcprelay.infrastructure.MCP_MINUTE_PURGE_SQL
 import run.ostrom.server.mcprelay.infrastructure.MCP_SLOT_INSERT_SQL
 import run.ostrom.server.mcprelay.infrastructure.MCP_SLOT_LOCK_SQL
@@ -70,6 +72,37 @@ class McpRelaySlotsQueryPlansTest : RelayPostgresHarness() {
             assertFalse("Seq Scan" in plan, "$what scans a table:\n$plan")
         }
     }
+
+    @Test
+    fun theHostedReadsOfAListingAndOfTheAdministrationScanNoTable() =
+        serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
+            val fixtures = server.database.superuser
+            fixtures.execute(servers(Relay.orgB, 5_000).replace("'HTTP'", "'STDIO'")).getOrThrow()
+            fixtures.execute(
+                "INSERT INTO mcp_relay_servers (id, org_id, name, transport, url, credential_secret_id, " +
+                    "credential_header, stdio, sharing, version, created_at) VALUES (CAST('$serverA' AS uuid), " +
+                    "CAST('${Relay.orgA}' AS uuid), 'fs', 'STDIO', NULL, NULL, NULL, NULL, 'SHARED', 1, now())",
+            ).getOrThrow()
+            fixtures.execute(
+                "INSERT INTO mcp_relay_assignments (org_id, server_id, member_id, tools, credential_secret_id, " +
+                    "assigned_at) SELECT s.org_id, s.id, NULL, NULL, NULL, now() FROM mcp_relay_servers s",
+            ).getOrThrow()
+            fixtures.execute(
+                "INSERT INTO mcp_relay_stdio_states (org_id, server_id, member_id, process_key, state, failure, " +
+                    "changed_at) SELECT s.org_id, s.id, gen_random_uuid(), 'k', 'ready', NULL, now() " +
+                    "FROM mcp_relay_servers s, generate_series(1, 4) AS i",
+            ).getOrThrow()
+            listOf("mcp_relay_servers", "mcp_relay_assignments", "mcp_relay_stdio_states").forEach {
+                fixtures.execute("VACUUM ANALYZE $it").getOrThrow()
+            }
+            mapOf(
+                "a member's states" to memberStatesSql(":server_id"),
+                "the org's hosted assignments" to MCP_ORG_HOSTED_SQL.replace(":limit", "10001"),
+            ).forEach { (what, sql) ->
+                val plan = plan(server.driver, sql)
+                assertFalse("Seq Scan" in plan, "$what scans a table:\n$plan")
+            }
+        }
 
     private suspend fun plan(driver: Driver, sql: String): String {
         val statement = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org_id", Relay.orgA)

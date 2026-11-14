@@ -284,6 +284,8 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "PUT /api/v1/mcp/settings" to Case.Target(body = "{}", admin = true),
     "GET /api/v1/mcp/calls" to Case.Target(),
     "GET /api/v1/mcp/usage" to Case.Target(),
+    "GET /api/v1/mcp/hosted" to Case.Target(),
+    "POST /api/v1/mcp/hosted/restart" to Case.Target(body = """{"server": "{{MCP_SERVER}}"}""", admin = true),
     "GET /api/v1/mcp/{server}" to target("server" to MCP_SERVER),
     "DELETE /api/v1/mcp/{server}" to target("server" to MCP_SERVER),
     "POST /api/v1/mcp/{server}" to target(

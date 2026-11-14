@@ -198,9 +198,12 @@ class McpRelayModuleRegistrationTest {
                         // On the test's scheduler, so each minute's call is answered before the next one.
                         val engine = MockEngineConfig().apply {
                             dispatcher = StandardTestDispatcher(testScheduler)
-                            addHandler {
-                                val status = answers.removeFirstOrNull() ?: HttpStatusCode.OK
-                                respond("""{"stopped":0}""", status)
+                            addHandler { request ->
+                                if (request.url.encodedPath.endsWith("/v1/status")) {
+                                    respond("""{"version":"1","processes":[]}""")
+                                } else {
+                                    respond("""{"stopped":0}""", answers.removeFirstOrNull() ?: HttpStatusCode.OK)
+                                }
                             }
                         }
                         HttpClient(MockEngine(engine))

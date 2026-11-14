@@ -204,4 +204,24 @@ val McpRelayMigrations: List<SchemaMigration> = listOf(
         """.trimIndent() + ";\n" + tenantTableSql("mcp_relay_slots") + "\n" + tenantTableSql("mcp_relay_minutes"),
     ),
     SchemaMigration(version = 7, name = "mcp_relay_hosted_assignments", sql = HOSTED_ASSIGNMENTS_SQL),
+    // The state of each hosted process as the minute sweep last saw it (TeamCode's mcp_stdio_states): one row per
+    // server and member, the member null for a shared server's process; an idle process that never failed has none.
+    SchemaMigration(
+        version = 8,
+        name = "mcp_relay_stdio_states",
+        sql = """
+            CREATE TABLE mcp_relay_stdio_states (
+                org_id UUID NOT NULL,
+                server_id UUID NOT NULL REFERENCES mcp_relay_servers (id) ON DELETE CASCADE,
+                member_id UUID,
+                process_key TEXT NOT NULL,
+                state TEXT NOT NULL,
+                failure TEXT,
+                changed_at TIMESTAMPTZ NOT NULL
+            );
+            CREATE UNIQUE INDEX mcp_relay_stdio_states_process ON mcp_relay_stdio_states (server_id, member_id)
+                NULLS NOT DISTINCT;
+            CREATE INDEX mcp_relay_stdio_states_org ON mcp_relay_stdio_states (org_id, server_id, member_id)
+        """.trimIndent() + ";\n" + tenantTableSql("mcp_relay_stdio_states"),
+    ),
 )

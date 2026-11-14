@@ -17,7 +17,8 @@ TeamCode's `mcp` module (TeamCode `docs/mcp.md`) and speaks the same host protoc
 | Image (amd64, arm64) and its contract test with real npm and PyPI servers | Done (`mcp-host-image.yml`) |
 | Relay → host operations (`HostMcpUpstream`, `POST /v1/ops`; `OSTROM_MCP_HOST_URL`, `OSTROM_MCP_HOST_TOKEN`) | Done (`mcp-relay`) |
 | Warm-up from the member's server list and the `retain` sweep each minute (`mcp-relay`) | Done |
-| `/v1/stop` (Restart), the recorded state of each process, the member's view of it | Next |
+| The recorded state of each process (`mcp_relay_stdio_states`), `GET /api/v1/mcp/hosted`, Restart (`POST /api/v1/mcp/hosted/restart`, `/v1/stop`), `state` and `failure` in a member's list | Done (coming soon on main until ostrom-core marks the routes served; `mcp-relay`) |
+| Events `mcp.stdio.failed`, `mcp.stdio.recovered`, `mcp.unreachable` | Waiting for outgoing webhooks |
 | Helm component (Deployment, Service, NetworkPolicy, generated token Secret) | Next (ostrom-helm) |
 
 ## Architecture
@@ -217,6 +218,40 @@ TeamCode's `RetainHostedMcpProcessesUseCase` does. Both run only when `OSTROM_MC
   `SECURITY DEFINER` function `mcp_relay_hosted_assignments(limit)` (`docs/tenancy.md`). It returns the stdio
   assignments' ids, versions, sharing and dates, never a definition or a secret. It goes away with Row-Level
   Security in the Exposed migration.
+
+## Process states and Restart
+
+As in TeamCode (`docs/mcp.md`, "Operating and troubleshooting"):
+
+- **State sweep.** After `POST /v1/retain`, the minute sweep reads `GET /v1/status` and records the state of each
+  assigned process in `mcp_relay_stdio_states`. There is one row per server and member; the member is null for a
+  shared server's process. A row holds:
+  - the relay key it was observed under;
+  - the state (`idle`, `starting`, `ready`, `failed`, `backoff`; any other value the host sends is stored as
+    `unknown`);
+  - the last failure not yet followed by a successful start;
+  - when it changed.
+
+  A row is written only when something changes, by compare-and-set on the row the sweep read, so two replicas never
+  write the same transition twice. An idle process that never failed has no row. A state recorded under an earlier
+  key (a new version, a reassignment) reads as `idle`. The next sweep deletes the rows of processes no longer
+  assigned, and a deleted server's rows go with it (foreign key). The sweep writes each organization's rows in that
+  organization's own transactions, under row-level security. The rows of an organization left with no hosted
+  assignment at all stay until its servers go. No view shows them, since every view starts from current assignments.
+- **Administrators** (`GET /api/v1/mcp/hosted`, `mcp:read`) list every hosted process of the organization: a shared
+  server's once, a per-member server's once per member. Each item gives the state and last failure, starts,
+  failures, last exit code, cold-start time, memory and the last 4 KiB of scrubbed stderr, all read live from
+  `/v1/status`. When the host does not answer, `hostReachable` is false and the recorded states are shown.
+  Coming soon: served once ostrom-core lists the route.
+- **Restart** (`POST /api/v1/mcp/hosted/restart`, `mcp:admin`, a recent sign-in) stops the process and lifts a
+  backoff (`/v1/stop`); the next operation starts it again. It is journaled first, as `mcp.stdio.restarted`, with
+  the subject `server` or `server/member`. A host that does not answer gets 503 `mcp_host_unavailable`. Coming soon:
+  served once ostrom-core lists the route.
+- **Members** see `state` and `failure` for their stdio servers in `GET /api/v1/mcp/servers?mine=true`, as
+  recorded by the sweep, without stderr. A state that cannot be read is left out: it never hides a server from an
+  agent.
+- **Events.** TeamCode publishes `mcp.stdio.failed`, `mcp.stdio.recovered` and `mcp.unreachable` to the team's feed
+  and webhooks. They come here once the server has outgoing webhooks.
 
 ## Security
 

@@ -37,6 +37,9 @@ import io.ktor.server.resources.put
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
+import io.ktor.server.routing.delete as routeDelete
+import io.ktor.server.routing.get as routeGet
+import io.ktor.server.routing.post as routePost
 import io.ktor.server.routing.route
 import io.ktor.server.util.getOrFail
 import io.ktor.utils.io.readRemaining
@@ -44,9 +47,6 @@ import kotlinx.io.readByteArray
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlin.uuid.Uuid
-import io.ktor.server.routing.delete as routeDelete
-import io.ktor.server.routing.get as routeGet
-import io.ktor.server.routing.post as routePost
 
 /**
  * The relay routes, in the org of the caller's token: administration under `/api/v1/mcp` (servers addressed by name,
@@ -61,6 +61,7 @@ fun Route.mcpRelayRoutes(dependencies: McpRelayRoutesDependencies) {
         assignmentRoutes(dependencies)
         policyRoutes(dependencies)
         journalRoutes(dependencies)
+        hostedRoutes(dependencies)
     }
     // A relayed call lasts as long as the upstream server takes: a held call, counted apart from the server's other
     // calls from before authentication on, so that a slow server plugged in by a member never takes their places

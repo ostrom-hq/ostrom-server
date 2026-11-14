@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.mcprelay
 
+import run.ostrom.server.mcprelay.domain.HostedProcessStatus
 import run.ostrom.server.mcprelay.domain.McpOutcome
 import run.ostrom.server.mcprelay.domain.McpTransport
 import run.ostrom.server.mcprelay.domain.StdioLauncher
@@ -32,13 +33,13 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonObject
-import kotlin.test.assertFailsWith
 import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
@@ -552,6 +553,50 @@ class UpstreamsTest {
             status = code
             assertFailsWith<IllegalStateException>(body) { upstream.retain(emptyList()) }
         }
+    }
+
+    @Test
+    fun theHostsStatusIsReadByRelayKeyAndAStopNamesTheHashedKey() = realTime {
+        var answer = """{"version":"1.2.3","processes":[{"key":"${HostMcpUpstream.processKey("org:a:1")}",""" +
+            """"state":"failed","launcher":"npm","package":"a@1.0.0","starts":2,"failures":1,"lastExitCode":1,""" +
+            """"lastFailure":"crashed","coldStartMillis":900,"rssBytes":1024,"stderr":"boom"},""" +
+            """{"key":"${HostMcpUpstream.processKey("org:b:1")}"},{"state":"ready"},"junk"]}"""
+        var status = HttpStatusCode.OK
+        val upstream = HostMcpUpstream(
+            client { _, _ -> respond(answer, status) },
+            McpHostConfig("http://mcp-host:8080", "host_token"),
+        )
+        val snapshot = upstream.status()
+        val (request, body) = requests.last()
+        assertEquals("http://mcp-host:8080/v1/status", request.url.toString())
+        assertEquals(HttpMethod.Get, request.method)
+        assertEquals(null, body)
+        assertEquals("1.2.3", snapshot.version)
+        assertEquals(
+            HostedProcessStatus("failed", "npm", "a@1.0.0", 2, 1, 1, "crashed", 900, 1024, "boom"),
+            snapshot.of("org:a:1"),
+        )
+        assertEquals(HostedProcessStatus("unknown", "", ""), snapshot.of("org:b:1"))
+        assertEquals(null, snapshot.of("org:c:1"))
+        for (refused in listOf("""{"processes":[]}""", """{"version":"1"}""", "[]")) {
+            answer = refused
+            assertFailsWith<IllegalStateException>(refused) { upstream.status() }
+        }
+        answer = """{"version":"1","processes":[]}"""
+        status = HttpStatusCode.Unauthorized
+        assertFailsWith<IllegalStateException> { upstream.status() }
+        status = HttpStatusCode.OK
+        answer = """{"stopped":true}"""
+        assertTrue(upstream.stop("org:a:1"))
+        assertEquals(HostMcpUpstream.processKey("org:a:1"), requests.last().second!!["key"]!!.jsonPrimitive.content)
+        assertEquals("http://mcp-host:8080/v1/stop", requests.last().first.url.toString())
+        for (refused in listOf("""{"stopped":"yes"}""", """{}""", "not json")) {
+            answer = refused
+            assertFailsWith<IllegalStateException>(refused) { upstream.stop("org:a:1") }
+        }
+        status = HttpStatusCode.Unauthorized
+        answer = """{"stopped":false}"""
+        assertFailsWith<IllegalStateException> { upstream.stop("org:a:1") }
     }
 }
 

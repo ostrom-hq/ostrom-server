@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.mcprelay.infrastructure
 
+import run.ostrom.server.mcprelay.domain.HostStatus
+import run.ostrom.server.mcprelay.domain.HostedProcessStates
+import run.ostrom.server.mcprelay.domain.HostedProcessStatus
 import run.ostrom.server.mcprelay.domain.McpHostControl
 import run.ostrom.server.mcprelay.domain.McpOutcome
 import run.ostrom.server.mcprelay.domain.McpUpstream
@@ -13,9 +16,11 @@ import io.ktor.client.HttpClient
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.header
 import io.ktor.client.request.preparePost
+import io.ktor.client.request.prepareRequest
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.ContentType
+import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
@@ -29,8 +34,11 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
@@ -154,15 +162,42 @@ class HostMcpUpstream(
         return stopped
     }
 
-    private suspend fun control(path: String, body: JsonObject): Pair<HttpStatusCode, JsonObject?> =
+    override suspend fun status(): HostStatus {
+        val (status, answer) = control(STATUS, null, STATUS_ENVELOPE)
+        val version = (answer?.get("version") as? JsonPrimitive)?.contentOrNull
+        val processes = answer?.get("processes") as? JsonArray
+        check(status == HttpStatusCode.OK && version != null && processes != null) {
+            "The MCP host refused the status."
+        }
+        val byKey = processes.mapNotNull { it as? JsonObject }.mapNotNull { process ->
+            process.text("key")?.let { key -> key to process.toStatus() }
+        }.toMap()
+        return HostStatus(version) { byKey[processKey(it)] }
+    }
+
+    override suspend fun stop(key: String): Boolean {
+        val (status, answer) = control("/v1/stop", buildJsonObject { put("key", processKey(key)) })
+        val stopped = (answer?.get("stopped") as? JsonPrimitive)?.booleanOrNull
+        check(status == HttpStatusCode.OK && stopped != null) { "The MCP host refused the stop." }
+        return stopped
+    }
+
+    private suspend fun control(
+        path: String,
+        body: JsonObject?,
+        envelope: Long = HOST_ENVELOPE,
+    ): Pair<HttpStatusCode, JsonObject?> =
         withTimeout(CONTROL_TIMEOUT) {
-            client.preparePost(config.url.trimEnd('/') + path) {
+            client.prepareRequest(config.url.trimEnd('/') + path) {
+                method = if (body == null) HttpMethod.Get else HttpMethod.Post
                 bearerAuth(config.token)
                 header(PROTOCOL_HEADER, PROTOCOL_VERSION)
-                contentType(ContentType.Application.Json)
-                setBody(body.toString())
+                if (body != null) {
+                    contentType(ContentType.Application.Json)
+                    setBody(body.toString())
+                }
             }.execute { response ->
-                val bytes = response.bodyAsChannel().readRemaining(HOST_ENVELOPE).readByteArray()
+                val bytes = response.bodyAsChannel().readRemaining(envelope).readByteArray()
                 val json = try {
                     Json.parseToJsonElement(bytes.decodeToString()) as? JsonObject
                 } catch (_: SerializationException) {
@@ -171,15 +206,6 @@ class HostMcpUpstream(
                 response.status to json
             }
         }
-
-    private fun spec(target: UpstreamTarget, spec: StdioSpec) = buildJsonObject {
-        put("launcher", spec.launcher.wire)
-        put("package", spec.packageName)
-        putJsonArray("args") { spec.args.forEach { add(JsonPrimitive(it)) } }
-        putJsonObject("env") { spec.env.forEach { (name, value) -> put(name, value) } }
-        putJsonObject("secrets") { target.secretEnv.forEach { (name, value) -> put(name, value.reveal()) } }
-        put("declaredAt", target.server.createdAt.toEpochMilliseconds())
-    }
 
     private fun answer(status: HttpStatusCode, bytes: ByteArray): HostAnswer {
         val json = try {
@@ -224,7 +250,6 @@ class HostMcpUpstream(
         }
     }
 
-    private fun failure(message: String) = UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, message)
 
     /** The protocol between the relay and its MCP host. */
     companion object {
@@ -235,6 +260,10 @@ class HostMcpUpstream(
         const val PROTOCOL_VERSION: String = "1"
 
         private const val HOST_ENVELOPE = 64 * 1024L
+
+        // Up to 16 processes with 64 KiB of stderr each, escaped up to six times (\u00XX): past it, no parse.
+        private const val STATUS_ENVELOPE = 8 * 1024 * 1024L
+        private const val STATUS = "/v1/status"
         private val CONTROL_TIMEOUT = 30.seconds
         private const val MAX_ERROR = 1000
 
@@ -248,4 +277,34 @@ class HostMcpUpstream(
         fun processKey(key: String): String =
             CryptographyProvider.Default.get(SHA256).hasher().hashBlocking(key.encodeToByteArray()).toHexString()
     }
+}
+
+private fun JsonObject.text(name: String) = (get(name) as? JsonPrimitive)?.contentOrNull
+
+private fun JsonObject.number(name: String) = (get(name) as? JsonPrimitive)?.longOrNull
+
+// One process of `GET /v1/status`; a field the host leaves out reads as nothing known.
+private fun JsonObject.toStatus() = HostedProcessStatus(
+    state = text("state") ?: HostedProcessStates.UNKNOWN,
+    launcher = text("launcher").orEmpty(),
+    packageName = text("package").orEmpty(),
+    starts = number("starts")?.toInt() ?: 0,
+    failures = number("failures")?.toInt() ?: 0,
+    lastExitCode = number("lastExitCode")?.toInt(),
+    lastFailure = text("lastFailure"),
+    coldStartMillis = number("coldStartMillis"),
+    rssBytes = number("rssBytes"),
+    stderr = text("stderr").orEmpty(),
+)
+
+private fun failure(message: String) = UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, message)
+
+// The definition the host launches, its secret values included.
+private fun spec(target: UpstreamTarget, spec: StdioSpec) = buildJsonObject {
+    put("launcher", spec.launcher.wire)
+    put("package", spec.packageName)
+    putJsonArray("args") { spec.args.forEach { add(JsonPrimitive(it)) } }
+    putJsonObject("env") { spec.env.forEach { (name, value) -> put(name, value) } }
+    putJsonObject("secrets") { target.secretEnv.forEach { (name, value) -> put(name, value.reveal()) } }
+    put("declaredAt", target.server.createdAt.toEpochMilliseconds())
 }
