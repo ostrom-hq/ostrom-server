@@ -110,7 +110,12 @@ class CreateCloudSessionUseCaseImpl(
 
     /** The name of a session asked without one: its repository's, the first of its recipe's, or none. */
     private fun defaultName(payload: CreateCloudSessionPayload): String? {
-        val url = payload.repository?.url ?: payload.environment?.repositories?.firstOrNull()?.url ?: return null
+        val repositories = payload.environment?.repositories.orEmpty()
+        val url = when {
+            payload.repository != null -> payload.repository.url
+            repositories.isNotEmpty() -> repositories.first().url
+            else -> return null
+        }
         return CloudEnvironmentRules.defaultPath(url)
     }
 

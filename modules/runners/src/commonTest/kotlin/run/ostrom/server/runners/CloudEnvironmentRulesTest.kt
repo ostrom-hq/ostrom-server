@@ -247,6 +247,7 @@ class CloudEnvironmentRulesTest {
             message(PreparationStep.SETUP_CREATE, 1, 2),
         )
         assertEquals("Setup command 1 (start) failed.$log", message(PreparationStep.SETUP_START))
+        assertEquals("Setup command 1 (create) failed.$log", message(PreparationStep.SETUP_CREATE))
         assertEquals("The runner could not prepare the environment.", message(PreparationStep.RUNNER))
     }
 
