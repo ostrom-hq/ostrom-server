@@ -95,7 +95,7 @@ data class ApprovalDelivery(
     val body: String,
     val createdAt: Instant,
 ) : QueuedDelivery {
-    /** Pushes about the same request replace one another. */
+    /** The row's `collapse_key`, for support; phones collapse a request's pushes by its id (EncryptedPushSender). */
     val collapseKey: String get() = "approval:$approvalId"
 }
 

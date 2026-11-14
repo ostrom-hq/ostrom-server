@@ -190,7 +190,7 @@ class ApprovalRoutingTest {
     }
 
     @Test
-    fun aPushGoesToEachLivePhoneOfTheGatesOrganizationApartAndIsDeliveredWhenOnePhoneGotIt() {
+    fun aPushGoesToEachLivePhoneOfTheGatesOrganizationApartAndIsRetriedWhileOneMayStillGetIt() {
         runTest {
             val first = phone(bob, "fcm-token-bob-1")
             phone(bob, "fcm-token-bob-2")
@@ -201,12 +201,15 @@ class ApprovalRoutingTest {
             live -= revoked
             devices.devices += first.copy(id = Uuid.random(), pushToken = "ExponentPushToken[old]", provider = "expo")
             val push = PhonePushSender { if (it == "fcm-token-bob-2") PushNotSentException("fcm_503") else null }
+            val refused = PhonePushSender { if (it == "fcm-token-bob-2") PushRejectedException("fcm_404") else null }
             val gate = sampleGate()
             val delivery = approvalDelivery(org, gate, approver = "BOB")
 
             val router = ApprovalRouter(MapGates(), approvers, mailing, sender(push))
 
-            assertEquals(ChannelResult.DELIVERED, router.send(delivery, gate))
+            assertEquals(ChannelResult.retry("fcm_503"), router.send(delivery, gate), "Phone 2 may still get it")
+            val delivered = ApprovalRouter(MapGates(), approvers, mailing, sender(refused)).send(delivery, gate)
+            assertEquals(ChannelResult.DELIVERED, delivered, "Phone 1 got it, phone 2 never will")
             assertEquals(listOf(1, 1), push.sent.map { it.size }, "One push per phone, apart")
             assertEquals(setOf("fcm-token-bob-1", "fcm-token-bob-2"), push.sent.flatten().map { it.to }.toSet())
             assertTrue(notices.push(delivery.approvalId, first) in push.sent.flatten())

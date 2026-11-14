@@ -78,6 +78,19 @@ class DeliverNotificationsUseCaseImpl(
         }
         for ((delivery, result) in results) {
             val outcome = DeliveryRules.outcome(delivery.attempts, result, clock.now())
+            // An approver not told is an operator's concern, as the in-memory outbox logged it: our codes only.
+            if (delivery is ApprovalDelivery && outcome.state != DeliveryState.DELIVERED) {
+                logger.warn(
+                    APPROVAL_NOT_SENT,
+                    mapOf(
+                        "gate_id" to delivery.gateId,
+                        "channel" to delivery.channel,
+                        "attempt" to outcome.attempts,
+                        "state" to outcome.state.wire,
+                        "error" to outcome.error,
+                    ),
+                )
+            }
             guarded(RECORD_FAILED, Unit) { record(delivery, outcome) }
         }
         return due.size + asks.size
@@ -220,6 +233,7 @@ class DeliverNotificationsUseCaseImpl(
         const val FANOUT_FAILED = "notification fan-out failed"
         const val CLAIM_FAILED = "notification claim failed"
         const val RECORD_FAILED = "notification record failed"
+        const val APPROVAL_NOT_SENT = "approval notification not sent"
         val LEASE = DeliveryRules.LEASE
     }
 }

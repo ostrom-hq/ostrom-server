@@ -60,9 +60,10 @@ class ApprovalSender(
                 val results = coroutineScope {
                     phones.map { async { pushTo(notices.push(delivery.approvalId, it)) } }.awaitAll()
                 }
-                // Delivered when one phone got it; retried when none did and one may still; failed otherwise.
-                results.firstOrNull { it.outcome == ChannelResult.Outcome.DELIVERED }
-                    ?: results.firstOrNull { it.outcome == ChannelResult.Outcome.RETRY }
+                // Retried while one phone may still get it (the pushes about one request collapse on the phones that
+                // already have it), delivered when one did, failed otherwise.
+                results.firstOrNull { it.outcome == ChannelResult.Outcome.RETRY }
+                    ?: results.firstOrNull { it.outcome == ChannelResult.Outcome.DELIVERED }
                     ?: results.first()
             }
         }
