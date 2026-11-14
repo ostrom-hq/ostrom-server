@@ -29,6 +29,7 @@ import run.ostrom.server.notifications.domain.PushDevice
 import run.ostrom.server.notifications.domain.PushDevicesRepository
 import run.ostrom.server.notifications.domain.PushMessage
 import run.ostrom.server.notifications.domain.PushSender
+import run.ostrom.server.notifications.domain.QueuedDelivery
 import run.ostrom.server.notifications.domain.SwitchedOff
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -308,9 +309,59 @@ class DeliverNotificationsUseCaseTest {
 
             val attempted = useCase(FakeJournal(), CountingWaits(emptyList()), deliveries, listOf(push))()
             assertEquals(DeliveryRules.BATCH, attempted)
-            assertEquals(1, deliveries.due.getValue(orgA).size)
-            assertEquals(1, deliveries.due.getValue(orgB).size, "B waits for the next pass")
+            assertEquals(2, deliveries.due.getValue(orgA).size, "A had more than its share: the room left")
+            assertEquals(0, deliveries.due.getValue(orgB).size, "B is not held back by A's burst")
         }
+    }
+
+    @Test
+    fun eachOrganizationIsGivenItsShareOfThePassBeforeAnyTakesMore() {
+        runTest {
+            val deliveries = MemoryDeliveries()
+            fun queue(org: Uuid, count: Int) = MutableList<QueuedDelivery>(count) {
+                NotificationDelivery(notification(org, null), "push", 0)
+            }
+            deliveries.due[orgA] = queue(orgA, 100)
+            deliveries.due[orgB] = queue(orgB, 3)
+            deliveries.due[orgC] = queue(orgC, 30)
+
+            val push = FakeChannel("push")
+            val attempted = useCase(FakeJournal(), CountingWaits(emptyList()), deliveries, listOf(push))()
+
+            assertEquals(DeliveryRules.BATCH, attempted)
+            assertEquals(
+                listOf(orgA to 16, orgB to 16, orgC to 16, orgA to 15),
+                deliveries.claims,
+                "A third each, the longest waiting first, then the room B left goes to A",
+            )
+            assertEquals(listOf(69, 0, 14), listOf(orgA, orgB, orgC).map { deliveries.due.getValue(it).size })
+        }
+    }
+
+    @Test
+    fun moreOrganizationsThanTheBatchTakeOneEachTheLongestWaitingFirst() {
+        runTest {
+            val deliveries = MemoryDeliveries()
+            val orgs = List(DeliveryRules.BATCH + 10) { Uuid.random() }
+            for (org in orgs) {
+                deliveries.due[org] = mutableListOf(NotificationDelivery(notification(org, null), "push", 0))
+            }
+
+            val push = FakeChannel("push")
+            val attempted = useCase(FakeJournal(), CountingWaits(emptyList()), deliveries, listOf(push))()
+
+            assertEquals(DeliveryRules.BATCH, attempted)
+            assertEquals(orgs.take(DeliveryRules.BATCH).map { it to 1 }, deliveries.claims)
+            assertEquals(orgs.drop(DeliveryRules.BATCH), orgs.filter { deliveries.due.getValue(it).isNotEmpty() })
+        }
+    }
+
+    @Test
+    fun aShareIsAnEvenPartOfTheBatchAndAtLeastOne() {
+        assertEquals(DeliveryRules.BATCH, DeliveryRules.fairShare(0))
+        assertEquals(DeliveryRules.BATCH, DeliveryRules.fairShare(1))
+        assertEquals(DeliveryRules.BATCH / 3, DeliveryRules.fairShare(3))
+        assertEquals(1, DeliveryRules.fairShare(DeliveryRules.ORGS_PER_PASS))
     }
 
     @Test
