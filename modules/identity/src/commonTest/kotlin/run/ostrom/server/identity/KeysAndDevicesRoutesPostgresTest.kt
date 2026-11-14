@@ -162,12 +162,42 @@ class KeysAndDevicesRoutesPostgresTest {
             ).secret
             assertEquals(HttpStatusCode.Forbidden, server.client.get(KEYS) { bearerAuth(personal) }.status)
             val minted = server.client.post(KEYS) { bearerAuth(personal); json(ciKey) }
-            assertEquals(HttpStatusCode.Forbidden, minted.status, "A token never mints a key (S2-52)")
+            assertEquals(HttpStatusCode.Forbidden, minted.status, "A personal token never mints a key (S2-52)")
             assertEquals(HttpStatusCode.Forbidden, server.client.get(DEVICES) { bearerAuth(personal) }.status)
             val bad = server.client.post(KEYS) {
                 signedIn(server.person("own", orgA)); json(CreateServiceKeyRequest("k", listOf("gates:answer")))
             }
             assertEquals(HttpStatusCode.BadRequest, bad.status)
+        }
+
+    @Test
+    fun theCliSignInOfAnOwnerManagesTheKeysAsTeamCodesDoesButNoOtherTokenDoes() =
+        serverTest(listOf(IdentityModule), overrides) { server ->
+            val ada = server.person("ada", orgA)
+            val max = server.person("max", orgA, OrgRole.MEMBER)
+            val laptop = server.koin.get<IssueCliTokenUseCase>()(ada.user.id, "laptop")
+            val created = server.client.post(KEYS) { bearerAuth(laptop.secret); json(ciKey) }
+            assertEquals(HttpStatusCode.Created, created.status)
+            val key = created.body<ServiceKeyResponse>()
+            assertNotNull(key.secret)
+            val listed = server.client.get(KEYS) { bearerAuth(laptop.secret) }
+            assertEquals(listOf(key.id), listed.body<ServiceKeysResponse>().items.map { it.id })
+            // the key it made is a service, not a person: it cannot mint nor list keys
+            val asKey = assertNotNull(key.secret)
+            assertEquals(HttpStatusCode.Forbidden, server.client.get(KEYS) { bearerAuth(asKey) }.status)
+            assertEquals(HttpStatusCode.Forbidden, server.client.post(KEYS) { bearerAuth(asKey); json(ciKey) }.status)
+            assertEquals(
+                HttpStatusCode.NoContent,
+                server.client.delete("$KEYS/${key.id}") { bearerAuth(laptop.secret) }.status,
+            )
+            // a member's sign-in is still a member's: the organization's keys are its owners' and admins'
+            val theirs = server.koin.get<IssueCliTokenUseCase>()(max.user.id, "max's laptop")
+            assertEquals(HttpStatusCode.Forbidden, server.client.get(KEYS) { bearerAuth(theirs.secret) }.status)
+            // an agent's or an app's token is no sign-in on a workstation
+            val personal = server.koin.get<CreatePersonalTokenUseCase>()(
+                ada.user.id, "script", listOf("orgs:read"), 1.days,
+            ).secret
+            assertEquals(HttpStatusCode.Forbidden, server.client.get(KEYS) { bearerAuth(personal) }.status)
         }
 
     @Test
