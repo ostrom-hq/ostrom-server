@@ -542,6 +542,8 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     ),
     "GET /api/v1/packages" to Case.Target(),
     "GET /api/v1/packages/current" to Case.Target(),
+    "GET /api/v1/packages/settings" to Case.Target(),
+    "PUT /api/v1/packages/settings" to Case.Target(body = """{"pin": "manual"}"""),
     "GET /api/v1/packages/audit" to Case.Target(),
     "POST /api/v1/packages/preview" to Case.Target(body = "{}"),
     "GET /api/v1/packages/{digest}" to target("digest" to PACKAGE),

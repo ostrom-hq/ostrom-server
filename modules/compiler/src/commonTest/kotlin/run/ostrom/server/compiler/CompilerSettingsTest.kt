@@ -180,6 +180,8 @@ class CompilerSettingsTest {
             override fun log(level: LogLevel, message: String, fields: Map<String, Any?>, error: Throwable?) {
                 lines += "$level $message $fields"
             }
+
+            override fun with(fields: Map<String, Any?>): Logger = this
         }
         for (config in listOf(mapOf("OSTROM_PIN" to "manual", "OSTROM_PROD_APPROVER" to "ops"), emptyMap())) {
             val application = koinApplication {
