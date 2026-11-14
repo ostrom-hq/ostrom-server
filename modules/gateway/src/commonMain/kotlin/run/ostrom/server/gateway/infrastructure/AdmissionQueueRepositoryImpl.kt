@@ -40,6 +40,12 @@ class AdmissionQueueRepositoryImpl(private val database: JdbcDatabase) : Admissi
                 ?: throw QueueRefusedException(RefusalKind.QUEUE_EXPIRED)
         }
         val running = if (request.limit == null) 0 else admissionRunning(orgId, request.memberId).single()
+        val launch = request.launchId
+        val launchRunning = if (launch == null || request.launchLimit == null) {
+            0
+        } else {
+            admissionLaunchRunning(orgId, launch).single()
+        }
         val others = admissionCandidates(orgId, request.scope, request.id).rows()
         val turns = admissionTurns(orgId, request.scope, request.memberId).single()
         val me = QueueCandidate(request.id, request.memberId, request.workload, waited.milliseconds, turns.mine)

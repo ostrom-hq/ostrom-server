@@ -57,6 +57,9 @@ internal object GatewayAdmissions : Table("gateway_admissions") {
     val turnTaken = long("turn_taken").nullable()
     val turnBefore = long("turn_before").nullable()
 
+    /** The launch the call belongs to (version 6), counted against its `maxConcurrent`. */
+    val launchId = text("launch_id").nullable()
+
     override val primaryKey = PrimaryKey(id)
 }
 
