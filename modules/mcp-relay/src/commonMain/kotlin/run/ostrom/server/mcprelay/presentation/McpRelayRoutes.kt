@@ -103,12 +103,12 @@ private fun Route.serverRoutes(dependencies: McpRelayRoutesDependencies) = with(
         }
         val payload = request.toPayload(directory.idsByName(caller.orgId, null, request.secretNamesUsed()))
         val existing = listServers.find(caller, params.name)
-        val (server, event) = if (existing == null) {
-            createServer(caller, payload) to SERVER_CREATED
+        val (server, event, details) = if (existing == null) {
+            val created = createServer(caller, payload)
+            Triple(created, SERVER_CREATED, created.createdDetails())
         } else {
-            updateServer(caller, existing.id, payload) to "mcp.server.updated"
+            Triple(updateServer(caller, existing.id, payload), "mcp.server.updated", emptyMap())
         }
-        val details = if (existing == null) server.createdDetails() else emptyMap()
         recordChange(call, caller, event, server.name, details)
         call.respond(server.toDto(directory.namesById(caller.orgId, server.secretIds())))
     }

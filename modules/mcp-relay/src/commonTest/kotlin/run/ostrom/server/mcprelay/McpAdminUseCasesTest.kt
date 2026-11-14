@@ -43,6 +43,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
 /** The admin use cases: only admins write, every reference is checked, and a missing target is a 404. */
@@ -97,6 +98,26 @@ class McpAdminUseCasesTest {
             update(Relay.adminA, created.id, http.copy(transport = McpTransport.STDIO, url = null))
         }
         assertEquals(1, repository.servers.single { it.id == created.id }.version, "Nothing was stored")
+    }
+
+    @Test
+    fun theCommandOfAHostedServerNeverChangesButItsSecretsMay() {
+        val spec = StdioSpec(StdioLauncher.NPM, "mcp-db@1.0.0", listOf("--dsn=\${DSN}"), mapOf("MODE" to "ro"))
+        val current = Relay.server("db", transport = McpTransport.STDIO).copy(stdio = spec)
+        val administration = administration()
+        val rotated = spec.copy(secretEnv = mapOf("DSN" to Uuid.random()))
+        administration.requireSameEndpoint(current, current.copy(stdio = rotated))
+        for (changed in listOf(
+            spec.copy(packageName = "mcp-db@1.0.1"),
+            spec.copy(launcher = StdioLauncher.PYPI),
+            spec.copy(args = listOf("--dsn=\${OTHER}")),
+            spec.copy(env = mapOf("API_URL" to "https://evil.example.com")),
+        )) {
+            val refused = assertFailsWith<InvalidMcpServerException>("$changed") {
+                administration.requireSameEndpoint(current, current.copy(stdio = changed))
+            }
+            assertTrue("cannot change" in refused.message.orEmpty())
+        }
     }
 
     @Test
