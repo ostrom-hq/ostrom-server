@@ -41,7 +41,7 @@ agent session runs, holds the gates that wait for an approver, reads the diff an
 receipt for every change.
 
 The Ostrom server, on the JVM (Java 21, [docs/decisions/0001](docs/decisions/0001-jvm-and-teamcode-stack.md)): one
-container image for Linux x64 and arm64 (`ostromhq/ostrom-server` on Docker Hub, built by jib), Ktor on the CIO engine,
+container image for Linux x64 and arm64 (`ostromhq/ostrom-server` on Docker Hub, built by jib), Ktor on the Netty engine,
 PostgreSQL, Koin, Clean Architecture with one Gradle module per functional domain.
 
 ## Quick start

@@ -1,0 +1,10 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- The app's tests: the libraries' warnings only, so a test run's output stays readable. Exposed off as in logback.xml. -->
+<configuration>
+    <logger name="Exposed" level="OFF"/>
+    <appender name="STDERR" class="ch.qos.logback.core.ConsoleAppender">
+        <target>System.err</target>
+        <encoder><pattern>%d{HH:mm:ss} %-5level %logger{30} - %msg%n</pattern></encoder>
+    </appender>
+    <root level="WARN"><appender-ref ref="STDERR"/></root>
+</configuration>

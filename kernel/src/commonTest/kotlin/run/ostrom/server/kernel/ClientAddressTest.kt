@@ -8,8 +8,8 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.statement.bodyAsText
 import io.ktor.server.application.install
-import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
+import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.origin
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
@@ -23,7 +23,7 @@ import io.ktor.client.engine.cio.CIO as ClientCIO
 
 /**
  * The client address on real sockets: two clients behind a proxy on 127.0.0.1 (S2-02). The test engine of Ktor has no
- * peer address, so this test runs CIO on a free port of the loopback.
+ * peer address, so this test runs Netty, the production engine, on a free port of the loopback.
  */
 class ClientAddressTest {
     /** A client of `/origin`, the address the server sees for the call. */
@@ -39,7 +39,7 @@ class ClientAddressTest {
     private fun behindAProxy(proxies: TrustedProxies, block: suspend Asker.() -> Unit) = runTest {
         // On the real clock: the sockets are real.
         withContext(Dispatchers.Default) {
-            val server = embeddedServer(CIO, port = 0, host = "127.0.0.1") {
+            val server = embeddedServer(Netty, port = 0, host = "127.0.0.1") {
                 install(ClientAddress) { this.proxies = proxies }
                 routing { get("/origin") { call.respondText(call.request.origin.remoteAddress) } }
             }.startSuspend(wait = false)

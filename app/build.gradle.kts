@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// The server application: `ostrom-server` serves HTTP on Ktor's CIO engine (role checked, migrations verified, graceful
+// The server application: `ostrom-server` serves HTTP on Ktor's Netty engine (role checked, migrations verified, graceful
 // drain on SIGTERM), `ostrom-server migrate` applies every module's migrations with the owner's credentials, and
 // `ostrom-server seed-test-account` creates a QA account. Depends on every module of modules/, and on the enterprise
 // modules of ee/modules/ when that directory is present (an Apache-2.0 build without ee/ compiles the same code with none).
