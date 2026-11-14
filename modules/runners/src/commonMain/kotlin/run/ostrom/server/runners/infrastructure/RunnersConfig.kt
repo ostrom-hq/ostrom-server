@@ -14,8 +14,8 @@ import run.ostrom.server.kernel.config.InvalidConfigException
  * @property serverUrl The URL runners reach the server at (`OSTROM_RUNNERS_SERVER_URL`), required for Docker and
  *   registered runners; a Kubernetes session's is the cloud runtime's, else this one (the in-cluster service URL of
  *   an install from before cloud profiles, which a restricted session can reach), else `OSTROM_PUBLIC_URL`.
- * @property runnerImage The image of a Docker or registered session: the runner, the agents and the `ostrom` CLI; the
- *   runner image of a Kubernetes one while the cloud runtime names none.
+ * @property runnerImage The session image of a Docker or registered session (the agents, git, the session's accounts),
+ *   and the runner image, `ostrom` at /usr/local/bin, of every session while the cloud runtime names none.
  * @property kubernetes The pods' priority class and the server pods' labels, for the Kubernetes sessions.
  * @property docker The Docker runtime's settings, when [driver] is `docker`.
  * @property replicaUrl The URL the other replicas reach this one at (`OSTROM_RUNNERS_REPLICA_URL`, the pod's address

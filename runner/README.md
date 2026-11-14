@@ -1,7 +1,11 @@
 # The runner of cloud sessions
 
-`ostrom-runner` is the process of a cloud session (module `runners` on the server side). A session runs the image
-three times, as three containers; each pair shares at most one socket directory:
+`ostrom-runner` was the process of a cloud session (module `runners` on the server side). The server's Kubernetes, Docker
+and registered drivers now run the CLI's `ostrom` instead (`/opt/ostrom/ostrom cloud runner|agent-supervisor|check-host`,
+ostrom-cli's `runner/README.md`), delivered from the runner image; this module and its image stay until they are removed.
+The image also holds the CLI's `ostrom` at `/usr/local/bin`, so it is both the session and the runner image (TeamCode's
+template image). A session ran the image three times, as three containers; each pair shares at most one socket
+directory:
 
 - **The agent host** (`ostrom-runner agent-host`, UID 1001, the agent's container). It owns the workspace and runs
   each terminal the runner asks for on a PTY: `/bin/sh -c` cloning the repository and starting the agent, then a
@@ -28,9 +32,17 @@ On Kubernetes the agent host is a native sidecar of the session pod (an init con
 **Kubernetes 1.29 or later**), so the pod ends when the runner ends. The token and the first message reach the
 runner's container only, as variables the kubelet reads from the execution's Secret (`secretKeyRef`): they are in
 no file, in no volume, and not in the pod's spec. The check host is a second native sidecar. The pod does not share
-its process namespace. On Docker, the driver runs the same three containers.
+its process namespace. On Docker, the driver runs the same three containers, after a delivery container from the runner
+image that mounts the execution's binary volume (`ostrom-ws-<session>-e<epoch>-bin`) over the binary's directory, so
+the engine copies the binary into it; the three containers mount it read-only at `/opt/ostrom`. The volume is removed
+with the execution's containers, and with the workspace.
 
 ## A registered runner on a machine (`ostrom-runner machine`)
+
+The server's plans now carry the delivery container, which `ostrom-runner machine` refuses: a machine runs the CLI's
+`ostrom cloud machine` (ostrom-cli's `runner/README.md`), from this image with `--entrypoint /usr/local/bin/ostrom` or
+from the CLI's runner image. A machine that pins `OSTROM_RUNNER_SESSION_IMAGE` also pins `OSTROM_RUNNER_DELIVERY_IMAGE`.
+What follows describes `ostrom-runner machine`, until it is removed.
 
 An owner or an admin registers a machine of the organization with `POST /api/v1/runners`; the answer shows the
 runner's key once. On that machine, `ostrom-runner machine` signs of life with it on

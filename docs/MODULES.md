@@ -404,6 +404,20 @@ versioned cloud profiles (cluster, namespace, the team's own session image, allo
 resources, idle timeouts) and assign them to members; a published version never changes. Every save is optimistic (a
 `409` when another came first) and audited without a credential.
 
+Every session gets the CLI's `ostrom` from the runner image the runtime names (`OSTROM_RUNNERS_IMAGE` while it names
+none), read at each execution's start, at the runtime's binary path (`/usr/local/bin/ostrom` by default), and its
+containers run `/opt/ostrom/ostrom cloud runner|agent-supervisor|check-host` (TeamCode's delivery). On Kubernetes an
+init container copies the binary into the pod's binary volume; the containers run the profile's image. On Docker and on
+registered runners, which have no profile, the execution's delivery container (`<execution>-bin`, the runner image, the
+runner's uid) mounts the execution's binary volume (`ostrom-ws-<session>-e<epoch>-bin`, labelled with the session and
+the epoch) over the binary's directory, so the engine copies that directory into it, and exits; the other containers
+run `OSTROM_RUNNERS_IMAGE`, the instance's session image, with the volume read-only at `/opt/ostrom`. The binary volume
+is removed with the execution's containers, and with the workspace (a volume still in use is retried later). A runner
+image whose binary directory holds anything but `ostrom` copies that too, and the agent finds it first on its `PATH`:
+the CLI's `ghcr.io/ostrom-hq/ostrom-runner` holds `ostrom` alone. A registered machine runs the CLI's
+`ostrom cloud machine`; one that pins its session image also pins its delivery image (ostrom-cli's
+`runner/README.md`).
+
 #### Push notifications
 
 Ported from TeamCode's docs/notifications.md ("Push"). The phone app registers its FCM registration token (iOS and

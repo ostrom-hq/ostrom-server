@@ -4,11 +4,20 @@ name: Runner image
 # GHCR (private package) and to Docker Hub, docker.io/ostromhq/ostrom-runner (public, as the server image): the
 # console's journeys in ostrom-web start their cloud sessions and machines on it, and that repository's token cannot
 # read the GHCR package. Pull requests stay on the one `ci` job (org CI rules), which builds and tests :runner.
+#
+# The image holds the CLI's `ostrom` at /usr/local/bin: the server delivers the binary of its runner image (the cloud
+# runtime's, else OSTROM_RUNNERS_IMAGE, this image by default) into each session's /opt/ostrom, and the session's
+# containers run `/opt/ostrom/ostrom cloud …`, so this image is the session and the runner image at once, as TeamCode's
+# template image is. The binary comes from the CLI's latest release, else is built from ostrom-cli (`cli_ref`, main).
 on:
   push:
     branches: [main]
     paths: ["runner/**", ".github/workflows/runner-image.yml"]
   workflow_dispatch:
+    inputs:
+      cli_ref:
+        description: ostrom-cli ref whose `ostrom` the image holds when the CLI has no release yet
+        default: main
 
 concurrency:
   group: runner-image-${{ github.ref }}
@@ -47,14 +56,52 @@ jobs:
       - name: Runner binary (linuxX64)
         run: ./gradlew :runner:linkReleaseExecutableLinuxX64
 
-      - name: Build context
+      - name: The ostrom CLI's latest release
+        id: release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLI_REF: ${{ inputs.cli_ref || 'main' }}
         run: |
-          # The ostrom CLI, from its latest release when there is one (the image works without it).
-          gh release download -R ostrom-hq/ostrom-cli --pattern 'ostrom-linux-x64*' -D cli 2>/dev/null || true
-          cli_binary=$(find cli -type f -name 'ostrom-linux-x64*' ! -name '*.sha256' 2>/dev/null | head -n 1 || true)
-          [ -n "$cli_binary" ] || echo "no ostrom CLI release yet"
+          gh release download -R ostrom-hq/ostrom-cli --pattern 'ostrom-linux-x64*' -D cli-release 2>/dev/null || true
+          binary=$(find cli-release -type f -name 'ostrom-linux-x64*' ! -name '*.sha256' 2>/dev/null | head -n 1 || true)
+          [ -n "$binary" ] || echo "no ostrom CLI release yet: built from ostrom-cli ${CLI_REF}"
+          echo "binary=$binary" >> "$GITHUB_OUTPUT"
+
+      # Without a release, the CLI's linuxX64 release binary from ostrom-cli, as cli-journey.yml builds it: ostrom-core
+      # next to it, at the commit the CLI pins.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.release.outputs.binary == ''
+        with:
+          repository: ostrom-hq/ostrom-cli
+          ref: ${{ inputs.cli_ref || 'main' }}
+          ssh-key: ${{ secrets.DEPLOY_KEY_CLI }}
+          path: cli
+          persist-credentials: false
+      - name: ostrom-core version the CLI pins
+        id: core
+        if: steps.release.outputs.binary == ''
+        run: echo "ref=$(tr -d '[:space:]' < cli/gradle/ostrom-core.ref)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.release.outputs.binary == ''
+        with:
+          repository: ostrom-hq/ostrom-core
+          ref: ${{ steps.core.outputs.ref }}
+          ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
+          path: ostrom-core
+          persist-credentials: false
+      - name: The CLI's linuxX64 release binary
+        if: steps.release.outputs.binary == ''
+        working-directory: cli
+        run: |
+          sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
+          ./gradlew -Postrom.core.local=true :cli:linkReleaseExecutableLinuxX64
+
+      - name: Build context
+        env:
+          RELEASED: ${{ steps.release.outputs.binary }}
+        run: |
+          cli_binary=${RELEASED:-cli/cli/build/bin/linuxX64/releaseExecutable/ostrom.kexe}
+          test -f "$cli_binary" || { echo "::error::no ostrom CLI binary for the image"; exit 1; }
           ci/session-image-context.sh image runner/build/bin/linuxX64/releaseExecutable/ostrom-runner.kexe "$cli_binary"
           ls -l image/bin
 
@@ -73,6 +120,22 @@ jobs:
           test "$machine" = 2
           test "$unreadable" = 2
           docker run --rm --entrypoint sh ostrom-runner:ci -c 'claude --version && codex --version && git --version && id -u | grep -x 1001'
+
+      - name: Smoke test (the image delivers the CLI's ostrom as the server's delivery container runs it)
+        run: |
+          # The delivery container: the runner's uid, a read-only root, the binary's directory on an empty volume.
+          docker volume create ostrom-smoke-bin > /dev/null
+          docker run --rm --user 1000:1000 --read-only --tmpfs /tmp -e HOME=/tmp --cap-drop ALL \
+            -v ostrom-smoke-bin:/usr/local/bin --entrypoint /usr/local/bin/ostrom ostrom-runner:ci --version
+          # A session's container: the copy, read-only at /opt/ostrom, under the agent's uid.
+          docker run --rm --user 1001:1000 --read-only --tmpfs /tmp -e HOME=/tmp -v ostrom-smoke-bin:/opt/ostrom:ro \
+            --entrypoint /opt/ostrom/ostrom ostrom-runner:ci --version
+          docker volume rm ostrom-smoke-bin > /dev/null
+          # `ostrom cloud machine` refuses a missing configuration (2), as ostrom-runner machine did.
+          set +e
+          docker run --rm --entrypoint /usr/local/bin/ostrom ostrom-runner:ci cloud machine; machine=$?
+          set -e
+          test "$machine" = 2
 
       - name: Push to GHCR
         env:
