@@ -66,8 +66,15 @@ const val WORKFLOW_SESSION_SCOPE = "workflow:session"
  */
 const val MEMORY_SCOPE = "memory:use"
 
+/**
+ * The scope that publishes and shares artifacts, with which an agent token is issued (TeamCode's execution credential
+ * holds it): the agent publishes as the member who launched it, as a plain member; making an artifact public or
+ * deleting one needs a person, whatever the scopes.
+ */
+const val ARTIFACTS_WRITE_SCOPE = "artifacts:write"
+
 /** The scopes an agent token is issued with. */
-val AGENT_SCOPES: Set<String> = setOf(AGENT_SCOPE, WORKFLOW_SESSION_SCOPE, MEMORY_SCOPE)
+val AGENT_SCOPES: Set<String> = setOf(AGENT_SCOPE, WORKFLOW_SESSION_SCOPE, MEMORY_SCOPE, ARTIFACTS_WRITE_SCOPE)
 
 /**
  * The scope that answers a gate. No token the person can create or the CLI holds has it (audit S2-04, S2-31): such a

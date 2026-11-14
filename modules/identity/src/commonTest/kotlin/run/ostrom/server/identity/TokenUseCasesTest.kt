@@ -193,9 +193,9 @@ class TokenUseCasesTest {
         assertEquals(TokenKind.AGENT, issued.token.kind)
         assertEquals("osa_secret1", issued.secret)
         assertEquals(
-            setOf(AGENT_SCOPE, "workflow:session", "memory:use"),
+            setOf(AGENT_SCOPE, "workflow:session", "memory:use", "artifacts:write"),
             issued.token.scopes,
-            "Its session, its workflow step and the memory",
+            "Its session, its workflow step, the memory and the artifacts",
         )
         assertEquals("run-1", issued.token.agentSessionId)
         assertEquals(orgId, issued.token.orgId)

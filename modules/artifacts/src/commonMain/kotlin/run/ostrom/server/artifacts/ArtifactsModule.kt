@@ -54,12 +54,14 @@ import run.ostrom.server.artifacts.infrastructure.SealedViewTickets
 import run.ostrom.server.artifacts.infrastructure.Sha256ContentDigest
 import run.ostrom.server.artifacts.infrastructure.storage.ArtifactStorageRepositoryImpl
 import run.ostrom.server.artifacts.infrastructure.storage.S3ObjectStore
+import run.ostrom.server.artifacts.presentation.ArtifactOrgResolver
 import run.ostrom.server.artifacts.presentation.ArtifactsRoutesDependencies
 import run.ostrom.server.artifacts.presentation.StorageRoutesDependencies
 import run.ostrom.server.artifacts.presentation.artifactContentRoutes
 import run.ostrom.server.artifacts.presentation.artifactStorageRoutes
 import run.ostrom.server.artifacts.presentation.artifactUploadRoutes
 import run.ostrom.server.artifacts.presentation.artifactsRoutes
+import run.ostrom.server.kernel.auth.AgentMembers
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
@@ -104,7 +106,12 @@ object ArtifactsModule : ServerModule {
         single<ViewTicketSeal> { SealedViewTickets(get()) }
         single<ViewerChecks> { KernelViewerChecks(get(), getOrNull()) }
         single<ViewArtifactUseCase> { ViewArtifactUseCaseImpl(get(), get(), get(), get(), get(), get()) }
-        single { ArtifactsRoutesDependencies(get(), get(), get(), get(), get(), get(), get()) }
+        // An agent token is the member who launched it (the launches module's AgentMembers); without that module, no
+        // agent token is anyone here.
+        single { ArtifactOrgResolver(get(), getOrNull<AgentMembers>()) }
+        single {
+            ArtifactsRoutesDependencies(get(), get(), get(), get(), get(), get<ArtifactOrgResolver>(), get())
+        }
         single<ArtifactStorageRepository> { ArtifactStorageRepositoryImpl(get(), lazy { get<SecretCipher>() }) }
         // The bucket an administrator typed: every connection checked where it is made (no link-local, metadata or
         // unspecified address; a private one is allowed, for a bucket on the organization's own network, as in
@@ -124,7 +131,7 @@ object ArtifactsModule : ServerModule {
         }
         single<ArtifactUsageReports> { ArtifactUsageRepositoryImpl(get()) }
         single { ReadArtifactUsageUseCase(get()) }
-        single { StorageRoutesDependencies(get(), get(), get()) }
+        single { StorageRoutesDependencies(get(), get<ArtifactOrgResolver>(), get()) }
         single<ArtifactUploadsRepository> { ArtifactUploadsRepositoryImpl(get()) }
         single<UploadChunks> { BucketUploadChunks(get(), get()) }
         single<CommitArtifactUploadUseCase> {

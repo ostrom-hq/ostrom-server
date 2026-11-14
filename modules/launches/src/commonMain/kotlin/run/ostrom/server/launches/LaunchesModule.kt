@@ -3,6 +3,7 @@ package run.ostrom.server.launches
 
 import run.ostrom.server.automations.domain.WaitAgentResolver
 import run.ostrom.server.gates.domain.services.GateActorResolver
+import run.ostrom.server.kernel.auth.AgentMembers
 import run.ostrom.server.kernel.auth.ModelAccess
 import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.SchemaMigration
@@ -28,6 +29,7 @@ import run.ostrom.server.launches.domain.usecases.OpenRunnerLaunchUseCaseImpl
 import run.ostrom.server.launches.domain.usecases.ReportHooksMissingUseCase
 import run.ostrom.server.launches.domain.usecases.ReportHooksMissingUseCaseImpl
 import run.ostrom.server.launches.infrastructure.IdentityAgentTokens
+import run.ostrom.server.launches.infrastructure.LaunchAgentMembers
 import run.ostrom.server.launches.infrastructure.IdentityLauncherResolver
 import run.ostrom.server.launches.infrastructure.LaunchAgents
 import run.ostrom.server.launches.infrastructure.LaunchGateActors
@@ -64,7 +66,8 @@ import kotlin.time.Duration.Companion.minutes
  * A launch tells the CLI when to look for the hooks and whether to stop an agent without them, and the launch's own
  * agent token records `hooks.missing` in the organization's audit log when none ran.
  * Needs the identity, orgs, gates and runners modules; it binds the secrets module's `CallerResolver` and the
- * automations module's `WaitAgentResolver`, which those modules look up.
+ * automations module's `WaitAgentResolver`, which those modules look up, and the kernel's `AgentMembers`, which the
+ * artifacts module reads an agent token with.
  */
 object LaunchesModule : ServerModule {
     override val name: String = "launches"
@@ -78,6 +81,7 @@ object LaunchesModule : ServerModule {
         single<GateActorResolver> { LaunchGateActors(get(), get()) }
         single<CallerResolver> { LaunchRelayCallers(get(), get()) }
         single<WaitAgentResolver> { LaunchWaitAgents(get(), get()) }
+        single<AgentMembers> { LaunchAgentMembers(get()) }
         single<HooksCheckRules> { OrgsHooksCheckRules(get(), get()) }
         single { LaunchPolicy(get()) }
         single<CheckAgentPolicyUseCase> { CheckAgentPolicyUseCaseImpl(get(), get()) }
