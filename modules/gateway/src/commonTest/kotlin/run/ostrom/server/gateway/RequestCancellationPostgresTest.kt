@@ -3,20 +3,24 @@ package run.ostrom.server.gateway
 
 import run.ostrom.server.gateway.domain.CancellationLimitException
 import run.ostrom.server.gateway.domain.RequestCancellationRepository
-import run.ostrom.server.gateway.infrastructure.CANCELLATION_COUNTS_SQL
-import run.ostrom.server.gateway.infrastructure.CANCELLATION_INSERT_SQL
-import run.ostrom.server.gateway.infrastructure.CANCELLATION_LOCK_SQL
-import run.ostrom.server.gateway.infrastructure.CANCELLATION_PURGE_SQL
-import run.ostrom.server.gateway.infrastructure.CANCELLATION_READ_SQL
+import run.ostrom.server.gateway.infrastructure.GatewayCancellations
 import run.ostrom.server.gateway.infrastructure.RequestCancellationRepositoryImpl
+import run.ostrom.server.gateway.infrastructure.advisoryLock
+import run.ostrom.server.gateway.infrastructure.cancellationCounts
+import run.ostrom.server.gateway.infrastructure.cancellationInsert
+import run.ostrom.server.gateway.infrastructure.cancellationLockKey
+import run.ostrom.server.gateway.infrastructure.cancellationPurge
+import run.ostrom.server.gateway.infrastructure.cancellationRead
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
-import run.ostrom.server.secrets.infrastructure.fetchInOrg
 import run.ostrom.server.sharing.SharingModule
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
+import org.jetbrains.exposed.v1.core.statements.Statement
+import org.jetbrains.exposed.v1.core.statements.StatementBuilder
+import org.jetbrains.exposed.v1.jdbc.select
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -36,7 +40,7 @@ class RequestCancellationPostgresTest {
     private val bob = Gw.otherA.memberId
 
     private fun TestServer.replicas(): List<RequestCancellationRepository> =
-        listOf(koin.get<RequestCancellationRepository>(), RequestCancellationRepositoryImpl(driver))
+        listOf(koin.get<RequestCancellationRepository>(), RequestCancellationRepositoryImpl(koin.get<JdbcDatabase>()))
 
     /** [count] markers of [org], one member each unless [member] is given, alive for a minute. */
     private fun markers(org: Uuid, count: Int, member: Uuid? = null) =
@@ -64,8 +68,10 @@ class RequestCancellationPostgresTest {
         val left = server.database.superuser.fetchAll("SELECT member_id FROM gateway_cancellations").getOrThrow()
         assertEquals(1, left.size)
 
-        val unfiltered = Statement.create("SELECT org_id FROM gateway_cancellations")
-        assertEquals(0, server.driver.fetchInOrg(Gw.orgB, unfiltered).getOrThrow().size, "No WHERE, no leak")
+        val unfiltered = server.koin.get<JdbcDatabase>().inOrg(Gw.orgB) {
+            GatewayCancellations.select(GatewayCancellations.orgId).count()
+        }
+        assertEquals(0L, unfiltered, "No WHERE, no leak")
     }
 
     @Test
@@ -88,26 +94,17 @@ class RequestCancellationPostgresTest {
         val fixtures = server.database.superuser
         fixtures.execute(markers(Gw.orgB, count = 5_000)).getOrThrow()
         fixtures.execute("VACUUM ANALYZE gateway_cancellations").getOrThrow()
-        val values = mapOf(
-            "org_id" to Gw.orgA,
-            "key" to "gateway_cancellations:${Gw.orgA}",
-            "member_id" to ada,
-            "request_id" to Uuid.random(),
+        val requestId = Uuid.random()
+        val statements: List<StatementBuilder.() -> Statement<*>> = listOf(
+            { advisoryLock(cancellationLockKey(Gw.orgA)) },
+            { cancellationPurge(Gw.orgA) },
+            { cancellationCounts(Gw.orgA, ada, requestId).query },
+            { cancellationInsert(Gw.orgA, ada, requestId) },
+            { cancellationRead(Gw.orgA, ada, requestId) },
         )
-        for (sql in listOf(
-            CANCELLATION_LOCK_SQL,
-            CANCELLATION_PURGE_SQL,
-            CANCELLATION_COUNTS_SQL,
-            CANCELLATION_INSERT_SQL,
-            CANCELLATION_READ_SQL,
-        )) {
-            val explained = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql")
-            val statement = values.entries.fold(explained) { bound, (name, value) ->
-                if (":$name" in sql) bound.bind(name, value) else bound
-            }
-            val plan = server.driver.fetchInOrg(Gw.orgA, statement).getOrThrow()
-                .joinToString("\n") { it.get("QUERY PLAN").asString() }
-            assertFalse("Seq Scan" in plan, "$sql scans a table:\n$plan")
+        for (statement in statements) {
+            val plan = server.koin.get<JdbcDatabase>().inOrg(Gw.orgA) { plan(statement) }
+            assertFalse("Seq Scan" in plan, "A cancellation statement scans a table:\n$plan")
         }
     }
 }

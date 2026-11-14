@@ -16,9 +16,6 @@ import org.jetbrains.exposed.v1.jdbc.select
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
-/** The database's clock (`now()`): the rate limits' windows are timed by it, never by a replica's. */
-internal fun databaseNow(): Expression<Instant> = CustomFunction("now", InstantColumnType())
-
 /** [value] bound as a `TIMESTAMPTZ`. */
 internal fun instantParam(value: Instant): Expression<Instant> = QueryParameter(value, InstantColumnType())
 

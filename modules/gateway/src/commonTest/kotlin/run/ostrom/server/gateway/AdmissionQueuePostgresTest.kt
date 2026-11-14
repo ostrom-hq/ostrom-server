@@ -8,37 +8,39 @@ import run.ostrom.server.gateway.domain.QueueCounts
 import run.ostrom.server.gateway.domain.QueueRefusedException
 import run.ostrom.server.gateway.domain.RefusalKind
 import run.ostrom.server.gateway.domain.Workload
-import run.ostrom.server.gateway.infrastructure.ADMISSION_CANDIDATES_SQL
-import run.ostrom.server.gateway.infrastructure.ADMISSION_COUNTS_SQL
-import run.ostrom.server.gateway.infrastructure.ADMISSION_GIVE_BACK_SQL
-import run.ostrom.server.gateway.infrastructure.ADMISSION_LOCK_SQL
-import run.ostrom.server.gateway.infrastructure.ADMISSION_POLL_SQL
-import run.ostrom.server.gateway.infrastructure.ADMISSION_PURGE_SQL
-import run.ostrom.server.gateway.infrastructure.ADMISSION_RELEASE_SQL
-import run.ostrom.server.gateway.infrastructure.ADMISSION_RENEW_SQL
-import run.ostrom.server.gateway.infrastructure.ADMISSION_REQUEUE_SQL
-import run.ostrom.server.gateway.infrastructure.ADMISSION_RUNNING_SQL
-import run.ostrom.server.gateway.infrastructure.ADMISSION_RUN_SQL
-import run.ostrom.server.gateway.infrastructure.ADMISSION_START_SQL
-import run.ostrom.server.gateway.infrastructure.ADMISSION_TURNS_SQL
-import run.ostrom.server.gateway.infrastructure.ADMISSION_TURN_SQL
-import run.ostrom.server.gateway.infrastructure.ADMISSION_WAITED_SQL
-import run.ostrom.server.gateway.infrastructure.ADMISSION_WAITING_SQL
-import run.ostrom.server.gateway.infrastructure.ADMISSION_WAIT_SQL
 import run.ostrom.server.gateway.infrastructure.AdmissionQueueRepositoryImpl
+import run.ostrom.server.gateway.infrastructure.admissionCandidates
+import run.ostrom.server.gateway.infrastructure.admissionCounts
+import run.ostrom.server.gateway.infrastructure.admissionGiveBack
+import run.ostrom.server.gateway.infrastructure.admissionLockKey
+import run.ostrom.server.gateway.infrastructure.admissionPoll
+import run.ostrom.server.gateway.infrastructure.admissionPurge
+import run.ostrom.server.gateway.infrastructure.admissionRelease
+import run.ostrom.server.gateway.infrastructure.admissionRenew
+import run.ostrom.server.gateway.infrastructure.admissionRequeue
+import run.ostrom.server.gateway.infrastructure.admissionRun
+import run.ostrom.server.gateway.infrastructure.admissionRunning
+import run.ostrom.server.gateway.infrastructure.admissionStart
+import run.ostrom.server.gateway.infrastructure.admissionTurn
+import run.ostrom.server.gateway.infrastructure.admissionTurns
+import run.ostrom.server.gateway.infrastructure.admissionWait
+import run.ostrom.server.gateway.infrastructure.admissionWaited
+import run.ostrom.server.gateway.infrastructure.admissionWaiting
+import run.ostrom.server.gateway.infrastructure.advisoryLock
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
-import run.ostrom.server.secrets.infrastructure.inTenant
 import run.ostrom.server.sharing.SharingModule
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import org.jetbrains.exposed.v1.core.statements.Statement
+import org.jetbrains.exposed.v1.core.statements.StatementBuilder
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -68,7 +70,7 @@ class AdmissionQueuePostgresTest {
     ) = AdmissionRequest(Uuid.random(), org, member, "claude", workload, limit, limited)
 
     private fun TestServer.replicas(): List<AdmissionQueueRepository> =
-        listOf(koin.get<AdmissionQueueRepository>(), AdmissionQueueRepositoryImpl(driver))
+        listOf(koin.get<AdmissionQueueRepository>(), AdmissionQueueRepositoryImpl(koin.get<JdbcDatabase>()))
 
     @Test
     fun membersTakeTurnsAndInteractiveCallsGoFirstOnEitherReplica() = serverTest(modules, overrides) { server ->
@@ -228,48 +230,30 @@ class AdmissionQueuePostgresTest {
         listOf("gateway_admissions", "gateway_admission_turns").forEach {
             fixtures.execute("VACUUM ANALYZE $it").getOrThrow()
         }
-        mapOf(
-            "the org locked" to ADMISSION_LOCK_SQL,
-            "the expired dropped" to ADMISSION_PURGE_SQL,
-            "how long it waited" to ADMISSION_WAITED_SQL,
-            "the member's running calls" to ADMISSION_RUNNING_SQL,
-            "the other waiting calls" to ADMISSION_CANDIDATES_SQL,
-            "the turns" to ADMISSION_TURNS_SQL,
-            "a call run at once" to ADMISSION_RUN_SQL,
-            "a waiting call run" to ADMISSION_START_SQL,
-            "the turn taken" to ADMISSION_TURN_SQL,
-            "the bounds" to ADMISSION_WAITING_SQL,
-            "a call that waits" to ADMISSION_WAIT_SQL,
-            "a poll" to ADMISSION_POLL_SQL,
-            "a turn given back" to ADMISSION_GIVE_BACK_SQL,
-            "a call back to wait" to ADMISSION_REQUEUE_SQL,
-            "a lease renewed" to ADMISSION_RENEW_SQL,
-            "a call released" to ADMISSION_RELEASE_SQL,
-            "the counts" to ADMISSION_COUNTS_SQL,
-        ).forEach { (what, sql) ->
-            val plan = plan(server, sql)
-            assertFalse("Seq Scan" in plan, "$what scans a table:\n$plan")
-        }
-    }
-
-    private suspend fun plan(server: TestServer, sql: String): String {
-        val values = mapOf(
-            "org_id" to Gw.orgA,
-            "key" to "gateway_admissions:${Gw.orgA}",
-            "member_id" to ada,
-            "scope" to "claude",
-            "workload" to "INTERACTIVE",
-            "turn" to 1L,
-            "before" to 0L,
-            "ready_in" to 0L,
-            "id" to Uuid.random(),
+        val request = call(ada, limit = 1)
+        val id = Uuid.random()
+        val statements: Map<String, StatementBuilder.() -> Statement<*>> = mapOf(
+            "the org locked" to { advisoryLock(admissionLockKey(Gw.orgA)) },
+            "the expired dropped" to { admissionPurge(Gw.orgA) },
+            "how long it waited" to { admissionWaited(Gw.orgA, id).query },
+            "the member's running calls" to { admissionRunning(Gw.orgA, ada).query },
+            "the other waiting calls" to { admissionCandidates(Gw.orgA, "claude", id).query },
+            "the turns" to { admissionTurns(Gw.orgA, "claude", ada).query },
+            "a call run at once" to { admissionRun(request, 1, 0) },
+            "a waiting call run" to { admissionStart(request, 1, 0) },
+            "the turn taken" to { admissionTurn(request, 1) },
+            "the bounds" to { admissionWaiting(Gw.orgA, ada).query },
+            "a call that waits" to { admissionWait(call(ada), 0) },
+            "a poll" to { admissionPoll(Gw.orgA, id, 0) },
+            "a turn given back" to { admissionGiveBack(Gw.orgA, request.id) },
+            "a call back to wait" to { admissionRequeue(Gw.orgA, id) },
+            "a lease renewed" to { admissionRenew(Gw.orgA, id) },
+            "a call released" to { admissionRelease(Gw.orgA, id) },
+            "the counts" to { admissionCounts(Gw.orgA, ada).query },
         )
-        val explained = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql")
-        val statement = values.entries.fold(explained) { bound, (name, value) ->
-            if (":$name" in sql) bound.bind(name, value) else bound
-        }
-        return server.driver.inTenant(Gw.orgA) {
-            fetchAll(statement).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
+        statements.forEach { (what, statement) ->
+            val plan = server.koin.get<JdbcDatabase>().inOrg(Gw.orgA) { plan(statement) }
+            assertFalse("Seq Scan" in plan, "$what scans a table:\n$plan")
         }
     }
 }
