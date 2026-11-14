@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# The Ostrom MCP stdio host image, ghcr.io/ostrom-hq/ostrom-mcp-host (docs/mcp-host.md). The build context is this
+# The Ostrom MCP stdio host image, docker.io/ostromhq/ostrom-mcp-host (docs/mcp-host.md). The build context is this
 # directory, after `./gradlew :mcp-host:installHost` wrote build/install/ostrom-mcp-host/lib:
 #
 #   docker build -t ostrom-mcp-host:dev mcp-host
