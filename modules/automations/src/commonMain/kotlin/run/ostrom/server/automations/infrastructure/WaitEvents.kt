@@ -17,7 +17,8 @@ import kotlin.uuid.Uuid
 /**
  * The event of [type] about this wait, as [OrgEventType] documents it: `{waitId, sessionId?, waitKind, assigneeId}`,
  * and the [action] of an answer. It belongs to the assignee (who sees it besides the owners and the admins); an
- * assignee that is not a member id (an agent) leaves it to the owners and the admins. Never the question, the answer's values or a secret.
+ * assignee that is not a member id (an agent) leaves it to the owners and the admins. Never the question, the
+ * answer's values or a secret.
  */
 internal fun Wait.event(type: OrgEventType, action: String? = null): OrgEventDraft {
     val data = buildMap {
