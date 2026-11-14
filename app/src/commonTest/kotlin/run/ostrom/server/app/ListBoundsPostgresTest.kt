@@ -292,6 +292,10 @@ class ListBoundsPostgresTest {
             "listCloudClusters" to 403,
             "listInstanceAdmins" to 403,
             "listInstanceSettings" to 403,
+            // The hosted MCP processes are read live from an MCP host, which the test server runs none of (409).
+            "listMcpHostedProcesses" to 409,
+            // A webhook's deliveries, under a webhook the bootstrap does not make (404); the events module bounds them.
+            "listWebhookDeliveries" to 404,
         )
 
         /**
