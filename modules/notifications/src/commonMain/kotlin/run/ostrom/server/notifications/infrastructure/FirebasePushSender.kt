@@ -62,22 +62,24 @@ class FirebasePushSender(
 
     override suspend fun send(push: EncryptedPush): PushResult {
         val access = accessTokenOrNull() ?: return PushResult.retry("fcm_token")
-        return post(access, push)?.let { outcome(it) } ?: PushResult.retry("fcm_unreachable")
+        val answer = post(access, push)
+        return if (answer == null) PushResult.retry("fcm_unreachable") else outcome(answer.status, answer.unregistered)
     }
 
-    private suspend fun outcome(answer: Answer): PushResult = when (answer.status) {
-        in SUCCESS -> PushResult.SENT
+    // A status family rather than a range: no bound of a range a real answer never reaches is left for Kover.
+    private suspend fun outcome(status: Int, unregistered: Boolean): PushResult = when {
+        status / STATUS_FAMILY == SUCCESS -> PushResult.SENT
         // Only FCM's UNREGISTERED forgets the phone: a 404 for a project that is not found (a wrong project_id, the
         // API not enabled) would otherwise forget every phone.
-        NOT_FOUND -> if (answer.unregistered) PushResult.UNREGISTERED else PushResult.rejected("fcm_404")
+        status == NOT_FOUND -> if (unregistered) PushResult.UNREGISTERED else PushResult.rejected("fcm_404")
         // The access token was revoked or expired early: the next attempt asks for another.
-        UNAUTHORIZED -> {
+        status == UNAUTHORIZED -> {
             tokens.withLock { token = null }
             PushResult.retry("fcm_unauthorized")
         }
-        TIMEOUT, TOO_MANY -> PushResult.retry("fcm_rate_limited")
-        in SERVER_ERRORS -> PushResult.retry("fcm_unavailable")
-        else -> PushResult.rejected("fcm_${answer.status}")
+        status == TIMEOUT || status == TOO_MANY -> PushResult.retry("fcm_rate_limited")
+        status / STATUS_FAMILY == SERVER_ERROR -> PushResult.retry("fcm_unavailable")
+        else -> PushResult.rejected("fcm_$status")
     }
 
     /**
@@ -223,8 +225,9 @@ private const val UNREGISTERED = "UNREGISTERED"
 private const val UNAUTHORIZED = 401
 private const val TIMEOUT = 408
 private const val TOO_MANY = 429
-private val SUCCESS = 200..299
-private val SERVER_ERRORS = 500..599
+private const val STATUS_FAMILY = 100
+private const val SUCCESS = 2
+private const val SERVER_ERROR = 5
 // The JSON object a text holds, or null.
 private fun jsonObjectOf(text: String): JsonObject? = try {
     Json.parseToJsonElement(text) as? JsonObject
