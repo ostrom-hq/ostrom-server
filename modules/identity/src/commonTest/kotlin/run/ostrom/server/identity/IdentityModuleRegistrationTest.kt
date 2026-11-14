@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.identity
 
+import run.ostrom.server.identity.domain.GitHubAppOAuthClient
+import run.ostrom.server.identity.domain.GitHubAppSignIn
 import run.ostrom.server.identity.domain.MailSender
 import run.ostrom.server.identity.domain.SignInMethodsSource
 import run.ostrom.server.identity.domain.SignUpMode
@@ -70,13 +72,26 @@ class IdentityModuleRegistrationTest {
         assertFalse(koin.get<MailAvailability>().available())
     }
 
-    private fun withIdentity(vararg config: Pair<String, String>, block: suspend (Koin) -> Unit) = runTest {
-        val kernel = module {
-            single<ConfigSource> { MapConfigSource(config.toMap()) }
-            single<Clock> { Clock.System }
-            single<InstanceSettings> { settings }
+    @Test
+    fun theGitHubAppsClientBoundByItsModuleSignsPeopleInFirst() = runTest {
+        val client = GitHubAppOAuthClient("Iv1.app", "app-secret", "https://gh.test", "https://api.gh.test")
+        val integration = module { single<GitHubAppSignIn> { GitHubAppSignIn { client } } }
+        val app = koinApplication { modules(kernel(), integration, IdentityModule.koinModule) }
+        try {
+            assertEquals("Iv1.app", app.koin.get<SignInSettings>().github()?.client?.clientId)
+        } finally {
+            app.close()
         }
-        val app = koinApplication { modules(kernel, IdentityModule.koinModule) }
+    }
+
+    private fun kernel(vararg config: Pair<String, String>) = module {
+        single<ConfigSource> { MapConfigSource(config.toMap()) }
+        single<Clock> { Clock.System }
+        single<InstanceSettings> { settings }
+    }
+
+    private fun withIdentity(vararg config: Pair<String, String>, block: suspend (Koin) -> Unit) = runTest {
+        val app = koinApplication { modules(kernel(*config), IdentityModule.koinModule) }
         try {
             block(app.koin)
         } finally {
