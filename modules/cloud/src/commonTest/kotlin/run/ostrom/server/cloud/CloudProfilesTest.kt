@@ -18,6 +18,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
 import kotlin.uuid.Uuid
@@ -26,7 +27,7 @@ class CloudProfilesTest {
     private val clusters = MemoryClusters()
     private val repository = MemoryProfiles()
     private val clock = SettableClock()
-    private val profiles = CloudProfilesUseCaseImpl(repository, clusters, clock)
+    private val profiles = CloudProfilesUseCaseImpl(repository, clusters, clock, EveryoneIsAMember)
     private val cluster = CloudCluster(
         Uuid.random(), "prod", "https://k8s.acme.dev", listOf("sessions"), 10, null, 1, true, true, NOW, NOW,
     )
@@ -149,5 +150,14 @@ class CloudProfilesTest {
             checked.create(admin, base.copy(assignedMemberIds = setOf(BOB.toString(), "someone-else")))
         }
         assertTrue("not a member" in refused.message.orEmpty())
+    }
+
+    @Test
+    fun withoutTheOrgsModuleNobodyIsAMember() = runTest {
+        assertFalse(NoMembers.isActiveMember(ORG_A, BOB.toString()))
+    }
+
+    private object EveryoneIsAMember : MemberDirectory {
+        override suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean = true
     }
 }

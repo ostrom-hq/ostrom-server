@@ -56,7 +56,7 @@ class CloudProfilesUseCaseImpl(
     private val repository: CloudProfilesRepository,
     private val clusters: CloudClustersRepository,
     private val clock: Clock,
-    private val members: MemberDirectory? = null,
+    private val members: MemberDirectory,
 ) : CloudProfilesUseCase {
     override suspend fun list(caller: Caller): List<CloudProfile> {
         val all = repository.list(caller.orgId)
@@ -98,9 +98,8 @@ class CloudProfilesUseCaseImpl(
 
     // Only the organization's members: an id of someone else, or of a member who left, never gets the profile.
     private suspend fun membersProblem(orgId: Uuid, input: CloudProfileInput): String? {
-        val directory = members ?: return null
         return "assignedMemberIds names someone not a member of the organization."
-            .takeIf { input.assignedMemberIds.any { !directory.isActiveMember(orgId, it) } }
+            .takeIf { input.assignedMemberIds.any { !members.isActiveMember(orgId, it) } }
     }
 
     private companion object {
