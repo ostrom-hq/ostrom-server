@@ -3,7 +3,11 @@ package run.ostrom.server.sessions
 
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.gates.domain.services.GateSessions
+import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.database.repeatDue
+import run.ostrom.server.kernel.database.scheduledWork
+import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.observability.CachedCount
 import run.ostrom.server.kernel.observability.OstromMetrics
@@ -35,16 +39,14 @@ import run.ostrom.server.sessions.domain.usecases.SweepStaleSessionsUseCaseImpl
 import run.ostrom.server.sessions.infrastructure.ActiveSessionsCount
 import run.ostrom.server.sessions.infrastructure.PostgresSessionsRepository
 import run.ostrom.server.sessions.infrastructure.SessionsAgentDirectory
-import run.ostrom.server.sessions.infrastructure.SessionsReceiptOwners
 import run.ostrom.server.sessions.infrastructure.SessionsGateGuard
 import run.ostrom.server.sessions.infrastructure.SessionsMigrations
+import run.ostrom.server.sessions.infrastructure.SessionsReceiptOwners
 import run.ostrom.server.sessions.presentation.SessionsRoutesDependencies
 import run.ostrom.server.sessions.presentation.sessionsRoutes
 import io.ktor.server.routing.Route
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.supervisorScope
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
@@ -90,15 +92,17 @@ object SessionsModule : ServerModule {
     override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.SESSIONS)
 
     /**
-     * Closes the lost sessions every 30 s; a failing run is logged by the server's scope and the next one runs. Keeps
-     * the count of the `ostrom.sessions.active{where="local"}` gauge the same way.
+     * Closes the lost sessions every 30 s, on one replica at a time (ScheduledWork); a failing run is logged and the
+     * next one runs. Keeps the count of the `ostrom.sessions.active{where="local"}` gauge on every replica.
      */
     override fun start(scope: CoroutineScope, koin: Koin) {
         val sweep = koin.get<SweepStaleSessionsUseCase>()
+        val logger = koin.get<Logger>()
+        val work = koin.scheduledWork()
+        val every = SweepStaleSessionsUseCaseImpl.EVERY
         scope.launch {
-            while (true) {
-                delay(SweepStaleSessionsUseCaseImpl.EVERY)
-                supervisorScope { launch { sweep() } }
+            work.repeatDue(ScheduledJob("sessions/sweep", every, every), logger, "stale session sweep failed") {
+                sweep()
             }
         }
         val active = koin.get<CachedCount>(named(ACTIVE_SESSIONS))

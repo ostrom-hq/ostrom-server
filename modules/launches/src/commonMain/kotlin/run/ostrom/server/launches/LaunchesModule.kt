@@ -4,7 +4,10 @@ package run.ostrom.server.launches
 import run.ostrom.server.automations.domain.WaitAgentResolver
 import run.ostrom.server.gates.domain.services.GateActorResolver
 import run.ostrom.server.kernel.auth.ModelAccess
+import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.database.repeatDue
+import run.ostrom.server.kernel.database.scheduledWork
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.launches.domain.repositories.LaunchesRepository
@@ -40,9 +43,7 @@ import run.ostrom.server.launches.presentation.LaunchesRoutesDependencies
 import run.ostrom.server.launches.presentation.launchesRoutes
 import run.ostrom.server.secrets.domain.CallerResolver
 import io.ktor.server.routing.Route
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.koin.core.Koin
 import org.koin.core.module.Module
@@ -51,6 +52,7 @@ import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 
 /**
  * The launches module: `ostrom <agent>` reads the organization's policy, then creates a launch and gets the agent
@@ -93,22 +95,20 @@ object LaunchesModule : ServerModule {
     /** How long a launch is kept once expired: its agent token no longer acts, and nothing reads it afterwards. */
     val LAUNCH_RETENTION: Duration = 30.days
 
+    /** The longest the hourly purge may take. */
+    private val PURGE_TIMEOUT: Duration = 5.minutes
+
     // Every hour, the launches expired more than LAUNCH_RETENTION ago are deleted: a row per `ostrom <agent>`, they
-    // were kept for ever. A failed purge is logged and tried again the next hour; it never stops the server.
+    // were kept for ever. One replica at a time runs it (ScheduledWork). A failed purge is logged and tried again the
+    // next hour; it never stops the server.
     override fun start(scope: CoroutineScope, koin: Koin) {
         val launches = koin.get<LaunchesRepository>()
         val clock = koin.get<Clock>()
         val logger = koin.get<Logger>()
+        val work = koin.scheduledWork()
         scope.launch {
-            while (true) {
-                try {
-                    launches.purge(clock.now() - LAUNCH_RETENTION)
-                } catch (error: CancellationException) {
-                    throw error
-                } catch (error: Exception) {
-                    logger.warn("launch purge failed", mapOf("error" to error::class.simpleName))
-                }
-                delay(1.hours)
+            work.repeatDue(ScheduledJob("launches/purge", 1.hours, PURGE_TIMEOUT), logger, "launch purge failed") {
+                launches.purge(clock.now() - LAUNCH_RETENTION)
             }
         }
     }

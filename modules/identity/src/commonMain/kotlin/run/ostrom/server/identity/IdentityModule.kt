@@ -170,7 +170,10 @@ import run.ostrom.server.kernel.auth.PhoneUnlockProofs
 import run.ostrom.server.kernel.auth.ServiceKeyAudit
 import run.ostrom.server.kernel.auth.SignOutListener
 import run.ostrom.server.kernel.auth.TokenAuthenticator
+import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.database.repeatDue
+import run.ostrom.server.kernel.database.scheduledWork
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.InstanceBootstrapper
 import run.ostrom.server.kernel.module.ServerModule
@@ -181,12 +184,12 @@ import io.ktor.client.plugins.HttpTimeout
 import io.ktor.server.routing.Route
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
@@ -343,21 +346,24 @@ object IdentityModule : ServerModule {
     /** How long an agent token is kept once expired: it no longer acts, and nothing reads it after its launch. */
     val AGENT_TOKEN_RETENTION: Duration = 7.days
 
+    /** The longest the hourly purge may take. */
+    private val PURGE_TIMEOUT: Duration = 5.minutes
+
     // Every hour, the agent tokens expired more than AGENT_TOKEN_RETENTION ago are deleted: one per launch, they were
-    // kept for ever; and so are the rate limits' windows already over. A failed purge is logged and tried again the
-    // next hour; it never stops the server.
+    // kept for ever; and so are the rate limits' windows already over. One replica at a time runs it (ScheduledWork).
+    // A failed purge is logged and tried again the next hour; it never stops the server.
     override fun start(scope: CoroutineScope, koin: Koin) {
         warnWhenNobodyCanSignUp(scope, koin)
         val tokens = koin.get<ApiTokensRepository>()
         val windows = koin.get<RateLimitWindows>()
         val clock = koin.get<Clock>()
         val logger = koin.get<Logger>()
+        val work = koin.scheduledWork()
         scope.launch {
-            while (true) {
+            work.repeatDue(ScheduledJob("identity/purge", 1.hours, PURGE_TIMEOUT), logger, "identity purge failed") {
                 val before = clock.now() - AGENT_TOKEN_RETENTION
                 logger.purging("agent token purge failed") { tokens.purgeAgentTokens(before) }
                 logger.purging("rate limit purge failed") { windows.purgeExpired() }
-                delay(1.hours)
             }
         }
     }
