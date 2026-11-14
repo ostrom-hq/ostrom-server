@@ -91,7 +91,7 @@ private fun Route.serverRoutes(dependencies: McpRelayRoutesDependencies) = with(
         val request = call.receive<McpServerDto>()
         val payload = request.toPayload(directory.idsByName(caller.orgId, null, request.secretNamesUsed()))
         val server = createServer(caller, payload)
-        recordChange(call, caller, SERVER_CREATED, server.name, emptyMap())
+        recordChange(call, caller, SERVER_CREATED, server.name, server.createdDetails())
         call.respond(HttpStatusCode.Created, server.toDto(directory.namesById(caller.orgId, server.secretIds())))
     }
     put<McpApi.Servers.Name> { params ->
@@ -108,7 +108,8 @@ private fun Route.serverRoutes(dependencies: McpRelayRoutesDependencies) = with(
         } else {
             updateServer(caller, existing.id, payload) to "mcp.server.updated"
         }
-        recordChange(call, caller, event, server.name, emptyMap())
+        val details = if (existing == null) server.createdDetails() else emptyMap()
+        recordChange(call, caller, event, server.name, details)
         call.respond(server.toDto(directory.namesById(caller.orgId, server.secretIds())))
     }
     delete<McpApi.Servers.Name> { params ->

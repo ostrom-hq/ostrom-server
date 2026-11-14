@@ -37,7 +37,7 @@ internal fun Route.personalRoutes(dependencies: McpRelayRoutesDependencies) = wi
         // A member's server names their own personal secrets.
         val payload = request.toPayload(directory.idsByName(caller.orgId, caller.memberId, request.secretNamesUsed()))
         val server = personal.create(caller, payload)
-        recordChange(call, caller, "mcp.server.personal.created", server.name, emptyMap())
+        recordChange(call, caller, "mcp.server.personal.created", server.name, server.createdDetails())
         call.respond(HttpStatusCode.Created, server.toDto(directory.namesById(caller.orgId, server.secretIds())))
     }
     put<MyMcpServersApi.Name> { params ->
