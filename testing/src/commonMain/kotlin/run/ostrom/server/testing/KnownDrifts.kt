@@ -12,5 +12,8 @@ object KnownDrifts {
      * Each drift's key ([Drift.key], such as `listThings 200 $.id MISSING`) to why it waits. Empty: every answer the
      * tests see follows the ostrom-core contract.
      */
-    val drifts: Map<String, String> = emptyMap()
+    val drifts: Map<String, String> = mapOf(
+        // ostrom-core#189 declares it (ArtifactConflict); gradle/ostrom-core.ref moves to it with the next bump.
+        "publishArtifactVersion 409 \$.current UNDECLARED" to "ostrom-core#189, past the pinned contract",
+    )
 }
