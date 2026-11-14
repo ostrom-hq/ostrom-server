@@ -7,6 +7,7 @@ import run.ostrom.server.runners.infrastructure.TerminalRelay
 import run.ostrom.server.runners.presentation.TerminalCloseCodes
 import run.ostrom.server.runners.presentation.TerminalControl
 import run.ostrom.server.runners.presentation.TerminalJson
+import run.ostrom.server.runners.presentation.MemberAttachment
 import run.ostrom.server.runners.presentation.MemberAttachment.Companion.afterHop
 import run.ostrom.server.runners.presentation.MemberAttachment.Ended
 import run.ostrom.server.runners.presentation.closeReason
@@ -28,6 +29,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.uuid.Uuid
 
 /** The terminal protocol's pieces that need no socket: the queues' pumps, close reasons, the plugin. */
@@ -55,9 +57,14 @@ class TerminalProtocolTest {
         val queue = Channel<TerminalRelay.ClientBound>(Channel.UNLIMITED)
         queue.send(TerminalRelay.ClientBound.Output("$ ".encodeToByteArray()))
         queue.send(TerminalRelay.ClientBound.Runner(true))
+        val cursor = TerminalRelay.Cursor(Uuid.random(), 2)
+        queue.send(TerminalRelay.ClientBound.Joined(cursor))
         queue.close()
         val sent = mutableListOf<Frame>()
-        forwardToClient(queue) { sent += it }
+        val joined = mutableListOf<TerminalRelay.Cursor>()
+        forwardToClient(queue, joined = { joined += it }) { sent += it }
+
+        assertEquals(listOf(cursor), joined, "A cursor is handed over, never sent as it is")
 
         assertEquals("$ ", assertIs<Frame.Binary>(sent[0]).readBytes().decodeToString())
         val state = TerminalJson.decodeFromString(
@@ -81,8 +88,20 @@ class TerminalProtocolTest {
         val queue = Channel<TerminalRelay.ClientBound>(Channel.UNLIMITED)
         queue.close()
         val sent = mutableListOf<Frame>()
-        forwardToClient(queue, { hopClosing(moved) }) { sent += it }
+        forwardToClient(queue, { hopClosing(moved) }, {}) { sent += it }
         assertEquals(TerminalCloseCodes.MOVED, assertIs<Frame.Close>(sent.single()).readReason()?.code)
+    }
+
+    @Test
+    fun aHopsCursorIsReadFromItsJoinedFrameOnly() {
+        val cursor = TerminalRelay.Cursor(Uuid.random(), 7)
+        val joined = TerminalJson.encodeToString(
+            TerminalControl.serializer(),
+            TerminalControl.Joined(cursor.room.toString(), cursor.offset),
+        )
+        assertEquals(cursor, MemberAttachment.joinedIn(joined))
+        assertNull(MemberAttachment.joinedIn("""{"type":"runner","connected":true}"""))
+        assertNull(MemberAttachment.joinedIn("not json"))
     }
 
     @Test

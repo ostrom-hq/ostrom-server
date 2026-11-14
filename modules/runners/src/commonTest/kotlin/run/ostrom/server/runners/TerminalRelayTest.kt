@@ -21,7 +21,10 @@ class TerminalRelayTest {
     private val relay = TerminalRelay(scrollbackBytes = 8, clientQueue = 4)
     private val id = Uuid.random()
 
-    private fun ReceiveChannel<ClientBound>.drain(): List<ClientBound> = buildList {
+    /** What a client was sent, its cursors left out (they have their own tests). */
+    private fun ReceiveChannel<ClientBound>.drain(): List<ClientBound> = drainAll().filter { it !is ClientBound.Joined }
+
+    private fun ReceiveChannel<ClientBound>.drainAll(): List<ClientBound> = buildList {
         while (true) add(tryReceive().getOrNull() ?: break)
     }
 
@@ -156,6 +159,63 @@ class TerminalRelayTest {
         assertEquals("bcde", scrollback.snapshot().decodeToString())
         scrollback.append("0123456789".encodeToByteArray())
         assertEquals("6789", scrollback.snapshot().decodeToString())
+    }
+
+    @Test
+    fun aMemberComingBackToTheSameRoomGetsOnlyWhatTheyHaveNotSeen() = runTest {
+        val relay = TerminalRelay(scrollbackBytes = 16)
+        val runner = assertNotNull(relay.connectRunner(id, 1))
+        relay.output(id, runner, "abc".encodeToByteArray())
+        val first = assertNotNull(relay.connectHopClient(id)).outbound.drainAll()
+        val joined = assertIs<ClientBound.Joined>(first[1])
+        assertEquals("abc", first.text())
+        assertEquals(3L, joined.cursor.offset)
+
+        // The hop was dropped (a socket lost), the runner went on: the member comes back with their cursor.
+        relay.output(id, runner, "def".encodeToByteArray())
+        val again = assertNotNull(relay.connectHopClient(id, joined.cursor)).outbound.drainAll()
+        assertEquals("def", again.text(), "Never abc twice")
+        assertEquals(ClientBound.Joined(TerminalRelay.Cursor(joined.cursor.room, 6)), again[1])
+
+        val upToDate = relay.connectClient(id, TerminalRelay.Cursor(joined.cursor.room, 6)).outbound.drainAll()
+        assertEquals(emptyList(), upToDate.filterIsInstance<ClientBound.Output>(), "Nothing missed, nothing sent")
+    }
+
+    @Test
+    fun aMemberFromAnotherRoomOrFromFurtherBackIsResetBeforeTheScrollback() = runTest {
+        val runner = assertNotNull(relay.connectRunner(id, 1))
+        relay.output(id, runner, "0123456789".encodeToByteArray())
+        val reset = TerminalRelay.RESET.decodeToString()
+
+        val elsewhere = relay.connectClient(id, TerminalRelay.Cursor(Uuid.random(), 4)).outbound.drain()
+        assertEquals(reset + "23456789", elsewhere.text(), "Another room: the screen is drawn again")
+        val room = assertIs<ClientBound.Joined>(relay.connectClient(id).outbound.drainAll()[1]).cursor.room
+        val behind = relay.connectClient(id, TerminalRelay.Cursor(room, 1)).outbound.drain()
+        assertEquals(reset + "23456789", behind.text(), "Past the scrollback: a gap, drawn again")
+        val ahead = relay.connectClient(id, TerminalRelay.Cursor(room, 11)).outbound.drain()
+        assertEquals(reset + "23456789", ahead.text(), "A cursor ahead of the room is not one of its places")
+    }
+
+    @Test
+    fun aCursorReadsAsItIsWritten() {
+        val cursor = TerminalRelay.Cursor(Uuid.random(), 42)
+        assertEquals(cursor, TerminalRelay.Cursor.parse(cursor.toString()))
+        assertNull(TerminalRelay.Cursor.parse(null))
+        assertNull(TerminalRelay.Cursor.parse("nothing"))
+        assertNull(TerminalRelay.Cursor.parse("not-a-uuid.4"))
+        assertNull(TerminalRelay.Cursor.parse("${cursor.room}.many"))
+        assertNull(TerminalRelay.Cursor.parse("${cursor.room}.-1"))
+    }
+
+    @Test
+    fun theScrollbackSaysWhatFollowsAnOffset() {
+        val scrollback = Scrollback(4)
+        scrollback.append("abcdef".encodeToByteArray())
+        assertEquals(6L, scrollback.total)
+        assertTrue(scrollback.reaches(2) && scrollback.reaches(6))
+        assertFalse(scrollback.reaches(1) || scrollback.reaches(7))
+        assertEquals("ef", scrollback.since(4).decodeToString())
+        assertEquals("", scrollback.since(6).decodeToString())
     }
 
     @Test

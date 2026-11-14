@@ -13,7 +13,11 @@ import kotlin.uuid.Uuid
  *
  * One room per session: at most one runner link (a newer epoch replaces an older one, an older epoch is refused),
  * any number of client links, and a scrollback of the last [scrollbackBytes] bytes of output that a new client
- * receives first. A client that does not keep up (its queue of [clientQueue] frames is full) is dropped rather
+ * receives first. A client that comes back with its [Cursor] (a member whose terminal moved between replicas) gets
+ * only what it has not seen yet, as TeamCode's attach resumes after the last event it printed, so nothing is printed
+ * twice; when the room is another one, or its scrollback no longer reaches that far (TeamCode's `gap`), the terminal
+ * is reset ([RESET]) before the scrollback, so the screen is drawn again rather than doubled. A client that does not
+ * keep up (its queue of [clientQueue] frames is full) is dropped rather
  * than slowing the others or the runner. The relay lives in the memory of the replica holding the runner's socket;
  * a member attached on another replica is relayed to it as a hop client ([connectHopClient], `TerminalHosts`).
  *
@@ -35,6 +39,40 @@ class TerminalRelay(
 
         /** Whether the runner is connected. */
         data class Runner(val connected: Boolean) : ClientBound
+
+        /**
+         * Where the client now is in the room's output: what it was sent before is up to [cursor], what follows is
+         * counted from it. Never sent to a member: their replica keeps it to come back with.
+         *
+         * @property cursor The room and the bytes of its output sent so far.
+         */
+        data class Joined(val cursor: Cursor) : ClientBound
+    }
+
+    /**
+     * A place in a room's output.
+     *
+     * @property room The room: one stay of a session's terminal in a replica's memory.
+     * @property offset The bytes of output the room relayed before this place.
+     */
+    data class Cursor(val room: Uuid, val offset: Long) {
+        /** `<room>.<offset>`, as a hop's `after` query parameter. */
+        override fun toString(): String = "$room.$offset"
+
+        /** Reading a cursor. */
+        companion object {
+            /**
+             * @param text `<room>.<offset>`, or null.
+             *
+             * @return The cursor, or null when [text] is null or not one.
+             */
+            fun parse(text: String?): Cursor? {
+                val parts = text.orEmpty().split('.', limit = 2)
+                val id = Uuid.parseOrNull(parts.first())
+                val offset = parts.getOrNull(1)?.toLongOrNull()?.takeIf { it >= 0 }
+                return if (id != null && offset != null) Cursor(id, offset) else null
+            }
+        }
     }
 
     /** A frame for the runner. */
@@ -72,6 +110,7 @@ class TerminalRelay(
     }
 
     private class Room(scrollbackBytes: Int) {
+        val id = Uuid.random()
         var runner: RunnerLink? = null
         var lastEpoch = -1L
         val clients = mutableSetOf<ClientLink>()
@@ -128,36 +167,48 @@ class TerminalRelay(
     }
 
     /**
-     * Connects a client. Its queue starts with the scrollback and the runner's state.
+     * Connects a client. Its queue starts with the scrollback (from [after], or reset first: [join]), where it now is
+     * ([ClientBound.Joined]) and the runner's state.
      *
      * @param sessionId The session.
+     * @param after Where the client was, when it comes back.
      *
      * @return Its link.
      */
-    suspend fun connectClient(sessionId: Uuid): ClientLink = mutex.withLock {
-        rooms.getOrPut(sessionId) { Room(scrollbackBytes) }.join(ClientLink(clientQueue))
+    suspend fun connectClient(sessionId: Uuid, after: Cursor? = null): ClientLink = mutex.withLock {
+        rooms.getOrPut(sessionId) { Room(scrollbackBytes) }.join(ClientLink(clientQueue), after)
     }
 
-    private fun Room.join(link: ClientLink): ClientLink {
-        val history = scrollback.snapshot()
+    /**
+     * Adds a client: a new one gets the scrollback; one coming back to this room, what followed its cursor; one coming
+     * from another room, or from further back than the scrollback, a terminal reset, then the scrollback.
+     */
+    private fun Room.join(link: ClientLink, after: Cursor?): ClientLink {
+        val history = when {
+            after == null -> scrollback.snapshot()
+            after.room == id && scrollback.reaches(after.offset) -> scrollback.since(after.offset)
+            else -> RESET + scrollback.snapshot()
+        }
         if (history.isNotEmpty()) link.outbound.trySend(ClientBound.Output(history))
+        link.outbound.trySend(ClientBound.Joined(Cursor(id, scrollback.total)))
         link.outbound.trySend(ClientBound.Runner(runner != null))
         clients += link
         return link
     }
 
     /**
-     * Connects another replica relaying its member to this one's runner. Its queue starts with the scrollback and the
-     * runner's state; it is dropped (its queue closed) once the runner leaves, so that the other replica looks again
+     * Connects another replica relaying its member to this one's runner. Its queue starts as a client's
+     * ([connectClient]); it is dropped (its queue closed) once the runner leaves, so that the other replica looks again
      * for where the runner is.
      *
      * @param sessionId The session.
+     * @param after Where the member was, when they come back.
      *
      * @return Its link, or null when the runner is not here.
      */
-    suspend fun connectHopClient(sessionId: Uuid): ClientLink? = mutex.withLock {
+    suspend fun connectHopClient(sessionId: Uuid, after: Cursor? = null): ClientLink? = mutex.withLock {
         val room = rooms[sessionId]?.takeIf { it.runner != null } ?: return@withLock null
-        room.join(ClientLink(clientQueue, hop = true))
+        room.join(ClientLink(clientQueue, hop = true), after)
     }
 
     /**
@@ -238,6 +289,9 @@ class TerminalRelay(
         const val DEFAULT_SCROLLBACK_BYTES = 256 * 1024
         const val DEFAULT_CLIENT_QUEUE = 256
         private const val RUNNER_QUEUE = 256
+
+        /** ESC c, the terminal's full reset (RIS): the screen is cleared before a scrollback it may have shown. */
+        val RESET: ByteArray = byteArrayOf(0x1b, 'c'.code.toByte())
     }
 }
 
@@ -251,12 +305,17 @@ class Scrollback(private val capacity: Int) {
     private var start = 0
     private var size = 0
 
+    /** The bytes ever appended. */
+    var total: Long = 0
+        private set
+
     /**
      * Appends bytes, forgetting the oldest beyond the capacity.
      *
      * @param bytes The bytes.
      */
     fun append(bytes: ByteArray) {
+        total += bytes.size
         val kept = if (bytes.size > capacity) bytes.copyOfRange(bytes.size - capacity, bytes.size) else bytes
         for (byte in kept) {
             buffer[(start + size) % capacity] = byte
@@ -270,4 +329,23 @@ class Scrollback(private val capacity: Int) {
      * @return The bytes.
      */
     fun snapshot(): ByteArray = ByteArray(size) { buffer[(start + it) % capacity] }
+
+    /**
+     * @param offset A count of bytes appended.
+     *
+     * @return Whether the bytes appended after [offset] are all kept.
+     */
+    fun reaches(offset: Long): Boolean = offset in total - size..total
+
+    /**
+     * Copies the bytes appended after [offset], which must be [reaches].
+     *
+     * @param offset A count of bytes appended.
+     *
+     * @return The bytes.
+     */
+    fun since(offset: Long): ByteArray {
+        val count = (total - offset).toInt()
+        return ByteArray(count) { buffer[(start + size - count + it) % capacity] }
+    }
 }
