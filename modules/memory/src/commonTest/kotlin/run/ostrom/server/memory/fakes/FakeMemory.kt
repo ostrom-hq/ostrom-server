@@ -110,9 +110,9 @@ class RecordingAudit : MemoryAudit {
         actor: AuthenticatedPrincipal,
         event: String,
         id: Uuid,
-        vararg facts: Pair<String, String>,
+        facts: Map<String, String>,
     ) {
-        events += "$event ${facts.joinToString(",") { "${it.first}=${it.second}" }}".trim()
+        events += "$event ${facts.entries.joinToString(",") { "${it.key}=${it.value}" }}".trim()
         actors += actor.subjectId
     }
 }

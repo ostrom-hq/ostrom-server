@@ -19,6 +19,7 @@ import run.ostrom.server.memory.fakes.BEN
 import run.ostrom.server.memory.fakes.FakeProposalStore
 import run.ostrom.server.memory.fakes.FakeProposalWaits
 import run.ostrom.server.memory.fakes.FakeRepository
+import run.ostrom.server.memory.fakes.ORG_A
 import run.ostrom.server.memory.fakes.ORG_B
 import run.ostrom.server.memory.fakes.ROOT
 import run.ostrom.server.memory.fakes.RecordingAudit

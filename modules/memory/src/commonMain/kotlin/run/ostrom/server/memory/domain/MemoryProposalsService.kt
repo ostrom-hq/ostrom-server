@@ -114,8 +114,8 @@ class MemoryProposalsServiceImpl(
             if (!caller.admin && accept) throw MemoryProposalForbiddenException()
         }
         decided.waitId?.let { waits.cancel(caller.orgId, decided.entry.authorId, it) }
-        val facts = if (accept) arrayOf("edited" to "false") else emptyArray()
-        audit.record(caller, if (accept) "memory.accepted" else "memory.rejected", id, *facts)
+        val facts = if (accept) mapOf("edited" to "false") else emptyMap()
+        audit.record(caller.orgId, caller.principal, if (accept) "memory.accepted" else "memory.rejected", id, facts)
         return decided.entry
     }
 
@@ -176,8 +176,8 @@ class MemoryProposalsServiceImpl(
         if (closed) {
             val by = "by" to (wait?.author ?: SYSTEM)
             val event = if (accepted) "memory.accepted" else "memory.rejected"
-            val facts = if (accepted) arrayOf(by, "edited" to "${edits != null}") else arrayOf(by)
-            audit.record(orgId, MEMORY_ACTOR, event, proposal.entry.id, *facts)
+            val facts = if (accepted) mapOf(by, "edited" to "${edits != null}") else mapOf(by)
+            audit.record(orgId, MEMORY_ACTOR, event, proposal.entry.id, facts)
         }
         if (wait?.open == true) waits.cancel(orgId, proposal.entry.authorId, wait.id)
         return closed

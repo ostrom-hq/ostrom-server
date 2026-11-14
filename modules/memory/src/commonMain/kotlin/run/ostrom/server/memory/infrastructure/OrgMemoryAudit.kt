@@ -19,8 +19,8 @@ internal class OrgMemoryAudit(private val trail: OrgAuditTrail) : MemoryAudit {
         actor: AuthenticatedPrincipal,
         event: String,
         id: Uuid,
-        vararg facts: Pair<String, String>,
+        facts: Map<String, String>,
     ) {
-        trail.record(OrgAuditRecord(orgId, actor, event, "memory", id.toString(), facts.toMap()))
+        trail.record(OrgAuditRecord(orgId, actor, event, "memory", id.toString(), facts))
     }
 }

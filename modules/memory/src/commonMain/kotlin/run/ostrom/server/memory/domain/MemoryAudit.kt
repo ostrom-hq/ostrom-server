@@ -20,10 +20,10 @@ fun interface MemoryAudit {
         actor: AuthenticatedPrincipal,
         event: String,
         id: Uuid,
-        vararg facts: Pair<String, String>,
+        facts: Map<String, String>,
     )
 }
 
 /** Records a change [caller] made. */
 suspend fun MemoryAudit.record(caller: MemoryCaller, event: String, id: Uuid, vararg facts: Pair<String, String>) =
-    record(caller.orgId, caller.principal, event, id, *facts)
+    record(caller.orgId, caller.principal, event, id, facts.toMap())
