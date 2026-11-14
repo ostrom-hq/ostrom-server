@@ -71,6 +71,7 @@ class FakeCurationRuns : MemoryCurationRuns {
     val broken = mutableSetOf<Uuid>()
     val rooms = mutableListOf<Pair<Uuid, Int>>()
     val recorded = mutableListOf<String>()
+    val retained = mutableListOf<Uuid>()
 
     fun add(orgId: Uuid) {
         organizations += orgId
@@ -93,6 +94,7 @@ class FakeCurationRuns : MemoryCurationRuns {
     }
 
     override suspend fun retain(orgId: Uuid, now: Instant): List<Uuid> {
+        retained += orgId
         if (orgId in broken) error("broken")
         return expired[orgId].orEmpty()
     }

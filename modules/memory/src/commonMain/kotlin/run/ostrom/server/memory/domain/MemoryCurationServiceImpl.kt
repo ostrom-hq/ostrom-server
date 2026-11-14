@@ -13,6 +13,8 @@ import kotlin.uuid.Uuid
  * @param audit The organization's audit log.
  * @param clock The time of a run.
  * @param page How many organizations a run reads at a time.
+ * @param start Where a run starts among the organizations, random by default: it goes on to the last one, then from
+ *   the first back to it, so that no organization always comes last for the run's scopes.
  */
 class MemoryCurationServiceImpl(
     private val store: MemoryCurationStore,
@@ -20,6 +22,7 @@ class MemoryCurationServiceImpl(
     private val audit: MemoryAudit,
     private val clock: Clock,
     private val page: Int = ORGANIZATIONS_PAGE,
+    private val start: () -> Uuid = { Uuid.random() },
 ) : MemoryCurationService {
     override suspend fun settings(caller: MemoryCaller): CurationSettings =
         store.settings(requireAdministrator(caller).orgId)
@@ -66,19 +69,30 @@ class MemoryCurationServiceImpl(
     override suspend fun run(runId: String): CurationReport {
         var report = CurationReport(0, 0, 0, 0)
         var failure: Exception? = null
-        var after: Uuid? = null
-        do {
-            val organizations = runs.organizations(after, page)
-            for (orgId in organizations) {
-                val room = MemoryRules.CURATION_SCOPES - report.scopes
-                val (done, failed) = apart { curate(orgId, runId, room) }
-                report += done
-                failure = failure ?: failed
-            }
-            after = organizations.lastOrNull()
-        } while (organizations.size == page)
+        forEachOrganization(start()) { orgId ->
+            val room = MemoryRules.CURATION_SCOPES - report.scopes
+            val (done, failed) = apart { curate(orgId, runId, room) }
+            report += done
+            failure = failure ?: failed
+        }
         failure?.let { throw it }
         return report
+    }
+
+    /** Every organization once: those after [start], then from the first up to [start]. */
+    private suspend fun forEachOrganization(start: Uuid, block: suspend (Uuid) -> Unit) {
+        var after: Uuid? = start
+        var wrapped = false
+        var reading = true
+        while (reading) {
+            val organizations = runs.organizations(after, page)
+            val within = if (wrapped) organizations.filter { it.toString() <= start.toString() } else organizations
+            for (orgId in within) block(orgId)
+            val more = organizations.size == page && within.size == organizations.size
+            reading = more || !wrapped
+            after = if (more) organizations.last() else null
+            if (!more) wrapped = true
+        }
     }
 
     /** One organization's run: its retention, then its due scopes within [room]. */

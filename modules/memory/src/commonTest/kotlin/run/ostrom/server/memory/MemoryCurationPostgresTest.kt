@@ -264,6 +264,9 @@ class MemoryCurationPostgresTest {
         val eves = note("Eve's", by = caller(EVE, ORG_B))
         sql("UPDATE memory_entries SET expires_at = now() - INTERVAL '8 days' WHERE id = '$soon'")
         sql("UPDATE memory_entries SET expires_at = now() - INTERVAL '1 day' WHERE id = '$recent'")
+        val proposed = note("Waiting proposal", scope = MemoryScope.TEAM)
+        sql("UPDATE memory_entries SET status = 'proposed', expires_at = now() - INTERVAL '8 days' " +
+            "WHERE id = '$proposed'")
         sql("UPDATE memory_entries SET status = 'superseded', updated_at = now() - INTERVAL '91 days' " +
             "WHERE id = '$old'")
         assertEquals(setOf(ORG_A, ORG_B), runs.organizations(null, 10).toSet())
@@ -273,7 +276,7 @@ class MemoryCurationPostgresTest {
         val report = curation.run("run-1")
         assertEquals(1 to 0, report.expired to report.scopes)
         assertEquals(0, count("id IN ('$soon', '$old')"))
-        assertEquals(2, count("id IN ('$recent', '$eves')"), "an entry expired recently is only hidden")
+        assertEquals(3, count("id IN ('$recent', '$eves', '$proposed')"), "expired recently, or still a proposal")
 
         // An answered review is kept 30 days.
         enable("root", true)

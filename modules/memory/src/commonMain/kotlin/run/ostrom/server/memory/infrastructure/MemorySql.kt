@@ -54,7 +54,8 @@ internal suspend fun QueryExecutor.proposalsOf(orgId: Uuid, author: String): Int
 ).getOrThrow().first().get("n").asInt()
 
 /**
- * The older entry becomes `superseded` by the newer one, once: a concurrent change loses on its status and version.
+ * The older entry becomes `superseded` by the newer one, still active, once: a concurrent change loses on the older
+ * entry's status and version.
  * The newer entry names it (`supersedes_id`) unless it already names another. Nothing is deleted. One statement.
  *
  * @return The older entry's id when this call superseded it; nothing otherwise.
@@ -71,7 +72,10 @@ internal suspend fun QueryExecutor.supersede(
         WITH changed AS (
             UPDATE memory_entries SET status = 'superseded', superseded_by_id = :newer, updated_at = :now,
                 version = version + 1
-            WHERE org_id = :org_id AND id = :older AND status = 'active' AND version = :version RETURNING id
+            WHERE org_id = :org_id AND id = :older AND status = 'active' AND version = :version
+                AND EXISTS (SELECT 1 FROM memory_entries n WHERE n.org_id = :org_id AND n.id = :newer
+                    AND n.status = 'active')
+            RETURNING id
         ), named AS (
             UPDATE memory_entries SET supersedes_id = :older WHERE org_id = :org_id AND id = :newer
                 AND supersedes_id IS NULL AND EXISTS (SELECT 1 FROM changed)

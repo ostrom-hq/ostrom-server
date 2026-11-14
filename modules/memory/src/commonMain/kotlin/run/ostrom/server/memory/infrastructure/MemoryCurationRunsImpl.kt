@@ -141,7 +141,8 @@ internal class MemoryCurationRunsImpl(private val driver: Driver) : MemoryCurati
         val expired = fetchAll(
             Statement.create(
                 "DELETE FROM memory_entries WHERE org_id = :org_id AND id IN (SELECT id FROM memory_entries " +
-                    "WHERE org_id = :org_id AND expires_at < :expired LIMIT :limit) RETURNING id",
+                    "WHERE org_id = :org_id AND status <> 'proposed' AND expires_at < :expired " +
+                    "ORDER BY expires_at LIMIT :limit) RETURNING id",
             ).bind("org_id", orgId).bind("expired", now - MemoryRules.EXPIRED_DAYS.days).bind("limit", RETAIN_LIMIT),
         ).getOrThrow().map { it.id() }
         execute(

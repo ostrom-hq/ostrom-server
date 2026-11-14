@@ -2,11 +2,11 @@
 package run.ostrom.server.memory
 
 import run.ostrom.core.api.models.ServerFeatures
+import run.ostrom.server.kernel.database.ScheduledWork
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.OrgDeletionListener
 import run.ostrom.server.kernel.module.ServerModule
-import run.ostrom.server.kernel.database.ScheduledWork
-import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.memory.domain.MemoryAudit
 import run.ostrom.server.memory.domain.MemoryCurationRuns
 import run.ostrom.server.memory.domain.MemoryCurationService

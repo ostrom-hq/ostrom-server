@@ -36,7 +36,8 @@ class MemoryCurationServiceTest {
     private val clock = object : Clock {
         override fun now(): Instant = FakeRepository.AT
     }
-    private val curation = MemoryCurationServiceImpl(store, runs, audit, clock, page = 2)
+    private val first = Uuid.parse("00000000-0000-0000-0000-000000000000")
+    private val curation = MemoryCurationServiceImpl(store, runs, audit, clock, page = 2) { first }
     private val root = caller(ROOT, admin = true)
 
     @Test
@@ -126,5 +127,17 @@ class MemoryCurationServiceTest {
         val failure = assertFailsWith<IllegalStateException> { curation.run("run-2") }
         assertEquals("broken", failure.message)
         assertEquals(orgs - ORG_A - ORG_B, runs.rooms.map { it.first }, "the third one ran")
+    }
+
+    @Test
+    fun aRunStartsAtARandomOrganizationAndComesBackToItSoNoneIsAlwaysLast() = runTest {
+        val orgs = (1..5).map { Uuid.parse("00000000-0000-0000-0000-00000000000$it") }
+        orgs.forEach(runs::add)
+        orgs.forEach { runs.scopes[it] = List(15) { n -> CurationScope(MemoryScope.PERSONAL, "m$n") } }
+        val middle = Uuid.parse("00000000-0000-0000-0000-000000000003")
+        val wrapping = MemoryCurationServiceImpl(store, runs, audit, clock, page = 2) { middle }
+        assertEquals(20, wrapping.run("run-4").scopes)
+        assertEquals(listOf(orgs[3] to 20, orgs[4] to 5), runs.rooms, "the fourth one first, then no room left")
+        assertEquals(orgs.drop(3) + orgs.take(3), runs.retained, "then from the first, each kept once")
     }
 }

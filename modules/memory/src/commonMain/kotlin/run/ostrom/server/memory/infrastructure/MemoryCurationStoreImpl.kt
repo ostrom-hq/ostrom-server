@@ -123,8 +123,9 @@ internal class MemoryCurationStoreImpl(private val driver: Driver, private val c
             val row = fetchAll(
                 Statement.create(
                     "SELECT $ENTRY_COLUMNS, superseded_by_id FROM memory_entries WHERE org_id = :org_id AND id = :id " +
-                        "AND status = 'superseded' AND (scope = 'team' OR owner_id = :me) FOR UPDATE",
-                ).bind("org_id", caller.orgId).bind("id", id).bind("me", caller.memberId),
+                        "AND status = 'superseded' AND (scope = 'team' OR owner_id = :me) " +
+                        "AND (expires_at IS NULL OR expires_at > :now) FOR UPDATE",
+                ).bind("org_id", caller.orgId).bind("id", id).bind("me", caller.memberId).bind("now", clock.now()),
             ).getOrThrow().firstOrNull() ?: throw MemoryNotFoundException()
             val entry = row.toEntry(emptyList())
             check(entry)
