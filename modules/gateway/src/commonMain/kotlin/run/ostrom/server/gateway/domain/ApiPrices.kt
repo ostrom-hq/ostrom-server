@@ -47,7 +47,9 @@ class DatabaseOrgPrices(private val repository: ApiPriceRepository, private val 
         val rows = repository.rows(orgId)
         if (rows.isEmpty()) return PriceTable()
         val today = ApiPrices.dayOf(clock)
-        return PriceTable(rows.filter { it.effectiveFromDay <= today })
+        // Rows that all start later (a scheduled change) leave the built-in prices in force until then.
+        val current = rows.filter { it.effectiveFromDay <= today }
+        return if (current.isEmpty()) PriceTable() else PriceTable(current)
     }
 }
 

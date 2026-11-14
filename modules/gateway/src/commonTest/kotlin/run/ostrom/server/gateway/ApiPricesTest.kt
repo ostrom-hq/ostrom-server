@@ -80,6 +80,14 @@ class ApiPricesTest {
     }
 
     @Test
+    fun aTableWhoseRowsAllStartLaterLeavesTheBuiltInPricesInForce() = runTest {
+        PutApiPricesUseCaseImpl(repository)(Gw.adminA, listOf(row("claude-sonnet-4", today + 3, input = 9_000_000)))
+        val table = DatabaseOrgPrices(repository, clock).of(Gw.orgA)
+        assertEquals(2_000_000, table.priceOf(InferenceProvider.ANTHROPIC, "claude-sonnet-5")?.input)
+        assertNull(table.priceOf(InferenceProvider.ANTHROPIC, "claude-sonnet-4-6")?.takeIf { it.input == 9_000_000L })
+    }
+
+    @Test
     fun onlyAdministratorsChangeTheTable() = runTest {
         assertFailsWith<AdminRequiredException> { PutApiPricesUseCaseImpl(repository)(Gw.memberA, emptyList()) }
         assertFailsWith<AdminRequiredException> { LoadApiPriceDefaultsUseCaseImpl(repository)(Gw.memberA) }
