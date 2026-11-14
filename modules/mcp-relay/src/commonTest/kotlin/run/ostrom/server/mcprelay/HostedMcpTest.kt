@@ -30,9 +30,10 @@ import kotlin.uuid.Uuid
 
 class HostedMcpTest {
     private val secretId = Uuid.random()
+    private val notice = RecordingHostNotice()
 
     private fun sweeper(repository: McpRelayRepository, members: MemberDirectory?, host: McpHostControl) =
-        RetainHostedMcpProcessesUseCaseImpl(repository, members, host, TestClock())
+        RetainHostedMcpProcessesUseCaseImpl(repository, members, host, TestClock(), notice)
 
     private fun stdio(name: String, sharing: McpSharing) =
         Relay.server(name, transport = McpTransport.STDIO, sharing = sharing).copy(
@@ -115,6 +116,23 @@ class HostedMcpTest {
             HostedSweep.HostUnavailable,
             sweeper(repository, FakeMembers(emptyList()), host)(),
         )
+    }
+
+    @Test
+    fun aSilentOrRefusingHostIsToldToTheOrgsThatHaveHostedProcesses() = runTest {
+        val repository = InMemoryRelayRepository()
+        val shared = stdio("shared", McpSharing.SHARED)
+        val other = stdio("other", McpSharing.SHARED).copy(orgId = Relay.orgB)
+        repository.servers += listOf(shared, other)
+        repository.assign(shared, null)
+        repository.assign(other, null)
+        val host = FakeHostControl(fail = true)
+        assertEquals(HostedSweep.HostUnavailable, sweeper(repository, null, host)())
+        assertEquals(listOf(setOf(Relay.orgA, Relay.orgB) to "unreachable"), notice.notices)
+        notice.notices.clear()
+        host.refuses = true
+        sweeper(repository, null, host)()
+        assertEquals(listOf(setOf(Relay.orgA, Relay.orgB) to "refused"), notice.notices)
     }
 
     @Test

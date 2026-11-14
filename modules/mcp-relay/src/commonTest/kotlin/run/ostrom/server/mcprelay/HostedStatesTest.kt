@@ -3,6 +3,7 @@ package run.ostrom.server.mcprelay
 
 import run.ostrom.server.kernel.errors.OstromException
 import run.ostrom.server.mcprelay.domain.HostedProcessAdministration
+import run.ostrom.server.mcprelay.domain.HostedProcessEvent
 import run.ostrom.server.mcprelay.domain.HostedProcessRecord
 import run.ostrom.server.mcprelay.domain.HostedProcessRef
 import run.ostrom.server.mcprelay.domain.HostedProcessStateRules
@@ -33,6 +34,7 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.uuid.Uuid
 
 class HostedStatesTest {
+    private val notice = RecordingHostNotice()
     private val ref = HostedProcessRef(Relay.orgA, Uuid.random(), null, "org:server:1")
 
     private fun stored(state: String, failure: String?, key: String = ref.key) =
@@ -85,6 +87,29 @@ class HostedStatesTest {
     }
 
     @Test
+    fun aFailureStreakIsOneFailedEventAndItsEndOneRecoveredEventNamingWhatItRecoveredFrom() {
+        val rules = HostedProcessStateRules
+        val now = Relay.epoch + 1.minutes
+        fun eventOf(next: HostedProcessStatus?, before: HostedProcessRecord?) = rules.change(ref, next, before, now)
+        val failed = eventOf(status("failed", "start_failed"), null)!!
+        assertEquals(HostedProcessEvent.FAILED to null, failed.event to failed.recoveredFrom)
+        // Retries, `failed` becoming `backoff` and the streak's later changes tell nothing more.
+        assertNull(eventOf(status("backoff"), stored("failed", "start_failed"))!!.event)
+        assertNull(eventOf(status("starting"), stored("failed", "start_failed"))!!.event)
+        assertNull(eventOf(status("failed", "crashed"), stored("failed", "start_failed"))!!.event)
+        val recovered = eventOf(status("ready"), stored("backoff", "crashed"))!!
+        assertEquals(HostedProcessEvent.RECOVERED to "crashed", recovered.event to recovered.recoveredFrom)
+        // A process that starts, or goes idle, without ever having failed is no event.
+        assertNull(eventOf(status("ready"), null)!!.event)
+        assertNull(eventOf(status("ready"), stored("idle", null))!!.event)
+        // A failure recorded for an earlier key is not this process's: it fails afresh.
+        assertEquals(
+            HostedProcessEvent.FAILED,
+            eventOf(status("failed", "crashed"), stored("failed", "crashed", key = "old"))!!.event,
+        )
+    }
+
+    @Test
     fun theSweepRecordsEachProcessStateAndRemovesTheUnassignedOnes() = runTest {
         val repository = InMemoryRelayRepository()
         val shared = stdio("shared", McpSharing.SHARED)
@@ -105,7 +130,7 @@ class HostedStatesTest {
         host.processes[shared.key()] = status("ready")
         host.processes[personal.key(Relay.memberA.memberId)] = status("failed", "start_failed")
         val clock = TestClock(Relay.epoch + 1.minutes)
-        val sweep = RetainHostedMcpProcessesUseCaseImpl(repository, null, host, clock)
+        val sweep = RetainHostedMcpProcessesUseCaseImpl(repository, null, host, clock, notice)
         assertEquals(HostedSweep.Done(3, 3, 2), sweep())
         val orgA = repository.states.filter { it.orgId == Relay.orgA }.associateBy { it.serverId }
         assertEquals(setOf(shared.id, personal.id), orgA.keys)
@@ -117,6 +142,7 @@ class HostedStatesTest {
         assertEquals(listOf(shared.id), repository.states.filter { it.orgId == Relay.orgA }.map { it.serverId })
         host.statusFails = true
         assertEquals(HostedSweep.StatesUnrecorded, sweep(), "Retained, but no state read: not the host refusing")
+        assertEquals(listOf(setOf(Relay.orgA, Relay.orgB) to "unreachable"), notice.notices, "The host is silent")
     }
 
     @Test

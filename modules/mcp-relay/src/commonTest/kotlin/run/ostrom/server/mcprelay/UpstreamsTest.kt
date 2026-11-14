@@ -4,6 +4,7 @@ package run.ostrom.server.mcprelay
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.mcprelay.domain.HostedProcessStatus
+import run.ostrom.server.mcprelay.domain.McpHostRefusedException
 import run.ostrom.server.mcprelay.domain.McpOutcome
 import run.ostrom.server.mcprelay.domain.McpTransport
 import run.ostrom.server.mcprelay.domain.StdioLauncher
@@ -590,6 +591,16 @@ class UpstreamsTest {
             status = code
             assertFailsWith<IllegalStateException>(body) { upstream.retain(emptyList()) }
         }
+        // Another token (401) or protocol version (400) is the host refusing the relay; a failure is not.
+        answer = """{"error":{"code":"unauthorized"}}"""
+        for (code in listOf(HttpStatusCode.Unauthorized, HttpStatusCode.BadRequest)) {
+            status = code
+            assertFailsWith<McpHostRefusedException> { upstream.retain(emptyList()) }
+            assertFailsWith<McpHostRefusedException> { upstream.status() }
+        }
+        status = HttpStatusCode.InternalServerError
+        val failed = assertFailsWith<IllegalStateException> { upstream.retain(emptyList()) }
+        assertFalse(failed is McpHostRefusedException)
     }
 
     @Test

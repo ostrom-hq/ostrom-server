@@ -53,6 +53,27 @@ enum class OrgEventType(val wire: String, val subject: String) {
      * (`approved` or `rejected` for the answerer's, `closed` for the others).
      */
     APPROVAL_DECIDED("cloud.approval.decided", "approval"),
+
+    /**
+     * A hosted MCP server's process started failing (`failed` or `backoff`), once per failure streak:
+     * `{server, memberId?, state, failure}`. The subject id is the server's name, then `/` and the member's id for a
+     * per-member process. It belongs to the member of a per-member process; a shared process's belongs to nobody (the
+     * owners and the admins see it).
+     */
+    MCP_STDIO_FAILED("mcp.stdio.failed", "mcp"),
+
+    /**
+     * A hosted MCP server's process is `ready` again after a failure: the same facts, `failure` naming what it
+     * recovered from.
+     */
+    MCP_STDIO_RECOVERED("mcp.stdio.recovered", "mcp"),
+
+    /**
+     * The state sweep could not reach the MCP host while the organization has hosted servers: `{reason}`
+     * (`unreachable`, no answer; `refused`, another token or protocol version). At most one every ten minutes per
+     * organization; an event of the whole organization, with an empty subject id.
+     */
+    MCP_UNREACHABLE("mcp.unreachable", "mcp"),
     ;
 
     /** Reads a wire name. */

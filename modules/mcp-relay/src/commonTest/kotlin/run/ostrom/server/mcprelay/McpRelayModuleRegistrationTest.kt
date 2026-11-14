@@ -5,6 +5,8 @@ import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.InvalidConfigException
 import run.ostrom.server.kernel.config.MapConfigSource
 import run.ostrom.server.kernel.logging.LogLevel
+import run.ostrom.server.kernel.events.DiscardingOrgEventPublisher
+import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.mcprelay.domain.ApprovalRequester
 import run.ostrom.server.mcprelay.domain.HostedAssignment
@@ -151,6 +153,7 @@ class McpRelayModuleRegistrationTest {
             modules(
                 module {
                     single<McpRelayRepository> { repository }
+                    single<OrgEventPublisher> { DiscardingOrgEventPublisher() }
                     single<Clock> { TestClock() }
                     single<Logger> { logger }
                 },
@@ -192,6 +195,7 @@ class McpRelayModuleRegistrationTest {
                         MapConfigSource(if (host) values else mapOf())
                     }
                     single<McpRelayRepository> { repository }
+                    single<OrgEventPublisher> { DiscardingOrgEventPublisher() }
                     single<Clock> { TestClock() }
                     single<Logger> { logger }
                     single(McpRelayModule.HTTP_CLIENT) {

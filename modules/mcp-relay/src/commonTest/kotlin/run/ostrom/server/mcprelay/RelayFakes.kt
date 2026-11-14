@@ -379,6 +379,7 @@ class InMemoryRelayRepository : McpRelayRepository {
 
 /** The MCP host's control operations, recorded; [processes] is its status, by relay key. */
 class FakeHostControl(var fail: Boolean = false) : McpHostControl {
+    var refuses = false
     val retained = mutableListOf<Set<String>>()
     val warmed = mutableListOf<UpstreamTarget>()
     val stopped = mutableListOf<String>()
@@ -390,6 +391,7 @@ class FakeHostControl(var fail: Boolean = false) : McpHostControl {
     }
 
     override suspend fun retain(keys: Collection<String>): Int {
+        if (refuses) throw run.ostrom.server.mcprelay.domain.McpHostRefusedException("another token")
         if (fail) error("host down")
         retained += keys.toSet()
         return 3
@@ -412,4 +414,13 @@ class FakeMembers(var ids: List<String>?) : MemberDirectory {
     override suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean = true
 
     override suspend fun memberIds(orgId: Uuid, limit: Int): List<String>? = ids
+}
+
+/** The orgs told that the MCP host cannot be reached, and why. */
+class RecordingHostNotice : run.ostrom.server.mcprelay.domain.HostUnreachableNotice {
+    val notices = mutableListOf<Pair<Set<Uuid>, String>>()
+
+    override suspend fun hostUnreachable(orgIds: Set<Uuid>, reason: String) {
+        notices += orgIds to reason
+    }
 }
