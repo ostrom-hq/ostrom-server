@@ -97,6 +97,15 @@ class ModuleWiringTest {
         withBillingKoin(CLOUD) { koin -> checkCloud(koin, this) }
     }
 
+    @Test
+    fun theConsoleUrlStaysTheEnvironments() = runTest {
+        val set = mapOf("OSTROM_CONSOLE_URL" to "https://c.test")
+        val console = module { single<ConfigSource> { MapConfigSource(set) } }
+        withBillingKoin(CLOUD, console) { koin ->
+            assertEquals("https://c.test", koin.get<BillingSettings>().consoleUrl)
+        }
+    }
+
     private suspend fun checkCloud(koin: Koin, scope: TestScope) {
         assertTrue(koin.get<BillingSettings>().stripeEnabled())
         assertEquals("https://app.ostrom.run", koin.get<BillingSettings>().consoleUrl)
