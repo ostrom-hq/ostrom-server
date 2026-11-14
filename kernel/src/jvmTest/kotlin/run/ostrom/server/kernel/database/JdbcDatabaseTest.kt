@@ -49,16 +49,18 @@ class JdbcDatabaseTest {
     fun aPooledConnectionHasTheSessionTimeouts() {
         runTest {
             val url = System.getenv("OSTROM_TEST_DATABASE_URL") ?: return@runTest skipped()
-            JdbcDatabase(DatabaseConfig.of(url, null, null, 2), 2).let { database ->
+            val database = JdbcDatabase(DatabaseConfig.of(url, null, null, 2), 2)
+            try {
                 val settings = database.query {
                     listOf("statement_timeout", "lock_timeout", "idle_in_transaction_session_timeout").map { show(it) }
                 }
                 assertEquals(listOf("10s", "5s", "15s"), settings)
                 assertEquals("read committed", database.query { show("transaction_isolation") })
                 assertEquals(PoolState(open = true, waiting = 0), database.state())
+            } finally {
                 database.close()
-                assertFalse(database.state().open)
             }
+            assertFalse(database.state().open)
         }
     }
 

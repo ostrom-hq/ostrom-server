@@ -5,12 +5,12 @@ import run.ostrom.server.kernel.SERVER_VERSION
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.InvalidConfigException
 import run.ostrom.server.kernel.config.ServerConfig
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.MigrationRunner
 import run.ostrom.server.kernel.database.MigrationRunnerImpl
 import run.ostrom.server.kernel.database.MigrationsNotAppliedException
-import run.ostrom.server.kernel.database.UnsafeDatabaseRoleException
-import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.PoolHealthCheck
+import run.ostrom.server.kernel.database.UnsafeDatabaseRoleException
 import run.ostrom.server.kernel.database.connectPostgres
 import run.ostrom.server.kernel.database.migrateUnderLock
 import run.ostrom.server.kernel.database.requireRowLevelSecurity
@@ -125,10 +125,10 @@ private fun serve() {
         logger.info("server stopped")
     } catch (error: Throwable) { // not coroutine-reachable: the process entry point, outside any coroutine.
         failed(logger, "server stopped on a failure", error)
-        stopThenFlush(telemetry, exporters) { shutDown(workers, koin, driver).also { jdbc?.close() } }
+        stopThenFlush(telemetry, exporters) { shutDown(workers, koin, driver, jdbc) }
         exitProcess(EXIT_FAILURE)
     }
-    stopThenFlush(telemetry, exporters) { shutDown(workers, koin, driver).also { jdbc?.close() } }
+    stopThenFlush(telemetry, exporters) { shutDown(workers, koin, driver, jdbc) }
 }
 
 /** Applies every module's migrations under the migration lock, with the owner's connection, then exits. */
@@ -237,8 +237,13 @@ private fun failed(logger: Logger, message: String, error: Throwable) {
     logger.error(message, mapOf("error" to error::class.simpleName, "reason" to reason))
 }
 
-private fun shutDown(workers: CoroutineScope, koin: Koin?, driver: Driver?) {
-    workers.cancel()
-    koin?.close()
-    runBlocking { driver?.close() }
+// The JDBC pool is closed even when a module's stop fails, so that its threads never hold the JVM up.
+private fun shutDown(workers: CoroutineScope, koin: Koin?, driver: Driver?, jdbc: JdbcDatabase?) {
+    try {
+        workers.cancel()
+        koin?.close()
+        runBlocking { driver?.close() }
+    } finally {
+        jdbc?.close()
+    }
 }
