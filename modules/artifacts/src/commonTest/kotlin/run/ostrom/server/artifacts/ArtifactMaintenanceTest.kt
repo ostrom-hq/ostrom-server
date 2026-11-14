@@ -15,8 +15,9 @@ import run.ostrom.server.artifacts.fakes.ORG_A
 import run.ostrom.server.artifacts.fakes.ORG_B
 import run.ostrom.server.artifacts.fakes.TestClock
 import run.ostrom.server.artifacts.fakes.active
-import run.ostrom.server.artifacts.infrastructure.ArtifactMaintenanceSweeper
 import run.ostrom.server.kernel.auth.PrincipalKind
+import run.ostrom.server.kernel.database.ScheduledJob
+import run.ostrom.server.kernel.database.ScheduledWork
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.logging.Logger
 import kotlinx.coroutines.CancellationException
@@ -29,8 +30,10 @@ import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
-import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -192,19 +195,51 @@ class ArtifactMaintenanceTest {
     }
 
     @Test
-    fun theSweeperRunsItsPassesLogsAFailureAndStopsWhenCancelled() = runTest {
+    fun theModuleRunsTheMaintenanceUnderItsLeaseAndLogsAFailedPass() = runTest {
+        val leases = mutableListOf<ScheduledJob>()
+        val failed = CompletableDeferred<Unit>()
         val logger = RecordingLogger()
-        val failures = mutableListOf<Exception>(IllegalStateException("database"))
-        var passes = 0
-        ArtifactMaintenanceSweeper({
-            passes++
-            failures.removeFirstOrNull()?.let { throw it }
-        }, logger, 10.milliseconds, passes = 2).run()
-        assertEquals(2, passes)
-        assertEquals(listOf(LogLevel.ERROR to "artifacts maintenance failed"), logger.lines)
-        val cancelled = ArtifactMaintenanceSweeper({ throw CancellationException("stopping") }, logger)
-        assertFailsWith<CancellationException> { cancelled.run() }
-        assertEquals(1, logger.lines.size)
+        val work = object : ScheduledWork {
+            override suspend fun runDue(
+                name: String,
+                interval: Duration,
+                timeout: Duration,
+                block: suspend () -> Unit,
+            ): Boolean {
+                leases += ScheduledJob(name, interval, timeout)
+                try {
+                    block()
+                } finally {
+                    failed.complete(Unit)
+                }
+                return true
+            }
+        }
+        val broken = object : ArtifactMaintenanceRepository by rows {
+            override suspend fun organizations(
+                now: Instant,
+                drafts: Instant,
+                publications: Instant,
+                limit: Int,
+            ): List<Uuid> = error("database")
+        }
+        val contents = BucketArtifactContents(storage, bucket)
+        val pass = ArtifactMaintenance(broken, contents, BucketUploadChunks(storage, bucket), { _, _, _, _ -> })
+        val koin = koinApplication {
+            modules(
+                module {
+                    single { pass }
+                    single<Logger> { logger }
+                    single<ScheduledWork> { work }
+                },
+            )
+        }.koin
+        val job = Job()
+        ArtifactsModule.start(CoroutineScope(coroutineContext + job), koin)
+        failed.await()
+        job.cancel()
+        assertEquals(listOf(ScheduledJob("artifacts/maintain", 1.minutes, 240.seconds)), leases)
+        assertEquals(listOf(LogLevel.WARN to "artifacts maintenance failed"), logger.lines)
     }
 
     @Test

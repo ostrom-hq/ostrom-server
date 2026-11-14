@@ -43,7 +43,6 @@ import run.ostrom.server.artifacts.infrastructure.ArtifactPublicationsRepository
 import run.ostrom.server.artifacts.infrastructure.ArtifactUploadsRepositoryImpl
 import run.ostrom.server.artifacts.infrastructure.ArtifactLifecycleRepositoryImpl
 import run.ostrom.server.artifacts.infrastructure.ArtifactMaintenanceRepositoryImpl
-import run.ostrom.server.artifacts.infrastructure.ArtifactMaintenanceSweeper
 import run.ostrom.server.artifacts.infrastructure.ArtifactUsageRepositoryImpl
 import run.ostrom.server.artifacts.infrastructure.ArtifactsConfig
 import run.ostrom.server.artifacts.infrastructure.ArtifactsMigrations
@@ -61,7 +60,11 @@ import run.ostrom.server.artifacts.presentation.artifactStorageRoutes
 import run.ostrom.server.artifacts.presentation.artifactUploadRoutes
 import run.ostrom.server.artifacts.presentation.artifactsRoutes
 import run.ostrom.server.kernel.config.ConfigSource
+import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.database.repeatDue
+import run.ostrom.server.kernel.database.scheduledWork
+import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.network.outboundHttpClient
 import run.ostrom.server.secrets.domain.SecretCipher
@@ -74,6 +77,8 @@ import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import org.koin.dsl.onClose
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The artifacts module: pages and file sets that members and their agents publish for the organization to read,
@@ -153,9 +158,17 @@ object ArtifactsModule : ServerModule {
     /** Shared artifacts, their viewer and their MCP server. */
     override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.ARTIFACTS)
 
+    /**
+     * The maintenance of artifacts, `artifacts/maintain`: every minute, on one replica at a time (the kernel's
+     * scheduled work, as TeamCode's job of the same name), each pass bounded by TeamCode's 240 seconds. A failed or
+     * overrunning pass is logged (its type only) and the next one runs at its time.
+     */
+    val MAINTENANCE: ScheduledJob = ScheduledJob("artifacts/maintain", 1.minutes, 240.seconds)
+
     override fun start(scope: CoroutineScope, koin: Koin) {
         val maintenance = koin.get<ArtifactMaintenance>()
-        val sweeper = ArtifactMaintenanceSweeper({ maintenance.run() }, koin.get())
-        scope.launch { sweeper.run() }
+        val logger = koin.get<Logger>()
+        val work = koin.scheduledWork()
+        scope.launch { work.repeatDue(MAINTENANCE, logger, "artifacts maintenance failed") { maintenance.run() } }
     }
 }
