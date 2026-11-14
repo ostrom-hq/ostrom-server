@@ -378,6 +378,8 @@ class LaunchPathLoadPostgresTest {
     private fun SentStatement.fresh(prefix: String): Statement {
         val copy = Statement.create(prefix + sql)
         statement?.namedParametersValues.orEmpty().forEach { (name, value) -> copy.bind(name, value) }
+        // The modules on Exposed send `?` placeholders, recorded with their values by position (ExposedRecorder).
+        statement?.positionalParametersValues.orEmpty().forEachIndexed { index, value -> copy.bind(index, value) }
         return copy
     }
 
