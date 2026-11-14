@@ -173,7 +173,8 @@ object RunnersModule : ServerModule {
         single<ReconcileCloudSessionUseCase> {
             // The organization's cloud settings when the cloud module is there (always on a full server).
             val limit = CloudSettingsBackgroundWorkLimit(getOrNull<CloudSettingsSource>())
-            ReconcileCloudSessionUseCaseImpl(get(), get(), get(), get(), get(), get(), getAll<SessionEndListener>(), limit)
+            val ended = getAll<SessionEndListener>()
+            ReconcileCloudSessionUseCaseImpl(get(), get(), get(), get(), get(), get(), ended, limit)
         }
         single { ReconcilerWorker(get(), get(), get(), get()) }
         // The members' GitHub access when the GitHub integration is there (always on a full server).
