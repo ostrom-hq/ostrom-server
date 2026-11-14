@@ -57,7 +57,7 @@ object CloudModule : ServerModule {
         single { CloudRuntimeUseCaseImpl(get(), get(), get(), get(), get()) } binds
             arrayOf(CloudRuntimeUseCase::class, CloudRuntimeSource::class)
         single {
-            CloudClustersUseCaseImpl(get(), get(), get(), get(), get(), get(), ::readTextFileOrNull)
+            CloudClustersUseCaseImpl(get(), get(), get(), get(), get(), get(), readFile = ::readTextFileOrNull)
         } binds
             arrayOf(CloudClustersUseCase::class, CloudClusterAccess::class)
         single<CloudProfilesUseCase> {

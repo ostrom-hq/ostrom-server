@@ -102,6 +102,28 @@ class SessionProfilesTest {
     }
 
     @Test
+    fun anImagePatternMatchesAsAGlobWithoutBacktracking() {
+        fun matches(pattern: String, image: String) = CatalogSessionProfiles.matchesImagePattern(pattern, image)
+        assertTrue(matches("ghcr.io/acme/web:1", "ghcr.io/acme/web:1"), "No star: the exact image")
+        assertFalse(matches("ghcr.io/acme/web:1", "ghcr.io/acme/web:10"))
+        assertTrue(matches("*", ""))
+        assertTrue(matches("ghcr.io/*/web:*", "ghcr.io/acme/web:pr-7"))
+        assertTrue(matches("a*b*c", "abc"), "A star matches an empty run")
+        assertTrue(matches("a*b*b*c", "a-b-b-b-c"), "Each middle at its first place still leaves room")
+        assertFalse(matches("a*a", "a"), "The prefix and the suffix never share a character")
+        assertFalse(matches("ghcr.io/*", "docker.io/acme"), "Another prefix")
+        assertFalse(matches("*:1", "ghcr.io/acme:2"), "Another suffix")
+        assertFalse(matches("a*x*c", "abbc"), "A middle missing")
+        assertFalse(matches("a*bc*c", "abc"), "A middle only found inside the suffix")
+        assertFalse(matches("a.*", "aXb"), "A dot is a dot")
+        // `a*a*…*a*b` against `aaa…a` is exponential for a backtracking regex (`a.*a.*…b`): here, a few passes.
+        val pathological = "a" + "*a".repeat(30) + "*b"
+        val image = "a".repeat(512)
+        assertFalse(matches(pathological, image))
+        assertTrue(matches(pathological, image + "b"))
+    }
+
+    @Test
     fun theProfilesClusterMustBeReachableAndAllowItsNamespace() = runTest {
         catalog.clusters.remove(CLUSTER)
         assertFailsWith<ClusterUnavailableException> { profiles.choose(alice, WEB.id, null) }

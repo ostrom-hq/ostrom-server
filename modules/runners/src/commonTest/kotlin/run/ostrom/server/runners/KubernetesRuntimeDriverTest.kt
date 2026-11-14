@@ -39,11 +39,12 @@ import kotlin.test.assertTrue
 class KubernetesRuntimeDriverTest {
     private val api = FakeApi()
     private var tokenReads = 0
+    private var clusterVersion = 1
     private val settings = KubernetesSettings()
     private val clusters = object : KubernetesClusters {
         override suspend fun <T> use(clusterId: String, block: suspend (KubernetesTarget) -> T): T {
             if (clusterId != CLUSTER) throw RuntimeUnreachableException("gone")
-            return block(KubernetesTarget(api.client, "https://k8s/", "sa-${++tokenReads}"))
+            return block(KubernetesTarget(api.client, "https://k8s/", "sa-${++tokenReads}", clusterVersion))
         }
     }
     private val driver = KubernetesRuntimeDriver(clusters, settings, delivery("runner:1"))
@@ -377,6 +378,19 @@ class KubernetesRuntimeDriverTest {
         val former = agent(5)["resources"]!!.jsonObject
         assertEquals("250m", former["requests"]!!.jsonObject["cpu"]!!.jsonPrimitive.content)
         assertEquals("4Gi", former["limits"]!!.jsonObject["memory"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun aClusterSavedAgainGetsItsPoliciesAgain() = runTest {
+        driver.startExecution(spec(repository = null))
+        driver.startExecution(spec(repository = null))
+        assertEquals(2, api.lines().count { it.endsWith("/networkpolicies") }, "Once at a version")
+        // An administrator saves the cluster (a new API server, say): its version moves.
+        clusterVersion = 2
+        driver.startExecution(spec(repository = null))
+        assertEquals(4, api.lines().count { it.endsWith("/networkpolicies") }, "Again at the new version")
+        driver.startExecution(spec(repository = null))
+        assertEquals(4, api.lines().count { it.endsWith("/networkpolicies") })
     }
 
     @Test

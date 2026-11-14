@@ -5,7 +5,11 @@ import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.settings.InstanceAuditRecord
 import run.ostrom.server.kernel.settings.InstanceAuditTrail
 import run.ostrom.server.secrets.domain.SecretCipher
+import kotlin.concurrent.Volatile
 import kotlin.time.Clock
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** The API server, seen from a pod. */
@@ -20,7 +24,7 @@ const val IN_CLUSTER_CA_FILE: String = "/var/run/secrets/kubernetes.io/serviceac
 /** What the runtime driver reads to reach a cluster: its credentials, opened from their sealed values. */
 interface CloudClusterAccess {
     /**
-     * A cluster with its credentials.
+     * A cluster with its credentials: opened again once its version changes, and once 30 seconds old.
      *
      * @param id The cluster.
      *
@@ -104,6 +108,8 @@ interface CloudClustersUseCase : CloudClusterAccess {
  * @param audit The instance's audit log.
  * @param clock The clock.
  * @param logger Where an unreadable credential and the import are said, never a credential.
+ * @param ttl How long credentials opened are used again while their cluster keeps its version: an in-cluster
+ *   cluster's files are read again past it, since the kubelet rotates the token.
  * @param readFile Reads a text file, null when it cannot: the pod's service account of an in-cluster cluster.
  */
 // The administrator's operations, the driver's read and the one-time import; the file reader is the pod's.
@@ -115,8 +121,16 @@ class CloudClustersUseCaseImpl(
     private val audit: InstanceAuditTrail,
     private val clock: Clock,
     private val logger: Logger,
+    private val ttl: Duration = 30.seconds,
     private val readFile: (String) -> String?,
 ) : CloudClustersUseCase {
+    /** Credentials opened, the version of their cluster then and when. */
+    private class Opened(val version: Int, val at: Instant, val credentials: CloudClusterCredentials)
+
+    // Replaced whole, never changed in place: concurrent reads at worst open the same credentials twice.
+    @Volatile
+    private var cache: Map<Uuid, Opened> = emptyMap()
+
     override suspend fun list(caller: CloudAdminCaller): List<CloudCluster> {
         gate.require(caller)
         return repository.list()
@@ -184,8 +198,20 @@ class CloudClustersUseCaseImpl(
         return both
     }
 
+    // Each operation of the runtime driver asks: the cluster's version only is read then, unless it changed or the
+    // credentials are older than the ttl. A save on any replica bumps the version, so none is used once replaced.
     override suspend fun credentials(id: Uuid): CloudClusterCredentials? {
-        val stored = repository.get(id) ?: return null
+        val version = repository.version(id)
+        val now = clock.now()
+        val held = cache[id]
+        if (held != null && held.version == version && now - held.at < ttl) return held.credentials
+        val read = (if (version == null) null else repository.get(id))?.let { read(it) }
+        // What does not open is asked again at the next operation, as an administrator may enter it any time.
+        cache = if (read == null) cache - id else cache + (id to Opened(read.cluster.version, now, read))
+        return read
+    }
+
+    private suspend fun read(stored: StoredCloudCluster): CloudClusterCredentials? {
         val cluster = stored.cluster
         return when {
             cluster.inCluster -> podCredentials(cluster)

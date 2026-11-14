@@ -65,6 +65,8 @@ class MemoryClusters : CloudClustersRepository {
 
     override suspend fun get(id: Uuid): StoredCloudCluster? = rows[id]
 
+    override suspend fun version(id: Uuid): Int? = rows[id]?.cluster?.version
+
     override suspend fun insert(stored: StoredCloudCluster): Boolean {
         if (rows.values.any { it.cluster.name == stored.cluster.name }) return false
         rows[stored.cluster.id] = stored

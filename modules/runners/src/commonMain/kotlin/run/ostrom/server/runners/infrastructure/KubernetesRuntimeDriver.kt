@@ -45,9 +45,10 @@ import kotlin.uuid.Uuid
  * @property client The HTTP client, trusting the cluster's CA.
  * @property apiUrl The API server.
  * @property token The service-account token.
+ * @property version The cluster's version, which each save in the console increments.
  */
-class KubernetesTarget(val client: HttpClient, val apiUrl: String, val token: String) {
-    override fun toString(): String = "KubernetesTarget(apiUrl=$apiUrl, token=***)"
+class KubernetesTarget(val client: HttpClient, val apiUrl: String, val token: String, val version: Int) {
+    override fun toString(): String = "KubernetesTarget(apiUrl=$apiUrl, token=***, version=$version)"
 }
 
 /** The instance's clusters, as the driver reaches them. */
@@ -85,10 +86,13 @@ class KubernetesRuntimeDriver(
     private val settings: KubernetesSettings,
     private val delivery: RunnerDeliverySource,
 ) : RuntimeDriver {
-    /** The cluster and namespace whose NetworkPolicies are in place, so that later starts skip them. */
+    /**
+     * The cluster, at its version, and namespace whose NetworkPolicies are in place, so that later starts skip them;
+     * a cluster saved again (a new API server, say) gets them again.
+     */
     // Replaced whole, never changed in place: concurrent steps at worst apply the same policies twice (a no-op).
     @Volatile
-    private var policiesApplied: Set<Pair<String, String>> = emptySet()
+    private var policiesApplied: Set<Triple<String, Int, String>> = emptySet()
 
     /** One operation on a session's cluster and namespace. */
     private class Scope(val target: KubernetesTarget, val profile: SessionProfile) {
@@ -210,7 +214,7 @@ class KubernetesRuntimeDriver(
 
     /** The session pods' network: no ingress; DNS, the server, and the internet without private ranges. */
     private suspend fun Scope.applyNetworkPolicies() {
-        val key = profile.clusterId to namespace
+        val key = Triple(profile.clusterId, target.version, namespace)
         if (key in policiesApplied) return
         for (restricted in listOf(true, false)) {
             val name = if (restricted) RESTRICTED_POLICY else OPEN_POLICY

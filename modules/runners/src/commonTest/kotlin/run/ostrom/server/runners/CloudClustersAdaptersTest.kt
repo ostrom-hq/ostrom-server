@@ -62,7 +62,7 @@ class CloudClustersAdaptersTest {
         clusters.ca = "CA-2"
         assertNotSame(first.client, adapter.use(id) { it.client }, "A new CA, a new client")
         clusters.version = 2
-        adapter.use(id) {}
+        assertEquals(2, adapter.use(id) { it.version }, "The cluster's version, for what is applied once per version")
         assertEquals(listOf("CA-1", "CA-2", "CA-2"), made)
         assertEquals(1, adapter.clients(), "One client kept per cluster")
         assertTrue(first.toString().contains("token=***"))
@@ -85,7 +85,7 @@ class CloudClustersAdaptersTest {
         runCurrent()
         // Replaced while the first operation still runs, then used by a second one, which closes nothing.
         clusters.version = 2
-        adapter.use(id) {}
+        assertEquals(2, adapter.use(id) { it.version }, "The cluster's version, for what is applied once per version")
         assertTrue(clients[0].isActive, "Not closed under the operations still running")
         shorter.complete(Unit)
         other.await()

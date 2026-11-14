@@ -22,6 +22,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
 class CloudClustersTest {
@@ -31,12 +32,13 @@ class CloudClustersTest {
     private val audit = RecordingAudit()
     private val logger = RecordingLogger()
     private val cipher = AesGcmSecretCipher(ByteArray(32) { 7 })
+    private val clock = SettableClock()
     private val clusters = CloudClustersUseCaseImpl(
         repository,
         CloudAdminGate(InstanceAdministrators { it == ALICE }),
         cipher,
         audit,
-        SettableClock(),
+        clock,
         logger,
     ) { files[it] }
     private val alice = CloudAdminCaller(ALICE, person = true)
@@ -165,6 +167,33 @@ class CloudClustersTest {
         assertEquals(listOf(cluster.id.toString(), cluster.id.toString()), logger.events.map { it.third["cluster"] })
     }
 
+    @Test
+    fun credentialsAreOpenedOnceForThirtySecondsWhileTheirClusterKeepsItsVersion() = runTest {
+        var reads = 0
+        val counting = object : CloudClustersRepository by repository {
+            override suspend fun get(id: Uuid): StoredCloudCluster? = repository.get(id).also { reads++ }
+        }
+        val gate = CloudAdminGate(InstanceAdministrators { it == ALICE })
+        val cached = CloudClustersUseCaseImpl(counting, gate, cipher, audit, clock, logger) { files[it] }
+        val cluster = cached.create(alice, input)
+
+        assertEquals("eyJ.secret.token", cached.credentials(cluster.id)?.serviceAccountToken)
+        clock.advance(29.seconds)
+        assertEquals("eyJ.secret.token", cached.credentials(cluster.id)?.serviceAccountToken)
+        assertEquals(1, reads, "Opened once, its version only read at the next operation")
+        // Another replica saves a new token: the version says so at once.
+        val rotated = input.copy(version = 1, caCertificate = null, serviceAccountToken = "eyJ.rotated")
+        clusters.update(alice, cluster.id, rotated)
+        assertEquals("eyJ.rotated", cached.credentials(cluster.id)?.serviceAccountToken, "Never the replaced one")
+        assertEquals(2, reads)
+        clock.advance(30.seconds)
+        assertEquals("eyJ.rotated", cached.credentials(cluster.id)?.serviceAccountToken)
+        assertEquals(3, reads, "Opened again past 30 s")
+        repository.rows.remove(cluster.id)
+        assertNull(cached.credentials(cluster.id), "A cluster gone is gone at once")
+        assertEquals(3, reads, "Nothing to open")
+    }
+
     private fun legacy(vararg values: Pair<String, String>): (String) -> String? =
         (mapOf("OSTROM_RUNNERS_DRIVER" to "kubernetes") + values)::get
 
@@ -193,6 +222,8 @@ class CloudClustersTest {
         files[IN_CLUSTER_TOKEN_FILE] = "token-1\n"
         assertEquals("token-1", clusters.credentials(cluster.id)?.serviceAccountToken)
         files[IN_CLUSTER_TOKEN_FILE] = "token-2"
+        assertEquals("token-1", clusters.credentials(cluster.id)?.serviceAccountToken, "Read again past 30 s only")
+        clock.advance(30.seconds)
         assertEquals("token-2", clusters.credentials(cluster.id)?.serviceAccountToken, "The rotated token is used")
         assertEquals(PEM, clusters.credentials(cluster.id)?.caCertificate)
 
