@@ -48,9 +48,8 @@ class EciesPushEncryption : PushEncryption {
     // A P-256 public key in SubjectPublicKeyInfo DER, base64; null for anything else.
     private suspend fun decode(publicKey: String): ECDH.PublicKey? = try {
         ecdh.publicKeyDecoder(EC.Curve.P256)
+            // A key of another curve does not decode as P-256 on the JDK: refused with anything else.
             .decodeFromByteArray(EC.PublicKey.Format.DER, Base64.decode(publicKey))
-            // A DER key of another curve decodes on some providers: its point is not 65 bytes.
-            .takeIf { it.encodeToByteArray(EC.PublicKey.Format.RAW).size == POINT_BYTES }
     } catch (error: CancellationException) {
         throw error
     } catch (_: Exception) {
@@ -61,7 +60,6 @@ class EciesPushEncryption : PushEncryption {
         const val VERSION: Byte = 1
         const val INFO = "ostrom-push-v1"
         const val KEY_BYTES = 32
-        const val POINT_BYTES = 65
         const val MAX_KEY_CHARS = 255
         const val COLLAPSE_CHARS = 32
     }

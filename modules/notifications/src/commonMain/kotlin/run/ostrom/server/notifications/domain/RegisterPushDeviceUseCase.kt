@@ -51,7 +51,7 @@ class RegisterPushDeviceUseCaseImpl(
     ): PushDevice {
         val token = registration.pushToken.trim()
         val locale = registration.locale.orEmpty().trim().ifEmpty { null }
-        val publicKey = registration.publicKey?.trim()?.ifEmpty { null }
+        val publicKey = registration.publicKey.orEmpty().trim().ifEmpty { null }
         val valid = registration.platform in PLATFORMS && (locale == null || LOCALE.matches(locale)) &&
             when (registration.provider) {
                 FCM -> FCM_TOKEN.matches(token) && publicKey != null && encryption.acceptsKey(publicKey)

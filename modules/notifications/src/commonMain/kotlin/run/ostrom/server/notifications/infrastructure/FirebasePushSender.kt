@@ -62,11 +62,10 @@ class FirebasePushSender(
 
     override suspend fun send(push: EncryptedPush): PushResult {
         val access = accessTokenOrNull() ?: return PushResult.retry("fcm_token")
-        return outcome(post(access, push))
+        return post(access, push)?.let { outcome(it) } ?: PushResult.retry("fcm_unreachable")
     }
 
-    private suspend fun outcome(answer: Answer?): PushResult = when (answer?.status) {
-        null -> PushResult.retry("fcm_unreachable")
+    private suspend fun outcome(answer: Answer): PushResult = when (answer.status) {
         in SUCCESS -> PushResult.SENT
         // Only FCM's UNREGISTERED forgets the phone: a 404 for a project that is not found (a wrong project_id, the
         // API not enabled) would otherwise forget every phone.

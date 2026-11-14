@@ -22,7 +22,10 @@ class CachedFirebaseSenders(private val firebase: (FirebaseServiceAccount) -> Fc
     private var current: Pair<String, FcmSender>? = null
 
     override suspend fun sender(serviceAccountJson: String): FcmSender = mutex.withLock {
-        current?.takeIf { it.first == serviceAccountJson }?.second ?: run {
+        val kept = current?.takeIf { it.first == serviceAccountJson }
+        if (kept != null) {
+            kept.second
+        } else {
             val account = FirebaseServiceAccount.parse(serviceAccountJson)
             val sender = if (account == null) INVALID else firebase(account)
             current = serviceAccountJson to sender
