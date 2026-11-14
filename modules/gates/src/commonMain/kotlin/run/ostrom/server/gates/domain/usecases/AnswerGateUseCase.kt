@@ -26,6 +26,7 @@ import run.ostrom.server.gates.domain.services.GateGitHubAccounts
 import run.ostrom.server.gates.domain.services.GateNotifier
 import run.ostrom.server.gates.domain.services.GatePolicies
 import run.ostrom.server.kernel.auth.PhoneUnlockProofs
+import run.ostrom.server.kernel.events.OrgEventType
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -124,6 +125,7 @@ class AnswerGateUseCaseImpl(
             )
             updateGate(next)
             updateRequests(answered)
+            announce(OrgEventType.APPROVAL_DECIDED, next, answered)
             next to answered
         }
         val requests = decided.second

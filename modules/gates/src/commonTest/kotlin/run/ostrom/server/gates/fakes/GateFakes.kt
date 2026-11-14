@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.gates.fakes
 
+import run.ostrom.server.kernel.events.OrgEventType
 import run.ostrom.server.gates.domain.models.ActorKind
 import run.ostrom.server.gates.domain.models.ApprovalRequest
 import run.ostrom.server.gates.domain.models.ApprovalView
@@ -54,6 +55,9 @@ class InMemoryGatesRepository : GatesRepository {
     /** When each session's end read its gates, as `gates_session_ends` holds it. */
     val sessionEnds = linkedMapOf<Pair<Uuid, String>, Instant>()
 
+    /** The approval events published, as (type, gate, statuses of the requests) in order; a rollback drops its own. */
+    val announced = mutableListOf<Triple<OrgEventType, Uuid, List<RequestStatus>>>()
+
     /** The sessions whose lock a transaction took, in order. */
     val lockedSessions = mutableListOf<String>()
     private val mutex = Mutex()
@@ -64,6 +68,7 @@ class InMemoryGatesRepository : GatesRepository {
         val savedRequests = LinkedHashMap(requests)
         val savedLinks = LinkedHashSet(links)
         val savedEnds = LinkedHashMap(sessionEnds)
+        val savedAnnounced = announced.size
         try {
             Tx().block()
         } catch (error: Throwable) {
@@ -71,6 +76,7 @@ class InMemoryGatesRepository : GatesRepository {
             requests.clear(); requests.putAll(savedRequests)
             links.clear(); links.addAll(savedLinks)
             sessionEnds.clear(); sessionEnds.putAll(savedEnds)
+            while (announced.size > savedAnnounced) announced.removeAt(announced.lastIndex)
             throw error
         }
     }
@@ -130,6 +136,10 @@ class InMemoryGatesRepository : GatesRepository {
     }
 
     private inner class Tx : GatesTransaction {
+        override suspend fun announce(type: OrgEventType, gate: Gate, requests: List<ApprovalRequest>) {
+            announced += Triple(type, gate.id, requests.map { it.status })
+        }
+
         override suspend fun lockSession(orgId: Uuid, sessionId: String) {
             lockedSessions += sessionId
         }

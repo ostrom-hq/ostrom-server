@@ -32,6 +32,7 @@ import run.ostrom.server.gates.domain.services.GateDigester
 import run.ostrom.server.gates.domain.services.GateNotifier
 import run.ostrom.server.gates.domain.services.GatePolicies
 import run.ostrom.server.gates.domain.services.GateSessions
+import run.ostrom.server.kernel.events.OrgEventType
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -186,7 +187,11 @@ class OpenGateUseCaseImpl(
             ApprovalRequest(Uuid.random(), gate.id, gate.orgId, approver, RequestStatus.PENDING, createdAt = now)
         }
         insertGate(gate)
-        if (requests.isNotEmpty()) insertRequests(requests)
+        // Only an enforced gate asks approvers: each is told through the feed, in this transaction, last.
+        if (requests.isNotEmpty()) {
+            insertRequests(requests)
+            announce(OrgEventType.APPROVAL_REQUESTED, gate, requests)
+        }
         return Opened(gate, requests, created = true)
     }
 
