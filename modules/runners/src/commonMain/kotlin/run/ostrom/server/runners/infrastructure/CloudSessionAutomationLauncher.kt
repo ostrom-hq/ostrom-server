@@ -4,6 +4,7 @@ package run.ostrom.server.runners.infrastructure
 import run.ostrom.server.automations.domain.AutomationLauncher
 import run.ostrom.server.automations.domain.LaunchRequest
 import run.ostrom.server.automations.domain.LaunchResult
+import run.ostrom.server.kernel.errors.OstromException
 import run.ostrom.server.runners.domain.Caller
 import run.ostrom.server.runners.domain.ChangeCloudSessionUseCase
 import run.ostrom.server.runners.domain.CloudHoursExhaustedException
@@ -15,13 +16,15 @@ import run.ostrom.server.runners.domain.CloudSessionsRepository
 import run.ostrom.server.runners.domain.CreateCloudSessionPayload
 import run.ostrom.server.runners.domain.CreateCloudSessionUseCase
 import run.ostrom.server.runners.domain.InvalidCloudSessionRequestException
+import run.ostrom.server.runners.domain.ProfileRefusals
 import kotlin.uuid.Uuid
 
 /**
  * The automations' [AutomationLauncher] on cloud sessions: a run starts a session owned by the automation's owner,
  * through [CreateCloudSessionUseCase], so the organization's plan (allowlist, running cap, hours) applies to
- * automations exactly as to a member. An expected refusal becomes a [LaunchResult.Refused] with a stable reason the
- * run history shows; anything else propagates, and the automation records `launch_failed`.
+ * automations exactly as to a member, on the action's cloud profile (else the owner's only usable one). An expected
+ * refusal becomes a [LaunchResult.Refused] with a stable reason the run history shows; anything else propagates, and
+ * the automation records `launch_failed`.
  *
  * @param create Creates sessions.
  * @param repository Reads a run's session back, to tell whether it still works.
@@ -39,6 +42,7 @@ internal class CloudSessionAutomationLauncher(
             repository = null,
             model = request.action.model,
             prompt = request.prompt,
+            profileId = request.action.profileId?.let(Uuid::parseOrNull),
         )
         val refusal = try {
             return LaunchResult.Started(create(Caller(request.orgId, request.owner), payload).id.toString())
@@ -50,6 +54,9 @@ internal class CloudSessionAutomationLauncher(
             "cloud_hours_exhausted"
         } catch (_: InvalidCloudSessionRequestException) {
             "invalid_session_request"
+        } catch (refused: OstromException) {
+            // The profile's refusals keep their key (TeamCode's run reasons); anything else is not expected here.
+            ProfileRefusals.keyOf(refused) ?: throw refused
         }
         return LaunchResult.Refused(refusal)
     }

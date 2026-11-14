@@ -248,14 +248,28 @@ private val FAILURE_CODES = mapOf(
 
 /**
  * The stable code of a failed visit (`WorkflowRun.failureCode`): the failures an agent visit names, read from what it
- * says; null for any other visit.
+ * says (a refusal of its cloud profile, [profileRefused], keeps its key); null for any other visit.
  *
  * @param visit The visit.
  *
  * @return The code, or null.
  */
 fun failureCodeOf(visit: NodeVisit): String? =
-    visit.output?.takeIf { visit.status == RunMoves.FAILED }?.let { FAILURE_CODES[it] }
+    visit.output?.takeIf { visit.status == RunMoves.FAILED }?.let {
+        FAILURE_CODES[it] ?: PROFILE_REFUSED.matchEntire(it)?.let { match -> match.groupValues[1] }
+    }
+
+/**
+ * What an agent visit says when the cloud profile refused its session: the refusal's key, which becomes the run's
+ * `failureCode` (`profile_unassigned`, `cluster_unavailable`…).
+ *
+ * @param key The refusal's key.
+ *
+ * @return The sentence.
+ */
+fun profileRefused(key: String): String = "The cloud profile refused the agent session: $key."
+
+private val PROFILE_REFUSED = Regex("The cloud profile refused the agent session: ([a-z_]+)\\.")
 
 /**
  * The cloud session of an agent node's visit: derived from the run and the visit, so the key exists before the

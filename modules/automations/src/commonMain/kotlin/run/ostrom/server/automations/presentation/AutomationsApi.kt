@@ -104,6 +104,7 @@ data class AutomationActionRequest(
     val model: String? = null,
     val effort: String? = null,
     val maxRuntimeMinutes: Int = AutomationAction.DEFAULT_RUNTIME_MINUTES,
+    val profileId: String? = null,
 )
 
 /** The body of `POST` and `PUT /api/v1/automations[/{id}]`; `version` is the one read, required by `PUT`. */
@@ -138,6 +139,7 @@ fun AutomationRequest.toDefinition(): AutomationDefinition {
             workflowId = action.workflowId,
             inputs = action.inputs,
             repository = action.repository,
+            profileId = action.profileId,
         ),
         variables = variables,
         samplePayload = samplePayload,

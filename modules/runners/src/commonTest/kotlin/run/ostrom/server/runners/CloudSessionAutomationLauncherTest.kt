@@ -4,7 +4,21 @@ package run.ostrom.server.runners
 import run.ostrom.server.automations.domain.AutomationAction
 import run.ostrom.server.automations.domain.LaunchRequest
 import run.ostrom.server.automations.domain.LaunchResult
+import run.ostrom.server.kernel.errors.OstromException
 import run.ostrom.server.runners.domain.CloudPlan
+import run.ostrom.server.runners.domain.Caller
+import run.ostrom.server.runners.domain.CloudSession
+import run.ostrom.server.runners.domain.ClusterUnavailableException
+import run.ostrom.server.runners.domain.GitHubOwnerOnlyException
+import run.ostrom.server.runners.domain.ImageNotAllowedException
+import run.ostrom.server.runners.domain.NamespaceNotAllowedException
+import run.ostrom.server.runners.domain.ProfileRefusals
+import run.ostrom.server.runners.domain.ProfileRequiredException
+import run.ostrom.server.runners.domain.ProfileUnassignedException
+import run.ostrom.server.runners.domain.SessionFailure
+import run.ostrom.server.runners.domain.SessionProfile
+import run.ostrom.server.runners.domain.SessionProfileNotFoundException
+import run.ostrom.server.runners.domain.SessionProfiles
 import run.ostrom.server.runners.domain.ChangeCloudSessionUseCaseImpl
 import run.ostrom.server.runners.domain.CloudPlanProvider
 import run.ostrom.server.runners.domain.DesiredState
@@ -73,6 +87,36 @@ class CloudSessionAutomationLauncherTest {
     }
 
     @Test
+    fun aRunLaunchesOnItsActionsProfileAndTheProfilesRefusalsBecomeTheirKeys() = runTest {
+        val profiles = AskedProfiles()
+        val onProfiles = CloudSessionAutomationLauncher(
+            CreateCloudSessionUseCaseImpl(repository, plans, meter, clock, profiles),
+            repository,
+            ChangeCloudSessionUseCaseImpl(repository, plans, meter, clock),
+        )
+        val profile = Uuid.random()
+        val named = request().let { it.copy(action = it.action.copy(profileId = profile.toString())) }
+        assertIs<LaunchResult.Started>(onProfiles.launch(named))
+        assertIs<LaunchResult.Started>(onProfiles.launch(request()))
+        assertEquals(listOf(profile, null), profiles.asked)
+        val refusals = listOf(
+            SessionProfileNotFoundException(),
+            ProfileUnassignedException(),
+            ProfileRequiredException(),
+            ImageNotAllowedException(),
+            ClusterUnavailableException(),
+            NamespaceNotAllowedException(),
+        )
+        for (refusal in refusals) {
+            profiles.refusal = refusal
+            assertEquals(LaunchResult.Refused(refusal.type), onProfiles.launch(named))
+        }
+        assertEquals(ProfileRefusals.KEYS, refusals.map { it.type }.toSet())
+        profiles.refusal = GitHubOwnerOnlyException()
+        assertFailsWith<GitHubOwnerOnlyException> { onProfiles.launch(named) }
+    }
+
+    @Test
     fun anUnexpectedFailurePropagates() = runTest {
         val failing = CloudSessionAutomationLauncher(
             CreateCloudSessionUseCaseImpl(repository, DownPlans, meter, SettableClock()),
@@ -111,4 +155,20 @@ class CloudSessionAutomationLauncherTest {
 
 private object DownPlans : CloudPlanProvider {
     override suspend fun planFor(orgId: Uuid): CloudPlan = error("plan store down")
+}
+
+/** Records the profile each creation asks for, and refuses with [refusal] when it is set. */
+private class AskedProfiles : SessionProfiles {
+    val asked = mutableListOf<Uuid?>()
+    var refusal: OstromException? = null
+
+    override suspend fun choose(caller: Caller, profileId: Uuid?, image: String?): SessionProfile {
+        asked += profileId
+        refusal?.let { throw it }
+        return SessionProfile(clusterId = "c", namespace = "ns", image = "img", workspaceGibibytes = 1)
+    }
+
+    override suspend fun startFailure(session: CloudSession): SessionFailure? = null
+
+    override suspend fun legacy(): SessionProfile? = null
 }

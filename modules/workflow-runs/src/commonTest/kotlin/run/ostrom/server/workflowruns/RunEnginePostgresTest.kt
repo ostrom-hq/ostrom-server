@@ -35,6 +35,7 @@ import run.ostrom.server.instance.InstanceModule
 import run.ostrom.server.kernel.auth.OrgPrincipal
 import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.database.withOrganization
+import run.ostrom.server.kernel.errors.OstromException
 import run.ostrom.server.kernel.http.OstromJson
 import run.ostrom.server.launches.LaunchesModule
 import run.ostrom.server.launches.domain.services.LauncherResolver
@@ -49,11 +50,17 @@ import run.ostrom.server.receipts.ReceiptsModule
 import run.ostrom.server.receipts.domain.usecases.isoMillis
 import run.ostrom.server.runners.RunnersModule
 import run.ostrom.server.runners.domain.AgentKind
+import run.ostrom.server.runners.domain.Caller
 import run.ostrom.server.runners.domain.CloudPlan
 import run.ostrom.server.runners.domain.CloudPlanProvider
+import run.ostrom.server.runners.domain.CloudSession
+import run.ostrom.server.runners.domain.CloudSessionLimitException
 import run.ostrom.server.runners.domain.CloudSessionsRepository
+import run.ostrom.server.runners.domain.CreateCloudSessionPayload
+import run.ostrom.server.runners.domain.CreateCloudSessionUseCase
 import run.ostrom.server.runners.domain.DesiredState
 import run.ostrom.server.runners.domain.FreeCloudPlanProvider
+import run.ostrom.server.runners.domain.ProfileUnassignedException
 import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.sessions.SessionsModule
 import run.ostrom.server.testing.TestServer
@@ -62,6 +69,7 @@ import run.ostrom.server.workflowruns.domain.engine.PlayRunUseCaseImpl
 import run.ostrom.server.workflowruns.domain.engine.RunMoves
 import run.ostrom.server.workflowruns.domain.engine.TickRunsUseCase
 import run.ostrom.server.workflowruns.domain.engine.TickRunsUseCaseImpl
+import run.ostrom.server.workflowruns.domain.engine.profileRefused
 import run.ostrom.server.workflowruns.domain.engine.sessionOf
 import run.ostrom.server.workflowruns.domain.models.RunAudit
 import run.ostrom.server.workflowruns.domain.models.RunChange
@@ -771,6 +779,22 @@ class RunEnginePostgresTest {
             agents.start(ada.org.id, request),
         )
         assertNull(server.koin.get<CloudSessionsRepository>().get(ada.org.id, request.sessionId))
+        // The session runs on the request's profile; a refusal of the profile keeps its key, another its sentence.
+        val asked = mutableListOf<CreateCloudSessionPayload>()
+        var refusal: OstromException = ProfileUnassignedException()
+        val refusing = object : CreateCloudSessionUseCase {
+            override suspend fun invoke(caller: Caller, payload: CreateCloudSessionPayload): CloudSession {
+                asked += payload
+                throw refusal
+            }
+        }
+        val onProfile = CloudRunAgents(refusing, server.koin.get(), real, clock)
+        val profile = Uuid.random()
+        val named = request.copy(profileId = profile)
+        assertEquals(profileRefused("profile_unassigned"), onProfile.start(ada.org.id, named))
+        refusal = CloudSessionLimitException(1)
+        assertEquals(refusal.message, onProfile.start(ada.org.id, named))
+        assertEquals(listOf<Uuid?>(profile, profile), asked.map { it.profileId })
     }
 
     @Test

@@ -8,6 +8,8 @@ import run.ostrom.core.api.models.WorkflowStatus
 import run.ostrom.server.gates.domain.models.ActorKind
 import run.ostrom.server.gates.domain.models.GateActor
 import run.ostrom.server.kernel.auth.OrgRole
+import run.ostrom.server.kernel.sessions.CloudProfileDirectory
+import run.ostrom.server.kernel.sessions.NamedCloudProfile
 import run.ostrom.server.kernel.errors.InvalidPageException
 import run.ostrom.server.workflowruns.domain.models.InvalidRunException
 import run.ostrom.server.workflowruns.domain.models.RunAudit
@@ -35,6 +37,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -232,6 +235,32 @@ class StartRunTest {
         assertFailsWith<WorkflowNotAcceptedException> { start.startKeyed(owner, "idea", emptyMap(), null, "k") }
         assertFailsWith<InvalidRunException> { start.startKeyed(owner, "ship", emptyMap(), null, "k") }
         assertEquals(emptyList(), runs.stored)
+    }
+
+    @Test
+    fun aRunKeepsTheProfileOfItsAgentNodesThatNameNoneGivenAtStartOrByItsAutomation() = runTest {
+        val profile = Uuid.random()
+        val directory = CloudProfileDirectory { orgId ->
+            if (orgId == ORG) listOf(NamedCloudProfile(profile, "backend")) else emptyList()
+        }
+        val checked = StartWorkflowRunUseCaseImpl(Workflows(ship, idea), runs, runs, clock, directory)
+        val owner = person(OrgRole.OWNER)
+        val main = mapOf("branch" to "main")
+        assertEquals(profile.toString(), checked(owner, "ship", main, null, profile.toString()).profileId)
+        assertNull(checked(owner, "ship", main).profileId)
+        val malformed = assertFailsWith<InvalidRunException> { checked(owner, "ship", main, null, "backend") }
+        assertEquals("profileId: a cloud profile's id (a UUID).", malformed.message)
+        val unknown = assertFailsWith<InvalidRunException> {
+            checked(owner, "ship", main, null, Uuid.random().toString())
+        }
+        assertEquals("profileId: no cloud profile of the organization has this id.", unknown.message)
+        // Where sessions run on no profile, a well-formed id is kept unchecked.
+        val other = Uuid.random().toString()
+        assertEquals(other, start(owner, "ship", main, null, other).profileId)
+        val automated = start.startFor(memberStart().copy(profileId = profile.toString()))
+        assertEquals(profile.toString(), automated.run.profileId)
+        val keyed = checked.startKeyed(owner, "ship", main, null, "with-profile", profile.toString())
+        assertEquals(profile.toString(), keyed.run.profileId)
     }
 
     @Test

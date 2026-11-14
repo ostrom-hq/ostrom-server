@@ -21,6 +21,7 @@ import run.ostrom.server.compiler.domain.services.WorkflowChecks
 import run.ostrom.server.compiler.domain.services.WorkflowRepos
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
+import run.ostrom.server.kernel.sessions.CloudProfileDirectory
 import run.ostrom.server.kernel.workflows.AutomationUsage
 import run.ostrom.server.kernel.workflows.WorkflowRemovals
 import kotlin.time.Clock
@@ -147,6 +148,7 @@ interface ImportWorkflowsUseCase {
  * @param clock The time.
  * @param automations Tells which automation starts a workflow; null, none does.
  * @param removals Told of a deleted workflow (its budgets go with it); null, nobody keeps anything about one.
+ * @param profiles The organization's cloud profiles an agent node may name; null where sessions run on none.
  */
 class WorkflowsUseCaseImpl(
     private val repository: CompilerRepository,
@@ -154,6 +156,7 @@ class WorkflowsUseCaseImpl(
     private val clock: Clock,
     private val automations: AutomationUsage? = null,
     private val removals: WorkflowRemovals? = null,
+    private val profiles: CloudProfileDirectory? = null,
 ) : WorkflowsUseCase, ImportWorkflowsUseCase {
     override suspend fun list(orgId: Uuid, repo: String?, status: WorkflowStatus?): List<StoredWorkflow> {
         val all = repository.workflows(orgId)
@@ -205,6 +208,8 @@ class WorkflowsUseCaseImpl(
         creation: String,
     ): StoredWorkflow {
         val workflow = decode(raw)
+        // Read before the lock: the profiles keep their own storage (as the automations, see [delete]).
+        requireProfiles(orgId, workflow)
         val repos = WorkflowRepos.of(raw)
         val author = Authorship(by, clock.now())
         // The lock holds the reads that decide (the version, the count, the names, the calls) and the write, so that
@@ -252,6 +257,22 @@ class WorkflowsUseCaseImpl(
         val others = locked.workflows(orgId).map { it.doc.workflow }.filter { it.id != workflow.id }
         requireFreeName(workflow, others)
         requireCalls(workflow, others)
+    }
+
+    // An agent node names a profile of the organization (TeamCode refuses an unknown one at save too); one its run's
+    // starter may not use fails that session, with its key as the run's failureCode.
+    private suspend fun requireProfiles(orgId: Uuid, workflow: Workflow) {
+        if (profiles == null || !WorkflowChecks.runsOnServer(workflow)) return
+        val named = workflow.nodes.filter { it.kind == WorkflowNodeKind.AGENT }
+            .mapNotNull { node -> node.run?.profileId?.let { node.id to Uuid.parseOrNull(it) } }
+        if (named.isEmpty()) return
+        val known = profiles.profiles(orgId).map { it.id }.toSet()
+        named.firstOrNull { it.second !in known }?.let { (node, _) ->
+            throw InvalidWorkflowException(
+                "Invalid workflow: Node ${node.take(MAX_ERROR)}: " +
+                    "run.profileId is no cloud profile of the organization.",
+            )
+        }
     }
 
     override fun check(raw: JsonObject) {

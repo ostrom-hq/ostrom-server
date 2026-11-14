@@ -13,6 +13,8 @@ import kotlin.uuid.Uuid
  * @property agent The agent's wire name (`claude`, `codex`…).
  * @property model The model, if the node names one.
  * @property prompt The agent's first message.
+ * @property profileId The cloud profile the session runs on: the node's, else the run's; null for the starter's only
+ *   usable one.
  */
 data class AgentRequest(
     val sessionId: Uuid,
@@ -21,6 +23,7 @@ data class AgentRequest(
     val agent: String,
     val model: String?,
     val prompt: String,
+    val profileId: Uuid? = null,
 )
 
 /** Where an agent node's session is. */

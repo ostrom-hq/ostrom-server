@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.automations.domain
 
+import run.ostrom.server.kernel.sessions.CloudProfileDirectory
+import run.ostrom.server.kernel.sessions.has
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
@@ -71,12 +73,14 @@ interface ManageAutomationsUseCase {
  * @param secrets The webhook secrets.
  * @param clock The time.
  * @param workflows The workflows a workflow action is checked against.
+ * @param profiles The organization's cloud profiles an action may name; null where sessions run on none.
  */
 class ManageAutomationsUseCaseImpl(
     private val repository: AutomationsRepository,
     private val secrets: WebhookSecrets,
     private val clock: Clock,
     private val workflows: AutomationWorkflows = NoWorkflows,
+    private val profiles: CloudProfileDirectory? = null,
 ) : ManageAutomationsUseCase {
     override suspend fun create(caller: AutomationCaller, definition: AutomationDefinition): AutomationWithSecret {
         val now = clock.now().truncatedToMillis()
@@ -166,9 +170,16 @@ class ManageAutomationsUseCaseImpl(
         return RotatedSecret(saved, secrets.secret(saved.id, saved.secretGeneration), previousValidUntil)
     }
 
-    /** The definition's rules, and a workflow action's against its workflow as it is now. */
+    /**
+     * The definition's rules, its profile among the organization's (TeamCode refuses an unknown one at save too), and a
+     * workflow action's against its workflow as it is now.
+     */
     private suspend fun checked(caller: AutomationCaller, definition: AutomationDefinition): AutomationDefinition {
         val checked = AutomationRules.check(definition)
+        val profileId = checked.action.profileId?.let(Uuid::parse)
+        if (profileId != null && profiles?.has(caller.orgId, profileId) == false) {
+            throw InvalidAutomationException("action.profileId: no cloud profile of the organization has this id.")
+        }
         val workflowId = checked.action.workflowId ?: return checked
         WorkflowActionRules.checkInputs(checked.action, workflows.inputs(caller.orgId, workflowId))
         return checked

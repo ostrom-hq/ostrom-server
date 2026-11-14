@@ -128,7 +128,7 @@ object AgentRequests {
      * is the node's instructions (else its detail, else its label) rendered ([RunTemplates]), then what the earlier
      * steps delivered (each node starts its own session, TeamCode's `handoff`), then, for a node that asks for a
      * deliverable, the sentence that tells the agent how the step ends: the instructions give way when it all does not
-     * fit.
+     * fit. It runs on the node's cloud profile, else the run's (TeamCode's node `profileId`, then the run's).
      *
      * @param run The run.
      * @param node The agent node.
@@ -148,6 +148,8 @@ object AgentRequests {
             agent = spec?.agent ?: DEFAULT_AGENT,
             model = spec?.model,
             prompt = if (closing == null) prompt else prompt.take(MAX_PROMPT - closing.length - 2) + "\n\n" + closing,
+            // A saved id is checked at save; one that no longer reads names none (the starter's only profile).
+            profileId = (spec?.profileId ?: run.profileId)?.let(Uuid::parseOrNull),
         )
     }
 

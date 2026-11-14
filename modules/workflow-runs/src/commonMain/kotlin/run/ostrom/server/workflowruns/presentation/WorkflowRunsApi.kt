@@ -225,9 +225,10 @@ class WorkflowsMcpApi(val session: String? = null)
  * The body of `POST /api/v1/workflows/{id}/runs`.
  *
  * @property inputs The inputs, by id.
+ * @property profileId The cloud profile of the agent nodes that name none.
  */
 @Serializable
-data class StartRunRequest(val inputs: Map<String, String> = emptyMap())
+data class StartRunRequest(val inputs: Map<String, String> = emptyMap(), val profileId: String? = null)
 
 /**
  * A page of runs of workflows.

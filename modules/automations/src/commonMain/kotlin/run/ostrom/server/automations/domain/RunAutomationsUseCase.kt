@@ -480,6 +480,7 @@ class RunAutomationsUseCaseImpl(
             workflowId = workflowId,
             inputs = Json.decodeFromString(INPUTS, rendered),
             repository = action.repository,
+            profileId = action.profileId,
             idempotencyKey = "automation-run:${run.id}",
         )
         val result = try {

@@ -56,6 +56,7 @@ class RunsAutomationWorkflows(
             key = request.idempotencyKey,
             source = AUTOMATION,
             automationId = request.automationId.toString(),
+            profileId = request.profileId,
         )
         // A refusal is a stable code; never its message, which may quote an input.
         return try {

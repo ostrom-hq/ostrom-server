@@ -23,6 +23,7 @@ data class WorkflowInputSpec(val id: String, val required: Boolean, val hasDefau
  * @property repository The repository of its agent nodes that name none.
  * @property idempotencyKey `automation-run:<run id>`: a start retried, or replayed after a crash, finds the first
  *   workflow run of this key instead of starting a second.
+ * @property profileId The cloud profile of its agent nodes that name none, or null.
  */
 data class WorkflowStartRequest(
     val orgId: Uuid,
@@ -32,6 +33,7 @@ data class WorkflowStartRequest(
     val inputs: Map<String, String>,
     val repository: String?,
     val idempotencyKey: String,
+    val profileId: String? = null,
 )
 
 /** What starting a workflow run gave. */
