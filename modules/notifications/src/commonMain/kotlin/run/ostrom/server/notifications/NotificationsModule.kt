@@ -2,20 +2,21 @@
 package run.ostrom.server.notifications
 
 import run.ostrom.core.api.models.ServerFeatures
-import run.ostrom.server.gates.domain.services.GateChannel
 import run.ostrom.server.identity.domain.MailAvailability
 import run.ostrom.server.kernel.auth.SignOutListener
 import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.database.repeatDue
 import run.ostrom.server.kernel.database.scheduledWork
+import run.ostrom.server.kernel.events.GateSummaries
 import run.ostrom.server.kernel.events.OrgEventJournal
 import run.ostrom.server.kernel.events.WaitSummaries
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.OrgDeletionListener
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.notifications.domain.ApprovalNotices
-import run.ostrom.server.notifications.domain.ApproverNotificationsChannel
+import run.ostrom.server.notifications.domain.ApprovalRouter
+import run.ostrom.server.notifications.domain.ApprovalSender
 import run.ostrom.server.notifications.domain.Approvers
 import run.ostrom.server.notifications.domain.DeletePushDeviceUseCase
 import run.ostrom.server.notifications.domain.DeliverNotificationsUseCase
@@ -33,7 +34,6 @@ import run.ostrom.server.notifications.infrastructure.RelayPushSender
 import run.ostrom.server.kernel.network.outboundHttpClient
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.notifications.domain.LiveCredentials
-import run.ostrom.server.notifications.domain.NotificationOutbox
 import run.ostrom.server.notifications.domain.PUSH_SETTINGS
 import run.ostrom.server.notifications.domain.NotificationChannel
 import run.ostrom.server.notifications.domain.PUSH_CHANNEL
@@ -88,10 +88,11 @@ import kotlin.time.Duration.Companion.seconds
 
 /**
  * The notifications module: the phones a person registers for push notifications, one per push token in each
- * organization, and what tells an approver a gate waits for their yes (a push to those phones and an e-mail), sent
- * apart from the request by [NotificationOutbox]. A phone is forgotten when its organization is deleted or its person
- * signs out with the credential that registered it. Each member's switches of the notification router
- * (`/api/v1/notifications/settings`, TeamCode's `notifications.v1`) are kept here, per channel and kind.
+ * organization, and what tells an approver a gate waits for their yes (a push to those phones and an e-mail), queued
+ * from the event journal and sent by the router's worker, apart from the request. A phone is forgotten when its
+ * organization is deleted or its person signs out with the credential that registered it. Each member's switches of
+ * the notification router (`/api/v1/notifications/settings`, TeamCode's `notifications.v1`) are kept here, per
+ * channel and kind; they never govern an approval, which the approver's `requests` preference does.
  */
 object NotificationsModule : ServerModule {
     // Declared before koinModule: the object initializes in order, and the module lambda runs at once.
@@ -107,6 +108,9 @@ object NotificationsModule : ServerModule {
 
     /** No wait is known: a server built without the automations module. */
     private val NO_WAITS = WaitSummaries { _, _ -> emptyList() }
+
+    /** No gate is known: a server built without the gates module. */
+    private val NO_GATES = GateSummaries { _, _ -> emptyList() }
 
     override val name: String = "notifications"
 
@@ -162,20 +166,8 @@ object NotificationsModule : ServerModule {
             val settings = get<NotificationSettings>()
             EncryptedPushSender(get(), get(), get(), settings.publicUrl, get())
         }
-        single { NotificationOutbox(get(), get(), get()) }
         single<Approvers> { MemberApprovers(get(), get(), get()) }
         single<LiveCredentials> { IdentityLiveCredentials(get(), get(), get()) }
-        // The gates module tells every bound channel of a request (ChannelsGateNotifier).
-        single<GateChannel>(named("notifications")) {
-            ApproverNotificationsChannel(
-                approvers = get(),
-                devices = get(),
-                credentials = get(),
-                notices = ApprovalNotices(get<NotificationSettings>().webOrigin),
-                outbox = get(),
-                mailing = get(),
-            )
-        }
     }
 
     override val migrations: List<SchemaMigration> = NotificationsMigrations
@@ -208,6 +200,19 @@ object NotificationsModule : ServerModule {
             val scope = this
             NotificationDeliveriesRepositoryImpl(get()) { scope.get<OrgEventJournal>() }
         }
+        // The requests for a yes the gates publish: their approvers' pushes and e-mails, through the same queue.
+        single {
+            ApprovalSender(
+                approvers = get(),
+                devices = get(),
+                credentials = get(),
+                notices = ApprovalNotices(get<NotificationSettings>().webOrigin),
+                push = get(),
+                mail = get(),
+                mailing = get(),
+            )
+        }
+        single { ApprovalRouter(getOrNull() ?: NO_GATES, get(), get(), get()) }
         single<DeliverNotificationsUseCase> {
             val scope = this
             DeliverNotificationsUseCaseImpl(
@@ -216,6 +221,7 @@ object NotificationsModule : ServerModule {
                 settings = get(),
                 deliveries = get(),
                 channels = { scope.getAll<NotificationChannel>().distinctBy { it.id } },
+                approvals = get(),
                 clock = get(),
                 logger = get(),
             )
@@ -239,9 +245,8 @@ object NotificationsModule : ServerModule {
     override suspend fun features(koin: Koin): Set<String> =
         setOf(ServerFeatures.NOTIFICATIONS, ServerFeatures.NOTIFICATIONS_PUSH, ServerFeatures.NOTIFICATIONS_PUSH_TEST)
 
-    /** Sends the queued approval notifications and runs the router's worker until the server stops. */
+    /** Runs the router's worker, which also tells the approvers, until the server stops. */
     override fun start(scope: CoroutineScope, koin: Koin) {
-        val outbox = koin.get<NotificationOutbox>()
         val settings = koin.get<NotificationSettings>()
         val mailing = koin.get<MailAvailability>()
         val logger = koin.get<Logger>()
@@ -262,7 +267,6 @@ object NotificationsModule : ServerModule {
                 mapOf("settings" to settings.toString(), "emails" to emails),
             )
         }
-        scope.launch { outbox.run() }
         // The router runs where the event journal is: a server built without the events module has nothing to route.
         if (koin.getOrNull<OrgEventJournal>() != null) {
             val deliver = koin.get<DeliverNotificationsUseCase>()

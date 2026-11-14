@@ -8,6 +8,12 @@ import run.ostrom.server.kernel.events.JournalSlice
 import run.ostrom.server.kernel.events.OrgEventType
 import run.ostrom.server.kernel.events.WaitSummaries
 import run.ostrom.server.kernel.events.WaitSummary
+import run.ostrom.server.identity.domain.MailAvailability
+import run.ostrom.server.notifications.domain.ApprovalDelivery
+import run.ostrom.server.notifications.domain.ApprovalNotices
+import run.ostrom.server.notifications.domain.ApprovalRouter
+import run.ostrom.server.notifications.domain.ApprovalSender
+import run.ostrom.server.notifications.domain.Approver
 import run.ostrom.server.notifications.domain.ChannelResult
 import run.ostrom.server.notifications.domain.DeliverNotificationsUseCaseImpl
 import run.ostrom.server.notifications.domain.DeliveryOutcome
@@ -16,7 +22,11 @@ import run.ostrom.server.notifications.domain.DeliveryState
 import run.ostrom.server.notifications.domain.NotificationChannel
 import run.ostrom.server.notifications.domain.NotificationDelivery
 import run.ostrom.server.notifications.domain.NotificationKind
-import run.ostrom.server.notifications.domain.NotificationRules
+import run.ostrom.server.notifications.domain.PushCredential
+import run.ostrom.server.notifications.domain.PushDevice
+import run.ostrom.server.notifications.domain.PushDevicesRepository
+import run.ostrom.server.notifications.domain.PushMessage
+import run.ostrom.server.notifications.domain.PushSender
 import run.ostrom.server.notifications.domain.SwitchedOff
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -49,6 +59,24 @@ class DeliverNotificationsUseCaseTest {
         }
     }
 
+    private val bob = Approver(Uuid.random(), mia, "bob@example.com", pushes = true)
+    private val gates = MapGates()
+    private val pushes = RecordingPushSender()
+    private val mail = RecordingMailSender()
+    private val devices = InMemoryPushDevicesRepository()
+
+    /** The approvals' router of the next use case, the default one when null. */
+    private var router: ApprovalRouter? = null
+
+    private fun approvals(push: PushSender = pushes): ApprovalRouter {
+        val approvers = MapApprovers(mapOf("bob" to bob))
+        val notices = ApprovalNotices("https://console.ostrom.test")
+        val mailing = MailAvailability { true }
+        val live = SetLiveCredentials(setOf(CREDENTIAL))
+        val sender = ApprovalSender(approvers, devices, live, notices, push, mail, mailing)
+        return ApprovalRouter(gates, approvers, mailing, sender)
+    }
+
     private fun useCase(
         journal: FakeJournal,
         waits: WaitSummaries,
@@ -57,9 +85,9 @@ class DeliverNotificationsUseCaseTest {
         settings: OffSettings = OffSettings(),
     ): DeliverNotificationsUseCaseImpl {
         val made = ids.iterator()
-        return DeliverNotificationsUseCaseImpl(journal, waits, settings, deliveries, { channels }, clock, logger) {
-            made.next()
-        }
+        return DeliverNotificationsUseCaseImpl(
+            journal, waits, settings, deliveries, { channels }, router ?: approvals(), clock, logger,
+        ) { made.next() }
     }
 
     @Test
@@ -92,15 +120,18 @@ class DeliverNotificationsUseCaseTest {
             val queued = useCase(journal, waits, deliveries, listOf(push, chat), settings).fanOut()
 
             assertEquals(2, queued, "C's page was queued by another replica")
-            assertEquals(listOf(NotificationRules.SOURCE_TYPES), journal.read.map { it.second }.distinct())
+            assertEquals(listOf(DeliveryRules.SOURCE_TYPES), journal.read.map { it.second }.distinct())
+            assertEquals(setOf(OrgEventType.WAIT_CREATED, OrgEventType.APPROVAL_REQUESTED), DeliveryRules.SOURCE_TYPES)
             val (a, b) = deliveries.enqueued
             assertEquals(orgA, a.first.orgId)
+            val told = a.second.filterIsInstance<NotificationDelivery>()
+            assertEquals(a.second, told, "No approval on the page")
             assertEquals(
                 listOf("push" to mia, "chat" to mia),
-                a.second.map { it.channel to it.notification.memberId },
+                told.map { it.channel to it.notification.memberId },
                 "Leo switched push off; a wait a timer resolves and an unknown wait tell nobody",
             )
-            val first = a.second.first()
+            val first = told.first()
             assertEquals(0, first.attempts)
             assertEquals(ids[0], first.notification.id)
             assertEquals(orgA, first.notification.orgId)
@@ -238,5 +269,114 @@ class DeliverNotificationsUseCaseTest {
         assertEquals(OrgEventType.WAIT_CREATED, waitCreated(1, "w").type)
     }
 
+    @Test
+    fun aPagesRequestsForAYesAreQueuedAfterItsNotificationsWithoutTheMembersSwitches() {
+        runTest {
+            val gate = sampleGate(pending = listOf("bob")).also { gates.gates = listOf(it) }
+            val approval = Uuid.random()
+            val journal = FakeJournal(
+                positions = listOf(JournalPosition(orgA, 0, 2)),
+                slices = mapOf(
+                    orgA to JournalSlice(listOf(waitCreated(1, "w-1"), approvalRequested(2, approval, gate, "bob")), 2),
+                ),
+            )
+            val deliveries = MemoryDeliveries()
+            // Mia (Bob's membership) switched every wait off: an approval is no kind of hers to switch.
+            val settings = OffSettings(setOf(SwitchedOff(mia, "push", NotificationKind.WAITING)))
+            val waits = CountingWaits(listOf(summary("w-1", mia)))
+
+            val channels = listOf(FakeChannel("push", setOf(mia)))
+            assertEquals(2, useCase(journal, waits, deliveries, channels, settings).fanOut())
+
+            val queued = deliveries.enqueued.single().second
+            assertEquals(listOf("push", "email"), queued.map { it.channel })
+            assertEquals(listOf(approval, approval), queued.map { (it as ApprovalDelivery).approvalId })
+            assertEquals(ids[0], queued.first().id)
+            assertEquals(listOf(setOf(mia)), settings.asked, "The switches are read for the waits only")
+        }
+    }
+
+    @Test
+    fun aClaimedApprovalIsSentWhileItsGateAsksAndFailedUnsentOnceDecided() {
+        runTest {
+            val open = sampleGate(pending = listOf("bob"))
+            val decided = sampleGate(open = false)
+            gates.gates = listOf(open, decided)
+            devices.devices += PushDevice(
+                Uuid.random(), orgA, mia, "fcm-token-bob", "fcm", "ios", null, clock.now, clock.now,
+                PushCredential(bob.userId, CREDENTIAL, browser = false),
+            )
+            val sent = approvalDelivery(orgA, open, memberId = mia)
+            val emailed = approvalDelivery(orgA, open, channel = "email", memberId = mia).copy(attempts = 2)
+            val late = approvalDelivery(orgA, decided, memberId = mia).copy(attempts = 1)
+            val wait = NotificationDelivery(notification(orgA, null), "push", 0)
+            val deliveries = MemoryDeliveries()
+            deliveries.due[orgA] = mutableListOf(sent, emailed, late, wait)
+
+            val noWaits = CountingWaits(emptyList())
+            val attempted = useCase(FakeJournal(), noWaits, deliveries, listOf(FakeChannel("push")))()
+
+            assertEquals(3, attempted, "The decided gate's delivery is not attempted")
+            val now = clock.now
+            assertEquals(DeliveryOutcome(DeliveryState.DELIVERED, 1, now, null), deliveries.recorded[sent.id])
+            assertEquals(DeliveryOutcome(DeliveryState.DELIVERED, 3, now, null), deliveries.recorded[emailed.id])
+            assertEquals(DeliveryOutcome(DeliveryState.FAILED, 1, now, "gate_decided"), deliveries.recorded[late.id])
+            assertEquals(DeliveryState.DELIVERED, deliveries.recorded[wait.id]?.state)
+            assertEquals(listOf("fcm-token-bob"), pushes.calls.flatten().map { it.to })
+            assertEquals(listOf("bob@example.com"), mail.calls.map { it.to })
+        }
+    }
+
+    @Test
+    fun aSlowOrFailingApprovalIsRetriedAndAFailedGateReadHoldsTheClaimUntilItsLease() {
+        runTest {
+            val open = sampleGate(pending = listOf("bob"))
+            gates.gates = listOf(open)
+            devices.devices += PushDevice(
+                Uuid.random(), orgA, mia, "fcm-token-bob", "fcm", "ios", null, clock.now, clock.now,
+                PushCredential(bob.userId, CREDENTIAL, browser = false),
+            )
+            val deliveries = MemoryDeliveries()
+            val slow = approvalDelivery(orgA, open, memberId = mia)
+            deliveries.due[orgA] = mutableListOf(slow)
+            val hanging = object : PushSender {
+                override suspend fun send(messages: List<PushMessage>) = awaitCancellation()
+            }
+            val noWaits = CountingWaits(emptyList())
+            router = approvals(hanging)
+            useCase(FakeJournal(), noWaits, deliveries, emptyList())()
+            val retried = DeliveryOutcome(DeliveryState.PENDING, 1, clock.now + 10.seconds, "timeout")
+            assertEquals(retried, deliveries.recorded[slow.id])
+
+            val broken = approvalDelivery(orgA, open, memberId = mia)
+            deliveries.due[orgA] = mutableListOf(broken)
+            devices.devices.clear()
+            val failing = object : PushDevicesRepository by devices {
+                override suspend fun ofMember(orgId: Uuid, memberId: Uuid): List<PushDevice> =
+                    error("The database is down")
+            }
+            val approvers = MapApprovers(mapOf("bob" to bob))
+            val mailing = MailAvailability { true }
+            val sender = ApprovalSender(
+                approvers, failing, SetLiveCredentials(emptySet()), ApprovalNotices(""), pushes, mail, mailing,
+            )
+            router = ApprovalRouter(gates, approvers, mailing, sender)
+            useCase(FakeJournal(), noWaits, deliveries, emptyList())()
+            assertEquals("no_result", deliveries.recorded[broken.id]?.error)
+
+            val held = approvalDelivery(orgA, open, memberId = mia)
+            deliveries.due[orgA] = mutableListOf(held)
+            router = ApprovalRouter({ _, _ -> error("The database is down") }, approvers, mailing, sender)
+            assertEquals(0, useCase(FakeJournal(), noWaits, deliveries, emptyList())())
+            assertEquals(null, deliveries.recorded[held.id], "Claimed, unrecorded: back after its lease")
+            val failed = logger.events.last()
+            assertEquals("notification claim failed" to "IllegalStateException", failed.second to failed.third["error"])
+        }
+    }
+
     private fun NotificationDelivery.id() = notification.id
+
+    private companion object {
+        val CREDENTIAL: Uuid = Uuid.parse("0000000a-0000-0000-0000-0000000000c1")
+    }
 }

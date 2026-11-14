@@ -18,6 +18,8 @@ import kotlin.uuid.Uuid
 
 /**
  * [Approvers] on the identity module's people and the orgs module's members: a gate names its approvers by login.
+ * Each login is two reads by their keys (the person, their membership), then their addresses and preferences: a page
+ * names a handful of approvers, where listing the organization's members would read every one of them.
  *
  * @param users The people.
  * @param members The members of each organization.
@@ -28,7 +30,10 @@ class MemberApprovers(
     private val members: MembersRepository,
     private val preferences: NotificationPreferencesRepository,
 ) : Approvers {
-    override suspend fun reach(orgId: Uuid, login: String): Approver? {
+    override suspend fun reach(orgId: Uuid, logins: Set<String>): Map<String, Approver> =
+        logins.mapNotNull { login -> reach(orgId, login)?.let { login to it } }.toMap()
+
+    private suspend fun reach(orgId: Uuid, login: String): Approver? {
         val user = users.findByLogin(login)
         val member = user?.let { members.findByUser(orgId, it.id) }
         if (user == null || member == null) return null

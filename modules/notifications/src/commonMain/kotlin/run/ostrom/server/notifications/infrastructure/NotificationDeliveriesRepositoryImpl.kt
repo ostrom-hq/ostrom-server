@@ -10,10 +10,8 @@ import run.ostrom.server.kernel.events.OrgEventJournal
 import run.ostrom.server.notifications.domain.DeliveryOutcome
 import run.ostrom.server.notifications.domain.DeliveryRules
 import run.ostrom.server.notifications.domain.DeliveryState
-import run.ostrom.server.notifications.domain.Notification
 import run.ostrom.server.notifications.domain.NotificationDeliveriesRepository
-import run.ostrom.server.notifications.domain.NotificationDelivery
-import run.ostrom.server.notifications.domain.NotificationKind
+import run.ostrom.server.notifications.domain.QueuedDelivery
 import org.jetbrains.exposed.v1.core.CustomFunction
 import org.jetbrains.exposed.v1.core.IntegerColumnType
 import org.jetbrains.exposed.v1.core.LongColumnType
@@ -37,7 +35,7 @@ import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * [NotificationDeliveriesRepository] on PostgreSQL through Exposed ([NotificationsMigrations] version 6): every
+ * [NotificationDeliveriesRepository] on PostgreSQL through Exposed ([NotificationsMigrations] versions 6 and 7): every
  * query inside the organization (`inOrg`, with its own `org_id` filter), the paths across organizations through the
  * functions of `ostrom_router`. The router's journal cursor moves in the transaction that queues the page.
  *
@@ -51,27 +49,11 @@ class NotificationDeliveriesRepositoryImpl(
     override suspend fun enqueue(
         position: JournalPosition,
         through: Long,
-        deliveries: List<NotificationDelivery>,
+        deliveries: List<QueuedDelivery>,
     ): Boolean = database.inOrg(position.orgId) {
         if (!journal().advanceIn(this, DeliveryRules.READER, position, through)) return@inOrg false
-        NotificationDeliveries.batchInsert(deliveries, ignore = true, shouldReturnGeneratedValues = false) { delivery ->
-            val notification = delivery.notification
-            this[NotificationDeliveries.orgId] = position.orgId
-            this[NotificationDeliveries.id] = notification.id
-            this[NotificationDeliveries.eventSeq] = notification.eventSeq
-            this[NotificationDeliveries.memberId] = notification.memberId
-            this[NotificationDeliveries.channel] = delivery.channel
-            this[NotificationDeliveries.kind] = notification.kind.wire
-            this[NotificationDeliveries.title] = notification.title
-            this[NotificationDeliveries.body] = notification.body
-            this[NotificationDeliveries.sessionId] = notification.sessionId
-            this[NotificationDeliveries.waitId] = notification.waitId
-            this[NotificationDeliveries.collapseKey] = notification.collapseKey
-            this[NotificationDeliveries.state] = DeliveryState.PENDING.wire
-            this[NotificationDeliveries.attempts] = 0
-            this[NotificationDeliveries.nextAttemptAt] = notification.createdAt
-            this[NotificationDeliveries.leaseUntil] = notification.createdAt
-            this[NotificationDeliveries.createdAt] = notification.createdAt
+        NotificationDeliveries.batchInsert(deliveries, ignore = true, shouldReturnGeneratedValues = false) {
+            fill(position.orgId, it)
         }
         true
     }
@@ -91,7 +73,7 @@ class NotificationDeliveriesRepositoryImpl(
         limit: Int,
         now: Instant,
         lease: Duration,
-    ): List<NotificationDelivery> = database.inOrg(orgId) {
+    ): List<QueuedDelivery> = database.inOrg(orgId) {
         val rows = NotificationDeliveries.select(NotificationDeliveries.columns)
             .where {
                 (NotificationDeliveries.orgId eq orgId) and
@@ -103,9 +85,11 @@ class NotificationDeliveriesRepositoryImpl(
             .limit(limit)
             .forUpdate(ForUpdateOption.PostgreSQL.ForUpdate(ForUpdateOption.PostgreSQL.MODE.SKIP_LOCKED))
             .toList()
-        val (known, unknown) = rows.partition { NotificationKind.parse(it[NotificationDeliveries.kind]) != null }
+            .map { it to it.toDelivery() }
+        val known = rows.mapNotNull { (row, delivery) -> delivery?.let { row to it } }
+        val unknown = rows.filter { it.second == null }.map { it.first }
         if (known.isNotEmpty()) {
-            NotificationDeliveries.update({ owned(orgId, known) }) { it[leaseUntil] = now + lease }
+            NotificationDeliveries.update({ owned(orgId, known.map { it.first }) }) { it[leaseUntil] = now + lease }
         }
         // A kind of a later version, rolled back since: never sent as another kind.
         if (unknown.isNotEmpty()) {
@@ -114,7 +98,7 @@ class NotificationDeliveriesRepositoryImpl(
                 it[lastError] = UNKNOWN_KIND
             }
         }
-        known.map { it.toDelivery() }
+        known.map { it.second }
     }
 
     override suspend fun record(orgId: Uuid, id: Uuid, outcome: DeliveryOutcome, now: Instant) {
@@ -153,24 +137,6 @@ class NotificationDeliveriesRepositoryImpl(
 
     private fun owned(orgId: Uuid, rows: List<ResultRow>) = (NotificationDeliveries.orgId eq orgId) and
         (NotificationDeliveries.id inList rows.map { it[NotificationDeliveries.id] })
-
-    private fun ResultRow.toDelivery(): NotificationDelivery {
-        val t = NotificationDeliveries
-        val notification = Notification(
-            id = this[t.id],
-            orgId = this[t.orgId],
-            memberId = this[t.memberId],
-            kind = NotificationKind.entries.first { it.wire == this[t.kind] },
-            title = this[t.title],
-            body = this[t.body],
-            sessionId = this[t.sessionId],
-            waitId = this[t.waitId],
-            collapseKey = this[t.collapseKey],
-            createdAt = this[t.createdAt],
-            eventSeq = this[t.eventSeq],
-        )
-        return NotificationDelivery(notification, this[t.channel], this[t.attempts])
-    }
 
     private companion object {
         const val UNKNOWN_KIND = "unknown_kind"

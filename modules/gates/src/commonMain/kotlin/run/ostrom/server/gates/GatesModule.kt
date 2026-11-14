@@ -47,6 +47,7 @@ import run.ostrom.server.gates.domain.usecases.UseGateUseCaseImpl
 import run.ostrom.server.gates.infrastructure.ChannelsGateNotifier
 import run.ostrom.server.gates.infrastructure.DefaultGatePolicies
 import run.ostrom.server.gates.infrastructure.GatesMigrations
+import run.ostrom.server.gates.infrastructure.GateSummariesImpl
 import run.ostrom.server.gates.infrastructure.GatesReceiptReaders
 import run.ostrom.server.gates.infrastructure.InProcessGateChanges
 import run.ostrom.server.gates.infrastructure.MetricsGateChannel
@@ -65,6 +66,7 @@ import run.ostrom.server.gates.infrastructure.UnknownPullRequestHeads
 import run.ostrom.server.gates.presentation.GatesRoutesDependencies
 import run.ostrom.server.gates.presentation.gatesRoutes
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.events.GateSummaries
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.observability.CachedCount
 import run.ostrom.server.kernel.observability.OstromMetrics
@@ -112,6 +114,8 @@ object GatesModule : ServerModule {
         single<ReportLocalDenialUseCase> { ReportLocalDenialUseCaseImpl(get(), get()) }
         // Named: the channels of other modules (notifications, Slack, GitHub) bind theirs next to it.
         single<GateChannel>(named("metrics")) { MetricsGateChannel(get()) }
+        // What the notification router reads of a gate its approval events name, and whether it is still open.
+        single<GateSummaries> { GateSummariesImpl(get()) }
 
         single {
             GatesRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())

@@ -122,6 +122,8 @@ private val DELIVERIES_SQL: String =
  * channel and kind a member changed, no row meaning on. Version 5 keeps the instance's identity at each push relay
  * (TeamCode's `push_relay_instances`): the instance's, not an organization's, so without `org_id` (docs/tenancy.md),
  * its Ed25519 private key sealed with the secrets key. Version 6 is the router's delivery queue ([DELIVERIES_SQL]).
+ * Version 7 lets it hold the requests for a yes: a row of kind `approval` names the request (`approval_id`), its gate
+ * (`gate_id`) and the approver's login (`approver`), null on every other row.
  */
 val NotificationsMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -196,4 +198,13 @@ val NotificationsMigrations: List<SchemaMigration> = listOf(
         """.trimIndent(),
     ),
     SchemaMigration(6, "create_deliveries", DELIVERIES_SQL),
+    SchemaMigration(
+        7,
+        "deliveries_approvals",
+        """
+        ALTER TABLE notifications_deliveries ADD COLUMN approval_id UUID;
+        ALTER TABLE notifications_deliveries ADD COLUMN gate_id UUID;
+        ALTER TABLE notifications_deliveries ADD COLUMN approver TEXT
+        """.trimIndent(),
+    ),
 )
