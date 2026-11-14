@@ -37,6 +37,18 @@ const val PROVIDER_FIELD = "provider"
 const val FIREBASE_SERVICE_ACCOUNT_FIELD = "firebaseServiceAccount"
 
 /**
+ * The field of [PUSH_SETTINGS] for the deprecated Expo phones' push endpoint, [DEFAULT_EXPO_PUSH_URL] when unset:
+ * https, or http to this machine only (the end-to-end bench's fake Expo), since the access token is sent there.
+ */
+const val EXPO_PUSH_URL_FIELD = "expoPushUrl"
+
+/** The secret field of [PUSH_SETTINGS] for Expo's access token, when the project's push security requires one. */
+const val EXPO_ACCESS_TOKEN_FIELD = "expoAccessToken"
+
+/** Where Expo takes pushes, when the console sets no other endpoint. */
+const val DEFAULT_EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
+
+/**
  * A Google service account JSON key, checked: what the sender needs to sign its token requests. Never logged.
  *
  * @property projectId The Firebase project.
@@ -88,7 +100,8 @@ class FirebaseServiceAccount(
 /**
  * The instance's push settings (Admin → Settings → `push`), stored and sealed by the admin module: `provider` (`off`,
  * the default, or `firebase`) and the Firebase project's service account JSON key, a write-only secret sealed with the
- * secrets key. Never an environment variable nor a Helm value.
+ * secrets key, never an environment variable nor a Helm value; and, for the deprecated Expo phones, Expo's push
+ * endpoint and access token (sealed), imported once from `OSTROM_EXPO_PUSH_URL` and `OSTROM_EXPO_ACCESS_TOKEN`.
  */
 val PUSH_SETTINGS: SettingsSection = SettingsSection(
     "push",
@@ -99,8 +112,15 @@ val PUSH_SETTINGS: SettingsSection = SettingsSection(
         SettingsField(FIREBASE_SERVICE_ACCOUNT_FIELD, secret = true, check = { value ->
             if (FirebaseServiceAccount.parse(value) == null) SERVICE_ACCOUNT_REFUSAL else null
         }),
+        SettingsField(EXPO_PUSH_URL_FIELD, legacyVariable = "OSTROM_EXPO_PUSH_URL", check = ::checkExpoUrl),
+        SettingsField(EXPO_ACCESS_TOKEN_FIELD, secret = true, legacyVariable = "OSTROM_EXPO_ACCESS_TOKEN"),
     ),
 )
+
+// Trimmed, as the push reads it: an imported variable may end with a mounted Secret's newline.
+private fun checkExpoUrl(value: String): String? = value.trim().let { url ->
+    if (EXPO_HTTPS_URL.matches(url) || EXPO_LOCAL_URL.matches(url)) null else EXPO_URL_REFUSAL
+}
 
 /** The only token endpoint a stored key may name: the server posts its signed assertion there. */
 const val GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
@@ -109,3 +129,7 @@ private const val SERVICE_ACCOUNT_REFUSAL = "paste the JSON key of a Google serv
     "(type service_account, token_uri $GOOGLE_TOKEN_URI)."
 private val PROJECT_ID = Regex("[a-z][a-z0-9-]{4,62}")
 private val CLIENT_EMAIL = Regex("[A-Za-z0-9._%+-]{1,128}@[A-Za-z0-9.-]{1,128}")
+private const val EXPO_URL_REFUSAL =
+    "Expo's push endpoint is an https URL, or http to localhost or 127.0.0.1, without credentials."
+private val EXPO_HTTPS_URL = Regex("https://[^\\s/?#@]+(/\\S*)?")
+private val EXPO_LOCAL_URL = Regex("http://(localhost|127\\.0\\.0\\.1)(:[0-9]{1,5})?(/\\S*)?")

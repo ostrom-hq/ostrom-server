@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.notifications.infrastructure
 
+import run.ostrom.server.kernel.settings.InstanceSettings
+import run.ostrom.server.notifications.domain.DEFAULT_EXPO_PUSH_URL
+import run.ostrom.server.notifications.domain.EXPO_ACCESS_TOKEN_FIELD
+import run.ostrom.server.notifications.domain.EXPO_PUSH_URL_FIELD
+import run.ostrom.server.notifications.domain.PUSH_SETTINGS
 import run.ostrom.server.notifications.domain.PushMessage
 import run.ostrom.server.notifications.domain.PushNotSentException
 import run.ostrom.server.notifications.domain.PushSender
@@ -27,20 +32,26 @@ import kotlinx.serialization.json.put
  * [PushSender] on Expo's push service (`POST /--/api/v2/push/send`), which hands each message to APNs or FCM with
  * the project's keys: one request for an approver's phones, at most a hundred messages each, as Expo takes them.
  *
+ * The endpoint and the access token are the instance's push settings ([PUSH_SETTINGS]), read at each send: a change
+ * an administrator saves applies to the next push.
+ *
  * @param http The client.
- * @param url Expo's push endpoint (`OSTROM_EXPO_PUSH_URL`; a fake one in the tests and the end-to-end bench).
- * @param accessToken The project's access token when its push security requires one (`OSTROM_EXPO_ACCESS_TOKEN`).
+ * @param settings The instance's settings (Expo's endpoint, a fake one in the tests and the end-to-end bench, and
+ *   the project's access token when its push security requires one).
  */
 class ExpoPushSender(
     private val http: HttpClient,
-    private val url: String,
-    private val accessToken: String?,
+    private val settings: InstanceSettings,
 ) : PushSender {
     override suspend fun send(messages: List<PushMessage>) {
-        messages.chunked(MAX_BATCH).forEach { post(it) }
+        val push = settings.read(PUSH_SETTINGS.name)
+        // Trimmed, a blank one unset, as the variables they are imported from were read (a mounted Secret's newline).
+        val url = push[EXPO_PUSH_URL_FIELD].orEmpty().trim().ifEmpty { DEFAULT_EXPO_PUSH_URL }
+        val accessToken = push[EXPO_ACCESS_TOKEN_FIELD].orEmpty().trim().ifEmpty { null }
+        messages.chunked(MAX_BATCH).forEach { post(it, url, accessToken) }
     }
 
-    private suspend fun post(batch: List<PushMessage>) {
+    private suspend fun post(batch: List<PushMessage>, url: String, accessToken: String?) {
         val body = buildJsonArray {
             batch.forEach { message ->
                 add(
@@ -56,7 +67,7 @@ class ExpoPushSender(
                 )
             }
         }
-        val answer = answer(body.toString())
+        val answer = answer(body.toString(), url, accessToken)
         val refusal = when {
             answer == null -> "Expo did not answer."
             !answer.status.isSuccess() -> "Expo refused (${answer.status.value})."
@@ -69,7 +80,7 @@ class ExpoPushSender(
     private class Answer(val status: HttpStatusCode, val text: String)
 
     /** Expo's answer to [body], or null when it did not answer (connection, timeout). */
-    private suspend fun answer(body: String): Answer? = try {
+    private suspend fun answer(body: String, url: String, accessToken: String?): Answer? = try {
         val response = http.post(url) {
             accessToken?.let { header(HttpHeaders.Authorization, "Bearer $it") }
             contentType(ContentType.Application.Json)

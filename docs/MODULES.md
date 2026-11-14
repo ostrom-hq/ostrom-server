@@ -306,7 +306,7 @@ What lives in the console so far:
 | Stripe (`stripe`: the sealed secret key and webhook signing secrets, Stripe's API), read at each use; billing is on while the key and a webhook secret are stored | `OSTROM_STRIPE_SECRET_KEY`, `OSTROM_STRIPE_WEBHOOK_SECRET` (or their `_FILE`), `OSTROM_STRIPE_API_BASE` | the `billing` module |
 | Gateway (`gateway`: the instance's sealed Anthropic, OpenAI and OpenRouter keys, the providers' base URLs), read at each model call | `OSTROM_GATEWAY_ANTHROPIC_API_KEY`, `OSTROM_GATEWAY_OPENAI_API_KEY`, `OSTROM_GATEWAY_OPENROUTER_API_KEY`, `OSTROM_GATEWAY_ANTHROPIC_URL`, `OSTROM_GATEWAY_OPENAI_URL`, `OSTROM_GATEWAY_OPENROUTER_URL`, `OSTROM_GATEWAY_CODEX_URL` | the `gateway` module |
 | Sharing (`sharing`: the providers' OAuth token endpoints), read at each refresh | `OSTROM_SHARING_CLAUDE_TOKEN_URL`, `OSTROM_SHARING_CODEX_TOKEN_URL` | the `sharing` module |
-| Push (`push`): `provider` (`off` by default, or `firebase`) and the Firebase project's service account JSON key (`firebaseServiceAccount`, sealed) | new, never a variable | FCM push (`notifications`) |
+| Push (`push`): `provider` (`off` by default, or `firebase`) and the Firebase project's service account JSON key (`firebaseServiceAccount`, sealed), new and never a variable; for the deprecated Expo phones, Expo's push endpoint (`expoPushUrl`, https or http to this machine only, Expo's own while unset) and access token (`expoAccessToken`, sealed, only for a project that requires one), read at each send | `OSTROM_EXPO_PUSH_URL`, `OSTROM_EXPO_ACCESS_TOKEN` | push (`notifications`) |
 | License (`license`: the sealed enterprise license key, verified on save and at start; a key that does not verify is never stored, and one that stops verifying grants nothing, with its reason logged) | `OSTROM_LICENSE_KEY` (or its `_FILE`) | the `license` module (`ee/`) |
 
 The GitHub App is kept as TeamCode keeps it, in its own table (`github_apps`, one row, the key and secrets sealed),
@@ -616,7 +616,7 @@ anonymous call gets 401 `unauthorized`. A module lists a key of ostrom-core's `S
 | `integrations-github` | `github.v1`; `github.link.v1` | a stored GitHub App (created by the manifest flow, or imported once from the former variables); the second once that App's OAuth client (id and secret) is known |
 | `mcp-relay` | `mcp.v1`, `mcp.personal.v1` (members' own servers) | — |
 | `memory` | `memory.v1` | — |
-| `notifications` | `notifications.v1`, `notifications.push.v1` | — (phones register their FCM token and P-256 key; pushes go out once an administrator picks the provider in Admin → Settings → push. Deprecated Expo: `OSTROM_EXPO_ACCESS_TOKEN` only when the project requires one) |
+| `notifications` | `notifications.v1`, `notifications.push.v1` | — (phones register their FCM token and P-256 key; pushes go out once an administrator picks the provider in Admin → Settings → push. Deprecated Expo: its endpoint and access token in the same section) |
 | `receipts` | `receipts.v1` | — |
 | `reports` | `reports.v1` | — |
 | `rules` | `rules.v1`, `reports.v1` (the analysis) | — |

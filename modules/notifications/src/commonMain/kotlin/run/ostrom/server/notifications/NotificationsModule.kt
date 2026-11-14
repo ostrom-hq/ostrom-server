@@ -72,7 +72,7 @@ object NotificationsModule : ServerModule {
         single<PushDevicesRepository> { PushDevicesRepositoryImpl(get()) }
         single<PushEncryption> { EciesPushEncryption() }
         single<RegisterPushDeviceUseCase> { RegisterPushDeviceUseCaseImpl(get(), get(), get()) }
-        // Admin → Settings → push: the provider and the Firebase service account, sealed (the admin module).
+        // Admin → Settings → push: the provider, Firebase's key, Expo's endpoint and token (the admin module).
         single(named("notifications-push")) { PUSH_SETTINGS }
         single<DeletePushDeviceUseCase> { DeletePushDeviceUseCaseImpl(get()) }
         single { PushDevicesRoutesDependencies(get(), get(), get()) }
@@ -98,7 +98,7 @@ object NotificationsModule : ServerModule {
         single<PushSender> {
             val settings = get<NotificationSettings>()
             ProviderPushSender(
-                expo = ExpoPushSender(get(HTTP), settings.expoPushUrl, settings.expoAccessToken),
+                expo = ExpoPushSender(get(HTTP), get()),
                 fcm = EncryptedPushSender(get(), get(), get(), get(), settings.publicUrl, get()),
             )
         }
@@ -127,7 +127,8 @@ object NotificationsModule : ServerModule {
     /**
      * Approval notifications, and push to the phones: a phone registers its FCM token and public key whatever the
      * provider, and its pushes go out once an administrator chooses one (Admin → Settings → push); the deprecated
-     * Expo push service needs no configuration.
+     * Expo push service needs no configuration (its endpoint has a default, an access token only for a project that
+     * requires one).
      */
     override suspend fun features(koin: Koin): Set<String> =
         setOf(ServerFeatures.NOTIFICATIONS, ServerFeatures.NOTIFICATIONS_PUSH)

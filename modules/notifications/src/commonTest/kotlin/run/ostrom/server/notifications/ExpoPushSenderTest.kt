@@ -3,6 +3,11 @@ package run.ostrom.server.notifications
 
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.logging.LogLevel
+import run.ostrom.server.kernel.settings.InstanceSettings
+import run.ostrom.server.kernel.settings.SettingsValues
+import run.ostrom.server.notifications.domain.EXPO_ACCESS_TOKEN_FIELD
+import run.ostrom.server.notifications.domain.EXPO_PUSH_URL_FIELD
+import run.ostrom.server.notifications.domain.PUSH_SETTINGS
 import run.ostrom.server.notifications.domain.PushMessage
 import run.ostrom.server.notifications.domain.PushNotSentException
 import run.ostrom.server.notifications.infrastructure.ExpoPushSender
@@ -27,6 +32,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -47,7 +53,7 @@ class ExpoPushSenderTest {
         val requests = mutableListOf<HttpRequestData>()
         val http = HttpClient(MockEngine { requests += it; respond("""{"data":[{"status":"ok","id":"t1"}]}""") })
 
-        ExpoPushSender(http, url, "expo-access").send(listOf(message))
+        ExpoPushSender(http, settings("expo-access")).send(listOf(message))
 
         val request = requests.single()
         assertEquals(url, request.url.toString())
@@ -69,7 +75,7 @@ class ExpoPushSenderTest {
         val http = HttpClient(MockEngine { requests += it; respond("{}") })
 
         val phones = List(MAX_BATCH + 1) { message.copy(device = testPhone("ExponentPushToken[p$it]")) }
-        ExpoPushSender(http, url, null).send(phones)
+        ExpoPushSender(http, settings(null)).send(phones)
 
         assertEquals(listOf(MAX_BATCH, 1), requests.map { body(it).size })
         assertTrue(requests.all { it.headers[HttpHeaders.Authorization] == null })
@@ -79,11 +85,15 @@ class ExpoPushSenderTest {
     @Test
     fun aRefusalOrNoAnswerIsAPushNotSentThatNamesNoToken() = runTest {
         val refused = HttpClient(MockEngine { respond("{}", HttpStatusCode.TooManyRequests) }) { expectSuccess = false }
-        val error = assertFailsWith<PushNotSentException> { ExpoPushSender(refused, url, null).send(listOf(message)) }
+        val error = assertFailsWith<PushNotSentException> {
+            ExpoPushSender(refused, settings(null)).send(listOf(message))
+        }
         assertEquals("Expo refused (429).", error.message)
 
         val down = HttpClient(MockEngine { error("network down: ${it.url}") })
-        val silent = assertFailsWith<PushNotSentException> { ExpoPushSender(down, url, null).send(listOf(message)) }
+        val silent = assertFailsWith<PushNotSentException> {
+            ExpoPushSender(down, settings(null)).send(listOf(message))
+        }
         assertEquals("Expo did not answer.", silent.message)
         assertFalse(silent.toString().contains("bob-phone"))
     }
@@ -99,7 +109,7 @@ class ExpoPushSenderTest {
             },
         )
         val error = assertFailsWith<PushNotSentException> {
-            ExpoPushSender(unregistered, url, null).send(listOf(message))
+            ExpoPushSender(unregistered, settings(null)).send(listOf(message))
         }
         assertEquals("Expo refused a message (DeviceNotRegistered).", error.message)
         assertFalse(error.toString().contains("bob-phone"))
@@ -131,41 +141,106 @@ class ExpoPushSenderTest {
     @Test
     fun aCancellationStaysACancellation() = runTest {
         val cancelled = HttpClient(MockEngine { throw CancellationException("stop") })
-        assertFailsWith<CancellationException> { ExpoPushSender(cancelled, url, null).send(listOf(message)) }
+        assertFailsWith<CancellationException> { ExpoPushSender(cancelled, settings(null)).send(listOf(message)) }
     }
 
     @Test
-    fun theSettingsReadTheConfigurationAndNeverPrintTheToken() {
+    fun withNothingSetInTheConsoleTheirPushGoesToExposOwnEndpoint() = runTest {
+        val requests = mutableListOf<HttpRequestData>()
+        val http = HttpClient(MockEngine { requests += it; respond("{}") })
+        val read = mutableListOf<String>()
+
+        ExpoPushSender(http, { section -> read += section; SettingsValues.EMPTY }).send(listOf(message))
+
+        assertEquals(listOf("push"), read, "The push section is read at each send")
+        assertEquals("https://exp.host/--/api/v2/push/send", requests.single().url.toString())
+        assertNull(requests.single().headers[HttpHeaders.Authorization])
+    }
+
+    @Test
+    fun aChangeSavedInTheConsoleAppliesToTheNextPush() = runTest {
+        val requests = mutableListOf<HttpRequestData>()
+        val http = HttpClient(MockEngine { requests += it; respond("{}") })
+        var stored = mapOf("expoPushUrl" to url)
+        val sender = ExpoPushSender(http, { SettingsValues(stored) })
+
+        sender.send(listOf(message))
+        stored = mapOf("expoPushUrl" to "https://relay.test/push", "expoAccessToken" to "rotated")
+        sender.send(listOf(message))
+
+        assertEquals(listOf(url, "https://relay.test/push"), requests.map { it.url.toString() })
+        assertEquals(listOf(null, "Bearer rotated"), requests.map { it.headers[HttpHeaders.Authorization] })
+    }
+
+    @Test
+    fun storedValuesAreTrimmedAndABlankOneIsUnset() = runTest {
+        val requests = mutableListOf<HttpRequestData>()
+        val http = HttpClient(MockEngine { requests += it; respond("{}") })
+        var stored = mapOf("expoPushUrl" to " $url\n", "expoAccessToken" to " expo-access\n")
+        val sender = ExpoPushSender(http, { SettingsValues(stored) })
+
+        sender.send(listOf(message))
+        stored = mapOf("expoPushUrl" to "  ", "expoAccessToken" to " ")
+        sender.send(listOf(message))
+
+        assertEquals(listOf(url, "https://exp.host/--/api/v2/push/send"), requests.map { it.url.toString() })
+        assertEquals(listOf("Bearer expo-access", null), requests.map { it.headers[HttpHeaders.Authorization] })
+    }
+
+    @Test
+    fun theConsolesPushSettingsHoldExposEndpointAndItsSealedToken() {
+        assertEquals("push", PUSH_SETTINGS.name)
+        val endpoint = assertNotNull(PUSH_SETTINGS.field(EXPO_PUSH_URL_FIELD))
+        val token = assertNotNull(PUSH_SETTINGS.field(EXPO_ACCESS_TOKEN_FIELD))
+        assertEquals("expoPushUrl", endpoint.name)
+        assertEquals("expoAccessToken", token.name)
+        assertEquals("OSTROM_EXPO_PUSH_URL", endpoint.legacyVariable)
+        assertFalse(endpoint.secret)
+        assertEquals("OSTROM_EXPO_ACCESS_TOKEN", token.legacyVariable)
+        assertTrue(token.secret)
+        assertNull(endpoint.check("http://127.0.0.1:4621/--/api/v2/push/send"))
+        assertNull(endpoint.check("http://localhost/push"))
+        assertNull(endpoint.check("https://exp.host"))
+        assertNull(endpoint.check(" https://exp.host/--/api/v2/push/send\n"), "an imported variable's newline")
+        val refusal = "Expo's push endpoint is an https URL, or http to localhost or 127.0.0.1, without credentials."
+        for (refused in listOf(
+            "exp.host/--/api/v2/push/send",
+            "ftp://exp.host",
+            "http://exp.host/--/api/v2/push/send",
+            "http://169.254.169.254/latest",
+            "https://user@exp.host/push",
+            "http://localhost.evil.example/push",
+        )) {
+            assertEquals(refusal, endpoint.check(refused), refused)
+        }
+        assertNull(token.check("any-token"))
+    }
+
+    @Test
+    fun theWebOriginAndPublicUrlAreReadFromTheConfiguration() {
         val defaults = NotificationSettings.from(config(emptyMap()))
         assertEquals(NotificationSettings(), defaults)
-        assertEquals("https://exp.host/--/api/v2/push/send", defaults.expoPushUrl)
-        assertNull(defaults.expoAccessToken)
         assertEquals("http://localhost:5173", defaults.webOrigin)
         assertEquals("", defaults.publicUrl, "No public URL set")
-        assertTrue(defaults.toString().contains("expoAccessToken=none"))
-
         val set = NotificationSettings.from(
             config(
                 mapOf(
-                    "OSTROM_EXPO_PUSH_URL" to " http://127.0.0.1:4621/--/api/v2/push/send ",
-                    "OSTROM_EXPO_ACCESS_TOKEN" to "expo-secret",
-                    "OSTROM_WEB_ORIGIN" to "https://console.ostrom.test/",
+                    "OSTROM_WEB_ORIGIN" to " https://console.ostrom.test/ ",
                     "OSTROM_PUBLIC_URL" to "https://ostrom.test/",
                 ),
             ),
         )
-        assertEquals(
-            NotificationSettings(
-                "http://127.0.0.1:4621/--/api/v2/push/send",
-                "expo-secret",
-                "https://console.ostrom.test",
-                "https://ostrom.test",
-            ),
-            set,
+        assertEquals(NotificationSettings("https://console.ostrom.test", "https://ostrom.test"), set)
+    }
+
+    private fun settings(token: String?) = InstanceSettings { section ->
+        assertEquals("push", section)
+        SettingsValues(
+            buildMap {
+                put("expoPushUrl", url)
+                token?.let { put("expoAccessToken", it) }
+            },
         )
-        assertFalse(set.toString().contains("expo-secret"), set.toString())
-        assertTrue(set.toString().contains("expoAccessToken=set"))
-        assertNull(NotificationSettings.from(config(mapOf("OSTROM_EXPO_ACCESS_TOKEN" to "  "))).expoAccessToken)
     }
 
     private fun config(values: Map<String, String>) = object : ConfigSource {
