@@ -4,12 +4,14 @@ package run.ostrom.server.runners.domain
 /**
  * How a session gets the `ostrom` binary its containers run (TeamCode's "Delivery", docs/cloud-sessions.md): an init
  * container from [runnerImage] copies [runnerBinary] into a volume every other container mounts read-only at
- * `/opt/ostrom`, and runs `/opt/ostrom/ostrom cloud …`; the session's containers run [sessionImage], the team's
+ * `/opt/ostrom`, and runs `/opt/ostrom/ostrom cloud …` (on Docker, the delivery container mounts that volume over the
+ * binary's directory, which the engine copies into it); the session's containers run [sessionImage], the team's
  * toolchain.
  *
- * @property runnerImage The image holding the `ostrom` Linux binary (ghcr.io/ostrom-hq/ostrom-runner).
+ * @property runnerImage The image holding the `ostrom` Linux binary (docker.io/ostromhq/ostrom-runner).
  * @property runnerBinary Where the binary is in [runnerImage].
- * @property sessionImage The image of the session's containers, where the session names none (its profile does).
+ * @property sessionImage The image of the session's containers where the session names none: a Docker or registered
+ *   session's (`OSTROM_RUNNERS_IMAGE`); a Kubernetes session's profile names its own.
  * @property serverUrl The URL a Kubernetes session's runner calls back: the runtime's, else the server's public URL.
  */
 data class RunnerDelivery(

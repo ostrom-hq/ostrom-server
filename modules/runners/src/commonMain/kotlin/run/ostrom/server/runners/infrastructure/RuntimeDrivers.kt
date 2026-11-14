@@ -15,7 +15,8 @@ object RuntimeDrivers {
      *
      * @param config The module's configuration.
      * @param registered The driver on the registered runners, which needs the database.
-     * @param delivery The runner image and server URL of a new Kubernetes execution.
+     * @param delivery The runner image and binary of a new execution, on Kubernetes or Docker, its session image on
+     *   Docker and its server URL on Kubernetes.
      * @param clusters The console's clusters the Kubernetes sessions run on.
      *
      * @return The driver; [DisabledRuntimeDriver] when no runtime is configured.
@@ -34,7 +35,7 @@ object RuntimeDrivers {
                 client = runtimeHttpClient(null, DOCKER_TIMEOUT_MILLIS),
                 settings = config.docker,
                 serverUrl = config.serverUrl,
-                runnerImage = config.runnerImage,
+                delivery = delivery,
             )
         }
 }

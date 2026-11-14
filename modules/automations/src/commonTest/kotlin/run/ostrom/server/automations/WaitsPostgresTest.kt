@@ -2,6 +2,9 @@
 package run.ostrom.server.automations
 
 import run.ostrom.server.automations.domain.AnswerWaitUseCase
+import run.ostrom.server.kernel.sessions.CloudSessionWakes
+import run.ostrom.server.kernel.sessions.PendingWaitAnswers
+import run.ostrom.server.automations.fakes.RecordingWakes
 import run.ostrom.server.automations.domain.AskWait
 import run.ostrom.server.automations.domain.AskWaitUseCase
 import run.ostrom.server.automations.domain.CreateOutcome
@@ -270,6 +273,24 @@ class WaitsPostgresTest {
         assertEquals(listOf(elsewhere.id), repository.takeAnswered(ORG_B, segments, 10).map { it.id })
     }
 
+    @Test
+    fun anAnswerNotHandedOverIsPendingForItsSessionSinceItsResolution() =
+        serverTest(listOf(AutomationsModule)) { server ->
+            val repository = server.koin.get<WaitsRepository>()
+            val pending = server.koin.get<PendingWaitAnswers>()
+            val asked = wait(session = "c-1")
+            repository.createWithinLimit(asked, 5)
+            assertFalse(pending.answeredSince(ORG_A, "c-1", t0), "Open, not answered")
+            repository.resolve(ORG_A, asked.id, WaitAnswer("approve", emptyMap(), ALICE.toString(), t0 + 2.minutes))
+
+            assertTrue(pending.answeredSince(ORG_A, "c-1", t0 + 1.minutes))
+            assertFalse(pending.answeredSince(ORG_A, "c-1", t0 + 2.minutes), "Resolved before the execution started")
+            assertFalse(pending.answeredSince(ORG_B, "c-1", t0), "Another organization's")
+            assertFalse(pending.answeredSince(ORG_A, "c-2", t0), "Another session's")
+            repository.takeAnswered(ORG_A, listOf("c-1"), 10)
+            assertFalse(pending.answeredSince(ORG_A, "c-1", t0), "Handed over")
+        }
+
     private fun open(session: String) = WaitFilter(ORG_A, status = WaitStatus.OPEN, sessionId = session)
 
     @Test
@@ -302,6 +323,26 @@ class WaitsPostgresTest {
             contentType(ContentType.Application.Json)
             setBody(request)
         }
+
+    @Test
+    fun anAnswerWakesItsSessionOnceAndACancelNone() {
+        val wakes = RecordingWakes()
+        val overrides = module {
+            includes(testIdentities)
+            single<CloudSessionWakes> { wakes }
+        }
+        serverTest(listOf(AutomationsModule), overrides) { server ->
+            val client = server.client
+            val asked = CreateWaitRequest(question, sessionId = "s1", assignee = ALICE.toString())
+            val wait = client.ask("agent", asked).body<WaitResponse>()
+            val cancelled = client.ask("agent", asked).body<WaitResponse>()
+            val approve = AnswerWaitRequest("approve", mapOf("feedback" to JsonPrimitive("Go")))
+            assertEquals(HttpStatusCode.OK, client.answer("alice", wait.id, approve).status)
+            assertEquals(HttpStatusCode.OK, client.answer("alice", wait.id, approve).status, "The same answer again")
+            client.post("/api/v1/waits/${cancelled.id}/cancel") { bearerAuth("agent") }
+            assertEquals(listOf("s1" to Uuid.parse(wait.id)), wakes.woken)
+        }
+    }
 
     @Test
     fun theApiAsksListsAnswersAndCancels() {

@@ -46,7 +46,7 @@ jobs:
     env:
       HELM_REF: ${{ inputs.helm_ref || 'main' }}
       SERVER_IMAGE: ${{ inputs.server_image || 'docker.io/ostromhq/ostrom-server:latest' }}
-      RUNNER_IMAGE: ${{ inputs.runner_image || 'ghcr.io/ostrom-hq/ostrom-runner:latest' }}
+      RUNNER_IMAGE: ${{ inputs.runner_image || 'docker.io/ostromhq/ostrom-runner:latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

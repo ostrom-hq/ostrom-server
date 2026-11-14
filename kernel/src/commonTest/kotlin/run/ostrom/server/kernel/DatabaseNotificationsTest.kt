@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.kernel
 
+import run.ostrom.server.kernel.database.CancellationKeepingDriver
 import run.ostrom.server.kernel.database.InProcessNotifications
 import run.ostrom.server.kernel.database.PostgresNotifications
 import run.ostrom.server.kernel.database.databaseNotifications
@@ -45,6 +46,8 @@ class DatabaseNotificationsTest {
             val database = TestDatabase.create() ?: return@withContext
             try {
                 assertIs<PostgresNotifications>(databaseNotifications(database.driver))
+                val pool = assertIs<CancellationKeepingDriver>(database.driver).inner
+                assertIs<PostgresNotifications>(databaseNotifications(pool), "The sqlx4k pool itself")
                 assertIs<InProcessNotifications>(databaseNotifications(RecordingDriver(database.driver)))
             } finally {
                 database.close()

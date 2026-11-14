@@ -89,7 +89,7 @@ interface CloudSessionsRepository {
     /**
      * Sets the desired state to running unless the organization already has [maxRunning] sessions holding an
      * execution, serialized per organization like [createWithinCap]. A session that already holds one is not
-     * counted twice.
+     * counted twice. A session being deleted, or over, is left as it is: [ResumeOutcome.NotFound].
      *
      * @param orgId The organization.
      * @param id The session.
@@ -202,6 +202,6 @@ sealed interface ResumeOutcome {
     /** The organization is at its cap. */
     data object AtCap : ResumeOutcome
 
-    /** No such session in the organization. */
+    /** No such session in the organization, or it is being deleted or over. */
     data object NotFound : ResumeOutcome
 }

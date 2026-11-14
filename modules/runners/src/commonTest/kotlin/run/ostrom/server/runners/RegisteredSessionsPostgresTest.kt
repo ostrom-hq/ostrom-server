@@ -70,7 +70,7 @@ class RegisteredSessionsPostgresTest {
                 mapOf(
                     "OSTROM_RUNNERS_DRIVER" to "registered",
                     "OSTROM_RUNNERS_SERVER_URL" to "http://host.docker.internal:4600",
-                    "OSTROM_RUNNERS_IMAGE" to "ghcr.io/ostrom-hq/ostrom-runner:test",
+                    "OSTROM_RUNNERS_IMAGE" to "docker.io/ostromhq/ostrom-runner:test",
                 ),
             ),
         )
@@ -104,14 +104,15 @@ class RegisteredSessionsPostgresTest {
             val plan = work.executions.single().plan!!
             assertEquals(1, work.executions.single().epoch)
             assertEquals(listOf(created.id.toString()), work.workspaces)
-            assertEquals(3, plan.volumes.size)
+            // The session's three volumes, then the execution's binary (DockerPlanGuardTest has the plan's shape).
+            assertEquals("ostrom-ws-${created.id.toHexString()}-e1-bin", plan.volumes.drop(3).single().name)
             val runner = plan.containers.last().body
             val env = runner["Env"]!!.jsonArray.map { it.jsonPrimitive.content }
             val token = env.single { it.startsWith("OSTROM_RUNNER_TOKEN=") }.substringAfter('=')
             assertEquals(server.koin.get<RunnerTokens>().hash(token), fresh().runnerTokenHash)
             assertTrue("OSTROM_SERVER_URL=http://host.docker.internal:4600" in env)
             assertTrue("OSTROM_AGENT_PROMPT=Fix the tests" in env)
-            assertEquals("ghcr.io/ostrom-hq/ostrom-runner:test", runner["Image"]!!.jsonPrimitive.content)
+            assertEquals("docker.io/ostromhq/ostrom-runner:test", runner["Image"]!!.jsonPrimitive.content)
             assertNull(runner["HostConfig"]!!.jsonObject["NetworkMode"], "The runner's engine chooses the network")
             assertEquals(emptyList(), server.work(b.id, b.token).executions, "Taken by one runner only")
 

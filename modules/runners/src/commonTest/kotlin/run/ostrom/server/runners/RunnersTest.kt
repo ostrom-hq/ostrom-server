@@ -59,7 +59,7 @@ class RunnersTest {
         val online = CloudRunner(id, "review", AgentKind.CODEX, 1, t0, online = true)
         assertEquals(
             RunnerDto(id.toString(), "review", listOf("kubernetes", "codex"), "online", t0.toString(), "1.4.0"),
-            online.toDto(RunnerRuntime("kubernetes", "ghcr.io/ostrom-hq/ostrom-runner:1.4.0")),
+            online.toDto(RunnerRuntime("kubernetes", "docker.io/ostromhq/ostrom-runner:1.4.0")),
         )
         val waiting = online.copy(lastSeenAt = null, online = false)
         assertEquals(

@@ -74,4 +74,7 @@ class InProcessNotifications : DatabaseNotifications {
  * @return The notifications.
  */
 fun databaseNotifications(driver: Driver): DatabaseNotifications =
-    (driver as? IPostgresSQL)?.let(::PostgresNotifications) ?: InProcessNotifications()
+    when (val pool = if (driver is CancellationKeepingDriver) driver.inner else driver) {
+        is IPostgresSQL -> PostgresNotifications(pool)
+        else -> InProcessNotifications()
+    }

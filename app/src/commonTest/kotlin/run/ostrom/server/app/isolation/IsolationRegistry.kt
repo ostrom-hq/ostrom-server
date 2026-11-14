@@ -198,6 +198,8 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "POST /api/v1/accounts/{id}/handover" to target("id" to ACCOUNT),
     "POST /api/v1/accounts/{id}/access-only" to target("id" to ACCOUNT),
     "GET /api/v1/capacity" to Case.Target(),
+    // The quota forecasts of one account (capacity.forecasts.v1): B's account, named in the query, read by A's admin.
+    "GET /api/v1/forecasts" to Case.Target(query = "account={{ACCOUNT}}", admin = true),
     "GET /api/v1/policy/models" to Case.Target(),
     "PUT /api/v1/policy/models" to Case.Target(body = """{"default": ["claude-sonnet-4-5"]}""", admin = true),
     "GET /api/v1/inference/queue" to Case.Target(),

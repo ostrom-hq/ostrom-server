@@ -4,6 +4,8 @@ package run.ostrom.server.runners.infrastructure
 import run.ostrom.server.runners.domain.CloudSession
 import run.ostrom.server.runners.domain.ExecutionSpec
 import run.ostrom.server.runners.domain.ExecutionStatus
+import run.ostrom.server.runners.domain.PlannedObject
+import run.ostrom.server.runners.domain.RunnerDeliverySource
 import run.ostrom.server.runners.domain.RuntimeDriver
 import run.ostrom.server.runners.domain.RuntimeNames
 import io.ktor.client.HttpClient
@@ -18,13 +20,17 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * [RuntimeDriver] on a local Docker Engine, through its HTTP API, for tests and self-hosting: it creates on the engine
- * what [DockerExecutionPlan] describes (three volumes per session, three containers per execution, the token in the
- * runner's container only, S2-49).
+ * what [DockerExecutionPlan] describes (three volumes per session; per execution a binary volume, the delivery
+ * container that fills it from the runner image, and three containers of the session image, the token in the runner's
+ * container only, S2-49). The delivery is read at each execution's start, as on Kubernetes.
  *
  * The engine is reached over TCP ([DockerSettings.apiUrl]; for the local socket, expose it on the loopback, for
  * example with a socket proxy). The free plan's egress restriction is not enforced here: it is a Kubernetes
@@ -33,16 +39,16 @@ import kotlinx.serialization.json.jsonArray
  * @param client The HTTP client.
  * @param settings The engine's URL and network.
  * @param serverUrl The URL the runner reaches the server at.
- * @param runnerImage The session container's image.
+ * @param delivery The runner image, its binary and the session image.
  */
 class DockerRuntimeDriver(
     private val client: HttpClient,
     settings: DockerSettings,
     serverUrl: String,
-    private val runnerImage: String,
+    private val delivery: RunnerDeliverySource,
 ) : RuntimeDriver {
     private val base = settings.apiUrl.trimEnd('/')
-    private val plan = DockerExecutionPlan(settings.network, serverUrl, runnerImage)
+    private val plan = DockerExecutionPlan(settings.network, serverUrl, delivery)
 
     override suspend fun ensureWorkspace(session: CloudSession) {
         // Creating a volume that exists answers 201 with the existing volume. The socket's volume takes the owner and
@@ -53,13 +59,18 @@ class DockerRuntimeDriver(
     }
 
     override suspend fun startExecution(spec: ExecutionSpec) {
-        for (container in plan.containers(spec)) createAndStart(container.name, container.body)
+        // Empty, so the delivery container's mount fills it; one left by a crashed start already holds the binary.
+        call(HttpMethod.Post, "/volumes/create", plan.binaryVolume(spec).body).requireSuccess("create volume")
+        for (container in plan.containers(spec, delivery.current())) createAndStart(container)
     }
 
-    private suspend fun createAndStart(name: String, body: JsonObject) {
+    private suspend fun createAndStart(container: PlannedObject) {
+        val name = container.name
+        val body = container.body
         var created = call(HttpMethod.Post, "/containers/create", body, mapOf("name" to name))
         if (created.status == HttpStatusCode.NotFound) {
-            pullImage()
+            // The runner image or the session image, whichever this container runs.
+            pullImage(body.getValue("Image").jsonPrimitive.content)
             created = call(HttpMethod.Post, "/containers/create", body, mapOf("name" to name))
         }
         if (created.status != HttpStatusCode.Conflict) created.requireSuccess("create container")
@@ -93,13 +104,35 @@ class DockerRuntimeDriver(
             val removed = call(HttpMethod.Delete, "/containers/$id", parameters = mapOf("force" to "true"))
             if (removed.status != HttpStatusCode.NotFound) removed.requireSuccess("remove container")
         }
+        // The binaries end with their executions: the next one gets its own runner image's. One still held (409) is
+        // removed at the next stop or with the workspace.
+        removeBinaryVolumes(session)
     }
 
     override suspend fun deleteWorkspace(session: CloudSession): Boolean {
+        val binariesGone = removeBinaryVolumes(session)
         val socketGone = removeVolume(DockerExecutionPlan.socketVolume(session.id))
         val checkGone = removeVolume(DockerExecutionPlan.checkVolume(session.id))
         val workspaceGone = removeVolume(RuntimeNames.workspace(session.id))
-        return socketGone && checkGone && workspaceGone
+        return binariesGone && socketGone && checkGone && workspaceGone
+    }
+
+    /**
+     * Removes the session's binary volumes, whatever their epoch: those with an epoch label (the session's own volumes
+     * have none).
+     *
+     * @return True once every one is gone.
+     */
+    private suspend fun removeBinaryVolumes(session: CloudSession): Boolean {
+        val label = "${KubernetesRuntimeDriver.SESSION_LABEL}=${session.id.toHexString()}"
+        val filters = """{"label":["$label","${KubernetesRuntimeDriver.EPOCH_LABEL}"]}"""
+        val listed = call(HttpMethod.Get, "/volumes", parameters = mapOf("filters" to filters))
+        listed.requireSuccess("list volumes")
+        // `Volumes` is null when none matches.
+        val volumes = Json.parseToJsonElement(listed.bodyAsText()).jsonObject["Volumes"] as? JsonArray
+        val names = volumes.orEmpty().mapNotNull { it.textAt("Name") }
+        // Every one is tried, so one still held never keeps the others.
+        return names.map { removeVolume(it) }.all { it }
     }
 
     /** Removes a volume; true once it is gone. */
@@ -112,8 +145,8 @@ class DockerRuntimeDriver(
         return call(HttpMethod.Get, path).status == HttpStatusCode.NotFound
     }
 
-    private suspend fun pullImage() {
-        val (image, tag) = splitImage(runnerImage)
+    private suspend fun pullImage(reference: String) {
+        val (image, tag) = splitImage(reference)
         call(HttpMethod.Post, "/images/create", parameters = mapOf("fromImage" to image, "tag" to tag))
             .requireSuccess("pull image")
     }
