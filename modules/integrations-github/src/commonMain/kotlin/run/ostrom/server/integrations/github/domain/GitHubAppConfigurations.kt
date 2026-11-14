@@ -113,6 +113,12 @@ class GitHubAppChange(
      * @param clientId The client ID stored now.
      */
     suspend fun applied(before: GitHubAppCredentials, appId: Long, clientId: String) {
+        // The links first: ending them matters more than the count the warning gives.
+        val former = before.oauthApp()
+        if (before.clientId != clientId) {
+            val removed = links.removeLinksOfOtherClients(clientId)
+            if (former != null) removed.forEach { GitHubLinks.revokeToken(github, former, it) }
+        }
         if (before.appId != appId.toString()) {
             logger.warn(
                 "The GitHub App ID changed: installations of the former App stop working until each organization " +
@@ -123,11 +129,6 @@ class GitHubAppChange(
                     "formerInstallations" to installations.installationCount(),
                 ),
             )
-        }
-        val former = before.oauthApp()
-        if (before.clientId != clientId) {
-            val removed = links.removeLinksOfOtherClients(clientId)
-            if (former != null) removed.forEach { GitHubLinks.revokeToken(github, former, it) }
         }
     }
 }
@@ -192,7 +193,8 @@ class GitHubAppConfigurations(
         // GitHub names the App's client; an answer without one is checked on the id alone, as TeamCode does.
         val client = verified.clientId ?: input.clientId
         if (verified.id != input.appId || client != input.clientId) refuse(GitHubAppMismatchException())
-        val webhook = input.webhookSecret ?: current?.webhookSecret
+        // Another App signs its deliveries with its own webhook secret: the former one is kept only for the same App.
+        val webhook = input.webhookSecret ?: current?.webhookSecret?.takeIf { current.appId == input.appId.toString() }
         val app = CreatedGitHubApp(input.appId, verified.slug, verified.owner, key, webhook, input.clientId, secret)
         if (!store.replaceApp(app, input.version, principal.subjectId, clock.now())) {
             refuse(GitHubAppConflictException())

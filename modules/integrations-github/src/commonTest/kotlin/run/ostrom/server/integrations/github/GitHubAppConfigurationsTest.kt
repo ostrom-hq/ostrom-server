@@ -243,7 +243,7 @@ class GitHubAppConfigurationsTest {
         verified = { id, _ -> VerifiedGitHubApp(id, "ostrom-next", "acme", "Iv1.next") }
         val next = base.copy(8, "Iv1.next", "n".repeat(40), privateKey = null, webhookSecret = null, version = 1)
         val saved = configurations().save(admin, next)
-        assertEquals("8" to "hook-secret", saved.app?.appId to saved.app?.webhookSecret)
+        assertEquals("8" to null, saved.app?.appId to saved.app?.webhookSecret, "The former App's webhook secret goes")
         val message = logger.lines.single().second
         assertTrue("installations of the former App stop working" in message, message)
         assertEquals(mapOf("formerAppId" to "7", "appId" to 8L, "formerInstallations" to 2L), logger.fields.single())
