@@ -31,7 +31,7 @@ class SchemaTenancyPostgresTest {
         // A table without `org_id` escapes the checks above: it must be named in INSTANCE_TABLES (docs/tenancy.md,
         // "Tables without an organization"), with the role that reaches it and why no organization owns its rows.
         val found = server.rows(TABLES_WITHOUT_AN_ORGANIZATION, "name").mapNotNull { it["name"] }
-            .filterNot { it.startsWith(MIGRATIONS_PREFIX) || it.startsWith(FLYWAY_PREFIX) }
+            .filterNot { it.startsWith(FLYWAY_PREFIX) }
         assertEquals(INSTANCE_TABLES.keys, found.toSet(), "Tables without org_id, each listed with its reason")
     }
 
@@ -136,9 +136,6 @@ class SchemaTenancyPostgresTest {
             WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND NOT ($ORG_TABLE_FILTER)
             ORDER BY 1
         """
-
-        /** The migrator's own tables, one per module (`_migrations_<module>`), written by the owner role at start. */
-        const val MIGRATIONS_PREFIX = "_migrations_"
 
         /** Flyway's histories, one per module (`flyway_<module>`), written by the owner role when it migrates. */
         const val FLYWAY_PREFIX = "flyway_"

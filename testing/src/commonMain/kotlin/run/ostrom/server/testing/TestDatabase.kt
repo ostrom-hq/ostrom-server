@@ -4,8 +4,11 @@ package run.ostrom.server.testing
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.DatabaseConfig
 import run.ostrom.server.kernel.config.EnvironmentConfigSource
+import run.ostrom.server.kernel.database.MigrationRunner
 import run.ostrom.server.kernel.database.TENANT_ROLE
 import run.ostrom.server.kernel.database.connectPostgres
+import run.ostrom.server.kernel.database.ownerMigrationRunner
+import run.ostrom.server.kernel.logging.Logger
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
 import kotlinx.coroutines.Dispatchers
@@ -65,6 +68,17 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
 
     /** The name of the serving role, the one [driver] connects as. */
     val servingRole: String get() = servingRoleName(id)
+
+    /**
+     * Flyway on the owner's connections, as `ostrom-server migrate` runs, but without its advisory lock: for a test
+     * that applies a module's migrations itself, one pass at a time (a part of them first, or a module its test server
+     * does not load).
+     *
+     * @param logger Where applied migrations are reported.
+     *
+     * @return The runner.
+     */
+    fun migrationRunner(logger: Logger): MigrationRunner = ownerMigrationRunner(ownerConfig, logger)
 
     /**
      * Runs [block] connected to this database as a fresh login role, like a deployment's serving role: not a

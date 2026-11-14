@@ -6,6 +6,8 @@ import run.ostrom.server.kernel.config.MapConfigSource
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.database.UnsafeDatabaseRoleException
 import run.ostrom.server.kernel.database.requireRowLevelSecurity
+import run.ostrom.server.kernel.logging.JsonLogger
+import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.module.ServerModule
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
@@ -218,11 +220,23 @@ class TestDatabaseTest {
     }
 
     @Test
-    fun serverTestCanMigrateWithFlyway() = serverTest(listOf(Migrated), migrations = TestMigrations.FLYWAY) { server ->
+    fun serverTestMigratesWithFlyway() = serverTest(listOf(Migrated)) { server ->
         val history = server.database.owner.fetchAll("SELECT count(*) AS n FROM flyway_probe WHERE success")
             .getOrThrow().single().get("n").asLong()
         assertEquals(1L, history, "the probe's migration is in its Flyway history")
         assertEquals(HttpStatusCode.OK, server.client.get("/health").status)
+    }
+
+    @Test
+    fun aTestMigratesAModuleWithFlywayAsTheOwner() = serverTest(emptyList()) { server ->
+        val second = Migrated.migrations +
+            SchemaMigration(2, "add_name", "ALTER TABLE probe_items ADD COLUMN name TEXT;")
+        val runner = server.database.migrationRunner(JsonLogger(LogLevel.WARN))
+        runner.migrate(Migrated.name, Migrated.migrations)
+        runner.migrate(Migrated.name, second)
+        val history = server.database.owner.fetchAll("SELECT count(*) AS n FROM flyway_probe WHERE success")
+            .getOrThrow().single().get("n").asLong()
+        assertEquals(2L, history, "both versions, applied one pass after the other")
     }
 
     /** A module with one migration. */

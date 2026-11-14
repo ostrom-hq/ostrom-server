@@ -6,7 +6,6 @@ import run.ostrom.server.compiler.domain.models.CompilerSettings
 import run.ostrom.server.compiler.domain.models.DecisionDoc
 import run.ostrom.server.compiler.domain.models.RuleDoc
 import run.ostrom.server.compiler.domain.services.CompilerSources
-import run.ostrom.server.kernel.database.MigrationRunnerImpl
 import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.rules.domain.models.RuleGate
 import run.ostrom.server.rules.domain.models.RuleGateAction
@@ -55,7 +54,7 @@ class EveryRulePostgresTest {
     ) = runTest(timeout = 5.minutes) {
         val database = TestDatabase.create() ?: return@runTest
         try {
-            MigrationRunnerImpl(database.owner, RecordingLogger()).migrate("rules", RulesMigrations)
+            database.migrationRunner(RecordingLogger()).migrate("rules", RulesMigrations)
             block(database.superuser, PostgresRulesRepository(database.driver), database.driver)
         } finally {
             database.close()

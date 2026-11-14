@@ -14,7 +14,7 @@ import org.koin.core.module.Module
  * How to add one: docs/MODULES.md.
  */
 interface ServerModule {
-    /** The module name: lower-case, also the suffix of its migration table (`_migrations_<name>`). */
+    /** The module name: lower-case, also the suffix of its Flyway history (`flyway_<name>`). */
     val name: String
 
     /** The Koin definitions of the module: use cases, repositories, and the routes' dependencies. */

@@ -4,7 +4,6 @@ package run.ostrom.server.rules
 import run.ostrom.server.compiler.CompilerModule
 import run.ostrom.server.gates.GatesModule
 import run.ostrom.server.instance.InstanceModule
-import run.ostrom.server.kernel.database.MigrationRunnerImpl
 import run.ostrom.server.receipts.ReceiptsModule
 import run.ostrom.server.rules.domain.models.AnalysisKind
 import run.ostrom.server.rules.domain.models.AnalysisRun
@@ -135,7 +134,7 @@ class AnalysisEnginePostgresTest {
         val database = TestDatabase.create() ?: return@runTest
         try {
             // The owner migrates, as `ostrom-server migrate` does; the test database's driver is the serving role.
-            MigrationRunnerImpl(database.owner, RecordingLogger()).migrate("rules", RulesMigrations)
+            database.migrationRunner(RecordingLogger()).migrate("rules", RulesMigrations)
             val runs = PostgresAnalysisRepository(database.driver)
             val rules = PostgresRulesRepository(database.driver)
             val reader = FakeRepositoryReader().apply { connect(orgA, RepositoryFixtures.docs) }

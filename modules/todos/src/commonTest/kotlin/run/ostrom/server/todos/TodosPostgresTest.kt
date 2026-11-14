@@ -5,7 +5,6 @@ import run.ostrom.server.automations.domain.WaitAgent
 import run.ostrom.server.automations.domain.WaitAgentResolver
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.MemberDirectory
-import run.ostrom.server.testing.TestMigrations
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.todos.domain.TodoArtifacts
@@ -60,9 +59,9 @@ class TodosPostgresTest {
         }
     }
 
-    /** The module's server, its tables migrated by Flyway as `ostrom-server migrate` does. */
+    /** The module's server. */
     private fun todosServer(overrides: Module, block: suspend ApplicationTestBuilder.(TestServer) -> Unit) =
-        serverTest(listOf(TodosModule), overrides, TestMigrations.FLYWAY, block)
+        serverTest(listOf(TodosModule), overrides, block)
 
     private fun list(org: Uuid = ORG_A, session: String = "s1") = TodoRules.create(
         Uuid.random(),

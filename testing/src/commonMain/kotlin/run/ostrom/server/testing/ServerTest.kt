@@ -7,10 +7,8 @@ import run.ostrom.server.kernel.config.LayeredConfigSource
 import run.ostrom.server.kernel.config.MapConfigSource
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.MigrationRunner
-import run.ostrom.server.kernel.database.MigrationRunnerImpl
 import run.ostrom.server.kernel.database.databaseNotifications
 import run.ostrom.server.kernel.database.migrateModules
-import run.ostrom.server.kernel.database.migrateUnderLock
 import run.ostrom.server.kernel.database.requireRowLevelSecurity
 import run.ostrom.server.kernel.http.OstromJson
 import run.ostrom.server.kernel.http.configureHttp
@@ -44,33 +42,23 @@ private val BENCH_TIMEOUT = 5.minutes
  * Runs a test against a real server: a fresh PostgreSQL database (see [TestDatabase]), the kernel, the given
  * modules with their migrations applied, and their routes. Skipped when no test database is configured.
  *
- * Started as a deployment starts: the owner applies the migrations (`ostrom-server migrate`), then the server connects
- * as the serving role, which must pass the start check (no row-level security bypass), verifies the migrations and
- * initializes the modules. Every request and every repository of the test runs as that role.
+ * Started as a deployment starts: the owner applies the migrations with Flyway (`ostrom-server migrate`), then the
+ * server connects as the serving role, which must pass the start check (no row-level security bypass), verifies
+ * Flyway's histories through its JDBC pool and initializes the modules. Every request and every repository of the test
+ * runs as that role.
  *
  * Every JSON answer of an operation the ostrom-core contract marks `served` is checked against it when CI gives the
  * contract (`OSTROM_CONTRACT_OPENAPI`): the test fails on a drift [KnownDrifts] does not list ([ContractObserver]).
  *
  * @param modules The modules under test, in dependency order.
  * @param overrides Koin definitions replacing real ones (a fake clock, a fake token authenticator).
- * @param migrations What applies and checks the migrations: sqlx4k until every module's tests move to Flyway.
  * @param block The test.
  */
 fun serverTest(
     modules: List<ServerModule>,
     overrides: Module? = null,
-    migrations: TestMigrations = TestMigrations.SQLX4K,
     block: suspend ApplicationTestBuilder.(TestServer) -> Unit,
-) = serverTest(modules, overrides, EnvironmentConfigSource(), migrations = migrations, block = block)
-
-/** What a test server applies and checks the migrations with. */
-enum class TestMigrations {
-    /** sqlx4k's runner and its `_migrations_<module>` histories, the modules' tests until they move to Flyway. */
-    SQLX4K,
-
-    /** Flyway and its `flyway_<module>` histories, as `ostrom-server migrate` and the server's start. */
-    FLYWAY,
-}
+) = serverTest(modules, overrides, EnvironmentConfigSource(), block = block)
 
 /**
  * [serverTest] for a read bench (ReadBench.kt): the same server, within [BENCH_TIMEOUT].
@@ -89,34 +77,27 @@ fun benchTest(
  * [serverTest] with the test database configuration read from [environment] (the skipped case is tested so), run as
  * Ktor's `testApplication` runs it, within [timeout] (a read bench fills its tables first, ReadBench.kt).
  */
-@Suppress("LongParameterList") // The public serverTest's parameters, and what its own tests set: the environment.
 internal fun serverTest(
     modules: List<ServerModule>,
     overrides: Module?,
     environment: ConfigSource,
     timeout: Duration = TEST_TIMEOUT,
-    migrations: TestMigrations = TestMigrations.SQLX4K,
     block: suspend ApplicationTestBuilder.(TestServer) -> Unit,
 ) = runTestWithRealTime(EmptyCoroutineContext, timeout) {
-    runTestApplication { serve(modules, overrides, environment, migrations, block) }
+    runTestApplication { serve(modules, overrides, environment, block) }
 }
 
 private suspend fun ApplicationTestBuilder.serve(
     modules: List<ServerModule>,
     overrides: Module?,
     environment: ConfigSource,
-    migrations: TestMigrations,
     block: suspend ApplicationTestBuilder.(TestServer) -> Unit,
 ) {
     val database = TestDatabase.create(environment) ?: return
     try {
         val signer = Ed25519InstanceSigner.generate()
         val logger = JsonLogger(LogLevel.WARN)
-        when (migrations) {
-            TestMigrations.SQLX4K ->
-                database.owner.migrateUnderLock(MigrationRunnerImpl(database.owner, logger), modules)
-            TestMigrations.FLYWAY -> migrateModules(database.ownerConfig, logger, modules)
-        }
+        migrateModules(database.ownerConfig, logger, modules)
         database.driver.requireRowLevelSecurity()
         // The server's pool records what it sends, for the read benches (ReadBench.kt).
         val driver = RecordingDriver(database.driver)
@@ -136,8 +117,8 @@ private suspend fun ApplicationTestBuilder.serve(
                     signer,
                     source,
                     notifications = notifications,
-                    // The server's start check reads Flyway's histories through the pool; sqlx4k's on the driver.
-                    migrationRunner = if (migrations == TestMigrations.FLYWAY) jdbc.migrationRunner(logger) else null,
+                    // The server's start check reads Flyway's histories through the pool, as the server does.
+                    migrationRunner = jdbc.migrationRunner(logger),
                     jdbc = jdbc,
                 ),
                 modules,

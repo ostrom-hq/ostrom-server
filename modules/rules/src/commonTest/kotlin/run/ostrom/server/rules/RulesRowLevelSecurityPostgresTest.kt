@@ -2,7 +2,6 @@
 package run.ostrom.server.rules
 
 import run.ostrom.server.gates.domain.models.SelfApprovalPolicy
-import run.ostrom.server.kernel.database.MigrationRunnerImpl
 import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.rules.domain.models.AnalysisFailure
 import run.ostrom.server.rules.domain.models.AnalysisKind
@@ -51,7 +50,7 @@ class RulesRowLevelSecurityPostgresTest {
         val database = TestDatabase.create() ?: return@runTest
         try {
             // The owner migrates, as `ostrom-server migrate` does; the test database's driver is the serving role.
-            MigrationRunnerImpl(database.owner, RecordingLogger()).migrate("rules", RulesMigrations)
+            database.migrationRunner(RecordingLogger()).migrate("rules", RulesMigrations)
             block(database.superuser, PostgresRulesRepository(database.driver), database.driver)
         } finally {
             database.close()
