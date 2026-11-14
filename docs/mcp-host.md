@@ -17,7 +17,7 @@ TeamCode's `mcp` module (TeamCode `docs/mcp.md`) and speaks the same host protoc
 | Image (amd64, arm64) and its contract test with real npm and PyPI servers | Done (`mcp-host-image.yml`) |
 | Relay → host operations (`HostMcpUpstream`, `POST /v1/ops`; `OSTROM_MCP_HOST_URL`, `OSTROM_MCP_HOST_TOKEN`) | Done (`mcp-relay`) |
 | Warm-up from the member's server list and the `retain` sweep each minute (`mcp-relay`) | Done |
-| The recorded state of each process (`mcp_relay_stdio_states`), `GET /api/v1/mcp/hosted`, Restart (`POST /api/v1/mcp/hosted/restart`, `/v1/stop`), `state` and `failure` in a member's list | Done (coming soon on main until ostrom-core marks the routes served; `mcp-relay`) |
+| The recorded state of each process (`mcp_relay_stdio_states`), `GET /api/v1/mcp/hosted`, Restart (`POST /api/v1/mcp/hosted/restart`, `/v1/stop`), `state` and `failure` in a member's list | Done (`mcp-relay`) |
 | Events `mcp.stdio.failed`, `mcp.stdio.recovered`, `mcp.unreachable` | Waiting for outgoing webhooks |
 | Helm component (Deployment, Service, NetworkPolicy, generated token Secret) | Next (ostrom-helm) |
 
@@ -242,11 +242,9 @@ As in TeamCode (`docs/mcp.md`, "Operating and troubleshooting"):
   server's once, a per-member server's once per member. Each item gives the state and last failure, starts,
   failures, last exit code, cold-start time, memory and the last 4 KiB of scrubbed stderr, all read live from
   `/v1/status`. When the host does not answer, `hostReachable` is false and the recorded states are shown.
-  Coming soon: served once ostrom-core lists the route.
 - **Restart** (`POST /api/v1/mcp/hosted/restart`, `mcp:admin`, a recent sign-in) stops the process and lifts a
   backoff (`/v1/stop`); the next operation starts it again. It is journaled first, as `mcp.stdio.restarted`, with
-  the subject `server` or `server/member`. A host that does not answer gets 503 `mcp_host_unavailable`. Coming soon:
-  served once ostrom-core lists the route.
+  the subject `server` or `server/member`. A host that does not answer gets 503 `mcp_host_unavailable`.
 - **Members** see `state` and `failure` for their stdio servers in `GET /api/v1/mcp/servers?mine=true`, as
   recorded by the sweep, without stderr. A state that cannot be read is left out: it never hides a server from an
   agent.
