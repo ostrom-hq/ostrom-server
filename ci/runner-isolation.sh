@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # S2-49: in a cloud session, the agent cannot read the runner token. Builds the session image (runner/Dockerfile)
 # around the runner binary given as $1, and runs one session as the Docker runtime driver does: the agent host as
-# UID 1000 with the workspace and the agent socket, the check host as UID 1000 in a container of its own with the
-# workspace and the check socket, the runner as UID 1001 with the token and the two sockets only. Then:
+# UID 1001 with the workspace and the agent socket, the check host as UID 1001 in a container of its own with the
+# workspace and the check socket, the runner as UID 1000 with the token and the two sockets only, all in group 1000
+# (TeamCode's image contract). Then:
 #   - the runner started the agent's terminal through the host (a bash runs in the agent's container);
 #   - the agent's container sees no process of another UID;
 #   - nothing the agent's container can read holds the token (every process's environment and command line, and
@@ -44,15 +45,15 @@ docker volume create iso-workspace > /dev/null
 docker volume create iso-socket > /dev/null
 docker volume create iso-check > /dev/null
 hardening=(--read-only --tmpfs "/tmp:rw,nosuid,size=64m" --cap-drop ALL --security-opt no-new-privileges)
-docker run -d --name iso-agent --user 1000:1000 "${hardening[@]}" \
+docker run -d --name iso-agent --user 1001:1000 "${hardening[@]}" \
   -v iso-workspace:/workspace -v iso-socket:/run/ostrom -w /workspace \
   -e OSTROM_AGENT_SOCKET=/run/ostrom/agent.sock -e HOME=/workspace/.home \
   --entrypoint /usr/local/bin/ostrom-runner "$image" agent-host > /dev/null
-docker run -d --name iso-checks --user 1000:1000 "${hardening[@]}" \
+docker run -d --name iso-checks --user 1001:1000 "${hardening[@]}" \
   -v iso-workspace:/workspace -v iso-check:/run/ostrom-check -w /workspace \
   -e OSTROM_CHECK_HOST_SOCKET=/run/ostrom-check/check.sock -e HOME=/tmp \
   --entrypoint /usr/local/bin/ostrom-runner "$image" check-host > /dev/null
-docker run -d --name iso-runner --user 1001:1001 --group-add 2000 "${hardening[@]}" \
+docker run -d --name iso-runner --user 1000:1000 "${hardening[@]}" \
   -v iso-socket:/run/ostrom -v iso-check:/run/ostrom-check \
   -e OSTROM_RUNNER_TOKEN="$token" -e OSTROM_SERVER_URL=http://127.0.0.1:9 -e OSTROM_SESSION_ID="$session" \
   -e OSTROM_EPOCH=1 -e OSTROM_AGENT=shell -e OSTROM_AGENT_COMMAND=bash \
@@ -65,9 +66,9 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 docker exec iso-agent pgrep -x bash > /dev/null || fail "The agent's terminal did not start through the agent host."
-test "$(docker exec iso-agent id -u)" = 1000 || fail "The agent does not run as UID 1000."
-test "$(docker exec iso-runner id -u)" = 1001 || fail "The runner does not run as UID 1001."
-others=$(docker exec iso-agent ps -eo uid= | awk '$1 != 1000')
+test "$(docker exec iso-agent id -u)" = 1001 || fail "The agent does not run as UID 1001."
+test "$(docker exec iso-runner id -u)" = 1000 || fail "The runner does not run as UID 1000."
+others=$(docker exec iso-agent ps -eo uid= | awk '$1 != 1001')
 test -z "$others" || fail "The agent's container sees processes of another UID: $others"
 
 # What a container's UID can read: every process's environment and command line, and the writable directories.
@@ -81,7 +82,7 @@ readable iso-agent
 readable iso-runner
 if grep -qaF "$token" "$context/iso-agent.dump"; then fail "The agent's container can read the runner token."; fi
 grep -qaF "$token" "$context/iso-runner.dump" || fail "The search did not find the token in the runner's container."
-echo "S2-49: the agent (UID 1000) cannot read the runner token; the runner (UID 1001) holds it."
+echo "S2-49: the agent (UID 1001) cannot read the runner token; the runner (UID 1000) holds it, in the same group."
 
 # A check, asked by the agent's side as the hook asks it: one JSON line on the runner's checks socket.
 ask_check() {
@@ -121,7 +122,7 @@ expected=$(printf '%s' "$script" | sha256sum | cut -d' ' -f1)
 test "$(field scriptSha)" = "$expected" || fail "The runner did not hash the script it ran: $reply"
 checks_host=$(docker exec iso-checks hostname)
 case "$(field outputTail)" in
-  *"host=$checks_host uid=1000"*) ;;
+  *"host=$checks_host uid=1001"*) ;;
   *) fail "The check did not run on the check host: $reply" ;;
 esac
 case "$(field outputTail)" in
@@ -138,7 +139,7 @@ if docker exec iso-agent pgrep -f "sleep 6.42" > /dev/null; then fail "The agent
 wait "$asking"
 readable iso-checks
 if grep -qaF "$token" "$context/iso-checks.dump"; then fail "The check host's container can read the runner token."; fi
-echo "Checks: run on the check host (UID 1000, no token), code and script hash read by the runner."
+echo "Checks: run on the check host (UID 1001, no token), code and script hash read by the runner."
 
 # R4 (audit runner 2): a check can neither take the check host's place nor leave anything to the next one. The runner
 # listens and the check host links to it. A script, under the check host's uid, removes the runner's socket, listens at
@@ -152,7 +153,7 @@ sleep 1
 echo "taken=$(stat -c %u /run/ostrom-check/check.sock) home=$HOME"'
 reply=$(ask_check "$takeover")
 test "$(field exit)" = 0 || fail "The takeover script did not run: $reply"
-first_home=$(field outputTail | sed -n 's/.*taken=1000 home=\(\/tmp\/check-[A-Za-z0-9]*\).*/\1/p')
+first_home=$(field outputTail | sed -n 's/.*taken=1001 home=\(\/tmp\/check-[A-Za-z0-9]*\).*/\1/p')
 test -n "$first_home" || fail "The script did not take the runner's socket path, or ran without a home of its own: $reply"
 probe='echo "home=$HOME host=$(hostname)"
 if pgrep -f "sleep 50[7]" > /dev/null; then echo residual=yes; else echo residual=no; fi

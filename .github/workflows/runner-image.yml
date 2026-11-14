@@ -70,7 +70,7 @@ jobs:
           test "$code" = 2
           test "$machine" = 2
           test "$unreadable" = 2
-          docker run --rm --entrypoint sh ostrom-runner:ci -c 'claude --version && codex --version && git --version && id -u | grep -x 1000'
+          docker run --rm --entrypoint sh ostrom-runner:ci -c 'claude --version && codex --version && git --version && id -u | grep -x 1001'
 
       - name: Push to GHCR
         env:

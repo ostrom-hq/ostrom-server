@@ -30,7 +30,7 @@ internal fun plan(session: Uuid, epoch: Long, token: String = "ostrom_runner_xyz
         )
     }
     val execution = "ostrom-s-$hex-e$epoch"
-    val users = listOf("$execution-agent" to "1000:1000", "$execution-checks" to "1000:1000", execution to "1001:1001")
+    val users = listOf("$execution-agent" to "1001:1000", "$execution-checks" to "1001:1000", execution to "1000:1000")
     val containers = users.map { (name, user) ->
         PlannedObject(name, container(hex, epoch, user, token.takeIf { name == execution }))
     }
@@ -49,7 +49,6 @@ private fun container(hex: String, epoch: Long, user: String, token: String?) = 
     }
     putJsonObject("HostConfig") {
         putJsonArray("Binds") { add(JsonPrimitive("ostrom-ws-$hex:/workspace")) }
-        putJsonArray("GroupAdd") { add(JsonPrimitive("2000")) }
         putJsonArray("ExtraHosts") { add(JsonPrimitive("host.docker.internal:host-gateway")) }
         putJsonObject("RestartPolicy") { put("Name", "no") }
         putJsonArray("CapDrop") { add(JsonPrimitive("ALL")) }

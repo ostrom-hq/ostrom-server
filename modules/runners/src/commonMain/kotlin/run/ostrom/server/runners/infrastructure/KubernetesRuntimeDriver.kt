@@ -174,8 +174,9 @@ class KubernetesRuntimeDriver(
                 putJsonArray("imagePullSecrets") { add(buildJsonObject { put("name", secret) }) }
             }
             // The runner and the agent never share a uid (S2-49): the agent host runs the agent in its own container,
-            // which has neither the token nor a view of the runner's or the check host's processes; the pod's group is
-            // only the sockets'.
+            // which has neither the token nor a view of the runner's or the check host's processes. Every container is
+            // in the pod's group (TeamCode's image contract: runner 1000, agent 1001, group 1000); the runner keeps
+            // nothing of its own on a volume the agent mounts, so the group shares the agent's side only.
             put("shareProcessNamespace", false)
             putJsonObject("securityContext") {
                 put("runAsNonRoot", true)
@@ -299,14 +300,14 @@ class KubernetesRuntimeDriver(
         }
     }
 
-    /** A container of the session pod: its own uid and group, no privilege, a read-only root. */
+    /** A container of the session pod: its own uid in the pod's group, no privilege, a read-only root. */
     private fun container(name: String, uid: Int, image: String, body: JsonObjectBuilder.() -> Unit): JsonObject =
         buildJsonObject {
             put("name", name)
             put("image", image)
             putJsonObject("securityContext") {
                 put("runAsUser", uid)
-                put("runAsGroup", uid)
+                put("runAsGroup", SHARED_GID)
                 put("allowPrivilegeEscalation", false)
                 put("readOnlyRootFilesystem", true)
                 putJsonObject("capabilities") { putJsonArray("drop") { add(JsonPrimitive("ALL")) } }
@@ -414,14 +415,14 @@ class KubernetesRuntimeDriver(
         const val BINARY_VOLUME = "ostrom-bin"
         private const val BINARY_VOLUME_SIZE = "256Mi"
         const val WORKSPACE = "/workspace"
-        /** The agent's uid (the image's `node` user), owner of the workspace. */
-        const val AGENT_UID = 1000
+        /** The agent's uid (TeamCode's `agent`, 1001), owner of the workspace; the check host runs as it too. */
+        const val AGENT_UID = 1001
 
-        /** The runner's uid: never the agent's (S2-49). */
-        const val RUNNER_UID = 1001
+        /** The runner's uid (TeamCode's `runner`, 1000): never the agent's (S2-49). */
+        const val RUNNER_UID = 1000
 
-        /** The group both containers share, for the agent socket only (the pod's fsGroup). */
-        const val SHARED_GID = 2000
+        /** The group of every container of the session (`runAsGroup`) and the pod's fsGroup, TeamCode's 1000. */
+        const val SHARED_GID = 1000
         const val GRACE_SECONDS = 20
         private const val EPHEMERAL_REQUEST = "64Mi"
 
