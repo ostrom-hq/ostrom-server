@@ -29,7 +29,9 @@ import run.ostrom.core.api.models.PushRelaySendResponse
 public const val MAX_BODY_BYTES: Int = 8_192
 
 // A lowercase name on purpose: ostrom-core's served-routes.py reads every commonMain file of this repository for the
-// Ostrom API's routes (the contract check and the e2e sweep), and the relay's probe is not one of them.
+// Ostrom API's routes (the contract check and the e2e sweep), and the relay's probe is not one of them. The scan
+// resolves only constants named in upper case, so this one is left unresolved (detekt would make it a `const`).
+@Suppress("MayBeConst")
 private val healthPath = "/healthz"
 
 /**
