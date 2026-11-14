@@ -268,12 +268,11 @@ internal class McpImporter(
         val present = planned.deniedTools
             .filter { Triple(it, emptyList<ArgumentCondition>(), PolicyEffect.DENY) in policies }
             .toSet()
-        val refused = when {
-            // As in TeamCode, an endpoint never changes: the stored credentials would follow a new host.
-            (existing.transport to existing.url) != (payload.transport to payload.url) -> ENDPOINT_CHANGED
-            dryRun -> null
-            else -> deny(caller, existing, planned.deniedTools.filter { it !in present })
-        }
+        // TeamCode's new denials apply first, even to a server whose address moved: it stays reachable as it is.
+        val denied = if (dryRun) null else deny(caller, existing, planned.deniedTools.filter { it !in present })
+        // As in TeamCode, an endpoint never changes: the stored credentials would follow a new host.
+        val moved = (existing.transport to existing.url) != (payload.transport to payload.url)
+        val refused = denied ?: ENDPOINT_CHANGED.takeIf { moved }
         if (refused != null) return skippedServer(planned, refused)
         val unchanged = existing.toPayload() == payload
         val (server, action) = when {
