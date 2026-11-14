@@ -132,8 +132,10 @@ class InMemoryAutomations : AutomationsRepository {
         if (runs[runId]?.status == RunStatus.QUEUED) prompts[runId] = prompt
     }
 
-    override suspend fun parked(limit: Int): List<AutomationRun> =
-        runs.values.filter { it.status == RunStatus.QUEUED && it.id in prompts }.take(limit)
+    override suspend fun parked(limit: Int): List<AutomationRun> {
+        failIf("parked")
+        return runs.values.filter { it.status == RunStatus.QUEUED && it.id in prompts }.take(limit)
+    }
 
     override suspend fun takeParked(orgId: Uuid, runId: Uuid): String? =
         if (takenElsewhere) null else prompts.remove(runId)
@@ -144,15 +146,25 @@ class InMemoryAutomations : AutomationsRepository {
                 automations[it.automationId]?.owner == owner
         }.mapNotNull { it.sessionId }.take(limit)
 
+    /** The scheduler steps that throw, by the name of their method. */
+    val failing = mutableSetOf<String>()
+
+    private fun failIf(step: String) {
+        if (step in failing) throw IllegalStateException(step)
+    }
+
     /** When each run was last followed, as [followed] marks it. */
     val followedAt = mutableMapOf<Uuid, Instant>()
 
-    override suspend fun followed(now: Instant, limit: Int): List<FollowedRun> = runs.values
-        .filter { it.status == RunStatus.STARTED && it.workflowRunId != null }
-        .groupBy { it.orgId }.values
-        .flatMap { ofOrg -> ofOrg.sortedBy { followedAt[it.id] ?: Instant.DISTANT_PAST }.take(limit) }
-        .onEach { followedAt[it.id] = now }
-        .map { FollowedRun(it, it.workflowRunId.orEmpty()) }
+    override suspend fun followed(now: Instant, limit: Int): List<FollowedRun> {
+        failIf("followed")
+        return runs.values
+            .filter { it.status == RunStatus.STARTED && it.workflowRunId != null }
+            .groupBy { it.orgId }.values
+            .flatMap { ofOrg -> ofOrg.sortedBy { followedAt[it.id] ?: Instant.DISTANT_PAST }.take(limit) }
+            .onEach { followedAt[it.id] = now }
+            .map { FollowedRun(it, it.workflowRunId.orEmpty()) }
+    }
 
     override suspend fun latestWorkflowRun(orgId: Uuid, automationId: Uuid, except: Uuid): String? =
         runs.values.reversed()
@@ -200,6 +212,7 @@ class InMemoryAutomations : AutomationsRepository {
         limit: Int,
         decide: suspend (Automation, Instant) -> CronClaim,
     ): List<ClaimedRun> {
+        failIf("claimDue")
         val due = automations.values.filter { it.enabled && it.nextRunAt?.let { at -> at <= now } == true }.take(limit)
         return due.mapNotNull { automation ->
             val slot = automation.nextRunAt!!
@@ -213,11 +226,13 @@ class InMemoryAutomations : AutomationsRepository {
     }
 
     override suspend fun deleteRunsBefore(before: Instant) {
+        failIf("deleteRunsBefore")
         deletedBefore = before
         runs.values.removeAll { it.createdAt < before }
     }
 
     override suspend fun failQueuedBefore(before: Instant, now: Instant) {
+        failIf("failQueuedBefore")
         failedBefore = before
         runs.entries.filter { (_, run) -> run.status == RunStatus.QUEUED && run.createdAt < before }.forEach { entry ->
             val reason = if (prompts.remove(entry.key) == null) "interrupted" else "capacity_timeout"

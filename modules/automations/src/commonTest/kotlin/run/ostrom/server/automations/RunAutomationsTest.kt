@@ -593,6 +593,25 @@ class RunAutomationsTest {
     }
 
     @Test
+    fun aFailingStepOfThePassLeavesTheOthersRunningAndItsFailureReported() = runTest {
+        // TeamCode d7cc0b49: the steps of a pass shared one handler, so a failing purge stopped every launch.
+        manage.setEnabled(aliceAuto, manage.create(aliceAuto, cronDefinition()).automation.id, true)
+        clock.now = Instant.parse("2026-10-30T20:00:30Z")
+        repository.failing += setOf("deleteRunsBefore", "failQueuedBefore")
+        val purge = assertFailsWith<IllegalStateException> { runs.tick() }
+        assertEquals("deleteRunsBefore", purge.message, "The first failure")
+        assertEquals("Summarize 2026-10-30 at 21:00", launcher.launched.single().prompt, "The due cron still ran")
+        assertNull(repository.failedBefore)
+        repository.failing.clear()
+        repository.failing += setOf("claimDue", "parked", "followed")
+        assertEquals("claimDue", assertFailsWith<IllegalStateException> { runs.tick() }.message)
+        assertEquals(clock.now - 14.days, repository.deletedBefore, "The purge still ran")
+        assertEquals(clock.now - 30.minutes, repository.failedBefore)
+        repository.failing.clear()
+        assertEquals(0, runs.tick())
+    }
+
+    @Test
     fun aStoredScheduleThatNoLongerReadsIsPausedAndTheOtherCronsStillRun() = runTest {
         // TeamCode 9ade0c25: a saved cron whose zone is gone pauses its automation instead of failing every pass.
         suspend fun enabledCron(name: String) =

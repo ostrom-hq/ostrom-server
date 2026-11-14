@@ -110,8 +110,9 @@ interface RunAutomationsUseCase {
     suspend fun cancel(caller: AutomationCaller, id: Uuid, runId: Uuid): AutomationRun
 
     /**
-     * One scheduler pass: expires the history, fails the runs queued too long, runs the due crons, then starts the
-     * runs that waited for their owner's capacity.
+     * One scheduler pass: expires the history, fails the runs queued too long, runs the due crons, starts the runs
+     * that waited for their owner's capacity, then ends the runs whose workflow run ended. Every step, every due cron
+     * and every run runs whatever the others did; the first failure is thrown once all ran.
      *
      * @return How many cron runs it recorded.
      */
@@ -247,38 +248,29 @@ class RunAutomationsUseCaseImpl(
 
     override suspend fun tick(): Int {
         val now = clock.now().truncatedToMillis()
-        repository.deleteRunsBefore(now - HISTORY)
-        repository.failQueuedBefore(now - QUEUE_TIMEOUT, now)
-        val claimed = repository.claimDue(now, BATCH) { automation, slot -> claim(automation, slot, now) }
+        val steps = PassSteps()
+        steps.step { repository.deleteRunsBefore(now - HISTORY) }
+        steps.step { repository.failQueuedBefore(now - QUEUE_TIMEOUT, now) }
+        val claimed = steps.step {
+            repository.claimDue(now, BATCH) { automation, slot -> claim(automation, slot, now) }
+        }.orEmpty()
         for (entry in claimed) {
-            proceed(entry.automation, entry.run, render(entry.automation, entry.run.id, RunSource.CRON, entry.slot))
+            steps.step {
+                proceed(entry.automation, entry.run, render(entry.automation, entry.run.id, RunSource.CRON, entry.slot))
+            }
         }
-        startParked()
-        followWorkflows()
+        for (waiting in steps.step { repository.parked(BATCH) }.orEmpty()) steps.step { startParked(waiting) }
+        for (followed in steps.step { repository.followed(now, BATCH) }.orEmpty()) steps.step { follow(followed, now) }
+        steps.end()
         return claimed.size
     }
 
     /**
-     * Ends the started runs of workflow actions whose workflow run ended: `succeeded`, `failed` (`workflow_failed`),
+     * Ends a started run of a workflow action whose workflow run ended: `succeeded`, `failed` (`workflow_failed`),
      * `cancelled` (`workflow_cancelled`), or `failed` (`workflow_missing`) when it no longer exists. A run cancelled
-     * meanwhile stays cancelled (the write is conditional on `started`). A run that fails to be followed does not stop
-     * the others: the first failure is thrown once all were tried, and that run is tried again on a later pass.
+     * meanwhile stays cancelled (the write is conditional on `started`). A run still running is followed again on a
+     * later pass.
      */
-    private suspend fun followWorkflows() {
-        val now = clock.now().truncatedToMillis()
-        var failure: Exception? = null
-        for (followed in repository.followed(now, BATCH)) {
-            try {
-                follow(followed, now)
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                failure = failure ?: error
-            }
-        }
-        failure?.let { throw it }
-    }
-
     private suspend fun follow(followed: FollowedRun, now: Instant) {
         val (run, workflowRunId) = followed
         val state = workflows.state(run.orgId, workflowRunId)
@@ -292,13 +284,11 @@ class RunAutomationsUseCaseImpl(
         repository.endRun(run.copy(status = status, reason = reason, updatedAt = now), RunStatus.STARTED)
     }
 
-    /** Starts, oldest first, the runs that waited for their owner's capacity, while it has room. */
-    private suspend fun startParked() {
-        for (waiting in repository.parked(BATCH)) {
-            // Its automation may be deleted since (its runs go with it, but not within one read).
-            val automation = repository.get(waiting.orgId, waiting.automationId) ?: continue
-            if (!atCapacity(automation)) startWaiting(automation, waiting)
-        }
+    /** Starts a run that waited for its owner's capacity, when it has room. */
+    private suspend fun startParked(waiting: AutomationRun) {
+        // Its automation may be deleted since (its runs go with it, but not within one read).
+        val automation = repository.get(waiting.orgId, waiting.automationId) ?: return
+        if (!atCapacity(automation)) startWaiting(automation, waiting)
     }
 
     /** Takes the prompt of a waiting run, once (another replica that read the same run finds none), and starts it. */
