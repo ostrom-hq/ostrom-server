@@ -523,8 +523,9 @@ forwards with `x-ostrom-origin: agent`, writes its personal entries directly; it
 stored `proposed`, read by nobody, while the session's person is asked an ordinary wait with the entry to edit (at most
 20 proposals of a member wait, 409 `memory_proposals_limit`). The settling pass (`memory/settle`, every 10 s on the
 instance's `ScheduledWork` lease, one replica at a time) applies the answers, the person's valid edits included, rejects
-what nobody answered in 14 days, and deletes the rejected entries after 30 days. In the console's queue
-(`GET /api/v1/memory/proposals`) an administrator accepts or rejects any proposal, a member rejects their own. Text
+what nobody answered in 14 days, and deletes the rejected entries after 30 days. In the queue
+(`GET /api/v1/memory/proposals`, coming soon in the console) an administrator accepts or rejects any proposal, a
+member rejects their own. Text
 that looks like a credential is refused (422 `memory_secret`). A memory holds 5 000 organization entries and 2 000 per
 member. The index and the search never read `content`; the audit names ids only.
 
