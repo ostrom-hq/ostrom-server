@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.artifacts
 
+import run.ostrom.server.artifacts.domain.Artifact
+import run.ostrom.server.artifacts.domain.ArtifactAccess
+import run.ostrom.server.artifacts.domain.ArtifactLifecycleRepository
 import run.ostrom.server.artifacts.domain.ArtifactPublishForbiddenException
 import run.ostrom.server.artifacts.domain.ArtifactPublishRateLimitedException
 import run.ostrom.server.artifacts.domain.ArtifactQuotaExceededException
 import run.ostrom.server.artifacts.domain.ArtifactUsage
 import run.ostrom.server.artifacts.domain.PublicationGateImpl
 import run.ostrom.server.artifacts.domain.storage.ArtifactQuotas
+import run.ostrom.server.artifacts.domain.storage.ArtifactRetention
 import run.ostrom.server.artifacts.domain.storage.ArtifactsInactiveException
 import run.ostrom.server.artifacts.domain.storage.WhoCanPublish
 import run.ostrom.server.artifacts.fakes.InMemoryPublications
@@ -21,7 +25,9 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** TC-ART-29: who publishes and how often, by the organization's settings (TeamCode's commit rules). */
@@ -30,7 +36,25 @@ class PublicationGateTest {
     private val publications = InMemoryPublications()
     private val clock = TestClock()
     private var usage = ArtifactUsage(0, 0, 0)
-    private val gate = PublicationGateImpl(storage, publications, { _, _ -> usage }, clock)
+    private val lifecycle = RecordedLifecycle()
+    private val gate = PublicationGateImpl(storage, publications, { _, _ -> usage }, lifecycle, clock)
+
+    /** What the gate asked to keep and expire. */
+    private class RecordedLifecycle : ArtifactLifecycleRepository {
+        val retained = mutableListOf<Pair<Int, Instant?>>()
+        val expired = mutableListOf<Instant?>()
+
+        override suspend fun retain(orgId: Uuid, artifactId: Uuid, versions: Int, expiresAt: Instant?, now: Instant) {
+            retained += versions to expiresAt
+        }
+
+        override suspend fun expire(orgId: Uuid, artifactId: Uuid, expiresAt: Instant?) {
+            expired += expiresAt
+        }
+    }
+
+    private fun artifact(access: ArtifactAccess = ArtifactAccess.TEAM) =
+        Artifact(Uuid.random(), ORG_A, alice.memberId, "T", access, 1, null, clock.now, clock.now)
 
     private fun settle(who: WhoCanPublish = WhoCanPublish.EVERYONE, perHour: Int = ArtifactQuotas().publishesPerHour) {
         val settings = storage.settings.getValue(ORG_A)
@@ -52,7 +76,7 @@ class PublicationGateTest {
         settle(perHour = 2)
         repeat(2) {
             gate.admit(alice)
-            gate.published(alice, Uuid.random(), clock.now)
+            gate.published(alice, artifact(), clock.now)
             clock.now += 10.minutes
         }
         val limited = assertFailsWith<ArtifactPublishRateLimitedException> { gate.admit(alice) }
@@ -88,5 +112,18 @@ class PublicationGateTest {
     fun nothingIsPublishedWhileArtifactsAreInactive() = runTest {
         assertFailsWith<ArtifactsInactiveException> { gate.admit(carol) }
         assertEquals(emptyList(), publications.published)
+    }
+
+    @Test
+    fun aPublicationKeepsTheNewestVersionsAndExpiresByItsAccess() = runTest {
+        val retention = ArtifactRetention(personalDays = 7, sharedDays = 30, maxVersionsPerArtifact = 5)
+        storage.settings[ORG_A] = storage.settings.getValue(ORG_A).copy(retention = retention)
+        gate.published(alice, artifact(ArtifactAccess.PERSONAL), clock.now)
+        gate.published(alice, artifact(ArtifactAccess.LINK), clock.now)
+        assertEquals(listOf<Pair<Int, Instant?>>(5 to clock.now + 7.days, 5 to clock.now + 30.days), lifecycle.retained)
+        gate.accessChanged(artifact(ArtifactAccess.TEAM), clock.now)
+        storage.settings[ORG_A] = storage.settings.getValue(ORG_A).copy(retention = ArtifactRetention())
+        gate.accessChanged(artifact(ArtifactAccess.PERSONAL), clock.now)
+        assertEquals(listOf(clock.now + 30.days, null), lifecycle.expired)
     }
 }

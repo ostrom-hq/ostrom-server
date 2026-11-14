@@ -50,6 +50,7 @@ internal class ManageArtifactUseCaseImpl(
     private val contents: ArtifactContents,
     private val clock: Clock,
     private val events: ArtifactEvents,
+    private val gate: PublicationGate,
 ) : ManageArtifactUseCase {
     private val rules = ArtifactAccessRules(repository)
 
@@ -71,6 +72,7 @@ internal class ManageArtifactUseCaseImpl(
         )
         repository.updateSettings(updated)
         if (newAccess != artifact.access) {
+            gate.accessChanged(updated, updated.updatedAt)
             events.record(caller, "access_changed", id, mapOf("from" to artifact.access.wire, "to" to newAccess.wire))
         }
         return updated

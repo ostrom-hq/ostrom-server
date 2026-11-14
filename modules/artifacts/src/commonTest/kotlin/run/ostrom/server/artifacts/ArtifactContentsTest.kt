@@ -119,7 +119,7 @@ class ArtifactContentsTest {
         val publish =
             PublishArtifactUseCaseImpl(repository, contents, digest, clock, { _, _, _, _ -> }, gateOf(storage, clock))
         val read = ReadArtifactsUseCaseImpl(repository, contents)
-        val manage = ManageArtifactUseCaseImpl(repository, contents, clock) { _, _, _, _ -> }
+        val manage = ManageArtifactUseCaseImpl(repository, contents, clock, { _, _, _, _ -> }, gateOf(storage, clock))
         val view = ViewArtifactUseCaseImpl(
             repository, contents, SealedViewTickets(Ed25519InstanceSigner.generate()), TestViewers(),
             ArtifactLocations(VIEWER, CONTENT_ORIGIN), clock,

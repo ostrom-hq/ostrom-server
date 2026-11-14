@@ -123,7 +123,7 @@ class UploadArtifactUseCaseTest {
         // Its owner may still send another upload to it, or delete it; nobody else reaches it.
         use.open(alice, draft.id, listOf(announced(page)))
         assertFailsWith<ArtifactNotFoundException> { use.open(bob, draft.id, listOf(announced(page))) }
-        ManageArtifactUseCaseImpl(artifacts, contents, clock, recorder).delete(alice, draft.id)
+        ManageArtifactUseCaseImpl(artifacts, contents, clock, recorder, gateOf(storage, clock)).delete(alice, draft.id)
         assertNull(artifacts.artifacts[draft.id])
     }
 

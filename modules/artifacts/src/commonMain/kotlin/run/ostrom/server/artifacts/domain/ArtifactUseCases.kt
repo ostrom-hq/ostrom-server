@@ -82,7 +82,7 @@ internal class PublishArtifactUseCaseImpl(
         val version = ArtifactVersion(id, 1, ArtifactRules.entry(files.map { it.path }), recorded, now, caller.memberId)
         contents.write(caller.orgId, id, blobs)
         repository.create(artifact, version)
-        gate.published(caller, id, now)
+        gate.published(caller, artifact, now)
         events.record(caller, "created", id, mapOf("title" to checkedTitle, "access" to checkedAccess.wire))
         return artifact
     }
@@ -107,7 +107,7 @@ internal class PublishArtifactUseCaseImpl(
         // the artifact's folder already holds, or that the collection removes).
         contents.write(caller.orgId, id, blobs - known)
         repository.addVersion(caller.orgId, version, now) ?: throw ArtifactConflictException()
-        gate.published(caller, id, now)
+        gate.published(caller, artifact, now)
         events.record(caller, "version_published", id, mapOf("version" to version.number.toString()))
         return version
     }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.artifacts.fakes
 
+import run.ostrom.server.artifacts.domain.ArtifactLifecycleRepository
 import run.ostrom.server.artifacts.domain.ArtifactPublicationsRepository
 import run.ostrom.server.artifacts.domain.ArtifactUsage
 import run.ostrom.server.artifacts.domain.ArtifactUsageRepository
@@ -26,6 +27,13 @@ class InMemoryPublications : ArtifactPublicationsRepository {
 /** Nothing held yet. */
 val NO_USAGE = ArtifactUsageRepository { _, _ -> ArtifactUsage(0, 0, 0) }
 
+/** Neither prunes nor expires anything. */
+val NO_LIFECYCLE = object : ArtifactLifecycleRepository {
+    override suspend fun retain(orgId: Uuid, artifactId: Uuid, versions: Int, expiresAt: Instant?, now: Instant) = Unit
+
+    override suspend fun expire(orgId: Uuid, artifactId: Uuid, expiresAt: Instant?) = Unit
+}
+
 /** A gate on [storage]'s settings with publications in memory, and [usage]. */
 fun gateOf(storage: ArtifactStorageRepository, clock: Clock, usage: ArtifactUsageRepository = NO_USAGE) =
-    PublicationGateImpl(storage, InMemoryPublications(), usage, clock)
+    PublicationGateImpl(storage, InMemoryPublications(), usage, NO_LIFECYCLE, clock)

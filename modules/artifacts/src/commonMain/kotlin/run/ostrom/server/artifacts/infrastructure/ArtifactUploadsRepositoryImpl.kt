@@ -113,7 +113,7 @@ internal class ArtifactUploadsRepositoryImpl(private val driver: Driver) : Artif
                 Statement.create(
                     """
                     INSERT INTO artifacts_blobs (artifact_id, org_id, sha256, size) VALUES (:artifact, :org_id, :sha,
-                    :size) ON CONFLICT DO NOTHING
+                    :size) ON CONFLICT (artifact_id, sha256) DO UPDATE SET marked_at = NULL
                     """,
                 ).bind("artifact", upload.artifactId).bind("org_id", orgId).bind("sha", sha256).bind("size", size),
             ).getOrThrow()

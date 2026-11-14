@@ -215,7 +215,7 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
                 Statement.create(
                     """
                     INSERT INTO artifacts_blobs (artifact_id, org_id, sha256, size) VALUES (:id, :org_id, :sha, :size)
-                    ON CONFLICT DO NOTHING
+                    ON CONFLICT (artifact_id, sha256) DO UPDATE SET marked_at = NULL
                     """,
                 ).bind("id", version.artifactId).bind("org_id", orgId).bind("sha", file.sha256)
                     .bind("size", file.size),
