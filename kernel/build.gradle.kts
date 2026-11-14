@@ -75,8 +75,9 @@ kotlin {
             implementation(project(":testing"))
             implementation(libs.ktor.server.test.host)
             implementation(libs.ktor.client.content.negotiation)
-            // The client address test runs a real server and client on 127.0.0.1: the test engine has no peer address.
-            implementation(libs.ktor.server.cio)
+            // The client address test runs a real server (Netty, the production engine) and client on 127.0.0.1: the
+            // test engine has no peer address.
+            implementation(libs.ktor.server.netty)
             implementation(libs.ktor.client.cio)
             implementation(libs.ktor.client.mock)
         }

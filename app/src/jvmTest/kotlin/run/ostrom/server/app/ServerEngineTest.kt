@@ -21,7 +21,11 @@ class ServerEngineTest {
      * Here the server closes a `Connection: close` exchange, then a new engine binds the same port at once.
      */
     @Test
-    fun aRestartedServerBindsItsPortWhileTheOldConnectionsWait() = runBlocking {
+    fun aRestartedServerBindsItsPortWhileTheOldConnectionsWait() {
+        runBlocking { restartOnTheSamePort() }
+    }
+
+    private suspend fun restartOnTheSamePort() {
         val first = serverEngine(port = 0, host = LOOPBACK) { routing { get("/") { call.respondText("ok") } } }
             .start(wait = false)
         val port = first.engine.resolvedConnectors().single().port
