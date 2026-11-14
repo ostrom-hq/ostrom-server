@@ -22,6 +22,7 @@ import run.ostrom.server.notifications.domain.NotificationKind
 import run.ostrom.server.notifications.domain.PROVIDER_FIELD
 import run.ostrom.server.notifications.domain.PUSH_CHANNEL
 import run.ostrom.server.notifications.domain.PushChannel
+import run.ostrom.server.notifications.domain.PushProviders
 import run.ostrom.server.notifications.domain.PushCredential
 import run.ostrom.server.notifications.domain.PushDevice
 import run.ostrom.server.notifications.domain.PushEncryption
@@ -73,7 +74,8 @@ class PushChannelTest {
     private val clock = TestClock()
 
     private fun channel(origin: String = "https://ostrom.example") = PushChannel(
-        settings, { fcm }, PlainEncryption(), devices, SetLiveCredentials(setOf(live)), origin, clock,
+        PushProviders(settings, { fcm }, { fcm }), PlainEncryption(), devices, SetLiveCredentials(setOf(live)), origin,
+        clock,
     )
 
     private fun phone(
@@ -105,6 +107,8 @@ class PushChannelTest {
         assertEquals(emptySet(), channel(origin = "").reachable(org, setOf(mia)), "No account of the app named")
         settings.values = mapOf(PROVIDER_FIELD to "firebase")
         assertEquals(emptySet(), channel().reachable(org, setOf(mia)), "No service account")
+        settings.values = mapOf(PROVIDER_FIELD to "relay")
+        assertEquals(setOf(mia), channel().reachable(org, setOf(mia)), "The relay of the published apps")
         settings.values = mapOf(PROVIDER_FIELD to "off")
         assertEquals(emptySet(), channel().reachable(org, setOf(mia)))
         val off = notification()

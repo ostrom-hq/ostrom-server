@@ -12,7 +12,9 @@ private const val ORG = "CAST(NULLIF(current_setting('ostrom.org_id', TRUE), '')
  * out with it. A phone of version 1 has none and is notified again once the app registers it anew. Version 3 keeps an
  * `fcm` phone's P-256 public key (`public_key`), which every push to it is encrypted for. Version 4 holds the
  * members' switches of the notification router (TeamCode's `member_notification_settings`): one row per member,
- * channel and kind a member changed, no row meaning on.
+ * channel and kind a member changed, no row meaning on. Version 5 keeps the instance's identity at each push relay
+ * (TeamCode's `push_relay_instances`): the instance's, not an organization's, so without `org_id` (docs/tenancy.md),
+ * its Ed25519 private key sealed with the secrets key.
  */
 val NotificationsMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -71,6 +73,19 @@ val NotificationsMigrations: List<SchemaMigration> = listOf(
         ALTER TABLE notifications_member_settings FORCE ROW LEVEL SECURITY;
         CREATE POLICY notifications_member_settings_org ON notifications_member_settings
             USING (org_id = $ORG) WITH CHECK (org_id = $ORG)
+        """.trimIndent(),
+    ),
+    SchemaMigration(
+        5,
+        "create_push_relay_instances",
+        """
+        CREATE TABLE notifications_push_relay_instances (
+            relay_url TEXT PRIMARY KEY,
+            public_key TEXT NOT NULL,
+            private_key TEXT NOT NULL,
+            instance_id TEXT,
+            created_at TIMESTAMPTZ NOT NULL
+        )
         """.trimIndent(),
     ),
 )

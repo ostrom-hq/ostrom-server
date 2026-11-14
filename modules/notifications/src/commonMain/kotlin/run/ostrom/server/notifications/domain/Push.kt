@@ -4,7 +4,6 @@
 package run.ostrom.server.notifications.domain
 
 import run.ostrom.core.api.models.PushPayload
-import run.ostrom.server.kernel.settings.InstanceSettings
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -141,29 +140,25 @@ fun interface FirebaseSenders {
  * nothing is sent, and nothing is tried again. A token the provider no longer knows is forgotten, unless the app
  * already registered it anew.
  *
- * @param settings The instance's settings.
- * @param senders The Firebase senders.
+ * @param providers The provider in force.
  * @param encryption The payload's encryption.
  * @param devices The phones, to forget a token.
  * @param origin The server's public URL (`OSTROM_PUBLIC_URL`), which account of the app a push is for.
  * @param clock The payload's date.
  */
-@Suppress("LongParameterList") // The settings, the senders, the cipher, the phones, the origin, the clock.
 class EncryptedPushSender(
-    private val settings: InstanceSettings,
-    private val senders: FirebaseSenders,
+    private val providers: PushProviders,
     private val encryption: PushEncryption,
     private val devices: PushDevicesRepository,
     private val origin: String,
     private val clock: Clock,
 ) : PushSender {
     override suspend fun send(messages: List<PushMessage>) {
-        val values = settings.read(PUSH_SETTINGS.name)
-        if (PushProvider.of(values[PROVIDER_FIELD]) != PushProvider.FIREBASE) return
-        val account = values[FIREBASE_SERVICE_ACCOUNT_FIELD] ?: throw PushRejectedException(NO_CREDENTIALS)
+        val inForce = providers.inForce()
+        if (inForce.provider == PushProvider.OFF) return
+        val sender = inForce.sender ?: throw PushRejectedException(NO_CREDENTIALS)
         // The app tells its accounts apart by the server's URL: without it, a push names no account.
         if (origin.isEmpty()) throw PushRejectedException(NO_ORIGIN)
-        val sender = senders.sender(account)
         val results = coroutineScope { messages.map { async { it to send(sender, it) } }.awaitAll() }
         results.filter { it.second.status == PushResult.Status.UNREGISTERED }
             .forEach { (message, _) -> devices.forgetToken(message.device.orgId, message.device.id, message.to) }

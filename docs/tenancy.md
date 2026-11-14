@@ -68,6 +68,7 @@ listed table that gained one. The migrator's own tables, one per module (`flyway
 | `instance_info` | instance | serving role | the instance's one identity row |
 | `instance_scheduled_work` | instance | serving role | the leases of the periodic jobs one replica runs at a time, one row per job |
 | `instance_signing_keys` | instance | serving role | the public keys of the instance's receipt signatures |
+| `notifications_push_relay_instances` | notifications | serving role | the instance's Ed25519 identity at each push relay (TeamCode's `push_relay_instances`), the private key sealed with the secrets key |
 
 ## The queries
 

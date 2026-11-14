@@ -16,6 +16,14 @@ import run.ostrom.server.notifications.domain.DeletePushDeviceUseCase
 import run.ostrom.server.notifications.domain.DeletePushDeviceUseCaseImpl
 import run.ostrom.server.notifications.domain.EncryptedPushSender
 import run.ostrom.server.notifications.domain.FirebaseSenders
+import run.ostrom.server.notifications.domain.PushProviders
+import run.ostrom.server.notifications.domain.PushRelayIdentitiesRepository
+import run.ostrom.server.notifications.domain.RelaySenders
+import run.ostrom.server.notifications.infrastructure.CachedRelaySenders
+import run.ostrom.server.notifications.infrastructure.PushRelayIdentitiesRepositoryImpl
+import run.ostrom.server.notifications.infrastructure.RelayPushSender
+import run.ostrom.server.kernel.network.outboundHttpClient
+import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.notifications.domain.LiveCredentials
 import run.ostrom.server.notifications.domain.NotificationOutbox
 import run.ostrom.server.notifications.domain.PUSH_SETTINGS
@@ -76,6 +84,7 @@ import kotlin.time.Clock
 object NotificationsModule : ServerModule {
     // Declared before koinModule: the object initializes in order, and the module lambda runs at once.
     private val HTTP = named("notifications-http")
+    private val RELAY_HTTP = named("notifications-relay-http")
     private const val HTTP_TIMEOUT_MS = 10_000L
 
     override val name: String = "notifications"
@@ -85,7 +94,7 @@ object NotificationsModule : ServerModule {
         single<PushDevicesRepository> { PushDevicesRepositoryImpl(get()) }
         single<PushEncryption> { EciesPushEncryption() }
         single<RegisterPushDeviceUseCase> { RegisterPushDeviceUseCaseImpl(get(), get(), get()) }
-        // Admin → Settings → push: the provider and the Firebase service account, sealed (the admin module).
+        // Admin → Settings → push: the provider, the relay URL and the Firebase service account, sealed (admin module).
         single(named("notifications-push")) { PUSH_SETTINGS }
         single<DeletePushDeviceUseCase> { DeletePushDeviceUseCaseImpl(get()) }
         single { PushDevicesRoutesDependencies(get(), get(), get()) }
@@ -109,9 +118,28 @@ object NotificationsModule : ServerModule {
             val clock = get<Clock>()
             CachedFirebaseSenders { account -> FirebasePushSender(account, http, clock) }
         }
+        // The relay URL is an administrator's: the kernel's outbound client checks every address it connects to. A
+        // relay of one's own on one's network passes; link-local and cloud metadata addresses never do (TeamCode).
+        single(RELAY_HTTP) {
+            outboundHttpClient(allowPrivate = true) {
+                install(HttpTimeout) {
+                    connectTimeoutMillis = HTTP_TIMEOUT_MS
+                    requestTimeoutMillis = HTTP_TIMEOUT_MS
+                }
+            }
+        } onClose { it?.close() }
+        single<PushRelayIdentitiesRepository> { PushRelayIdentitiesRepositoryImpl(get(), get()) }
+        single<RelaySenders> {
+            // Resolved at the first push through a relay: the secrets key and the client only then.
+            val scope = this
+            CachedRelaySenders { url ->
+                RelayPushSender(url, scope.get(), scope.get<SecretCipher>(), scope.get(RELAY_HTTP), scope.get())
+            }
+        }
+        single { PushProviders(get(), get(), get()) }
         single<PushSender> {
             val settings = get<NotificationSettings>()
-            EncryptedPushSender(get(), get(), get(), get(), settings.publicUrl, get())
+            EncryptedPushSender(get(), get(), get(), settings.publicUrl, get())
         }
         single { NotificationOutbox(get(), get(), get()) }
         single<Approvers> { MemberApprovers(get(), get(), get()) }
@@ -145,7 +173,7 @@ object NotificationsModule : ServerModule {
         }
         single { NotificationSettingsRoutesDependencies(get(), get()) }
         single {
-            PushChannel(get(), get(), get(), get(), get(), get<NotificationSettings>().publicUrl, get())
+            PushChannel(get(), get(), get(), get(), get<NotificationSettings>().publicUrl, get())
         }
         single<NotificationChannel>(named(PUSH_CHANNEL)) { get<PushChannel>() }
         single<SendTestPushUseCase> {

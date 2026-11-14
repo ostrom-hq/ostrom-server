@@ -12,6 +12,9 @@ import run.ostrom.server.notifications.domain.FcmSender
 import run.ostrom.server.notifications.domain.FirebaseServiceAccount
 import run.ostrom.server.notifications.domain.PROVIDER_FIELD
 import run.ostrom.server.notifications.domain.PUSH_SETTINGS
+import run.ostrom.server.notifications.domain.DEFAULT_RELAY_URL
+import run.ostrom.server.notifications.domain.PushProviders
+import run.ostrom.server.notifications.domain.RELAY_URL_FIELD
 import run.ostrom.server.notifications.domain.PushDevice
 import run.ostrom.server.notifications.domain.PushEncryption
 import run.ostrom.server.notifications.domain.PushMessage
@@ -120,10 +123,20 @@ class EncryptedPushTest {
         fcm: Fcm,
         devices: InMemoryPushDevicesRepository,
         origin: String = "https://ostrom.example",
+        relay: Fcm = Fcm(),
     ) = EncryptedPushSender(
-        settings, { account -> fcm.also { assertEquals("{key}", account) } }, PlainEncryption(), devices, origin,
+        PushProviders(
+            settings,
+            { account -> fcm.also { assertEquals("{key}", account) } },
+            { url -> relay.also { relayUrls += url } },
+        ),
+        PlainEncryption(),
+        devices,
+        origin,
         TestClock(),
     )
+
+    private val relayUrls = mutableListOf<String>()
 
     private fun phone(token: String, key: String? = "key") = testPhone(token, "fcm", "android", key)
 
@@ -178,11 +191,24 @@ class EncryptedPushTest {
     @Test
     fun whilePushIsOffNothingIsSentNorTriedAgain() = runTest {
         val fcm = Fcm()
-        for (values in listOf(emptyMap(), mapOf(PROVIDER_FIELD to "off"), mapOf(PROVIDER_FIELD to "relay"))) {
+        for (values in listOf(emptyMap(), mapOf(PROVIDER_FIELD to "off"), mapOf(PROVIDER_FIELD to "nobody"))) {
             sender(Settings(values), fcm, InMemoryPushDevicesRepository()).send(listOf(approval(phone("t"))))
         }
 
         assertTrue(fcm.sent.isEmpty())
+    }
+
+    @Test
+    fun theRelayProviderSendsThroughTheRelayAtItsUrlOrTheDefaultOne() = runTest {
+        val relay = Fcm()
+        val devices = InMemoryPushDevicesRepository()
+        sender(Settings(mapOf(PROVIDER_FIELD to "relay")), Fcm(), devices, relay = relay)
+            .send(listOf(approval(phone("t"))))
+        val own = mapOf(PROVIDER_FIELD to "relay", RELAY_URL_FIELD to "https://push.example.com")
+        sender(Settings(own), Fcm(), devices, relay = relay).send(listOf(approval(phone("u"))))
+
+        assertEquals(listOf("t", "u"), relay.sent.map { it.token })
+        assertEquals(listOf(DEFAULT_RELAY_URL, "https://push.example.com"), relayUrls)
     }
 
     @Test
@@ -263,7 +289,21 @@ class EncryptedPushTest {
         assertFalse(provider.secret)
         assertNull(provider.check("off"))
         assertNull(provider.check("firebase"))
-        assertEquals("off or firebase.", provider.check("relay"))
+        assertNull(provider.check("relay"))
+        assertEquals("off, relay or firebase.", provider.check("expo"))
+        val relayUrl = assertNotNull(PUSH_SETTINGS.field(RELAY_URL_FIELD))
+        assertFalse(relayUrl.secret)
+        assertNull(relayUrl.check(DEFAULT_RELAY_URL))
+        assertNull(relayUrl.check("https://10.0.0.7:8443"), "A relay of one's own on one's network")
+        assertNull(relayUrl.check("https://[fd12::7]"))
+        val bare = "use an https relay URL without a path, such as https://push.ostrom.run."
+        for (url in listOf("http://push.example.com", "https://push.example.com/", "https://push.example.com/v1",
+            "https://push.example.com?a=1", "https://user@push.example.com", "push.example.com", "https://")) {
+            assertEquals(bare, relayUrl.check(url), url)
+        }
+        val metadata = "the relay URL must not point at a link-local or cloud metadata address."
+        assertEquals(metadata, relayUrl.check("https://169.254.169.254"))
+        assertEquals(metadata, relayUrl.check("https://metadata.google.internal"))
         val account = assertNotNull(PUSH_SETTINGS.field(FIREBASE_SERVICE_ACCOUNT_FIELD))
         assertTrue(account.secret, "Sealed, never answered back")
         assertNull(account.check(SERVICE_ACCOUNT))
@@ -272,7 +312,8 @@ class EncryptedPushTest {
 
         assertEquals(PushProvider.FIREBASE, PushProvider.of("firebase"))
         assertEquals(PushProvider.OFF, PushProvider.of(null))
-        assertEquals(PushProvider.OFF, PushProvider.of("relay"))
+        assertEquals(PushProvider.RELAY, PushProvider.of("relay"))
+        assertEquals(PushProvider.OFF, PushProvider.of("expo"))
     }
 
     @Test

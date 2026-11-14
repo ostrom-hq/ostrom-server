@@ -358,7 +358,7 @@ What lives in the console so far:
 | Stripe (`stripe`: the sealed secret key and webhook signing secrets, Stripe's API), read at each use; billing is on while the key and a webhook secret are stored | `OSTROM_STRIPE_SECRET_KEY`, `OSTROM_STRIPE_WEBHOOK_SECRET` (or their `_FILE`), `OSTROM_STRIPE_API_BASE` | the `billing` module |
 | Gateway (`gateway`: the instance's sealed Anthropic, OpenAI and OpenRouter keys, the providers' base URLs), read at each model call | `OSTROM_GATEWAY_ANTHROPIC_API_KEY`, `OSTROM_GATEWAY_OPENAI_API_KEY`, `OSTROM_GATEWAY_OPENROUTER_API_KEY`, `OSTROM_GATEWAY_ANTHROPIC_URL`, `OSTROM_GATEWAY_OPENAI_URL`, `OSTROM_GATEWAY_OPENROUTER_URL`, `OSTROM_GATEWAY_CODEX_URL` | the `gateway` module |
 | Sharing (`sharing`: the providers' OAuth token endpoints), read at each refresh | `OSTROM_SHARING_CLAUDE_TOKEN_URL`, `OSTROM_SHARING_CODEX_TOKEN_URL` | the `sharing` module |
-| Push (`push`): `provider` (`off` by default, or `firebase`) and the Firebase project's service account JSON key (`firebaseServiceAccount`, sealed) | new, never a variable | FCM push (`notifications`) |
+| Push (`push`): `provider` (`off` by default, `relay` or `firebase`), the relay's URL (`relayUrl`, `https://push.ostrom.run` when unset) and the Firebase project's service account JSON key (`firebaseServiceAccount`, sealed) | new, never a variable | FCM push (`notifications`) |
 | License (`license`: the sealed enterprise license key, verified on save and at start; a key that does not verify is never stored, and one that stops verifying grants nothing, with its reason logged) | `OSTROM_LICENSE_KEY` (or its `_FILE`) | the `license` module (`ee/`) |
 
 The GitHub App is kept as TeamCode keeps it, in its own table (`github_apps`, one row, the key and secrets sealed),
@@ -391,6 +391,17 @@ is given up at once. While the provider is `off`, phones register and nothing is
 `provider: expo` registration is refused (400), and a phone an older app registered with Expo is never notified (it has
 no key to encrypt for) until the app registers FCM. The former Expo variables are no longer read: a deployment that
 still sets them can drop them.
+
+Two providers send the same FCM message. `firebase` is the instance's own Firebase project, for apps it builds and
+signs itself. `relay` is the Ostrom Push relay (`push/`), which holds the Firebase project of the published apps
+(TeamCode's relay, protocol `push.v1`, the contract's `PushRelay`): its URL is `https`, a host and nothing after it,
+never a link-local or cloud metadata address, and every call to it goes through the kernel's outbound client. At the
+first push through a relay the server makes an Ed25519 key pair shared by every replica
+(`notifications_push_relay_instances`, the private key sealed with the secrets key, context `push-relay:<url>`),
+registers its raw public key (`POST /v1/instances`) and signs every send (`Ostrom-Instance`, `Ostrom-Timestamp`,
+`Ostrom-Signature` over `POST\n/v1/send\n<timestamp>\n<body sha256>`). The relay's `sent` delivers, `unregistered`
+forgets the token, `retry`, 408, 429, 5xx or no answer are tried again, a 401 (the relay no longer knows the key)
+registers the same key again at the next push, a 403 (the instance is blocked) and any other refusal are given up.
 
 ### Database connections
 
