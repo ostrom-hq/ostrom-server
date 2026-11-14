@@ -8,160 +8,154 @@ import run.ostrom.server.identity.domain.MAX_TOKENS_PER_USER
 import run.ostrom.server.identity.domain.TokenKind
 import run.ostrom.server.identity.domain.WebSession
 import run.ostrom.server.identity.domain.WebSessionsRepository
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.PurgeDates
 import run.ostrom.server.kernel.database.withOrganization
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.QueryExecutor
-import io.github.smyrgeorge.sqlx4k.ResultSet
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
+import org.jetbrains.exposed.v1.core.Op
+import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.isNull
+import org.jetbrains.exposed.v1.core.neq
+import org.jetbrains.exposed.v1.core.or
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * [WebSessionsRepository] on PostgreSQL.
+ * [WebSessionsRepository] on PostgreSQL through Exposed ([IdentityWebSessions]); no organization's rows.
  *
- * @param driver The database.
+ * @param database The JDBC pool.
  */
-class WebSessionsRepositoryImpl(private val driver: Driver) : WebSessionsRepository {
+class WebSessionsRepositoryImpl(private val database: JdbcDatabase) : WebSessionsRepository {
+    private val t = IdentityWebSessions
+
     override suspend fun create(session: WebSession, secretHash: String) {
-        driver.execute(
-            Statement.create(
-                "INSERT INTO identity_web_sessions (id, user_id, secret_hash, created_at, expires_at, last_seen_at) " +
-                    "VALUES (:id, :user, :hash, :created, :expires, :seen)",
-            ).bind("id", session.id).bind("user", session.userId).bind("hash", secretHash)
-                .bind("created", session.createdAt).bind("expires", session.expiresAt).bind("seen", session.lastSeenAt),
-        ).getOrThrow()
+        database.query {
+            t.insert {
+                it[id] = session.id
+                it[userId] = session.userId
+                it[this.secretHash] = secretHash
+                it[createdAt] = session.createdAt
+                it[expiresAt] = session.expiresAt
+                it[lastSeenAt] = session.lastSeenAt
+            }
+        }
     }
 
-    override suspend fun findBySecretHash(secretHash: String): WebSession? = driver.fetchAll(
-        Statement.create("SELECT $SESSION_COLUMNS FROM identity_web_sessions WHERE secret_hash = :hash")
-            .bind("hash", secretHash),
-    ).getOrThrow().firstOrNull()?.toWebSession()
+    override suspend fun findBySecretHash(secretHash: String): WebSession? = database.query {
+        t.select(columns).where { t.secretHash eq secretHash }.singleOrNull()?.toWebSession()
+    }
 
     override suspend fun touch(id: Uuid, at: Instant) {
-        driver.execute(
-            Statement.create("UPDATE identity_web_sessions SET last_seen_at = :at WHERE id = :id")
-                .bind("at", at).bind("id", id),
-        ).getOrThrow()
+        database.query { t.update({ t.id eq id }) { it[lastSeenAt] = at } }
     }
 
     override suspend fun revoke(id: Uuid, at: Instant) {
-        driver.execute(
-            Statement.create("UPDATE identity_web_sessions SET revoked_at = :at WHERE id = :id AND revoked_at IS NULL")
-                .bind("at", at).bind("id", id),
-        ).getOrThrow()
+        database.query { t.update({ (t.id eq id) and t.revokedAt.isNull() }) { it[revokedAt] = at } }
     }
 
-    override suspend fun revokeAllOfUser(userId: Uuid, at: Instant): Long = driver.execute(
-        Statement.create(
-            "UPDATE identity_web_sessions SET revoked_at = :at WHERE user_id = :user AND revoked_at IS NULL",
-        )
-            .bind("at", at).bind("user", userId),
-    ).getOrThrow()
-
-    override suspend fun listLive(userId: Uuid, now: Instant, limit: Int): List<WebSession> = driver.fetchAll(
-        Statement.create(
-            "SELECT $SESSION_COLUMNS FROM identity_web_sessions WHERE user_id = :user AND revoked_at IS NULL " +
-                "AND expires_at > :now ORDER BY last_seen_at DESC, id LIMIT :limit",
-        ).bind("user", userId).bind("now", now).bind("limit", limit),
-    ).getOrThrow().map { it.toWebSession() }
-
-    override suspend fun revokeOfUser(userId: Uuid, id: Uuid, at: Instant): Boolean = driver.execute(
-        Statement.create(
-            "UPDATE identity_web_sessions SET revoked_at = :at WHERE id = :id AND user_id = :user " +
-                "AND revoked_at IS NULL AND expires_at > :at",
-        ).bind("at", at).bind("id", id).bind("user", userId),
-    ).getOrThrow() == 1L
-
-    private companion object {
-        const val SESSION_COLUMNS = "id, user_id, created_at, expires_at, last_seen_at, revoked_at"
+    override suspend fun revokeAllOfUser(userId: Uuid, at: Instant): Long = database.query {
+        t.update({ (t.userId eq userId) and t.revokedAt.isNull() }) { it[revokedAt] = at }.toLong()
     }
+
+    override suspend fun listLive(userId: Uuid, now: Instant, limit: Int): List<WebSession> = database.query {
+        t.select(columns)
+            .where { (t.userId eq userId) and t.revokedAt.isNull() and (t.expiresAt greater now) }
+            .orderBy(t.lastSeenAt to SortOrder.DESC, t.id to SortOrder.ASC)
+            .limit(limit)
+            .map { it.toWebSession() }
+    }
+
+    override suspend fun revokeOfUser(userId: Uuid, id: Uuid, at: Instant): Boolean = database.query {
+        t.update({
+            (t.id eq id) and (t.userId eq userId) and t.revokedAt.isNull() and (t.expiresAt greater at)
+        }) { it[revokedAt] = at } == 1
+    }
+
+    /** What a read of a session selects: never its hash. */
+    private val columns = listOf(t.id, t.userId, t.createdAt, t.expiresAt, t.lastSeenAt, t.revokedAt)
+
+    private fun ResultRow.toWebSession() = WebSession(
+        id = this[t.id],
+        userId = this[t.userId],
+        createdAt = this[t.createdAt],
+        expiresAt = this[t.expiresAt],
+        lastSeenAt = this[t.lastSeenAt],
+        revokedAt = this[t.revokedAt],
+    )
 }
 
-/** Reads a browser session row. */
-private fun ResultSet.Row.toWebSession() = WebSession(
-    id = get("id").asUuid(),
-    userId = get("user_id").asUuid(),
-    createdAt = get("created_at").asInstant(),
-    expiresAt = get("expires_at").asInstant(),
-    lastSeenAt = get("last_seen_at").asInstant(),
-    revokedAt = get("revoked_at").asInstantOrNull(),
-)
-
 /**
- * [ApiTokensRepository] on PostgreSQL. Scopes are stored space-separated (a scope never contains a space).
+ * [ApiTokensRepository] on PostgreSQL through Exposed ([IdentityApiTokens]). Scopes are stored space-separated (a
+ * scope never contains a space).
  *
  * Outside any organization the serving role only sees the account-level tokens (personal and CLI, `org_id IS NULL`),
  * which a user lists, rotates and revokes. An organization's token (an agent token) is written inside its
- * organization; it is found by its hash, marked as used and revoked with its agent session through the
- * `identity_*` functions of `ostrom_router` (RLS audit R1, docs/tenancy.md).
+ * organization, as the serving role ([withOrganization]: `ostrom_tenant` only reads the table); it is found by its
+ * hash, marked as used and revoked with its agent session through the `identity_*` functions of `ostrom_router` (RLS
+ * audit R1, docs/tenancy.md).
  *
- * @param driver The database.
+ * @param database The JDBC pool.
+ * @param clock Bounds the purge's date.
  */
 class ApiTokensRepositoryImpl(
-    private val driver: Driver,
+    private val database: JdbcDatabase,
     private val clock: Clock = Clock.System,
 ) : ApiTokensRepository {
+    private val t = IdentityApiTokens
+
     override suspend fun create(token: ApiToken, secretHash: String) {
         val orgId = token.orgId
         if (orgId == null) {
-            insert(driver, token, secretHash)
+            database.query { insertToken(token, secretHash) }
         } else {
-            driver.withOrganization(orgId) { insert(it, token, secretHash) }
+            database.withOrganization(orgId) { insertToken(token, secretHash) }
         }
     }
 
-    override suspend fun findBySecretHash(secretHash: String): ApiToken? = driver.fetchAll(
-        Statement.create("SELECT $TOKEN_COLUMNS FROM identity_token_by_hash(:hash)").bind("hash", secretHash),
-    ).getOrThrow().firstOrNull()?.toApiToken()
+    override suspend fun findBySecretHash(secretHash: String): ApiToken? = database.query {
+        val found = TokenByHash(secretHash)
+        found.select(found.read).firstOrNull()?.toApiToken(found)
+    }
 
-    override suspend fun get(userId: Uuid, id: Uuid): ApiToken? = driver.fetchAll(
-        Statement.create("SELECT $TOKEN_COLUMNS FROM identity_api_tokens WHERE id = :id AND user_id = :user")
-            .bind("id", id).bind("user", userId),
-    ).getOrThrow().firstOrNull()?.toApiToken()
+    override suspend fun get(userId: Uuid, id: Uuid): ApiToken? = database.query {
+        t.select(t.read).where { (t.id eq id) and (t.userId eq userId) }.singleOrNull()?.toApiToken(t)
+    }
 
-    override suspend fun listLive(userId: Uuid, kinds: Set<TokenKind>, now: Instant): List<ApiToken> = driver.fetchAll(
-        Statement.create(
-            "SELECT $TOKEN_COLUMNS FROM identity_api_tokens WHERE user_id = :user AND revoked_at IS NULL " +
-                "AND (expires_at IS NULL OR expires_at > :now) AND kind IN :kinds ORDER BY created_at DESC, id " +
-                "LIMIT :limit",
-        ).bind("user", userId).bind("now", now).bind("kinds", kinds.map { it.name }).bind("limit", MAX_LISTED_TOKENS),
-    ).getOrThrow().map { it.toApiToken() }
+    override suspend fun listLive(userId: Uuid, kinds: Set<TokenKind>, now: Instant): List<ApiToken> =
+        database.query {
+            t.select(t.read)
+                .where { live(userId, kinds, now) }
+                .orderBy(t.createdAt to SortOrder.DESC, t.id to SortOrder.ASC)
+                .limit(MAX_LISTED_TOKENS)
+                .map { it.toApiToken(t) }
+        }
 
-    override suspend fun countLive(userId: Uuid, kinds: Set<TokenKind>, now: Instant): Int = driver.fetchAll(
-        Statement.create(
-            "SELECT COUNT(*) AS live FROM (SELECT 1 FROM identity_api_tokens WHERE user_id = :user AND " +
-                "revoked_at IS NULL " +
-                "AND (expires_at IS NULL OR expires_at > :now) AND kind IN :kinds LIMIT :limit) AS capped",
-        ).bind("user", userId).bind("now", now).bind("kinds", kinds.map { it.name }).bind("limit", MAX_TOKENS_PER_USER),
-    ).getOrThrow().first().get("live").asInt()
+    // Counted over a page of at most MAX_TOKENS_PER_USER rows (`SELECT COUNT(*) FROM (… LIMIT n)`), never every row.
+    override suspend fun countLive(userId: Uuid, kinds: Set<TokenKind>, now: Instant): Int = database.query {
+        t.select(t.id).where { live(userId, kinds, now) }.limit(MAX_TOKENS_PER_USER).count().toInt()
+    }
 
     override suspend fun touch(id: Uuid, at: Instant) {
-        driver.execute(
-            Statement.create("SELECT identity_token_touch(CAST(:id AS UUID), CAST(:at AS TIMESTAMPTZ))")
-                .bind("id", id).bind("at", at),
-        ).getOrThrow()
+        database.query { call("identity_token_touch", uuidParam(id), instantParam(at)) }
     }
 
     override suspend fun revoke(userId: Uuid, id: Uuid, at: Instant, orgId: Uuid?): Boolean {
-        val statement = Statement.create(
-            "UPDATE identity_api_tokens SET revoked_at = :at WHERE id = :id AND user_id = :user AND revoked_at " +
-                "IS NULL " +
-                "AND kind <> 'AGENT'",
-        ).bind("at", at).bind("id", id).bind("user", userId)
+        val mine = { (t.id eq id) and (t.userId eq userId) and t.revokedAt.isNull() and (t.kind neq AGENT) }
         val revoked = if (orgId == null) {
-            driver.execute(statement).getOrThrow()
+            database.query { t.update({ mine() }) { it[revokedAt] = at } }
         } else {
-            driver.withOrganization(orgId) { it.execute(statement).getOrThrow() }
+            database.withOrganization(orgId) { t.update({ mine() and (t.orgId eq orgId) }) { it[revokedAt] = at } }
         }
-        return revoked == 1L
+        return revoked == 1
     }
 
     override suspend fun rotate(
@@ -170,83 +164,76 @@ class ApiTokensRepositoryImpl(
         replacement: ApiToken,
         secretHash: String,
         at: Instant,
-    ): Boolean =
-        driver.transaction {
-            val revoked = execute(
-                Statement.create(
-                    "UPDATE identity_api_tokens SET revoked_at = :at WHERE id = :id AND user_id = :user " +
-                        "AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > :at)",
-                ).bind("at", at).bind("id", oldId).bind("user", userId),
-            ).getOrThrow()
-            if (revoked == 1L) insert(this, replacement, secretHash)
-            revoked == 1L
-        }
+    ): Boolean = database.query {
+        val revoked = t.update({
+            (t.id eq oldId) and (t.userId eq userId) and t.revokedAt.isNull() and
+                (t.expiresAt.isNull() or (t.expiresAt greater at))
+        }) { it[revokedAt] = at } == 1
+        if (revoked) insertToken(replacement, secretHash)
+        revoked
+    }
 
-    override suspend fun revokeOfAgentSession(agentSessionId: String, at: Instant): Long = driver.fetchAll(
-        Statement.create(
-            "SELECT identity_revoke_agent_session_tokens(:session, CAST(:at AS TIMESTAMPTZ)) AS revoked",
-        ).bind("session", agentSessionId).bind("at", at),
-    ).getOrThrow().first().get("revoked").asLong()
+    override suspend fun revokeOfAgentSession(agentSessionId: String, at: Instant): Long = database.query {
+        countOf("identity_revoke_agent_session_tokens", textParam(agentSessionId), instantParam(at))
+    }
 
     // The one deletion across organizations, through the function of IdentityMigrations versions 14 and 15, which
     // bounds the date to the retention itself.
     override suspend fun purgeAgentTokens(before: Instant): Long {
         PurgeDates.check(before, clock.now())
-        return driver.fetchAll(
-            Statement.create("SELECT identity_purge_agent_tokens(CAST(:before AS TIMESTAMPTZ)) AS n")
-                .bind("before", before),
-        ).getOrThrow().first().get("n").asLong()
+        return database.query { countOf("identity_purge_agent_tokens", instantParam(before)) }
     }
 
     private companion object {
-        const val TOKEN_COLUMNS = "id, user_id, org_id, name, kind, scopes, hint, agent_session_id, created_at, " +
-            "expires_at, last_used_at, revoked_at, authenticated_at"
+        const val AGENT = "AGENT"
     }
 }
 
+/** A user's live tokens (not revoked, not expired) of [kinds]. */
+private fun live(userId: Uuid, kinds: Set<TokenKind>, now: Instant): Op<Boolean> {
+    val t = IdentityApiTokens
+    return (t.userId eq userId) and t.revokedAt.isNull() and (t.expiresAt.isNull() or (t.expiresAt greater now)) and
+        (t.kind inList kinds.map { it.name })
+}
+
 /**
- * Inserts a token with an executor (the pool, or a transaction).
+ * Inserts a token in this transaction.
  *
- * @param executor Where to run the insert.
  * @param token The token.
  * @param secretHash The SHA-256 of its secret.
  * @param unlockKeyHash For the phone app's token, the SHA-256 of its unlock key; null for every other kind.
  */
-internal suspend fun insert(
-    executor: QueryExecutor,
-    token: ApiToken,
-    secretHash: String,
-    unlockKeyHash: String? = null,
-) {
-    executor.execute(
-        Statement.create(
-            "INSERT INTO identity_api_tokens (id, user_id, org_id, name, kind, scopes, hint, agent_session_id, " +
-                "secret_hash, " +
-                "created_at, expires_at, last_used_at, revoked_at, unlock_key_hash, authenticated_at) " +
-                "VALUES (:id, :user, :org, :name, :kind, :scopes, :hint, :session, :hash, :created, :expires, " +
-                "NULL, NULL, :unlock, :authenticated)",
-        ).bind("id", token.id).bind("user", token.userId).bind("org", token.orgId).bind("name", token.name)
-            .bind("kind", token.kind.name).bind("scopes", token.scopes.sorted().joinToString(" "))
-            .bind("hint", token.hint)
-            .bind("session", token.agentSessionId).bind("hash", secretHash).bind("created", token.createdAt)
-            .bind("expires", token.expiresAt).bind("unlock", unlockKeyHash)
-            .bind("authenticated", token.authenticatedAt),
-    ).getOrThrow()
+internal fun JdbcTransaction.insertToken(token: ApiToken, secretHash: String, unlockKeyHash: String? = null) {
+    IdentityApiTokens.insert {
+        it[id] = token.id
+        it[userId] = token.userId
+        it[orgId] = token.orgId
+        it[name] = token.name
+        it[kind] = token.kind.name
+        it[scopes] = token.scopes.sorted().joinToString(" ")
+        it[hint] = token.hint
+        it[agentSessionId] = token.agentSessionId
+        it[this.secretHash] = secretHash
+        it[createdAt] = token.createdAt
+        it[expiresAt] = token.expiresAt
+        it[this.unlockKeyHash] = unlockKeyHash
+        it[authenticatedAt] = token.authenticatedAt
+    }
 }
 
-/** Reads a token row. */
-internal fun ResultSet.Row.toApiToken() = ApiToken(
-    id = get("id").asUuid(),
-    userId = get("user_id").asUuid(),
-    orgId = get("org_id").asUuidOrNull(),
-    name = get("name").asString(),
-    kind = TokenKind.of(get("kind").asString()),
-    scopes = get("scopes").asString().split(' ').toSet() - "",
-    hint = get("hint").asString(),
-    agentSessionId = get("agent_session_id").asStringOrNull(),
-    createdAt = get("created_at").asInstant(),
-    expiresAt = get("expires_at").asInstantOrNull(),
-    lastUsedAt = get("last_used_at").asInstantOrNull(),
-    revokedAt = get("revoked_at").asInstantOrNull(),
-    authenticatedAt = get("authenticated_at").asInstantOrNull(),
+/** Reads a token row of [t] (the table, or [TokenByHash]). */
+internal fun ResultRow.toApiToken(t: TokenColumns) = ApiToken(
+    id = this[t.id],
+    userId = this[t.userId],
+    orgId = this[t.orgId],
+    name = this[t.name],
+    kind = TokenKind.of(this[t.kind]),
+    scopes = this[t.scopes].split(' ').toSet() - "",
+    hint = this[t.hint],
+    agentSessionId = this[t.agentSessionId],
+    createdAt = this[t.createdAt],
+    expiresAt = this[t.expiresAt],
+    lastUsedAt = this[t.lastUsedAt],
+    revokedAt = this[t.revokedAt],
+    authenticatedAt = this[t.authenticatedAt],
 )

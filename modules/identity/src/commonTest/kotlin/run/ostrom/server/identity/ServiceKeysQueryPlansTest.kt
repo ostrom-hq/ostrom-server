@@ -2,10 +2,10 @@
 
 package run.ostrom.server.identity
 
-import run.ostrom.server.identity.infrastructure.LIVE_SERVICE_KEYS_SQL
+import run.ostrom.server.identity.infrastructure.liveServiceKeys
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -43,11 +43,8 @@ class ServiceKeysQueryPlansTest {
         fixtures.execute(seed(orgA, "SERVICE", 40, "s")).getOrThrow()
         fixtures.execute("VACUUM ANALYZE identity_api_tokens").getOrThrow()
 
-        val plan = server.driver.withOrganization(orgA) { tx ->
-            tx.fetchAll(
-                Statement.create("EXPLAIN (ANALYZE, BUFFERS) $LIVE_SERVICE_KEYS_SQL")
-                    .bind("org", orgA).bind("now", Clock.System.now()).bind("limit", 100),
-            ).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
+        val plan = server.koin.get<JdbcDatabase>().withOrganization(orgA) {
+            plan { liveServiceKeys(orgA, Clock.System.now(), 100) }
         }
         assertFalse("Seq Scan on identity_api_tokens" in plan, "The list scans the table:\n$plan")
         assertTrue("identity_api_tokens_service" in plan, "The list skips its index:\n$plan")

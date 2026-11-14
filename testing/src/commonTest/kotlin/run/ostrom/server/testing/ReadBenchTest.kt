@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.testing
 
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.TENANT_ROLE
+import run.ostrom.server.kernel.database.TENANT_SETTING
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
 import io.ktor.client.request.get
@@ -8,6 +11,7 @@ import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.readString
+import org.jetbrains.exposed.v1.core.IntegerColumnType
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
@@ -15,6 +19,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlin.uuid.Uuid
 
 /**
  * The read bench: the server's pool records the statements of a request, on the pool and in its transactions, and only
@@ -176,5 +181,36 @@ class ReadBenchTest {
         val statement = Statement.create("SELECT COALESCE(:v, 'none') AS v").bindNull("v", String::class)
         val plans = server.database.driver.replay(listOf(SentStatement(statement.sql, statement, 1)), explain = true)
         assertTrue("Result" in plans.single(), plans.single())
+    }
+
+    @Test
+    fun theStatementsOfExposedAreRecordedAndReplayedByTheirTransaction() = serverTest(emptyList()) { server ->
+        val jdbc = server.koin.get<JdbcDatabase>()
+        val org = Uuid.random()
+        jdbc.query { exec("SELECT 0") { } }
+        val sent = server.driver.record {
+            jdbc.inOrg(org) { exec("SELECT CAST(? AS int) + 1", listOf(IntegerColumnType() to 1)) { } }
+            jdbc.query { exec("SELECT 2") { } }
+            assertFails {
+                jdbc.query {
+                    exec("SELECT 3") { }
+                    error("a failed request")
+                }
+            }
+        }
+        jdbc.query { exec("SELECT 4") { } }
+        val expected = listOf(
+            "SET LOCAL ROLE $TENANT_ROLE",
+            "SELECT set_config('$TENANT_SETTING', ?, true)",
+            "SELECT CAST(? AS int) + 1",
+            "SELECT 2",
+            "SELECT 3",
+        )
+        assertEquals(expected, sent.map { it.sql })
+        assertEquals(listOf(org.toString()), sent[1].statement?.positionalParametersValues?.toList())
+        assertEquals(1, sent.take(3).map { it.transaction }.distinct().size, "One transaction")
+        assertEquals(3, sent.map { it.transaction }.distinct().size, "Then one each")
+        val plans = server.database.driver.replay(sent, explain = true)
+        assertEquals(3, plans.size, plans.joinToString("\n\n"))
     }
 }

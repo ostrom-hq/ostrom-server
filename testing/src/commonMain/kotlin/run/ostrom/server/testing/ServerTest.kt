@@ -123,7 +123,10 @@ private suspend fun ApplicationTestBuilder.serve(
                 ),
                 modules,
             )
-            serveWith(serverKoin(kernel, modules, overrides), modules, driver, database, environment, block)
+            // The read benches count and replay the statements of the modules on Exposed too.
+            ExposedRecorder(driver).installed {
+                serveWith(serverKoin(kernel, modules, overrides), modules, driver, database, environment, block)
+            }
         } finally {
             jdbc.close()
         }

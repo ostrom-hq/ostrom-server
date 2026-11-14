@@ -4,43 +4,59 @@ package run.ostrom.server.identity.infrastructure
 import run.ostrom.server.identity.domain.ApiToken
 import run.ostrom.server.identity.domain.MAX_SERVICE_KEYS_PER_ORG
 import run.ostrom.server.identity.domain.ServiceKeysRepository
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.withOrganization
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.core.isNull
+import org.jetbrains.exposed.v1.core.or
+import org.jetbrains.exposed.v1.jdbc.Query
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * [ServiceKeysRepository] on PostgreSQL: the `SERVICE` rows of `identity_api_tokens`, inside their organization (the
- * `identity_api_tokens_tenant` policy).
+ * [ServiceKeysRepository] on PostgreSQL through Exposed: the `SERVICE` rows of `identity_api_tokens`, inside their
+ * organization (the `identity_api_tokens_tenant` policy), as the serving role ([withOrganization]), each query
+ * filtered on the organization too.
  *
- * @param driver The database.
+ * @param database The JDBC pool.
  */
-class ServiceKeysRepositoryImpl(private val driver: Driver) : ServiceKeysRepository {
+class ServiceKeysRepositoryImpl(private val database: JdbcDatabase) : ServiceKeysRepository {
     override suspend fun listLive(orgId: Uuid, now: Instant): List<ApiToken> =
-        driver.withOrganization(orgId) { tx ->
-            tx.fetchAll(
-                Statement.create(LIVE_SERVICE_KEYS_SQL).bind("org", orgId).bind("now", now)
-                    .bind("limit", MAX_SERVICE_KEYS_PER_ORG),
-            ).getOrThrow().map { it.toApiToken() }
+        database.withOrganization(orgId) {
+            liveServiceKeys(orgId, now, MAX_SERVICE_KEYS_PER_ORG).map { it.toApiToken(IdentityApiTokens) }
         }
 
-    override suspend fun revoke(orgId: Uuid, id: Uuid, at: Instant): Boolean =
-        driver.withOrganization(orgId) { tx ->
-            tx.execute(
-                Statement.create(
-                    "UPDATE identity_api_tokens SET revoked_at = :at WHERE id = :id AND org_id = :org " +
-                        "AND kind = 'SERVICE' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > :at)",
-                ).bind("at", at).bind("id", id).bind("org", orgId),
-            ).getOrThrow() == 1L
-        }
+    override suspend fun revoke(orgId: Uuid, id: Uuid, at: Instant): Boolean = database.withOrganization(orgId) {
+        val t = IdentityApiTokens
+        t.update({
+            (t.id eq id) and (t.orgId eq orgId) and (t.kind eq SERVICE) and t.revokedAt.isNull() and
+                (t.expiresAt.isNull() or (t.expiresAt greater at))
+        }) { it[revokedAt] = at } == 1
+    }
 }
 
+private const val SERVICE = "SERVICE"
+
 /**
- * An organization's live service keys (`:org`, `:now`, `:limit`), newest first, read through the partial index
- * `identity_api_tokens_service` (`ServiceKeysQueryPlansTest`).
+ * An organization's live service keys, newest first, read through the partial index `identity_api_tokens_service`
+ * (`ServiceKeysQueryPlansTest`).
+ *
+ * @param orgId The organization.
+ * @param now The time that decides which keys are expired.
+ * @param limit The most keys read.
  */
-internal const val LIVE_SERVICE_KEYS_SQL: String =
-    "SELECT id, user_id, org_id, name, kind, scopes, hint, agent_session_id, created_at, expires_at, last_used_at, " +
-        "revoked_at, authenticated_at FROM identity_api_tokens WHERE org_id = :org AND kind = 'SERVICE' " +
-        "AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > :now) ORDER BY created_at DESC, id LIMIT :limit"
+internal fun liveServiceKeys(orgId: Uuid, now: Instant, limit: Int): Query {
+    val t = IdentityApiTokens
+    return t.select(t.read)
+        .where {
+            (t.orgId eq orgId) and (t.kind eq SERVICE) and t.revokedAt.isNull() and
+                (t.expiresAt.isNull() or (t.expiresAt greater now))
+        }
+        .orderBy(t.createdAt to SortOrder.DESC, t.id to SortOrder.ASC)
+        .limit(limit)
+}

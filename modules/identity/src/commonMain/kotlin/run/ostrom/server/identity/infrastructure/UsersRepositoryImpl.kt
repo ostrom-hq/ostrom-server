@@ -6,140 +6,170 @@ import run.ostrom.server.identity.domain.User
 import run.ostrom.server.identity.domain.UserEmail
 import run.ostrom.server.identity.domain.UsersRepository
 import run.ostrom.server.identity.domain.VerifiedIdentity
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.QueryExecutor
-import io.github.smyrgeorge.sqlx4k.ResultSet
-import io.github.smyrgeorge.sqlx4k.SQLError
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
+import run.ostrom.server.kernel.database.JdbcDatabase
+import org.jetbrains.exposed.v1.core.JoinType
+import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.or
+import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.upsert
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * [UsersRepository] on PostgreSQL (tables of [IdentityMigrations]).
+ * [UsersRepository] on PostgreSQL through Exposed ([IdentityUsers], [IdentityIdentities], [IdentityUserEmails]); no
+ * organization's rows.
  *
- * @param driver The database.
+ * @param database The JDBC pool.
  */
-class UsersRepositoryImpl(private val driver: Driver) : UsersRepository {
-    override suspend fun get(id: Uuid): User? =
-        driver.fetchAll(Statement.create("SELECT $USER_COLUMNS FROM identity_users u WHERE u.id = :id").bind("id", id))
-            .getOrThrow().firstOrNull()?.toUser()
+class UsersRepositoryImpl(private val database: JdbcDatabase) : UsersRepository {
+    private val u = IdentityUsers
 
-    override suspend fun findByIdentity(issuer: String, subject: String): User? = driver.fetchAll(
-        Statement.create(
-            "SELECT $USER_COLUMNS FROM identity_identities i JOIN identity_users u ON u.id = i.user_id " +
-                "WHERE i.issuer = :issuer AND i.subject = :subject",
-        ).bind("issuer", issuer).bind("subject", subject),
-    ).getOrThrow().firstOrNull()?.toUser()
+    override suspend fun get(id: Uuid): User? = database.query {
+        u.select(columns).where { u.id eq id }.singleOrNull()?.toUser()
+    }
 
-    override suspend fun findByVerifiedEmail(email: String): User? = driver.fetchAll(
-        Statement.create(
-            "SELECT $USER_COLUMNS FROM identity_user_emails e JOIN identity_users u ON u.id = e.user_id " +
-                "WHERE e.email = :email AND e.verified",
-        ).bind("email", email),
-    ).getOrThrow().firstOrNull()?.toUser()
+    override suspend fun findByIdentity(issuer: String, subject: String): User? = database.query {
+        val i = IdentityIdentities
+        i.join(u, JoinType.INNER, i.userId, u.id)
+            .select(columns)
+            .where { (i.issuer eq issuer) and (i.subject eq subject) }
+            .singleOrNull()
+            ?.toUser()
+    }
 
-    override suspend fun loginTaken(login: String): Boolean = driver.fetchAll(
-        Statement.create("SELECT 1 FROM identity_users WHERE login = :login").bind("login", login),
-    ).getOrThrow().firstOrNull() != null
+    override suspend fun findByVerifiedEmail(email: String): User? = database.query {
+        val e = IdentityUserEmails
+        e.join(u, JoinType.INNER, e.userId, u.id)
+            .select(columns)
+            .where { (e.email eq email) and (e.verified eq true) }
+            .singleOrNull()
+            ?.toUser()
+    }
 
-    override suspend fun findByLogin(login: String): User? = driver.fetchAll(
-        Statement.create("SELECT $USER_COLUMNS FROM identity_users u WHERE u.login = :login")
-            .bind("login", login.lowercase()),
-    ).getOrThrow().firstOrNull()?.toUser()
+    override suspend fun loginTaken(login: String): Boolean = database.query {
+        !u.select(u.id).where { u.login eq login }.limit(1).empty()
+    }
+
+    override suspend fun findByLogin(login: String): User? = database.query {
+        u.select(columns).where { u.login eq login.lowercase() }.singleOrNull()?.toUser()
+    }
 
     override suspend fun getMany(ids: Collection<Uuid>): List<User> {
         if (ids.isEmpty()) return emptyList()
         val distinct = ids.distinct()
-        // One bound parameter per id: no list binding, and never a value spliced into the SQL.
-        val names = distinct.indices.joinToString { ":id$it" }
-        val statement = Statement.create("SELECT $USER_COLUMNS FROM identity_users u WHERE u.id IN ($names)")
-        distinct.forEachIndexed { index, id -> statement.bind("id$index", id) }
-        return driver.fetchAll(statement).getOrThrow().map { it.toUser() }
+        // One bound parameter per id, never a value spliced into the SQL.
+        return database.query {
+            u.select(columns).where { u.id inList distinct }.limit(distinct.size).map { it.toUser() }
+        }
     }
 
     override suspend fun create(user: User, identity: VerifiedIdentity, email: UserEmail?, at: Instant) = uniqueGuard {
-        driver.transaction {
-            execute(
-                Statement.create(
-                    "INSERT INTO identity_users (id, login, display_name, primary_email, avatar_url, created_at) " +
-                        "VALUES (:id, :login, :name, :email, :avatar, :at)",
-                ).bind("id", user.id).bind("login", user.login).bind("name", user.displayName)
-                    .bind("email", user.primaryEmail)
-                    .bind("avatar", user.avatarUrl).bind("at", user.createdAt),
-            ).getOrThrow()
-            insertIdentity(this, user.id, identity, at)
-            if (email != null) upsertEmail(this, user.id, email, at)
+        database.query {
+            u.insert {
+                it[id] = user.id
+                it[login] = user.login
+                it[displayName] = user.displayName
+                it[primaryEmail] = user.primaryEmail
+                it[avatarUrl] = user.avatarUrl
+                it[createdAt] = user.createdAt
+            }
+            insertIdentity(user.id, identity, at)
+            if (email != null) upsertEmail(user.id, email, at)
         }
     }
 
     override suspend fun link(userId: Uuid, identity: VerifiedIdentity, email: UserEmail?, at: Instant) = uniqueGuard {
-        driver.transaction {
-            insertIdentity(this, userId, identity, at)
-            if (email != null) upsertEmail(this, userId, email, at)
+        database.query {
+            insertIdentity(userId, identity, at)
+            if (email != null) upsertEmail(userId, email, at)
         }
     }
 
-    override suspend fun listEmails(userId: Uuid): List<UserEmail> = driver.fetchAll(
-        Statement.create(
-            "SELECT email, verified FROM identity_user_emails WHERE user_id = :id ORDER BY verified DESC, " +
-                "email LIMIT 50",
-        ).bind("id", userId),
-    ).getOrThrow().map { UserEmail(it.get("email").asString(), it.get("verified").asBoolean()) }
+    override suspend fun listEmails(userId: Uuid): List<UserEmail> = database.query {
+        val e = IdentityUserEmails
+        e.select(e.email, e.verified)
+            .where { e.userId eq userId }
+            .orderBy(e.verified to SortOrder.DESC, e.email to SortOrder.ASC)
+            .limit(MAX_LISTED)
+            .map { UserEmail(it[e.email], it[e.verified]) }
+    }
 
-    override suspend fun listIssuers(userId: Uuid): List<String> = driver.fetchAll(
-        Statement.create("SELECT DISTINCT issuer FROM identity_identities WHERE user_id = :id ORDER BY issuer LIMIT 50")
-            .bind("id", userId),
-    ).getOrThrow().map { it.get("issuer").asString() }
+    override suspend fun listIssuers(userId: Uuid): List<String> = database.query {
+        val i = IdentityIdentities
+        i.select(i.issuer).withDistinct()
+            .where { i.userId eq userId }
+            .orderBy(i.issuer)
+            .limit(MAX_LISTED)
+            .map { it[i.issuer] }
+    }
+
+    private val columns = listOf(u.id, u.login, u.displayName, u.primaryEmail, u.avatarUrl, u.createdAt)
 
     private companion object {
-        const val USER_COLUMNS = "u.id, u.login, u.display_name, u.primary_email, u.avatar_url, u.created_at"
+        const val MAX_LISTED = 50
     }
 }
 
-private suspend fun insertIdentity(executor: QueryExecutor, userId: Uuid, identity: VerifiedIdentity, at: Instant) {
+private fun ResultRow.toUser(): User {
+    val u = IdentityUsers
+    return User(
+        id = this[u.id],
+        login = this[u.login],
+        displayName = this[u.displayName],
+        primaryEmail = this[u.primaryEmail],
+        avatarUrl = this[u.avatarUrl],
+        createdAt = this[u.createdAt],
+    )
+}
+
+private fun JdbcTransaction.insertIdentity(userId: Uuid, identity: VerifiedIdentity, at: Instant) {
     // A known identity of the same user only refreshes its last use. Of another user, nothing is written and the
     // call fails: the use case found it free a moment ago, so another sign-in took it in between (a race), and the
     // caller retries, which then finds it. Writing nothing silently would leave a user without a way in.
-    val written = executor.execute(
-        Statement.create(
-            "INSERT INTO identity_identities (issuer, subject, user_id, email, created_at, last_used_at) " +
-                "VALUES (:issuer, :subject, :user, :email, :at, :at) " +
-                "ON CONFLICT (issuer, subject) DO UPDATE SET last_used_at = EXCLUDED.last_used_at " +
-                "WHERE identity_identities.user_id = EXCLUDED.user_id",
-        ).bind("issuer", identity.issuer).bind("subject", identity.subject).bind("user", userId)
-            .bind("email", identity.email).bind("at", at),
-    ).getOrThrow()
-    if (written == 0L) throw DuplicateIdentityException()
+    val i = IdentityIdentities
+    val written = i.upsert(
+        i.issuer,
+        i.subject,
+        onUpdate = { it[i.lastUsedAt] = insertValue(i.lastUsedAt) },
+        // The row's user is the one being written (EXCLUDED.user_id), bound as such.
+        where = { i.userId eq userId },
+    ) {
+        it[issuer] = identity.issuer
+        it[subject] = identity.subject
+        it[this.userId] = userId
+        it[email] = identity.email
+        it[createdAt] = at
+        it[lastUsedAt] = at
+    }.insertedCount
+    if (written == 0) throw DuplicateIdentityException()
 }
 
-private suspend fun upsertEmail(executor: QueryExecutor, userId: Uuid, email: UserEmail, at: Instant) {
+private fun JdbcTransaction.upsertEmail(userId: Uuid, email: UserEmail, at: Instant) {
     // An e-mail becomes verified, never unverified.
-    executor.execute(
-        Statement.create(
-            "INSERT INTO identity_user_emails (user_id, email, verified, created_at) VALUES (:user, " +
-                ":email, :verified, :at) " +
-                "ON CONFLICT (user_id, email) DO UPDATE SET verified = identity_user_emails.verified OR " +
-                "EXCLUDED.verified",
-        ).bind("user", userId).bind("email", email.email).bind("verified", email.verified).bind("at", at),
-    ).getOrThrow()
+    val e = IdentityUserEmails
+    e.upsert(e.userId, e.email, onUpdate = { it[e.verified] = e.verified or insertValue(e.verified) }) {
+        it[this.userId] = userId
+        it[this.email] = email.email
+        it[verified] = email.verified
+        it[createdAt] = at
+    }
 }
 
-// Not inline: one copy, whichever repository method fails.
+/** PostgreSQL's SQLSTATE of a unique violation. */
+private const val UNIQUE_VIOLATION = "23505"
+
+// Not inline: one copy, whichever repository method fails. Another sign-in that verified the same e-mail at the same
+// moment breaks the partial unique index `identity_user_emails_verified`, which no ON CONFLICT target covers.
 private suspend fun <T> uniqueGuard(block: suspend () -> T): T = try {
     block()
-} catch (error: SQLError) {
-    if (error.kind == SQLError.Kind.UniqueViolation) throw DuplicateIdentityException()
+} catch (error: ExposedSQLException) {
+    if (error.sqlState == UNIQUE_VIOLATION) throw DuplicateIdentityException()
     throw error
 }
-
-private fun ResultSet.Row.toUser() = User(
-    id = get("id").asUuid(),
-    login = get("login").asString(),
-    displayName = get("display_name").asString(),
-    primaryEmail = get("primary_email").asStringOrNull(),
-    avatarUrl = get("avatar_url").asStringOrNull(),
-    createdAt = get("created_at").asInstant(),
-)

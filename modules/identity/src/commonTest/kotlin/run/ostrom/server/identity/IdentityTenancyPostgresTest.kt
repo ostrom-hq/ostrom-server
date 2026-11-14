@@ -5,7 +5,11 @@ import run.ostrom.server.identity.domain.AGENT_SCOPE
 import run.ostrom.server.identity.domain.ApiToken
 import run.ostrom.server.identity.domain.ApiTokensRepository
 import run.ostrom.server.identity.domain.AuditEntry
+import run.ostrom.server.identity.domain.AuditIntegrity
 import run.ostrom.server.identity.domain.AuditLog
+import run.ostrom.server.identity.domain.AuditRepository
+import run.ostrom.server.identity.domain.AuditVerifier
+import run.ostrom.server.identity.domain.OrgAuditQuery
 import run.ostrom.server.identity.domain.IdentityProvider
 import run.ostrom.server.identity.domain.ResolveUserUseCase
 import run.ostrom.server.identity.domain.TokenKind
@@ -22,6 +26,9 @@ import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.Transaction
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
@@ -195,6 +202,28 @@ class IdentityTenancyPostgresTest {
         assertFailsWith<IllegalArgumentException>("Only an organization's action") {
             s.driver.inOrg(orgA) { audit.record(this, AuditEntry(null, null, "account", "t", "3")) }
         }
+    }
+
+    // Identity appends on Exposed (AuditLog.record), the modules still on sqlx4k in their own transaction
+    // (TransactionalAuditLog): both take the chain's advisory lock and read its head alike, so one chain written by
+    // both, one after the other and at once, has no gap, no fork, and every line verifies.
+    @Test
+    fun aChainWrittenByBothPoolsStaysOneVerifiedChain() = serverTest(listOf(IdentityModule)) { s ->
+        val log = s.koin.get<AuditLog>()
+        val inTransaction = s.koin.get<TransactionalAuditLog>()
+        suspend fun bySqlx4k(n: Int) =
+            s.driver.inOrg(orgA) { inTransaction.record(this, AuditEntry(orgA, null, "s$n", "t", "$n")) }
+        suspend fun byExposed(n: Int) = log.record(AuditEntry(orgA, null, "e$n", "t", "$n"))
+
+        val alternated = listOf(bySqlx4k(1), byExposed(2), bySqlx4k(3), byExposed(4))
+        assertEquals(listOf(1L, 2L, 3L, 4L), alternated.map { it.sequence })
+        assertEquals(alternated.dropLast(1).map { it.hash }, alternated.drop(1).map { it.previousHash })
+        coroutineScope { (5..24).map { n -> async { if (n % 2 == 0) byExposed(n) else bySqlx4k(n) } }.awaitAll() }
+
+        val lines = s.koin.get<AuditRepository>().listOrg(orgA, OrgAuditQuery(limit = 100))
+        assertEquals((24L downTo 1L).toList(), lines.map { it.event.sequence }, "No gap, no sequence twice")
+        val verifier = s.koin.get<AuditVerifier>()
+        assertEquals(List(24) { AuditIntegrity.VERIFIED }, lines.map { verifier.integrity(it) })
     }
 
     @Test

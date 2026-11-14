@@ -2,19 +2,30 @@
 package run.ostrom.server.identity.infrastructure
 
 import run.ostrom.server.identity.domain.LinkedIdentities
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
+import run.ostrom.server.kernel.database.JdbcDatabase
+import org.jetbrains.exposed.v1.core.JoinType
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.select
 
 /**
- * [LinkedIdentities] on PostgreSQL: one read of `identity_identities` by the user's login.
+ * [LinkedIdentities] on PostgreSQL through Exposed: one read of `identity_identities` by the user's login.
  *
- * @param driver The database.
+ * @param database The JDBC pool.
  */
-class LinkedIdentitiesImpl(private val driver: Driver) : LinkedIdentities {
-    override suspend fun subjectsOf(login: String, issuer: String): List<String> = driver.fetchAll(
-        Statement.create(
-            "SELECT i.subject FROM identity_users u JOIN identity_identities i ON i.user_id = u.id " +
-                "WHERE u.login = :login AND i.issuer = :issuer ORDER BY i.subject LIMIT 50",
-        ).bind("login", login.lowercase()).bind("issuer", issuer),
-    ).getOrThrow().map { it.get("subject").asString() }
+class LinkedIdentitiesImpl(private val database: JdbcDatabase) : LinkedIdentities {
+    override suspend fun subjectsOf(login: String, issuer: String): List<String> = database.query {
+        val u = IdentityUsers
+        val i = IdentityIdentities
+        u.join(i, JoinType.INNER, u.id, i.userId)
+            .select(i.subject)
+            .where { (u.login eq login.lowercase()) and (i.issuer eq issuer) }
+            .orderBy(i.subject)
+            .limit(MAX_SUBJECTS)
+            .map { it[i.subject] }
+    }
+
+    private companion object {
+        const val MAX_SUBJECTS = 50
+    }
 }

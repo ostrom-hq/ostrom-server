@@ -3,58 +3,71 @@ package run.ostrom.server.identity.infrastructure
 
 import run.ostrom.server.identity.domain.SetupLink
 import run.ostrom.server.identity.domain.SetupLinksRepository
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
+import run.ostrom.server.kernel.database.JdbcDatabase
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.core.isNotNull
+import org.jetbrains.exposed.v1.core.isNull
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * [SetupLinksRepository] on PostgreSQL (`identity_setup_links`, migration 17).
+ * [SetupLinksRepository] on PostgreSQL through Exposed ([IdentitySetupLinks], migration 17); an instance-level table.
  *
- * @param driver The database.
+ * @param database The JDBC pool.
  */
-class SetupLinksRepositoryImpl(private val driver: Driver) : SetupLinksRepository {
+class SetupLinksRepositoryImpl(private val database: JdbcDatabase) : SetupLinksRepository {
+    private val t = IdentitySetupLinks
+
     override suspend fun replace(link: SetupLink, tokenHash: String) {
-        driver.transaction {
-            execute(
-                Statement.create(
-                    "UPDATE identity_setup_links SET expires_at = :now WHERE used_at IS NULL AND expires_at > :now",
-                ).bind("now", link.createdAt),
-            ).getOrThrow()
-            execute(
-                Statement.create(
-                    "INSERT INTO identity_setup_links (id, token_hash, created_at, expires_at) " +
-                        "VALUES (:id, :token, :created, :expires)",
-                ).bind("id", link.id).bind("token", tokenHash).bind("created", link.createdAt)
-                    .bind("expires", link.expiresAt),
-            ).getOrThrow()
+        database.query {
+            // The links still pending end now: one setup link at a time.
+            t.update({ t.usedAt.isNull() and (t.expiresAt greater link.createdAt) }) { it[expiresAt] = link.createdAt }
+            t.insert {
+                it[id] = link.id
+                it[this.tokenHash] = tokenHash
+                it[createdAt] = link.createdAt
+                it[expiresAt] = link.expiresAt
+            }
         }
     }
 
-    override suspend fun consume(tokenHash: String, userId: Uuid, now: Instant): Boolean = driver.execute(
-        Statement.create(
-            "UPDATE identity_setup_links SET used_at = :now, used_by = :user WHERE token_hash = :token " +
-                "AND used_at IS NULL AND expires_at > :now",
-        ).bind("now", now).bind("user", userId).bind("token", tokenHash),
-    ).getOrThrow() == 1L
+    override suspend fun consume(tokenHash: String, userId: Uuid, now: Instant): Boolean = database.query {
+        t.update({ (t.tokenHash eq tokenHash) and t.usedAt.isNull() and (t.expiresAt greater now) }) {
+            it[usedAt] = now
+            it[usedBy] = userId
+        } == 1
+    }
 
-    override suspend fun pending(tokenHash: String, now: Instant): Boolean = driver.fetchAll(
-        Statement.create(
-            "SELECT 1 FROM identity_setup_links WHERE token_hash = :token AND used_at IS NULL AND expires_at > :now",
-        ).bind("token", tokenHash).bind("now", now),
-    ).getOrThrow().firstOrNull() != null
+    override suspend fun pending(tokenHash: String, now: Instant): Boolean = database.query {
+        !t.select(t.id)
+            .where { (t.tokenHash eq tokenHash) and t.usedAt.isNull() and (t.expiresAt greater now) }
+            .limit(1)
+            .empty()
+    }
 
-    override suspend fun usedBy(userId: Uuid): Boolean = driver.fetchAll(
-        Statement.create("SELECT 1 FROM identity_setup_links WHERE used_by = :user LIMIT 1").bind("user", userId),
-    ).getOrThrow().firstOrNull() != null
+    override suspend fun usedBy(userId: Uuid): Boolean = database.query {
+        !t.select(t.id).where { t.usedBy eq userId }.limit(1).empty()
+    }
 
-    override suspend fun anyAccount(): Boolean = driver.fetchAll(
-        Statement.create("SELECT 1 FROM identity_users LIMIT 1"),
-    ).getOrThrow().firstOrNull() != null
+    override suspend fun anyAccount(): Boolean = database.query {
+        !IdentityUsers.select(IdentityUsers.id).limit(1).empty()
+    }
 
-    override suspend fun owners(): Map<Uuid, Instant> = driver.fetchAll(
-        "SELECT used_by, used_at FROM identity_setup_links WHERE used_by IS NOT NULL ORDER BY used_at",
-    ).getOrThrow().associate { it.get("used_by").asUuid() to it.get("used_at").asInstant() }
+    // The accounts a setup link created: one per `ostrom-server bootstrap` that was used, a handful at most.
+    override suspend fun owners(): Map<Uuid, Instant> = database.query {
+        t.select(t.usedBy, t.usedAt)
+            .where { t.usedBy.isNotNull() }
+            .orderBy(t.usedAt)
+            .limit(MAX_OWNERS)
+            .associate { it.present(t.usedBy) to it.present(t.usedAt) }
+    }
+
+    private companion object {
+        const val MAX_OWNERS = 1_000
+    }
 }

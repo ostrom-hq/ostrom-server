@@ -164,7 +164,11 @@ override suspend fun rename(orgId: Uuid, id: Uuid, name: String): Boolean = data
 - **Tenant tables, two walls**: every query filters on `T.orgId eq orgId` itself (the typed org filter, SD-08), and
   runs in `database.inOrg(orgId) { }`, which switches the transaction to `ostrom_tenant` and sets `ostrom.org_id`, so
   the table's row-level security policy still refuses another organization's rows. Keep both until the step that
-  drops row-level security; outside `inOrg` a tenant table shows no row and accepts none.
+  drops row-level security; outside `inOrg` a tenant table shows no row and accepts none. A table whose migration lets
+  `ostrom_tenant` only read it (identity's `identity_api_tokens`) is written in `database.withOrganization(orgId) { }`,
+  the serving role with the organization set, as the sqlx4k `withOrganization`. The identity audit chain has two
+  writers until orgs and workflow-runs move: identity's own on Exposed, theirs in their sqlx4k transaction
+  (`TransactionalAuditLog`); both take the kernel's advisory lock on the chain (`lockUntilCommit`).
 - A change that reads then writes locks what it read: `select(…).where { … }.forUpdate()` in the same transaction.
 - Exposed never retries a transaction (`defaultMaxAttempts = 1`). A refusal the domain expects (a duplicate) is an
   `insertIgnore`/`upsert` or a check in the same transaction, not a caught exception.
