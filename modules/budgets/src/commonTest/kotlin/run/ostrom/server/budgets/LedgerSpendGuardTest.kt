@@ -5,6 +5,7 @@ import run.ostrom.server.budgets.domain.BudgetAction
 import run.ostrom.server.budgets.domain.BudgetDecision
 import run.ostrom.server.budgets.domain.BudgetGuard
 import run.ostrom.server.budgets.domain.BudgetLimit
+import run.ostrom.server.budgets.domain.BudgetLimits
 import run.ostrom.server.budgets.domain.BudgetScope
 import run.ostrom.server.budgets.domain.BudgetTarget
 import run.ostrom.server.budgets.domain.BudgetWindow
@@ -43,6 +44,9 @@ class LedgerSpendGuardTest {
             guardWorkflows += workflowId
             return cached
         }
+
+        override suspend fun checkRead(orgId: Uuid, memberId: Uuid, limits: BudgetLimits, monthSpent: Long) =
+            error("never asked by the gateway")
     }
 
     private var answer: Admission = Admission.Admitted

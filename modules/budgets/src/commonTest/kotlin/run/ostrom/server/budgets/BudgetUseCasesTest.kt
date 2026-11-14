@@ -6,6 +6,7 @@ import run.ostrom.server.budgets.domain.BudgetAlert
 import run.ostrom.server.budgets.domain.BudgetDecision
 import run.ostrom.server.budgets.domain.BudgetGuard
 import run.ostrom.server.budgets.domain.BudgetLimit
+import run.ostrom.server.budgets.domain.BudgetLimits
 import run.ostrom.server.budgets.domain.BudgetPeriod
 import run.ostrom.server.budgets.domain.BudgetRules
 import run.ostrom.server.budgets.domain.BudgetScope
@@ -32,9 +33,8 @@ class BudgetUseCasesTest {
     private val clock = TestClock()
     private val repository = InMemoryBudgetsRepository()
     private val spend = FakeSpendReader()
-    private val cache = RecordingCache()
     private val getBudgets = GetBudgetsUseCaseImpl(repository, spend, clock)
-    private val set = SetBudgetUseCaseImpl(repository, cache, clock, getBudgets)
+    private val set = SetBudgetUseCaseImpl(repository, clock, getBudgets)
     private val member = TestCallers.memberA.memberId
 
     @Test
@@ -48,7 +48,6 @@ class BudgetUseCasesTest {
         assertEquals(10_000_000L, overview.settings.defaultMemberLimitMicros)
         assertEquals(1_234L, overview.orgSpentMicros)
         assertEquals(BudgetPeriod(TestCallers.monthStart, TestCallers.nextMonth), overview.period)
-        assertEquals(listOf(TestCallers.orgA, TestCallers.orgA), cache.invalidated, "The guard forgets the old limits")
 
         set(TestCallers.adminA, BudgetTarget.Org, emptyList())
         val cleared = set(TestCallers.adminA, BudgetTarget.DefaultMember, emptyList())
@@ -78,7 +77,6 @@ class BudgetUseCasesTest {
             set(TestCallers.memberA, BudgetTarget.Member(member), listOf(BudgetLimit(1)))
         }
         assertFailsWith<AdminRequiredException> { set(TestCallers.memberA, BudgetTarget.Member(member), emptyList()) }
-        assertEquals(emptyList(), cache.invalidated)
     }
 
     @Test
@@ -88,7 +86,6 @@ class BudgetUseCasesTest {
         assertEquals(listOf(MemberBudget(member, 3_000_000, TestCallers.epoch)), given.settings.overrides)
         set(TestCallers.adminA, BudgetTarget.Member(member), emptyList())
         assertEquals(emptyList(), getBudgets(TestCallers.adminA).settings.overrides)
-        assertEquals(listOf(TestCallers.orgA, TestCallers.orgA), cache.invalidated)
     }
 
     @Test
@@ -102,7 +99,10 @@ class BudgetUseCasesTest {
         )
         val guard = object : BudgetGuard {
             override suspend fun check(orgId: Uuid, memberId: Uuid, workflowId: String?): BudgetDecision =
-                decisions.removeFirst()
+                error("the page's reads are handed over")
+
+            override suspend fun checkRead(orgId: Uuid, memberId: Uuid, limits: BudgetLimits, monthSpent: Long) =
+                decisions.removeFirst().also { assertEquals(1_500, monthSpent, "The spend read once, handed over") }
         }
         val mine = GetMyBudgetUseCaseImpl(repository, spend, guard, clock)
         repository.defaultLimits[TestCallers.orgA] = 1_000
@@ -132,6 +132,9 @@ class BudgetUseCasesTest {
     fun aMemberWithoutLimitHasNoRemaining() = runTest {
         val guard = object : BudgetGuard {
             override suspend fun check(orgId: Uuid, memberId: Uuid, workflowId: String?): BudgetDecision =
+                BudgetDecision.Allowed(null)
+
+            override suspend fun checkRead(orgId: Uuid, memberId: Uuid, limits: BudgetLimits, monthSpent: Long) =
                 BudgetDecision.Allowed(null)
         }
         val budget = GetMyBudgetUseCaseImpl(repository, spend, guard, clock)(TestCallers.memberA)
@@ -184,7 +187,6 @@ class BudgetUseCasesTest {
         val removed = set(TestCallers.adminA, BudgetTarget.DefaultMember, emptyList())
         assertEquals(emptyList(), removed.settings.defaultMember)
         assertEquals(9_000_000, repository.orgLimits[TestCallers.orgA])
-        assertEquals(listOf(TestCallers.orgA, TestCallers.orgA), cache.invalidated)
         assertFailsWith<InvalidBudgetException> { set(TestCallers.adminA, BudgetTarget.Org, listOf(BudgetLimit(-1))) }
         assertFailsWith<AdminRequiredException> { set(TestCallers.memberA, BudgetTarget.Org, listOf(BudgetLimit(1))) }
 

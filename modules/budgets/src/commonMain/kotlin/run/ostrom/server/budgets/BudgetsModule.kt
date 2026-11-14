@@ -4,7 +4,6 @@ package run.ostrom.server.budgets
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.budgets.domain.AuditedBudgetAlerts
 import run.ostrom.server.budgets.domain.BudgetAlerts
-import run.ostrom.server.budgets.domain.BudgetDecisionCache
 import run.ostrom.server.budgets.domain.BudgetGuard
 import run.ostrom.server.budgets.domain.BudgetGuardImpl
 import run.ostrom.server.budgets.domain.BudgetsRepository
@@ -32,7 +31,7 @@ import io.ktor.server.routing.Route
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.scope.Scope
-import org.koin.dsl.binds
+import org.koin.dsl.bind
 import org.koin.dsl.module
 
 /**
@@ -49,13 +48,13 @@ object BudgetsModule : ServerModule {
         single {
             val alerts = AuditedBudgetAlerts(getOrNull<BudgetAlerts>() ?: NoBudgetAlerts(), get<OrgAuditTrail>())
             BudgetGuardImpl(get(), get(), alerts, get(), get())
-        } binds arrayOf(BudgetGuard::class, BudgetDecisionCache::class)
+        } bind BudgetGuard::class
         // The gateway asks it before each model call (GatewayModule falls back to allowing every call without it).
         single<SpendGuard> { LedgerSpendGuard(get(), get(), get(), get()) }
         single<GetBudgetsUseCase> { GetBudgetsUseCaseImpl(get(), get(), get()) }
         single<GetMyBudgetUseCase> { GetMyBudgetUseCaseImpl(get(), get(), get(), get()) }
-        single<SetBudgetUseCase> { SetBudgetUseCaseImpl(get(), get(), get(), get(), workflows = getOrNull()) }
-        single<WorkflowRemovals> { WorkflowBudgetsRemoval(get(), get()) }
+        single<SetBudgetUseCase> { SetBudgetUseCaseImpl(get(), get(), get(), workflows = getOrNull()) }
+        single<WorkflowRemovals> { WorkflowBudgetsRemoval(get()) }
         single { BudgetsRoutesDependencies(callerResolver(), get(), get(), get(), get()) }
     }
 

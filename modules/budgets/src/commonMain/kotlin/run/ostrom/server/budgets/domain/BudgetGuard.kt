@@ -9,14 +9,14 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.time.Clock
-import kotlin.time.Duration
-import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
  * Decides whether a member may spend more today and this month. Bound in Koin by the budgets module; the gateway calls
- * it before each model call, so a decision is cached a few seconds and a cached check costs a map lookup.
+ * it before each model call. Nothing is cached in the process: every check reads the limits and the spend as they are
+ * now, so a limit set on any replica applies to the next call on every one (TeamCode docs/replicas.md, « Policy and
+ * account edits: database transactions; no process cache »).
  */
 interface BudgetGuard {
     /**
@@ -30,30 +30,24 @@ interface BudgetGuard {
      * @return The decision.
      */
     suspend fun check(orgId: Uuid, memberId: Uuid, workflowId: String? = null): BudgetDecision
-}
 
-/** Forgets cached decisions when an org's limits change, so this replica applies them at once. */
-interface BudgetDecisionCache {
     /**
-     * Forgets the org's cached decisions and spend.
+     * As [check] without a workflow, on what the caller already read (a member's own budget page), so that nothing is
+     * read twice: the member's limits and their spend since the start of the month.
      *
      * @param orgId The org.
+     * @param memberId The member.
+     * @param limits The org's and the member's limits, as [BudgetsRepository.limits] gave them.
+     * @param monthSpent The member's spend since the start of this month.
+     *
+     * @return The decision.
      */
-    suspend fun invalidate(orgId: Uuid)
+    suspend fun checkRead(orgId: Uuid, memberId: Uuid, limits: BudgetLimits, monthSpent: Long): BudgetDecision
 }
 
 /**
- * How [BudgetGuardImpl] caches.
- *
- * @property ttl How long a decision and a spend are reused.
- * @property maxEntries Entries kept per cache before expired ones are dropped.
- */
-data class BudgetCacheSettings(val ttl: Duration = 5.seconds, val maxEntries: Int = 100_000)
-
-/**
- * [BudgetGuard] on the limits and the ledger. Decisions are cached for the [BudgetCacheSettings.ttl] per (org, member),
- * and the org's spend as long per org and period, so that the gateway's hot path stays far under a millisecond; the
- * price is that spending may overshoot a limit by what is spent within that time. Crossing 80 % and 100 % of a limit
+ * [BudgetGuard] on the limits and the ledger, read at every check (the spend from the spend of each day,
+ * `usage_spend_days`). Crossing 80 % and 100 % of a limit
  * publishes a [BudgetAlert], once per limit value, action, threshold and period: a local memo avoids asking the
  * database again, and the database makes it once across replicas ([AuditedBudgetAlerts] also writes a limit that warns,
  * reached, to the organization's audit log, with the same once).
@@ -63,7 +57,6 @@ data class BudgetCacheSettings(val ttl: Duration = 5.seconds, val maxEntries: In
  * @param alerts Where alerts go.
  * @param clock The time.
  * @param logger Where a failed alert is reported.
- * @param cache How decisions and spends are cached.
  */
 class BudgetGuardImpl(
     private val repository: BudgetsRepository,
@@ -71,15 +64,7 @@ class BudgetGuardImpl(
     private val alerts: BudgetAlerts,
     private val clock: Clock,
     private val logger: Logger,
-    private val cache: BudgetCacheSettings = BudgetCacheSettings(),
-) : BudgetGuard,
-    BudgetDecisionCache {
-    private data class MemberKey(val orgId: Uuid, val memberId: Uuid, val workflowId: String?)
-
-    private data class SpendKey(val orgId: Uuid, val period: BudgetPeriod)
-
-    private class Cached<T>(val value: T, val expiresAt: Instant)
-
+) : BudgetGuard {
     /** Whose limit: the org's (no member), a member's, or a workflow's. */
     private data class Subject(
         val orgId: Uuid,
@@ -95,52 +80,44 @@ class BudgetGuardImpl(
         val remaining: Long get() = (limit.micros - spent).coerceAtLeast(0)
     }
 
+    // The alerts this replica already saw marked: they spare a write, never decide (the database marks each once).
     private val lock = Mutex()
-    private val decisions = HashMap<MemberKey, Cached<BudgetDecision>>()
-    private val orgSpends = HashMap<SpendKey, Cached<Long>>()
     private val alerted = HashSet<AlertKey>()
     private var alertedMonth: Instant? = null
 
-    /**
-     * Counts invalidations: a value read before one is not cached after it, or a check running while an admin changes
-     * a limit would keep the old decision for the whole TTL.
-     */
-    private var generation = 0L
+    override suspend fun check(orgId: Uuid, memberId: Uuid, workflowId: String?): BudgetDecision =
+        decide(orgId, memberId, workflowId, repository.limits(orgId, memberId, workflowId), null)
 
-    override suspend fun check(orgId: Uuid, memberId: Uuid, workflowId: String?): BudgetDecision {
+    override suspend fun checkRead(
+        orgId: Uuid,
+        memberId: Uuid,
+        limits: BudgetLimits,
+        monthSpent: Long,
+    ): BudgetDecision =
+        decide(orgId, memberId, null, limits, monthSpent)
+
+    /** The decision on [limits], the member's spend of the month being [monthSpent] when already read. */
+    private suspend fun decide(
+        orgId: Uuid,
+        memberId: Uuid,
+        workflowId: String?,
+        limits: BudgetLimits,
+        monthSpent: Long?,
+    ): BudgetDecision {
         val now = clock.now()
-        val key = MemberKey(orgId, memberId, workflowId)
-        val (cached, readAt) = lock.withLock { decisions[key] to generation }
-        if (cached != null && cached.expiresAt > now) return cached.value
-        val decision = evaluate(key, now, readAt)
-        lock.withLock {
-            if (generation == readAt) decisions.putBounded(key, Cached(decision, now + cache.ttl), now)
-        }
-        return decision
-    }
-
-    override suspend fun invalidate(orgId: Uuid) {
-        lock.withLock {
-            generation++
-            decisions.keys.removeAll { it.orgId == orgId }
-            orgSpends.keys.removeAll { it.orgId == orgId }
-        }
-    }
-
-    private suspend fun evaluate(key: MemberKey, now: Instant, readAt: Long): BudgetDecision {
-        val (orgId, memberId, workflowId) = key
-        val limits = repository.limits(orgId, memberId, workflowId)
+        val monthStart = BudgetPeriod.of(now).start
         val org = Subject(orgId, null, BudgetScope.ORG)
         val member = Subject(orgId, memberId, BudgetScope.MEMBER)
         val measured = limits.org.map { limit ->
             val period = limit.window.periodOf(now)
-            Measured(org, limit, period, orgSpent(orgId, period, now, readAt))
+            Measured(org, limit, period, spend.spentMicros(orgId, null, period.start))
         } + limits.member.map { limit ->
             val period = limit.window.periodOf(now)
-            Measured(member, limit, period, spend.spentMicros(orgId, memberId, period.start))
+            val spent = monthSpent?.takeIf { period.start == monthStart }
+                ?: spend.spentMicros(orgId, memberId, period.start)
+            Measured(member, limit, period, spent)
         } + workflowId?.let { measuredWorkflow(orgId, it, limits.workflow, now) }.orEmpty()
-        val month = BudgetPeriod.of(now).start
-        for (each in measured) alertCrossings(each, month, now)
+        for (each in measured) alertCrossings(each, monthStart, now)
         val stopping = measured.filter { it.limit.action == BudgetAction.BLOCK }
         val reached = stopping.firstOrNull { it.exhausted }
             ?: return BudgetDecision.Allowed(stopping.minOfOrNull { it.remaining })
@@ -164,17 +141,6 @@ class BudgetGuardImpl(
             val period = limit.window.periodOf(now)
             Measured(subject, limit, period, spend.workflowSpentMicros(orgId, workflowId, period.start))
         }
-    }
-
-    private suspend fun orgSpent(orgId: Uuid, period: BudgetPeriod, now: Instant, readAt: Long): Long {
-        val key = SpendKey(orgId, period)
-        val cached = lock.withLock { orgSpends[key] }
-        if (cached != null && cached.expiresAt > now) return cached.value
-        val spent = spend.spentMicros(orgId, null, period.start)
-        lock.withLock {
-            if (generation == readAt) orgSpends.putBounded(key, Cached(spent, now + cache.ttl), now)
-        }
-        return spent
     }
 
     private suspend fun alertCrossings(measured: Measured, month: Instant, now: Instant) {
@@ -247,14 +213,6 @@ class BudgetGuardImpl(
             alertedMonth = month
         }
         alerted.add(key)
-    }
-
-    private fun <K, V : Cached<*>> HashMap<K, V>.putBounded(key: K, value: V, now: Instant) {
-        if (size >= cache.maxEntries) {
-            entries.removeAll { it.value.expiresAt <= now }
-            if (size >= cache.maxEntries) clear()
-        }
-        put(key, value)
     }
 }
 

@@ -53,14 +53,12 @@ interface SetBudgetUseCase {
  * that two admins changing two subjects at once keep both changes.
  *
  * @param repository Stores the limits.
- * @param cache Forgets cached decisions when a limit changes.
  * @param clock The time of the change.
  * @param getBudgets Reads the limits afterwards.
  * @param workflows The org's workflows, which a workflow budget names; null, none is known.
  */
 class SetBudgetUseCaseImpl(
     private val repository: BudgetsRepository,
-    private val cache: BudgetDecisionCache,
     private val clock: Clock,
     private val getBudgets: GetBudgetsUseCase,
     private val workflows: WorkflowDirectory? = null,
@@ -74,7 +72,6 @@ class SetBudgetUseCaseImpl(
             throw BudgetWorkflowNotFoundException()
         }
         repository.replaceLimits(caller.orgId, target, limits, clock.now())
-        cache.invalidate(caller.orgId)
         return getBudgets(caller)
     }
 
