@@ -5,6 +5,7 @@ import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.mcprelay.domain.ArgumentPolicy
 import run.ostrom.server.mcprelay.domain.EffectiveServer
 import run.ostrom.server.mcprelay.domain.HostStatus
+import run.ostrom.server.mcprelay.domain.HostUnreachableNotice
 import run.ostrom.server.mcprelay.domain.HostedAssignment
 import run.ostrom.server.mcprelay.domain.HostedProcessChange
 import run.ostrom.server.mcprelay.domain.HostedProcessRecord
@@ -15,6 +16,7 @@ import run.ostrom.server.mcprelay.domain.McpCallCursor
 import run.ostrom.server.mcprelay.domain.McpCallSlot
 import run.ostrom.server.mcprelay.domain.McpCallSlotRepository
 import run.ostrom.server.mcprelay.domain.McpHostControl
+import run.ostrom.server.mcprelay.domain.McpHostRefusedException
 import run.ostrom.server.mcprelay.domain.McpLoad
 import run.ostrom.server.mcprelay.domain.McpOperation
 import run.ostrom.server.mcprelay.domain.McpOutcome
@@ -34,10 +36,13 @@ import run.ostrom.server.secrets.domain.Caller
 import run.ostrom.server.secrets.domain.MemberRole
 import run.ostrom.server.secrets.domain.RevealSecretsUseCase
 import run.ostrom.server.secrets.domain.SecretValue
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -380,6 +385,7 @@ class InMemoryRelayRepository : McpRelayRepository {
 /** The MCP host's control operations, recorded; [processes] is its status, by relay key. */
 class FakeHostControl(var fail: Boolean = false) : McpHostControl {
     var refuses = false
+    var hangs = false
     val retained = mutableListOf<Set<String>>()
     val warmed = mutableListOf<UpstreamTarget>()
     val stopped = mutableListOf<String>()
@@ -391,7 +397,8 @@ class FakeHostControl(var fail: Boolean = false) : McpHostControl {
     }
 
     override suspend fun retain(keys: Collection<String>): Int {
-        if (refuses) throw run.ostrom.server.mcprelay.domain.McpHostRefusedException("another token")
+        if (hangs) withTimeout(1.seconds) { awaitCancellation() }
+        if (refuses) throw McpHostRefusedException("another token")
         if (fail) error("host down")
         retained += keys.toSet()
         return 3
@@ -417,7 +424,7 @@ class FakeMembers(var ids: List<String>?) : MemberDirectory {
 }
 
 /** The orgs told that the MCP host cannot be reached, and why. */
-class RecordingHostNotice : run.ostrom.server.mcprelay.domain.HostUnreachableNotice {
+class RecordingHostNotice : HostUnreachableNotice {
     val notices = mutableListOf<Pair<Set<Uuid>, String>>()
 
     override suspend fun hostUnreachable(orgIds: Set<Uuid>, reason: String) {

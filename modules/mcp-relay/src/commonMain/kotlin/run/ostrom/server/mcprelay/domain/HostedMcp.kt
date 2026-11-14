@@ -7,6 +7,7 @@ import run.ostrom.server.secrets.domain.RevealSecretsUseCase
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -249,6 +250,10 @@ class RetainHostedMcpProcessesUseCaseImpl(
         val keys = processes.mapTo(HashSet()) { it.key }
         val stopped = try {
             host.retain(keys)
+        } catch (error: TimeoutCancellationException) {
+            // A host that accepts the call and never answers is a silent host, not this coroutine's cancellation.
+            hostSilent(processes, error)
+            null
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -269,12 +274,15 @@ class RetainHostedMcpProcessesUseCaseImpl(
     private suspend fun recorded(processes: List<HostedProcessRef>, keys: Int, stopped: Int): HostedSweep {
         val status = try {
             host.status()
+        } catch (error: TimeoutCancellationException) {
+            hostSilent(processes, error)
+            null
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
             hostSilent(processes, error)
-            return HostedSweep.StatesUnrecorded
-        }
+            null
+        } ?: return HostedSweep.StatesUnrecorded
         return try {
             HostedSweep.Done(keys, stopped, record(processes, status))
         } catch (error: CancellationException) {

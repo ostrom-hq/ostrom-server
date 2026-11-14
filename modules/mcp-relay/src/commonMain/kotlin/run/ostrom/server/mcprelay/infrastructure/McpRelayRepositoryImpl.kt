@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.mcprelay.infrastructure
 
+import run.ostrom.server.kernel.events.OrgEventDraft
+import run.ostrom.server.kernel.events.OrgEventPublisher
+import run.ostrom.server.kernel.events.OrgEventType
 import run.ostrom.server.mcprelay.domain.ArgumentCondition
 import run.ostrom.server.mcprelay.domain.ArgumentPolicy
 import run.ostrom.server.mcprelay.domain.ConditionOperator
 import run.ostrom.server.mcprelay.domain.EffectiveServer
 import run.ostrom.server.mcprelay.domain.HostedAssignment
-import run.ostrom.server.kernel.events.OrgEventDraft
-import run.ostrom.server.kernel.events.OrgEventPublisher
-import run.ostrom.server.kernel.events.OrgEventType
 import run.ostrom.server.mcprelay.domain.HostedProcessChange
 import run.ostrom.server.mcprelay.domain.HostedProcessEvent
 import run.ostrom.server.mcprelay.domain.HostedProcessRecord
@@ -471,6 +471,7 @@ class McpRelayRepositoryImpl(
     ): Int = driver.inTenant(orgId) {
         var applied = 0
         val events = ArrayList<OrgEventDraft>()
+        val names = HashMap<Uuid, String>()
         for (change in changes) {
             val next = change.next
             val previous = change.previous
@@ -494,7 +495,7 @@ class McpRelayRepositoryImpl(
             // Compare-and-set: a row another replica changed meanwhile is left to it, and so is its event.
             if (execute(statement).getOrThrow() == 1L) {
                 applied++
-                change.event?.let { events += hostedEvent(orgId, change, it) }
+                change.event?.let { events += hostedEvent(orgId, change, it, names) }
             }
         }
         for (removal in removals) {
@@ -515,12 +516,16 @@ class McpRelayRepositoryImpl(
         orgId: Uuid,
         change: HostedProcessChange,
         event: HostedProcessEvent,
+        names: MutableMap<Uuid, String>,
     ): OrgEventDraft {
         val next = change.next
-        val name = fetchAll(
-            Statement.create("SELECT name FROM mcp_relay_servers WHERE org_id = :org_id AND id = :id")
-                .bind("org_id", orgId).bind("id", next.serverId),
-        ).getOrThrow().first().get("name").asString()
+        // Once per server, not per process: a host restart flips every member's process of a server at once.
+        val name = names.getOrPut(next.serverId) {
+            fetchAll(
+                Statement.create("SELECT name FROM mcp_relay_servers WHERE org_id = :org_id AND id = :id")
+                    .bind("org_id", orgId).bind("id", next.serverId),
+            ).getOrThrow().first().get("name").asString()
+        }
         val failure = if (event == HostedProcessEvent.FAILED) next.failure else change.recoveredFrom
         val data = buildJsonObject {
             put("server", name)

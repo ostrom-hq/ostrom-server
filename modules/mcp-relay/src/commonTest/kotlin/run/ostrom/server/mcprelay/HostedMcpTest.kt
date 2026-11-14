@@ -133,6 +133,13 @@ class HostedMcpTest {
         host.refuses = true
         sweeper(repository, null, host)()
         assertEquals(listOf(setOf(Relay.orgA, Relay.orgB) to "refused"), notice.notices)
+        // A host that takes the call and never answers is silent too, though its timeout is a cancellation.
+        notice.notices.clear()
+        host.refuses = false
+        host.fail = false
+        host.hangs = true
+        assertEquals(HostedSweep.HostUnavailable, sweeper(repository, null, host)())
+        assertEquals(listOf(setOf(Relay.orgA, Relay.orgB) to "unreachable"), notice.notices)
     }
 
     @Test

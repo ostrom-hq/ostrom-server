@@ -30,10 +30,11 @@ class HostUnreachableNoticeTest {
         }
     }
 
-    private class Published : OrgEventPublisher {
+    private class Published(private val failing: Set<Uuid> = emptySet()) : OrgEventPublisher {
         val events = mutableListOf<Pair<Uuid, List<OrgEventDraft>>>()
 
         override suspend fun publish(orgId: Uuid, events: List<OrgEventDraft>) {
+            check(orgId !in failing) { "journal down" }
             this.events += orgId to events
         }
 
@@ -45,11 +46,11 @@ class HostUnreachableNoticeTest {
     fun eachOrgGetsOneEventOfTheWholeOrganizationUnderItsOwnTenMinuteLease() = runTest {
         val first = Uuid.parse("00000000-0000-0000-0000-00000000000a")
         val second = Uuid.parse("00000000-0000-0000-0000-00000000000b")
-        val leases = Leases(held = setOf("mcp/unreachable/$second"))
+        val leases = Leases(held = setOf("mcp/unreachable/$second/refused"))
         val published = Published()
         HostUnreachableNoticeImpl(leases, published).hostUnreachable(setOf(second, first), "refused")
         assertEquals(
-            listOf("mcp/unreachable/$first" to 10.minutes, "mcp/unreachable/$second" to 10.minutes),
+            listOf("mcp/unreachable/$first/refused" to 10.minutes, "mcp/unreachable/$second/refused" to 10.minutes),
             leases.taken,
             "In org order, whichever replica sweeps",
         )
@@ -61,5 +62,14 @@ class HostUnreachableNoticeTest {
             ),
             events.single(),
         )
+    }
+
+    @Test
+    fun anOrgWhoseJournalFailsNeverKeepsTheOthersFromTheirEvent() = runTest {
+        val first = Uuid.parse("00000000-0000-0000-0000-00000000000a")
+        val second = Uuid.parse("00000000-0000-0000-0000-00000000000b")
+        val published = Published(failing = setOf(first))
+        HostUnreachableNoticeImpl(Leases(), published).hostUnreachable(setOf(first, second), "unreachable")
+        assertEquals(listOf(second), published.events.map { it.first })
     }
 }

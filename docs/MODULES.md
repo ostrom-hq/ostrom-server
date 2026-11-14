@@ -736,6 +736,10 @@ owner, so the serving role reads the history (the start-up check) and never rewr
   registered a key and whose credential still works, through the provider of the instance's `push` settings (nobody
   while it is `off`); `sendTestPush` sends a member a test now, once every ten seconds per
   member on each replica.
+  The MCP relay publishes the state transitions of its hosted processes (subject `mcp`) in the transaction that records
+  them: `mcp.stdio.failed` and `mcp.stdio.recovered` (a per-member process's belong to the member), and
+  `mcp.unreachable`, an event of the whole organization with an empty subject id, at most one every ten minutes per
+  organization and reason (`docs/mcp-host.md`).
 - **A cloud session's terminal is relayed by the replica holding its runner's socket** (TC-REP-1). That replica
   records the hold in `runners_terminal_hosts` (renewed every 30 s, 90 s lease by the database's clock, the newest
   execution wins). A member attached on another replica is relayed to it as a hop client, at its pod address

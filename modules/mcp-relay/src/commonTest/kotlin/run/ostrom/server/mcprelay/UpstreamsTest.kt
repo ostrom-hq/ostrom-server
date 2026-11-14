@@ -591,14 +591,29 @@ class UpstreamsTest {
             status = code
             assertFailsWith<IllegalStateException>(body) { upstream.retain(emptyList()) }
         }
-        // Another token (401) or protocol version (400) is the host refusing the relay; a failure is not.
-        answer = """{"error":{"code":"unauthorized"}}"""
-        for (code in listOf(HttpStatusCode.Unauthorized, HttpStatusCode.BadRequest)) {
+    }
+
+    @Test
+    fun aRefusalOfTheRelayIsToldFromAnyOtherFailure() = realTime {
+        var answer = "{}"
+        var status = HttpStatusCode.OK
+        val upstream = HostMcpUpstream(
+            client { _, _ -> respond(answer, status) },
+            McpHostConfig("http://mcp-host:8080/", "host_token"),
+        )
+        // Another token (401) or protocol version is the host refusing the relay; any other failure is not.
+        for ((code, body) in listOf(
+            HttpStatusCode.Unauthorized to "{}",
+            HttpStatusCode.BadRequest to """{"error":{"code":"unsupported_protocol"}}""",
+            HttpStatusCode.OK to """{"error":{"code":"unauthorized"}}""",
+        )) {
             status = code
+            answer = body
             assertFailsWith<McpHostRefusedException> { upstream.retain(emptyList()) }
             assertFailsWith<McpHostRefusedException> { upstream.status() }
         }
-        status = HttpStatusCode.InternalServerError
+        status = HttpStatusCode.BadRequest
+        answer = """{"error":{"code":"bad_request"}}"""
         val failed = assertFailsWith<IllegalStateException> { upstream.retain(emptyList()) }
         assertFalse(failed is McpHostRefusedException)
     }
