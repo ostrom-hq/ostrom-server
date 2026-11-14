@@ -26,8 +26,8 @@ import kotlin.time.Clock
  * [MailSender] on Resend's API (`POST /emails`).
  *
  * @param http The HTTP client.
- * @param apiKey The Resend API key (`OSTROM_RESEND_API_KEY`).
- * @param from The sender, such as `Ostrom <login@mail.ostrom.run>` (`OSTROM_MAIL_FROM`).
+ * @param apiKey The Resend API key (the `mail` settings of the console).
+ * @param from The sender, such as `Ostrom <login@mail.ostrom.run>`.
  * @param apiUrl Resend's API URL (overridden in tests).
  */
 class ResendMailSender(
@@ -65,7 +65,7 @@ class ResendMailSender(
 
 /**
  * [MailSender] that writes each mail as an `.eml`-like text file in a directory (`OSTROM_MAIL_DIR`): for a developer's
- * machine and the end-to-end tests, which read the sign-in link from it. Never used when Resend is configured.
+ * machine and the end-to-end tests, which read the sign-in link from it. Never used once Resend is set in the console.
  *
  * @param directory The directory, created if missing.
  * @param clock Names the files in order.
@@ -84,11 +84,6 @@ class DirectoryMailSender(private val directory: String, private val clock: Cloc
             throw MailNotSentException()
         }
     }
-}
-
-/** [MailSender] of an instance without one: e-mailed links are not offered, and a send fails. */
-class UnconfiguredMailSender : MailSender {
-    override suspend fun send(mail: Mail): Unit = throw MailNotSentException()
 }
 
 /**

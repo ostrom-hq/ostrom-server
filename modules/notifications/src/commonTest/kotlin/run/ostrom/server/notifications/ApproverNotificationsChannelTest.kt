@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.notifications
 
+import run.ostrom.server.identity.domain.MailAvailability
 import run.ostrom.server.gates.domain.models.RequestStatus
 import run.ostrom.server.notifications.domain.ApprovalNotices
 import run.ostrom.server.notifications.domain.Approver
@@ -35,7 +36,8 @@ class ApproverNotificationsChannelTest {
     private fun TestScope.channel(mailing: Boolean = true): ApproverNotificationsChannel {
         val outbox = NotificationOutbox(push, mail, RecordingLogger())
         backgroundScope.launch { outbox.run() }
-        return ApproverNotificationsChannel(approvers, devices, SetLiveCredentials(live), notices, outbox, mailing)
+        val mails = MailAvailability { mailing }
+        return ApproverNotificationsChannel(approvers, devices, SetLiveCredentials(live), notices, outbox, mails)
     }
 
     private fun phone(orgId: Uuid, approver: Approver, token: String, credential: Uuid? = Uuid.random()) =

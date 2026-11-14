@@ -5,14 +5,17 @@ package run.ostrom.server.identity
 import run.ostrom.server.identity.domain.IdentityProvider
 import run.ostrom.server.identity.domain.Mail
 import run.ostrom.server.identity.domain.MailNotSentException
+import run.ostrom.server.identity.fakes.RecordingMailSender
 import run.ostrom.server.identity.fakes.SettableClock
 import run.ostrom.server.identity.infrastructure.DirectoryMailSender
 import run.ostrom.server.identity.infrastructure.ResendMailSender
-import run.ostrom.server.identity.infrastructure.UnconfiguredMailSender
+import run.ostrom.server.identity.infrastructure.InstanceMailSender
+import run.ostrom.server.identity.infrastructure.MAIL_SETTINGS
 import run.ostrom.server.identity.infrastructure.magicLinkMail
 import run.ostrom.server.identity.presentation.IdentityConfig
 import run.ostrom.server.identity.presentation.SignInConfig
 import run.ostrom.server.kernel.config.MapConfigSource
+import run.ostrom.server.testing.TestInstanceSettings
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -31,6 +34,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
@@ -62,7 +66,6 @@ class MailAndConfigTest {
 
         val down = HttpClient(MockEngine { error("network down") })
         assertFailsWith<MailNotSentException> { ResendMailSender(down, "k", "f").send(mail) }
-        assertFailsWith<MailNotSentException> { UnconfiguredMailSender().send(mail) }
     }
 
     @Test
@@ -102,21 +105,50 @@ class MailAndConfigTest {
     }
 
     @Test
-    fun theMailSenderIsReadFromTheEnvironment() {
-        val none = SignInConfig.from(MapConfigSource(emptyMap()))
-        val set = SignInConfig.from(
-            MapConfigSource(
-                mapOf(
-                    "OSTROM_RESEND_API_KEY" to "re_x",
-                    "OSTROM_MAIL_FROM" to "Me <me@x.test>",
-                    "OSTROM_MAIL_DIR" to "/m",
-                ),
-            ),
-        )
+    fun onlyTheMailDirectoryIsReadFromTheEnvironment() {
+        val ignored = mapOf("OSTROM_RESEND_API_KEY" to "re_x", "OSTROM_MAIL_FROM" to "Me <me@x.test>")
 
-        assertEquals(SignInConfig(null, "Ostrom <login@mail.ostrom.run>", null), none)
-        assertEquals(SignInConfig("re_x", "Me <me@x.test>", "/m"), set)
+        assertEquals(SignInConfig(null), SignInConfig.from(MapConfigSource(ignored)))
+        assertEquals(SignInConfig("/m"), SignInConfig.from(MapConfigSource(ignored + ("OSTROM_MAIL_DIR" to " /m "))))
     }
+
+    @Test
+    fun theMailGoesThroughResendOnceItsKeyIsSetInTheConsole() = runTest {
+        val requests = mutableListOf<HttpRequestData>()
+        val http = HttpClient(MockEngine { requests += it; respond("""{"id":"e1"}""") })
+        val settings = TestInstanceSettings()
+        val directory = RecordingMailSender()
+        val withDirectory = InstanceMailSender(settings, http, directory, "https://resend.test")
+        val alone = InstanceMailSender(settings, http, null, "https://resend.test")
+
+        assertTrue(withDirectory.available())
+        assertFalse(alone.available())
+        withDirectory.send(mail)
+        assertEquals(listOf(mail), directory.sent)
+        assertFailsWith<MailNotSentException> { alone.send(mail) }
+
+        settings.save("mail", mapOf("apiKey" to " re_key "))
+        assertTrue(alone.available())
+        withDirectory.send(mail)
+        assertEquals(listOf(mail), directory.sent, "Resend, not the directory")
+        assertTrue("Ostrom <login@mail.ostrom.run>" in requests.single().bodyText())
+        assertEquals("Bearer re_key", requests.single().headers[HttpHeaders.Authorization])
+        settings.save("mail", mapOf("apiKey" to "re_key", "from" to "Acme <ostrom@acme.test>"))
+        alone.send(mail)
+        assertTrue("Acme <ostrom@acme.test>" in requests.last().bodyText())
+    }
+
+    @Test
+    fun theMailSectionNamesItsFormerVariablesAndSealsTheKey() {
+        val variables = MAIL_SETTINGS.fields.map { it.legacyVariable }
+        assertEquals(listOf("OSTROM_RESEND_API_KEY", "OSTROM_MAIL_FROM"), variables)
+        assertTrue(MAIL_SETTINGS.field("apiKey")!!.secret)
+        val from = MAIL_SETTINGS.field("from")!!
+        assertNull(from.check("Ostrom <login@mail.ostrom.run>"))
+        assertEquals("an address, such as Ostrom <login@mail.ostrom.run>.", from.check("Ostrom"))
+    }
+
+    private fun HttpRequestData.bodyText() = (body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
 
     @Test
     fun callbackAndLinkUrlsFollowThePublicUrls() {

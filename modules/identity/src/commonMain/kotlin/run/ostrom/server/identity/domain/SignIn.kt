@@ -164,6 +164,16 @@ interface MailSender {
     suspend fun send(mail: Mail)
 }
 
+/** Whether the instance sends e-mails now: an administrator set a mail provider in the console, or a mail directory. */
+fun interface MailAvailability {
+    /**
+     * Reads it.
+     *
+     * @return True when a mail can be sent.
+     */
+    suspend fun available(): Boolean
+}
+
 /** Started OAuth sign-ins. */
 interface OAuthAttemptsRepository {
     /**

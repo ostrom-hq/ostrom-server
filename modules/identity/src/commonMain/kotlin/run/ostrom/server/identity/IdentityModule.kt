@@ -58,6 +58,7 @@ import run.ostrom.server.identity.domain.ListServiceKeysUseCaseImpl
 import run.ostrom.server.identity.domain.ListTokensUseCase
 import run.ostrom.server.identity.domain.ListTokensUseCaseImpl
 import run.ostrom.server.identity.domain.MagicLinksRepository
+import run.ostrom.server.identity.domain.MailAvailability
 import run.ostrom.server.identity.domain.MailSender
 import run.ostrom.server.identity.domain.MobileCodesRepository
 import run.ostrom.server.identity.domain.MobileTokensRepository
@@ -119,7 +120,9 @@ import run.ostrom.server.identity.infrastructure.DirectoryMailSender
 import run.ostrom.server.identity.infrastructure.ElevatedTokensRepositoryImpl
 import run.ostrom.server.identity.infrastructure.GITHUB_SIGN_IN_SETTINGS
 import run.ostrom.server.identity.infrastructure.GOOGLE_SIGN_IN_SETTINGS
+import run.ostrom.server.identity.infrastructure.InstanceMailSender
 import run.ostrom.server.identity.infrastructure.InstanceSignInMethods
+import run.ostrom.server.identity.infrastructure.MAIL_SETTINGS
 import run.ostrom.server.identity.infrastructure.SIGN_UP_SETTINGS
 import run.ostrom.server.identity.infrastructure.SignInSettings
 import run.ostrom.server.identity.infrastructure.GitHubTokenVerifierImpl
@@ -134,7 +137,6 @@ import run.ostrom.server.identity.infrastructure.NotificationPreferencesReposito
 import run.ostrom.server.identity.infrastructure.OAuthAttemptsRepositoryImpl
 import run.ostrom.server.identity.infrastructure.PhoneUnlockProofsImpl
 import run.ostrom.server.identity.infrastructure.RateLimiterImpl
-import run.ostrom.server.identity.infrastructure.ResendMailSender
 import run.ostrom.server.identity.infrastructure.SecureSecretGenerator
 import run.ostrom.server.identity.infrastructure.IdentityInstanceBootstrapper
 import run.ostrom.server.identity.infrastructure.SetupLinksRepositoryImpl
@@ -142,7 +144,6 @@ import run.ostrom.server.identity.infrastructure.ServiceKeysRepositoryImpl
 import run.ostrom.server.identity.infrastructure.Sha256SecretHasher
 import run.ostrom.server.identity.infrastructure.SignInLinksRepositoryImpl
 import run.ostrom.server.identity.infrastructure.TransactionalAuditLog
-import run.ostrom.server.identity.infrastructure.UnconfiguredMailSender
 import run.ostrom.server.identity.infrastructure.LinkedIdentitiesImpl
 import run.ostrom.server.identity.infrastructure.UsersRepositoryImpl
 import run.ostrom.server.identity.infrastructure.WebSessionsRepositoryImpl
@@ -189,6 +190,7 @@ import kotlin.time.Duration.Companion.hours
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
+import org.koin.dsl.binds
 import org.koin.dsl.module
 import org.koin.dsl.onClose
 
@@ -289,12 +291,14 @@ object IdentityModule : ServerModule {
                 }
             }
         } onClose ::closeHttpClient
+        single(named(MAIL_SETTINGS.name)) { MAIL_SETTINGS }
+        single {
+            val directory = get<SignInConfig>().mailDirectory?.let { DirectoryMailSender(it, get()) }
+            InstanceMailSender(get(), get(HTTP), directory)
+        } binds arrayOf(MailSender::class, MailAvailability::class)
         single<SignInMethodsSource> {
-            val config = get<SignInConfig>()
-            val email = config.resendApiKey != null || config.mailDirectory != null
-            InstanceSignInMethods(get(), get(HTTP), get()) { email }
+            InstanceSignInMethods(get(), get(HTTP), get(), get<MailAvailability>()::available)
         }
-        single<MailSender> { mailSender(get(), get(HTTP), get()) }
         single<OAuthAttemptsRepository> { OAuthAttemptsRepositoryImpl(get()) }
         single<MagicLinksRepository> { MagicLinksRepositoryImpl(get()) }
         single<StartOAuthSignInUseCase> { StartOAuthSignInUseCaseImpl(get(), get(), get()) }
@@ -406,10 +410,4 @@ object IdentityModule : ServerModule {
     /** The audit log (`/api/v1/audit`, `/api/v1/auth/me/audit`) and the wide catalogue of service-key scopes. */
     override suspend fun features(koin: Koin): Set<String> =
         setOf(ServerFeatures.AUDIT, ServerFeatures.SERVICE_KEY_SCOPES)
-
-    private fun mailSender(config: SignInConfig, http: HttpClient, clock: Clock): MailSender = when {
-        config.resendApiKey != null -> ResendMailSender(http, config.resendApiKey, config.mailFrom)
-        config.mailDirectory != null -> DirectoryMailSender(config.mailDirectory, clock)
-        else -> UnconfiguredMailSender()
-    }
 }
