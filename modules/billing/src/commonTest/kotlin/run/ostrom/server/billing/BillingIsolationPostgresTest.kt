@@ -17,8 +17,8 @@ import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.TokenAuthenticator
-import run.ostrom.server.kernel.config.ConfigSource
-import run.ostrom.server.kernel.config.MapConfigSource
+import run.ostrom.server.kernel.settings.InstanceSettings
+import run.ostrom.server.kernel.settings.SettingsValues
 import run.ostrom.server.testing.serverTest
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
@@ -50,10 +50,15 @@ class BillingIsolationPostgresTest {
 
     // Console sessions `admin-a` (billing admin of A) and `admin-b` (owner of B): the subject id is the token.
     private val overrides = module {
-        single<ConfigSource> {
-            MapConfigSource(
-                mapOf("OSTROM_STRIPE_SECRET_KEY" to "sk_test_x", "OSTROM_STRIPE_WEBHOOK_SECRET" to webhookSecret),
-            )
+        // The Stripe account an administrator saved in the console.
+        single<InstanceSettings> {
+            InstanceSettings { section ->
+                if (section == "stripe") {
+                    SettingsValues(mapOf("secretKey" to "sk_test_x", "webhookSecret" to webhookSecret))
+                } else {
+                    SettingsValues.EMPTY
+                }
+            }
         }
         single<Clock> { clock }
         single<StripeGateway> { stripe }

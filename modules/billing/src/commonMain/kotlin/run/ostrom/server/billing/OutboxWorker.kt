@@ -17,6 +17,7 @@ import kotlin.time.Duration.Companion.seconds
  * @param interval The pause between passes.
  * @param batch The tasks of one pass.
  * @param passes How many passes to run (unbounded in production; bounded in tests).
+ * @param enabled Whether billing is on now: a pass while it is off sends nothing and the tasks wait.
  */
 class OutboxWorker(
     private val process: ProcessOutboxUseCase,
@@ -24,13 +25,14 @@ class OutboxWorker(
     private val interval: Duration = 10.seconds,
     private val batch: Int = 100,
     private val passes: Long = Long.MAX_VALUE,
+    private val enabled: suspend () -> Boolean = { true },
 ) {
     /** Runs the passes. */
     suspend fun run() {
         var done = 0L
         while (done < passes) {
             try {
-                process(batch)
+                if (enabled()) process(batch)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {

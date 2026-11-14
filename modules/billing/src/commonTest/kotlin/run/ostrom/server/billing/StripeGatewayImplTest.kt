@@ -152,6 +152,39 @@ class StripeGatewayImplTest {
     }
 
     @Test
+    fun theAccountIsReadAtEachCallAndAnotherOneResolvesItsOwnPrices() = runTest {
+        val urls = mutableListOf<String>()
+        val keys = mutableListOf<String?>()
+        var account: StripeConfig? = StripeConfig("sk_test_a", "https://a.stripe.test")
+        val gateway = StripeGatewayImpl(
+            HttpClient(
+                MockEngine { request ->
+                    urls += request.url.toString().substringBefore('?')
+                    keys += request.headers[HttpHeaders.Authorization]
+                    respond("""{"data":[{"id":"price_${urls.size}"}]}""", HttpStatusCode.OK)
+                },
+            ),
+            { account },
+        )
+        assertEquals("price_1", gateway.priceId("ostrom_team_monthly"))
+        assertEquals("price_1", gateway.priceId("ostrom_team_monthly"), "Cached for the same account")
+        account = StripeConfig("sk_live_b", "https://b.stripe.test")
+        assertEquals("price_2", gateway.priceId("ostrom_team_monthly"), "Another account's price")
+        assertEquals(listOf("https://a.stripe.test/v1/prices", "https://b.stripe.test/v1/prices"), urls)
+        assertEquals(2, keys.toSet().size)
+        account = null
+        assertFailsWith<BillingNotConfiguredException> { gateway.priceId("ostrom_team_monthly") }
+        assertFailsWith<BillingNotConfiguredException> { gateway.customerEmail("cus_1") }
+        assertEquals(2, urls.size, "Nothing is sent without an account")
+    }
+
+    @Test
+    fun theConfigurationNeverPrintsItsSecrets() {
+        val config = StripeConfig("sk_live_secret", webhookSecrets = listOf("whsec_secret"))
+        assertEquals("StripeConfig(baseUrl=https://api.stripe.com, meterEventName=ostrom_active_person)", "$config")
+    }
+
+    @Test
     fun aMissingPriceMeansTheAccountWasNotProvisioned() = runTest {
         val harness = Harness(200 to """{"data":[]}""")
         assertFailsWith<BillingNotConfiguredException> { harness.gateway.priceId("ostrom_team_monthly") }

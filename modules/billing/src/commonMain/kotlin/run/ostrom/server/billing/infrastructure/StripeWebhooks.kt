@@ -21,15 +21,26 @@ const val MAX_WEBHOOK_BYTES = 256 * 1024
  * secret, in one of the `v1` entries, and a timestamp less than [tolerance] old (replay protection). Several `v1`
  * entries are accepted, as during a secret rotation.
  *
- * @param secrets The endpoint's signing secrets (two during a rotation).
+ * @param secrets The endpoint's signing secrets (two during a rotation), read at each webhook (the instance's Stripe
+ *   account); none while billing is not configured, when every webhook is refused.
  * @param clock The clock of the tolerance.
  * @param tolerance The largest accepted age, Stripe's default of 5 minutes.
  */
 class StripeSignatureVerifier(
-    private val secrets: List<String>,
+    private val secrets: suspend () -> List<String>,
     private val clock: Clock,
     private val tolerance: Duration = 5.minutes,
 ) {
+    /**
+     * A verifier of fixed secrets.
+     *
+     * @param secrets The endpoint's signing secrets.
+     * @param clock The clock of the tolerance.
+     * @param tolerance The largest accepted age.
+     */
+    constructor(secrets: List<String>, clock: Clock, tolerance: Duration = 5.minutes) :
+        this({ secrets }, clock, tolerance)
+
     /** @throws InvalidWebhookSignatureException When no entry matches or the timestamp is out of tolerance. */
     suspend fun verify(payload: String, header: String?) {
         if (!isValid(payload, header)) throw InvalidWebhookSignatureException()
@@ -45,7 +56,7 @@ class StripeSignatureVerifier(
             ?: return false
         val signatures = entries.filter { it.first == "v1" }.map { it.second }
         val signed = "$timestamp.$payload".encodeToByteArray()
-        return secrets.any { secret ->
+        return secrets().any { secret ->
             val expected = hmacSha256Hex(secret, signed)
             signatures.any { constantTimeEquals(it, expected) }
         }

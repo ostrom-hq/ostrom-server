@@ -16,6 +16,7 @@ import run.ostrom.server.admin.domain.SeedInstanceAdminsUseCaseImpl
 import run.ostrom.server.admin.infrastructure.AdminMigrations
 import run.ostrom.server.admin.infrastructure.InstanceAdminsRepositoryImpl
 import run.ostrom.server.admin.infrastructure.InstanceSettingsRepositoryImpl
+import run.ostrom.server.admin.infrastructure.LegacyEnvironment
 import run.ostrom.server.admin.presentation.AdminRoutesDependencies
 import run.ostrom.server.admin.presentation.adminRoutes
 import run.ostrom.server.kernel.config.ConfigSource
@@ -63,7 +64,8 @@ object AdminModule : ServerModule {
     override suspend fun initialize(koin: Koin) {
         val source = koin.get<ConfigSource>()
         koin.get<SeedInstanceAdminsUseCase>()(source[LEGACY_ADMINS])
-        koin.get<ImportLegacySettingsUseCase>()(source::get)
+        // A former variable is read from itself or from the file its `_FILE` names.
+        koin.get<ImportLegacySettingsUseCase>()(LegacyEnvironment.of(source))
     }
 
     override fun routes(route: Route, koin: Koin) {

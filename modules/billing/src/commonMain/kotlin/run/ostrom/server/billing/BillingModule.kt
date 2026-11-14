@@ -41,6 +41,7 @@ import run.ostrom.server.billing.domain.SetCancellationUseCaseImpl
 import run.ostrom.server.billing.domain.StartCheckoutUseCase
 import run.ostrom.server.billing.domain.StartCheckoutUseCaseImpl
 import run.ostrom.server.billing.domain.StripeGateway
+import run.ostrom.server.billing.domain.StripeSettings
 import run.ostrom.server.billing.domain.SyncSubscriptionUseCase
 import run.ostrom.server.billing.domain.SyncSubscriptionUseCaseImpl
 import run.ostrom.server.billing.infrastructure.BillingMigrations
@@ -49,7 +50,7 @@ import run.ostrom.server.billing.infrastructure.BillingRepositoryImpl
 import run.ostrom.server.billing.infrastructure.GuardedBillingNotifier
 import run.ostrom.server.billing.infrastructure.LoggingBillingMetrics
 import run.ostrom.server.billing.infrastructure.LoggingBillingNotifier
-import run.ostrom.server.billing.infrastructure.StripeConfig
+import run.ostrom.server.billing.infrastructure.StripeAccount
 import run.ostrom.server.billing.infrastructure.StripeGatewayImpl
 import run.ostrom.server.billing.infrastructure.StripeSignatureVerifier
 import run.ostrom.server.billing.presentation.BillingRoutesDependencies
@@ -60,6 +61,7 @@ import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.OrgDeletionListener
 import run.ostrom.server.kernel.module.ServerModule
+import run.ostrom.server.kernel.settings.SettingsSection
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.server.routing.Route
@@ -77,6 +79,10 @@ import org.koin.dsl.onClose
 private const val STRIPE_TIMEOUT_MILLIS = 30_000L
 private val STRIPE_HTTP = named("billing.stripe.http")
 
+/** The console's URL, which the server needs to start (the return pages of Checkout and the portal). */
+private const val CONSOLE_URL = "OSTROM_CONSOLE_URL"
+private const val DEFAULT_CONSOLE_URL = "https://app.ostrom.run"
+
 /**
  * The billing module: Stripe subscriptions per active person, plan limits enforced on the server, cloud agent usage
  * and its alerts. Other modules depend on its use cases: orgs calls [CheckEntitlementUseCase] before adding a member
@@ -88,8 +94,13 @@ object BillingModule : ServerModule {
     override val name: String = "billing"
 
     override val koinModule: Module = module {
-        single { BillingConfig.load(get<ConfigSource>()) }
-        single { BillingSettings(get<BillingConfig>().stripeSecretKey != null, get<BillingConfig>().consoleUrl) }
+        // The Stripe account an administrator sets in the console (the admin module collects every bound section).
+        single<SettingsSection>(named(StripeSettings.SECTION.name)) { StripeSettings.SECTION }
+        single { StripeAccount(get()) }
+        single {
+            val account = get<StripeAccount>()
+            BillingSettings(get<ConfigSource>()[CONSOLE_URL] ?: DEFAULT_CONSOLE_URL) { account.read() != null }
+        }
         single<BillingRepository> { BillingRepositoryImpl(get()) }
         // Its own definition, so that Koin closes it with the application: its selector holds a thread of
         // Dispatchers.IO until then (StoppedApplicationsTest).
@@ -97,10 +108,13 @@ object BillingModule : ServerModule {
             HttpClient { install(HttpTimeout) { requestTimeoutMillis = STRIPE_TIMEOUT_MILLIS } }
         } onClose { it?.close() }
         single<StripeGateway> {
-            val config = get<BillingConfig>()
-            StripeGatewayImpl(get(STRIPE_HTTP), StripeConfig(config.stripeSecretKey.orEmpty(), config.stripeApiBase))
+            val account = get<StripeAccount>()
+            StripeGatewayImpl(get(STRIPE_HTTP), { account.read() })
         }
-        single { StripeSignatureVerifier(get<BillingConfig>().webhookSecrets, get<Clock>()) }
+        single {
+            val account = get<StripeAccount>()
+            StripeSignatureVerifier({ account.read()?.webhookSecrets.orEmpty() }, get<Clock>())
+        }
         single<GetPlanLimitsUseCase> { GetPlanLimitsUseCaseImpl(get(), licenses(), get(), get()) }
         single<GetBillingOverviewUseCase> { GetBillingOverviewUseCaseImpl(get(), get(), get(), get()) }
         single<StartCheckoutUseCase> {
@@ -145,13 +159,17 @@ object BillingModule : ServerModule {
         route.billingRoutes(koin.get())
     }
 
-    /** Billing, only with Stripe configured: without a key the routes answer that nothing can be bought. */
+    /**
+     * Billing, only while the instance's Stripe account is stored: without it the routes answer that nothing can be
+     * bought.
+     */
     override suspend fun features(koin: Koin): Set<String> =
-        if (koin.get<BillingSettings>().stripeEnabled) setOf(ServerFeatures.BILLING) else emptySet()
+        if (koin.get<BillingSettings>().stripeEnabled()) setOf(ServerFeatures.BILLING) else emptySet()
 
+    /** The Stripe tasks' worker, which sends them while an account is stored (one can be saved at any time). */
     override fun start(scope: CoroutineScope, koin: Koin) {
-        if (!koin.get<BillingSettings>().stripeEnabled) return
-        val worker = OutboxWorker(koin.get(), koin.get())
+        val settings = koin.get<BillingSettings>()
+        val worker = OutboxWorker(koin.get(), koin.get(), enabled = { settings.stripeEnabled() })
         scope.launch { worker.run() }
     }
 }

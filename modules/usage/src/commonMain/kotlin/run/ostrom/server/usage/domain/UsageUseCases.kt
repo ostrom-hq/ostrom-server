@@ -274,19 +274,36 @@ interface PurgeUsageUseCase {
  *
  * @param repository The ledger.
  * @param clock The time.
- * @param retention How long events are kept.
+ * @param retention How long events are kept, read at each run (the instance's [UsageSettings]).
  * @param batchSize Events deleted per statement.
  * @param maxBatches Statements per run; the rest waits for the next run.
  */
 class PurgeUsageUseCaseImpl(
     private val repository: UsageRepository,
     private val clock: Clock,
-    private val retention: Duration,
+    private val retention: suspend () -> Duration,
     private val batchSize: Int = 10_000,
     private val maxBatches: Int = 100,
 ) : PurgeUsageUseCase {
+    /**
+     * A fixed retention.
+     *
+     * @param repository The ledger.
+     * @param clock The time.
+     * @param retention How long events are kept.
+     * @param batchSize Events deleted per statement.
+     * @param maxBatches Statements per run.
+     */
+    constructor(
+        repository: UsageRepository,
+        clock: Clock,
+        retention: Duration,
+        batchSize: Int = 10_000,
+        maxBatches: Int = 100,
+    ) : this(repository, clock, { retention }, batchSize, maxBatches)
+
     override suspend fun invoke(): Long {
-        val before = clock.now() - retention
+        val before = clock.now() - retention()
         var total = 0L
         repeat(maxBatches) {
             val deleted = repository.purge(before, batchSize)

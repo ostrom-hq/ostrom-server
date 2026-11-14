@@ -3,9 +3,6 @@ package run.ostrom.server.usage
 
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.gateway.domain.ModelUsageSink
-import run.ostrom.server.kernel.config.ConfigSource
-import run.ostrom.server.kernel.config.EnvironmentConfigSource
-import run.ostrom.server.kernel.config.InvalidConfigException
 import run.ostrom.server.kernel.database.EveryCallScheduledWork
 import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.ScheduledWork
@@ -14,6 +11,8 @@ import run.ostrom.server.kernel.database.repeatDue
 import run.ostrom.server.kernel.database.scheduledWork
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.ServerModule
+import run.ostrom.server.kernel.settings.InstanceSettings
+import run.ostrom.server.kernel.settings.SettingsSection
 import run.ostrom.server.secrets.domain.CallerResolver
 import run.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
 import run.ostrom.server.sessions.domain.services.SessionCosts
@@ -33,6 +32,7 @@ import run.ostrom.server.usage.domain.UsageRecorderImpl
 import run.ostrom.server.usage.domain.UsageReportUseCase
 import run.ostrom.server.usage.domain.UsageReportUseCaseImpl
 import run.ostrom.server.usage.domain.UsageRepository
+import run.ostrom.server.usage.domain.UsageSettings
 import run.ostrom.server.usage.domain.UsageSummaryUseCase
 import run.ostrom.server.usage.domain.UsageSummaryUseCaseImpl
 import run.ostrom.server.usage.domain.WatchUsageUseCase
@@ -51,44 +51,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.koin.core.Koin
 import org.koin.core.module.Module
+import org.koin.core.qualifier.named
 import org.koin.core.scope.Scope
 import org.koin.dsl.module
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
-
-/**
- * The usage module's configuration, read once (`OSTROM_USAGE_*`).
- *
- * @property retention How long events are kept before the hourly purge deletes them.
- */
-data class UsageConfig(val retention: Duration) {
-    /** The defaults and the reading of the configuration. */
-    companion object {
-        /** Days kept by default: a full year plus a month, so that year-over-year totals stay possible. */
-        const val DEFAULT_RETENTION_DAYS: Int = 400
-
-        /** The longest retention accepted: ten years. */
-        const val MAX_RETENTION_DAYS: Int = 3650
-
-        /**
-         * Reads it.
-         *
-         * @param source The configuration.
-         *
-         * @return The configuration.
-         *
-         * @throws InvalidConfigException When `OSTROM_USAGE_RETENTION_DAYS` is not 1 to 3650.
-         */
-        fun from(source: ConfigSource): UsageConfig {
-            val raw = source["OSTROM_USAGE_RETENTION_DAYS"] ?: return UsageConfig(DEFAULT_RETENTION_DAYS.days)
-            val days = raw.toIntOrNull()?.takeIf { it in 1..MAX_RETENTION_DAYS }
-                ?: throw InvalidConfigException("OSTROM_USAGE_RETENTION_DAYS is 1 to 3650.")
-            return UsageConfig(days.days)
-        }
-    }
-}
 
 /**
  * The usage module: the central ledger. It binds [UsageRecorder], [SpendReader] and [SpendAdmission], which the
@@ -98,7 +66,8 @@ object UsageModule : ServerModule {
     override val name: String = "usage"
 
     override val koinModule: Module = module {
-        single { UsageConfig.from(getOrNull<ConfigSource>() ?: EnvironmentConfigSource()) }
+        // The retention an administrator sets in the console (the admin module collects every bound section).
+        single<SettingsSection>(named(UsageSettings.SECTION.name)) { UsageSettings.SECTION }
         single<UsageRepository> { UsageRepositoryImpl(get()) }
         single { UsageFeedImpl() }
         single { ReplicatedUsageFeed(get(), get(), UsageFeedReadsImpl(get()), get()) }
@@ -114,18 +83,16 @@ object UsageModule : ServerModule {
         single<UsageReportUseCase> { UsageReportUseCaseImpl(get(), get()) }
         single<ListUsageEventsUseCase> { ListUsageEventsUseCaseImpl(get()) }
         single<WatchUsageUseCase> { WatchUsageUseCaseImpl(get()) }
-        single<PurgeUsageUseCase> { PurgeUsageUseCaseImpl(get(), get(), get<UsageConfig>().retention) }
+        single<PurgeUsageUseCase> {
+            val settings = get<InstanceSettings>()
+            PurgeUsageUseCaseImpl(get(), get(), { UsageSettings.retention(settings) })
+        }
         single {
             UsageRoutesDependencies(callerResolver(), get(), get(), get(), get(), get())
         }
     }
 
     override val migrations: List<SchemaMigration> = UsageMigrations
-
-    override suspend fun initialize(koin: Koin) {
-        // A malformed retention stops the server at start, not at the first purge.
-        koin.get<UsageConfig>()
-    }
 
     override fun routes(route: Route, koin: Koin) {
         route.usageRoutes(koin.get())
