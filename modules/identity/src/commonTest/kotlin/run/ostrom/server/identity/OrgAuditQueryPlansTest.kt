@@ -52,8 +52,10 @@ class OrgAuditQueryPlansTest {
             // The line before each one is looked up for the page's lines only, never the chain read whole.
             assertFalse("Materialize" in plan || "Join Filter" in plan, "$name reads the whole chain:\n$plan")
             // The page is cut before the lateral read: it runs once per line of the page, never once per line older
-            // than the cursor (5 000 loops for `?before=5000` on main e362671).
-            val loops = LOOPS.findAll(plan).maxOf { it.groupValues[1].toInt() }
+            // than the cursor.
+            val loops = checkNotNull(LOOPS.findAll(plan).maxOfOrNull { it.groupValues[1].toInt() }) {
+                "$name has no loops: is the plan ANALYZEd?\n$plan"
+            }
             assertTrue(loops <= PAGE + 1, "$name reads the line before $loops lines, not the page's:\n$plan")
         }
     }

@@ -157,7 +157,7 @@ private fun ResultRow.toEvent(at: ColumnsOf): AuditEvent {
  * that line is `sequence - 1` ([predecessorHash]), so a gap gives no predecessor. The limit comes before the lateral
  * read by construction: with the page's filters in the same query as the lateral read, the organization filter and
  * row-level security made the planner expect 49 rows of 4 999, sort after the join, and run the lateral read once per
- * line older than the cursor (5 000 times for `?before=5000`, p95 1.32 s on main e362671, IdentityReadsBenchTest).
+ * line older than the cursor (once per line of the chain for `?before=` deep in it, IdentityReadsBenchTest).
  * A plain join read and materialized the whole chain (1.5 s at p95 over 10 000 lines); an equality on `sequence - 1`
  * left the index condition under row-level security on PostgreSQL 17.12, while a plain `<` between the two columns
  * stays one. Only the filters asked for are in the SQL, each value bound.
