@@ -144,7 +144,11 @@ for port in 8082 8083; do
   [ -n "${unready[$port]:-}" ] || { echo "replica $port: /ready still 200 after 50 s of callers waiting"; exit 1; }
   [ "$(me "$port")" != 200 ] || { echo "replica $port authenticated without its database"; exit 1; }
 done
+# Both are unready: the callers (this script's own subshells) stop now rather than at 55 s, and are forgotten so the
+# exit trap never signals a reused PID.
+kill "${callers[@]}" 2>/dev/null || true
 wait "${callers[@]}" 2>/dev/null || true
+callers=()
 for name in ostrom-replica-a ostrom-replica-b; do
   running="$(docker inspect -f '{{.State.Running}}' "$name")"
   [ "$running" = true ] || { echo "$name exited without its database"; exit 1; }
