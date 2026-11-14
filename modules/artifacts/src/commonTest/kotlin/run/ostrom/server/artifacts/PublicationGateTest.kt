@@ -120,7 +120,7 @@ class PublicationGateTest {
         storage.settings[ORG_A] = storage.settings.getValue(ORG_A).copy(retention = retention)
         gate.published(alice, artifact(ArtifactAccess.PERSONAL), clock.now)
         gate.published(alice, artifact(ArtifactAccess.LINK), clock.now)
-        assertEquals(listOf(5 to clock.now + 7.days, 5 to clock.now + 30.days), lifecycle.retained)
+        assertEquals(listOf<Pair<Int, Instant?>>(5 to clock.now + 7.days, 5 to clock.now + 30.days), lifecycle.retained)
         gate.accessChanged(artifact(ArtifactAccess.TEAM), clock.now)
         storage.settings[ORG_A] = storage.settings.getValue(ORG_A).copy(retention = ArtifactRetention())
         gate.accessChanged(artifact(ArtifactAccess.PERSONAL), clock.now)
