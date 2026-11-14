@@ -16,3 +16,5 @@
 # Python tooling of ops/ (coverage, bytecode).
 __pycache__/
 .coverage
+# A test server writes its secrets key here.
+/app/data/
