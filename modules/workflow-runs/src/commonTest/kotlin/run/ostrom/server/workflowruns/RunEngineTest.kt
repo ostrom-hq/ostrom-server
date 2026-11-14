@@ -332,6 +332,8 @@ class RunEngineTest {
         // A trigger after an agent keeps the run's session: only an agent node changes it.
         val kept = moves.begin(run().copy(sessionId = "s"), RunGraph("t", listOf(TRIGGER)), "t").next
         assertEquals("s", kept.sessionId)
+        // A second agent names no session until its own is asked, not the first agent's.
+        assertNull(moves.begin(run().copy(sessionId = "s"), RunGraph("a", listOf(AGENT_NODE)), "a").next.sessionId)
     }
 
     @Test

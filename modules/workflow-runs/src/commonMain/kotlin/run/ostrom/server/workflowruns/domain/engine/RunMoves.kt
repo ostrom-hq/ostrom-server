@@ -62,10 +62,16 @@ class RunMoves(private val owner: String, now: Instant) {
     private fun visit(run: WorkflowRun, node: WorkflowNode): RunChange {
         val seq = run.visits.size + 1
         // The session's key is in the audit and in the visit's row from the start; the run names it only once the
-        // session exists ([dispatched]), so a read in between never finds an id that no session has yet.
+        // session exists ([dispatched]), so a read in between never finds an id that no session has yet, nor the
+        // session of an earlier agent visit.
         val session = if (node.kind == WorkflowNodeKind.AGENT) sessionOf(run.id, seq).toString() else null
         val visit = NodeVisit(seq, node.id, node.kind, RUNNING, nodeTitle = node.label, startedAt = at)
-        val next = run.copy(status = RunStatus.RUNNING, currentNodeId = node.id, visits = run.visits + visit)
+        val next = run.copy(
+            status = RunStatus.RUNNING,
+            currentNodeId = node.id,
+            sessionId = if (session == null) run.sessionId else null,
+            visits = run.visits + visit,
+        )
         val details = auditDetails("node" to node.id, "kind" to node.kind.value, "seq" to seq, "session" to session)
         return RunChange(run, next, owner, visit, listOf(RunAudit("node_started", details)))
     }
