@@ -187,6 +187,11 @@ class ConfigAndCallersTest {
         assertFailsWith<NotAMemberException> {
             ArtifactOrgResolver(TestOrgResolver, null).artifactCallerOf(agent, ARTIFACTS_WRITE)
         }
+        // The resolver itself: an agent token as its launch's member, a person as the kernel's.
+        assertEquals(DAVE, resolver.resolve(agent, null)?.memberId)
+        assertNull(resolver.resolve(agent.copy(subjectId = "ended"), null))
+        assertNull(ArtifactOrgResolver(TestOrgResolver, null).resolve(agent, null))
+        assertEquals(TestOrgResolver.resolve(person, null), resolver.resolve(person, null))
         assertEquals(TestOrgResolver.profile(ORG_A), resolver.profile(ORG_A), "The organization is the kernel's")
     }
 

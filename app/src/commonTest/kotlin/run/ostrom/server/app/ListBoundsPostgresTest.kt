@@ -212,13 +212,20 @@ class ListBoundsPostgresTest {
         return Person(org.id, member.id, koin.get<StartWebSessionUseCase>()(user.id))
     }
 
-    // Two rules and two artifacts (a page of one has a next), an automation and an MCP server (their sub-lists), an
-    // accepted workflow and one run of it (the runs, listed by the organization and by the workflow), a webhook with
-    // one test delivery: the ids of the created resources by their collection, for the paths that name one.
+    // Two rules, two artifacts and two memory entries (a page of one has a next), an automation and an MCP server
+    // (their sub-lists), an accepted workflow and one run of it (the runs, listed by the organization and by the
+    // workflow), a webhook with one test delivery: the ids of the created resources by their collection, for the paths
+    // that name one.
     private suspend fun TestServer.seed(ada: Person): Map<String, String> {
         repeat(2) { n ->
             write(ada, "/api/v1/rules", """{"statement": "Rule $n of the lists", "group": "Lists"}""")
             write(ada, "/api/v1/artifacts", """{"title": "Page $n", "files": [{"path": "a.html", "content": "$n"}]}""")
+            // Two team entries of the memory (a page of one has a next), which the search finds by their title.
+            write(
+                ada,
+                "/api/v1/memory",
+                """{"title": "Lists $n", "summary": "Lists", "scope": "team", "tags": [], "content": "Lists"}""",
+            )
         }
         val automation = write(
             ada,

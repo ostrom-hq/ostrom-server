@@ -11,9 +11,11 @@ import kotlin.uuid.Uuid
 internal fun tagsOf(value: String?): List<String> =
     if (value == null) emptyList() else value.split(',').map { it.trim() }.filter { it.isNotEmpty() }
 
-/** A limit from the query: a number, or the default. */
+/** A limit from the query: a number of at least 1 (the contract's minimum), or the default. */
 internal fun limitOf(value: String?, default: Int): Int =
-    value?.let { it.toIntOrNull() ?: throw InvalidMemoryException("Use a number as the limit.") } ?: default
+    value?.let { it.toIntOrNull()?.takeIf { limit -> limit >= 1 } ?: throw InvalidMemoryException(LIMIT) } ?: default
+
+private const val LIMIT = "Use a number of at least 1 as the limit."
 
 /** A scope from the query; both when absent. */
 internal fun scopeOf(value: String?): MemoryScope? = value?.let(MemoryScope::parse)

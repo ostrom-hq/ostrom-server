@@ -171,7 +171,8 @@ class MemoryRoutesPostgresTest {
     @Test
     fun aBadRequestNamesItsFieldAndASecretIsNeverStored() = memoryTest {
         val bad = listOf(
-            "index?scope=repo", "index?limit=many", "index?after=nope", "index?after=x_y",
+            "index?scope=repo", "index?limit=many", "index?limit=0", "search?q=note&limit=-1",
+            "index?after=nope", "index?after=x_y",
             "index?after=2026-11-14T12:00:00Z_nope", "index?tags=Bad!", "search",
             "search?q=%3F",
         )
