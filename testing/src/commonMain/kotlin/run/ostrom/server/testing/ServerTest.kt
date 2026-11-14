@@ -9,6 +9,7 @@ import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.MigrationRunner
 import run.ostrom.server.kernel.database.MigrationRunnerImpl
 import run.ostrom.server.kernel.database.databaseNotifications
+import run.ostrom.server.kernel.database.migrateModules
 import run.ostrom.server.kernel.database.migrateUnderLock
 import run.ostrom.server.kernel.database.requireRowLevelSecurity
 import run.ostrom.server.kernel.http.OstromJson
@@ -52,13 +53,24 @@ private val BENCH_TIMEOUT = 5.minutes
  *
  * @param modules The modules under test, in dependency order.
  * @param overrides Koin definitions replacing real ones (a fake clock, a fake token authenticator).
+ * @param migrations What applies and checks the migrations: sqlx4k until every module's tests move to Flyway.
  * @param block The test.
  */
 fun serverTest(
     modules: List<ServerModule>,
     overrides: Module? = null,
+    migrations: TestMigrations = TestMigrations.SQLX4K,
     block: suspend ApplicationTestBuilder.(TestServer) -> Unit,
-) = serverTest(modules, overrides, EnvironmentConfigSource(), block = block)
+) = serverTest(modules, overrides, EnvironmentConfigSource(), migrations = migrations, block = block)
+
+/** What a test server applies and checks the migrations with. */
+enum class TestMigrations {
+    /** sqlx4k's runner and its `_migrations_<module>` histories, the modules' tests until they move to Flyway. */
+    SQLX4K,
+
+    /** Flyway and its `flyway_<module>` histories, as `ostrom-server migrate` and the server's start. */
+    FLYWAY,
+}
 
 /**
  * [serverTest] for a read bench (ReadBench.kt): the same server, within [BENCH_TIMEOUT].
@@ -71,33 +83,40 @@ fun benchTest(
     modules: List<ServerModule>,
     overrides: Module?,
     block: suspend ApplicationTestBuilder.(TestServer) -> Unit,
-) = serverTest(modules, overrides, EnvironmentConfigSource(), BENCH_TIMEOUT, block)
+) = serverTest(modules, overrides, EnvironmentConfigSource(), BENCH_TIMEOUT, block = block)
 
 /**
  * [serverTest] with the test database configuration read from [environment] (the skipped case is tested so), run as
  * Ktor's `testApplication` runs it, within [timeout] (a read bench fills its tables first, ReadBench.kt).
  */
+@Suppress("LongParameterList") // The public serverTest's parameters, and what its own tests set: the environment.
 internal fun serverTest(
     modules: List<ServerModule>,
     overrides: Module?,
     environment: ConfigSource,
     timeout: Duration = TEST_TIMEOUT,
+    migrations: TestMigrations = TestMigrations.SQLX4K,
     block: suspend ApplicationTestBuilder.(TestServer) -> Unit,
 ) = runTestWithRealTime(EmptyCoroutineContext, timeout) {
-    runTestApplication { serve(modules, overrides, environment, block) }
+    runTestApplication { serve(modules, overrides, environment, migrations, block) }
 }
 
 private suspend fun ApplicationTestBuilder.serve(
     modules: List<ServerModule>,
     overrides: Module?,
     environment: ConfigSource,
+    migrations: TestMigrations,
     block: suspend ApplicationTestBuilder.(TestServer) -> Unit,
 ) {
     val database = TestDatabase.create(environment) ?: return
     try {
         val signer = Ed25519InstanceSigner.generate()
         val logger = JsonLogger(LogLevel.WARN)
-        database.owner.migrateUnderLock(MigrationRunnerImpl(database.owner, logger), modules)
+        when (migrations) {
+            TestMigrations.SQLX4K ->
+                database.owner.migrateUnderLock(MigrationRunnerImpl(database.owner, logger), modules)
+            TestMigrations.FLYWAY -> migrateModules(database.ownerConfig, logger, modules)
+        }
         database.driver.requireRowLevelSecurity()
         // The server's pool records what it sends, for the read benches (ReadBench.kt).
         val driver = RecordingDriver(database.driver)
@@ -111,7 +130,16 @@ private suspend fun ApplicationTestBuilder.serve(
         val jdbc = JdbcDatabase(database.servingConfig, JdbcDatabase.MIN_POOL_SIZE)
         try {
             val kernel = testKernel(
-                kernelModule(logger, driver, signer, source, notifications = notifications, jdbc = jdbc),
+                kernelModule(
+                    logger,
+                    driver,
+                    signer,
+                    source,
+                    notifications = notifications,
+                    // The server's start check reads Flyway's histories through the pool; sqlx4k's on the driver.
+                    migrationRunner = if (migrations == TestMigrations.FLYWAY) jdbc.migrationRunner(logger) else null,
+                    jdbc = jdbc,
+                ),
                 modules,
             )
             serveWith(serverKoin(kernel, modules, overrides), modules, driver, database, environment, block)

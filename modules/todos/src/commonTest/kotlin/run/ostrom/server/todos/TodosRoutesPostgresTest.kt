@@ -20,6 +20,8 @@ import run.ostrom.server.kernel.auth.PrincipalChannel
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.TokenAuthenticator
+import run.ostrom.server.testing.TestMigrations
+import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.todos.domain.TodoArtifacts
 import run.ostrom.server.todos.domain.TodoCredentialRefusedException
@@ -51,6 +53,8 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.server.testing.ApplicationTestBuilder
+import org.koin.core.module.Module
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -73,8 +77,12 @@ class TodosRoutesPostgresTest {
         single<TodoArtifacts> { FakeArtifacts() }
     }
 
+    /** The module's server, its tables migrated by Flyway as `ostrom-server migrate` does. */
+    private fun todosServer(overrides: Module, block: suspend ApplicationTestBuilder.(TestServer) -> Unit) =
+        serverTest(listOf(TodosModule), overrides, TestMigrations.FLYWAY, block)
+
     private fun todoTest(block: suspend HttpClient.() -> Unit) =
-        serverTest(listOf(TodosModule), overrides) { server -> server.client.block() }
+        todosServer(overrides) { server -> server.client.block() }
 
     private suspend fun HttpClient.send(token: String?, method: String, path: String, body: String = "{}") =
         when (method) {
@@ -148,7 +156,7 @@ class TodosRoutesPostgresTest {
     }
 
     @Test
-    fun aClosedTodoIsResetByItsAgentAndWrittenToTheAuditLog() = serverTest(listOf(TodosModule), audited) { server ->
+    fun aClosedTodoIsResetByItsAgentAndWrittenToTheAuditLog() = todosServer(audited) { server ->
         val client = server.client
         val reset = """{"sessionId": "s1"}"""
         assertEquals(HttpStatusCode.NotFound, client.send("agent", "POST", "$SESSION/reset", reset).status)
@@ -201,7 +209,7 @@ class TodosRoutesPostgresTest {
     }
 
     @Test
-    fun aMachineThatGetsPastTheGatesIsStillRefused() = serverTest(listOf(TodosModule), overrides) { server ->
+    fun aMachineThatGetsPastTheGatesIsStillRefused() = todosServer(overrides) { server ->
         // The kernel stops a service key or a device before these routes; the callers refuse them all the same.
         val callers = server.koin.get<TodoCallers>()
         for (kind in listOf(PrincipalKind.SERVICE, PrincipalKind.DEVICE)) {
@@ -211,7 +219,7 @@ class TodosRoutesPostgresTest {
     }
 
     @Test
-    fun theModuleServesTodosV1() = serverTest(listOf(TodosModule), overrides) { server ->
+    fun theModuleServesTodosV1() = todosServer(overrides) { server ->
         assertEquals(setOf(ServerFeatures.TODOS), TodosModule.features(server.koin))
     }
 

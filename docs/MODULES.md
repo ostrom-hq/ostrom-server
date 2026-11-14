@@ -6,7 +6,8 @@ Every functional domain of the server (`identity`, `orgs`, `sessions`, `launches
 Gradle module under `modules/<name>/`. Each one already exists as an empty skeleton, registered in the app: **the owner
 of a module only edits its own directory**, plus its single line in `app/.../ServerModules.kt` if the order must
 change.
-`modules/instance` is the complete reference example: copy its shape.
+`modules/instance` is the complete reference example of a module's shape; `modules/todos` is the reference of its
+database access on Exposed (section 4): copy both.
 
 Read [`ostrom-core/docs/CONVENTIONS.md`](https://github.com/ostrom-hq/ostrom-core/blob/main/docs/CONVENTIONS.md)
 first: it wins over this page wherever they differ.
@@ -19,14 +20,15 @@ modules/<name>/
   src/commonMain/kotlin/run/ostrom/server/<pkg>/
     <Name>Module.kt                     # object <Name>Module : ServerModule
     domain/                             # models, repository interfaces, use cases (XXX + XXXImpl)
-    infrastructure/                     # repository implementations (sqlx4k), <Name>Migrations.kt
+    infrastructure/                     # repository implementations (Exposed), <Name>Tables.kt, <Name>Migrations.kt
     presentation/                       # @Resource API classes, DTOs, routes, mappers
   src/commonTest/kotlin/run/ostrom/server/<pkg>/
     *Test.kt                            # unit tests with hand-written fakes, *PostgresTest.kt with serverTest
 ```
 
 - **domain** depends on nothing but the kernel's `errors` and `signing` interfaces: no Ktor, no SQL.
-- **infrastructure** implements the domain's interfaces; only it sees `io.github.smyrgeorge.sqlx4k`.
+- **infrastructure** implements the domain's interfaces; only it sees `org.jetbrains.exposed` (and, in a module not
+  yet moved, `io.github.smyrgeorge.sqlx4k`).
 - **presentation** maps HTTP to use cases; routes receive a `<Name>RoutesDependencies` data class, in its own file
   (detekt `MatchingDeclarationName`: a file whose only class is not its name fails).
 - A module never imports another module's `infrastructure` or `presentation`, never reads another module's tables.
@@ -39,7 +41,7 @@ modules/<name>/
 object OrgsModule : ServerModule {
     override val name = "orgs"                       // [a-z][a-z0-9-]*, also the migration table: _migrations_orgs
     override val koinModule = module {
-        single<OrgsRepository> { OrgsRepositoryImpl(get()) }          // get() = the sqlx4k Driver
+        single<OrgsRepository> { OrgsRepositoryImpl(get(), get()) }    // get() = the JdbcDatabase, kotlin.time.Clock
         single<CreateOrgUseCase> { CreateOrgUseCaseImpl(get(), get()) } // get() = repository, kotlin.time.Clock
         single { OrgsRoutesDependencies(get()) }
     }
@@ -62,7 +64,8 @@ failed or overrunning run by its type only. The jobs on it: `mcp/purge` (hourly)
 `identity/purge`, `launches/purge` and `usage/purge` (hourly), `events/purge` (each minute) and `sessions/sweep`
 (every 30 s).
 
-The kernel binds, for every module: `Logger`, `Driver` (database), `InstanceSigner`, `kotlin.time.Clock`,
+The kernel binds, for every module: `Logger`, `JdbcDatabase` (Exposed over the HikariCP pool), `Driver` (sqlx4k, for
+the modules not yet on Exposed), `InstanceSigner`, `kotlin.time.Clock`,
 `TokenAuthenticator`, `PrincipalOrgResolver`, `MigrationRunner`, and the `HealthCheck`s. Use `Clock` from Koin, never `Clock.System`
 directly, so tests can fix the time.
 
@@ -106,31 +109,72 @@ val OrgsMigrations = listOf(
 - PostgreSQL 15 or later: unique indexes use `NULLS NOT DISTINCT`. Some modules' migrations create the `ostrom_tenant`
   role their queries switch to (`SET LOCAL ROLE`): the owner that runs `migrate` needs `CREATEROLE`, and the serving
   role must be a member of `ostrom_tenant` (ci/database-roles.sql creates it beforehand and grants it to both, as a
-  deployment must). Their `inTenant` converges on the kernel's `withOrganization`, which needs no role switch.
+  deployment must). On Exposed, the kernel's `JdbcDatabase.inOrg` does that switch (section 4).
 - Plain PostgreSQL. Statements are split on `;`. **No `::type` casts** (write `CAST(x AS type)`): the driver reads
   `:name` as a named parameter.
 - Modules migrate in the order of `serverModules()`: a module whose tables reference another module's tables comes
   after it.
 
-## 4. Repositories (sqlx4k)
+## 4. Repositories (Exposed)
+
+New code and every module moved off sqlx4k use **Exposed's typed DSL over the kernel's `JdbcDatabase`** (TeamCode's
+stack, [docs/decisions/0001](decisions/0001-jvm-and-teamcode-stack.md)). `modules/todos` is the reference: its
+`infrastructure/TodosTables.kt` and `TodosRepositoryImpl.kt` show every pattern below.
+
+**Tables** (`infrastructure/<Name>Tables.kt`): one `internal object` per table, its columns named as the migration
+creates them. The migrations stay the schema's only source: never `SchemaUtils.create`, and a column added to a table
+object is added by a new migration first.
 
 ```kotlin
-driver.execute(
-    Statement.create("INSERT INTO orgs_organizations (id, name, created_at) VALUES (:id, :name, :created_at)")
-        .bind("id", org.id).bind("name", org.name).bind("created_at", org.createdAt),
-).getOrThrow()
-
-driver.fetchAll(Statement.create("SELECT id, name, created_at FROM orgs_organizations WHERE id = :id").bind("id", id))
-    .getOrThrow().firstOrNull()?.let { row -> Org(row.get("id").asUuid(), row.get("name").asString(), row.get("created_at").asInstant()) }
+internal object OrgsOrganizations : Table("orgs_organizations") {
+    val id = uuid("id")                    // kotlin.uuid.Uuid
+    val name = text("name")
+    val note = text("note").nullable()
+    val createdAt = instant("created_at")  // the kernel's TIMESTAMPTZ column of kotlin.time.Instant
+    override val primaryKey = PrimaryKey(id)
+}
 ```
 
-- Always bind values (`:name`), never concatenate them into SQL.
-- `Result` from sqlx4k is unwrapped with `getOrThrow()` in the repository; the domain never sees `Result`.
-- Transactions: `driver.transaction { execute(…).getOrThrow(); … }`.
-- **Tenant tables only through `driver.withOrganization(orgId) { tx -> … }`**: it opens the transaction and sets
-  `ostrom.org_id` for it alone, so row-level security shows and accepts that organization's rows only. The repository
-  of a tenant table receives the transaction, never the pool. Outside it, a tenant table shows no row.
-- `Uuid` (kotlin.uuid), `Instant` (kotlin.time), `String`, numbers, `Boolean`, `ByteArray` bind directly.
+**Queries** (`infrastructure/<Name>RepositoryImpl.kt`), the repository constructed with the `JdbcDatabase`:
+
+```kotlin
+override suspend fun find(orgId: Uuid, id: Uuid): Org? = database.inOrg(orgId) {
+    OrgsOrganizations.select(OrgsOrganizations.id, OrgsOrganizations.name, OrgsOrganizations.createdAt)
+        .where { (OrgsOrganizations.orgId eq orgId) and (OrgsOrganizations.id eq id) }
+        .singleOrNull()
+        ?.let { Org(it[OrgsOrganizations.id], it[OrgsOrganizations.name], it[OrgsOrganizations.createdAt]) }
+}
+
+override suspend fun rename(orgId: Uuid, id: Uuid, name: String): Boolean = database.inOrg(orgId) {
+    OrgsOrganizations.update({ (OrgsOrganizations.orgId eq orgId) and (OrgsOrganizations.id eq id) }) {
+        it[OrgsOrganizations.name] = name
+    } > 0
+}
+```
+
+- **One transaction per repository call**: `database.query { }`, or `database.inOrg(orgId) { }` for a tenant table.
+  The block is not `suspend` and runs on `Dispatchers.IO`: no network call, no other repository, no `delay` inside a
+  transaction (CRL-03); read what the use case needs, decide in the domain, write in a second call or pass the rule in
+  as a plain function (`mutate(orgId, id) { current -> next }`, as `TodosRepository.mutate`).
+- **No hand-written SQL**: `select`, `insert`, `insertIgnore` (`ON CONFLICT DO NOTHING`), `upsert`
+  (`ON CONFLICT … DO UPDATE`), `update`, `deleteWhere`, `forUpdate()`, `orderBy`, `limit`, joins. Values are always
+  bound by Exposed. `exec("…")` is for the kernel only (role switches, advisory locks).
+- **Every read lists its columns** (`select(T.a, T.b)` or `select(T.columns)`), and a credential table's read names only
+  the columns it needs, never `selectAll()` (TeamCode fix 1322acbc). Every list read has a `limit`.
+- **Tenant tables, two walls**: every query filters on `T.orgId eq orgId` itself (the typed org filter, SD-08), and
+  runs in `database.inOrg(orgId) { }`, which switches the transaction to `ostrom_tenant` and sets `ostrom.org_id`, so
+  the table's row-level security policy still refuses another organization's rows. Keep both until the step that
+  drops row-level security; outside `inOrg` a tenant table shows no row and accepts none.
+- A change that reads then writes locks what it read: `select(…).where { … }.forUpdate()` in the same transaction.
+- Exposed never retries a transaction (`defaultMaxAttempts = 1`). A refusal the domain expects (a duplicate) is an
+  `insertIgnore`/`upsert` or a check in the same transaction, not a caught exception.
+- JSON columns are `text` written and read by the module's own serializer (`TodoJson`); Exposed's `json` columns are
+  not used yet.
+- The domain never sees Exposed types: rows become domain models in the repository (`ResultRow.toX()`).
+
+A module not yet moved keeps its sqlx4k repository (`driver.fetchAll(Statement.create(…).bind(…))`,
+`driver.withOrganization(orgId) { tx -> … }`, `Result.getOrThrow()`) until its own step: move a module whole, every
+repository of it in one PR, its tests on Flyway (section 7).
 
 ## 5. Routes and errors
 
@@ -171,6 +215,8 @@ Every request is already logged once by the kernel (method, route template — n
 
 ## 7. Tests
 
+- Tests are written `fun x() { runTest { … } }`, never `fun x() = runTest { … }`: JUnit skips a test function that
+  returns a value (TeamCode fix 6112985f). `fun x() = serverTest(…) { … }` is fine: it returns `Unit`.
 - Tests live in `commonTest` (and `jvmTest` for JVM-only code) and run on the **JVM** (`jvmTest`), the server's runtime
   ([docs/decisions/0001](decisions/0001-jvm-and-teamcode-stack.md)), where Kover requires **100 % of the lines and
   branches** of the module (`koverVerify`). The server modules have no native target any more. Each module's own
@@ -182,14 +228,19 @@ Every request is already logged once by the kernel (method, route template — n
   test cases).
 - **Unit tests** (use cases): hand-written fakes (`InMemoryOrgsRepository`), no MockK (CONVENTIONS).
   Coroutines with `runTest`; time from an injected `Clock`.
-- **Database and route tests**: `serverTest(listOf(OrgsModule)) { server -> server.client.get("/api/v1/orgs") … }` starts
-  a fresh PostgreSQL database, applies the migrations, runs `initialize`, serves the routes, and drops the database
-  afterwards. Fakes replace real bindings through `overrides = module { single<TokenAuthenticator> { … } }`.
-  Name these classes `*PostgresTest`.
-- **Isolation tests** (one per tenant table, CONVENTIONS 16.1): `serverTest` and `TestDatabase` connect as the test
-  database's owner, a superuser that bypasses row-level security. Prove the isolation as a serving role instead:
-  `database.withRole { role, serving -> … }` creates a login role that owns nothing (grant it the module's tables),
-  connects as it, and drops it afterwards; `kernel/…/TenancyPostgresTest.kt` is the model.
+- **Database and route tests**: `serverTest(listOf(OrgsModule), migrations = TestMigrations.FLYWAY) { server -> … }`
+  starts a fresh PostgreSQL database, applies the migrations with Flyway as `ostrom-server migrate` does, starts the
+  kernel with its `JdbcDatabase` as the serving role, runs `initialize`, serves the routes, and drops the database
+  afterwards. A module on Exposed always passes `TestMigrations.FLYWAY` (the server checks Flyway's histories at
+  start); the default, sqlx4k's runner, is for the modules not moved yet. Fakes replace real bindings through
+  `overrides = module { single<TokenAuthenticator> { … } }`. Name these classes `*PostgresTest`.
+- **Isolation tests** (one per tenant table, CONVENTIONS 16.1): `serverTest`'s repositories and routes run as the
+  test database's serving role, which bypasses nothing, as a deployment's. To prove a policy on its own, as another
+  role: `database.withRole { role, serving -> … }` creates a login role that owns nothing (grant it the module's tables),
+  connects as it, and drops it afterwards; `kernel/…/TenancyPostgresTest.kt` is the model, and
+  `kernel/…/database/JdbcTenancyPostgresTest.kt` on Exposed. A module's own isolation test reads and writes one
+  organization's rows through its repository and checks another organization sees none (`TodosPostgresTest`,
+  `anotherOrganizationNeitherReadsNorChangesAList`).
 - Locally: `docker compose up -d postgres`,
   `export OSTROM_TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres`, then
   `./gradlew :modules:orgs:jvmTest :modules:orgs:koverHtmlReport` (always through `.coord/build-lock.sh` on the shared
