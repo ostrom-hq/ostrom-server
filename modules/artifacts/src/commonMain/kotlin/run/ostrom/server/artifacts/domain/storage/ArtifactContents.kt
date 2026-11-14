@@ -92,20 +92,7 @@ class BucketArtifactContents(
     override suspend fun remove(orgId: Uuid, artifactId: Uuid): Boolean {
         val connection = storage.connection(orgId) ?: return false
         val root = ArtifactKeys.artifactRoot(connection.prefix, orgId.toString(), artifactId.toString())
-        return try {
-            var token: String? = null
-            var emptied = true
-            do {
-                val page = objects.list(connection, root, token)
-                if (page.keys.isNotEmpty()) emptied = objects.delete(connection, page.keys.map { it.key }).isEmpty()
-                token = page.nextContinuationToken
-            } while (token != null && emptied)
-            emptied
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: ObjectStoreException) {
-            false
-        }
+        return objects.empty(connection, root)
     }
 
     private suspend fun connection(orgId: Uuid): ArtifactStorageConnection = storage.openConnection(orgId)
@@ -113,6 +100,26 @@ class BucketArtifactContents(
     private fun key(connection: ArtifactStorageConnection, orgId: Uuid, artifactId: Uuid, sha256: String) =
         ArtifactKeys.blob(connection.prefix, orgId.toString(), artifactId.toString(), sha256)
 
+}
+
+/**
+ * Deletes every object under [root], page by page, as far as the bucket answers.
+ *
+ * @return True when each page was deleted, false when the bucket refused one or failed.
+ */
+internal suspend fun ArtifactObjectStore.empty(connection: ArtifactStorageConnection, root: String): Boolean = try {
+    var token: String? = null
+    var emptied = true
+    do {
+        val page = list(connection, root, token)
+        if (page.keys.isNotEmpty()) emptied = delete(connection, page.keys.map { it.key }).isEmpty()
+        token = page.nextContinuationToken
+    } while (token != null && emptied)
+    emptied
+} catch (cancelled: CancellationException) {
+    throw cancelled
+} catch (_: ObjectStoreException) {
+    false
 }
 
 /** The type every object is written with: the bucket never serves them, the server does. */
