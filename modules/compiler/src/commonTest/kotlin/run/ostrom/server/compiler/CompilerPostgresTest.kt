@@ -889,7 +889,8 @@ class CompilerPostgresTest {
     fun rowLevelSecurityHidesOtherOrganizationsEvenWithoutAWhereClause() = compilerTest { server ->
         server.call("user:a:lead", "/api/v1/workflows", "POST", release())
         server.call("user:a:lead", "/api/v1/workflows/settings", "PUT", settings("all"))
-        server.call("user:a:lead", "/api/v1/packages/settings", "PUT", compileSettings("manual"))
+        // Auto: a manual pin would leave the agent below without a pin to set.
+        server.call("user:a:lead", "/api/v1/packages/settings", "PUT", compileSettings("auto"))
         server.call("agent:a:l1", "/api/v1/packages/current?repo=acme-api")
         // The test server's driver is the serving role, as in production: row level security applies to it.
         val tables = listOf(
