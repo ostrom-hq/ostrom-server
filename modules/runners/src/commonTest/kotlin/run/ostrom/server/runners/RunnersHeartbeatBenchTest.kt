@@ -34,7 +34,6 @@ import kotlin.test.assertEquals
 class RunnersHeartbeatBenchTest {
     private val overrides = testIdentitiesWith(
         mapOf(
-            "OSTROM_RUNNERS_ALLOWED_ORGS" to ORG_A.toString(),
             "OSTROM_RUNNERS_DRIVER" to "registered",
             "OSTROM_RUNNERS_SERVER_URL" to "http://host.docker.internal:4600",
             "OSTROM_RUNNERS_IMAGE" to "ghcr.io/ostrom-hq/ostrom-runner:test",

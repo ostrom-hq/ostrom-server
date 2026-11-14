@@ -265,7 +265,7 @@ class TerminalReplicasTest {
     fun aReplicaToldItsUrlHoldsTheRunnersItServes() = serverTest(
         listOf(RunnersModule),
         testIdentitiesWith(
-            mapOf("OSTROM_RUNNERS_ALLOWED_ORGS" to ORG_A.toString(), "OSTROM_RUNNERS_REPLICA_URL" to "$SELF/"),
+            mapOf("OSTROM_RUNNERS_REPLICA_URL" to "$SELF/"),
         ),
     ) { server ->
         val (id, token) = server.liveSession()
