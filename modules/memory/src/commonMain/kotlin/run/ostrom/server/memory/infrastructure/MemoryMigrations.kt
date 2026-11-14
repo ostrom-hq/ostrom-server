@@ -97,9 +97,10 @@ private val CURATION_SQL: String =
     CREATE FUNCTION memory_kept_orgs(p_after UUID, p_limit INTEGER) RETURNS TABLE (org_id UUID)
         LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
         WITH RECURSIVE kept (id) AS (
-            SELECT (SELECT min(e.org_id) FROM memory_entries e WHERE p_after IS NULL OR e.org_id > p_after)
+            SELECT (SELECT e.org_id FROM memory_entries e WHERE p_after IS NULL OR e.org_id > p_after
+                ORDER BY e.org_id LIMIT 1)
             UNION ALL
-            SELECT (SELECT min(e.org_id) FROM memory_entries e WHERE e.org_id > kept.id)
+            SELECT (SELECT e.org_id FROM memory_entries e WHERE e.org_id > kept.id ORDER BY e.org_id LIMIT 1)
                 FROM kept WHERE kept.id IS NOT NULL
         )
         SELECT kept.id FROM kept WHERE kept.id IS NOT NULL LIMIT p_limit;
