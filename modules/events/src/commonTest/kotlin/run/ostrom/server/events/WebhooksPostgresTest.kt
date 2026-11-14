@@ -276,6 +276,7 @@ class WebhooksPostgresTest {
 
         // A server error is retried after 10 s; the claim is released at once.
         sender.status = 503
+        clock.now += 1.seconds // The log is newest first: w-2's delivery comes after w-1's.
         server.publish(orgA, OrgEventType.WAIT_CREATED, "w-2")
         assertEquals(1, deliver())
         val retried = repository.deliveries(orgA, created.webhook.id, 1).single()

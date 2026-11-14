@@ -208,7 +208,7 @@ class EventsPostgresTest {
 
     @Test
     fun theModuleServesTheFeedAndRefusesBeforeStreaming() = serverTest(modules, overrides()) { server ->
-        assertEquals(setOf(ServerFeatures.EVENTS), EventsModule.features(server.koin))
+        assertEquals(setOf(ServerFeatures.EVENTS, ServerFeatures.WEBHOOKS), EventsModule.features(server.koin))
         server.publish(orgA, draft(OrgEventType.WAIT_CREATED, "w-1", miaA))
 
         assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/events").status)
