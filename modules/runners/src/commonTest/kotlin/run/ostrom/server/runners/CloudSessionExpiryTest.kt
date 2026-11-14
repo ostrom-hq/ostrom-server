@@ -19,9 +19,12 @@ import run.ostrom.server.runners.fakes.SettableClock
 import run.ostrom.server.runners.fakes.session
 import run.ostrom.server.runners.infrastructure.CloudRuntimePausedRetention
 import run.ostrom.server.runners.presentation.toResponse
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.minutes
@@ -57,6 +60,9 @@ class CloudSessionExpiryTest {
 
     private fun paused(expiresAt: Instant?, desired: DesiredState = DesiredState.PAUSED) =
         put(session(state = SessionState.PAUSED, desired = desired).copy(pausedAt = t0, expiresAt = expiresAt))
+
+    /** A session paused before the upgrade, as the migration marks it. */
+    private fun pausedBeforeTheUpgrade() = put(paused(null).copy(expiryBackfill = true))
 
     @Test
     fun aPauseExpiresAfterTheRetentionInForceAndIsLookedAtAgainThen() = runTest {
@@ -136,25 +142,63 @@ class CloudSessionExpiryTest {
 
     @Test
     fun aSessionPausedBeforeTheUpgradeExpiresFromItsPauseNeverAtOnce() = runTest {
-        val recent = paused(null)
+        val recent = pausedBeforeTheUpgrade()
         clock.now = t0 + 2.days
 
         assertEquals(t0 + 30.days, reconcile(recent))
         assertEquals(t0 + 30.days, stored(recent).expiresAt)
+        assertFalse(stored(recent).expiryBackfill, "Given once")
 
-        val old = paused(null)
+        val old = pausedBeforeTheUpgrade()
         clock.now = t0 + 45.days
         assertEquals(clock.now + 1.days, reconcile(old), "Already past it: one more day")
         assertEquals(clock.now + 1.days, stored(old).expiresAt)
         assertEquals((clock.now + 1.days).toString(), stored(old).toResponse().expiresAt)
 
-        val unknown = put(session(state = SessionState.PAUSED, desired = DesiredState.PAUSED))
+        val unknown = put(
+            session(state = SessionState.PAUSED, desired = DesiredState.PAUSED).copy(expiryBackfill = true),
+        )
         assertEquals(clock.now + 30.days, reconcile(unknown), "Without its pause: from now")
 
         days = null
-        val kept = paused(null)
+        val kept = pausedBeforeTheUpgrade()
         assertNull(reconcile(kept))
         assertNull(stored(kept).expiresAt)
+        assertFalse(stored(kept).expiryBackfill)
+        days = 1
+        assertNull(reconcile(stored(kept)), "Kept under no retention at the upgrade: a later setting changes nothing")
+        assertNull(stored(kept).expiresAt)
+    }
+
+    @Test
+    fun aSessionPausedUnderNoRetentionIsKeptWhenARetentionIsSetLater() = runTest {
+        days = null
+        val starting = put(session(state = SessionState.RESUMING, desired = DesiredState.PAUSED))
+        assertNull(reconcile(starting))
+        days = 7
+
+        clock.now = t0 + 30.days
+        assertNull(reconcile(stored(starting)))
+        assertNull(stored(starting).expiresAt)
+        assertEquals(SessionState.PAUSED, stored(starting).state)
+    }
+
+    @Test
+    fun aPauseOrAResumeEndsTheUpgradesBackfillAndAnUnreadableRetentionIsThirtyDays() = runTest {
+        val resumed = put(pausedBeforeTheUpgrade().copy(desiredState = DesiredState.RUNNING))
+        reconcile(resumed)
+        assertFalse(stored(resumed).expiryBackfill)
+
+        val failing = reconciler { throw IllegalStateException("database down") }
+        val starting = put(
+            session(state = SessionState.RESUMING, desired = DesiredState.PAUSED).copy(expiryBackfill = true),
+        )
+        assertEquals(t0 + 30.days, failing(starting), "A pause never fails on its retention")
+        assertFalse(stored(starting).expiryBackfill)
+
+        val cancelled = reconciler { throw CancellationException("stopped") }
+        val other = put(session(state = SessionState.RESUMING, desired = DesiredState.PAUSED))
+        assertFailsWith<CancellationException> { cancelled(other) }
     }
 
     @Test

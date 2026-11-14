@@ -3,6 +3,7 @@ package run.ostrom.server.runners.domain
 
 import run.ostrom.server.kernel.sessions.PendingWaitAnswers
 import run.ostrom.server.kernel.sessions.SessionEndListener
+import kotlinx.coroutines.CancellationException
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
@@ -343,25 +344,40 @@ class ReconcileCloudSessionUseCaseImpl(
             return write(expired, now)
         }
         if (session.desiredState == DesiredState.RUNNING) {
-            return write(
-                session.moveTo(SessionState.RESUMING, now)
-                    .copy(phase = "scheduling", executionStartedAt = null, failure = null, expiresAt = null),
-                now,
+            val resuming = session.moveTo(SessionState.RESUMING, now).copy(
+                phase = "scheduling",
+                executionStartedAt = null,
+                failure = null,
+                expiresAt = null,
+                expiryBackfill = false,
             )
+            return write(resuming, now)
         }
-        if (expiresAt != null) return expiresAt
-        return upgradedExpiry(session, now)
+        if (session.expiryBackfill) return upgradedExpiry(session, now)
+        return expiresAt
     }
 
     /**
-     * A session paused before paused sessions expired gets its expiry from the retention in force now, counted from
-     * its pause; one already past it gets [UPGRADE_GRACE], so that nothing is deleted the moment the upgrade lands.
+     * A session paused before paused sessions expired gets its expiry, once, from the retention in force at its first
+     * step, counted from its pause; one already past it gets [UPGRADE_GRACE], so that nothing is deleted the moment
+     * the upgrade lands. With no retention then, it is kept, as a session paused under none.
      */
     private suspend fun upgradedExpiry(session: CloudSession, now: Instant): Instant? {
-        val days = retention.days() ?: return null
-        val due = (session.pausedAt ?: now) + days.days
-        val expiresAt = if (due <= now) now + UPGRADE_GRACE else due
-        return write(session.copy(expiresAt = expiresAt, updatedAt = now), expiresAt)
+        val due = retentionDays()?.let { (session.pausedAt ?: now) + it.days }
+        val expiresAt = due?.let { if (it <= now) now + UPGRADE_GRACE else it }
+        return write(session.copy(expiresAt = expiresAt, expiryBackfill = false, updatedAt = now), expiresAt)
+    }
+
+    /**
+     * The paused retention in force, read once by the step that pauses the session (or gives it its expiry). A pause
+     * never fails on it: a retention that cannot be read is [PausedRetention.FALLBACK_DAYS].
+     */
+    private suspend fun retentionDays(): Int? = try {
+        retention.days()
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        PausedRetention.FALLBACK_DAYS
     }
 
     /** Why the organization's plan stops the session now: cloud sessions closed to it, or its hours used up. */
@@ -396,7 +412,8 @@ class ReconcileCloudSessionUseCaseImpl(
     private suspend fun CloudSession.toPaused(now: Instant, reason: SessionFailure?): CloudSession =
         moveTo(SessionState.PAUSED, now).copy(
             pausedAt = now,
-            expiresAt = retention.days()?.let { now + it.days },
+            expiresAt = retentionDays()?.let { now + it.days },
+            expiryBackfill = false,
             executionStartedAt = null,
             runnerTokenHash = null,
             runnerStoppedAt = null,

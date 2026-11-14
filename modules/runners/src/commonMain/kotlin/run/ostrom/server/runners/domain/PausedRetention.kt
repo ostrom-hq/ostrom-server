@@ -12,6 +12,12 @@ fun interface PausedRetention {
      * @return The days a paused session keeps its workspace before it is terminated with it; null keeps it.
      */
     suspend fun days(): Int?
+
+    /** Constants of the port. */
+    companion object {
+        /** The retention a pause gets when it cannot be read (TeamCode's default). */
+        const val FALLBACK_DAYS = 30
+    }
 }
 
 /** Paused sessions are kept, as long as no module sets a retention (the cloud module does). */

@@ -55,6 +55,8 @@ import kotlin.uuid.Uuid
  *   paused sessions are kept. Resuming clears it.
  * @property terminatedReason Why a terminated session ended: [TERMINATED_DELETED] or [TERMINATED_EXPIRED]; null
  *   before it is asked to end.
+ * @property expiryBackfill Whether the session was paused before paused sessions expired and has not been given its
+ *   expiry yet: set once by the upgrade, cleared by its first step, a pause or a resume. Never served.
  */
 data class CloudSession(
     val id: Uuid,
@@ -92,6 +94,7 @@ data class CloudSession(
     val clusterUnreachableSince: Instant? = null,
     val expiresAt: Instant? = null,
     val terminatedReason: String? = null,
+    val expiryBackfill: Boolean = false,
 ) {
     /**
      * Whether the runner of the current start reported a failed preparation (or the server found one): the
