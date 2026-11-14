@@ -4,7 +4,6 @@ package run.ostrom.server.notifications
 import run.ostrom.server.identity.domain.MailAvailability
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.logging.Logger
-import run.ostrom.server.notifications.domain.NotificationOutbox
 import run.ostrom.server.notifications.infrastructure.NotificationSettings
 import run.ostrom.server.notifications.infrastructure.NotificationsMigrations
 import kotlinx.coroutines.CancellationException
@@ -21,7 +20,7 @@ class NotificationsModuleRegistrationTest {
     fun registersUnderItsNameWithItsMigrationAndDefinitionsThatLoad() {
         assertEquals("notifications", NotificationsModule.name)
         assertEquals(NotificationsMigrations, NotificationsModule.migrations)
-        assertEquals(listOf(1L, 2L, 3L, 4L, 5L, 6L), NotificationsMigrations.map { it.version })
+        assertEquals(listOf(1L, 2L, 3L, 4L, 5L, 6L, 7L), NotificationsMigrations.map { it.version })
         koinApplication { modules(NotificationsModule.koinModule) }.close()
     }
 
@@ -40,7 +39,6 @@ class NotificationsModuleRegistrationTest {
         val app = koinApplication {
             modules(
                 module {
-                    single { NotificationOutbox(RecordingPushSender(), RecordingMailSender(), logger) }
                     single { NotificationSettings() }
                     single<MailAvailability> { MailAvailability { mailing() } }
                     single<Logger> { logger }

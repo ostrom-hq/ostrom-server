@@ -14,8 +14,6 @@ kotlin {
             implementation(project(":modules:identity"))
             // The members of an organization, and the organizations of a person.
             implementation(project(":modules:orgs"))
-            // The gate channel the gates module tells of each request.
-            implementation(project(":modules:gates"))
             // The secrets key, which seals the instance's signing key at the push relay.
             implementation(project(":modules:secrets"))
             // Outbound HTTPS to FCM and Google's token endpoint: the app's CIO client.
@@ -31,6 +29,8 @@ kotlin {
         commonTest.dependencies {
             implementation(project(":testing"))
             implementation(project(":modules:instance"))
+            // The gates whose requests the approvals' end-to-end tests ask, and their summaries.
+            implementation(project(":modules:gates"))
             // The event journal the router reads, and the cipher the events module needs.
             implementation(project(":modules:events"))
             implementation(project(":modules:secrets"))

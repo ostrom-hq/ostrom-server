@@ -138,11 +138,11 @@ class RecordingLogger : Logger {
 
 /** The approvers of a test, by login (any case). */
 class MapApprovers(private val byLogin: Map<String, Approver>) : Approvers {
-    val asked = mutableListOf<Pair<Uuid, String>>()
+    val asked = mutableListOf<Pair<Uuid, Set<String>>>()
 
-    override suspend fun reach(orgId: Uuid, login: String): Approver? {
-        asked += orgId to login
-        return byLogin[login.lowercase()]
+    override suspend fun reach(orgId: Uuid, logins: Set<String>): Map<String, Approver> {
+        asked += orgId to logins
+        return logins.mapNotNull { login -> byLogin[login.lowercase()]?.let { login to it } }.toMap()
     }
 }
 

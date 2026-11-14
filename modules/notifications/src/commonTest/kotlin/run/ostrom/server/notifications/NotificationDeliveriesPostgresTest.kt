@@ -25,6 +25,7 @@ import run.ostrom.server.kernel.events.OrgEventType
 import run.ostrom.server.kernel.events.WaitSummaries
 import run.ostrom.server.kernel.events.WaitSummary
 import run.ostrom.server.kernel.module.OrgDeletionListener
+import run.ostrom.server.notifications.domain.ApprovalDelivery
 import run.ostrom.server.notifications.domain.DeliverNotificationsUseCase
 import run.ostrom.server.notifications.domain.DeliveryOutcome
 import run.ostrom.server.notifications.domain.DeliveryState
@@ -32,6 +33,8 @@ import run.ostrom.server.notifications.domain.Notification
 import run.ostrom.server.notifications.domain.NotificationChannel
 import run.ostrom.server.notifications.domain.NotificationDeliveriesRepository
 import run.ostrom.server.notifications.domain.NotificationDelivery
+import run.ostrom.server.notifications.domain.NotificationKind
+import run.ostrom.server.notifications.domain.NotificationSettingsService
 import run.ostrom.server.notifications.infrastructure.NotificationDeliveriesRepositoryImpl
 import run.ostrom.server.orgs.OrgsModule
 import run.ostrom.server.secrets.domain.SecretCipher
@@ -147,12 +150,56 @@ class NotificationDeliveriesPostgresTest {
             "UPDATE notifications_deliveries SET kind = 'later' WHERE id = '${later.notification.id}'",
         ).getOrThrow()
         val claimed = repository.claimDue(orgA, 5, t0 + 1.minutes, 1.minutes)
-        assertEquals(listOf(2L), claimed.map { it.notification.eventSeq })
+        assertEquals(listOf(2L), claimed.map { (it as NotificationDelivery).notification.eventSeq })
         assertEquals("failed:0:unknown_kind:false", server.row(later.notification.id))
 
         server.database.superuser.execute("UPDATE notifications_deliveries SET kind = 'later'").getOrThrow()
         assertEquals(emptyList(), repository.claimDue(orgA, 5, t0 + 1.hours, 1.minutes), "Only unknown kinds")
     }
+
+    @Test
+    fun anApprovalIsQueuedWithItsRequestAndClaimedBackWholeAndOneMissingWhatItNamesIsFailed() =
+        serverTest(modules, overrides) { server ->
+            val repository = server.repository()
+            val gate = sampleGate()
+            val approval = approvalDelivery(orgA, gate, memberId = mia).copy(eventSeq = 1, createdAt = t0)
+            val email = approval.copy(id = Uuid.random(), channel = "email")
+            val broken = (2L..4L).map {
+                approvalDelivery(orgA, gate, memberId = mia).copy(eventSeq = it, createdAt = t0)
+            }
+            repository.enqueue(JournalPosition(orgA, 0, 4), 4, listOf(approval, email, delivery(orgA, 5)) + broken)
+            assertEquals(1, server.count("event_seq = 1 AND channel = 'push' AND kind = 'approval'"))
+            assertEquals(
+                "approval:${approval.approvalId}:${gate.id}:bob:ana asks for your yes",
+                server.database.superuser.fetchAll(
+                    "SELECT collapse_key || ':' || gate_id || ':' || approver || ':' || title AS r " +
+                        "FROM notifications_deliveries WHERE id = '${approval.id}'",
+                ).getOrThrow().first().get("r").asString(),
+            )
+            assertEquals(1, server.count("approval_id IS NULL AND gate_id IS NULL AND approver IS NULL"), "The wait's")
+            val (noRequest, noGate, noApprover) = broken
+            suspend fun unset(row: ApprovalDelivery, column: String) = server.database.superuser.execute(
+                "UPDATE notifications_deliveries SET $column = NULL WHERE id = '${row.id}'",
+            ).getOrThrow()
+            unset(noRequest, "approval_id")
+            unset(noGate, "gate_id")
+            unset(noApprover, "approver")
+
+            val claimed = repository.claimDue(orgA, 10, t0 + 1.minutes, 1.minutes)
+
+            assertEquals(setOf(approval, email), claimed.filterIsInstance<ApprovalDelivery>().toSet())
+            assertEquals(listOf(5L), claimed.filterIsInstance<NotificationDelivery>().map { it.notification.eventSeq })
+            assertEquals(3, server.count("state = 'failed' AND last_error = 'unknown_kind'"))
+
+            // An approval is no kind of the members' switches: their settings are the same with one queued.
+            val settings = server.koin.get<NotificationSettingsService>().settings(orgA, mia)
+            assertEquals(listOf("fake", "push"), settings.channels)
+            assertEquals(
+                NotificationKind.entries.toSet(),
+                settings.settings.map { it.kind }.toSet(),
+                "No approval kind, no e-mail channel",
+            )
+        }
 
     @Test
     fun theUpkeepGivesUpLateOnesAndDeletesOldOnesAcrossOrganizations() = serverTest(modules, overrides) { server ->
@@ -181,7 +228,7 @@ class NotificationDeliveriesPostgresTest {
             repository.enqueue(JournalPosition(orgA, 0, 1), 1, listOf(mine))
             repository.enqueue(JournalPosition(orgB, 0, 1), 1, listOf(delivery(orgB, 1)))
             val now = t0 + 1.minutes
-            assertEquals(listOf(orgB), repository.claimDue(orgB, 5, now, 1.minutes).map { it.notification.orgId })
+            assertEquals(listOf(orgB), repository.claimDue(orgB, 5, now, 1.minutes).map { it.orgId })
             repository.record(orgB, mine.notification.id, DeliveryOutcome(DeliveryState.FAILED, 1, now, "x"), now)
             assertEquals("pending:0:-:false", server.row(mine.notification.id), "Not B's row")
 

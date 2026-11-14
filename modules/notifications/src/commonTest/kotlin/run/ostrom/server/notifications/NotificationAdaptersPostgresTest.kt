@@ -18,7 +18,7 @@ import run.ostrom.server.identity.domain.WebSessionsRepository
 import run.ostrom.server.instance.InstanceModule
 import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.notifications.domain.Approver
-import run.ostrom.server.notifications.domain.ApproverNotificationsChannel
+import run.ostrom.server.notifications.domain.ApprovalRouter
 import run.ostrom.server.notifications.domain.Approvers
 import run.ostrom.server.notifications.domain.EncryptedPushSender
 import run.ostrom.server.notifications.domain.LiveCredentials
@@ -70,21 +70,27 @@ class NotificationAdaptersPostgresTest {
             val bob = server.user("bob-n", "bob@example.com", verified = true)
             val (org, member) = server.org(bob)
 
-            val reached = approvers.reach(org.id, "BOB-N")
-            assertEquals(Approver(bob.id, member.id, "bob@example.com", pushes = true), reached)
+            suspend fun reach(orgId: Uuid, login: String) = approvers.reach(orgId, setOf(login))[login]
+
+            val reached = approvers.reach(org.id, setOf("BOB-N", "nobody-n"))
+            assertEquals(
+                mapOf("BOB-N" to Approver(bob.id, member.id, "bob@example.com", pushes = true)),
+                reached,
+                "Keyed as asked; nobody has the other login",
+            )
             server.koin.get<NotificationPreferencesRepository>()
                 .put(bob.id, NotificationPreferences(requests = false, decisions = true, spending = false), now)
-            assertEquals(false, approvers.reach(org.id, "bob-n")?.pushes, "Requests turned off on the phone")
+            assertEquals(false, reach(org.id, "bob-n")?.pushes, "Requests turned off on the phone")
 
             val unproven = server.user("eve-n", "eve@example.com", verified = false)
             val (eveOrg, _) = server.org(unproven)
-            assertNull(approvers.reach(eveOrg.id, "eve-n")?.email, "An address nobody proved is never written to")
+            assertNull(reach(eveOrg.id, "eve-n")?.email, "An address nobody proved is never written to")
             val silent = server.user("sam-n", email = null, verified = false)
             val (samOrg, _) = server.org(silent)
-            assertNull(approvers.reach(samOrg.id, "sam-n")?.email)
+            assertNull(reach(samOrg.id, "sam-n")?.email)
 
-            assertNull(approvers.reach(org.id, "nobody-n"), "No such person")
-            assertNull(approvers.reach(eveOrg.id, "bob-n"), "Not a member of that organization")
+            assertNull(reach(eveOrg.id, "bob-n"), "Not a member of that organization")
+            assertEquals(emptyMap(), approvers.reach(org.id, emptySet()))
         }
 
     @Test
@@ -122,11 +128,13 @@ class NotificationAdaptersPostgresTest {
     }
 
     @Test
-    fun theServerEncryptsEachPushAndTellsApproversAsAGateChannel() = serverTest(modules) { server ->
+    fun theServerEncryptsEachPushAndTellsApproversThroughTheRouterNotAsAGateChannel() = serverTest(modules) { server ->
         assertTrue(server.koin.get<PushSender>() is EncryptedPushSender)
-        val channel = server.koin.getAll<GateChannel>().single()
-        assertTrue(channel is ApproverNotificationsChannel)
-        assertEquals("notifications", channel.name)
+        assertTrue(server.koin.getAll<GateChannel>().isEmpty(), "Nothing told in the gate's request")
+        // Without the gates module, no gate is known: an approval event tells nobody.
+        val router = server.koin.get<ApprovalRouter>()
+        val event = approvalRequested(1, Uuid.random(), sampleGate(), "bob")
+        assertEquals(emptyList(), router.queue(Uuid.random(), listOf(event), now) { Uuid.random() })
     }
 
     @Test

@@ -4,6 +4,7 @@
 package run.ostrom.server.notifications.domain
 
 import run.ostrom.server.kernel.events.JournalPosition
+import run.ostrom.server.kernel.events.OrgEventType
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
@@ -29,13 +30,74 @@ enum class DeliveryState(val wire: String) {
 }
 
 /**
+ * A row of the deliveries queue: a member's notification on a channel ([NotificationDelivery], TeamCode's), or the
+ * request for a yes an approver is told of ([ApprovalDelivery], Ostrom's own, on the same mechanics).
+ */
+sealed interface QueuedDelivery {
+    /** The delivery's id. */
+    val id: Uuid
+
+    /** The organization. */
+    val orgId: Uuid
+
+    /** The channel's id. */
+    val channel: String
+
+    /** The attempts made so far. */
+    val attempts: Int
+}
+
+/**
  * One notification queued for one channel (TeamCode's `NotificationDelivery`).
  *
  * @property notification The notification; its id is the delivery's.
  * @property channel The channel's id.
  * @property attempts The attempts made so far.
  */
-data class NotificationDelivery(val notification: Notification, val channel: String, val attempts: Int)
+data class NotificationDelivery(
+    val notification: Notification,
+    override val channel: String,
+    override val attempts: Int,
+) : QueuedDelivery {
+    override val id: Uuid get() = notification.id
+    override val orgId: Uuid get() = notification.orgId
+}
+
+/**
+ * The request for a yes one approver is told of on one way ([PUSH_CHANNEL] or [ApprovalRules.EMAIL_CHANNEL]): an
+ * Ostrom extension of TeamCode's queue, its row of kind [ApprovalRules.KIND]. It is not a [NotificationKind] and no
+ * member switch governs it: the approver's `requests` preference and the instance's mail do.
+ *
+ * @property id The delivery's id.
+ * @property orgId The organization.
+ * @property memberId The approver's membership.
+ * @property approver The approver's login, as the gate names them.
+ * @property approvalId The approver's request.
+ * @property gateId Its gate.
+ * @property channel `push` or `email`.
+ * @property attempts The attempts made so far.
+ * @property eventSeq The `cloud.approval.requested` event it comes from.
+ * @property title What the approver is told, kept for support.
+ * @property body The gate's label and repository, kept for support.
+ * @property createdAt When it was queued.
+ */
+data class ApprovalDelivery(
+    override val id: Uuid,
+    override val orgId: Uuid,
+    val memberId: Uuid,
+    val approver: String,
+    val approvalId: Uuid,
+    val gateId: Uuid,
+    override val channel: String,
+    override val attempts: Int,
+    val eventSeq: Long,
+    val title: String,
+    val body: String,
+    val createdAt: Instant,
+) : QueuedDelivery {
+    /** The row's `collapse_key`, for support; phones collapse a request's pushes by its id (EncryptedPushSender). */
+    val collapseKey: String get() = "approval:$approvalId"
+}
 
 /**
  * What an attempt leaves on its delivery.
@@ -68,7 +130,7 @@ interface NotificationDeliveriesRepository {
      *
      * @return False, with nothing written, when another replica queued the page meanwhile.
      */
-    suspend fun enqueue(position: JournalPosition, through: Long, deliveries: List<NotificationDelivery>): Boolean
+    suspend fun enqueue(position: JournalPosition, through: Long, deliveries: List<QueuedDelivery>): Boolean
 
     /**
      * @param now The time.
@@ -80,7 +142,8 @@ interface NotificationDeliveriesRepository {
 
     /**
      * Claims up to [limit] of the organization's due deliveries until [now] plus [lease], skipping those another
-     * replica is claiming. A delivery of a kind this server does not know is failed instead.
+     * replica is claiming. A delivery of a kind this server does not know (neither a [NotificationKind] nor
+     * [ApprovalRules.KIND]) is failed instead.
      *
      * @param orgId The organization.
      * @param limit The most deliveries.
@@ -89,7 +152,7 @@ interface NotificationDeliveriesRepository {
      *
      * @return The claimed deliveries, the longest due first.
      */
-    suspend fun claimDue(orgId: Uuid, limit: Int, now: Instant, lease: Duration): List<NotificationDelivery>
+    suspend fun claimDue(orgId: Uuid, limit: Int, now: Instant, lease: Duration): List<QueuedDelivery>
 
     /**
      * Records an attempt and releases the claim.
@@ -126,6 +189,9 @@ interface NotificationDeliveriesRepository {
 object DeliveryRules {
     /** The journal reader's name: its cursor in `events_readers`. */
     const val READER: String = "notifications"
+
+    /** The journal types the router reads: the members' notifications' and the approvals'. */
+    val SOURCE_TYPES: Set<OrgEventType> = NotificationRules.SOURCE_TYPES + ApprovalRules.SOURCE_TYPES
 
     /** The most attempts of a delivery. */
     const val MAX_ATTEMPTS: Int = 5

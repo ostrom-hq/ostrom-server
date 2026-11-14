@@ -15,8 +15,8 @@ import run.ostrom.server.notifications.domain.DeliveryOutcome
 import run.ostrom.server.notifications.domain.Notification
 import run.ostrom.server.notifications.domain.NotificationChannel
 import run.ostrom.server.notifications.domain.NotificationDeliveriesRepository
-import run.ostrom.server.notifications.domain.NotificationDelivery
 import run.ostrom.server.notifications.domain.NotificationKind
+import run.ostrom.server.notifications.domain.QueuedDelivery
 import run.ostrom.server.notifications.domain.NotificationSetting
 import run.ostrom.server.notifications.domain.NotificationSettingsRepository
 import run.ostrom.server.notifications.domain.SwitchedOff
@@ -78,8 +78,8 @@ class FakeJournal(
 
 /** A queue in memory: what was enqueued, the rows a claim returns, and what each attempt recorded. */
 class MemoryDeliveries : NotificationDeliveriesRepository {
-    val enqueued = mutableListOf<Pair<JournalPosition, List<NotificationDelivery>>>()
-    val due = mutableMapOf<Uuid, MutableList<NotificationDelivery>>()
+    val enqueued = mutableListOf<Pair<JournalPosition, List<QueuedDelivery>>>()
+    val due = mutableMapOf<Uuid, MutableList<QueuedDelivery>>()
     val recorded = mutableMapOf<Uuid, DeliveryOutcome>()
     val maintained = mutableListOf<List<Instant>>()
     val deleted = mutableListOf<Uuid>()
@@ -96,7 +96,7 @@ class MemoryDeliveries : NotificationDeliveriesRepository {
     override suspend fun enqueue(
         position: JournalPosition,
         through: Long,
-        deliveries: List<NotificationDelivery>,
+        deliveries: List<QueuedDelivery>,
     ): Boolean {
         if (position.orgId in refused) return false
         enqueued += position to deliveries
@@ -110,7 +110,7 @@ class MemoryDeliveries : NotificationDeliveriesRepository {
         limit: Int,
         now: Instant,
         lease: Duration,
-    ): List<NotificationDelivery> {
+    ): List<QueuedDelivery> {
         check(orgId !in failingClaims) { "The database is down" }
         val rows = due.getValue(orgId)
         val claimed = rows.take(limit)
