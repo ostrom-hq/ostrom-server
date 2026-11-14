@@ -88,6 +88,19 @@ class McpRelayMappersTest {
     }
 
     @Test
+    fun theTransportIsHttpOrStdioAndSseIsRefused() {
+        val http = McpServerDto("linear", transport = "http", url = "https://mcp.linear.app/mcp")
+        assertEquals(McpTransport.HTTP, http.toPayload(emptyMap()).transport)
+        assertEquals(McpTransport.STDIO, stdioDto.toPayload(mapOf("DB" to dsn)).transport)
+        for (transport in listOf("sse", "websocket", "")) {
+            val refused = assertFailsWith<InvalidMcpServerException>(transport) {
+                http.copy(transport = transport).toPayload(emptyMap())
+            }
+            assertEquals("transport must be one of http, stdio.", refused.message)
+        }
+    }
+
+    @Test
     fun aMatchesConditionNeedsAPatternAndACallKeepsItsPolicy() {
         val request = ArgumentPolicyRequest("q", listOf(ArgumentConditionDto("db", "matches")), "deny", "No.")
         assertFailsWith<InvalidMcpServerException> { request.toPayload() }
