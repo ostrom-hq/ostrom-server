@@ -231,7 +231,8 @@ object NotificationRules {
                 Uuid.parseOrNull(it.assigneeId) != null
         } ?: return null
         val member = Uuid.parse(wait.assigneeId)
-        val title = source.sessionName?.takeIf { it.isNotBlank() }?.take(MAX_TITLE) ?: DEFAULT_TITLE
+        val name = source.sessionName.orEmpty()
+        val title = if (name.isBlank()) DEFAULT_TITLE else name.take(MAX_TITLE)
         val failed = wait.kind == TURN_FAILED_WAIT
         return NotificationDraft(
             eventSeq = entry.seq,
@@ -250,5 +251,8 @@ object NotificationRules {
      *
      * @return The wait it names: its `waitId`, else its subject.
      */
-    fun waitIdOf(entry: JournalEntry): String = (entry.data["waitId"] as? JsonPrimitive)?.content ?: entry.subjectId
+    fun waitIdOf(entry: JournalEntry): String {
+        val waitId = entry.data["waitId"]
+        return if (waitId is JsonPrimitive) waitId.content else entry.subjectId
+    }
 }

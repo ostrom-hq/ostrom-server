@@ -189,7 +189,7 @@ class NotificationSettingsPostgresTest {
             single<SendTestPushUseCase> {
                 object : SendTestPushUseCase {
                     override suspend fun invoke(orgId: Uuid, memberId: Uuid): List<PushResult> =
-                        listOf(PushResult.SENT, PushResult.rejected("push_key_invalid"))
+                        listOf(PushResult.rejected("push_key_invalid"), PushResult.SENT)
                 }
             }
         },
@@ -198,7 +198,7 @@ class NotificationSettingsPostgresTest {
         assertEquals(HttpStatusCode.OK, sent.status)
         val expected = PushTestResults(
             ok = true,
-            results = listOf(PushTestResult("sent", null), PushTestResult("rejected", "push_key_invalid")),
+            results = listOf(PushTestResult("rejected", "push_key_invalid"), PushTestResult("sent", null)),
         )
         assertEquals(expected, sent.body<PushTestResults>())
     }
