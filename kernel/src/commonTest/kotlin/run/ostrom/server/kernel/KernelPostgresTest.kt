@@ -3,6 +3,7 @@ package run.ostrom.server.kernel
 
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.MapConfigSource
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.MigrationRunner
 import run.ostrom.server.kernel.database.MigrationRunnerImpl
 import run.ostrom.server.kernel.database.MigrationsNotAppliedException
@@ -41,6 +42,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Clock
@@ -70,6 +72,7 @@ class KernelPostgresTest {
             assertSame(TrustedProxies.NONE, koin.get<TrustedProxies>())
             assertFalse(koin.get<Readiness>().isDraining)
             assertTrue(koin.get<HealthCheck>(named("database")).isUp())
+            assertNull(koin.getOrNull<JdbcDatabase>(), "no pool is bound when none is given")
             block(database, koin.get())
             koin.close()
         } finally {
@@ -88,6 +91,7 @@ class KernelPostgresTest {
                 }
                 val logger = JsonLogger(LogLevel.INFO, sink = { lines += it })
                 val runner = MigrationRunnerImpl(database.owner, logger)
+                val jdbc = JdbcDatabase(database.servingConfig, JdbcDatabase.MIN_POOL_SIZE)
                 val kernel = kernelModule(
                     logger,
                     database.owner,
@@ -95,11 +99,14 @@ class KernelPostgresTest {
                     MapConfigSource(emptyMap()),
                     databaseCheck = check,
                     migrationRunner = runner,
+                    jdbc = jdbc,
                 )
                 val koin = serverKoin(kernel, emptyList())
                 assertSame(check, koin.get<HealthCheck>(named("database")))
                 assertSame(runner, koin.get<MigrationRunner>())
+                assertSame(jdbc, koin.get<JdbcDatabase>())
                 koin.close()
+                jdbc.close()
             } finally {
                 database.close()
             }

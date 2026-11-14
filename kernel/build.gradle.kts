@@ -55,17 +55,19 @@ kotlin {
             api(libs.kotlinx.io)
             api(libs.ostrom.telemetry)
             implementation(libs.cryptography.core)
-        }
-        // The JDK provides Ed25519 there.
-        jvmMain.dependencies {
-            implementation(libs.cryptography.jdk)
-            // The JVM database layer (docs/decisions/0001, step 2): Exposed transactions over a HikariCP pool.
+            // The JVM database layer (docs/decisions/0001, step 2): Exposed transactions over a HikariCP pool, and
+            // Flyway. In commonMain, which only the jvm() target compiles, so that the modules (commonMain too) reach
+            // `JdbcDatabase` and Exposed: a class of jvmMain is not visible from a module's commonMain.
             api(libs.exposed.core)
             api(libs.exposed.jdbc)
             implementation(libs.hikari)
             implementation(libs.postgresql.jdbc)
             implementation(libs.flyway.core)
             runtimeOnly(libs.flyway.postgresql)
+        }
+        // The JDK provides Ed25519 there.
+        jvmMain.dependencies {
+            implementation(libs.cryptography.jdk)
             // Loading a key file needs its public key, which the JDK alone cannot derive from an Ed25519 private key.
             runtimeOnly(libs.bouncycastle.bcprov)
         }

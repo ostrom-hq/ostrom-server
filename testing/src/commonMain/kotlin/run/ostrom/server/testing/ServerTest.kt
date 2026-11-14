@@ -5,6 +5,7 @@ import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.EnvironmentConfigSource
 import run.ostrom.server.kernel.config.LayeredConfigSource
 import run.ostrom.server.kernel.config.MapConfigSource
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.MigrationRunner
 import run.ostrom.server.kernel.database.MigrationRunnerImpl
 import run.ostrom.server.kernel.database.databaseNotifications
@@ -25,6 +26,7 @@ import io.ktor.server.application.install
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.runTestApplication
 import io.ktor.test.dispatcher.runTestWithRealTime
+import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.dsl.module
 import kotlin.coroutines.EmptyCoroutineContext
@@ -105,29 +107,50 @@ private suspend fun ApplicationTestBuilder.serve(
         val source = LayeredConfigSource(listOf(environment, MapConfigSource(mapOf("OSTROM_SIGNUP" to "open"))))
         // The database's notifications need the pool itself, not its recording wrapper.
         val notifications = databaseNotifications(database.driver)
-        val kernel = testKernel(kernelModule(logger, driver, signer, source, notifications = notifications), modules)
-        val koin = serverKoin(kernel, modules, overrides)
+        // The JDBC pool of the modules on Exposed, connected as the serving role as the server's is.
+        val jdbc = JdbcDatabase(database.servingConfig, JdbcDatabase.MIN_POOL_SIZE)
         try {
-            val migrations = koin.get<MigrationRunner>()
-            modules.forEach { migrations.verify(it.name, it.migrations) }
-            modules.forEach { it.initialize(koin) }
-            // Every answer is checked against the pinned ostrom-core's contract when CI gives it (ContractObserver).
-            val observer = ContractObserver(Contract.from(environment))
-            application {
-                install(observer.plugin)
-                configureHttp(koin, modules)
-            }
-            // Started now, not lazily at the first request: a test that never calls the client would otherwise start
-            // the application after the finally below has closed Koin.
-            startApplication()
-            val client = createClient { install(ContentNegotiation) { json(OstromJson) } }
-            block(TestServer(koin, driver, client, database))
-            observer.finish()
+            val kernel = testKernel(
+                kernelModule(logger, driver, signer, source, notifications = notifications, jdbc = jdbc),
+                modules,
+            )
+            serveWith(serverKoin(kernel, modules, overrides), modules, driver, database, environment, block)
         } finally {
-            koin.close()
+            jdbc.close()
         }
     } finally {
         database.close()
+    }
+}
+
+/** Verifies the migrations, initializes the modules, starts the application on [koin] and runs [block]. */
+@Suppress("LongParameterList") // What the test server runs on: its Koin, modules, pool, database and configuration.
+private suspend fun ApplicationTestBuilder.serveWith(
+    koin: Koin,
+    modules: List<ServerModule>,
+    driver: RecordingDriver,
+    database: TestDatabase,
+    environment: ConfigSource,
+    block: suspend ApplicationTestBuilder.(TestServer) -> Unit,
+) {
+    try {
+        val migrations = koin.get<MigrationRunner>()
+        modules.forEach { migrations.verify(it.name, it.migrations) }
+        modules.forEach { it.initialize(koin) }
+        // Every answer is checked against the pinned ostrom-core's contract when CI gives it (ContractObserver).
+        val observer = ContractObserver(Contract.from(environment))
+        application {
+            install(observer.plugin)
+            configureHttp(koin, modules)
+        }
+        // Started now, not lazily at the first request: a test that never calls the client would otherwise start
+        // the application after the finally below has closed Koin.
+        startApplication()
+        val client = createClient { install(ContentNegotiation) { json(OstromJson) } }
+        block(TestServer(koin, driver, client, database))
+        observer.finish()
+    } finally {
+        koin.close()
     }
 }
 

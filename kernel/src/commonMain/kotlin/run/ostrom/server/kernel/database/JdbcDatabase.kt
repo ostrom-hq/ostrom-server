@@ -9,11 +9,13 @@ import java.net.URLEncoder
 import java.sql.Connection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.jetbrains.exposed.v1.core.TextColumnType
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import org.jetbrains.exposed.v1.core.DatabaseConfig as ExposedConfig
+import kotlin.uuid.Uuid
 
 /**
  * Exposed transactions over a bounded HikariCP pool, as TeamCode's `Database` (docs/decisions/0001, step 2), with the
@@ -44,6 +46,26 @@ class JdbcDatabase(config: DatabaseConfig, poolSize: Int) : AutoCloseable {
      */
     suspend fun <T> query(block: JdbcTransaction.() -> T): T = withContext(Dispatchers.IO) {
         transaction(exposed) { block() }
+    }
+
+    /**
+     * Runs [block] in one transaction confined to one organization, as the sqlx4k [inOrg]: the transaction switches to
+     * [TENANT_ROLE] and sets [TENANT_SETTING] for itself alone (`SET LOCAL`, `set_config(…, true)`), so a tenant
+     * table's row-level security policy only shows and accepts the rows of [orgId], whatever the query says. Both end
+     * with the transaction: the pooled connection goes back with neither.
+     *
+     * The queries still filter on `org_id` themselves: the policy is the second wall until a later step drops
+     * row-level security for typed org filters (SD-08).
+     *
+     * @param orgId The organization the queries are confined to.
+     * @param block The queries.
+     *
+     * @return What [block] returns, after the commit.
+     */
+    suspend fun <T> inOrg(orgId: Uuid, block: JdbcTransaction.() -> T): T = query {
+        exec("SET LOCAL ROLE $TENANT_ROLE")
+        exec("SELECT set_config('$TENANT_SETTING', ?, true)", listOf(TextColumnType() to orgId.toString())) {}
+        block()
     }
 
     /** The pool's state for `/ready` ([PoolHealthCheck]), read without opening a connection. */
