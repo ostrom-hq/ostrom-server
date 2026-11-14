@@ -652,7 +652,7 @@ member rejects their own. Text
 that looks like a credential is refused (422 `memory_secret`). A memory holds 5 000 organization entries and 2 000 per
 member. The index and the search never read `content`; the audit names ids only.
 
-The curation (TeamCode #273, coming soon in the contract and the console) is off for an organization until an
+The curation (TeamCode #273, coming soon in the console) is off for an organization until an
 administrator turns it on (`PUT /api/v1/memory/curation`, a person's, audited `memory.curation_enabled` or
 `memory.curation_disabled`); the setting is a row of `memory_settings`, never an environment variable. Every hour
 (`memory/curate`, on the same lease, 4 minutes at most), a run reads at most 20 scopes of the organizations that turned
