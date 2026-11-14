@@ -4,6 +4,7 @@ package run.ostrom.server.usage
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.gateway.domain.ModelUsageSink
 import run.ostrom.server.kernel.database.EveryCallScheduledWork
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.ScheduledWork
 import run.ostrom.server.kernel.database.SchemaMigration
@@ -70,9 +71,9 @@ object UsageModule : ServerModule {
     override val koinModule: Module = module {
         // The retention an administrator sets in the console (the admin module collects every bound section).
         single<SettingsSection>(named(UsageSettings.SECTION.name)) { UsageSettings.SECTION }
-        single<UsageRepository> { UsageRepositoryImpl(get()) }
+        single<UsageRepository> { UsageRepositoryImpl(get<JdbcDatabase>()) }
         single { UsageFeedImpl() }
-        single { ReplicatedUsageFeed(get(), get(), UsageFeedReadsImpl(get()), get()) }
+        single { ReplicatedUsageFeed(get(), get(), UsageFeedReadsImpl(get<JdbcDatabase>()), get()) }
         single<UsageFeed> { get<ReplicatedUsageFeed>() }
         single<UsageRecorder> { UsageRecorderImpl(get(), get(), get()) }
         // The ports of the gateway and the sessions, which fall back to dropping everything without this module.

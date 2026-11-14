@@ -2,12 +2,10 @@
 package run.ostrom.server.usage.infrastructure
 
 import run.ostrom.server.kernel.database.DatabaseNotifications
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.logging.Logger
-import run.ostrom.server.secrets.infrastructure.fetchInOrg
 import run.ostrom.server.usage.domain.UsageEvent
 import run.ostrom.server.usage.domain.UsageFeed
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
@@ -33,28 +31,14 @@ fun interface UsageFeedReads {
 }
 
 /**
- * [UsageFeedReads] on the ledger, under the org's row-level security.
+ * [UsageFeedReads] on the ledger, under the org's row-level security, by primary key ([feedRead]).
  *
- * @param driver The database.
+ * @param database The JDBC pool.
  */
-class UsageFeedReadsImpl(private val driver: Driver) : UsageFeedReads {
-    override suspend fun read(orgId: Uuid, ids: List<Uuid>): List<UsageEvent> {
-        val statement = Statement.create(usageFeedReadSql(ids.size)).bind("org_id", orgId)
-        ids.forEachIndexed { index, id -> statement.bind("id$index", id) }
-        return driver.fetchInOrg(orgId, statement).getOrThrow().map { it.toEvent() }
-    }
+class UsageFeedReadsImpl(private val database: JdbcDatabase) : UsageFeedReads {
+    override suspend fun read(orgId: Uuid, ids: List<Uuid>): List<UsageEvent> =
+        database.inOrg(orgId) { feedRead(orgId, ids).map { it.toEvent() } }
 }
-
-/**
- * The events of one org among [count] ids (`:id0` … ), by their primary key.
- *
- * @param count The ids bound.
- *
- * @return The statement's text.
- */
-internal fun usageFeedReadSql(count: Int): String =
-    "SELECT $COLUMNS FROM usage_events WHERE org_id = :org_id AND id IN (" +
-        (0 until count).joinToString(", ") { ":id$it" } + ")"
 
 /**
  * [UsageFeed] across replicas (TC-REP-1): an event published here reaches this replica's subscribers at once and the

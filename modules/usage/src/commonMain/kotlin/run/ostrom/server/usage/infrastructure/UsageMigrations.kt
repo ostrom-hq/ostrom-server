@@ -191,8 +191,8 @@ private val SPEND_DAY_FUNCTIONS =
 
 /**
  * Version 10, TeamCode #163: the spend of each UTC day, by organization, member and workflow, which a budget's
- * admission reads instead of adding up the month's calls while it holds the organization's lock (UsageQueries
- * .holdTotals): a month is at most 31 days of an organization's members and workflows, whatever its calls. Kept as
+ * admission reads instead of adding up the month's calls while it holds the organization's lock
+ * (holdTotalsRead): a month is at most 31 days of an organization's members and workflows, whatever its calls. Kept as
  * version 7 keeps `usage_daily` (statement triggers run as `ostrom_router`, one upsert in key order, the ledger locked
  * while the router writes the spend of the calls recorded before), and exact: every call whose cost is not zero
  * counts, as in the sums it replaces.

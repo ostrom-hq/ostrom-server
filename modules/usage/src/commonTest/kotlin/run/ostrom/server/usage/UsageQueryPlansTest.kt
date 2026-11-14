@@ -1,16 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.usage
 
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
-import run.ostrom.server.secrets.infrastructure.fetchInOrg
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.usage.domain.UsageGroupBy
-import run.ostrom.server.usage.infrastructure.UsageQueries
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
+import run.ostrom.server.usage.domain.DailySpendLimits
+import run.ostrom.server.usage.domain.HoldWindow
+import run.ostrom.server.usage.domain.SpendHold
+import run.ostrom.server.usage.domain.SpendLimits
+import run.ostrom.server.usage.domain.UsageCursor
+import run.ostrom.server.usage.domain.UsageWindow
+import run.ostrom.server.usage.infrastructure.accountSpentRead
+import run.ostrom.server.usage.infrastructure.holdTotalsRead
+import run.ostrom.server.usage.infrastructure.launchSpentRead
+import run.ostrom.server.usage.infrastructure.listRead
+import run.ostrom.server.usage.infrastructure.spentRead
+import run.ostrom.server.usage.infrastructure.summaryRead
+import run.ostrom.server.usage.infrastructure.workflowSpentRead
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
@@ -19,14 +29,16 @@ import org.koin.core.module.Module
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 import kotlin.uuid.Uuid
 
 /**
  * The ledger's request-path reads under `EXPLAIN ANALYZE`, on the tenant role with its row-level security policy, over
- * a table where the org is a small part of the rows: each read goes through an index, never a scan of the table. The
- * plans are written to `build/reports/explain/usage.txt`, uploaded with the CI's reports.
+ * a table where the org is a small part of the rows: each read, as Exposed sends it, goes through an index, never a
+ * scan of the table. The plans are written to `build/reports/explain/usage.txt`, uploaded with the CI's reports.
  */
 class UsageQueryPlansTest {
     private val clock = TestClock()
@@ -76,53 +88,37 @@ class UsageQueryPlansTest {
     fun theLedgersRequestPathReadsUseTheirIndexes() =
         serverTest(listOf(SecretsModule, UsageModule), overrides) { server ->
             server.fill()
-            val driver = server.driver
+            val org = TestCallers.orgA
             val since = TestCallers.epoch - 30.days
             val member = TestCallers.memberA.memberId
-            val plans = linkedMapOf(
-                "spend of the org (budgets, gateway)" to driver.explain(UsageQueries.spent(member = false)) {
-                    bind("since", since)
-                },
-                "spend of a member (budgets, gateway)" to driver.explain(UsageQueries.spent(member = true)) {
-                    bind("since", since).bind("member_id", member)
-                },
-                "spend of a shared account (sharing)" to driver.explain(UsageQueries.ACCOUNT_SPENT) {
-                    bind("since", since).bind("account_id", account)
-                },
-                "newest page of the org" to driver.explain(UsageQueries.list(false, UsageQueries.Cursor.NONE)) {
-                    bind("limit", 50)
-                },
-                "next page of a member" to driver.explain(UsageQueries.list(true, UsageQueries.Cursor.AT_AND_ID)) {
-                    bind("limit", 50).bind("member_id", member)
-                        .bind("before_at", since).bind("before_id", Uuid.random())
-                },
+            val hold = SpendHold(org, member, Uuid.random(), micros = 1_000, workflowId = "review")
+            val window = HoldWindow(since, TestCallers.epoch, TestCallers.epoch + 5.minutes)
+            val today = DailySpendLimits(TestCallers.epoch - 1.hours, orgMicros = 1, memberMicros = 1)
+            val reads = linkedMapOf(
+                "spend of the org (budgets, gateway)" to spentRead(org, null, since).query,
+                "spend of a member (budgets, gateway)" to spentRead(org, member, since).query,
+                "spend of a shared account (sharing)" to accountSpentRead(org, account, since).query,
+                "newest page of the org" to listRead(org, null, null, 50).query,
+                "next page of the org" to listRead(org, null, UsageCursor(since, Uuid.random()), 50).query,
+                "next page of a member" to listRead(org, member, UsageCursor(since, Uuid.random()), 50).query,
                 "spend of a launch while its session ran (session receipt)" to
-                    driver.explain(UsageQueries.LAUNCH_SPENT) {
-                        bind(
-                            "launch_id",
-                            "lch_1",
-                        ).bind("from", TestCallers.epoch - 2.hours).bind("to", TestCallers.epoch)
-                    },
+                    launchSpentRead(org, "lch_1", TestCallers.epoch - 2.hours, TestCallers.epoch).query,
                 "spend and holds of the org and a member, by the month and the day (gateway admission)" to
-                    driver.explain(UsageQueries.holdTotals(true, member = true, orgDay = true, memberDay = true)) {
-                        bind("since", since).bind("now", TestCallers.epoch).bind("call_id", Uuid.random())
-                            .bind("member_id", member).bind("day_since", TestCallers.epoch - 1.hours)
-                    },
-                "spend of a workflow (its budgets)" to driver.explain(UsageQueries.WORKFLOW_SPENT) {
-                    bind("since", since).bind("workflow_id", "review")
-                },
+                    holdTotalsRead(hold.copy(workflowId = null), SpendLimits(1, 1, today), window).query,
+                "spend of a workflow (its budgets)" to workflowSpentRead(org, "review", since).query,
                 "spend and holds of a workflow, by the month and the day (gateway admission)" to
-                    driver.explain(
-                        UsageQueries.holdTotals(false, false, false, false, workflow = true, workflowDay = true),
-                    ) {
-                        bind("since", since).bind("now", TestCallers.epoch).bind("call_id", Uuid.random())
-                            .bind("workflow_id", "review").bind("day_since", TestCallers.epoch - 1.hours)
-                    },
+                    holdTotalsRead(
+                        hold,
+                        SpendLimits(null, null, DailySpendLimits(today.since, null, null, 1), workflowMicros = 1),
+                        window,
+                    ).query,
+                "spend and holds of a launch over its life (gateway admission)" to
+                    holdTotalsRead(hold.copy(launchId = "lch_1"), SpendLimits(null, null, launchMicros = 1), window).query,
                 "summary of 30 days by model" to
-                    driver.explain(UsageQueries.summary(UsageGroupBy.MODEL, false, false)) {
-                        bind("since", since).bind("limit", 1000)
-                    },
+                    summaryRead(UsageWindow(org, null, since), UsageGroupBy.MODEL, 1000).query,
             )
+            val database = server.koin.get<JdbcDatabase>()
+            val plans = reads.mapValues { (_, read) -> database.inOrg(org) { plan { read } } }
             val report = plans.entries.joinToString("\n\n") { (name, plan) -> "-- $name\n$plan" }
             SystemFileSystem.createDirectories(Path("build/reports/explain"))
             SystemFileSystem.sink(Path("build/reports/explain/usage.txt")).buffered().use { it.writeString(report) }
@@ -131,13 +127,8 @@ class UsageQueryPlansTest {
                 assertFalse("Seq Scan on usage_holds" in plan, "$name scans the holds:\n$plan")
                 assertFalse("Seq Scan on usage_spend_days" in plan, "$name scans the spend of the days:\n$plan")
             }
+            // The cursor `(at, id) < (?, ?)` walks the org's index on (org_id, at, id) from where the page starts.
+            val next = plans.getValue("next page of the org")
+            assertTrue("usage_events_org_at" in next && "Sort" !in next, "The org's next page sorts:\n$next")
         }
-
-    /** The plan of [sql] in org A, as the tenant role reads it; `:org_id` is bound, [bind] adds the rest. */
-    private suspend fun Driver.explain(sql: String, bind: Statement.() -> Statement): String {
-        val statement = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org_id", TestCallers.orgA).bind()
-        return fetchInOrg(TestCallers.orgA, statement).getOrThrow().joinToString("\n") {
-            it.get("QUERY PLAN").asString()
-        }
-    }
 }
