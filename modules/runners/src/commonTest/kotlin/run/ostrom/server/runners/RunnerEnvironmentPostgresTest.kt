@@ -55,8 +55,16 @@ import kotlin.uuid.Uuid
 /** A session's recipe, from its creation to its runner's preparation, against a real PostgreSQL and real HTTP. */
 class RunnerEnvironmentPostgresTest {
     private var answer = RunnerVariableValues(mapOf("NPM_TOKEN" to "npm-alice"), emptyList())
+    private val members = module {
+        single<MemberDirectory> {
+            object : MemberDirectory {
+                override suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean =
+                    memberId == ALICE.toString()
+            }
+        }
+    }
     private val overrides = module {
-        includes(testIdentities)
+        includes(testIdentities, members)
         single<RunnerVariables> { RunnerVariables { _, _ -> answer } }
         single<RunnerGitHubTokens> {
             object : RunnerGitHubTokens {
@@ -64,12 +72,6 @@ class RunnerEnvironmentPostgresTest {
 
                 override suspend fun token(orgId: Uuid, memberId: String): RunnerGitHubToken =
                     RunnerGitHubToken.NotLinked
-            }
-        }
-        single<MemberDirectory> {
-            object : MemberDirectory {
-                override suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean =
-                    memberId == ALICE.toString()
             }
         }
         single<MemberLogins> {
@@ -84,6 +86,25 @@ class RunnerEnvironmentPostgresTest {
 
     private fun environmentTest(block: suspend (TestServer) -> Unit) =
         serverTest(listOf(RunnersModule), overrides) { server -> block(server) }
+
+    @Test
+    fun withoutTheOrgsModuleThePreparationIsNotServedSoTheRunnerClonesAsBefore() =
+        serverTest(listOf(RunnersModule), testIdentities) { server ->
+            val (id, token) = server.started()
+            for (path in listOf("environment", "preparation")) {
+                val body = """{"sessionId":"$id","epoch":1,"phase":"running_setup"}"""
+                assertEquals(HttpStatusCode.NotFound, server.runner(path, "Bearer $token", body).status, path)
+            }
+        }
+
+    @Test
+    fun withoutTheMembersLoginsTheOwnerCommitsUnderTheirId() =
+        serverTest(listOf(RunnersModule), module { includes(testIdentities, members) }) { server ->
+            val (id, token) = server.started(recipe.copy(requiredVariables = emptyList()))
+            val asked = server.runner("environment", "Bearer $token", """{"sessionId":"$id","epoch":1}""")
+            assertEquals(HttpStatusCode.OK, asked.status, asked.bodyAsText())
+            assertEquals(ALICE.toString(), asked.body<RunnerEnvironmentResponse>().git.name)
+        }
 
     private suspend fun TestServer.runner(path: String, auth: String?, body: String): HttpResponse =
         client.post("/api/v1/cloud/runner/$path") {

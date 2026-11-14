@@ -197,10 +197,8 @@ class RunnerEnvironmentUseCaseImpl(
     }
 }
 
-/** Nobody is an active member: a server built without the orgs module, where no session prepares (fail closed). */
-object NoActiveMembers : MemberDirectory, MemberLogins {
-    override suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean = false
-
+/** No member has a known login: a server built without the orgs module, the Git identity named by the owner's id. */
+object NoMemberLogins : MemberLogins {
     override suspend fun idsOf(orgId: Uuid, logins: Collection<String>): Map<String, Uuid> = emptyMap()
 
     override suspend fun loginsOf(orgId: Uuid, memberIds: Collection<Uuid>): Map<Uuid, String> = emptyMap()

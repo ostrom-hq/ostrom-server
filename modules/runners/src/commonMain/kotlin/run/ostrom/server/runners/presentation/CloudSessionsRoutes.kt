@@ -10,6 +10,7 @@ import run.ostrom.server.runners.domain.CloudSessionNotFoundException
 import run.ostrom.server.runners.domain.CreateCloudSessionPayload
 import run.ostrom.server.runners.domain.InvalidCloudSessionRequestException
 import run.ostrom.server.runners.domain.RepositorySpec
+import run.ostrom.server.runners.domain.RunnerEnvironmentUseCase
 import run.ostrom.server.runners.domain.RunnerExecutionRequest
 import run.ostrom.server.runners.domain.RunnerGitHubRequest
 import run.ostrom.server.runners.domain.RunnerGitHubToken
@@ -135,23 +136,27 @@ private fun Route.runnerChannelRoutes(dependencies: CloudSessionsRoutesDependenc
             call.response.header(HttpHeaders.CacheControl, "no-store")
             call.respond(RunnerVariablesResponse(values.variables, values.unavailable))
         }
+    }
+    runnerEnvironment?.let { preparationRoutes(dependencies, it) }
+}
+
+/** The runner's preparation (`runners.cloud.environment.v1`): what to prepare, and its phases or its failure. */
+private fun Route.preparationRoutes(dependencies: CloudSessionsRoutesDependencies, use: RunnerEnvironmentUseCase) {
+    bodyLimit(HEARTBEAT_BODY_LIMIT) {
         // What to prepare, with the owner's values: never cached, never logged.
         post<RunnerEnvironmentApi> {
             val token = call.runnerToken()
-            checkRunnerToken(token)
+            dependencies.checkRunnerToken(token)
             val request = call.receive<RunnerExecutionBody>()
-            val prepared = runnerEnvironment.environment(
-                token,
-                RunnerExecutionRequest(parseId(request.sessionId), request.epoch),
-            )
+            val prepared = use.environment(token, RunnerExecutionRequest(parseId(request.sessionId), request.epoch))
             call.response.header(HttpHeaders.CacheControl, "no-store")
             call.respond(prepared.toResponse())
         }
         post<RunnerPreparationApi> {
             val token = call.runnerToken()
-            checkRunnerToken(token)
+            dependencies.checkRunnerToken(token)
             val request = call.receive<RunnerPreparationRequest>()
-            val answer = runnerEnvironment.progress(token, request.toReport(parseId(request.sessionId)))
+            val answer = use.progress(token, request.toReport(parseId(request.sessionId)))
             call.respond(RunnerHeartbeatResponse(answer.instruction.wire, answer.state.wire))
         }
     }

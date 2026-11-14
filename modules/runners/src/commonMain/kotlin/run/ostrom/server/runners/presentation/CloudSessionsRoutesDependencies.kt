@@ -26,7 +26,8 @@ import run.ostrom.server.runners.domain.SetCloudSessionGitHubAccessUseCase
  * @property setGitHubAccess Sets whose GitHub access a session uses.
  * @property runnerGitHubToken Hands a runner its owner's GitHub token.
  * @property runnerVariables Hands a runner its owner's environment variables.
- * @property runnerEnvironment Hands a runner what to prepare, and records its preparation.
+ * @property runnerEnvironment Hands a runner what to prepare, and records its preparation; null without the orgs
+ *   module, whose routes are then not served.
  */
 data class CloudSessionsRoutesDependencies(
     val createCloudSession: CreateCloudSessionUseCase,
@@ -39,5 +40,5 @@ data class CloudSessionsRoutesDependencies(
     val setGitHubAccess: SetCloudSessionGitHubAccessUseCase,
     val runnerGitHubToken: RunnerGitHubTokenUseCase,
     val runnerVariables: RunnerVariablesUseCase,
-    val runnerEnvironment: RunnerEnvironmentUseCase,
+    val runnerEnvironment: RunnerEnvironmentUseCase? = null,
 )

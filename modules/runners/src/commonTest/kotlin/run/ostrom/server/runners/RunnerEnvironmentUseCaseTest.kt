@@ -12,7 +12,7 @@ import run.ostrom.server.runners.domain.ExecutionFencedException
 import run.ostrom.server.runners.domain.GitHubAccessMode
 import run.ostrom.server.runners.domain.GitIdentity
 import run.ostrom.server.runners.domain.InvalidCloudSessionRequestException
-import run.ostrom.server.runners.domain.NoActiveMembers
+import run.ostrom.server.runners.domain.NoMemberLogins
 import run.ostrom.server.runners.domain.NotPreparingException
 import run.ostrom.server.runners.domain.PreparationFailedException
 import run.ostrom.server.runners.domain.PreparationFailure
@@ -266,9 +266,8 @@ class RunnerEnvironmentUseCaseTest {
     }
 
     @Test
-    fun withoutTheOrgsModuleNobodyIsAnActiveMember() = runTest {
-        assertFalse(NoActiveMembers.isActiveMember(ORG_A, ALICE.toString()))
-        assertEquals(emptyMap(), NoActiveMembers.idsOf(ORG_A, listOf("alice")))
-        assertEquals(emptyMap(), NoActiveMembers.loginsOf(ORG_A, listOf(ALICE)))
+    fun withoutTheOrgsModuleNoMemberHasALogin() = runTest {
+        assertEquals(emptyMap(), NoMemberLogins.idsOf(ORG_A, listOf("alice")))
+        assertEquals(emptyMap(), NoMemberLogins.loginsOf(ORG_A, listOf(ALICE)))
     }
 }

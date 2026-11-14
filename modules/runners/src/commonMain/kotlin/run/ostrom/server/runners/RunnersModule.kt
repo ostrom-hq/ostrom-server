@@ -58,9 +58,8 @@ import run.ostrom.server.runners.domain.RunnerAssignmentsRepository
 import run.ostrom.server.runners.domain.RunnerGitHubTokenUseCase
 import run.ostrom.server.runners.domain.RunnerGitHubTokenUseCaseImpl
 import run.ostrom.server.runners.domain.RunnerGitHubTokens
-import run.ostrom.server.runners.domain.RunnerEnvironmentUseCase
 import run.ostrom.server.runners.domain.RunnerEnvironmentUseCaseImpl
-import run.ostrom.server.runners.domain.NoActiveMembers
+import run.ostrom.server.runners.domain.NoMemberLogins
 import run.ostrom.server.runners.domain.RunnerHeartbeatUseCase
 import run.ostrom.server.runners.domain.RunnerHeartbeatUseCaseImpl
 import run.ostrom.server.runners.domain.RunnerTokens
@@ -177,20 +176,23 @@ object RunnersModule : ServerModule {
         }
         single<RunnerVariables> { runnerVariables(getOrNull<ResolveEnvironmentUseCase>()) }
         single<RunnerVariablesUseCase> { RunnerVariablesUseCaseImpl(get(), get(), get()) }
-        // An owner nobody vouches for (no orgs module) is no active member: their sessions prepare nothing.
-        single<RunnerEnvironmentUseCase> {
-            RunnerEnvironmentUseCaseImpl(
-                get(),
-                get(),
-                get(),
-                getOrNull<RunnerGitHubTokens>() ?: NoRunnerGitHubTokens,
-                getOrNull<MemberDirectory>() ?: NoActiveMembers,
-                getOrNull<MemberLogins>() ?: NoActiveMembers,
-                get(),
-            )
-        }
+        // Without the orgs module nobody vouches for an owner: the preparation routes are not served (404), so a
+        // runner falls back to the legacy clone instead of failing every session.
         single {
-            CloudSessionsRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
+            val environment = getOrNull<MemberDirectory>()?.let { members ->
+                RunnerEnvironmentUseCaseImpl(
+                    get(),
+                    get(),
+                    get(),
+                    getOrNull<RunnerGitHubTokens>() ?: NoRunnerGitHubTokens,
+                    members,
+                    getOrNull<MemberLogins>() ?: NoMemberLogins,
+                    get(),
+                )
+            }
+            CloudSessionsRoutesDependencies(
+                get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), environment,
+            )
         }
         single<ListRunnersUseCase> { ListRunnersUseCaseImpl(get(), get()) }
         single<RegisteredRunnersRepository> { RegisteredRunnersRepositoryImpl(get()) }
