@@ -1,6 +1,6 @@
 # ostrom-server contributor instructions
 
-This is the Ostrom server, on the JVM in production (Java 21, a jib image for linux/amd64 and linux/arm64, [docs/decisions/0001](docs/decisions/0001-jvm-and-teamcode-stack.md)), Ktor CIO, PostgreSQL through Exposed over HikariCP (`modules/todos` is the reference, docs/MODULES.md section 4), sqlx4k in the modules not moved yet. The session runner (`runner/`) is the one Kotlin/Native program (`runner/gradle.properties`); the server modules have only the `jvm()` target. Apache-2.0, `ee/` under the commercial license.
+This is the Ostrom server, on the JVM in production (Java 21, a jib image for linux/amd64 and linux/arm64, [docs/decisions/0001](docs/decisions/0001-jvm-and-teamcode-stack.md)), Ktor CIO, PostgreSQL through Exposed over HikariCP (`modules/todos` is the reference, docs/MODULES.md section 4), sqlx4k in the modules not moved yet. The session runner (`runner/`) and the push relay (`push/`, ported from TeamCode, its Docker Hub image `ostromhq/ostrom-push`) are the two Kotlin/Native programs (`runner/gradle.properties`, `push/gradle.properties`); the server modules have only the `jvm()` target. Apache-2.0, `ee/` under the commercial license.
 
 **The conventions are in [ostrom-core `docs/CONVENTIONS.md`](https://github.com/ostrom-hq/ostrom-core/blob/main/docs/CONVENTIONS.md) (local clone: `../ostrom-core/docs/CONVENTIONS.md`).** They follow Nathan Fallet's practices (teamcode, asonar,
 pkg) and bind every contributor, human or agent. This file only summarizes the most important rules; when in

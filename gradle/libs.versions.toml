@@ -15,6 +15,8 @@ okio = "3.18.2"
 clikt = "5.1.0"
 mordant = "3.0.2"
 cryptography = "0.6.0"
+# TeamCode's FCM library (the push relay, push/)
+flareon = "0.1.2"
 bouncycastle = "1.86"
 sqlx4k = "1.17.0"
 # The JVM database stack of docs/decisions/0001, TeamCode's versions (step 2).
@@ -101,6 +103,10 @@ okio = { module = "com.squareup.okio:okio", version.ref = "okio" }
 okio-fakefilesystem = { module = "com.squareup.okio:okio-fakefilesystem", version.ref = "okio" }
 clikt = { module = "com.github.ajalt.clikt:clikt", version.ref = "clikt" }
 mordant = { module = "com.github.ajalt.mordant:mordant-coroutines", version.ref = "mordant" }
+
+# Firebase Cloud Messaging with Google credentials (the push relay)
+flareon-core = { module = "me.nathanfallet.flareon:core", version.ref = "flareon" }
+flareon-messaging = { module = "me.nathanfallet.flareon:messaging", version.ref = "flareon" }
 
 # Crypto: one static OpenSSL 3.5 LTS on every native target; JDK provider for the test-only JVM target
 cryptography-core = { module = "dev.whyoleg.cryptography:cryptography-core", version.ref = "cryptography" }

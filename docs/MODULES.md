@@ -251,7 +251,7 @@ Every request is already logged once by the kernel (method, route template — n
 ## 8. Before the PR
 
 - CI job `ci` green: `scripts/check-conventions.py`, then
-  `./gradlew detekt jvmTest koverVerify koverXmlReport`, the runner's `:runner:linuxX64Test`, the image (`./gradlew
+  `./gradlew detekt jvmTest koverVerify koverXmlReport`, the runner's and the push relay's `:runner:linuxX64Test :push:linuxX64Test`, the image (`./gradlew
   :image:publishImageToLocalRegistry`, jib) and its smoke test.
 - One PR per module step, small; the PR touches only `modules/<name>/` (and its line in `ServerModules.kt` if needed).
 - `ee/` code: same shape, under `ee/modules/<name>/` (Gradle path `:ee:modules:<name>`, discovered like `modules/`),
