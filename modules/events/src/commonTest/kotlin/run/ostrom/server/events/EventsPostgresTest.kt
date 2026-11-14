@@ -29,6 +29,7 @@ import run.ostrom.server.events.domain.OrgEventsRepository
 import run.ostrom.server.events.infrastructure.EventsPurgeWorker
 import run.ostrom.server.events.infrastructure.JournalOrgEventPublisher
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.auth.OrgPrincipal
 import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.auth.PrincipalChannel
@@ -90,6 +91,14 @@ class EventsPostgresTest {
             object : PrincipalOrgResolver {
                 override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): OrgPrincipal? =
                     members[principal.subjectId]?.takeIf { orgId == null || it.orgId == orgId }
+            }
+        }
+        single<MemberLogins> {
+            object : MemberLogins {
+                override suspend fun idsOf(orgId: Uuid, logins: Collection<String>): Map<String, Uuid> = emptyMap()
+
+                override suspend fun loginsOf(orgId: Uuid, memberIds: Collection<Uuid>): Map<Uuid, String> =
+                    mapOf(miaA to "mia", adminA to "tom").filterKeys { it in memberIds }
             }
         }
         if (instantPolls) single<OpenEventFeedUseCase> { OpenEventFeedUseCaseImpl(get()) { yield() } }
@@ -159,6 +168,27 @@ class EventsPostgresTest {
             server.publish(orgA, draft(OrgEventType.TODO_UPDATED, "s-2", miaA, tooLong))
         }
         assertEquals(3, events.head(orgA))
+    }
+
+    @Test
+    fun anApproverReadsTheApprovalEventsThatNameThemWhateverTheirRole() = serverTest(modules, overrides()) { server ->
+        val events = server.koin.get<OrgEventsRepository>()
+        fun approval(type: OrgEventType, subject: String, approver: String) =
+            draft(type, subject, null, JsonObject(mapOf("approver" to JsonPrimitive(approver))))
+        server.publish(
+            orgA,
+            approval(OrgEventType.APPROVAL_REQUESTED, "r-1", "Mia"),
+            approval(OrgEventType.APPROVAL_REQUESTED, "r-2", "tom"),
+            approval(OrgEventType.APPROVAL_DECIDED, "r-1", "mia"),
+            draft(OrgEventType.WAIT_RESOLVED, "w-1", null, JsonObject(mapOf("approver" to JsonPrimitive("mia")))),
+        )
+        val mia = events.read(orgA, EventAudience(miaA, false, "mia"), 0, null, 100)
+        assertEquals(listOf("r-1", "r-1"), mia.events.map { it.subjectId }, "Hers, in any case, and no one else's")
+        assertEquals(listOf(1L, 3L), mia.events.map { it.seq })
+        val unknown = events.read(orgA, EventAudience(miaA, false, null), 0, null, 100)
+        assertTrue(unknown.events.isEmpty(), "Without a login, none")
+        val admin = events.read(orgA, EventAudience(adminA, true, "tom"), 0, null, 100)
+        assertEquals(4, admin.events.size, "An administrator reads the whole organization's, as before")
     }
 
     @Test
@@ -246,6 +276,23 @@ class EventsPostgresTest {
                 server.publish(orgA, draft(OrgEventType.WAIT_RESOLVED, "w-2", adminA))
                 server.publish(orgA, draft(OrgEventType.WAIT_RESOLVED, "w-1", miaA))
                 assertEquals(listOf("id: 4", "event: cloud.wait.resolved"), stream.frame().take(2), "Not the admin's")
+            }
+        }
+        // An approver who is no administrator reads the approval event that names their login, in the stream too.
+        server.publish(
+            orgA,
+            draft(
+                OrgEventType.APPROVAL_REQUESTED,
+                "r-1",
+                null,
+                JsonObject(mapOf("approver" to JsonPrimitive("Mia"))),
+            ),
+        )
+        server.client.prepareGet("/api/v1/events?after=4") { bearerAuth("mia-a") }.execute { response ->
+            val stream = response.bodyAsChannel()
+            withTimeout(30.seconds) {
+                stream.frame()
+                assertEquals(listOf("id: 5", "event: cloud.approval.requested"), stream.frame().take(2))
             }
         }
         server.client.prepareGet("/api/v1/events") {

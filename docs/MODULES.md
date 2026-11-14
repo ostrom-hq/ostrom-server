@@ -779,7 +779,9 @@ owner, so the serving role reads the history (the start-up check) and never rewr
   The gates publish theirs in the gate's own transaction: `cloud.approval.requested` when an enforced gate asks its
   approvers and `cloud.approval.decided` when it is answered, one per approval request with its own status, events of
   the whole organization naming the approver's login (no other module is read inside the gate's transaction), never
-  the gate's label or evidence.
+  the gate's label or evidence. The feed shows an approver, whatever their role, the approval events that name their login
+  (TeamCode's wait events belong to the person asked, not only to the session's owner): the login of the reader is
+  resolved when the stream opens, outside any gate's transaction, and an event of another approver is never shown.
   The notifications module holds the router's rules (`NotificationRules`: a wait a person resolves tells its
   assignee, a failed turn's wait its owner), each member's switches per channel and kind
   (`notifications_member_settings`, contract `getNotificationSettings`, no row meaning on) and the channels the server

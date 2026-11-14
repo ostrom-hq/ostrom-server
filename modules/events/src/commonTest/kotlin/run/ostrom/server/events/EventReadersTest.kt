@@ -15,7 +15,9 @@ import run.ostrom.server.events.presentation.readerOf
 import run.ostrom.server.events.presentation.stillReads
 import run.ostrom.server.events.presentation.toOrgEvent
 import run.ostrom.server.events.presentation.typesOf
+import run.ostrom.server.events.presentation.withLogin
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.auth.NoOrganizationCredentialException
 import run.ostrom.server.kernel.auth.OrgPrincipal
 import run.ostrom.server.kernel.auth.OrgRole
@@ -71,6 +73,20 @@ class EventReadersTest {
         assertFailsWith<EventsScopeException> { members.readerOf(user(setOf("cloud:admin"))) }
         val agent = AuthenticatedPrincipal("lch_1", PrincipalKind.AGENT, setOf("agent:session"))
         assertFailsWith<EventsScopeException> { members.readerOf(agent) }
+    }
+
+    @Test
+    fun theReadersLoginComesFromTheMembersOfTheirOrganizationWhenOneIsBound() = runTest {
+        val audience = EventAudience(mia, false)
+        val logins = object : MemberLogins {
+            override suspend fun idsOf(orgId: Uuid, logins: Collection<String>): Map<String, Uuid> = emptyMap()
+
+            override suspend fun loginsOf(orgId: Uuid, memberIds: Collection<Uuid>): Map<Uuid, String> =
+                if (orgId == org) mapOf(mia to "mia") else emptyMap()
+        }
+        assertEquals(EventAudience(mia, false, "mia"), audience.withLogin(org, logins))
+        assertEquals(audience, audience.withLogin(Uuid.random(), logins), "Not a member of that organization")
+        assertEquals(audience, audience.withLogin(org, null), "No logins bound: none")
     }
 
     @Test
