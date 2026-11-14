@@ -218,19 +218,16 @@ jobs:
             image=$WANTED_IMAGE
             if [ -z "$image" ]; then
               # as cli-journey.yml: a head whose image failed or is still building is skipped; any other error stops.
-              # Until main's last commits are all JVM images on Docker Hub, a commit merged before the JVM has its
-              # native image on GHCR only (docs/decisions/0001): docker.io first, then ghcr.io. To drop once done.
               for commit in $(git -C server rev-list --first-parent --max-count=10 origin/main); do
-                for candidate in docker.io/ostromhq/ostrom-server:sha-${commit} ghcr.io/ostrom-hq/ostrom-server:sha-${commit:0:7}; do
-                  if error=$(docker pull --quiet "$candidate" 2>&1 >/dev/null); then
-                    image=$candidate
-                    break 2
-                  fi
-                  case "$error" in
-                    *"manifest unknown"* | *"not found"* | *"repository does not exist"*) echo "$candidate is not published yet" ;;
-                    *) echo "::error::$candidate cannot be pulled: $error"; exit 1 ;;
-                  esac
-                done
+                candidate=docker.io/ostromhq/ostrom-server:sha-${commit}
+                if error=$(docker pull --quiet "$candidate" 2>&1 >/dev/null); then
+                  image=$candidate
+                  break
+                fi
+                case "$error" in
+                  *"manifest unknown"* | *"not found"*) echo "$candidate is not published yet" ;;
+                  *) echo "::error::$candidate cannot be pulled: $error"; exit 1 ;;
+                esac
               done
               [ -n "$image" ] || { echo "::error::no sha-<commit> image of main's last 10 commits can be pulled"; exit 1; }
             else

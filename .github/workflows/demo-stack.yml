@@ -70,16 +70,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ACTOR: ${{ github.actor }}
-          WANTED_SERVER: ${{ inputs.server_image }}
         run: |
           echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
-          # Until main's first JVM image is on Docker Hub, the default `latest` falls back to GHCR's native `edge`
-          # (docs/decisions/0001). To drop once published.
-          if ! docker pull -q "$SERVER_IMAGE"; then
-            [ -z "$WANTED_SERVER" ] || exit 1
-            SERVER_IMAGE=ghcr.io/ostrom-hq/ostrom-server:edge
-            docker pull -q "$SERVER_IMAGE"
-          fi
+          docker pull -q "$SERVER_IMAGE"
           docker pull -q "$RUNNER_IMAGE"
           server=$(docker inspect -f '{{index .RepoDigests 0}}' "$SERVER_IMAGE")
           runner=$(docker inspect -f '{{index .RepoDigests 0}}' "$RUNNER_IMAGE")
