@@ -125,6 +125,14 @@ class McpServerAdministration(
                     "Add another server.",
             )
         }
+        // A hosted command's code and visible variables decide where its secrets go, as TeamCode's (launcher,
+        // package, args and config cannot change): only which secrets it takes may.
+        if (next.stdio?.copy(secretEnv = emptyMap()) != current.stdio?.copy(secretEnv = emptyMap())) {
+            throw InvalidMcpServerException(
+                "The command of a hosted MCP server cannot change: its secrets never follow new code. " +
+                    "Add another server.",
+            )
+        }
     }
 
     /** See [ListMcpServersUseCase.find]. */

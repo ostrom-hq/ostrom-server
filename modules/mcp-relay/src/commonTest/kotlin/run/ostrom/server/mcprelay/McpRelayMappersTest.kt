@@ -19,6 +19,7 @@ import run.ostrom.server.mcprelay.presentation.ArgumentPolicyRequest
 import run.ostrom.server.mcprelay.presentation.McpHostedProcessDto
 import run.ostrom.server.mcprelay.presentation.McpServerDto
 import run.ostrom.server.mcprelay.presentation.StdioSpecDto
+import run.ostrom.server.mcprelay.presentation.createdDetails
 import run.ostrom.server.mcprelay.presentation.secretIds
 import run.ostrom.server.mcprelay.presentation.secretNamesUsed
 import run.ostrom.server.mcprelay.presentation.toDto
@@ -131,5 +132,16 @@ class McpRelayMappersTest {
         )
         assertEquals(McpHostedProcessDto("b", null, "pypi", "b==1", "idle", "crashed", 0, 0), dto.items.last())
         assertEquals(true to "1.2.3", dto.hostReachable to dto.hostVersion)
+    }
+
+    @Test
+    fun aHostedCommandsCreationNamesItsCodeButNeverItsArgumentsOrVariables() {
+        assertEquals(emptyMap(), Relay.server().createdDetails())
+        val spec = StdioSpec(StdioLauncher.PYPI, "mcp-mysql==1.2.0", listOf("--dsn=\${DSN}"), mapOf("MODE" to "ro"))
+        val hosted = Relay.server("mysql", transport = McpTransport.STDIO).copy(stdio = spec)
+        assertEquals(
+            mapOf("transport" to "stdio", "launcher" to "pypi", "package" to "mcp-mysql==1.2.0"),
+            hosted.createdDetails(),
+        )
     }
 }

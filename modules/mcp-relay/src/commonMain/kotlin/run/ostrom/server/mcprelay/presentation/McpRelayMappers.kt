@@ -52,6 +52,15 @@ fun McpServerDto.secretNamesUsed(): List<String> = listOfNotNull(credentialName(
 fun McpServer.secretIds(): List<Uuid> = listOfNotNull(credentialSecretId) + stdio?.secretEnv.orEmpty().values
 
 /**
+ * What a server's creation line in the journal names, as TeamCode's `variant.created`: for a hosted command, which
+ * code the server will run (its transport, launcher and package); never its arguments, variables or values.
+ */
+fun McpServer.createdDetails(): Map<String, String> {
+    val spec = stdio ?: return emptyMap()
+    return mapOf("transport" to "stdio", "launcher" to spec.launcher.wire, "package" to spec.packageName)
+}
+
+/**
  * Maps a server to the API.
  *
  * @param names Secret names by id.
