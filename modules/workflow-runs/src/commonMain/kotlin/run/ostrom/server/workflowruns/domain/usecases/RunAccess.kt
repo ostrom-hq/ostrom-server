@@ -88,8 +88,9 @@ class RunAccess(
         owned(actor, sessionId).takeIf { it.endedAt != null } ?: throw SessionStillOpenException(sessionId)
 
     /**
-     * The session a read is about: its person, an owner or an administrator reads it, and a person a gate of it was
-     * sent to; an agent token its own launch's only; anyone else is answered as absent (TeamCode #238).
+     * The session a read is about: its person reads it, and a person a gate of it was sent to; an agent token its own
+     * launch's only; anyone else, an owner or an administrator included, is answered as absent (TeamCode #238: what a
+     * session did is its member's, whatever the role).
      *
      * @param actor The caller.
      * @param sessionId The session.
@@ -100,25 +101,22 @@ class RunAccess(
      */
     suspend fun reading(actor: GateActor, sessionId: String): Session {
         val session = sessions.find(actor.orgId, sessionId) ?: throw RunSessionNotFoundException()
-        if (SessionAccess.canRead(actor, session) || approves(actor, session.id)) return session
+        if (SessionAccess.readsContent(actor, session) || approves(actor, session.id)) return session
         throw RunSessionNotFoundException()
     }
 
     /**
-     * The runs and notifications a list of the whole organization keeps for the caller (TeamCode #238): every one for
-     * an owner or an administrator; a person's own and those of the sessions whose gates they approve otherwise.
+     * The runs and notifications a list of the whole organization keeps for the caller (TeamCode #238, what a session
+     * did is its member's whatever the role): a person's own and those of the sessions whose gates they approve, an
+     * owner or an administrator included.
      *
      * @param actor The caller: a person (an agent token lists its own session's only).
      *
-     * @return Null for an owner or an administrator, the caller's audience otherwise.
+     * @return The caller's audience.
      */
-    suspend fun audience(actor: GateActor): RunAudience? {
-        val person = actor.personId
-        return when {
-            SessionAccess.readsTeam(actor) -> null
-            person == null -> RunAudience(null, emptyList())
-            else -> RunAudience(person, sessions.approvedBy(actor.orgId, person))
-        }
+    suspend fun audience(actor: GateActor): RunAudience {
+        val person = actor.personId ?: return RunAudience(null, emptyList())
+        return RunAudience(person, sessions.approvedBy(actor.orgId, person))
     }
 
     // Only a person approves: an agent token, a device or a service key never reads a session for its gates.

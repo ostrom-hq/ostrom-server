@@ -32,8 +32,8 @@ class DefaultReceiptReadersTest {
     @Test
     fun aPersonIsTheirOrganizationAndRoleAndApprovesNothing() = runTest {
         val readers = OrgReceiptReaders(orgs)
-        assertEquals(ReceiptReader(ORG_A, null, readsAll = true), readers.resolve(person("owner")))
-        assertEquals(ReceiptReader(ORG_A, null, readsAll = false), readers.resolve(person("member")))
+        assertEquals(ReceiptReader(ORG_A, null), readers.resolve(person("owner")), "A role reads no more")
+        assertEquals(ReceiptReader(ORG_A, null), readers.resolve(person("member")))
         assertNull(readers.resolve(person("stranger")))
         assertFalse(readers.approves(ORG_A, "rev", "s-1"))
         assertEquals(emptyList(), readers.approvedSessions(ORG_A, "rev"))

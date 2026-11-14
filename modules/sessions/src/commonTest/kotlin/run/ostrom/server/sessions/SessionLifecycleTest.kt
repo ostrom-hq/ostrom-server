@@ -202,7 +202,10 @@ class SessionLifecycleTest {
             assertEquals(emptyList(), bench.list(member("rev-b", role), SessionQuery()), role.name)
         }
         listOf(OrgRole.OWNER, OrgRole.ADMIN).forEach { role ->
-            assertEquals(session.id, bench.get(member("rev-b", role), session.id).session.id, role.name)
+            val record = bench.get(member("rev-b", role), session.id)
+            assertEquals(session.id, record.session.id, role.name)
+            // TeamCode #238: the record only, as TeamCode's run records; what the session did is its person's.
+            assertEquals(listOf(null, null, null), listOf(record.gates, record.answers, record.receipt), role.name)
             assertEquals(listOf("s-2", "s-1"), bench.list(member("rev-b", role), SessionQuery()).map { it.id })
             val lyes = bench.list(member("rev-b", role), SessionQuery(dev = "lyes"))
             assertEquals(listOf("s-1"), lyes.map { it.id })
@@ -270,8 +273,30 @@ class SessionLifecycleTest {
         }
         assertFailsWith<SessionNotFoundException>("No such session") { bench.get(member("rev-b"), "nope") }
         assertEquals(session.id, bench.get(member("lyes"), session.id).session.id)
-        assertEquals(session.id, bench.get(member("root", OrgRole.ADMIN), session.id).session.id)
-        assertEquals(emptyList(), bench.approvers.asked, "Asked only of a person who does not read it already")
+        assertEquals(emptyList(), bench.approvers.asked, "Never asked of its person, a token or a device")
+    }
+
+    @Test
+    fun anAdministratorReadsTheContentOfAnotherMembersSessionOnlyAsItsApprover() = runTest {
+        // TeamCode #238: a role reads the record of another member's session; its gates, answers and receipt are its
+        // person's and its approvers', an administrator who approves one of its gates included.
+        val bench = SessionBench()
+        val session = bench.start(agent(), start)
+        bench.end(agent(), session.id, EndSession())
+        val admin = member("root", OrgRole.ADMIN)
+        val record = bench.get(admin, session.id)
+        assertEquals(listOf(null, null, null), listOf(record.gates, record.answers, record.receipt))
+        assertEquals("rcpt_session_s-1", record.session.receiptId, "The record names its receipt")
+        assertEquals(listOf("root s-1"), bench.approvers.asked)
+
+        bench.approvers.sessions["root"] = listOf(session.id)
+        val judged = bench.get(admin, session.id)
+        assertEquals(emptyList(), judged.gates)
+        assertEquals(emptyList(), judged.answers)
+        assertEquals("rcpt_session_s-1", judged.receipt?.get("id")?.toString()?.trim('"'))
+        val own = bench.get(member("lyes"), session.id)
+        assertEquals(emptyList(), own.gates, "Its person reads it whole")
+        assertEquals(judged.receipt, own.receipt)
     }
 
     @Test

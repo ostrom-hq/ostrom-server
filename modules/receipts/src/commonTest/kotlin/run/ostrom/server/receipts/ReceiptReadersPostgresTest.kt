@@ -35,17 +35,17 @@ import kotlin.uuid.Uuid
 
 /**
  * The receipts routes read as TeamCode reads a session's (#238, parity TC-NEW-675a530-2): a receipt about a session
- * by its person, the owners and administrators, and the approvers of its gates; any other member gets a 404 and lists
- * only what they read, and a cursor naming a receipt they do not read is a 400 as a forged one.
+ * by its person and the approvers of its gates; any other member, an owner or an administrator included, gets a 404
+ * and lists only what they read, and a cursor naming a receipt they do not read is a 400 as a forged one.
  */
 class ReceiptReadersPostgresTest {
     // `lyes` and `mia` own a session each, `rev` approves a gate of Lyes's, `root` is an administrator of A.
     private val people = mapOf(
-        "lyes" to ReceiptReader(ORG_A, "lyes", readsAll = false),
-        "mia" to ReceiptReader(ORG_A, "mia", readsAll = false),
-        "rev" to ReceiptReader(ORG_A, "rev", readsAll = false),
-        "root" to ReceiptReader(ORG_A, "root", readsAll = true),
-        "other" to ReceiptReader(ORG_B, "other", readsAll = true),
+        "lyes" to ReceiptReader(ORG_A, "lyes"),
+        "mia" to ReceiptReader(ORG_A, "mia"),
+        "rev" to ReceiptReader(ORG_A, "rev"),
+        "root" to ReceiptReader(ORG_A, "root"),
+        "other" to ReceiptReader(ORG_B, "other"),
     )
     private val overrides = module {
         single<TokenAuthenticator> {
@@ -69,7 +69,7 @@ class ReceiptReadersPostgresTest {
         call(token, "/api/v1/receipts$query").body<ReceiptsPage>().items.map { it.text("id") }
 
     @Test
-    fun aSessionsReceiptIsServedToItsPersonTheAdministratorsAndItsApproversOnly() = readersTest { server ->
+    fun aSessionsReceiptIsServedToItsPersonAndItsApproversOnly() = readersTest { server ->
         val sign = server.koin.get<SignReceiptUseCase>()
         val lyes = sign(ORG_A, draft("s-lyes", "session")).text("id")
         val gate = sign(ORG_A, draft("gate-1", session = "s-lyes")).text("id")
@@ -77,9 +77,10 @@ class ReceiptReadersPostgresTest {
         val harness = sign(ORG_A, draft("harness-1", "harness")).text("id")
 
         for (path in listOf("/api/v1/receipts/$lyes", "/api/v1/receipts/$lyes/verify")) {
-            for (reader in listOf("lyes", "rev", "root")) {
+            for (reader in listOf("lyes", "rev")) {
                 assertEquals(HttpStatusCode.OK, server.call(reader, path).status, "$reader: $path")
             }
+            assertEquals(HttpStatusCode.NotFound, server.call("root", path).status, "an administrator: $path")
             assertEquals(HttpStatusCode.NotFound, server.call("mia", path).status, "another member: $path")
             assertEquals(HttpStatusCode.NotFound, server.call("other", path).status, "another organization: $path")
             assertEquals(HttpStatusCode.NotFound, server.call("nobody", path).status, "no organization: $path")
@@ -89,7 +90,7 @@ class ReceiptReadersPostgresTest {
         assertEquals(lyes, server.call("lyes", "/api/v1/receipts/$lyes").body<JsonObject>().text("id"))
         assertEquals(HttpStatusCode.OK, server.call("mia", "/api/v1/receipts/$harness").status, "The organization's")
 
-        assertEquals(listOf(harness, mia, gate, lyes), server.ids("root"))
+        assertEquals(listOf(harness), server.ids("root"), "An administrator lists no member's session receipts")
         assertEquals(listOf(harness, gate, lyes), server.ids("lyes"))
         assertEquals(listOf(harness, gate, lyes), server.ids("rev"))
         assertEquals(listOf(harness, mia), server.ids("mia"))
@@ -102,6 +103,7 @@ class ReceiptReadersPostgresTest {
         // Another's receipt as a cursor names nothing the member reads: a 400, as a forged one.
         assertEquals(HttpStatusCode.BadRequest, server.call("mia", "/api/v1/receipts?before=$lyes").status)
         assertEquals(HttpStatusCode.BadRequest, server.call("mia", "/api/v1/receipts?before=rcpt_forged").status)
+        assertEquals(HttpStatusCode.BadRequest, server.call("root", "/api/v1/receipts?before=$lyes").status)
         assertEquals(listOf(mia), server.ids("mia", "?before=$harness"))
     }
 
@@ -117,7 +119,7 @@ class ReceiptReadersPostgresTest {
         val mia = ReceiptAudience("mia", approved)
         val nobody = ReceiptAudience(null, emptyList())
         val plans = linkedMapOf(
-            "newest page of an administrator" to server.driver.plan(ReceiptQuery()),
+            "newest page of the whole organization" to server.driver.plan(ReceiptQuery()),
             "newest page of a member" to server.driver.plan(ReceiptQuery(audience = mia)),
             "a member's page by its cursor" to server.driver.plan(ReceiptQuery(before = "rcpt_5000", audience = mia)),
             "a member's sessions receipts" to server.driver.plan(ReceiptQuery(subjectKind = "session", audience = mia)),

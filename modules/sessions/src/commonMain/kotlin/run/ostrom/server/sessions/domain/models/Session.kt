@@ -88,15 +88,15 @@ data class SeenItem(val kind: String, val name: String, val via: String, val at:
  * A session with what its single reads show.
  *
  * @property session The segment.
- * @property gates The gates it asked or joined.
- * @property receipt Its signed receipt, once ended.
- * @property answers The answers to those of its gates someone answered, oldest gate first.
+ * @property gates The gates it asked or joined; null for a caller who reads its record only (TeamCode #238).
+ * @property receipt Its signed receipt, once ended, for a caller who reads its content.
+ * @property answers The answers to those of its gates someone answered, oldest gate first; null with [gates].
  */
 data class SessionView(
     val session: Session,
-    val gates: List<String>,
+    val gates: List<String>?,
     val receipt: JsonObject?,
-    val answers: List<GateAnswer>,
+    val answers: List<GateAnswer>?,
 )
 
 /**

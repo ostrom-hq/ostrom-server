@@ -23,10 +23,10 @@ interface GetSessionUseCase {
     /**
      * Reads a segment.
      *
-     * @param actor The caller: the session's person, an owner or an admin, a person a gate of the session was sent to
-     *   (to judge it, read only), an agent token only for its own launch.
+     * @param actor The caller: the session's person, a person a gate of the session was sent to (to judge it, read
+     *   only), an agent token only for its own launch; an owner or an admin reads another member's record only.
      * @param id The segment.
-     * @return The segment, its gates and its receipt once ended.
+     * @return The segment, and its gates and its receipt once ended for a caller who reads its content.
      * @throws SessionNotFoundException When the organization has no such segment, or the caller does not read it.
      */
     suspend operator fun invoke(actor: GateActor, id: String): SessionView
@@ -56,8 +56,15 @@ class GetSessionUseCaseImpl(
 ) : GetSessionUseCase {
     override suspend fun invoke(actor: GateActor, id: String): SessionView {
         val session = repository.get(actor.orgId, id) ?: throw SessionNotFoundException()
-        if (!SessionAccess.canRead(actor, session) && !approves(actor, session)) throw SessionNotFoundException()
-        return view(session)
+        if (SessionAccess.readsContent(actor, session)) return view(session)
+        // TeamCode #238: an owner or an administrator reads another member's record only, as TeamCode's run records;
+        // its gates, their answers and its receipt are its person's, and its approvers'.
+        val approver = approves(actor, session)
+        return when {
+            approver -> view(session)
+            SessionAccess.canRead(actor, session) -> SessionView(session, gates = null, receipt = null, answers = null)
+            else -> throw SessionNotFoundException()
+        }
     }
 
     // Nathan's decision of 13/11/2026 (parity TC-NEW-675a530-2): a person a gate of the session was sent to opens the

@@ -121,10 +121,10 @@ class SessionApproversPostgresTest {
         assertEquals(emptyList(), approvers(orgA, "nobody"))
 
         val readers = server.koin.get<ReceiptReaders>()
-        assertEquals(ReceiptReader(orgA, "rev", readsAll = false), readers.resolve(person("rev")))
-        assertEquals(ReceiptReader(orgA, "root", readsAll = true), readers.resolve(person("root")))
+        assertEquals(ReceiptReader(orgA, "rev"), readers.resolve(person("rev")))
+        assertEquals(ReceiptReader(orgA, "root"), readers.resolve(person("root")), "No role reads more")
         assertNull(readers.resolve(person("stranger")))
-        assertEquals(ReceiptReader(orgA, null, readsAll = false), readers.resolve(person("phone")), "No login known")
+        assertEquals(ReceiptReader(orgA, null), readers.resolve(person("phone")), "No login known")
         assertTrue(readers.approves(orgA, "rev", "s-2"))
         assertEquals(listOf("s-1", "s-2"), readers.approvedSessions(orgA, "rev").sorted())
     }

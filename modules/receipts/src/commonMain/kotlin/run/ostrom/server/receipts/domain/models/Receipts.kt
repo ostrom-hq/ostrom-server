@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.receipts.domain.models
 
-import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
 import kotlinx.serialization.json.JsonObject
@@ -34,21 +33,19 @@ data class StoredReceipt(
 )
 
 /**
- * Who reads receipts (TeamCode #238): an owner or an administrator reads every receipt of the organization; anyone
- * else the receipts about no session, those of their own sessions, and those of the sessions whose gates they approve.
+ * Who reads receipts (TeamCode #238, a session's content is its owner's whatever the role): every reader of the
+ * organization reads the receipts about no session; a session's receipts are read by its person and by the approvers
+ * of its gates, never by a role (an owner or an administrator reads another member's session record, not its
+ * receipts).
  *
  * @property orgId The organization.
  * @property person The person's login, or null when unknown (they then read the receipts about no session only).
- * @property readsAll True for an owner or an administrator.
  */
-data class ReceiptReader(val orgId: Uuid, val person: String?, val readsAll: Boolean)
-
-/** The roles that read every receipt of their organization, as every session (TeamCode #238). */
-val TEAM_READERS: Set<OrgRole> = setOf(OrgRole.OWNER, OrgRole.ADMIN)
+data class ReceiptReader(val orgId: Uuid, val person: String?)
 
 /**
- * The receipts a list keeps for a reader who does not read them all: those about no session, those whose [member] is
- * the reader, and those of [sessions].
+ * The receipts a list keeps for a reader: those about no session, those whose [member] is the reader, and those of
+ * [sessions].
  *
  * @property member The reader, or null when unknown.
  * @property sessions The sessions whose gates the reader approves.

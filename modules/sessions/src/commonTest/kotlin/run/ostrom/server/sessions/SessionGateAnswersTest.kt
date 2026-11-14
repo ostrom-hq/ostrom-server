@@ -67,8 +67,8 @@ class SessionGateAnswersTest {
         bench.gates.gates["s-2"] = listOf(gate(2, GateStatus.REJECTED, no))
 
         val first = bench.get(user(), "s-1")
-        assertEquals(2, first.gates.size, "Both gates are listed")
-        assertEquals(listOf(true to "rev-b"), first.answers.map { it.approved to it.by }, "Only the answered one")
-        assertEquals(listOf(false to "rev-c"), bench.get(user(), "s-2").answers.map { it.approved to it.by })
+        assertEquals(2, first.gates?.size, "Both gates are listed")
+        assertEquals(listOf(true to "rev-b"), first.answers?.map { it.approved to it.by }, "Only the answered one")
+        assertEquals(listOf(false to "rev-c"), bench.get(user(), "s-2").answers?.map { it.approved to it.by })
     }
 }

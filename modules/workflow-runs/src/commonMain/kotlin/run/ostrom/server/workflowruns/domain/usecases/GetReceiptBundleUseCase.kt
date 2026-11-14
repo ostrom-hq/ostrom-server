@@ -58,7 +58,7 @@ interface GetReceiptBundleUseCase {
  * [GetReceiptBundleUseCase] on the receipts, sessions and compiler modules.
  *
  * @param receipts The receipts.
- * @param access Who reads a receipt: a session's person, the owners and administrators, its gates' approvers.
+ * @param access Who reads a receipt: a session's person and its gates' approvers, any reader one about no session.
  * @param keys The instance's keys.
  * @param sessions The sessions and their gates.
  * @param packages The packages.
@@ -82,7 +82,7 @@ class GetReceiptBundleUseCaseImpl(
         // read for receipts (TeamCode #238); anyone else is answered as absent.
         val reader = readerOf(actor)
         val readable = if (reader == null) {
-            session != null && SessionAccess.canRead(actor, session)
+            session != null && SessionAccess.readsContent(actor, session)
         } else {
             access.canRead(reader, stored)
         }
@@ -107,7 +107,7 @@ class GetReceiptBundleUseCaseImpl(
 
     // A person reads receipts as the receipts routes do; an agent token is no reader of its own.
     private fun readerOf(actor: GateActor): ReceiptReader? = actor.takeIf { it.kind != ActorKind.AGENT_SESSION }
-        ?.let { ReceiptReader(it.orgId, it.personId, SessionAccess.readsTeam(it)) }
+        ?.let { ReceiptReader(it.orgId, it.personId) }
 
     // The session a receipt is about: its own for a session receipt, the one before `@version` for a workflow receipt.
     private suspend fun sessionOf(orgId: Uuid, kind: String?, subjectId: String?): Session? {

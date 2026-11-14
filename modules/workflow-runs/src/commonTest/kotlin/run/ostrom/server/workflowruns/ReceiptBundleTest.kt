@@ -112,7 +112,7 @@ class ReceiptBundleTest {
     }
 
     @Test
-    fun aSessionsBundleIsReadByItsPersonItsApproversAndTheAdministratorsOnly() = runTest {
+    fun aSessionsBundleIsReadByItsPersonAndItsApproversOnly() = runTest {
         // TeamCode #238: the receipt names its session and person; a cited receipt another member's is left out.
         val mine = json("""{"id":"rcpt_mine","subject":{"kind":"gate","id":"g"},"nodes":[{"ref":"rcpt_bobs"}]}""")
         val bobs = json("""{"id":"rcpt_bobs","subject":{"kind":"gate","id":"g2"}}""")
@@ -122,7 +122,7 @@ class ReceiptBundleTest {
         assertEquals(mine, bundle(ADA, "rcpt_mine").receipt)
         assertEquals(emptyList(), bundle(ADA, "rcpt_mine").chain, "Bob's receipt is not Ada's to read")
         assertEquals(mine, bundle(carol, "rcpt_mine").receipt, "An approver of the session's gates")
-        assertEquals(listOf(bobs), bundle(ADMIN, "rcpt_mine").chain, "An administrator reads every one")
+        assertFailsWith<ReceiptNotFoundException>("An administrator") { bundle(ADMIN, "rcpt_mine") }
         assertFailsWith<ReceiptNotFoundException>("Another member") { bundle(BOB, "rcpt_mine") }
         assertEquals(bobs, bundle(BOB, "rcpt_bobs").receipt)
     }

@@ -36,7 +36,7 @@ class ReceiptReadersTest {
     private val list = ListReceiptsUseCaseImpl(receipts, access)
     private val verify = VerifyReceiptUseCaseImpl(access, FakeKeys(listOf(instance.receiptKey())))
 
-    private fun member(login: String?) = ReceiptReader(ORG_A, login, readsAll = false)
+    private fun member(login: String?) = ReceiptReader(ORG_A, login)
 
     @Test
     fun eachReceiptNamesTheSessionItIsAboutAndItsPerson() = runTest {
@@ -58,18 +58,19 @@ class ReceiptReadersTest {
     }
 
     @Test
-    fun aSessionsReceiptIsReadByItsPersonTheAdministratorsAndItsApproversOnly() = runTest {
+    fun aSessionsReceiptIsReadByItsPersonAndItsApproversOnlyNeverByARole() = runTest {
+        // TeamCode #238: what a session did is its member's, whatever the role; an administrator reads its record only.
         val id = sign(ORG_A, draft("s-lyes", "session")).text("id")
         assertEquals(id, get(member("lyes"), id).text("id"), "Its person")
-        assertEquals(id, get(admin(ORG_A), id).text("id"), "An owner or an administrator")
+        assertFailsWith<ReceiptNotFoundException>("An owner or an administrator") { get(admin(ORG_A), id) }
         assertEquals(id, get(member("rev"), id).text("id"), "An approver of its gates")
         assertFailsWith<ReceiptNotFoundException>("Another member") { get(member("mia"), id) }
         assertFailsWith<ReceiptNotFoundException>("A person whose login is unknown") { get(member(null), id) }
         assertFailsWith<ReceiptNotFoundException>("Another organization") { get(admin(ORG_B), id) }
         assertEquals(
-            listOf("approves rev s-lyes", "approves mia s-lyes"),
+            listOf("approves root s-lyes", "approves rev s-lyes", "approves mia s-lyes"),
             readers.asked,
-            "Asked only of someone who is neither its person nor an administrator",
+            "Asked only of someone who is not its person",
         )
         assertFailsWith<ReceiptNotFoundException>("Nor verified by another member") { verify(member("mia"), id) }
         assertEquals(true, verify(member("rev"), id).ok)
@@ -88,8 +89,8 @@ class ReceiptReadersTest {
         val lyes = sign(ORG_A, draft("s-lyes", "session")).text("id")
         val mia = sign(ORG_A, draft("s-mia", "session")).text("id")
         val harness = sign(ORG_A, draft("harness-1", "harness")).text("id")
-        assertEquals(listOf(harness, mia, lyes), list(admin(ORG_A), ReceiptQuery()).map { it.id })
-        assertNull(receipts.lastQuery?.audience)
+        assertEquals(listOf(harness), list(admin(ORG_A), ReceiptQuery()).map { it.id }, "No role lists them all")
+        assertEquals(ReceiptAudience("root", emptyList()), receipts.lastQuery?.audience)
         assertEquals(listOf(harness, mia), list(member("mia"), ReceiptQuery()).map { it.id })
         assertEquals(ReceiptAudience("mia", emptyList()), receipts.lastQuery?.audience)
         assertEquals(listOf(harness, lyes), list(member("rev"), ReceiptQuery()).map { it.id })
@@ -109,8 +110,8 @@ class ReceiptReadersTest {
         assertFailsWith<InvalidPageException> { list(member("mia"), ReceiptQuery(before = "rcpt_forged")) }
         assertEquals(emptyList(), list(member("mia"), ReceiptQuery(before = mia)))
         assertEquals(emptyList(), list(member("rev"), ReceiptQuery(before = lyes)), "An approver's cursor")
-        // An administrator's cursor is checked on an empty page only, as before.
-        assertEquals(listOf(lyes), list(admin(ORG_A), ReceiptQuery(before = mia)).map { it.id })
+        // An administrator's cursor too: another member's receipt is one they do not read.
+        assertFailsWith<InvalidPageException> { list(admin(ORG_A), ReceiptQuery(before = mia)) }
         assertFailsWith<InvalidPageException> { list(admin(ORG_A), ReceiptQuery(before = "rcpt_forged")) }
     }
 }

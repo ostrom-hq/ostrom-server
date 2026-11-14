@@ -155,14 +155,15 @@ class NotificationsTest {
     }
 
     @Test
-    fun theOrganizationsNotificationsAreListedToTheirPersonTheApproversAndTheAdministrators() = runTest {
+    fun theOrganizationsNotificationsAreListedToTheirPersonAndTheApproversOnly() = runTest {
         // TeamCode #238: without a session, a member lists their own and those of the sessions whose gates they
-        // approve; an owner or an administrator every one.
+        // approve; an owner or an administrator too, no more.
         val carol = GateActor("carol", ORG, ActorKind.USER, personId = "carol")
         val list = ListNotificationsUseCaseImpl(access(FakeSessions(approvals = mapOf("carol" to listOf("s-1")))), runs)
         val ada = send(AGENT, request())
         val bob = send(BOB, request(notifyId = "nt-1", sessionId = null))
-        assertEquals(listOf(bob.id, ada.id), list(ADMIN, RunQuery()).map { it.id })
+        assertEquals(emptyList(), list(ADMIN, RunQuery()), "An administrator lists no member's notifications")
+        assertFailsWith<RunSessionNotFoundException> { list(ADMIN, RunQuery(sessionId = "s-1")) }
         assertEquals(listOf(ada.id), list(ADA, RunQuery()).map { it.id })
         assertEquals(listOf(bob.id), list(BOB, RunQuery()).map { it.id })
         assertEquals(listOf(ada.id), list(carol, RunQuery()).map { it.id })
@@ -170,6 +171,6 @@ class NotificationsTest {
         assertEquals(listOf(ada.id), list(carol, RunQuery(sessionId = "s-1")).map { it.id })
         assertFailsWith<InvalidPageException> { list(BOB, RunQuery(before = ada.id)) }
         assertEquals(emptyList(), list(carol, RunQuery(before = ada.id)))
-        assertEquals(listOf(ada.id), list(ADMIN, RunQuery(before = bob.id)).map { it.id })
+        assertFailsWith<InvalidPageException> { list(ADMIN, RunQuery(before = bob.id)) }
     }
 }

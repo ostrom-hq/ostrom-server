@@ -89,9 +89,10 @@ object SessionAccess {
     val TEAM_READERS: Set<OrgRole> = setOf(OrgRole.OWNER, OrgRole.ADMIN)
 
     /**
-     * True when the caller may read the session: its person, and an owner or an administrator of its organization
-     * (TeamCode #238: a session is its member's; only the team's administrators read the others'); an agent token
-     * only reads its own launch's sessions (audit A12), and none without a launch (S2-48).
+     * True when the caller may read the session's record: its person, and an owner or an administrator of its
+     * organization (TeamCode #238: a session is its member's; the team's administrators read the others' records, as
+     * TeamCode's run records, not their content, see [readsContent]); an agent token only reads its own launch's
+     * sessions (audit A12), and none without a launch (S2-48).
      *
      * @param actor The caller.
      * @param session The session.
@@ -105,8 +106,25 @@ object SessionAccess {
         }
 
     /**
-     * True when the caller reads the sessions of the whole organization: an owner or an administrator (an agent token
-     * carries no role).
+     * True when the caller reads what the session did, beyond its record: its gates, their answers, its receipt, its
+     * checks and notifications. Only its person and an agent token of its own launch (TeamCode #238: sessions,
+     * transcripts and permission answers are their owner's, whatever the role); an owner or an administrator reads the
+     * record only, as TeamCode's run records. The approvers of its gates are let in by the callers, read only.
+     *
+     * @param actor The caller.
+     * @param session The session.
+     * @return Whether it reads its content.
+     */
+    fun readsContent(actor: GateActor, session: Session): Boolean =
+        if (actor.kind == ActorKind.AGENT_SESSION) {
+            actor.launchId == session.launchId
+        } else {
+            actor.personId == session.dev
+        }
+
+    /**
+     * True when the caller reads the records of every session of the organization (not their content, see
+     * [readsContent]): an owner or an administrator (an agent token carries no role).
      *
      * @param actor The caller.
      * @return Whether it does.
