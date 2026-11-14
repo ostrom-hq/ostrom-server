@@ -7,6 +7,7 @@ import run.ostrom.core.api.models.MemoryProposals
 import run.ostrom.server.kernel.auth.TokenAuthenticator
 import run.ostrom.server.kernel.database.ScheduledWork
 import run.ostrom.server.kernel.http.ApiError
+import run.ostrom.server.memory.domain.MemoryCursor
 import run.ostrom.server.memory.domain.MemoryOrigin
 import run.ostrom.server.memory.domain.MemoryProposalStore
 import run.ostrom.server.memory.domain.MemoryProposalWaits
@@ -125,7 +126,7 @@ class MemoryProposalsPostgresTest {
         assertEquals("memory_not_proposed", decide("root", first.id, "reject").errorType())
 
         val second = proposed("Withdrawn")
-        assertEquals(HttpStatusCode.Forbidden, decide("ben", second.id, "reject").status)
+        assertEquals(HttpStatusCode.NotFound, decide("ben", second.id, "reject").status, "not Ben's to know of")
         assertEquals("rejected", decide("ada", second.id, "reject").body<MemoryEntry>().status)
         assertEquals(listOf("Deploy order"), index("ada"))
         assertEquals(HttpStatusCode.NotFound, decide("root", Uuid.random().toString(), "accept").status)
@@ -163,7 +164,15 @@ class MemoryProposalsPostgresTest {
         val superuser = server.database.superuser
         superuser.execute("UPDATE memory_entries SET updated_at = now() - INTERVAL '15 days' WHERE id = '${stale.id}'")
             .getOrThrow()
-        assertEquals(setOf(ORG_A, ORG_B), store.organizations(10).toSet())
+        assertEquals(setOf(ORG_A, ORG_B), store.organizations(null, 10).toSet())
+        val oldest = store.pending(ORG_A, null, 1).single().entry
+        assertEquals(stale.id, oldest.id, "oldest first")
+        assertEquals(
+            listOf(edited.id),
+            store.pending(ORG_A, MemoryCursor(oldest.updatedAt, oldest.id), 10).map { it.entry.id },
+        )
+        val first = store.organizations(null, 1).single()
+        assertEquals(setOf(ORG_A, ORG_B) - first, store.organizations(first, 10).toSet(), "by id, after the cursor")
 
         assertEquals(3, proposals.settle())
         val ada = caller()
@@ -179,7 +188,7 @@ class MemoryProposalsPostgresTest {
             .getOrThrow()
         assertEquals(0, proposals.settle())
         assertEquals(1L, superuser.fetchAll("SELECT id FROM memory_entries").getOrThrow().toList().size.toLong())
-        assertTrue(store.organizations(10).isEmpty())
+        assertTrue(store.organizations(null, 10).isEmpty())
         val job = Job()
         MemoryModule.start(CoroutineScope(job), server.koin)
         job.cancel()

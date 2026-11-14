@@ -2,6 +2,7 @@
 package run.ostrom.server.memory.fakes
 
 import run.ostrom.server.memory.domain.MemoryCaller
+import run.ostrom.server.memory.domain.MemoryCursor
 import run.ostrom.server.memory.domain.MemoryEntry
 import run.ostrom.server.memory.domain.MemoryNotFoundException
 import run.ostrom.server.memory.domain.MemoryNotProposedException
@@ -63,7 +64,14 @@ class FakeProposalStore(private val repository: FakeRepository) : MemoryProposal
     /** Another replica closes every proposal first. */
     var lostRace = false
 
+    /** Binding a wait fails, as a database error would. */
+    var failAttach = false
+
+    /** An organization whose proposals cannot be read. */
+    var broken: Uuid? = null
+
     override suspend fun attach(orgId: Uuid, id: Uuid, waitId: Uuid) {
+        check(!failAttach) { "The database is down." }
         waits[id] = waitId
     }
 
@@ -79,17 +87,23 @@ class FakeProposalStore(private val repository: FakeRepository) : MemoryProposal
         check: (MemoryEntry) -> Unit,
     ): PendingProposal {
         val entry = repository.entries[id]?.takeIf { it.scope == MemoryScope.TEAM } ?: throw MemoryNotFoundException()
-        if (entry.status != MemoryStatus.PROPOSED) throw MemoryNotProposedException()
         check(entry)
+        if (entry.status != MemoryStatus.PROPOSED) throw MemoryNotProposedException()
         close(caller.orgId, id, accept, null)
         return PendingProposal(repository.entries.getValue(id), waits[id])
     }
 
-    override suspend fun organizations(limit: Int): List<Uuid> = organizations
+    override suspend fun organizations(after: Uuid?, limit: Int): List<Uuid> =
+        organizations.drop(if (after == null) 0 else organizations.indexOf(after) + 1).take(limit)
 
-    override suspend fun pending(orgId: Uuid, limit: Int): List<PendingProposal> =
-        repository.entries.values.filter { it.status == MemoryStatus.PROPOSED }
+    override suspend fun pending(orgId: Uuid, after: MemoryCursor?, limit: Int): List<PendingProposal> {
+        check(orgId != broken) { "This organization's proposals cannot be read." }
+        // In the order they were written, which the cursor names a place in, whatever became of its entry since.
+        val all = repository.entries.values.toList()
+        val from = if (after == null) 0 else all.indexOfFirst { it.id == after.id } + 1
+        return all.drop(from).filter { it.status == MemoryStatus.PROPOSED }.take(limit)
             .map { PendingProposal(it, waits[it.id]) }
+    }
 
     override suspend fun close(orgId: Uuid, id: Uuid, accept: Boolean, edits: ProposalEdits?): Boolean {
         val entry = repository.entries[id]?.takeIf { it.status == MemoryStatus.PROPOSED && !lostRace } ?: return false

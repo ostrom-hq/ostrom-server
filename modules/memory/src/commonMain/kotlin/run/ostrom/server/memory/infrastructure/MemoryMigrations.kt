@@ -4,7 +4,7 @@ package run.ostrom.server.memory.infrastructure
 import run.ostrom.server.kernel.database.SchemaMigration
 
 /** The cross-organization read of the settling pass, a function owned by `ostrom_router`. */
-private const val SETTLING_ORGS = "memory_settling_orgs(INTEGER)"
+private const val SETTLING_ORGS = "memory_settling_orgs(UUID, INTEGER)"
 
 /**
  * Version 2: an agent's organization entry is a proposal (TeamCode #272), bound to the wait that asks its session's
@@ -15,7 +15,7 @@ private const val SETTLING_ORGS = "memory_settling_orgs(INTEGER)"
 private val PROPOSALS_SQL: String =
     """
     ALTER TABLE memory_entries ADD COLUMN proposal_wait_id UUID;
-    CREATE INDEX memory_entries_status ON memory_entries (status, updated_at);
+    CREATE INDEX memory_entries_status ON memory_entries (org_id, status, updated_at, id);
     DO $$ BEGIN
         CREATE ROLE ostrom_router NOLOGIN NOSUPERUSER NOBYPASSRLS;
     EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
@@ -28,9 +28,10 @@ private val PROPOSALS_SQL: String =
     CREATE POLICY memory_entries_router ON memory_entries FOR SELECT TO ostrom_router
         USING (current_user = 'ostrom_router');
     GRANT SELECT ON memory_entries TO ostrom_router;
-    CREATE FUNCTION memory_settling_orgs(p_limit INTEGER) RETURNS TABLE (org_id UUID)
+    CREATE FUNCTION memory_settling_orgs(p_after UUID, p_limit INTEGER) RETURNS TABLE (org_id UUID)
         LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
-        SELECT DISTINCT e.org_id FROM memory_entries e WHERE e.status IN ('proposed', 'rejected') LIMIT p_limit;
+        SELECT DISTINCT e.org_id FROM memory_entries e WHERE e.status IN ('proposed', 'rejected')
+            AND (p_after IS NULL OR e.org_id > p_after) ORDER BY e.org_id LIMIT p_limit;
     $$;
     REVOKE EXECUTE ON FUNCTION $SETTLING_ORGS FROM PUBLIC;
     DO $$ BEGIN

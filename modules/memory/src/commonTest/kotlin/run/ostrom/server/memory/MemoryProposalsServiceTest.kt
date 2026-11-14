@@ -2,6 +2,7 @@
 package run.ostrom.server.memory
 
 import run.ostrom.server.memory.domain.MemoryEntry
+import run.ostrom.server.memory.domain.MemoryNotFoundException
 import run.ostrom.server.memory.domain.MemoryNotProposedException
 import run.ostrom.server.memory.domain.MemoryOrigin
 import run.ostrom.server.memory.domain.MemoryProposalForbiddenException
@@ -89,6 +90,13 @@ class MemoryProposalsServiceTest {
         waits.failOpen = true
         assertFailsWith<IllegalStateException> { proposals.propose(agent, note(), "s1") }
         assertEquals(MemoryStatus.REJECTED, repository.entries.values.single().status, "nobody could ever accept it")
+        assertTrue(waits.cancelled.isEmpty(), "no wait was opened")
+        // A wait opened but never bound to its proposal is closed with it.
+        waits.failOpen = false
+        store.failAttach = true
+        assertFailsWith<IllegalStateException> { proposals.propose(agent, note(), "s1") }
+        assertEquals(List(2) { MemoryStatus.REJECTED }, repository.entries.values.map { it.status })
+        assertEquals(listOf(ADA to waits.states.keys.single()), waits.cancelled)
         assertTrue(audit.events.isEmpty())
     }
 
@@ -108,7 +116,9 @@ class MemoryProposalsServiceTest {
     fun anAdministratorAcceptsAndTheAuthorOrAnAdministratorRejects() = runTest {
         val first = proposed()
         assertFailsWith<MemoryProposalForbiddenException> { proposals.decide(caller(), first.id, accept = true) }
-        assertFailsWith<MemoryProposalForbiddenException> { proposals.decide(caller(BEN), first.id, accept = false) }
+        // Another member's proposal is not theirs to know of: the 404 of an unknown entry.
+        assertFailsWith<MemoryNotFoundException> { proposals.decide(caller(BEN), first.id, accept = false) }
+        assertFailsWith<MemoryNotFoundException> { proposals.decide(caller(BEN), first.id, accept = true) }
         assertEquals(MemoryStatus.ACTIVE, proposals.decide(admin, first.id, accept = true).status)
         assertEquals(listOf(ADA to store.waits.getValue(first.id)), waits.cancelled, "its wait is closed")
         assertFailsWith<MemoryNotProposedException> { proposals.decide(admin, first.id, accept = true) }
@@ -196,5 +206,20 @@ class MemoryProposalsServiceTest {
         assertEquals(listOf("memory.proposed scope=team,origin=agent"), audit.events)
         assertEquals(2, waits.cancelled.size, "its wait is closed all the same, in each pass")
         assertNull(repository.entries.values.firstOrNull { it.status != MemoryStatus.PROPOSED })
+    }
+
+    @Test
+    fun theSettlingReadsEveryPageOfEveryOrganizationAndOneFailureStopsNoOther() = runTest {
+        val paged = MemoryProposalsServiceImpl(repository, store, waits, audit, clock, page = 2)
+        // Two waiting proposals fill the first page: the answers after them are applied all the same.
+        proposed("Waiting 1")
+        proposed("Waiting 2")
+        val answered = (1..3).map { proposed("Answered $it").also { entry -> answer(entry, "reject") } }
+        val other = Uuid.random()
+        store.organizations = listOf(other, ORG_A, ORG_B)
+        store.broken = other
+        assertFailsWith<IllegalStateException> { paged.settle() }
+        assertEquals(List(3) { MemoryStatus.REJECTED }, answered.map(::status), "the broken organization stops none")
+        assertEquals(List(2) { FakeRepository.AT - 30.days }, store.purged, "ORG_A's and ORG_B's, on the second page")
     }
 }

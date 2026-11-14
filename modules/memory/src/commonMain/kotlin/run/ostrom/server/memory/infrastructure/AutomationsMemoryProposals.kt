@@ -22,6 +22,7 @@ import run.ostrom.server.memory.domain.MemoryEntry
 import run.ostrom.server.memory.domain.MemoryProposalWaits
 import run.ostrom.server.memory.domain.MemoryRules
 import run.ostrom.server.memory.domain.MemorySessionNotFoundException
+import run.ostrom.server.memory.domain.PROPOSAL_ACCEPT
 import run.ostrom.server.memory.domain.ProposalSession
 import run.ostrom.server.memory.domain.ProposalWait
 import run.ostrom.server.sessions.domain.repositories.SessionsRepository
@@ -78,7 +79,7 @@ internal class AutomationsMemoryProposals(
                     maxLength = MemoryRules.CONTENT_LENGTH),
             ),
             actions = listOf(
-                WaitAction(ACCEPT, "Add to the team memory", style = "primary"),
+                WaitAction(PROPOSAL_ACCEPT, "Add to the team memory", style = "primary"),
                 WaitAction(REJECT, "Do not add", style = "danger"),
             ),
             refs = listOf(WaitRef("session", id = session.segment)),
@@ -120,7 +121,6 @@ internal class AutomationsMemoryProposals(
     }
 
     private companion object {
-        const val ACCEPT = "accept"
         const val REJECT = "reject"
         const val EXTERNAL = "external"
         const val MAX_TITLE = 200

@@ -29,6 +29,9 @@ data class ProposalWait(
     val author: String? = null,
 )
 
+/** The action of a proposal's wait that accepts it; any other answer rejects it. */
+const val PROPOSAL_ACCEPT = "accept"
+
 /**
  * A proposal waiting for its answer.
  *
@@ -81,7 +84,8 @@ interface MemoryProposalStore {
     suspend fun proposals(caller: MemoryCaller, limit: Int): List<MemoryEntry>
 
     /**
-     * Accepts or rejects a waiting proposal, after [check] (under the row's lock).
+     * Accepts or rejects a waiting proposal. [check] runs first on the organization's entry, whatever its status, under
+     * the row's lock: it decides whether the caller may know of it.
      *
      * @return The entry as it is now, and its wait.
      * @throws MemoryNotFoundException When the organization has no such entry of its own.
@@ -94,11 +98,11 @@ interface MemoryProposalStore {
         check: (MemoryEntry) -> Unit,
     ): PendingProposal
 
-    /** The organizations holding proposals or rejected entries, for the settling pass. */
-    suspend fun organizations(limit: Int): List<Uuid>
+    /** The organizations holding proposals or rejected entries, for the settling pass, by id after [after]. */
+    suspend fun organizations(after: Uuid?, limit: Int): List<Uuid>
 
-    /** An organization's waiting proposals, oldest first. */
-    suspend fun pending(orgId: Uuid, limit: Int): List<PendingProposal>
+    /** An organization's waiting proposals, oldest first, after [after]: changed later, or at once with a larger id. */
+    suspend fun pending(orgId: Uuid, after: MemoryCursor?, limit: Int): List<PendingProposal>
 
     /**
      * Accepts (with [edits], when given) or rejects a proposal still waiting, once.

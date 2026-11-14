@@ -3,11 +3,13 @@ package run.ostrom.server.memory.domain
 
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.PrincipalKind
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
@@ -58,6 +60,7 @@ interface MemoryProposalsService {
  * @param waits The waits asking the sessions' people.
  * @param audit The organization's audit log.
  * @param clock The time the proposals' age is read with.
+ * @param page How many organizations, then proposals of one, the settling pass reads at a time.
  */
 class MemoryProposalsServiceImpl(
     private val repository: MemoryRepository,
@@ -65,6 +68,7 @@ class MemoryProposalsServiceImpl(
     private val waits: MemoryProposalWaits,
     private val audit: MemoryAudit,
     private val clock: Clock,
+    private val page: Int = SETTLE_PAGE,
 ) : MemoryProposalsService {
     override suspend fun propose(caller: MemoryCaller, entry: NewMemory, sessionId: String?): MemoryEntry {
         // A key or a token is no agent's session: nobody would answer its proposal.
@@ -76,13 +80,21 @@ class MemoryProposalsServiceImpl(
         val named = sessionId?.takeIf { it.isNotBlank() } ?: throw MemoryProposalSessionException()
         val session = waits.session(caller, named)
         val stored = repository.create(caller, entry, MemoryOrigin.AGENT, session.segment, MemoryStatus.PROPOSED)
+        var waitId: Uuid? = null
         var asked = false
         try {
-            store.attach(caller.orgId, stored.id, waits.open(caller, session, stored))
+            val opened = waits.open(caller, session, stored)
+            waitId = opened
+            store.attach(caller.orgId, stored.id, opened)
             asked = true
         } finally {
-            // Nobody was asked, so nobody can ever accept it: it must not wait for the expiry.
-            if (!asked) withContext(NonCancellable) { store.close(caller.orgId, stored.id, accept = false, null) }
+            // Nobody can ever accept it: it must not wait for the expiry, nor its wait stay open for nothing.
+            if (!asked) {
+                withContext(NonCancellable) {
+                    store.close(caller.orgId, stored.id, accept = false, null)
+                    waitId?.let { waits.cancel(caller.orgId, caller.memberId, it) }
+                }
+            }
         }
         audit.record(caller, "memory.proposed", stored.id, "scope" to stored.scope.wire, "origin" to "agent")
         return stored
@@ -96,8 +108,10 @@ class MemoryProposalsServiceImpl(
     override suspend fun decide(caller: MemoryCaller, id: Uuid, accept: Boolean): MemoryEntry {
         requirePerson(caller)
         val decided = store.decide(caller, id, accept) { entry ->
-            // Accepting changes what the organization reads: an administrator's call. The author may withdraw theirs.
-            if (!caller.admin && (accept || entry.authorId != caller.memberId)) throw MemoryProposalForbiddenException()
+            // Another member's proposal is nobody's but theirs and the administrators'; accepting changes what the
+            // organization reads, an administrator's call. The author may withdraw theirs.
+            if (!caller.admin && entry.authorId != caller.memberId) throw MemoryNotFoundException()
+            if (!caller.admin && accept) throw MemoryProposalForbiddenException()
         }
         decided.waitId?.let { waits.cancel(caller.orgId, decided.entry.authorId, it) }
         val facts = if (accept) arrayOf("edited" to "false") else emptyArray()
@@ -105,35 +119,68 @@ class MemoryProposalsServiceImpl(
         return decided.entry
     }
 
-    override suspend fun settle(): Int =
-        store.organizations(SETTLE_ORGANIZATIONS).sumOf { settle(it) }
+    override suspend fun settle(): Int {
+        var changed = 0
+        var failure: Exception? = null
+        var after: Uuid? = null
+        do {
+            val organizations = store.organizations(after, page)
+            for (orgId in organizations) {
+                val (settled, failed) = settleApart(orgId)
+                changed += settled
+                failure = failure ?: failed
+            }
+            after = organizations.lastOrNull()
+        } while (organizations.size == page)
+        failure?.let { throw it }
+        return changed
+    }
+
+    /** One organization's pass: its failure leaves the others settled, and is thrown once every one was tried. */
+    private suspend fun settleApart(orgId: Uuid): Pair<Int, Exception?> = try {
+        settle(orgId) to null
+    } catch (error: CancellationException) {
+        throw error
+    } catch (error: Exception) {
+        0 to error
+    }
 
     private suspend fun settle(orgId: Uuid): Int {
         val now = clock.now()
-        val pending = store.pending(orgId, SETTLE_PAGE)
-        val states = waits.states(orgId, pending.mapNotNull { it.waitId })
         var changed = 0
-        for (proposal in pending) {
-            val wait = proposal.waitId?.let(states::get)
-            val fresh = proposal.entry.updatedAt >= now - MemoryRules.PROPOSAL_DAYS.days
-            // A proposal whose wait is still being opened (bound just after the row) is left alone for a minute.
-            val opening = proposal.waitId == null && proposal.entry.updatedAt >= now - OPENING
-            if (wait?.open == true && fresh || opening) continue
-            val answer = wait?.takeIf { it.action == ACCEPT }
-            val accepted = answer != null
-            val edits = answer?.let { edits(proposal.entry, it.values) }
-            if (store.close(orgId, proposal.entry.id, accepted, edits)) {
-                changed++
-                val by = "by" to (wait?.author ?: SYSTEM)
-                val event = if (accepted) "memory.accepted" else "memory.rejected"
-                val facts = if (accepted) arrayOf(by, "edited" to "${edits != null}") else arrayOf(by)
-                audit.record(orgId, MEMORY_ACTOR, event, proposal.entry.id, *facts)
+        var after: MemoryCursor? = null
+        do {
+            // Every page, past the proposals still waiting for their person, so an answer is never held behind them.
+            val pending = store.pending(orgId, after, page)
+            val states = waits.states(orgId, pending.mapNotNull { it.waitId })
+            for (proposal in pending) {
+                if (settle(orgId, proposal, proposal.waitId?.let(states::get), now)) changed++
             }
-            if (wait?.open == true) waits.cancel(orgId, proposal.entry.authorId, wait.id)
-        }
+            after = pending.lastOrNull()?.let { MemoryCursor(it.entry.updatedAt, it.entry.id) }
+        } while (pending.size == page)
         // Rejected proposals are kept for the audit, then deleted (their tags go with them).
         store.purgeRejected(orgId, now - MemoryRules.REJECTED_DAYS.days)
         return changed
+    }
+
+    /** Applies [wait]'s answer to [proposal], or its expiry; whether this replica changed it. */
+    private suspend fun settle(orgId: Uuid, proposal: PendingProposal, wait: ProposalWait?, now: Instant): Boolean {
+        val fresh = proposal.entry.updatedAt >= now - MemoryRules.PROPOSAL_DAYS.days
+        // A proposal whose wait is still being opened (bound just after the row) is left alone for a minute.
+        val opening = proposal.waitId == null && proposal.entry.updatedAt >= now - OPENING
+        if (wait?.open == true && fresh || opening) return false
+        val answer = wait?.takeIf { it.action == PROPOSAL_ACCEPT }
+        val accepted = answer != null
+        val edits = answer?.let { edits(proposal.entry, it.values) }
+        val closed = store.close(orgId, proposal.entry.id, accepted, edits)
+        if (closed) {
+            val by = "by" to (wait?.author ?: SYSTEM)
+            val event = if (accepted) "memory.accepted" else "memory.rejected"
+            val facts = if (accepted) arrayOf(by, "edited" to "${edits != null}") else arrayOf(by)
+            audit.record(orgId, MEMORY_ACTOR, event, proposal.entry.id, *facts)
+        }
+        if (wait?.open == true) waits.cancel(orgId, proposal.entry.authorId, wait.id)
+        return closed
     }
 
     /** The person's edits, when they changed something and keep the rules; else the proposal as it was sent. */
@@ -163,10 +210,8 @@ class MemoryProposalsServiceImpl(
     }
 
     private companion object {
-        const val ACCEPT = "accept"
         const val SYSTEM = "ostrom"
         const val SETTLE_PAGE = 100
-        const val SETTLE_ORGANIZATIONS = 1_000
         val OPENING = 1.minutes
     }
 }

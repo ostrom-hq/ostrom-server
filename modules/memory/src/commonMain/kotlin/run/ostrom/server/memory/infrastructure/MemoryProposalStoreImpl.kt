@@ -3,6 +3,7 @@ package run.ostrom.server.memory.infrastructure
 
 import run.ostrom.server.kernel.database.inOrg
 import run.ostrom.server.memory.domain.MemoryCaller
+import run.ostrom.server.memory.domain.MemoryCursor
 import run.ostrom.server.memory.domain.MemoryEntry
 import run.ostrom.server.memory.domain.MemoryNotFoundException
 import run.ostrom.server.memory.domain.MemoryNotProposedException
@@ -64,8 +65,8 @@ internal class MemoryProposalStoreImpl(private val driver: Driver, private val c
             ).bind("org_id", caller.orgId).bind("id", id),
         ).getOrThrow().firstOrNull() ?: throw MemoryNotFoundException()
         val entry = entriesOf(listOf(row)).single()
-        if (entry.status != MemoryStatus.PROPOSED) throw MemoryNotProposedException()
         check(entry)
+        if (entry.status != MemoryStatus.PROPOSED) throw MemoryNotProposedException()
         val now = clock.now()
         closeOne(caller.orgId, id, accept, null, now)
         val status = if (accept) MemoryStatus.ACTIVE else MemoryStatus.REJECTED
@@ -75,20 +76,25 @@ internal class MemoryProposalStoreImpl(private val driver: Driver, private val c
         )
     }
 
-    override suspend fun organizations(limit: Int): List<Uuid> = driver.fetchAll(
+    override suspend fun organizations(after: Uuid?, limit: Int): List<Uuid> = driver.fetchAll(
         // The serving role alone runs the function; it returns organizations' ids, nothing of an entry.
-        Statement.create("SELECT org_id FROM memory_settling_orgs(CAST(:limit AS INTEGER))").bind("limit", limit),
+        Statement.create("SELECT org_id FROM memory_settling_orgs(CAST(:after AS UUID), CAST(:limit AS INTEGER))")
+            .bind("after", after).bind("limit", limit),
     ).getOrThrow().map { it.get("org_id").asUuid() }
 
-    override suspend fun pending(orgId: Uuid, limit: Int): List<PendingProposal> = driver.inOrg(orgId) {
-        val rows = fetchAll(
-            Statement.create(
+    override suspend fun pending(orgId: Uuid, after: MemoryCursor?, limit: Int): List<PendingProposal> =
+        driver.inOrg(orgId) {
+            val cursor = if (after == null) "" else PENDING_AFTER
+            val statement = Statement.create(
                 "SELECT $ENTRY_COLUMNS, proposal_wait_id FROM memory_entries WHERE org_id = :org_id " +
-                    "AND status = 'proposed' ORDER BY updated_at, id LIMIT :limit",
-            ).bind("org_id", orgId).bind("limit", limit),
-        ).getOrThrow().toList()
+                    "AND status = 'proposed'$cursor ORDER BY updated_at, id LIMIT :limit",
+            ).bind("org_id", orgId).bind("limit", limit)
+            if (after != null) statement.bind("after_at", after.updatedAt).bind("after_id", after.id)
+            pendingOf(fetchAll(statement).getOrThrow().toList())
+        }
+
+    private suspend fun QueryExecutor.pendingOf(rows: List<ResultSet.Row>): List<PendingProposal> =
         entriesOf(rows).zip(rows) { entry, row -> PendingProposal(entry, row.get("proposal_wait_id").asUuidOrNull()) }
-    }
 
     override suspend fun close(orgId: Uuid, id: Uuid, accept: Boolean, edits: ProposalEdits?): Boolean =
         driver.inOrg(orgId) { closeOne(orgId, id, accept, edits, clock.now()) }
@@ -128,3 +134,6 @@ internal class MemoryProposalStoreImpl(private val driver: Driver, private val c
         return rows.map { it.toEntry(tags[it.id()].orEmpty()) }
     }
 }
+
+/** The waiting proposals after a cursor, oldest first. */
+private const val PENDING_AFTER = " AND (updated_at > :after_at OR (updated_at = :after_at AND id > :after_id))"
