@@ -128,9 +128,10 @@ class CommitArtifactUploadUseCaseTest {
         // The page is in the folder already: only the style is sent.
         val (uploadId, _) = sent(alice, draft, page, style)
         val files = listOf(file("index.html", page), file("style.css", style))
-        assertFailsWith<ArtifactConflictException> {
+        val stale = assertFailsWith<ArtifactConflictException> {
             use.commit(alice, draft, UploadCommit(uploadId, files, baseVersion = 0))
         }
+        assertEquals(1, stale.current?.number)
         artifacts.loseNextRace = true
         assertFailsWith<ArtifactConflictException> { use.commit(alice, draft, UploadCommit(uploadId, files)) }
         val second = use.commit(alice, draft, UploadCommit(uploadId, files, entry = "index.html", title = "Renamed"))
@@ -154,6 +155,16 @@ class CommitArtifactUploadUseCaseTest {
         val (uploadId, _) = sent(alice, id, page)
         val next = use.commit(alice, id, UploadCommit(uploadId, listOf(file("index.html", page))))
         assertEquals(2 to 1, next.version.number to next.version.baseVersion)
+    }
+
+    @Test
+    fun aDraftsConflictCarriesNoLiveVersion() = runTest {
+        val (uploadId, draft) = sent(alice, null, page)
+        val conflict = assertFailsWith<ArtifactConflictException> {
+            val commit = UploadCommit(uploadId, listOf(file("index.html", page)), baseVersion = 1, title = "T")
+            use.commit(alice, draft, commit)
+        }
+        assertNull(conflict.current)
     }
 
     @Test

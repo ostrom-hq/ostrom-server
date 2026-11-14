@@ -125,7 +125,8 @@ internal class CommitArtifactUploadUseCaseImpl(
             credentialId = caller.credentialId,
         )
         if (base != artifact.latestVersion || artifacts.addVersion(caller.orgId, version, now) == null) {
-            throw ArtifactConflictException()
+            // The live version, newest first, for the publisher to merge (none for a draft).
+            throw ArtifactConflictException(artifacts.versions(caller.orgId, artifact.id).firstOrNull())
         }
         if (settings != artifact) {
             artifacts.updateSettings(settings.copy(latestVersion = version.number, updatedAt = now))
