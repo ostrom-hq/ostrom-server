@@ -196,12 +196,34 @@ class DeliverNotificationsUseCaseTest {
                 positions = listOf(JournalPosition(orgA, 0, 1)),
                 slices = mapOf(orgA to JournalSlice(listOf(waitCreated(1, "w-1")), 1)),
             )
-            names = SessionNames { _, _ -> error("No session to name") }
+            names = SessionNames { _, _ -> error("Never asked: no session to name") }
             val deliveries = MemoryDeliveries()
 
             val queued = useCase(journal, waits, deliveries, listOf(FakeChannel("push", setOf(mia)))).fanOut()
 
             assertEquals(1, queued)
+        }
+    }
+
+    @Test
+    fun aFailedReadOfTheNamesKeepsTheDefaultTitleAndQueuesThePage() {
+        runTest {
+            val journal = FakeJournal(
+                positions = listOf(JournalPosition(orgA, 0, 1)),
+                slices = mapOf(orgA to JournalSlice(listOf(waitCreated(1, "w-1")), 1)),
+            )
+            names = SessionNames { _, _ -> error("The database is down") }
+            val deliveries = MemoryDeliveries()
+
+            val waits = CountingWaits(listOf(summary("w-1", mia)))
+            useCase(journal, waits, deliveries, listOf(FakeChannel("push", setOf(mia)))).fanOut()
+
+            val told = deliveries.enqueued.single().second.filterIsInstance<NotificationDelivery>()
+            assertEquals(listOf(NotificationRules.DEFAULT_TITLE), told.map { it.notification.title })
+            assertEquals(
+                listOf("notification session names read failed" to mapOf("error" to "IllegalStateException")),
+                logger.events.map { it.second to it.third },
+            )
         }
     }
 

@@ -148,7 +148,12 @@ class DeliverNotificationsUseCaseImpl(
         val known = if (waitIds.isEmpty()) emptyMap() else waits.of(orgId, waitIds).associateBy { it.id }
         // Only the waits that tell someone need their session's name, read once for the page (TeamCode).
         val sessionIds = known.values.filter { it.open }.mapNotNull { it.sessionId }.toSet()
-        val names = if (sessions == null || sessionIds.isEmpty()) emptyMap() else sessions.of(orgId, sessionIds)
+        // A title is only words: a failed read of the names keeps the default title, it never holds the page back.
+        val names = if (sessions == null || sessionIds.isEmpty()) {
+            emptyMap()
+        } else {
+            guarded(NAMES_FAILED, emptyMap()) { sessions.of(orgId, sessionIds) }
+        }
         val drafts = entries.mapNotNull { entry ->
             val wait = known[NotificationRules.waitIdOf(entry)]
             NotificationRules.draft(NotificationSource(entry, wait, wait?.sessionId?.let(names::get)))
@@ -238,6 +243,7 @@ class DeliverNotificationsUseCaseImpl(
         const val WAIT_CLOSED = "wait_closed"
         const val GATE_DECIDED = "gate_decided"
         const val FANOUT_FAILED = "notification fan-out failed"
+        const val NAMES_FAILED = "notification session names read failed"
         const val CLAIM_FAILED = "notification claim failed"
         const val RECORD_FAILED = "notification record failed"
         const val APPROVAL_NOT_SENT = "approval notification not sent"
