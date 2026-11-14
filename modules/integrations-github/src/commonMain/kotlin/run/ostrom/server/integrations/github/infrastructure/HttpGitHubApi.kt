@@ -80,10 +80,12 @@ class HttpGitHubApi(
     private val lock = Mutex()
 
     // GitHub Enterprise Server serves GraphQL at /api/graphql, next to the REST API's /api/v3.
-    private fun graphqlUrl(): String {
-        val api = apiUrl()
-        return if (api.endsWith(ENTERPRISE_REST)) api.removeSuffix(ENTERPRISE_REST) + "/api" else api
-    }
+    // A getter, read at each call: GitHub's address is the console's.
+    private val graphqlUrl: String
+        get() {
+            val api = apiUrl()
+            return if (api.endsWith(ENTERPRISE_REST)) api.removeSuffix(ENTERPRISE_REST) + "/api" else api
+        }
 
     override suspend fun pullRequest(installationId: Long, repo: String, number: Int): GitHubPull? {
         // The hook of the agent waits for this answer: GitHub has 2 seconds.
@@ -171,7 +173,7 @@ class HttpGitHubApi(
                     put("after", after)
                 }
             }
-            val response = http.exchange(HttpMethod.Post, "${graphqlUrl()}/graphql", "/graphql") {
+            val response = http.exchange(HttpMethod.Post, "${graphqlUrl}/graphql", "/graphql") {
                 headers(token)
                 contentType(ContentType.Application.Json)
                 setBody(query.toString())
