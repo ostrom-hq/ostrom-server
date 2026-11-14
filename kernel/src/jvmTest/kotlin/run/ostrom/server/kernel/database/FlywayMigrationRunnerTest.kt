@@ -84,7 +84,7 @@ class FlywayMigrationRunnerTest {
         }
     }
 
-    // AUDIT-RLS R8, as for sqlx4k's history: the serving role reads Flyway's and never writes it.
+    // AUDIT-RLS R8, as for sqlx4k's history: the serving role reads Flyway's, and the older one, and never writes them.
     @Test
     fun onlyTheOwnerWritesTheHistory() {
         databaseTest { database ->
@@ -95,6 +95,10 @@ class FlywayMigrationRunnerTest {
             runner.migrate("probe", first)
             assertFalse(database.canWrite(database.servingRole, "flyway_probe"), "Write not revoked again")
             assertTrue(database.canWrite(database.servingRole, "probe_items"), "Module tables keep their grants")
+            database.owner.execute("CREATE TABLE _migrations_probe (version BIGINT, checksum TEXT)").getOrThrow()
+            database.superuser.execute("GRANT ALL ON _migrations_probe TO ${database.servingRole}").getOrThrow()
+            runner.migrate("probe", first)
+            assertFalse(database.canWrite(database.servingRole, "_migrations_probe"), "The older history is writable")
         }
     }
 
@@ -221,7 +225,7 @@ class FlywayMigrationRunnerTest {
 
     // TeamCode 3da27ca0: two migrations of one module never share a version.
     @Test
-    fun refusesVersionsThatRepeatOrGoBackwards() {
+    fun refusesVersionsThatRepeatGoBackwardsOrSkipOne() {
         databaseTest { database ->
             val runner = database.runner()
             val repeated = first + first.single().copy(name = "again")
@@ -229,6 +233,8 @@ class FlywayMigrationRunnerTest {
             assertFailsWith<IllegalArgumentException> { runner.verify("probe", second.reversed()) }
             val zero = listOf(first.single().copy(version = 0))
             assertFailsWith<IllegalArgumentException> { runner.migrate("probe", zero) }
+            val gap = first + second.last().copy(version = 3)
+            assertFailsWith<IllegalArgumentException> { runner.migrate("probe", gap) }
             assertFailsWith<IllegalArgumentException> { runner.migrate("Probe", first) }
             runner.migrate("empty", emptyList())
             assertEquals(0, applied())

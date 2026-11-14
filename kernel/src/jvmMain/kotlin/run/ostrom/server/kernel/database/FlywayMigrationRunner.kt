@@ -9,6 +9,7 @@ import java.sql.SQLException
 import java.util.zip.CRC32
 import javax.sql.DataSource
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlin.time.Duration
@@ -56,8 +57,13 @@ class FlywayMigrationRunner(
                 if (attempt == attempts || !error.isLockTimeout()) throw error
                 null
             } finally {
-                // Even after a failed pass: the history may have been created, and must not stay writable meanwhile.
-                withContext(Dispatchers.IO) { source.connection.use { it.run(ownerOnlySql(table)) } }
+                // Even after a failed or cancelled pass: the history may have been created, and must not stay writable
+                // meanwhile. sqlx4k's older history too, which nothing else writes now (AUDIT-RLS R8).
+                withContext(NonCancellable + Dispatchers.IO) {
+                    source.connection.use { connection ->
+                        listOf(table, legacyTable(module)).forEach { connection.run(ownerOnlySql(it)) }
+                    }
+                }
             }
             if (applied != null) {
                 applied.forEach { (version, millis) ->
@@ -117,7 +123,7 @@ class FlywayMigrationRunner(
             .javaMigrations(*migrations.map(::ModuleMigration).toTypedArray())
             .baselineOnMigrate(true)
             .baselineVersion(MigrationVersion.fromVersion(baseline.toString()))
-            .baselineDescription("adopted from sqlx4k")
+            .baselineDescription("the history before Flyway")
             .load()
         return flyway.migrate().migrations.map { it.version to it.executionTime }
     }

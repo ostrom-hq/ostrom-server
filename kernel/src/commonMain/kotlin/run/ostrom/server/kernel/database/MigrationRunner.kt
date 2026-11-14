@@ -120,15 +120,15 @@ internal fun moduleKey(module: String): String {
 }
 
 /**
- * Refuses a module's migrations whose versions are not positive and increasing (TeamCode 3da27ca0): two migrations
- * with one version would make Flyway, or sqlx4k, apply one of them only.
+ * Refuses a module's migrations whose versions are not 1, 2, 3… in order (TeamCode 3da27ca0): two migrations with one
+ * version would make Flyway, or sqlx4k, apply one of them only, and a gap would be skipped without a word.
  *
- * @throws IllegalArgumentException When a version is below 1, repeated or out of order.
+ * @throws IllegalArgumentException When a version is repeated, out of order or missing.
  */
 internal fun requireVersions(module: String, migrations: List<SchemaMigration>) {
     val versions = migrations.map { it.version }
-    require(versions.zipWithNext().all { (a, b) -> a < b } && versions.all { it > 0 }) {
-        "The migrations of module $module must have increasing versions from 1, not $versions."
+    require(versions == (1L..versions.size).toList()) {
+        "The migrations of module $module must be numbered 1, 2, 3… without a gap or a repeat, not $versions."
     }
 }
 
