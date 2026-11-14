@@ -45,15 +45,8 @@ fun Route.cloudAdminRoutes(dependencies: CloudAdminRoutesDependencies) = with(de
             val caller = call.requirePrincipal().cloudAdmin()
             gate.require(caller)
             val request = call.receive<SaveCloudRuntimeRequest>()
-            val expected = request.updatedAt?.let {
-                Instant.parseOrNull(it) ?: throw InvalidCloudRuntimeException("updatedAt is a date-time.")
-            }
-            val saved = runtime.save(
-                caller,
-                request.toRuntime(),
-                expected,
-                keepAutomationCap = request.maxRunningAutomationsPerMember == null,
-            )
+            val keep = request.maxRunningAutomationsPerMember == null
+            val saved = runtime.save(caller, request.toRuntime(), request.expectedUpdate(), keepAutomationCap = keep)
             call.respond(saved.toResponse(publicUrl))
         }
         get<CloudClustersApi> {
@@ -108,6 +101,10 @@ internal fun AuthenticatedPrincipal.cloudAdmin(): CloudAdminCaller = CloudAdminC
     userId = Uuid.parseOrNull(subjectId),
     person = mayWrite(WriteAccess.PERSON),
 )
+
+private fun SaveCloudRuntimeRequest.expectedUpdate(): Instant? = updatedAt?.let {
+    Instant.parseOrNull(it) ?: throw InvalidCloudRuntimeException("updatedAt is a date-time.")
+}
 
 internal fun SaveCloudRuntimeRequest.toRuntime() = CloudRuntime(
     enabled = enabled,
