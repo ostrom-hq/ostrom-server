@@ -11,6 +11,7 @@ import run.ostrom.server.gateway.domain.BudgetCheck
 import run.ostrom.server.gateway.domain.CancelInferenceRequestUseCase
 import run.ostrom.server.gateway.domain.CancelInferenceRequestUseCaseImpl
 import run.ostrom.server.gateway.domain.CancellationWatch
+import run.ostrom.server.gateway.domain.GatewayInstanceSettings
 import run.ostrom.server.gateway.domain.GatewaySettingsRepository
 import run.ostrom.server.gateway.domain.GetGatewaySettingsUseCase
 import run.ostrom.server.gateway.domain.GetGatewaySettingsUseCaseImpl
@@ -34,7 +35,6 @@ import run.ostrom.server.gateway.domain.RelayInferenceUseCase
 import run.ostrom.server.gateway.domain.RelayInferenceUseCaseImpl
 import run.ostrom.server.gateway.domain.RequestCancellationRepository
 import run.ostrom.server.gateway.domain.SpendGuard
-import run.ostrom.server.gateway.domain.UpstreamRequests
 import run.ostrom.server.gateway.infrastructure.AdmissionQueueRepositoryImpl
 import run.ostrom.server.gateway.infrastructure.GatewayMigrations
 import run.ostrom.server.gateway.infrastructure.GatewaySettingsRepositoryImpl
@@ -47,9 +47,10 @@ import run.ostrom.server.gateway.presentation.GatewayRoutesDependencies
 import run.ostrom.server.gateway.presentation.gatewayRoutes
 import run.ostrom.server.kernel.auth.GovernanceChange
 import run.ostrom.server.kernel.auth.ModelAccess
-import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
+import run.ostrom.server.kernel.settings.InstanceSettings
+import run.ostrom.server.kernel.settings.SettingsSection
 import run.ostrom.server.secrets.domain.CallerResolver
 import run.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
 import io.ktor.client.HttpClient
@@ -81,7 +82,9 @@ object GatewayModule : ServerModule {
     private const val SILENCE_MS = 300_000L
 
     override val koinModule: Module = module {
-        single { GatewayConfig.from(get<ConfigSource>()) }
+        // The instance's provider keys and URLs an administrator sets in the console (the admin module collects
+        // every bound section).
+        single<SettingsSection>(named(GatewayInstanceSettings.SECTION.name)) { GatewayInstanceSettings.SECTION }
         single(HTTP_CLIENT) {
             HttpClient {
                 followRedirects = false
@@ -96,14 +99,13 @@ object GatewayModule : ServerModule {
         single<InferenceUpstream> { KtorInferenceUpstream(get(HTTP_CLIENT), SILENCE_MS.milliseconds) }
         single { PriceTable() }
         single {
-            val config = get<GatewayConfig>()
+            val instance = get<InstanceSettings>()
             InferencePlanner(
                 settings = get(),
                 pool = get(),
                 revealSecrets = get(),
                 spend = BudgetCheck(getOrNull<SpendGuard>() ?: AllowAllSpend, get()),
-                keys = config.keys,
-                requests = UpstreamRequests(config.endpoints),
+                instance = { GatewayInstanceSettings.providers(instance.read(GatewayInstanceSettings.SECTION.name)) },
             )
         }
         single<AdmissionQueueRepository> { AdmissionQueueRepositoryImpl(get()) }
@@ -150,11 +152,6 @@ object GatewayModule : ServerModule {
     }
 
     override val migrations: List<SchemaMigration> = GatewayMigrations
-
-    /** Reads the configuration at start: a malformed URL stops the server instead of failing calls. */
-    override suspend fun initialize(koin: Koin) {
-        koin.get<GatewayConfig>()
-    }
 
     override fun routes(route: Route, koin: Koin) {
         route.gatewayRoutes(koin.get())

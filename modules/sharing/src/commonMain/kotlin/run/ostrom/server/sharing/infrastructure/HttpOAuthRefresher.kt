@@ -34,18 +34,34 @@ import kotlin.time.Duration.Companion.seconds
  *
  * @param client The HTTP client.
  * @param clock The time.
- * @param endpoints Token endpoint per provider (tests point them at a fake).
+ * @param endpoints Token endpoint per provider, read at each refresh (the instance's settings; tests point them at a
+ *   fake).
  * @param timeout How long a refresh may take.
  */
 class HttpOAuthRefresher(
     private val client: HttpClient,
     private val clock: Clock,
-    private val endpoints: Map<AccountProvider, String> = ENDPOINTS,
+    private val endpoints: suspend () -> Map<AccountProvider, String>,
     private val timeout: Duration = 15.seconds,
 ) : OAuthRefresher {
+    /**
+     * A refresher on fixed endpoints.
+     *
+     * @param client The HTTP client.
+     * @param clock The clock of the expiries.
+     * @param endpoints Token endpoint per provider.
+     * @param timeout The longest a refresh may take.
+     */
+    constructor(
+        client: HttpClient,
+        clock: Clock,
+        endpoints: Map<AccountProvider, String> = ENDPOINTS,
+        timeout: Duration,
+    ) : this(client, clock, { endpoints }, timeout)
+
     override suspend fun refresh(provider: AccountProvider, credentials: AccountCredentials): RefreshResult = try {
         withTimeoutOrNull(timeout) {
-            client.preparePost(endpoints.getValue(provider)) {
+            client.preparePost(endpoints().getValue(provider)) {
                 contentType(ContentType.Application.Json)
                 setBody(
                     buildJsonObject {

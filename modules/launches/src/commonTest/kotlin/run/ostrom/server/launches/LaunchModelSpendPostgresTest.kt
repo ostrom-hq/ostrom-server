@@ -18,6 +18,8 @@ import run.ostrom.server.identity.domain.VerifiedIdentity
 import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.EnvironmentConfigSource
+import run.ostrom.server.kernel.settings.InstanceSettings
+import run.ostrom.server.kernel.settings.SettingsValues
 import run.ostrom.server.launches.presentation.LaunchResponse
 import run.ostrom.server.orgs.domain.Member
 import run.ostrom.server.orgs.domain.Org
@@ -92,22 +94,29 @@ class LaunchModelSpendPostgresTest {
         expectSuccess = false
     }
 
-    /** The instance's Anthropic key, the environment for the rest (the test database). */
+    /** The environment (the test database). */
     private val config = object : ConfigSource {
         private val environment = EnvironmentConfigSource()
-        private val gateway = mapOf(
-            "OSTROM_GATEWAY_ANTHROPIC_URL" to "https://anthropic.test",
-            "OSTROM_GATEWAY_ANTHROPIC_API_KEY" to "sk-ant-api03-instance",
-            // Its owners sign up as on ostrom.run (serverTest's default, which this source replaces).
-            "OSTROM_SIGNUP" to "open",
-        )
 
-        override fun get(key: String): String? = gateway[key] ?: environment[key]
+        override fun get(key: String): String? = environment[key]
     }
 
     private val overrides = module {
         single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
         single<ConfigSource> { config }
+        // The instance's Anthropic key and URL, as an administrator saves them in the console, and its owners signing
+        // up as on ostrom.run.
+        single<InstanceSettings> {
+            InstanceSettings { section ->
+                when (section) {
+                    "gateway" -> SettingsValues(
+                        mapOf("anthropicUrl" to "https://anthropic.test", "anthropicApiKey" to "sk-ant-api03-instance"),
+                    )
+                    "sign-up" -> SettingsValues(mapOf("mode" to "open"))
+                    else -> SettingsValues.EMPTY
+                }
+            }
+        }
         single(GatewayModule.HTTP_CLIENT) { anthropic }
     }
 

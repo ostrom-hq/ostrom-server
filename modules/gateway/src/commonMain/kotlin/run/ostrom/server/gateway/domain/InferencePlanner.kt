@@ -13,23 +13,40 @@ import kotlin.uuid.Uuid
 /**
  * Decides where a member's model call goes and builds it: a valid body, an allowed model, the budgets, then the
  * credential — a shared subscription account first (when the org uses them), else the provider key of the instance
- * configuration, else the org's key secret.
+ * (set in the console), else the org's key secret.
  *
  * @param settings The org's settings and model policy.
  * @param pool The org's shared accounts.
  * @param revealSecrets Opens the org's key secrets.
  * @param spend The budgets, asked with what the call may cost.
- * @param keys The instance's provider keys.
- * @param requests Builds the upstream requests.
+ * @param instance The instance's provider keys and URLs, read once per call ([GatewayInstanceSettings]).
  */
 class InferencePlanner(
     private val settings: GatewaySettingsRepository,
     private val pool: SharedAccountPool,
     private val revealSecrets: RevealSecretsUseCase,
     private val spend: BudgetCheck,
-    private val keys: InstanceProviderKeys,
-    private val requests: UpstreamRequests,
+    private val instance: suspend () -> InstanceProviders,
 ) {
+    /**
+     * A planner on fixed providers.
+     *
+     * @param settings The org's settings and model policy.
+     * @param pool The org's shared accounts.
+     * @param revealSecrets Opens the org's key secrets.
+     * @param spend The budgets.
+     * @param keys The instance's provider keys.
+     * @param requests Builds the upstream requests.
+     */
+    constructor(
+        settings: GatewaySettingsRepository,
+        pool: SharedAccountPool,
+        revealSecrets: RevealSecretsUseCase,
+        spend: BudgetCheck,
+        keys: InstanceProviderKeys,
+        requests: UpstreamRequests,
+    ) : this(settings, pool, revealSecrets, spend, { InstanceProviders(keys, requests.endpoints) })
+
     /**
      * Plans a call.
      *
@@ -39,8 +56,9 @@ class InferencePlanner(
     suspend fun plan(caller: Caller, call: InferenceCall): InferencePlan =
         plan(caller, call, configOf(caller), Uuid.random())
 
-    /** What [plan] needs of the caller's org: one read, kept over the tries of a call. */
-    suspend fun configOf(caller: Caller): GatewayOrgConfig = settings.forCall(caller.orgId)
+    /** What [plan] needs of the caller's org and of the instance: one read, kept over the tries of a call. */
+    suspend fun configOf(caller: Caller): GatewayOrgConfig =
+        settings.forCall(caller.orgId).copy(providers = instance())
 
     /**
      * Plans a try of a call.
@@ -53,7 +71,7 @@ class InferencePlanner(
     suspend fun plan(caller: Caller, call: InferenceCall, org: GatewayOrgConfig, callId: Uuid): InferencePlan {
         val body = RequestBody.read(call.body, org.policy.default)
             ?: return refused(RefusalKind.INVALID, "The request body must be a JSON object naming a model.", "")
-        val plan = admit(caller, call, body, org.policy, callId) ?: route(caller, call, body, org.settings)
+        val plan = admit(caller, call, body, org.policy, callId) ?: route(caller, call, body, org)
         // A call that waits for a busy account holds no budget meanwhile: it is taken again on its next try.
         if (plan is InferencePlan.Busy) spend.release(caller, callId)
         return plan
@@ -86,12 +104,12 @@ class InferencePlanner(
         caller: Caller,
         call: InferenceCall,
         body: RequestBody,
-        org: GatewaySettings,
+        org: GatewayOrgConfig,
     ): InferencePlan {
-        val lease = call.protocol.shared?.takeIf { org.useSharedAccounts }
+        val lease = call.protocol.shared?.takeIf { org.settings.useSharedAccounts }
             ?.let { pool.lease(caller.orgId, caller.memberId, it, call.sessionId) }
         return when (lease) {
-            is LeaseResult.Leased -> requests.shared(call, body, lease.lease)
+            is LeaseResult.Leased -> UpstreamRequests(org.providers.endpoints).shared(call, body, lease.lease)
             is LeaseResult.Refused -> byKey(caller, call, body, org, lease.refusal)
             null -> byKey(caller, call, body, org, null)
         }
@@ -105,14 +123,14 @@ class InferencePlanner(
         caller: Caller,
         call: InferenceCall,
         body: RequestBody,
-        org: GatewaySettings,
+        org: GatewayOrgConfig,
         pool: PoolRefusal?,
     ): InferencePlan {
         val provider = call.protocol.keyProvider(body.model)
-        val key = keys.of(provider) ?: org.keySecret(provider)?.let { reveal(caller, it) }
+        val key = org.providers.keys.of(provider) ?: org.settings.keySecret(provider)?.let { reveal(caller, it) }
         val busyUntil = pool?.retryAt
         return when {
-            key != null -> requests.byKey(provider, call, body, key)
+            key != null -> UpstreamRequests(org.providers.endpoints).byKey(provider, call, body, key)
             pool?.busy == true -> InferencePlan.Busy(noCapacity(busyUntil), body.model)
             busyUntil != null -> InferencePlan.Refused(noCapacity(busyUntil), body.model)
             else -> refused(

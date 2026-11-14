@@ -305,6 +305,8 @@ What lives in the console so far:
 | Mail (`mail`): Resend's API key, sealed, and the sender (`Ostrom <login@mail.ostrom.run>` while unset). Sign-in links, invitations and approval e-mails go once the key is set, and e-mailed sign-in is offered then, without a restart. A developer's machine or an end-to-end test writes them to `OSTROM_MAIL_DIR` instead, which stays in the environment | `OSTROM_RESEND_API_KEY`, `OSTROM_MAIL_FROM` | the `identity` module |
 | Usage (`usage`: days the ledger keeps its events, 1 to 3650, 400 by default), read at each hourly purge | `OSTROM_USAGE_RETENTION_DAYS` | the `usage` module |
 | Stripe (`stripe`: the sealed secret key and webhook signing secrets, Stripe's API), read at each use; billing is on while the key and a webhook secret are stored | `OSTROM_STRIPE_SECRET_KEY`, `OSTROM_STRIPE_WEBHOOK_SECRET` (or their `_FILE`), `OSTROM_STRIPE_API_BASE` | the `billing` module |
+| Gateway (`gateway`: the instance's sealed Anthropic, OpenAI and OpenRouter keys, the providers' base URLs), read at each model call | `OSTROM_GATEWAY_ANTHROPIC_API_KEY`, `OSTROM_GATEWAY_OPENAI_API_KEY`, `OSTROM_GATEWAY_OPENROUTER_API_KEY`, `OSTROM_GATEWAY_ANTHROPIC_URL`, `OSTROM_GATEWAY_OPENAI_URL`, `OSTROM_GATEWAY_OPENROUTER_URL`, `OSTROM_GATEWAY_CODEX_URL` | the `gateway` module |
+| Sharing (`sharing`: the providers' OAuth token endpoints), read at each refresh | `OSTROM_SHARING_CLAUDE_TOKEN_URL`, `OSTROM_SHARING_CODEX_TOKEN_URL` | the `sharing` module |
 
 The GitHub App is kept as TeamCode keeps it, in its own table (`github_apps`, one row, the key and secrets sealed),
 not in a settings section: the manifest flow creates it once, and the stored App is the only one the server uses. At
@@ -347,18 +349,20 @@ the calls that wait at 128 and the open connections at 170.
 
 ### Module `gateway`
 
-The inference gateway reads these keys at start (a malformed URL stops the server). An instance key serves every org
-of the instance and comes before an org's own key (`/api/v1/inference/settings` names an org secret instead).
+The inference gateway reads the instance's providers in the console (**Admin → Settings → gateway**) at each model
+call. An instance key serves every org of the instance and comes before an org's own key (`/api/v1/inference/settings`
+names an org secret instead); organizations keep their own keys as before. The keys are sealed and never returned; a
+URL is `http(s)` only. The former `OSTROM_GATEWAY_*` variable of each field is imported once.
 
-| Key | Default | Meaning |
+| Field | Default | Meaning |
 |---|---|---|
-| `OSTROM_GATEWAY_ANTHROPIC_API_KEY` | — | Anthropic API key for every org, when no shared Claude account serves |
-| `OSTROM_GATEWAY_OPENAI_API_KEY` | — | OpenAI API key for every org (Responses, Chat Completions) |
-| `OSTROM_GATEWAY_OPENROUTER_API_KEY` | — | OpenRouter key for every org (Chat Completions with a `vendor/model` name) |
-| `OSTROM_GATEWAY_ANTHROPIC_URL` | `https://api.anthropic.com` | Anthropic base URL (`/v1/messages` is added); `http(s)` only |
-| `OSTROM_GATEWAY_OPENAI_URL` | `https://api.openai.com` | OpenAI base URL (`/v1/responses`, `/v1/chat/completions`) |
-| `OSTROM_GATEWAY_OPENROUTER_URL` | `https://openrouter.ai/api` | OpenRouter base URL (`/v1/chat/completions`) |
-| `OSTROM_GATEWAY_CODEX_URL` | `https://chatgpt.com/backend-api/codex` | ChatGPT's Codex backend (`/responses`), for shared ChatGPT accounts |
+| `anthropicApiKey` | — | Anthropic API key for every org, when no shared Claude account serves |
+| `openaiApiKey` | — | OpenAI API key for every org (Responses, Chat Completions) |
+| `openrouterApiKey` | — | OpenRouter key for every org (Chat Completions with a `vendor/model` name) |
+| `anthropicUrl` | `https://api.anthropic.com` | Anthropic base URL (`/v1/messages` is added) |
+| `openaiUrl` | `https://api.openai.com` | OpenAI base URL (`/v1/responses`, `/v1/chat/completions`) |
+| `openrouterUrl` | `https://openrouter.ai/api` | OpenRouter base URL (`/v1/chat/completions`) |
+| `codexUrl` | `https://chatgpt.com/backend-api/codex` | ChatGPT's Codex backend (`/responses`), for shared ChatGPT accounts |
 
 A shared account that refuses a call before any output hands it to another, three accounts at most. How far it goes
 depends on the refusal (TeamCode #226): an account that cannot serve (a 401, or a 429 whose quota headers show a spent
@@ -471,10 +475,14 @@ again. Pausing and resuming never change the ownership; a member's own share of 
 refused (403 `account_in_use`), an admin's takes it over. A handover is refused (409 `account_refreshing`) while a
 refresh intent is on the row, in flight or left by a failure: new tokens clear it first.
 
-| Key | Default | Meaning |
+The providers' token endpoints are the instance's, set in the console (**Admin → Settings → sharing**) and read at each
+refresh: https, or http to a local host only (`OSTROM_SHARING_CLAUDE_TOKEN_URL` and `OSTROM_SHARING_CODEX_TOKEN_URL`
+are imported once).
+
+| Field | Default | Meaning |
 |---|---|---|
-| `OSTROM_SHARING_CLAUDE_TOKEN_URL` | `https://platform.claude.com/v1/oauth/token` | Token endpoint of shared Claude accounts |
-| `OSTROM_SHARING_CODEX_TOKEN_URL` | `https://auth.openai.com/oauth/token` | Token endpoint of shared ChatGPT (Codex) accounts |
+| `claudeTokenUrl` | `https://platform.claude.com/v1/oauth/token` | Token endpoint of shared Claude accounts |
+| `codexTokenUrl` | `https://auth.openai.com/oauth/token` | Token endpoint of shared ChatGPT (Codex) accounts |
 
 ### Module `skills`
 

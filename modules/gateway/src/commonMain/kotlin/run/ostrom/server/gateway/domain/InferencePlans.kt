@@ -7,7 +7,7 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 /**
- * Base URLs of the providers. Defaults are the public APIs; an operator (or a test) points them elsewhere.
+ * Base URLs of the providers. Defaults are the public APIs; an administrator (or a test) points them elsewhere.
  *
  * @property anthropic Anthropic API (`/v1/messages`).
  * @property openai OpenAI API (`/v1/responses`, `/v1/chat/completions`).
@@ -22,8 +22,8 @@ data class ProviderEndpoints(
 )
 
 /**
- * Provider keys set in the instance configuration (Docker environment, Helm values). They come before the org's
- * settings: an operator who sets one decides for every org of the instance.
+ * Provider keys an administrator of the instance sets in the console ([GatewayInstanceSettings]). They come before the
+ * org's settings: an administrator who sets one decides for every org of the instance.
  *
  * @property anthropic Anthropic API key.
  * @property openai OpenAI API key.
@@ -40,6 +40,23 @@ class InstanceProviderKeys(val anthropic: String? = null, val openai: String? = 
     }
 
     override fun toString(): String = "InstanceProviderKeys([REDACTED])"
+}
+
+/**
+ * The instance's providers, as a model call reads them ([GatewayInstanceSettings]).
+ *
+ * @property keys The instance's provider keys.
+ * @property endpoints The providers' base URLs.
+ */
+class InstanceProviders(
+    val keys: InstanceProviderKeys = InstanceProviderKeys(),
+    val endpoints: ProviderEndpoints = ProviderEndpoints(),
+) {
+    /** The providers of an instance that sets none. */
+    companion object {
+        /** No instance key, the public APIs. */
+        val NONE: InstanceProviders = InstanceProviders()
+    }
 }
 
 /**

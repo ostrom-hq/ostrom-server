@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.sharing
 
-import run.ostrom.server.kernel.config.ConfigSource
-import run.ostrom.server.kernel.config.InvalidConfigException
-import run.ostrom.server.kernel.config.MapConfigSource
+import run.ostrom.server.kernel.settings.InstanceSettings
+import run.ostrom.server.kernel.settings.SettingsSection
+import run.ostrom.server.kernel.settings.SettingsValues
 import run.ostrom.server.sharing.domain.AccountCredentials
 import run.ostrom.server.sharing.domain.AccountProvider
 import run.ostrom.server.sharing.domain.AccountStatus
 import run.ostrom.server.sharing.domain.AccountTokenCipher
+import run.ostrom.server.sharing.domain.OAuthRefresher
 import run.ostrom.server.sharing.domain.RefreshResult
 import run.ostrom.server.sharing.infrastructure.AWAITING_SIGN_IN
 import run.ostrom.server.sharing.infrastructure.HttpOAuthRefresher
@@ -30,10 +31,11 @@ import org.koin.dsl.module
 import kotlin.io.encoding.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -132,11 +134,14 @@ class SharingInfrastructureTest {
     }
 
     @Test
-    fun theInstanceConfigurationPointsTheTokenEndpointsElsewhere() {
-        assertEquals(HttpOAuthRefresher.ENDPOINTS, SharingConfig.tokenEndpoints(MapConfigSource(emptyMap())))
-        val claude = "OSTROM_SHARING_CLAUDE_TOKEN_URL"
-        fun claudeAt(url: String) =
-            SharingConfig.tokenEndpoints(MapConfigSource(mapOf(claude to url))).getValue(AccountProvider.CLAUDE)
+    fun theInstanceSettingsPointTheTokenEndpointsElsewhere() {
+        assertEquals(HttpOAuthRefresher.ENDPOINTS, SharingSettings.tokenEndpoints(SettingsValues.EMPTY))
+        val claude = "claudeTokenUrl"
+        val field = checkNotNull(SharingSettings.SECTION.field(claude))
+        fun claudeAt(url: String): String {
+            assertNull(field.check(url.trim()), url)
+            return SharingSettings.tokenEndpoints(SettingsValues(mapOf(claude to url))).getValue(AccountProvider.CLAUDE)
+        }
         val accepted = listOf(
             "https://proxy.example/oauth/token",
             "HTTPS://Proxy.Example/oauth/token",
@@ -181,23 +186,57 @@ class SharingInfrastructureTest {
             "//localhost/oauth/token",
         )
         for (url in refused) {
-            val error = assertFailsWith<InvalidConfigException>(url) { claudeAt(url) }
             assertEquals(
                 "$claude must be an https URL, or http to a local host (localhost, 127.0.0.1, *.localhost, " +
                     "*.localtest.me), with a plain host name or IPv4 address, a port up to 65535, and no " +
                     "credentials (@), fragment (#) or backslash.",
-                error.message,
+                field.check(url),
+                url,
             )
         }
     }
 
     @Test
-    fun aMalformedTokenEndpointStopsTheServerAtStart() = runTest {
-        fun koin(url: String) = koinApplication {
-            modules(module { single<ConfigSource> { MapConfigSource(mapOf("OSTROM_SHARING_CODEX_TOKEN_URL" to url)) } })
-        }.koin
-        SharingModule.initialize(koin("https://proxy.example/oauth/token"))
-        assertFailsWith<InvalidConfigException> { SharingModule.initialize(koin("http://proxy.internal/token")) }
+    fun theSharingSectionImportsBothTokenEndpointsAndChecksEach() {
+        assertEquals(
+            listOf(
+                "claudeTokenUrl" to "OSTROM_SHARING_CLAUDE_TOKEN_URL",
+                "codexTokenUrl" to "OSTROM_SHARING_CODEX_TOKEN_URL",
+            ),
+            SharingSettings.SECTION.fields.map { it.name to it.legacyVariable },
+        )
+        assertEquals("sharing", SharingSettings.SECTION.name)
+        assertNotNull(checkNotNull(SharingSettings.SECTION.field("codexTokenUrl")).check("http://proxy.internal/t"))
+    }
+
+    @Test
+    fun theModuleReadsTheTokenEndpointsTheConsoleStoresAtEachRefresh() = realTime {
+        val urls = mutableListOf<String>()
+        var stored = "https://proxy.example/oauth/token"
+        val app = koinApplication {
+            modules(
+                SharingModule.koinModule,
+                module {
+                    single<Clock> { clock }
+                    single<InstanceSettings> {
+                        InstanceSettings { section ->
+                            assertEquals("sharing", section)
+                            SettingsValues(mapOf("codexTokenUrl" to stored))
+                        }
+                    }
+                    single(SharingModule.HTTP_CLIENT) {
+                        HttpClient(MockEngine { request -> urls += request.url.toString(); respond("{}") })
+                    }
+                },
+            )
+        }
+        val refresher = app.koin.get<OAuthRefresher>()
+        refresher.refresh(AccountProvider.CODEX, old)
+        stored = "https://other.example/oauth/token"
+        refresher.refresh(AccountProvider.CODEX, old)
+        assertEquals(listOf("https://proxy.example/oauth/token", "https://other.example/oauth/token"), urls)
+        assertEquals(listOf("sharing"), app.koin.getAll<SettingsSection>().map { it.name })
+        app.close()
     }
 
     @Test

@@ -9,9 +9,9 @@ import kotlinx.serialization.json.JsonPrimitive
  * Builds the request each provider expects. Only the agent headers the provider needs are passed on, never the
  * agent's own credential.
  *
- * @param endpoints The provider URLs.
+ * @property endpoints The provider URLs.
  */
-class UpstreamRequests(private val endpoints: ProviderEndpoints) {
+class UpstreamRequests(val endpoints: ProviderEndpoints) {
     /** A call served by a shared subscription account: Claude for Messages, Codex for Responses. */
     fun shared(call: InferenceCall, body: RequestBody, lease: AccountLease): InferencePlan.Ready {
         val claude = call.protocol == WireProtocol.MESSAGES

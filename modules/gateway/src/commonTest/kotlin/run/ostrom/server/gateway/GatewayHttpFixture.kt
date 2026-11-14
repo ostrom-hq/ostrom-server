@@ -14,10 +14,10 @@ import run.ostrom.server.kernel.auth.GovernanceScopes
 import run.ostrom.server.kernel.auth.PrincipalChannel
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.TokenAuthenticator
-import run.ostrom.server.kernel.config.ConfigSource
-import run.ostrom.server.kernel.config.MapConfigSource
 import run.ostrom.server.kernel.http.CallCeilingSettings
 import run.ostrom.server.kernel.http.CallsInProgress
+import run.ostrom.server.kernel.settings.InstanceSettings
+import run.ostrom.server.kernel.settings.SettingsValues
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.domain.Caller
 import run.ostrom.server.secrets.domain.CallerResolver
@@ -163,15 +163,19 @@ abstract class GatewayHttpFixture {
                     byToken[principal.subjectId]
             }
         }
-        single<ConfigSource> {
-            MapConfigSource(
-                mapOf(
-                    "OSTROM_GATEWAY_ANTHROPIC_URL" to "https://anthropic.test",
-                    "OSTROM_GATEWAY_OPENAI_URL" to "https://openai.test",
-                    "OSTROM_GATEWAY_OPENROUTER_URL" to "https://openrouter.test/api",
-                    "OSTROM_GATEWAY_CODEX_URL" to "https://codex.test",
-                ),
-            )
+        // The provider URLs an administrator saved in the console.
+        single<InstanceSettings> {
+            InstanceSettings { section ->
+                assertEquals("gateway", section)
+                SettingsValues(
+                    mapOf(
+                        "anthropicUrl" to "https://anthropic.test",
+                        "openaiUrl" to "https://openai.test",
+                        "openrouterUrl" to "https://openrouter.test/api",
+                        "codexUrl" to "https://codex.test",
+                    ),
+                )
+            }
         }
         single<ModelUsageSink> {
             ModelUsageSink {

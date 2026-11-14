@@ -3,9 +3,10 @@ package run.ostrom.server.sharing
 
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.kernel.auth.MemberLogins
-import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
+import run.ostrom.server.kernel.settings.InstanceSettings
+import run.ostrom.server.kernel.settings.SettingsSection
 import run.ostrom.server.secrets.domain.CallerResolver
 import run.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
 import run.ostrom.server.sharing.domain.AccountGroups
@@ -85,8 +86,15 @@ object SharingModule : ServerModule {
         single<SharedAccountRepository> { SharedAccountRepositoryImpl(get()) }
         single<QuotaWindowRepository> { QuotaWindowRepositoryImpl(get()) }
         single { AccountTokenCipher(get()) }
+        // The token endpoints an administrator sets in the console (the admin module collects every bound section).
+        single<SettingsSection>(named(SharingSettings.SECTION.name)) { SharingSettings.SECTION }
         single<OAuthRefresher> {
-            HttpOAuthRefresher(get(HTTP_CLIENT), get(), SharingConfig.tokenEndpoints(get<ConfigSource>()))
+            val settings = get<InstanceSettings>()
+            HttpOAuthRefresher(
+                get(HTTP_CLIENT),
+                get(),
+                { SharingSettings.tokenEndpoints(settings.read(SharingSettings.SECTION.name)) },
+            )
         }
         single<QuotaHeaderParser> { ProviderQuotaHeaderParser() }
         single<AccountRefreshRepository> { AccountRefreshRepositoryImpl(get()) }
@@ -133,11 +141,6 @@ object SharingModule : ServerModule {
     private fun Scope.spend(): AccountSpendReader = getOrNull<AccountSpendReader>() ?: NoAccountSpendReader()
 
     override val migrations: List<SchemaMigration> = SharingMigrations
-
-    /** Reads the token endpoints at start, so a malformed one stops the server instead of failing a refresh. */
-    override suspend fun initialize(koin: Koin) {
-        SharingConfig.tokenEndpoints(koin.get<ConfigSource>())
-    }
 
     override fun routes(route: Route, koin: Koin) {
         route.sharingRoutes(koin.get())
