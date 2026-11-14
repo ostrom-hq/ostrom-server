@@ -383,5 +383,5 @@ internal suspend fun TestServer.anotherLaunch(party: Party): Map<Seed, String> {
 internal val UPLOAD_BODY = """{"files": [{"sha256": "${"a".repeat(64)}", "size": 1}]}"""
 
 // A phone's P-256 public key (SubjectPublicKeyInfo DER, base64), as the app registers it with its FCM token.
-private const val PHONE_KEY = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAErk/gFJHBFOfxoyNsYaVJVQ9V24LFSHJeDBl+kT9Lz+VM8qRL3kDoYuz" +
-    "DxGhTqrV7NtPatu0gc+GFnan8LoAuUA=="
+private const val PHONE_KEY = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAErk/gFJHBFOfxoyNsYaVJVQ9V" +
+    "24LFSHJeDBl+kT9Lz+VM8qRL3kDoYuzDxGhTqrV7NtPatu0gc+GFnan8LoAuUA=="
