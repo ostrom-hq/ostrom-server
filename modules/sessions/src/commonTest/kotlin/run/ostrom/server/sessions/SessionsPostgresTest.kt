@@ -170,9 +170,17 @@ class SessionsPostgresTest {
         val receipt = assertNotNull(ended.receipt)
         assertEquals("rcpt_session_s-1", ended.session.receiptId)
         assertEquals(1, ended.session.gates?.size)
-        val verified = server.call("user:a:rev-b", "/api/v1/receipts/rcpt_session_s-1/verify").bodyAsText()
+        val verified = server.call("user:a:lyes", "/api/v1/receipts/rcpt_session_s-1/verify").bodyAsText()
         assertTrue("\"ok\":true" in verified, verified)
-        assertEquals(receipt, server.call("user:a:rev-b", "/api/v1/receipts/rcpt_session_s-1").body<JsonObject>())
+        assertEquals(receipt, server.call("user:a:lyes", "/api/v1/receipts/rcpt_session_s-1").body<JsonObject>())
+        // TeamCode #238: an administrator reads another member's record, never what the session did.
+        val byAdmin = server.call("user:a:rev-b", "/api/v1/sessions/s-1").body<SessionResponse>()
+        assertEquals(listOf("s-1", "rcpt_session_s-1"), listOf(byAdmin.session.id, byAdmin.session.receiptId))
+        val content = listOf(byAdmin.session.gates, byAdmin.session.gateAnswers, byAdmin.receipt)
+        assertEquals(listOf(null, null, null), content, "No gate, answer or receipt")
+        for (path in listOf("/api/v1/receipts/rcpt_session_s-1", "/api/v1/receipts/rcpt_session_s-1/verify")) {
+            assertEquals(HttpStatusCode.NotFound, server.call("user:a:rev-b", path).status, path)
+        }
 
         val refused = server.call(
             "agent:a:launch-1",

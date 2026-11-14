@@ -220,13 +220,13 @@ class ChecksTest {
     }
 
     @Test
-    fun theRunsAreReadByTheirPersonAnAdministratorAndTheSessionsAgentOnly() = runTest {
+    fun theRunsAreReadByTheirPersonAndTheSessionsAgentOnly() = runTest {
         val run = report(AGENT, request())
         val bySession = RunQuery(sessionId = "s-1")
         assertTrue(list(ADA, RunQuery(before = run.id)).isEmpty(), "After the last run")
         assertFailsWith<InvalidPageException> { list(ADA, RunQuery(before = "nope")) }
-        // TeamCode #238: a session's runs are its person's and the administrators', not another member's.
-        assertEquals(1, list(ADMIN, bySession).size, "An administrator reads them")
+        // TeamCode #238: a session's runs are its person's, not another member's, an administrator included.
+        assertFailsWith<RunSessionNotFoundException>("An administrator") { list(ADMIN, bySession) }
         assertFailsWith<RunSessionNotFoundException> { list(BOB, bySession) }
         assertEquals(1, list(ADA, RunQuery()).size)
         assertEquals(1, list(AGENT, bySession).size)
@@ -236,14 +236,14 @@ class ChecksTest {
     }
 
     @Test
-    fun theOrganizationsRunsAreListedToTheirPersonTheApproversOfTheirSessionAndTheAdministrators() = runTest {
+    fun theOrganizationsRunsAreListedToTheirPersonAndTheApproversOfTheirSessionOnly() = runTest {
         // TeamCode #238: without a session, a member lists their own runs and those of the sessions they approve.
         val carol = GateActor("carol", ORG, ActorKind.USER, personId = "carol")
         val list = ListChecksUseCaseImpl(access(FakeSessions(approvals = mapOf("carol" to listOf("s-1")))), runs)
         val ada = report(AGENT, request())
         val bob = report(BOB, request(sessionId = null))
-        assertEquals(listOf(bob.id, ada.id), list(ADMIN, RunQuery()).map { it.id })
-        assertNull(runs.queries.last().audience, "An administrator reads every run")
+        assertEquals(emptyList(), list(ADMIN, RunQuery()), "An administrator lists no member's runs")
+        assertEquals(RunAudience("root", emptyList()), runs.queries.last().audience)
         assertEquals(listOf(ada.id), list(ADA, RunQuery()).map { it.id })
         assertEquals(listOf(bob.id), list(BOB, RunQuery()).map { it.id }, "Their own outside a session")
         assertEquals(listOf(ada.id), list(carol, RunQuery()).map { it.id }, "A session whose gate they approve")
@@ -257,7 +257,7 @@ class ChecksTest {
         assertFailsWith<InvalidPageException> { list(BOB, RunQuery(before = ada.id)) }
         assertEquals(read, runs.queries.size, "No page was read")
         assertEquals(emptyList(), list(carol, RunQuery(before = ada.id)))
-        assertEquals(listOf(ada.id), list(ADMIN, RunQuery(before = bob.id)).map { it.id })
+        assertFailsWith<InvalidPageException> { list(ADMIN, RunQuery(before = bob.id)) }
     }
 
     @Test

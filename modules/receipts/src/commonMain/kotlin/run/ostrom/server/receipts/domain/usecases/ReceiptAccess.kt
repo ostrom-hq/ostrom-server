@@ -9,10 +9,10 @@ import run.ostrom.server.receipts.domain.repositories.ReceiptsRepository
 import run.ostrom.server.receipts.domain.services.ReceiptReaders
 
 /**
- * Who reads a receipt (TeamCode #238, a session is its member's): an owner or an administrator of its organization,
- * the person of its session, and the approvers of that session's gates; a receipt about no session (a harness, a
- * decision, a gate of a pull request's CI) is the organization's, read by any of its readers. Anyone else is answered
- * as if the receipt did not exist.
+ * Who reads a receipt (TeamCode #238, a session and what it did are its member's, whatever the role): the person of
+ * its session and the approvers of that session's gates; a receipt about no session (a harness, a decision, a gate of
+ * a pull request's CI) is the organization's, read by any of its readers. Anyone else, an owner or an administrator
+ * included, is answered as if the receipt did not exist.
  *
  * @param repository The receipts.
  * @param readers Who approves a session's gates.
@@ -30,7 +30,7 @@ class ReceiptAccess(private val repository: ReceiptsRepository, private val read
         val session = receipt.sessionId
         val person = reader.person
         return when {
-            reader.readsAll || session == null -> true
+            session == null -> true
             person == null -> false
             receipt.member == person -> true
             else -> readers.approves(reader.orgId, person, session)
@@ -55,14 +55,10 @@ class ReceiptAccess(private val repository: ReceiptsRepository, private val read
      *
      * @param reader The caller.
      *
-     * @return Null for an owner or an administrator (every receipt), the caller's audience otherwise.
+     * @return The caller's audience, whatever their role.
      */
-    suspend fun audience(reader: ReceiptReader): ReceiptAudience? {
-        val person = reader.person
-        return when {
-            reader.readsAll -> null
-            person == null -> ReceiptAudience(null, emptyList())
-            else -> ReceiptAudience(person, readers.approvedSessions(reader.orgId, person))
-        }
+    suspend fun audience(reader: ReceiptReader): ReceiptAudience {
+        val person = reader.person ?: return ReceiptAudience(null, emptyList())
+        return ReceiptAudience(person, readers.approvedSessions(reader.orgId, person))
     }
 }

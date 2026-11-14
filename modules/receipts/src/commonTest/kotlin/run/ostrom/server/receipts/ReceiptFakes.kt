@@ -93,8 +93,8 @@ internal class FakeReaders(
     }
 }
 
-/** An owner or an administrator of [org], who reads every receipt. */
-internal fun admin(org: Uuid): ReceiptReader = ReceiptReader(org, "root", readsAll = true)
+/** An owner or an administrator of [org]: a reader like any other, of no session's receipts but their own (#238). */
+internal fun admin(org: Uuid): ReceiptReader = ReceiptReader(org, "root")
 
 /** Who reads the receipts of [receipts], [readers] naming the approvers. */
 internal fun access(receipts: ReceiptsRepository, readers: ReceiptReaders = FakeReaders()) =

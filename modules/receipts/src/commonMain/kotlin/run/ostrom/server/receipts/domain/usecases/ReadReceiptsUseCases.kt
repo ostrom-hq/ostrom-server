@@ -97,10 +97,10 @@ class ListReceiptsUseCaseImpl(
     override suspend fun invoke(reader: ReceiptReader, query: ReceiptQuery): List<StoredReceipt> {
         val audience = access.audience(reader)
         // A `before` that names no receipt the caller reads (forged, another organization's, or a session's they do
-        // not read) is a 400, not an empty page. A partial reader's is checked before any page, whose start would
-        // otherwise order their receipts against one they do not read; the others' only on an empty page.
+        // not read) is a 400, not an empty page, checked before any page, whose start would otherwise order their
+        // receipts against one they do not read.
         val before = query.before
-        if (audience != null && before != null && !readable(reader, before)) Pages.unknownCursor("before")
+        if (before != null && !readable(reader, before)) Pages.unknownCursor("before")
         val limit = query.limit.coerceIn(1, ReceiptQuery.MAX_PAGE)
         val page = repository.list(reader.orgId, query.copy(limit = limit, audience = audience))
         return Pages.checked("before", before, page) { readable(reader, it) }

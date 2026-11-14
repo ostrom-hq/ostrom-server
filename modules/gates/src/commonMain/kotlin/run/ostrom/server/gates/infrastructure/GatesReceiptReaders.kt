@@ -5,7 +5,6 @@ import run.ostrom.server.gates.domain.services.GateActorResolver
 import run.ostrom.server.gates.domain.usecases.SessionApproversUseCase
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.receipts.domain.models.ReceiptReader
-import run.ostrom.server.receipts.domain.models.TEAM_READERS
 import run.ostrom.server.receipts.domain.services.ReceiptReaders
 import kotlin.uuid.Uuid
 
@@ -17,7 +16,7 @@ import kotlin.uuid.Uuid
  *   for this.
  * @param approvers The approvers of the sessions' gates.
  * @param organizations Resolves a person no actor resolver knows (no launches module loaded) by their organization
- *   and role alone, with no login: they then read the receipts about no session only, unless an owner or an admin.
+ *   alone, with no login: they then read the receipts about no session only.
  */
 class GatesReceiptReaders(
     private val actors: Lazy<GateActorResolver>,
@@ -25,7 +24,7 @@ class GatesReceiptReaders(
     private val organizations: ReceiptReaders,
 ) : ReceiptReaders {
     override suspend fun resolve(principal: AuthenticatedPrincipal): ReceiptReader? =
-        actors.value.resolve(principal)?.let { ReceiptReader(it.orgId, it.personId, it.role in TEAM_READERS) }
+        actors.value.resolve(principal)?.let { ReceiptReader(it.orgId, it.personId) }
             ?: organizations.resolve(principal)
 
     override suspend fun approves(orgId: Uuid, person: String, sessionId: String): Boolean =

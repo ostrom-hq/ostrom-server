@@ -21,7 +21,8 @@ class ReceiptOrgBindingTest {
     private val receipts = FakeReceipts()
     private val instance = SeedSigner(hex(GoldenVectors.SEED_HEX))
     private val clock = FixedClock()
-    private val sign = SignReceiptUseCaseImpl(receipts, InstanceReceiptSigner(instance), clock, FakeOwners())
+    private val owners = FakeOwners(mapOf("s-1" to "root"))
+    private val sign = SignReceiptUseCaseImpl(receipts, InstanceReceiptSigner(instance), clock, owners)
     private val verify = VerifyReceiptUseCaseImpl(access(receipts), FakeKeys(listOf(instance.receiptKey())))
 
     @Test

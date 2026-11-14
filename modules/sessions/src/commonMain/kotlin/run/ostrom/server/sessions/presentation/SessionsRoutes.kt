@@ -101,7 +101,7 @@ private fun StartSessionRequest.toStart() =
     StartSession(id, launchId, repo, realRepo, cwd, agent, harnessVersion, packageDigest, model)
 
 private fun SessionView.toResponse(reopened: Boolean? = null) =
-    SessionResponse(session.toDto(gates, answers.map { it.toDto() }), receipt, reopened)
+    SessionResponse(session.toDto(gates, answers?.map { it.toDto() }), receipt, reopened)
 
 private fun GateAnswer.toDto() =
     SessionGateAnswerDto(gateId, actionClass, if (approved) "approved" else "refused", by, at.toString(), receiptId)

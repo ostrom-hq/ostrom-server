@@ -4,6 +4,7 @@ package run.ostrom.server.receipts
 import run.ostrom.server.kernel.errors.InvalidPageException
 import run.ostrom.server.receipts.domain.models.InvalidReceiptException
 import run.ostrom.server.receipts.domain.models.ReceiptNotFoundException
+import run.ostrom.server.receipts.domain.models.ReceiptAudience
 import run.ostrom.server.receipts.domain.models.ReceiptQuery
 import run.ostrom.server.receipts.domain.services.ReceiptBodySigner
 import run.ostrom.server.receipts.domain.usecases.GetReceiptUseCaseImpl
@@ -118,7 +119,7 @@ class ReceiptsUseCasesTest {
         assertEquals(listOf(receipt), list(admin(ORG_A), ReceiptQuery(limit = 0)).map { it.body })
 
         assertEquals(1, receipts.lastQuery?.limit)
-        assertEquals(null, receipts.lastQuery?.audience, "An administrator reads every receipt")
+        assertEquals(ReceiptAudience("root", emptyList()), receipts.lastQuery?.audience, "No role reads them all")
         list(admin(ORG_A), ReceiptQuery(subjectKind = "gate", limit = 1_000))
         assertEquals(ReceiptQuery.MAX_PAGE, receipts.lastQuery?.limit)
         assertEquals("gate", receipts.lastQuery?.subjectKind)
