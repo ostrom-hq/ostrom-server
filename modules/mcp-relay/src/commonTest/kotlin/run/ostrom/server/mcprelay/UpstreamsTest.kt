@@ -615,6 +615,9 @@ class UpstreamsTest {
         status = HttpStatusCode.BadRequest
         answer = """{"error":{"code":"bad_request"}}"""
         val failed = assertFailsWith<IllegalStateException> { upstream.retain(emptyList()) }
+        status = HttpStatusCode.InternalServerError
+        answer = """{"stopped":2}"""
+        assertFailsWith<IllegalStateException> { upstream.retain(emptyList()) }
         assertFalse(failed is McpHostRefusedException)
     }
 
@@ -646,6 +649,8 @@ class UpstreamsTest {
             assertFailsWith<IllegalStateException>(refused) { upstream.status() }
         }
         answer = """{"version":"1","processes":[]}"""
+        status = HttpStatusCode.InternalServerError
+        assertFailsWith<IllegalStateException> { upstream.status() }
         status = HttpStatusCode.Unauthorized
         assertFailsWith<IllegalStateException> { upstream.status() }
         status = HttpStatusCode.OK
@@ -657,8 +662,10 @@ class UpstreamsTest {
             answer = refused
             assertFailsWith<IllegalStateException>(refused) { upstream.stop("org:a:1") }
         }
-        status = HttpStatusCode.Unauthorized
+        status = HttpStatusCode.InternalServerError
         answer = """{"stopped":false}"""
+        assertFailsWith<IllegalStateException> { upstream.stop("org:a:1") }
+        status = HttpStatusCode.Unauthorized
         assertFailsWith<IllegalStateException> { upstream.stop("org:a:1") }
     }
 }

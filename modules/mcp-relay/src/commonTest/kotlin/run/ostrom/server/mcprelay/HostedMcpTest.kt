@@ -140,6 +140,12 @@ class HostedMcpTest {
         host.hangs = true
         assertEquals(HostedSweep.HostUnavailable, sweeper(repository, null, host)())
         assertEquals(listOf(setOf(Relay.orgA, Relay.orgB) to "unreachable"), notice.notices)
+        // The same when it is the status read that never answers.
+        notice.notices.clear()
+        host.hangs = false
+        host.statusHangs = true
+        assertEquals(HostedSweep.StatesUnrecorded, sweeper(repository, null, host)())
+        assertEquals(listOf(setOf(Relay.orgA, Relay.orgB) to "unreachable"), notice.notices)
     }
 
     @Test

@@ -391,6 +391,7 @@ class FakeHostControl(var fail: Boolean = false) : McpHostControl {
     val stopped = mutableListOf<String>()
     val processes = mutableMapOf<String, HostedProcessStatus>()
     var statusFails = false
+    var statusHangs = false
 
     override suspend fun warm(target: UpstreamTarget) {
         warmed += target
@@ -405,6 +406,7 @@ class FakeHostControl(var fail: Boolean = false) : McpHostControl {
     }
 
     override suspend fun status(): HostStatus {
+        if (statusHangs) withTimeout(1.seconds) { awaitCancellation() }
         if (fail || statusFails) error("host down")
         return HostStatus("1.2.3") { processes[it] }
     }

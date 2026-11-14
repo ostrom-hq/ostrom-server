@@ -41,8 +41,6 @@ class HostUnreachableNoticeImpl(
             }
         }
     }
-
-    private companion object {
-        val PUBLISH_TIMEOUT = 30.seconds
-    }
 }
+
+private val PUBLISH_TIMEOUT = 30.seconds
