@@ -34,8 +34,8 @@ fun Route.forecastRoutes(dependencies: ForecastRoutesDependencies) = with(depend
     authenticated {
         get<ForecastsApi> {
             call.response.header(HttpHeaders.CacheControl, "no-store")
-            val account = call.singleForecastAccount()
             if (!call.requirePrincipal().mayWrite(WriteAccess.PERSON)) throw ForecastsForbiddenException()
+            val account = call.singleForecastAccount()
             val caller = call.requireCaller(callers, RelayScopes.ACCOUNTS_READ)
             val id = account?.toIdOr(::AccountNotFoundException)
             call.respond(forecasts.load(caller, id).toResponse())

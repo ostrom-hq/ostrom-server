@@ -14,6 +14,7 @@ import run.ostrom.server.sharing.domain.AccountTokens
 import run.ostrom.server.sharing.domain.LeaseResult
 import run.ostrom.server.sharing.domain.NoAccountSpendReader
 import run.ostrom.server.sharing.domain.ProviderRefusal
+import run.ostrom.server.sharing.domain.QuotaHistoryRepository
 import run.ostrom.server.sharing.domain.QuotaWindow
 import run.ostrom.server.sharing.domain.RefreshResult
 import run.ostrom.server.sharing.domain.SharedAccount
@@ -416,6 +417,25 @@ class SharedAccountPoolTest {
         val (org, recorded, reading) = history.readings.single()
         assertEquals(Sharing.orgA to account.id, org to recorded)
         assertEquals(0.42, reading.utilization)
+    }
+
+    @Test
+    fun aHistoryThatFailsNeverStopsTheCoolDown() = runTest {
+        val account = account("a")
+        val failing = object : QuotaHistoryRepository by InMemoryQuotaHistory() {
+            override suspend fun record(orgId: Uuid, accountId: Uuid, windows: List<QuotaWindow>) =
+                error("database down")
+        }
+        val pool = SharedAccountPool(
+            repository, repository, tokens(repository, cipher, refresher, clock, logged::add),
+            InMemorySlots(clock, repository), ProviderQuotaHeaderParser(), spend, clock,
+            logger = JsonLogger(LogLevel.ERROR, sink = {}), history = failing,
+        )
+        val result = pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null)
+        val leased = assertIs<LeaseResult.Leased>(result).lease
+        leased.observe(429, mapOf("anthropic-ratelimit-unified-5h-utilization" to "0.42", "retry-after" to "30"))
+        assertEquals(clock.now() + 30.seconds, repository.get(Sharing.orgA, account.id)!!.cooldownUntil)
+        assertEquals(0.42, repository.windows.getValue(account.id).single().utilization)
     }
 
     @Test

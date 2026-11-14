@@ -305,7 +305,8 @@ class SharedAccountPool(
         val observed = parser.parse(account.provider, headers, now)
         if (observed.isNotEmpty()) {
             windows.put(account.orgId, account.id, observed)
-            history.record(account.orgId, account.id, observed)
+            // The history only feeds the forecasts: a reading it fails to keep never stops the cool-down below.
+            quietly { history.record(account.orgId, account.id, observed) }
         }
         when (status) {
             TOO_MANY_REQUESTS -> accounts.setCooldown(account.orgId, account.id, cooldownEnd(observed, headers, now))
@@ -391,13 +392,13 @@ private suspend fun AccountGroups.allowed(
     return ready.filter { it in named || it.id in lent }
 }
 
-/** Runs a slot's write; one that fails is left to the slot's lease. */
+/** Runs a write whose failure changes no answer: a slot's (left to its lease), a reading of the history. */
 private suspend fun quietly(write: suspend () -> Unit) {
     try {
         write()
     } catch (error: CancellationException) {
         throw error
     } catch (_: Exception) {
-        // Left to the slot's lease.
+        // Left to the slot's lease, or one reading fewer in the history.
     }
 }
