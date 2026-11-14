@@ -142,7 +142,9 @@ class ArtifactLifecyclePostgresTest {
         }
         val id = Uuid.random()
         for (sql in listOf(LifecycleQueries.PRUNE, LifecycleQueries.MARK)) {
-            val statement = Statement.create("EXPLAIN $sql").bind("id", id).bind("keep", 5).bind("now", t0)
+            var statement = Statement.create("EXPLAIN $sql").bind("id", id)
+            if (":keep" in sql) statement = statement.bind("keep", 5)
+            if (":now" in sql) statement = statement.bind("now", t0)
             val plan = server.driver.fetchInOrg(ORG_A, statement).getOrThrow()
                 .joinToString("\n") { it.get("QUERY PLAN").asString() }
             for (table in listOf("artifacts_artifacts", "artifacts_versions", "artifacts_blobs")) {
