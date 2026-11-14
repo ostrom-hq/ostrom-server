@@ -19,6 +19,9 @@ object RelayScopes {
     /** Lists the secrets. */
     const val SECRETS_READ: String = "secrets:read"
 
+    /** Reads the caller's own environment values (`GET /api/v1/environment`): the CLI's token holds it. */
+    const val ENVIRONMENT_READ: String = "environment:read"
+
     /** Saves and deletes secrets. */
     const val SECRETS_WRITE: String = "secrets:write"
 

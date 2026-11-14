@@ -10,6 +10,6 @@ class SecretsFeaturesTest {
     @Test
     fun itsFeaturesNeedNoConfiguration() = runTest {
         val koin = koinApplication {}.koin
-        assertEquals(setOf("secrets.v1"), SecretsModule.features(koin))
+        assertEquals(setOf("secrets.v1", "environment.v1"), SecretsModule.features(koin))
     }
 }

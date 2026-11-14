@@ -2,6 +2,7 @@
 package run.ostrom.server.secrets
 
 import run.ostrom.core.api.models.ServerFeatures
+import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
@@ -10,6 +11,15 @@ import run.ostrom.server.secrets.domain.CreateSecretUseCase
 import run.ostrom.server.secrets.domain.CreateSecretUseCaseImpl
 import run.ostrom.server.secrets.domain.DeleteSecretUseCase
 import run.ostrom.server.secrets.domain.DeleteSecretUseCaseImpl
+import run.ostrom.server.secrets.domain.EnvironmentRepository
+import run.ostrom.server.secrets.domain.ManageEnvironmentAssignmentsUseCase
+import run.ostrom.server.secrets.domain.ManageEnvironmentAssignmentsUseCaseImpl
+import run.ostrom.server.secrets.domain.ManageEnvironmentVariantsUseCase
+import run.ostrom.server.secrets.domain.ManageEnvironmentVariantsUseCaseImpl
+import run.ostrom.server.secrets.domain.PersonalEnvironmentVariantsUseCase
+import run.ostrom.server.secrets.domain.PersonalEnvironmentVariantsUseCaseImpl
+import run.ostrom.server.secrets.domain.ResolveEnvironmentUseCase
+import run.ostrom.server.secrets.domain.ResolveEnvironmentUseCaseImpl
 import run.ostrom.server.secrets.domain.FindSecretUseCase
 import run.ostrom.server.secrets.domain.FindSecretUseCaseImpl
 import run.ostrom.server.secrets.domain.ListSecretsUseCase
@@ -24,14 +34,19 @@ import run.ostrom.server.secrets.domain.SecretDirectoryUseCase
 import run.ostrom.server.secrets.domain.SecretDirectoryUseCaseImpl
 import run.ostrom.server.secrets.domain.SecretsRepository
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
+import run.ostrom.server.secrets.infrastructure.EnvironmentRepositoryImpl
+import run.ostrom.server.secrets.infrastructure.NoEnvironmentMembers
 import run.ostrom.server.secrets.infrastructure.SecretsKey
 import run.ostrom.server.secrets.infrastructure.SecretsMigrations
 import run.ostrom.server.secrets.infrastructure.SecretsRepositoryImpl
+import run.ostrom.server.secrets.presentation.EnvironmentRoutesDependencies
 import run.ostrom.server.secrets.presentation.SecretsRoutesDependencies
+import run.ostrom.server.secrets.presentation.environmentRoutes
 import run.ostrom.server.secrets.presentation.secretsRoutes
 import io.ktor.server.routing.Route
 import org.koin.core.Koin
 import org.koin.core.module.Module
+import org.koin.core.scope.Scope
 import org.koin.dsl.module
 
 /**
@@ -53,6 +68,26 @@ object SecretsModule : ServerModule {
         single<RevealSecretsUseCase> { RevealSecretsUseCaseImpl(get(), get()) }
         single<FindSecretUseCase> { FindSecretUseCaseImpl(get()) }
         single<SecretDirectoryUseCase> { SecretDirectoryUseCaseImpl(get()) }
+        single<EnvironmentRepository> { EnvironmentRepositoryImpl(get()) }
+        single<ManageEnvironmentVariantsUseCase> {
+            ManageEnvironmentVariantsUseCaseImpl(get(), get(), members(), get(), get())
+        }
+        single<ManageEnvironmentAssignmentsUseCase> {
+            ManageEnvironmentAssignmentsUseCaseImpl(get(), get(), members(), get(), get())
+        }
+        single<PersonalEnvironmentVariantsUseCase> {
+            PersonalEnvironmentVariantsUseCaseImpl(get(), get(), get(), get())
+        }
+        single<ResolveEnvironmentUseCase> { ResolveEnvironmentUseCaseImpl(get(), get(), members()) }
+        single {
+            EnvironmentRoutesDependencies(
+                getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get()),
+                get(),
+                get(),
+                get(),
+                get(),
+            )
+        }
         single {
             SecretsRoutesDependencies(
                 getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get()),
@@ -65,6 +100,8 @@ object SecretsModule : ServerModule {
         }
     }
 
+    private fun Scope.members(): MemberDirectory = getOrNull<MemberDirectory>() ?: NoEnvironmentMembers
+
     override val migrations: List<SchemaMigration> = SecretsMigrations
 
     override suspend fun initialize(koin: Koin) {
@@ -74,8 +111,9 @@ object SecretsModule : ServerModule {
 
     override fun routes(route: Route, koin: Koin) {
         route.secretsRoutes(koin.get())
+        route.environmentRoutes(koin.get())
     }
 
-    /** Organization secrets. */
-    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.SECRETS)
+    /** Organization secrets, and the environment variants they hold. */
+    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.SECRETS, ServerFeatures.ENVIRONMENT)
 }

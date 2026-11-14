@@ -27,6 +27,7 @@ internal suspend fun TestServer.seed(party: Party, spends: Boolean) {
     seeder.agents(party)
     seeder.sharing(party)
     activateArtifacts(party)
+    seeder.environment(party)
     seeder.content(party)
     seeder.governance(party)
     seeder.gate(party)
@@ -112,6 +113,29 @@ private suspend fun Seeder.sharing(party: Party) {
         """{"tool": "query", "conditions": [], "effect": "deny", "message": "${party.marker} says no."}""",
     )
     keep(Seed.MCP_POLICY, policy, "id")
+}
+
+// A shared environment variant holding the marker, assigned to the member, and the member's personal variant.
+private suspend fun Seeder.environment(party: Party) {
+    val variable = "${party.marker.uppercase()}_TOKEN"
+    val team = send(
+        "environment variant",
+        "POST /api/v1/environment/variants",
+        party.browser,
+        """{"variable": "$variable", "name": "${party.marker}", "value": "env-${party.marker}"}""",
+    )
+    val id = keep(Seed.ENV_VARIANT, team, "id")
+    if (id != null) {
+        val slot = "PUT /api/v1/environment/assignments/${party.member.memberId}/$variable"
+        send("environment assignment", slot, party.browser, """{"variantId": "$id"}""", expected = OK)
+    }
+    val personal = send(
+        "personal environment variant",
+        "POST /api/v1/me/environment/variants",
+        party.memberBrowser,
+        """{"variable": "${variable}_MINE", "name": "${party.marker}", "value": "own-${party.marker}"}""",
+    )
+    keep(Seed.ENV_PERSONAL, personal, "id")
 }
 
 // A team artifact shared with the member, a link artifact, an automation and a wait.
