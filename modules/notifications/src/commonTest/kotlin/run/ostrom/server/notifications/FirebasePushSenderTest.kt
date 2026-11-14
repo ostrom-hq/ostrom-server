@@ -42,6 +42,7 @@ class FirebasePushSenderTest {
     private val clock = TestClock()
 
     private class Google(var token: () -> Pair<HttpStatusCode, String>, var send: () -> HttpStatusCode) {
+        var sendBody = """{"name":"projects/ostrom-app/messages/1"}"""
         val tokenRequests = mutableListOf<HttpRequestData>()
         val sends = mutableListOf<HttpRequestData>()
     }
@@ -61,7 +62,7 @@ class FirebasePushSenderTest {
                 respond(body, status)
             } else {
                 google.sends += request
-                respond("""{"name":"projects/ostrom-app/messages/1"}""", google.send())
+                respond(google.sendBody, google.send())
             }
         },
     ) { expectSuccess = false }
@@ -132,8 +133,12 @@ class FirebasePushSenderTest {
         var status = HttpStatusCode.OK
         val google = google(send = { status })
         val sender = FirebasePushSender(account, client(google), clock)
+        status = HttpStatusCode.NotFound
+        google.sendBody = """{"error":{"code":404,"status":"NOT_FOUND","details":[{"errorCode":"UNREGISTERED"}]}}"""
+        assertEquals(PushResult.UNREGISTERED, sender.send(ios), "The token FCM no longer knows")
+        google.sendBody = """{"error":{"code":404,"message":"Requested entity was not found.","status":"NOT_FOUND"}}"""
+        assertEquals(PushResult.rejected("fcm_404"), sender.send(ios), "A project not found forgets no phone")
         val outcomes = mapOf(
-            HttpStatusCode.NotFound to PushResult.UNREGISTERED,
             HttpStatusCode.RequestTimeout to PushResult.retry("fcm_rate_limited"),
             HttpStatusCode.TooManyRequests to PushResult.retry("fcm_rate_limited"),
             HttpStatusCode.ServiceUnavailable to PushResult.retry("fcm_unavailable"),

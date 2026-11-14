@@ -90,7 +90,8 @@ class EncryptedPushTest {
     private class PlainEncryption : PushEncryption {
         override suspend fun acceptsKey(publicKey: String): Boolean = true
 
-        override suspend fun encrypt(publicKey: String, plaintext: String): String = plaintext
+        override suspend fun encrypt(publicKey: String, plaintext: String): String =
+            if (publicKey == "stale") error("does not open") else plaintext
 
         override suspend fun collapseKey(key: String): String = "ck:$key"
     }
@@ -115,9 +116,14 @@ class EncryptedPushTest {
 
     private val firebase = mapOf(PROVIDER_FIELD to "firebase", FIREBASE_SERVICE_ACCOUNT_FIELD to "{key}")
 
-    private fun sender(settings: Settings, fcm: Fcm, devices: InMemoryPushDevicesRepository) = EncryptedPushSender(
-        settings, { account -> fcm.also { assertEquals("{key}", account) } }, PlainEncryption(), devices,
-        "https://ostrom.example", TestClock(),
+    private fun sender(
+        settings: Settings,
+        fcm: Fcm,
+        devices: InMemoryPushDevicesRepository,
+        origin: String = "https://ostrom.example",
+    ) = EncryptedPushSender(
+        settings, { account -> fcm.also { assertEquals("{key}", account) } }, PlainEncryption(), devices, origin,
+        TestClock(),
     )
 
     private fun phone(token: String, key: String? = "key") = testPhone(token, "fcm", "android", key)
@@ -233,7 +239,16 @@ class EncryptedPushTest {
             sender(Settings(firebase), fcm, InMemoryPushDevicesRepository()).send(listOf(approval(phone("t", null))))
         }
         assertEquals("push_key_missing", refused.message)
+        val stale = assertFailsWith<PushRejectedException> {
+            sender(Settings(firebase), fcm, InMemoryPushDevicesRepository()).send(listOf(approval(phone("t", "stale"))))
+        }
+        assertEquals("push_key_invalid", stale.message)
         assertTrue(fcm.sent.isEmpty(), "Nothing in clear ever leaves")
+        val nowhere = assertFailsWith<PushRejectedException> {
+            sender(Settings(firebase), fcm, InMemoryPushDevicesRepository(), origin = "")
+                .send(listOf(approval(phone("t"))))
+        }
+        assertEquals("push_public_url_required", nowhere.message, "Without OSTROM_PUBLIC_URL a push names no account")
 
         fcm.answer = { awaitCancellation() }
         val late = assertFailsWith<PushNotSentException> {
@@ -308,7 +323,8 @@ class EncryptedPushTest {
         assertEquals(listOf("kid-1", "kid-2"), made.map { it.privateKeyId })
 
         val invalid = senders.sender("{}")
-        assertEquals(PushResult.rejected("push_firebase_credentials_invalid"), invalid.send(EncryptedPush("t", "ios", "p", "c", 1)))
+        val answer = invalid.send(EncryptedPush("t", "ios", "p", "c", 1))
+        assertEquals(PushResult.rejected("push_firebase_credentials_invalid"), answer)
         assertEquals(2, made.size, "No sender for a key that does not parse")
     }
 

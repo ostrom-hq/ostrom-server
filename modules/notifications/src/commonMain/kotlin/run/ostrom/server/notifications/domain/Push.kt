@@ -5,6 +5,7 @@ package run.ostrom.server.notifications.domain
 
 import run.ostrom.core.api.models.PushPayload
 import run.ostrom.server.kernel.settings.InstanceSettings
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -160,6 +161,8 @@ class EncryptedPushSender(
         val values = settings.read(PUSH_SETTINGS.name)
         if (PushProvider.of(values[PROVIDER_FIELD]) != PushProvider.FIREBASE) return
         val account = values[FIREBASE_SERVICE_ACCOUNT_FIELD] ?: throw PushRejectedException(NO_CREDENTIALS)
+        // The app tells its accounts apart by the server's URL: without it, a push names no account.
+        if (origin.isEmpty()) throw PushRejectedException(NO_ORIGIN)
         val sender = senders.sender(account)
         val results = coroutineScope { messages.map { async { it to send(sender, it) } }.awaitAll() }
         results.filter { it.second.status == PushResult.Status.UNREGISTERED }
@@ -173,7 +176,6 @@ class EncryptedPushSender(
 
     private suspend fun send(sender: FcmSender, message: PushMessage): PushResult {
         val device = message.device
-        val key = device.publicKey ?: return PushResult.rejected(NO_KEY)
         val payload = PushPayload(
             id = Uuid.random().toString(),
             origin = origin,
@@ -188,14 +190,26 @@ class EncryptedPushSender(
         val plaintext = PAYLOAD_JSON.encodeToString(PushPayload.serializer(), payload)
         // Pushes about the same request replace one another, without the provider learning which request.
         val group = "${device.orgId}:${payload.kind}:${payload.approvalId.orEmpty()}"
+        // Nothing in clear ever leaves: a phone without a key that opens is refused alone.
+        val encrypted = device.publicKey?.let { encrypted(it, plaintext) }
+            ?: return PushResult.rejected(if (device.publicKey == null) NO_KEY else BAD_KEY)
         val push = EncryptedPush(
             token = device.pushToken,
             platform = device.platform,
-            payload = encryption.encrypt(key, plaintext),
+            payload = encrypted,
             collapseKey = encryption.collapseKey(group),
             ttlSeconds = TTL.inWholeSeconds,
         )
         return withTimeoutOrNull(SEND_DEADLINE) { sender.send(push) } ?: PushResult.retry(TIMEOUT)
+    }
+
+    // The payload encrypted for a phone's key, or null when the stored key no longer opens: that phone only fails.
+    private suspend fun encrypted(key: String, plaintext: String): String? = try {
+        encryption.encrypt(key, plaintext)
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        null
     }
 }
 
@@ -230,6 +244,8 @@ private const val APPROVAL = "approval"
 private const val APPROVAL_ID = "approvalId"
 private const val NO_CREDENTIALS = "push_firebase_credentials_required"
 private const val NO_KEY = "push_key_missing"
+private const val BAD_KEY = "push_key_invalid"
+private const val NO_ORIGIN = "push_public_url_required"
 private const val TIMEOUT = "timeout"
 private const val RETRY = "retry"
 private const val REJECTED = "rejected"

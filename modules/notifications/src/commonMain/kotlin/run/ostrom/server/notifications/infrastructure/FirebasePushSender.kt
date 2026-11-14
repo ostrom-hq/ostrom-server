@@ -62,28 +62,42 @@ class FirebasePushSender(
 
     override suspend fun send(push: EncryptedPush): PushResult {
         val access = accessTokenOrNull() ?: return PushResult.retry("fcm_token")
-        return when (val status = post(access, push)) {
-            null -> PushResult.retry("fcm_unreachable")
-            in SUCCESS -> PushResult.SENT
-            NOT_FOUND -> PushResult.UNREGISTERED
-            // The access token was revoked or expired early: the next attempt asks for another.
-            UNAUTHORIZED -> {
-                tokens.withLock { token = null }
-                PushResult.retry("fcm_unauthorized")
-            }
-            TIMEOUT, TOO_MANY -> PushResult.retry("fcm_rate_limited")
-            in SERVER_ERRORS -> PushResult.retry("fcm_unavailable")
-            else -> PushResult.rejected("fcm_$status")
-        }
+        return outcome(post(access, push))
     }
 
-    // FCM's status for the push, or null when it did not answer (connection, timeout).
-    private suspend fun post(access: String, push: EncryptedPush): Int? = try {
-        http.post("$fcmUrl/v1/projects/${account.projectId}/messages:send") {
+    private suspend fun outcome(answer: Answer?): PushResult = when (answer?.status) {
+        null -> PushResult.retry("fcm_unreachable")
+        in SUCCESS -> PushResult.SENT
+        // Only FCM's UNREGISTERED forgets the phone: a 404 for a project that is not found (a wrong project_id, the
+        // API not enabled) would otherwise forget every phone.
+        NOT_FOUND -> if (answer.unregistered) PushResult.UNREGISTERED else PushResult.rejected("fcm_404")
+        // The access token was revoked or expired early: the next attempt asks for another.
+        UNAUTHORIZED -> {
+            tokens.withLock { token = null }
+            PushResult.retry("fcm_unauthorized")
+        }
+        TIMEOUT, TOO_MANY -> PushResult.retry("fcm_rate_limited")
+        in SERVER_ERRORS -> PushResult.retry("fcm_unavailable")
+        else -> PushResult.rejected("fcm_${answer.status}")
+    }
+
+    /**
+     * FCM's answer to a push.
+     *
+     * @property status Its status.
+     * @property unregistered Whether its error is `UNREGISTERED` (read only for a 404, never logged).
+     */
+    private class Answer(val status: Int, val unregistered: Boolean)
+
+    // FCM's answer for the push, or null when it did not answer (connection, timeout).
+    private suspend fun post(access: String, push: EncryptedPush): Answer? = try {
+        val response = http.post("$fcmUrl/v1/projects/${account.projectId}/messages:send") {
             header(HttpHeaders.Authorization, "Bearer $access")
             contentType(ContentType.Application.Json)
             setBody(message(push, clock.now()).toString())
-        }.status.value
+        }
+        val status = response.status.value
+        Answer(status, status == NOT_FOUND && UNREGISTERED in response.bodyAsText())
     } catch (error: CancellationException) {
         throw error
     } catch (_: Exception) {
@@ -104,11 +118,12 @@ class FirebasePushSender(
         val now = clock.now()
         val kept = token?.takeIf { it.second > now }?.first
         kept ?: run {
+            val assertion = assertion(now)
             val response = http.submitForm(
                 GOOGLE_TOKEN_URI,
                 parameters {
                     append("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer")
-                    append("assertion", assertion(now))
+                    append("assertion", assertion)
                 },
             )
             accessTokenOf(response)?.also { (access, expiresIn) ->
@@ -205,6 +220,7 @@ private const val ASSERTION_SECONDS = 3600L
 private const val DEFAULT_EXPIRY_SECONDS = 3600
 private const val EARLY_SECONDS = 60
 private const val NOT_FOUND = 404
+private const val UNREGISTERED = "UNREGISTERED"
 private const val UNAUTHORIZED = 401
 private const val TIMEOUT = 408
 private const val TOO_MANY = 429
