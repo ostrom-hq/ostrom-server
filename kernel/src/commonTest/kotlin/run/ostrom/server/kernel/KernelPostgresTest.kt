@@ -78,7 +78,7 @@ class KernelPostgresTest {
     }
 
     @Test
-    fun takesTheDatabaseCheckItIsGiven() {
+    fun takesTheDatabaseCheckAndTheMigrationRunnerItIsGiven() {
         runTest {
             val database = TestDatabase.create() ?: return@runTest
             try {
@@ -87,15 +87,18 @@ class KernelPostgresTest {
                     override suspend fun isUp(): Boolean = false
                 }
                 val logger = JsonLogger(LogLevel.INFO, sink = { lines += it })
+                val runner = MigrationRunnerImpl(database.owner, logger)
                 val kernel = kernelModule(
                     logger,
                     database.owner,
                     Ed25519InstanceSigner.generate(),
                     MapConfigSource(emptyMap()),
                     databaseCheck = check,
+                    migrationRunner = runner,
                 )
                 val koin = serverKoin(kernel, emptyList())
                 assertSame(check, koin.get<HealthCheck>(named("database")))
+                assertSame(runner, koin.get<MigrationRunner>())
                 koin.close()
             } finally {
                 database.close()

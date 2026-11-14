@@ -2,6 +2,7 @@
 package run.ostrom.server.kernel.database
 
 import run.ostrom.server.kernel.config.DatabaseConfig
+import run.ostrom.server.kernel.logging.Logger
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
 import java.net.URLEncoder
@@ -51,6 +52,13 @@ class JdbcDatabase(config: DatabaseConfig, poolSize: Int) : AutoCloseable {
         waiting = source.hikariPoolMXBean.threadsAwaitingConnection,
     )
 
+    /**
+     * Reads the modules' migration histories through this pool, to check at start that every migration is applied.
+     *
+     * @param logger Where the runner reports.
+     */
+    fun migrationRunner(logger: Logger): MigrationRunner = FlywayMigrationRunner(source, logger)
+
     override fun close() {
         TransactionManager.closeAndUnregister(exposed)
         source.close()
@@ -70,26 +78,35 @@ class JdbcDatabase(config: DatabaseConfig, poolSize: Int) : AutoCloseable {
         private const val MAX_LIFETIME_MILLIS = 1_800_000L
         private const val KEEPALIVE_MILLIS = 600_000L
         private const val LEAK_DETECTION_MILLIS = 60_000L
+        private const val SOCKET_TIMEOUT_SECONDS = 15
+        private val SERVING_SESSION = listOf(
+            "statement_timeout=10s",
+            "lock_timeout=5s",
+            "idle_in_transaction_session_timeout=15s",
+        )
 
         /**
          * The JDBC URL of [config]: pgjdbc's connect, login and socket timeouts (seconds, the socket's a backstop above
          * `statement_timeout`), TCP keepalive, the application name, batched inserts rewritten, and the session's
          * statement, lock and idle-in-transaction timeouts enforced by the server (CRL-02).
+         *
+         * @param session The session's settings (`name=value`), the serving connection's by default.
+         * @param socketTimeoutSeconds How long a read may wait on the socket, 0 for no limit.
          */
-        internal fun jdbcUrl(config: DatabaseConfig): String {
-            val session = listOf(
-                "statement_timeout=10s",
-                "lock_timeout=5s",
-                "idle_in_transaction_session_timeout=15s",
-            ).joinToString(" ") { "-c $it" }
+        internal fun jdbcUrl(
+            config: DatabaseConfig,
+            session: List<String> = SERVING_SESSION,
+            socketTimeoutSeconds: Int = SOCKET_TIMEOUT_SECONDS,
+        ): String {
+            val settings = session.joinToString(" ") { "-c $it" }
             val options = listOf(
                 "connectTimeout=5",
                 "loginTimeout=5",
-                "socketTimeout=15",
+                "socketTimeout=$socketTimeoutSeconds",
                 "tcpKeepAlive=true",
                 "ApplicationName=ostrom-server",
                 "reWriteBatchedInserts=true",
-                "options=" + URLEncoder.encode(session, Charsets.UTF_8).replace("+", "%20"),
+                "options=" + URLEncoder.encode(settings, Charsets.UTF_8).replace("+", "%20"),
             )
             val location = config.url.substringAfter("://")
             return "jdbc:postgresql://$location?" + options.joinToString("&")

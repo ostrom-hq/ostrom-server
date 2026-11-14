@@ -63,7 +63,9 @@ kotlin {
             api(libs.exposed.core)
             api(libs.exposed.jdbc)
             implementation(libs.hikari)
-            runtimeOnly(libs.postgresql.jdbc)
+            implementation(libs.postgresql.jdbc)
+            implementation(libs.flyway.core)
+            runtimeOnly(libs.flyway.postgresql)
             // Loading a key file needs its public key, which the JDK alone cannot derive from an Ed25519 private key.
             runtimeOnly(libs.bouncycastle.bcprov)
         }

@@ -45,11 +45,15 @@ import kotlin.uuid.Uuid
  * @property driver The connection pool of the serving role.
  * @property owner The connection pool of the owner, for migrations.
  * @property superuser The connection pool of the configured user, never the path under test.
+ * @property ownerConfig How the owner connects, for a migrator on another driver (Flyway).
+ * @property servingConfig How the serving role connects, for the JDBC pool.
  */
 class TestDatabase private constructor(
     val driver: Driver,
     val owner: Driver,
     val superuser: Driver,
+    val ownerConfig: DatabaseConfig,
+    val servingConfig: DatabaseConfig,
     private val admin: DatabaseConfig,
     private val id: String,
 ) {
@@ -257,10 +261,14 @@ class TestDatabase private constructor(
             val testUrl = config.url.substringBeforeLast('/') + "/" + name
             val superuser = connectPostgres(config.copy(url = testUrl, maxConnections = SUPERUSER_POOL_SIZE))
             superuser.grantAsADeployment(ownerRole, servingRole)
+            val serving = DatabaseConfig(testUrl, servingRole, servingPassword, POOL_SIZE)
+            val owner = DatabaseConfig(testUrl, ownerRole, ownerPassword, OWNER_POOL_SIZE)
             return TestDatabase(
-                driver = connectPostgres(DatabaseConfig(testUrl, servingRole, servingPassword, POOL_SIZE)),
-                owner = connectPostgres(DatabaseConfig(testUrl, ownerRole, ownerPassword, OWNER_POOL_SIZE)),
+                driver = connectPostgres(serving),
+                owner = connectPostgres(owner),
                 superuser = superuser,
+                ownerConfig = owner,
+                servingConfig = serving,
                 admin = config,
                 id = id,
             )

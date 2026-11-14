@@ -76,7 +76,7 @@ class MigrationRunnerImpl(
             },
         )
         // Even after a failed pass: the history may have been created, and must not stay writable meanwhile.
-        val locked = driver.execute(ownerOnly(table))
+        val locked = driver.execute(ownerOnlySql(table))
         val results = pass.getOrThrow()
         locked.getOrThrow()
         logger.info(
@@ -104,50 +104,71 @@ class MigrationRunnerImpl(
         if (missing.isNotEmpty()) throw MigrationsNotAppliedException(module, missing)
     }
 
-    /**
-     * Only the migrator writes a module's history. A deployment's default privileges (`ci/database-roles.sql`, the Helm
-     * chart) give the serving role SELECT, INSERT, UPDATE and DELETE on every table of the owner, the history tables
-     * included: the serving process could erase the trace of a migration, which the next `migrate` would then replay
-     * or fail on. Every role but the owner that holds more than SELECT (on the table or on a column, MAINTAIN
-     * included) loses all of it, with what it granted on (CASCADE), and gets SELECT back if it had it: [verify] reads
-     * the history at start. At every pass, after a failed one too, so a database migrated before keeps no write
-     * either. Skipped when the connected role is not (a member of) the table's owner, which alone may revoke.
-     */
-    private fun ownerOnly(table: String): String = """
-        DO $$
-        DECLARE r record;
-        BEGIN
-          FOR r IN
-            SELECT CASE WHEN g.grantee = 0 THEN 'PUBLIC' ELSE quote_ident(pg_get_userbyid(g.grantee)) END AS name,
-              bool_or(g.privilege_type = 'SELECT' AND NOT g.on_column) AS reads
-            FROM pg_class c
-            CROSS JOIN LATERAL (
-              SELECT a.grantee, a.privilege_type, false AS on_column FROM aclexplode(c.relacl) a
-              UNION ALL
-              SELECT a.grantee, a.privilege_type, true FROM pg_attribute t, aclexplode(t.attacl) a
-              WHERE t.attrelid = c.oid
-            ) g
-            WHERE c.oid = to_regclass('$table') AND g.grantee <> c.relowner
-              AND pg_has_role(current_user, c.relowner, 'USAGE')
-            GROUP BY g.grantee
-            HAVING bool_or(g.privilege_type <> 'SELECT' OR g.on_column)
-          LOOP
-            EXECUTE format('REVOKE ALL ON %I FROM %s CASCADE', '$table', r.name);
-            IF r.reads THEN
-              EXECUTE format('GRANT SELECT ON %I TO %s', '$table', r.name);
-            END IF;
-          END LOOP;
-        END
-        $$
-    """.trimIndent()
-
-    private fun historyTable(module: String): String {
-        require(MODULE_NAME.matches(module)) { "Module name must match $MODULE_NAME." }
-        return "_migrations_" + module.replace('-', '_')
-    }
+    private fun historyTable(module: String): String = "_migrations_" + moduleKey(module)
 
     private fun List<SchemaMigration>.files() = map { MigrationFile("${it.version}_${it.name}.sql", it.sql) }
 }
+
+/**
+ * The part of a module's history table names that comes from the module's name.
+ *
+ * @throws IllegalArgumentException When [module] is not lower-case letters, digits and `-`.
+ */
+internal fun moduleKey(module: String): String {
+    require(MODULE_NAME.matches(module)) { "Module name must match $MODULE_NAME." }
+    return module.replace('-', '_')
+}
+
+/**
+ * Refuses a module's migrations whose versions are not positive and increasing (TeamCode 3da27ca0): two migrations
+ * with one version would make Flyway, or sqlx4k, apply one of them only.
+ *
+ * @throws IllegalArgumentException When a version is below 1, repeated or out of order.
+ */
+internal fun requireVersions(module: String, migrations: List<SchemaMigration>) {
+    val versions = migrations.map { it.version }
+    require(versions.zipWithNext().all { (a, b) -> a < b } && versions.all { it > 0 }) {
+        "The migrations of module $module must have increasing versions from 1, not $versions."
+    }
+}
+
+/**
+ * Only the migrator writes a module's history. A deployment's default privileges (`ci/database-roles.sql`, the Helm
+ * chart) give the serving role SELECT, INSERT, UPDATE and DELETE on every table of the owner, the history tables
+ * included: the serving process could erase the trace of a migration, which the next `migrate` would then replay
+ * or fail on. Every role but the owner that holds more than SELECT (on the table or on a column, MAINTAIN
+ * included) loses all of it, with what it granted on (CASCADE), and gets SELECT back if it had it:
+ * [MigrationRunner.verify] reads the history at start. At every pass, after a failed one too, so a database migrated
+ * before keeps no write either. Skipped when the connected role is not (a member of) the table's owner, which alone
+ * may revoke.
+ */
+internal fun ownerOnlySql(table: String): String = """
+    DO $$
+    DECLARE r record;
+    BEGIN
+      FOR r IN
+        SELECT CASE WHEN g.grantee = 0 THEN 'PUBLIC' ELSE quote_ident(pg_get_userbyid(g.grantee)) END AS name,
+          bool_or(g.privilege_type = 'SELECT' AND NOT g.on_column) AS reads
+        FROM pg_class c
+        CROSS JOIN LATERAL (
+          SELECT a.grantee, a.privilege_type, false AS on_column FROM aclexplode(c.relacl) a
+          UNION ALL
+          SELECT a.grantee, a.privilege_type, true FROM pg_attribute t, aclexplode(t.attacl) a
+          WHERE t.attrelid = c.oid
+        ) g
+        WHERE c.oid = to_regclass('$table') AND g.grantee <> c.relowner
+          AND pg_has_role(current_user, c.relowner, 'USAGE')
+        GROUP BY g.grantee
+        HAVING bool_or(g.privilege_type <> 'SELECT' OR g.on_column)
+      LOOP
+        EXECUTE format('REVOKE ALL ON %I FROM %s CASCADE', '$table', r.name);
+        IF r.reads THEN
+          EXECUTE format('GRANT SELECT ON %I TO %s', '$table', r.name);
+        END IF;
+      END LOOP;
+    END
+    $$
+""".trimIndent()
 
 // No `_`: `a-b` and `a_b` would share the table `_migrations_a_b`.
 private val MODULE_NAME = Regex("[a-z][a-z0-9-]{0,40}")
