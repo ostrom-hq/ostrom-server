@@ -44,6 +44,7 @@ class SessionSegments(
      *   connection of the pool).
      * @return The open segment.
      */
+    @Suppress("LongParameterList") // The transaction, the caller, what starts and why, read before the transaction.
     suspend fun open(
         tx: SessionsTransaction,
         orgId: Uuid,

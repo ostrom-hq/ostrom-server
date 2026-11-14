@@ -164,5 +164,8 @@ class LaunchLimitsPostgresTest {
             HttpStatusCode.NotFound,
             server.send(ada.cliToken, "/api/v1/launches/lch_none/limits").status,
         )
+        val launches = server.koin.get<LaunchesRepository>()
+        assertEquals(false, launches.setCaps(org.id, "lch_none", LaunchCaps()), "Nothing to set on an unknown launch")
+        assertEquals(emptyMap(), launches.labelsOf(org.id, "lch_none"))
     }
 }
