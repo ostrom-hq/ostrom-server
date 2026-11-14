@@ -67,7 +67,7 @@ object SharingSettings {
      */
     fun tokenEndpoints(values: SettingsValues): Map<AccountProvider, String> =
         HttpOAuthRefresher.ENDPOINTS.mapValues { (provider, default) ->
-            values[TOKEN_URL_FIELDS.getValue(provider)]?.trim() ?: default
+            (values[TOKEN_URL_FIELDS.getValue(provider)] ?: default).trim()
         }
 
     /**
