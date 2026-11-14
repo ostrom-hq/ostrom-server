@@ -127,6 +127,7 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/devices" to Case.Target(),
     "DELETE /api/v1/devices/{id}" to target("id" to DEVICE),
     "POST /api/v1/push-devices" to Case.Own("registers the caller's phone"),
+    "GET /api/v1/push-devices" to Case.Own("lists the caller's own phones"),
     "DELETE /api/v1/push-devices/{id}" to target("id" to PUSH_DEVICE),
     "GET /api/v1/notifications/settings" to Case.Own("reads the caller's own switches"),
     "PUT /api/v1/notifications/settings" to Case.Own("changes the caller's own switches"),

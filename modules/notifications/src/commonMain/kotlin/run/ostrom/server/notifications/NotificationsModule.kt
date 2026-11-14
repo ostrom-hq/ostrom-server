@@ -23,6 +23,8 @@ import run.ostrom.server.notifications.domain.DeliverNotificationsUseCase
 import run.ostrom.server.notifications.domain.DeliverNotificationsUseCaseImpl
 import run.ostrom.server.notifications.domain.NotificationDeliveriesRepository
 import run.ostrom.server.notifications.domain.DeletePushDeviceUseCaseImpl
+import run.ostrom.server.notifications.domain.ListPushDevicesUseCase
+import run.ostrom.server.notifications.domain.ListPushDevicesUseCaseImpl
 import run.ostrom.server.notifications.domain.EncryptedPushSender
 import run.ostrom.server.notifications.domain.FirebaseSenders
 import run.ostrom.server.notifications.domain.PushProviders
@@ -122,7 +124,8 @@ object NotificationsModule : ServerModule {
         // Admin → Settings → push: the provider, the relay URL and the Firebase service account, sealed (admin module).
         single(named("notifications-push")) { PUSH_SETTINGS }
         single<DeletePushDeviceUseCase> { DeletePushDeviceUseCaseImpl(get()) }
-        single { PushDevicesRoutesDependencies(get(), get(), get()) }
+        single<ListPushDevicesUseCase> { ListPushDevicesUseCaseImpl(get()) }
+        single { PushDevicesRoutesDependencies(get(), get(), get(), get()) }
         // A deleted organization's phones are forgotten at once (OrgsModule calls every bound listener).
         single<OrgDeletionListener>(named("notifications")) { PushDevicesOrgDeletionListener(get()) }
         single<PersonOrganizations> { MemberOrganizations(get()) }
