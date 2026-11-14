@@ -42,12 +42,15 @@ object EnvironmentRules {
         "GLIBC_TUNABLES", "NODE_TLS_REJECT_UNAUTHORIZED", "NODE_ICU_DATA", "ELECTRON_RUN_AS_NODE", "PYTHONUSERBASE",
         "PYTHONEXECUTABLE", "PYTHONPLATLIBDIR", "PYTHONBREAKPOINT", "PERL5DB", "CLASSPATH", "DOTNET_STARTUP_HOOKS",
         "CORECLR_PROFILER", "CORECLR_PROFILER_PATH", "CORECLR_ENABLE_PROFILING", "CURL_CA_BUNDLE", "SSLKEYLOGFILE",
+        "GCONV_PATH",
         // the shell
         "OLDPWD", "SHELLOPTS", "BASHOPTS", "CDPATH", "GLOBIGNORE", "PS4", "ZDOTDIR",
         // Git, SSH and the GitHub CLI: the programs they run and where they read a repository
         "GIT_TERMINAL_PROMPT", "GH_CONFIG_DIR", "GIT_ASKPASS", "SSH_ASKPASS", "GIT_PROXY_COMMAND", "GIT_EXTERNAL_DIFF",
         "GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_TEMPLATE_DIR", "GIT_DIR", "GIT_WORK_TREE",
         "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR",
+        // what weakens Git's TLS or protocols
+        "GIT_SSL_NO_VERIFY", "GIT_SSL_CAINFO", "GIT_SSL_CAPATH", "GIT_ALLOW_PROTOCOL",
         // an agent's tools: ripgrep's file can name a `--pre` program
         "RIPGREP_CONFIG_PATH",
     )
@@ -76,8 +79,8 @@ object EnvironmentRules {
     }
 
     /**
-     * Checks a variable name's form only: what removing an assignment needs, so a name reserved after it was assigned
-     * can still be cleaned up.
+     * Checks a variable name's form only: what removing an assignment or an exclusion needs, so a name reserved
+     * after it was stored can still be cleaned up.
      *
      * @throws InvalidEnvironmentVariantException When it is malformed.
      */

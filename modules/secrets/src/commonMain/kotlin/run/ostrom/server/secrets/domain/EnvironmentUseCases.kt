@@ -293,7 +293,7 @@ class ManageEnvironmentAssignmentsUseCaseImpl(
 
     override suspend fun include(actor: EnvironmentActor, memberId: Uuid, variable: String) {
         actor.caller.requireAdmin()
-        EnvironmentRules.requireVariable(variable)
+        EnvironmentRules.requireWellFormed(variable)
         requireMember(members, actor.caller.orgId, memberId)
         if (repository.include(actor.caller.orgId, memberId, variable)) {
             recordMember(audit, actor, "environment.included", memberId, variable)

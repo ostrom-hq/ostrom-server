@@ -53,7 +53,7 @@ enum class BillingInterval(val key: String) {
 }
 
 /**
- * What an organization may use. A null bound means unlimited.
+ * What an organization may use. A null bound means unlimited, except [maxConcurrentCloudAgents], whose unlimited is 0.
  *
  * @property maxPeople The members the organization may have.
  * @property maxConcurrentCloudAgents The cloud agents that may run at the same time; [UNLIMITED_CLOUD_AGENTS] (0), the

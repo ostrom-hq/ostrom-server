@@ -222,8 +222,9 @@ class EnvironmentPostgresTest {
         assertEquals(emptyMap(), server.values("member-a").variables)
 
         assertEquals(HttpStatusCode.BadRequest, server.send("PUT", "$exclusions/$memberA/path", "admin-a").status)
-        assertEquals(HttpStatusCode.BadRequest, server.send("DELETE", "$exclusions/$memberA/PATH", "admin-a").status)
-        // A reserved name can still be unassigned, in case it was assigned before it was reserved.
+        // A reserved name's exclusion or assignment can still be removed, in case it was stored before it was reserved.
+        assertEquals(HttpStatusCode.NoContent, server.send("DELETE", "$exclusions/$memberA/PATH", "admin-a").status)
+        assertEquals(HttpStatusCode.BadRequest, server.send("DELETE", "$exclusions/$memberA/path", "admin-a").status)
         assertEquals(HttpStatusCode.NoContent, server.send("DELETE", "$assignments/$memberA/LD_X", "admin-a").status)
         assertEquals(
             HttpStatusCode.NotFound,

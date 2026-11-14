@@ -51,7 +51,8 @@ class EnvironmentRulesTest {
         val beyond = listOf(
             "GLIBC_TUNABLES", "NODE_TLS_REJECT_UNAUTHORIZED", "SSLKEYLOGFILE", "CURL_CA_BUNDLE", "DOTNET_STARTUP_HOOKS",
             "PYTHONBREAKPOINT", "CLASSPATH", "SHELLOPTS", "ZDOTDIR", "GIT_ASKPASS", "SSH_ASKPASS", "GIT_PROXY_COMMAND",
-            "GIT_DIR", "GH_CONFIG_DIR", "RIPGREP_CONFIG_PATH", "BASH_FUNC_X",
+            "GIT_DIR", "GH_CONFIG_DIR", "RIPGREP_CONFIG_PATH", "BASH_FUNC_X", "GIT_SSL_NO_VERIFY", "GIT_ALLOW_PROTOCOL",
+            "GCONV_PATH",
         )
         for (name in beyond) {
             assertTrue(EnvironmentRules.isReserved(name), name)
