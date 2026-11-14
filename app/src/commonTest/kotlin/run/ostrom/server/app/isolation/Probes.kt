@@ -42,7 +42,7 @@ internal val SERVICE_KEY_ROUTES: Map<String, Set<String>> = mapOf(
         "POST /api/v1/inference/requests/{id}/cancel",
     ),
     "mcp:use" to setOf("POST /api/v1/mcp/{server}", "GET /api/v1/mcp/servers"),
-    "usage:read" to USAGE_READS + "GET /api/v1/inference/queue",
+    "usage:read" to USAGE_READS + setOf("GET /api/v1/inference/queue", "GET /api/v1/policy/api-prices"),
     "cloud:read" to CLOUD_READS,
     "cloud:write" to CLOUD_WRITES,
     "cloud:admin" to CLOUD_WRITES + WEBHOOKS,
