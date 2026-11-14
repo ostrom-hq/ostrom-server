@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.artifacts.domain.storage
 
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
+import run.ostrom.server.artifacts.domain.ArtifactAccess
 
 /**
  * The organization's S3-compatible bucket, as stored; the secret access key is never part of it (it stays sealed in
@@ -141,7 +143,16 @@ data class ArtifactRetention(
     val personalDays: Int? = null,
     val sharedDays: Int? = null,
     val maxVersionsPerArtifact: Int = 50,
-)
+) {
+    /**
+     * When an artifact of [access] published or changed at [from] expires: `personalDays` for a personal one,
+     * `sharedDays` for a team or link one.
+     *
+     * @return The time, or null when it is kept.
+     */
+    fun expiryOf(access: ArtifactAccess, from: Instant): Instant? =
+        (if (access == ArtifactAccess.PERSONAL) personalDays else sharedDays)?.let { from + it.days }
+}
 
 /**
  * The organization's artifact settings.

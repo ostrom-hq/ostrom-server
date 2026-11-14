@@ -71,7 +71,7 @@ class ArtifactUseCasesTest {
     private val publish =
         PublishArtifactUseCaseImpl(repository, contents, digest, clock, recorder, gateOf(storage, clock))
     private val read = ReadArtifactsUseCaseImpl(repository, contents)
-    private val manage = ManageArtifactUseCaseImpl(repository, contents, clock, recorder)
+    private val manage = ManageArtifactUseCaseImpl(repository, contents, clock, recorder, gateOf(storage, clock))
     private var signer: InstanceSigner? = null
 
     private suspend fun signer(): InstanceSigner = signer ?: Ed25519InstanceSigner.generate().also { signer = it }

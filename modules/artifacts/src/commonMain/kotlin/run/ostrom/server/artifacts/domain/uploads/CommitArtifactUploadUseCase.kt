@@ -134,7 +134,8 @@ internal class CommitArtifactUploadUseCaseImpl(
             artifacts.updateSettings(settings.copy(latestVersion = version.number, updatedAt = now))
         }
         uploads.end(caller.orgId, upload)
-        gate.published(caller, artifact.id, now)
+        // As committed: a draft takes its access with its first version.
+        gate.published(caller, settings, now)
         val event = if (artifact.draft) "created" else "version_published"
         events.record(caller, event, artifact.id, mapOf("version" to version.number.toString()))
         return CommittedVersion(version, replayed = false)

@@ -53,8 +53,16 @@ interface PublicationGate {
      */
     suspend fun withinQuotas(orgId: Uuid, ownerId: String, added: Long, newArtifact: Boolean)
 
-    /** Counts a version the caller published. */
-    suspend fun published(caller: ArtifactCaller, artifactId: Uuid, at: Instant)
+    /**
+     * Counts a version the caller published, prunes the versions beyond `maxVersionsPerArtifact` and sets when the
+     * artifact expires, from [at] and the retention of its access.
+     *
+     * @param artifact The artifact as published (its access).
+     */
+    suspend fun published(caller: ArtifactCaller, artifact: Artifact, at: Instant)
+
+    /** Sets when [artifact] expires after its access changed at [at]: a change never expires it at once. */
+    suspend fun accessChanged(artifact: Artifact, at: Instant)
 }
 
 /**
@@ -63,12 +71,14 @@ interface PublicationGate {
  * @param storage The settings.
  * @param publications The publications of the last hour.
  * @param usages What owners and organizations hold.
+ * @param lifecycle The versions kept and the expiry.
  * @param clock The time.
  */
 class PublicationGateImpl(
     private val storage: ArtifactStorageRepository,
     private val publications: ArtifactPublicationsRepository,
     private val usages: ArtifactUsageRepository,
+    private val lifecycle: ArtifactLifecycleRepository,
     private val clock: Clock = Clock.System,
 ) : PublicationGate {
     override suspend fun admit(caller: ArtifactCaller) {
@@ -101,8 +111,16 @@ class PublicationGateImpl(
         if (refusal != null) throw ArtifactQuotaExceededException(refusal)
     }
 
-    override suspend fun published(caller: ArtifactCaller, artifactId: Uuid, at: Instant) {
-        publications.record(caller.orgId, caller.memberId, artifactId, at)
+    override suspend fun published(caller: ArtifactCaller, artifact: Artifact, at: Instant) {
+        publications.record(caller.orgId, caller.memberId, artifact.id, at)
+        val retention = storage.overview(artifact.orgId).settings.retention
+        val expiresAt = retention.expiryOf(artifact.access, at)
+        lifecycle.retain(artifact.orgId, artifact.id, retention.maxVersionsPerArtifact, expiresAt, at)
+    }
+
+    override suspend fun accessChanged(artifact: Artifact, at: Instant) {
+        val retention = storage.overview(artifact.orgId).settings.retention
+        lifecycle.expire(artifact.orgId, artifact.id, retention.expiryOf(artifact.access, at))
     }
 
     private suspend fun activeSettings(orgId: Uuid) = storage.overview(orgId).let { overview ->

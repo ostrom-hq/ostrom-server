@@ -6,6 +6,7 @@ import run.ostrom.server.artifacts.domain.ArtifactEvents
 import run.ostrom.server.artifacts.domain.ArtifactLocations
 import run.ostrom.server.artifacts.domain.ArtifactPublicationsRepository
 import run.ostrom.server.artifacts.domain.ArtifactUsageReports
+import run.ostrom.server.artifacts.domain.ArtifactLifecycleRepository
 import run.ostrom.server.artifacts.domain.ArtifactUsageRepository
 import run.ostrom.server.artifacts.domain.ArtifactsRepository
 import run.ostrom.server.artifacts.domain.ContentDigest
@@ -38,6 +39,7 @@ import run.ostrom.server.artifacts.domain.uploads.UploadArtifactUseCaseImpl
 import run.ostrom.server.artifacts.domain.uploads.UploadStores
 import run.ostrom.server.artifacts.infrastructure.ArtifactPublicationsRepositoryImpl
 import run.ostrom.server.artifacts.infrastructure.ArtifactUploadsRepositoryImpl
+import run.ostrom.server.artifacts.infrastructure.ArtifactLifecycleRepositoryImpl
 import run.ostrom.server.artifacts.infrastructure.ArtifactUsageRepositoryImpl
 import run.ostrom.server.artifacts.infrastructure.ArtifactsConfig
 import run.ostrom.server.artifacts.infrastructure.ArtifactsMigrations
@@ -88,10 +90,11 @@ object ArtifactsModule : ServerModule {
         single<ArtifactContents> { BucketArtifactContents(get(), get()) }
         single<ArtifactPublicationsRepository> { ArtifactPublicationsRepositoryImpl(get()) }
         single<ArtifactUsageRepository> { ArtifactUsageRepositoryImpl(get()) }
-        single<PublicationGate> { PublicationGateImpl(get(), get(), get()) }
+        single<ArtifactLifecycleRepository> { ArtifactLifecycleRepositoryImpl(get()) }
+        single<PublicationGate> { PublicationGateImpl(get(), get(), get(), get()) }
         single<PublishArtifactUseCase> { PublishArtifactUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single<ReadArtifactsUseCase> { ReadArtifactsUseCaseImpl(get(), get()) }
-        single<ManageArtifactUseCase> { ManageArtifactUseCaseImpl(get(), get(), get(), get()) }
+        single<ManageArtifactUseCase> { ManageArtifactUseCaseImpl(get(), get(), get(), get(), get()) }
         single<ViewTicketSeal> { SealedViewTickets(get()) }
         single<ViewerChecks> { KernelViewerChecks(get(), getOrNull()) }
         single<ViewArtifactUseCase> { ViewArtifactUseCaseImpl(get(), get(), get(), get(), get(), get()) }

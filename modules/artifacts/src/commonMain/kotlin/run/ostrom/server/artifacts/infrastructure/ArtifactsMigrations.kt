@@ -268,4 +268,17 @@ val ArtifactsMigrations: List<SchemaMigration> = listOf(
             CREATE INDEX artifacts_artifacts_owner ON artifacts_artifacts (org_id, owner_id) WHERE latest_version > 0;
         """.trimIndent(),
     ),
+    // TeamCode's retention: an artifact expires from its last publication or access change, and a content no kept
+    // version uses is marked for the maintenance, which deletes it from the bucket (a later version that uses it
+    // again clears the mark).
+    SchemaMigration(
+        version = 11,
+        name = "artifacts_retention",
+        sql = """
+            ALTER TABLE artifacts_artifacts ADD COLUMN expires_at TIMESTAMPTZ;
+            ALTER TABLE artifacts_blobs ADD COLUMN marked_at TIMESTAMPTZ;
+            CREATE INDEX artifacts_artifacts_expiry ON artifacts_artifacts (expires_at) WHERE expires_at IS NOT NULL;
+            CREATE INDEX artifacts_blobs_marked ON artifacts_blobs (marked_at) WHERE marked_at IS NOT NULL;
+        """.trimIndent(),
+    ),
 )
