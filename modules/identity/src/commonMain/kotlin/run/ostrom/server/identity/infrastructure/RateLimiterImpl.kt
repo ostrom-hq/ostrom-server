@@ -4,14 +4,9 @@ package run.ostrom.server.identity.infrastructure
 import run.ostrom.server.identity.domain.RateLimitWindows
 import run.ostrom.server.identity.domain.RateLimiter
 import run.ostrom.server.identity.domain.SecretHasher
-import run.ostrom.server.kernel.database.InstantColumnType
 import run.ostrom.server.kernel.database.JdbcDatabase
-import org.jetbrains.exposed.v1.core.CustomFunction
-import org.jetbrains.exposed.v1.core.CustomOperator
-import org.jetbrains.exposed.v1.core.DoubleColumnType
-import org.jetbrains.exposed.v1.core.Expression
-import org.jetbrains.exposed.v1.core.QueryParameter
-import org.jetbrains.exposed.v1.core.TextColumnType
+import run.ostrom.server.kernel.database.databaseNow
+import run.ostrom.server.kernel.database.databaseNowPlus
 import org.jetbrains.exposed.v1.core.case
 import org.jetbrains.exposed.v1.core.intLiteral
 import org.jetbrains.exposed.v1.core.lessEq
@@ -23,7 +18,6 @@ import org.jetbrains.exposed.v1.core.statements.buildStatement
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.statements.ReturningBlockingExecutable
 import kotlin.time.Duration
-import kotlin.time.Instant
 
 /**
  * [RateLimiter] on PostgreSQL through Exposed ([IdentityRateLimits], [IdentityMigrations] version 18): fixed windows
@@ -74,20 +68,9 @@ internal fun StatementBuilder.attempt(keyHash: String, seconds: Long): Returning
     ) {
         it[this.keyHash] = keyHash
         it[attempts] = 1
-        it[endsAt] = inSeconds(seconds)
+        it[endsAt] = databaseNowPlus(seconds)
     }
 }
 
 /** The windows already over, which no attempt reads again: `DELETE … WHERE ends_at <= now()`. */
 internal val windowsOver: IdentityRateLimits.() -> Op<Boolean> = { endsAt lessEq databaseNow() }
-
-/** `now() + make_interval(secs => seconds)`, written positionally: the other six parts are zero. */
-private fun inSeconds(seconds: Long): Expression<Instant> {
-    val zero = intLiteral(0)
-    val interval = CustomFunction(
-        "make_interval",
-        TextColumnType(),
-        zero, zero, zero, zero, zero, zero, QueryParameter(seconds.toDouble(), DoubleColumnType()),
-    )
-    return CustomOperator("+", InstantColumnType(), databaseNow(), interval)
-}

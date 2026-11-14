@@ -47,6 +47,7 @@ import run.ostrom.server.gateway.presentation.GatewayRoutesDependencies
 import run.ostrom.server.gateway.presentation.gatewayRoutes
 import run.ostrom.server.kernel.auth.GovernanceChange
 import run.ostrom.server.kernel.auth.ModelAccess
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.settings.InstanceSettings
@@ -95,7 +96,7 @@ object GatewayModule : ServerModule {
                 }
             }
         } onClose { it?.close() } // Its selector holds a thread of Dispatchers.IO until then (StoppedApplicationsTest).
-        single<GatewaySettingsRepository> { GatewaySettingsRepositoryImpl(get()) }
+        single<GatewaySettingsRepository> { GatewaySettingsRepositoryImpl(get<JdbcDatabase>()) }
         single<InferenceUpstream> { KtorInferenceUpstream(get(HTTP_CLIENT), SILENCE_MS.milliseconds) }
         single { PriceTable() }
         single {
@@ -108,10 +109,10 @@ object GatewayModule : ServerModule {
                 instance = { GatewayInstanceSettings.providers(instance.read(GatewayInstanceSettings.SECTION.name)) },
             )
         }
-        single<AdmissionQueueRepository> { AdmissionQueueRepositoryImpl(get()) }
+        single<AdmissionQueueRepository> { AdmissionQueueRepositoryImpl(get<JdbcDatabase>()) }
         single<AwaitAdmissionUseCase> { AwaitAdmissionUseCaseImpl(get(), get()) }
         single<GetInferenceQueueUseCase> { GetInferenceQueueUseCaseImpl(get()) }
-        single<RequestCancellationRepository> { RequestCancellationRepositoryImpl(get()) }
+        single<RequestCancellationRepository> { RequestCancellationRepositoryImpl(get<JdbcDatabase>()) }
         single<CancelInferenceRequestUseCase> { CancelInferenceRequestUseCaseImpl(get()) }
         single<RelayInferenceUseCase> {
             RelayInferenceUseCaseImpl(

@@ -176,6 +176,11 @@ override suspend fun rename(orgId: Uuid, id: Uuid, name: String): Boolean = data
 - A change that reads then writes locks what it read: `select(…).where { … }.forUpdate()` in the same transaction.
 - Exposed never retries a transaction (`defaultMaxAttempts = 1`). A refusal the domain expects (a duplicate) is an
   `insertIgnore`/`upsert` or a check in the same transaction, not a caught exception.
+- A time shared by every replica (a lease, a window, an expiry) is the database's clock: the kernel's `databaseNow()`
+  (`now()`) and `databaseNowPlus(seconds)` (`now()` plus bound seconds), never a replica's `Clock`. A statement the
+  plan tests explain is an `internal` function of the module (a `Query`, or a `StatementBuilder.()` write run with
+  `buildStatement { … }.toExecutable().execute(this)`), so the test explains what the repository sends
+  (`AdmissionReads.kt` in the gateway).
 - JSON columns are `text` written and read by the module's own serializer (`TodoJson`); Exposed's `json` columns are
   not used yet.
 - The domain never sees Exposed types: rows become domain models in the repository (`ResultRow.toX()`).
