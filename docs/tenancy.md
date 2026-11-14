@@ -55,6 +55,7 @@ listed table that gained one. The migrator's own tables, one per module (`flyway
 | `github_manifest_states` | integrations-github | serving role | the state of an instance admin's GitHub App creation, by hash |
 | `github_webhook_deliveries` | integrations-github | serving role, GitHub webhook | the webhook deliveries already received (an id and a time), to drop a replay |
 | `identity_device_authorizations` | identity | serving role, device sign-in | a person's pending CLI sign-in |
+| `identity_devices` | identity | serving role | the CLI's registered installations (`devices.v1`), one per person and installation, across their organizations |
 | `identity_identities` | identity | serving role, sign-in | a person's external accounts |
 | `identity_magic_links` | identity | serving role, sign-in | e-mail sign-in links, by hash |
 | `identity_mobile_codes` | identity | serving role, the app's sign-in | one-time codes, by hash |

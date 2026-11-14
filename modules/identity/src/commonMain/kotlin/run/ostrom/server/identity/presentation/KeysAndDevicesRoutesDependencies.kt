@@ -4,7 +4,9 @@ package run.ostrom.server.identity.presentation
 import run.ostrom.server.identity.domain.CreateServiceKeyUseCase
 import run.ostrom.server.identity.domain.DeleteServiceKeyUseCase
 import run.ostrom.server.identity.domain.ListDevicesUseCase
+import run.ostrom.server.identity.domain.ListMemberDevicesUseCase
 import run.ostrom.server.identity.domain.ListServiceKeysUseCase
+import run.ostrom.server.identity.domain.RenameDeviceUseCase
 import run.ostrom.server.identity.domain.SignOutDeviceUseCase
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 
@@ -17,6 +19,8 @@ import run.ostrom.server.kernel.auth.PrincipalOrgResolver
  * @property deleteServiceKey Deletes one.
  * @property listDevices Lists the caller's workstations.
  * @property signOutDevice Signs one out.
+ * @property renameDevice Renames a registered one.
+ * @property listMemberDevices Lists a member's, for an owner or an admin.
  */
 data class KeysAndDevicesRoutesDependencies(
     val orgs: PrincipalOrgResolver,
@@ -25,4 +29,6 @@ data class KeysAndDevicesRoutesDependencies(
     val deleteServiceKey: DeleteServiceKeyUseCase,
     val listDevices: ListDevicesUseCase,
     val signOutDevice: SignOutDeviceUseCase,
+    val renameDevice: RenameDeviceUseCase,
+    val listMemberDevices: ListMemberDevicesUseCase,
 )

@@ -501,4 +501,33 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
             ANALYZE identity_audit_events
         """.trimIndent(),
     ),
+    // devices.v1 (TeamCode's devices): one row per installation of the CLI, keyed by person and installation, kept
+    // across the sign-ins that are its tokens. An account-level table, as the people's: no organization owns it. The
+    // authorization carries what the CLI said at the start until the approval registers it; a token points at its
+    // device, and removing the device (which revokes them first) only forgets the pointer. The daemon's presence
+    // columns join this table in the slice that serves the daemon.
+    SchemaMigration(
+        version = 20,
+        name = "devices",
+        sql = """
+            CREATE TABLE identity_devices (
+                id UUID PRIMARY KEY,
+                user_id UUID NOT NULL REFERENCES identity_users (id) ON DELETE CASCADE,
+                installation_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                platform TEXT,
+                os_version TEXT,
+                created_at TIMESTAMPTZ NOT NULL,
+                last_login_at TIMESTAMPTZ NOT NULL,
+                CONSTRAINT identity_devices_user_installation UNIQUE (user_id, installation_id)
+            );
+            CREATE INDEX identity_devices_user ON identity_devices (user_id, last_login_at DESC, id);
+            ALTER TABLE identity_device_authorizations
+                ADD COLUMN installation_id TEXT, ADD COLUMN device_name TEXT, ADD COLUMN platform TEXT,
+                ADD COLUMN os_version TEXT;
+            ALTER TABLE identity_api_tokens
+                ADD COLUMN device_id UUID REFERENCES identity_devices (id) ON DELETE SET NULL;
+            CREATE INDEX identity_api_tokens_device ON identity_api_tokens (device_id) WHERE device_id IS NOT NULL
+        """.trimIndent(),
+    ),
 )

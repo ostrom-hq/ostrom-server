@@ -2,6 +2,7 @@
 package run.ostrom.server.identity.presentation
 
 import run.ostrom.server.identity.domain.DEVICE_POLL_INTERVAL
+import run.ostrom.server.identity.domain.DeviceLoginIdentity
 import run.ostrom.server.identity.domain.DevicePollResult
 import run.ostrom.server.identity.domain.PERSONAL_TOKEN_SCOPES
 import run.ostrom.server.identity.domain.SessionRequiredException
@@ -56,7 +57,9 @@ private fun Route.deviceLoginRoutes(dependencies: IdentityRoutesDependencies) = 
         // The body is optional: a CLI that sends none gets the default client name.
         val hasBody = call.request.headers[HttpHeaders.ContentType] != null
         val request = if (hasBody) call.receive<DeviceCodeRequest>() else null
-        val started = startDeviceAuthorization(request?.clientName, call.request.origin.remoteAddress, request?.scopes)
+        val device = request?.let { DeviceLoginIdentity(it.installationId, it.deviceName, it.platform, it.osVersion) }
+        val source = call.request.origin.remoteAddress
+        val started = startDeviceAuthorization(request?.clientName, source, request?.scopes, device)
         val authorization = started.authorization
         val page = config.consoleUrl + "/device"
         call.respond(

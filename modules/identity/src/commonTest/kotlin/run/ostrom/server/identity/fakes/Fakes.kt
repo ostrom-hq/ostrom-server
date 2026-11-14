@@ -12,6 +12,13 @@ import run.ostrom.server.identity.domain.ChainedAuditEvent
 import run.ostrom.server.identity.domain.DeviceAuthorization
 import run.ostrom.server.identity.domain.DeviceAuthorizationStatus
 import run.ostrom.server.identity.domain.DeviceAuthorizationsRepository
+import run.ostrom.server.identity.domain.DeviceLimitException
+import run.ostrom.server.identity.domain.DeviceSignIn
+import run.ostrom.server.identity.domain.DeviceSignInRequest
+import run.ostrom.server.identity.domain.DevicesRepository
+import run.ostrom.server.identity.domain.MAX_REGISTERED_DEVICES
+import run.ostrom.server.identity.domain.RegisteredDevice
+import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.identity.domain.ElevatedTokensRepository
 import run.ostrom.server.identity.domain.DuplicateIdentityException
 import run.ostrom.server.identity.domain.OrgAuditQuery
@@ -266,8 +273,75 @@ class InMemoryElevatedTokensRepository(private val tokens: InMemoryApiTokensRepo
     }
 }
 
+class InMemoryDevicesRepository(private val tokens: InMemoryApiTokensRepository) : DevicesRepository {
+    val devices = mutableMapOf<Uuid, RegisteredDevice>()
+    var refuseRename = false
+    var refuseRemove = false
+
+    override suspend fun find(userId: Uuid, installationId: String): RegisteredDevice? =
+        devices.values.firstOrNull { it.userId == userId && it.installationId == installationId }
+
+    override suspend fun count(userId: Uuid): Int = devices.values.count { it.userId == userId }
+
+    override suspend fun get(id: Uuid): RegisteredDevice? = devices[id]
+
+    override suspend fun list(userId: Uuid): List<RegisteredDevice> =
+        devices.values.filter { it.userId == userId }.sortedByDescending { it.lastLoginAt }
+
+    override suspend fun rename(id: Uuid, name: String): Boolean {
+        if (refuseRename) return false
+        devices[id] = devices.getValue(id).copy(name = name)
+        return true
+    }
+
+    override suspend fun remove(userId: Uuid, id: Uuid, at: Instant): Boolean {
+        if (refuseRemove) return false
+        tokens.tokens.values.filter { it.deviceId == id && it.revokedAt == null }.forEach { token ->
+            tokens.revoke(token.userId, token.id, at)
+        }
+        return devices.remove(id) != null
+    }
+
+    /** The registration of a sign-in, as the database does it under the person's lock. */
+    fun signIn(userId: Uuid, login: DeviceSignInRequest, now: Instant): DeviceSignIn {
+        val existing = lookup(userId, login.installationId)
+        if (existing != null) {
+            val reported = login.platform != null
+            val device = existing.copy(
+                lastLoginAt = now,
+                platform = if (reported) login.platform else existing.platform,
+                osVersion = if (reported) login.osVersion else existing.osVersion,
+            )
+            devices[device.id] = device
+            return DeviceSignIn(device, registered = false)
+        }
+        if (devices.values.count { it.userId == userId } >= MAX_REGISTERED_DEVICES) throw DeviceLimitException()
+        val device = RegisteredDevice(
+            Uuid.random(), userId, login.installationId, login.name, login.platform, login.osVersion, now, now,
+        )
+        devices[device.id] = device
+        return DeviceSignIn(device, registered = true)
+    }
+
+    private fun lookup(userId: Uuid, installationId: String): RegisteredDevice? =
+        devices.values.firstOrNull { it.userId == userId && it.installationId == installationId }
+}
+
+class FakeMemberDirectory : MemberDirectory {
+    /** The users of the organizations' members: (organization, member id) to user. */
+    val members = mutableMapOf<Pair<Uuid, String>, Uuid>()
+
+    override suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean = (orgId to memberId) in members
+
+    override suspend fun userIdOf(orgId: Uuid, memberId: String): Uuid? = members[orgId to memberId]
+
+    override suspend fun hasUser(orgId: Uuid, userId: Uuid): Boolean =
+        members.any { it.key.first == orgId && it.value == userId }
+}
+
 class InMemoryDeviceAuthorizationsRepository(
     private val tokens: InMemoryApiTokensRepository,
+    val devices: InMemoryDevicesRepository = InMemoryDevicesRepository(tokens),
 ) : DeviceAuthorizationsRepository {
     val authorizations = mutableMapOf<String, DeviceAuthorization>()
     var refuseAnswer = false
@@ -307,6 +381,20 @@ class InMemoryDeviceAuthorizationsRepository(
         update(id) { it.copy(status = DeviceAuthorizationStatus.CONSUMED) }
         tokens.create(token, secretHash)
         return true
+    }
+
+    override suspend fun consumeOnDevice(
+        id: Uuid,
+        token: ApiToken,
+        secretHash: String,
+        login: DeviceSignInRequest,
+        now: Instant,
+    ): DeviceSignIn? {
+        if (refuseConsume) return null
+        val signIn = devices.signIn(token.userId, login, now)
+        update(id) { it.copy(status = DeviceAuthorizationStatus.CONSUMED) }
+        tokens.create(token.copy(deviceId = signIn.device.id), secretHash)
+        return signIn
     }
 
     fun update(id: Uuid, change: (DeviceAuthorization) -> DeviceAuthorization) {
