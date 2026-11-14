@@ -23,8 +23,8 @@ import io.ktor.server.routing.Route
 import kotlin.uuid.Uuid
 
 /**
- * The phones routes: a person registers, lists and removes their own phones in the organization they act in (`Ostrom-Org`,
- * or their only one), with the phone app's token or a browser session, the credentials that hold
+ * The phones routes: a person registers, lists and removes their own phones in the organization they act in
+ * (`Ostrom-Org`, or their only one), with the phone app's token or a browser session, the credentials that hold
  * `notifications:write`. A personal token never does (an agent must not silence its person's approvals), nor an
  * agent, a device or a service key.
  *

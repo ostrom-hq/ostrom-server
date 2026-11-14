@@ -59,9 +59,9 @@ import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * `POST` and `GET /api/v1/push-devices` and `DELETE /api/v1/push-devices/{id}` on the real identity, orgs and notifications
- * modules and PostgreSQL, as the serving role: the phone app registers its phone, lists its phones and removes it, the push token never
- * comes back, another organization neither sees nor removes it, and only a person's phone or browser may register.
+ * `POST` and `GET /api/v1/push-devices` and `DELETE /api/v1/push-devices/{id}` on the real identity, orgs and
+ * notifications modules and PostgreSQL, as the serving role: the phone app registers its phone, lists its phones and
+ * removes it, the push token never comes back, another organization neither sees nor removes it, and only a person's phone or browser may register.
  */
 class PushDevicesPostgresTest {
     private val modules = listOf(InstanceModule, IdentityModule, OrgsModule, NotificationsModule)
