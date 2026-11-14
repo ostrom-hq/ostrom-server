@@ -36,6 +36,7 @@ val MAIL: SettingsSection = SettingsSection(
             secret = true,
             legacyVariable = "OSTROM_MAIL_TOKEN",
             check = { if (it.length > 3) null else "too short" },
+            verify = { if (it == "forged") "is not signed" else null },
         ),
     ),
 )

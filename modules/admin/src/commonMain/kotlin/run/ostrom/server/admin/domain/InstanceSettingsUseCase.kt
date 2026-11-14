@@ -148,29 +148,29 @@ class InstanceSettingsUseCaseImpl(
         repository.get(section).also { if ((it?.version ?: 0) != version) throw SettingsConflictException() }
 
     // Why the change is refused, naming the field, never echoing its value; null when it is not.
-    private fun problem(section: SettingsSection, change: SettingsChange): String? {
+    private suspend fun problem(section: SettingsSection, change: SettingsChange): String? {
         if (change.version !in 0..<Int.MAX_VALUE) return "version is a version this section had."
         return change.values.entries.firstNotNullOfOrNull { (name, value) -> plainProblem(section, name, value) }
             ?: change.secrets.entries.firstNotNullOfOrNull { (name, value) -> secretProblem(section, name, value) }
     }
 
-    private fun plainProblem(section: SettingsSection, name: String, value: String): String? {
+    private suspend fun plainProblem(section: SettingsSection, name: String, value: String): String? {
         val field = section.field(name)?.takeUnless { it.secret }
             ?: return "$name is not a plain field of ${section.name}."
         return when {
             value.length > MAX_VALUE -> "$name is $MAX_VALUE characters at most."
             value.isEmpty() -> null
-            else -> field.check(value)?.let { "$name: $it" }
+            else -> field.refusal(value)?.let { "$name: $it" }
         }
     }
 
-    private fun secretProblem(section: SettingsSection, name: String, value: String?): String? {
+    private suspend fun secretProblem(section: SettingsSection, name: String, value: String?): String? {
         val field = section.field(name)?.takeIf { it.secret }
             ?: return "$name is not a secret of ${section.name}."
         return when {
             value.isNullOrEmpty() -> null
             value.length > MAX_SECRET -> "$name is $MAX_SECRET characters at most."
-            else -> field.check(value)?.let { "$name: $it" }
+            else -> field.refusal(value)?.let { "$name: $it" }
         }
     }
 

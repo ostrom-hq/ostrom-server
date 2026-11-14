@@ -153,6 +153,7 @@ class InstanceSettingsTest {
         assertEquals("other is not a secret of mail.", refused(secrets = mapOf("other" to "x")))
         assertEquals("url: an https URL", refused(values = mapOf("url" to "http://secret.example")))
         assertEquals("token: too short", refused(secrets = mapOf("token" to "abc")))
+        assertEquals("token: is not signed", refused(secrets = mapOf("token" to "forged")), "Verified on save")
         assertEquals("from is 4096 characters at most.", refused(values = mapOf("from" to "a".repeat(4097))))
         assertEquals("token is 16384 characters at most.", refused(secrets = mapOf("token" to "a".repeat(16385))))
         assertEquals("version is a version this section had.", refused(version = -1))
@@ -220,8 +221,8 @@ class InstanceSettingsTest {
         val environment = mapOf(
             "OSTROM_MAIL_FROM" to "Ostrom <a@example.com>",
             "OSTROM_RESEND_API_KEY" to "re_secret",
-            // Refused by the field's rule: left out, never imported.
-            "OSTROM_MAIL_TOKEN" to "abc",
+            // Refused by the field's rule: left out, never imported, with the reason.
+            "OSTROM_MAIL_TOKEN" to "forged",
         )
 
         import(environment::get)
@@ -238,6 +239,7 @@ class InstanceSettingsTest {
         assertEquals(4, logger.events.size)
         assertTrue("were not imported" in logger.events[0].second)
         assertEquals("OSTROM_MAIL_TOKEN", logger.events[0].third["variables"])
+        assertEquals("OSTROM_MAIL_TOKEN: is not signed", logger.events[0].third["reasons"])
         assertTrue("Imported" in logger.events[1].second)
         assertTrue("Ignored" in logger.events[3].second)
         assertEquals("OSTROM_MAIL_FROM,OSTROM_RESEND_API_KEY", logger.events[3].third["variables"])

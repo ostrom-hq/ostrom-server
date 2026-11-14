@@ -10,14 +10,27 @@ package run.ostrom.server.kernel.settings
  * @property legacyVariable The former environment variable that held it (`OSTROM_RESEND_API_KEY`): read once, into an
  *   empty database, then never again ([SettingsSection]).
  * @property check Refuses a value: returns why (never echoing the value), or null when it is acceptable.
+ * @property verify Refuses a value [check] accepts, with what it needs to read (a license key's signature, the
+ *   instance it is bound to): returns why (never echoing the value), or null. Run on save and on the one-time import.
  */
 class SettingsField(
     val name: String,
     val secret: Boolean = false,
     val required: Boolean = false,
     val legacyVariable: String? = null,
+    // Before [check], so that a trailing lambda (`SettingsField("mode") { … }`) stays the check.
+    val verify: (suspend (String) -> String?)? = null,
     val check: (String) -> String? = { null },
-)
+) {
+    /**
+     * Why a value is refused: [check], then [verify].
+     *
+     * @param value The value.
+     *
+     * @return Why, never echoing the value; null when it is acceptable.
+     */
+    suspend fun refusal(value: String): String? = check(value) ?: verify?.invoke(value)
+}
 
 /**
  * A section of the instance's settings, which a module declares by binding it in Koin (the admin module collects every

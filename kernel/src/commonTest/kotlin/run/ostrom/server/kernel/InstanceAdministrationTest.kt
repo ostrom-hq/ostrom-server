@@ -77,6 +77,20 @@ class InstanceAdministrationTest {
     }
 
     @Test
+    fun aFieldRefusesWhatItsCheckThenItsVerificationRefuse() = runTest {
+        val plain = SettingsField("from")
+        assertNull(plain.refusal("ops@acme.test"))
+        val checked = SettingsField(
+            "key",
+            check = { if (it.startsWith("k_")) null else "starts with k_" },
+            verify = { if (it == "k_good") null else "is not signed" },
+        )
+        assertEquals("starts with k_", checked.refusal("bad"), "The check first, without verifying")
+        assertEquals("is not signed", checked.refusal("k_forged"))
+        assertNull(checked.refusal("k_good"))
+    }
+
+    @Test
     fun aSectionNamesItsFieldsOnce() {
         val section = SettingsSection("mail", listOf(SettingsField("from"), SettingsField("apiKey", secret = true)))
 

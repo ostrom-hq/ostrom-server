@@ -53,11 +53,17 @@ class ImportLegacySettingsUseCaseImpl(
                 environment(variable)?.takeIf { it.isNotEmpty() }?.let { Triple(field, variable, it) }
             }
         }
-        val (found, refused) = set.partition { (field, _, value) -> field.check(value) == null }
+        val refusals = set.associate { (field, variable, value) -> variable to field.refusal(value) }
+        val (found, refused) = set.partition { (_, variable, _) -> refusals[variable] == null }
         if (refused.isNotEmpty()) {
+            // The reasons name what is wrong, never the value (SettingsField.check and verify).
             logger.warn(
                 "Deprecated variables with a value the console refuses were not imported: set them in the console.",
-                mapOf("section" to section.name, "variables" to refused.joinToString(",") { it.second }),
+                mapOf(
+                    "section" to section.name,
+                    "variables" to refused.joinToString(",") { it.second },
+                    "reasons" to refused.joinToString("; ") { "${it.second}: ${refusals[it.second]}" },
+                ),
             )
         }
         val variables = found.joinToString(",") { it.second }
