@@ -83,7 +83,7 @@ class FlywayMigrationRunner(
         requireVersions(module, migrations)
         if (migrations.isEmpty()) return
         val applied = withContext(Dispatchers.IO) { source.connection.use { history(it, table) } }
-        val baseline = applied.filter { it.baseline }.maxOfOrNull { it.version } ?: 0L
+        val baseline = applied.filter { it.baseline }.fold(0L) { last, row -> maxOf(last, row.version) }
         val done = applied.filter { it.success && !it.baseline }.associate { it.version to it.checksum }
         val missing = migrations.filter { it.version > baseline && done[it.version] != checksum(it) }.map { it.version }
         if (missing.isNotEmpty()) throw MigrationsNotAppliedException(module, missing)
@@ -109,11 +109,11 @@ class FlywayMigrationRunner(
     }
 
     /** Runs Flyway once: the versions applied, with how long each took in milliseconds. */
+    @Suppress("SpreadOperator") // Flyway takes its migrations as varargs: one copy of a module's few, per pass.
     private fun pass(table: String, baseline: Long, migrations: List<SchemaMigration>): List<Pair<String, Int>> {
         val flyway = Flyway.configure()
             .dataSource(source)
             .table(table)
-            .locations(*emptyArray<String>())
             .javaMigrations(*migrations.map(::ModuleMigration).toTypedArray())
             .baselineOnMigrate(true)
             .baselineVersion(MigrationVersion.fromVersion(baseline.toString()))
@@ -192,7 +192,10 @@ class FlywayMigrationRunner(
         private fun Connection.exists(table: String): Boolean =
             prepareStatement("SELECT to_regclass(?) IS NOT NULL").use { statement ->
                 statement.setString(1, table)
-                statement.executeQuery().use { it.next() && it.getBoolean(1) }
+                statement.executeQuery().use { rows ->
+                    rows.next()
+                    rows.getBoolean(1)
+                }
             }
 
         private fun historyTable(module: String): String = "flyway_" + moduleKey(module)

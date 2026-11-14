@@ -48,7 +48,7 @@ import kotlin.uuid.Uuid
  * @property ownerConfig How the owner connects, for a migrator on another driver (Flyway).
  * @property servingConfig How the serving role connects, for the JDBC pool.
  */
-class TestDatabase private constructor(
+class TestDatabase @Suppress("LongParameterList") private constructor( // Each role's pool and credentials.
     val driver: Driver,
     val owner: Driver,
     val superuser: Driver,
