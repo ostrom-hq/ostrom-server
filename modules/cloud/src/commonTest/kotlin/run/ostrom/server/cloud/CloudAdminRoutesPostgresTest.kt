@@ -13,6 +13,7 @@ import run.ostrom.server.cloud.presentation.CloudRuntimeResponse
 import run.ostrom.server.cloud.presentation.cloudAdmin
 import run.ostrom.server.kernel.auth.ALL_USER_SCOPES
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.auth.PrincipalChannel
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.TokenAuthenticator
@@ -70,6 +71,12 @@ class CloudAdminRoutesPostgresTest {
                         CAROL.toString() -> Caller(ORG_B, CAROL, MemberRole.OWNER)
                         else -> null
                     }
+            }
+        }
+        single<MemberDirectory> {
+            object : MemberDirectory {
+                override suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean =
+                    orgId == ORG_A && memberId in setOf(ALICE.toString(), BOB.toString())
             }
         }
         single<ConfigSource> {

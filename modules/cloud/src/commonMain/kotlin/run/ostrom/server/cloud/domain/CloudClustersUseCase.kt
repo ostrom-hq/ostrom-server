@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.cloud.domain
 
+import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.settings.InstanceAuditRecord
 import run.ostrom.server.kernel.settings.InstanceAuditTrail
 import run.ostrom.server.secrets.domain.SecretCipher
@@ -75,6 +76,7 @@ class CloudClustersUseCaseImpl(
     private val cipher: SecretCipher,
     private val audit: InstanceAuditTrail,
     private val clock: Clock,
+    private val logger: Logger,
 ) : CloudClustersUseCase {
     override suspend fun list(caller: CloudAdminCaller): List<CloudCluster> {
         gate.require(caller)
@@ -136,6 +138,9 @@ class CloudClustersUseCaseImpl(
         val ca = cipher.open(stored.sealedCaCertificate, context(id, CA))
         val token = cipher.open(stored.sealedServiceAccountToken, context(id, TOKEN))
         return if (ca == null || token == null) {
+            // The secrets key changed, or the row is damaged: the administrator enters them again in the console.
+            val fields = mapOf("cluster" to id.toString())
+            logger.warn("Cloud cluster credentials no longer open: enter them again.", fields)
             null
         } else {
             CloudClusterCredentials(stored.cluster, ca.decodeToString(), token.decodeToString())

@@ -20,6 +20,7 @@ import run.ostrom.server.cloud.infrastructure.CloudProfilesRepositoryImpl
 import run.ostrom.server.cloud.infrastructure.CloudRuntimeRepositoryImpl
 import run.ostrom.server.cloud.presentation.CloudAdminRoutesDependencies
 import run.ostrom.server.cloud.presentation.cloudAdminRoutes
+import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
@@ -30,6 +31,7 @@ import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.dsl.binds
 import org.koin.dsl.module
+import kotlin.uuid.Uuid
 
 /**
  * TeamCode's cloud administration (`/dashboard/cloud`, docs/MODULES.md "Settings in the console"): the instance's
@@ -48,9 +50,11 @@ object CloudModule : ServerModule {
         single { CloudAdminGate(get()) }
         single { CloudRuntimeUseCaseImpl(get(), get(), get(), get(), get()) } binds
             arrayOf(CloudRuntimeUseCase::class, CloudRuntimeSource::class)
-        single { CloudClustersUseCaseImpl(get(), get(), get(), get(), get()) } binds
+        single { CloudClustersUseCaseImpl(get(), get(), get(), get(), get(), get()) } binds
             arrayOf(CloudClustersUseCase::class, CloudClusterAccess::class)
-        single<CloudProfilesUseCase> { CloudProfilesUseCaseImpl(get(), get(), get()) }
+        single<CloudProfilesUseCase> {
+            CloudProfilesUseCaseImpl(get(), get(), get(), getOrNull<MemberDirectory>() ?: NoMembers)
+        }
         single {
             CloudAdminRoutesDependencies(
                 get(),
@@ -75,4 +79,9 @@ object CloudModule : ServerModule {
     }
 
     override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.CLOUD_ADMIN)
+}
+
+/** Without the orgs module nobody is a member: a profile is then assigned to no one, never to anyone. */
+internal object NoMembers : MemberDirectory {
+    override suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean = false
 }

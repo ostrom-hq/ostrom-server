@@ -10,6 +10,7 @@ import run.ostrom.server.cloud.domain.CloudProfilesUseCaseImpl
 import run.ostrom.server.cloud.domain.CloudResources
 import run.ostrom.server.cloud.domain.InvalidCloudProfileException
 import run.ostrom.server.cloud.domain.StoredCloudCluster
+import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.secrets.domain.AdminRequiredException
 import run.ostrom.server.secrets.domain.Caller
 import run.ostrom.server.secrets.domain.MemberRole
@@ -17,6 +18,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
 import kotlin.uuid.Uuid
@@ -25,7 +27,7 @@ class CloudProfilesTest {
     private val clusters = MemoryClusters()
     private val repository = MemoryProfiles()
     private val clock = SettableClock()
-    private val profiles = CloudProfilesUseCaseImpl(repository, clusters, clock)
+    private val profiles = CloudProfilesUseCaseImpl(repository, clusters, clock, EveryoneIsAMember)
     private val cluster = CloudCluster(
         Uuid.random(), "prod", "https://k8s.acme.dev", listOf("sessions"), 10, null, 1, true, true, NOW, NOW,
     )
@@ -131,5 +133,31 @@ class CloudProfilesTest {
         )
         val chosen = with(spec.copy(storageClass = "fast", agentVersion = "2.1", agentKind = "codex"))
         assertEquals("fast", profiles.create(admin, chosen).spec.storageClass)
+    }
+
+    @Test
+    fun onlyTheOrganizationsMembersAreAssigned() = runTest {
+        connect()
+        val directory = object : MemberDirectory {
+            override suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean =
+                orgId == ORG_A && memberId == BOB.toString()
+        }
+        val checked = CloudProfilesUseCaseImpl(repository, clusters, clock, directory)
+        val base = input.copy(assignedMemberIds = setOf(BOB.toString()))
+
+        assertEquals(setOf(BOB.toString()), checked.create(admin, base).assignedMemberIds)
+        val refused = assertFailsWith<InvalidCloudProfileException> {
+            checked.create(admin, base.copy(assignedMemberIds = setOf(BOB.toString(), "someone-else")))
+        }
+        assertTrue("not a member" in refused.message.orEmpty())
+    }
+
+    @Test
+    fun withoutTheOrgsModuleNobodyIsAMember() = runTest {
+        assertFalse(NoMembers.isActiveMember(ORG_A, BOB.toString()))
+    }
+
+    private object EveryoneIsAMember : MemberDirectory {
+        override suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean = true
     }
 }
