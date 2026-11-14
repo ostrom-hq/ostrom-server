@@ -89,8 +89,8 @@ class MemoryRulesTest {
             "github_pat_" + "a".repeat(30),
             "xoxb-1234567890-abc",
             "AKIAABCDEFGHIJKLMNOP",
-            "osp_" + "a".repeat(20),
-            "opk_" + "a".repeat(20),
+            "osp_" + "aB3-_".repeat(9),
+            "opk_" + "a".repeat(43),
             "Authorization: Bearer abcdefghijklmnopqrstuvwxyz",
             "password = hunter2hunter2!",
         )
@@ -101,6 +101,7 @@ class MemoryRulesTest {
         assertFailsWith<MemorySecretException> { valid(summary = "api_key: abcdefghijklmnop") }
         assertFailsWith<MemorySecretException> { valid(refs = listOf("ghp_" + "b".repeat(30))) }
         valid(content = "The deploy key lives in the vault under ostrom/deploy; ask an administrator.")
+        valid(content = "Run ost_migration_run_2026_batch_two, then oss_settings_cleanup.", tags = emptyList())
     }
 
     @Test

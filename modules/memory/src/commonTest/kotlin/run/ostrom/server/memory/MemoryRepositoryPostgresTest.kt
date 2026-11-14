@@ -60,12 +60,19 @@ class MemoryRepositoryPostgresTest {
     @Test
     fun eachMemoryHoldsItsLimitExactly() = repositoryTest { server, repository ->
         val ada = caller()
-        server.fill(ORG_A, MemoryScope.PERSONAL, ada.memberId, 1_999)
+        server.fill(ORG_A, MemoryScope.PERSONAL, ada.memberId, 1_998)
+        // An expired entry, which nobody reads or forgets any more, holds no place.
+        server.fill(ORG_A, MemoryScope.PERSONAL, ada.memberId, 10, expires = "now() - INTERVAL '1 minute'")
         repository.create(ada, note(MemoryScope.PERSONAL), MemoryOrigin.HUMAN, null)
-        val personal = assertFailsWith<MemoryLimitException> {
-            repository.create(ada, note(MemoryScope.PERSONAL), MemoryOrigin.HUMAN, null)
+        // Two of the member's agents write their last place at once: the lock lets one in.
+        val mine = coroutineScope {
+            (1..2).map {
+                async { runCatching { repository.create(ada, note(MemoryScope.PERSONAL), MemoryOrigin.AGENT, null) } }
+            }.awaitAll()
         }
-        assertTrue("2000" in personal.message.orEmpty())
+        assertEquals(1, mine.count { it.isSuccess })
+        val personal = mine.single { it.isFailure }.exceptionOrNull()
+        assertTrue(personal is MemoryLimitException && "2000" in personal.message.orEmpty())
         // Another member's own memory and the organization's are apart.
         repository.create(caller(EVE, ORG_B), note(MemoryScope.PERSONAL), MemoryOrigin.HUMAN, null)
         repository.create(ada, note(MemoryScope.TEAM), MemoryOrigin.HUMAN, null)

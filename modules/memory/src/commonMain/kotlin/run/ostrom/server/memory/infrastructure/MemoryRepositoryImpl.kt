@@ -104,22 +104,22 @@ internal class MemoryRepositoryImpl(private val driver: Driver, private val cloc
     ): MemoryEntry = driver.inOrg(caller.orgId) {
         val personal = entry.scope == MemoryScope.PERSONAL
         val owner = ownerOf(caller, entry.scope)
-        // The organization's count is shared by every member: its writes take the organization's memory lock, so the
-        // limit is exact; a member's own entries are only written by them.
-        if (!personal) {
-            fetchAll(Statement.create("SELECT pg_advisory_xact_lock(:key)").bind("key", lockKey(caller.orgId)))
-                .getOrThrow()
-        }
+        // Every write takes the organization's memory lock, so each limit is exact: the organization's count is
+        // shared by its members, and a member's own may be written by several of their agents at once. An expired
+        // entry, which nobody reads or forgets any more, holds no place.
+        fetchAll(Statement.create("SELECT pg_advisory_xact_lock(:key)").bind("key", lockKey(caller.orgId)))
+            .getOrThrow()
         val limit = if (personal) MemoryRules.PERSONAL_LIMIT else MemoryRules.TEAM_LIMIT
+        val now = clock.now()
         val held = fetchAll(
             Statement.create(
                 "SELECT COUNT(*) AS n FROM memory_entries WHERE org_id = :org_id AND scope = :scope AND " +
-                    "owner_id = :owner AND status IN ('active', 'proposed')",
-            ).bind("org_id", caller.orgId).bind("scope", entry.scope.wire).bind("owner", owner),
+                    "owner_id = :owner AND status IN ('active', 'proposed') " +
+                    "AND (expires_at IS NULL OR expires_at > :now)",
+            ).bind("org_id", caller.orgId).bind("scope", entry.scope.wire).bind("owner", owner).bind("now", now),
         ).getOrThrow().first().get("n").asInt()
         if (held >= limit) throw MemoryLimitException(limit)
         val id = Uuid.random()
-        val now = clock.now()
         execute(
             Statement.create(
                 """

@@ -35,7 +35,9 @@ object MemoryRules {
         Regex("""\bgithub_pat_[A-Za-z0-9_]{20,}"""),
         Regex("""\bxox[abprs]-[A-Za-z0-9-]{10,}"""),
         Regex("""\bAKIA[0-9A-Z]{16}\b"""),
-        Regex("""\b(os[a-z]|opk)_[A-Za-z0-9_-]{16,}"""),
+        // Ostrom's credentials: a prefix of the identity module, then at least 32 random URL-safe characters (a
+        // snake_case name such as `ost_migration_2026` is no credential).
+        Regex("""\b(osa|osb|osc|osg|osm|osp|oss|ost|opk)_[A-Za-z0-9_-]{32,}"""),
         Regex("""(?i)\bauthorization:\s*(bearer|basic)\s+\S{16,}"""),
         Regex(
             """(?i)\b(password|passwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token)""" +
