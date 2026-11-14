@@ -88,12 +88,15 @@ val OrgsMigrations = listOf(
 )
 ```
 
-- Each module has its **own** version sequence (1, 2, 3… without gaps) in its own table `_migrations_<name>`:
-  two modules never compete for a number.
+- Each module has its **own** version sequence (1, 2, 3… without gaps) in its own Flyway history table
+  `flyway_<name>`: two modules never compete for a number, and a version used twice is refused. A database migrated
+  before by sqlx4k (`_migrations_<name>`) is adopted: Flyway's history starts with a baseline at its last version,
+  once every version it applied is checked against the code.
 - **Every table starts with the module name** (`orgs_…`, `instance_…`).
 - Migrations are applied by **`ostrom-server migrate`**, with the owner's credentials
   (`OSTROM_DATABASE_MIGRATION_URL`), under a PostgreSQL advisory lock: init containers or replicas that migrate at
-  once wait for each other. The serving process never migrates: at start it checks that every migration is applied
+  once wait for each other. A migration waits at most 3 s for a table lock (`lock_timeout`), and the pass runs again
+  after a pause when it gave up on one (SQLSTATE 55P03), up to 5 times. The serving process never migrates: at start it checks that every migration is applied
   unchanged, and refuses to start otherwise (run `migrate` first).
 - An applied migration is never edited (its checksum is verified by `migrate` and at each start); add a new version
   instead.
@@ -590,8 +593,8 @@ no route yet. A module that adds a feature, or a route behind a configuration, u
 The database roles of a deployment (the Helm chart creates them): an **owner**, which owns the schema and runs
 `migrate`, and a **serving role** that owns nothing, `NOSUPERUSER NOBYPASSRLS`, granted `USAGE` on the schema and,
 through `ALTER DEFAULT PRIVILEGES FOR ROLE <owner>`, `SELECT, INSERT, UPDATE, DELETE` on its tables and `USAGE, SELECT`
-on its sequences. CI's smoke test sets them up the same way. The migrations' history tables (`_migrations_<name>`)
-are the exception: after each pass, `migrate` revokes every privilege but `SELECT` on them from every role but the
+on its sequences. CI's smoke test sets them up the same way. The migrations' history tables (`flyway_<name>`, and
+the older `_migrations_<name>`) are the exception: after each pass, `migrate` revokes every privilege but `SELECT` on them from every role but the
 owner, so the serving role reads the history (the start-up check) and never rewrites it.
 
 ## Known limits of the foundation

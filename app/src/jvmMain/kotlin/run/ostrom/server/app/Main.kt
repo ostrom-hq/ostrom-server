@@ -7,12 +7,11 @@ import run.ostrom.server.kernel.config.InvalidConfigException
 import run.ostrom.server.kernel.config.ServerConfig
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.MigrationRunner
-import run.ostrom.server.kernel.database.MigrationRunnerImpl
 import run.ostrom.server.kernel.database.MigrationsNotAppliedException
 import run.ostrom.server.kernel.database.PoolHealthCheck
 import run.ostrom.server.kernel.database.UnsafeDatabaseRoleException
 import run.ostrom.server.kernel.database.connectPostgres
-import run.ostrom.server.kernel.database.migrateUnderLock
+import run.ostrom.server.kernel.database.migrateModules
 import run.ostrom.server.kernel.database.requireRowLevelSecurity
 import run.ostrom.server.kernel.http.configureHttp
 import run.ostrom.server.kernel.logging.JsonLogger
@@ -109,6 +108,7 @@ private fun serve() {
             telemetry = telemetry,
             metrics = metrics,
             databaseCheck = PoolHealthCheck(pool::state),
+            migrationRunner = pool.migrationRunner(logger),
         )
         val server = serverKoin(kernel, modules).also { koin = it }
         runBlocking {
@@ -131,7 +131,7 @@ private fun serve() {
     stopThenFlush(telemetry, exporters) { shutDown(workers, koin, driver, jdbc) }
 }
 
-/** Applies every module's migrations under the migration lock, with the owner's connection, then exits. */
+/** Applies every module's migrations under the migration lock, with the owner's credentials (Flyway), then exits. */
 private fun migrate() {
     val source = loadSource()
     val logger = JsonLogger(LogLevel.INFO)
@@ -140,17 +140,13 @@ private fun migrate() {
     } catch (error: InvalidConfigException) {
         invalidConfig(error)
     }
-    var driver: Driver? = null
     try {
-        val owner = connectPostgres(database).also { driver = it }
-        runBlocking { owner.migrateUnderLock(MigrationRunnerImpl(owner, logger), serverModules()) }
+        runBlocking { migrateModules(database, logger, serverModules()) }
         logger.info("migrations done", mapOf("version" to SERVER_VERSION))
     } catch (error: Throwable) { // not coroutine-reachable: the process entry point, outside any coroutine.
         failed(logger, "migration failed", error)
-        runBlocking { driver?.close() }
         exitProcess(EXIT_FAILURE)
     }
-    runBlocking { driver?.close() }
 }
 
 /**
@@ -176,11 +172,14 @@ private fun oneShot(
     val modules = serverModules()
     var driver: Driver? = null
     var koin: Koin? = null
+    var jdbc: JdbcDatabase? = null
     val workers = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     try {
         val database = connectPostgres(config.database).also { driver = it }
+        val pool = JdbcDatabase(config.database, JdbcDatabase.MIN_POOL_SIZE).also { jdbc = it }
         val signer = runBlocking { Ed25519InstanceSigner.loadOrCreate(config.signingKeyFile) }
-        val server = serverKoin(kernelModule(logger, database, signer, source), modules).also { koin = it }
+        val kernel = kernelModule(logger, database, signer, source, migrationRunner = pool.migrationRunner(logger))
+        val server = serverKoin(kernel, modules).also { koin = it }
         val text = runBlocking {
             val migrations = server.get<MigrationRunner>()
             modules.forEach { migrations.verify(it.name, it.migrations) }
@@ -189,14 +188,14 @@ private fun oneShot(
         }
         println(text)
     } catch (error: UsageException) {
-        shutDown(workers, koin, driver)
+        shutDown(workers, koin, driver, jdbc)
         usage(error)
     } catch (error: Throwable) { // not coroutine-reachable: the process entry point, outside any coroutine.
         failed(logger, failure, error)
-        shutDown(workers, koin, driver)
+        shutDown(workers, koin, driver, jdbc)
         exitProcess(EXIT_FAILURE)
     }
-    shutDown(workers, koin, driver)
+    shutDown(workers, koin, driver, jdbc)
 }
 
 private fun loadSource(): ConfigSource = try {
@@ -238,7 +237,7 @@ private fun failed(logger: Logger, message: String, error: Throwable) {
 }
 
 // The JDBC pool is closed even when a module's stop fails, so that its threads never hold the JVM up.
-private fun shutDown(workers: CoroutineScope, koin: Koin?, driver: Driver?, jdbc: JdbcDatabase? = null) {
+private fun shutDown(workers: CoroutineScope, koin: Koin?, driver: Driver?, jdbc: JdbcDatabase?) {
     try {
         workers.cancel()
         koin?.close()

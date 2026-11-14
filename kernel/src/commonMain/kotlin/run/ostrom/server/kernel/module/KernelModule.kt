@@ -38,6 +38,8 @@ import kotlin.time.Clock
  *   whose [driver] wraps the pool gives the pool's.
  * @param databaseCheck `/ready`'s database check: the JDBC pool's state in the server (CRL-11), `SELECT 1` on [driver]
  *   when none is given.
+ * @param migrationRunner Checks the modules' migrations at start: Flyway's histories in the server (CRL-05), sqlx4k's
+ *   on [driver] when none is given.
  *
  * @return The module.
  */
@@ -52,6 +54,7 @@ fun kernelModule(
     metrics: OstromMetrics = OstromMetrics(telemetry.meter),
     notifications: DatabaseNotifications = databaseNotifications(driver),
     databaseCheck: HealthCheck? = null,
+    migrationRunner: MigrationRunner? = null,
 ): Module = module {
     single { logger }
     single { config }
@@ -68,6 +71,6 @@ fun kernelModule(
     single { ReadThrottle(get(), ServerConfig.readLimits(config), ReadThrottle.MAX_SUBJECTS) }
     // P1 memory: the calls this replica runs at once, under a ceiling taken from its container's limit.
     single { CallsInProgress(ServerConfig.callCeilings(config), ProcessMemory::limitBytes) }
-    single<MigrationRunner> { MigrationRunnerImpl(get(), get()) }
+    single<MigrationRunner> { migrationRunner ?: MigrationRunnerImpl(get(), get()) }
     single<HealthCheck>(named("database")) { databaseCheck ?: DatabaseHealthCheck(get()) }
 }

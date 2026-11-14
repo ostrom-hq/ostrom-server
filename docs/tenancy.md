@@ -39,8 +39,8 @@ Without an organization set, no row matches and nothing errors.
 
 Every other table is listed here, with the role that reaches it and why no organization owns its rows;
 `SchemaTenancyPostgresTest` fails on a table that has no `org_id` and is not in this list (`INSTANCE_TABLES`), and on a
-listed table that gained one. The migrator's own tables, one per module (`_migrations_<module>`), are the only ones
-admitted by their prefix: the owner role writes them when it migrates.
+listed table that gained one. The migrator's own tables, one per module (`flyway_<module>`, and the older
+`_migrations_<module>`), are the only ones admitted by their prefix: the owner role writes them when it migrates.
 
 | Table | Module | Reached by | Why no organization |
 |---|---|---|---|

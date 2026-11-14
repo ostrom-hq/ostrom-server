@@ -323,7 +323,7 @@ jobs:
               WHERE has_table_privilege(r, c.oid, 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
                  OR has_any_column_privilege(r, c.oid, 'INSERT, UPDATE, REFERENCES')))
             FROM pg_class c WHERE c.relkind = 'r' AND c.relnamespace = 'public'::regnamespace
-              AND c.relname LIKE '\_migrations\_%'")
+              AND c.relname LIKE 'flyway\_%'")
           echo "migration histories: $histories, writable by another role: $writable"
           [ "$histories" -gt 0 ] || { echo "no migrations' history"; exit 1; }
           [ "$writable" -eq 0 ] || { echo "a migrations' history is writable by another role"; exit 1; }
