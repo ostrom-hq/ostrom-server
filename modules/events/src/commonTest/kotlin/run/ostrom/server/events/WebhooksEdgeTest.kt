@@ -26,7 +26,7 @@ import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.config.MapConfigSource
 import run.ostrom.server.kernel.network.PinnedDnsRefusal
 import run.ostrom.server.kernel.network.PinnedDnsTimeout
-import run.ostrom.server.kernel.network.isPublicAddress
+import java.net.UnknownHostException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -84,8 +84,6 @@ class WebhooksEdgeTest {
     }
 
     private fun sender(
-        answers: List<String> = listOf("93.184.215.14"),
-        lookupFails: Throwable? = null,
         engine: suspend (HttpRequestData) -> Unit = {},
         requests: MutableList<HttpRequestData> = mutableListOf(),
     ) = HttpWebhookSender(
@@ -97,8 +95,7 @@ class WebhooksEdgeTest {
             },
         ),
         WebhookTargets(allowPrivate = false),
-        ::isPublicAddress,
-    ) { _ -> lookupFails?.let { throw it } ?: answers }
+    )
 
     @Test
     fun aDeliveryIsPostedWithItsHeadersAndOnlyItsStatusIsKept() = runTest {
@@ -115,16 +112,21 @@ class WebhooksEdgeTest {
     @Test
     fun aRefusedTargetIsNeverRequested() = runTest {
         val requests = mutableListOf<HttpRequestData>()
-        suspend fun codeOf(url: String, answers: List<String> = listOf("93.184.215.14"), fails: Throwable? = null) =
-            sender(answers, fails, requests = requests).send(url, emptyMap(), "{}").error
+        suspend fun codeOf(url: String) = sender(requests = requests).send(url, emptyMap(), "{}").error
         assertEquals("host_not_allowed", codeOf("https://10.0.0.1/"))
-        assertEquals("host_not_allowed", codeOf("https://rebind.example.com/", listOf("93.184.215.14", "10.0.0.1")))
-        assertEquals("host_not_allowed", codeOf("https://odd.example.com/", listOf("not an address")))
-        assertEquals("dns", codeOf("https://none.example.com/", fails = PinnedDnsRefusal()))
-        assertEquals("dns", codeOf("https://slow.example.com/", fails = PinnedDnsTimeout()))
+        assertEquals("host_not_allowed", codeOf("https://localhost/"))
         assertTrue(requests.isEmpty())
         assertEquals(null, codeOf("https://hooks.example.com/"))
         assertEquals(1, requests.size)
+    }
+
+    @Test
+    fun theConnectionsOwnRefusalAndLookupFailuresAreTold() = runTest {
+        val url = "https://hooks.example.com/"
+        suspend fun codeOf(failure: Throwable) = sender(engine = { throw failure }).send(url, emptyMap(), "").error
+        assertEquals("host_not_allowed", codeOf(IOException("x", PinnedDnsRefusal("hooks.example.com"))))
+        assertEquals("dns", codeOf(PinnedDnsTimeout("hooks.example.com")))
+        assertEquals("dns", codeOf(IOException("x", UnknownHostException("hooks.example.com"))))
     }
 
     @Test
