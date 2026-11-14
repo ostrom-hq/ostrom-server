@@ -102,10 +102,11 @@ class WebhooksRepositoryImpl(private val driver: Driver) : WebhooksRepository {
 
     override suspend fun rotateSecret(orgId: Uuid, id: Uuid, sealedSecret: String, at: Instant): WebhookSubscription =
         driver.withOrganization(orgId) { tx ->
-            tx.fetchAll(
+            val row = tx.fetchAll(
                 Statement.create(ROTATE_SQL).bind("org_id", orgId).bind("id", id).bind("secret", sealedSecret)
                     .bind("at", at),
-            ).getOrThrow().firstOrNull()?.toWebhook() ?: throw WebhookNotFoundException()
+            ).getOrThrow().firstOrNull() ?: throw WebhookNotFoundException()
+            row.toWebhook()
         }
 
     override suspend fun delete(orgId: Uuid, id: Uuid) {
