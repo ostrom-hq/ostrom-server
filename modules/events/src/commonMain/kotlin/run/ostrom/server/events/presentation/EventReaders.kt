@@ -7,6 +7,7 @@ import run.ostrom.server.events.domain.EventsScopeException
 import run.ostrom.server.events.domain.InvalidCursorException
 import run.ostrom.server.events.domain.InvalidEventTypeException
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.auth.OrgPrincipal
 import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.auth.PrincipalKind
@@ -15,6 +16,7 @@ import run.ostrom.server.kernel.auth.ServiceKeyScopes
 import run.ostrom.server.kernel.auth.TokenAuthenticator
 import run.ostrom.server.kernel.auth.outsideOrganization
 import run.ostrom.server.kernel.events.OrgEventType
+import kotlin.uuid.Uuid
 
 /** The scope that reads the feed, as it reads the cloud sessions (TeamCode: `cloud:read`). */
 private const val CLOUD_READ = "cloud:read"
@@ -60,6 +62,18 @@ internal suspend fun PrincipalOrgResolver.readerOf(
     val member = resolve(principal, null) ?: throw principal.outsideOrganization()
     return member to EventAudience(member.memberId, principal.readsWholeOrg(member))
 }
+
+/**
+ * The audience with the reader's login, so that an approver reads the approval events that name them. Asked when the
+ * feed opens, with no gate's lock held.
+ *
+ * @param orgId The organization.
+ * @param logins The members' logins, or null when none is bound (the approver then reads none).
+ *
+ * @return The audience, with the login when the reader is a member of [orgId].
+ */
+internal suspend fun EventAudience.withLogin(orgId: Uuid, logins: MemberLogins?): EventAudience =
+    copy(login = logins?.loginsOf(orgId, listOf(memberId))?.get(memberId))
 
 /**
  * Whether an open stream's reader still reads what it was opened with: a person's credential still works, and the

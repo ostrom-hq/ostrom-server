@@ -77,7 +77,7 @@ object EventsModule : ServerModule {
         // The modules that turn the journal's events into their own work (the notification router) read it here.
         single<OrgEventJournal> { OrgEventJournalImpl(get()) }
         single<OpenEventFeedUseCase> { OpenEventFeedUseCaseImpl(get()) }
-        single { EventsRoutesDependencies(get(), get(), get()) }
+        single { EventsRoutesDependencies(get(), get(), get(), getOrNull()) }
         single { EventsPurgeWorker(get(), get(), get()) }
         // A deleted organization's journal is erased once its deletion is final (OrgsModule calls every listener).
         single<OrgDeletionListener>(named("events")) { EventsOrgDeletionListener(get(), get()) }

@@ -51,6 +51,7 @@ class OrgEventsRepositoryImpl(private val driver: Driver) : OrgEventsRepository 
                 .bind("types", types.orEmpty().sorted().joinToString(","))
                 .bind("whole_org", audience.wholeOrg)
                 .bind("member_id", audience.memberId)
+                .bind("login", audience.login?.lowercase())
                 .bind("limit", limit + 1),
         ).getOrThrow().map { it.toEvent() }
         val page = rows.take(limit)
@@ -78,7 +79,9 @@ class OrgEventsRepositoryImpl(private val driver: Driver) : OrgEventsRepository 
             "SELECT seq, type, subject, subject_id, member_id, at, data FROM events_journal " +
                 "WHERE org_id = :org_id AND seq > :after AND seq <= :head " +
                 "AND (CAST(:all_types AS BOOLEAN) OR type = ANY(string_to_array(CAST(:types AS TEXT), ','))) " +
-                "AND (member_id = :member_id OR (CAST(:whole_org AS BOOLEAN) AND member_id IS NULL)) " +
+                "AND (member_id = :member_id OR (member_id IS NULL AND (CAST(:whole_org AS BOOLEAN) OR " +
+                "(type IN ('cloud.approval.requested', 'cloud.approval.decided') " +
+                "AND lower(CAST(data AS JSONB) ->> 'approver') = CAST(:login AS TEXT))))) " +
                 "ORDER BY seq LIMIT :limit"
         const val ERASE_JOURNAL_SQL = "DELETE FROM events_journal WHERE org_id = :org_id"
         const val ERASE_CURSOR_SQL = "DELETE FROM events_cursors WHERE org_id = :org_id"

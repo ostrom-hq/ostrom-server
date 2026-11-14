@@ -34,10 +34,15 @@ data class JournalEvent(
  * [wholeOrg]. Never another member's, an owner's or an administrator's feed included (TeamCode #238: the event feed
  * is its owner's, `readsTeamSessions` is false for every credential).
  *
+ * A gate's approval events (`cloud.approval.requested`, `cloud.approval.decided`) belong to no member, because the gate
+ * names its approver by login and never reads the members inside its transaction. The approver reads the ones that
+ * name their login, whatever their role: [login] is resolved when the feed is opened, never inside a gate.
+ *
  * @property memberId The reader.
  * @property wholeOrg An owner or an admin, or a key that reads for one.
+ * @property login The reader's login, null when it is not known (a key of no member, a member who left).
  */
-data class EventAudience(val memberId: Uuid, val wholeOrg: Boolean) {
+data class EventAudience(val memberId: Uuid, val wholeOrg: Boolean, val login: String? = null) {
     /**
      * Whether an event belonging to [owner] is visible.
      *

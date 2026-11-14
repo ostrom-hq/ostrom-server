@@ -43,8 +43,9 @@ enum class OrgEventType(val wire: String, val subject: String) {
     /**
      * A gate asks an approver for their yes (an enforced gate opened): `{approvalId, gateId, approver, repo?}`, the
      * approver's login, never the gate's label nor its evidence. One per approval request; the subject is the request.
-     * An event of the whole organization (an approver is a login, not a member id). Ostrom's own: the notifications
-     * module tells the approver from it.
+     * An event of the whole organization (an approver is a login, not a member id): the feed also shows it to the
+     * approver it names, their login resolved when the feed is read. Ostrom's own: the notifications module tells the
+     * approver from it.
      */
     APPROVAL_REQUESTED("cloud.approval.requested", "approval"),
 
