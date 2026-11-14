@@ -42,6 +42,7 @@ fun Route.importRoutes(dependencies: ImportRoutesDependencies) = with(dependenci
                     params.dryRun,
                     cutoverBy,
                     params.accessOnly,
+                    call.requirePrincipal(),
                 )
                 call.respond(report.toDto())
             }

@@ -20,6 +20,15 @@ enum class ImportKind {
 
     /** A shared subscription account. */
     ACCOUNT,
+
+    /** A workflow (`tc-<TeamCode id>`). */
+    WORKFLOW,
+
+    /** Who edits the workflows. */
+    EDITORS,
+
+    /** An automation (`<owner>/<name>`). */
+    AUTOMATION,
 }
 
 /** What the import did with an item. */

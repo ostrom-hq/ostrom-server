@@ -5,6 +5,8 @@ import run.ostrom.server.importer.domain.ImportTeamCodeUseCase
 import run.ostrom.server.secrets.domain.CallerResolver
 import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 
 /**
  * `/api/v1/import/teamcode`: imports a TeamCode team into the caller's org (an addition to the contract, proposed in
@@ -137,6 +139,111 @@ data class TeamCodeAccountDto(
         "expiresAt=$expiresAt, disabled=$disabled)"
 }
 
+/**
+ * A TeamCode workflow (a row of `workflows`).
+ *
+ * @property id TeamCode's id.
+ * @property name Its name.
+ * @property version TeamCode's version.
+ * @property definition TeamCode's definition JSON.
+ * @property updatedById Who saved it last (a TeamCode member id).
+ * @property createdAt Epoch milliseconds.
+ * @property updatedAt Epoch milliseconds.
+ */
+@Serializable
+data class TeamCodeWorkflowDto(
+    val id: String,
+    val name: String,
+    val version: Int,
+    val definition: JsonObject,
+    val updatedById: String? = null,
+    val createdAt: Long? = null,
+    val updatedAt: Long? = null,
+) {
+    /** Without the definition, which holds the instructions: a log line never shows them. */
+    override fun toString(): String = "TeamCodeWorkflowDto(id=$id, name=$name, version=$version)"
+}
+
+/**
+ * TeamCode's `workflow_settings` row.
+ *
+ * @property mode `all`, `admins` or `members`.
+ * @property memberIds The TeamCode members who edit, in mode `members`.
+ */
+@Serializable
+data class TeamCodeWorkflowEditorsDto(val mode: String, val memberIds: List<String> = emptyList())
+
+/**
+ * A TeamCode automation (a row of `automations`, without its secrets).
+ *
+ * @property id TeamCode's id.
+ * @property ownerId Its owner (a TeamCode member id).
+ * @property name Its name.
+ * @property triggerKind `cron` or `webhook`.
+ * @property cron The schedule.
+ * @property timezone The schedule's zone.
+ * @property catchup `once` or `skip`.
+ * @property catchupGraceMinutes How late a missed slot may still run.
+ * @property actionKind `cloud`, `workflow` or `remote`.
+ * @property profileId The cloud profile.
+ * @property model The model.
+ * @property effort The effort.
+ * @property maxRuntimeMinutes The longest a session works.
+ * @property prompt The prompt.
+ * @property variables The webhook variables.
+ * @property samplePayload The sample payload.
+ * @property overlap `skip`, `queue` or `allow`.
+ * @property maxRunsPerDay The most runs a day.
+ * @property enabled Whether TeamCode runs it.
+ * @property version TeamCode's version.
+ * @property workflowId The workflow a workflow action starts.
+ * @property workflowInputs Its inputs' templates.
+ */
+@Serializable
+data class TeamCodeAutomationDto(
+    val id: String,
+    val ownerId: String,
+    val name: String,
+    val triggerKind: String,
+    val cron: String? = null,
+    val timezone: String? = null,
+    val catchup: String? = null,
+    val catchupGraceMinutes: Int? = null,
+    val actionKind: String,
+    val profileId: String? = null,
+    val model: String? = null,
+    val effort: String? = null,
+    val maxRuntimeMinutes: Int? = null,
+    val prompt: String? = null,
+    val variables: List<JsonElement> = emptyList(),
+    val samplePayload: JsonElement? = null,
+    val overlap: String? = null,
+    val maxRunsPerDay: Int? = null,
+    val enabled: Boolean,
+    val version: Int? = null,
+    val workflowId: String? = null,
+    val workflowInputs: Map<String, String> = emptyMap(),
+) {
+    /** Without the prompt, the variables and the sample payload: a log line never shows them. */
+    override fun toString(): String = "TeamCodeAutomationDto(id=$id, ownerId=$ownerId, name=$name)"
+}
+
+/**
+ * The repositories of a TeamCode cloud profile's current version.
+ *
+ * @property id TeamCode's id.
+ * @property name Its name.
+ * @property repositories Its repositories.
+ * @property setupCommands How many setup commands its recipe has.
+ */
+@Serializable
+data class TeamCodeProfileDto(
+    val id: String,
+    val name: String? = null,
+    val repositories: List<String> = emptyList(),
+    val setupCommands: Int = 0,
+)
+
 /** What a request's [toString] shows instead of a credential. */
 private const val REDACTED = "<redacted>"
 
@@ -147,6 +254,10 @@ private const val REDACTED = "<redacted>"
  * @property mcpServers TeamCode's MCP variants.
  * @property assignments The assignments.
  * @property accounts The shared accounts.
+ * @property workflows TeamCode's workflows.
+ * @property workflowEditors Who edits them.
+ * @property automations TeamCode's automations, without their secrets.
+ * @property profiles The cloud profiles the workflows and automations name.
  * @property memberMap TeamCode member id to Ostrom member id.
  */
 @Serializable
@@ -155,13 +266,18 @@ data class TeamCodeImportRequest(
     val mcpServers: List<TeamCodeMcpServerDto> = emptyList(),
     val assignments: List<TeamCodeAssignmentDto> = emptyList(),
     val accounts: List<TeamCodeAccountDto> = emptyList(),
+    val workflows: List<TeamCodeWorkflowDto> = emptyList(),
+    val workflowEditors: TeamCodeWorkflowEditorsDto? = null,
+    val automations: List<TeamCodeAutomationDto> = emptyList(),
+    val profiles: List<TeamCodeProfileDto> = emptyList(),
     val memberMap: Map<String, String> = emptyMap(),
 )
 
 /**
  * One line of the report.
  *
- * @property kind `setting`, `secret`, `server`, `policy`, `assignment` or `account`.
+ * @property kind `setting`, `secret`, `server`, `policy`, `assignment`, `account`, `workflow`, `editors` or
+ *   `automation`.
  * @property name Its name.
  * @property action `planned`, `created`, `updated`, `unchanged`, `skipped` or `revive_at_cutover` (a shared account
  *   left waiting for a reconnection until the cutover run).

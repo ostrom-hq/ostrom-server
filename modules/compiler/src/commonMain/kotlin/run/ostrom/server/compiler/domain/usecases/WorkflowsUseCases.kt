@@ -40,7 +40,7 @@ interface WorkflowDecisionSigner {
      *
      * @param orgId The organization.
      * @param decision The decision (its receipt id not set yet).
-     * @param action `accept` or `edit`.
+     * @param action `accept`, `edit`, or `import` (a workflow created by an import).
      * @param before What the workflow was, or null for a new one.
      * @param after What it is.
      * @return The receipt id.
@@ -111,8 +111,36 @@ interface WorkflowsUseCase {
     fun check(raw: JsonObject)
 }
 
+/** What an import did, or would do, with a workflow ([ImportWorkflowsUseCase]). */
+enum class WorkflowImport {
+    /** It did not exist: created. */
+    CREATED,
+
+    /** It differed: a new version saved. */
+    UPDATED,
+
+    /** It is already as imported. */
+    UNCHANGED,
+}
+
+/** Saves the workflows another system decided (`ostrom import teamcode`). */
+interface ImportWorkflowsUseCase {
+    /**
+     * Creates the workflow, saves a new version when [raw] differs from the stored document, or leaves it alone, so a
+     * second import changes nothing. The save is [WorkflowsUseCase.save]'s, with its checks and its lock; a creation
+     * is a decision `import` signed for [by], a later change an `edit` (or an `accept`) as any save.
+     *
+     * @param orgId The organization.
+     * @param raw The workflow document.
+     * @param by Who runs the import.
+     * @param dryRun Checks [raw] as a save does without the organization's other workflows, and writes nothing.
+     * @return What it did, or would do.
+     */
+    suspend fun import(orgId: Uuid, raw: JsonObject, by: String, dryRun: Boolean): WorkflowImport
+}
+
 /**
- * [WorkflowsUseCase] on the repository.
+ * [WorkflowsUseCase] and [ImportWorkflowsUseCase] on the repository.
  *
  * @param repository The compiler's storage.
  * @param signer Signs the decisions.
@@ -126,7 +154,7 @@ class WorkflowsUseCaseImpl(
     private val clock: Clock,
     private val automations: AutomationUsage? = null,
     private val removals: WorkflowRemovals? = null,
-) : WorkflowsUseCase {
+) : WorkflowsUseCase, ImportWorkflowsUseCase {
     override suspend fun list(orgId: Uuid, repo: String?, status: WorkflowStatus?): List<StoredWorkflow> {
         val all = repository.workflows(orgId)
         val applies = repo?.let { r ->
@@ -150,6 +178,31 @@ class WorkflowsUseCaseImpl(
         expectedVersion: Int?,
         by: String,
         create: Boolean,
+    ): StoredWorkflow = store(orgId, raw, expectedVersion, by, create, EDIT)
+
+    override suspend fun import(orgId: Uuid, raw: JsonObject, by: String, dryRun: Boolean): WorkflowImport {
+        val existing = repository.workflow(orgId, decode(raw).id)
+        val outcome = when {
+            existing == null -> WorkflowImport.CREATED
+            existing.doc.raw == raw -> WorkflowImport.UNCHANGED
+            else -> WorkflowImport.UPDATED
+        }
+        if (!dryRun && outcome != WorkflowImport.UNCHANGED) {
+            store(orgId, raw, existing?.version, by, existing == null, IMPORT)
+        }
+        return outcome
+    }
+
+    // A save; [creation] is the decision a new workflow records (`edit`, or `import`). Its parameters are the save's
+    // and the decision of a creation; its refusals are the save's (exists, limit, not found, conflict).
+    @Suppress("LongParameterList", "ThrowsCount")
+    private suspend fun store(
+        orgId: Uuid,
+        raw: JsonObject,
+        expectedVersion: Int?,
+        by: String,
+        create: Boolean,
+        creation: String,
     ): StoredWorkflow {
         val workflow = decode(raw)
         val repos = WorkflowRepos.of(raw)
@@ -183,7 +236,7 @@ class WorkflowsUseCaseImpl(
             )
             existing to stored
         }
-        val change = changeOf(before?.doc, workflow, repos)
+        val change = if (before == null) creation else changeOf(before.doc, workflow, repos)
         if (change != null) record(orgId, WorkflowDoc(raw, workflow), before?.doc, change, author)
         return saved
     }
@@ -302,15 +355,18 @@ private fun runOf(node: WorkflowNode): JsonElement? {
 
 private const val MAX_ERROR = 200
 
+private const val EDIT = "edit"
+private const val IMPORT = "import"
+
 // `accept` from proposed to accepted, `edit` otherwise; null when nothing that is decided changed.
-private fun changeOf(before: WorkflowDoc?, after: Workflow, repos: List<String>?): String? {
-    val same = before != null && strip(before.workflow) == strip(after) && before.repos == repos
-    val proposed = before != null && before.workflow.status == WorkflowStatus.PROPOSED
+private fun changeOf(before: WorkflowDoc, after: Workflow, repos: List<String>?): String? {
+    val same = strip(before.workflow) == strip(after) && before.repos == repos
+    val proposed = before.workflow.status == WorkflowStatus.PROPOSED
     val accepted = proposed && after.status == WorkflowStatus.ACCEPTED
     return when {
         same -> null
         accepted -> "accept"
-        else -> "edit"
+        else -> EDIT
     }
 }
 
