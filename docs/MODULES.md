@@ -777,7 +777,7 @@ anonymous call gets 401 `unauthorized`. A module lists a key of ostrom-core's `S
 | `receipts` | `receipts.v1` | — |
 | `reports` | `reports.v1` | — |
 | `rules` | `rules.v1`, `reports.v1` (the analysis) | — |
-| `runners` | `runners.v1`; `runners.cloud.v1`; `runners.cloud.github.v1`; `runners.cloud.variables.v1`; `runners.cloud.environment.v1`; `runners.cloud.profiles.v1` | the second with a runtime (`OSTROM_RUNNERS_DRIVER` `kubernetes` with the cloud module, `docker` or `registered`); the third also once members can link a GitHub account (`github.link.v1`); the fourth also with the secrets module (`environment.v1`); the fifth also with the orgs module, which says who is an active member; the sixth on the console's clusters |
+| `runners` | `runners.v1`; `runners.cloud.v1` and `runners.cloud.agent.v1`; `runners.cloud.github.v1`; `runners.cloud.variables.v1`; `runners.cloud.environment.v1`; `runners.cloud.profiles.v1` | the second pair with a runtime (`OSTROM_RUNNERS_DRIVER` `kubernetes` with the cloud module, `docker` or `registered`), a cloud launch's agent token being bound to its cloud session (`CloudAgentSessions`); the third also once members can link a GitHub account (`github.link.v1`); the fourth also with the secrets module (`environment.v1`); the fifth also with the orgs module, which says who is an active member; the sixth on the console's clusters |
 | `secrets` | `secrets.v1`, `environment.v1` (environment variants) | — |
 | `sessions` | `sessions.v1` | — |
 | `sharing` | `sharing.v1` | — |
