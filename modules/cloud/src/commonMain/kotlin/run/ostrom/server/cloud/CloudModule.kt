@@ -52,7 +52,9 @@ object CloudModule : ServerModule {
             arrayOf(CloudRuntimeUseCase::class, CloudRuntimeSource::class)
         single { CloudClustersUseCaseImpl(get(), get(), get(), get(), get(), get()) } binds
             arrayOf(CloudClustersUseCase::class, CloudClusterAccess::class)
-        single<CloudProfilesUseCase> { CloudProfilesUseCaseImpl(get(), get(), get(), getOrNull<MemberDirectory>() ?: NoMembers) }
+        single<CloudProfilesUseCase> {
+            CloudProfilesUseCaseImpl(get(), get(), get(), getOrNull<MemberDirectory>() ?: NoMembers)
+        }
         single {
             CloudAdminRoutesDependencies(
                 get(),
