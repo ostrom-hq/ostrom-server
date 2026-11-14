@@ -105,6 +105,9 @@ class FakeWorkflowsRepository : WorkflowsRepository {
 
     override suspend fun workflowCount(orgId: Uuid): Int = count ?: workflows.keys.count { it.first == orgId }
 
+    override suspend fun <T> underWorkflowLock(orgId: Uuid, block: suspend (WorkflowsRepository) -> T): T =
+        error("a proposal takes no lock")
+
     override suspend fun lastDecisions(orgId: Uuid): List<DecisionDoc> = error("not read")
 
     override suspend fun addDecision(orgId: Uuid, decision: DecisionDoc) = error("a proposal is not a decision")
