@@ -2,9 +2,10 @@
 
 Every functional domain of the server (`identity`, `orgs`, `sessions`, `launches`, `gates`, `receipts`, `compiler`,
 `workflow-runs`, `mcp-relay`, `secrets`, `events`, `usage`, `gateway`, `budgets`, `runners`, `automations`,
-`artifacts`, `integrations-github`, `integrations-slack`, `sharing`, `governance`, `todos`, `skills`) is a Gradle module
-under `modules/<name>/`. Each one already exists as an empty skeleton, registered in the app: **the owner of a module
-only edits its own directory**, plus its single line in `app/.../ServerModules.kt` if the order must change.
+`artifacts`, `integrations-github`, `integrations-slack`, `sharing`, `governance`, `todos`, `skills`, `memory`) is a
+Gradle module under `modules/<name>/`. Each one already exists as an empty skeleton, registered in the app: **the owner
+of a module only edits its own directory**, plus its single line in `app/.../ServerModules.kt` if the order must
+change.
 `modules/instance` is the complete reference example: copy its shape.
 
 Read [`ostrom-core/docs/CONVENTIONS.md`](https://github.com/ostrom-hq/ostrom-core/blob/main/docs/CONVENTIONS.md)
@@ -500,6 +501,18 @@ a member downloads only their effective pinned version, and both are checked aga
 `hook_integrity`). There is no retirement and no personal hook, as in TeamCode. The catalog's writes take the
 organization's hook lock, as the skills' do, and each change is audited once committed, a key's with its id.
 
+### Module `memory`
+
+The agent memory (TeamCode's docs/memory.md): short entries agents and people read on demand, the organization's
+(`team`) and each member's own (`personal`). Visibility is a parameter of every query (`org_id`, `scope`, `owner_id`),
+never a filter applied after the read: a personal entry is its owner's alone, administrators included, and any other
+caller gets the 404 of an unknown entry. A person (browser, phone, the CLI's sign-in) or a credential holding
+`memory:use` (agent tokens are issued with it) reads and writes. Only a person writes or changes the organization's
+entries, as their author or as an administrator. An agent's call, an agent token or a request the CLI's relay
+forwards with `x-ostrom-origin: agent`, writes personal entries only. Agent proposals for the team memory come with
+the next layer. Text that looks like a credential is refused (422 `memory_secret`). A memory holds 5 000
+organization entries and 2 000 per member. The index and the search never read `content`; the audit names ids only.
+
 ## Commands
 
 | Command | What it does | Exit |
@@ -540,6 +553,7 @@ anonymous call gets 401 `unauthorized`. A module lists a key of ostrom-core's `S
 | `import` | `import.teamcode.v1` | — |
 | `integrations-github` | `github.v1`; `github.link.v1` | a GitHub App: the environment's (`OSTROM_GITHUB_APP_ID` or `_SLUG`) or the manifest flow's; the latter once that App's OAuth client (id and secret) is known |
 | `mcp-relay` | `mcp.v1` | — |
+| `memory` | `memory.v1` | — |
 | `notifications` | `notifications.v1`, `notifications.push.v1` | — (Expo's push service needs no key; `OSTROM_EXPO_ACCESS_TOKEN` only when the project requires one) |
 | `receipts` | `receipts.v1` | — |
 | `reports` | `reports.v1` | — |
