@@ -63,6 +63,8 @@ data class CloudRuntimeResponse(
     val maxRunningSessionsPerMember: Int,
     /** Sessions a member keeps. */
     val maxRetainedSessionsPerMember: Int,
+    /** Sessions of a member's automation runs that work at once. */
+    val maxRunningAutomationsPerMember: Int,
     /** Days transcript events are kept. */
     val transcriptRetentionDays: Int? = null,
     /** `offer` or `disabled`. */
@@ -92,6 +94,8 @@ data class SaveCloudRuntimeRequest(
     val maxRunningSessionsPerMember: Int,
     /** Sessions a member keeps. */
     val maxRetainedSessionsPerMember: Int,
+    /** Sessions of a member's automation runs that work at once; absent keeps the stored value. */
+    val maxRunningAutomationsPerMember: Int? = null,
     /** Days transcript events are kept. */
     val transcriptRetentionDays: Int? = null,
     /** `offer` or `disabled`. */

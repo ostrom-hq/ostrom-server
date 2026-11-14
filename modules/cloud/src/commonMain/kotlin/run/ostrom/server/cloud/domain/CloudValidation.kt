@@ -19,6 +19,7 @@ private const val MAX_PODS = 100_000
 private const val MAX_RETENTION_DAYS = 3650
 private const val MAX_RUNNING = 1000
 private const val MAX_RETAINED = 10_000
+private const val MAX_AUTOMATIONS = 100
 private const val MAX_OVERRIDES = 50
 private const val MAX_PULL_SECRETS = 20
 private const val MIN_CPU = 100
@@ -46,6 +47,9 @@ internal fun runtimeProblem(runtime: CloudRuntime): String? = listOfNotNull(
     "failedWorkspaceRetentionDays is 1 to 3650.".takeIf { !isRetention(runtime.failedWorkspaceRetentionDays) },
     "maxRunningSessionsPerMember is 1 to 1000.".takeIf { runtime.maxRunningSessionsPerMember !in 1..MAX_RUNNING },
     "maxRetainedSessionsPerMember is 1 to 10000.".takeIf { runtime.maxRetainedSessionsPerMember !in 1..MAX_RETAINED },
+    "maxRunningAutomationsPerMember is 1 to 100.".takeIf {
+        runtime.maxRunningAutomationsPerMember !in 1..MAX_AUTOMATIONS
+    },
     "transcriptRetentionDays is 1 to 3650.".takeIf { runtime.transcriptRetentionDays?.let(::isRetention) == false },
     "memberTransfers is offer or disabled.".takeIf { runtime.memberTransfers !in CloudRuntime.TRANSFERS },
     "runnerImage is needed to turn cloud sessions on.".takeIf { runtime.enabled && runtime.runnerImage == null },

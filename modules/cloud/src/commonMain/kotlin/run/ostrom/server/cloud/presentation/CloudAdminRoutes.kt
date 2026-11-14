@@ -48,7 +48,13 @@ fun Route.cloudAdminRoutes(dependencies: CloudAdminRoutesDependencies) = with(de
             val expected = request.updatedAt?.let {
                 Instant.parseOrNull(it) ?: throw InvalidCloudRuntimeException("updatedAt is a date-time.")
             }
-            call.respond(runtime.save(caller, request.toRuntime(), expected).toResponse(publicUrl))
+            val saved = runtime.save(
+                caller,
+                request.toRuntime(),
+                expected,
+                keepAutomationCap = request.maxRunningAutomationsPerMember == null,
+            )
+            call.respond(saved.toResponse(publicUrl))
         }
         get<CloudClustersApi> {
             val list = clusters.list(call.requirePrincipal().cloudAdmin())
@@ -113,6 +119,7 @@ internal fun SaveCloudRuntimeRequest.toRuntime() = CloudRuntime(
     failedWorkspaceRetentionDays = failedWorkspaceRetentionDays,
     maxRunningSessionsPerMember = maxRunningSessionsPerMember,
     maxRetainedSessionsPerMember = maxRetainedSessionsPerMember,
+    maxRunningAutomationsPerMember = maxRunningAutomationsPerMember ?: CloudRuntime().maxRunningAutomationsPerMember,
     transcriptRetentionDays = transcriptRetentionDays,
     memberTransfers = memberTransfers,
 )
@@ -128,6 +135,7 @@ internal fun CloudRuntime.toResponse(publicUrl: String) = CloudRuntimeResponse(
     failedWorkspaceRetentionDays = failedWorkspaceRetentionDays,
     maxRunningSessionsPerMember = maxRunningSessionsPerMember,
     maxRetainedSessionsPerMember = maxRetainedSessionsPerMember,
+    maxRunningAutomationsPerMember = maxRunningAutomationsPerMember,
     transcriptRetentionDays = transcriptRetentionDays,
     memberTransfers = memberTransfers,
     updatedAt = updatedAt?.toString(),

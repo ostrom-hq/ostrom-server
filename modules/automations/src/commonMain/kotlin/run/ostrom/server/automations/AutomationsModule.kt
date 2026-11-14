@@ -4,6 +4,7 @@ package run.ostrom.server.automations
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.automations.domain.AnswerWaitUseCase
 import run.ostrom.server.automations.domain.AutomationLauncher
+import run.ostrom.server.automations.domain.AutomationLimits
 import run.ostrom.server.automations.domain.AutomationWorkflows
 import run.ostrom.server.automations.domain.NoWorkflows
 import run.ostrom.server.automations.domain.WorkflowsStartedByAutomations
@@ -36,6 +37,7 @@ import run.ostrom.server.automations.domain.WaitsRepository
 import run.ostrom.server.automations.domain.WakeWaitsUseCase
 import run.ostrom.server.automations.domain.WakeWaitsUseCaseImpl
 import run.ostrom.server.automations.infrastructure.AutomationScheduler
+import run.ostrom.server.automations.infrastructure.DefaultAutomationLimits
 import run.ostrom.server.automations.infrastructure.AutomationsMigrations
 import run.ostrom.server.automations.infrastructure.AutomationsRepositoryImpl
 import run.ostrom.server.automations.infrastructure.DueWaitsWorker
@@ -155,6 +157,8 @@ object AutomationsModule : ServerModule {
                 getOrNull<MemberDirectory>(),
                 get(),
                 workflows = getOrNull<AutomationWorkflows>() ?: NoWorkflows,
+                limits = getOrNull<AutomationLimits>() ?: DefaultAutomationLimits,
+                audit = get(),
             )
         }
         single { AutomationScheduler(get(), get()) }

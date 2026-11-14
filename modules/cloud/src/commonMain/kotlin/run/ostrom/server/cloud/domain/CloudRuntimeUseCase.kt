@@ -37,13 +37,20 @@ interface CloudRuntimeUseCase : CloudRuntimeSource {
      * @param caller An administrator of the instance.
      * @param runtime The new runtime.
      * @param expectedUpdatedAt The `updatedAt` of the runtime edited, null while nothing was stored.
+     * @param keepAutomationCap Whether the request left `maxRunningAutomationsPerMember` out: the stored value (the
+     *   default while nothing is stored) is then kept, whatever [runtime] carries.
      *
      * @return The runtime saved.
      *
      * @throws InvalidCloudRuntimeException When a value is refused.
      * @throws CloudRuntimeConflictException When another save came first.
      */
-    suspend fun save(caller: CloudAdminCaller, runtime: CloudRuntime, expectedUpdatedAt: Instant?): CloudRuntime
+    suspend fun save(
+        caller: CloudAdminCaller,
+        runtime: CloudRuntime,
+        expectedUpdatedAt: Instant?,
+        keepAutomationCap: Boolean = false,
+    ): CloudRuntime
 
     /**
      * Seeds the runtime once from the former `OSTROM_RUNNERS_*` variables; afterwards they are ignored with a warning.
@@ -97,9 +104,15 @@ class CloudRuntimeUseCaseImpl(
         caller: CloudAdminCaller,
         runtime: CloudRuntime,
         expectedUpdatedAt: Instant?,
+        keepAutomationCap: Boolean,
     ): CloudRuntime {
         val userId = gate.require(caller)
-        val next = normalize(runtime).copy(updatedAt = clock.nowMillis())
+        val cap = if (keepAutomationCap) {
+            (repository.get() ?: CloudRuntime()).maxRunningAutomationsPerMember
+        } else {
+            runtime.maxRunningAutomationsPerMember
+        }
+        val next = normalize(runtime).copy(maxRunningAutomationsPerMember = cap, updatedAt = clock.nowMillis())
         runtimeProblem(next)?.let { throw InvalidCloudRuntimeException(it) }
         if (!repository.save(next, expectedUpdatedAt, userId)) throw CloudRuntimeConflictException()
         remember(next)

@@ -125,9 +125,10 @@ private fun Route.runRoutes(dependencies: AutomationsRoutesDependencies) = with(
         }
     }
     post<AutomationsApi.Id.CancelRun> { params ->
-        val caller = orgResolver.automationCallerOf(call.requirePrincipal(), AUTOMATIONS_WRITE)
+        val principal = call.requirePrincipal()
+        val caller = orgResolver.automationCallerOf(principal, AUTOMATIONS_WRITE)
         val runId = Uuid.parseOrNull(params.runId) ?: throw AutomationRunNotFoundException()
-        call.respond(runs.cancel(caller, automationId(params.parent.id), runId).toResponse())
+        call.respond(runs.cancel(principal, caller, automationId(params.parent.id), runId).toResponse())
     }
     get<AutomationsApi.Id.Runs> { params ->
         val caller = orgResolver.automationCallerOf(call.requirePrincipal(), AUTOMATIONS_READ)

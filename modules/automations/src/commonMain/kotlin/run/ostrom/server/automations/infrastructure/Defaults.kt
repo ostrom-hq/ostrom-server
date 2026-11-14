@@ -2,6 +2,7 @@
 package run.ostrom.server.automations.infrastructure
 
 import run.ostrom.server.automations.domain.AutomationLauncher
+import run.ostrom.server.automations.domain.AutomationLimits
 import run.ostrom.server.automations.domain.LaunchRequest
 import run.ostrom.server.automations.domain.LaunchResult
 import run.ostrom.server.automations.domain.Wait
@@ -57,4 +58,9 @@ internal object UnavailableLauncher : AutomationLauncher {
     override suspend fun isWorking(orgId: Uuid, sessionId: String): Boolean = false
 
     override suspend fun pause(orgId: Uuid, owner: String, sessionId: String): Boolean = false
+}
+
+/** The cap until the module serving the cloud settings binds one: two sessions of a member's automation runs. */
+internal object DefaultAutomationLimits : AutomationLimits {
+    override suspend fun maxRunningPerMember(orgId: Uuid): Int = 2
 }

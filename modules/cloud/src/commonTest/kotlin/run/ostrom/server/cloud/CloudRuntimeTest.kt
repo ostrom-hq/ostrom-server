@@ -73,6 +73,8 @@ class CloudRuntimeTest {
         assertTrue("maxRunningSessionsPerMember" in refused(on.copy(maxRunningSessionsPerMember = 1001)))
         assertTrue("maxRetainedSessionsPerMember" in refused(on.copy(maxRetainedSessionsPerMember = 0)))
         assertTrue("maxRetainedSessionsPerMember" in refused(on.copy(maxRetainedSessionsPerMember = 10_001)))
+        assertTrue("maxRunningAutomationsPerMember" in refused(on.copy(maxRunningAutomationsPerMember = 0)))
+        assertTrue("maxRunningAutomationsPerMember" in refused(on.copy(maxRunningAutomationsPerMember = 101)))
         assertTrue("transcriptRetentionDays" in refused(on.copy(transcriptRetentionDays = 0)))
         assertTrue("memberTransfers" in refused(on.copy(memberTransfers = "always")))
         assertTrue("needed to turn" in refused(on.copy(runnerImage = " ")))
@@ -83,6 +85,23 @@ class CloudRuntimeTest {
             null,
         )
         assertEquals(CloudRuntime.DEFAULT_RUNNER_BINARY, saved.runnerBinary)
+    }
+
+    @Test
+    fun theAutomationCapIsTwoUntilSetAndAnOmittedOneKeepsTheStoredValue() = runTest {
+        assertEquals(2, CloudRuntime().maxRunningAutomationsPerMember)
+        val first = runtime.save(alice, on.copy(maxRunningAutomationsPerMember = 5), null)
+        assertEquals(5, first.maxRunningAutomationsPerMember)
+        val kept = runtime.save(alice, on.copy(enabled = false), first.updatedAt, keepAutomationCap = true)
+        assertEquals(5, kept.maxRunningAutomationsPerMember)
+        // A save that names the default value sets it.
+        assertEquals(2, runtime.save(alice, on, kept.updatedAt).maxRunningAutomationsPerMember)
+    }
+
+    @Test
+    fun anOmittedAutomationCapIsTheDefaultWhileNothingIsStored() = runTest {
+        val saved = runtime.save(alice, on.copy(maxRunningAutomationsPerMember = 9), null, keepAutomationCap = true)
+        assertEquals(2, saved.maxRunningAutomationsPerMember)
     }
 
     @Test

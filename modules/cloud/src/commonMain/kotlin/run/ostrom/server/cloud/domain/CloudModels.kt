@@ -20,6 +20,8 @@ import kotlin.uuid.Uuid
  * @property failedWorkspaceRetentionDays Days a failed session keeps its workspace.
  * @property maxRunningSessionsPerMember Sessions one member runs at once.
  * @property maxRetainedSessionsPerMember Sessions one member keeps.
+ * @property maxRunningAutomationsPerMember Sessions of one member's automation runs that work at once; a run over it
+ *   waits, queued (TeamCode's `maxRunningAutomationsPerMember`).
  * @property transcriptRetentionDays Days transcript events are kept; null keeps them.
  * @property memberTransfers `offer`, or `disabled` (administrators only).
  * @property updatedAt When it was saved last; null while nothing is stored.
@@ -35,6 +37,7 @@ data class CloudRuntime(
     val failedWorkspaceRetentionDays: Int = DEFAULT_FAILED_RETENTION_DAYS,
     val maxRunningSessionsPerMember: Int = DEFAULT_MAX_RUNNING,
     val maxRetainedSessionsPerMember: Int = DEFAULT_MAX_RETAINED,
+    val maxRunningAutomationsPerMember: Int = DEFAULT_MAX_RUNNING_AUTOMATIONS,
     val transcriptRetentionDays: Int? = DEFAULT_TRANSCRIPT_RETENTION_DAYS,
     val memberTransfers: String = TRANSFERS_OFFER,
     val updatedAt: Instant? = null,
@@ -60,6 +63,7 @@ data class CloudRuntime(
         private const val DEFAULT_FAILED_RETENTION_DAYS = 7
         private const val DEFAULT_MAX_RUNNING = 2
         private const val DEFAULT_MAX_RETAINED = 20
+        private const val DEFAULT_MAX_RUNNING_AUTOMATIONS = 2
         private const val DEFAULT_TRANSCRIPT_RETENTION_DAYS = 30
     }
 }

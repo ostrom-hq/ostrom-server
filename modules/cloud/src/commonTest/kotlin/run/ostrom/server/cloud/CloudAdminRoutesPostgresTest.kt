@@ -105,6 +105,11 @@ class CloudAdminRoutesPostgresTest {
         return if (method == "POST") post(path, build) else put(path, build)
     }
 
+    /** [this] runtime body with its `updatedAt` replaced and an automation cap added (none when null). */
+    private fun String.withCap(cap: Int?, updatedAt: String?): String =
+        replace(Regex(""""updatedAt":"[^"]*""""), """"updatedAt":"$updatedAt"""")
+            .let { if (cap == null) it else it.replace("{", """{"maxRunningAutomationsPerMember":$cap,""") }
+
     private fun cluster(name: String, version: Int, credentials: Boolean = true): String {
         val secrets = if (credentials) ""","caCertificate":"$PEM_JSON","serviceAccountToken":"tok.secret"""" else ""
         return """{"name":"$name","apiUrl":"https://k8s.acme.dev","allowedNamespaces":["sessions"],""" +
@@ -139,13 +144,24 @@ class CloudAdminRoutesPostgresTest {
         assertFalse(saved.enabled)
         assertEquals("https://pods.acme.dev", saved.effectiveServerUrl)
         assertEquals("disabled", server.koin.get<CloudRuntimeSource>().current().memberTransfers)
+        assertEquals(2, saved.maxRunningAutomationsPerMember)
+        // An automation cap in range is stored and read back; one left out keeps it; one out of range is refused.
+        val capped = http.send("PUT", "/api/v1/cloud/runtime", "alice", body.withCap(7, saved.updatedAt))
+        assertEquals(7, capped.body<CloudRuntimeResponse>().maxRunningAutomationsPerMember)
+        assertEquals(7, server.koin.get<CloudRuntimeSource>().current().maxRunningAutomationsPerMember)
+        val cappedAt = capped.body<CloudRuntimeResponse>().updatedAt
+        val kept = http.send("PUT", "/api/v1/cloud/runtime", "alice", body.withCap(null, cappedAt))
+        assertEquals(7, kept.body<CloudRuntimeResponse>().maxRunningAutomationsPerMember)
+        val keptAt = kept.body<CloudRuntimeResponse>().updatedAt
+        val range = http.send("PUT", "/api/v1/cloud/runtime", "alice", body.withCap(101, keptAt))
+        assertEquals(HttpStatusCode.BadRequest, range.status)
         val stale = http.send("PUT", "/api/v1/cloud/runtime", "alice", body)
         assertEquals(HttpStatusCode.Conflict, stale.status)
         assertTrue("cloud_runtime_conflict" in stale.bodyAsText())
         val invalid = http.send("PUT", "/api/v1/cloud/runtime", "alice", body.replace(seeded.updatedAt!!, "soon"))
         assertEquals(HttpStatusCode.BadRequest, invalid.status)
         val again = http.get("/api/v1/cloud/runtime") { bearerAuth("alice") }.body<CloudRuntimeResponse>()
-        assertEquals(saved, again)
+        assertEquals(7, again.maxRunningAutomationsPerMember)
     }
 
     @Test
