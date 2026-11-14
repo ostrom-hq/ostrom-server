@@ -19,6 +19,7 @@ import run.ostrom.server.automations.domain.WaitStatus
 import run.ostrom.server.automations.domain.WaitsRepository
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.MemberLogins
+import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.errors.OstromException
 import run.ostrom.server.memory.domain.MemoryEntry
 import run.ostrom.server.memory.domain.MemoryOrigin
@@ -123,19 +124,23 @@ class AdaptersTest {
     private fun adapter(segments: List<Session> = emptyList(), waits: Waits = Waits(), asker: Asker = Asker(waits)) =
         AutomationsMemoryProposals(asker, asker, waits, agents, Sessions(segments), logins)
 
+    /** A person's agent the CLI's relay forwards: the person's sign-in, marked as an agent's call. */
+    private fun relayed(member: String) =
+        caller(member, agent = true).copy(principal = AuthenticatedPrincipal(member, PrincipalKind.USER, emptySet()))
+
     @Test
     fun anAgentTokensSessionIsItsLaunchsAndAPersonsMustBeTheirs() = runTest {
         val agent = caller(person = false, agent = true)
         assertEquals(ProposalSession("s1~r2", listOf("s1", "s1~r2")), adapter().session(agent, "s1"))
         assertFailsWith<OstromException> { adapter().session(agent, "s9") }
 
-        val relayed = caller(agent = true)
+        val ada = relayed(ADA)
         val theirs = adapter(listOf(segment("s1", 1, "ada"), segment("s1~r2", 2, "ada")))
-        assertEquals(ProposalSession("s1~r2", listOf("s1", "s1~r2")), theirs.session(relayed, "s1"))
-        assertFailsWith<MemorySessionNotFoundException> { theirs.session(relayed, "ghost") }
-        assertFailsWith<MemorySessionNotFoundException> { theirs.session(caller(BEN, agent = true), "s1") }
+        assertEquals(ProposalSession("s1~r2", listOf("s1", "s1~r2")), theirs.session(ada, "s1"))
+        assertFailsWith<MemorySessionNotFoundException> { theirs.session(ada, "ghost") }
+        assertFailsWith<MemorySessionNotFoundException> { theirs.session(relayed(BEN), "s1") }
         val nobodys = adapter(listOf(segment("s1", 1, "gone")))
-        assertFailsWith<MemorySessionNotFoundException> { nobodys.session(relayed, "s1") }
+        assertFailsWith<MemorySessionNotFoundException> { nobodys.session(ada, "s1") }
     }
 
     @Test
