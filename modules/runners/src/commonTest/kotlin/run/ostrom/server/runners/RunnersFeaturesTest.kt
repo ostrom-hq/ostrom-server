@@ -2,8 +2,11 @@
 package run.ostrom.server.runners
 
 import run.ostrom.server.kernel.config.MapConfigSource
+import run.ostrom.server.runners.domain.NoRunnerVariables
 import run.ostrom.server.runners.domain.RunnerGitHubToken
 import run.ostrom.server.runners.domain.RunnerGitHubTokens
+import run.ostrom.server.runners.domain.RunnerVariableValues
+import run.ostrom.server.runners.domain.RunnerVariables
 import run.ostrom.server.runners.infrastructure.RunnersConfig
 import kotlinx.coroutines.test.runTest
 import org.koin.dsl.koinApplication
@@ -54,6 +57,25 @@ class RunnersFeaturesTest {
             val github = setOfNotNull("runners.cloud.github.v1".takeIf { available })
             val expected = setOf("runners.v1", "runners.cloud.v1") + github
             assertEquals(expected, RunnersModule.features(koin))
+        }
+    }
+
+    @Test
+    fun cloudVariablesAreListedOnceTheSecretsModuleResolvesThem() = runTest {
+        for (variables in listOf(NoRunnerVariables, RunnerVariables { _, _ -> RunnerVariableValues.NONE })) {
+            val koin = koinApplication {
+                modules(
+                    module {
+                        single {
+                            val docker = RunnersConfig.DriverKind.DOCKER
+                            RunnersConfig.from(MapConfigSource(emptyMap())).copy(driver = docker)
+                        }
+                        single<RunnerVariables> { variables }
+                    },
+                )
+            }.koin
+            val listed = setOfNotNull("runners.cloud.variables.v1".takeIf { variables !== NoRunnerVariables })
+            assertEquals(setOf("runners.v1", "runners.cloud.v1") + listed, RunnersModule.features(koin))
         }
     }
 }

@@ -9,6 +9,7 @@ import run.ostrom.server.runners.domain.GetCloudSessionUseCase
 import run.ostrom.server.runners.domain.ListCloudSessionsUseCase
 import run.ostrom.server.runners.domain.RunnerGitHubTokenUseCase
 import run.ostrom.server.runners.domain.RunnerHeartbeatUseCase
+import run.ostrom.server.runners.domain.RunnerVariablesUseCase
 import run.ostrom.server.runners.domain.SetCloudSessionGitHubAccessUseCase
 
 /**
@@ -23,6 +24,7 @@ import run.ostrom.server.runners.domain.SetCloudSessionGitHubAccessUseCase
  * @property orgResolver The member a request acts for.
  * @property setGitHubAccess Sets whose GitHub access a session uses.
  * @property runnerGitHubToken Hands a runner its owner's GitHub token.
+ * @property runnerVariables Hands a runner its owner's environment variables.
  */
 data class CloudSessionsRoutesDependencies(
     val createCloudSession: CreateCloudSessionUseCase,
@@ -34,4 +36,5 @@ data class CloudSessionsRoutesDependencies(
     val orgResolver: PrincipalOrgResolver,
     val setGitHubAccess: SetCloudSessionGitHubAccessUseCase,
     val runnerGitHubToken: RunnerGitHubTokenUseCase,
+    val runnerVariables: RunnerVariablesUseCase,
 )

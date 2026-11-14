@@ -55,6 +55,12 @@ import run.ostrom.server.runners.domain.RunnerAssignmentsRepository
 import run.ostrom.server.runners.domain.RunnerGitHubTokenUseCase
 import run.ostrom.server.runners.domain.RunnerGitHubTokenUseCaseImpl
 import run.ostrom.server.runners.domain.RunnerGitHubTokens
+import run.ostrom.server.runners.domain.NoRunnerVariables
+import run.ostrom.server.runners.domain.RunnerVariables
+import run.ostrom.server.runners.domain.RunnerVariablesUseCase
+import run.ostrom.server.runners.domain.RunnerVariablesUseCaseImpl
+import run.ostrom.server.runners.infrastructure.ResolvedRunnerVariables
+import run.ostrom.server.secrets.domain.ResolveEnvironmentUseCase
 import run.ostrom.server.runners.domain.RunnerHeartbeatUseCase
 import run.ostrom.server.runners.domain.RunnerHeartbeatUseCaseImpl
 import run.ostrom.server.runners.domain.RunnerTokens
@@ -158,7 +164,12 @@ object RunnersModule : ServerModule {
         single<RunnerGitHubTokenUseCase> {
             RunnerGitHubTokenUseCaseImpl(get(), get(), getOrNull<RunnerGitHubTokens>() ?: NoRunnerGitHubTokens)
         }
-        single { CloudSessionsRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        // The members' environment values when the secrets module is there (always on a full server).
+        single<RunnerVariables> {
+            getOrNull<ResolveEnvironmentUseCase>()?.let(::ResolvedRunnerVariables) ?: NoRunnerVariables
+        }
+        single<RunnerVariablesUseCase> { RunnerVariablesUseCaseImpl(get(), get(), get()) }
+        single { CloudSessionsRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single<ListRunnersUseCase> { ListRunnersUseCaseImpl(get(), get()) }
         single<RegisteredRunnersRepository> { RegisteredRunnersRepositoryImpl(get()) }
         single<ListRegisteredRunnersUseCase> { ListRegisteredRunnersUseCaseImpl(get(), get()) }
@@ -204,10 +215,12 @@ object RunnersModule : ServerModule {
     override suspend fun features(koin: Koin): Set<String> {
         if (koin.get<RunnersConfig>().driver == RunnersConfig.DriverKind.NONE) return setOf(ServerFeatures.RUNNERS)
         val github = koin.getOrNull<RunnerGitHubTokens>()?.available() == true
+        val variables = koin.getOrNull<RunnerVariables>()
         return setOfNotNull(
             ServerFeatures.RUNNERS,
             ServerFeatures.RUNNERS_CLOUD,
             ServerFeatures.RUNNERS_CLOUD_GITHUB.takeIf { github },
+            ServerFeatures.RUNNERS_CLOUD_VARIABLES.takeIf { variables != null && variables !== NoRunnerVariables },
         )
     }
 

@@ -9,6 +9,7 @@ import run.ostrom.server.runners.domain.CloudSessionNotFoundException
 import run.ostrom.server.runners.domain.CreateCloudSessionPayload
 import run.ostrom.server.runners.domain.InvalidCloudSessionRequestException
 import run.ostrom.server.runners.domain.RepositorySpec
+import run.ostrom.server.runners.domain.RunnerExecutionRequest
 import run.ostrom.server.runners.domain.RunnerGitHubRequest
 import run.ostrom.server.runners.domain.RunnerGitHubToken
 import run.ostrom.server.runners.domain.RunnerHeartbeat
@@ -121,6 +122,15 @@ private fun Route.runnerChannelRoutes(dependencies: CloudSessionsRoutesDependenc
                     else -> RunnerGitHubTokenResponse(access.wire)
                 },
             )
+        }
+        // The owner's environment variables, resolved on every call: never cached, never logged.
+        post<RunnerVariablesApi> {
+            val token = call.runnerToken()
+            checkRunnerToken(token)
+            val request = call.receive<RunnerExecutionBody>()
+            val values = runnerVariables(token, RunnerExecutionRequest(parseId(request.sessionId), request.epoch))
+            call.response.header(HttpHeaders.CacheControl, "no-store")
+            call.respond(RunnerVariablesResponse(values.variables, values.unavailable))
         }
     }
 }
