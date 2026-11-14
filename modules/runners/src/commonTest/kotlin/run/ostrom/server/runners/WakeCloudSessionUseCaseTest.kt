@@ -107,11 +107,12 @@ class WakeCloudSessionUseCaseTest {
         val paused = paused()
         assertEquals(CloudSessionWake.OWNER_GONE, unbound(ORG_A, paused.id.toString(), waitId), "No member known")
 
-        repeat(CloudPlan.FREE.maxRunningSessions) { repository.put(session(state = SessionState.RUNNING)) }
+        plans.plan = CloudPlan.FREE.copy(maxRunningSessions = 1)
+        repository.put(session(state = SessionState.RUNNING))
         assertEquals(CloudSessionWake.AT_CAP, wake(ORG_A, paused.id.toString(), waitId))
         repository.usage[ORG_A to "2026-10"] = 300 * 3600L
         assertEquals(CloudSessionWake.NO_HOURS, wake(ORG_A, paused.id.toString(), waitId))
-        plans.plan = CloudPlan.FREE.copy(available = false)
+        plans.plan = plans.plan.copy(available = false)
         assertEquals(CloudSessionWake.CLOSED, wake(ORG_A, paused.id.toString(), waitId))
 
         assertEquals(DesiredState.PAUSED, repository.sessions.getValue(paused.id).desiredState)
