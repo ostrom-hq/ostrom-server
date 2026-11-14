@@ -337,7 +337,8 @@ until a minute before it expires. A token FCM no longer knows (404 `UNREGISTERED
 registered it anew; a 401, 408, 429, 5xx or no answer is tried again; any other refusal, or `firebase` without its key,
 is given up at once. While the provider is `off`, phones register and nothing is sent. Expo is gone, as in TeamCode: a
 `provider: expo` registration is refused (400), and a phone an older app registered with Expo is never notified (it has
-no key to encrypt for) until the app registers FCM.
+no key to encrypt for) until the app registers FCM. `OSTROM_EXPO_PUSH_URL` and `OSTROM_EXPO_ACCESS_TOKEN` are no longer
+read: a deployment that still sets them can drop them.
 
 ### Memory under the container limit
 

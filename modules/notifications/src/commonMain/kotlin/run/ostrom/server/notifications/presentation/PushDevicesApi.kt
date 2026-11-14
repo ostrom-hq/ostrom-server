@@ -41,7 +41,7 @@ data class PushDeviceRequest(
  * A registered phone (contract `PushDevice`): never its push token.
  *
  * @property id The device.
- * @property provider `fcm`.
+ * @property provider `fcm` (`expo` for a phone an older app registered, never notified).
  * @property platform `ios` or `android`.
  * @property locale The phone's language, absent when it gave none.
  * @property createdAt When it was first registered, ISO-8601.
