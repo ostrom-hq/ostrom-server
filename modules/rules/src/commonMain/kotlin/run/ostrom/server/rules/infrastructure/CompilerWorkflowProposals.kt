@@ -81,7 +81,9 @@ class CompilerWorkflowProposals(
             approvers = gate?.approvers,
             approverReason = gate?.reason,
             ruleIds = rule?.let { listOf(it.id) },
-            actions = gate?.actions?.map { GateAction(it.cls, it.label, it.patterns, it.repos, it.tools) },
+            actions = gate?.let { held ->
+                held.actions.map { GateAction(it.cls, it.label, it.patterns, it.repos, it.tools) }
+            },
             suggested = command?.let {
                 NodeSuggestions(command = StringSuggestion(it.command, listOf(it.evidence), at = found))
             },
