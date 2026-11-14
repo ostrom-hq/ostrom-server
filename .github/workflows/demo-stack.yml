@@ -81,7 +81,7 @@ jobs:
           {
             echo "### Images"
             echo "- server: \`$server\`"
-            echo "- cloud session and machine runner: \`$runner\`"
+            echo "- runner image (delivery and machine): \`$runner\`; sessions run the server's default session image"
             echo "- console: ostrom-web main $(git -C web rev-parse --short HEAD), built here"
             echo "- ostrom-helm $(git -C helm rev-parse --short HEAD) ($HELM_REF)"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -142,7 +142,7 @@ jobs:
           REPORT: ${{ runner.temp }}/demo-report.md
           OSTROM_DEMO_SESSION_CHECK: demo/check-session.sh
           OSTROM_DEMO_TEAMCODE_CHECK: demo/teamcode/check.sh
-          # A registered runner on a machine (6.2): the same image, `ostrom-runner machine`, on the sessions' network.
+          # A registered runner on a machine (6.2): the runner image, `ostrom cloud machine`, on the sessions' network.
           OSTROM_DEMO_RUNNER_IMAGE: ${{ steps.images.outputs.runner }}
         run: node demo/journey.mjs
       - name: Report

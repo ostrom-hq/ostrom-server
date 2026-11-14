@@ -34,8 +34,9 @@ Prerequisites: JDK 21 and Git. Kotlin/Native downloads its own toolchain the fir
 
 The server runs on the JVM ([docs/decisions/0001](docs/decisions/0001-jvm-and-teamcode-stack.md)): the server modules
 have only the `jvm()` target, whose tests and Kover coverage are those of the shipped runtime, and
-`./gradlew :image:installDist` gives a runnable `image/build/install/ostrom-server/bin/ostrom-server`. The session
-runner (`runner/`) is the one Kotlin/Native program (`runner/gradle.properties` gives it its native targets).
+`./gradlew :image:installDist` gives a runnable `image/build/install/ostrom-server/bin/ostrom-server`. The push relay
+(`push/`) is the one Kotlin/Native program (`push/gradle.properties` gives it its native targets); the session runner
+is the CLI's `ostrom cloud runner` (ostrom-cli).
 
 ## Tests: the bar
 

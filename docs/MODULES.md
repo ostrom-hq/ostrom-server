@@ -426,8 +426,8 @@ the console; no variable seeds it, as in TeamCode), with the volume read-only at
 is removed with the execution's containers, and with the workspace (a volume still in use is retried later). A runner
 image whose binary directory holds anything but `ostrom` copies that too, and the agent finds it first on its `PATH`:
 the CLI's runner image (ostrom-cli `docker/runner`) holds `ostrom` alone. A registered machine runs the CLI's
-`ostrom cloud machine`; one that pins its session image also pins its delivery image (ostrom-cli's
-`runner/README.md`).
+`ostrom cloud machine`; one that pins its session image also pins its delivery image (ostrom-cli's runner module
+README).
 
 #### Push notifications
 
@@ -752,7 +752,7 @@ after. The run finds the organizations through `memory_kept_orgs` (docs/tenancy.
 
 ### A cloud agent's session
 
-The agent of a cloud session runs with its launch's agent token (`OSTROM_AGENT_TOKEN`, opened by its runner) and no
+The agent of a cloud session runs with its launch's agent token (opened by its runner, the CLI's `ostrom cloud runner`) and no
 session id of the `sessions` module. Like TeamCode's execution credential (`tcex_`, confined to the cloud session it was
 issued for), the token of a cloud session's launch acts on that cloud session whatever a request names, and needs to
 name none: its todo (`/api/v1/todos/session` and the routes under it), its waits (`/api/v1/waits/mcp`, the Stop hook's `/api/v1/waits/wake`),
