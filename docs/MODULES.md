@@ -432,7 +432,10 @@ waits for a handover (`refreshOwnership` `pending_handover`, status `pending_han
 tokens, and two refreshers of one rotating refresh token disconnect the account, so it serves nothing and no replica
 leases it. Each later import gives it TeamCode's current tokens. Once TeamCode no longer uses it, an admin hands it
 over (the account's handover route, or the import's cutover run, which hands over every waiting account with
-TeamCode's tokens), and Ostrom renews it from then on. The import's `accessOnly` trial (TeamCode's `--access-only`),
+TeamCode's tokens), and Ostrom renews it from then on. As TeamCode's `accounts handover ID --confirm`, the handover
+route also takes an administrator signed in on the CLI: the token of `ostrom login --admin` holds `accounts:read` and
+`accounts:write` (`ostrom accounts handover <name> --confirm`), the role is checked again before the write, and the
+write is recorded in the audit log (`governance.write`) first; every other account change stays a console write. The import's `accessOnly` trial (TeamCode's `--access-only`),
 or the account's access-only route, serves an account with its access token and never renews it: once the token is within the 5-minute margin of its expiry, the account serves nothing until imported
 again. Pausing and resuming never change the ownership; a member's own share of a waiting or access-only account is
 refused (403 `account_in_use`), an admin's takes it over. A handover is refused (409 `account_refreshing`) while a

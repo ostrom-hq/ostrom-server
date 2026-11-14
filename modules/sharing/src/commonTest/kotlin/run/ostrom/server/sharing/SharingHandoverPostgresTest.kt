@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.sharing
 
+import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import run.ostrom.server.kernel.auth.GovernanceAudit
 import run.ostrom.server.secrets.infrastructure.executeInOrg
 import run.ostrom.server.sharing.domain.AccountProvider
 import run.ostrom.server.sharing.domain.LeaseResult
@@ -26,9 +28,11 @@ import io.ktor.http.HttpStatusCode
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
 import kotlin.uuid.Uuid
@@ -120,6 +124,50 @@ class SharingHandoverPostgresTest : SharingPostgresHarness() {
             assertEquals("account_refreshing", refreshing.errorType())
             val stored = koin.get<SharedAccountRepository>().get(Sharing.orgA, id)
             assertEquals(RefreshOwnership.OSTROM, stored?.ownership, "Nothing changed")
+        }
+    }
+
+    @Test
+    fun anAdminSignedInOnTheCliHandsOverRecordedInTheAuditLogAsTeamCodesCli() {
+        val recorded = mutableListOf<Triple<String, String, String>>()
+        val audit = module {
+            single<GovernanceAudit> {
+                object : GovernanceAudit {
+                    override suspend fun record(principal: AuthenticatedPrincipal, scope: String, target: String) {
+                        recorded += Triple(principal.subjectId, scope, target)
+                    }
+                }
+            }
+        }
+        serverTest(modules, module { includes(overrides, audit) }) { server ->
+            with(server) {
+                val id = imported(RefreshOwnership.PENDING_HANDOVER)
+                // ostrom accounts handover reads the accounts to find it by name, then hands it over
+                val listed = client.get(base) { bearerAuth("admin-cli-a") }.body<SharedAccountsResponse>()
+                assertEquals(listOf(id.toString()), listed.items.map { it.id })
+                val personal = postAs("personal-a", "$base/$id/handover")
+                assertEquals(HttpStatusCode.Forbidden, personal.status, "A console token makes no console write")
+                assertTrue("a token cannot make it" in personal.bodyAsText(), personal.bodyAsText())
+                assertEquals(HttpStatusCode.Forbidden, postAs("cli-a", "$base/$id/handover").status, "No scope")
+                val member = postAs("member-cli-a", "$base/$id/handover")
+                assertEquals("account_handover_forbidden", member.errorType(), "Its owner signed in, no admin")
+                assertEquals(HttpStatusCode.Forbidden, postAs("admin-cli-a", "$base/$id/access-only").status)
+                val waiting = koin.get<SharedAccountRepository>().get(Sharing.orgA, id)
+                assertEquals(RefreshOwnership.PENDING_HANDOVER, waiting?.ownership, "Nothing handed over yet")
+
+                val handed = postAs("admin-cli-a", "$base/$id/handover")
+                assertEquals(HttpStatusCode.OK, handed.status, handed.bodyAsText())
+                assertEquals("ostrom", handed.body<SharedAccountResponse>().refreshOwnership)
+                val path = "POST $base/$id/handover"
+                assertEquals(
+                    listOf(
+                        Triple("member-cli-a", "accounts:write", path),
+                        Triple("admin-cli-a", "accounts:write", path),
+                    ),
+                    recorded,
+                    "Each token's handover is recorded before it is made; a browser session's is not",
+                )
+            }
         }
     }
 }

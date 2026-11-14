@@ -2,7 +2,10 @@
 package run.ostrom.server.sharing.presentation
 
 import run.ostrom.server.kernel.auth.ServiceKeyScopes
+import run.ostrom.server.kernel.auth.WriteAccess
+import run.ostrom.server.kernel.auth.auditGovernance
 import run.ostrom.server.kernel.auth.authenticated
+import run.ostrom.server.kernel.auth.requirePrincipal
 import run.ostrom.server.secrets.domain.Caller
 import run.ostrom.server.secrets.domain.RelayScopes
 import run.ostrom.server.secrets.presentation.requireCaller
@@ -73,8 +76,12 @@ fun Route.sharingRoutes(dependencies: SharingRoutesDependencies) = with(dependen
             call.respond(view(caller, update(caller, id, payload)).toResponse(caller))
         }
         post<AccountsApi.Id.Handover> { params ->
-            val caller = call.requireCaller(callers, RelayScopes.ACCOUNTS_WRITE)
+            // TeamCode's `accounts handover ID --confirm`: an administrator signed in on their workstation (the token
+            // of `ostrom login --admin`, the only one holding accounts:write) hands over too, recorded in the audit log
+            // before the write; the use case checks the administrator's role again.
+            val caller = call.requireCaller(callers, RelayScopes.ACCOUNTS_WRITE, writers = HANDOVER_WRITERS)
             val id = params.parent.id.toIdOr(::AccountNotFoundException)
+            call.auditGovernance(call.requirePrincipal(), RelayScopes.ACCOUNTS_WRITE)
             call.respond(view(caller, handOver(caller, id, RefreshOwnership.OSTROM)).toResponse(caller))
         }
         post<AccountsApi.Id.AccessOnly> { params ->
@@ -104,6 +111,12 @@ fun Route.sharingRoutes(dependencies: SharingRoutesDependencies) = with(dependen
  * `dailyAllocationUsd` sets the daily allocation; `sharedWith` is the use case's (members are named by login).
  * Malformed input is refused before the account is read.
  */
+/**
+ * Who hands an account over besides a browser session: a person's sign-in on a workstation (`ostrom login --admin`),
+ * as TeamCode's interactive login; never a personal token made in the console, an agent's, a device's or a service key.
+ */
+private val HANDOVER_WRITERS: WriteAccess = WriteAccess.PERSON
+
 private fun UpdateAccountRequest.limitsChange(): ((AccountLimits) -> AccountLimits)? {
     val patch = limits
     val daily = dailyAllocationUsd?.let(::usdToMicros)
