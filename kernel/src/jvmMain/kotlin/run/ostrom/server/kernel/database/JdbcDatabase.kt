@@ -45,6 +45,12 @@ class JdbcDatabase(config: DatabaseConfig, poolSize: Int) : AutoCloseable {
         transaction(exposed) { block() }
     }
 
+    /** The pool's state for `/ready` ([PoolHealthCheck]), read without opening a connection. */
+    fun state(): PoolState = PoolState(
+        open = source.isRunning,
+        waiting = source.hikariPoolMXBean.threadsAwaitingConnection,
+    )
+
     override fun close() {
         TransactionManager.closeAndUnregister(exposed)
         source.close()

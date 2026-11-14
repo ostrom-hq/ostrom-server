@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # Two real server processes on one PostgreSQL, as TeamCode's scripts/smoke-replicas.py (docs/replicas.md « Evidence »,
 # parity TC-REP-7): both start at once on a migrated database; a token works on either; one replica killed (SIGKILL)
-# leaves the other serving, and comes back; a database outage makes both unready while they keep running, then both
-# ready again without a restart; a token revoked on one replica is refused by the other. Only its own containers are
-# stopped. Needs the image ostrom-server:ci and a database migrated by the image smoke step, reached as the serving
-# role through OSTROM_SMOKE_DATABASE_URL (postgresql://user:password@host:port/database).
+# leaves the other serving, and comes back; during a database outage /ready stays bounded and nobody is authenticated
+# while both keep running, then both serve again without a restart; a token revoked on one replica is refused by the
+# other. Only its own containers are stopped. Needs the image ostrom-server:ci and a database migrated by the image
+# smoke step, reached as the serving role through OSTROM_SMOKE_DATABASE_URL
+# (postgresql://user:password@host:port/database).
 set -euo pipefail
 
 url="${OSTROM_SMOKE_DATABASE_URL:?}"
@@ -102,20 +103,19 @@ docker start ostrom-replica-a >/dev/null
 await_status localhost:8082/ready 30 200
 [ "$(me 8082)" = 200 ] || { echo "A came back without the session"; exit 1; }
 
-echo "4. The database goes away: both are unready, authenticate nobody and keep running; then both are ready again."
+echo "4. The database goes away: /ready stays bounded, nobody is authenticated, both keep running, then serve again."
 kill "$proxy_pid"
 wait "$proxy_pid" 2>/dev/null || true
 proxy_pid=""
-# Unready is a 503 or no answer within the probe's 5 seconds, both a failed readiness probe for an orchestrator.
+# CRL-11: /ready reads the pool's state, never a query, so that a database stall does not drain every replica at once.
+# It goes unready only after callers have waited 30 s on the pool (PoolHealthCheckTest). What the smoke checks is
+# that the probe stays bounded: it answers within 2 s whatever its code, where it took more than 10 s before.
 for port in 8082 8083; do
-  ready=200
-  for _ in $(seq 1 30); do
-    ready="$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' "localhost:$port/ready" || true)"
-    [ "$ready" = 200 ] || break
-    sleep 1
-  done
-  [ "$ready" != 200 ] || { echo "replica $port stayed ready without its database"; exit 1; }
-  echo "   replica $port: /ready answered $ready"
+  ready="$(curl -s --max-time 2 -o /dev/null -w '%{http_code}' "localhost:$port/ready" || true)"
+  case "$ready" in
+    200 | 503) echo "   replica $port: /ready answered $ready" ;;
+    *) echo "replica $port: /ready did not answer within 2 s without its database ($ready)"; exit 1 ;;
+  esac
   [ "$(me "$port")" != 200 ] || { echo "replica $port authenticated without its database"; exit 1; }
 done
 for name in ostrom-replica-a ostrom-replica-b; do
@@ -125,6 +125,15 @@ done
 proxy
 await_status localhost:8082/ready 60 200
 await_status localhost:8083/ready 60 200
+for port in 8082 8083; do
+  status=""
+  for _ in $(seq 1 30); do
+    status="$(me "$port")"
+    [ "$status" = 200 ] && break
+    sleep 1
+  done
+  [ "$status" = 200 ] || { echo "replica $port did not serve again once its database came back ($status)"; exit 1; }
+done
 
 echo "5. A token revoked on B is refused by A."
 revoked="$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $token" \
