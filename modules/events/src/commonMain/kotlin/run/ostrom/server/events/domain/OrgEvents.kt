@@ -30,7 +30,9 @@ data class JournalEvent(
 )
 
 /**
- * What a reader may see: the events of [memberId], and every event of the organization when [wholeOrg].
+ * What a reader may see: the events of [memberId], and the events of the whole organization (no member's) when
+ * [wholeOrg]. Never another member's, an owner's or an administrator's feed included (TeamCode #238: the event feed
+ * is its owner's, `readsTeamSessions` is false for every credential).
  *
  * @property memberId The reader.
  * @property wholeOrg An owner or an admin, or a key that reads for one.
@@ -43,7 +45,7 @@ data class EventAudience(val memberId: Uuid, val wholeOrg: Boolean) {
      *
      * @return True when visible.
      */
-    fun sees(owner: Uuid?): Boolean = wholeOrg || owner == memberId
+    fun sees(owner: Uuid?): Boolean = owner == memberId || (wholeOrg && owner == null)
 }
 
 /**

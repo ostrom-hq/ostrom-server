@@ -130,23 +130,24 @@ class EventsPostgresTest {
         assertEquals(3, events.head(orgA), "The rolled-back event took no sequence")
         assertEquals(1, events.oldest(orgA))
         assertEquals(1, events.head(orgB), "Each organization counts on its own")
+        // TeamCode #238: an admin reads the organization's events and their own, never another member's.
         val all = events.read(orgA, EventAudience(adminA, true), 0, null, 100)
-        assertEquals(listOf(1L, 2L, 3L), all.events.map { it.seq })
+        assertEquals(listOf(2L, 3L), all.events.map { it.seq }, "Not Mia's")
         assertEquals(3, all.through)
-        assertEquals("""{"title":"Deploy?"}""", all.events.first().data)
-        assertEquals("wait", all.events.first().subject)
-        assertEquals(miaA, all.events.first().memberId)
-        assertNull(all.events[1].memberId)
+        assertNull(all.events.first().memberId)
         assertTrue(all.events.none { it.subjectId == "s-0" })
 
         val mine = events.read(orgA, EventAudience(miaA, false), 0, null, 100)
         assertEquals(listOf(1L), mine.events.map { it.seq }, "A member reads only their own events")
         assertEquals(3, mine.through, "and moves past the others")
+        assertEquals("""{"title":"Deploy?"}""", mine.events.first().data)
+        assertEquals("wait", mine.events.first().subject)
+        assertEquals(miaA, mine.events.first().memberId)
         val types = setOf("cloud.todo", "cloud.wait.resolved")
         val todos = events.read(orgA, EventAudience(adminA, true), 0, types, 100)
         assertEquals(listOf(3L), todos.events.map { it.seq })
-        val first = events.read(orgA, EventAudience(adminA, true), 0, null, 2)
-        assertEquals(PageSummary(listOf(1L, 2L), 2, true), first.summary())
+        val first = events.read(orgA, EventAudience(adminA, true), 0, null, 1)
+        assertEquals(PageSummary(listOf(2L), 2, true), first.summary())
         val past = events.read(orgA, EventAudience(adminA, true), 3, null, 2)
         assertEquals(PageSummary(emptyList(), 3, false), past.summary())
 
@@ -246,12 +247,14 @@ class EventsPostgresTest {
         }
         server.client.prepareGet("/api/v1/events") {
             bearerAuth("admin-a")
-            header("Last-Event-ID", "3")
+            header("Last-Event-ID", "1")
         }.execute { response ->
             val stream = response.bodyAsChannel()
             withTimeout(30.seconds) {
                 stream.frame()
-                assertEquals("id: 4", stream.frame().first(), "An admin resumes after its last event, any member's")
+                // TeamCode #238: their own events only, Mia's 1 and 4 never.
+                assertEquals("id: 2", stream.frame().first(), "An admin resumes after its cursor, with its own")
+                assertEquals("id: 3", stream.frame().first())
             }
         }
     }

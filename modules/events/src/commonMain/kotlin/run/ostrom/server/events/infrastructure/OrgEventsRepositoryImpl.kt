@@ -77,7 +77,7 @@ class OrgEventsRepositoryImpl(private val driver: Driver) : OrgEventsRepository 
             "SELECT seq, type, subject, subject_id, member_id, at, data FROM events_journal " +
                 "WHERE org_id = :org_id AND seq > :after AND seq <= :head " +
                 "AND (CAST(:all_types AS BOOLEAN) OR type = ANY(string_to_array(CAST(:types AS TEXT), ','))) " +
-                "AND (CAST(:whole_org AS BOOLEAN) OR member_id = :member_id) " +
+                "AND (member_id = :member_id OR (CAST(:whole_org AS BOOLEAN) AND member_id IS NULL)) " +
                 "ORDER BY seq LIMIT :limit"
         const val ERASE_JOURNAL_SQL = "DELETE FROM events_journal WHERE org_id = :org_id"
         const val ERASE_CURSOR_SQL = "DELETE FROM events_cursors WHERE org_id = :org_id"

@@ -21,6 +21,15 @@ class EventFeedTest {
     private val tom = Uuid.random()
 
     @Test
+    fun anAdministratorSeesTheOrganizationsEventsAndTheirOwnNeverAnotherMembers() {
+        // TeamCode #238: the event feed is its owner's, whatever the role.
+        val admin = EventAudience(tom, wholeOrg = true)
+        val member = EventAudience(mia, wholeOrg = false)
+        assertEquals(listOf(true, true, false), listOf(admin.sees(tom), admin.sees(null), admin.sees(mia)))
+        assertEquals(listOf(true, false, false), listOf(member.sees(mia), member.sees(null), member.sees(tom)))
+    }
+
+    @Test
     fun aCursorThatIsNegativeOrAheadOfTheOrganizationIsRefused() = runTest {
         val events = InMemoryEvents(head = 3, oldest = 1)
         val open = OpenEventFeedUseCaseImpl(events) {}
@@ -71,7 +80,7 @@ class EventFeedTest {
     fun aFullPageIsFollowedAtOnceAndTheTypesAndTheWholeOrganizationAreKept() = runTest {
         val events = InMemoryEvents()
         repeat(EventRules.PAGE + 5) {
-            events.add(if (it % 2 == 0) mia else null, if (it == 3) "cloud.wait.created" else "cloud.todo")
+            events.add(if (it % 2 == 0) tom else null, if (it == 3) "cloud.wait.created" else "cloud.todo")
         }
         val sent = mutableListOf<List<JournalEvent>>()
         var sleeps = 0

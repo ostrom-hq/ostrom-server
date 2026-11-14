@@ -22,7 +22,7 @@ private const val CLOUD_READ = "cloud:read"
 /** A token that writes the cloud sessions reads them too. */
 private const val CLOUD_WRITE = "cloud:write"
 
-/** The roles that read the whole organization's events. */
+/** The roles that read the whole organization's events (those of no member; another member's never, TeamCode #238). */
 private val ADMIN_ROLES = setOf(OrgRole.OWNER, OrgRole.ADMIN)
 
 /**
