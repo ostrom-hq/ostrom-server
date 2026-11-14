@@ -270,8 +270,7 @@ class AnalyzeOrganizationUseCaseTest {
             "The infrastructure rule's scope is too long; npm and the branch stay",
         )
         assertEquals(AnalysisRun.READY, recorded()?.phase)
-        assertTrue(logger.events.isNotEmpty(), "The rules left out are told")
-        assertEquals(setOf(LogLevel.WARN to "analysis left out a proposal"), logger.events.toSet())
+        assertEquals(listOf(LogLevel.WARN to "analysis left out a proposal"), logger.events)
     }
 
     // AUDIT-SECU-ANALYSE R1: a tree past 20,000 paths is cut and said cut; each repository is let go before the next.
@@ -341,7 +340,8 @@ class AnalyzeOrganizationUseCaseTest {
             checks.proposal.nodes.map { it.kind },
             "The branch rule's scope is too long: its gate is not named",
         )
-        assertEquals(listOf(LogLevel.WARN to "analysis left out a proposal"), logger.events)
+        assertTrue(logger.events.isNotEmpty(), "The rules left out are told")
+        assertEquals(setOf(LogLevel.WARN to "analysis left out a proposal"), logger.events.toSet())
     }
 
     @Test
