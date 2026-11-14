@@ -195,16 +195,15 @@ internal fun repositoryOf(
     what: String,
     notes: MutableList<String>,
 ): String? {
-    val profile = profiles[profileId]
-    val repository = profile?.repositories?.firstOrNull()
-    if (profile == null || repository == null) {
+    val profile = profiles[profileId]?.takeIf { it.repositories.isNotEmpty() }
+    if (profile == null) {
         notes += "$what: its profile names no repository, so it works in none."
     } else if (profile.repositories.size > 1 || profile.setupCommands > 0) {
         val name = profile.name ?: profile.id
         notes += "$what: only the first repository of its profile $name is carried; its other repositories and " +
             "setup commands belong to the organization's runner settings."
     }
-    return repository
+    return profile?.let { it.repositories.first() }
 }
 
 private const val PREFIX = "tc-"

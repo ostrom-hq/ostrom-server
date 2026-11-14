@@ -32,6 +32,7 @@ class TeamCodeWorkflowMapperTest {
             TeamCodeProfile("p-web", repositories = listOf("acme/web", "acme/docs")),
             TeamCodeProfile("p-one", repositories = listOf("acme/one")),
             TeamCodeProfile("p-none", "Empty"),
+            TeamCodeProfile("p-setup", "Setup", listOf("acme/setup"), setupCommands = 1),
         ).associateBy { it.id },
     )
 
@@ -236,6 +237,37 @@ class TeamCodeWorkflowMapperTest {
                     "commands belong to the organization's runner settings.",
                 "Node d: its assignee has no Ostrom member, so the run's starter answers.",
                 "Node d: the choices of f show their values, not their labels.",
+            ),
+            mapped.notes,
+        )
+    }
+
+    @Test
+    fun anUnassignedWaitHasNoApproverAndPlainChoicesOrASetupProfileAreNoted() {
+        val plain = fix.copy(
+            definition = definition(
+                """
+                {"start": "a", "nodes": [
+                  {"id": "a", "kind": "human", "title": "A", "actions": [{"id": "ok", "label": "OK"}],
+                   "fields": [{"id": "f", "type": "choice", "label": "F", "options": [{"value": "z", "label": "z"}]}],
+                   "transitions": [{"on": "ok", "to": "b"}]},
+                  {"id": "b", "kind": "human", "title": "B", "assignee": {"kind": "member"},
+                   "fields": [{"id": "g", "type": "choice", "label": "G", "options": [{"value": "y", "label": "Yes"}]}],
+                   "actions": [{"id": "ok", "label": "OK"}], "transitions": [{"on": "ok", "to": "c"}]},
+                  {"id": "c", "kind": "agent", "title": "C", "instruction": "Go", "profileId": "p-setup"}
+                ]}
+                """,
+            ),
+        )
+        val mapped = TeamCodeWorkflowMapper.map(plain, mapping)
+        val workflow = decoded(mapped)
+        assertEquals(listOf(null, null), workflow.nodes.take(2).map { it.approvers })
+        assertEquals("acme/setup", workflow.nodes[2].run?.repository)
+        assertEquals(
+            listOf(
+                "Node b: the choices of g show their values, not their labels.",
+                "Node c: only the first repository of its profile Setup is carried; its other repositories and " +
+                    "setup commands belong to the organization's runner settings.",
             ),
             mapped.notes,
         )

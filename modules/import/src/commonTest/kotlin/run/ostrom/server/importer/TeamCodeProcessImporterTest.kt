@@ -192,6 +192,11 @@ class TeamCodeProcessImporterTest {
         TeamCodeProcessImporter(null, null, null, null)
             .import(caller, TeamCodeProcesses(), emptyList(), emptyMap(), ProcessRunMode(false, false, principal), none)
         assertEquals(emptyList(), none)
+        val unknownOwner = mutableListOf<ImportItem>()
+        val lone = TeamCodeProcesses(automations = listOf(TeamCodeAutomation("a9", "m9", "Lone", "cron")))
+        TeamCodeProcessImporter(null, null, null, null)
+            .import(caller, lone, emptyList(), emptyMap(), ProcessRunMode(false, false, principal), unknownOwner)
+        assertEquals("m9/Lone", unknownOwner.single().name, "The owner's TeamCode id without its member")
     }
 
     @Test
