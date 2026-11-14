@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.mcprelay.infrastructure
 
+import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.mcprelay.domain.McpOutcome
 import run.ostrom.server.mcprelay.domain.McpUpstream
 import run.ostrom.server.mcprelay.domain.RelayMcpMessageUseCaseImpl
@@ -44,11 +45,14 @@ import kotlin.time.Duration.Companion.seconds
  * @param client The HTTP client (redirects off).
  * @param guard Refuses private destinations.
  * @param maxResponseBytes The largest answer read.
+ * @param logger Where a server that cannot be reached is logged (its org, server and the failure's class, never a
+ *   message); null logs nothing.
  */
 class HttpMcpUpstream(
     private val client: HttpClient,
     private val guard: UpstreamAddressGuard,
     private val maxResponseBytes: Int = DEFAULT_MAX_RESPONSE_BYTES,
+    private val logger: Logger? = null,
 ) : McpUpstream {
     override suspend fun listTools(target: UpstreamTarget, deadline: Duration): UpstreamResult<List<JsonObject>> =
         session(target, deadline) { session ->
@@ -102,8 +106,8 @@ class HttpMcpUpstream(
         val url = target.server.url?.takeIf { guard.allows(it) }
             ?: return UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, "The MCP server's address is not allowed.")
         val session = Session(url, target)
-        try {
-            return withTimeoutOrNull(deadline) {
+        return try {
+            withTimeoutOrNull(deadline) {
                 when (val initialized = session.request("initialize", INITIALIZE_PARAMS)) {
                     is Reply.Result -> {
                         val version = (initialized.value["protocolVersion"] as? JsonPrimitive)?.content
@@ -124,9 +128,29 @@ class HttpMcpUpstream(
                     is Reply.Refused -> initialized.failure
                 }
             } ?: UpstreamResult.Failure(McpOutcome.TIMEOUT, "The MCP server did not answer in time.")
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            unreachable(target, error)
         } finally {
             session.close()
         }
+    }
+
+    // TeamCode's "The MCP server could not be reached.", with a TLS failure named apart: an untrusted or expired
+    // certificate is not a wrong credential. Never the exception's message, which may name what it was sent.
+    private fun unreachable(target: UpstreamTarget, error: Exception): UpstreamResult.Failure {
+        val tls = generateSequence<Throwable>(error) { it.cause }.take(MAX_CAUSES).any { cause ->
+            val name = cause::class.simpleName.orEmpty()
+            TLS_NAMES.any { it in name }
+        }
+        val fields = mapOf(
+            "org" to target.server.orgId.toString(),
+            "server" to target.server.id.toString(),
+            "error" to error::class.simpleName,
+        )
+        logger?.warn(if (tls) "mcp upstream tls failure" else "mcp upstream unreachable", fields)
+        return UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, if (tls) TLS_FAILURE else UNREACHABLE)
     }
 
     private sealed interface Reply {
@@ -269,6 +293,15 @@ class HttpMcpUpstream(
         private val SESSION_ID_LENGTH = 1..256
         private val VISIBLE_ASCII = 0x21..0x7e
         private const val MAX_ERROR = 1000
+        private const val MAX_CAUSES = 8
+        private val TLS_NAMES = listOf("SSL", "Tls", "TLS", "Certificate")
+
+        /** The answer when the server's TLS handshake fails. */
+        const val TLS_FAILURE: String =
+            "The MCP server's TLS certificate is not trusted, has expired or does not match its host name."
+
+        /** The answer when the server cannot be reached otherwise (connection refused, unknown host, reset). */
+        const val UNREACHABLE: String = "The MCP server could not be reached."
         private val INITIALIZE_PARAMS = buildJsonObject {
             put("protocolVersion", RelayMcpMessageUseCaseImpl.PROTOCOL_VERSIONS.first())
             putJsonObject("capabilities") {}

@@ -182,6 +182,7 @@ object McpRelayModule : ServerModule {
                 http = HttpMcpUpstream(
                     get<HttpClient>(UPSTREAM_CLIENT),
                     UpstreamAddressGuard(config.allowPrivateUpstreams),
+                    logger = getOrNull(),
                 ),
                 host = get<HostedRuntime>().host,
             )
