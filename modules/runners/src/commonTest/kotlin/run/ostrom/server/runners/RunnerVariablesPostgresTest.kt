@@ -87,6 +87,8 @@ class RunnerVariablesPostgresTest {
         assertEquals(HttpStatusCode.BadRequest, server.ask("Bearer $token", "{not json").status)
         val malformed = server.ask("Bearer $token", """{"sessionId":"nope","epoch":2}""")
         assertEquals(HttpStatusCode.BadRequest, malformed.status)
+        val padded = """{"sessionId":"${running.id}","epoch":2,"pad":"${"x".repeat(5000)}"}"""
+        assertEquals(HttpStatusCode.PayloadTooLarge, server.ask("Bearer $token", padded).status)
         assertEquals(2, asked.size, "No refused call resolved anything")
     }
 
