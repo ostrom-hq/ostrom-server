@@ -19,7 +19,7 @@ class CloudRuntimeRunnerDelivery(
     private val fallbackImage: String,
 ) : RunnerDeliverySource {
     override suspend fun current(): RunnerDelivery {
-        val current = runtime?.current() ?: CloudRuntime()
+        val current = if (runtime == null) CloudRuntime() else runtime.current()
         val image = current.runnerImage?.takeIf { it.isNotBlank() } ?: fallbackImage
         return RunnerDelivery(image, current.runnerBinary, image)
     }
