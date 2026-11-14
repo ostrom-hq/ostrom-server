@@ -39,6 +39,7 @@ import run.ostrom.server.events.presentation.eventsRoutes
 import run.ostrom.server.events.presentation.feedJson
 import run.ostrom.server.events.presentation.webhooksRoutes
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.database.scheduledWork
 import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.module.OrgDeletionListener
 import run.ostrom.server.kernel.module.ServerModule
@@ -88,11 +89,12 @@ object EventsModule : ServerModule {
     /** The feed and the webhooks are served on every instance: they need nothing but the database. */
     override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.EVENTS, ServerFeatures.WEBHOOKS)
 
-    /** Purges the events past their retention and delivers the webhooks until the server stops. */
+    /** Purges the events past their retention, one replica at a time, and delivers the webhooks until it stops. */
     override fun start(scope: CoroutineScope, koin: Koin) {
         val purge = koin.get<EventsPurgeWorker>()
         val webhooks = koin.get<WebhooksWorker>()
-        scope.launch { purge.run() }
+        val work = koin.scheduledWork()
+        scope.launch { purge.run(work) }
         scope.launch { webhooks.run() }
     }
 

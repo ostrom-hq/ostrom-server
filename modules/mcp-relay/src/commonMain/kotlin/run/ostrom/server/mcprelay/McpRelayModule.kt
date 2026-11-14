@@ -6,6 +6,8 @@ import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.InvalidConfigException
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.database.repeatDue
+import run.ostrom.server.kernel.database.scheduledWork
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.network.outboundHttpClient
@@ -76,7 +78,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.koin.core.Koin
 import org.koin.core.module.Module
@@ -88,6 +89,7 @@ import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The relay's configuration, read once (`OSTROM_MCP_*`).
@@ -141,6 +143,12 @@ object McpRelayModule : ServerModule {
     val HTTP_CLIENT = named("mcpRelayHttpClient")
 
     private val WARMUP_SCOPE = named("mcpRelayWarmupScope")
+
+    /** The longest the journal's hourly purge may take. */
+    private val PURGE_TIMEOUT = 5.minutes
+
+    /** The longest a retain sweep of the MCP host may take (TeamCode's default run timeout). */
+    private val RETAIN_TIMEOUT = 45.seconds
 
     /**
      * The Koin name of the client of the org's upstream MCP servers (a URL a member supplied): every connection is
@@ -238,23 +246,22 @@ object McpRelayModule : ServerModule {
         val repository = koin.get<McpRelayRepository>()
         val clock = koin.get<Clock>()
         val logger = koin.get<Logger>()
+        // Each periodic job on one replica at a time (ScheduledWork, TeamCode's SqlScheduledWork).
+        val work = koin.scheduledWork()
         scope.launch {
-            while (true) {
-                try {
-                    repository.purgeCalls(clock.now() - 30.days)
-                } catch (error: CancellationException) {
-                    throw error
-                } catch (error: Exception) {
-                    logger.warn("mcp journal purge failed", mapOf("error" to error::class.simpleName))
-                }
-                delay(1.hours)
-            }
+            work.repeatDue(
+                "mcp/purge",
+                1.hours,
+                PURGE_TIMEOUT,
+                logger,
+                "mcp journal purge failed",
+            ) { repository.purgeCalls(clock.now() - 30.days) }
         }
         val host = koin.getOrNull<HostedRuntime>()?.host ?: return
         val retain = RetainHostedMcpProcessesUseCaseImpl(repository, koin.getOrNull<MemberDirectory>(), host, clock)
         scope.launch {
             var last: HostedSweep? = null
-            while (true) {
+            work.repeatDue("mcp/retain", 1.minutes, RETAIN_TIMEOUT, logger, "mcp retain sweep failed") {
                 val sweep = try {
                     retain()
                 } catch (error: CancellationException) {
@@ -267,7 +274,6 @@ object McpRelayModule : ServerModule {
                     logger.warn("mcp retain sweep", mapOf("outcome" to sweep.toString()))
                 }
                 last = sweep
-                delay(1.minutes)
             }
         }
     }

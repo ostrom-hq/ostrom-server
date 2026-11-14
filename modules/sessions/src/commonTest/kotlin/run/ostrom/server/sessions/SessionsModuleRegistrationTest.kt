@@ -4,14 +4,14 @@ package run.ostrom.server.sessions
 import run.ostrom.core.telemetry.Attributes
 import run.ostrom.core.telemetry.metrics.MeterImpl
 import run.ostrom.core.telemetry.metrics.MetricData
+import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.observability.CachedCount
 import run.ostrom.server.kernel.observability.OstromMetrics
 import run.ostrom.server.sessions.domain.services.NoSessionCosts
 import run.ostrom.server.sessions.domain.services.SessionCosts
 import run.ostrom.server.sessions.domain.usecases.SweepStaleSessionsUseCase
 import run.ostrom.server.sessions.fakes.FakeCosts
-import kotlinx.coroutines.CoroutineExceptionHandler
-import kotlinx.coroutines.CoroutineScope
+import run.ostrom.server.sessions.fakes.RecordingLogger
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -47,7 +47,7 @@ class SessionsModuleRegistrationTest {
     }
 
     @Test
-    fun theSweepRunsEveryThirtySecondsAndOutlivesAFailedRun() = runTest {
+    fun theSweepRunsAtStartThenEveryThirtySecondsAndOutlivesAFailedRun() = runTest {
         var runs = 0
         val sweep = object : SweepStaleSessionsUseCase {
             override suspend fun invoke(): List<String> {
@@ -57,28 +57,25 @@ class SessionsModuleRegistrationTest {
             }
         }
         val meter = MeterImpl(Clock.System)
+        val logger = RecordingLogger()
         val koin = koinApplication {
             modules(
                 module {
                     single<SweepStaleSessionsUseCase> { sweep }
                     single(named(SessionsModule.ACTIVE_SESSIONS)) { CachedCount { 3L } }
                     single { OstromMetrics(meter) }
+                    single<Logger> { logger }
                 },
             )
         }.koin
-        val failures = mutableListOf<Throwable>()
-        val handler = CoroutineExceptionHandler { _, error -> failures += error }
-        val scope = CoroutineScope(backgroundScope.coroutineContext + handler)
-
-        SessionsModule.start(scope, koin)
-        advanceTimeBy(29.seconds)
-        runCurrent()
-        assertEquals(0, runs)
-        advanceTimeBy(2.seconds)
+        SessionsModule.start(backgroundScope, koin)
         runCurrent()
         assertEquals(1, runs)
-        assertEquals(listOf("first run fails"), failures.map { it.message })
-        advanceTimeBy(30.seconds)
+        assertEquals(listOf("stale session sweep failed"), logger.lines.map { it.first })
+        advanceTimeBy(29.seconds)
+        runCurrent()
+        assertEquals(1, runs)
+        advanceTimeBy(2.seconds)
         runCurrent()
         assertEquals(2, runs, "A failed run does not stop the sweep")
         val active = (meter.collect().single { it.name == "ostrom.sessions.active" } as MetricData.Gauge).points

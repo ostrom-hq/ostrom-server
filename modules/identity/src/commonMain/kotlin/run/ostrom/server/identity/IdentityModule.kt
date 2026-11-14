@@ -11,6 +11,8 @@ import run.ostrom.server.identity.domain.AuditLogImpl
 import run.ostrom.server.identity.domain.AuditRepository
 import run.ostrom.server.identity.domain.AuditVerifier
 import run.ostrom.server.identity.domain.AuditVerifierImpl
+import run.ostrom.server.identity.domain.BootstrapInstanceUseCase
+import run.ostrom.server.identity.domain.BootstrapInstanceUseCaseImpl
 import run.ostrom.server.identity.domain.CompleteMobileSignInUseCase
 import run.ostrom.server.identity.domain.CompleteMobileSignInUseCaseImpl
 import run.ostrom.server.identity.domain.CompleteOAuthSignInUseCase
@@ -47,6 +49,7 @@ import run.ostrom.server.identity.domain.LauncherLoginUseCase
 import run.ostrom.server.identity.domain.LauncherLoginUseCaseImpl
 import run.ostrom.server.identity.domain.LinkIdentityUseCase
 import run.ostrom.server.identity.domain.LinkIdentityUseCaseImpl
+import run.ostrom.server.identity.domain.LinkedIdentities
 import run.ostrom.server.identity.domain.ListAuditEventsUseCase
 import run.ostrom.server.identity.domain.ListAuditEventsUseCaseImpl
 import run.ostrom.server.identity.domain.ListDevicesUseCase
@@ -78,25 +81,21 @@ import run.ostrom.server.identity.domain.RevokeTokenUseCaseImpl
 import run.ostrom.server.identity.domain.RotateTokenUseCase
 import run.ostrom.server.identity.domain.RotateTokenUseCaseImpl
 import run.ostrom.server.identity.domain.SecretGenerator
-import run.ostrom.server.identity.domain.BootstrapInstanceUseCase
-import run.ostrom.server.identity.domain.BootstrapInstanceUseCaseImpl
-import run.ostrom.server.identity.domain.SetupLinksRepository
-import run.ostrom.server.identity.domain.SignUpInvitations
-import run.ostrom.server.identity.domain.GrantSignUpUseCase
-import run.ostrom.server.identity.domain.GrantSignUpUseCaseImpl
-import run.ostrom.server.identity.domain.SignUpMode
-import run.ostrom.server.identity.domain.SignUpPolicy
-import run.ostrom.server.identity.domain.SignUpPolicyImpl
 import run.ostrom.server.identity.domain.SecretHasher
 import run.ostrom.server.identity.domain.ServiceKeyAuditImpl
 import run.ostrom.server.identity.domain.ServiceKeysRepository
 import run.ostrom.server.identity.domain.SetNotificationPreferencesUseCase
 import run.ostrom.server.identity.domain.SetNotificationPreferencesUseCaseImpl
+import run.ostrom.server.identity.domain.SetupLinksRepository
 import run.ostrom.server.identity.domain.SignInLinksRepository
 import run.ostrom.server.identity.domain.SignInMethodsSource
 import run.ostrom.server.identity.domain.SignInServices
 import run.ostrom.server.identity.domain.SignOutDeviceUseCase
 import run.ostrom.server.identity.domain.SignOutDeviceUseCaseImpl
+import run.ostrom.server.identity.domain.SignUpInvitations
+import run.ostrom.server.identity.domain.SignUpMode
+import run.ostrom.server.identity.domain.SignUpPolicy
+import run.ostrom.server.identity.domain.SignUpPolicyImpl
 import run.ostrom.server.identity.domain.StartDeviceAuthorizationUseCase
 import run.ostrom.server.identity.domain.StartDeviceAuthorizationUseCaseImpl
 import run.ostrom.server.identity.domain.StartOAuthSignInUseCase
@@ -105,7 +104,6 @@ import run.ostrom.server.identity.domain.StartWebSessionUseCase
 import run.ostrom.server.identity.domain.StartWebSessionUseCaseImpl
 import run.ostrom.server.identity.domain.UnlockMobileAppUseCase
 import run.ostrom.server.identity.domain.UnlockMobileAppUseCaseImpl
-import run.ostrom.server.identity.domain.LinkedIdentities
 import run.ostrom.server.identity.domain.UsersRepository
 import run.ostrom.server.identity.domain.VerifyMagicLinkUseCase
 import run.ostrom.server.identity.domain.VerifyMagicLinkUseCaseImpl
@@ -125,8 +123,10 @@ import run.ostrom.server.identity.infrastructure.SignInSettings
 import run.ostrom.server.identity.infrastructure.GitHubTokenVerifierImpl
 import run.ostrom.server.identity.infrastructure.IdentityInstanceAccounts
 import run.ostrom.server.identity.infrastructure.IdentityInstanceAuditTrail
+import run.ostrom.server.identity.infrastructure.IdentityInstanceBootstrapper
 import run.ostrom.server.identity.infrastructure.IdentityMigrations
 import run.ostrom.server.identity.infrastructure.IdentityOrgAuditTrail
+import run.ostrom.server.identity.infrastructure.LinkedIdentitiesImpl
 import run.ostrom.server.identity.infrastructure.MagicLinksRepositoryImpl
 import run.ostrom.server.identity.infrastructure.MobileCodesRepositoryImpl
 import run.ostrom.server.identity.infrastructure.MobileTokensRepositoryImpl
@@ -136,14 +136,12 @@ import run.ostrom.server.identity.infrastructure.PhoneUnlockProofsImpl
 import run.ostrom.server.identity.infrastructure.RateLimiterImpl
 import run.ostrom.server.identity.infrastructure.ResendMailSender
 import run.ostrom.server.identity.infrastructure.SecureSecretGenerator
-import run.ostrom.server.identity.infrastructure.IdentityInstanceBootstrapper
-import run.ostrom.server.identity.infrastructure.SetupLinksRepositoryImpl
 import run.ostrom.server.identity.infrastructure.ServiceKeysRepositoryImpl
+import run.ostrom.server.identity.infrastructure.SetupLinksRepositoryImpl
 import run.ostrom.server.identity.infrastructure.Sha256SecretHasher
 import run.ostrom.server.identity.infrastructure.SignInLinksRepositoryImpl
 import run.ostrom.server.identity.infrastructure.TransactionalAuditLog
 import run.ostrom.server.identity.infrastructure.UnconfiguredMailSender
-import run.ostrom.server.identity.infrastructure.LinkedIdentitiesImpl
 import run.ostrom.server.identity.infrastructure.UsersRepositoryImpl
 import run.ostrom.server.identity.infrastructure.WebSessionsRepositoryImpl
 import run.ostrom.server.identity.infrastructure.closeHttpClient
@@ -170,6 +168,8 @@ import run.ostrom.server.kernel.auth.ServiceKeyAudit
 import run.ostrom.server.kernel.auth.SignOutListener
 import run.ostrom.server.kernel.auth.TokenAuthenticator
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.database.repeatDue
+import run.ostrom.server.kernel.database.scheduledWork
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.InstanceBootstrapper
 import run.ostrom.server.kernel.module.ServerModule
@@ -180,12 +180,12 @@ import io.ktor.client.plugins.HttpTimeout
 import io.ktor.server.routing.Route
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
@@ -339,21 +339,24 @@ object IdentityModule : ServerModule {
     /** How long an agent token is kept once expired: it no longer acts, and nothing reads it after its launch. */
     val AGENT_TOKEN_RETENTION: Duration = 7.days
 
+    /** The longest the hourly purge may take. */
+    private val PURGE_TIMEOUT: Duration = 5.minutes
+
     // Every hour, the agent tokens expired more than AGENT_TOKEN_RETENTION ago are deleted: one per launch, they were
-    // kept for ever; and so are the rate limits' windows already over. A failed purge is logged and tried again the
-    // next hour; it never stops the server.
+    // kept for ever; and so are the rate limits' windows already over. One replica at a time runs it (ScheduledWork).
+    // A failed purge is logged and tried again the next hour; it never stops the server.
     override fun start(scope: CoroutineScope, koin: Koin) {
         warnWhenNobodyCanSignUp(scope, koin)
         val tokens = koin.get<ApiTokensRepository>()
         val windows = koin.get<RateLimitWindows>()
         val clock = koin.get<Clock>()
         val logger = koin.get<Logger>()
+        val work = koin.scheduledWork()
         scope.launch {
-            while (true) {
+            work.repeatDue("identity/purge", 1.hours, PURGE_TIMEOUT, logger, "identity purge failed") {
                 val before = clock.now() - AGENT_TOKEN_RETENTION
                 logger.purging("agent token purge failed") { tokens.purgeAgentTokens(before) }
                 logger.purging("rate limit purge failed") { windows.purgeExpired() }
-                delay(1.hours)
             }
         }
     }

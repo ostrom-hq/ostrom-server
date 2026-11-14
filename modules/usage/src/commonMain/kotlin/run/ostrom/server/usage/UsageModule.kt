@@ -6,7 +6,11 @@ import run.ostrom.server.gateway.domain.ModelUsageSink
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.EnvironmentConfigSource
 import run.ostrom.server.kernel.config.InvalidConfigException
+import run.ostrom.server.kernel.database.EveryCallScheduledWork
+import run.ostrom.server.kernel.database.ScheduledWork
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.database.repeatDue
+import run.ostrom.server.kernel.database.scheduledWork
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.secrets.domain.CallerResolver
@@ -42,9 +46,7 @@ import run.ostrom.server.usage.infrastructure.UsageRepositoryImpl
 import run.ostrom.server.usage.presentation.UsageRoutesDependencies
 import run.ostrom.server.usage.presentation.usageRoutes
 import io.ktor.server.routing.Route
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.koin.core.Koin
 import org.koin.core.module.Module
@@ -53,6 +55,7 @@ import org.koin.dsl.module
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 
 /**
  * The usage module's configuration, read once (`OSTROM_USAGE_*`).
@@ -134,31 +137,30 @@ object UsageModule : ServerModule {
         val purge = koin.get<PurgeUsageUseCase>()
         val logger = koin.get<Logger>()
         val feed = koin.get<ReplicatedUsageFeed>()
-        scope.launch { purgeHourly(purge, logger) }
+        val work = koin.scheduledWork()
+        scope.launch { purgeHourly(purge, logger, work) }
         // The live feed of the other replicas' events, and this one's told to them.
         scope.launch { feed.run() }
     }
 
     /**
-     * Purges now, then every hour, until cancelled. A failed run is logged and retried at the next hour.
+     * Purges now, then every hour, on one replica at a time ([ScheduledWork]), until cancelled. A failed run is logged
+     * (its type only: PostgreSQL quotes row values in its message) and retried at the next hour.
      *
      * @param purge The purge.
      * @param logger Where failures go.
+     * @param work The lease of the job, `usage/purge`.
      * @param interval The interval between runs.
      */
-    suspend fun purgeHourly(purge: PurgeUsageUseCase, logger: Logger, interval: Duration = 1.hours) {
-        while (true) {
-            try {
-                purge()
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                // The class only, never the message: PostgreSQL quotes row values in it.
-                logger.warn("usage purge failed", mapOf("error" to error::class.simpleName))
-            }
-            delay(interval)
-        }
-    }
+    suspend fun purgeHourly(
+        purge: PurgeUsageUseCase,
+        logger: Logger,
+        work: ScheduledWork = EveryCallScheduledWork,
+        interval: Duration = 1.hours,
+    ): Nothing = work.repeatDue("usage/purge", interval, PURGE_TIMEOUT, logger, "usage purge failed") { purge() }
+
+    /** The longest a purge may take. */
+    private val PURGE_TIMEOUT: Duration = 5.minutes
 }
 
 /**
