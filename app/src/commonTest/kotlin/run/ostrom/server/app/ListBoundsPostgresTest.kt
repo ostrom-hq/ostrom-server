@@ -356,17 +356,13 @@ class ListBoundsPostgresTest {
             "listCloudClusters" to 403,
             "listInstanceAdmins" to 403,
             "listInstanceSettings" to 403,
-            // A memory search needs its query `q`, which a bare read of the list does not send (400); it is one page
-            // of the best matches, bounded by the memory module.
-            "searchMemory" to 400,
         )
 
         /**
          * The paged lists whose page of A is empty after the minimal bootstrap: nothing of A to replay in B. Their
          * cursor names a row by its id (refused when B cannot see it, as the forged id above is) or is a position in
-         * time the contract accepts as such (MCP calls, usage events: `before` an instant; the memory's `after`, an
-         * `<updatedAt>_<id>` keyset position read under `org_id` and its owner), which row-level security keeps to B's
-         * own rows.
+         * time the contract accepts as such (MCP calls, usage events: `before` an instant), which row-level
+         * security keeps to B's own rows.
          */
         val WITHOUT_FOREIGN_CURSOR = setOf(
             "listApprovals",
@@ -374,7 +370,6 @@ class ListBoundsPostgresTest {
             "listChecks",
             "listCloudSessions",
             "listMcpCalls",
-            "listMemory",
             "listNotifications",
             "listRepos",
             "listSessions",
