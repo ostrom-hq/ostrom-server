@@ -80,8 +80,8 @@ class OrgEventsRepositoryImpl(private val driver: Driver) : OrgEventsRepository 
                 "WHERE org_id = :org_id AND seq > :after AND seq <= :head " +
                 "AND (CAST(:all_types AS BOOLEAN) OR type = ANY(string_to_array(CAST(:types AS TEXT), ','))) " +
                 "AND (member_id = :member_id OR (member_id IS NULL AND (CAST(:whole_org AS BOOLEAN) OR " +
-                "(type IN ('cloud.approval.requested', 'cloud.approval.decided') " +
-                "AND lower(CAST(data AS JSONB) ->> 'approver') = CAST(:login AS TEXT))))) " +
+                "CASE WHEN type IN ('cloud.approval.requested', 'cloud.approval.decided') " +
+                "THEN lower(CAST(data AS JSONB) ->> 'approver') = CAST(:login AS TEXT) ELSE FALSE END))) " +
                 "ORDER BY seq LIMIT :limit"
         const val ERASE_JOURNAL_SQL = "DELETE FROM events_journal WHERE org_id = :org_id"
         const val ERASE_CURSOR_SQL = "DELETE FROM events_cursors WHERE org_id = :org_id"
