@@ -2,12 +2,15 @@
 package run.ostrom.server.gateway.domain
 
 import run.ostrom.server.secrets.domain.Caller
+import run.ostrom.server.sharing.domain.AccountAction
+import run.ostrom.server.sharing.domain.ClaudeAccountRefusals
 import run.ostrom.server.sharing.domain.ProviderRefusal
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Instant
@@ -23,6 +26,85 @@ private fun rateLimited(waits: List<Duration>, now: Instant): InferenceRefusal {
             "Retry in ${wait.inWholeSeconds} s.",
         now + wait,
     )
+}
+
+/**
+ * The refusal of a call a shared account refused until its owner does [action], and no other account or key served:
+ * Ostrom's own words ([AccountAction.explanation]), never the provider's text, nor which account it was. Claude's
+ * terms are the only account action today; another brings its own [RefusalKind].
+ */
+private fun accountActionRefusal(action: AccountAction): InferenceRefusal =
+    InferenceRefusal(RefusalKind.PROVIDER_TERMS_REQUIRED, action.explanation)
+
+/**
+ * How a try that will not go to another account ends, when the gateway answers it itself: a second plain rate limit
+ * stops the call with the shortest wait, and the last account asking its owner to act, with Ostrom's explanation. Null
+ * when the provider's answer is relayed, or when [retry].
+ */
+private fun stopOf(retry: Boolean, rateLimits: List<Duration>, asked: AccountAction?, now: Instant): InferenceRefusal? =
+    when {
+        retry -> null
+        rateLimits.size > RelayInferenceUseCaseImpl.RATE_LIMIT_SWITCHES -> rateLimited(rateLimits, now)
+        asked != null -> accountActionRefusal(asked)
+        else -> null
+    }
+
+/** The refusals that only say no account is left: an account's action explains them better. */
+private val POOL_EMPTY = setOf(RefusalKind.NO_CAPACITY, RefusalKind.NO_CREDENTIAL)
+
+/**
+ * [refusal], unless it only says that no account is left after one refused the call until its owner does [action]:
+ * that is the cause (TeamCode's `accountActionFailure`). A queue's or a budget's refusal stays as it is.
+ */
+private fun explained(refusal: InferenceRefusal, action: AccountAction?): InferenceRefusal =
+    if (action != null && refusal.kind in POOL_EMPTY) accountActionRefusal(action) else refusal
+
+/**
+ * An error answer whose start was read.
+ *
+ * @property answer The answer, relayed whole: the bytes read first, then the rest.
+ * @property whole The whole body, when it ended within the bounds of [peek].
+ */
+private class Peeked(val answer: UpstreamAnswer, val whole: ByteArray?)
+
+/**
+ * Reads the start of an error's body, at most [ClaudeAccountRefusals.MAX_BYTES] and one byte more, for at most
+ * [ClaudeAccountRefusals.READ_TIMEOUT] (TeamCode's bounded inspection). A read that fails fails as the provider's
+ * answer would; the agent leaving cancels it.
+ */
+private suspend fun peek(answer: UpstreamAnswer): Peeked {
+    val bytes = ByteArray(ClaudeAccountRefusals.MAX_BYTES + 1)
+    var size = 0
+    var ended = false
+    withTimeoutOrNull(ClaudeAccountRefusals.READ_TIMEOUT) {
+        while (!ended && size < bytes.size) {
+            val chunk = ByteArray(bytes.size - size)
+            val count = answer.body.read(chunk)
+            if (count < 0) {
+                ended = true
+            } else {
+                chunk.copyInto(bytes, size, 0, count)
+                size += count
+            }
+        }
+    }
+    val read = bytes.copyOf(size)
+    // Ended before the extra byte: at most MAX_BYTES.
+    val whole = read.takeIf { ended }
+    return Peeked(UpstreamAnswer(answer.status, answer.headers, PrefixedSource(read, answer.body)), whole)
+}
+
+/** [prefix], then the rest of [rest]. */
+private class PrefixedSource(private val prefix: ByteArray, private val rest: ByteSource) : ByteSource {
+    private var offset = 0
+
+    override suspend fun read(buffer: ByteArray): Int {
+        if (offset == prefix.size) return rest.read(buffer)
+        val count = minOf(prefix.size - offset, buffer.size)
+        prefix.copyInto(buffer, 0, offset, offset + count)
+        offset += count
+        return count
+    }
 }
 
 /** Bytes read from somewhere, chunk by chunk. */
@@ -82,9 +164,9 @@ interface RelayInferenceUseCase {
 
 /**
  * [RelayInferenceUseCase]: plans, sends, streams the answer back byte for byte while reading its usage, then records
- * the call. A shared account that answers 429 or 401 is observed (cool-down, refresh) and, before any byte reaches the
- * agent, the call moves to the next account, up to [MAX_ATTEMPTS] tries. One that stalls rests a short while, so the
- * next calls go elsewhere.
+ * the call. A shared account that answers 429 or 401 is observed (cool-down, refresh), one whose 400 asks its owner to
+ * act (Claude's terms) rests, and, before any byte reaches the agent, the call moves to the next account, up to
+ * [MAX_ATTEMPTS] tries. One that stalls rests a short while, so the next calls go elsewhere.
  *
  * @param planner Plans each try.
  * @param upstream Sends to the providers.
@@ -188,6 +270,9 @@ class RelayInferenceUseCaseImpl(
         /** The waits of the plain rate limits the call met, one per account (TeamCode's `ProviderFailoverBudget`). */
         private val rateLimits = mutableListOf<Duration>()
 
+        /** What an account that refused the call asked of its owner: it explains the call's end if no other serves. */
+        private var action: AccountAction? = null
+
         /** One try: the finished call, or null to try again on another account. */
         suspend fun attempt(tries: Int): CallState? {
             // After its wait in the queue; a later try already runs and goes back to wait first.
@@ -198,8 +283,8 @@ class RelayInferenceUseCaseImpl(
                 queue(request, running = tries > 1) { planner.plan(caller, call, org, id) }
             }
             return when (plan) {
-                is InferencePlan.Refused -> refuse(plan.refusal, plan.model)
-                is InferencePlan.Busy -> refuse(plan.refusal, plan.model)
+                is InferencePlan.Refused -> refuse(explained(plan.refusal, action), plan.model)
+                is InferencePlan.Busy -> refuse(explained(plan.refusal, action), plan.model)
                 is InferencePlan.Ready -> send(plan, tries)
             }
         }
@@ -277,20 +362,28 @@ class RelayInferenceUseCaseImpl(
             // The provider has answered: writing its windows or a cool-down is bookkeeping, and the database failing
             // there must not turn an answer already paid for into a 502 the agent retries (TeamCode #165).
             if (lease != null) deliver { lease.observe(answer.status, answer.headers) }
+            // A refusal of the account named in its body (Claude's terms) is read before anything reaches the agent.
+            var relayed = answer
+            var asked: AccountAction? = null
+            if (lease != null && lease.inspects(answer.status)) {
+                val read = peek(answer)
+                asked = read.whole?.let(lease::action)?.also { found ->
+                    this.action = found
+                    deliver { lease.required(found) }
+                }
+                relayed = read.answer
+            }
             // An account that cannot serve sends the call to the next one; a plain rate limit, once only.
-            val refusal = lease?.refusal(answer.status, answer.headers)
+            val refusal = if (asked != null) ProviderRefusal.Account else lease?.refusal(answer.status, answer.headers)
             if (refusal is ProviderRefusal.RateLimit) rateLimits += refusal.wait
             val retry = refusal != null && tries < MAX_ATTEMPTS && rateLimits.size <= RATE_LIMIT_SWITCHES
-            when {
-                retry -> Unit
-                rateLimits.size > RATE_LIMIT_SWITCHES -> {
-                    // The provider rate-limited one account after another: the call stops, with the shortest wait.
-                    val refusal = rateLimited(rateLimits, clock.now())
-                    state.status = refusal.kind.status
-                    state.outcome = refusal.kind.code
-                    responder.refuse(call.protocol, refusal)
-                }
-                else -> stream(answer, state)
+            val stop = stopOf(retry, rateLimits, asked, clock.now())
+            if (stop != null) {
+                state.status = stop.kind.status
+                state.outcome = stop.kind.code
+                responder.refuse(call.protocol, stop)
+            } else if (!retry) {
+                stream(relayed, state)
             }
             return retry
         }

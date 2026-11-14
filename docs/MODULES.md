@@ -482,6 +482,17 @@ subscription window) sends the call on to the next account; a plain 429, a rate 
 switches account once only, and a second one answers 429 `provider_rate_limited` with the shortest `Retry-After` the
 provider gave. Either way the account rests as after any 429.
 
+A shared Claude account whose 400 asks its owner to accept Claude's updated Consumer Terms and Privacy Policy is an
+account refusal too (TeamCode #277): only that account rests 60 s, through the same shared cool-down, its tokens
+untouched, and the call tries the next account, then a key. Ostrom never accepts the terms for the owner, and the
+account serves again after its rest, with nothing to reactivate. The gateway reads such a body only on a Claude
+account's 400, at most 4 KiB within 2 s, and recognizes only Claude's error envelope, `invalid_request_error` and the
+whole published message, case and whitespace aside; any other body (a keyword, a request error quoting the message,
+another shape, a larger or unfinished body) is relayed byte for byte as before, and nothing in an accepted stream is
+read. When no other account or key serves the call, the agent gets 503 `provider_terms_required` with
+`x-should-retry: false` and Ostrom's own explanation (ask the subscription's owner to sign in at https://claude.ai and
+accept them), never the provider's text, which is not logged either: the log names the account and the code.
+
 A model call waits for its turn in the org's admission queue (TeamCode's admission), shared by every replica in
 PostgreSQL (`gateway_admissions`, `gateway_admission_turns`, under an advisory lock of the org): while every shared
 account it may use is busy, or while its member already runs as many calls as their limit (`memberConcurrency` in
@@ -495,8 +506,8 @@ polling loses its turn within 5 s and its place within 15 s, and a running call'
 every 5. Waiting holds no account, no budget and no database connection. The inference API's queue route counts the
 waiting calls; every gateway refusal carries its code in `x-ostrom-error`. A refusal retrying does not change also sends
 `x-should-retry: false`, as TeamCode does (e7dbca54): a spent budget (`budget_exhausted`, `budget_insufficient`), an
-invalid request, credential or model, no account nor key (`no_credential`), and any refusal whose `retry-after` is
-more than two minutes away. Claude Code and the Anthropic SDKs then show the cause at once instead of retrying a
+invalid request, credential or model, no account nor key (`no_credential`), Claude's terms to accept
+(`provider_terms_required`), and any refusal whose `retry-after` is more than two minutes away. Claude Code and the Anthropic SDKs then show the cause at once instead of retrying a
 state only a new period or an admin changes.
 
 A call sent with `x-ostrom-client-request-id` (a lowercase UUID) can be stopped by its member, on whichever replica

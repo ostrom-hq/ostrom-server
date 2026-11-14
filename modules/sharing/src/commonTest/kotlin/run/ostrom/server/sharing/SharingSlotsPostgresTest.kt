@@ -54,6 +54,7 @@ class SharingSlotsPostgresTest : SharingPostgresHarness() {
         koin.get(),
         NoAccountSpendReader(),
         Clock.System,
+        logger = JsonLogger(LogLevel.ERROR, sink = {}),
     )
 
     @Test

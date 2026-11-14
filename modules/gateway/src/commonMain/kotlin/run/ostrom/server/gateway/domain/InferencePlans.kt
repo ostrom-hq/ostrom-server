@@ -144,6 +144,12 @@ enum class RefusalKind(
      * `provider_rate_limited`).
      */
     PROVIDER_RATE_LIMITED(TOO_MANY_REQUESTS, "rate_limit_error", "rate_limit_exceeded"),
+
+    /**
+     * A shared Claude account refused the call until its owner accepts Claude's updated terms, and no other account
+     * or key served it (TeamCode's `provider_terms_required`): retrying changes nothing until the owner acts.
+     */
+    PROVIDER_TERMS_REQUIRED(SERVICE_UNAVAILABLE, "api_error", "server_error", retryable = false),
     ;
 
     /** The code of the refusal, in `x-ostrom-error` and an OpenAI error's `code`. */

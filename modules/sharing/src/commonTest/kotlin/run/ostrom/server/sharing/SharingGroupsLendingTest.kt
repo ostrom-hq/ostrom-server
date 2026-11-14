@@ -2,6 +2,8 @@
 package run.ostrom.server.sharing
 
 import run.ostrom.server.kernel.auth.MemberLogins
+import run.ostrom.server.kernel.logging.JsonLogger
+import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.sharing.domain.AccountGroups
 import run.ostrom.server.sharing.domain.AccountLimits
 import run.ostrom.server.sharing.domain.AccountProvider
@@ -88,6 +90,7 @@ class SharingGroupsLendingTest {
         NoAccountSpendReader(),
         clock,
         groups,
+        JsonLogger(LogLevel.ERROR, sink = {}),
     )
 
     private suspend fun account(label: String, limits: AccountLimits) = share(
