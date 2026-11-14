@@ -12,6 +12,7 @@ import run.ostrom.server.events.EventsModule
 import run.ostrom.server.gates.GatesModule
 import run.ostrom.server.gateway.GatewayModule
 import run.ostrom.server.governance.GovernanceModule
+import run.ostrom.server.hooks.HooksModule
 import run.ostrom.server.identity.IdentityModule
 import run.ostrom.server.importer.ImportModule
 import run.ostrom.server.instance.InstanceModule
@@ -67,6 +68,7 @@ fun serverModules(): List<ServerModule> = listOf(
     AutomationsModule,
     ArtifactsModule,
     SkillsModule,
+    HooksModule,
     // After the sessions, automations (waits) and artifacts it reads.
     TodosModule,
     GitHubIntegrationModule,

@@ -51,6 +51,10 @@ internal val SERVICE_KEY_ROUTES: Map<String, Set<String>> = mapOf(
     "skills:publish" to setOf("POST /api/v1/skills/{name}/versions"),
     "skills:pin" to emptySet(),
     "skills:assign" to emptySet(),
+    // Its delivery, as the CLI reads it; never the catalog, a version's code, nor a member's delivery.
+    "hooks:read" to setOf("GET /api/v1/hook-delivery", "GET /api/v1/hook-delivery/{name}/{version}"),
+    // A CI's publication, which never pins.
+    "hooks:publish" to setOf("POST /api/v1/hooks/{name}/versions"),
     "team:read" to setOf(
         "GET /api/v1/usage", "GET /api/v1/usage/summary", "GET /api/v1/usage/events", "GET /api/v1/usage/live",
         "GET /api/v1/mcp/usage", "GET /api/v1/spending", "GET /api/v1/budgets", "GET /api/v1/accounts",

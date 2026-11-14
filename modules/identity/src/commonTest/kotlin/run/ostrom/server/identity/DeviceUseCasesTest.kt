@@ -79,10 +79,11 @@ class DeviceUseCasesTest {
         // `ostrom logs`), MCP servers (`ostrom claude`) and rules (`ostrom init`, `ostrom rules list`), writing none;
         // it starts, stops and attaches to its person's cloud sessions (`ostrom claude --cloud`, `ostrom attach`),
         // reads its person's own environment values for the agent `ostrom claude` starts, syncs the skills delivered
-        // to its person and publishes their personal ones (`ostrom skills`).
+        // to its person and publishes their personal ones (`ostrom skills`), and reads the hooks delivered to them
+        // (`ostrom hooks`).
         val expected = setOf(
             "profile:read", "orgs:read", "workflows:read", "sessions:write", "receipts:read", "gates:read", "mcp:read",
-            "rules:read", "cloud:write", "environment:read", "skills:read", "skills:write",
+            "rules:read", "cloud:write", "environment:read", "skills:read", "skills:write", "hooks:read",
         )
         assertEquals(expected, approved.token.token.scopes)
         assertEquals("osc_secret2", approved.token.secret)

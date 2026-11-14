@@ -10,7 +10,7 @@ class ServiceKeyScopesTest {
     @Test
     fun theReservedScopesAreTheAdministratorsAndNeverACiScope() {
         assertEquals(
-            setOf("team:read", "cloud:admin", "skills:publish", "skills:pin", "skills:assign"),
+            setOf("team:read", "cloud:admin", "skills:publish", "skills:pin", "skills:assign", "hooks:publish"),
             ServiceKeyScopes.RESERVED,
         )
         assertEquals(setOf("sessions:write", "rules:read"), ServiceKeyScopes.CI)

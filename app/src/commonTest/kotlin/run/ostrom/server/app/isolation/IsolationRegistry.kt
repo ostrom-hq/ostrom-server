@@ -13,6 +13,7 @@ import run.ostrom.server.app.isolation.Seed.ENV_PERSONAL
 import run.ostrom.server.app.isolation.Seed.ENV_VARIANT
 import run.ostrom.server.app.isolation.Seed.GATE
 import run.ostrom.server.app.isolation.Seed.GROUP
+import run.ostrom.server.app.isolation.Seed.HOOK
 import run.ostrom.server.app.isolation.Seed.INVITATION
 import run.ostrom.server.app.isolation.Seed.LAUNCH
 import run.ostrom.server.app.isolation.Seed.LINK_SLUG
@@ -361,6 +362,25 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/members/{memberId}/skill-delivery" to target("memberId" to MEMBER_ID),
     "GET /api/v1/members/{memberId}/skill-installations" to target("memberId" to MEMBER_ID),
 
+    // Hooks: the team catalog (the console's), its publication by a CI's key, the delivery.
+    "GET /api/v1/hooks" to Case.Target(),
+    "GET /api/v1/hooks/{name}/versions" to target("name" to HOOK),
+    "POST /api/v1/hooks/{name}/versions" to target("name" to HOOK, body = HOOK_BODY, admin = true),
+    "GET /api/v1/hooks/{name}/versions/{version}" to
+        Case.Target(mapOf("name" to of(HOOK), "version" to Param.Fixed("1.0.0"))),
+    "PUT /api/v1/hooks/{name}/pin" to target("name" to HOOK, body = """{"version": "1.0.0"}""", admin = true),
+    "DELETE /api/v1/hooks/{name}/pin" to target("name" to HOOK, admin = true),
+    "PUT /api/v1/hooks/{name}/audience" to target("name" to HOOK, body = """{"allMembers": true}""", admin = true),
+    "GET /api/v1/hooks/{name}/assignments" to target("name" to HOOK),
+    "PUT /api/v1/hooks/{name}/assignments/{memberId}" to
+        target("name" to HOOK, "memberId" to MEMBER_ID, body = """{"decision": "allow"}""", admin = true),
+    "DELETE /api/v1/hooks/{name}/assignments/{memberId}" to
+        target("name" to HOOK, "memberId" to MEMBER_ID, admin = true),
+    "GET /api/v1/hook-delivery" to Case.Target(),
+    "GET /api/v1/hook-delivery/{name}/{version}" to
+        Case.Target(mapOf("name" to of(HOOK), "version" to Param.Fixed("1.0.0"))),
+    "GET /api/v1/members/{memberId}/hook-delivery" to target("memberId" to MEMBER_ID),
+
     // Automations and waits.
     "GET /api/v1/automations" to Case.Target(),
     "POST /api/v1/automations" to Case.Target(body = AUTOMATION_BODY),
@@ -554,6 +574,10 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
 // A skill version: its one file, SKILL.md, base64 of "# Skill".
 private const val SKILL_BODY = """{"version": "1.0.0",""" +
     """ "files": [{"path": "SKILL.md", "contentBase64": "IyBTa2lsbA=="}]}"""
+
+// A hook version: its one executable file, run.sh, base64 of "#!/bin/sh\n", run on Stop.
+internal const val HOOK_BODY = """{"version": "1.0.0", "definition": {"events": ["Stop"], "command": "run.sh"},""" +
+    """ "files": [{"path": "run.sh", "mode": "executable", "contentBase64": "IyEvYmluL3NoCg=="}]}"""
 
 private const val AUTOMATION_BODY = """{"name": "Taken", "trigger": {"kind": "webhook"},""" +
     """ "action": {"prompt": "Fix"}, "variables": [], "overlap": "allow"}"""

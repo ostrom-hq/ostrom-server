@@ -159,7 +159,7 @@ class ServiceKeysAndDevicesTest {
         }
         assertEquals(setOf("sessions:write", "rules:read"), CI_SERVICE_KEY_SCOPES)
         assertEquals(
-            setOf("team:read", "cloud:admin", "skills:publish", "skills:pin", "skills:assign"),
+            setOf("team:read", "cloud:admin", "skills:publish", "skills:pin", "skills:assign", "hooks:publish"),
             RESERVED_SERVICE_KEY_SCOPES,
         )
     }

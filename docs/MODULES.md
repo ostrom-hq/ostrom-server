@@ -465,6 +465,28 @@ run one after the other on any replica, and the audit events are written once th
 is the workstation (`GET /api/v1/devices`): it alone reports what it installed, a report never grants nor revokes
 anything, and the rows go with the skill.
 
+### Module `hooks`
+
+The organization's team hooks, ported from TeamCode (`docs/hooks.md`). A hook runs code on members' computers with
+their rights, so it reaches them through three locks: a CI publishes versions with a service key holding
+`hooks:publish` (a reserved scope, created by an owner or an admin), but only an owner or an admin pins a version, from
+the console; only members set to yes receive it, or every member not set to no when its audience is all members; and
+each member approves each version on their computer before the CLI installs it. A publication never pins, and a key
+asks for all members only while nothing is pinned or when the hook already is for all members (403
+`hook_audience_requires_administrator` otherwise, nothing stored): the administrator's pin approves the code and who
+runs it together.
+
+A version is immutable: its definition (`events` among Claude Code's, each once; a `matcher` of 1 to 256 characters
+without control characters; a `timeoutSeconds` of 1 to 600, 60 by default; `command`, an executable file of the
+artifact) and its files (1 to 50, at most 1 MiB, paths as the skills', stored in PostgreSQL) never change. The digest
+is `sha256:` over `hook\0<events sorted, comma-separated>\0<matcher or empty>\0<command>\0<timeout>\n` followed
+by the skills' file lines, so a client verifies what it will run and when. The same label published again answers 200
+`created: false` with the same digest, 409 `hook_version_conflict` with another. Limits: 100 hooks, 200 versions per
+hook. An administrator reads any version's code before pinning it (`readHookVersion`);
+a member downloads only their effective pinned version, and both are checked against the digest (500
+`hook_integrity`). There is no retirement and no personal hook, as in TeamCode. The catalog's writes take the
+organization's hook lock, as the skills' do, and each change is audited once committed, a key's with its id.
+
 ## Commands
 
 | Command | What it does | Exit |
@@ -500,6 +522,7 @@ anonymous call gets 401 `unauthorized`. A module lists a key of ostrom-core's `S
 | `gates` | `gates.v1` | — |
 | `gateway` | `inference.v1`, `inference.queue.v1`, `inference.cancel.v1` | — (an organization can set its own provider keys) |
 | `governance` | `governance.v1` | — |
+| `hooks` | `hooks.v1` | — |
 | `identity` | `audit.v1` | — |
 | `import` | `import.teamcode.v1` | — |
 | `integrations-github` | `github.v1`; `github.link.v1` | a GitHub App: the environment's (`OSTROM_GITHUB_APP_ID` or `_SLUG`) or the manifest flow's; the latter once that App's OAuth client (id and secret) is known |

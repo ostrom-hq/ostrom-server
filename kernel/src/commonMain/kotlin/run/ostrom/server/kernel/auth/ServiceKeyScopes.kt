@@ -28,11 +28,14 @@ object ServiceKeyScopes {
     /** With [SKILLS_PUBLISH]: delivers a skill to all members at publication. */
     const val SKILLS_ASSIGN: String = "skills:assign"
 
+    /** Publishes team hook versions, never pinning one (a CI's publication, TeamCode's `hooks:publish`). */
+    const val HOOKS_PUBLISH: String = "hooks:publish"
+
     /**
      * The scopes reserved to an owner or an admin: only they create a key with one, and the key stops at once when its
      * creator is no longer one.
      */
-    val RESERVED: Set<String> = setOf(TEAM_READ, CLOUD_ADMIN, SKILLS_PUBLISH, SKILLS_PIN, SKILLS_ASSIGN)
+    val RESERVED: Set<String> = setOf(TEAM_READ, CLOUD_ADMIN, SKILLS_PUBLISH, SKILLS_PIN, SKILLS_ASSIGN, HOOKS_PUBLISH)
 
     /** What a CI calls: the key acts for its organization, audited, and never as a person. */
     val CI: Set<String> = setOf("sessions:write", "rules:read")
