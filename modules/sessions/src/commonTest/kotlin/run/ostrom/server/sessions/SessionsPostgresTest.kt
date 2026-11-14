@@ -31,6 +31,7 @@ import run.ostrom.server.sessions.domain.services.SessionCosts
 import run.ostrom.server.sessions.domain.usecases.SweepStaleSessionsUseCase
 import run.ostrom.server.sessions.fakes.SettableClock
 import run.ostrom.server.sessions.infrastructure.SessionsGateGuard
+import run.ostrom.server.sessions.presentation.SessionActivityDto
 import run.ostrom.server.sessions.presentation.SessionDto
 import run.ostrom.server.sessions.presentation.SessionResponse
 import run.ostrom.server.sessions.presentation.SessionScopes
@@ -192,6 +193,51 @@ class SessionsPostgresTest {
         assertEquals(HttpStatusCode.Conflict, server.call("agent:a:launch-1", "/api/v1/sessions/s-1/seen", seen).status)
         val after = server.call("agent:a:launch-1", "/api/v1/sessions/s-1/alive", "{}").body<SessionDto>()
         assertEquals(true to false, after.ended to after.lost, "Ended by its launcher: not lost")
+    }
+
+    @Test
+    fun theAgentsActivityIsStoredShownWhileOpenAndRefusedAfterTheEnd() = sessionsTest { server ->
+        server.start("agent:a:launch-1", "s-1")
+        val path = "/api/v1/sessions/s-1/activity"
+        val observed = clock.now.toString()
+        val report = """{"state":"waiting_for_human","observedAt":"$observed"}"""
+        val waiting = server.call("agent:a:launch-1", path, report)
+        assertEquals(HttpStatusCode.OK, waiting.status, waiting.bodyAsText())
+        val body = waiting.body<SessionActivityDto>()
+        assertEquals(SessionActivityDto("s-1", "waiting_for_human", clock.now.toString(), false), body)
+        clock.now += 1.seconds
+        val late = """{"state":"working","observedAt":"${Instant.parse(observed) - 1.seconds}"}"""
+        assertEquals(true, server.call("user:a:lyes", path, late).body<SessionActivityDto>().superseded)
+
+        val listed = server.call("user:a:lyes", "/api/v1/sessions").body<SessionsPage>().items.single()
+        assertEquals("waiting_for_human" to body.since, listed.activity to listed.activitySince, "read back")
+        val byAdmin = server.call("user:a:rev-b", "/api/v1/sessions/s-1").body<SessionResponse>().session
+        assertEquals("waiting_for_human", byAdmin.activity, "the team's view shows it")
+
+        for (bad in listOf("""{"state":"idle"}""", """{"state":"working","observedAt":"yesterday"}""")) {
+            val refused = server.call("agent:a:launch-1", path, bad)
+            assertEquals(HttpStatusCode.BadRequest, refused.status, bad)
+            assertTrue("invalid_session_activity" in refused.bodyAsText(), refused.bodyAsText())
+        }
+        assertEquals(HttpStatusCode.Forbidden, server.call("agent:a:launch-2", path, """{"state":"working"}""").status)
+        assertEquals(HttpStatusCode.Forbidden, server.call("reader:a:lyes", path, """{"state":"working"}""").status)
+        assertEquals(HttpStatusCode.NotFound, server.call("agent:b:launch-1", path, """{"state":"working"}""").status)
+
+        // a silence clears a `working` reported before it; a report observed before that one changes nothing
+        server.call("agent:a:launch-1", "/api/v1/sessions/s-1/alive", "{}")
+        server.call("agent:a:launch-1", path, """{"state":"working","observedAt":"${clock.now}"}""")
+        clock.now += 90.seconds
+        server.call("agent:a:launch-1", "/api/v1/sessions/s-1/alive", "{}")
+        val older = """{"state":"working","observedAt":"${clock.now - 2.minutes}"}"""
+        val cleared = server.call("agent:a:launch-1", path, older).body<SessionActivityDto>()
+        assertEquals(SessionActivityDto("s-1", null, null, true), cleared)
+
+        server.call("agent:a:launch-1", "/api/v1/sessions/s-1/end", """{"exitCode":0}""")
+        val ended = server.call("user:a:lyes", "/api/v1/sessions/s-1").body<SessionResponse>().session
+        assertEquals(null to null, ended.activity to ended.activitySince, "a guess after the end")
+        val after = server.call("agent:a:launch-1", path, """{"state":"working"}""")
+        assertEquals(HttpStatusCode.Conflict, after.status)
+        assertTrue("session_ended" in after.bodyAsText(), after.bodyAsText())
     }
 
     @Test

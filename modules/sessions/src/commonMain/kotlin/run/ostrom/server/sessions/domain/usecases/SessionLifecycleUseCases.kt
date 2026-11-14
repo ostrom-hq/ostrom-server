@@ -9,6 +9,7 @@ import run.ostrom.server.sessions.domain.models.Reopened
 import run.ostrom.server.sessions.domain.models.SeenItem
 import run.ostrom.server.sessions.domain.models.Session
 import run.ostrom.server.sessions.domain.models.SessionAccess
+import run.ostrom.server.sessions.domain.models.SessionActivityState
 import run.ostrom.server.sessions.domain.models.SessionClosedException
 import run.ostrom.server.sessions.domain.models.SessionNotFoundException
 import run.ostrom.server.sessions.domain.models.SessionResumedElsewhereException
@@ -115,7 +116,7 @@ class SessionAliveUseCaseImpl(
         val session = lock(id) ?: throw SessionNotFoundException()
         SessionAccess.ensureOwner(actor, session)
         if (session.endedAt != null) return@transaction session
-        session.copy(lastSeenAt = clock.now()).also { update(it) }
+        SessionActivityRules.afterSignOfLife(session, clock.now()).also { update(it) }
     }
 }
 
@@ -162,9 +163,23 @@ class ReopenSessionUseCaseImpl(
             last.endedAt == null -> throw SessionResumedElsewhereException(closed.rootId, last.id)
             else -> {
                 val opening = Opening.of(actor, reasonAfter(last))
-                Reopened(segments.open(tx, actor.orgId, closed.dev, nextOf(closed), opening), true)
+                val opened = segments.open(tx, actor.orgId, closed.dev, nextOf(closed), opening)
+                Reopened(waitingCarried(tx, last, opened), true)
             }
         }
+    }
+
+    // A person still has to answer the agent of a segment lost while it waited: the reopened one waits too. A segment
+    // its launcher ended carries nothing over.
+    private suspend fun waitingCarried(tx: SessionsTransaction, last: Session, opened: Session): Session {
+        if (!last.lost || last.activity != SessionActivityState.WAITING_FOR_HUMAN) return opened
+        val carried = opened.copy(
+            activity = last.activity,
+            activityAt = last.activityAt,
+            activityObservedAt = last.activityObservedAt,
+        )
+        tx.update(carried)
+        return carried
     }
 
     private fun nextOf(closed: Session) = StartSession(
