@@ -127,6 +127,22 @@ class WebhooksPostgresTest {
             setBody(CreateWebhookRequest(url, listOf("cloud.wait.created"), "Support"))
         }
 
+    /** Organization B neither sees nor changes A's webhook [id]. */
+    private suspend fun TestServer.assertOrganizationBCannotReach(id: String, url: String) {
+        val ofB = client.get("/api/v1/webhooks") { bearerAuth("owner-b") }.body<WebhookList>()
+        assertEquals(emptyList(), ofB.items)
+        for (path in listOf("/api/v1/webhooks/$id", "/api/v1/webhooks/$id/deliveries")) {
+            assertEquals(HttpStatusCode.NotFound, client.get(path) { bearerAuth("owner-b") }.status, path)
+        }
+        for (path in listOf("/api/v1/webhooks/$id/test", "/api/v1/webhooks/$id/rotate-secret")) {
+            assertEquals(HttpStatusCode.NotFound, client.post(path) { bearerAuth("owner-b") }.status, path)
+        }
+        val changed = change("owner-b", id, UpdateWebhookRequest(1, url, listOf("cloud.todo")))
+        assertEquals(HttpStatusCode.NotFound, changed.status)
+        val deleted = client.delete("/api/v1/webhooks/$id") { bearerAuth("owner-b") }
+        assertEquals(HttpStatusCode.NotFound, deleted.status)
+    }
+
     private suspend fun TestServer.change(token: String, id: String, request: UpdateWebhookRequest): HttpResponse =
         client.put("/api/v1/webhooks/$id") {
             bearerAuth(token)
@@ -163,18 +179,7 @@ class WebhooksPostgresTest {
         val listed = server.client.get("/api/v1/webhooks") { bearerAuth("owner-a") }.body<WebhookList>()
         assertEquals(listOf(id), listed.items.map { it.id })
 
-        // Organization B neither sees nor changes it.
-        val ofB = server.client.get("/api/v1/webhooks") { bearerAuth("owner-b") }.body<WebhookList>()
-        assertEquals(emptyList(), ofB.items)
-        for (path in listOf("/api/v1/webhooks/$id", "/api/v1/webhooks/$id/deliveries")) {
-            assertEquals(HttpStatusCode.NotFound, server.client.get(path) { bearerAuth("owner-b") }.status, path)
-        }
-        for (path in listOf("/api/v1/webhooks/$id/test", "/api/v1/webhooks/$id/rotate-secret")) {
-            assertEquals(HttpStatusCode.NotFound, server.client.post(path) { bearerAuth("owner-b") }.status, path)
-        }
-        assertEquals(HttpStatusCode.NotFound, server.change("owner-b", id, UpdateWebhookRequest(1, url, todo)).status)
-        val deleted = server.client.delete("/api/v1/webhooks/$id") { bearerAuth("owner-b") }
-        assertEquals(HttpStatusCode.NotFound, deleted.status)
+        server.assertOrganizationBCannotReach(id, url)
         val odd = server.client.get("/api/v1/webhooks/not-a-uuid") { bearerAuth("owner-a") }
         assertEquals(HttpStatusCode.NotFound, odd.status)
 

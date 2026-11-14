@@ -55,6 +55,7 @@ enum class DeliveryState(val wire: String) {
     FAILED("failed"),
     ;
 
+    /** Reads the states' wire names. */
     companion object {
         /**
          * The state of a wire name.

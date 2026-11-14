@@ -114,7 +114,7 @@ class WebhooksRepositoryImpl(private val driver: Driver) : WebhooksRepository {
                 Statement.create("DELETE FROM events_webhooks WHERE org_id = :org_id AND id = :id RETURNING id")
                     .bind("org_id", orgId).bind("id", id),
             ).getOrThrow()
-            if (gone.isEmpty()) throw WebhookNotFoundException()
+            if (gone.none()) throw WebhookNotFoundException()
         }
     }
 

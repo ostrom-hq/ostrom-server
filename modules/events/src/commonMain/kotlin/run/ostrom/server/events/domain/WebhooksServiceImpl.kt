@@ -47,7 +47,7 @@ class WebhooksServiceImpl(
         types: List<String>,
         description: String,
     ): CreatedWebhookSecret {
-        val kept = validate(url, types, description)
+        val kept = targets.validate(url, types, description)
         if (!targets.allows(url)) throw WebhookHostNotAllowedException()
         val id = newId()
         val secret = signer.newSecret()
@@ -82,7 +82,7 @@ class WebhooksServiceImpl(
         description: String,
         enabled: Boolean?,
     ): WebhookSubscription {
-        val kept = validate(url, types, description)
+        val kept = targets.validate(url, types, description)
         // A webhook kept on its URL can still be paused, relabelled or deleted after the operator withdrew private
         // targets (its deliveries are refused meanwhile); a new URL must pass, and a paused one on a refused URL
         // cannot be enabled again. Saving an enabled one unchanged stays possible: it delivers nothing either way.
@@ -138,19 +138,24 @@ class WebhooksServiceImpl(
         val details = auditDetails(*facts)
         trail.record(OrgAuditRecord(actor.orgId, actor.principal, event, "webhook", id.toString(), details))
     }
+}
 
-    private fun validate(url: String, types: List<String>, description: String): Set<String> {
-        targets.requireWellFormed(url)
-        val kept = types.toSet()
-        val problem = when {
-            kept.isEmpty() -> "Choose at least one event type."
-            kept.size > EventRules.MAX_TYPES || kept.any { OrgEventType.parse(it) == null } ->
-                "Name at most ${EventRules.MAX_TYPES} event types of the feed."
-            description.length > WebhookRules.MAX_DESCRIPTION || description.any { it.isISOControl() } ->
-                "The description is at most ${WebhookRules.MAX_DESCRIPTION} characters, without control characters."
-            else -> null
-        }
-        if (problem != null) throw InvalidWebhookException(problem)
-        return kept
+/**
+ * The kept event types of a webhook, after refusing a URL, types or description that break a rule.
+ *
+ * @throws InvalidWebhookException When one does.
+ */
+private fun WebhookTargets.validate(url: String, types: List<String>, description: String): Set<String> {
+    requireWellFormed(url)
+    val kept = types.toSet()
+    val problem = when {
+        kept.isEmpty() -> "Choose at least one event type."
+        kept.size > EventRules.MAX_TYPES || kept.any { OrgEventType.parse(it) == null } ->
+            "Name at most ${EventRules.MAX_TYPES} event types of the feed."
+        description.length > WebhookRules.MAX_DESCRIPTION || description.any { it.isISOControl() } ->
+            "The description is at most ${WebhookRules.MAX_DESCRIPTION} characters, without control characters."
+        else -> null
     }
+    if (problem != null) throw InvalidWebhookException(problem)
+    return kept
 }

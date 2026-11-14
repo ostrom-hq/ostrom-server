@@ -43,9 +43,12 @@ internal suspend fun PrincipalOrgResolver.webhookActorOf(
     principal: AuthenticatedPrincipal,
     write: Boolean,
 ): WebhookActor {
-    if (!principal.managesWebhooks(write)) throw WebhooksForbiddenException()
-    val member = resolve(principal, null) ?: throw principal.outsideOrganization()
-    if (member.role !in WEBHOOK_ROLES) throw WebhooksForbiddenException()
+    val member = if (principal.managesWebhooks(write)) {
+        resolve(principal, null) ?: throw principal.outsideOrganization()
+    } else {
+        null
+    }
+    if (member == null || member.role !in WEBHOOK_ROLES) throw WebhooksForbiddenException()
     return WebhookActor(member.orgId, member.memberId, principal)
 }
 
