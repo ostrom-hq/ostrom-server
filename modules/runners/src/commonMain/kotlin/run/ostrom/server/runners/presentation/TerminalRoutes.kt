@@ -8,6 +8,8 @@ import run.ostrom.server.kernel.http.openConnections
 import run.ostrom.server.runners.domain.Caller
 import run.ostrom.server.runners.domain.CloudSessionNotFoundException
 import run.ostrom.server.runners.domain.InvalidCloudSessionRequestException
+import run.ostrom.server.runners.domain.TerminalHosts
+import run.ostrom.server.runners.infrastructure.KtorTerminalForwarder
 import run.ostrom.server.runners.infrastructure.TerminalRelay
 import io.ktor.http.HttpHeaders
 import io.ktor.server.resources.post
@@ -23,9 +25,12 @@ import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
 import io.ktor.websocket.close
 import io.ktor.websocket.readBytes
-import io.ktor.websocket.readText
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -66,6 +71,9 @@ object TerminalCloseCodes {
     const val NOT_FOUND: Short = 4404
     const val TOO_SLOW: Short = 4408
     const val CONFLICT: Short = 4409
+
+    /** To another replica relaying its member: the runner is not here (any more), look again where it is. */
+    const val MOVED: Short = 4421
 }
 
 /** Terminal frames serializer: the `type` field names the frame. */
@@ -116,7 +124,11 @@ fun Route.terminalRoutes(dependencies: TerminalRoutesDependencies) = with(depend
             } catch (error: OstromException) {
                 return@webSocket close(closeReason(error))
             }
-            attachClient(dependencies, id)
+            if (call.parameters[KtorTerminalForwarder.HOP_PARAMETER] == "1") {
+                attachHop(relay, id)
+            } else {
+                attachMember(dependencies, caller, id)
+            }
         }
         webSocket("/api/v1/cloud/runner/terminal") {
             val token = bearerToken()
@@ -125,36 +137,58 @@ fun Route.terminalRoutes(dependencies: TerminalRoutesDependencies) = with(depend
             if (token == null || id == null || epoch == null) {
                 return@webSocket close(CloseReason(TerminalCloseCodes.UNAUTHORIZED, NEED_RUNNER_CREDENTIAL))
             }
-            try {
+            val session = try {
                 authenticateRunner(token, id, epoch)
             } catch (error: OstromException) {
                 return@webSocket close(closeReason(error))
             }
             val link = relay.connectRunner(id, epoch)
                 ?: return@webSocket close(CloseReason(TerminalCloseCodes.CONFLICT, NEWER_EXECUTION))
-            attachRunner(relay, id, link)
+            attachRunner(dependencies, session.orgId, id, link)
         }
     }
     get("/api/v1/cloud/sessions/{id}/terminal") { throw InvalidCloudSessionRequestException(NEED_UPGRADE) }
     get("/api/v1/cloud/runner/terminal") { throw InvalidCloudSessionRequestException(NEED_UPGRADE) }
 }
 
-/** Pumps a runner's PTY: its output to the relay, the clients' input and resizes to it. */
+/**
+ * Pumps a runner's PTY: its output to the relay, the clients' input and resizes to it. With other replicas, this one
+ * holds the session in [TerminalHosts] while the socket is open, so that members attached elsewhere are relayed here.
+ */
 private suspend fun DefaultWebSocketServerSession.attachRunner(
-    relay: TerminalRelay,
+    dependencies: TerminalRoutesDependencies,
+    orgId: Uuid,
     id: Uuid,
     link: TerminalRelay.RunnerLink,
 ) {
+    val relay = dependencies.relay
+    val replica = dependencies.replica
+    val hosts = replica?.hosts
     try {
+        hosts?.let { quietly { it.hold(orgId, id, link.epoch) } }
         coroutineScope {
             val writer = launch { forwardToRunner(link.outbound) { send(it) } }
+            val renewing = replica?.let {
+                launch {
+                    while (true) {
+                        delay(it.renewEvery)
+                        quietly { it.hosts.renew(orgId, id, link.epoch) }
+                    }
+                }
+            }
             for (frame in incoming) {
                 if (frame is Frame.Binary) relay.output(id, link, frame.readBytes())
             }
             writer.cancel()
+            renewing?.cancel()
         }
     } finally {
-        relay.disconnectRunner(id, link)
+        withContext(NonCancellable) {
+            // A socket another replaced (the runner came back here) leaves the hold to its successor; one the database
+            // could not give back ends with its lease.
+            val current = relay.disconnectRunner(id, link)
+            if (current) hosts?.let { quietly { it.release(orgId, id, link.epoch) } }
+        }
     }
 }
 
@@ -179,38 +213,34 @@ private fun DefaultWebSocketServerSession.bearerToken(): String? {
 
 private const val BEARER = "Bearer "
 
-private suspend fun DefaultWebSocketServerSession.attachClient(dependencies: TerminalRoutesDependencies, id: Uuid) {
-    val relay = dependencies.relay
-    val link = relay.connectClient(id)
-    try {
-        coroutineScope {
-            val writer = launch { forwardToClient(link.outbound) { send(it) } }
-            for (frame in incoming) {
-                when (frame) {
-                    is Frame.Binary -> {
-                        relay.input(id, frame.readBytes())
-                        dependencies.activity.touch(id)
-                    }
-                    is Frame.Text -> resize(relay, id, frame.readText())
-                    else -> Unit
-                }
-            }
-            writer.cancel()
-        }
-    } finally {
-        relay.disconnectClient(id, link)
-    }
-}
-
-private suspend fun DefaultWebSocketServerSession.resize(relay: TerminalRelay, id: Uuid, text: String) {
+/**
+ * Applies a client's text frame: a resize within bounds goes to the runner, one out of bounds is ignored.
+ *
+ * @return False when the frame is not one of the protocol's: the socket is then closed.
+ */
+internal suspend fun resized(relay: TerminalRelay, id: Uuid, text: String): Boolean {
     val control = try {
         TerminalJson.decodeFromString(TerminalControl.serializer(), text)
     } catch (_: IllegalArgumentException) {
         // SerializationException included: it extends IllegalArgumentException.
-        return close(CloseReason(TerminalCloseCodes.BAD_REQUEST, "Unknown terminal frame."))
+        return false
     }
     if (control is TerminalControl.Resize && control.columns in 1..MAX_SIZE && control.rows in 1..MAX_SIZE) {
         relay.resize(id, control.columns, control.rows)
     }
+    return true
 }
 
+/** The close of a socket sent an unknown frame. */
+internal val UNKNOWN_FRAME = CloseReason(TerminalCloseCodes.BAD_REQUEST, "Unknown terminal frame.")
+
+/** Runs a write whose failure is left to a lease (a hold, renewed or given back). */
+private suspend fun quietly(write: suspend () -> Unit) {
+    try {
+        write()
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        // Left to the hold's lease.
+    }
+}

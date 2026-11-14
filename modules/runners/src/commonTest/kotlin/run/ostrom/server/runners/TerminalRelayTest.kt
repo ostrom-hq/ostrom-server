@@ -81,7 +81,7 @@ class TerminalRelayTest {
         assertNull(relay.connectRunner(id, 1))
         // The replaced runner's output and departure change nothing.
         relay.output(id, first, "old".encodeToByteArray())
-        relay.disconnectRunner(id, first)
+        assertFalse(relay.disconnectRunner(id, first), "Not the session's runner any more")
         client.outbound.drain()
         relay.output(id, second, "new".encodeToByteArray())
         assertEquals("new", client.outbound.drain().text())
@@ -105,17 +105,43 @@ class TerminalRelayTest {
     }
 
     @Test
+    fun anotherReplicasHopIsServedOnlyWhileTheRunnerIsHere() = runTest {
+        assertNull(relay.connectHopClient(id), "No runner here: the other replica looks again")
+        assertFalse(relay.runnerHere(id))
+        val member = relay.connectClient(id)
+        assertNull(relay.connectHopClient(id), "Nor with only members waiting")
+
+        val runner = assertNotNull(relay.connectRunner(id, 1))
+        assertTrue(relay.runnerHere(id))
+        relay.output(id, runner, "hi".encodeToByteArray())
+        val hop = assertNotNull(relay.connectHopClient(id))
+        assertTrue(hop.hop)
+        val greeting = hop.outbound.drain()
+        assertEquals("hi", greeting.text(), "The scrollback first, as any client")
+        assertEquals(ClientBound.Runner(true), greeting.last())
+        member.outbound.drain()
+
+        relay.disconnectRunner(id, runner)
+        assertTrue(hop.moved, "Dropped as moved, not told the runner left")
+        assertTrue(hop.outbound.isClosedForSend)
+        assertEquals(emptyList(), hop.outbound.drain())
+        assertEquals(listOf<ClientBound>(ClientBound.Runner(false)), member.outbound.drain(), "A member is told")
+        assertFalse(member.moved)
+        assertEquals(1, relay.counts().third)
+    }
+
+    @Test
     fun anEmptyRoomIsForgotten() = runTest {
         val client = relay.connectClient(id)
         assertEquals(Triple(1, 0, 1), relay.counts())
         val runner = assertNotNull(relay.connectRunner(id, 1))
         relay.disconnectClient(id, client)
         assertEquals(Triple(1, 1, 0), relay.counts())
-        relay.disconnectRunner(id, runner)
+        assertTrue(relay.disconnectRunner(id, runner))
         assertEquals(Triple(0, 0, 0), relay.counts())
         // Unknown rooms are ignored.
         relay.disconnectClient(id, client)
-        relay.disconnectRunner(id, runner)
+        assertFalse(relay.disconnectRunner(id, runner))
         relay.output(id, runner, byteArrayOf(1))
         assertEquals(Triple(0, 0, 0), relay.counts())
     }

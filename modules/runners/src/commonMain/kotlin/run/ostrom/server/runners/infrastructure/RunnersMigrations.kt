@@ -296,4 +296,21 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
         name = "session_github_access",
         sql = "ALTER TABLE runners_sessions ADD COLUMN github_access TEXT NOT NULL DEFAULT 'owner'",
     ),
+    // TC-REP-1: which replica holds each session's runner socket (TerminalHostsImpl), so that a member attached on
+    // another replica is relayed to it. A hold ends 90 s after its last renewal by the database's clock.
+    SchemaMigration(
+        version = 11,
+        name = "terminal_hosts",
+        sql = """
+            CREATE TABLE runners_terminal_hosts (
+                session_id UUID PRIMARY KEY,
+                org_id UUID NOT NULL,
+                epoch BIGINT NOT NULL,
+                replica_url TEXT NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL
+            );
+            CREATE INDEX runners_terminal_hosts_expiry ON runners_terminal_hosts (org_id, expires_at);
+            ${tenantTableSql("runners_terminal_hosts")}
+        """.trimIndent(),
+    ),
 )

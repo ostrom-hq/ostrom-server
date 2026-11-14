@@ -15,6 +15,8 @@ kotlin {
             implementation(project(":modules:billing"))
             implementation(libs.cryptography.core)
             implementation(libs.ktor.client.core)
+            // The hops of a terminal to the replica holding its runner (TerminalForwarder).
+            implementation(libs.ktor.client.websockets)
             implementation(libs.ktor.server.websockets)
         }
         // The JDK provides SHA-256 and CIO the client.
@@ -25,7 +27,6 @@ kotlin {
         commonTest.dependencies {
             implementation(project(":testing"))
             implementation(libs.ktor.client.mock)
-            implementation(libs.ktor.client.websockets)
         }
     }
 }

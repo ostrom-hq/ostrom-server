@@ -67,6 +67,7 @@ import run.ostrom.server.runners.infrastructure.CloudSessionAutomationLauncher
 import run.ostrom.server.runners.infrastructure.CloudSessionsRepositoryImpl
 import run.ostrom.server.runners.infrastructure.DockerExecutionPlan
 import run.ostrom.server.runners.infrastructure.InProcessRunnerWorkSignals
+import run.ostrom.server.runners.infrastructure.KtorTerminalForwarder
 import run.ostrom.server.runners.infrastructure.ReconcilerWorker
 import run.ostrom.server.runners.infrastructure.RegisteredRunnersRepositoryImpl
 import run.ostrom.server.runners.infrastructure.RegisteredRuntimeDriver
@@ -75,8 +76,11 @@ import run.ostrom.server.runners.infrastructure.RunnerTokensImpl
 import run.ostrom.server.runners.infrastructure.RunnersConfig
 import run.ostrom.server.runners.infrastructure.RunnersMigrations
 import run.ostrom.server.runners.infrastructure.RuntimeDrivers
+import run.ostrom.server.runners.infrastructure.TerminalHostsImpl
 import run.ostrom.server.runners.infrastructure.TerminalRelay
+import run.ostrom.server.runners.infrastructure.TerminalReplica
 import run.ostrom.server.runners.infrastructure.TerminalTicketsImpl
+import run.ostrom.server.runners.infrastructure.replicaHttpClient
 import run.ostrom.server.runners.presentation.CloudSessionsRoutesDependencies
 import run.ostrom.server.runners.presentation.RunnerRuntime
 import run.ostrom.server.runners.presentation.RunnersRoutesDependencies
@@ -90,7 +94,11 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
 import org.koin.core.Koin
 import org.koin.core.module.Module
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
+import org.koin.dsl.onClose
+
+private val REPLICA_HTTP = named("runners.replica.http")
 
 /**
  * The runners module: cloud sessions. A member creates a session; the leased reconciler starts one pod per
@@ -163,7 +171,14 @@ object RunnersModule : ServerModule {
         single<OpenTerminalUseCase> { OpenTerminalUseCaseImpl(get()) }
         single<IssueTerminalTicketUseCase> { IssueTerminalTicketUseCaseImpl(get(), get()) }
         single { TerminalActivity(get(), get()) }
-        single { TerminalRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get()) }
+        // Hops to the replica holding a runner's socket, only once replicas are told their URL (one replica: none).
+        single(REPLICA_HTTP) { replicaHttpClient() } onClose { it?.close() }
+        single {
+            val replica = get<RunnersConfig>().replicaUrl?.let { url ->
+                TerminalReplica(url, TerminalHostsImpl(get(), url), KtorTerminalForwarder(get(REPLICA_HTTP)))
+            }
+            TerminalRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), replica)
+        }
         single<AutomationLauncher> { CloudSessionAutomationLauncher(get(), get(), get()) }
     }
 

@@ -253,6 +253,21 @@ class ModelTest {
     }
 
     @Test
+    fun theReplicaUrlIsReadWithoutItsSlashAndChecked() {
+        assertNull(RunnersConfig.from(MapConfigSource(emptyMap())).replicaUrl, "One replica: every terminal here")
+        assertNull(RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_REPLICA_URL" to "/"))).replicaUrl)
+        val pod = MapConfigSource(mapOf("OSTROM_RUNNERS_REPLICA_URL" to "http://10.0.0.7:8080/"))
+        assertEquals("http://10.0.0.7:8080", RunnersConfig.from(pod).replicaUrl)
+        assertEquals(
+            "https://a",
+            RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_REPLICA_URL" to "https://a"))).replicaUrl,
+        )
+        assertFailsWith<InvalidConfigException> {
+            RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_REPLICA_URL" to "10.0.0.7:8080")))
+        }
+    }
+
+    @Test
     fun theServerSelectorDefaultsToTheChartLabelsAndIsChecked() {
         val default = RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_KUBERNETES_SERVER_SELECTOR" to " ")))
         assertEquals(KubernetesSettings.DEFAULT_SERVER_SELECTOR, default.kubernetes.serverSelector)
