@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.artifacts
 
+import run.ostrom.server.artifacts.domain.ArtifactBlob
 import run.ostrom.server.artifacts.domain.ArtifactEvents
 import run.ostrom.server.artifacts.domain.ArtifactMaintenance
 import run.ostrom.server.artifacts.domain.ArtifactMaintenanceRepository
 import run.ostrom.server.artifacts.domain.storage.ArtifactKeys
 import run.ostrom.server.artifacts.domain.storage.BucketArtifactContents
 import run.ostrom.server.artifacts.domain.storage.BucketUploadChunks
+import run.ostrom.server.artifacts.domain.storage.ObjectStoreException
 import run.ostrom.server.artifacts.fakes.InMemoryBucket
 import run.ostrom.server.artifacts.fakes.InMemoryStorage
 import run.ostrom.server.artifacts.fakes.ORG_A
@@ -76,6 +78,15 @@ class ArtifactMaintenanceTest {
 
         override suspend fun deleteExpired(orgId: Uuid, artifactId: Uuid, now: Instant, drafts: Instant) =
             latest.remove(artifactId)
+
+        val marked = mutableMapOf<Uuid, List<ArtifactBlob>>()
+        val collected = mutableListOf<ArtifactBlob>()
+
+        override suspend fun markedBlobs(orgId: Uuid, now: Instant, limit: Int) = marked[orgId].orEmpty()
+
+        override suspend fun forgetBlobs(orgId: Uuid, blobs: List<ArtifactBlob>) {
+            collected += blobs
+        }
     }
 
     private fun chunk(upload: Uuid) = ArtifactKeys.chunk("", "$ORG_A", "$upload", "sha", 0)
@@ -102,6 +113,31 @@ class ArtifactMaintenanceTest {
         assertEquals(setOf(blob(raced)), bucket.objects.keys)
         // A draft goes silently; an artifact past its retention is audited, by the system.
         assertEquals(listOf<Triple<String, String, Uuid?>>(Triple("system", "retention_expired", retained)), events)
+    }
+
+    @Test
+    fun theMarkedContentsAreDeletedFromTheBucketThenForgotten() = runTest {
+        val artifact = Uuid.random()
+        val blobs = listOf("one", "two").map { ArtifactBlob(artifact, it) }
+        val keys = blobs.map { ArtifactKeys.blob("", "$ORG_A", "$artifact", it.sha256) }
+        bucket.objects += keys.associateWith { byteArrayOf(1) }
+        rows.marked[ORG_A] = blobs
+        // Org B has no bucket: its marked contents wait for one.
+        rows.marked[ORG_B] = listOf(ArtifactBlob(artifact, "three"))
+        maintenance.run()
+        assertEquals(blobs, rows.collected)
+        assertEquals(emptySet(), bucket.objects.keys)
+        // Refused or failed: nothing is forgotten, the next pass tries again.
+        rows.collected.clear()
+        bucket.objects += keys.associateWith { byteArrayOf(1) }
+        bucket.refuseDelete = true
+        maintenance.run()
+        bucket.refuseDelete = false
+        bucket.beforeEach = { call -> if (call == "delete") throw ObjectStoreException(500, "InternalError") }
+        maintenance.run()
+        assertEquals(emptyList(), rows.collected)
+        bucket.beforeEach = { call -> if (call == "delete") throw CancellationException("stopping") }
+        assertFailsWith<CancellationException> { maintenance.run() }
     }
 
     @Test

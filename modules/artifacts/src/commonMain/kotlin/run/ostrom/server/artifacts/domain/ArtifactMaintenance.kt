@@ -43,13 +43,28 @@ interface ArtifactMaintenanceRepository {
      * @return Its latest version when it was deleted (0 for a draft), null otherwise.
      */
     suspend fun deleteExpired(orgId: Uuid, artifactId: Uuid, now: Instant, drafts: Instant): Int?
+
+    /** The organization's contents marked for collection that no live upload announced, the oldest mark first. */
+    suspend fun markedBlobs(orgId: Uuid, now: Instant, limit: Int): List<ArtifactBlob>
+
+    /** Forgets contents deleted from the bucket, unless a publication used one again since (its mark cleared). */
+    suspend fun forgetBlobs(orgId: Uuid, blobs: List<ArtifactBlob>)
 }
+
+/**
+ * A content of an artifact's folder.
+ *
+ * @property artifactId The artifact.
+ * @property sha256 Its digest, its key in the folder.
+ */
+data class ArtifactBlob(val artifactId: Uuid, val sha256: String)
 
 /**
  * The scheduled work of artifacts, TeamCode's `ArtifactMaintenance`: the publications the hourly limit no longer
  * counts are forgotten; an expired upload ends and its folder of chunks is deleted from the bucket; a draft never
  * committed for 24 hours and an artifact past its retention are deleted with their folder, the latter audited as
- * `artifact.retention_expired` by the system. Each organization on its own: a failure is tried again at the next pass.
+ * `artifact.retention_expired` by the system; the contents marked for collection are deleted from the bucket, then
+ * forgotten. Each organization on its own: a failure is tried again at the next pass.
  *
  * @param repository The rows.
  * @param contents The artifacts' folders.
@@ -96,6 +111,9 @@ class ArtifactMaintenance(
             contents.remove(orgId, artifactId)
             if (latest > 0) events.record(system(orgId), "retention_expired", artifactId, emptyMap())
         }
+        // Deleted from the bucket, then forgotten: while one is marked its artifact takes no upload and no version.
+        val marked = repository.markedBlobs(orgId, now, BATCH)
+        if (marked.isNotEmpty()) repository.forgetBlobs(orgId, contents.collect(orgId, marked))
     }
 
     private fun system(orgId: Uuid) = ArtifactCaller(

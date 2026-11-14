@@ -22,18 +22,23 @@ import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
+
+private const val UPLOADS = "/api/v1/artifacts/uploads"
 
 /** TC-ART-29 against a real PostgreSQL: the versions kept, the contents marked, the expiry. */
 class ArtifactLifecyclePostgresTest {
@@ -119,6 +124,30 @@ class ArtifactLifecyclePostgresTest {
         }
 
     @Test
+    fun anArtifactWhoseContentsAreCollectedTakesNoUploadNorVersion() =
+        serverTest(listOf(ArtifactsModule), testIdentities) { server ->
+            server.koin.activateArtifacts()
+            suspend fun post(path: String, body: String) = server.client.post(path) {
+                bearerAuth("alice")
+                contentType(ContentType.Application.Json)
+                setBody(body)
+            }
+            val page = """"files": [{"path": "index.html", "content": "<p>one</p>"}]"""
+            assertEquals(HttpStatusCode.Created, post("/api/v1/artifacts", """{"title": "Notes", $page}""").status)
+            val id = server.driver.fetchInOrg(ORG_A, Statement.create("SELECT id FROM artifacts_artifacts"))
+                .getOrThrow().single().get("id").asUuid()
+            server.database.superuser.execute("UPDATE artifacts_blobs SET marked_at = now()").getOrThrow()
+            val announced = """{"artifactId": "$id", "files": [{"sha256": "${"a".repeat(64)}", "size": 1}]}"""
+            for (refused in listOf(post("/api/v1/artifacts/$id/versions", "{$page}"), post(UPLOADS, announced))) {
+                assertEquals(HttpStatusCode.Conflict, refused.status)
+                assertEquals("60", refused.headers[HttpHeaders.RetryAfter])
+                assertTrue("artifact_busy" in refused.bodyAsText())
+            }
+            server.database.superuser.execute("UPDATE artifacts_blobs SET marked_at = NULL").getOrThrow()
+            assertEquals(HttpStatusCode.Created, post(UPLOADS, announced).status)
+        }
+
+    @Test
     fun theRetentionReadsItsIndexes() = serverTest(listOf(ArtifactsModule)) { server ->
         val fixtures = server.database.superuser
         // 2 000 artifacts of 10 versions each, a content per version.
@@ -141,7 +170,7 @@ class ArtifactLifecyclePostgresTest {
             fixtures.execute("VACUUM ANALYZE $table").getOrThrow()
         }
         val id = Uuid.random()
-        for (sql in listOf(LifecycleQueries.PRUNE, LifecycleQueries.MARK)) {
+        for (sql in listOf(LifecycleQueries.PRUNE, LifecycleQueries.MARK, LifecycleQueries.BUSY)) {
             var statement = Statement.create("EXPLAIN $sql").bind("id", id)
             if (":keep" in sql) statement = statement.bind("keep", 5)
             if (":now" in sql) statement = statement.bind("now", t0)

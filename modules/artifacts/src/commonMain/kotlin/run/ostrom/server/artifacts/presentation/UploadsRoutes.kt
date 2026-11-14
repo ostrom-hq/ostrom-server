@@ -30,11 +30,13 @@ fun Route.artifactUploadRoutes(uploads: UploadArtifactUseCase, orgResolver: Prin
         post<ArtifactUploadsApi> {
             val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), ARTIFACTS_WRITE)
             val request = call.receive<CreateArtifactUploadRequest>()
-            val upload = uploads.open(
-                caller,
-                request.artifactId?.let { artifactId(it) },
-                request.files.map { AnnouncedFile(it.sha256, it.size) },
-            )
+            val upload = call.publishing {
+                uploads.open(
+                    caller,
+                    request.artifactId?.let { artifactId(it) },
+                    request.files.map { AnnouncedFile(it.sha256, it.size) },
+                )
+            }
             call.respond(
                 HttpStatusCode.Created,
                 ArtifactUploadResponse(

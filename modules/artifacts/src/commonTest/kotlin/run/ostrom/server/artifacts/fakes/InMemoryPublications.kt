@@ -32,6 +32,8 @@ val NO_LIFECYCLE = object : ArtifactLifecycleRepository {
     override suspend fun retain(orgId: Uuid, artifactId: Uuid, versions: Int, expiresAt: Instant?, now: Instant) = Unit
 
     override suspend fun expire(orgId: Uuid, artifactId: Uuid, expiresAt: Instant?) = Unit
+
+    override suspend fun busy(orgId: Uuid, artifactId: Uuid) = false
 }
 
 /** A gate on [storage]'s settings with publications in memory, and [usage]. */
