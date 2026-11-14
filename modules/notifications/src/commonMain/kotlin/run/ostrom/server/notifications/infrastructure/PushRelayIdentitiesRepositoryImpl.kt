@@ -6,9 +6,9 @@ package run.ostrom.server.notifications.infrastructure
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.notifications.domain.PushRelayIdentitiesRepository
 import run.ostrom.server.notifications.domain.PushRelayIdentity
+import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
-import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.jetbrains.exposed.v1.jdbc.insertIgnore
 import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.update
@@ -36,7 +36,8 @@ class PushRelayIdentitiesRepositoryImpl(
             it[instanceId] = identity.instanceId
             it[createdAt] = now
         }
-        checkNotNull(read(relayUrl)) { "The relay identity was neither kept nor found." }
+        // This row or the one another replica inserted first: there is one either way.
+        rows(relayUrl).single().toIdentity()
     }
 
     override suspend fun setInstance(relayUrl: String, publicKey: String, instanceId: String?) {
@@ -47,15 +48,16 @@ class PushRelayIdentitiesRepositoryImpl(
         }
     }
 
-    private fun JdbcTransaction.read(relayUrl: String): PushRelayIdentity? = PushRelayInstances
+    private fun read(relayUrl: String): PushRelayIdentity? =
+        rows(relayUrl).singleOrNull()?.toIdentity()
+
+    private fun rows(relayUrl: String) = PushRelayInstances
         .select(PushRelayInstances.publicKey, PushRelayInstances.privateKey, PushRelayInstances.instanceId)
         .where { PushRelayInstances.relayUrl eq relayUrl }
-        .singleOrNull()
-        ?.let {
-            PushRelayIdentity(
-                it[PushRelayInstances.publicKey],
-                it[PushRelayInstances.privateKey],
-                it[PushRelayInstances.instanceId],
-            )
-        }
+
+    private fun ResultRow.toIdentity() = PushRelayIdentity(
+        this[PushRelayInstances.publicKey],
+        this[PushRelayInstances.privateKey],
+        this[PushRelayInstances.instanceId],
+    )
 }

@@ -19,6 +19,11 @@ class CachedRelaySenders(private val relay: (String) -> FcmSender) : RelaySender
     private var current: Pair<String, FcmSender>? = null
 
     override suspend fun sender(relayUrl: String): FcmSender = mutex.withLock {
-        current?.takeIf { it.first == relayUrl }?.second ?: relay(relayUrl).also { current = relayUrl to it }
+        val kept = current?.takeIf { it.first == relayUrl }
+        if (kept != null) {
+            kept.second
+        } else {
+            relay(relayUrl).also { current = relayUrl to it }
+        }
     }
 }
