@@ -2,6 +2,10 @@
 package run.ostrom.server.runners
 
 import run.ostrom.server.kernel.events.SessionNames
+import run.ostrom.server.kernel.audit.OrgAuditRecord
+import run.ostrom.server.kernel.audit.OrgAuditTrail
+import run.ostrom.server.kernel.auth.MemberDirectory
+import run.ostrom.server.kernel.sessions.CloudSessionWakes
 import run.ostrom.server.runners.domain.AllowlistedCloudPlanProvider
 import run.ostrom.server.runners.domain.CloudPlan
 import run.ostrom.server.runners.domain.CloudPlanProvider
@@ -51,6 +55,7 @@ import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -187,6 +192,48 @@ class CloudSessionsPostgresTest {
         assertEquals(DesiredState.RUNNING, (resumed as ResumeOutcome.Resumed).session.desiredState)
         assertEquals(ResumeOutcome.NotFound, repository.resumeWithinCap(ORG_B, paused.id, 2, t0))
         assertNull(repository.setDesiredState(ORG_B, paused.id, DesiredState.PAUSED, t0))
+    }
+
+    @Test
+    fun resumeWithinCapLeavesADeletedOrEndedSessionAsItIs() = serverTest(listOf(RunnersModule)) { server ->
+        val repository = server.koin.get<CloudSessionsRepository>()
+        val deleting = session(state = SessionState.PAUSED, desired = DesiredState.TERMINATED, createdAt = t0)
+        val failed = session(state = SessionState.FAILED, desired = DesiredState.PAUSED, createdAt = t0)
+        repository.createWithinCap(deleting, 5)
+        repository.createWithinCap(failed, 5)
+
+        assertEquals(ResumeOutcome.NotFound, repository.resumeWithinCap(ORG_A, deleting.id, 5, t0))
+        assertEquals(ResumeOutcome.NotFound, repository.resumeWithinCap(ORG_A, failed.id, 5, t0))
+        assertEquals(DesiredState.TERMINATED, repository.get(ORG_A, deleting.id)?.desiredState)
+        assertEquals(DesiredState.PAUSED, repository.get(ORG_A, failed.id)?.desiredState)
+    }
+
+    @Test
+    fun anAnswerToAWaitResumesAPausedSessionOnItsOwnersBehalf() {
+        val audit = mutableListOf<OrgAuditRecord>()
+        val overrides = module {
+            includes(testIdentities)
+            single<MemberDirectory> {
+                object : MemberDirectory {
+                    override suspend fun isActiveMember(orgId: Uuid, memberId: String) = memberId == "alice"
+                }
+            }
+            single<OrgAuditTrail> { OrgAuditTrail { audit += it } }
+        }
+        serverTest(listOf(RunnersModule), overrides) { server ->
+            val repository = server.koin.get<CloudSessionsRepository>()
+            val wakes = server.koin.get<CloudSessionWakes>()
+            val paused = session(state = SessionState.PAUSED, desired = DesiredState.PAUSED, createdAt = t0)
+            repository.createWithinCap(paused, 5)
+            val waitId = Uuid.random()
+
+            assertTrue(wakes.wake(ORG_A, paused.id.toString(), waitId))
+            assertEquals(DesiredState.RUNNING, repository.get(ORG_A, paused.id)?.desiredState)
+            assertFalse(wakes.wake(ORG_A, paused.id.toString(), waitId), "Once")
+            assertFalse(wakes.wake(ORG_B, paused.id.toString(), waitId), "Another organization's")
+            assertFalse(wakes.wake(ORG_A, "s-local", waitId), "A local launch's session")
+            assertEquals(listOf("cloud.session.woken"), audit.map { it.event })
+        }
     }
 
     @Test

@@ -2,6 +2,7 @@
 package run.ostrom.server.automations.fakes
 
 import run.ostrom.server.automations.domain.CreateOutcome
+import run.ostrom.server.kernel.sessions.CloudSessionWakes
 import run.ostrom.server.automations.domain.DueWait
 import run.ostrom.server.automations.domain.TimedWaitsRepository
 import run.ostrom.server.automations.domain.Wait
@@ -111,6 +112,16 @@ class RecordingEvents : WaitEvents {
 
     override suspend fun cancelled(wait: Wait) {
         seen += "cancelled" to wait.id
+    }
+}
+
+/** Records the sessions it is asked to wake, and wakes none. */
+class RecordingWakes : CloudSessionWakes {
+    val woken = mutableListOf<Pair<String, Uuid>>()
+
+    override suspend fun wake(orgId: Uuid, sessionId: String, waitId: Uuid): Boolean {
+        woken += sessionId to waitId
+        return false
     }
 }
 

@@ -2,6 +2,8 @@
 package run.ostrom.server.automations
 
 import run.ostrom.server.automations.domain.AnswerWaitUseCase
+import run.ostrom.server.kernel.sessions.CloudSessionWakes
+import run.ostrom.server.automations.fakes.RecordingWakes
 import run.ostrom.server.automations.domain.AskWait
 import run.ostrom.server.automations.domain.AskWaitUseCase
 import run.ostrom.server.automations.domain.CreateOutcome
@@ -302,6 +304,26 @@ class WaitsPostgresTest {
             contentType(ContentType.Application.Json)
             setBody(request)
         }
+
+    @Test
+    fun anAnswerWakesItsSessionOnceAndACancelNone() {
+        val wakes = RecordingWakes()
+        val overrides = module {
+            includes(testIdentities)
+            single<CloudSessionWakes> { wakes }
+        }
+        serverTest(listOf(AutomationsModule), overrides) { server ->
+            val client = server.client
+            val asked = CreateWaitRequest(question, sessionId = "s1", assignee = ALICE.toString())
+            val wait = client.ask("agent", asked).body<WaitResponse>()
+            val cancelled = client.ask("agent", asked).body<WaitResponse>()
+            val approve = AnswerWaitRequest("approve", mapOf("feedback" to JsonPrimitive("Go")))
+            assertEquals(HttpStatusCode.OK, client.answer("alice", wait.id, approve).status)
+            assertEquals(HttpStatusCode.OK, client.answer("alice", wait.id, approve).status, "The same answer again")
+            client.post("/api/v1/waits/${cancelled.id}/cancel") { bearerAuth("agent") }
+            assertEquals(listOf("s1" to Uuid.parse(wait.id)), wakes.woken)
+        }
+    }
 
     @Test
     fun theApiAsksListsAnswersAndCancels() {

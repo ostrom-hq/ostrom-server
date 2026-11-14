@@ -15,6 +15,7 @@ import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.errors.OstromException
 import run.ostrom.server.kernel.sessions.AgentSession
 import run.ostrom.server.kernel.sessions.AgentSessions
+import run.ostrom.server.kernel.sessions.CloudSessionWakes
 import kotlin.uuid.Uuid
 
 /**
@@ -55,6 +56,11 @@ internal object SilentWaitEvents : WaitEvents {
     override suspend fun resolved(wait: Wait) = Unit
 
     override suspend fun cancelled(wait: Wait) = Unit
+}
+
+/** No cloud session is woken by its waits until the runners module binds its [CloudSessionWakes]. */
+internal object NoCloudSessionWakes : CloudSessionWakes {
+    override suspend fun wake(orgId: Uuid, sessionId: String, waitId: Uuid): Boolean = false
 }
 
 /** The launcher until a module serving cloud sessions binds one: every run fails `cloud_sessions_unavailable`. */

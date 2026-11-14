@@ -37,6 +37,8 @@ import run.ostrom.server.automations.domain.WaitsRepository
 import run.ostrom.server.automations.domain.WakeWaitsUseCase
 import run.ostrom.server.automations.domain.WakeWaitsUseCaseImpl
 import run.ostrom.server.automations.infrastructure.AutomationScheduler
+import run.ostrom.server.automations.infrastructure.CloudWakingWaitEvents
+import run.ostrom.server.automations.infrastructure.NoCloudSessionWakes
 import run.ostrom.server.automations.infrastructure.DefaultAutomationLimits
 import run.ostrom.server.automations.infrastructure.AutomationsMigrations
 import run.ostrom.server.automations.infrastructure.AutomationsRepositoryImpl
@@ -63,6 +65,7 @@ import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.events.WaitSummaries
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.sessions.AgentSessions
+import run.ostrom.server.kernel.sessions.CloudSessionWakes
 import run.ostrom.server.kernel.sessions.SessionEndListener
 import run.ostrom.server.kernel.workflows.AutomationUsage
 import io.ktor.server.routing.Route
@@ -70,6 +73,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.koin.core.Koin
 import org.koin.core.module.Module
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
 
 /**
@@ -82,13 +86,23 @@ import org.koin.dsl.module
  * through the waits MCP server. An [AutomationWorkflows] bound by the module that runs workflows lets an action start
  * a workflow run; until then no workflow exists for one. It binds [AutomationUsage], so a workflow an automation
  * starts is not deleted under it. Its [SessionEndListener] cancels the open waits of a session that ends. It binds
- * [WaitSummaries], so the notification router reads the waits the event journal names.
+ * [WaitSummaries], so the notification router reads the waits the event journal names. A wait resolved (answered,
+ * its time reached, its event received or timed out) wakes its session through the runners module's
+ * [CloudSessionWakes]: a paused cloud session resumes; unbound, none does.
  */
 object AutomationsModule : ServerModule {
     override val name: String = "automations"
 
     override val koinModule: Module = module {
         single<WaitsRepository> { WaitsRepositoryImpl(get(), get()) }
+        // Another module's listener first, then the wake of a paused cloud session (runners).
+        single<WaitEvents>(named(WAKING)) {
+            CloudWakingWaitEvents(
+                getOrNull<WaitEvents>() ?: SilentWaitEvents,
+                getOrNull<CloudSessionWakes>() ?: NoCloudSessionWakes,
+                get(),
+            )
+        }
         single<TimedWaitsRepository> { TimedWaitsRepositoryImpl(get(), get()) }
         // The notification router reads the waits the journal names through the kernel's port.
         single<WaitSummaries> { WaitSummariesImpl(get()) }
@@ -102,7 +116,7 @@ object AutomationsModule : ServerModule {
             AskWaitUseCaseImpl(
                 get(),
                 getOrNull<MemberDirectory>() ?: NoOtherMembers,
-                getOrNull<WaitEvents>() ?: SilentWaitEvents,
+                get<WaitEvents>(named(WAKING)),
                 get(),
                 get(),
                 get(),
@@ -114,20 +128,20 @@ object AutomationsModule : ServerModule {
                 get(),
                 get(),
                 WaitEventRateLimit(get()),
-                getOrNull<WaitEvents>() ?: SilentWaitEvents,
+                get<WaitEvents>(named(WAKING)),
                 get(),
             )
         }
         single<ResolveDueWaitsUseCase> {
-            ResolveDueWaitsUseCaseImpl(get(), getOrNull<WaitEvents>() ?: SilentWaitEvents, get())
+            ResolveDueWaitsUseCaseImpl(get(), get<WaitEvents>(named(WAKING)), get())
         }
         single { DueWaitsWorker(get(), get()) }
         single<ReadWaitsUseCase> { ReadWaitsUseCaseImpl(get(), get()) }
         single<WakeWaitsUseCase> { WakeWaitsUseCaseImpl(get(), get(), get()) }
         single<SessionEndListener> {
-            CancelSessionWaitsUseCaseImpl(get(), getOrNull<WaitEvents>() ?: SilentWaitEvents, get())
+            CancelSessionWaitsUseCaseImpl(get(), get<WaitEvents>(named(WAKING)), get())
         }
-        single<AnswerWaitUseCase> { AnswerWaitUseCaseImpl(get(), getOrNull<WaitEvents>() ?: SilentWaitEvents, get()) }
+        single<AnswerWaitUseCase> { AnswerWaitUseCaseImpl(get(), get<WaitEvents>(named(WAKING)), get()) }
         single {
             WaitsRoutesDependencies(
                 get(),
@@ -192,6 +206,9 @@ object AutomationsModule : ServerModule {
         scope.launch { dueWaits.run() }
     }
 }
+
+/** The qualifier of the [WaitEvents] the waits use: another module's, and the wake of a paused cloud session. */
+private const val WAKING = "automations.waits.waking"
 
 /**
  * The server's public URL, without a trailing slash, for the webhook URLs; empty when unset (relative URLs).

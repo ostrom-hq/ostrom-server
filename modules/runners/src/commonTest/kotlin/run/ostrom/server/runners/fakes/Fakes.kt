@@ -199,6 +199,7 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
     override suspend fun resumeWithinCap(orgId: Uuid, id: Uuid, maxRunning: Int, now: Instant): ResumeOutcome {
         val current = get(orgId, id) ?: return ResumeOutcome.NotFound
         if (!current.state.holdsExecution && holding(orgId, id) >= maxRunning) return ResumeOutcome.AtCap
+        if (current.state.isFinal || current.desiredState == DesiredState.TERMINATED) return ResumeOutcome.NotFound
         val updated = current.copy(
             desiredState = DesiredState.RUNNING,
             generation = current.generation + 1,
