@@ -195,11 +195,16 @@ class ListBoundsPostgresTest {
         list.cursors.forEach { name ->
             val replayed = read(bob, bobs, "$name=${cursor.encodeURLParameter()}")
             val text = replayed.bodyAsText()
-            val accepted = id in POSITION_CURSORS && replayed.status == HttpStatusCode.OK
-            if (replayed.status !in refused && !accepted) f.broken += "$id $name=<A's>: ${replayed.status}, not 400"
+            if (!refusedOrPosition(id, replayed.status, refused)) {
+                f.broken += "$id $name=<A's>: ${replayed.status}, not 400"
+            }
             if (seen.any { it in text }) f.broken += "$id $name=<A's>: B was answered A's rows"
         }
     }
+
+    // A replayed cursor of A is refused, or answered B's own page for a position cursor ([POSITION_CURSORS]).
+    private fun refusedOrPosition(id: String, status: HttpStatusCode, refused: Set<HttpStatusCode>): Boolean =
+        status in refused || (id in POSITION_CURSORS && status == HttpStatusCode.OK)
 
     private suspend fun TestServer.person(login: String): Person {
         val user = koin.get<ResolveUserUseCase>()(
