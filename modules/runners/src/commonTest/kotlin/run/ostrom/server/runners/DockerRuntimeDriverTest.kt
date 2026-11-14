@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.runners.domain.RunnerDelivery
+import run.ostrom.server.runners.domain.RunnerDeliverySource
 import run.ostrom.server.kernel.config.MapConfigSource
 import run.ostrom.server.runners.domain.AgentKind
 import run.ostrom.server.runners.domain.CloudPlan
@@ -326,21 +328,21 @@ class DockerRuntimeDriverTest {
     fun theConfigurationChoosesTheDriver() {
         val registered = RegisteredRuntimeDriver(InMemoryRunnerAssignments(), SettableClock(), FakeRunnerWorkSignals())
         val none = RunnersConfig.from(MapConfigSource(emptyMap()))
-        assertIs<DisabledRuntimeDriver>(RuntimeDrivers.create(none, { registered }))
+        assertIs<DisabledRuntimeDriver>(RuntimeDrivers.create(none, { registered }, DELIVERY))
         val kubernetes = RunnersConfig.from(
             MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "kubernetes", "OSTROM_RUNNERS_SERVER_URL" to "http://s")),
         )
-        assertIs<KubernetesRuntimeDriver>(RuntimeDrivers.create(kubernetes, { registered }) { "token" })
+        assertIs<KubernetesRuntimeDriver>(RuntimeDrivers.create(kubernetes, { registered }, DELIVERY) { "token" })
         val docker = RunnersConfig.from(
             MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "docker", "OSTROM_RUNNERS_SERVER_URL" to "http://s")),
         )
-        assertIs<DockerRuntimeDriver>(RuntimeDrivers.create(docker, { registered }))
+        assertIs<DockerRuntimeDriver>(RuntimeDrivers.create(docker, { registered }, DELIVERY))
         val machines = RunnersConfig.from(
             MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "Registered", "OSTROM_RUNNERS_SERVER_URL" to "http://s")),
         )
-        assertEquals(registered, RuntimeDrivers.create(machines, { registered }))
+        assertEquals(registered, RuntimeDrivers.create(machines, { registered }, DELIVERY))
         assertEquals("registered", machines.runtimeLabel)
-        assertFalse(RuntimeDrivers.create(docker, { registered }).relocates, "Only registered runners move")
+        assertFalse(RuntimeDrivers.create(docker, { registered }, DELIVERY).relocates, "Only registered runners move")
     }
 
     @Test
@@ -351,3 +353,5 @@ class DockerRuntimeDriverTest {
         SystemFileSystem.delete(path)
     }
 }
+
+private val DELIVERY = RunnerDeliverySource { RunnerDelivery("runner:1", RunnerDelivery.DEFAULT_RUNNER_BINARY, "img") }

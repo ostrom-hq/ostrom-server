@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.cloud.domain.CloudRuntimeSource
+import run.ostrom.server.runners.domain.RunnerDeliverySource
+import run.ostrom.server.runners.infrastructure.CloudRuntimeRunnerDelivery
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.automations.domain.AutomationLauncher
 import run.ostrom.server.billing.domain.GetAgentUsageUseCase
@@ -132,7 +135,11 @@ object RunnersModule : ServerModule {
             DockerExecutionPlan(null, config.serverUrl, config.runnerImage)
         }
         single<RunnerWorkSignals> { InProcessRunnerWorkSignals(get(), get()) }
-        single<RuntimeDriver> { RuntimeDrivers.create(get(), { RegisteredRuntimeDriver(get(), get(), get()) }) }
+        // The console's cloud runtime names the runner image (cloud module); OSTROM_RUNNERS_IMAGE while it names none.
+        single<RunnerDeliverySource> {
+            CloudRuntimeRunnerDelivery(getOrNull<CloudRuntimeSource>(), get<RunnersConfig>().runnerImage)
+        }
+        single<RuntimeDriver> { RuntimeDrivers.create(get(), { RegisteredRuntimeDriver(get(), get(), get()) }, get()) }
         single<CreateCloudSessionUseCase> {
             MeteredCreateCloudSession(CreateCloudSessionUseCaseImpl(get(), get(), get(), get()), get())
         }
