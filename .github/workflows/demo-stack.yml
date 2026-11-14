@@ -123,17 +123,18 @@ jobs:
       # two answers S0 checks, through Caddy; a server that never answers fails here, named, with its own logs.
       - name: The stack answers through Caddy
         run: |
-          for _ in $(seq 1 90); do
-            api=$(curl -fsS --max-time 5 http://api.localhost/health 2> /dev/null || true)
-            app=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://app.localhost/api/v1/health 2> /dev/null || true)
+          deadline=$((SECONDS + 180))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            api=$(curl -fsS --max-time 3 http://api.localhost/health 2> /dev/null || true)
+            app=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://app.localhost/api/v1/health 2> /dev/null || true)
             if printf %s "$api" | grep -q '"status":"ok"' && [ "$app" = 200 ]; then
-              echo "api /health $api, app /api/v1/health $app"
+              echo "api /health $api, app /api/v1/health $app after ${SECONDS} s"
               exit 0
             fi
             sleep 2
           done
+          # The logs follow in "Logs on failure".
           echo "::error::The server did not answer through Caddy within 180 s: api /health '${api}', app /api/v1/health ${app}"
-          helm/compose/demo/demo.sh logs 200 | grep -E '^(server|migrate|caddy)-' || true
           exit 1
       - name: The customer's journey
         working-directory: helm/compose
