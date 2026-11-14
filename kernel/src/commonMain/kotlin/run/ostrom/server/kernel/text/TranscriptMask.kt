@@ -73,6 +73,7 @@ object TranscriptMask {
 
     /** A path: `/api/v1/items`, `./dist`, or one lowercase segment (`/artifacts`), not `/9j4AAQSkZJRg…` (base64). */
     private val path = Regex("\\.{0,2}/(?:[A-Za-z0-9._~-]+/)+[A-Za-z0-9._~-]*|\\.{0,2}/[a-z0-9._~-]*")
+    private val base64 = Regex("[A-Za-z0-9+/]*")
     private val namePart = Regex("[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
 
     /**
@@ -146,8 +147,7 @@ object TranscriptMask {
     /** Base64, padded or not, of printable text holding a colon: what `Authorization: Basic` carries. */
     private fun basicPair(word: String): Boolean {
         val bare = word.trimEnd('=')
-        val base64 = bare.all { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it in "+/" }
-        if (bare.length % 4 == 1 || word.length - bare.length > 2 || !base64) return false
+        if (bare.length % 4 == 1 || word.length - bare.length > 2 || !base64.matches(bare)) return false
         val padded = bare + "=".repeat((4 - bare.length % 4) % 4)
         // The characters, the length and the padding are checked above: the decoder cannot refuse this value.
         val decoded = Base64.getDecoder().decode(padded)

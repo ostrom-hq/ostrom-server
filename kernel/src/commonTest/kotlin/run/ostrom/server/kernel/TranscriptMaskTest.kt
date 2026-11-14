@@ -106,6 +106,7 @@ class TranscriptMaskTest {
             "Authorization: Bearer AbCdEfGhIjKlMnOpQrStUvWxYz" to "authorization_header",
             "Authorization: Token 4815162342108151623" to "authorization_header",
             "Authorization: Bearer /9j4AAQSkZJRgABAQEAYABgAAD" to "authorization_header",
+            "token handle12345Callback" to "authorization_header",
         )
         for ((text, kind) in found) assertEquals(kind, TranscriptMask.detect(text), text)
         // A Basic value that is not base64 of a pair, or whose base64 is not text, is prose.
