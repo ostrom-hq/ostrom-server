@@ -51,4 +51,4 @@ class FakeSignUpInvitations(val live: MutableSet<String> = mutableSetOf()) : Sig
 
 /** The policy of an open instance (ostrom.run), for the tests of everything but sign-up. */
 fun openSignUp(clock: SettableClock = SettableClock()) =
-    SignUpPolicyImpl(SignUpMode.OPEN, InMemorySetupLinks(), null, FakeHasher(), clock)
+    SignUpPolicyImpl({ SignUpMode.OPEN }, InMemorySetupLinks(), null, FakeHasher(), clock)

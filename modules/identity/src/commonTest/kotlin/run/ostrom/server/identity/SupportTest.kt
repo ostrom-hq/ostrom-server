@@ -17,7 +17,6 @@ import run.ostrom.server.identity.fakes.InMemoryAuditRepository
 import run.ostrom.server.identity.fakes.SettableClock
 import run.ostrom.server.identity.infrastructure.SecureSecretGenerator
 import run.ostrom.server.identity.infrastructure.Sha256SecretHasher
-import run.ostrom.server.identity.domain.SignUpMode
 import run.ostrom.server.identity.presentation.IdentityConfig
 import run.ostrom.server.kernel.config.InvalidConfigException
 import run.ostrom.server.kernel.config.MapConfigSource
@@ -187,15 +186,5 @@ class SupportTest {
             val source = MapConfigSource(mapOf("OSTROM_ALLOWED_ORIGINS" to origin))
             assertFailsWith<InvalidConfigException>(origin) { IdentityConfig.from(source) }
         }
-    }
-
-    @Test
-    fun signUpIsInviteOnlyUnlessTheOperatorOpensIt() {
-        assertEquals(SignUpMode.INVITE, IdentityConfig.from(MapConfigSource(emptyMap())).signUp)
-        assertEquals(SignUpMode.OPEN, IdentityConfig.from(MapConfigSource(mapOf("OSTROM_SIGNUP" to "open"))).signUp)
-        val refused = assertFailsWith<InvalidConfigException> {
-            IdentityConfig.from(MapConfigSource(mapOf("OSTROM_SIGNUP" to "everyone")))
-        }
-        assertEquals("OSTROM_SIGNUP is invite (the default) or open.", refused.message)
     }
 }

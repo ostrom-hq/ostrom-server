@@ -39,7 +39,6 @@ import run.ostrom.server.identity.domain.GetNotificationPreferencesUseCaseImpl
 import run.ostrom.server.identity.domain.GetProfileUseCase
 import run.ostrom.server.identity.domain.GetProfileUseCaseImpl
 import run.ostrom.server.identity.domain.GitHubTokenVerifier
-import run.ostrom.server.identity.domain.IdentityProvider
 import run.ostrom.server.identity.domain.IssueAgentTokenUseCase
 import run.ostrom.server.identity.domain.IssueAgentTokenUseCaseImpl
 import run.ostrom.server.identity.domain.IssueCliTokenUseCase
@@ -64,7 +63,6 @@ import run.ostrom.server.identity.domain.MobileCodesRepository
 import run.ostrom.server.identity.domain.MobileTokensRepository
 import run.ostrom.server.identity.domain.NotificationPreferencesRepository
 import run.ostrom.server.identity.domain.OAuthAttemptsRepository
-import run.ostrom.server.identity.domain.OAuthProvider
 import run.ostrom.server.identity.domain.PollDeviceAuthorizationUseCase
 import run.ostrom.server.identity.domain.PollDeviceAuthorizationUseCaseImpl
 import run.ostrom.server.identity.domain.RateLimitWindows
@@ -95,7 +93,7 @@ import run.ostrom.server.identity.domain.ServiceKeysRepository
 import run.ostrom.server.identity.domain.SetNotificationPreferencesUseCase
 import run.ostrom.server.identity.domain.SetNotificationPreferencesUseCaseImpl
 import run.ostrom.server.identity.domain.SignInLinksRepository
-import run.ostrom.server.identity.domain.SignInMethods
+import run.ostrom.server.identity.domain.SignInMethodsSource
 import run.ostrom.server.identity.domain.SignInServices
 import run.ostrom.server.identity.domain.SignOutDeviceUseCase
 import run.ostrom.server.identity.domain.SignOutDeviceUseCaseImpl
@@ -119,7 +117,11 @@ import run.ostrom.server.identity.infrastructure.AuditRepositoryImpl
 import run.ostrom.server.identity.infrastructure.DeviceAuthorizationsRepositoryImpl
 import run.ostrom.server.identity.infrastructure.DirectoryMailSender
 import run.ostrom.server.identity.infrastructure.ElevatedTokensRepositoryImpl
-import run.ostrom.server.identity.infrastructure.GitHubOAuthProvider
+import run.ostrom.server.identity.infrastructure.GITHUB_SIGN_IN_SETTINGS
+import run.ostrom.server.identity.infrastructure.GOOGLE_SIGN_IN_SETTINGS
+import run.ostrom.server.identity.infrastructure.InstanceSignInMethods
+import run.ostrom.server.identity.infrastructure.SIGN_UP_SETTINGS
+import run.ostrom.server.identity.infrastructure.SignInSettings
 import run.ostrom.server.identity.infrastructure.GitHubTokenVerifierImpl
 import run.ostrom.server.identity.infrastructure.IdentityInstanceAccounts
 import run.ostrom.server.identity.infrastructure.IdentityInstanceAuditTrail
@@ -130,8 +132,6 @@ import run.ostrom.server.identity.infrastructure.MobileCodesRepositoryImpl
 import run.ostrom.server.identity.infrastructure.MobileTokensRepositoryImpl
 import run.ostrom.server.identity.infrastructure.NotificationPreferencesRepositoryImpl
 import run.ostrom.server.identity.infrastructure.OAuthAttemptsRepositoryImpl
-import run.ostrom.server.identity.infrastructure.OidcEndpoints
-import run.ostrom.server.identity.infrastructure.OidcProvider
 import run.ostrom.server.identity.infrastructure.PhoneUnlockProofsImpl
 import run.ostrom.server.identity.infrastructure.RateLimiterImpl
 import run.ostrom.server.identity.infrastructure.ResendMailSender
@@ -239,9 +239,14 @@ object IdentityModule : ServerModule {
             CredentialAuthenticatorImpl(get(), get(), get(), get(), config.allowedOrigins, config.sessionCookiePrefix)
         }
         single<SetupLinksRepository> { SetupLinksRepositoryImpl(get()) }
+        single(named(GITHUB_SIGN_IN_SETTINGS.name)) { GITHUB_SIGN_IN_SETTINGS }
+        single(named(GOOGLE_SIGN_IN_SETTINGS.name)) { GOOGLE_SIGN_IN_SETTINGS }
+        single(named(SIGN_UP_SETTINGS.name)) { SIGN_UP_SETTINGS }
+        single { SignInSettings(get()) }
         single<SignUpPolicy> {
+            val settings = get<SignInSettings>()
             // The orgs module binds the invitations: absent (a server without it), only the setup link admits.
-            SignUpPolicyImpl(get<IdentityConfig>().signUp, get(), getOrNull<SignUpInvitations>(), get(), get(), get())
+            SignUpPolicyImpl(settings::signUp, get(), getOrNull<SignUpInvitations>(), get(), get(), get())
         }
         single<BootstrapInstanceUseCase> { BootstrapInstanceUseCaseImpl(get(), get(), get(), get()) }
         single<InstanceBootstrapper> {
@@ -284,7 +289,11 @@ object IdentityModule : ServerModule {
                 }
             }
         } onClose ::closeHttpClient
-        single { signInMethods(get(), get(HTTP), get()) }
+        single<SignInMethodsSource> {
+            val config = get<SignInConfig>()
+            val email = config.resendApiKey != null || config.mailDirectory != null
+            InstanceSignInMethods(get(), get(HTTP), get()) { email }
+        }
         single<MailSender> { mailSender(get(), get(HTTP), get()) }
         single<OAuthAttemptsRepository> { OAuthAttemptsRepositoryImpl(get()) }
         single<MagicLinksRepository> { MagicLinksRepositoryImpl(get()) }
@@ -296,10 +305,7 @@ object IdentityModule : ServerModule {
             RequestMagicLinkUseCaseImpl(get(), get(), get(), get(), ::magicLinkMail, config::magicLinkUrl)
         }
         single<VerifyMagicLinkUseCase> { VerifyMagicLinkUseCaseImpl(get(), get(), get(), get(), get()) }
-        single<GitHubTokenVerifier> {
-            val config = get<SignInConfig>()
-            GitHubTokenVerifierImpl(config.github, get(HTTP), config.githubApiUrl)
-        }
+        single<GitHubTokenVerifier> { GitHubTokenVerifierImpl(get<SignInSettings>()::github, get(HTTP)) }
         single<IssueCliTokenUseCase> { IssueCliTokenUseCaseImpl(get(), get(), get(), get(), get()) }
         single<LauncherLoginUseCase> { LauncherLoginUseCaseImpl(get(), get(), get(), get()) }
         single<GrantSignUpUseCase> { GrantSignUpUseCaseImpl(get(), get()) }
@@ -357,12 +363,13 @@ object IdentityModule : ServerModule {
      * bootstrap`: nobody could sign up otherwise. The link itself is never logged (it is a credential).
      */
     private fun warnWhenNobodyCanSignUp(scope: CoroutineScope, koin: Koin) {
-        if (koin.get<IdentityConfig>().signUp != SignUpMode.INVITE) return
-        val setupLinks = koin.get<SetupLinksRepository>()
+        val signUp = koin.get<SignUpPolicy>()
         val logger = koin.get<Logger>()
         scope.launch {
             try {
-                if (!setupLinks.anyAccount()) logger.warn(BOOTSTRAP_HINT)
+                // The mode an administrator set (or imported from the former variable at this start).
+                if (signUp.mode() != SignUpMode.INVITE) return@launch
+                if (!koin.get<SetupLinksRepository>().anyAccount()) logger.warn(BOOTSTRAP_HINT)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -373,8 +380,8 @@ object IdentityModule : ServerModule {
 
     /** What the start says when an invite-only instance has no account yet. */
     const val BOOTSTRAP_HINT: String =
-        "sign-up is invite-only (OSTROM_SIGNUP) and this instance has no account yet: run `ostrom-server bootstrap` " +
-            "for the first owner's one-time setup link"
+        "sign-up is invite-only (Admin → Settings, sign-up) and this instance has no account yet: run " +
+            "`ostrom-server bootstrap` for the first owner's one-time setup link"
 
     private suspend fun Logger.purging(failure: String, purge: suspend () -> Long) {
         try {
@@ -399,25 +406,6 @@ object IdentityModule : ServerModule {
     /** The audit log (`/api/v1/audit`, `/api/v1/auth/me/audit`) and the wide catalogue of service-key scopes. */
     override suspend fun features(koin: Koin): Set<String> =
         setOf(ServerFeatures.AUDIT, ServerFeatures.SERVICE_KEY_SCOPES)
-
-    private fun signInMethods(config: SignInConfig, http: HttpClient, clock: Clock): SignInMethods {
-        val oauth = buildMap<IdentityProvider, OAuthProvider> {
-            config.github?.let {
-                put(IdentityProvider.GITHUB, GitHubOAuthProvider(it, http, config.githubWebUrl, config.githubApiUrl))
-            }
-            config.google?.let {
-                put(
-                    IdentityProvider.GOOGLE,
-                    OidcProvider(IdentityProvider.GOOGLE, config.googleEndpoints.withAccountPicker(), it, http, clock),
-                )
-            }
-        }
-        return SignInMethods(oauth, email = config.resendApiKey != null || config.mailDirectory != null)
-    }
-
-    /** Google's consent page lets the person pick an account instead of reusing the last one silently. */
-    private fun OidcEndpoints.withAccountPicker() =
-        copy(extraParameters = extraParameters + ("prompt" to "select_account"))
 
     private fun mailSender(config: SignInConfig, http: HttpClient, clock: Clock): MailSender = when {
         config.resendApiKey != null -> ResendMailSender(http, config.resendApiKey, config.mailFrom)

@@ -17,6 +17,7 @@ import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.module.kernelModule
 import run.ostrom.server.kernel.module.serverKoin
+import run.ostrom.server.kernel.settings.InstanceSettings
 import run.ostrom.server.kernel.signing.Ed25519InstanceSigner
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
@@ -25,6 +26,7 @@ import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.runTestApplication
 import io.ktor.test.dispatcher.runTestWithRealTime
 import org.koin.core.module.Module
+import org.koin.dsl.module
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
@@ -97,12 +99,13 @@ private suspend fun ApplicationTestBuilder.serve(
         database.driver.requireRowLevelSecurity()
         // The server's pool records what it sends, for the read benches (ReadBench.kt).
         val driver = RecordingDriver(database.driver)
-        // Tests sign people up as an open instance does (`OSTROM_SIGNUP` of ostrom.run); the invite-only default of a
-        // self-hosted instance has its own tests, which override the identity configuration.
+        // Tests sign people up as an open instance does (ostrom.run): with the admin module, its former variable is
+        // imported into the console's settings at start; without it, the settings say so (testKernel). The
+        // invite-only default of a self-hosted instance has its own tests, which override the instance's settings.
         val source = LayeredConfigSource(listOf(environment, MapConfigSource(mapOf("OSTROM_SIGNUP" to "open"))))
         // The database's notifications need the pool itself, not its recording wrapper.
         val notifications = databaseNotifications(database.driver)
-        val kernel = kernelModule(logger, driver, signer, source, notifications = notifications)
+        val kernel = testKernel(kernelModule(logger, driver, signer, source, notifications = notifications), modules)
         val koin = serverKoin(kernel, modules, overrides)
         try {
             val migrations = koin.get<MigrationRunner>()
@@ -127,3 +130,25 @@ private suspend fun ApplicationTestBuilder.serve(
         database.close()
     }
 }
+
+/**
+ * The kernel of a test server: without the admin module, it adds the instance's settings of an open instance
+ * ([TestInstanceSettings.openSignUp]), as the admin module stores them on ostrom.run.
+ *
+ * @param kernel The kernel's definitions.
+ * @param modules The modules under test.
+ *
+ * @return The definitions.
+ */
+internal fun testKernel(kernel: Module, modules: List<ServerModule>): Module =
+    if (modules.any { it.name == ADMIN_MODULE }) {
+        kernel
+    } else {
+        module {
+            includes(kernel)
+            single<InstanceSettings> { TestInstanceSettings.openSignUp() }
+        }
+    }
+
+/** The name of the module that stores the instance's settings. */
+private const val ADMIN_MODULE = "admin"

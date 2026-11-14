@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.identity
 
+import run.ostrom.server.identity.infrastructure.GitHubSignIn
+import run.ostrom.server.identity.fakes.offered
 import run.ostrom.server.identity.domain.ANSWER_SCOPE
 import run.ostrom.server.identity.domain.ApiToken
 import run.ostrom.server.identity.domain.ApiTokensRepository
@@ -89,10 +91,11 @@ class AccountSecurityRoutesPostgresTest {
     private val overrides = module {
         single {
             val providers = mapOf(IdentityProvider.GITHUB to githubSignIn, IdentityProvider.GOOGLE to google)
-            SignInMethods(providers, email = false)
+            SignInMethods(providers, email = false).offered()
         }
         single<GitHubTokenVerifier> {
-            GitHubTokenVerifierImpl(OAuthClient("ostrom-app", "app-secret"), gitHub.http, "https://api.gh.test")
+            val app = GitHubSignIn(OAuthClient("ostrom-app", "app-secret"), "https://gh.test", "https://api.gh.test")
+            GitHubTokenVerifierImpl({ app }, gitHub.http)
         }
     }
 

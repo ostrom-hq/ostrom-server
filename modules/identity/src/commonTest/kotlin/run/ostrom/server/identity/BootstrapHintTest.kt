@@ -10,7 +10,9 @@ import run.ostrom.server.identity.fakes.InMemoryApiTokensRepository
 import run.ostrom.server.identity.fakes.InMemorySetupLinks
 import run.ostrom.server.identity.fakes.InMemoryUsersRepository
 import run.ostrom.server.identity.fakes.SettableClock
-import run.ostrom.server.identity.presentation.IdentityConfig
+import run.ostrom.server.identity.domain.SignUpPolicy
+import run.ostrom.server.identity.domain.SignUpPolicyImpl
+import run.ostrom.server.identity.fakes.FakeHasher
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.logging.Logger
 import kotlinx.coroutines.test.TestScope
@@ -44,7 +46,7 @@ class BootstrapHintTest {
                     single<RateLimitWindows> { NO_WINDOWS }
                     single<Clock> { SettableClock() }
                     single<Logger> { recorder }
-                    single { IdentityConfig("http://localhost:8080", "http://localhost:5173", signUp = mode) }
+                    single<SignUpPolicy> { SignUpPolicyImpl({ mode }, links, null, FakeHasher(), SettableClock()) }
                 },
             )
         }

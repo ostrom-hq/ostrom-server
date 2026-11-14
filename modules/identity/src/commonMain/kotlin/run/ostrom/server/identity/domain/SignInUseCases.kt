@@ -19,6 +19,19 @@ data class SignInMethods(val oauth: Map<IdentityProvider, OAuthProvider>, val em
 }
 
 /**
+ * The sign-in methods offered now: an administrator of the instance sets the providers in the console (Admin →
+ * Settings), and a provider is offered once its required fields are set, without a restart.
+ */
+fun interface SignInMethodsSource {
+    /**
+     * Reads the methods offered now.
+     *
+     * @return The methods.
+     */
+    suspend fun current(): SignInMethods
+}
+
+/**
  * What the sign-in use cases share: secrets and their hashes, the rate limiter, the clock and the callback URLs.
  *
  * @property generator Generates states, PKCE verifiers, nonces and link tokens.
@@ -95,12 +108,12 @@ private data class AttemptOptions(
 /**
  * [StartOAuthSignInUseCase].
  *
- * @param methods The configured providers.
+ * @param methods The providers offered now.
  * @param attempts Where attempts are kept.
  * @param services Secrets, hashes, the rate limit per address, the clock and the callback URLs.
  */
 class StartOAuthSignInUseCaseImpl(
-    private val methods: SignInMethods,
+    private val methods: SignInMethodsSource,
     private val attempts: OAuthAttemptsRepository,
     private val services: SignInServices,
 ) : StartOAuthSignInUseCase {
@@ -189,7 +202,7 @@ interface CompleteOAuthSignInUseCase {
 /**
  * [CompleteOAuthSignInUseCase].
  *
- * @param methods The configured providers.
+ * @param methods The providers offered now.
  * @param attempts Where attempts are kept.
  * @param services Hashes the state; the clock and the callback URLs (the same as at the start).
  * @param resolveUser Finds, merges or creates the account.
@@ -197,7 +210,7 @@ interface CompleteOAuthSignInUseCase {
  * @param startSession Opens the browser session.
  */
 class CompleteOAuthSignInUseCaseImpl(
-    private val methods: SignInMethods,
+    private val methods: SignInMethodsSource,
     private val attempts: OAuthAttemptsRepository,
     private val services: SignInServices,
     private val resolveUser: ResolveUserUseCase,
@@ -252,7 +265,7 @@ interface RequestMagicLinkUseCase {
 /**
  * [RequestMagicLinkUseCase].
  *
- * @param methods The configured methods.
+ * @param methods The methods offered now.
  * @param links Where links are kept.
  * @param mail Sends the e-mail.
  * @param services Generates and hashes the link token; limits requests per address and per recipient; the clock.
@@ -260,7 +273,7 @@ interface RequestMagicLinkUseCase {
  * @param linkUrl The console URL the e-mail points to, for a token.
  */
 class RequestMagicLinkUseCaseImpl(
-    private val methods: SignInMethods,
+    private val methods: SignInMethodsSource,
     private val links: MagicLinksRepository,
     private val mail: MailSender,
     private val services: SignInServices,
@@ -269,7 +282,7 @@ class RequestMagicLinkUseCaseImpl(
 ) : RequestMagicLinkUseCase {
     override suspend fun invoke(email: String, redirect: String?, source: String, browserNonce: String?): String {
         val limiter = services.limiter
-        if (!methods.email) throw ProviderNotConfiguredException()
+        if (!methods.current().email) throw ProviderNotConfiguredException()
         val address = normalizeEmail(email)
         val key = "magic-link:${rateLimitSource(source)}"
         if (!limiter.tryAcquire(key, SOURCE_LIMIT, LIMIT_WINDOW_MINUTES.minutes)) {
@@ -361,7 +374,7 @@ internal data class TakenState(val provider: String, val state: String?, val bro
 /**
  * Checks a callback's state against the browser's cookie and takes its attempt, once.
  *
- * @param methods The configured providers.
+ * @param methods The providers offered now.
  * @param attempts Where attempts are kept.
  * @param services Hashes the state; the clock.
  * @param taken The provider and the two states.
@@ -373,7 +386,7 @@ internal data class TakenState(val provider: String, val state: String?, val bro
  *   expired, or belongs to another provider.
  */
 internal suspend fun takeAttempt(
-    methods: SignInMethods,
+    methods: SignInMethodsSource,
     attempts: OAuthAttemptsRepository,
     services: SignInServices,
     taken: TakenState,
@@ -389,7 +402,7 @@ internal suspend fun takeAttempt(
     return oauth to attempt
 }
 
-private fun configuredProvider(methods: SignInMethods, key: String): OAuthProvider {
+private suspend fun configuredProvider(methods: SignInMethodsSource, key: String): OAuthProvider {
     val provider = IdentityProvider.entries.firstOrNull { it.key == key } ?: throw ProviderNotConfiguredException()
-    return methods.oauth[provider] ?: throw ProviderNotConfiguredException()
+    return methods.current().oauth[provider] ?: throw ProviderNotConfiguredException()
 }

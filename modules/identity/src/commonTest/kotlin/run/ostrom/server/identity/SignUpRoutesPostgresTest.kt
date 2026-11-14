@@ -2,19 +2,20 @@
 
 package run.ostrom.server.identity
 
+import run.ostrom.server.testing.TestInstanceSettings
+import run.ostrom.server.kernel.settings.InstanceSettings
+import run.ostrom.server.identity.fakes.offered
 import run.ostrom.server.identity.domain.BootstrapInstanceUseCase
 import run.ostrom.server.identity.domain.IdentityProvider
 import run.ostrom.server.identity.domain.MailSender
 import run.ostrom.server.identity.domain.SecretHasher
 import run.ostrom.server.identity.domain.SetupLinksRepository
 import run.ostrom.server.identity.domain.SignInMethods
-import run.ostrom.server.identity.domain.SignUpMode
 import run.ostrom.server.identity.domain.UsersRepository
 import run.ostrom.server.identity.fakes.FakeOAuthProvider
 import run.ostrom.server.identity.fakes.RecordingMailSender
 import run.ostrom.server.identity.presentation.AccountResponse
 import run.ostrom.server.identity.presentation.EMAIL_LINK_COOKIE
-import run.ostrom.server.identity.presentation.IdentityConfig
 import run.ostrom.server.identity.presentation.MagicLinkRequest
 import run.ostrom.server.identity.presentation.OAUTH_STATE_COOKIE
 import run.ostrom.server.identity.presentation.ProvidersResponse
@@ -52,9 +53,9 @@ class SignUpRoutesPostgresTest {
     private val github = FakeOAuthProvider(IdentityProvider.GITHUB)
     private val mail = RecordingMailSender()
     private val inviteOnly = module {
-        single { SignInMethods(mapOf(IdentityProvider.GITHUB to github), email = true) }
+        single { SignInMethods(mapOf(IdentityProvider.GITHUB to github), email = true).offered() }
         single<MailSender> { mail }
-        single { IdentityConfig("http://localhost:8080", "http://localhost:5173", signUp = SignUpMode.INVITE) }
+        single<InstanceSettings> { TestInstanceSettings(mapOf("sign-up" to mapOf("mode" to "invite"))) }
     }
 
     private fun HttpResponse.cookie(name: String) =

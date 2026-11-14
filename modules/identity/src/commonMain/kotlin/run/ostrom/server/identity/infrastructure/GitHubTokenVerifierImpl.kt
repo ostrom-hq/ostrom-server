@@ -22,17 +22,18 @@ import kotlinx.serialization.Serializable
  * the client id and secret of Ostrom's GitHub app). GitHub answers 404 for a token it did not issue to that app (a
  * token of another OAuth app, a personal access token, a revoked one), and otherwise names the account it belongs to.
  *
- * @param client The GitHub app's OAuth credentials, or null when this instance has none.
+ * @param github Reads GitHub's sign-in as set in the console now (the app's OAuth credentials and GitHub's API URL),
+ *   null while it is not.
  * @param http The HTTP client.
- * @param apiUrl GitHub's API URL (overridden in tests by a fake GitHub).
  */
 class GitHubTokenVerifierImpl(
-    private val client: OAuthClient?,
+    private val github: suspend () -> GitHubSignIn?,
     private val http: HttpClient,
-    private val apiUrl: String = "https://api.github.com",
 ) : GitHubTokenVerifier {
     override suspend fun verify(token: String): GitHubAccount? {
-        val app = client ?: throw ProviderNotConfiguredException()
+        val signIn = github() ?: throw ProviderNotConfiguredException()
+        val app = signIn.client
+        val apiUrl = signIn.apiUrl
         val body = ProviderJson.encodeToString(CheckRequest.serializer(), CheckRequest(token))
         val response = providerCall {
             http.post("$apiUrl/applications/${app.clientId.encodeURLPathPart()}/token") {

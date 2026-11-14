@@ -2,6 +2,7 @@
 
 package run.ostrom.server.identity
 
+import run.ostrom.server.identity.fakes.offered
 import run.ostrom.server.identity.domain.IdentityProvider
 import run.ostrom.server.identity.domain.MagicLink
 import run.ostrom.server.identity.domain.MagicLinksRepository
@@ -73,6 +74,7 @@ class SignInRoutesPostgresTest {
     private val overrides = module {
         single {
             SignInMethods(mapOf(IdentityProvider.GITHUB to github, IdentityProvider.GOOGLE to google), email = true)
+                .offered()
         }
         single<MailSender> { mail }
     }

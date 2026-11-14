@@ -22,6 +22,7 @@ import run.ostrom.server.identity.fakes.InMemoryUsersRepository
 import run.ostrom.server.identity.fakes.RecordingAuditLog
 import run.ostrom.server.identity.fakes.ScriptedRateLimiter
 import run.ostrom.server.identity.fakes.SettableClock
+import run.ostrom.server.identity.infrastructure.GitHubSignIn
 import run.ostrom.server.identity.infrastructure.GitHubTokenVerifierImpl
 import run.ostrom.server.identity.infrastructure.OAuthClient
 import io.ktor.client.HttpClient
@@ -78,10 +79,13 @@ class FakeGitHub(private val clientId: String = "ostrom-app", private val client
     private val json = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString())
 }
 
+/** GitHub's sign-in of the fake GitHub, with a client. */
+private fun signIn(client: OAuthClient) = GitHubSignIn(client, "https://gh.test", "https://api.gh.test")
+
 class LauncherLoginTest {
     private val github = FakeGitHub()
     private val app = OAuthClient("ostrom-app", "app-secret")
-    private val verifier = GitHubTokenVerifierImpl(app, github.http, "https://api.gh.test")
+    private val verifier = GitHubTokenVerifierImpl({ signIn(app) }, github.http)
     private val users = InMemoryUsersRepository()
     private val tokens = InMemoryApiTokensRepository()
     private val limiter = ScriptedRateLimiter()
@@ -177,13 +181,13 @@ class LauncherLoginTest {
         assertFailsWith<ProviderRejectedException> { verifier.verify("gho_ostrom") }
         github.status = null
         val wrong = OAuthClient("ostrom-app", "wrong")
-        val wrongSecret = GitHubTokenVerifierImpl(wrong, github.http, "https://api.gh.test")
+        val wrongSecret = GitHubTokenVerifierImpl({ signIn(wrong) }, github.http)
         assertNull(wrongSecret.verify("gho_ostrom"))
-        val unconfigured = GitHubTokenVerifierImpl(null, github.http)
+        val unconfigured = GitHubTokenVerifierImpl({ null }, github.http)
         assertFailsWith<ProviderNotConfiguredException> { unconfigured.verify("gho_ostrom") }
         val unreachable = HttpClient(MockEngine { error("network down") }) { expectSuccess = false }
         assertFailsWith<ProviderRejectedException> {
-            GitHubTokenVerifierImpl(app, unreachable).verify("gho_ostrom")
+            GitHubTokenVerifierImpl({ signIn(app) }, unreachable).verify("gho_ostrom")
         }
     }
 

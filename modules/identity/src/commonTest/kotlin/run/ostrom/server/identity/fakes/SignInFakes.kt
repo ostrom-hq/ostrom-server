@@ -12,6 +12,8 @@ import run.ostrom.server.identity.domain.OAuthAttempt
 import run.ostrom.server.identity.domain.OAuthAttemptsRepository
 import run.ostrom.server.identity.domain.OAuthProvider
 import run.ostrom.server.identity.domain.ProviderRejectedException
+import run.ostrom.server.identity.domain.SignInMethods
+import run.ostrom.server.identity.domain.SignInMethodsSource
 import run.ostrom.server.identity.domain.VerifiedIdentity
 import kotlin.time.Instant
 
@@ -92,3 +94,6 @@ class FakeOAuthProvider(
         return identity
     }
 }
+
+/** These methods, offered whatever the instance's settings say. */
+fun SignInMethods.offered(): SignInMethodsSource = SignInMethodsSource { this }

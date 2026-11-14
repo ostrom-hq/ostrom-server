@@ -15,7 +15,7 @@ import run.ostrom.server.identity.domain.ProviderNotConfiguredException
 import run.ostrom.server.identity.domain.ProviderRejectedException
 import run.ostrom.server.identity.domain.RateLimitedException
 import run.ostrom.server.identity.domain.RequestMagicLinkUseCase
-import run.ostrom.server.identity.domain.SignInMethods
+import run.ostrom.server.identity.domain.SignInMethodsSource
 import run.ostrom.server.identity.domain.SignUpClosedException
 import run.ostrom.server.identity.domain.GrantSignUpUseCase
 import run.ostrom.server.identity.domain.SignUpPolicy
@@ -83,7 +83,7 @@ private const val SIGN_IN_COOKIE_PATH = "/api/v1/auth"
  */
 data class SignInRoutesDependencies(
     val config: IdentityConfig,
-    val methods: SignInMethods,
+    val methods: SignInMethodsSource,
     val startOAuth: StartOAuthSignInUseCase,
     val completeOAuth: CompleteOAuthSignInUseCase,
     val requestMagicLink: RequestMagicLinkUseCase,
@@ -105,7 +105,7 @@ data class SignInRoutesDependencies(
  */
 fun Route.signInRoutes(dependencies: SignInRoutesDependencies) = with(dependencies) {
     get<SignInApi.Providers> {
-        call.respond(ProvidersResponse(methods.keys, signUp.mode.key))
+        call.respond(ProvidersResponse(methods.current().keys, signUp.mode().key))
     }
     get<SignInApi.Provider.Start> { params ->
         // Invalid mobile parameters answer 400 here: nothing is redirected to a deep link that is not the app's.

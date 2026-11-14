@@ -42,7 +42,7 @@ class SignUpTest {
     private val links = InMemorySetupLinks(users)
     private val invitations = FakeSignUpInvitations(mutableSetOf("invite-token"))
     private val hasher = FakeHasher()
-    private val invite = SignUpPolicyImpl(SignUpMode.INVITE, links, invitations, hasher, clock)
+    private val invite = SignUpPolicyImpl({ SignUpMode.INVITE }, links, invitations, hasher, clock)
     private val bootstrap = BootstrapInstanceUseCaseImpl(links, CountingSecretGenerator(), hasher, clock)
     private val github = VerifiedIdentity(IdentityProvider.GITHUB, "583231", "ada@example.com", true, login = "ada")
 
@@ -104,7 +104,7 @@ class SignUpTest {
         assertTrue(invite.accepts("invite-token"))
         assertFalse(invite.mayCreateOrgs(id))
 
-        val withoutOrgs = SignUpPolicyImpl(SignUpMode.INVITE, links, null, hasher, clock)
+        val withoutOrgs = SignUpPolicyImpl({ SignUpMode.INVITE }, links, null, hasher, clock)
         assertFalse(withoutOrgs.admits(github, SignUpGrant.Presented("invite-token")))
         assertFalse(withoutOrgs.accepts("invite-token"))
     }
@@ -112,7 +112,7 @@ class SignUpTest {
     @Test
     fun theSetupLinksPersonIsMadeAnAdministratorOfTheInstanceOnlyWhenTheLinkIsSpent() = runTest {
         val granted = mutableListOf<Pair<Uuid, Instant>>()
-        val policy = SignUpPolicyImpl(SignUpMode.INVITE, links, invitations, hasher, clock) { userId, at ->
+        val policy = SignUpPolicyImpl({ SignUpMode.INVITE }, links, invitations, hasher, clock) { userId, at ->
             granted += userId to at
         }
         val link = assertNotNull(bootstrap())
@@ -128,7 +128,7 @@ class SignUpTest {
 
     @Test
     fun anOpenInstanceAdmitsEveryoneAndLetsEveryoneCreateOrganizations() = runTest {
-        val open = SignUpPolicyImpl(SignUpMode.OPEN, links, invitations, hasher, clock)
+        val open = SignUpPolicyImpl({ SignUpMode.OPEN }, links, invitations, hasher, clock)
 
         assertTrue(open.admits(github, SignUpGrant.Presented(null)))
         assertTrue(open.mayCreateOrgs(Uuid.random()))
