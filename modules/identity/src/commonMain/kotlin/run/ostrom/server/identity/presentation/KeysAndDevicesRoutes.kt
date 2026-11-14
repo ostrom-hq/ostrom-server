@@ -23,10 +23,10 @@ import kotlin.uuid.Uuid
  * The service keys of an organization (its owners and admins) and the caller's signed-in workstations. Every route
  * needs a browser session, like the personal tokens: a token never signs a machine out (S2-52). The service keys also
  * take the person's own CLI sign-in (`ostrom keys`, as TeamCode's), never a service key, an agent's token nor a
- * personal token, so a leaked one cannot spread. The organization of the keys is the one `Ostrom-Org` names, or the caller's only one; the
- * tokens of `ostrom login --admin` are listed and signed out only in the one `Ostrom-Org` names, a member's own, any
- * member's for an owner or an admin. A member of another organization, an unknown key or a device the caller may not
- * sign out is answered 404.
+ * personal token, so a leaked one cannot spread. The organization of the keys is the one `Ostrom-Org` names, or the
+ * caller's only one; the tokens of `ostrom login --admin` are listed and signed out only in the one `Ostrom-Org`
+ * names, a member's own, any member's for an owner or an admin. A member of another organization, an unknown key or a
+ * device the caller may not sign out is answered 404.
  *
  * @param dependencies The use cases.
  */
