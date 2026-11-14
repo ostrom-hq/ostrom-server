@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.gateway.infrastructure
 
-import run.ostrom.server.gateway.domain.AdmissionQueueRepository
 import run.ostrom.server.gateway.domain.AdmissionRequest
 import run.ostrom.server.kernel.database.databaseNow
 import run.ostrom.server.kernel.database.databaseNowPlus
@@ -17,9 +16,6 @@ import kotlin.uuid.Uuid
 
 // The writes of a call's arrival and polls (AdmissionQueueRepositoryImpl), one function each so that
 // AdmissionQueuePostgresTest explains exactly what the repository sends. Every one filters on the org.
-
-private val WAITING_SECONDS = AdmissionQueueRepository.WAITING_LEASE.inWholeSeconds
-private val RUNNING_SECONDS = AdmissionQueueRepository.RUNNING_LEASE.inWholeSeconds
 
 /** The org's expired entries: waits no longer polled, and calls whose replica died. */
 internal fun StatementBuilder.admissionPurge(orgId: Uuid): DeleteStatement =

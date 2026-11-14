@@ -103,7 +103,7 @@ class RequestCancellationPostgresTest {
             { cancellationRead(Gw.orgA, ada, requestId) },
         )
         for (statement in statements) {
-            val plan = server.koin.get<JdbcDatabase>().inOrg(Gw.orgA) { plan(statement) }
+            val plan = server.koin.get<JdbcDatabase>().inOrg(Gw.orgA) { plan(statement).also { rollback() } }
             assertFalse("Seq Scan" in plan, "A cancellation statement scans a table:\n$plan")
         }
     }

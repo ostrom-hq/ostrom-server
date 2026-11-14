@@ -252,7 +252,7 @@ class AdmissionQueuePostgresTest {
             "the counts" to { admissionCounts(Gw.orgA, ada).query },
         )
         statements.forEach { (what, statement) ->
-            val plan = server.koin.get<JdbcDatabase>().inOrg(Gw.orgA) { plan(statement) }
+            val plan = server.koin.get<JdbcDatabase>().inOrg(Gw.orgA) { plan(statement).also { rollback() } }
             assertFalse("Seq Scan" in plan, "$what scans a table:\n$plan")
         }
     }

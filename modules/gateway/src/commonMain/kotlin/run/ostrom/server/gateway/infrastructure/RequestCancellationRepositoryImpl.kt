@@ -27,7 +27,7 @@ import kotlin.uuid.Uuid
  */
 class RequestCancellationRepositoryImpl(private val database: JdbcDatabase) : RequestCancellationRepository {
     override suspend fun cancel(orgId: Uuid, memberId: Uuid, requestId: Uuid) = database.inOrg(orgId) {
-        advisoryLock(cancellationLockKey(orgId)).toList()
+        lockUntilCommit(cancellationLockKey(orgId))
         write { cancellationPurge(orgId) }
         val markers = cancellationCounts(orgId, memberId, requestId).single()
         // Idempotent: a marker already there is neither extended nor counted again.

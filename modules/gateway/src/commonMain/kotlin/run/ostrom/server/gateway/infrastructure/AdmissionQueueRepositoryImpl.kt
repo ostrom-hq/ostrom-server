@@ -10,11 +10,7 @@ import run.ostrom.server.gateway.domain.QueueRefusedException
 import run.ostrom.server.gateway.domain.QueueTurns
 import run.ostrom.server.gateway.domain.RefusalKind
 import run.ostrom.server.kernel.database.JdbcDatabase
-import org.jetbrains.exposed.v1.core.statements.Statement
-import org.jetbrains.exposed.v1.core.statements.StatementBuilder
-import org.jetbrains.exposed.v1.core.statements.buildStatement
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
-import org.jetbrains.exposed.v1.jdbc.statements.toExecutable
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.uuid.Uuid
 
@@ -34,7 +30,7 @@ class AdmissionQueueRepositoryImpl(private val database: JdbcDatabase) : Admissi
 
     private fun JdbcTransaction.decide(request: AdmissionRequest, first: Boolean): AdmissionEntry {
         val orgId = request.orgId
-        advisoryLock(admissionLockKey(orgId)).toList()
+        lockUntilCommit(admissionLockKey(orgId))
         write { admissionPurge(orgId) }
         val waited = if (first) {
             bound(request)
@@ -104,14 +100,9 @@ class AdmissionQueueRepositoryImpl(private val database: JdbcDatabase) : Admissi
     }
 }
 
+internal val WAITING_SECONDS = AdmissionQueueRepository.WAITING_LEASE.inWholeSeconds
+internal val RUNNING_SECONDS = AdmissionQueueRepository.RUNNING_LEASE.inWholeSeconds
+internal val ALIVE_SECONDS = AdmissionQueueRepository.ALIVE.inWholeSeconds
+
 /** The advisory lock key of an org's admissions: its entries are decided one at a time, on every replica. */
 internal fun admissionLockKey(orgId: Uuid): String = "gateway_admissions:$orgId"
-
-/**
- * Runs one write built by [body] in this transaction.
- *
- * @return What the statement returns (rows written).
- */
-internal fun <T : Any> JdbcTransaction.write(body: StatementBuilder.() -> Statement<T>): T? =
-    buildStatement(body).toExecutable().execute(this)
-

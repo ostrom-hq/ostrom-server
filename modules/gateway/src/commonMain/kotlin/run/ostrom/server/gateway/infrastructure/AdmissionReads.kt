@@ -8,7 +8,6 @@ import run.ostrom.server.gateway.domain.Workload
 import run.ostrom.server.kernel.database.databaseNow
 import run.ostrom.server.kernel.database.databaseNowPlus
 import org.jetbrains.exposed.v1.core.JoinType
-import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.coalesce
 import org.jetbrains.exposed.v1.core.count
@@ -25,23 +24,6 @@ import kotlin.uuid.Uuid
 // The reads of the admission queue (AdmissionQueueRepositoryImpl), one function each so that AdmissionQueuePostgresTest
 // explains exactly what the repository sends. Every one filters on the org.
 
-private val ALIVE_SECONDS = AdmissionQueueRepository.ALIVE.inWholeSeconds
-
-/**
- * A read and how its rows become what the repository decides on: the [query] alone for a plan.
- *
- * @property query What is sent.
- */
-internal class Read<T>(val query: Query, private val map: (ResultRow) -> T) {
-    /** The rows, mapped. */
-    fun rows(): List<T> = query.map(map)
-
-    /** The one row of an aggregate. */
-    fun single(): T = map(query.single())
-
-    /** The row, if any. */
-    fun singleOrNull(): T? = query.singleOrNull()?.let(map)
-}
 
 /** A member's last turn in a scope ([mine], 0 before their first) and the scope's last ([top]). */
 internal data class Turns(val mine: Long, val top: Long)

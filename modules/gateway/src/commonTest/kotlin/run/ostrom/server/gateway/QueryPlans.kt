@@ -7,7 +7,8 @@ import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.jetbrains.exposed.v1.jdbc.explain
 
 /**
- * The plan of a repository's statement, as Exposed sends it, under `EXPLAIN (ANALYZE, BUFFERS)` in this transaction.
+ * The plan of a repository's statement, as Exposed sends it, under `EXPLAIN (ANALYZE, BUFFERS)` in this transaction: a
+ * write runs, so a caller that explains several rolls each back.
  *
  * @param statement The statement.
  *

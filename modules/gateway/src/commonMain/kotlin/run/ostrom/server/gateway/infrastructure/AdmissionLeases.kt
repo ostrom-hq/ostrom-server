@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.gateway.infrastructure
 
-import run.ostrom.server.gateway.domain.AdmissionQueueRepository
 import run.ostrom.server.kernel.database.databaseNow
 import run.ostrom.server.kernel.database.databaseNowPlus
 import org.jetbrains.exposed.v1.core.JoinType
 import org.jetbrains.exposed.v1.core.and
-import org.jetbrains.exposed.v1.core.coalesce
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.statements.DeleteStatement
 import org.jetbrains.exposed.v1.core.statements.StatementBuilder
@@ -15,9 +13,6 @@ import kotlin.uuid.Uuid
 
 // The writes of a running call's lease (AdmissionQueueRepositoryImpl), one function each so that
 // AdmissionQueuePostgresTest explains exactly what the repository sends. Every one filters on the org.
-
-private val WAITING_SECONDS = AdmissionQueueRepository.WAITING_LEASE.inWholeSeconds
-private val RUNNING_SECONDS = AdmissionQueueRepository.RUNNING_LEASE.inWholeSeconds
 
 /**
  * The turn a running call took, given back to its member as it goes back to wait (it was not served), unless another
@@ -34,9 +29,9 @@ internal fun StatementBuilder.admissionGiveBack(orgId: Uuid, id: Uuid): UpdateSt
             (a.orgId eq t.orgId) and (a.scope eq t.scope) and (a.memberId eq t.memberId) and (t.turn eq a.turnTaken)
         },
     )
-    // turn_before is set with turn_taken, which the join requires: the coalesce never falls back.
+    // turn_before is set with turn_taken, which the join requires.
     return taken.update({ (a.orgId eq orgId) and (a.id eq id) and (a.running eq true) and (t.orgId eq orgId) }) {
-        it[t.turn] = coalesce(a.turnBefore, t.turn)
+        it[t.turn] = a.turnBefore
     }
 }
 
