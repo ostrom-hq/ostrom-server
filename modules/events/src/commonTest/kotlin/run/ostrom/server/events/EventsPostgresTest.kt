@@ -40,6 +40,7 @@ import run.ostrom.server.kernel.events.OrgEventDraft
 import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.events.OrgEventType
 import run.ostrom.server.kernel.module.OrgDeletionListener
+import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import kotlin.test.Test
@@ -76,6 +77,8 @@ class EventsPostgresTest {
     }
 
     private fun overrides(instantPolls: Boolean = false): Module = module {
+        // The webhooks the module also serves seal their secrets; the feed never opens one.
+        single<SecretCipher> { ContextCipher() }
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
                 override suspend fun authenticate(token: String): AuthenticatedPrincipal? = principal(token)

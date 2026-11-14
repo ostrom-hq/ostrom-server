@@ -303,7 +303,7 @@ class WebhooksRepositoryImpl(private val driver: Driver) : WebhooksRepository {
                 "WHERE w.id = d.webhook_id AND d.org_id = :org_id AND d.id IN (" +
                 "SELECT e.id FROM events_webhook_deliveries e JOIN events_webhooks x ON x.id = e.webhook_id " +
                 "WHERE e.org_id = :org_id AND e.state = 'pending' AND e.next_attempt_at <= :now " +
-                "AND e.lease_until < :now AND (x.enabled OR e.test) ORDER BY e.next_attempt_at LIMIT :limit " +
+                "AND e.lease_until <= :now AND (x.enabled OR e.test) ORDER BY e.next_attempt_at LIMIT :limit " +
                 "FOR UPDATE OF e SKIP LOCKED) " +
                 "RETURNING d.id, d.webhook_id, d.event_seq, d.event_type, d.payload, d.state, d.attempts, " +
                 "d.next_attempt_at, d.last_status, d.last_error, d.created_at, d.delivered_at, d.test, w.url, w.secret"
