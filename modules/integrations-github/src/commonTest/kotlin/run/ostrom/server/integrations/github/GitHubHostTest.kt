@@ -55,7 +55,8 @@ class GitHubHostTest {
             assertNull(check("https://ghe.example:8443/api/v3/"))
             assertNull(check("http://[::1]:9000"))
             for (bad in listOf(
-                "ghe.example", "ftp://ghe.example", "https://", "http:///x", "https://ghe .example",
+                "ghe.example", "ftp://ghe.example", "https://", "http:///x", "https://ghe .example", "https://:8080",
+                "https://ghe.example:123456",
                 "https://user:pw@ghe.example", "https://ghe.example?x=1", "https://ghe.example/#top",
             )) {
                 assertEquals("an http:// or https:// URL, without credentials, query or fragment.", check(bad), bad)
