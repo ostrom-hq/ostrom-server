@@ -30,7 +30,6 @@ import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLongOrNull
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
-import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.events.DiscardingOrgEventPublisher
 import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.events.OrgEventType
@@ -49,12 +48,10 @@ import kotlin.uuid.Uuid
  *
  * @param driver The connection pool.
  * @param events The organization's feed, where [GateAnnouncements.announce] publishes in the gate's transaction.
- * @param logins The members of each approver's login; null (the orgs module not loaded) announces nothing.
  */
 class PostgresGatesRepository(
     private val driver: Driver,
     private val events: OrgEventPublisher = DiscardingOrgEventPublisher(),
-    private val logins: MemberLogins? = null,
 ) : GatesRepository, GateHistory {
     override suspend fun <T> transaction(block: suspend GatesTransaction.() -> T): T = driver.transaction {
         tx(this).block()
@@ -63,7 +60,7 @@ class PostgresGatesRepository(
     // Each transaction of the gates, its organization's scope and its announcements in the same transaction.
     private fun tx(transaction: Transaction): Tx {
         val scope = OrgScope(transaction)
-        return Tx(transaction, scope, Announcements(transaction, scope, events, logins))
+        return Tx(transaction, scope, Announcements(transaction, scope, events))
     }
 
     override suspend fun get(orgId: Uuid, id: Uuid): Gate? = driver.transaction {
@@ -291,21 +288,16 @@ class PostgresGatesRepository(
     }
 
     // The approval events, published last in the gate's transaction (the organization's cursor is the lock every
-    // publisher shares, taken last everywhere).
+    // publisher shares, taken last everywhere). Nothing else is read: no other module's lookup holds the gate's locks.
     private class Announcements(
         val transaction: Transaction,
         val scope: OrgScope,
         val events: OrgEventPublisher,
-        val logins: MemberLogins?,
     ) : GateAnnouncements {
         override suspend fun announce(type: OrgEventType, gate: Gate, requests: List<ApprovalRequest>) {
-            if (logins == null || requests.isEmpty()) return
-            val members = logins.idsOf(gate.orgId, requests.map { it.approverId })
-            val drafts = requests.mapNotNull { request ->
-                members[request.approverId]?.let { request.event(type, gate, it) }
-            }
+            if (requests.isEmpty()) return
             scope.enter(gate.orgId)
-            events.publishIn(transaction, gate.orgId, drafts)
+            events.publishIn(transaction, gate.orgId, requests.map { it.event(type, gate) })
         }
     }
 

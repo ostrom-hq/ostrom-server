@@ -13,8 +13,7 @@ import run.ostrom.server.kernel.events.OrgEventType
  */
 interface GateAnnouncements {
     /**
-     * Publishes the [type] event of each of [requests], after the transaction's other writes. A request whose
-     * approver is not a member of the gate's organization has none: nobody would see it.
+     * Publishes the [type] event of each of [requests], after the transaction's other writes.
      *
      * @param type [OrgEventType.APPROVAL_REQUESTED] or [OrgEventType.APPROVAL_DECIDED].
      * @param gate The gate, as written.

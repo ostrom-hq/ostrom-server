@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.gates.domain.usecases
 
-import run.ostrom.server.kernel.events.OrgEventType
 import run.ostrom.server.gates.domain.models.ActorKind
 import run.ostrom.server.gates.domain.models.Answer
 import run.ostrom.server.gates.domain.models.AnswerChannel
@@ -27,6 +26,7 @@ import run.ostrom.server.gates.domain.services.GateGitHubAccounts
 import run.ostrom.server.gates.domain.services.GateNotifier
 import run.ostrom.server.gates.domain.services.GatePolicies
 import run.ostrom.server.kernel.auth.PhoneUnlockProofs
+import run.ostrom.server.kernel.events.OrgEventType
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.uuid.Uuid

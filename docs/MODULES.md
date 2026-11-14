@@ -629,8 +629,9 @@ owner, so the serving role reads the history (the start-up check) and never rewr
   reader's own transaction with the work it writes and guarded by its previous value, so two replicas never handle a
   page twice. The waits an event names are read through the kernel's `WaitSummaries` (automations module).
   The gates publish theirs in the gate's own transaction: `cloud.approval.requested` when an enforced gate asks its
-  approvers and `cloud.approval.decided` when it is answered, one per approval request, belonging to the approver's
-  member (a login that names no member has none), ids only (`approvalId`, `gateId`, the repository or the `status`).
+  approvers and `cloud.approval.decided` when it is answered, one per approval request with its own status, events of
+  the whole organization naming the approver's login (no other module is read inside the gate's transaction), never
+  the gate's label or evidence.
 - **A cloud session's terminal is relayed by the replica holding its runner's socket** (TC-REP-1). That replica
   records the hold in `runners_terminal_hosts` (renewed every 30 s, 90 s lease by the database's clock, the newest
   execution wins). A member attached on another replica is relayed to it as a hop client, at its pod address

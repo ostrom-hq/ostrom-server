@@ -9,7 +9,6 @@ import run.ostrom.server.gates.domain.models.GateStatus
 import run.ostrom.server.gates.domain.models.GateSubject
 import run.ostrom.server.gates.domain.models.RequestStatus
 import run.ostrom.server.gates.infrastructure.PostgresGatesRepository
-import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.events.OrgEventDraft
 import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.events.OrgEventType
@@ -25,24 +24,12 @@ import kotlin.uuid.Uuid
 
 /**
  * The approval events of the gates, published in the gate's own transaction (the prerequisite of the durable
- * notifications, TC-NEW-a6a3bd8-2): one per request whose approver is a member, ids only, confined to the gate's
- * organization.
+ * notifications, TC-NEW-a6a3bd8-2): one per request with its own status, ids and the approver's login only, confined
+ * to the gate's organization.
  */
 class GateEventsPostgresTest {
     private val orgA = Uuid.parse("0000000a-0000-0000-0000-000000000000")
-    private val rev = Uuid.parse("00000000-0000-0000-0000-0000000000e1")
-    private val ops = Uuid.parse("00000000-0000-0000-0000-0000000000e2")
     private val epoch = Instant.fromEpochSeconds(1_790_000_000)
-
-    // `Rev` and `ops` are members of A, in any case; `gone` left.
-    private val logins = object : MemberLogins {
-        override suspend fun idsOf(orgId: Uuid, logins: Collection<String>): Map<String, Uuid> =
-            logins.mapNotNull { login ->
-                mapOf("rev" to rev, "ops" to ops)[login.lowercase()]?.let { login to it }
-            }.toMap()
-
-        override suspend fun loginsOf(orgId: Uuid, memberIds: Collection<Uuid>): Map<Uuid, String> = emptyMap()
-    }
 
     // What each publication was given, and the organization its transaction was confined to when it came.
     private class Recorder : OrgEventPublisher {
@@ -77,12 +64,15 @@ class GateEventsPostgresTest {
     private fun request(gate: Gate, approver: String, status: RequestStatus = RequestStatus.PENDING) =
         ApprovalRequest(Uuid.random(), gate.id, gate.orgId, approver, status, createdAt = epoch)
 
+    private fun data(vararg pairs: Pair<String, String>) =
+        JsonObject(pairs.associate { it.first to JsonPrimitive(it.second) })
+
     @Test
-    fun eachMemberApproverIsToldInTheGatesTransaction() = serverTest(listOf(GatesModule)) { server ->
+    fun eachRequestIsInTheFeedInTheGatesTransaction() = serverTest(listOf(GatesModule)) { server ->
         val recorder = Recorder()
-        val repository = PostgresGatesRepository(server.driver, recorder, logins)
+        val repository = PostgresGatesRepository(server.driver, recorder)
         val asked = gate("acme/api")
-        val requests = listOf(request(asked, "Rev"), request(asked, "gone"), request(asked, "ops"))
+        val requests = listOf(request(asked, "rev"), request(asked, "ops"))
         repository.transaction {
             insertGate(asked)
             insertRequests(requests)
@@ -90,57 +80,42 @@ class GateEventsPostgresTest {
         }
         val (org, events) = recorder.published.single()
         assertEquals(orgA.toString(), org, "Confined to the gate's organization")
-        assertEquals(listOf(requests[0].id.toString(), requests[2].id.toString()), events.map { it.subjectId })
-        assertEquals(listOf(rev, ops), events.map { it.memberId }, "The approver who left is told nothing")
+        assertEquals(requests.map { it.id.toString() }, events.map { it.subjectId })
+        assertEquals(listOf(null, null), events.map { it.memberId }, "The whole organization's: a login, not a member")
         assertEquals(
-            JsonObject(
-                mapOf(
-                    "approvalId" to JsonPrimitive(requests[0].id.toString()),
-                    "gateId" to JsonPrimitive(asked.id.toString()),
-                    "repo" to JsonPrimitive("acme/api"),
-                ),
-            ),
+            data("approvalId" to requests[0].id.toString(), "gateId" to asked.id.toString(), "approver" to "rev",
+                "repo" to "acme/api"),
             events[0].data,
-            "Ids and the repository, never the label",
+            "Ids, the approver and the repository, never the label",
         )
 
+        // Answered: each request with its own status, the closed one as closed.
         val decided = gate(null, GateStatus.REJECTED)
-        val answered = listOf(request(decided, "ops", RequestStatus.REJECTED))
+        val answered =
+            listOf(request(decided, "ops", RequestStatus.REJECTED), request(decided, "rev", RequestStatus.CLOSED))
         repository.transaction {
             insertGate(decided)
             insertRequests(answered)
             announce(OrgEventType.APPROVAL_DECIDED, decided, answered)
         }
-        assertEquals(
-            JsonObject(
-                mapOf(
-                    "approvalId" to JsonPrimitive(answered[0].id.toString()),
-                    "gateId" to JsonPrimitive(decided.id.toString()),
-                    "status" to JsonPrimitive("rejected"),
-                ),
-            ),
-            recorder.published.last().second.single().data,
-        )
-        // A gate without a repository is asked with ids alone.
+        val statuses = recorder.published.last().second.map { it.data.getValue("status") }
+        assertEquals(listOf(JsonPrimitive("rejected"), JsonPrimitive("closed")), statuses)
+        // A gate without a repository is asked with ids and the approver alone.
         val bare = gate(null)
         repository.transaction { announce(OrgEventType.APPROVAL_REQUESTED, bare, listOf(request(bare, "rev"))) }
-        assertEquals(setOf("approvalId", "gateId"), recorder.published.last().second.single().data.keys)
+        assertEquals(setOf("approvalId", "gateId", "approver"), recorder.published.last().second.single().data.keys)
     }
 
     @Test
-    fun withoutRequestsOrMembersNothingIsPublished() = serverTest(listOf(GatesModule)) { server ->
+    fun withoutRequestsNothingIsPublished() = serverTest(listOf(GatesModule)) { server ->
         val recorder = Recorder()
         val asked = gate("acme/api")
-        PostgresGatesRepository(server.driver, recorder, logins).transaction {
-            announce(OrgEventType.APPROVAL_REQUESTED, asked, emptyList())
-        }
-        // The orgs module not loaded: no login names a member.
         PostgresGatesRepository(server.driver, recorder).transaction {
-            announce(OrgEventType.APPROVAL_REQUESTED, asked, listOf(request(asked, "rev")))
+            announce(OrgEventType.APPROVAL_REQUESTED, asked, emptyList())
         }
         assertEquals(emptyList(), recorder.published)
         // The default feed discards: a gates-only server still opens gates.
-        PostgresGatesRepository(server.driver, logins = logins).transaction {
+        PostgresGatesRepository(server.driver).transaction {
             announce(OrgEventType.APPROVAL_REQUESTED, asked, listOf(request(asked, "rev")))
         }
     }
