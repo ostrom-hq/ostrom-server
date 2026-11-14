@@ -51,15 +51,16 @@ data class ProposalEdits(val title: String, val summary: String, val content: St
  */
 interface MemoryProposalWaits {
     /**
-     * The session a proposal comes from: an agent token's own, or the session a person's relayed agent names, which
-     * must be theirs.
+     * The session a proposal comes from: an agent token's own (a cloud session's launch, its cloud session whatever
+     * the request names), or the session a person's relayed agent names, which must be theirs.
      *
      * @param caller An agent token, or a person's relayed agent.
-     * @param requested The session the request names.
+     * @param requested The session the request names, or null.
      * @return The session.
+     * @throws MemoryProposalSessionException When it names none and must.
      * @throws MemorySessionNotFoundException When it is not the caller's.
      */
-    suspend fun session(caller: MemoryCaller, requested: String): ProposalSession
+    suspend fun session(caller: MemoryCaller, requested: String?): ProposalSession
 
     /**
      * Opens the wait asking the session's person.

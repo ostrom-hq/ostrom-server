@@ -110,6 +110,8 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.auth.MemberLogins
+import run.ostrom.server.kernel.sessions.CloudAgentSessions
+import run.ostrom.server.runners.infrastructure.RunnersCloudAgentSessions
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
@@ -123,7 +125,8 @@ private val REPLICA_HTTP = named("runners.replica.http")
  * execution (Kubernetes namespace `ostrom`, a local Docker container, or a container on one of the organization's
  * registered runners, `ostrom-runner machine`), with a workspace volume that survives
  * pauses; the runner in the pod reports through the runner channel; the free plan's guards pause idle, overlong or
- * over-budget sessions.
+ * over-budget sessions. Its cloud sessions are agent sessions to the other modules (the kernel's
+ * [CloudAgentSessions]): a cloud agent's todo, waits and proposals are its cloud session's.
  */
 object RunnersModule : ServerModule {
     override val name: String = "runners"
@@ -132,6 +135,7 @@ object RunnersModule : ServerModule {
         single<RunnersConfig> { RunnersConfig.from(get<ConfigSource>()) }
         single(named(CLOUD_ACCESS_SETTINGS.name)) { CLOUD_ACCESS_SETTINGS }
         single<CloudSessionsRepository> { CloudSessionsRepositoryImpl(get()) }
+        single<CloudAgentSessions> { RunnersCloudAgentSessions(get(), getOrNull<MemberLogins>() ?: NoMemberLogins) }
         single<RunnerTokens> { RunnerTokensImpl() }
         // Billing's plans and hours counter when the billing module is there (always on a full server); the free
         // plan and the sessions' own monthly counter otherwise.

@@ -10,8 +10,8 @@ import kotlin.uuid.Uuid
  * @property memberId The member: a person, or the person who launched an agent token.
  * @property admin Whether the caller administers the organization (a person, never an agent): it reads any
  *   session's todo.
- * @property agentSession For an agent token, the open segment of its launch's session it is confined to, whatever
- *   the request names; null for anyone else.
+ * @property agentSession For an agent token, the open segment of its launch's session it is confined to, or its
+ *   launch's cloud session, whatever the request names; null for anyone else.
  */
 data class TodoCaller(
     val orgId: Uuid,

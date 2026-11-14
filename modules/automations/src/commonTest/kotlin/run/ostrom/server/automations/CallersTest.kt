@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.automations
 
+import run.ostrom.server.automations.domain.AgentSessionRequiredException
 import run.ostrom.server.automations.domain.MissingWaitScopeException
 import run.ostrom.server.automations.domain.NoOrganizationException
 import run.ostrom.server.automations.domain.WaitCaller
@@ -103,6 +104,15 @@ class CallersTest {
             NoWaitAgents.agentWaitCallerOf(agent, LAUNCH_SESSION, WAITS_ASK)
         }
         assertNull(NoWaitAgents.resolve(agent, LAUNCH_SESSION), "Fails closed until the launches module binds one")
+    }
+
+    @Test
+    fun anAgentTokenThatNamesNoSessionMustNameOneUnlessItsResolverBindsItsCloudSession() = runTest {
+        val agent = principal(PrincipalKind.AGENT, "agent:session", subject = LAUNCH)
+        assertFailsWith<AgentSessionRequiredException> { FakeWaitAgents.agentWaitCallerOf(agent, null, WAITS_ASK) }
+        assertFailsWith<NoOrganizationCredentialException>("Nobody, before a missing session is said") {
+            NoWaitAgents.agentWaitCallerOf(agent, null, WAITS_ASK)
+        }
     }
 
     @Test

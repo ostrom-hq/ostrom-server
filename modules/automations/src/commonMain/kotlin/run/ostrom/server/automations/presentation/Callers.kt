@@ -73,23 +73,26 @@ private val AGENT_WAIT_SCOPES = setOf(WAITS_ASK, WAITS_READ)
  * asked.
  *
  * @param principal The agent token's principal.
- * @param sessionId The session the request names: any of its segments.
+ * @param sessionId The session the request names: any of its segments; a cloud session's launch acts on its cloud
+ *   session whatever it names, and may name none.
  * @param scope What the tool needs.
  *
  * @return The caller, in the segment open now.
  *
  * @throws MissingWaitScopeException When [scope] is more than asking and reading.
+ * @throws AgentSessionRequiredException When a launch on a machine names no session.
  * @throws run.ostrom.server.kernel.auth.NoOrganizationCredentialException When the token's launch is over or its
  *   person may no longer launch.
  * @throws run.ostrom.server.kernel.errors.OstromException When the session is not one of its launch's open sessions.
  */
 suspend fun WaitAgentResolver.agentWaitCallerOf(
     principal: AuthenticatedPrincipal,
-    sessionId: String,
+    sessionId: String?,
     scope: String,
 ): WaitCaller {
     if (scope !in AGENT_WAIT_SCOPES) throw MissingWaitScopeException(scope)
-    val agent = resolve(principal, sessionId) ?: throw principal.outsideOrganization()
+    val agent = resolve(principal, sessionId) { AgentSessionRequiredException() }
+        ?: throw principal.outsideOrganization()
     return WaitCaller(
         orgId = agent.orgId,
         memberId = agent.memberId,
@@ -104,16 +107,17 @@ suspend fun WaitAgentResolver.agentWaitCallerOf(
 /**
  * The callers of one request to the waits MCP server, by scope, each resolved once per request. A person's
  * credential or a key is the member the orgs module resolves, with its waits scopes ([waitCallerOf]); an agent token
- * is its launch's person ([agentWaitCallerOf]), in the session it names, and never names a run (refused before any
- * message is read). An agent token may name no session yet: Claude Code connects its MCP servers at start-up, maybe
- * before its SessionStart hook told the relay the session, so the handshake and the tools' list are answered and each
- * tool names what is missing.
+ * is its launch's person ([agentWaitCallerOf]), in the session it names (a cloud session's launch, in its cloud
+ * session whatever it names), and never names a run (refused before any message is read). An agent token may name no
+ * session yet: Claude Code connects its MCP servers at start-up, maybe before its SessionStart hook told the relay the
+ * session, so the handshake and the tools' list are answered and each tool of a launch on a machine names what is
+ * missing.
  *
  * @param principal The caller's principal.
  * @param binding The session and run the request names.
  *
- * @return The caller for a scope; it throws when refused, [AgentSessionRequiredException] for an agent token that
- *   names no session.
+ * @return The caller for a scope; it throws when refused, [AgentSessionRequiredException] for the agent token of a
+ *   launch on a machine that names no session.
  *
  * @throws AgentRunRefusedException When an agent token names a run.
  */
@@ -123,9 +127,8 @@ internal fun WaitsRoutesDependencies.mcpCallers(
 ): suspend (String) -> WaitCaller {
     val resolve: suspend (String) -> WaitCaller = if (principal.kind == PrincipalKind.AGENT) {
         if (binding.run != null) throw AgentRunRefusedException()
-        val session = binding.session
         val agentCaller: suspend (String) -> WaitCaller = { scope ->
-            agents.agentWaitCallerOf(principal, session ?: throw AgentSessionRequiredException(), scope)
+            agents.agentWaitCallerOf(principal, binding.session, scope)
         }
         agentCaller
     } else {

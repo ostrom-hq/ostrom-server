@@ -621,6 +621,24 @@ class RunEnginePostgresTest {
         }
 
     @Test
+    fun aQuestionTheStepsCloudAgentAsksInItsCloudSessionHoldsTheStep() = engineTest { server ->
+        val step = server.sessionStep()
+        val (ada, session) = step.ada to step.session
+        val token = server.agentTokenOf(step)
+        val steps = server.koin.get<StepSessions>()
+        assertFalse(steps.asked(ada.org.id, session))
+        // A cloud agent's token asks in its cloud session itself, with no segment of the sessions module.
+        val question = WaitSpec("Which base?", actions = listOf(WaitAction("ok", "OK")))
+        val wait = Wait(
+            Uuid.random(), ada.org.id, "human_request", WaitStatus.OPEN, session.toString(), null,
+            ada.memberId.toString(), ada.memberId.toString(), question, null, clock.now(), null, null,
+        )
+        server.koin.get<WaitsRepository>().createWithinLimit(wait, 5)
+        assertTrue(steps.asked(ada.org.id, session))
+        assertEquals(HttpStatusCode.OK to NOTHING_PENDING, server.pendingOf(token, ""))
+    }
+
+    @Test
     fun theSessionsAgentTokenDeliversForTheStepItsSessionWorksOnFoundThroughTheSessionIndex() = engineTest { server ->
         val step = server.sessionStep()
         val (ada, session, pr) = Triple(step.ada, step.session, step.pr)

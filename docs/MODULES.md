@@ -661,7 +661,8 @@ caller gets the 404 of an unknown entry. A person (browser, phone, the CLI's sig
 entries, as their author or as an administrator. An agent's call, an agent token or a request the CLI's relay
 forwards with `x-ostrom-origin: agent`, writes its personal entries directly; its organization entry is a proposal
 (TeamCode #272), a key's is refused (403). A proposal names the agent's session (`sessionId`, 400
-`memory_proposal_session` without it; an agent token's must be its launch's, a relayed call's its person's) and is
+`memory_proposal_session` without it; an agent token's must be its launch's, a relayed call's its person's; a cloud
+session's agent token proposes from its cloud session whatever it names, see "A cloud agent's session") and is
 stored `proposed`, read by nobody, while the session's person is asked an ordinary wait with the entry to edit (at most
 20 proposals of a member wait, 409 `memory_proposals_limit`). The settling pass (`memory/settle`, every 10 s on the
 instance's `ScheduledWork` lease, one replica at a time) applies the answers, the person's valid edits included, rejects
@@ -686,6 +687,21 @@ owner, or for the organization's by its author or an administrator; the entry th
 one. These routes are a person's only. The retention runs for every organization, curation on or off: an entry
 expired for 7 days is deleted (audited `memory.expired`), a superseded one 90 days after, an answered review 30 days
 after. The run finds the organizations through `memory_kept_orgs` (docs/tenancy.md).
+
+### A cloud agent's session
+
+The agent of a cloud session runs with its launch's agent token (`OSTROM_AGENT_TOKEN`, opened by its runner) and no
+session id of the `sessions` module. Like TeamCode's execution credential (`tcex_`, confined to the cloud session it was
+issued for), the token of a cloud session's launch acts on that cloud session whatever a request names, and needs to
+name none: its todo (`/api/v1/todos/session` and the routes under it), its waits (`/api/v1/waits/mcp`, the Stop hook's `/api/v1/waits/wake`),
+its team memory proposals (`POST /api/v1/memory`) and its workflow step's delivery (`/api/v1/workflows/mcp`) are the
+cloud session's, keyed by its id, which every execution of it shares. The `launches` module's `LaunchWaitAgents` binds
+it (the token is live only while the execution it was opened in runs); the `runners` module binds the kernel's
+`CloudAgentSessions`, on which the `sessions` module's `AgentSessions` and the todo fall back for an id no segment has,
+so the cloud session's owner reads its todo and answers its waits as any session's. A launch on a machine
+(`ostrom <agent>`) is unchanged: it names its session, and acts only inside one of its launch's open segments. An answer
+is taken by the Stop hook of the running execution (`/api/v1/waits/wake`); a paused cloud session is not resumed by an
+answer yet, and its open waits are not cancelled when it ends.
 
 ## Commands
 

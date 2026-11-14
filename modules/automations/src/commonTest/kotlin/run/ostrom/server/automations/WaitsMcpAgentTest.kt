@@ -10,6 +10,7 @@ import run.ostrom.server.automations.fakes.FakeWaitAgents
 import run.ostrom.server.automations.fakes.LAUNCH_SESSION
 import run.ostrom.server.automations.fakes.testIdentities
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import run.ostrom.server.kernel.errors.OstromException
 import run.ostrom.server.testing.serverTest
 import io.ktor.client.HttpClient
 import io.ktor.client.request.bearerAuth
@@ -48,11 +49,24 @@ class WaitsMcpAgentTest {
         var reopened: String? = null
         var segments: List<String>? = null
 
+        /** The cloud session of the launch, if set: it acts there whatever it names, as the launches module binds. */
+        var cloud: String? = null
+
         override suspend fun resolve(principal: AuthenticatedPrincipal, sessionId: String): WaitAgent? {
             resolutions++
             val agent = FakeWaitAgents.resolve(principal, sessionId)
             val open = reopened ?: return agent
             return agent?.copy(sessionId = open, segments = segments ?: listOf(LAUNCH_SESSION, open))
+        }
+
+        override suspend fun resolve(
+            principal: AuthenticatedPrincipal,
+            sessionId: String?,
+            missing: () -> OstromException,
+        ): WaitAgent? {
+            val session = cloud ?: return super.resolve(principal, sessionId, missing)
+            val agent = FakeWaitAgents.resolve(principal, LAUNCH_SESSION)
+            return agent?.copy(sessionId = session, segments = listOf(session))
         }
     }
 
@@ -297,6 +311,29 @@ class WaitsMcpAgentTest {
         }
 
     @Test
+    fun aCloudSessionsAgentTokenAsksAndIsWokenInItsCloudSessionWhateverItNames() =
+        serverTest(listOf(AutomationsModule), withAgents) { server ->
+            val client = server.client
+            agents.cloud = CLOUD_SESSION
+            val ship = """{"title":"Ship it?","actions":[{"id":"ship","label":"Ship"}]}"""
+            val asked = client.call("ask_human", ship, UNBOUND)
+            assertFalse(asked.isError(), asked.text())
+            val id = asked.text().substringAfter("wait ").substringBefore(" ")
+            val read = Json.parseToJsonElement(client.call("get_wait", """{"wait":"$id"}""", FOREIGN).text()).jsonObject
+            assertEquals(CLOUD_SESSION, read.getValue("sessionId").jsonPrimitive.content, "Asked in its cloud session")
+            assertEquals("""{"open":true,"messages":[]}""", client.wake(path = WAKE).bodyAsText(), "No session named")
+
+            val answered = client.post("/api/v1/waits/$id/answer") {
+                bearerAuth("bob")
+                contentType(ContentType.Application.Json)
+                setBody("""{"action":"ship"}""")
+            }
+            assertEquals(HttpStatusCode.OK, answered.status, answered.bodyAsText())
+            val woken = Json.parseToJsonElement(client.wake(path = "$WAKE?session=$FOREIGN_SESSION").bodyAsText())
+            assertEquals(1, woken.jsonObject.getValue("messages").jsonArray.size, "Its cloud session's answer")
+        }
+
+    @Test
     fun withoutTheLaunchesModuleNoAgentTokenIsAnyone() =
         serverTest(listOf(AutomationsModule), testIdentities) { server ->
             val refused = server.client.call("ask_human", """{"title":"Ship it?"}""", OWN)
@@ -310,5 +347,6 @@ class WaitsMcpAgentTest {
         const val WAKE = "/api/v1/waits/wake"
         const val ALICES = "/api/v1/waits/mcp?session=alice-1"
         const val FOREIGN = "/api/v1/waits/mcp?session=$FOREIGN_SESSION"
+        const val CLOUD_SESSION = "00000000-0000-0000-0000-00000000c10d"
     }
 }

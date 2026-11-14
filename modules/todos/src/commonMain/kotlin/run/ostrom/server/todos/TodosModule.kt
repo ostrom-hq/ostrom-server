@@ -3,6 +3,7 @@ package run.ostrom.server.todos
 
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.sessions.CloudAgentSessions
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.todos.domain.ChangeTodoUseCase
 import run.ostrom.server.todos.domain.ChangeTodoUseCaseImpl
@@ -42,7 +43,7 @@ object TodosModule : ServerModule {
 
     override val koinModule: Module = module {
         single<TodosRepository> { TodosRepositoryImpl(get(), get()) }
-        single<TodoSessions> { SessionsTodoSessions(get(), get()) }
+        single<TodoSessions> { SessionsTodoSessions(get(), get(), getOrNull<CloudAgentSessions>()) }
         single<TodoWaits> { AutomationsTodoWaits(get(), get(), get()) }
         single<TodoArtifacts> { ArtifactsTodoArtifacts(get()) }
         single { TodoAccess(get()) }

@@ -439,4 +439,15 @@ class SessionLifecycleTest {
         assertEquals(false, directory.find(ORG, "s-1~r2")?.open)
         assertNull(directory.find(OTHER_ORG, "s-1"))
     }
+
+    @Test
+    fun anIdNoSegmentHasIsReadAsACloudSessions() = runTest {
+        val bench = SessionBench()
+        val cloud = AgentSession("ada", open = true, listOf("c-1"))
+        val directory = SessionsAgentDirectory(bench.repository) { _, id -> cloud.takeIf { id == "c-1" } }
+        assertEquals(cloud, directory.find(ORG, "c-1"))
+        assertNull(directory.find(ORG, "s-1"))
+        val session = bench.start(agent(), start)
+        assertEquals(listOf("s-1"), directory.find(ORG, session.id)?.segments, "A segment is read first")
+    }
 }

@@ -20,6 +20,8 @@ import run.ostrom.server.automations.domain.WaitSpec
 import run.ostrom.server.automations.domain.WaitStatus
 import run.ostrom.server.automations.domain.WaitsRepository
 import run.ostrom.server.kernel.auth.MemberLogins
+import run.ostrom.server.kernel.sessions.AgentSession
+import run.ostrom.server.kernel.sessions.CloudAgentSessions
 import run.ostrom.server.sessions.domain.models.Session
 import run.ostrom.server.sessions.domain.models.SessionQuery
 import run.ostrom.server.sessions.domain.repositories.SessionsRepository
@@ -81,6 +83,16 @@ class AdaptersTest {
         assertNull(sessions.find(ORG_A, "ghost", ADA))
         val unknown = SessionsTodoSessions(Sessions(listOf(segment("s1", 1, "nobody"))), logins)
         assertFalse(unknown.find(ORG_A, "s1", ADA)!!.owned, "a login no member has owns nothing")
+    }
+
+    @Test
+    fun anIdNoSegmentHasIsTheCloudSessionOfThatIdWithItsOwner() = runTest {
+        val cloud = CloudAgentSessions { _, id -> AgentSession("ada", open = true, listOf(id)).takeIf { id == "c1" } }
+        val sessions = SessionsTodoSessions(Sessions(listOf(segment("s1", 1, "ada"))), logins, cloud)
+        assertEquals(TodoSession("c1", listOf("c1"), owned = true), sessions.find(ORG_A, "c1", ADA))
+        assertEquals(TodoSession("c1", listOf("c1"), owned = false), sessions.find(ORG_A, "c1", BEN))
+        assertEquals("s1", sessions.find(ORG_A, "s1", ADA)?.rootId, "A segment is read first")
+        assertNull(sessions.find(ORG_A, "ghost", ADA))
     }
 
     private class Waits : WaitsRepository {

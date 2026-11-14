@@ -6,6 +6,7 @@ import run.ostrom.server.memory.domain.MemoryCursor
 import run.ostrom.server.memory.domain.MemoryEntry
 import run.ostrom.server.memory.domain.MemoryNotFoundException
 import run.ostrom.server.memory.domain.MemoryNotProposedException
+import run.ostrom.server.memory.domain.MemoryProposalSessionException
 import run.ostrom.server.memory.domain.MemoryProposalStore
 import run.ostrom.server.memory.domain.MemoryProposalWaits
 import run.ostrom.server.memory.domain.MemoryScope
@@ -20,8 +21,8 @@ import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * The waits of the proposals: `s1` is every caller's session, any other is nobody's; [failOpen] makes asking fail.
- * The states are set by the test.
+ * The waits of the proposals: `s1` is every caller's session, any other is nobody's, one must be named; [failOpen]
+ * makes asking fail. The states are set by the test.
  */
 class FakeProposalWaits : MemoryProposalWaits {
     val opened = mutableListOf<Pair<ProposalSession, MemoryEntry>>()
@@ -35,12 +36,11 @@ class FakeProposalWaits : MemoryProposalWaits {
     /** The asking coroutine is cancelled while the wait opens. */
     var cancelOpen = false
 
-    override suspend fun session(caller: MemoryCaller, requested: String): ProposalSession =
-        if (requested.startsWith("s1")) {
-            ProposalSession(requested, listOf(requested))
-        } else {
-            throw MemorySessionNotFoundException()
-        }
+    override suspend fun session(caller: MemoryCaller, requested: String?): ProposalSession = when {
+        requested == null -> throw MemoryProposalSessionException()
+        requested.startsWith("s1") -> ProposalSession(requested, listOf(requested))
+        else -> throw MemorySessionNotFoundException()
+    }
 
     override suspend fun open(caller: MemoryCaller, session: ProposalSession, entry: MemoryEntry): Uuid {
         check(!failOpen) { "The waits are down." }

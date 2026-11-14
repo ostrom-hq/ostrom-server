@@ -24,6 +24,7 @@ import run.ostrom.server.kernel.errors.OstromException
 import run.ostrom.server.memory.domain.MemoryEntry
 import run.ostrom.server.memory.domain.MemoryOrigin
 import run.ostrom.server.memory.domain.MemoryScope
+import run.ostrom.server.memory.domain.MemoryProposalSessionException
 import run.ostrom.server.memory.domain.MemorySessionNotFoundException
 import run.ostrom.server.memory.domain.MemoryStatus
 import run.ostrom.server.memory.domain.ProposalSession
@@ -127,6 +128,14 @@ class AdaptersTest {
     /** A person's agent the CLI's relay forwards: the person's sign-in, marked as an agent's call. */
     private fun relayed(member: String) =
         caller(member, agent = true).copy(principal = AuthenticatedPrincipal(member, PrincipalKind.USER, emptySet()))
+
+    @Test
+    fun aProposalThatNamesNoSessionIsRefusedUnlessTheTokensLaunchIsACloudSessions() = runTest {
+        // The fake resolver binds no cloud session: a token that names none must name one, as a person must.
+        val agent = caller(person = false, agent = true)
+        assertFailsWith<MemoryProposalSessionException> { adapter().session(agent, null) }
+        assertFailsWith<MemoryProposalSessionException> { adapter().session(relayed(ADA), null) }
+    }
 
     @Test
     fun anAgentTokensSessionIsItsLaunchsAndAPersonsMustBeTheirs() = runTest {

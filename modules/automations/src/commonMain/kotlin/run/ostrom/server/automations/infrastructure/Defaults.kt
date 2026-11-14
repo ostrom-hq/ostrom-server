@@ -12,6 +12,7 @@ import run.ostrom.server.automations.domain.WaitEvents
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.auth.MemberLogins
+import run.ostrom.server.kernel.errors.OstromException
 import run.ostrom.server.kernel.sessions.AgentSession
 import run.ostrom.server.kernel.sessions.AgentSessions
 import kotlin.uuid.Uuid
@@ -39,6 +40,12 @@ internal object NoAgentSessions : AgentSessions {
 /** No agent token is anyone until the launches module binds its [WaitAgentResolver]: the waits MCP refuses it. */
 internal object NoWaitAgents : WaitAgentResolver {
     override suspend fun resolve(principal: AuthenticatedPrincipal, sessionId: String): WaitAgent? = null
+
+    override suspend fun resolve(
+        principal: AuthenticatedPrincipal,
+        sessionId: String?,
+        missing: () -> OstromException,
+    ): WaitAgent? = null
 }
 
 /** No one listens to waits until notifications and the waking of sessions bind a [WaitEvents]. */

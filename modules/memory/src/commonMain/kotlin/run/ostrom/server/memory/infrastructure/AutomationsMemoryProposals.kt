@@ -20,6 +20,7 @@ import run.ostrom.server.kernel.auth.outsideOrganization
 import run.ostrom.server.memory.domain.MemoryCaller
 import run.ostrom.server.memory.domain.MemoryEntry
 import run.ostrom.server.memory.domain.MemoryProposalWaits
+import run.ostrom.server.memory.domain.MemoryProposalSessionException
 import run.ostrom.server.memory.domain.MemoryRules
 import run.ostrom.server.memory.domain.MemorySessionNotFoundException
 import run.ostrom.server.memory.domain.PROPOSAL_ACCEPT
@@ -34,7 +35,8 @@ import kotlin.uuid.Uuid
  * [MemoryProposalWaits] on the automations module: a proposal asks the session's person an ordinary wait ("Waiting
  * for you"), asked in the session in their name, so it notifies them and wakes the agent's session like any answer;
  * its answer is read back from the waits' table by id. An agent token's session is its launch's (one reading of the
- * token, the gates' and the waits'); a person's relayed agent names its session, which must be theirs.
+ * token, the gates' and the waits': a cloud session's launch proposes from its cloud session whatever it names); a
+ * person's relayed agent names its session, which must be theirs.
  *
  * @param ask Asks.
  * @param answer Cancels.
@@ -52,13 +54,14 @@ internal class AutomationsMemoryProposals(
     private val sessions: SessionsRepository,
     private val logins: MemberLogins,
 ) : MemoryProposalWaits {
-    override suspend fun session(caller: MemoryCaller, requested: String): ProposalSession {
+    override suspend fun session(caller: MemoryCaller, requested: String?): ProposalSession {
         val principal = caller.principal
         if (principal.kind == PrincipalKind.AGENT) {
-            val agent = agents.resolve(principal, requested) ?: throw principal.outsideOrganization()
+            val agent = agents.resolve(principal, requested) { MemoryProposalSessionException() }
+                ?: throw principal.outsideOrganization()
             return ProposalSession(agent.sessionId, agent.segments)
         }
-        val segments = sessions.segmentsOf(caller.orgId, requested)
+        val segments = sessions.segmentsOf(caller.orgId, requested ?: throw MemoryProposalSessionException())
         val first = segments.firstOrNull() ?: throw MemorySessionNotFoundException()
         // A session whose person is no member any more is nobody's here.
         val owner = logins.idsOf(caller.orgId, listOf(first.dev))[first.dev].toString()
