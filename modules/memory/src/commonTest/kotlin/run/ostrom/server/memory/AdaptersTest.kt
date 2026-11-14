@@ -9,11 +9,13 @@ import run.ostrom.server.automations.domain.CreateOutcome
 import run.ostrom.server.automations.domain.Wait
 import run.ostrom.server.automations.domain.WaitAgent
 import run.ostrom.server.automations.domain.WaitAgentResolver
+import run.ostrom.server.automations.domain.ServedSecrets
 import run.ostrom.server.automations.domain.WaitAnswer
 import run.ostrom.server.automations.domain.WaitCaller
 import run.ostrom.server.automations.domain.WaitClosedException
 import run.ostrom.server.automations.domain.WaitFilter
 import run.ostrom.server.automations.domain.WaitRef
+import run.ostrom.server.automations.domain.WaitSecret
 import run.ostrom.server.automations.domain.WaitSpec
 import run.ostrom.server.automations.domain.WaitStatus
 import run.ostrom.server.automations.domain.WaitsRepository
@@ -85,7 +87,10 @@ class AdaptersTest {
         override suspend fun findByIdempotencyKey(orgId: Uuid, createdBy: String, key: String): Wait? = unused()
         override suspend fun get(orgId: Uuid, id: Uuid): Wait? = stored[id]?.takeIf { it.orgId == orgId }
         override suspend fun list(filter: WaitFilter, before: Uuid?, limit: Int): List<Wait> = unused()
-        override suspend fun resolve(orgId: Uuid, id: Uuid, answer: WaitAnswer): Wait? = unused()
+        override suspend fun resolve(orgId: Uuid, id: Uuid, answer: WaitAnswer, secrets: List<WaitSecret>): Wait? =
+            unused()
+        override suspend fun serveSecrets(orgId: Uuid, sessionId: String, ownerId: String, now: Instant): ServedSecrets =
+            unused()
         override suspend fun cancel(orgId: Uuid, id: Uuid, now: Instant): Wait? = unused()
         override suspend fun cancelOpenOfSessions(orgId: Uuid, sessions: List<String>, now: Instant): List<Wait> =
             unused()
