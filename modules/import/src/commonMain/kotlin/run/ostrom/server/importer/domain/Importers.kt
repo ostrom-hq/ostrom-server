@@ -268,7 +268,12 @@ internal class McpImporter(
         val present = planned.deniedTools
             .filter { Triple(it, emptyList<ArgumentCondition>(), PolicyEffect.DENY) in policies }
             .toSet()
-        val refused = if (dryRun) null else deny(caller, existing, planned.deniedTools.filter { it !in present })
+        val refused = when {
+            // As in TeamCode, an endpoint never changes: the stored credentials would follow a new host.
+            existing.transport != payload.transport || existing.url != payload.url -> ENDPOINT_CHANGED
+            dryRun -> null
+            else -> deny(caller, existing, planned.deniedTools.filter { it !in present })
+        }
         if (refused != null) return skippedServer(planned, refused)
         val unchanged = existing.toPayload() == payload
         val (server, action) = when {
@@ -327,6 +332,8 @@ internal class McpImporter(
 
     private companion object {
         const val DENIED = "Denied in TeamCode."
+        const val ENDPOINT_CHANGED =
+            "Its address changed in TeamCode; an MCP server's address never changes in Ostrom: add another server."
         const val EVERYONE = "everyone"
         const val REVOKED = "Removed: TeamCode no longer assigns this server to this member."
     }
