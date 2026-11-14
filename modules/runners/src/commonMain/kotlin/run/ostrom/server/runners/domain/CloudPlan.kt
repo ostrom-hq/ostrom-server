@@ -89,9 +89,12 @@ data class AllowedOrgs(val all: Boolean, val orgs: Set<Uuid>) {
          */
         fun parse(raw: String): AllowedOrgs? {
             val entries = raw.split(',').map { it.trim() }.filter { it.isNotEmpty() }
-            if (entries == listOf("*")) return AllowedOrgs(all = true, orgs = emptySet())
-            val orgs = entries.map { Uuid.parseOrNull(it) ?: return null }
-            return AllowedOrgs(all = false, orgs = orgs.toSet())
+            val orgs = entries.mapNotNull { Uuid.parseOrNull(it) }
+            return when {
+                entries == listOf("*") -> AllowedOrgs(all = true, orgs = emptySet())
+                orgs.size == entries.size -> AllowedOrgs(all = false, orgs = orgs.toSet())
+                else -> null
+            }
         }
     }
 }
