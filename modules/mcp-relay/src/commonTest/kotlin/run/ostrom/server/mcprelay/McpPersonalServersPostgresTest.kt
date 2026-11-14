@@ -184,6 +184,9 @@ class McpPersonalServersPostgresTest : RelayPostgresHarness() {
         serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
             val repository = server.koin.get<McpRelayRepository>()
             val mine = Relay.server("mine").copy(ownerMemberId = Relay.memberA.memberId)
+            assertFailsWith<IllegalArgumentException>("A personal server has an owner") {
+                repository.createPersonalServer(mine.copy(ownerMemberId = null), 20)
+            }
             assertEquals(PersonalServerOutcome.CREATED, repository.createPersonalServer(mine, 20))
             val again = repository.createPersonalServer(mine.copy(id = Uuid.random()), 20)
             assertEquals(PersonalServerOutcome.NAME_TAKEN, again)
