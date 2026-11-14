@@ -2,7 +2,9 @@
 package run.ostrom.server.runners
 
 import run.ostrom.server.kernel.sessions.SessionEndListener
+import run.ostrom.server.kernel.sessions.PendingWaitAnswers
 import run.ostrom.server.runners.domain.BackgroundWork
+import run.ostrom.server.runners.domain.BackgroundWorkLimit
 import run.ostrom.server.runners.domain.CloudPlan
 import run.ostrom.server.runners.domain.CloudSession
 import run.ostrom.server.runners.domain.DesiredState
@@ -20,6 +22,7 @@ import run.ostrom.server.runners.fakes.SettableClock
 import run.ostrom.server.runners.fakes.session
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
+import kotlin.time.Instant
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -337,6 +340,45 @@ class ReconcileCloudSessionUseCaseTest {
         assertEquals("idle_timeout", stateAt(60, since = 1, seen = 59).failure?.code)
         backgroundCap = BackgroundWork.DEFAULT_MAX_MINUTES
         assertEquals("idle_timeout", stateAt(60, since = null, seen = 59).failure?.code)
+    }
+
+    @Test
+    fun anAnswerGivenWhileTheSessionRanIdleStartsItsExecutionAgainInsteadOfPausingIt() = runTest {
+        driver.status = ExecutionStatus.RUNNING
+        val asked = mutableListOf<Pair<String, Instant>>()
+        val answered = PendingWaitAnswers { orgId, sessionId, since ->
+            asked += sessionId to since
+            orgId == ORG_A
+        }
+        val limit = BackgroundWorkLimit { backgroundCap }
+        val restarting = ReconcileCloudSessionUseCaseImpl(
+            repository, driver, tokens, plans, meter, clock, backgroundWork = limit, answers = answered,
+        )
+        val idle = runningSession().copy(lastHeartbeatAt = t0 + 30.minutes).also { put(it) }
+        clock.now = t0 + 30.minutes
+        restarting(idle)
+        assertEquals(listOf(idle.id.toString() to t0), asked, "Only what came since this execution started")
+        assertEquals(SessionState.PAUSING, stored(idle).state)
+        assertEquals(DesiredState.RUNNING, stored(idle).desiredState, "Its pause is followed by a resume")
+        assertEquals("idle_timeout", stored(idle).failure?.code)
+
+        // Reported ready only: the start of its readiness bounds the answers.
+        val ready = runningSession().copy(executionStartedAt = null, lastHeartbeatAt = t0 + 30.minutes).also { put(it) }
+        restarting(ready)
+        assertEquals(DesiredState.RUNNING, stored(ready).desiredState)
+        // Nothing to bound them with: no restart.
+        val unknown = runningSession().copy(executionStartedAt = null, readyAt = null, lastActivityAt = t0)
+            .copy(lastHeartbeatAt = t0 + 30.minutes).also { put(it) }
+        restarting(unknown)
+        assertEquals(DesiredState.PAUSED, stored(unknown).desiredState)
+        // Another reason than idleness pauses it as before.
+        val overlong = runningSession().copy(lastActivityAt = t0 + 240.minutes, lastHeartbeatAt = t0 + 240.minutes)
+            .also { put(it) }
+        clock.now = t0 + 240.minutes
+        restarting(overlong)
+        assertEquals("max_duration", stored(overlong).failure?.code)
+        assertEquals(DesiredState.PAUSED, stored(overlong).desiredState)
+        assertEquals(2, asked.size, "Asked for idleness only, never without a start")
     }
 
     @Test

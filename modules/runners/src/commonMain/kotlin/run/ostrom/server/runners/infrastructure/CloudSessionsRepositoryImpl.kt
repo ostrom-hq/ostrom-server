@@ -138,16 +138,18 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             if (!current.state.holdsExecution && countHolding(orgId, id) >= maxRunning) {
                 return@inTenant ResumeOutcome.AtCap
             }
+            // A session deleted or ended since it was read is not brought back: it is gone, as the owner sees it.
             val updated = fetchAll(
                 Statement.create(
                     """
                     UPDATE runners_sessions SET desired_state = 'running', generation = generation + 1,
-                    updated_at = :now WHERE id = :id AND org_id = :org_id RETURNING $COLUMNS
+                    updated_at = :now WHERE id = :id AND org_id = :org_id AND desired_state <> 'terminated' AND
+                    state NOT IN ('terminated', 'failed') RETURNING $COLUMNS
                     """,
                 ).bind("now", now).bind("id", id).bind("org_id", orgId),
-            ).getOrThrow().first().toSession()
+            ).getOrThrow().firstOrNull() ?: return@inTenant ResumeOutcome.NotFound
             lookAt(id, now)
-            ResumeOutcome.Resumed(updated)
+            ResumeOutcome.Resumed(updated.toSession())
         }
 
     override suspend fun compareAndSet(session: CloudSession, nextReconcileAt: Instant?): CloudSession? =

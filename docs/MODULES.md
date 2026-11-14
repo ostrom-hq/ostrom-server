@@ -740,8 +740,32 @@ it (the token is live only while the execution it was opened in runs); the `runn
 `CloudAgentSessions`, on which the `sessions` module's `AgentSessions` and the todo fall back for an id no segment has,
 so the cloud session's owner reads its todo and answers its waits as any session's. A launch on a machine
 (`ostrom <agent>`) is unchanged: it names its session, and acts only inside one of its launch's open segments. An answer
-is taken by the Stop hook of the running execution (`/api/v1/waits/wake`); a paused cloud session is not resumed by an
-answer yet, and its open waits are not cancelled when it ends.
+is taken by the Stop hook of the running execution (`/api/v1/waits/wake`); its open waits are not cancelled when it ends.
+
+An answer to a wait of a paused cloud session resumes it, as TeamCode's message queued on the session does
+(`docs/waits.md`, « Waking the session »). Once an answer, a time reached, an event received or a timeout is
+committed, the `automations` module tells the kernel's `CloudSessionWakes`, which the `runners` module binds
+(`WakeCloudSessionUseCase`): a cloud session paused or pausing, not ended nor being deleted, whose owner is still an
+active member, resumes within its organization's plan (hours, cap) on its owner's behalf, written to the audit log as
+`cloud.session.woken` by the server (`actor_kind` `service`) with the owner and the wait. A session that cannot resume
+stays paused, logged with its reason; a session already running, a local launch's and an ended one are left as they
+are. The answer stays on the wait whatever happens (`wake_pending` until an agent takes it), and the runner of the next
+execution, whoever resumes it, asks `/api/v1/waits/wake` with `waitMillis` 0 and starts the agent with the answers as
+its first message. The wake is not retried, unlike TeamCode's `wake_pending` scan: `wake_pending` here is the message
+itself, still set on a session its owner pauses again on purpose, so a scan on it would resume what the owner paused; a
+wake lost between the commit and the resume (a replica that stops) leaves the session paused with its answer, as at its
+cap, until it is resumed.
+
+A cloud session that runs is not resumed by an answer, and its Stop hook does not hold the agent (Claude Code's terminal
+redraws while a hook runs, which the runner counts as activity: a held hook would keep the session from its idle
+pause). So an answer given while the session ran idle, never taken by its agent, would wait for someone to resume it
+once the idle guard paused it. TeamCode never has the case: its pod reads the queued message after the turn. Here the
+idle guard asks the kernel's `PendingWaitAnswers` (bound by `automations`, one read through the partial index of the
+answers not handed over) whether an answer resolved since the execution started is still there; if so, the pause is
+followed by a resume (desired state `running`), and the new execution's runner hands the answer over as its first
+message. An answer older than the execution was offered to it when it started, so one its agent never takes (an agent
+without the waits' server) restarts nothing. A pause the owner asks for, or any other guard (`max_duration`, hours),
+pauses as before.
 
 ## Commands
 

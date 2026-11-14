@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners.domain
 
+import run.ostrom.server.kernel.sessions.PendingWaitAnswers
 import run.ostrom.server.kernel.sessions.SessionEndListener
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
+import kotlin.uuid.Uuid
 
 /**
  * One reconciliation step of a session: compares its state with its desired state and the runtime, acts on the
@@ -40,6 +42,9 @@ interface ReconcileCloudSessionUseCase {
  * @param ended Told once a session is terminated, so that what its agent asked there ends with it (its open waits are
  *   cancelled): its agent asks in the cloud session itself.
  * @param profiles Whether a Kubernetes session's cluster still takes it, at each start.
+ * @param answers Whether answers to the session's waits, given while its execution ran, were never handed over: the
+ *   idle guard then starts the execution again instead of pausing it, so its runner hands them over (an answer to a
+ *   running session resumes nothing, and nothing would resume it once paused).
  * @param backgroundWork How long the agent's background work holds off the idle pause, per organization.
  */
 // Each step is a decision table read top to bottom: an early return per outcome reads better than nested branches,
@@ -55,6 +60,7 @@ class ReconcileCloudSessionUseCaseImpl(
     private val clock: Clock,
     private val ended: List<SessionEndListener> = emptyList(),
     private val profiles: SessionProfiles = NoSessionProfiles,
+    private val answers: PendingWaitAnswers = NoPendingWaitAnswers,
     private val backgroundWork: BackgroundWorkLimit,
 ) : ReconcileCloudSessionUseCase {
     override suspend fun invoke(session: CloudSession): Instant? {
@@ -264,7 +270,18 @@ class ReconcileCloudSessionUseCaseImpl(
             return write(session.toPausing(now, session.failure), now + STEP_DELAY)
         }
         val reason = limitReached(session, now) ?: planFailure(session, now) ?: return now + WATCH_DELAY
-        return write(session.toPausing(now, reason).copy(desiredState = DesiredState.PAUSED), now + STEP_DELAY)
+        val again = reason.code == IDLE_TIMEOUT && answeredMeanwhile(session)
+        val desired = if (again) DesiredState.RUNNING else DesiredState.PAUSED
+        return write(session.toPausing(now, reason).copy(desiredState = desired), now + STEP_DELAY)
+    }
+
+    /**
+     * Whether an answer to a wait of the session came while this execution ran and its agent never took it: its
+     * runner took what was there when it started, so an older one, not taken, would never be (no restart loop).
+     */
+    private suspend fun answeredMeanwhile(session: CloudSession): Boolean {
+        val started = session.executionStartedAt ?: session.readyAt ?: return false
+        return answers.answeredSince(session.orgId, session.id.toString(), started)
     }
 
     /**
@@ -280,7 +297,7 @@ class ReconcileCloudSessionUseCaseImpl(
         return when {
             now - idleSince >= timeout && !backgroundHolds(session, now, timeout) ->
                 SessionFailure(
-                    "idle_timeout",
+                    IDLE_TIMEOUT,
                     "Paused after ${session.limits.idleTimeoutMinutes} minutes without a request to the model.",
                 )
             now - (session.readyAt ?: now) >= session.limits.maxRunMinutes.minutes ->
@@ -360,6 +377,9 @@ class ReconcileCloudSessionUseCaseImpl(
         /** A start must report ready within this time, image pull and repository clone included. */
         private val START_TIMEOUT: Duration = 15.minutes
 
+        /** Why the idle guard pauses a session. */
+        private const val IDLE_TIMEOUT = "idle_timeout"
+
         /** The phase of an execution started, until its runner reports ready. */
         private const val STARTING_PHASE = "starting_runner"
 
@@ -414,4 +434,9 @@ class ReconcileCloudSessionUseCaseImpl(
             retryable = true,
         )
     }
+}
+
+/** No answer waits for any session, as long as no module binds [PendingWaitAnswers] (automations does). */
+object NoPendingWaitAnswers : PendingWaitAnswers {
+    override suspend fun answeredSince(orgId: Uuid, sessionId: String, since: Instant): Boolean = false
 }

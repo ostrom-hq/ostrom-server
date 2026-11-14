@@ -2,6 +2,8 @@
 package run.ostrom.server.automations
 
 import run.ostrom.server.automations.domain.CreateOutcome
+import run.ostrom.server.kernel.sessions.CloudSessionWakes
+import run.ostrom.server.automations.fakes.RecordingWakes
 import run.ostrom.server.automations.domain.DueWait
 import run.ostrom.server.automations.domain.ResolveDueWaitsUseCase
 import run.ostrom.server.automations.domain.TimedWaitsRepository
@@ -112,14 +114,16 @@ class TimedWaitsPostgresTest {
     @Test
     fun anAgentWaitsForATimeAndTheClockWakesItsSession() {
         val events = RecordingEvents()
+        val wakes = RecordingWakes()
         val overrides = module {
             includes(withAgents)
             single<WaitEvents> { events }
+            single<CloudSessionWakes> { wakes }
         }
-        serverTest(listOf(AutomationsModule), overrides) { server -> timeComes(server, events) }
+        serverTest(listOf(AutomationsModule), overrides) { server -> timeComes(server, events, wakes) }
     }
 
-    private suspend fun timeComes(server: TestServer, events: RecordingEvents) {
+    private suspend fun timeComes(server: TestServer, events: RecordingEvents, wakes: RecordingWakes) {
         val client = server.client
         val asked = client.waitFor("""{"title":"Check the deploy","after":30,"resumeMessage":"Look at #42"}""")
         assertFalse(asked.isError(), asked.text())
@@ -142,6 +146,7 @@ class TimedWaitsPostgresTest {
         assertEquals(1, pass.pass())
         assertEquals(0, pass.pass(), "Once")
         assertTrue("resolved" to id in events.seen, "The bound events hear of it")
+        assertEquals(listOf(LAUNCH_SESSION to id), wakes.woken, "The time wakes its session once")
 
         val woken = client.post("/api/v1/waits/wake?session=$LAUNCH_SESSION") {
             bearerAuth("launch")

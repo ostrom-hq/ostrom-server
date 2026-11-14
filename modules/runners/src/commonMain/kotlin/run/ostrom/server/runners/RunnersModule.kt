@@ -33,6 +33,9 @@ import run.ostrom.server.runners.domain.AuthenticateRunnerUseCase
 import run.ostrom.server.runners.domain.AuthenticateRunnerUseCaseImpl
 import run.ostrom.server.runners.domain.ChangeCloudSessionUseCase
 import run.ostrom.server.runners.domain.ChangeCloudSessionUseCaseImpl
+import run.ostrom.server.runners.domain.NoPendingWaitAnswers
+import run.ostrom.server.runners.domain.WakeCloudSessionUseCase
+import run.ostrom.server.runners.domain.WakeCloudSessionUseCaseImpl
 import run.ostrom.server.runners.domain.CheckRunnerTokenUseCase
 import run.ostrom.server.runners.domain.CheckRunnerTokenUseCaseImpl
 import run.ostrom.server.runners.domain.CloudPlanProvider
@@ -124,9 +127,12 @@ import kotlinx.coroutines.launch
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.sessions.CloudAgentSessions
+import run.ostrom.server.kernel.sessions.CloudSessionWakes
+import run.ostrom.server.kernel.sessions.PendingWaitAnswers
 import run.ostrom.server.kernel.sessions.SessionEndListener
 import run.ostrom.server.runners.infrastructure.RunnersCloudAgentSessions
 import run.ostrom.server.runners.infrastructure.RunnersSessionNames
+import run.ostrom.server.runners.infrastructure.RunnersCloudSessionWakes
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
@@ -142,7 +148,8 @@ private val REPLICA_HTTP = named("runners.replica.http")
  * pauses; the runner in the pod reports through the runner channel; the free plan's guards pause idle, overlong or
  * over-budget sessions. Its cloud sessions are agent sessions to the other modules (the kernel's
  * [CloudAgentSessions]): a cloud agent's todo, waits and proposals are its cloud session's. Their names title the
- * notifications about them ([SessionNames]).
+ * notifications about them ([SessionNames]). An answer to a wait of a paused one resumes it ([CloudSessionWakes]), on
+ * its owner's behalf and within the plan.
  */
 object RunnersModule : ServerModule {
     override val name: String = "runners"
@@ -203,6 +210,11 @@ object RunnersModule : ServerModule {
         single<GetCloudSessionUseCase> { GetCloudSessionUseCaseImpl(get(), get()) }
         single<ListCloudSessionsUseCase> { ListCloudSessionsUseCaseImpl(get()) }
         single<ChangeCloudSessionUseCase> { ChangeCloudSessionUseCaseImpl(get(), get(), get(), get()) }
+        single<WakeCloudSessionUseCase> {
+            WakeCloudSessionUseCaseImpl(get(), get(), get(), getOrNull<MemberDirectory>(), get(), get())
+        }
+        // An answer to a wait of a paused cloud session resumes it (automations calls it once the answer is stored).
+        single<CloudSessionWakes> { RunnersCloudSessionWakes(get(), get()) }
         single<CheckRunnerTokenUseCase> { CheckRunnerTokenUseCaseImpl(get(), get()) }
         single<RunnerHeartbeatUseCase> { RunnerHeartbeatUseCaseImpl(get(), get(), get(), get()) }
         single<RecordCloudSessionActivityUseCase> { RecordCloudSessionActivityUseCaseImpl(get(), get()) }
@@ -210,7 +222,8 @@ object RunnersModule : ServerModule {
             // The organization's cloud settings when the cloud module is there (always on a full server).
             val limit = CloudSettingsBackgroundWorkLimit(getOrNull<CloudSettingsSource>())
             val ended = getAll<SessionEndListener>()
-            ReconcileCloudSessionUseCaseImpl(get(), get(), get(), get(), get(), get(), ended, get(), limit)
+            val answers = getOrNull<PendingWaitAnswers>() ?: NoPendingWaitAnswers
+            ReconcileCloudSessionUseCaseImpl(get(), get(), get(), get(), get(), get(), ended, get(), answers, limit)
         }
         single { ReconcilerWorker(get(), get(), get(), get()) }
         // The members' GitHub access when the GitHub integration is there (always on a full server).
