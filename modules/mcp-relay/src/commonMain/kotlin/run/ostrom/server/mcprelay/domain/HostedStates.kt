@@ -131,7 +131,21 @@ data class HostedProcessRecord(
  * @property previous What the sweep read.
  * @property next What it writes.
  */
-data class HostedProcessChange(val previous: HostedProcessRecord?, val next: HostedProcessRecord)
+data class HostedProcessChange(
+    val previous: HostedProcessRecord?,
+    val next: HostedProcessRecord,
+    val event: HostedProcessEvent? = null,
+    val recoveredFrom: String? = null,
+)
+
+/** A transition of a hosted process that the organization's event feed tells (TeamCode's `HostedProcessEvent`). */
+enum class HostedProcessEvent {
+    /** The process starts failing (`failed` or `backoff`), once per failure streak. */
+    FAILED,
+
+    /** The process is `ready` again after a failure. */
+    RECOVERED,
+}
 
 /** The state sweep's transitions, TeamCode's `HostedProcessStateRules`. */
 object HostedProcessStateRules {
@@ -163,7 +177,15 @@ object HostedProcessStateRules {
         }
         if (unchanged) return null
         val next = HostedProcessRecord(process.orgId, process.serverId, process.memberId, key, state, failure, now)
-        return HostedProcessChange(stored, next)
+        // The streak: a failure kept from before is still the same streak (a retry, `failed` becoming `backoff`).
+        val previousFailure = stored?.failureFor(key)
+        val event = when {
+            HostedProcessStates.failing(state) && previousFailure == null -> HostedProcessEvent.FAILED
+            state == HostedProcessStates.READY && previousFailure != null -> HostedProcessEvent.RECOVERED
+            else -> null
+        }
+        val recoveredFrom = previousFailure.takeIf { event == HostedProcessEvent.RECOVERED }
+        return HostedProcessChange(stored, next, event, recoveredFrom)
     }
 
     /**

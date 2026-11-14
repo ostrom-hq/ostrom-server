@@ -7,6 +7,7 @@ import run.ostrom.server.secrets.domain.RevealSecretsUseCase
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -232,12 +233,14 @@ interface RetainHostedMcpProcessesUseCase {
  * it, and such an assignment then makes the sweep incomplete.
  * @param host The MCP host.
  * @param clock When a state changed.
+ * @param unreachable Where the orgs are told that the host cannot be reached.
  */
 class RetainHostedMcpProcessesUseCaseImpl(
     private val repository: McpRelayRepository,
     private val members: MemberDirectory?,
     private val host: McpHostControl,
     private val clock: Clock,
+    private val unreachable: HostUnreachableNotice,
 ) : RetainHostedMcpProcessesUseCase {
     override suspend fun invoke(): HostedSweep {
         // A truncated list would stop processes that are still assigned: rather keep everything until it fits.
@@ -247,23 +250,47 @@ class RetainHostedMcpProcessesUseCaseImpl(
         val keys = processes.mapTo(HashSet()) { it.key }
         val stopped = try {
             host.retain(keys)
+        } catch (error: TimeoutCancellationException) {
+            // A host that accepts the call and never answers is a silent host, not this coroutine's cancellation.
+            hostSilent(processes, error)
+            null
         } catch (error: CancellationException) {
             throw error
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            hostSilent(processes, error)
             null
         }
         return if (stopped == null) HostedSweep.HostUnavailable else recorded(processes, keys.size, stopped)
     }
 
-    // Apart from the retain: a database or status failure is not the host refusing to stop processes.
-    private suspend fun recorded(processes: List<HostedProcessRef>, keys: Int, stopped: Int): HostedSweep =
-        try {
-            HostedSweep.Done(keys, stopped, record(processes, host.status()))
+    // The orgs with a hosted process are told the host cannot be reached (once in a while, see HostUnreachableNotice).
+    private suspend fun hostSilent(processes: List<HostedProcessRef>, error: Exception) {
+        val refused = error is McpHostRefusedException
+        val reason = if (refused) HostUnreachableNotice.REFUSED else HostUnreachableNotice.UNREACHABLE
+        unreachable.hostUnreachable(processes.mapTo(HashSet()) { it.orgId }, reason)
+    }
+
+    // Apart from the retain: a database failure is not the host refusing to stop processes.
+    private suspend fun recorded(processes: List<HostedProcessRef>, keys: Int, stopped: Int): HostedSweep {
+        val status = try {
+            host.status()
+        } catch (error: TimeoutCancellationException) {
+            hostSilent(processes, error)
+            null
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            hostSilent(processes, error)
+            null
+        } ?: return HostedSweep.StatesUnrecorded
+        return try {
+            HostedSweep.Done(keys, stopped, record(processes, status))
         } catch (error: CancellationException) {
             throw error
         } catch (_: Exception) {
             HostedSweep.StatesUnrecorded
         }
+    }
 
     // Each org's states in its own transactions. The rows of an org left without hosted assignments stay until its
     // servers go (their foreign key); no view shows them, since every view starts from current assignments.
@@ -293,5 +320,34 @@ class RetainHostedMcpProcessesUseCaseImpl(
     companion object {
         /** About 650 KiB of hashed keys, within the host's 2 MiB request bound (TeamCode's). */
         const val MAX_KEYS: Int = 10_000
+    }
+}
+
+/** The MCP host refused the relay (another token or protocol version), as opposed to not answering. */
+class McpHostRefusedException(message: String) : IllegalStateException(message)
+
+/**
+ * Tells the organizations that have hosted servers that the MCP host cannot be reached: the event `mcp.unreachable` of
+ * their feed (TeamCode's `publishUnreachable`).
+ */
+interface HostUnreachableNotice {
+    /**
+     * Publishes the event for each org, at most once every [INTERVAL] per org whichever replica sweeps.
+     *
+     * @param orgIds The orgs with a hosted process.
+     * @param reason [UNREACHABLE] or [REFUSED].
+     */
+    suspend fun hostUnreachable(orgIds: Set<Uuid>, reason: String)
+
+    /** The reasons and the rate. */
+    companion object {
+        /** The host did not answer. */
+        const val UNREACHABLE: String = "unreachable"
+
+        /** The host answered that it refuses the relay (another token or protocol version). */
+        const val REFUSED: String = "refused"
+
+        /** At most one event per org in this interval. */
+        val INTERVAL: Duration = 10.minutes
     }
 }

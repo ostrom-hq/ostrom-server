@@ -18,7 +18,7 @@ TeamCode's `mcp` module (TeamCode `docs/mcp.md`) and speaks the same host protoc
 | Relay → host operations (`HostMcpUpstream`, `POST /v1/ops`; `OSTROM_MCP_HOST_URL`, `OSTROM_MCP_HOST_TOKEN`) | Done (`mcp-relay`) |
 | Warm-up from the member's server list and the `retain` sweep each minute (`mcp-relay`) | Done |
 | The recorded state of each process (`mcp_relay_stdio_states`), `GET /api/v1/mcp/hosted`, Restart (`POST /api/v1/mcp/hosted/restart`, `/v1/stop`), `state` and `failure` in a member's list | Done (`mcp-relay`) |
-| Events `mcp.stdio.failed`, `mcp.stdio.recovered`, `mcp.unreachable` | Waiting for outgoing webhooks |
+| Events `mcp.stdio.failed`, `mcp.stdio.recovered`, `mcp.unreachable` in the organization's event feed and webhooks | Done (`mcp-relay`) |
 | Helm component (Deployment, Service, NetworkPolicy, generated token Secret) | Next (ostrom-helm) |
 
 ## Architecture
@@ -248,8 +248,20 @@ As in TeamCode (`docs/mcp.md`, "Operating and troubleshooting"):
 - **Members** see `state` and `failure` for their stdio servers in `GET /api/v1/mcp/servers?mine=true`, as
   recorded by the sweep, without stderr. A state that cannot be read is left out: it never hides a server from an
   agent.
-- **Events.** TeamCode publishes `mcp.stdio.failed`, `mcp.stdio.recovered` and `mcp.unreachable` to the team's feed
-  and webhooks. They come here once the server has outgoing webhooks.
+- **Events.** Each transition is published to the organization's event feed (`GET /api/v1/events`, and so to its
+  outgoing webhooks), in the same transaction as the state it reports, with the subject `mcp`:
+
+  | Event | When | `data` |
+  | --- | --- | --- |
+  | `mcp.stdio.failed` | A process starts failing (`failed` or `backoff`). Once per streak: retries, `failed` becoming `backoff` and an expired backoff stay in it until a start succeeds | `server`, `memberId` (a per-member process), `state`, `failure` |
+  | `mcp.stdio.recovered` | The process is `ready` again after a failure | the same, `failure` naming what it recovered from |
+  | `mcp.unreachable` | The sweep could not reach the host, or the host refused it (another token or protocol version), while the organization has hosted servers; at most one every ten minutes per organization (the lease `mcp/unreachable/<org>`, shared by the replicas) | `reason`: `unreachable` or `refused` |
+
+  The subject id is the server's name, then `/` and the member's id for a per-member process, and empty for
+  `mcp.unreachable`. A per-member process's events belong to its member; a shared process's and `mcp.unreachable` belong
+  to nobody, so owners and admins see them, and webhooks receive all of them. They carry no secret, argument or
+  output. The sweep runs once a minute, so an event follows its transition by up to a minute: a failure that recovers
+  between two sweeps is not seen. A transition another replica wrote first is its event.
 
 ## Security
 

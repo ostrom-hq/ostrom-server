@@ -4,6 +4,7 @@ package run.ostrom.server.mcprelay
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.mcprelay.domain.HostedProcessStatus
+import run.ostrom.server.mcprelay.domain.McpHostRefusedException
 import run.ostrom.server.mcprelay.domain.McpOutcome
 import run.ostrom.server.mcprelay.domain.McpTransport
 import run.ostrom.server.mcprelay.domain.StdioLauncher
@@ -593,6 +594,34 @@ class UpstreamsTest {
     }
 
     @Test
+    fun aRefusalOfTheRelayIsToldFromAnyOtherFailure() = realTime {
+        var answer = "{}"
+        var status = HttpStatusCode.OK
+        val upstream = HostMcpUpstream(
+            client { _, _ -> respond(answer, status) },
+            McpHostConfig("http://mcp-host:8080/", "host_token"),
+        )
+        // Another token (401) or protocol version is the host refusing the relay; any other failure is not.
+        for ((code, body) in listOf(
+            HttpStatusCode.Unauthorized to "{}",
+            HttpStatusCode.BadRequest to """{"error":{"code":"unsupported_protocol"}}""",
+            HttpStatusCode.OK to """{"error":{"code":"unauthorized"}}""",
+        )) {
+            status = code
+            answer = body
+            assertFailsWith<McpHostRefusedException> { upstream.retain(emptyList()) }
+            assertFailsWith<McpHostRefusedException> { upstream.status() }
+        }
+        status = HttpStatusCode.BadRequest
+        answer = """{"error":{"code":"bad_request"}}"""
+        val failed = assertFailsWith<IllegalStateException> { upstream.retain(emptyList()) }
+        status = HttpStatusCode.InternalServerError
+        answer = """{"stopped":2}"""
+        assertFailsWith<IllegalStateException> { upstream.retain(emptyList()) }
+        assertFalse(failed is McpHostRefusedException)
+    }
+
+    @Test
     fun theHostsStatusIsReadByRelayKeyAndAStopNamesTheHashedKey() = realTime {
         var answer = """{"version":"1.2.3","processes":[{"key":"${HostMcpUpstream.processKey("org:a:1")}",""" +
             """"state":"failed","launcher":"npm","package":"a@1.0.0","starts":2,"failures":1,"lastExitCode":1,""" +
@@ -620,6 +649,8 @@ class UpstreamsTest {
             assertFailsWith<IllegalStateException>(refused) { upstream.status() }
         }
         answer = """{"version":"1","processes":[]}"""
+        status = HttpStatusCode.InternalServerError
+        assertFailsWith<IllegalStateException> { upstream.status() }
         status = HttpStatusCode.Unauthorized
         assertFailsWith<IllegalStateException> { upstream.status() }
         status = HttpStatusCode.OK
@@ -631,8 +662,10 @@ class UpstreamsTest {
             answer = refused
             assertFailsWith<IllegalStateException>(refused) { upstream.stop("org:a:1") }
         }
-        status = HttpStatusCode.Unauthorized
+        status = HttpStatusCode.InternalServerError
         answer = """{"stopped":false}"""
+        assertFailsWith<IllegalStateException> { upstream.stop("org:a:1") }
+        status = HttpStatusCode.Unauthorized
         assertFailsWith<IllegalStateException> { upstream.stop("org:a:1") }
     }
 }

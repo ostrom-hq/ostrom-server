@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.mcprelay.infrastructure
 
+import run.ostrom.server.kernel.events.OrgEventDraft
+import run.ostrom.server.kernel.events.OrgEventPublisher
+import run.ostrom.server.kernel.events.OrgEventType
 import run.ostrom.server.mcprelay.domain.ArgumentCondition
 import run.ostrom.server.mcprelay.domain.ArgumentPolicy
 import run.ostrom.server.mcprelay.domain.ConditionOperator
 import run.ostrom.server.mcprelay.domain.EffectiveServer
 import run.ostrom.server.mcprelay.domain.HostedAssignment
 import run.ostrom.server.mcprelay.domain.HostedProcessChange
+import run.ostrom.server.mcprelay.domain.HostedProcessEvent
 import run.ostrom.server.mcprelay.domain.HostedProcessRecord
 import run.ostrom.server.mcprelay.domain.McpAssignment
 import run.ostrom.server.mcprelay.domain.McpCall
@@ -43,6 +47,8 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.SetSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlin.reflect.KClass
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -54,7 +60,10 @@ import kotlin.uuid.Uuid
  * @param driver The database.
  */
 @Suppress("TooManyFunctions") // Implements the one storage port of the module.
-class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
+class McpRelayRepositoryImpl(
+    private val driver: Driver,
+    private val events: OrgEventPublisher,
+) : McpRelayRepository {
     override suspend fun createServer(server: McpServer): Boolean = driver.executeInOrg(
         server.orgId,
         Statement.create(
@@ -459,8 +468,10 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
         orgId: Uuid,
         changes: List<HostedProcessChange>,
         removals: List<HostedProcessRecord>,
-    ): Int {
+    ): Int = driver.inTenant(orgId) {
         var applied = 0
+        val events = ArrayList<OrgEventDraft>()
+        val names = HashMap<Uuid, String>()
         for (change in changes) {
             val next = change.next
             val previous = change.previous
@@ -481,7 +492,11 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
             statement.bind("org_id", orgId).bind("server_id", next.serverId).bind("process_key", next.processKey)
                 .bind("state", next.state).bindNullable("failure", next.failure, String::class)
                 .bind("changed_at", next.changedAt)
-            applied += driver.executeInOrg(orgId, statement).getOrThrow().toInt()
+            // Compare-and-set: a row another replica changed meanwhile is left to it, and so is its event.
+            if (execute(statement).getOrThrow() == 1L) {
+                applied++
+                change.event?.let { events += hostedEvent(orgId, change, it, names) }
+            }
         }
         for (removal in removals) {
             val statement = Statement.create(
@@ -489,9 +504,43 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
                     "${removal.memberCondition()} AND changed_at = :changed_at",
             ).bind("org_id", orgId).bind("server_id", removal.serverId).bindMember(removal)
                 .bind("changed_at", removal.changedAt)
-            driver.executeInOrg(orgId, statement).getOrThrow()
+            execute(statement).getOrThrow()
         }
-        return applied
+        // Last, after every other write: the organization's cursor row is the lock every publisher takes.
+        events.publishedIn(this, orgId)
+        applied
+    }
+
+    // The event of a transition, in the transaction that wrote it: the server's name is read there, under the tenant.
+    private suspend fun Transaction.hostedEvent(
+        orgId: Uuid,
+        change: HostedProcessChange,
+        event: HostedProcessEvent,
+        names: MutableMap<Uuid, String>,
+    ): OrgEventDraft {
+        val next = change.next
+        // Once per server, not per process: a host restart flips every member's process of a server at once.
+        val name = names.getOrPut(next.serverId) {
+            fetchAll(
+                Statement.create("SELECT name FROM mcp_relay_servers WHERE org_id = :org_id AND id = :id")
+                    .bind("org_id", orgId).bind("id", next.serverId),
+            ).getOrThrow().first().get("name").asString()
+        }
+        val failure = if (event == HostedProcessEvent.FAILED) next.failure else change.recoveredFrom
+        val data = buildJsonObject {
+            put("server", name)
+            if (next.memberId != null) put("memberId", next.memberId.toString())
+            put("state", next.state)
+            put("failure", failure)
+        }
+        val failed = event == HostedProcessEvent.FAILED
+        val type = if (failed) OrgEventType.MCP_STDIO_FAILED else OrgEventType.MCP_STDIO_RECOVERED
+        val subject = if (next.memberId == null) name else "$name/${next.memberId}"
+        return OrgEventDraft(type, subject, next.memberId, data)
+    }
+
+    private suspend fun List<OrgEventDraft>.publishedIn(transaction: Transaction, orgId: Uuid) {
+        if (isNotEmpty()) events.publishIn(transaction, orgId, this)
     }
 
     private fun HostedProcessRecord.memberCondition() =

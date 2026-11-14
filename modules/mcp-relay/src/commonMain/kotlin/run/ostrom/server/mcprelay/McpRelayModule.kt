@@ -64,6 +64,7 @@ import run.ostrom.server.mcprelay.domain.UnassignMcpServerUseCaseImpl
 import run.ostrom.server.mcprelay.domain.UpdateMcpServerUseCase
 import run.ostrom.server.mcprelay.domain.UpdateMcpServerUseCaseImpl
 import run.ostrom.server.mcprelay.infrastructure.HostMcpUpstream
+import run.ostrom.server.mcprelay.infrastructure.HostUnreachableNoticeImpl
 import run.ostrom.server.mcprelay.infrastructure.HttpMcpUpstream
 import run.ostrom.server.mcprelay.infrastructure.McpCallSlotRepositoryImpl
 import run.ostrom.server.mcprelay.infrastructure.McpHostConfig
@@ -172,7 +173,7 @@ object McpRelayModule : ServerModule {
         single(UPSTREAM_CLIENT) {
             outboundHttpClient(allowPrivate = get<McpRelayConfig>().allowPrivateUpstreams)
         } onClose { it?.close() }
-        single<McpRelayRepository> { McpRelayRepositoryImpl(get()) }
+        single<McpRelayRepository> { McpRelayRepositoryImpl(get(), get()) }
         single { HostedRuntime(get<McpRelayConfig>().host?.let { HostMcpUpstream(get<HttpClient>(HTTP_CLIENT), it) }) }
         // The member listings' warm-ups, outside their requests; cancelled with the server.
         single(WARMUP_SCOPE) { CoroutineScope(SupervisorJob()) } onClose { it?.cancel() }
@@ -259,7 +260,13 @@ object McpRelayModule : ServerModule {
             }
         }
         val host = koin.getOrNull<HostedRuntime>()?.host ?: return
-        val retain = RetainHostedMcpProcessesUseCaseImpl(repository, koin.getOrNull<MemberDirectory>(), host, clock)
+        val retain = RetainHostedMcpProcessesUseCaseImpl(
+            repository,
+            koin.getOrNull<MemberDirectory>(),
+            host,
+            clock,
+            HostUnreachableNoticeImpl(work, koin.get()),
+        )
         scope.launch {
             var last: HostedSweep? = null
             work.repeatDue(ScheduledJob("mcp/retain", 1.minutes, RETAIN_TIMEOUT), logger, "mcp retain sweep failed") {

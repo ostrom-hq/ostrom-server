@@ -5,6 +5,7 @@ import run.ostrom.server.mcprelay.domain.HostStatus
 import run.ostrom.server.mcprelay.domain.HostedProcessStates
 import run.ostrom.server.mcprelay.domain.HostedProcessStatus
 import run.ostrom.server.mcprelay.domain.McpHostControl
+import run.ostrom.server.mcprelay.domain.McpHostRefusedException
 import run.ostrom.server.mcprelay.domain.McpOutcome
 import run.ostrom.server.mcprelay.domain.McpUpstream
 import run.ostrom.server.mcprelay.domain.StdioSpec
@@ -158,6 +159,7 @@ class HostMcpUpstream(
         val body = buildJsonObject { putJsonArray("keys") { keys.forEach { add(JsonPrimitive(processKey(it))) } } }
         val (status, answer) = control("/v1/retain", body)
         val stopped = (answer?.get("stopped") as? JsonPrimitive)?.intOrNull
+        refusedUnless(status, answer)
         check(status == HttpStatusCode.OK && stopped != null) { "The MCP host refused the retain sweep." }
         return stopped
     }
@@ -166,6 +168,7 @@ class HostMcpUpstream(
         val (status, answer) = control(STATUS, null, STATUS_ENVELOPE)
         val version = (answer?.get("version") as? JsonPrimitive)?.contentOrNull
         val processes = answer?.get("processes") as? JsonArray
+        refusedUnless(status, answer)
         check(status == HttpStatusCode.OK && version != null && processes != null) {
             "The MCP host refused the status."
         }
@@ -307,4 +310,13 @@ private fun spec(target: UpstreamTarget, spec: StdioSpec) = buildJsonObject {
     putJsonObject("env") { spec.env.forEach { (name, value) -> put(name, value) } }
     putJsonObject("secrets") { target.secretEnv.forEach { (name, value) -> put(name, value.reveal()) } }
     put("declaredAt", target.server.createdAt.toEpochMilliseconds())
+}
+
+// Another token (401, `unauthorized`) or protocol version (`unsupported_protocol`): the host answers, but refuses this
+// relay. Any other failure, a proxy's 400 included, is not that.
+private fun refusedUnless(status: HttpStatusCode, answer: JsonObject?) {
+    val code = ((answer?.get("error") as? JsonObject)?.get("code") as? JsonPrimitive)?.content
+    if (status == HttpStatusCode.Unauthorized || code == "unauthorized" || code == "unsupported_protocol") {
+        throw McpHostRefusedException("The MCP host refused the relay: another token or protocol version.")
+    }
 }
