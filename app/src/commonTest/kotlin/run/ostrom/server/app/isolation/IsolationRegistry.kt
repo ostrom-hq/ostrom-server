@@ -298,13 +298,14 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
         body = """{"title": "Taken", "access": "team", "files": [{"path": "index.html", "content": "x"}]}""",
     ),
     "POST /api/v1/artifacts/mcp" to Case.Target(body = mcpCall("read", "artifact"), rpc = true),
-    // The organization's bucket and artifact settings: an owner or an admin, signed in; the policy, any member.
+    // The organization's bucket, artifact settings and usage: an owner or an admin, signed in; the policy, any member.
     "GET /api/v1/artifacts/storage" to Case.Target(admin = true),
     "PUT /api/v1/artifacts/storage" to Case.Target(body = "{}", admin = true),
     "DELETE /api/v1/artifacts/storage" to Case.Target(admin = true),
     "POST /api/v1/artifacts/storage/test" to Case.Target(admin = true),
     "GET /api/v1/artifacts/settings" to Case.Target(admin = true),
     "PUT /api/v1/artifacts/settings" to Case.Target(body = "{}", admin = true),
+    "GET /api/v1/artifacts/usage" to Case.Target(admin = true),
     "GET /api/v1/artifacts/policy" to Case.Target(),
     // An upload is its opener's credential's alone.
     "POST /api/v1/artifacts/uploads" to Case.Target(body = UPLOAD_BODY),
