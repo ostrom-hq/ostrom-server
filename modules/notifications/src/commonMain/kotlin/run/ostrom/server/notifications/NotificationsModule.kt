@@ -5,7 +5,12 @@ import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.gates.domain.services.GateChannel
 import run.ostrom.server.identity.domain.MailAvailability
 import run.ostrom.server.kernel.auth.SignOutListener
+import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.database.repeatDue
+import run.ostrom.server.kernel.database.scheduledWork
+import run.ostrom.server.kernel.events.OrgEventJournal
+import run.ostrom.server.kernel.events.WaitSummaries
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.OrgDeletionListener
 import run.ostrom.server.kernel.module.ServerModule
@@ -13,6 +18,9 @@ import run.ostrom.server.notifications.domain.ApprovalNotices
 import run.ostrom.server.notifications.domain.ApproverNotificationsChannel
 import run.ostrom.server.notifications.domain.Approvers
 import run.ostrom.server.notifications.domain.DeletePushDeviceUseCase
+import run.ostrom.server.notifications.domain.DeliverNotificationsUseCase
+import run.ostrom.server.notifications.domain.DeliverNotificationsUseCaseImpl
+import run.ostrom.server.notifications.domain.NotificationDeliveriesRepository
 import run.ostrom.server.notifications.domain.DeletePushDeviceUseCaseImpl
 import run.ostrom.server.notifications.domain.EncryptedPushSender
 import run.ostrom.server.notifications.domain.FirebaseSenders
@@ -37,6 +45,8 @@ import run.ostrom.server.notifications.presentation.pushTestRoutes
 import run.ostrom.server.notifications.domain.NotificationSettingsRepository
 import run.ostrom.server.notifications.domain.NotificationSettingsService
 import run.ostrom.server.notifications.domain.NotificationSettingsServiceImpl
+import run.ostrom.server.notifications.infrastructure.NotificationDeliveriesOrgDeletionListener
+import run.ostrom.server.notifications.infrastructure.NotificationDeliveriesRepositoryImpl
 import run.ostrom.server.notifications.infrastructure.NotificationSettingsOrgDeletionListener
 import run.ostrom.server.notifications.infrastructure.NotificationSettingsRepositoryImpl
 import run.ostrom.server.notifications.presentation.NotificationSettingsRoutesDependencies
@@ -73,6 +83,8 @@ import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import org.koin.dsl.onClose
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The notifications module: the phones a person registers for push notifications, one per push token in each
@@ -86,6 +98,15 @@ object NotificationsModule : ServerModule {
     private val HTTP = named("notifications-http")
     private val RELAY_HTTP = named("notifications-relay-http")
     private const val HTTP_TIMEOUT_MS = 10_000L
+
+    /** The router's pass, every second, one replica at a time (TeamCode's `notifications/deliver`). */
+    private val DELIVER = ScheduledJob("notifications/deliver", 1.seconds, 45.seconds)
+
+    /** The queue's upkeep, each minute (TeamCode's `notifications/maintain`). */
+    private val MAINTAIN = ScheduledJob("notifications/maintain", 1.minutes, 30.seconds)
+
+    /** No wait is known: a server built without the automations module. */
+    private val NO_WAITS = WaitSummaries { _, _ -> emptyList() }
 
     override val name: String = "notifications"
 
@@ -182,6 +203,25 @@ object NotificationsModule : ServerModule {
         }
         single { PushTestRoutesDependencies(get(), get()) }
         single<OrgDeletionListener>(named("notifications-settings")) { NotificationSettingsOrgDeletionListener(get()) }
+        // The delivery queue, fed from the event journal (the events module binds it).
+        single<NotificationDeliveriesRepository> {
+            val scope = this
+            NotificationDeliveriesRepositoryImpl(get()) { scope.get<OrgEventJournal>() }
+        }
+        single<DeliverNotificationsUseCase> {
+            val scope = this
+            DeliverNotificationsUseCaseImpl(
+                journal = get(),
+                waits = getOrNull() ?: NO_WAITS,
+                settings = get(),
+                deliveries = get(),
+                channels = { scope.getAll<NotificationChannel>().distinctBy { it.id } },
+                clock = get(),
+            )
+        }
+        single<OrgDeletionListener>(named("notifications-deliveries")) {
+            NotificationDeliveriesOrgDeletionListener(get())
+        }
     }
 
     override fun routes(route: Route, koin: Koin) {
@@ -198,7 +238,7 @@ object NotificationsModule : ServerModule {
     override suspend fun features(koin: Koin): Set<String> =
         setOf(ServerFeatures.NOTIFICATIONS, ServerFeatures.NOTIFICATIONS_PUSH, ServerFeatures.NOTIFICATIONS_PUSH_TEST)
 
-    /** Sends the queued notifications until the server stops. */
+    /** Sends the queued approval notifications and runs the router's worker until the server stops. */
     override fun start(scope: CoroutineScope, koin: Koin) {
         val outbox = koin.get<NotificationOutbox>()
         val settings = koin.get<NotificationSettings>()
@@ -222,5 +262,12 @@ object NotificationsModule : ServerModule {
             )
         }
         scope.launch { outbox.run() }
+        // The router runs where the event journal is: a server built without the events module has nothing to route.
+        if (koin.getOrNull<OrgEventJournal>() != null) {
+            val deliver = koin.get<DeliverNotificationsUseCase>()
+            val work = koin.scheduledWork()
+            scope.launch { work.repeatDue(DELIVER, logger, "notification delivery failed") { deliver() } }
+            scope.launch { work.repeatDue(MAINTAIN, logger, "notification maintenance failed") { deliver.maintain() } }
+        }
     }
 }

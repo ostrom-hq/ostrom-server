@@ -10,6 +10,10 @@ import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import org.jetbrains.exposed.v1.jdbc.update
 import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.kernel.events.JournalEntry
 import run.ostrom.server.kernel.events.JournalPosition
@@ -19,7 +23,8 @@ import run.ostrom.server.kernel.events.OrgEventType
 
 /**
  * [OrgEventJournal] on PostgreSQL (version 3 of [EventsMigrations]): the readers' cursors in `events_readers`, found
- * across organizations only through `events_readers_behind`, read and moved inside each organization.
+ * across organizations only through `events_readers_behind`, read and moved inside each organization, in a sqlx4k or
+ * an Exposed transaction of the reader's.
  *
  * @param driver The database.
  */
@@ -72,6 +77,17 @@ class OrgEventJournalImpl(private val driver: Driver) : OrgEventJournal {
             .bind("from", position.from)
             .bind("through", through),
     ).getOrThrow().any()
+
+    // The Exposed DSL runs in the caller's current transaction, which is [transaction].
+    override fun advanceIn(
+        transaction: JdbcTransaction,
+        reader: String,
+        position: JournalPosition,
+        through: Long,
+    ): Boolean = EventsReaders.update({
+        (EventsReaders.orgId eq position.orgId) and (EventsReaders.reader eq reader) and
+            (EventsReaders.seq eq position.from)
+    }) { it[EventsReaders.seq] = through } > 0
 
     private companion object {
         private val READER = Regex("[a-z][a-z0-9-]{0,31}")

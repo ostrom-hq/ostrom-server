@@ -1,0 +1,177 @@
+// SPDX-License-Identifier: Apache-2.0
+// Ported from TeamCode (Apache-2.0),
+// infrastructure/src/main/kotlin/me/nathanfallet/teamcode/infrastructure/database/SqlNotificationStore.kt; see NOTICE.
+package run.ostrom.server.notifications.infrastructure
+
+import run.ostrom.server.kernel.database.InstantColumnType
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.events.JournalPosition
+import run.ostrom.server.kernel.events.OrgEventJournal
+import run.ostrom.server.notifications.domain.DeliveryOutcome
+import run.ostrom.server.notifications.domain.DeliveryRules
+import run.ostrom.server.notifications.domain.DeliveryState
+import run.ostrom.server.notifications.domain.Notification
+import run.ostrom.server.notifications.domain.NotificationDeliveriesRepository
+import run.ostrom.server.notifications.domain.NotificationDelivery
+import run.ostrom.server.notifications.domain.NotificationKind
+import org.jetbrains.exposed.v1.core.CustomFunction
+import org.jetbrains.exposed.v1.core.IntegerColumnType
+import org.jetbrains.exposed.v1.core.LongColumnType
+import org.jetbrains.exposed.v1.core.QueryParameter
+import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.Table
+import org.jetbrains.exposed.v1.core.UuidColumnType
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.less
+import org.jetbrains.exposed.v1.core.lessEq
+import org.jetbrains.exposed.v1.core.vendors.ForUpdateOption
+import org.jetbrains.exposed.v1.jdbc.batchInsert
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
+import kotlin.time.Duration
+import kotlin.time.Instant
+import kotlin.uuid.Uuid
+
+/**
+ * [NotificationDeliveriesRepository] on PostgreSQL through Exposed ([NotificationsMigrations] version 6): every
+ * query inside the organization (`inOrg`, with its own `org_id` filter), the paths across organizations through the
+ * functions of `ostrom_router`. The router's journal cursor moves in the transaction that queues the page.
+ *
+ * @param database The database.
+ * @param journal The event journal whose cursor the router moves, read when a page is queued.
+ */
+class NotificationDeliveriesRepositoryImpl(
+    private val database: JdbcDatabase,
+    private val journal: () -> OrgEventJournal,
+) : NotificationDeliveriesRepository {
+    override suspend fun enqueue(
+        position: JournalPosition,
+        through: Long,
+        deliveries: List<NotificationDelivery>,
+    ): Boolean = database.inOrg(position.orgId) {
+        if (!journal().advanceIn(this, DeliveryRules.READER, position, through)) return@inOrg false
+        NotificationDeliveries.batchInsert(deliveries, ignore = true, shouldReturnGeneratedValues = false) { delivery ->
+            val notification = delivery.notification
+            this[NotificationDeliveries.orgId] = position.orgId
+            this[NotificationDeliveries.id] = notification.id
+            this[NotificationDeliveries.eventSeq] = notification.eventSeq
+            this[NotificationDeliveries.memberId] = notification.memberId
+            this[NotificationDeliveries.channel] = delivery.channel
+            this[NotificationDeliveries.kind] = notification.kind.wire
+            this[NotificationDeliveries.title] = notification.title
+            this[NotificationDeliveries.body] = notification.body
+            this[NotificationDeliveries.sessionId] = notification.sessionId
+            this[NotificationDeliveries.waitId] = notification.waitId
+            this[NotificationDeliveries.collapseKey] = notification.collapseKey
+            this[NotificationDeliveries.state] = DeliveryState.PENDING.wire
+            this[NotificationDeliveries.attempts] = 0
+            this[NotificationDeliveries.nextAttemptAt] = notification.createdAt
+            this[NotificationDeliveries.leaseUntil] = notification.createdAt
+            this[NotificationDeliveries.createdAt] = notification.createdAt
+        }
+        true
+    }
+
+    override suspend fun workingOrgs(now: Instant, limit: Int): List<Uuid> = database.query {
+        val orgs = CustomFunction(
+            "notifications_delivery_orgs",
+            UuidColumnType(),
+            QueryParameter(now, InstantColumnType()),
+            QueryParameter(limit, IntegerColumnType()),
+        )
+        Table.Dual.select(orgs).map { it[orgs] }
+    }
+
+    override suspend fun claimDue(
+        orgId: Uuid,
+        limit: Int,
+        now: Instant,
+        lease: Duration,
+    ): List<NotificationDelivery> = database.inOrg(orgId) {
+        val rows = NotificationDeliveries.select(NotificationDeliveries.columns)
+            .where {
+                (NotificationDeliveries.orgId eq orgId) and
+                    (NotificationDeliveries.state eq DeliveryState.PENDING.wire) and
+                    (NotificationDeliveries.nextAttemptAt lessEq now) and
+                    (NotificationDeliveries.leaseUntil less now)
+            }
+            .orderBy(NotificationDeliveries.nextAttemptAt to SortOrder.ASC)
+            .limit(limit)
+            .forUpdate(ForUpdateOption.PostgreSQL.ForUpdate(ForUpdateOption.PostgreSQL.MODE.SKIP_LOCKED))
+            .toList()
+        val (known, unknown) = rows.partition { NotificationKind.parse(it[NotificationDeliveries.kind]) != null }
+        if (known.isNotEmpty()) {
+            NotificationDeliveries.update({ owned(orgId, known) }) { it[leaseUntil] = now + lease }
+        }
+        // A kind of a later version, rolled back since: never sent as another kind.
+        if (unknown.isNotEmpty()) {
+            NotificationDeliveries.update({ owned(orgId, unknown) }) {
+                it[state] = DeliveryState.FAILED.wire
+                it[lastError] = UNKNOWN_KIND
+            }
+        }
+        known.map { it.toDelivery() }
+    }
+
+    override suspend fun record(orgId: Uuid, id: Uuid, outcome: DeliveryOutcome, now: Instant) {
+        database.inOrg(orgId) {
+            NotificationDeliveries.update({
+                (NotificationDeliveries.orgId eq orgId) and (NotificationDeliveries.id eq id)
+            }) {
+                it[state] = outcome.state.wire
+                it[attempts] = outcome.attempts
+                it[nextAttemptAt] = outcome.nextAttemptAt
+                it[leaseUntil] = now
+                it[lastError] = outcome.error?.take(MAX_ERROR)
+                it[deliveredAt] = if (outcome.state == DeliveryState.DELIVERED) now else null
+            }
+        }
+    }
+
+    override suspend fun maintain(now: Instant, giveUpBefore: Instant, deleteBefore: Instant, limit: Int): Long =
+        database.query {
+            val pass = CustomFunction(
+                "notifications_deliveries_maintain",
+                LongColumnType(),
+                QueryParameter(now, InstantColumnType()),
+                QueryParameter(giveUpBefore, InstantColumnType()),
+                QueryParameter(deleteBefore, InstantColumnType()),
+                QueryParameter(limit, IntegerColumnType()),
+            )
+            Table.Dual.select(pass).single()[pass]
+        }
+
+    override suspend fun deleteAll(orgId: Uuid) {
+        database.inOrg(orgId) { NotificationDeliveries.deleteWhere { NotificationDeliveries.orgId eq orgId } }
+    }
+
+    private fun owned(orgId: Uuid, rows: List<ResultRow>) = (NotificationDeliveries.orgId eq orgId) and
+        (NotificationDeliveries.id inList rows.map { it[NotificationDeliveries.id] })
+
+    private fun ResultRow.toDelivery(): NotificationDelivery {
+        val t = NotificationDeliveries
+        val notification = Notification(
+            id = this[t.id],
+            orgId = this[t.orgId],
+            memberId = this[t.memberId],
+            kind = NotificationKind.entries.first { it.wire == this[t.kind] },
+            title = this[t.title],
+            body = this[t.body],
+            sessionId = this[t.sessionId],
+            waitId = this[t.waitId],
+            collapseKey = this[t.collapseKey],
+            createdAt = this[t.createdAt],
+            eventSeq = this[t.eventSeq],
+        )
+        return NotificationDelivery(notification, this[t.channel], this[t.attempts])
+    }
+
+    private companion object {
+        const val UNKNOWN_KIND = "unknown_kind"
+        const val MAX_ERROR = 40
+    }
+}

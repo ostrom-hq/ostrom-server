@@ -3,6 +3,7 @@ package run.ostrom.server.kernel.events
 
 import io.github.smyrgeorge.sqlx4k.Transaction
 import kotlinx.serialization.json.JsonObject
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -87,4 +88,17 @@ interface OrgEventJournal {
      *   handled the page): the caller rolls its work back.
      */
     suspend fun advanceIn(transaction: Transaction, reader: String, position: JournalPosition, through: Long): Boolean
+
+    /**
+     * [advanceIn] for a reader on Exposed: moves the cursor inside [transaction], the reader's `JdbcDatabase.inOrg`
+     * transaction confined to [JournalPosition.orgId], where it writes its work.
+     *
+     * @param transaction The reader's transaction, confined to [JournalPosition.orgId].
+     * @param reader The reader's name.
+     * @param position Where the reader stood when it read.
+     * @param through Where it stands now.
+     *
+     * @return False, with nothing written, when another replica handled the page: the caller rolls its work back.
+     */
+    fun advanceIn(transaction: JdbcTransaction, reader: String, position: JournalPosition, through: Long): Boolean
 }
