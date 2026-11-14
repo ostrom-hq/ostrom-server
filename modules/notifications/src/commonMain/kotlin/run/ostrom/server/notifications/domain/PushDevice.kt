@@ -11,14 +11,17 @@ import kotlin.uuid.Uuid
  * @property id The device.
  * @property orgId The organization.
  * @property memberId The member the phone notifies.
- * @property pushToken The Expo push token, never answered back.
- * @property provider `expo`.
+ * @property pushToken The FCM registration token (`fcm`) or the Expo push token (`expo`, deprecated), never answered
+ *   back nor logged.
+ * @property provider `fcm`, or `expo` (deprecated).
  * @property platform `ios` or `android`.
  * @property locale The phone's language, if it gave one.
  * @property createdAt When the phone was first registered.
  * @property seenAt When the phone last registered (the app registers again in a new language, or an hour later).
  * @property credential Who registered it, with which credential: null for a phone registered before the server
  *   kept it, which is notified again once the app registers it anew.
+ * @property publicKey The phone's P-256 public key (SubjectPublicKeyInfo, DER, base64) every `fcm` push is encrypted
+ *   for; null for an `expo` phone.
  */
 data class PushDevice(
     val id: Uuid,
@@ -31,6 +34,7 @@ data class PushDevice(
     val createdAt: Instant,
     val seenAt: Instant,
     val credential: PushCredential? = null,
+    val publicKey: String? = null,
 )
 
 /**
@@ -46,9 +50,17 @@ data class PushCredential(val userId: Uuid, val credentialId: Uuid, val browser:
 /**
  * A phone, as the app registers it (`registerPushDevice`).
  *
- * @property pushToken The Expo push token (`ExponentPushToken[…]`).
- * @property provider `expo`.
+ * @property pushToken The FCM registration token (`fcm`), or the Expo push token (`ExponentPushToken[…]`, `expo`,
+ *   deprecated).
+ * @property provider `fcm`, or `expo` (deprecated).
  * @property platform `ios` or `android`.
  * @property locale The phone's language, if any.
+ * @property publicKey The phone's P-256 public key, required with `fcm`.
  */
-data class PushRegistration(val pushToken: String, val provider: String, val platform: String, val locale: String?)
+data class PushRegistration(
+    val pushToken: String,
+    val provider: String,
+    val platform: String,
+    val locale: String?,
+    val publicKey: String? = null,
+)

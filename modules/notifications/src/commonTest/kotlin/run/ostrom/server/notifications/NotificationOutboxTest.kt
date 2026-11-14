@@ -6,6 +6,7 @@ import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.notifications.domain.Notice
 import run.ostrom.server.notifications.domain.NotificationOutbox
 import run.ostrom.server.notifications.domain.PushMessage
+import run.ostrom.server.notifications.domain.PushRejectedException
 import run.ostrom.server.notifications.domain.PushSender
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.awaitCancellation
@@ -24,7 +25,8 @@ import kotlin.uuid.Uuid
 class NotificationOutboxTest {
     private val gate = Uuid.parse("00000000-0000-0000-0000-0000000000a1")
     private val token = "ExponentPushToken[secret-token-1]"
-    private val message = PushMessage(token, "ana asks for your yes", "Push to main", mapOf("kind" to "approval"))
+    private val message =
+        PushMessage(testPhone(token), "ana asks for your yes", "Push to main", mapOf("kind" to "approval"))
     private val mail = Mail("bob@example.com", "ana asks for your yes", "<p>hi</p>", "hi")
     private val logger = RecordingLogger()
 
@@ -103,6 +105,28 @@ class NotificationOutboxTest {
             given.third,
         )
         assertFalse(logger.events.toString().contains("bob@example.com"), "An address is never logged")
+    }
+
+    @Test
+    fun aPushRefusedForGoodIsGivenUpAtOnce() = runTest {
+        var calls = 0
+        val refusing = object : PushSender {
+            override suspend fun send(messages: List<PushMessage>) {
+                calls++
+                throw PushRejectedException("fcm_403")
+            }
+        }
+        val outbox = NotificationOutbox(refusing, RecordingMailSender(), logger)
+        backgroundScope.launch { outbox.run() }
+
+        outbox.offer(Notice.Push(gate, listOf(message)))
+        advanceTimeBy(15.minutes)
+        runCurrent()
+
+        assertEquals(1, calls, "Never tried again")
+        val given = logged(LogLevel.ERROR).single()
+        assertEquals("notification given up", given.second)
+        assertEquals("fcm_403", given.third["reason"])
     }
 
     @Test

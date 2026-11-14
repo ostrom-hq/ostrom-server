@@ -156,10 +156,11 @@ class NotificationOutbox(
             throw error
         } catch (error: Exception) {
             // The type only: a provider's message may quote what it was sent.
-            // Push refusals carry our own words (Expo's status or ticket code), never a token: kept for the operator.
+            // Push refusals carry our own words (the provider's status or code), never a token: kept for the operator.
             val reason = (error as? PushNotSentException)?.let { mapOf("reason" to it.message) }.orEmpty()
             val failed = fields(attempt) + ("error" to error::class.simpleName) + reason
-            val pause = retryDelays.getOrNull(attempt.number - 1)
+            // A refusal for good (a key the provider refuses) would only be refused again.
+            val pause = if (error is PushRejectedException) null else retryDelays.getOrNull(attempt.number - 1)
             if (pause == null) {
                 logger.error("notification given up", failed)
                 return

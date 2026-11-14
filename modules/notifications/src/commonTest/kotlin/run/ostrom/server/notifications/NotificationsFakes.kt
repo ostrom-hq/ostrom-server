@@ -45,10 +45,38 @@ class InMemoryPushDevicesRepository : PushDevicesRepository {
         }
     }
 
+    /** The tokens forgotten, as (device, token). */
+    val forgotten = mutableListOf<Pair<Uuid, String>>()
+
+    override suspend fun forgetToken(orgId: Uuid, id: Uuid, pushToken: String) {
+        forgotten += id to pushToken
+        devices.removeAll { it.orgId == orgId && it.id == id && it.pushToken == pushToken }
+    }
+
     override suspend fun deleteAll(orgId: Uuid) {
         devices.removeAll { it.orgId == orgId }
     }
 }
+
+/**
+ * A phone of a test.
+ *
+ * @param token Its push token.
+ * @param provider `expo` or `fcm`.
+ * @param platform `ios` or `android`.
+ * @param publicKey Its public key, for `fcm`.
+ *
+ * @return It, in a new organization.
+ */
+fun testPhone(
+    token: String,
+    provider: String = "expo",
+    platform: String = "ios",
+    publicKey: String? = null,
+): PushDevice = PushDevice(
+    Uuid.random(), Uuid.random(), Uuid.random(), token, provider, platform, null, Instant.DISTANT_PAST,
+    Instant.DISTANT_PAST, null, publicKey,
+)
 
 /** A clock that says [now]. */
 class TestClock(var now: Instant = Instant.parse("2026-11-03T08:00:00Z")) : Clock {

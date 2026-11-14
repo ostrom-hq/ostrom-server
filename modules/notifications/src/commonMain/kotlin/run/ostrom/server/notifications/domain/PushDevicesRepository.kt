@@ -48,6 +48,15 @@ interface PushDevicesRepository {
     suspend fun forget(orgId: Uuid, userId: Uuid, credentialId: Uuid?)
 
     /**
+     * Forgets a phone whose token the push provider no longer knows, unless the app registered it anew meanwhile.
+     *
+     * @param orgId The organization.
+     * @param id The device.
+     * @param pushToken The token the provider refused: the device is removed only while it still has it.
+     */
+    suspend fun forgetToken(orgId: Uuid, id: Uuid, pushToken: String)
+
+    /**
      * Removes every phone of an organization: it was deleted, so nothing may be pushed for it any more.
      *
      * @param orgId The organization.

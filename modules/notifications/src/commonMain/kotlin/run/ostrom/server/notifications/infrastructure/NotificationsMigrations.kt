@@ -9,7 +9,8 @@ private const val ORG = "CAST(NULLIF(current_setting('ostrom.org_id', TRUE), '')
  * The notifications schema: the members' phones, one row per push token in an organization, under forced row level
  * security (docs/tenancy.md). Version 2 keeps who registered each phone and with which credential (`user_id`,
  * `credential_id`, `browser`): a phone is notified while that credential works, and forgotten when the person signs
- * out with it. A phone of version 1 has none and is notified again once the app registers it anew.
+ * out with it. A phone of version 1 has none and is notified again once the app registers it anew. Version 3 keeps an
+ * `fcm` phone's P-256 public key (`public_key`), which every push to it is encrypted for.
  */
 val NotificationsMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -46,5 +47,10 @@ val NotificationsMigrations: List<SchemaMigration> = listOf(
         CREATE INDEX notifications_push_devices_credential
             ON notifications_push_devices (org_id, user_id, credential_id)
         """.trimIndent(),
+    ),
+    SchemaMigration(
+        3,
+        "push_devices_public_key",
+        "ALTER TABLE notifications_push_devices ADD COLUMN public_key TEXT",
     ),
 )

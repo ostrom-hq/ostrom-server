@@ -42,7 +42,7 @@ class ApprovalNotices(private val webOrigin: String) {
      *   shows it to whoever holds the phone, so it names neither the asker, nor the label, nor the repository.
      */
     fun push(request: ApprovalRequest, device: PushDevice): PushMessage = PushMessage(
-        to = device.pushToken,
+        device = device,
         title = PUSH_TITLE,
         body = PUSH_BODY,
         data = mapOf("kind" to "approval", "approvalId" to request.id.toString()),

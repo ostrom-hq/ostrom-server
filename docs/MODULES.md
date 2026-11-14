@@ -308,6 +308,7 @@ What lives in the console so far:
 | Stripe (`stripe`: the sealed secret key and webhook signing secrets, Stripe's API), read at each use; billing is on while the key and a webhook secret are stored | `OSTROM_STRIPE_SECRET_KEY`, `OSTROM_STRIPE_WEBHOOK_SECRET` (or their `_FILE`), `OSTROM_STRIPE_API_BASE` | the `billing` module |
 | Gateway (`gateway`: the instance's sealed Anthropic, OpenAI and OpenRouter keys, the providers' base URLs), read at each model call | `OSTROM_GATEWAY_ANTHROPIC_API_KEY`, `OSTROM_GATEWAY_OPENAI_API_KEY`, `OSTROM_GATEWAY_OPENROUTER_API_KEY`, `OSTROM_GATEWAY_ANTHROPIC_URL`, `OSTROM_GATEWAY_OPENAI_URL`, `OSTROM_GATEWAY_OPENROUTER_URL`, `OSTROM_GATEWAY_CODEX_URL` | the `gateway` module |
 | Sharing (`sharing`: the providers' OAuth token endpoints), read at each refresh | `OSTROM_SHARING_CLAUDE_TOKEN_URL`, `OSTROM_SHARING_CODEX_TOKEN_URL` | the `sharing` module |
+| Push (`push`): `provider` (`off` by default, or `firebase`) and the Firebase project's service account JSON key (`firebaseServiceAccount`, sealed) | new, never a variable | FCM push (`notifications`) |
 
 The GitHub App is kept as TeamCode keeps it, in its own table (`github_apps`, one row, the key and secrets sealed),
 not in a settings section: the manifest flow creates it once, and the stored App is the only one the server uses. At
@@ -322,6 +323,21 @@ needs both again. Turning the runtime off refuses only new sessions. Each organi
 versioned cloud profiles (cluster, namespace, the team's own session image, allowed image overrides, pull secrets,
 resources, idle timeouts) and assign them to members; a published version never changes. Every save is optimistic (a
 `409` when another came first) and audited without a credential.
+
+#### Push notifications
+
+Ported from TeamCode's docs/notifications.md ("Push"). The phone app registers its FCM registration token (iOS and
+Android alike) with its P-256 public key (`POST /api/v1/push-devices`, `provider: fcm`, `publicKey` in
+SubjectPublicKeyInfo DER, base64), at every start and when FCM rotates the token. Each push is end-to-end encrypted
+for that key (ECIES: an ephemeral P-256 key, HKDF-SHA256 with info `ostrom-push-v1`, AES-256-GCM; the contract's
+`PushPayload`), so the provider sees a token and an opaque blob, and the text exists in clear only on the server and
+the phone. The FCM message carries `{"p": <payload>, "v": "1"}`: on iOS a generic alert with `mutable-content` the
+app's notification service extension replaces, on Android a high-priority data message, both with an opaque collapse
+key and a one-hour expiry. The server signs its own OAuth assertion with the service account (RS256) and keeps the
+access token until a minute before it expires. A token FCM no longer knows (404) forgets its phone, unless the app
+registered it anew; a 401, 408, 429, 5xx or no answer is tried again; any other refusal, or `firebase` without its key,
+is given up at once. While the provider is `off`, phones register and nothing is sent. The deprecated `expo` phones
+still go to Expo's push service until the apps register FCM.
 
 ### Memory under the container limit
 
@@ -591,7 +607,7 @@ anonymous call gets 401 `unauthorized`. A module lists a key of ostrom-core's `S
 | `integrations-github` | `github.v1`; `github.link.v1` | a stored GitHub App (created by the manifest flow, or imported once from the former variables); the second once that App's OAuth client (id and secret) is known |
 | `mcp-relay` | `mcp.v1`, `mcp.personal.v1` (members' own servers) | — |
 | `memory` | `memory.v1` | — |
-| `notifications` | `notifications.v1`, `notifications.push.v1` | — (Expo's push service needs no key; `OSTROM_EXPO_ACCESS_TOKEN` only when the project requires one) |
+| `notifications` | `notifications.v1`, `notifications.push.v1` | — (phones register their FCM token and P-256 key; pushes go out once an administrator picks the provider in Admin → Settings → push. Deprecated Expo: `OSTROM_EXPO_ACCESS_TOKEN` only when the project requires one) |
 | `receipts` | `receipts.v1` | — |
 | `reports` | `reports.v1` | — |
 | `rules` | `rules.v1`, `reports.v1` (the analysis) | — |

@@ -137,6 +137,32 @@ class PushDevicesPostgresTest {
     }
 
     @Test
+    fun anFcmPhoneRegistersItsTokenWithItsPublicKeyWhichIsKeptAndForgottenWithItsToken() = serverTest(modules) {
+        val mia = it.person("mia")
+        val key = phoneKey()
+        val made = it.register(mia.phone, PushDeviceRequest(FCM_TOKEN, "fcm", "android", "fr-FR", key))
+
+        assertEquals(HttpStatusCode.Created, made.status, made.bodyAsText())
+        assertFalse(made.bodyAsText().contains(FCM_TOKEN), "The push token stays on the server")
+        assertFalse(made.bodyAsText().contains(key), "The public key stays on the server too")
+        val device = made.body<PushDeviceDto>()
+        assertEquals("fcm" to "android", device.provider to device.platform)
+        val phones = it.koin.get<PushDevicesRepository>()
+        val stored = phones.ofMember(mia.orgId, mia.memberId).single()
+        assertEquals(key to FCM_TOKEN, stored.publicKey to stored.pushToken)
+
+        val noKey = PushDeviceRequest(FCM_TOKEN, "fcm", "ios")
+        assertEquals(HttpStatusCode.BadRequest, it.register(mia.phone, noKey).status, "An fcm phone sends its key")
+        val badKey = noKey.copy(publicKey = "bm90IGEga2V5")
+        assertEquals(HttpStatusCode.BadRequest, it.register(mia.phone, badKey).status, "A P-256 key")
+
+        phones.forgetToken(mia.orgId, stored.id, "another-token-the-app-registered-before")
+        assertEquals(1, it.phonesSeen(mia.orgId), "A token the app already replaced forgets nothing")
+        phones.forgetToken(mia.orgId, stored.id, FCM_TOKEN)
+        assertEquals(0, it.phonesSeen(mia.orgId), "The token FCM no longer knows is forgotten")
+    }
+
+    @Test
     fun anotherOrganizationNeitherRemovesNorSeesThePhone() = serverTest(modules) {
         val mia = it.person("mia")
         val tom = it.person("tom")
@@ -159,7 +185,7 @@ class PushDevicesPostgresTest {
         assertEquals(HttpStatusCode.Unauthorized, it.remove(null, Uuid.random().toString()).status)
         assertEquals(HttpStatusCode.Forbidden, it.register(mia.cli, phone).status, "A CLI token never registers")
         assertEquals(HttpStatusCode.Forbidden, it.remove(mia.cli, Uuid.random().toString()).status)
-        assertEquals(HttpStatusCode.BadRequest, it.register(mia.phone, phone.copy(provider = "fcm")).status)
+        assertEquals(HttpStatusCode.BadRequest, it.register(mia.phone, phone.copy(provider = "apns")).status)
         val noToken = """{"provider":"expo","platform":"ios"}"""
         assertEquals(HttpStatusCode.BadRequest, it.register(mia.phone, noToken).status, "A body without its token")
         assertEquals(HttpStatusCode.NotFound, it.remove(mia.phone, "not-a-device").status)
@@ -208,5 +234,6 @@ class PushDevicesPostgresTest {
         const val CODE = "phone-code-0123456789abcdef0123456789abcdef-"
         const val VERIFIER = "phone-verifier-0123456789abcdef0123456789abcdef0123"
         const val PUSH_TOKEN = "ExponentPushToken[0123456789abcdefABCDEF]"
+        const val FCM_TOKEN = "fcm-registration-token:APA91b0123456789abcdefABCDEF"
     }
 }
