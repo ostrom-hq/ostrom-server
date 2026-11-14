@@ -731,10 +731,10 @@ owner, so the serving role reads the history (the start-up check) and never rewr
   the gate's label or evidence.
   The notifications module holds the router's rules (`NotificationRules`: a wait a person resolves tells its
   assignee, a failed turn's wait its owner), each member's switches per channel and kind
-  (`notifications_member_settings`, `/api/v1/notifications/settings`, no row meaning on) and the channels the server
+  (`notifications_member_settings`, contract `getNotificationSettings`, no row meaning on) and the channels the server
   offers: every `NotificationChannel` bound in Koin. Its push channel (`push`) reaches a member's `fcm` phones that
   registered a key and whose credential still works, through the provider of the instance's `push` settings (nobody
-  while it is `off`); `POST /api/v1/notifications/push/test` sends a member a test now, once every ten seconds per
+  while it is `off`); `sendTestPush` sends a member a test now, once every ten seconds per
   member on each replica.
 - **A cloud session's terminal is relayed by the replica holding its runner's socket** (TC-REP-1). That replica
   records the hold in `runners_terminal_hosts` (renewed every 30 s, 90 s lease by the database's clock, the newest
