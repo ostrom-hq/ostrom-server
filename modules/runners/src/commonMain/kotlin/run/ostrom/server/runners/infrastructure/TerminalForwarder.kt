@@ -17,19 +17,22 @@ fun interface TerminalForwarder {
      * @param replicaUrl The other replica's URL.
      * @param sessionId The session.
      * @param ticket A terminal ticket of the member, which the other replica redeems.
+     * @param after Where the member was in the terminal's output, when they come back.
      * @param block What to do with the socket.
      */
     suspend fun forward(
         replicaUrl: String,
         sessionId: Uuid,
         ticket: String,
+        after: TerminalRelay.Cursor?,
         block: suspend (DefaultWebSocketSession) -> Unit,
     )
 }
 
 /**
- * [TerminalForwarder] over a WebSocket client: `ws://<replica>/api/v1/cloud/sessions/{id}/terminal?ticket=&hop=1`, on
- * the replicas' own network (the chart's pod addresses, opened to the server pods only).
+ * [TerminalForwarder] over a WebSocket client:
+ * `ws://<replica>/api/v1/cloud/sessions/{id}/terminal?ticket=&hop=1[&after=<room>.<offset>]`, on the replicas' own
+ * network (the chart's pod addresses, opened to the server pods only).
  *
  * @param client A client with WebSockets installed.
  */
@@ -38,10 +41,12 @@ class KtorTerminalForwarder(private val client: HttpClient) : TerminalForwarder 
         replicaUrl: String,
         sessionId: Uuid,
         ticket: String,
+        after: TerminalRelay.Cursor?,
         block: suspend (DefaultWebSocketSession) -> Unit,
     ) {
         val base = replicaUrl.replaceFirst("https://", "wss://").replaceFirst("http://", "ws://")
-        client.webSocket("$base/api/v1/cloud/sessions/$sessionId/terminal?ticket=$ticket&$HOP_PARAMETER=1") {
+        val resume = after?.let { "&$AFTER_PARAMETER=$it" }.orEmpty()
+        client.webSocket("$base/api/v1/cloud/sessions/$sessionId/terminal?ticket=$ticket&$HOP_PARAMETER=1$resume") {
             block(this)
         }
     }
@@ -50,6 +55,9 @@ class KtorTerminalForwarder(private val client: HttpClient) : TerminalForwarder 
     companion object {
         /** Marks another replica relaying its member: attached here only, never relayed further. */
         const val HOP_PARAMETER = "hop"
+
+        /** Where a hop client's member was in the output (`TerminalRelay.Cursor`), when they come back. */
+        const val AFTER_PARAMETER = "after"
     }
 }
 

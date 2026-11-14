@@ -99,6 +99,7 @@ class TerminalIsolationTest {
     private suspend fun World.assertCarolUntouched() {
         val probe = relay.connectClient(carol.id)
         assertContentEquals(SECRET.encodeToByteArray(), assertIs<ClientBound.Output>(probe.outbound.receive()).bytes)
+        assertIs<ClientBound.Joined>(probe.outbound.receive())
         assertEquals(ClientBound.Runner(true), probe.outbound.receive())
         relay.disconnectClient(carol.id, probe)
     }

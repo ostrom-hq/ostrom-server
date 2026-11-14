@@ -57,6 +57,17 @@ sealed interface TerminalControl {
     @Serializable
     @SerialName("runner")
     data class Runner(val connected: Boolean) : TerminalControl
+
+    /**
+     * Where a hop client now is in the output of the replica holding the runner (`TerminalRelay.Cursor`), from that
+     * replica to the one relaying its member, which keeps it to come back with and never passes it on.
+     *
+     * @property room The room.
+     * @property offset The bytes of output before what follows.
+     */
+    @Serializable
+    @SerialName("joined")
+    data class Joined(val room: String, val offset: Long) : TerminalControl
 }
 
 /** The browser ticket. */
@@ -125,7 +136,8 @@ fun Route.terminalRoutes(dependencies: TerminalRoutesDependencies) = with(depend
                 return@webSocket close(closeReason(error))
             }
             if (call.parameters[KtorTerminalForwarder.HOP_PARAMETER] == "1") {
-                attachHop(relay, id)
+                val after = TerminalRelay.Cursor.parse(call.parameters[KtorTerminalForwarder.AFTER_PARAMETER])
+                attachHop(relay, id, after)
             } else {
                 attachMember(dependencies, caller, id)
             }

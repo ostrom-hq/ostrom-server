@@ -101,6 +101,7 @@ class TerminalReplicasTest {
             replicaUrl: String,
             sessionId: Uuid,
             ticket: String,
+            after: TerminalRelay.Cursor?,
             block: suspend (DefaultWebSocketSession) -> Unit,
         ) {
             urls += replicaUrl
@@ -108,7 +109,7 @@ class TerminalReplicasTest {
                 failures--
                 throw IOException("unreachable")
             }
-            KtorTerminalForwarder(client).forward(replicaUrl, sessionId, ticket, block)
+            KtorTerminalForwarder(client).forward(replicaUrl, sessionId, ticket, after, block)
         }
     }
 

@@ -581,8 +581,12 @@ owner, so the serving role reads the history (the start-up check) and never rewr
   records the hold in `runners_terminal_hosts` (renewed every 30 s, 90 s lease by the database's clock, the newest
   execution wins). A member attached on another replica is relayed to it as a hop client, at its pod address
   (`OSTROM_RUNNERS_REPLICA_URL`), on a single-use ticket of theirs. When the runner moves, the member hears
-  `{"type":"runner","connected":false}` and is attached where it now is, on the same socket. Unset (one replica),
-  every terminal is served where it is attached.
+  `{"type":"runner","connected":false}` and is attached where it now is, on the same socket. Their replica keeps
+  where they are in the output (a cursor: the room, one stay of the terminal in a replica's memory, and its byte
+  count, which a hop hears as `{"type":"joined"}` and the member never does) and comes back with it (`after=`), so
+  only what they have not seen is sent, as TeamCode's attach resumes after its last event; from another room, or past
+  the scrollback (TeamCode's `gap`), the terminal is reset (ESC c) before the scrollback, drawn again, never doubled.
+  Unset (one replica), every terminal is served where it is attached.
 - **SQLite** (tests and local mode) is not wired yet: sqlx4k has a SQLite driver with the same `Driver` interface;
   repositories must stay portable SQL where they can.
 - **The instance signer is provisional** (`kernel/signing`): it moves to `ostrom-core` once published; the

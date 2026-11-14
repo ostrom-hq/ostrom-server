@@ -49,17 +49,20 @@ internal suspend fun forwardToRunner(
  *
  * @param outbound The client's queue.
  * @param closing The close sent then: falling behind, unless the caller knows better (a hop client moved).
+ * @param joined Where the client now is in the room's output: kept by a member's replica, sent on by a hop.
  * @param send Sends a frame on the socket.
  */
 internal suspend fun forwardToClient(
     outbound: ReceiveChannel<TerminalRelay.ClientBound>,
     closing: () -> CloseReason = { CloseReason(TerminalCloseCodes.TOO_SLOW, TOO_SLOW) },
+    joined: suspend (TerminalRelay.Cursor) -> Unit,
     send: suspend (Frame) -> Unit,
 ) {
     for (frame in outbound) {
         when (frame) {
             is TerminalRelay.ClientBound.Output -> send(Frame.Binary(true, frame.bytes))
             is TerminalRelay.ClientBound.Runner -> send(controlFrame(TerminalControl.Runner(frame.connected)))
+            is TerminalRelay.ClientBound.Joined -> joined(frame.cursor)
         }
     }
     send(Frame.Close(closing()))
