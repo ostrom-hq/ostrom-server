@@ -36,10 +36,11 @@ import kotlin.uuid.Uuid
  */
 internal class MemoryCurationStoreImpl(private val driver: Driver, private val clock: Clock) : MemoryCurationStore {
     override suspend fun settings(orgId: Uuid): CurationSettings = driver.inOrg(orgId) {
-        fetchAll(
+        val row = fetchAll(
             Statement.create("SELECT $SETTINGS_COLUMNS FROM memory_settings WHERE org_id = :org_id")
                 .bind("org_id", orgId),
-        ).getOrThrow().firstOrNull()?.toSettings() ?: CurationSettings(enabled = false)
+        ).getOrThrow().firstOrNull()
+        if (row == null) CurationSettings(enabled = false) else row.toSettings()
     }
 
     override suspend fun setEnabled(orgId: Uuid, enabled: Boolean): CurationSettings = driver.inOrg(orgId) {

@@ -3,12 +3,15 @@ package run.ostrom.server.memory.infrastructure
 
 import run.ostrom.server.kernel.database.ScheduledWork
 import run.ostrom.server.kernel.logging.Logger
+import run.ostrom.server.memory.domain.MemoryCurationService
+import run.ostrom.server.memory.domain.MemoryProposalsService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlin.uuid.Uuid
 
 /**
  * One of the memory's periodic jobs on the instance's [ScheduledWork] lease, one replica at a time: every [tick] this
@@ -49,6 +52,17 @@ internal class MemoryWorker(
         }
     }
 }
+
+/** The memory's two jobs: the settling of [proposals] and the curation, each run with a new run id. */
+internal fun memoryWorkers(
+    work: ScheduledWork,
+    logger: Logger,
+    proposals: MemoryProposalsService,
+    curation: MemoryCurationService,
+): List<MemoryWorker> = listOf(
+    MemoryWorker(MemorySchedule.SETTLE, work, logger) { proposals.settle() },
+    MemoryWorker(MemorySchedule.CURATE, work, logger) { curation.run(Uuid.random().toString()) },
+)
 
 /**
  * A periodic job's name and times.

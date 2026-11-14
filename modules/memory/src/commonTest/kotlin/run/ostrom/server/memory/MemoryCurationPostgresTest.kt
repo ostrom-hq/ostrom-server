@@ -178,6 +178,10 @@ class MemoryCurationPostgresTest {
         assertEquals(listOf(dup2.toString()), superseded("ada").map { it.id })
         assertEquals(HttpStatusCode.NotFound, restore("ada", dup1).status)
         assertEquals(HttpStatusCode.NotFound, client.post("$MEMORY/not-an-id/restore") { bearerAuth("ada") }.status)
+
+        // Its replacement is gone: the personal memory must have room for it.
+        repository.delete(caller(), dup1) {}
+        assertEquals("active", restore("ada", dup2).body<MemoryEntry>().status)
     }
 
     @Test
@@ -248,6 +252,7 @@ class MemoryCurationPostgresTest {
         val restored = restore("root", older).body<MemoryEntry>()
         assertEquals("active" to listOf("deploy"), restored.status to restored.tags)
         sql("UPDATE memory_entries SET status = 'superseded' WHERE id = '$older'")
+        assertEquals(listOf(null), superseded("root").map { it.supersededById }, "superseded by nothing left")
         sql(
             "INSERT INTO memory_entries (id, org_id, scope, owner_id, title, summary, content, refs, status, origin, " +
                 "author_id, version, created_at, updated_at) SELECT gen_random_uuid(), '$ORG_A', 'team', '', 'n', " +

@@ -4,8 +4,18 @@ package run.ostrom.server.memory
 import run.ostrom.server.kernel.database.ScheduledWork
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.logging.Logger
+import run.ostrom.server.memory.domain.MemoryCurationServiceImpl
+import run.ostrom.server.memory.domain.MemoryProposalsServiceImpl
+import run.ostrom.server.memory.fakes.FakeCurationRuns
+import run.ostrom.server.memory.fakes.FakeCurationStore
+import run.ostrom.server.memory.fakes.FakeProposalStore
+import run.ostrom.server.memory.fakes.FakeProposalWaits
+import run.ostrom.server.memory.fakes.FakeRepository
+import run.ostrom.server.memory.fakes.ORG_A
+import run.ostrom.server.memory.fakes.RecordingAudit
 import run.ostrom.server.memory.infrastructure.MemorySchedule
 import run.ostrom.server.memory.infrastructure.MemoryWorker
+import run.ostrom.server.memory.infrastructure.memoryWorkers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
@@ -13,6 +23,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
@@ -68,5 +79,20 @@ class MemoryWorkerTest {
         assertFailsWith<CancellationException> {
             MemoryWorker(MemorySchedule.SETTLE, Lease(), logger) { throw CancellationException("stop") }.pass()
         }
+    }
+
+    @Test
+    fun theMemoryRunsTheSettlingAndTheCurationEachUnderItsOwnJob() = runTest {
+        val repository = FakeRepository()
+        val audit = RecordingAudit()
+        val store = FakeProposalStore(repository)
+        val proposals = MemoryProposalsServiceImpl(repository, store, FakeProposalWaits(), audit, Clock.System)
+        val runs = FakeCurationRuns().apply { add(ORG_A) }
+        val curation = MemoryCurationServiceImpl(FakeCurationStore(), runs, audit, Clock.System)
+        val lease = Lease()
+        memoryWorkers(lease, logger, proposals, curation).forEach { it.pass() }
+        assertEquals(listOf("memory/settle", "memory/curate"), lease.asked.map { it.first })
+        assertEquals(listOf(ORG_A), runs.retained, "the curation ran its retention")
+        assertEquals(emptyList(), logged)
     }
 }

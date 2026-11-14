@@ -26,8 +26,7 @@ import run.ostrom.server.memory.infrastructure.MemoryMigrations
 import run.ostrom.server.memory.infrastructure.MemoryOrgDeletionListener
 import run.ostrom.server.memory.infrastructure.MemoryProposalStoreImpl
 import run.ostrom.server.memory.infrastructure.MemoryRepositoryImpl
-import run.ostrom.server.memory.infrastructure.MemorySchedule
-import run.ostrom.server.memory.infrastructure.MemoryWorker
+import run.ostrom.server.memory.infrastructure.memoryWorkers
 import run.ostrom.server.memory.infrastructure.OrgMemoryAudit
 import run.ostrom.server.memory.presentation.MemoryCallers
 import run.ostrom.server.memory.presentation.MemoryRoutesDependencies
@@ -40,7 +39,6 @@ import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
-import kotlin.uuid.Uuid
 
 /**
  * The memory module (TeamCode docs/memory.md): the organization's entries, which every member reads, and each member's
@@ -78,10 +76,7 @@ object MemoryModule : ServerModule {
         val logger = koin.get<Logger>()
         val proposals = koin.get<MemoryProposalsService>()
         val curation = koin.get<MemoryCurationService>()
-        val settle = MemoryWorker(MemorySchedule.SETTLE, work, logger) { proposals.settle() }
-        val curate = MemoryWorker(MemorySchedule.CURATE, work, logger) { curation.run(Uuid.random().toString()) }
-        scope.launch { settle.run() }
-        scope.launch { curate.run() }
+        memoryWorkers(work, logger, proposals, curation).forEach { worker -> scope.launch { worker.run() } }
     }
 
     /** The memory, always served. */

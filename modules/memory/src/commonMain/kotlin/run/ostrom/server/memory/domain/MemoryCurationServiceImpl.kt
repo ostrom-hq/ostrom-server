@@ -124,7 +124,8 @@ class MemoryCurationServiceImpl(
         reason: String,
     ) {
         val facts = mapOf("by" to newer.toString(), "run" to run, "reason" to reason)
-        audit.record(orgId, caller?.principal ?: MEMORY_ACTOR, "memory.superseded", older, facts)
+        val actor = if (caller == null) MEMORY_ACTOR else caller.principal
+        audit.record(orgId, actor, "memory.superseded", older, facts)
     }
 
     private companion object {
