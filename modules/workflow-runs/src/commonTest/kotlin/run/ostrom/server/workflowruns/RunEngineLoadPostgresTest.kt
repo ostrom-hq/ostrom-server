@@ -92,8 +92,12 @@ class RunEngineLoadPostgresTest {
         RunnersModule, LaunchesModule, AutomationsModule, WorkflowRunsModule,
     )
 
-    // No running cap: 10 sessions at once in an organization would pass the free plan's 5.
+    // No running cap: 10 sessions at once in an organization would pass the free plan's 5. The engine and what it
+    // calls (a child run's due time, a session's, a wait's) read one clock, this test's: a child run started with the
+    // system's clock was due at a time the test's own clock, five seconds a round from a start taken before the
+    // setup, had not always reached on a slow runner, so its parent was left waiting when the rounds ended.
     private val overrides = module {
+        single<Clock> { clock }
         single<CloudPlanProvider> {
             object : CloudPlanProvider {
                 override suspend fun planFor(orgId: Uuid) =
