@@ -273,6 +273,9 @@ class RelayInferenceUseCaseImpl(
             // 0, or no entry, is unlimited (TeamCode's `maxConcurrent > 0 && active >= max`).
             limit = org.settings.memberConcurrency[caller.memberId.toString()]?.takeIf { it > 0 },
             limitedMembers = org.settings.memberConcurrency.filterValues { it > 0 }.keys,
+            launchId = caller.launchId,
+            // An administrator's `maxConcurrent` on the launch: 0, or none, is unlimited, as for a member.
+            launchLimit = caller.caps?.maxConcurrent?.takeIf { it > 0 },
         )
 
         /** Whether the call is recorded: a failure after its record must not record it again. */

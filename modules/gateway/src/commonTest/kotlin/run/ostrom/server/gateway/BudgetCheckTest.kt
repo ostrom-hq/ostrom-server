@@ -15,6 +15,7 @@ import run.ostrom.server.gateway.domain.RequestBody
 import run.ostrom.server.gateway.domain.SpendDecision
 import run.ostrom.server.gateway.domain.SpendGuard
 import run.ostrom.server.gateway.domain.SpendRequest
+import run.ostrom.server.secrets.domain.LaunchCaps
 import run.ostrom.server.gateway.domain.UpstreamAnswer
 import run.ostrom.server.gateway.domain.WireProtocol
 import run.ostrom.server.sharing.domain.AccountProvider
@@ -107,6 +108,12 @@ class BudgetCheckTest {
         assertEquals(listOf(SpendRequest(Gw.orgA, Gw.memberA.memberId, callId, reserve)), asked)
         guarded.check(Gw.memberA.copy(workflowId = "review"), callId, WireProtocol.MESSAGES, body(text))
         assertEquals("review", asked.last().workflowId, "A launch's call is checked under the workflow it plays")
+        val budgeted = Gw.memberA.copy(launchId = "lch_1", caps = LaunchCaps(budgetMicros = 7))
+        guarded.check(budgeted, callId, WireProtocol.MESSAGES, body(text))
+        assertEquals("lch_1" to 7L, asked.last().launchId to asked.last().launchBudgetMicros)
+        val capped = Gw.memberA.copy(launchId = "lch_1", caps = LaunchCaps(maxConcurrent = 2))
+        guarded.check(capped, callId, WireProtocol.MESSAGES, body(text))
+        assertEquals(null, asked.last().launchBudgetMicros, "A launch without a budget holds none")
     }
 
     @Test

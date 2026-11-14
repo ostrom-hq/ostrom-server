@@ -16,6 +16,7 @@ import run.ostrom.server.launches.domain.services.AgentTokenService
 import run.ostrom.server.launches.domain.services.HooksCheckRules
 import run.ostrom.server.launches.domain.services.LaunchModelRules
 import run.ostrom.server.launches.domain.services.LauncherResolver
+import run.ostrom.server.secrets.domain.LaunchCaps
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Instant
@@ -52,6 +53,14 @@ class InMemoryLaunches : LaunchesRepository {
 
     override suspend fun find(orgId: Uuid, id: String): Launch? =
         launches.firstOrNull { it.orgId == orgId && it.id == id }
+
+    override suspend fun setCaps(orgId: Uuid, id: String, caps: LaunchCaps): Boolean {
+        val at = launches.indexOfFirst { it.orgId == orgId && it.id == id }
+        if (at >= 0) launches[at] = launches[at].copy(caps = caps)
+        return at >= 0
+    }
+
+    override suspend fun labelsOf(orgId: Uuid, id: String): Map<String, String> = find(orgId, id)?.labels.orEmpty()
 
     override suspend fun ofCloudSession(orgId: Uuid, cloudSessionId: Uuid, limit: Int): List<String> =
         launches.filter { it.orgId == orgId && it.cloudSessionId == cloudSessionId }.sortedByDescending { it.createdAt }

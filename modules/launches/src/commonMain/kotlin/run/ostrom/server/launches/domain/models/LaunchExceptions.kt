@@ -59,3 +59,14 @@ class LaunchWorkflowNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Wo
  * learns nothing about launches it does not hold.
  */
 class LaunchNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Launch not found.")
+
+/**
+ * A limit of a launch is outside its bounds (`invalid_launch_limits`).
+ *
+ * @param reason Which, and the bounds.
+ */
+class InvalidLaunchLimitsException(reason: String) :
+    OstromException(ErrorKind.INVALID_REQUEST, reason, "invalid_launch_limits")
+
+/** The launch ended or expired: its limits no longer matter (`launch_ended`). */
+class LaunchEndedException : OstromException(ErrorKind.CONFLICT, "The launch has ended.", "launch_ended")

@@ -40,6 +40,9 @@ enum class Workload(val wire: String) {
  * @property limit The most calls the member runs at once (their `maxConcurrent`, above 0), or null for no limit.
  * @property limitedMembers The org's members who have a limit (above 0), by id: the waiting calls take turns only
  *   while one of theirs waits (TeamCode #87).
+ * @property launchId The launch whose agent token made the call, or null.
+ * @property launchLimit The most calls that launch runs at once (the `maxConcurrent` an administrator set on it,
+ *   above 0), or null for no limit.
  */
 data class AdmissionRequest(
     val id: Uuid,
@@ -49,6 +52,8 @@ data class AdmissionRequest(
     val workload: Workload,
     val limit: Int?,
     val limitedMembers: Set<String> = emptySet(),
+    val launchId: String? = null,
+    val launchLimit: Int? = null,
 )
 
 /** What the queue answered a call. */
@@ -107,15 +112,21 @@ object QueueTurns {
      * @param running The calls its member runs now.
      * @param limit Its member's limit, or null.
      * @param limited The org's members who have a limit, by id.
+     * @param launchRunning The calls its launch runs now.
+     * @param launchLimit Its launch's limit, or null: a launch at its limit waits like a member at theirs.
      */
+    @Suppress("LongParameterList") // The call, the others, and the member's and the launch's counts and limits.
     fun decide(
         call: QueueCandidate,
         others: List<QueueCandidate>,
         running: Int,
         limit: Int?,
         limited: Set<String>,
+        launchRunning: Int = 0,
+        launchLimit: Int? = null,
     ): AdmissionEntry = when {
         limit != null && running >= limit -> AdmissionEntry.Waiting(blocked = true)
+        launchLimit != null && launchRunning >= launchLimit -> AdmissionEntry.Waiting(blocked = true)
         limit == null && others.none { it.memberId.toString() in limited } -> AdmissionEntry.Admitted
         (others + call).minWith(ORDER).id != call.id -> AdmissionEntry.Waiting(blocked = false)
         else -> AdmissionEntry.Admitted

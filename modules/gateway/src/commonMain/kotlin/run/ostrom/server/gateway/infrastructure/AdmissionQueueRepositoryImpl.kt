@@ -43,7 +43,9 @@ class AdmissionQueueRepositoryImpl(private val database: JdbcDatabase) : Admissi
         val others = admissionCandidates(orgId, request.scope, request.id).rows()
         val turns = admissionTurns(orgId, request.scope, request.memberId).single()
         val me = QueueCandidate(request.id, request.memberId, request.workload, waited.milliseconds, turns.mine)
-        val entry = QueueTurns.decide(me, others, running, request.limit, request.limitedMembers)
+        val entry = QueueTurns.decide(
+            me, others, running, request.limit, request.limitedMembers, launchRunning, request.launchLimit,
+        )
         when (entry) {
             AdmissionEntry.Admitted -> {
                 val turn = turns.top + 1
@@ -74,7 +76,8 @@ class AdmissionQueueRepositoryImpl(private val database: JdbcDatabase) : Admissi
      */
     private fun bound(request: AdmissionRequest) {
         val waiting = admissionWaiting(request.orgId, request.memberId).single()
-        val memberFull = request.limit != null && waiting.member >= AdmissionQueueRepository.MEMBER_BOUND
+        val bounded = request.limit != null || request.launchLimit != null
+        val memberFull = bounded && waiting.member >= AdmissionQueueRepository.MEMBER_BOUND
         if (memberFull || waiting.org >= AdmissionQueueRepository.ORG_BOUND) {
             throw QueueRefusedException(RefusalKind.QUEUE_FULL)
         }

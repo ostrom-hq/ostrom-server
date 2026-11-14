@@ -93,4 +93,14 @@ val GatewayMigrations: List<SchemaMigration> = listOf(
         name = "gateway_unlimited_member_concurrency",
         sql = "UPDATE gateway_settings SET member_concurrency = '{}'",
     ),
+    // A launch's `maxConcurrent` (`launches.limits.v1`): a call names its launch, and the calls it runs are counted.
+    SchemaMigration(
+        version = 6,
+        name = "gateway_admissions_name_the_launch",
+        sql = """
+            ALTER TABLE gateway_admissions ADD COLUMN launch_id TEXT;
+            CREATE INDEX gateway_admissions_launch ON gateway_admissions (org_id, launch_id, running)
+                WHERE launch_id IS NOT NULL
+        """.trimIndent(),
+    ),
 )

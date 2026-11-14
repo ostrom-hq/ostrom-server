@@ -126,4 +126,17 @@ val LaunchesMigrations: List<SchemaMigration> = listOf(
         "CREATE INDEX launches_launches_cloud_session ON launches_launches (org_id, cloud_session_id, created_at) " +
             "WHERE cloud_session_id IS NOT NULL",
     ),
+    // The labels of a launch (`createLaunch.labels`), fixed at start, and the limits an administrator sets on it
+    // (`launches.limits.v1`): a lifetime budget in USD millionths, a concurrency cap and a pause, 0 and false for none.
+    SchemaMigration(
+        8,
+        "launch_labels_and_limits",
+        """
+        ALTER TABLE launches_launches
+            ADD COLUMN labels TEXT NOT NULL DEFAULT '{}',
+            ADD COLUMN budget_micros BIGINT NOT NULL DEFAULT 0,
+            ADD COLUMN max_concurrent INTEGER NOT NULL DEFAULT 0,
+            ADD COLUMN paused BOOLEAN NOT NULL DEFAULT FALSE
+        """.trimIndent(),
+    ),
 )

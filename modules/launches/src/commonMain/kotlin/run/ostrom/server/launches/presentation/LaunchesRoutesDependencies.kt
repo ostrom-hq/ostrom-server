@@ -6,8 +6,10 @@ import run.ostrom.server.launches.domain.services.LauncherResolver
 import run.ostrom.server.launches.domain.usecases.CheckAgentPolicyUseCase
 import run.ostrom.server.launches.domain.usecases.CreateLaunchUseCase
 import run.ostrom.server.launches.domain.usecases.EndLaunchUseCase
+import run.ostrom.server.launches.domain.usecases.GetLaunchLimitsUseCase
 import run.ostrom.server.launches.domain.usecases.OpenRunnerLaunchUseCase
 import run.ostrom.server.launches.domain.usecases.ReportHooksMissingUseCase
+import run.ostrom.server.launches.domain.usecases.SetLaunchLimitsUseCase
 import run.ostrom.server.runners.domain.AuthenticateRunnerUseCase
 import run.ostrom.server.runners.domain.CheckRunnerTokenUseCase
 
@@ -23,6 +25,8 @@ import run.ostrom.server.runners.domain.CheckRunnerTokenUseCase
  * @property actors Reads an agent token's launch ([run.ostrom.server.launches.infrastructure.LaunchGateActors]).
  * @property endLaunch Ends a launch.
  * @property reportHooksMissing Records that no hook ran in a launch's session.
+ * @property getLaunchLimits Reads a launch's limits.
+ * @property setLaunchLimits Sets a launch's limits.
  */
 data class LaunchesRoutesDependencies(
     val launchers: LauncherResolver,
@@ -34,4 +38,6 @@ data class LaunchesRoutesDependencies(
     val actors: GateActorResolver,
     val endLaunch: EndLaunchUseCase,
     val reportHooksMissing: ReportHooksMissingUseCase,
+    val getLaunchLimits: GetLaunchLimitsUseCase,
+    val setLaunchLimits: SetLaunchLimitsUseCase,
 )

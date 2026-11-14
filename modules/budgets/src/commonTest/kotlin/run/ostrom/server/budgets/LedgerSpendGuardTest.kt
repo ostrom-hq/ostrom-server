@@ -128,6 +128,43 @@ class LedgerSpendGuardTest {
     }
 
     @Test
+    fun aLaunchBudgetIsAdmittedBesideTheOtherLimitsAndItsRefusalsAreItsOwn() = runTest {
+        val launched = SpendRequest(orgA, member, callId, 1_000, null, "lch_1", 5_000_000)
+        // No other limit stops: the call would go free, but the launch's budget is read under the lock.
+        cached = BudgetDecision.Allowed(null)
+        assertEquals(SpendDecision.Allowed, spendGuard.check(launched))
+        assertEquals(
+            Triple(
+                SpendHold(orgA, member, callId, 1_000, null, "lch_1"),
+                SpendLimits(null, null, null, null, 5_000_000),
+                monthStart,
+            ),
+            admitted.single(),
+        )
+        // Another limit stops too: the launch's budget joins it.
+        cached = BudgetDecision.Allowed(2_000_000)
+        repository.defaultLimits[orgA] = 2_000_000
+        spendGuard.check(launched)
+        assertEquals(SpendLimits(null, 2_000_000, null, null, 5_000_000), admitted.last().second)
+        spendGuard.check(launched.copy(launchBudgetMicros = null))
+        assertEquals(SpendLimits(null, 2_000_000), admitted.last().second, "No budget on the launch, none read")
+
+        answer = Admission.Exhausted(SpendScope.LAUNCH, 5_000_000)
+        assertEquals(
+            SpendDecision.LaunchBudget("Launch budget reached: this launch's budget of \$5.00 is spent."),
+            spendGuard.check(launched),
+        )
+        answer = Admission.Insufficient(SpendScope.LAUNCH, 5_000_000, 400_000)
+        assertEquals(
+            SpendDecision.LaunchBudget(
+                "Launch budget left too low for this call: \$0.40 is left of this launch's budget of \$5.00 and this " +
+                    "call may cost up to \$12.35. Lower its max_tokens, or ask an administrator to raise the budget.",
+            ),
+            spendGuard.check(launched.copy(reserveMicros = 12_345_678)),
+        )
+    }
+
+    @Test
     fun aCallTheBudgetLeftCannotCoverIsRefusedWithWhatIsLeft() = runTest {
         repository.orgLimits[orgA] = 100_000_000
         cached = BudgetDecision.Allowed(400_000)

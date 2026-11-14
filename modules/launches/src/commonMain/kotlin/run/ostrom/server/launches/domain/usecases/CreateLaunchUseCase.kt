@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.launches.domain.usecases
 
+import run.ostrom.server.kernel.launches.LaunchLabelRules
 import run.ostrom.server.kernel.workflows.WorkflowDirectory
 import run.ostrom.server.launches.domain.models.CreatedLaunch
 import run.ostrom.server.launches.domain.models.InvalidLaunchException
@@ -37,6 +38,7 @@ interface CreateLaunchUseCase {
      * @throws LaunchRefusedException When the organization's policy refuses the person or the model.
      * @throws LaunchRateLimitedException When the person or the organization launched too many agents lately.
      * @throws LaunchWorkflowNotFoundException When the workflow it names is not one of the organization's.
+     * @throws run.ostrom.server.kernel.launches.InvalidLabelException When a label is malformed or there are too many.
      */
     suspend operator fun invoke(launcher: Launcher, request: NewLaunch): CreatedLaunch
 }
@@ -71,6 +73,7 @@ class CreateLaunchUseCaseImpl(
         workflowId?.takeUnless { wellFormed(it, MAX_WORKFLOW_ID) }?.let {
             throw InvalidLaunchException("workflowId: 1 to $MAX_WORKFLOW_ID characters, without control characters.")
         }
+        val labels = LaunchLabelRules.check(request.labels)
         // A malformed name is the client's mistake (400); a refusal, the organization's answer (403).
         policy.malformed(request.agent, request.model)?.let { throw InvalidLaunchException(it) }
         policy.refusal(launcher, request.agent, request.model)?.let { throw LaunchRefusedException(it) }
@@ -91,6 +94,7 @@ class CreateLaunchUseCaseImpl(
             expiresAt = now + LIFETIME,
             cloudSessionId = request.cloudSessionId,
             workflowId = workflowId,
+            labels = labels,
         )
         // The launch first: its token never exists without the launch it is scoped to.
         // Counted before any token exists: a refused launch issues nothing.

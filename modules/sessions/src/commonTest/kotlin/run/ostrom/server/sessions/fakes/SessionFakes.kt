@@ -11,6 +11,7 @@ import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.observability.OstromMetrics
+import run.ostrom.server.kernel.sessions.LaunchLabels
 import run.ostrom.server.kernel.sessions.SessionEndListener
 import run.ostrom.server.receipts.domain.services.ReceiptRule
 import run.ostrom.server.receipts.domain.services.ReceiptRules
@@ -75,6 +76,7 @@ class InMemorySessions : SessionsRepository {
         val cursor = query.before?.let { rows[orgId to it]?.startedAt ?: return emptyList() }
         return rows.values.filter { it.orgId == orgId && (query.launchId == null || it.launchId == query.launchId) }
             .filter { query.dev == null || it.dev == query.dev }
+            .filter { it.labels.entries.containsAll(query.labels.entries) }
             .filter { cursor == null || it.startedAt < cursor }
             .sortedByDescending { it.startedAt }
             .take(query.limit)
@@ -194,7 +196,7 @@ class RecordingLogger : Logger {
 }
 
 /** The sessions use cases on fakes. */
-class SessionBench {
+class SessionBench(labels: LaunchLabels? = null) {
     val repository = InMemorySessions()
     val gates = FakeSessionGates()
     val rules = FakeRules()
@@ -204,7 +206,7 @@ class SessionBench {
     val costs = FakeCosts()
     val close = CloseSessionUseCaseImpl(repository, gates, rules, sign, costs, clock)
     val meter = MeterImpl(Clock.System)
-    val segments = SessionSegments(close, clock, OstromMetrics(meter))
+    val segments = SessionSegments(close, clock, OstromMetrics(meter), labels)
     val start = StartSessionUseCaseImpl(repository, segments)
     val endings = mutableListOf<Pair<Uuid, List<String>>>()
     val end = EndSessionUseCaseImpl(repository, close, listOf(SessionEndListener { org, ids -> endings += org to ids }))

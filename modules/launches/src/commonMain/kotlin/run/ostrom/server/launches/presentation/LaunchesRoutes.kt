@@ -9,16 +9,19 @@ import run.ostrom.server.launches.domain.models.HooksMissingReport
 import run.ostrom.server.launches.domain.models.InvalidLaunchException
 import run.ostrom.server.launches.domain.models.LaunchRateLimitedException
 import run.ostrom.server.launches.domain.models.Launcher
+import run.ostrom.server.launches.domain.models.LaunchLimitsView
 import run.ostrom.server.launches.domain.models.NewLaunch
 import run.ostrom.server.launches.domain.models.NoLaunchOrganizationException
 import run.ostrom.server.launches.domain.services.LauncherResolver
 import run.ostrom.server.runners.domain.RunnerUnauthenticatedException
+import run.ostrom.server.secrets.domain.LaunchCaps
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.receive
 import io.ktor.server.resources.delete
 import io.ktor.server.resources.get
+import io.ktor.server.resources.put
 import io.ktor.server.resources.post
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
@@ -42,9 +45,21 @@ fun Route.launchesRoutes(dependencies: LaunchesRoutesDependencies) = with(depend
         post<LaunchesApi> {
             val launcher = call.launcher(launchers)
             val body = call.receive<CreateLaunchRequest>()
-            val request = NewLaunch(body.repo, body.agent, body.model, workflowId = body.workflowId)
+            val request =
+                NewLaunch(body.repo, body.agent, body.model, workflowId = body.workflowId, labels = body.labels)
             val created = call.retryAfter { createLaunch(launcher, request) }
             call.respond(HttpStatusCode.Created, created.toResponse())
+        }
+        // The limits of a launch: an owner or an admin sets them (TeamCode's `PUT /runs/{id}/policy`), the person of
+        // the launch reads their own. An agent token never reaches them: it holds no `sessions:write`.
+        get<LaunchLimitsApi> { params ->
+            call.respond(getLaunchLimits(call.launcher(launchers), params.launchId).toBody())
+        }
+        put<LaunchLimitsApi> { params ->
+            val launcher = call.launcher(launchers)
+            val body = call.receive<LaunchLimitsBody>()
+            val caps = LaunchCaps(body.budgetMicros, body.maxConcurrent, body.paused)
+            call.respond(setLaunchLimits(call.requirePrincipal(), launcher, params.launchId, caps).toBody())
         }
         // The end of `ostrom <agent>` (AUDIT-SECU-RUNNER-2 R2b): only the launch's own agent token ends it. Only an
         // agent token's actor names a launch; a person, a device or a service key names none.
@@ -84,6 +99,9 @@ private suspend fun ApplicationCall.retryAfter(create: suspend () -> CreatedLaun
     response.header(HttpHeaders.RetryAfter, (limited.retryAfter.inWholeSeconds + 1).toString())
     throw limited
 }
+
+private fun LaunchLimitsView.toBody() =
+    LaunchLimitsBody(caps.budgetMicros, caps.maxConcurrent, caps.paused, spentMicros)
 
 private fun CreatedLaunch.toResponse() = LaunchResponse(
     launch.id,

@@ -9,6 +9,7 @@ import run.ostrom.server.usage.domain.UsageEvent
 import run.ostrom.server.usage.domain.UsageKind
 import run.ostrom.server.usage.domain.UsageRecorder
 import run.ostrom.server.usage.infrastructure.LedgerModelUsageSink
+import run.ostrom.server.usage.infrastructure.LedgerLaunchSpend
 import run.ostrom.server.usage.infrastructure.LedgerSessionCosts
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -123,5 +124,24 @@ class GatewayLedgerTest {
         assertNull(costs.costOf(TestCallers.orgA, "lch_3", from, to), "Nothing measured: no cost, never zero")
         assertNull(costs.costOf(TestCallers.orgA, "lch_4", from, to), "Only unpriced calls: no cost, never zero")
         assertNull(costs.costOf(TestCallers.orgA, null, from, to), "Without a launch, the gateway saw nothing of it")
+    }
+
+    @Test
+    fun aLaunchsLifetimeSpendIsWhatItsCallsCostFromTheLastDayAndAHalf() = runTest {
+        val repository = InMemoryUsageRepository()
+        val clock = TestClock()
+        val spent = LedgerLaunchSpend(repository, clock)
+        repository.insert(
+            TestCallers.orgA,
+            listOf(
+                modelEvent(1_000_000, at = clock.now - 25.hours).copy(launchId = "lch_1"),
+                modelEvent(500_000, at = clock.now).copy(launchId = "lch_1"),
+                modelEvent(9_000_000, at = clock.now - 27.hours).copy(launchId = "lch_1"),
+                modelEvent(9_000_000, at = clock.now).copy(launchId = "lch_2"),
+            ),
+        )
+        assertEquals(1_500_000, spent.spentMicros(TestCallers.orgA, "lch_1"))
+        assertEquals(0, spent.spentMicros(TestCallers.orgA, "lch_3"), "Nothing priced: nothing spent")
+        assertEquals(0, spent.spentMicros(TestCallers.orgB, "lch_1"), "Another organization's launch")
     }
 }

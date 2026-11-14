@@ -57,7 +57,7 @@ class SpendHoldsPostgresTest {
     /** Records the call of [hold] at [costMicros], as the gateway does once it is answered. */
     private suspend fun TestServer.settle(hold: SpendHold, costMicros: Long) = koin.get<UsageRecorder>().settle(
         modelEvent(costMicros, memberId = hold.memberId, orgId = hold.orgId)
-            .copy(id = hold.callId, workflowId = hold.workflowId),
+            .copy(id = hold.callId, workflowId = hold.workflowId, launchId = hold.launchId),
     )
 
     private suspend fun TestServer.holdRows(): Long =
@@ -73,6 +73,31 @@ class SpendHoldsPostgresTest {
         assertEquals(Admission.Admitted, server.admit(hold(3_000)), "Another call takes what it held")
         server.koin.get<SpendAdmission>().release(TestCallers.orgA, Uuid.random())
         assertEquals(1, server.holdRows(), "Releasing a call that holds nothing changes nothing")
+    }
+
+    @Test
+    fun aLaunchBudgetIsSpentByItsOwnCallsOnlyAndStopsExactlyAtTheLimit() = serverTest(modules, overrides) { server ->
+        val budget = SpendLimits(null, null, launchMicros = 10_000)
+        fun launched(micros: Long, launch: String) =
+            SpendHold(TestCallers.orgA, member, Uuid.random(), micros, launchId = launch)
+        val first = launched(6_000, "lch_1")
+        assertEquals(Admission.Admitted, server.admit(first, budget))
+        assertEquals(
+            Admission.Insufficient(SpendScope.LAUNCH, 10_000, 4_000),
+            server.admit(launched(5_000, "lch_1"), budget),
+            "Its calls in flight count",
+        )
+        assertEquals(Admission.Admitted, server.admit(launched(9_000, "lch_2"), budget), "Another launch's own budget")
+        server.settle(first, 6_000)
+        assertEquals(Admission.Admitted, server.admit(launched(4_000, "lch_1"), budget), "Recorded, the spend counts")
+        val rest = launched(4_000, "lch_1")
+        server.settle(rest, 4_000)
+        assertEquals(Admission.Exhausted(SpendScope.LAUNCH, 10_000), server.admit(launched(1, "lch_1"), budget))
+        assertEquals(
+            Admission.Admitted,
+            server.admit(SpendHold(TestCallers.orgA, member, Uuid.random(), 99_000), budget),
+            "A call of no launch has no launch budget",
+        )
     }
 
     @Test

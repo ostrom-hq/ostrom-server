@@ -108,6 +108,12 @@ enum class RefusalKind(
     /** What is left of a budget does not cover what this call may cost. */
     BUDGET_INSUFFICIENT(TOO_MANY_REQUESTS, "rate_limit_error", "insufficient_quota", retryable = false),
 
+    /** An administrator paused the call's launch (`PUT /launches/{launchId}/limits`). */
+    LAUNCH_PAUSED(FORBIDDEN, "permission_error", "permission_error", retryable = false),
+
+    /** The budget an administrator set on the call's launch is spent, or what is left does not cover this call. */
+    LAUNCH_BUDGET_EXHAUSTED(TOO_MANY_REQUESTS, "rate_limit_error", "insufficient_quota", retryable = false),
+
     /** Every shared account is busy or at its limit. */
     NO_CAPACITY(TOO_MANY_REQUESTS, "rate_limit_error", "rate_limit_exceeded"),
 

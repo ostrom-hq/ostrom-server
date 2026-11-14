@@ -18,6 +18,7 @@ import run.ostrom.server.launches.fakes.memberOf
 import run.ostrom.server.launches.infrastructure.LaunchAgents
 import run.ostrom.server.launches.infrastructure.LaunchRelayCallers
 import run.ostrom.server.secrets.domain.Caller
+import run.ostrom.server.secrets.domain.LaunchCaps
 import run.ostrom.server.secrets.domain.MemberRole
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -75,6 +76,15 @@ class LaunchRelayCallersTest {
             callers.resolve(agent(), null),
             "Every model call of the launch counts under its workflow",
         )
+    }
+
+    @Test
+    fun anAgentTokenOfALaunchWithLimitsCarriesThemAndOneWithoutCarriesNone() = runTest {
+        val caps = LaunchCaps(budgetMicros = 5_000_000, maxConcurrent = 2, paused = false)
+        launches.create(launch.copy(caps = caps))
+        assertEquals(caps, callers.resolve(agent(), null)?.caps)
+        launches.setCaps(ORG, launch.id, LaunchCaps())
+        assertNull(callers.resolve(agent(), null)?.caps, "Zero caps and no pause apply nothing")
     }
 
     @Test

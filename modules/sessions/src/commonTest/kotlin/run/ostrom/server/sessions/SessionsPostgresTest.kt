@@ -3,6 +3,7 @@ package run.ostrom.server.sessions
 
 import org.koin.core.qualifier.named
 import run.ostrom.server.kernel.observability.CachedCount
+import run.ostrom.server.kernel.sessions.LaunchLabels
 import run.ostrom.server.gates.GatesModule
 import run.ostrom.server.gates.domain.models.ActorKind
 import run.ostrom.server.gates.domain.models.GateActor
@@ -114,6 +115,10 @@ class SessionsPostgresTest {
             }
         }
         single<Clock> { clock }
+        // The labels of a launch, which the launches module gives: `launch-1` carries two.
+        single<LaunchLabels> {
+            LaunchLabels { _, id -> if (id == "launch-1") mapOf("task" to "1", "team" to "x") else emptyMap() }
+        }
         // The server's measure of a session's cost (the usage module binds the real one).
         single<SessionCosts> {
             object : SessionCosts {
@@ -238,6 +243,28 @@ class SessionsPostgresTest {
         val after = server.call("agent:a:launch-1", path, """{"state":"working"}""")
         assertEquals(HttpStatusCode.Conflict, after.status)
         assertTrue("session_ended" in after.bodyAsText(), after.bodyAsText())
+    }
+
+    @Test
+    fun aSessionCarriesItsLaunchsLabelsAndTheListFiltersOnThem() = sessionsTest { server ->
+        val labelled = server.start("agent:a:launch-1", "s-1")
+        assertEquals(mapOf("task" to "1", "team" to "x"), labelled.labels)
+        assertNull(server.start("agent:a:launch-2", "s-2").labels, "A launch without labels sends none")
+
+        suspend fun ids(query: String) =
+            server.call("user:a:rev-b", "/api/v1/sessions$query").body<SessionsPage>().items.map { it.id }
+        assertEquals(listOf("s-1"), ids("?label=task=1"))
+        assertEquals(listOf("s-1"), ids("?label=task=1&label=team=x"))
+        assertEquals(emptyList(), ids("?label=task=1&label=team=y"))
+        assertEquals(listOf("s-1"), ids("?label=task=1&label=task=1"), "A repeated key keeps its last value")
+        assertEquals(listOf("s-2", "s-1"), ids(""))
+        val read = server.call("user:a:rev-b", "/api/v1/sessions/s-1").body<SessionResponse>().session
+        assertEquals(labelled.labels, read.labels)
+        for (bad in listOf("task", "Task=1")) {
+            val refused = server.call("user:a:rev-b", "/api/v1/sessions?label=$bad")
+            assertEquals(HttpStatusCode.BadRequest, refused.status, bad)
+            assertTrue("invalid_label" in refused.bodyAsText(), refused.bodyAsText())
+        }
     }
 
     @Test

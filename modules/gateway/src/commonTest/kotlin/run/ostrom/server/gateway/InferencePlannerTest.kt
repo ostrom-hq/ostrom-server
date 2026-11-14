@@ -11,6 +11,7 @@ import run.ostrom.server.gateway.domain.InstanceProviderKeys
 import run.ostrom.server.gateway.domain.ModelPolicy
 import run.ostrom.server.gateway.domain.RefusalKind
 import run.ostrom.server.gateway.domain.SpendDecision
+import run.ostrom.server.secrets.domain.LaunchCaps
 import run.ostrom.server.gateway.domain.SpendGuard
 import run.ostrom.server.gateway.domain.SpendRequest
 import run.ostrom.server.gateway.domain.UpstreamRequests
@@ -84,6 +85,28 @@ class InferencePlannerTest {
         assertEquals(RefusalKind.BUDGET_EXHAUSTED, refusal(refused).kind)
         assertEquals(resets, refusal(refused).retryAt)
         assertEquals("claude-opus-5", refused.model)
+    }
+
+    @Test
+    fun aPausedLaunchIsRefusedBeforeAnyBudgetIsHeldAndItsBudgetStopsItsOwnCalls() = runTest {
+        var asked = 0
+        val spend = SpendGuard { _ ->
+            asked++
+            SpendDecision.LaunchBudget("Launch budget reached: this launch's budget of \$5.00 is spent.")
+        }
+        val body = call(WireProtocol.MESSAGES, """{"model":"claude-opus-5"}""")
+        val paused = planner(settings, pool(accounts, clock), spend = spend)
+            .plan(Gw.memberA.copy(launchId = "lch_1", caps = LaunchCaps(paused = true)), body)
+        assertEquals(RefusalKind.LAUNCH_PAUSED, refusal(paused).kind)
+        assertEquals("claude-opus-5", paused.model)
+        assertEquals(0, asked, "The pause comes first")
+        val spent = planner(settings, pool(accounts, clock), spend = spend)
+            .plan(Gw.memberA.copy(launchId = "lch_1", caps = LaunchCaps(budgetMicros = 5_000_000)), body)
+        assertEquals(RefusalKind.LAUNCH_BUDGET_EXHAUSTED, refusal(spent).kind)
+        assertTrue("Launch budget reached" in refusal(spent).message)
+        assertEquals(403 to 429, RefusalKind.LAUNCH_PAUSED.status to RefusalKind.LAUNCH_BUDGET_EXHAUSTED.status)
+        assertEquals(false, RefusalKind.LAUNCH_PAUSED.retryable)
+        assertEquals("launch_paused", RefusalKind.LAUNCH_PAUSED.code)
     }
 
     @Test

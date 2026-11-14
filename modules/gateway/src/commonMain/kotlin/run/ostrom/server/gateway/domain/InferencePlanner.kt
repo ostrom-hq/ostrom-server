@@ -92,11 +92,16 @@ class InferencePlanner(
                 body.model,
             )
         }
+        // A paused launch is refused before any budget is held: the pause is an administrator's, final until lifted.
+        if (caller.caps?.paused == true) {
+            return refused(RefusalKind.LAUNCH_PAUSED, "This launch is paused by an administrator.", body.model)
+        }
         return when (val decision = spend.check(caller, callId, call.protocol, body)) {
             SpendDecision.Allowed -> null
             is SpendDecision.Exhausted ->
                 refused(RefusalKind.BUDGET_EXHAUSTED, decision.message, body.model, decision.resetsAt)
             is SpendDecision.Insufficient -> refused(RefusalKind.BUDGET_INSUFFICIENT, decision.message, body.model)
+            is SpendDecision.LaunchBudget -> refused(RefusalKind.LAUNCH_BUDGET_EXHAUSTED, decision.message, body.model)
         }
     }
 
