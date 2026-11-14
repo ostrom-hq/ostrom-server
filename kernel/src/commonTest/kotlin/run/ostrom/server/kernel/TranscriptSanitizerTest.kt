@@ -84,6 +84,19 @@ class TranscriptSanitizerTest {
         val marker = encode(
             buildJsonObject {
                 put("isError", 1)
+                putJsonObject("index") { put("n", 1) }
+                repeat(5) { put("output$it", "z".repeat(15_000)) }
+            },
+        )
+
+        assertEquals(setOf("truncated", "originalBytes"), marker.keys)
+    }
+
+    @Test
+    fun anObjectIsErrorIsLeftOut() {
+        val marker = encode(
+            buildJsonObject {
+                putJsonObject("isError") { put("n", 1) }
                 repeat(5) { put("output$it", "z".repeat(15_000)) }
             },
         )

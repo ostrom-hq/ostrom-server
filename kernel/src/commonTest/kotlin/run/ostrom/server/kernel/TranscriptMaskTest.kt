@@ -117,6 +117,7 @@ class TranscriptMaskTest {
         val control = java.util.Base64.getEncoder().encodeToString("ab:\u0001cd".encodeToByteArray())
         assertNull(TranscriptMask.detect("Basic $control"), "Control characters are no password")
         assertNull(TranscriptMask.detect("Basic //46//46//46"), "Bytes that are not text")
+        assertNull(TranscriptMask.detect("token abcdefghijk."), "A trailing dot is not part of the value")
         assertNull(TranscriptMask.detect("token 123456789012"), "A short run of digits is a number")
         assertNull(TranscriptMask.detect("token refreshintervalx"), "A single lowercase word")
         assertNull(TranscriptMask.detect("token abcdefghijklmnopqrstuvwxyz"), "Letters of one case")

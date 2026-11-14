@@ -113,7 +113,7 @@ object TranscriptMask {
     private fun looksLikeSecretValue(scheme: String, value: String): Boolean {
         val word = value.trimEnd('.')
         if (scheme.equals("basic", ignoreCase = true)) return basicPair(word)
-        if ("://" in word || path.matches(word)) return false
+        if (path.matches(word)) return false
         if (word.length < 12 || identifier(word)) return false
         // A long run of digits alone is a numeric token; a shorter one is a number.
         if (word.none { it.isLetter() }) return word.length >= 16 && word.all { it.isDigit() }
