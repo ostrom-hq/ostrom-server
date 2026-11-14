@@ -77,6 +77,32 @@ class KernelPostgresTest {
         }
     }
 
+    @Test
+    fun takesTheDatabaseCheckItIsGiven() {
+        runTest {
+            val database = TestDatabase.create() ?: return@runTest
+            try {
+                val check = object : HealthCheck {
+                    override val name: String = "database"
+                    override suspend fun isUp(): Boolean = false
+                }
+                val logger = JsonLogger(LogLevel.INFO, sink = { lines += it })
+                val kernel = kernelModule(
+                    logger,
+                    database.owner,
+                    Ed25519InstanceSigner.generate(),
+                    MapConfigSource(emptyMap()),
+                    databaseCheck = check,
+                )
+                val koin = serverKoin(kernel, emptyList())
+                assertSame(check, koin.get<HealthCheck>(named("database")))
+                koin.close()
+            } finally {
+                database.close()
+            }
+        }
+    }
+
     private suspend fun Driver.count(table: String): Long =
         fetchAll(Statement.create("SELECT count(*) AS n FROM $table")).getOrThrow().single().get("n").asLong()
 
