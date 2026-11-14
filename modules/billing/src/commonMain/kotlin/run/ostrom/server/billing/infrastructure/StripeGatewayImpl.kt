@@ -208,7 +208,7 @@ class StripeGatewayImpl(
             HttpMethod.Post,
             "/v1/billing/meter_events",
             listOf(
-                "event_name" to config.meterEventName,
+                "event_name" to config().meterEventName,
                 "identifier" to identifier,
                 "timestamp" to at.epochSeconds.toString(),
                 "payload[stripe_customer_id]" to customerId,
@@ -234,7 +234,7 @@ class StripeGatewayImpl(
         }
         // A GET carries its parameters in the query (a lookup key, an expansion, a limit); a customer read has none.
         val query = if (method == HttpMethod.Get && form.isNotEmpty()) "?$form" else ""
-        val config = account() ?: throw BillingNotConfiguredException()
+        val config = config()
         val url = config.baseUrl.trimEnd('/') + path + query
         val response = client.request(url) {
             this.method = method
@@ -257,6 +257,9 @@ class StripeGatewayImpl(
         }
         return body ?: throw StripeApiException(response.status.value, null, "Stripe answered a body that is not JSON.")
     }
+
+    /** The account now; none while billing is not configured. */
+    private suspend fun config(): StripeConfig = account() ?: throw BillingNotConfiguredException()
 
     private fun parse(text: String): JsonObject? = try {
         STRIPE_JSON.parseToJsonElement(text) as? JsonObject
