@@ -14,6 +14,7 @@ import kotlin.time.Instant
 class MemoryRulesTest {
     private val now = Instant.parse("2026-11-14T12:00:00Z")
 
+    @Suppress("LongParameterList") // The entry's six fields, each defaulting to a valid one.
     private fun valid(
         title: String = "Deploy order",
         summary: String = "Core first, then the server",

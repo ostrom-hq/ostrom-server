@@ -90,7 +90,8 @@ class MemoryServiceImpl(
      */
     private fun requireEditable(caller: MemoryCaller, entry: MemoryEntry) {
         if (entry.scope == MemoryScope.PERSONAL) return
-        if (!caller.person || caller.agent || (entry.authorId != caller.memberId && !caller.admin)) {
+        val person = caller.person && !caller.agent
+        if (!person || (entry.authorId != caller.memberId && !caller.admin)) {
             throw MemoryTeamForbiddenException("Only the author of a team entry or an administrator can change it.")
         }
     }

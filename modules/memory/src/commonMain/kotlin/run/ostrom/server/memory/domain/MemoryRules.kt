@@ -60,29 +60,32 @@ object MemoryRules {
         expiresAt: Instant?,
         now: Instant,
     ) {
-        if (title.isBlank() || title.length > TITLE_LENGTH || title.any(Char::isISOControl)) {
-            throw InvalidMemoryException("Use a title of 1 to $TITLE_LENGTH characters on one line.")
+        valid(!title.isBlank() && title.length <= TITLE_LENGTH && title.none(Char::isISOControl)) {
+            "Use a title of 1 to $TITLE_LENGTH characters on one line."
         }
-        if (summary.isBlank() || summary.length > SUMMARY_LENGTH || summary.any(Char::isISOControl)) {
-            throw InvalidMemoryException("Use a one-line summary of 1 to $SUMMARY_LENGTH characters.")
+        valid(!summary.isBlank() && summary.length <= SUMMARY_LENGTH && summary.none(Char::isISOControl)) {
+            "Use a one-line summary of 1 to $SUMMARY_LENGTH characters."
         }
-        if (content.isBlank() || content.length > CONTENT_LENGTH || '\u0000' in content) {
-            throw InvalidMemoryException("Use content of 1 to $CONTENT_LENGTH characters.")
+        valid(!content.isBlank() && content.length <= CONTENT_LENGTH && '\u0000' !in content) {
+            "Use content of 1 to $CONTENT_LENGTH characters."
         }
-        if (tags.size > TAGS_LIMIT || tags.toSet().size != tags.size || tags.any { !tag.matches(it) }) {
-            throw InvalidMemoryException(
-                "Use at most $TAGS_LIMIT distinct tags of lowercase letters, digits, dots, dashes and underscores " +
-                    "(at most $TAG_LENGTH characters).",
-            )
+        valid(tags.size <= TAGS_LIMIT && tags.toSet().size == tags.size && tags.all { tag.matches(it) }) {
+            "Use at most $TAGS_LIMIT distinct tags of lowercase letters, digits, dots, dashes and underscores " +
+                "(at most $TAG_LENGTH characters)."
         }
-        val badRef = refs.any { it.isBlank() || it.length > REF_LENGTH || it.any(Char::isISOControl) }
-        if (refs.size > REFS_LIMIT || badRef) {
-            throw InvalidMemoryException("Use at most $REFS_LIMIT references of 1 to $REF_LENGTH characters.")
+        val goodRefs = refs.all { !it.isBlank() && it.length <= REF_LENGTH && it.none(Char::isISOControl) }
+        valid(refs.size <= REFS_LIMIT && goodRefs) {
+            "Use at most $REFS_LIMIT references of 1 to $REF_LENGTH characters."
         }
-        if (expiresAt != null && expiresAt <= now) throw InvalidMemoryException("An expiry must be in the future.")
+        valid(expiresAt == null || expiresAt > now) { "An expiry must be in the future." }
         if ((listOf(title, summary, content) + refs).any { text -> secretShapes.any { it.containsMatchIn(text) } }) {
             throw MemorySecretException()
         }
+    }
+
+    /** Refuses a field out of its bounds with [message]. */
+    private inline fun valid(ok: Boolean, message: () -> String) {
+        if (!ok) throw InvalidMemoryException(message())
     }
 
     /**

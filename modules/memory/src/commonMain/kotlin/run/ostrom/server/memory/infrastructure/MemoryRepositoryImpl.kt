@@ -258,29 +258,29 @@ internal class MemoryRepositoryImpl(private val driver: Driver, private val cloc
         }
     }
 
-    private fun ResultSet.Row.toEntry(tags: List<String>) = MemoryEntry(
-        id = id(),
-        scope = scopeOf(get("scope").asString()),
-        ownerId = get("owner_id").asString().ifEmpty { null },
-        title = get("title").asString(),
-        summary = get("summary").asString(),
-        content = get("content").asString(),
-        tags = tags,
-        refs = REFS.decode(get("refs").asString()),
-        status = MemoryStatus.entries.single { it.wire == get("status").asString() },
-        origin = MemoryOrigin.entries.single { it.wire == get("origin").asString() },
-        authorId = get("author_id").asString(),
-        sessionId = get("session_id").asStringOrNull(),
-        supersedesId = get("supersedes_id").asUuidOrNull(),
-        expiresAt = get("expires_at").asInstantOrNull(),
-        version = get("version").asInt(),
-        createdAt = get("created_at").asInstant(),
-        updatedAt = updatedAt(),
-        lastReadAt = get("last_read_at").asInstantOrNull(),
-        readCount = get("read_count").asInt(),
-    )
-
     private companion object {
+        fun ResultSet.Row.toEntry(tags: List<String>) = MemoryEntry(
+            id = id(),
+            scope = scopeOf(get("scope").asString()),
+            ownerId = get("owner_id").asString().ifEmpty { null },
+            title = get("title").asString(),
+            summary = get("summary").asString(),
+            content = get("content").asString(),
+            tags = tags,
+            refs = REFS.decode(get("refs").asString()),
+            status = MemoryStatus.entries.single { it.wire == get("status").asString() },
+            origin = MemoryOrigin.entries.single { it.wire == get("origin").asString() },
+            authorId = get("author_id").asString(),
+            sessionId = get("session_id").asStringOrNull(),
+            supersedesId = get("supersedes_id").asUuidOrNull(),
+            expiresAt = get("expires_at").asInstantOrNull(),
+            version = get("version").asInt(),
+            createdAt = get("created_at").asInstant(),
+            updatedAt = updatedAt(),
+            lastReadAt = get("last_read_at").asInstantOrNull(),
+            readCount = get("read_count").asInt(),
+        )
+
         const val AFTER_CURSOR = " AND (updated_at < :after_at OR (updated_at = :after_at AND id < :after_id))"
         const val INDEX_COLUMNS = "id, scope, title, summary, updated_at"
         const val ENTRY_COLUMNS = "id, scope, owner_id, title, summary, content, refs, status, origin, author_id, " +
