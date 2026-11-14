@@ -7,6 +7,7 @@ import run.ostrom.server.automations.AutomationsModule
 import run.ostrom.server.billing.BillingModule
 import run.ostrom.server.budgets.BudgetsModule
 import run.ostrom.server.compiler.CompilerModule
+import run.ostrom.server.events.EventsModule
 import run.ostrom.server.gates.GatesModule
 import run.ostrom.server.gateway.GatewayModule
 import run.ostrom.server.governance.GovernanceModule
@@ -53,6 +54,8 @@ fun serverModules(): List<ServerModule> = listOf(
     SecretsModule,
     // After secrets (it seals the settings with the secrets key) and identity (the setup link's person, the audit).
     AdminModule,
+    // The feed the other modules publish to, through the kernel's OrgEventPublisher.
+    EventsModule,
     UsageModule,
     GatewayModule,
     BudgetsModule,
