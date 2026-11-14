@@ -324,7 +324,7 @@ class ArtifactsPostgresTest {
             client.get("/api/v1/artifacts?before=nope") { bearerAuth("alice") }.status,
         )
         assertEquals(HttpStatusCode.BadRequest, client.publish("alice", "Bad", "public", "x").status)
-        val secret = client.publish("alice", "Leak", "team", "key: sk-ant-" + "a".repeat(30))
+        val secret = client.publish("alice", "Leak", "team", "key: sk-ant-" + "a1".repeat(15))
         assertEquals(HttpStatusCode.BadRequest, secret.status)
         assertFalse("sk-ant" in secret.bodyAsText())
         val forbidden = client.post("/api/v1/artifacts/${team.id}/versions") {

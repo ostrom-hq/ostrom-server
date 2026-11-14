@@ -149,11 +149,8 @@ object TranscriptMask {
         val base64 = bare.all { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it in "+/" }
         if (bare.length % 4 == 1 || word.length - bare.length > 2 || !base64) return false
         val padded = bare + "=".repeat((4 - bare.length % 4) % 4)
-        val decoded = try {
-            Base64.getDecoder().decode(padded)
-        } catch (_: IllegalArgumentException) {
-            return false
-        }
+        // The characters, the length and the padding are checked above: the decoder cannot refuse this value.
+        val decoded = Base64.getDecoder().decode(padded)
         val text = try {
             StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(decoded)).toString()
         } catch (_: CharacterCodingException) {

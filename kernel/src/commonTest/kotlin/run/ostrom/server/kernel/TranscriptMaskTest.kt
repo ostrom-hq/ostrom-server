@@ -112,6 +112,14 @@ class TranscriptMaskTest {
         assertNull(TranscriptMask.detect("Basic dXNlcnBhc3N3b3Jk"))
         assertNull(TranscriptMask.detect("Basic !!!notbase64!!!"))
         assertNull(TranscriptMask.detect("Basic /+/+/+/+/+/+"))
+        assertNull(TranscriptMask.detect("Basic dXNlcjpwYXNzd29yZA==="), "More than two padding characters")
+        assertNull(TranscriptMask.detect("Basic dXNlcjpwY"), "A length no base64 has")
+        val control = java.util.Base64.getEncoder().encodeToString("ab:\u0001cd".encodeToByteArray())
+        assertNull(TranscriptMask.detect("Basic $control"), "Control characters are no password")
+        assertNull(TranscriptMask.detect("Basic //46//46//46"), "Bytes that are not text")
+        assertNull(TranscriptMask.detect("token 123456789012"), "A short run of digits is a number")
+        assertNull(TranscriptMask.detect("token refreshintervalx"), "A single lowercase word")
+        assertNull(TranscriptMask.detect("token abcdefghijklmnopqrstuvwxyz"), "Letters of one case")
         // The transcript mask finds what the scanner finds.
         val jwt = "eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0.SflKxwRJSMeKKF2QT4"
         assertFalse(jwt in masked("jwt=$jwt"))

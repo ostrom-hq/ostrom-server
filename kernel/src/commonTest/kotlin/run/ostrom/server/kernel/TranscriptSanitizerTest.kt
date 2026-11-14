@@ -80,6 +80,18 @@ class TranscriptSanitizerTest {
     }
 
     @Test
+    fun aNumericIsErrorIsLeftOut() {
+        val marker = encode(
+            buildJsonObject {
+                put("isError", 1)
+                repeat(5) { put("output$it", "z".repeat(15_000)) }
+            },
+        )
+
+        assertEquals(setOf("truncated", "originalBytes"), marker.keys)
+    }
+
+    @Test
     fun aNegativeIndexAndAFractionalOneAreLeftOut() {
         for (index in listOf(-1, 2.5)) {
             val marker = encode(
