@@ -74,7 +74,7 @@ class FirebaseServiceAccount(
             val project = field("project_id")?.takeIf { valid && PROJECT_ID.matches(it) }
             val email = field("client_email")?.takeIf(CLIENT_EMAIL::matches)
             // The private key with its id: the assertion's signature and the header naming it.
-            val signer = field("private_key")?.takeIf { "PRIVATE KEY-----" in it }
+            val signer = field("private_key")?.takeIf { "-----BEGIN PRIVATE KEY-----" in it }
                 ?.let { key -> field("private_key_id")?.takeIf { it.isNotEmpty() }?.let { key to it } }
             return if (project != null && email != null && signer != null) {
                 FirebaseServiceAccount(project, email, signer.second, signer.first)
