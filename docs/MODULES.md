@@ -414,7 +414,7 @@ the epoch) over the binary's directory, so the engine copies that directory into
 run `OSTROM_RUNNERS_IMAGE`, the instance's session image, with the volume read-only at `/opt/ostrom`. The binary volume
 is removed with the execution's containers, and with the workspace (a volume still in use is retried later). A runner
 image whose binary directory holds anything but `ostrom` copies that too, and the agent finds it first on its `PATH`:
-the CLI's `ghcr.io/ostrom-hq/ostrom-runner` holds `ostrom` alone. A registered machine runs the CLI's
+the CLI's runner image (ostrom-cli `docker/runner`) holds `ostrom` alone. A registered machine runs the CLI's
 `ostrom cloud machine`; one that pins its session image also pins its delivery image (ostrom-cli's
 `runner/README.md`).
 

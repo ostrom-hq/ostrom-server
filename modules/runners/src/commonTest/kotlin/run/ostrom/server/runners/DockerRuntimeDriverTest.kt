@@ -314,7 +314,7 @@ class DockerRuntimeDriverTest {
             ),
             api.lines(),
         )
-        assertEquals("ghcr.io/ostrom-hq/ostrom-runner", api.calls[2].query["fromImage"])
+        assertEquals("docker.io/ostromhq/ostrom-runner", api.calls[2].query["fromImage"])
         assertEquals("1.2", api.calls[2].query["tag"])
         assertEquals("ghcr.io/acme/session", api.calls[6].query["fromImage"])
         assertEquals("3", api.calls[6].query["tag"])
@@ -511,7 +511,7 @@ private val NO_CLUSTERS = {
 
 private val DELIVERY = RunnerDeliverySource { RunnerDelivery("runner:1", RunnerDelivery.DEFAULT_RUNNER_BINARY, "img") }
 
-private const val RUNNER_IMAGE = "ghcr.io/ostrom-hq/ostrom-runner:1.2"
+private const val RUNNER_IMAGE = "docker.io/ostromhq/ostrom-runner:1.2"
 private const val SESSION_IMAGE = "ghcr.io/acme/session:3"
 
 /** The CLI's runner image, and a team's session image. */

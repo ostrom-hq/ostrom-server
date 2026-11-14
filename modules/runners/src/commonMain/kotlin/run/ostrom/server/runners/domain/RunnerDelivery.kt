@@ -8,7 +8,7 @@ package run.ostrom.server.runners.domain
  * binary's directory, which the engine copies into it); the session's containers run [sessionImage], the team's
  * toolchain.
  *
- * @property runnerImage The image holding the `ostrom` Linux binary (ghcr.io/ostrom-hq/ostrom-runner).
+ * @property runnerImage The image holding the `ostrom` Linux binary (docker.io/ostromhq/ostrom-runner).
  * @property runnerBinary Where the binary is in [runnerImage].
  * @property sessionImage The image of the session's containers where the session names none: a Docker or registered
  *   session's (`OSTROM_RUNNERS_IMAGE`); a Kubernetes session's profile names its own.

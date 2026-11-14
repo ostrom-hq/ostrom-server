@@ -165,7 +165,7 @@ class CloudClustersAdaptersTest {
     @Test
     fun theFormerVariablesClusterIsImportedAtStartAndGivenToTheSessionsWithoutAProfile() = runTest {
         val logger = RecordingLogger()
-        val runtime = Runtime("ghcr.io/ostrom-hq/ostrom-runner:7")
+        val runtime = Runtime("docker.io/ostromhq/ostrom-runner:7")
         val environment = mapOf(
             "OSTROM_RUNNERS_DRIVER" to "kubernetes",
             "OSTROM_RUNNERS_SERVER_URL" to "http://ostrom.svc",
@@ -180,7 +180,7 @@ class CloudClustersAdaptersTest {
             SessionProfile(
                 clusterId = ID.toString(),
                 namespace = "ostrom",
-                image = "ghcr.io/ostrom-hq/ostrom-runner:7",
+                image = "docker.io/ostromhq/ostrom-runner:7",
                 imagePullSecrets = listOf("ghcr"),
                 workspaceGibibytes = 20,
                 storageClass = "standard",

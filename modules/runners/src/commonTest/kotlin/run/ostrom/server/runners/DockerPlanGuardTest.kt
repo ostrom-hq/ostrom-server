@@ -111,7 +111,7 @@ class DockerPlanGuardTest {
         texts((container.body["HostConfig"] as JsonObject)["Binds"]).filterNotNull()
 }
 
-private const val RUNNER_IMAGE = "ghcr.io/ostrom-hq/ostrom-runner:1"
+private const val RUNNER_IMAGE = "docker.io/ostromhq/ostrom-runner:1"
 private const val SESSION_IMAGE = "ghcr.io/acme/session:3"
 
 private const val DELIVERY_SUFFIX = "-bin"

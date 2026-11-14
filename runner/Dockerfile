@@ -4,11 +4,8 @@
 # in a container of its own with the workspace, runs the hooks' checks for the runner. All three are in group 1000
 # (TeamCode's image contract). The agent and the runner share only the socket directory /run/ostrom; the runner and the
 # check host only /run/ostrom-check, where the runner listens and the check host links to it. Contract with the server (modules/runners): /usr/local/bin/ostrom-runner, those UIDs and
-# that group, /bin/sh, git and bash. The server now delivers the CLI's /usr/local/bin/ostrom from its runner image (this
-# image by default) into /opt/ostrom and runs `/opt/ostrom/ostrom cloud …` instead: the image is the session and the
-# runner image at once, as TeamCode's template image. Build context (ci/session-image-context.sh): bin/ostrom-runner
-# and bin/ostrom (required by runner-image.yml); agents/ (package.json, package-lock.json); npm-cache/ (empty or a warm
-# npm cache).
+# that group, /bin/sh, git and bash. Build context (ci/session-image-context.sh): bin/ostrom-runner and, when
+# available, bin/ostrom; agents/ (package.json, package-lock.json); npm-cache/ (empty or a warm npm cache).
 FROM node:22-bookworm-slim
 
 RUN apt-get update \

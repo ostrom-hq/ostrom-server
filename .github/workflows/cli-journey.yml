@@ -9,7 +9,7 @@ name: CLI journey
 # published, named in the run's summary, so a red night points at a commit; the hook's latency budgets of step 5.8 live
 # in ostrom-cli's e2e/journey.py), and, off the org's one-`ci`-job rule on purpose (as demo-stack.yml), on a pull
 # request only when the pull request changes this file. Cloud sessions (6.2: `ostrom claude --cloud`, `ostrom attach`)
-# run on this runner's Docker, on the session image ghcr.io/ostrom-hq/ostrom-runner (the token reads it too) with the
+# run on this runner's Docker, on the session image docker.io/ostromhq/ostrom-runner (public) with the
 # `ostrom` built here added at /usr/local/bin: TeamCode's template image, the session and the runner image at once, as
 # the server delivers the binary from the runner image into /opt/ostrom and its containers run `ostrom cloud …`. Step 5.9
 # (the launch end to end, p50 and p95 by part, the server's share from `docker logs ostrom-server`) writes its tables
@@ -91,7 +91,7 @@ jobs:
       CLI_REF: ${{ inputs.cli_ref || 'main' }}
       WANTED_IMAGE: ${{ inputs.server_image }}
       SERVER_RUN: ${{ inputs.server_run }}
-      RUNNER_IMAGE: ${{ inputs.runner_image || 'ghcr.io/ostrom-hq/ostrom-runner:latest' }}
+      RUNNER_IMAGE: ${{ inputs.runner_image || 'docker.io/ostromhq/ostrom-runner:latest' }}
     steps:
       # The whole history: main's head names the image, and the image's own commit gives its database roles.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

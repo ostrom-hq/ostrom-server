@@ -39,7 +39,7 @@ data class RunnersConfig(
     /** Constants and readers of the enclosing type. */
     companion object {
         /** The runner image published by ostrom-server's CI. */
-        const val DEFAULT_RUNNER_IMAGE = "ghcr.io/ostrom-hq/ostrom-runner:latest"
+        const val DEFAULT_RUNNER_IMAGE = "docker.io/ostromhq/ostrom-runner:latest"
 
         /**
          * Reads the configuration.

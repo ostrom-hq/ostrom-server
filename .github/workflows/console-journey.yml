@@ -101,7 +101,7 @@ jobs:
       WANTED_IMAGE: ${{ inputs.server_image }}
       # Stripe's test mode only on a dispatch that asks for it: a schedule, a pull request or a call keeps stripe-mock.
       STRIPE_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.stripe || 'mock' }}
-      RUNNER_IMAGE: ${{ inputs.runner_image || 'ghcr.io/ostrom-hq/ostrom-runner:latest' }}
+      RUNNER_IMAGE: ${{ inputs.runner_image || 'docker.io/ostromhq/ostrom-runner:latest' }}
       # A pull request that changes this file proves it with the /me journey (ostrom-web#42, on main) and the cloud
       # sessions on registered runners (line 6.2, ostrom-web#84); a dispatch or a call from ostrom-web runs what it
       # names, or all of e2e-real.

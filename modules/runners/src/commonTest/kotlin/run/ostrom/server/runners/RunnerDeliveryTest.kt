@@ -16,7 +16,7 @@ class RunnerDeliveryTest {
 
     @Test
     fun theConsoleRuntimeNamesTheRunnerImageAndItsBinaryAndDockerSessionsKeepTheConfiguredImage() = runTest {
-        val image = "ghcr.io/ostrom-hq/ostrom-runner:1@sha256:ab"
+        val image = "docker.io/ostromhq/ostrom-runner:1@sha256:ab"
         val runtime = CloudRuntime(runnerImage = image, runnerBinary = "/bin/ostrom")
         // The runner image only delivers the binary: a Docker or registered session runs OSTROM_RUNNERS_IMAGE.
         assertEquals(
