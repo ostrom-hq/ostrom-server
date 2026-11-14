@@ -97,7 +97,7 @@ private fun serve() {
     try {
         val database = connectPostgres(config.database).also { driver = it }
         runBlocking { database.requireRowLevelSecurity() }
-        // The JVM pool (docs/decisions/0001, step 2): `/ready` reads its state; the modules move onto it one by one.
+        // The JVM pool (docs/decisions/0001, step 2): `/ready` reads its state, and the modules on Exposed query it.
         val pool = JdbcDatabase(config.database, JdbcDatabase.MIN_POOL_SIZE).also { jdbc = it }
         val signer = runBlocking { Ed25519InstanceSigner.loadOrCreate(config.signingKeyFile) }
         val kernel = kernelModule(
@@ -109,6 +109,7 @@ private fun serve() {
             metrics = metrics,
             databaseCheck = PoolHealthCheck(pool::state),
             migrationRunner = pool.migrationRunner(logger),
+            jdbc = pool,
         )
         val server = serverKoin(kernel, modules).also { koin = it }
         runBlocking {
@@ -178,7 +179,8 @@ private fun oneShot(
         val database = connectPostgres(config.database).also { driver = it }
         val pool = JdbcDatabase(config.database, JdbcDatabase.MIN_POOL_SIZE).also { jdbc = it }
         val signer = runBlocking { Ed25519InstanceSigner.loadOrCreate(config.signingKeyFile) }
-        val kernel = kernelModule(logger, database, signer, source, migrationRunner = pool.migrationRunner(logger))
+        val kernel =
+            kernelModule(logger, database, signer, source, migrationRunner = pool.migrationRunner(logger), jdbc = pool)
         val server = serverKoin(kernel, modules).also { koin = it }
         val text = runBlocking {
             val migrations = server.get<MigrationRunner>()

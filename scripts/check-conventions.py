@@ -9,6 +9,7 @@ Copy to scripts/check-conventions.py of a Kotlin repository, fill MODULE_GRAPH, 
 
 Like teamcode/scripts/check-module-graph.py, it reads sources only: no Gradle, no network.
 """
+import functools
 import pathlib
 import re
 import sys
@@ -105,8 +106,8 @@ def cancellation_handled(code: str, tokens: list, catch: re.Match) -> bool:
     return False
 
 
-def check_kotlin(path: str, text: str) -> list:
-    """Returns the violations of one production Kotlin file."""
+def check_kotlin(path: str, text: str, jvm_only: bool = False) -> list:
+    """Returns the violations of one production Kotlin file; [jvm_only]: its project has no native target."""
     errors = []
     lines = text.splitlines()
     code = strip_comments_and_strings(text)
@@ -121,7 +122,9 @@ def check_kotlin(path: str, text: str) -> list:
         if not justified(index) and not cancellation_handled(code, tokens, catch):
             errors.append(f"{path}:{index + 1}: broad catch without `catch (e: CancellationException) {{ throw e }}` "
                           f"before it nor ensureActive() in it (section 4.1)")
-    native_or_common = NON_JVM_SOURCE_SET.search(path) is not None
+    # A project without native targets compiles commonMain for the JVM alone (docs/decisions/0001): there, only a
+    # native source set may not import JVM classes.
+    native_or_common = NON_JVM_SOURCE_SET.search(path) is not None and not (jvm_only and "/src/commonMain/" in path)
     for index, line in enumerate(code_lines):
         number = index + 1
         if RUN_CATCHING.search(line) and not justified(index):
@@ -157,8 +160,32 @@ def check(root: pathlib.Path) -> list:
         relative = "/" + path.relative_to(root).as_posix()
         if "/build/" in relative or not PRODUCTION_SOURCE_SET.search(relative):
             continue
-        errors.extend(check_kotlin(relative, path.read_text(encoding="utf-8")))
+        errors.extend(check_kotlin(relative, path.read_text(encoding="utf-8"), jvm_only_project(root, path)))
     return errors
+
+
+NATIVE_TARGETS = re.compile(r"^\s*ostrom\.nativeTargets\s*=(.*)$", re.MULTILINE)
+
+
+def jvm_only_project(root: pathlib.Path, path: pathlib.Path) -> bool:
+    """Whether the project of [path] has no native target: `ostrom.nativeTargets` empty in the gradle.properties
+    nearest to it, as Gradle reads it per project (the root's when the project sets none, all targets when no file
+    sets it)."""
+    return jvm_only_directory(root, path.parent)
+
+
+@functools.lru_cache(maxsize=None)
+def jvm_only_directory(root: pathlib.Path, directory: pathlib.Path) -> bool:
+    """[jvm_only_project] for the files of [directory], read once per directory."""
+    while True:
+        properties = directory / "gradle.properties"
+        if properties.exists():
+            match = NATIVE_TARGETS.search(properties.read_text(encoding="utf-8"))
+            if match:
+                return match.group(1).strip() == ""
+        if directory == root or directory == directory.parent:
+            return False
+        directory = directory.parent
 
 
 def self_test() -> None:
@@ -248,6 +275,9 @@ def self_test() -> None:
     native = check_kotlin("/x/src/linuxX64Main/kotlin/A.kt", "import java.io.File\n")
     assert len(native) == 1 and "JVM-only" in native[0], native
     assert check_kotlin("/x/src/jvmMain/kotlin/A.kt", "import java.io.File\n") == []
+    assert check_kotlin("/x/src/commonMain/kotlin/A.kt", "import java.io.File\n") != []
+    assert check_kotlin("/x/src/commonMain/kotlin/A.kt", "import java.io.File\n", jvm_only=True) == []
+    assert check_kotlin("/x/src/linuxX64Main/kotlin/A.kt", "import java.io.File\n", jvm_only=True) != []
     print("check-conventions self-test passed")
 
 

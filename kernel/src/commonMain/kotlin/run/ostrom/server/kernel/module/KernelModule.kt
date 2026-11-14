@@ -5,6 +5,7 @@ import run.ostrom.core.telemetry.Telemetry
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.ServerConfig
 import run.ostrom.server.kernel.database.DatabaseNotifications
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.MigrationRunner
 import run.ostrom.server.kernel.database.MigrationRunnerImpl
 import run.ostrom.server.kernel.database.databaseNotifications
@@ -28,7 +29,7 @@ import kotlin.time.Clock
  * The kernel's Koin definitions, loaded before every functional module ([serverKoin]).
  *
  * @param logger The root logger.
- * @param driver The database.
+ * @param driver The database (sqlx4k), for the modules not yet on Exposed.
  * @param signer The instance signing key.
  * @param config Where modules read their configuration keys ([ServerConfig.source]).
  * @param clock The clock use cases read; tests inject a fixed one.
@@ -40,6 +41,8 @@ import kotlin.time.Clock
  *   when none is given.
  * @param migrationRunner Checks the modules' migrations at start: Flyway's histories in the server (CRL-05), sqlx4k's
  *   on [driver] when none is given.
+ * @param jdbc The JDBC pool (Exposed over HikariCP) the modules on Exposed query, bound when given: the server and
+ *   test server (`serverTest`, testing module) always give one; a kernel test without such a module may not.
  *
  * @return The module.
  */
@@ -55,12 +58,14 @@ fun kernelModule(
     notifications: DatabaseNotifications = databaseNotifications(driver),
     databaseCheck: HealthCheck? = null,
     migrationRunner: MigrationRunner? = null,
+    jdbc: JdbcDatabase? = null,
 ): Module = module {
     single { logger }
     single { config }
     single { telemetry }
     single { metrics }
     single { driver }
+    if (jdbc != null) single { jdbc }
     single { notifications }
     single { signer }
     single { clock }
