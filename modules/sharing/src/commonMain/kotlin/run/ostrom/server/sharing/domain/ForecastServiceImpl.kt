@@ -40,8 +40,7 @@ class ForecastServiceImpl(
                 caller.orgId,
                 selected.id,
                 current.map { it.window },
-                now - FORECAST_HISTORY,
-                now,
+                (now - FORECAST_HISTORY)..now,
                 ForecastService.MAX_SAMPLES + 1,
             )
         }

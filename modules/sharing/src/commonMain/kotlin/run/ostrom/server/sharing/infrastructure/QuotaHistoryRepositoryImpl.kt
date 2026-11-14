@@ -55,11 +55,10 @@ class QuotaHistoryRepositoryImpl(
         orgId: Uuid,
         accountId: Uuid,
         windows: List<String>,
-        since: Instant,
-        until: Instant,
+        observed: ClosedRange<Instant>,
         limit: Int,
     ): List<QuotaWindow> = database.inOrg(orgId) {
-        recentQuotaHistory(orgId, accountId, windows, since, until, limit).map {
+        recentQuotaHistory(orgId, accountId, windows, observed, limit).map {
             QuotaWindow(
                 window = it[SharingQuotaHistory.name],
                 utilization = it[SharingQuotaHistory.utilization],
@@ -107,13 +106,12 @@ internal fun StatementBuilder.quotaReading(orgId: Uuid, accountId: Uuid, reading
         it[SharingQuotaHistory.sampleMinute] = reading.observedAt.toEpochMilliseconds() / MILLIS_PER_MINUTE
     }
 
-/** The forecast's read: the readings of the windows from [since] to [until], newest first, by the `recent` index. */
+/** The forecast's read: the readings of the windows observed in [observed], newest first, by the `recent` index. */
 internal fun recentQuotaHistory(
     orgId: Uuid,
     accountId: Uuid,
     windows: List<String>,
-    since: Instant,
-    until: Instant,
+    observed: ClosedRange<Instant>,
     limit: Int,
 ): Query = SharingQuotaHistory
     .select(
@@ -124,8 +122,8 @@ internal fun recentQuotaHistory(
     )
     .where {
         (SharingQuotaHistory.orgId eq orgId) and (SharingQuotaHistory.accountId eq accountId) and
-            (SharingQuotaHistory.name inList windows) and (SharingQuotaHistory.observedAt greaterEq since) and
-            (SharingQuotaHistory.observedAt lessEq until)
+            (SharingQuotaHistory.name inList windows) and (SharingQuotaHistory.observedAt greaterEq observed.start) and
+            (SharingQuotaHistory.observedAt lessEq observed.endInclusive)
     }
     .orderBy(SharingQuotaHistory.observedAt to SortOrder.DESC, SharingQuotaHistory.name to SortOrder.ASC)
     .limit(limit)

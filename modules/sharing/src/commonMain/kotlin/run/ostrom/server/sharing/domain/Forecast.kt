@@ -83,30 +83,54 @@ class ForecastQuotaUseCase(private val maximumAge: Duration = MAX_QUOTA_OBSERVAT
         threshold: Double = AccountLimits.DEFAULT_CEILING,
     ): QuotaForecast {
         require(threshold.isFinite() && threshold > 0 && threshold <= 1)
-        if (observation == null || !observation.utilization.isFinite() || observation.utilization !in 0.0..1.0) {
-            return QuotaForecast(null, null, QuotaForecast.State.UNKNOWN)
+        return when {
+            observation == null || !observation.utilization.isFinite() || observation.utilization !in 0.0..1.0 ->
+                QuotaForecast(null, null, QuotaForecast.State.UNKNOWN)
+            observation.isStaleAt(now) -> QuotaForecast(null, null, QuotaForecast.State.STALE)
+            else -> {
+                val validRate = ratePerHour?.takeIf { observation.resetsAt != null && it.isFinite() && it >= 0 }
+                fresh(observation, validRate, now, threshold)
+            }
         }
+    }
+
+    /** A reading in the future, whose reset has passed, or older than [maximumAge] no longer describes its window. */
+    private fun QuotaObservation.isStaleAt(now: Instant): Boolean =
+        observedAt > now || resetsAt?.let { it <= now } == true || now - observedAt > maximumAge
+
+    /** The forecast of a fresh reading at [validRate], a rate known to be finite and not negative, or null. */
+    private fun fresh(
+        observation: QuotaObservation,
+        validRate: Double?,
+        now: Instant,
+        threshold: Double,
+    ): QuotaForecast {
         val reset = observation.resetsAt
-        val stale = observation.observedAt > now || (reset != null && reset <= now) ||
-            now - observation.observedAt > maximumAge
-        if (stale) {
-            return QuotaForecast(null, null, QuotaForecast.State.STALE)
+        return when {
+            observation.utilization >= threshold ->
+                QuotaForecast(now, validRate?.times(PERCENT), QuotaForecast.State.EXHAUSTED)
+            // A missing reset can hide a reset between readings: never promise spare capacity or an ETA.
+            reset == null || validRate == null -> QuotaForecast(null, null, QuotaForecast.State.UNKNOWN)
+            validRate == 0.0 -> QuotaForecast(null, 0.0, QuotaForecast.State.IDLE)
+            else -> projected(observation, reset, validRate, threshold)
         }
-        val validRate = ratePerHour?.takeIf { reset != null && it.isFinite() && it >= 0 }
-        if (observation.utilization >= threshold) {
-            return QuotaForecast(now, validRate?.times(PERCENT), QuotaForecast.State.EXHAUSTED)
-        }
-        // A missing reset can hide a reset between readings: never promise spare capacity or an ETA.
-        if (reset == null || validRate == null) return QuotaForecast(null, null, QuotaForecast.State.UNKNOWN)
-        if (validRate == 0.0) return QuotaForecast(null, 0.0, QuotaForecast.State.IDLE)
-        val duration = ((threshold - observation.utilization) / validRate).toDuration(DurationUnit.HOURS)
+    }
+
+    /** When the window reaches [threshold] at [rate] (positive), and whether that comes before [reset]. */
+    private fun projected(
+        observation: QuotaObservation,
+        reset: Instant,
+        rate: Double,
+        threshold: Double,
+    ): QuotaForecast {
+        val duration = ((threshold - observation.utilization) / rate).toDuration(DurationUnit.HOURS)
         val eta = if (duration >= Instant.DISTANT_FUTURE - observation.observedAt) {
             Instant.DISTANT_FUTURE
         } else {
             observation.observedAt + duration
         }
         val state = if (eta < reset) QuotaForecast.State.EXHAUSTS_FIRST else QuotaForecast.State.RESET_FIRST
-        return QuotaForecast(eta, validRate * PERCENT, state)
+        return QuotaForecast(eta, rate * PERCENT, state)
     }
 
     private companion object {
@@ -197,9 +221,10 @@ class ForecastHistoryUseCase(private val threshold: Double = AccountLimits.DEFAU
         return resetsAt == previous.resetsAt && utilization >= previous.utilization &&
             elapsed > Duration.ZERO && elapsed <= MAX_QUOTA_OBSERVATION_AGE
     }
-
-    private companion object {
-        const val MIN_SAMPLES = 3
-        val MIN_SPAN: Duration = 1.minutes
-    }
 }
+
+/** Readings a rate needs at least. */
+private const val MIN_SAMPLES = 3
+
+/** The span a rate needs at least. */
+private val MIN_SPAN: Duration = 1.minutes

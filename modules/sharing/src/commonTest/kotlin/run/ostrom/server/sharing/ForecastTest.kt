@@ -144,6 +144,9 @@ class ForecastTest {
         assertNull(full.forecast.pointsPerHour)
         val stale = history.evaluate(listOf(full.quota), now + MAX_QUOTA_OBSERVATION_AGE + 1.milliseconds)!!
         assertEquals(QuotaForecast.State.STALE, stale.forecast.state)
+        // Read more than an hour ago: no segment left to learn from, and stale.
+        val old = history.evaluate(listOf(full.quota), now + 2.hours)!!
+        assertEquals(QuotaForecast.State.STALE, old.forecast.state)
         assertNull(history.evaluate(listOf(full.quota), now - 1.hours))
     }
 

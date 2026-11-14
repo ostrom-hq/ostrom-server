@@ -43,13 +43,12 @@ class InMemoryQuotaHistory : QuotaHistoryRepository {
         orgId: Uuid,
         accountId: Uuid,
         windows: List<String>,
-        since: Instant,
-        until: Instant,
+        observed: ClosedRange<Instant>,
         limit: Int,
     ): List<QuotaWindow> {
         reads++
         return readings.filter { (org, account, it) ->
-            org == orgId && account == accountId && it.window in windows && it.observedAt in since..until
+            org == orgId && account == accountId && it.window in windows && it.observedAt in observed
         }.map { it.third }.sortedByDescending { it.observedAt }.take(limit)
     }
 
@@ -196,7 +195,7 @@ class ForecastServiceTest {
     fun noHistoryRecordsNothing() {
         runTest {
             NoQuotaHistory.record(Sharing.orgA, Uuid.random(), listOf(QuotaWindow("five_hour", .1, null, now)))
-            val none = NoQuotaHistory.recent(Sharing.orgA, Uuid.random(), listOf("five_hour"), now, now, 1)
+            val none = NoQuotaHistory.recent(Sharing.orgA, Uuid.random(), listOf("five_hour"), now..now, 1)
             assertEquals(emptyList(), none)
             assertEquals(0L, NoQuotaHistory.prune(now, 1))
         }

@@ -7,6 +7,7 @@ import run.ostrom.server.sharing.domain.QuotaWindow
 import run.ostrom.server.sharing.domain.QuotaWindowRepository
 import run.ostrom.server.sharing.presentation.ForecastSnapshotResponse
 import run.ostrom.server.sharing.presentation.SharedAccountResponse
+import run.ostrom.server.sharing.presentation.UpdateAccountRequest
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.SQLError
@@ -104,6 +105,10 @@ class ForecastPostgresTest : SharingPostgresHarness() {
             assertNull(model.reachesThresholdAt)
             val first = forecasts("admin-a").body<ForecastSnapshotResponse>()
             assertEquals(snapshot, first.copy(generatedAt = snapshot.generatedAt), "The first account by default")
+            val pause = patchAs("admin-a", "$base/$selected", UpdateAccountRequest(paused = true))
+            assertEquals(HttpStatusCode.OK, pause.status)
+            val paused = forecasts("admin-a").body<ForecastSnapshotResponse>().account!!
+            assertEquals("disabled" to true, paused.status to paused.paused)
         }
     }
 
@@ -156,7 +161,7 @@ class ForecastPostgresTest : SharingPostgresHarness() {
             history.record(Sharing.orgA, account, listOf(newer.copy(resetsAt = minute)))
             history.record(Sharing.orgA, account, emptyList())
             suspend fun read(org: Uuid) =
-                history.recent(org, account, listOf("five_hour"), now - 1.hours, now + 1.hours, 10)
+                history.recent(org, account, listOf("five_hour"), (now - 1.hours)..(now + 1.hours), 10)
             assertEquals(listOf(.4), read(Sharing.orgA).map { it.utilization })
 
             // Another organization writes nothing on the account and reads none of it.
@@ -179,7 +184,7 @@ class ForecastPostgresTest : SharingPostgresHarness() {
             assertEquals(1L, history.prune(now - 7.days, 1), "At most the limit")
             assertEquals(1L, history.prune(now - 7.days, 1000))
             assertEquals(0L, history.prune(now, 1000), "Never younger than the retention, whatever the date")
-            assertEquals(1, history.recent(Sharing.orgA, a, listOf("five_hour"), now - 30.days, now, 10).size)
+            assertEquals(1, history.recent(Sharing.orgA, a, listOf("five_hour"), (now - 30.days)..now, 10).size)
             for (date in listOf(now + 1.days, Instant.DISTANT_PAST)) {
                 assertFailsWith<PurgeDateRefusedException>("$date") { history.prune(date, 1000) }
             }

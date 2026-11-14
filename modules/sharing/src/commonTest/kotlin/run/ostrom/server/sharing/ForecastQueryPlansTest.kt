@@ -70,7 +70,7 @@ class ForecastQueryPlansTest {
         val plans = database.inOrg(orgA) {
             mapOf(
                 "the forecast's read" to plan {
-                    recentQuotaHistory(orgA, accountA, windows, now - 1.hours, now, 8_193)
+                    recentQuotaHistory(orgA, accountA, windows, (now - 1.hours)..now, 8_193)
                 },
                 "the account checked" to plan { accountOfOrg(orgA, accountA) },
                 "the reading written" to plan {

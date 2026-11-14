@@ -19,15 +19,14 @@ interface QuotaHistoryRepository {
     suspend fun record(orgId: Uuid, accountId: Uuid, windows: List<QuotaWindow>)
 
     /**
-     * The readings of [windows] of an account of the org observed from [since] to [until], newest first, at most
+     * The readings of [windows] of an account of the org observed in [observed], newest first, at most
      * [limit].
      */
     suspend fun recent(
         orgId: Uuid,
         accountId: Uuid,
         windows: List<String>,
-        since: Instant,
-        until: Instant,
+        observed: ClosedRange<Instant>,
         limit: Int,
     ): List<QuotaWindow>
 
@@ -70,8 +69,7 @@ object NoQuotaHistory : QuotaHistoryRepository {
         orgId: Uuid,
         accountId: Uuid,
         windows: List<String>,
-        since: Instant,
-        until: Instant,
+        observed: ClosedRange<Instant>,
         limit: Int,
     ): List<QuotaWindow> = emptyList()
 
