@@ -378,4 +378,16 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
         """.trimIndent(),
     ),
     SchemaMigration(version = 15, name = "sessions_without_profile", sql = SESSIONS_WITHOUT_PROFILE_SQL),
+    // runners.cloud.retention.v1 (TeamCode's `expiresAt` and `terminatedReason`): when a paused session is terminated
+    // with its workspace, from the paused retention in force when it paused, and why a terminated session ended
+    // (`deleted` or `expired`). Every session nothing will look at again gets one step, so that one paused before
+    // the upgrade is given its expiry (ReconcileCloudSessionUseCaseImpl's paused step); the others change nothing.
+    SchemaMigration(
+        version = 16,
+        name = "session_expiry",
+        sql = """
+            ALTER TABLE runners_sessions ADD COLUMN expires_at TIMESTAMPTZ, ADD COLUMN terminated_reason TEXT;
+            UPDATE runners_session_routes SET next_reconcile_at = now() WHERE next_reconcile_at IS NULL;
+        """.trimIndent(),
+    ),
 )

@@ -165,7 +165,8 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
                     paused_at = :paused_at, terminated_at = :terminated_at, pausing_since = :pausing_since,
                     runner_stopped_at = :runner_stopped_at, runner_token_hash = :runner_token_hash,
                     background_since = :background_since, background_seen_at = :background_seen_at, profile =
-                    :profile, cluster_unreachable_since = :cluster_unreachable_since
+                    :profile, cluster_unreachable_since = :cluster_unreachable_since, expires_at = :expires_at,
+                    terminated_reason = :terminated_reason
                     WHERE id = :id AND generation = :generation RETURNING
                     $COLUMNS
                     """,
@@ -344,6 +345,8 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         .bind("background_seen_at", session.backgroundSeenAt)
         .bind("profile", session.profile?.let { RECIPE_JSON.encodeToString(SessionProfile.serializer(), it) })
         .bind("cluster_unreachable_since", session.clusterUnreachableSince)
+        .bind("expires_at", session.expiresAt)
+        .bind("terminated_reason", session.terminatedReason)
 
     private fun ResultSet.Row.toSession(): CloudSession {
         val url = get("repository_url").asStringOrNull()
@@ -390,6 +393,8 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             profile = get("profile").asStringOrNull()
                 ?.let { RECIPE_JSON.decodeFromString(SessionProfile.serializer(), it) },
             clusterUnreachableSince = get("cluster_unreachable_since").asInstantOrNull(),
+            expiresAt = get("expires_at").asInstantOrNull(),
+            terminatedReason = get("terminated_reason").asStringOrNull(),
         )
     }
 
@@ -406,7 +411,7 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             restricted_egress, created_at, updated_at, execution_started_at, ready_at, last_heartbeat_at,
             last_activity_at, paused_at, terminated_at, pausing_since, runner_stopped_at, runner_token_hash,
             github_access, background_since, background_seen_at, environment, failure_retryable, profile,
-            cluster_unreachable_since
+            cluster_unreachable_since, expires_at, terminated_reason
         """
         const val VALUES = """
             :id, :org_id, :owner_id, :name, :agent, :model, :prompt, :repository_url, :repository_ref, :state,
@@ -414,7 +419,7 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             :max_run_minutes, :restricted_egress, :created_at, :updated_at, :execution_started_at, :ready_at,
             :last_heartbeat_at, :last_activity_at, :paused_at, :terminated_at, :pausing_since, :runner_stopped_at,
             :runner_token_hash, :github_access, :background_since, :background_seen_at, :environment,
-            :failure_retryable, :profile, :cluster_unreachable_since
+            :failure_retryable, :profile, :cluster_unreachable_since, :expires_at, :terminated_reason
         """
     }
 }

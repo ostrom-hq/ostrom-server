@@ -15,6 +15,7 @@ import run.ostrom.server.runners.infrastructure.LegacyKubernetesImport
 import run.ostrom.server.runners.infrastructure.RunnersConfig.DriverKind.KUBERNETES
 import run.ostrom.server.runners.domain.RunnerDeliverySource
 import run.ostrom.server.runners.infrastructure.CLOUD_ACCESS_SETTINGS
+import run.ostrom.server.runners.infrastructure.CloudRuntimePausedRetention
 import run.ostrom.server.runners.infrastructure.CloudRuntimeRunnerDelivery
 import run.ostrom.server.runners.infrastructure.SettingsAllowedOrgs
 import run.ostrom.core.api.models.ServerFeatures
@@ -223,7 +224,11 @@ object RunnersModule : ServerModule {
             val limit = CloudSettingsBackgroundWorkLimit(getOrNull<CloudSettingsSource>())
             val ended = getAll<SessionEndListener>()
             val answers = getOrNull<PendingWaitAnswers>() ?: NoPendingWaitAnswers
-            ReconcileCloudSessionUseCaseImpl(get(), get(), get(), get(), get(), get(), ended, get(), answers, limit)
+            // The console's paused retention, for every runtime (30 days without the cloud module).
+            val retention = CloudRuntimePausedRetention(getOrNull<CloudRuntimeSource>())
+            ReconcileCloudSessionUseCaseImpl(
+                get(), get(), get(), get(), get(), get(), ended, get(), answers, retention, limit,
+            )
         }
         single { ReconcilerWorker(get(), get(), get(), get()) }
         // The members' GitHub access when the GitHub integration is there (always on a full server).

@@ -50,6 +50,11 @@ import kotlin.uuid.Uuid
  *   registered runners.
  * @property clusterUnreachableSince Since when the steps of the session have found its cluster unreachable without a
  *   break ([RuntimeUnreachableException]); null while it opens. Past a bound, its execution ends without the cluster.
+ * @property expiresAt When a paused session is terminated with its workspace (TeamCode's `expiresAt`), from the
+ *   instance's paused retention in force when it paused ([PausedRetention]); null while it is not paused, or when paused
+ *   sessions are kept. Resuming clears it.
+ * @property terminatedReason Why a terminated session ended: [TERMINATED_DELETED] or [TERMINATED_EXPIRED]; null
+ *   before it is asked to end.
  */
 data class CloudSession(
     val id: Uuid,
@@ -85,6 +90,8 @@ data class CloudSession(
     val environment: CloudEnvironmentSpec? = null,
     val profile: SessionProfile? = null,
     val clusterUnreachableSince: Instant? = null,
+    val expiresAt: Instant? = null,
+    val terminatedReason: String? = null,
 ) {
     /**
      * Whether the runner of the current start reported a failed preparation (or the server found one): the
@@ -93,6 +100,15 @@ data class CloudSession(
     val preparationFailed: Boolean
         get() = (state == SessionState.CREATING || state == SessionState.RESUMING) &&
             failure?.code == CloudEnvironmentRules.PREPARATION_FAILED
+
+    /** Constants and readers of the enclosing type. */
+    companion object {
+        /** A session its owner or an administrator deleted. */
+        const val TERMINATED_DELETED: String = "deleted"
+
+        /** A paused session whose retention ran out ([expiresAt]). */
+        const val TERMINATED_EXPIRED: String = "expired"
+    }
 }
 
 /**

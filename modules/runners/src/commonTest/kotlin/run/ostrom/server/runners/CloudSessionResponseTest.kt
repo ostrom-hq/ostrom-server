@@ -8,6 +8,7 @@ import run.ostrom.server.runners.fakes.session
 import run.ostrom.server.runners.presentation.toResponse
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 
@@ -30,5 +31,18 @@ class CloudSessionResponseTest {
         assertEquals("2026-10-30T10:03:00Z", response.pausedAt)
         assertEquals("2026-10-30T10:04:00Z", response.endedAt)
         assertEquals("terminated", response.status)
+        assertNull(response.terminatedReason, "A session terminated before the reason was recorded")
+    }
+
+    @Test
+    fun anExpiryIsServedOnAPausedSessionAndTheReasonOnATerminatedOne() {
+        val t0 = Instant.parse("2026-10-30T10:00:00Z")
+        val paused = session(state = SessionState.PAUSED, desired = DesiredState.TERMINATED, createdAt = t0)
+            .copy(expiresAt = t0 + 3.minutes, terminatedReason = "expired")
+        assertEquals("2026-10-30T10:03:00Z", paused.toResponse().expiresAt)
+        assertNull(paused.toResponse().terminatedReason, "Not terminated yet")
+        val terminated = paused.copy(state = SessionState.TERMINATED)
+        assertNull(terminated.toResponse().expiresAt)
+        assertEquals("expired", terminated.toResponse().terminatedReason)
     }
 }
