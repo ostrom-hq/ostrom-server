@@ -9,7 +9,7 @@ import kotlin.uuid.Uuid
 
 /** A comma-separated tag filter. */
 internal fun tagsOf(value: String?): List<String> =
-    value?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+    if (value == null) emptyList() else value.split(',').map { it.trim() }.filter { it.isNotEmpty() }
 
 /** A limit from the query: a number, or the default. */
 internal fun limitOf(value: String?, default: Int): Int =

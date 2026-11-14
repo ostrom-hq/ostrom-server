@@ -114,6 +114,7 @@ class MemoryRulesTest {
         assertEquals(listOf("deploy", "core.v1"), MemoryRules.terms("Deploy, a core.v1 DEPLOY"))
         assertEquals(5, MemoryRules.terms("one two three four five six").size)
         assertFailsWith<InvalidMemoryException> { MemoryRules.terms("a ! ?") }
+        assertEquals(listOf("core"), MemoryRules.terms("core ${"x".repeat(41)}"), "a word past 40 characters is left")
     }
 
     @Test

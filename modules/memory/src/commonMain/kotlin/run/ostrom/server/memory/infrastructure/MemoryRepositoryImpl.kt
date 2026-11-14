@@ -43,7 +43,7 @@ internal class MemoryRepositoryImpl(private val driver: Driver, private val cloc
         limit: Int,
     ): MemoryPage = driver.inOrg(caller.orgId) {
         val now = clock.now()
-        val rows = (scope?.let(::listOf) ?: MemoryScope.entries).flatMap { s ->
+        val rows = (if (scope == null) MemoryScope.entries else listOf(scope)).flatMap { s ->
             val cursor = if (after == null) "" else AFTER_CURSOR
             val statement = Statement.create(
                 "SELECT $INDEX_COLUMNS FROM memory_entries WHERE ${visible()}${tagged(tags)}$cursor " +
@@ -148,7 +148,7 @@ internal class MemoryRepositoryImpl(private val driver: Driver, private val cloc
         check: (MemoryEntry) -> Unit,
     ): MemoryEntry = driver.inOrg(caller.orgId) {
         val now = clock.now()
-        val before = readable(caller, id, now, lock = true)?.toEntry(emptyList()) ?: throw MemoryNotFoundException()
+        val before = (readable(caller, id, now, lock = true) ?: throw MemoryNotFoundException()).toEntry(emptyList())
         check(before)
         execute(
             Statement.create(
@@ -173,8 +173,8 @@ internal class MemoryRepositoryImpl(private val driver: Driver, private val cloc
 
     override suspend fun delete(caller: MemoryCaller, id: Uuid, check: (MemoryEntry) -> Unit) {
         driver.inOrg(caller.orgId) {
-            val entry = readable(caller, id, clock.now(), lock = true)?.toEntry(emptyList())
-                ?: throw MemoryNotFoundException()
+            val entry = (readable(caller, id, clock.now(), lock = true) ?: throw MemoryNotFoundException())
+                .toEntry(emptyList())
             check(entry)
             // The tags go with the entry (ON DELETE CASCADE).
             execute(

@@ -162,7 +162,8 @@ class MemoryRoutesPostgresTest {
     @Test
     fun aBadRequestNamesItsFieldAndASecretIsNeverStored() = memoryTest {
         val bad = listOf(
-            "index?scope=repo", "index?limit=many", "index?after=nope", "index?after=x_y", "index?tags=Bad!", "search",
+            "index?scope=repo", "index?limit=many", "index?after=nope", "index?after=x_y",
+            "index?after=2026-11-14T12:00:00Z_nope", "index?tags=Bad!", "search",
             "search?q=%3F",
         )
         for (path in bad) {
@@ -199,6 +200,12 @@ class MemoryRoutesPostgresTest {
     fun anExpiryInTheFutureIsKeptAndTheServerServesTheMemory() = memoryTest { server ->
         val later = created("ada", """{"title": "Freeze", "summary": "s", "content": "c", "expiresAt": "$FAR"}""")
         assertEquals(FAR, later.expiresAt)
+        // An agent names the session it writes from, cut to the length of an Ostrom session's id.
+        val long = "s".repeat(80)
+        val noted = create("agent", """{"title": "Noted", "summary": "s", "content": "c", "sessionId": "$long"}""")
+        assertEquals("s".repeat(64), noted.body<MemoryEntry>().sessionId)
+        val mine = created("ada", entry("Mine", "personal", "[]"))
+        assertEquals(listOf("new"), patch("$MEMORY/${mine.id}") { json("ada", update(1)) }.body<MemoryEntry>().tags)
         assertTrue(ServerFeatures.MEMORY in MemoryModule.features(server.koin))
     }
 
