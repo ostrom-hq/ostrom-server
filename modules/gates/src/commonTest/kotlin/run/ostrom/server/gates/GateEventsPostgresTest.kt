@@ -8,6 +8,7 @@ import run.ostrom.server.gates.domain.models.GateMode
 import run.ostrom.server.gates.domain.models.GateStatus
 import run.ostrom.server.gates.domain.models.GateSubject
 import run.ostrom.server.gates.domain.models.RequestStatus
+import run.ostrom.server.gates.domain.services.GateReceiptSigner
 import run.ostrom.server.gates.infrastructure.PostgresGatesRepository
 import run.ostrom.server.kernel.events.OrgEventDraft
 import run.ostrom.server.kernel.events.OrgEventPublisher
@@ -17,6 +18,7 @@ import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.Transaction
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.time.Instant
@@ -30,6 +32,15 @@ import kotlin.uuid.Uuid
 class GateEventsPostgresTest {
     private val orgA = Uuid.parse("0000000a-0000-0000-0000-000000000000")
     private val epoch = Instant.fromEpochSeconds(1_790_000_000)
+
+    // The gates' routes need a signer; the receipts module is not loaded here.
+    private val overrides = module {
+        single<GateReceiptSigner> {
+            object : GateReceiptSigner {
+                override suspend fun sign(gate: Gate): String = "rcpt_${gate.id}"
+            }
+        }
+    }
 
     // What each publication was given, and the organization its transaction was confined to when it came.
     private class Recorder : OrgEventPublisher {
@@ -68,7 +79,7 @@ class GateEventsPostgresTest {
         JsonObject(pairs.associate { it.first to JsonPrimitive(it.second) })
 
     @Test
-    fun eachRequestIsInTheFeedInTheGatesTransaction() = serverTest(listOf(GatesModule)) { server ->
+    fun eachRequestIsInTheFeedInTheGatesTransaction() = serverTest(listOf(GatesModule), overrides) { server ->
         val recorder = Recorder()
         val repository = PostgresGatesRepository(server.driver, recorder)
         val asked = gate("acme/api")
@@ -107,7 +118,7 @@ class GateEventsPostgresTest {
     }
 
     @Test
-    fun withoutRequestsNothingIsPublished() = serverTest(listOf(GatesModule)) { server ->
+    fun withoutRequestsNothingIsPublished() = serverTest(listOf(GatesModule), overrides) { server ->
         val recorder = Recorder()
         val asked = gate("acme/api")
         PostgresGatesRepository(server.driver, recorder).transaction {

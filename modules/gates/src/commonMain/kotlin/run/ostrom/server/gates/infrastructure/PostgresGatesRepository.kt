@@ -54,32 +54,26 @@ class PostgresGatesRepository(
     private val events: OrgEventPublisher = DiscardingOrgEventPublisher(),
 ) : GatesRepository, GateHistory {
     override suspend fun <T> transaction(block: suspend GatesTransaction.() -> T): T = driver.transaction {
-        tx(this).block()
-    }
-
-    // Each transaction of the gates, its organization's scope and its announcements in the same transaction.
-    private fun tx(transaction: Transaction): Tx {
-        val scope = OrgScope(transaction)
-        return Tx(transaction, scope, Announcements(transaction, scope, events))
+        Tx(this, events).block()
     }
 
     override suspend fun get(orgId: Uuid, id: Uuid): Gate? = driver.transaction {
-        tx(this).run { scope.enter(orgId); executor.selectGate(orgId, id, lock = false) }
+        Tx(this, events).run { scope.enter(orgId); executor.selectGate(orgId, id, lock = false) }
     }
 
     override suspend fun requestsOf(orgId: Uuid, gateId: Uuid): List<ApprovalRequest> = driver.transaction {
-        tx(this).requestsOf(orgId, gateId)
+        Tx(this, events).requestsOf(orgId, gateId)
     }
 
     override suspend fun requestsOfGates(orgId: Uuid, gateIds: List<Uuid>): List<ApprovalRequest> =
-        driver.transaction { tx(this).requestsOfGates(orgId, gateIds) }
+        driver.transaction { Tx(this, events).requestsOfGates(orgId, gateIds) }
 
     override suspend fun ofSession(orgId: Uuid, sessionId: String): List<Gate> = driver.transaction {
-        tx(this).gatesOfSession(orgId, sessionId)
+        Tx(this, events).gatesOfSession(orgId, sessionId)
     }
 
     override suspend fun recent(orgId: Uuid, since: Instant, limit: Int): List<Gate> = driver.transaction {
-        tx(this).run {
+        Tx(this, events).run {
             scope.enter(orgId)
             executor.rows(
                 Statement.create(GatesQueries.RECENT).bind("org", orgId).bind("since", since).bind("limit", limit),
@@ -88,7 +82,7 @@ class PostgresGatesRepository(
     }
 
     override suspend fun approval(orgId: Uuid, id: Uuid): ApprovalView? = driver.transaction {
-        tx(this).run {
+        Tx(this, events).run {
             // The foreign key keeps a request's gate: read as the one gate it must be.
             request(orgId, id)?.let { request ->
                 ApprovalView(request, listOfNotNull(executor.selectGate(orgId, request.gateId, lock = false)).single())
@@ -103,7 +97,7 @@ class PostgresGatesRepository(
         limit: Int,
         before: Uuid?,
     ): List<ApprovalView> = driver.transaction {
-        tx(this).run {
+        Tx(this, events).run {
             scope.enter(orgId)
             val page = Statement.create(GatesQueries.approvals(approverId != null, status != null, before != null))
                 .bind("org", orgId).bind("limit", limit)
@@ -127,7 +121,7 @@ class PostgresGatesRepository(
 
     override suspend fun sessionsApprovedBy(orgId: Uuid, approver: String, sessionId: String?): List<String> =
         driver.transaction {
-            tx(this).run {
+            Tx(this, events).run {
                 scope.enter(orgId)
                 val statement = if (sessionId == null) {
                     Statement.create(GatesQueries.APPROVED_SESSIONS)
@@ -142,7 +136,7 @@ class PostgresGatesRepository(
     override suspend fun approversOf(orgId: Uuid, gateIds: List<Uuid>): Map<Uuid, List<String>> {
         if (gateIds.isEmpty()) return emptyMap()
         return driver.transaction {
-            tx(this).run {
+            Tx(this, events).run {
                 scope.enter(orgId)
                 // Each id bound on its own (`:g0`, `:g1`…), as the gates of a page above; gates_requests_by_gate.
                 val statement = Statement.create(approversSql(gateIds.size)).bind("org", orgId)
@@ -169,11 +163,16 @@ class PostgresGatesRepository(
     }
 
     // The sessions' ends apart ([SessionEnds]): one class would hold more functions than detekt allows.
-    private class Tx(
-        val executor: QueryExecutor,
+    // Its announcements publish in the same transaction, under the same organization's scope.
+    private class Tx private constructor(
+        val executor: Transaction,
         val scope: OrgScope,
-        announcements: GateAnnouncements,
-    ) : GatesTransaction, GateSessionEnds by SessionEnds(executor, scope), GateAnnouncements by announcements {
+        events: OrgEventPublisher,
+    ) : GatesTransaction,
+        GateSessionEnds by SessionEnds(executor, scope),
+        GateAnnouncements by Announcements(executor, scope, events) {
+        constructor(transaction: Transaction, events: OrgEventPublisher) :
+            this(transaction, OrgScope(transaction), events)
 
 
         override suspend fun lockKey(orgId: Uuid, key: String) {
