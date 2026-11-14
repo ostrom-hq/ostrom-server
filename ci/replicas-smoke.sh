@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Two real server processes on one PostgreSQL, as TeamCode's scripts/smoke-replicas.py (docs/replicas.md « Evidence »,
 # parity TC-REP-7): both start at once on a migrated database; a token works on either; one replica killed (SIGKILL)
-# leaves the other serving, and comes back; during a database outage /ready stays bounded and nobody is authenticated
+# leaves the other serving, and comes back; during a database outage /ready stays bounded and goes 503 once callers have
+# waited 30 s on the pool (CRL-11), nobody is authenticated
 # while both keep running, then both serve again without a restart; a token revoked on one replica is refused by the
 # other. Only its own containers are stopped. Needs the image ostrom-server:ci and a database migrated by the image
 # smoke step, reached as the serving role through OSTROM_SMOKE_DATABASE_URL
@@ -15,6 +16,7 @@ proxied="$(sed -E 's#@([^/:]+):([0-9]+)/#@127.0.0.1:5499/#' <<<"$url")"
 target="$(sed -E 's#.*@([^/:]+):([0-9]+)/.*#\1:\2#' <<<"$url")"
 names=(ostrom-replica-a ostrom-replica-b)
 proxy_pid=""
+callers=()
 
 cleanup() {
   status=$?
@@ -23,6 +25,8 @@ cleanup() {
   fi
   docker rm -f "${names[@]}" >/dev/null 2>&1 || true
   [ -z "$proxy_pid" ] || kill "$proxy_pid" 2>/dev/null || true
+  # The callers of step 4 (this script's own subshells), if it stopped before they ended.
+  [ "${#callers[@]}" -eq 0 ] || kill "${callers[@]}" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -103,21 +107,48 @@ docker start ostrom-replica-a >/dev/null
 await_status localhost:8082/ready 30 200
 [ "$(me 8082)" = 200 ] || { echo "A came back without the session"; exit 1; }
 
-echo "4. The database goes away: /ready stays bounded, nobody is authenticated, both keep running, then serve again."
+echo "4. The database goes away: /ready stays bounded, then 503 once callers have waited 30 s on the pool; nobody is"
+echo "   authenticated, both keep running, then serve again."
 kill "$proxy_pid"
 wait "$proxy_pid" 2>/dev/null || true
 proxy_pid=""
-# CRL-11: /ready reads the pool's state, never a query, so that a database stall does not drain every replica at once.
-# It goes unready only after callers have waited 30 s on the pool (PoolHealthCheckTest). What the smoke checks is
-# that the probe stays bounded: it answers within 2 s whatever its code, where it took more than 10 s before.
+outage="$(date +%s)"
+# CRL-11: /ready reads the JDBC pool's state, never a query, so that a short database stall does not drain every
+# replica at once: it goes 503 only once callers have waited for a connection 30 s without a break (PoolHealthCheck).
+# Identity authenticates on that pool, so callers that keep asking wait on it (each up to the 5 s connection timeout).
 for port in 8082 8083; do
-  ready="$(curl -s --max-time 2 -o /dev/null -w '%{http_code}' "localhost:$port/ready" || true)"
-  case "$ready" in
-    200 | 503) echo "   replica $port: /ready answered $ready" ;;
-    *) echo "replica $port: /ready did not answer within 2 s without its database ($ready)"; exit 1 ;;
-  esac
+  for _ in 1 2 3 4 5 6; do
+    ( while [ $(($(date +%s) - outage)) -lt 55 ]; do me "$port" >/dev/null; done ) &
+    callers+=($!)
+  done
+done
+declare -A unready=()
+while [ $(($(date +%s) - outage)) -lt 50 ] && [ "${#unready[@]}" -lt 2 ]; do
+  for port in 8082 8083; do
+    [ -z "${unready[$port]:-}" ] || continue
+    ready="$(curl -s --max-time 2 -o /dev/null -w '%{http_code}' "localhost:$port/ready" || true)"
+    elapsed=$(($(date +%s) - outage))
+    case "$ready" in
+      200) ;;
+      503)
+        # Margin for the callers' first wait to start: 503 before 25 s would drain on a short stall.
+        [ "$elapsed" -ge 25 ] || { echo "replica $port: /ready 503 after ${elapsed}s only, before 30 s of waits"; exit 1; }
+        unready[$port]="$elapsed"
+        echo "   replica $port: /ready 503 after ${elapsed}s of callers waiting on the pool" ;;
+      *) echo "replica $port: /ready did not answer within 2 s without its database ($ready)"; exit 1 ;;
+    esac
+  done
+  sleep 1
+done
+for port in 8082 8083; do
+  [ -n "${unready[$port]:-}" ] || { echo "replica $port: /ready still 200 after 50 s of callers waiting"; exit 1; }
   [ "$(me "$port")" != 200 ] || { echo "replica $port authenticated without its database"; exit 1; }
 done
+# Both are unready: the callers (this script's own subshells) stop now rather than at 55 s, and are forgotten so the
+# exit trap never signals a reused PID.
+kill "${callers[@]}" 2>/dev/null || true
+wait "${callers[@]}" 2>/dev/null || true
+callers=()
 for name in ostrom-replica-a ostrom-replica-b; do
   running="$(docker inspect -f '{{.State.Running}}' "$name")"
   [ "$running" = true ] || { echo "$name exited without its database"; exit 1; }
