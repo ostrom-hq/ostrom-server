@@ -17,9 +17,10 @@ import kotlinx.coroutines.ensureActive
  * kept as suppressed; a failure while it is active stays the failure. The statements sent on the pool get the same
  * treatment, whatever sqlx4k does with a cancellation there.
  *
- * @param inner The sqlx4k pool.
+ * @property inner The sqlx4k pool, for what only the pool itself offers (PostgreSQL's `LISTEN`,
+ *   [databaseNotifications]).
  */
-internal class CancellationKeepingDriver(private val inner: Driver) : Driver by inner {
+internal class CancellationKeepingDriver(val inner: Driver) : Driver by inner {
     override suspend fun begin(): Result<Transaction> = inner.begin().kept()
 
     override suspend fun execute(sql: String): Result<Long> = inner.execute(sql).kept()
