@@ -263,7 +263,7 @@ class KubernetesRuntimeDriverTest {
             api.client,
             settings.copy(priorityClass = "ostrom-low", imagePullSecret = null),
             "http://s",
-            "img:1",
+            delivery("img:1"),
         ) { "t" }
         low.startExecution(spec(repository = null))
         assertEquals("ostrom-low", body(3)["spec"]!!.jsonObject["priorityClassName"]!!.jsonPrimitive.content)
