@@ -20,6 +20,8 @@ import org.koin.dsl.module
 import run.ostrom.core.api.models.NotificationSetting
 import run.ostrom.core.api.models.NotificationSettingChange
 import run.ostrom.core.api.models.NotificationSettings
+import run.ostrom.core.api.models.PushTestResult
+import run.ostrom.core.api.models.PushTestResults
 import run.ostrom.server.instance.InstanceModule
 import run.ostrom.server.identity.IdentityModule
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -37,6 +39,8 @@ import run.ostrom.server.notifications.domain.Notification
 import run.ostrom.server.notifications.domain.NotificationChannel
 import run.ostrom.server.notifications.domain.NotificationKind
 import run.ostrom.server.notifications.domain.NotificationSettingsRepository
+import run.ostrom.server.notifications.domain.PushResult
+import run.ostrom.server.notifications.domain.SendTestPushUseCase
 import run.ostrom.server.notifications.domain.SwitchedOff
 import run.ostrom.server.orgs.OrgsModule
 import run.ostrom.server.testing.TestServer
@@ -175,6 +179,28 @@ class NotificationSettingsPostgresTest {
         assertEquals(HttpStatusCode.TooManyRequests, again.status)
         assertEquals("push_test_rate_limited", again.body<ApiError>().error.type)
         assertEquals("10", again.headers[HttpHeaders.RetryAfter])
+    }
+
+    @Test
+    fun aTestPushAnswersEachPhonesResult() = serverTest(
+        modules,
+        module {
+            includes(overrides)
+            single<SendTestPushUseCase> {
+                object : SendTestPushUseCase {
+                    override suspend fun invoke(orgId: Uuid, memberId: Uuid): List<PushResult> =
+                        listOf(PushResult.SENT, PushResult.rejected("push_key_invalid"))
+                }
+            }
+        },
+    ) { server ->
+        val sent = server.client.post("/api/v1/notifications/push/test") { bearerAuth("mia-a") }
+        assertEquals(HttpStatusCode.OK, sent.status)
+        val expected = PushTestResults(
+            ok = true,
+            results = listOf(PushTestResult("sent", null), PushTestResult("rejected", "push_key_invalid")),
+        )
+        assertEquals(expected, sent.body<PushTestResults>())
     }
 
     @Test

@@ -225,9 +225,12 @@ object NotificationRules {
      */
     fun draft(source: NotificationSource): NotificationDraft? {
         val entry = source.entry
-        val wait = source.wait?.takeIf { entry.type == OrgEventType.WAIT_CREATED && it.open && it.resolver == HUMAN }
         // A wait asked of something else than a member (an agent's name) tells no person.
-        val member = wait?.let { Uuid.parseOrNull(it.assigneeId) } ?: return null
+        val wait = source.wait?.takeIf {
+            entry.type == OrgEventType.WAIT_CREATED && it.open && it.resolver == HUMAN &&
+                Uuid.parseOrNull(it.assigneeId) != null
+        } ?: return null
+        val member = Uuid.parse(wait.assigneeId)
         val title = source.sessionName?.takeIf { it.isNotBlank() }?.take(MAX_TITLE) ?: DEFAULT_TITLE
         val failed = wait.kind == TURN_FAILED_WAIT
         return NotificationDraft(

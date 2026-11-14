@@ -74,6 +74,8 @@ class NotificationRulesTest {
     fun theWaitAnEventNamesIsItsWaitIdElseItsSubject() {
         assertEquals("w-9", NotificationRules.waitIdOf(created("w-9")))
         assertEquals("w-1", NotificationRules.waitIdOf(created(null)))
+        val odd = created(null).copy(data = JsonObject(mapOf("waitId" to JsonObject(emptyMap()))))
+        assertEquals("w-1", NotificationRules.waitIdOf(odd), "A waitId that is no string")
     }
 
     @Test
