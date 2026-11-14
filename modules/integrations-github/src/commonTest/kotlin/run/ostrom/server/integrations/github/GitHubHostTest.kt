@@ -52,7 +52,14 @@ class GitHubHostTest {
             val check = fields.getValue(url).check
             assertNull(check(" https://ghe.example "))
             assertNull(check("http://localhost:9000"))
-            assertEquals("an http:// or https:// URL.", check("ghe.example"))
+            assertNull(check("https://ghe.example:8443/api/v3/"))
+            assertNull(check("http://[::1]:9000"))
+            for (bad in listOf(
+                "ghe.example", "ftp://ghe.example", "https://", "http:///x", "https://ghe .example",
+                "https://user:pw@ghe.example", "https://ghe.example?x=1", "https://ghe.example/#top",
+            )) {
+                assertEquals("an http:// or https:// URL, without credentials, query or fragment.", check(bad), bad)
+            }
         }
         val name = fields.getValue("appName").check
         assertNull(name(" Acme Ostrom "))

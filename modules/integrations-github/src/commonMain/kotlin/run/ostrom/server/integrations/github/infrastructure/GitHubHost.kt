@@ -63,14 +63,15 @@ class GitHubHost(private val settings: InstanceSettings) {
 /** The longest name GitHub gives an App. */
 private const val MAX_APP_NAME = 34
 
+// An http(s) URL: a host (and port), no credentials, then an optional path; no query, fragment or space.
+private val WEB_URL = Regex("https?://[^\\s/?#@]+(/[^\\s?#]*)?")
+
 /**
  * Why a URL setting is refused.
  *
  * @param value The value.
  *
- * @return Why, or null for an `http://` or `https://` URL.
+ * @return Why, or null for an `http://` or `https://` URL with a host, without credentials, a query or a fragment.
  */
-internal fun webUrlProblem(value: String): String? {
-    val url = value.trim()
-    return if (url.startsWith("https://") || url.startsWith("http://")) null else "an http:// or https:// URL."
-}
+internal fun webUrlProblem(value: String): String? =
+    if (WEB_URL.matches(value.trim())) null else "an http:// or https:// URL, without credentials, query or fragment."

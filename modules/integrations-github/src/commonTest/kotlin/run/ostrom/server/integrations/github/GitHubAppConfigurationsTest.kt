@@ -145,7 +145,6 @@ class GitHubAppConfigurationsTest {
             base.copy(clientSecret = "s".repeat(257)),
             base.copy(clientSecret = "s".repeat(19) + " x"),
             base.copy(clientSecret = "s".repeat(20) + "\u0001"),
-            base.copy(webhookSecret = ""),
             base.copy(webhookSecret = "h".repeat(257)),
             base.copy(webhookSecret = "hook secret"),
             base.copy(privateKey = "not a key"),
@@ -188,6 +187,18 @@ class GitHubAppConfigurationsTest {
         )
         assertEquals("github_app_conflict", typeOf { raced.save(admin, base.copy(version = 1)) })
         assertTrue(audit.records.isEmpty())
+    }
+
+    @Test
+    fun anEmptyWebhookSecretClearsTheStoredOne() = runTest {
+        store.stored = storedApp()
+        val cleared = configurations().save(
+            admin,
+            base.copy(clientSecret = null, privateKey = null, webhookSecret = "", version = 1),
+        )
+        assertNull(cleared.app?.webhookSecret)
+        assertFalse(cleared.toResponse().webhookSecretSet)
+        assertEquals(SECRET to 2, cleared.app?.clientSecret to cleared.app?.version, "Nothing else changes")
     }
 
     @Test

@@ -43,7 +43,7 @@ class GitHubAppMismatchException : OstromException(
  * @property clientId Its OAuth client ID.
  * @property clientSecret Its client secret, or null to keep it.
  * @property privateKey Its PEM private key, or null to keep it.
- * @property webhookSecret Its webhook secret, or null to keep it.
+ * @property webhookSecret Its webhook secret, null to keep it, or empty to clear it.
  * @property version The stored version it changes, or null for a first App.
  */
 data class GitHubAppInput(
@@ -194,7 +194,11 @@ class GitHubAppConfigurations(
         val client = verified.clientId ?: input.clientId
         if (verified.id != input.appId || client != input.clientId) refuse(GitHubAppMismatchException())
         // Another App signs its deliveries with its own webhook secret: the former one is kept only for the same App.
-        val webhook = input.webhookSecret ?: current?.webhookSecret?.takeIf { current.appId == input.appId.toString() }
+        val webhook = when (input.webhookSecret) {
+            null -> current?.webhookSecret?.takeIf { current.appId == input.appId.toString() }
+            "" -> null
+            else -> input.webhookSecret
+        }
         val app = CreatedGitHubApp(input.appId, verified.slug, verified.owner, key, webhook, input.clientId, secret)
         if (!store.replaceApp(app, input.version, principal.subjectId, clock.now())) {
             refuse(GitHubAppConflictException())
@@ -269,7 +273,7 @@ internal fun validate(input: GitHubAppInput) {
         !CLIENT_ID.matches(input.clientId) -> "The client ID is a GitHub App's: it starts with Iv."
         !secretFits(input.clientSecret, GitHubAppConfigurations.MIN_SECRET) ->
             "The client secret has 20 to 256 characters, without spaces."
-        !secretFits(input.webhookSecret, 1) -> "The webhook secret has 1 to 256 characters, without spaces."
+        !secretFits(input.webhookSecret, 0) -> "The webhook secret has up to 256 characters, without spaces."
         key != null && !pem(key) -> "The private key is the PEM file GitHub gave for the App."
         else -> null
     }

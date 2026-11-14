@@ -130,7 +130,11 @@ class SignInSettingsTest {
         val url = GITHUB_SIGN_IN_SETTINGS.field("apiUrl")!!
         assertNull(url.check("https://ghe.example/api/v3"))
         assertNull(url.check("http://127.0.0.1:4610"))
-        assertEquals("an http:// or https:// URL.", url.check("ghe.example"))
+        val refused = "an http:// or https:// URL, without credentials, query or fragment."
+        assertEquals(refused, url.check("ghe.example"))
+        assertEquals(refused, url.check("https://user:pw@ghe.example"))
+        assertEquals(refused, url.check("https://ghe.example?x=1"))
+        assertNull(url.check("https://ghe.example:8443/api/v3/"))
         val mode = SIGN_UP_SETTINGS.field("mode")!!
         assertEquals("OSTROM_SIGNUP", mode.legacyVariable)
         assertNull(mode.check("Open"))
