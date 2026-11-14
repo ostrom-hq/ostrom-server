@@ -8,8 +8,8 @@ import run.ostrom.server.automations.domain.TimedWaitsRepository
 import run.ostrom.server.automations.domain.Wait
 import run.ostrom.server.automations.domain.WaitAgentResolver
 import run.ostrom.server.automations.domain.WaitAnswer
-import run.ostrom.server.automations.domain.WaitEvents
 import run.ostrom.server.automations.domain.WaitEventTarget
+import run.ostrom.server.automations.domain.WaitEvents
 import run.ostrom.server.automations.domain.WaitFilter
 import run.ostrom.server.automations.domain.WaitResolver
 import run.ostrom.server.automations.domain.WaitSpec
@@ -19,11 +19,14 @@ import run.ostrom.server.automations.domain.WaitsRepository
 import run.ostrom.server.automations.fakes.BOB
 import run.ostrom.server.automations.fakes.FakeWaitAgents
 import run.ostrom.server.automations.fakes.LAUNCH_SESSION
-import run.ostrom.server.automations.fakes.RecordingEvents
 import run.ostrom.server.automations.fakes.ORG_A
 import run.ostrom.server.automations.fakes.ORG_B
+import run.ostrom.server.automations.fakes.RecordingEvents
+import run.ostrom.server.automations.fakes.RecordingOrgEvents
 import run.ostrom.server.automations.fakes.testIdentities
 import run.ostrom.server.automations.presentation.WaitsResponse
+import run.ostrom.server.kernel.events.OrgEventPublisher
+import run.ostrom.server.kernel.events.OrgEventType
 import run.ostrom.server.kernel.http.ApiError
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
@@ -39,6 +42,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import org.koin.dsl.module
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -46,7 +50,6 @@ import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -274,9 +277,11 @@ class TimedWaitsPostgresTest {
         assertFalse(at.isError(), at.text())
     }
 
+    private val feed = RecordingOrgEvents()
+
     @Test
     fun theRepositoryFindsDueWaitsAcrossOrganizationsAndResolvesEachOnce() =
-        serverTest(listOf(AutomationsModule)) { server ->
+        serverTest(listOf(AutomationsModule), module { single<OrgEventPublisher> { feed } }) { server ->
             val repository = server.koin.get<WaitsRepository>()
             val timedWaits = server.koin.get<TimedWaitsRepository>()
             val t0 = Instant.parse("2026-11-13T10:00:00Z")
@@ -316,6 +321,13 @@ class TimedWaitsPostgresTest {
             val received = WaitAnswer("event_received", mapOf("result" to JsonPrimitive("success")), "ostrom", t0)
             assertEquals(WaitStatus.RESOLVED, timedWaits.settle(ORG_B, event.id, received, due = false)?.status)
             assertNull(timedWaits.eventTarget(event.id), "Closed")
+            val settled = feed.published.filter { it.second.type == OrgEventType.WAIT_RESOLVED }
+            assertEquals(
+                listOf(ORG_A to time.id.toString(), ORG_B to event.id.toString()),
+                settled.map { it.first to it.second.subjectId },
+            )
+            val actions = settled.map { it.second.data["action"]?.jsonPrimitive?.content }
+            assertEquals(listOf("time_reached", "event_received"), actions)
             assertEquals(emptyList(), timedWaits.due(t0 + 5.minutes, 50))
             val timedOnly = WaitFilter(ORG_A, resolver = WaitResolver.TIME)
             assertEquals(setOf(time.id, later.id), repository.list(timedOnly, null, 10).map { it.id }.toSet())

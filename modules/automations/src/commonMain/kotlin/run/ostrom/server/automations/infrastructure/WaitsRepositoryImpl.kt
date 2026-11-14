@@ -7,6 +7,8 @@ import run.ostrom.server.automations.domain.WaitAnswer
 import run.ostrom.server.automations.domain.WaitFilter
 import run.ostrom.server.automations.domain.WaitSpec
 import run.ostrom.server.automations.domain.WaitsRepository
+import run.ostrom.server.kernel.events.OrgEventPublisher
+import run.ostrom.server.kernel.events.OrgEventType
 import run.ostrom.server.kernel.http.OstromJson
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
@@ -19,11 +21,17 @@ import kotlin.uuid.Uuid
 /**
  * [WaitsRepository] on PostgreSQL (table `automations_waits` of [AutomationsMigrations]). The question is JSON; the
  * first answer wins because a wait is only ever resolved or cancelled `WHERE status = 'open'`. Every query runs
- * confined to its organization ([inTenant], S2-01).
+ * confined to its organization ([inTenant], S2-01). Each change publishes its wait event to the organization's feed
+ * (`cloud.wait.created`, `.resolved`, `.cancelled`) in its own transaction: the event exists exactly when the change
+ * committed.
  *
  * @param driver The database.
+ * @param events The organization's event feed.
  */
-internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository {
+internal class WaitsRepositoryImpl(
+    private val driver: Driver,
+    private val events: OrgEventPublisher,
+) : WaitsRepository {
     override suspend fun createWithinLimit(wait: Wait, maxOpen: Int, sessions: List<String>): CreateOutcome =
         driver.inTenant(wait.orgId) {
             // Serialize the count and the insert of one scope, so that two concurrent asks never both pass the limit.
@@ -80,7 +88,9 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
                     .bind("resume_message", wait.timer?.resumeMessage)
                     .bind("event_secret_hash", wait.timer?.secretHash),
             ).getOrThrow()
-            if (inserted.none()) CreateOutcome.DUPLICATE else CreateOutcome.CREATED
+            if (inserted.none()) return@inTenant CreateOutcome.DUPLICATE
+            events.publishIn(this, wait.orgId, listOf(wait.event(OrgEventType.WAIT_CREATED)))
+            CreateOutcome.CREATED
         }
 
     override suspend fun findByIdempotencyKey(orgId: Uuid, createdBy: String, key: String): Wait? = driver.fetchInOrg(
@@ -136,8 +146,9 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
         return driver.fetchInOrg(filter.orgId, statement).getOrThrow().map { it.toWait() }
     }
 
-    override suspend fun resolve(orgId: Uuid, id: Uuid, answer: WaitAnswer): Wait? = driver.fetchInOrg(
-        orgId,
+    override suspend fun resolve(orgId: Uuid, id: Uuid, answer: WaitAnswer): Wait? = driver.changeInOrg(orgId, events, {
+        it.event(OrgEventType.WAIT_RESOLVED, answer.action)
+    }) {
         Statement.create(
             """
             UPDATE automations_waits SET status = 'resolved', answer_action = :action, answer_values = :values,
@@ -149,30 +160,29 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
             .bind("author", answer.author)
             .bind("at", answer.answeredAt)
             .bind("id", id)
-            .bind("org_id", orgId),
-    ).getOrThrow().firstOrNull()?.toWait()
+            .bind("org_id", orgId)
+    }.firstOrNull()
 
-    override suspend fun cancel(orgId: Uuid, id: Uuid, now: Instant): Wait? = driver.fetchInOrg(
-        orgId,
-        Statement.create(
-            """
-            UPDATE automations_waits SET status = 'cancelled', resolved_at = :now WHERE id = :id AND org_id =
-            :org_id AND status = 'open' RETURNING $WAIT_COLUMNS
-            """,
-        ).bind("now", now).bind("id", id).bind("org_id", orgId),
-    ).getOrThrow().firstOrNull()?.toWait()
+    override suspend fun cancel(orgId: Uuid, id: Uuid, now: Instant): Wait? =
+        driver.changeInOrg(orgId, events, { it.event(OrgEventType.WAIT_CANCELLED) }) {
+            Statement.create(
+                """
+                UPDATE automations_waits SET status = 'cancelled', resolved_at = :now WHERE id = :id AND org_id =
+                :org_id AND status = 'open' RETURNING $WAIT_COLUMNS
+                """,
+            ).bind("now", now).bind("id", id).bind("org_id", orgId)
+        }.firstOrNull()
 
     override suspend fun cancelOpenOfSessions(orgId: Uuid, sessions: List<String>, now: Instant): List<Wait> =
-        driver.fetchInOrg(
-            orgId,
+        driver.changeInOrg(orgId, events, { it.event(OrgEventType.WAIT_CANCELLED) }) {
             // A session id never holds a comma (`SESSION_ID` of the sessions module, `REFERENCE` of the waits).
             Statement.create(
                 """
                 UPDATE automations_waits SET status = 'cancelled', resolved_at = :now WHERE org_id = :org_id AND
                 session_id = ANY(string_to_array(:session_ids, ',')) AND status = 'open' RETURNING $WAIT_COLUMNS
                 """,
-            ).bind("now", now).bind("org_id", orgId).bind("session_ids", sessions.joinToString(",")),
-        ).getOrThrow().map { it.toWait() }
+            ).bind("now", now).bind("org_id", orgId).bind("session_ids", sessions.joinToString(","))
+        }
 
     override suspend fun takeAnswered(orgId: Uuid, sessions: List<String>, limit: Int): List<Wait> =
         driver.fetchInOrg(

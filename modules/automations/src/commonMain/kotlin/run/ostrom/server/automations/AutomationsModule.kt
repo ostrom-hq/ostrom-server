@@ -75,8 +75,8 @@ object AutomationsModule : ServerModule {
     override val name: String = "automations"
 
     override val koinModule: Module = module {
-        single<WaitsRepository> { WaitsRepositoryImpl(get()) }
-        single<TimedWaitsRepository> { TimedWaitsRepositoryImpl(get()) }
+        single<WaitsRepository> { WaitsRepositoryImpl(get(), get()) }
+        single<TimedWaitsRepository> { TimedWaitsRepositoryImpl(get(), get()) }
         single<WaitSessions> {
             WaitSessionsImpl(
                 getOrNull<AgentSessions>() ?: NoAgentSessions,
