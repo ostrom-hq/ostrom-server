@@ -2,6 +2,7 @@
 
 package run.ostrom.server.identity
 
+import run.ostrom.server.identity.domain.ADMIN_HANDOVER_SCOPE
 import run.ostrom.server.identity.domain.ADMIN_READ_SCOPES
 import run.ostrom.server.identity.domain.ADMIN_SCOPES
 import run.ostrom.server.identity.domain.ADMIN_TOKEN_LIFETIME
@@ -31,7 +32,7 @@ class AdminScopesTest {
         val stored = ADMIN_SCOPES + CLI_SCOPES + "orgs:write" + "user:*"
         // never more than its row lists: this one lists no read of the governance
         assertEquals(CLI_SCOPES + ADMIN_SCOPES, grantedScopes(TokenKind.ADMIN, stored))
-        assertEquals(CLI_SCOPES + ADMIN_SCOPES + ADMIN_READ_SCOPES, ADMIN_TOKEN_SCOPES)
+        assertEquals(CLI_SCOPES + ADMIN_SCOPES + ADMIN_READ_SCOPES + ADMIN_HANDOVER_SCOPE, ADMIN_TOKEN_SCOPES)
         assertEquals(CLI_SCOPES + "orgs:write", grantedScopes(TokenKind.PERSONAL, stored - "user:*"))
         assertEquals(CLI_SCOPES, grantedScopes(TokenKind.CLI, stored))
         assertEquals(8.hours, ADMIN_TOKEN_LIFETIME)
@@ -49,6 +50,17 @@ class AdminScopesTest {
         // reads only, which the browser does not show: never a write slipped in unseen
         assertTrue(ADMIN_READ_SCOPES.all { it.endsWith(":read") }, "$ADMIN_READ_SCOPES")
         assertTrue((ADMIN_READ_SCOPES intersect ADMIN_SCOPES).isEmpty())
+    }
+
+    @Test
+    fun theAdminTokenHandsAnImportedAccountOverAsTeamCodesCli() {
+        // ostrom accounts handover finds the account by its name, then hands it over (TeamCode's accounts handover)
+        val granted = grantedScopes(TokenKind.ADMIN, ADMIN_TOKEN_SCOPES)
+        assertTrue(setOf("accounts:read", "accounts:write").all { it in granted }, "$granted")
+        // the device's token of a plain `ostrom login` never does
+        val cli = grantedScopes(TokenKind.CLI, ADMIN_TOKEN_SCOPES)
+        assertTrue("accounts:read" !in cli && "accounts:write" !in cli, "$cli")
+        assertTrue(ADMIN_HANDOVER_SCOPE !in ADMIN_SCOPES, "Not a governance scope: the browser approves those")
     }
 
     @Test

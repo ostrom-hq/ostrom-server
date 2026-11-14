@@ -38,13 +38,26 @@ abstract class SharingPostgresHarness {
         "agent-a" to Sharing.memberA,
         "device-a" to Sharing.memberA,
         "reader-a" to Sharing.memberA,
+        "admin-cli-a" to Sharing.adminA,
+        "member-cli-a" to Sharing.memberA,
+        "cli-a" to Sharing.adminA,
+        "personal-a" to Sharing.adminA,
     )
+
+    /** The accounts scopes of the token of `ostrom login --admin`, which hands an imported account over. */
+    private val handover = setOf(RelayScopes.ACCOUNTS_READ, RelayScopes.ACCOUNTS_WRITE)
 
     /** Browser sessions hold every right of the user; the others hold what they list. */
     protected val principals = mapOf(
         "agent-a" to AuthenticatedPrincipal("agent-a", PrincipalKind.SERVICE, setOf(RelayScopes.AGENT_SESSION)),
         "device-a" to AuthenticatedPrincipal("device-a", PrincipalKind.DEVICE, setOf(RelayScopes.ALL_USER)),
         "reader-a" to AuthenticatedPrincipal("reader-a", PrincipalKind.USER, setOf(RelayScopes.ACCOUNTS_READ)),
+        // `ostrom login --admin`, of an admin and of a member; `ostrom login` (no accounts scope); a console token
+        "admin-cli-a" to AuthenticatedPrincipal("admin-cli-a", PrincipalKind.USER, handover, "osg-a", signedIn = true),
+        "member-cli-a" to
+            AuthenticatedPrincipal("member-cli-a", PrincipalKind.USER, handover, "osg-m", signedIn = true),
+        "cli-a" to AuthenticatedPrincipal("cli-a", PrincipalKind.USER, setOf("profile:read"), signedIn = true),
+        "personal-a" to AuthenticatedPrincipal("personal-a", PrincipalKind.USER, handover),
     )
 
     protected val authenticator = module {

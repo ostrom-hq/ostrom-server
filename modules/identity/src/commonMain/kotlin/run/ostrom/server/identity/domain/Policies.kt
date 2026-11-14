@@ -112,13 +112,38 @@ val ADMIN_TOKEN_LIFETIME: Duration = 8.hours
  * The reads the token of `ostrom login --admin` makes to write the governance, which the device's token lacks: the
  * model policy `ostrom policy set models` reads before it writes it again (it keeps the default and the members'
  * lists). Reads, not governance scopes: a personal token keeps them, and `ostrom login --admin` does not ask for them
- * (the browser shows the writes it approves). Only a read of what [ADMIN_SCOPES] write belongs here: `inference:read`
- * opens `GET /api/v1/policy/models` alone (the inference settings take `inference:admin`).
+ * (the browser shows the writes it approves). Only a read of what this token writes belongs here: `inference:read`
+ * opens `GET /api/v1/policy/models` alone (the inference settings take `inference:admin`), `accounts:read` the shared
+ * accounts a handover names ([ADMIN_HANDOVER_SCOPE]).
  */
-val ADMIN_READ_SCOPES: Set<String> = setOf("inference:read")
+val ADMIN_READ_SCOPES: Set<String> = setOf("inference:read", "accounts:read")
 
-/** What the token of `ostrom login --admin` grants: what the CLI does, the governance writes and their reads. */
-val ADMIN_TOKEN_SCOPES: Set<String> = CLI_SCOPES + ADMIN_SCOPES + ADMIN_READ_SCOPES
+/**
+ * The handover of an imported shared account, `ostrom accounts handover <account> --confirm`, as TeamCode's interactive
+ * administrator makes it from its CLI (`accounts handover ID --confirm`, docs/capacity.md « Refresh ownership »): the
+ * only route this write scope opens to a token is that handover (`POST /api/v1/accounts/{id}/handover`, which admits
+ * a person's sign-in on a workstation, checks the administrator's role again before the write and records it in the
+ * audit log). Every other change of an account stays a console write (S2-52); `accounts:read` ([ADMIN_READ_SCOPES])
+ * finds the account by its name.
+ */
+const val ADMIN_HANDOVER_SCOPE = "accounts:write"
+
+/**
+ * What the token of `ostrom login --admin` grants: what the CLI does, the governance writes and their reads, and the
+ * handover of an imported account ([ADMIN_HANDOVER_SCOPE]).
+ */
+val ADMIN_TOKEN_SCOPES: Set<String> = CLI_SCOPES + ADMIN_SCOPES + ADMIN_READ_SCOPES + ADMIN_HANDOVER_SCOPE
+
+/**
+ * The scopes the token of a device sign-in gets once approved, and that the console's approval page lists before the
+ * yes, every one of them: an admin never approves a power the page does not show. [ADMIN_TOKEN_SCOPES] for
+ * `ostrom login --admin` (it asked for [ADMIN_SCOPES]), [CLI_SCOPES] for the ordinary sign-in (it asked for none).
+ *
+ * @param asked The scopes the sign-in asked for.
+ *
+ * @return What its token holds.
+ */
+fun deviceTokenScopes(asked: Set<String>): Set<String> = if (asked.isEmpty()) CLI_SCOPES else ADMIN_TOKEN_SCOPES
 
 /** The scope that changes the caller's notification preferences (`PUT /api/v1/me/notifications`). */
 const val NOTIFICATIONS_WRITE_SCOPE = "notifications:write"
