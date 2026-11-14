@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners.infrastructure
 
+import run.ostrom.server.runners.domain.RunnerDeliverySource
 import run.ostrom.server.runners.domain.RuntimeDriver
 import io.ktor.client.HttpClient
 import kotlinx.io.buffered
@@ -19,6 +20,7 @@ object RuntimeDrivers {
      *
      * @param config The module's configuration.
      * @param registered The driver on the registered runners, which needs the database.
+     * @param delivery The runner image and session image of a new Kubernetes execution.
      * @param readFile Reads a text file (the Kubernetes service-account token).
      *
      * @return The driver; [DisabledRuntimeDriver] when no runtime is configured.
@@ -26,6 +28,7 @@ object RuntimeDrivers {
     fun create(
         config: RunnersConfig,
         registered: () -> RuntimeDriver,
+        delivery: RunnerDeliverySource,
         readFile: (String) -> String = ::readTextFile,
     ): RuntimeDriver =
         when (config.driver) {
@@ -35,7 +38,7 @@ object RuntimeDrivers {
                 client = runtimeHttpClient(config.kubernetes.caFile, KUBERNETES_TIMEOUT_MILLIS),
                 settings = config.kubernetes,
                 serverUrl = config.serverUrl,
-                runnerImage = config.runnerImage,
+                delivery = delivery,
                 token = { readFile(config.kubernetes.tokenFile).trim() },
             )
             RunnersConfig.DriverKind.DOCKER -> DockerRuntimeDriver(

@@ -6,6 +6,8 @@ import run.ostrom.server.runners.domain.ExecutionSpec
 import run.ostrom.server.runners.domain.ExecutionStatus
 import run.ostrom.server.runners.domain.RuntimeDriver
 import run.ostrom.server.runners.domain.RuntimeNames
+import run.ostrom.server.runners.domain.RunnerDelivery
+import run.ostrom.server.runners.domain.RunnerDeliverySource
 import io.ktor.client.HttpClient
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.parameter
@@ -44,7 +46,7 @@ import kotlin.uuid.Uuid
  * @param client The HTTP client, trusting the cluster's CA.
  * @param settings The namespace and the workspace volumes.
  * @param serverUrl The URL the runner reaches the server at.
- * @param runnerImage The session pod's image.
+ * @param delivery The images of the session pod and where the runner image keeps `ostrom`.
  * @param token Reads the service-account token, at every call (the kubelet rotates it).
  */
 @Suppress("TooManyFunctions") // The port's operations plus one builder per Kubernetes object.
@@ -52,7 +54,7 @@ class KubernetesRuntimeDriver(
     private val client: HttpClient,
     private val settings: KubernetesSettings,
     private val serverUrl: String,
-    private val runnerImage: String,
+    private val delivery: RunnerDeliverySource,
     private val token: () -> String,
 ) : RuntimeDriver {
     private val base = settings.apiUrl.trimEnd('/')
@@ -95,7 +97,7 @@ class KubernetesRuntimeDriver(
             }
         }
         create("/api/v1/namespaces/$namespace/secrets", secret)
-        create("/api/v1/namespaces/$namespace/pods", podManifest(spec, name))
+        create("/api/v1/namespaces/$namespace/pods", podManifest(spec, name, delivery.current()))
     }
 
     override suspend fun executionStatus(session: CloudSession): ExecutionStatus {
@@ -150,7 +152,8 @@ class KubernetesRuntimeDriver(
 
     // A manifest reads top to bottom like the YAML it stands for: splitting it would scatter one object.
     @Suppress("LongMethod")
-    private fun podManifest(spec: ExecutionSpec, name: String): JsonObject = buildJsonObject {
+    private fun podManifest(spec: ExecutionSpec, name: String, delivery: RunnerDelivery): JsonObject = buildJsonObject {
+        val image = delivery.sessionImage
         put("apiVersion", "v1")
         put("kind", "Pod")
         putJsonObject("metadata") {
@@ -179,20 +182,23 @@ class KubernetesRuntimeDriver(
                 put("fsGroup", SHARED_GID)
                 putJsonObject("seccompProfile") { put("type", "RuntimeDefault") }
             }
-            // Native sidecars (Kubernetes 1.29+): they start before the runner and stop once the runner has ended.
+            // First the runner image's `ostrom`, copied into the binary volume (TeamCode's delivery); then the native
+            // sidecars (Kubernetes 1.29+): they start before the runner and stop once the runner has ended.
             putJsonArray("initContainers") {
-                add(agentHost())
-                add(checkHost())
+                add(install(delivery))
+                add(agentHost(image))
+                add(checkHost(image))
             }
             putJsonArray("containers") {
                 add(
-                    container("runner", RUNNER_UID) {
-                        putJsonArray("command") { add(JsonPrimitive(RUNNER_BINARY)) }
+                    container("runner", RUNNER_UID, image) {
+                        command(CLOUD_RUNNER)
                         put("env", environment(spec, name))
                         put("resources", resources("50m", "64Mi", "500m", "256Mi", "64Mi"))
                         putJsonArray("volumeMounts") {
                             add(mount("agent-socket", RunnerEnvironment.AGENT_SOCKET_DIRECTORY))
                             add(mount("check-socket", RunnerEnvironment.CHECK_SOCKET_DIRECTORY))
+                            add(binaryMount())
                         }
                     },
                 )
@@ -211,17 +217,30 @@ class KubernetesRuntimeDriver(
                 add(emptyDir("agent-socket", "1Mi", memory = true))
                 add(emptyDir("check-tmp", "1Gi"))
                 add(emptyDir("check-socket", "1Mi"))
+                add(emptyDir(BINARY_VOLUME, BINARY_VOLUME_SIZE))
             }
         }
     }
 
-    /** The agent host: the agent's uid, the workspace and the agent socket, no token. */
-    private fun agentHost(): JsonObject = container("agent", AGENT_UID) {
-        put("restartPolicy", "Always")
-        putJsonArray("command") {
-            add(JsonPrimitive(RUNNER_BINARY))
-            add(JsonPrimitive("agent-host"))
+    /**
+     * The init container: copies `ostrom` out of the runner image into the binary volume, which every other container
+     * mounts read-only. It runs as the runner's uid, so the agent's can never change the copy.
+     */
+    private fun install(delivery: RunnerDelivery): JsonObject =
+        container("ostrom", RUNNER_UID, delivery.runnerImage) {
+            putJsonArray("command") {
+                add(JsonPrimitive("cp"))
+                add(JsonPrimitive(delivery.runnerBinary))
+                add(JsonPrimitive(RunnerDelivery.BINARY))
+            }
+            put("resources", resources("10m", "16Mi", "500m", "64Mi", "64Mi"))
+            putJsonArray("volumeMounts") { add(mount(BINARY_VOLUME, RunnerDelivery.DIRECTORY)) }
         }
+
+    /** The agent host (`ostrom cloud agent-supervisor`): the agent's uid, the workspace, the agent socket, no token. */
+    private fun agentHost(image: String): JsonObject = container("agent", AGENT_UID, image) {
+        put("restartPolicy", "Always")
+        command(CLOUD_AGENT)
         put("workingDir", WORKSPACE)
         putJsonArray("env") {
             add(variable("OSTROM_AGENT_SOCKET", RunnerEnvironment.AGENT_SOCKET))
@@ -232,6 +251,7 @@ class KubernetesRuntimeDriver(
             add(mount("workspace", WORKSPACE))
             add(mount("tmp", "/tmp"))
             add(mount("agent-socket", RunnerEnvironment.AGENT_SOCKET_DIRECTORY))
+            add(binaryMount())
         }
     }
 
@@ -240,12 +260,9 @@ class KubernetesRuntimeDriver(
      * volume the agent's container does not mount; its processes are out of the agent's sight (no shared process
      * namespace).
      */
-    private fun checkHost(): JsonObject = container("checks", AGENT_UID) {
+    private fun checkHost(image: String): JsonObject = container("checks", AGENT_UID, image) {
         put("restartPolicy", "Always")
-        putJsonArray("command") {
-            add(JsonPrimitive(RUNNER_BINARY))
-            add(JsonPrimitive("check-host"))
-        }
+        command(CLOUD_CHECKS)
         put("workingDir", WORKSPACE)
         putJsonArray("env") {
             add(variable("OSTROM_CHECK_HOST_SOCKET", RunnerEnvironment.CHECK_HOST_SOCKET))
@@ -256,7 +273,22 @@ class KubernetesRuntimeDriver(
             add(mount("workspace", WORKSPACE))
             add(mount("check-tmp", "/tmp"))
             add(mount("check-socket", RunnerEnvironment.CHECK_SOCKET_DIRECTORY))
+            add(binaryMount())
         }
+    }
+
+    /** `/opt/ostrom/ostrom cloud <name>`. */
+    private fun JsonObjectBuilder.command(name: String) = putJsonArray("command") {
+        add(JsonPrimitive(RunnerDelivery.BINARY))
+        add(JsonPrimitive("cloud"))
+        add(JsonPrimitive(name))
+    }
+
+    /** The binary volume, read-only. */
+    private fun binaryMount(): JsonObject = buildJsonObject {
+        put("name", BINARY_VOLUME)
+        put("mountPath", RunnerDelivery.DIRECTORY)
+        put("readOnly", true)
     }
 
     private fun emptyDir(name: String, size: String, memory: Boolean = false): JsonObject = buildJsonObject {
@@ -268,18 +300,19 @@ class KubernetesRuntimeDriver(
     }
 
     /** A container of the session pod: its own uid and group, no privilege, a read-only root. */
-    private fun container(name: String, uid: Int, body: JsonObjectBuilder.() -> Unit): JsonObject = buildJsonObject {
-        put("name", name)
-        put("image", runnerImage)
-        putJsonObject("securityContext") {
-            put("runAsUser", uid)
-            put("runAsGroup", uid)
-            put("allowPrivilegeEscalation", false)
-            put("readOnlyRootFilesystem", true)
-            putJsonObject("capabilities") { putJsonArray("drop") { add(JsonPrimitive("ALL")) } }
+    private fun container(name: String, uid: Int, image: String, body: JsonObjectBuilder.() -> Unit): JsonObject =
+        buildJsonObject {
+            put("name", name)
+            put("image", image)
+            putJsonObject("securityContext") {
+                put("runAsUser", uid)
+                put("runAsGroup", uid)
+                put("allowPrivilegeEscalation", false)
+                put("readOnlyRootFilesystem", true)
+                putJsonObject("capabilities") { putJsonArray("drop") { add(JsonPrimitive("ALL")) } }
+            }
+            body()
         }
-        body()
-    }
 
     /**
      * The runner's variables: identifiers as values, the token and the first message read from the execution's
@@ -372,7 +405,14 @@ class KubernetesRuntimeDriver(
         /** The bandwidth of a free plan's pod, enforced by CNIs with the bandwidth plugin. */
         const val RESTRICTED_BANDWIDTH = "20M"
 
-        const val RUNNER_BINARY = "/usr/local/bin/ostrom-runner"
+        /** The hidden commands of `ostrom` the session's containers run. */
+        const val CLOUD_RUNNER = "runner"
+        const val CLOUD_AGENT = "agent-supervisor"
+        const val CLOUD_CHECKS = "check-host"
+
+        /** The volume the init container copies `ostrom` into. */
+        const val BINARY_VOLUME = "ostrom-bin"
+        private const val BINARY_VOLUME_SIZE = "256Mi"
         const val WORKSPACE = "/workspace"
         /** The agent's uid (the image's `node` user), owner of the workspace. */
         const val AGENT_UID = 1000

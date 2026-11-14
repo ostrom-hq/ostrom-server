@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.runners.domain.RunnerDelivery
+import run.ostrom.server.runners.domain.RunnerDeliverySource
 import run.ostrom.server.runners.domain.AgentKind
 import run.ostrom.server.runners.domain.CloudPlan
 import run.ostrom.server.runners.domain.ExecutionSpec
@@ -35,7 +37,7 @@ class KubernetesRuntimeDriverTest {
         api.client,
         settings,
         "http://ostrom-server.ostrom.svc:8080",
-        "img:1",
+        delivery("img:1"),
     ) { "sa-${++tokenReads}" }
     private val session = session().copy(epoch = 4)
     private val hex = session.id.toHexString()
@@ -85,7 +87,7 @@ class KubernetesRuntimeDriverTest {
             api.client,
             settings.copy(storageClass = null, imagePullSecret = null),
             "http://s",
-            "img",
+            delivery("img"),
         ) { "t" }.ensureWorkspace(session)
         assertNull(body(0)["spec"]!!.jsonObject["storageClassName"])
     }
@@ -141,7 +143,7 @@ class KubernetesRuntimeDriverTest {
     fun theSessionPodIsHardened() = runTest {
         driver.startExecution(spec())
         val spec = body(3)["spec"]!!.jsonObject
-        val container = spec["initContainers"]!!.jsonArray[0].jsonObject
+        val container = spec["initContainers"]!!.jsonArray[1].jsonObject
         val claimName = spec["volumes"]!!.jsonArray[0].jsonObject["persistentVolumeClaim"]!!.jsonObject["claimName"]
         assertEquals("ostrom-ws-$hex", claimName!!.jsonPrimitive.content)
         assertEquals(
@@ -176,21 +178,36 @@ class KubernetesRuntimeDriverTest {
         val pod = spec["securityContext"]!!.jsonObject
         assertNull(pod["runAsUser"])
         assertEquals("2000", pod["fsGroup"]!!.jsonPrimitive.content)
-        val (agent, checks) = spec["initContainers"]!!.jsonArray.map { it.jsonObject }
+        val (install, agent, checks) = spec["initContainers"]!!.jsonArray.map { it.jsonObject }
+        // The runner image's `ostrom` is copied first, as the runner's uid, into the volume the others read only.
+        assertEquals("ostrom", install["name"]!!.jsonPrimitive.content)
+        assertEquals("runner:1", install["image"]!!.jsonPrimitive.content)
+        assertNull(install["restartPolicy"])
+        assertEquals(
+            listOf("cp", "/usr/local/bin/ostrom", "/opt/ostrom/ostrom"),
+            install["command"]!!.jsonArray.map { it.jsonPrimitive.content },
+        )
+        assertEquals("img:1", agent["image"]!!.jsonPrimitive.content)
+        assertEquals("img:1", checks["image"]!!.jsonPrimitive.content)
         val runner = spec["containers"]!!.jsonArray.single().jsonObject
         assertEquals("agent", agent["name"]!!.jsonPrimitive.content)
         assertEquals("Always", agent["restartPolicy"]!!.jsonPrimitive.content)
         assertEquals(
-            listOf("/usr/local/bin/ostrom-runner", "agent-host"),
+            listOf("/opt/ostrom/ostrom", "cloud", "agent-supervisor"),
             agent["command"]!!.jsonArray.map { it.jsonPrimitive.content },
         )
         fun uid(container: JsonObject) = container["securityContext"]!!.jsonObject["runAsUser"]!!.jsonPrimitive.content
+        assertEquals("1001", uid(install))
+        assertEquals(
+            listOf("/opt/ostrom/ostrom", "cloud", "runner"),
+            runner["command"]!!.jsonArray.map { it.jsonPrimitive.content },
+        )
         assertEquals("1000", uid(agent))
         assertEquals("1001", uid(runner))
         assertEquals("checks", checks["name"]!!.jsonPrimitive.content)
         assertEquals("Always", checks["restartPolicy"]!!.jsonPrimitive.content)
         assertEquals(
-            listOf("/usr/local/bin/ostrom-runner", "check-host"),
+            listOf("/opt/ostrom/ostrom", "cloud", "check-host"),
             checks["command"]!!.jsonArray.map { it.jsonPrimitive.content },
         )
         assertEquals("1000", uid(checks))
@@ -203,11 +220,16 @@ class KubernetesRuntimeDriverTest {
         fun mounts(container: JsonObject) =
             container["volumeMounts"]!!.jsonArray.map { it.jsonObject["name"]!!.jsonPrimitive.content }
         // The agent never mounts the check socket, the check host never the agent socket.
-        assertEquals(listOf("workspace", "tmp", "agent-socket"), mounts(agent))
-        assertEquals(listOf("workspace", "check-tmp", "check-socket"), mounts(checks))
-        assertEquals(listOf("agent-socket", "check-socket"), mounts(runner))
+        assertEquals(listOf("workspace", "tmp", "agent-socket", "ostrom-bin"), mounts(agent))
+        assertEquals(listOf("workspace", "check-tmp", "check-socket", "ostrom-bin"), mounts(checks))
+        assertEquals(listOf("agent-socket", "check-socket", "ostrom-bin"), mounts(runner))
+        assertEquals(listOf("ostrom-bin"), mounts(install))
+        // Only the init container writes the binary.
+        fun binary(container: JsonObject) = container["volumeMounts"]!!.jsonArray.map { it.jsonObject }
+            .single { it["name"]!!.jsonPrimitive.content == "ostrom-bin" }["readOnly"]?.jsonPrimitive?.content
+        assertEquals(listOf("true", "true", "true", null), listOf(agent, checks, runner, install).map(::binary))
         assertEquals(
-            listOf("workspace", "tmp", "agent-socket", "check-tmp", "check-socket"),
+            listOf("workspace", "tmp", "agent-socket", "check-tmp", "check-socket", "ostrom-bin"),
             spec["volumes"]!!.jsonArray.map { it.jsonObject["name"]!!.jsonPrimitive.content },
         )
         // The agent's gh configuration lives with the sockets, in memory only.
@@ -241,7 +263,7 @@ class KubernetesRuntimeDriverTest {
             api.client,
             settings.copy(priorityClass = "ostrom-low", imagePullSecret = null),
             "http://s",
-            "img:1",
+            delivery("img:1"),
         ) { "t" }
         low.startExecution(spec(repository = null))
         assertEquals("ostrom-low", body(3)["spec"]!!.jsonObject["priorityClassName"]!!.jsonPrimitive.content)
@@ -269,7 +291,7 @@ class KubernetesRuntimeDriverTest {
         assertEquals("Kubernetes API: create Pod answered 403.", error.message)
 
         val policies = "/apis/networking.k8s.io/v1/namespaces/ostrom/networkpolicies"
-        val other = KubernetesRuntimeDriver(api.client, settings, "http://s", "img") { "t" }
+        val other = KubernetesRuntimeDriver(api.client, settings, "http://s", delivery("img")) { "t" }
         api.on("POST", policies, HttpStatusCode.Conflict to "{}")
         api.on("GET", "$policies/ostrom-sessions-restricted", HttpStatusCode.Forbidden to "{}")
         assertFailsWith<KubernetesApiException> { other.startExecution(spec()) }
@@ -356,3 +378,7 @@ class KubernetesRuntimeDriverTest {
         assertNull(open["spec"]!!.jsonObject["egress"]!!.jsonArray[2].jsonObject["ports"])
     }
 }
+
+/** The runner image `runner:1`, its binary where the CLI's image keeps it, and [image] for the session's containers. */
+private fun delivery(image: String) =
+    RunnerDeliverySource { RunnerDelivery("runner:1", RunnerDelivery.DEFAULT_RUNNER_BINARY, image) }

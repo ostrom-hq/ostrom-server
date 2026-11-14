@@ -13,6 +13,8 @@ kotlin {
             implementation(project(":modules:automations"))
             // The plans and the hours counter of billing ([GetPlanLimitsUseCase], [RecordAgentUsageUseCase]).
             implementation(project(":modules:billing"))
+            // The console's cloud runtime: the runner image a session's init container copies `ostrom` from.
+            implementation(project(":modules:cloud"))
             implementation(libs.cryptography.core)
             implementation(libs.ktor.client.core)
             // The hops of a terminal to the replica holding its runner (TerminalForwarder).

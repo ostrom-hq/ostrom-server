@@ -76,7 +76,7 @@ class DockerExecutionPlan(
     private fun agentManifest(spec: ExecutionSpec): JsonObject = container(spec, Role.AGENT, MEMORY_BYTES) {
         // The whole command as the entrypoint: the image's own is the runner, which would take these as arguments.
         putJsonArray("Entrypoint") {
-            add(JsonPrimitive(KubernetesRuntimeDriver.RUNNER_BINARY))
+            add(JsonPrimitive(RUNNER_BINARY))
             add(JsonPrimitive("agent-host"))
         }
         put("WorkingDir", KubernetesRuntimeDriver.WORKSPACE)
@@ -89,7 +89,7 @@ class DockerExecutionPlan(
     /** The check host's container: the agent's uid, the workspace and the check socket, no token. */
     private fun checkManifest(spec: ExecutionSpec): JsonObject = container(spec, Role.CHECKS, CHECK_MEMORY_BYTES) {
         putJsonArray("Entrypoint") {
-            add(JsonPrimitive(KubernetesRuntimeDriver.RUNNER_BINARY))
+            add(JsonPrimitive(RUNNER_BINARY))
             add(JsonPrimitive("check-host"))
         }
         put("WorkingDir", KubernetesRuntimeDriver.WORKSPACE)
@@ -102,7 +102,7 @@ class DockerExecutionPlan(
     /** The runner's container: its own uid, the shared group for the sockets, the token, and no workspace. */
     private fun runnerManifest(spec: ExecutionSpec, secrets: Boolean): JsonObject =
         container(spec, Role.RUNNER, RUNNER_MEMORY_BYTES) {
-            putJsonArray("Entrypoint") { add(JsonPrimitive(KubernetesRuntimeDriver.RUNNER_BINARY)) }
+            putJsonArray("Entrypoint") { add(JsonPrimitive(RUNNER_BINARY)) }
             putJsonArray("Env") {
                 val environment = RunnerEnvironment.of(spec, serverUrl)
                 (if (secrets) environment + RunnerEnvironment.secrets(spec) else environment)
@@ -179,6 +179,12 @@ class DockerExecutionPlan(
 
         /** The volume of a session's agent socket. */
         fun socketVolume(sessionId: Uuid): String = "${RuntimeNames.workspace(sessionId)}-socket"
+
+        /**
+         * The runner of the session image on Docker and registered runners, until they move to the init container's
+         * `ostrom cloud …` as Kubernetes did.
+         */
+        const val RUNNER_BINARY = "/usr/local/bin/ostrom-runner"
     }
 }
 
