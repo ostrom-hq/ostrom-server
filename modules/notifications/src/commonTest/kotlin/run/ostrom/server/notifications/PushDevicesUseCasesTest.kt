@@ -28,12 +28,13 @@ class PushDevicesUseCasesTest {
 
     @Test
     fun aPhoneIsRegisteredWithItsTrimmedTokenItsLanguageAndTheTimeAndItsMemberKeepsTheirLatestTen() = runTest {
-        val registration = PushRegistration("  ExponentPushToken[abcdefgh-12_3]  ", "expo", "ios", " fr-FR ")
+        val key = phoneKey()
+        val registration = PushRegistration("  $FCM_TOKEN  ", "fcm", "ios", " fr-FR ", " $key ")
         val credential = PushCredential(Uuid.random(), Uuid.random(), browser = false)
         val device = register(org, member, registration, credential)
 
-        assertEquals("ExponentPushToken[abcdefgh-12_3]", device.pushToken)
-        assertEquals(Triple("expo", "ios", "fr-FR"), Triple(device.provider, device.platform, device.locale))
+        assertEquals(FCM_TOKEN to key, device.pushToken to device.publicKey)
+        assertEquals(Triple("fcm", "ios", "fr-FR"), Triple(device.provider, device.platform, device.locale))
         assertEquals(org to member, device.orgId to device.memberId)
         assertEquals(clock.now to clock.now, device.createdAt to device.seenAt)
         assertEquals(credential, device.credential, "The phone is notified through the credential it registered with")
@@ -44,8 +45,8 @@ class PushDevicesUseCasesTest {
 
     @Test
     fun aPhoneWithoutALanguageOrWithABlankOneIsRegisteredWithNone() = runTest {
-        val none = register(org, member, PushRegistration("ExpoPushToken[abcdefgh]", "expo", "android", null), null)
-        val blank = register(org, member, PushRegistration("ExpoPushToken[ijklmnop]", "expo", "android", "  "), null)
+        val none = register(org, member, phone("$FCM_TOKEN-1", platform = "android"), null)
+        val blank = register(org, member, phone("$FCM_TOKEN-2", platform = "android", locale = "  "), null)
 
         assertNull(none.locale)
         assertNull(blank.locale)
@@ -53,25 +54,14 @@ class PushDevicesUseCasesTest {
     }
 
     @Test
-    fun anFcmPhoneIsRegisteredWithItsTokenAndItsTrimmedPublicKey() = runTest {
-        val key = phoneKey()
-        val registration = PushRegistration(" $FCM_TOKEN ", "fcm", "android", null, " $key ")
-        val device = register(org, member, registration, null)
-
-        assertEquals(FCM_TOKEN to key, device.pushToken to device.publicKey)
-        assertEquals("fcm" to "android", device.provider to device.platform)
-    }
-
-    @Test
-    fun anythingButAnFcmTokenWithItsKeyOrAnExpoTokenOfAnIosOrAndroidPhoneInALanguageIsRefused() = runTest {
+    fun anythingButTheFcmTokenAndKeyOfAnIosOrAndroidPhoneInALanguageIsRefused() = runTest {
         val key = phoneKey()
         val refused = listOf(
-            PushRegistration("not-a-push-token", "expo", "ios", null),
-            PushRegistration("ExponentPushToken[short]", "expo", "ios", null),
-            PushRegistration("ExponentPushToken[abcdefgh]", "expo", "ios", null, key),
-            PushRegistration("ExponentPushToken[abcdefgh]", "expo", "web", null),
-            PushRegistration("ExponentPushToken[abcdefgh]", "expo", "ios", "not a language"),
-            PushRegistration("ExponentPushToken[abcdefgh]", "apns", "ios", null),
+            // An older app's Expo token, with or without a key: refused, the app registers FCM.
+            PushRegistration("ExponentPushToken[abcdefgh]", "expo", "ios", null),
+            PushRegistration(FCM_TOKEN, "expo", "ios", null, key),
+            PushRegistration(FCM_TOKEN, "apns", "ios", null, key),
+            PushRegistration(FCM_TOKEN, "fcm", "ios", "not a language", key),
             PushRegistration(FCM_TOKEN, "fcm", "ios", null),
             PushRegistration(FCM_TOKEN, "fcm", "ios", null, "  "),
             PushRegistration(FCM_TOKEN, "fcm", "ios", null, "bm90IGEga2V5"),
@@ -89,7 +79,7 @@ class PushDevicesUseCasesTest {
 
     @Test
     fun onlyTheMembersOwnPhoneIsRemovedAndOnlyOnce() = runTest {
-        val device = register(org, member, PushRegistration("ExponentPushToken[abcdefgh]", "expo", "ios", null), null)
+        val device = register(org, member, phone(FCM_TOKEN), null)
 
         assertFailsWith<PushDeviceNotFoundException> { remove(org, Uuid.random(), device.id) }
         assertFailsWith<PushDeviceNotFoundException> { remove(Uuid.random(), member, device.id) }
@@ -101,16 +91,18 @@ class PushDevicesUseCasesTest {
     @Test
     fun aDeletedOrganizationsPhonesAreRemovedAtOnceAndAgainAtThePurge() = runTest {
         val listener = PushDevicesOrgDeletionListener(repository)
-        val other =
-            register(Uuid.random(), member, PushRegistration("ExpoPushToken[otherorg]", "expo", "ios", null), null)
-        register(org, member, PushRegistration("ExpoPushToken[deleted1]", "expo", "ios", null), null)
+        val other = register(Uuid.random(), member, phone("$FCM_TOKEN-other"), null)
+        register(org, member, phone("$FCM_TOKEN-deleted-1"), null)
 
         listener.deleted(org)
         assertEquals(listOf(other), repository.devices)
-        register(org, member, PushRegistration("ExpoPushToken[deleted2]", "expo", "ios", null), null)
+        register(org, member, phone("$FCM_TOKEN-deleted-2"), null)
         listener.purge(org)
         assertEquals(listOf(other), repository.devices)
     }
+
+    private suspend fun phone(token: String, platform: String = "ios", locale: String? = null) =
+        PushRegistration(token, "fcm", platform, locale, phoneKey())
 
     private companion object {
         const val FCM_TOKEN = "dGVzdC1mY20tdG9rZW4:APA91bH-0123456789_abcdef.ghij"

@@ -125,12 +125,12 @@ class PushDevicesPostgresTest {
     @Test
     fun thePhoneRegistersWithTheAppsTokenWithoutItsPushTokenComingBackThenRemovesItOnce() = serverTest(modules) {
         val mia = it.person("mia")
-        val made = it.register(mia.phone, PushDeviceRequest(PUSH_TOKEN, "expo", "ios", "fr-FR"))
+        val made = it.register(mia.phone, PushDeviceRequest(FCM_TOKEN, "fcm", "ios", "fr-FR", phoneKey()))
 
         assertEquals(HttpStatusCode.Created, made.status, made.bodyAsText())
-        assertFalse(made.bodyAsText().contains(PUSH_TOKEN), "The push token stays on the server")
+        assertFalse(made.bodyAsText().contains(FCM_TOKEN), "The push token stays on the server")
         val device = made.body<PushDeviceDto>()
-        assertEquals(PushDeviceDto(device.id, "expo", "ios", "fr-FR", device.createdAt), device)
+        assertEquals(PushDeviceDto(device.id, "fcm", "ios", "fr-FR", device.createdAt), device)
         assertTrue(Instant.parse(device.createdAt) - now in (-1).minutes..1.minutes, "Registered now")
         assertEquals(HttpStatusCode.NoContent, it.remove(mia.phone, device.id).status)
         assertEquals(HttpStatusCode.NotFound, it.remove(mia.phone, device.id).status, "Removed once")
@@ -166,7 +166,8 @@ class PushDevicesPostgresTest {
     fun anotherOrganizationNeitherRemovesNorSeesThePhone() = serverTest(modules) {
         val mia = it.person("mia")
         val tom = it.person("tom")
-        val id = it.register(mia.phone, PushDeviceRequest(PUSH_TOKEN, "expo", "android")).body<PushDeviceDto>().id
+        val phone = PushDeviceRequest(FCM_TOKEN, "fcm", "android", publicKey = phoneKey())
+        val id = it.register(mia.phone, phone).body<PushDeviceDto>().id
 
         assertEquals(HttpStatusCode.NotFound, it.remove(tom.phone, id).status, "Not a phone of tom's organization")
         assertEquals(HttpStatusCode.NotFound, it.remove(tom.phone, id, mia.orgId).status, "Not tom's organization")
@@ -179,14 +180,16 @@ class PushDevicesPostgresTest {
     @Test
     fun onlyAPersonsPhoneOrBrowserRegistersAndNobodyWithoutACredential() = serverTest(modules) {
         val mia = it.person("mia")
-        val phone = PushDeviceRequest(PUSH_TOKEN, "expo", "ios")
+        val phone = PushDeviceRequest(FCM_TOKEN, "fcm", "ios", publicKey = phoneKey())
 
         assertEquals(HttpStatusCode.Unauthorized, it.register(null, phone).status)
         assertEquals(HttpStatusCode.Unauthorized, it.remove(null, Uuid.random().toString()).status)
         assertEquals(HttpStatusCode.Forbidden, it.register(mia.cli, phone).status, "A CLI token never registers")
         assertEquals(HttpStatusCode.Forbidden, it.remove(mia.cli, Uuid.random().toString()).status)
         assertEquals(HttpStatusCode.BadRequest, it.register(mia.phone, phone.copy(provider = "apns")).status)
-        val noToken = """{"provider":"expo","platform":"ios"}"""
+        val expo = PushDeviceRequest("ExponentPushToken[0123456789abcdefABCDEF]", "expo", "ios")
+        assertEquals(HttpStatusCode.BadRequest, it.register(mia.phone, expo).status, "An older app's Expo token")
+        val noToken = """{"provider":"fcm","platform":"ios"}"""
         assertEquals(HttpStatusCode.BadRequest, it.register(mia.phone, noToken).status, "A body without its token")
         assertEquals(HttpStatusCode.NotFound, it.remove(mia.phone, "not-a-device").status)
         assertEquals(0, it.phonesSeen(mia.orgId))
@@ -198,7 +201,7 @@ class PushDevicesPostgresTest {
         val second = Org(Uuid.random(), "mia-second", "mia second", null, null, now)
         val membership = Member(Uuid.random(), second.id, mia.userId, OrgRole.MEMBER, now)
         it.koin.get<OrgsRepository>().create(second, membership) { false }
-        val phone = PushDeviceRequest(PUSH_TOKEN, "expo", "ios")
+        val phone = PushDeviceRequest(FCM_TOKEN, "fcm", "ios", publicKey = phoneKey())
 
         assertEquals(HttpStatusCode.Conflict, it.register(mia.phone, phone).status, "Which organization?")
         assertEquals(HttpStatusCode.Created, it.register(mia.phone, phone, second.id).status)
@@ -213,18 +216,18 @@ class PushDevicesPostgresTest {
         val tom = it.person("tom")
         val phones = it.koin.get<PushDevicesRepository>()
         fun phone(token: String, at: Int, member: Uuid = mia.memberId) = PushDevice(
-            Uuid.random(), mia.orgId, member, token, "expo", "ios", "fr", now + at.seconds, now + at.seconds,
+            Uuid.random(), mia.orgId, member, token, "fcm", "ios", "fr", now + at.seconds, now + at.seconds,
         )
-        val first = phones.save(phone("ExpoPushToken[first-phone]", 0), 10)
-        val again = phones.save(phone("ExpoPushToken[first-phone]", 1, tom.memberId).copy(locale = null), 10)
+        val first = phones.save(phone("fcm-token-first-phone", 0), 10)
+        val again = phones.save(phone("fcm-token-first-phone", 1, tom.memberId).copy(locale = null), 10)
 
         assertEquals(first.id to first.createdAt, again.id to again.createdAt, "The same device")
         assertEquals(tom.memberId to now + 1.seconds, again.memberId to again.seenAt, "Signed in again by tom")
         assertNull(again.locale)
-        val oldest = phones.save(phone("ExpoPushToken[phone-number-2]", 2), 10)
-        for (at in 3..11) phones.save(phone("ExpoPushToken[phone-number-$at]", at), 10)
+        val oldest = phones.save(phone("fcm-token-phone-number-2", 2), 10)
+        for (at in 3..11) phones.save(phone("fcm-token-phone-number-$at", at), 10)
         assertEquals(11, it.phonesSeen(mia.orgId), "Tom's phone and mia's ten")
-        phones.save(phone("ExpoPushToken[phone-number-12]", 12), 10)
+        phones.save(phone("fcm-token-phone-number-12", 12), 10)
         assertEquals(11, it.phonesSeen(mia.orgId), "Still tom's phone and mia's ten")
         assertFalse(phones.delete(mia.orgId, mia.memberId, oldest.id), "Mia's oldest phone made room")
         assertTrue(phones.delete(mia.orgId, tom.memberId, first.id), "Tom's phone is untouched")
@@ -233,7 +236,6 @@ class PushDevicesPostgresTest {
     private companion object {
         const val CODE = "phone-code-0123456789abcdef0123456789abcdef-"
         const val VERIFIER = "phone-verifier-0123456789abcdef0123456789abcdef0123"
-        const val PUSH_TOKEN = "ExponentPushToken[0123456789abcdefABCDEF]"
         const val FCM_TOKEN = "fcm-registration-token:APA91b0123456789abcdefABCDEF"
     }
 }

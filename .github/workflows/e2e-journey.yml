@@ -269,8 +269,8 @@ jobs:
           # scenarios' addresses come through the trusted local proxy, Stripe is stripe-mock, and the providers' token
           # endpoint and APIs behind the gateway are the fake provider a scenario starts on port 4620 (BUDGET-002,
           # SHARE-*), GitHub and the GitHub App are the fakes the scenarios start on 4610 and 4700, and the read limits
-          # (#181) are those of a bench, wired as in ostrom-e2e's ci.yml. Expo's push service is the fake one a scenario
-          # starts on port 4621 (NOTIFY-*): the approvers' pushes are read there, never sent to a phone. Cloud sessions
+          # (#181) are those of a bench, wired as in ostrom-e2e's ci.yml. The instance has no push provider (Admin →
+          # Settings → push is off): phones register and nothing is sent to FCM. Cloud sessions
           # are open to every organization on the registered driver, as in ostrom-e2e's ci.yml: no runner takes one
           # here, so a workflow run's agent node waits on its session until E2E-PARC-022 ends it.
           cat > "$RUNNER_TEMP/server.env" <<'ENV'
@@ -304,7 +304,6 @@ jobs:
           OSTROM_GITHUB_APP_CLIENT_SECRET=fake-client-secret
           OSTROM_GITHUB_WEBHOOK_SECRET=whsec_github_e2e
           OSTROM_ARTIFACTS_CONTENT_ORIGIN=http://localhost:4601
-          OSTROM_EXPO_PUSH_URL=http://127.0.0.1:4621/--/api/v2/push/send
           OSTROM_RUNNERS_DRIVER=registered
           OSTROM_RUNNERS_SERVER_URL=http://127.0.0.1:4600
           OSTROM_RUNNERS_ALLOWED_ORGS=*
@@ -351,8 +350,6 @@ jobs:
           OSTROM_E2E_TEAMCODE_PASSWORD: teamcode-ro
           OSTROM_E2E_TEAMCODE_KEY_FILE: ${{ env.TEAMCODE == 'true' && format('{0}/helm/compose/demo/teamcode/key.txt', github.workspace) || '' }}
           OSTROM_E2E_DATABASE_ADMIN_URL: postgresql://ostrom:ostrom@localhost:5432/ostrom
-          # The fake Expo push service the notification scenarios start, where the server's pushes go (step above).
-          OSTROM_E2E_FAKE_EXPO_PORT: "4621"
           # E2E-SWEEP's contract (step « The server image »).
           OSTROM_E2E_SERVED_ROUTES: ${{ runner.temp }}/served-routes.txt
           OSTROM_E2E_OPENAPI: ${{ runner.temp }}/openapi.json

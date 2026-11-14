@@ -16,7 +16,7 @@ kotlin {
             implementation(project(":modules:orgs"))
             // The gate channel the gates module tells of each request.
             implementation(project(":modules:gates"))
-            // Outbound HTTPS to FCM, Google's token endpoint and Expo's push service: the app's CIO client.
+            // Outbound HTTPS to FCM and Google's token endpoint: the app's CIO client.
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.engine.defaults)
             // The pushes' end-to-end encryption (ECDH P-256, HKDF, AES-GCM) and the service account's RS256 assertion.

@@ -62,7 +62,7 @@ class InMemoryPushDevicesRepository : PushDevicesRepository {
  * A phone of a test.
  *
  * @param token Its push token.
- * @param provider `expo` or `fcm`.
+ * @param provider `fcm` (`expo` for an older app's phone).
  * @param platform `ios` or `android`.
  * @param publicKey Its public key, for `fcm`.
  *
@@ -70,7 +70,7 @@ class InMemoryPushDevicesRepository : PushDevicesRepository {
  */
 fun testPhone(
     token: String,
-    provider: String = "expo",
+    provider: String = "fcm",
     platform: String = "ios",
     publicKey: String? = null,
 ): PushDevice = PushDevice(
@@ -98,7 +98,7 @@ class RecordingPushSender(var failures: Int = 0) : PushSender {
         calls += messages
         if (failures > 0) {
             failures--
-            throw PushNotSentException("Expo refused (503).")
+            throw PushNotSentException("FCM unavailable (503).")
         }
         delivered.send(messages)
     }

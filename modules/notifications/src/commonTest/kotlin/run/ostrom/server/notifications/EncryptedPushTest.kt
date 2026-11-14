@@ -12,7 +12,6 @@ import run.ostrom.server.notifications.domain.FcmSender
 import run.ostrom.server.notifications.domain.FirebaseServiceAccount
 import run.ostrom.server.notifications.domain.PROVIDER_FIELD
 import run.ostrom.server.notifications.domain.PUSH_SETTINGS
-import run.ostrom.server.notifications.domain.ProviderPushSender
 import run.ostrom.server.notifications.domain.PushDevice
 import run.ostrom.server.notifications.domain.PushEncryption
 import run.ostrom.server.notifications.domain.PushMessage
@@ -255,22 +254,6 @@ class EncryptedPushTest {
             sender(Settings(firebase), fcm, InMemoryPushDevicesRepository()).send(listOf(approval(phone("t"))))
         }
         assertEquals("timeout", late.message)
-    }
-
-    @Test
-    fun eachPhoneGoesToItsOwnProvider() = runTest {
-        val expo = RecordingPushSender()
-        val fcm = RecordingPushSender()
-        val sender = ProviderPushSender(expo, fcm)
-        val legacy = approval(testPhone("ExponentPushToken[old-phone]"))
-        val encrypted = approval(phone("fcm-token-1"))
-
-        sender.send(listOf(legacy, encrypted))
-        sender.send(listOf(legacy))
-        sender.send(listOf(encrypted))
-
-        assertEquals(listOf(listOf(legacy), listOf(legacy)), expo.calls)
-        assertEquals(listOf(listOf(encrypted), listOf(encrypted)), fcm.calls)
     }
 
     @Test

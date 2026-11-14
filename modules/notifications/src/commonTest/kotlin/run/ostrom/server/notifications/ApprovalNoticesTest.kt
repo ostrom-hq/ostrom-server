@@ -18,7 +18,7 @@ class ApprovalNoticesTest {
     private val org = Uuid.random()
 
     private fun phone(token: String) = PushDevice(
-        Uuid.random(), org, Uuid.random(), token, "expo", "ios", null, Instant.DISTANT_PAST, Instant.DISTANT_PAST,
+        Uuid.random(), org, Uuid.random(), token, "fcm", "ios", null, Instant.DISTANT_PAST, Instant.DISTANT_PAST,
     )
 
     @Test
@@ -26,9 +26,9 @@ class ApprovalNoticesTest {
         val gate = sampleGate(org, askedBy = listOf("ana", "eli"))
         val request = sampleRequest(gate, "bob")
 
-        val push = notices.push(request, phone("ExponentPushToken[bob-phone-1]"))
+        val push = notices.push(request, phone("fcm-token-bob-phone-1"))
 
-        assertEquals("ExponentPushToken[bob-phone-1]", push.to)
+        assertEquals("fcm-token-bob-phone-1", push.to)
         assertEquals(PUSH_TITLE, push.title)
         assertEquals(PUSH_BODY, push.body)
         val shown = push.title + push.body

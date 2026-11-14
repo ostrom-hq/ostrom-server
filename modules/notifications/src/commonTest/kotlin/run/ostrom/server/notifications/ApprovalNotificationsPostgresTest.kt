@@ -130,7 +130,7 @@ class ApprovalNotificationsPostgresTest {
             bearerAuth(token)
             header(ORG_HEADER, org.toString())
             contentType(ContentType.Application.Json)
-            setBody(PushDeviceRequest(pushToken, "expo", "ios"))
+            setBody(PushDeviceRequest(pushToken, "fcm", "ios", publicKey = phoneKey()))
         }
         assertEquals(HttpStatusCode.Created, made.status, made.bodyAsText())
         return made.body<PushDeviceDto>().id
@@ -279,10 +279,10 @@ class ApprovalNotificationsPostgresTest {
         const val COMMIT = "0123456789abcdef0123456789abcdef01234567"
         const val CODE = "phone-code-0123456789abcdef0123456789abcdef-"
         const val VERIFIER = "phone-verifier-0123456789abcdef0123456789abcdef0123"
-        const val PHONE_A = "ExponentPushToken[bob-phone-org-a]"
-        const val PHONE_OTHER_ORG = "ExponentPushToken[bob-phone-org-b]"
-        const val PHONE_SIGNED_OUT = "ExponentPushToken[bob-phone-signed-out]"
-        const val PHONE_REVOKED = "ExponentPushToken[bob-phone-revoked]"
-        const val PHONE_LEGACY = "ExponentPushToken[bob-phone-legacy]"
+        const val PHONE_A = "fcm-token-bob-phone-org-a"
+        const val PHONE_OTHER_ORG = "fcm-token-bob-phone-org-b"
+        const val PHONE_SIGNED_OUT = "fcm-token-bob-phone-signed-out"
+        const val PHONE_REVOKED = "fcm-token-bob-phone-revoked"
+        const val PHONE_LEGACY = "fcm-token-bob-phone-legacy"
     }
 }

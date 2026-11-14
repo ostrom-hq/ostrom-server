@@ -24,7 +24,7 @@ import kotlin.uuid.Uuid
 
 class NotificationOutboxTest {
     private val gate = Uuid.parse("00000000-0000-0000-0000-0000000000a1")
-    private val token = "ExponentPushToken[secret-token-1]"
+    private val token = "fcm-token-secret-token-1"
     private val message =
         PushMessage(testPhone(token), "ana asks for your yes", "Push to main", mapOf("kind" to "approval"))
     private val mail = Mail("bob@example.com", "ana asks for your yes", "<p>hi</p>", "hi")
@@ -77,7 +77,7 @@ class NotificationOutboxTest {
                 "gate_id" to gate.toString(),
                 "attempt" to 1,
                 "error" to "PushNotSentException",
-                "reason" to "Expo refused (503).",
+                "reason" to "FCM unavailable (503).",
                 "retry_in" to "5s",
             ),
             warnings.first().third,

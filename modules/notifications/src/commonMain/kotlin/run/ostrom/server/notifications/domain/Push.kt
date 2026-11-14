@@ -213,20 +213,6 @@ class EncryptedPushSender(
     }
 }
 
-/**
- * Sends each phone's push through its own provider: `fcm` phones to [fcm], `expo` phones (deprecated) to [expo].
- *
- * @param expo Expo's push service.
- * @param fcm The encrypted pushes.
- */
-class ProviderPushSender(private val expo: PushSender, private val fcm: PushSender) : PushSender {
-    override suspend fun send(messages: List<PushMessage>) {
-        val (encrypted, legacy) = messages.partition { it.device.provider == FCM }
-        if (legacy.isNotEmpty()) expo.send(legacy)
-        if (encrypted.isNotEmpty()) fcm.send(encrypted)
-    }
-}
-
 // The payload's JSON: `v` written, an absent approvalId left out.
 private val PAYLOAD_JSON = Json {
     encodeDefaults = true
