@@ -247,12 +247,14 @@ class EventsPostgresTest {
         }
         server.client.prepareGet("/api/v1/events") {
             bearerAuth("admin-a")
-            header("Last-Event-ID", "3")
+            header("Last-Event-ID", "1")
         }.execute { response ->
             val stream = response.bodyAsChannel()
             withTimeout(30.seconds) {
                 stream.frame()
-                assertEquals("id: 4", stream.frame().first(), "An admin resumes after its last event, its own")
+                // TeamCode #238: their own events only, Mia's 1 and 4 never.
+                assertEquals("id: 2", stream.frame().first(), "An admin resumes after its cursor, with its own")
+                assertEquals("id: 3", stream.frame().first())
             }
         }
     }
