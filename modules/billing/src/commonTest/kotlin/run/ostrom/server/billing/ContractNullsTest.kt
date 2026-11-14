@@ -20,7 +20,7 @@ class ContractNullsTest {
 
     private val limits = PlanLimitsResponse(
         null,
-        null,
+        0,
         null,
         sso = false,
         policies = false,
@@ -39,7 +39,7 @@ class ContractNullsTest {
         val written = OstromJson.encodeToJsonElement(BillingOverviewResponse.serializer(), overview).jsonObject
         written.nulls("interval", "status", "paymentIssue")
         written.getValue("limits").jsonObject
-            .nulls("maxPeople", "maxConcurrentCloudAgents", "agentHoursPerPeriod", "receiptRetentionDays")
+            .nulls("maxPeople", "agentHoursPerPeriod", "receiptRetentionDays")
         written.getValue("usage").jsonObject.nulls("percentOfHours")
         val issue = PaymentIssueResponse("payment_failed", null, "2026-11-02")
         OstromJson.encodeToJsonElement(PaymentIssueResponse.serializer(), issue).jsonObject.nulls("hostedInvoiceUrl")

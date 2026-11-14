@@ -75,13 +75,13 @@ data class PlanRequest(val plan: String, val interval: String)
 @Serializable
 data class RedirectResponse(val url: String)
 
-/** The limits of the plan in force; null means unlimited. */
+/** The limits of the plan in force; null means unlimited, and so does a [maxConcurrentCloudAgents] of 0. */
 @OptIn(ExperimentalSerializationApi::class)
 @KeepGeneratedSerializer
 @Serializable(with = PlanLimitsResponse.Answer::class)
 data class PlanLimitsResponse(
     val maxPeople: Int?,
-    val maxConcurrentCloudAgents: Int?,
+    val maxConcurrentCloudAgents: Int,
     val agentHoursPerPeriod: Int?,
     val sso: Boolean,
     val policies: Boolean,
@@ -91,7 +91,6 @@ data class PlanLimitsResponse(
     object Answer : NullsKept<PlanLimitsResponse>(
         generatedSerializer(),
         "maxPeople",
-        "maxConcurrentCloudAgents",
         "agentHoursPerPeriod",
         "receiptRetentionDays",
     )

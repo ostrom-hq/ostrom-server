@@ -56,7 +56,8 @@ enum class BillingInterval(val key: String) {
  * What an organization may use. A null bound means unlimited.
  *
  * @property maxPeople The members the organization may have.
- * @property maxConcurrentCloudAgents The cloud agents that may run at the same time.
+ * @property maxConcurrentCloudAgents The cloud agents that may run at the same time; [UNLIMITED_CLOUD_AGENTS] (0), the
+ *   value of every plan, for no limit, as TeamCode's `maxConcurrent`.
  * @property agentHoursPerPeriod The cloud agent hours of a billing period, pooled across the organization.
  * @property sso Whether single sign-on (OIDC, SAML) may be configured.
  * @property policies Whether organization policies may be configured.
@@ -64,31 +65,33 @@ enum class BillingInterval(val key: String) {
  */
 data class PlanLimits(
     val maxPeople: Int?,
-    val maxConcurrentCloudAgents: Int?,
+    val maxConcurrentCloudAgents: Int,
     val agentHoursPerPeriod: Int?,
     val sso: Boolean,
     val policies: Boolean,
     val receiptRetentionDays: Int?,
 )
 
-// The grid decided on 30/10/2026 (`.coord/JOURNAL.md` 02:25): Free is 5 people, 5 cloud agents at once and 300 agent
-// hours; paid plans grow with the people billed.
+/** [PlanLimits.maxConcurrentCloudAgents] without a limit: 0, as TeamCode's concurrency settings. */
+const val UNLIMITED_CLOUD_AGENTS: Int = 0
+
+// The grid decided on 30/10/2026 (`.coord/JOURNAL.md` 02:25): Free is 5 people and 300 agent hours; paid plans grow
+// with the people billed. No plan caps the cloud agents running at once (Nathan, 14/11/2026, as TeamCode): the
+// cluster's `maxRunningPods` and the organization's per-member cloud settings bound them.
 private const val FREE_PEOPLE = 5
-private const val FREE_AGENTS = 5
 private const val FREE_HOURS = 300
 private const val FREE_RETENTION_DAYS = 30
-private const val AGENTS_PER_PERSON = 5
 private const val TEAM_HOURS_PER_PERSON = 100
 private const val TEAM_RETENTION_DAYS = 90
-private const val BUSINESS_MIN_AGENTS = 10
 private const val BUSINESS_MIN_HOURS = 600
 private const val BUSINESS_HOURS_PER_PERSON = 150
 private const val BUSINESS_RETENTION_DAYS = 365
 
 /**
  * The limits of each plan, in one place so that a pricing change is one line. Free is Lyes's decision of 30/10/2026
- * (5 people, 5 cloud agents, 300 hours, BYOK). The paid amounts of agents and hours are not decided yet: they follow
- * the study's recommendation (100 pooled hours per paid person), recorded in `.coord/QUESTIONS.md`.
+ * (5 people, 300 hours, BYOK); cloud agents at once are unlimited on every plan since Nathan's of 14/11/2026. The
+ * paid amounts of hours are not decided yet: they follow the study's recommendation (100 pooled hours per paid
+ * person), recorded in `.coord/QUESTIONS.md`.
  */
 object PlanCatalog {
     /** The Stripe lookup key of the price of a plan and interval, as created by `ops/stripe/provision.py`. */
@@ -120,7 +123,7 @@ object PlanCatalog {
         return when (plan) {
             Plan.FREE -> PlanLimits(
                 maxPeople = FREE_PEOPLE,
-                maxConcurrentCloudAgents = FREE_AGENTS,
+                maxConcurrentCloudAgents = UNLIMITED_CLOUD_AGENTS,
                 agentHoursPerPeriod = FREE_HOURS,
                 sso = false,
                 policies = false,
@@ -128,7 +131,7 @@ object PlanCatalog {
             )
             Plan.TEAM -> PlanLimits(
                 maxPeople = null,
-                maxConcurrentCloudAgents = maxOf(FREE_AGENTS, AGENTS_PER_PERSON * people),
+                maxConcurrentCloudAgents = UNLIMITED_CLOUD_AGENTS,
                 agentHoursPerPeriod = maxOf(FREE_HOURS, TEAM_HOURS_PER_PERSON * people),
                 sso = false,
                 policies = false,
@@ -136,7 +139,7 @@ object PlanCatalog {
             )
             Plan.BUSINESS -> PlanLimits(
                 maxPeople = null,
-                maxConcurrentCloudAgents = maxOf(BUSINESS_MIN_AGENTS, AGENTS_PER_PERSON * people),
+                maxConcurrentCloudAgents = UNLIMITED_CLOUD_AGENTS,
                 agentHoursPerPeriod = maxOf(BUSINESS_MIN_HOURS, BUSINESS_HOURS_PER_PERSON * people),
                 sso = true,
                 policies = true,
@@ -166,7 +169,7 @@ object PlanCatalog {
     /** Enterprise, and a self-hosted instance whose license grants everything. */
     val UNLIMITED = PlanLimits(
         maxPeople = null,
-        maxConcurrentCloudAgents = null,
+        maxConcurrentCloudAgents = UNLIMITED_CLOUD_AGENTS,
         agentHoursPerPeriod = null,
         sso = true,
         policies = true,

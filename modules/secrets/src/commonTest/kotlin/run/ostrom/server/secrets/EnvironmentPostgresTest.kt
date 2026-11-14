@@ -223,7 +223,8 @@ class EnvironmentPostgresTest {
 
         assertEquals(HttpStatusCode.BadRequest, server.send("PUT", "$exclusions/$memberA/path", "admin-a").status)
         assertEquals(HttpStatusCode.BadRequest, server.send("DELETE", "$exclusions/$memberA/PATH", "admin-a").status)
-        assertEquals(HttpStatusCode.BadRequest, server.send("DELETE", "$assignments/$memberA/LD_X", "admin-a").status)
+        // A reserved name can still be unassigned, in case it was assigned before it was reserved.
+        assertEquals(HttpStatusCode.NoContent, server.send("DELETE", "$assignments/$memberA/LD_X", "admin-a").status)
         assertEquals(
             HttpStatusCode.NotFound,
             server.send("PUT", "$exclusions/${Uuid.random()}/TOKEN", "admin-a").status,
@@ -443,10 +444,40 @@ class EnvironmentPostgresTest {
     }
 
     @Test
+    fun aNameReservedAfterItWasAssignedIsNeverServedAndCanStillBeUnassigned() = test { server ->
+        for (variable in listOf("GOOD", "LEGACY")) {
+            val variant = server.send("POST", variants, "admin-a", create(variable, "v", value = "value-1"))
+                .body<EnvironmentVariantResponse>()
+            server.assign("$memberA/$variable", variant.id)
+        }
+        // Stored before 14/11/2026, when GLIBC_TUNABLES was not reserved yet.
+        for (table in listOf("environment_variants", "environment_assignments")) {
+            server.driver.executeInOrg(
+                TestCallers.orgA,
+                Statement.create("UPDATE $table SET variable = 'GLIBC_TUNABLES' WHERE variable = 'LEGACY'"),
+            ).getOrThrow()
+        }
+
+        val values = server.values("member-a")
+        assertEquals(mapOf("GOOD" to "value-1"), values.variables)
+        assertEquals(emptyList(), values.unavailable, "Not even its name")
+        val removed = server.send("DELETE", "$assignments/$memberA/GLIBC_TUNABLES", "admin-a")
+        assertEquals(HttpStatusCode.NoContent, removed.status, removed.bodyAsText())
+        val page = server.client.get("$assignments?member=$memberA") {
+            bearerAuth("admin-a")
+        }.body<EnvironmentAssignmentsPageResponse>()
+        assertEquals(listOf("GOOD"), page.items.map { it.variable })
+        val malformed = server.send("DELETE", "$assignments/$memberA/lowercase", "admin-a")
+        assertEquals(HttpStatusCode.BadRequest, malformed.status)
+    }
+
+    @Test
     fun malformedVariantsAreRefused() = test { server ->
         val cases = listOf(
             create("PATH", "x", value = "value-1"),
             create("OSTROM_TOKEN", "x", value = "value-1"),
+            create("GLIBC_TUNABLES", "x", value = "value-1"),
+            create("GIT_ASKPASS", "x", value = "value-1"),
             create("lowercase", "x", value = "value-1"),
             create("GOOD", " ", value = "value-1"),
             create("GOOD", "x".repeat(121), value = "value-1"),

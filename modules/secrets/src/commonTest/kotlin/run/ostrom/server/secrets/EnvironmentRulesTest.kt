@@ -47,6 +47,25 @@ class EnvironmentRulesTest {
     }
 
     @Test
+    fun theLoaderTheRuntimesTheShellAndGitsProgramsAreReservedBeyondTeamCodesList() {
+        val beyond = listOf(
+            "GLIBC_TUNABLES", "NODE_TLS_REJECT_UNAUTHORIZED", "SSLKEYLOGFILE", "CURL_CA_BUNDLE", "DOTNET_STARTUP_HOOKS",
+            "PYTHONBREAKPOINT", "CLASSPATH", "SHELLOPTS", "ZDOTDIR", "GIT_ASKPASS", "SSH_ASKPASS", "GIT_PROXY_COMMAND",
+            "GIT_DIR", "GH_CONFIG_DIR", "RIPGREP_CONFIG_PATH", "BASH_FUNC_X",
+        )
+        for (name in beyond) {
+            assertTrue(EnvironmentRules.isReserved(name), name)
+            assertFailsWith<InvalidEnvironmentVariantException> { EnvironmentRules.requireVariable(name) }
+            EnvironmentRules.requireWellFormed(name)
+        }
+        // What teams set every day stays theirs.
+        for (name in listOf("GIT_AUTHOR_NAME", "GIT_COMMITTER_EMAIL", "PYTHONUNBUFFERED", "NODE_ENV", "SSH_KEY_NAME")) {
+            assertFalse(EnvironmentRules.isReserved(name), name)
+        }
+        assertFailsWith<InvalidEnvironmentVariantException> { EnvironmentRules.requireWellFormed("lower") }
+    }
+
+    @Test
     fun aValueAndANameKeepTheirBounds() {
         EnvironmentRules.requireValue(SecretValue("x".repeat(EnvironmentRules.MAX_VALUE_LENGTH)))
         assertFailsWith<InvalidEnvironmentVariantException> {

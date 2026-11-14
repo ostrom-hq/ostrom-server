@@ -81,7 +81,11 @@ class ModelTest {
 
     @Test
     fun theFreePlanIsTheDecidedOne() = runTest {
-        assertEquals(CloudPlan(5, 300, 30, 240, true, true), FreeCloudPlanProvider().planFor(ORG_A))
+        // No cap on agents at once (Nathan, 14/11/2026, as TeamCode).
+        assertEquals(
+            CloudPlan(CloudPlan.UNLIMITED_SESSIONS, 300, 30, 240, true, true),
+            FreeCloudPlanProvider().planFor(ORG_A),
+        )
     }
 
     @Test

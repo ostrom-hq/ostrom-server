@@ -36,7 +36,7 @@ class GetPlanLimitsUseCaseImpl(
         val features = license?.features.orEmpty()
         return PlanLimits(
             maxPeople = license?.maxPeople,
-            maxConcurrentCloudAgents = null,
+            maxConcurrentCloudAgents = UNLIMITED_CLOUD_AGENTS,
             agentHoursPerPeriod = null,
             sso = "sso" in features,
             policies = "policies" in features,
@@ -118,8 +118,8 @@ class CheckEntitlementUseCaseImpl(
     }
 
     private fun checkConcurrentAgents(limits: PlanLimits, running: Int, words: LimitWords) {
-        val max = limits.maxConcurrentCloudAgents ?: return
-        if (running >= max) {
+        val max = limits.maxConcurrentCloudAgents
+        if (max != UNLIMITED_CLOUD_AGENTS && running >= max) {
             throw PlanLimitException(
                 "${words.planName} runs $max cloud agents at the same time and $running are running. " +
                     "Wait for one to finish, or upgrade at ${settings.billingPageUrl}.",
