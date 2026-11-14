@@ -6,6 +6,7 @@ import run.ostrom.server.governance.domain.ConfirmationCredential
 import run.ostrom.server.governance.domain.ConfirmationError
 import run.ostrom.server.governance.domain.ConfirmationOutcome
 import run.ostrom.server.governance.domain.ConfirmationPerson
+import run.ostrom.server.governance.domain.ConfirmationRules
 import run.ostrom.server.governance.domain.ConfirmationStatus
 import run.ostrom.server.governance.domain.ConfirmationsRepository
 import run.ostrom.server.kernel.auth.GovernanceWrite
@@ -71,7 +72,11 @@ class PostgresConfirmationsRepository(private val driver: Driver) : Confirmation
         }
 
     override suspend fun expire(orgId: Uuid, now: Instant): List<Confirmation> = driver.withOrganization(orgId) { tx ->
-        tx.fetchAll(Statement.create(EXPIRE).bind("org_id", orgId).bind("now", now)).getOrThrow()
+        val statement = Statement.create(EXPIRE).bind("org_id", orgId).bind("now", now)
+            .bind("lost_before", now - ConfirmationRules.RESULT_GRACE)
+            .bind("lost_type", ConfirmationRules.RESULT_LOST)
+            .bind("lost_message", ConfirmationRules.RESULT_LOST_MESSAGE)
+        tx.fetchAll(statement).getOrThrow()
             .map { it.toConfirmation() }
     }
 
@@ -168,9 +173,16 @@ class PostgresConfirmationsRepository(private val driver: Driver) : Confirmation
         val WAITING = "SELECT $READ_COLUMNS FROM governance_confirmations WHERE org_id = :org_id " +
             "AND requested_by_user = :user AND status = 'pending' AND expires_at > :now ORDER BY created_at"
 
-        /** Expires the overdue ones of an organization, once each (index `governance_confirmations_expiry`). */
-        val EXPIRE = "UPDATE governance_confirmations SET status = 'expired' WHERE org_id = :org_id " +
-            "AND status = 'pending' AND expires_at <= :now RETURNING $READ_COLUMNS"
+        /**
+         * Expires the overdue ones of an organization, and fails the confirmed ones whose result was lost, once each
+         * (index `governance_confirmations_expiry`, `governance_confirmations_unsettled`).
+         */
+        val EXPIRE = "UPDATE governance_confirmations SET " +
+            "status = CASE WHEN status = 'pending' THEN 'expired' ELSE 'failed' END, " +
+            "error_type = CASE WHEN status = 'pending' THEN error_type ELSE :lost_type END, " +
+            "error_message = CASE WHEN status = 'pending' THEN error_message ELSE :lost_message END " +
+            "WHERE org_id = :org_id AND ((status = 'pending' AND expires_at <= :now) OR " +
+            "(status = 'confirmed' AND result_json IS NULL AND expires_at <= :lost_before)) RETURNING $READ_COLUMNS"
 
         /** Answers a pending, unexpired confirmation: of two answers, the second changes nothing. */
         const val ANSWER: String =
@@ -179,13 +191,14 @@ class PostgresConfirmationsRepository(private val driver: Driver) : Confirmation
             "error_message = :error_message WHERE org_id = :org_id AND id = :id AND status = 'pending' " +
             "AND expires_at > :at"
 
-        /** Keeps what a confirmed write returned, by its key. */
-        const val SETTLE_RESULT: String =
-            "UPDATE governance_confirmations SET result_json = :result WHERE org_id = :org_id AND id = :id"
+        /** Keeps what a confirmed write returned, by its key; never on one the sweep already failed (result lost). */
+        const val SETTLE_RESULT: String = "UPDATE governance_confirmations SET result_json = :result " +
+            "WHERE org_id = :org_id AND id = :id AND status = 'confirmed'"
 
-        /** Marks a confirmed write that failed, by its key. */
+        /** Marks a confirmed write that failed, by its key; never one the sweep already failed (result lost). */
         const val SETTLE_ERROR: String = "UPDATE governance_confirmations SET status = 'failed', " +
-            "error_type = :error_type, error_message = :error_message WHERE org_id = :org_id AND id = :id"
+            "error_type = :error_type, error_message = :error_message WHERE org_id = :org_id AND id = :id " +
+            "AND status = 'confirmed'"
 
         /** The sweep's read across organizations. */
         const val EXPIRED_ORGANIZATIONS: String =

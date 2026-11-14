@@ -87,4 +87,26 @@ val GovernanceMigrations: List<SchemaMigration> = listOf(
         name = "confirmation_token_name",
         sql = "ALTER TABLE governance_confirmations ADD COLUMN token_name TEXT",
     ),
+    // A confirmed write whose result was never written (its server stopped between the answer and the result) is
+    // failed by the sweep, `result_lost`, 5 minutes past its expiry (ConfirmationRules.RESULT_GRACE, decision of
+    // 14/11/2026): the sweep's function finds those organizations too, from their expiry on; the grace itself is the
+    // repository's bound parameter, never repeated here.
+    SchemaMigration(
+        version = 3,
+        name = "confirmation_result_lost",
+        sql = """
+        CREATE INDEX governance_confirmations_unsettled ON governance_confirmations (expires_at)
+            WHERE status = 'confirmed' AND result_json IS NULL;
+        CREATE OR REPLACE FUNCTION governance_expired_organizations(p_now TIMESTAMPTZ, p_limit INTEGER)
+            RETURNS SETOF UUID
+            LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+            (SELECT DISTINCT c.org_id FROM governance_confirmations c
+                WHERE c.status = 'pending' AND c.expires_at <= p_now)
+            UNION
+            (SELECT DISTINCT c.org_id FROM governance_confirmations c
+                WHERE c.status = 'confirmed' AND c.result_json IS NULL AND c.expires_at <= p_now)
+            LIMIT p_limit;
+        $$
+        """.trimIndent(),
+    ),
 )

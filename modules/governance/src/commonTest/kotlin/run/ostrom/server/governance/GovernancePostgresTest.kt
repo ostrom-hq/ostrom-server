@@ -3,6 +3,7 @@ package run.ostrom.server.governance
 
 import run.ostrom.server.governance.domain.ConfirmationOutcome
 import run.ostrom.server.governance.domain.ConfirmationPeople
+import run.ostrom.server.governance.domain.ConfirmationRules
 import run.ostrom.server.governance.domain.ConfirmationStatus
 import run.ostrom.server.governance.domain.ConfirmationsRepository
 import run.ostrom.server.governance.domain.ExpireConfirmationsUseCase
@@ -394,15 +395,43 @@ class GovernancePostgresTest {
     }
 
     @Test
+    fun theSweepFailsAConfirmedWriteWhoseResultWasLost() = governanceTest { server ->
+        // decision of 14/11/2026: confirmed with no result 5 minutes past its expiry is failed, result_lost
+        val id = server.ask("ada-token", "never").body<GovernanceConfirmationPending>().confirmationId
+        val repository = server.koin.get<ConfirmationsRepository>()
+        val asked = checkNotNull(repository.get(orgA, id))
+        val outcome = ConfirmationOutcome(ConfirmationStatus.CONFIRMED, asked.requestedBy, Time.now())
+        assertTrue(repository.answer(orgA, id, outcome))
+        val expire = server.koin.get<ExpireConfirmationsUseCase>()
+        Time.offset = 19.minutes
+        expire.everywhere()
+        assertEquals("pending", server.read("ada-token", id).body<ConfirmationDto>().status)
+        Time.offset = 21.minutes
+        expire.everywhere()
+        val failed = server.read("ada-token", id).body<ConfirmationDto>()
+        assertEquals("failed" to "result_lost", failed.status to failed.error?.type)
+        assertEquals(ConfirmationRules.RESULT_LOST_MESSAGE, failed.error?.message)
+        // a result that comes after changes nothing
+        repository.settle(orgA, id, JsonPrimitive("never"), null)
+        assertEquals(ConfirmationStatus.FAILED to null, repository.get(orgA, id)?.let { it.status to it.result })
+        assertEquals(0, expire.everywhere(), "Once: nothing left to sweep there")
+        val actions = server.koin.get<AuditRepository>().list(orgA, null, null, 50).map { it.entry.action }
+        assertTrue("governance.confirmation.failed" in actions, "$actions")
+    }
+
+    @Test
     fun theQueriesUseTheirIndexes() = governanceTest { server ->
         for ((org, count) in listOf(orgB to 6_000, orgA to 60)) {
             server.driver.withOrganization(org) { tx ->
                 tx.execute(
                     "INSERT INTO governance_confirmations (org_id, id, kind, scope, method, path, payload, summary, " +
                         "before_json, after_json, requested_by_user, requested_by_member, credential, status, " +
-                        "created_at, expires_at) SELECT CAST('$org' AS uuid), 'gcf_' || md5(random() || '' || i), " +
+                        "result_json, created_at, expires_at) SELECT CAST('$org' AS uuid), " +
+                        "'gcf_' || md5(random() || '' || i), " +
                         "'gates.policy', 'gates.policy', 'PUT', '/p', '{}', 's', 'null', 'null', 'u' || (i % 50), " +
                         "gen_random_uuid(), 'admin', CASE WHEN i % 20 = 0 THEN 'pending' ELSE 'confirmed' END, " +
+                        // a confirmed write has its result, but for the rare one whose server stopped (result_lost)
+                        "CASE WHEN i % 20 = 0 OR i % 500 = 1 THEN NULL ELSE 'null' END, " +
                         "now() - i * INTERVAL '1 minute', now() - i * INTERVAL '1 minute' + INTERVAL '15 minutes' " +
                         "FROM generate_series(1, $count) AS i",
                 ).getOrThrow()
@@ -416,7 +445,8 @@ class GovernancePostgresTest {
                 bind("user", "u7").bind("now", now)
             },
             "the overdue ones" to server.explain(PostgresConfirmationsRepository.EXPIRE, analyze = false) {
-                bind("now", now)
+                bind("now", now).bind("lost_before", now - ConfirmationRules.RESULT_GRACE)
+                    .bind("lost_type", ConfirmationRules.RESULT_LOST).bind("lost_message", "m")
             },
             "an answer" to server.explain(PostgresConfirmationsRepository.ANSWER, analyze = false) {
                 bind("id", "gcf_x").bind("status", "confirmed").bind("by_user", "u").bind("by_member", Uuid.random())
@@ -434,6 +464,11 @@ class GovernancePostgresTest {
                 "WHERE c.status = 'pending' AND c.expires_at <= now() LIMIT 100",
         ).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
         plans["the sweep's organizations (the router function's query)"] = sweep
+        val lost = server.database.superuser.fetchAll(
+            "EXPLAIN (ANALYZE, BUFFERS) SELECT DISTINCT c.org_id FROM governance_confirmations c " +
+                "WHERE c.status = 'confirmed' AND c.result_json IS NULL AND c.expires_at <= now() LIMIT 100",
+        ).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
+        plans["the sweep's organizations with a lost result (the router function's query)"] = lost
         val report = plans.entries.joinToString("\n\n") { (name, plan) -> "-- $name\n$plan" }
         SystemFileSystem.createDirectories(Path("build/reports/explain"))
         SystemFileSystem.sink(Path("build/reports/explain/governance.txt")).buffered().use { it.writeString(report) }
