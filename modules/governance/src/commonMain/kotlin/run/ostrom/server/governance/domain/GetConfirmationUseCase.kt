@@ -58,7 +58,8 @@ class GetConfirmationUseCaseImpl(
         val mayRead = confirmation.requestedBy.userId == viewer.subjectId || member.role in ConfirmationRules.MANAGERS
         if (!mayRead) throw ConfirmationNotFoundException()
         // Each look is a plain read: the expiry is written once, before the wait and after it if it expired meanwhile.
-        while (confirmation.statusAt(clock.now()) == ConfirmationStatus.PENDING && clock.now() < until) {
+        // A confirmed write still being made is waited on too: its result comes with it (Confirmation.shownAt).
+        while (confirmation.shownAt(clock.now()) == ConfirmationStatus.PENDING && clock.now() < until) {
             waits.await(id, minOf(until - clock.now(), ConfirmationRules.LOOK_EVERY))
             confirmation = look(member.orgId, id)
         }

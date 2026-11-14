@@ -139,6 +139,9 @@ class PostgresConfirmationsRepository(private val driver: Driver) : Confirmation
             answeredAt = get("answered_at").asInstantOrNull(),
             result = json("result_json"),
             error = error,
+            // a settled write's result is written, `null` for none: SQL NULL is a confirmed write still being made
+            settled = get("status").asString() != ConfirmationStatus.CONFIRMED.wire ||
+                get("result_json").asStringOrNull() != null,
         )
     }
 

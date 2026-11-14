@@ -31,6 +31,7 @@ import kotlin.uuid.Uuid
  * @property answeredAt When.
  * @property result What the confirmed write returned.
  * @property error Why a confirmed write was not written.
+ * @property settled False while a confirmed write is being made: it is confirmed, its result is not written yet.
  */
 data class Confirmation(
     val id: String,
@@ -53,6 +54,7 @@ data class Confirmation(
     val result: JsonElement? = null,
     val error: ConfirmationError? = null,
     val tokenName: String? = null,
+    val settled: Boolean = true,
 ) {
     /**
      * Its status at [now]: a pending confirmation past its expiry is expired, even before the server writes it so.
@@ -63,6 +65,17 @@ data class Confirmation(
      */
     fun statusAt(now: Instant): ConfirmationStatus =
         if (status == ConfirmationStatus.PENDING && now >= expiresAt) ConfirmationStatus.EXPIRED else status
+
+    /**
+     * Its status as it is shown at [now] ([statusAt]): a confirmed write still being made reads pending, so that a
+     * reader waits for its result rather than reads a confirmation with none (the CLI says what the write did).
+     *
+     * @param now The current time.
+     *
+     * @return The status shown.
+     */
+    fun shownAt(now: Instant): ConfirmationStatus =
+        if (status == ConfirmationStatus.CONFIRMED && !settled) ConfirmationStatus.PENDING else statusAt(now)
 
     /**
      * Whether it asks for the same write as [other]: the same kind, request and body.

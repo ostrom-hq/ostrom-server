@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.governance
 
+import run.ostrom.server.governance.domain.ConfirmationOutcome
 import run.ostrom.server.governance.domain.ConfirmationPeople
+import run.ostrom.server.governance.domain.ConfirmationStatus
 import run.ostrom.server.governance.domain.ConfirmationsRepository
 import run.ostrom.server.governance.domain.ExpireConfirmationsUseCase
 import run.ostrom.server.governance.domain.PersonName
@@ -372,6 +374,23 @@ class GovernancePostgresTest {
         val before = Clock.System.now()
         assertEquals("pending", server.read("ada-token", id, wait = 1).body<ConfirmationDto>().status)
         assertTrue(Clock.System.now() - before >= 1.seconds, "Waited")
+    }
+
+    @Test
+    fun aConfirmedWriteReadsPendingUntilItsResultIsWrittenEvenNone() = governanceTest { server ->
+        val id = server.ask("ada-token", "never").body<GovernanceConfirmationPending>().confirmationId
+        val repository = server.koin.get<ConfirmationsRepository>()
+        val asked = checkNotNull(repository.get(orgA, id))
+        val outcome = ConfirmationOutcome(ConfirmationStatus.CONFIRMED, asked.requestedBy, Clock.System.now())
+        assertTrue(repository.answer(orgA, id, outcome))
+        // confirmed, the write being made: the CLI that waits must not read it without its result
+        assertEquals(false, repository.get(orgA, id)?.settled)
+        assertEquals("pending", server.read("ada-token", id).body<ConfirmationDto>().status)
+        // a write that returns nothing (a removal) is settled all the same
+        repository.settle(orgA, id, null, null)
+        val settled = checkNotNull(repository.get(orgA, id))
+        assertEquals(true to null, settled.settled to settled.result)
+        assertEquals("confirmed", server.read("ada-token", id).body<ConfirmationDto>().status)
     }
 
     @Test

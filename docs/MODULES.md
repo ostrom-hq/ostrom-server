@@ -393,8 +393,9 @@ token, the CLI's (elevated by `ostrom login --admin` or not) or a personal one, 
 with a confirmation that an owner or an admin answers on the console, at
 `OSTROM_CONSOLE_URL/confirm/<id>` (audit CLI H1: an agent on the developer's machine can present the developer's
 tokens). A confirmation shows what the write replaces and what it writes, lives 15 minutes, is answered once, and
-each step (created, confirmed, refused, expired, failed) is an event of the organization's signed audit log. A token
-never answers; a browser session and an `inference:admin` service key still write at once. A module that owns a
+each step (created, confirmed, refused, expired, failed) is an event of the organization's signed audit log. While a
+confirmed write is being made it still reads `pending`, and a waiting read goes on waiting: the CLI reads it once
+with its result (who was invited), never confirmed with none. A token never answers; a browser session and an `inference:admin` service key still write at once. A module that owns a
 governance write binds a `GovernanceChange` named after itself (preview, apply) and calls `holdForConfirmation`
 for a token; without this module loaded, a token's governance write is refused.
 
