@@ -32,6 +32,7 @@ import run.ostrom.server.app.isolation.Seed.SECRET
 import run.ostrom.server.app.isolation.Seed.UPLOAD
 import run.ostrom.server.app.isolation.Seed.SERVICE_KEY
 import run.ostrom.server.app.isolation.Seed.SESSION
+import run.ostrom.server.app.isolation.Seed.SKILL
 import run.ostrom.server.app.isolation.Seed.TOKEN
 import run.ostrom.server.app.isolation.Seed.WAIT
 import run.ostrom.server.app.isolation.Seed.WORKFLOW
@@ -327,6 +328,39 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     ),
     "GET /l/{slug}/{...}" to Case.Exempt(LINK),
 
+    // Skills: the team catalog, the members' personal skills, the delivery.
+    "GET /api/v1/skills" to Case.Target(),
+    "DELETE /api/v1/skills/{name}" to target("name" to SKILL, admin = true),
+    "POST /api/v1/skills/{name}/restore" to target("name" to SKILL, admin = true),
+    "GET /api/v1/skills/{name}/versions" to target("name" to SKILL),
+    "POST /api/v1/skills/{name}/versions" to target("name" to SKILL, body = SKILL_BODY, admin = true),
+    "DELETE /api/v1/skills/{name}/versions/{version}" to
+        Case.Target(mapOf("name" to of(SKILL), "version" to Param.Fixed("0.9.0")), admin = true),
+    "PUT /api/v1/skills/{name}/pin" to target("name" to SKILL, body = """{"version": "1.0.0"}""", admin = true),
+    "DELETE /api/v1/skills/{name}/pin" to target("name" to SKILL, admin = true),
+    "PUT /api/v1/skills/{name}/audience" to target("name" to SKILL, body = """{"allMembers": true}""", admin = true),
+    "GET /api/v1/skills/{name}/assignments" to target("name" to SKILL),
+    "PUT /api/v1/skills/{name}/assignments/{memberId}" to
+        target("name" to SKILL, "memberId" to MEMBER_ID, body = """{"decision": "allow"}""", admin = true),
+    "DELETE /api/v1/skills/{name}/assignments/{memberId}" to
+        target("name" to SKILL, "memberId" to MEMBER_ID, admin = true),
+    "POST /api/v1/skills/{name}/promote" to target("name" to SKILL, admin = true),
+    "GET /api/v1/me/skills" to Case.Target(),
+    "DELETE /api/v1/me/skills/{name}" to target("name" to SKILL),
+    "POST /api/v1/me/skills/{name}/restore" to target("name" to SKILL),
+    "GET /api/v1/me/skills/{name}/versions" to target("name" to SKILL),
+    "POST /api/v1/me/skills/{name}/versions" to target("name" to SKILL, body = SKILL_BODY),
+    "PUT /api/v1/me/skills/{name}/pin" to target("name" to SKILL, body = """{"version": "1.0.0"}"""),
+    "DELETE /api/v1/me/skills/{name}/pin" to target("name" to SKILL),
+    "GET /api/v1/skill-delivery" to Case.Target(),
+    "GET /api/v1/skill-delivery/{name}/{version}" to
+        Case.Target(mapOf("name" to of(SKILL), "version" to Param.Fixed("1.0.0"))),
+    "GET /api/v1/skill-delivery/installations" to Case.Target(),
+    "PUT /api/v1/skill-delivery/installations" to
+        Case.Target(body = """{"installations": [{"name": "{{SKILL}}", "status": "installed"}]}"""),
+    "GET /api/v1/members/{memberId}/skill-delivery" to target("memberId" to MEMBER_ID),
+    "GET /api/v1/members/{memberId}/skill-installations" to target("memberId" to MEMBER_ID),
+
     // Automations and waits.
     "GET /api/v1/automations" to Case.Target(),
     "POST /api/v1/automations" to Case.Target(body = AUTOMATION_BODY),
@@ -516,6 +550,10 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/github/links/{memberId}/start" to target("memberId" to MEMBER_ID, admin = true),
     "POST /webhooks/github" to Case.Exempt(SIGNED),
 )
+
+// A skill version: its one file, SKILL.md, base64 of "# Skill".
+private const val SKILL_BODY = """{"version": "1.0.0",""" +
+    """ "files": [{"path": "SKILL.md", "contentBase64": "IyBTa2lsbA=="}]}"""
 
 private const val AUTOMATION_BODY = """{"name": "Taken", "trigger": {"kind": "webhook"},""" +
     """ "action": {"prompt": "Fix"}, "variables": [], "overlap": "allow"}"""

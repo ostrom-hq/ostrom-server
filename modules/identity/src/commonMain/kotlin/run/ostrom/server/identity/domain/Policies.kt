@@ -95,7 +95,7 @@ val NEVER_ON_A_TOKEN: Set<String> = setOf(ANSWER_SCOPE, AGENT_SCOPE, WORKFLOW_SE
  */
 val CLI_SCOPES: Set<String> = setOf(
     "profile:read", "orgs:read", "workflows:read", "sessions:write", "receipts:read", "gates:read", "mcp:read",
-    "rules:read", "cloud:write", "environment:read",
+    "rules:read", "cloud:write", "environment:read", "skills:read", "skills:write",
 )
 
 /**
@@ -279,16 +279,18 @@ val CI_SERVICE_KEY_SCOPES: Set<String> = ServiceKeyScopes.CI
  * What a service key holds to act as the person who created it, within the scope and as a plain member (the catalogue
  * of TeamCode's service keys, mapped on the routes Ostrom serves): the inference gateway, the relayed MCP servers, the
  * creator's own usage, their cloud sessions (`cloud:write` reads too), the artifacts they can read (`artifacts:write`
- * reads too, and never changes an access level nor deletes). TeamCode's `skills:*`, `hooks:*` and `guidance` scopes
- * join the day Ostrom serves those features.
+ * reads too, and never changes an access level nor deletes), the skills delivered to them (`skills:read`, a cloud
+ * pod's or a script's). TeamCode's `hooks:*` and `guidance` scopes join the day Ostrom serves those features.
  */
 val MEMBER_SERVICE_KEY_SCOPES: Set<String> = setOf(
     "inference:use", "mcp:use", "usage:read", "cloud:read", "cloud:write", "artifacts:read", "artifacts:write",
+    "skills:read",
 )
 
 /**
  * The scopes reserved to an owner or an admin ([ServiceKeyScopes.RESERVED]): `team:read` (a read-only view of the
- * organization) and `cloud:admin` (`cloud:write` with an administrator's rights over every cloud session). Only an
+ * organization), `cloud:admin` (`cloud:write` with an administrator's rights over every cloud session), and the skill
+ * catalogue's publication by a CI (`skills:publish`, with `skills:pin` and `skills:assign`). Only an
  * owner or an admin creates a key, and a key with one of these works only while its creator is still one: a demoted
  * or removed creator takes the key down at the next request, without a revocation.
  */

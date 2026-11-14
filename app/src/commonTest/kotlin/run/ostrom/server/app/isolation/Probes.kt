@@ -45,6 +45,12 @@ internal val SERVICE_KEY_ROUTES: Map<String, Set<String>> = mapOf(
         "DELETE /api/v1/artifacts/{id}/members/{login}", "PATCH /api/v1/artifacts/{id}",
         "POST /api/v1/artifacts/uploads", "PUT /api/v1/artifacts/uploads/{upload}/blobs/{sha256}/{n}",
     ),
+    // Its delivery, as the CLI or a cloud pod reads it; never the catalog, a member's delivery, nor a report.
+    "skills:read" to setOf("GET /api/v1/skill-delivery", "GET /api/v1/skill-delivery/{name}/{version}"),
+    // A CI's publication; pinning and the audience come with it, never alone.
+    "skills:publish" to setOf("POST /api/v1/skills/{name}/versions"),
+    "skills:pin" to emptySet(),
+    "skills:assign" to emptySet(),
     "team:read" to setOf(
         "GET /api/v1/usage", "GET /api/v1/usage/summary", "GET /api/v1/usage/events", "GET /api/v1/usage/live",
         "GET /api/v1/mcp/usage", "GET /api/v1/spending", "GET /api/v1/budgets", "GET /api/v1/accounts",

@@ -29,6 +29,7 @@ internal suspend fun TestServer.seed(party: Party, spends: Boolean) {
     activateArtifacts(party)
     seeder.environment(party)
     seeder.content(party)
+    seeder.skills(party)
     seeder.governance(party)
     seeder.gate(party)
     seeder.administration(party)
@@ -165,6 +166,29 @@ private suspend fun Seeder.content(party: Party) {
     keep(Seed.AUTOMATION, automation, "id")
     val wait = send("wait", "POST /api/v1/waits", owner, """{"question": {"title": "${party.marker} ship it?"}}""")
     keep(Seed.WAIT, wait, "id")
+}
+
+// A team skill pinned for all members, with a retired-able older version, and the member set to yes; a report of it
+// from the owner's workstation.
+private suspend fun Seeder.skills(party: Party) {
+    val owner = party.browser
+    val name = "${party.marker}-skill"
+    val older = """{"version": "0.9.0", "files": [{"path": "SKILL.md", "contentBase64": "IyAwLjk="}]}"""
+    send("skill", "POST /api/v1/skills/$name/versions", owner, older)
+    val body = """{"version": "1.0.0", "pin": true, "allMembers": true,""" +
+        """ "files": [{"path": "SKILL.md", "contentBase64": "IyBTa2lsbA=="}]}"""
+    val published = send("skill version", "POST /api/v1/skills/$name/versions", owner, body)
+    keep(Seed.SKILL, name, published)
+    if (published == null) return
+    send(
+        "skill decision",
+        "PUT /api/v1/skills/$name/assignments/${party.member.memberId}",
+        owner,
+        """{"decision": "allow"}""",
+        expected = OK,
+    )
+    val report = """{"installations": [{"name": "$name", "version": "1.0.0", "status": "installed"}]}"""
+    send("skill report", "PUT /api/v1/skill-delivery/installations", party.cli(), report, expected = NO_CONTENT)
 }
 
 private fun artifact(party: Party, access: String) =
