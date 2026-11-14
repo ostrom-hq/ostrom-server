@@ -132,14 +132,16 @@ class SignInSettings(private val settings: InstanceSettings, private val app: Gi
     private fun SettingsValues.value(field: String): String? = trimmedOrNull(this[field], Int.MAX_VALUE)
 }
 
+// An http(s) URL: a name or an IPv6 address, an optional port, then an optional path; no credentials, query,
+// fragment or space.
+private val WEB_URL = Regex("https?://(\\[[0-9A-Fa-f:.]+]|[A-Za-z0-9][A-Za-z0-9._-]*)(:\\d{1,5})?(/[^\\s?#]*)?")
+
 /**
  * Why a URL setting is refused.
  *
  * @param value The value.
  *
- * @return Why, or null for an `http://` or `https://` URL.
+ * @return Why, or null for an `http://` or `https://` URL with a host, without credentials, a query or a fragment.
  */
-internal fun webUrlProblem(value: String): String? {
-    val url = value.trim()
-    return if (url.startsWith("https://") || url.startsWith("http://")) null else "an http:// or https:// URL."
-}
+internal fun webUrlProblem(value: String): String? =
+    if (WEB_URL.matches(value.trim())) null else "an http:// or https:// URL, without credentials, query or fragment."

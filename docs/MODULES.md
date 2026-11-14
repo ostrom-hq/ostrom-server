@@ -384,16 +384,20 @@ address is read again every 30 seconds, so a change in the console reaches every
 An administrator of the instance, signed in as a person (never a key or a token, even an administrator's), may also
 enter the App by hand, as on TeamCode's GitHub page: `getGithubAppConfiguration` returns it without its key
 or secrets (only whether each is set) and the callback URLs to register on it (the install's return, the members'
-links and the sign-in with GitHub, which the manifest also sets); `saveGithubAppConfiguration` enters or changes it. A first App needs its
+links and the sign-in with GitHub, which the manifest also sets); `saveGithubAppConfiguration` enters or changes it. **An
+App that signs people in needs the "Email addresses: read" permission and the sign-in callback URL: the manifest flow
+sets both, but an App made before (or by hand) has them added by hand on GitHub, or sign-in through it fails.** A first App needs its
 client secret and private key; a change names the version it read (`409 github_app_conflict` otherwise) and keeps any
-secret it leaves null, but another client ID needs its own secret. TeamCode's bounds are refused with `400
+secret it leaves null (an empty webhook secret clears it), but another client ID needs its own secret. TeamCode's bounds are refused with `400
 invalid_github_app`, then GitHub is asked which App the key signs for (`GET /app` with the App's JWT): `422
 github_app_rejected` when it refuses the key for that App ID, `422 github_app_mismatch` when the key or the client ID
 is another App's, `503` when it does not answer. The save seals every secret again under the App's id, is audited
 (`github.app.saved`) and reaches every replica within a minute. A new App ID is logged with the number of the former
 App's installations: **those installations stop working until each organization installs the new App**. A new client
 ID removes the members' links of the former client in every organization and revokes their tokens with it while its
-secret still opens (TeamCode does the same). Both reads across organizations go through functions of `ostrom_router`
+secret still opens (TeamCode does the same, inline and without a bound: each revocation has its own timeout, and
+an App with very many links makes the save slow; the former client's pending link attempts are not cleared, they expire
+within minutes and cannot complete against the new client). Both reads across organizations go through functions of `ostrom_router`
 (docs/tenancy.md).
 
 The `cloud` module follows TeamCode's cloud model. The instance's administrators set the runtime and connect clusters:
