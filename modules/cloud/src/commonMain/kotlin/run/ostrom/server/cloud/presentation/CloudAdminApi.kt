@@ -204,3 +204,28 @@ data class SaveCloudProfileRequest(
     /** The members allowed to use it. */
     val assignedMemberIds: List<String> = emptyList(),
 )
+
+/** `GET` and `PUT /api/v1/cloud/settings` (`getCloudSettings`, `saveCloudSettings`). */
+@Serializable
+@Resource("/api/v1/cloud/settings")
+class CloudSettingsApi
+
+/** `CloudSettings`. */
+@Serializable
+data class CloudSettingsResponse(
+    /** How long background work holds off the idle pause, in minutes. */
+    val backgroundWorkMaxMinutes: Int,
+    /** The last save; absent while nothing is stored. */
+    val updatedAt: String? = null,
+    /** Who saved last; absent while nothing is stored. */
+    val updatedBy: String? = null,
+)
+
+/** `SaveCloudSettingsRequest`: every setting and the `updatedAt` it replaces. */
+@Serializable
+data class SaveCloudSettingsRequest(
+    /** How long background work holds off the idle pause, in minutes. */
+    val backgroundWorkMaxMinutes: Int,
+    /** The `updatedAt` of the settings edited; absent while nothing is stored. */
+    val updatedAt: String? = null,
+)

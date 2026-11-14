@@ -41,6 +41,9 @@ import kotlin.uuid.Uuid
  * @property runnerId The registered runner its current execution was handed to: named on a read of the session
  *   ([GetCloudSessionUseCase]), never stored with it; null on the cluster's or this server's Docker.
  * @property githubAccess Whose GitHub access the session's Git and `gh` use.
+ * @property backgroundSince When the current execution's runner started reporting the agent's background work without
+ *   a break ([BackgroundWork]); null before any report.
+ * @property backgroundSeenAt The last heartbeat of the current execution that reported background work.
  */
 data class CloudSession(
     val id: Uuid,
@@ -71,6 +74,8 @@ data class CloudSession(
     val prompt: String? = null,
     val runnerId: Uuid? = null,
     val githubAccess: GitHubAccessMode = GitHubAccessMode.OWNER,
+    val backgroundSince: Instant? = null,
+    val backgroundSeenAt: Instant? = null,
 )
 
 /**

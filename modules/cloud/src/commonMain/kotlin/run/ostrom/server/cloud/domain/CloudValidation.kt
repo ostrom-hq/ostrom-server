@@ -131,3 +131,15 @@ private val AGENTS = setOf("claude", "codex")
 
 /** The value trimmed, or null when it is null or blank. */
 internal fun String?.trimmedOrNull(): String? = this?.let { value -> value.trim().takeIf { it.isNotEmpty() } }
+
+/**
+ * Why the settings are refused, or null.
+ *
+ * @param settings The settings.
+ *
+ * @return The reason, naming the field.
+ */
+internal fun settingsProblem(settings: CloudSettings): String? =
+    "backgroundWorkMaxMinutes is 0 to 1440.".takeIf {
+        settings.backgroundWorkMaxMinutes !in 0..CloudSettings.MAX_BACKGROUND_WORK_MINUTES
+    }

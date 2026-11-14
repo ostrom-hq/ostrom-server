@@ -104,6 +104,7 @@ private fun Route.runnerChannelRoutes(dependencies: CloudSessionsRoutesDependenc
                 ready = request.ready,
                 stopped = request.stopped,
                 lastModelRequestAt = request.lastModelRequestAt?.let { parseInstant(it) },
+                background = request.background,
             )
             val answer = runnerHeartbeat(token, heartbeat)
             call.respond(RunnerHeartbeatResponse(answer.instruction.wire, answer.state.wire))

@@ -104,3 +104,26 @@ interface CloudProfilesRepository {
      */
     suspend fun publish(profile: CloudProfile): Boolean
 }
+
+/** The organizations' cloud settings (`cloud_org_settings`), one row per organization. */
+interface CloudSettingsRepository {
+    /**
+     * The organization's stored settings.
+     *
+     * @param orgId The organization.
+     *
+     * @return They, or null while nothing is stored.
+     */
+    suspend fun get(orgId: Uuid): CloudSettings?
+
+    /**
+     * Stores [settings] when the stored ones still carry [expectedUpdatedAt] (null: nothing stored yet).
+     *
+     * @param orgId The organization.
+     * @param settings The settings, their `updatedAt` and `updatedBy` the new ones.
+     * @param expectedUpdatedAt The `updatedAt` of the settings edited.
+     *
+     * @return False when another save came first.
+     */
+    suspend fun save(orgId: Uuid, settings: CloudSettings, expectedUpdatedAt: Instant?): Boolean
+}

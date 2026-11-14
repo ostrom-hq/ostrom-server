@@ -63,3 +63,18 @@ class CloudProfileConflictException : OstromException(
     "The profile was changed meanwhile: reload it and save again.",
     "cloud_profile_conflict",
 )
+
+/**
+ * A cloud settings value the server refuses, naming the field.
+ *
+ * @param message Why.
+ */
+class InvalidCloudSettingsException(message: String) :
+    OstromException(ErrorKind.INVALID_REQUEST, message, "invalid_cloud_settings")
+
+/** Another save of the organization's cloud settings came first. */
+class CloudSettingsConflictException : OstromException(
+    ErrorKind.CONFLICT,
+    "The cloud settings were changed meanwhile: reload them and save again.",
+    "cloud_settings_conflict",
+)

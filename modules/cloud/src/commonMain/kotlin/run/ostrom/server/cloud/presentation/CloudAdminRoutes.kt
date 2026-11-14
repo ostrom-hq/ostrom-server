@@ -9,6 +9,8 @@ import run.ostrom.server.cloud.domain.CloudProfile
 import run.ostrom.server.cloud.domain.CloudProfileInput
 import run.ostrom.server.cloud.domain.CloudProfileNotFoundException
 import run.ostrom.server.cloud.domain.CloudRuntime
+import run.ostrom.server.cloud.domain.CloudSettings
+import run.ostrom.server.cloud.domain.InvalidCloudSettingsException
 import run.ostrom.server.cloud.domain.InvalidCloudRuntimeException
 import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -31,7 +33,8 @@ import kotlin.uuid.Uuid
 /**
  * TeamCode's cloud administration (`/dashboard/cloud`): the runtime and the clusters are the instance's, for a person
  * who administers it, signed in; the profiles an organization's, read by its members (`cloud:read`), written by an
- * owner or an admin signed in (`cloud:write`). The caller is checked before a body is read (TeamCode 3b716702).
+ * owner or an admin signed in (`cloud:write`), as are the organization's cloud settings. The caller is checked
+ * before a body is read (TeamCode 3b716702).
  *
  * @param dependencies The use cases.
  */
@@ -88,8 +91,45 @@ fun Route.cloudAdminRoutes(dependencies: CloudAdminRoutesDependencies) = with(de
             audit.record(profile.audit(call.requirePrincipal(), "cloud.profile.published"))
             call.respond(profile.toResponse())
         }
+        cloudSettingsRoutes(dependencies)
     }
 }
+
+/** The organization's cloud settings: read by its people, saved by an owner or an admin signed in. */
+private fun Route.cloudSettingsRoutes(dependencies: CloudAdminRoutesDependencies) = with(dependencies) {
+    get<CloudSettingsApi> {
+        val caller = call.requireCaller(callers, CLOUD_READ)
+        call.requirePrincipal().requireWrite(WriteAccess.PERSON)
+        call.respond(settings.get(caller).toResponse())
+    }
+    put<CloudSettingsApi> {
+        val caller = call.requireCaller(callers, CLOUD_WRITE)
+        call.requirePrincipal().requireWrite(WriteAccess.PERSON)
+        caller.requireAdmin()
+        val request = call.receive<SaveCloudSettingsRequest>()
+        val expected = request.updatedAt?.let {
+            Instant.parseOrNull(it) ?: throw InvalidCloudSettingsException("updatedAt is a date-time.")
+        }
+        val saved = settings.save(caller, CloudSettings(request.backgroundWorkMaxMinutes), expected)
+        audit.record(
+            OrgAuditRecord(
+                caller.orgId,
+                call.requirePrincipal(),
+                "cloud.settings.saved",
+                "cloud_settings",
+                caller.orgId.toString(),
+                mapOf("backgroundWorkMaxMinutes" to saved.backgroundWorkMaxMinutes.toString()),
+            ),
+        )
+        call.respond(saved.toResponse())
+    }
+}
+
+internal fun CloudSettings.toResponse() = CloudSettingsResponse(
+    backgroundWorkMaxMinutes = backgroundWorkMaxMinutes,
+    updatedAt = updatedAt?.toString(),
+    updatedBy = updatedBy?.toString(),
+)
 
 private const val CLOUD_READ = "cloud:read"
 private const val CLOUD_WRITE = "cloud:write"

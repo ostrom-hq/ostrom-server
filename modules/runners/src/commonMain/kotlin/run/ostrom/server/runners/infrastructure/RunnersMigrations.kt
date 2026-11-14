@@ -313,4 +313,12 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
             ${tenantTableSql("runners_terminal_hosts")}
         """.trimIndent(),
     ),
+    // The agent's background work, as the runner's heartbeats report it (TeamCode af1a5f7b): the start of the
+    // unbroken stretch of reports and the last one, for the idle pause.
+    SchemaMigration(
+        version = 12,
+        name = "session_background_work",
+        sql = "ALTER TABLE runners_sessions ADD COLUMN background_since TIMESTAMPTZ, " +
+            "ADD COLUMN background_seen_at TIMESTAMPTZ",
+    ),
 )

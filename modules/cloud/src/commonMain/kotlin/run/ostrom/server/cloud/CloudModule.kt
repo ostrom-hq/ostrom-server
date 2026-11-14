@@ -14,10 +14,15 @@ import run.ostrom.server.cloud.domain.CloudRuntimeRepository
 import run.ostrom.server.cloud.domain.CloudRuntimeSource
 import run.ostrom.server.cloud.domain.CloudRuntimeUseCase
 import run.ostrom.server.cloud.domain.CloudRuntimeUseCaseImpl
+import run.ostrom.server.cloud.domain.CloudSettingsRepository
+import run.ostrom.server.cloud.domain.CloudSettingsSource
+import run.ostrom.server.cloud.domain.CloudSettingsUseCase
+import run.ostrom.server.cloud.domain.CloudSettingsUseCaseImpl
 import run.ostrom.server.cloud.infrastructure.CloudClustersRepositoryImpl
 import run.ostrom.server.cloud.infrastructure.CloudMigrations
 import run.ostrom.server.cloud.infrastructure.CloudProfilesRepositoryImpl
 import run.ostrom.server.cloud.infrastructure.CloudRuntimeRepositoryImpl
+import run.ostrom.server.cloud.infrastructure.CloudSettingsRepositoryImpl
 import run.ostrom.server.cloud.presentation.CloudAdminRoutesDependencies
 import run.ostrom.server.cloud.presentation.cloudAdminRoutes
 import run.ostrom.server.kernel.auth.MemberDirectory
@@ -55,8 +60,12 @@ object CloudModule : ServerModule {
         single<CloudProfilesUseCase> {
             CloudProfilesUseCaseImpl(get(), get(), get(), getOrNull<MemberDirectory>() ?: NoMembers)
         }
+        single<CloudSettingsRepository> { CloudSettingsRepositoryImpl(get()) }
+        single { CloudSettingsUseCaseImpl(get(), get()) } binds
+            arrayOf(CloudSettingsUseCase::class, CloudSettingsSource::class)
         single {
             CloudAdminRoutesDependencies(
+                get(),
                 get(),
                 get(),
                 get(),

@@ -10,7 +10,7 @@ import run.ostrom.server.secrets.infrastructure.tenantTableSql
  * `cloud_profiles`). `cloud_runtime` (one row) and `cloud_clusters` are the instance's, without `org_id`
  * (docs/tenancy.md); a cluster's CA bundle and token are sealed with the secrets key (context
  * `cloud-cluster:<id>:ca|token`), so a read of the table alone opens nothing. `cloud_profiles` and their immutable
- * `cloud_profile_versions` are an organization's, under row-level security.
+ * `cloud_profile_versions` are an organization's, under row-level security, as are its `cloud_org_settings`.
  */
 val CloudMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -61,5 +61,19 @@ val CloudMigrations: List<SchemaMigration> = listOf(
         name = "cloud_profiles_tenancy",
         sql = listOf(TENANT_ROLE_SQL, tenantTableSql("cloud_profiles"), tenantTableSql("cloud_profile_versions"))
             .joinToString("\n"),
+    ),
+    // An organization's cloud settings (TeamCode's team `cloud_settings`), under row-level security.
+    SchemaMigration(
+        version = 3,
+        name = "cloud_org_settings",
+        sql = """
+            CREATE TABLE cloud_org_settings (
+                org_id UUID PRIMARY KEY,
+                body TEXT NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL,
+                updated_by UUID NOT NULL
+            );
+            ${tenantTableSql("cloud_org_settings")}
+        """.trimIndent(),
     ),
 )

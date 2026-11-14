@@ -36,6 +36,7 @@ interface ReconcileCloudSessionUseCase {
  * @param plans The organizations' plans, for their hours.
  * @param usage The hours used.
  * @param clock The time.
+ * @param backgroundWork How long the agent's background work holds off the idle pause, per organization.
  */
 // Each step is a decision table read top to bottom: an early return per outcome reads better than nested branches,
 // and one small function per state and per check keeps each table short.
@@ -47,6 +48,7 @@ class ReconcileCloudSessionUseCaseImpl(
     private val plans: CloudPlanProvider,
     private val usage: CloudUsageMeter,
     private val clock: Clock,
+    private val backgroundWork: BackgroundWorkLimit = BackgroundWorkLimit { BackgroundWork.DEFAULT_MAX_MINUTES },
 ) : ReconcileCloudSessionUseCase {
     override suspend fun invoke(session: CloudSession): Instant? {
         val now = clock.now()
@@ -119,6 +121,8 @@ class ReconcileCloudSessionUseCaseImpl(
             executionStartedAt = now,
             readyAt = null,
             lastHeartbeatAt = null,
+            backgroundSince = null,
+            backgroundSeenAt = null,
             runnerTokenHash = tokens.hash(token),
             runnerStoppedAt = null,
             pausingSince = null,
@@ -164,10 +168,11 @@ class ReconcileCloudSessionUseCaseImpl(
     private fun relocating(status: ExecutionStatus, silent: Boolean): Boolean =
         status == ExecutionStatus.HOST_LOST || (silent && driver.relocates && status !in ENDED_STATUSES)
 
-    private fun limitReached(session: CloudSession, now: Instant): SessionFailure? {
+    private suspend fun limitReached(session: CloudSession, now: Instant): SessionFailure? {
         val idleSince = session.lastActivityAt ?: session.readyAt ?: now
+        val timeout = session.limits.idleTimeoutMinutes.minutes
         return when {
-            now - idleSince >= session.limits.idleTimeoutMinutes.minutes ->
+            now - idleSince >= timeout && !backgroundHolds(session, now, timeout) ->
                 SessionFailure(
                     "idle_timeout",
                     "Paused after ${session.limits.idleTimeoutMinutes} minutes without a request to the model.",
@@ -176,6 +181,16 @@ class ReconcileCloudSessionUseCaseImpl(
                 SessionFailure("max_duration", "Paused after ${session.limits.maxRunMinutes} minutes of running.")
             else -> null
         }
+    }
+
+    /**
+     * Whether the agent's background work still holds off the idle pause. The organization's cap is read only once
+     * the session already looks idle.
+     */
+    private suspend fun backgroundHolds(session: CloudSession, now: Instant, timeout: Duration): Boolean {
+        if (session.backgroundSeenAt == null) return false
+        val activity = BackgroundWork.activity(session, backgroundWork.maxMinutes(session.orgId)) ?: return false
+        return now - activity < timeout
     }
 
     private suspend fun pausing(session: CloudSession, now: Instant): Instant? {

@@ -47,8 +47,9 @@ class RunnerHeartbeatUseCaseTest {
         ready: Boolean = false,
         stopped: Boolean = false,
         model: kotlin.time.Instant? = null,
+        background: Boolean = false,
     ) =
-        RunnerHeartbeat(id, epoch, ready, stopped, model)
+        RunnerHeartbeat(id, epoch, ready, stopped, model, background)
 
     @Test
     fun aRunnerIsAuthenticatedByTheTokenOfACurrentExecution() = runTest {
@@ -143,6 +144,28 @@ class RunnerHeartbeatUseCaseTest {
         assertEquals(startedAt + 2.minutes, repository.sessions.getValue(session.id).lastActivityAt)
         heartbeat("tok", beat(session.id, model = clock.now + 1.minutes))
         assertEquals(startedAt + 2.minutes, repository.sessions.getValue(session.id).lastActivityAt)
+    }
+
+    @Test
+    fun backgroundWorkIsAStretchOfHeartbeatsInARow() = runTest {
+        val session = running(state = SessionState.RUNNING).copy(lastHeartbeatAt = startedAt)
+            .also { repository.put(it) }
+        fun stored() = repository.sessions.getValue(session.id)
+        clock.now += 15.seconds
+        heartbeat("tok", beat(session.id, background = true))
+        val first = clock.now
+        assertEquals(first to first, stored().backgroundSince to stored().backgroundSeenAt)
+        clock.now += 15.seconds
+        heartbeat("tok", beat(session.id, background = true))
+        assertEquals(first to clock.now, stored().backgroundSince to stored().backgroundSeenAt)
+        // A heartbeat without it leaves the last report; the next report starts a new stretch.
+        val seen = clock.now
+        clock.now += 15.seconds
+        heartbeat("tok", beat(session.id))
+        assertEquals(first to seen, stored().backgroundSince to stored().backgroundSeenAt)
+        clock.now += 15.seconds
+        heartbeat("tok", beat(session.id, background = true))
+        assertEquals(clock.now to clock.now, stored().backgroundSince to stored().backgroundSeenAt)
     }
 
     @Test
