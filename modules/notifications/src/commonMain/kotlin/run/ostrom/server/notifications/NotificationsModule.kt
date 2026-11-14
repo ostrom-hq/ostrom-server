@@ -138,14 +138,20 @@ object NotificationsModule : ServerModule {
     private fun Module.router() {
         single<NotificationSettingsRepository> { NotificationSettingsRepositoryImpl(get()) }
         single<NotificationSettingsService> {
-            NotificationSettingsServiceImpl(get(), getAll<NotificationChannel>().map { it.id }.distinct().sorted())
+            val scope = this
+            NotificationSettingsServiceImpl(get()) {
+                scope.getAll<NotificationChannel>().map { it.id }.distinct().sorted()
+            }
         }
         single { NotificationSettingsRoutesDependencies(get(), get()) }
         single {
             PushChannel(get(), get(), get(), get(), get(), get<NotificationSettings>().publicUrl, get())
         }
         single<NotificationChannel>(named(PUSH_CHANNEL)) { get<PushChannel>() }
-        single<SendTestPushUseCase> { SendTestPushUseCaseImpl(get(), get()) }
+        single<SendTestPushUseCase> {
+            val scope = this
+            SendTestPushUseCaseImpl({ scope.get<PushChannel>() }, get())
+        }
         single { PushTestRoutesDependencies(get(), get()) }
         single<OrgDeletionListener>(named("notifications-settings")) { NotificationSettingsOrgDeletionListener(get()) }
     }

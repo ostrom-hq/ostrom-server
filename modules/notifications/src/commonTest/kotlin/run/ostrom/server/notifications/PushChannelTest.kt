@@ -160,7 +160,7 @@ class PushChannelTest {
 
     @Test
     fun aTestGoesToTheCallersPhonesOnceEveryTenSeconds() = runTest {
-        val test = SendTestPushUseCaseImpl(channel(), clock)
+        val test = SendTestPushUseCaseImpl({ channel() }, clock)
         assertFailsWith<NoPushPhoneException> { test(org, mia) }
         phone(mia, "mia-phone")
         assertFailsWith<PushTestRateLimitedException> { test(org, mia) }

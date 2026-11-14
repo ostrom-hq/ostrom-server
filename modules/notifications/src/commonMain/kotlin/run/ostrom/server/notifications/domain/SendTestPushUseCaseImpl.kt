@@ -13,10 +13,11 @@ import kotlin.uuid.Uuid
  * [SendTestPushUseCase] through the push channel, with the rate of TeamCode's test: one per member every ten seconds
  * on each replica, kept in memory (a test costs one push per phone, nothing is stored).
  *
- * @param push The push channel.
+ * @param channel The push channel, built at the first test: the routes need nothing of it until then.
  * @param clock The time.
  */
-class SendTestPushUseCaseImpl(private val push: PushChannel, private val clock: Clock) : SendTestPushUseCase {
+class SendTestPushUseCaseImpl(channel: () -> PushChannel, private val clock: Clock) : SendTestPushUseCase {
+    private val push by lazy(channel)
     private val mutex = Mutex()
     private val last = HashMap<Pair<Uuid, Uuid>, Instant>()
 

@@ -10,12 +10,14 @@ import kotlin.uuid.Uuid
  * the member turns it off.
  *
  * @param repository The switches.
- * @param channels The ids of the channels this server offers.
+ * @param offered The ids of the channels this server offers, read at the first call: a channel is built only when used.
  */
 class NotificationSettingsServiceImpl(
     private val repository: NotificationSettingsRepository,
-    private val channels: List<String>,
+    offered: () -> List<String>,
 ) : NotificationSettingsService {
+    private val channels by lazy(offered)
+
     override suspend fun settings(orgId: Uuid, memberId: Uuid): MemberNotificationSettings {
         val stored = repository.settings(orgId, memberId).associateBy { it.channel to it.kind }
         val settings = channels.flatMap { channel ->
@@ -32,7 +34,8 @@ class NotificationSettingsServiceImpl(
         enabled: Boolean,
     ): MemberNotificationSettings {
         if (channel !in channels) {
-            throw InvalidNotificationSettingException("This server has no notification channel `${channel.take(16)}`.")
+            val shown = channel.take(MAX_CHANNEL_SHOWN)
+            throw InvalidNotificationSettingException("This server has no notification channel `$shown`.")
         }
         val parsed = NotificationKind.parse(kind) ?: throw InvalidNotificationSettingException(UNKNOWN_KIND)
         repository.set(orgId, memberId, NotificationSetting(channel, parsed, enabled))
@@ -41,5 +44,6 @@ class NotificationSettingsServiceImpl(
 
     private companion object {
         const val UNKNOWN_KIND = "Unknown notification kind."
+        const val MAX_CHANNEL_SHOWN = 16
     }
 }

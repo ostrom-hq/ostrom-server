@@ -37,7 +37,7 @@ class NotificationSettingsServiceTest {
 
     @Test
     fun aServerWithoutChannelsOffersNoSwitchAndRefusesEveryChange() = runTest {
-        val service = NotificationSettingsServiceImpl(MemoryRepository(), emptyList())
+        val service = NotificationSettingsServiceImpl(MemoryRepository()) { emptyList() }
         assertEquals(emptyList(), service.settings(org, mia).settings)
         assertFailsWith<InvalidNotificationSettingException> { service.set(org, mia, "push", "waiting", false) }
     }
@@ -45,7 +45,7 @@ class NotificationSettingsServiceTest {
     @Test
     fun aStoredSwitchReplacesItsDefault() = runTest {
         val repository = MemoryRepository()
-        val service = NotificationSettingsServiceImpl(repository, listOf("push"))
+        val service = NotificationSettingsServiceImpl(repository) { listOf("push") }
         val changed = service.set(org, mia, "push", "session_failed", false)
         assertEquals(listOf("push"), changed.channels)
         assertEquals(

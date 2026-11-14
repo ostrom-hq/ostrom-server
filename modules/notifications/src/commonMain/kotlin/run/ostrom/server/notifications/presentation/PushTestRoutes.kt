@@ -8,7 +8,6 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import run.ostrom.core.api.models.PushTestResult
 import run.ostrom.core.api.models.PushTestResults
-import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.authenticated
 import run.ostrom.server.kernel.auth.requireOrgPrincipal
 import run.ostrom.server.kernel.auth.requirePrincipal
@@ -17,14 +16,6 @@ import run.ostrom.server.notifications.domain.PushResult
 import run.ostrom.server.notifications.domain.PushTestRateLimitedException
 import run.ostrom.server.notifications.domain.SendTestPushUseCase
 import run.ostrom.server.notifications.domain.TEST_WINDOW
-
-/**
- * What the test push route needs.
- *
- * @property orgs The member the caller acts for.
- * @property sendTest The test.
- */
-data class PushTestRoutesDependencies(val orgs: PrincipalOrgResolver, val sendTest: SendTestPushUseCase)
 
 /**
  * "Send a test to my phone" (`notifications.push.test.v1`): any member signed in interactively, to their own phones
