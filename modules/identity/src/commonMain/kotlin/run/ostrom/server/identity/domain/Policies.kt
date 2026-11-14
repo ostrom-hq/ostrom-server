@@ -134,6 +134,17 @@ const val ADMIN_HANDOVER_SCOPE = "accounts:write"
  */
 val ADMIN_TOKEN_SCOPES: Set<String> = CLI_SCOPES + ADMIN_SCOPES + ADMIN_READ_SCOPES + ADMIN_HANDOVER_SCOPE
 
+/**
+ * The scopes the token of a device sign-in gets once approved, and that the console's approval page lists before the
+ * yes, every one of them: an admin never approves a power the page does not show. [ADMIN_TOKEN_SCOPES] for
+ * `ostrom login --admin` (it asked for [ADMIN_SCOPES]), [CLI_SCOPES] for the ordinary sign-in (it asked for none).
+ *
+ * @param asked The scopes the sign-in asked for.
+ *
+ * @return What its token holds.
+ */
+fun deviceTokenScopes(asked: Set<String>): Set<String> = if (asked.isEmpty()) CLI_SCOPES else ADMIN_TOKEN_SCOPES
+
 /** The scope that changes the caller's notification preferences (`PUT /api/v1/me/notifications`). */
 const val NOTIFICATIONS_WRITE_SCOPE = "notifications:write"
 

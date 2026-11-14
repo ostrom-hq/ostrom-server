@@ -531,8 +531,9 @@ data class AuthTokenResponse(
  * @property userCode The code.
  * @property clientName What is asking.
  * @property expiresAt When the request expires (ISO 8601).
- * @property scopes The governance write scopes `ostrom login --admin` asks for, shown before the yes, which only an
- *   owner or an admin may approve; absent for the ordinary sign-in.
+ * @property scopes Every scope the token of `ostrom login --admin` will hold (its governance writes, the CLI's, their
+ *   reads and the handover of shared accounts), shown before the yes, which only an owner or an admin may approve;
+ *   absent for the ordinary sign-in.
  * @property requestedAt When the CLI asked (ISO 8601), shown before the yes (web audit 2, W3).
  * @property requestedFrom The network the CLI asked from (`203.0.113.0/24`, `2001:db8:abcd::/48`), shown before the
  *   yes; absent when the server could not tell.

@@ -151,7 +151,9 @@ class AdminLoginPostgresTest {
         val shown = server.client.get("/api/v1/auth/device?userCode=${codes.userCode}") {
             browserSession(memberSession.secret, memberSession.csrfToken)
         }.body<DeviceAuthorizationResponse>()
-        assertEquals(listOf("gates:policy", "harness:write", "policy:write"), shown.scopes, "Shown before the yes")
+        val listed = checkNotNull(shown.scopes) { "An admin sign-in lists its scopes" }
+        assertTrue(listOf("gates:policy", "harness:write", "policy:write").all { it in listed }, "$listed")
+        assertTrue(listOf("accounts:read", "accounts:write").all { it in listed }, "The handover is shown: $listed")
         assertEquals(HttpStatusCode.Forbidden, server.answer(memberSession, codes.userCode), "A member")
         assertEquals(HttpStatusCode.Forbidden, server.answer(lonerSession, codes.userCode), "No organization")
         assertEquals(HttpStatusCode.NoContent, server.answer(adminSession, codes.userCode))
@@ -162,6 +164,7 @@ class AdminLoginPostgresTest {
         val token = response.body<AuthTokenResponse>()
         assertTrue(token.token.startsWith("osg_"))
         assertTrue(token.scopes.containsAll(ADMIN_SCOPES) && "profile:read" in token.scopes, "${token.scopes}")
+        assertEquals(listed, token.scopes.sorted(), "The page listed exactly the token's scopes, no power unseen")
         val expiresAt = Instant.parse(checkNotNull(token.expiresAt))
         assertTrue(expiresAt <= before + 8.hours + 1.minutes && expiresAt > before + 7.hours, "$expiresAt")
 

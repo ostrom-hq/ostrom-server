@@ -308,7 +308,7 @@ class PollDeviceAuthorizationUseCaseImpl(
         val kind = if (admin) TokenKind.ADMIN else TokenKind.CLI
         val issued = issue(secrets, kind) { id, hint ->
             val expiresAt = now + if (admin) ADMIN_TOKEN_LIFETIME else CLI_TOKEN_LIFETIME
-            val scopes = if (admin) ADMIN_TOKEN_SCOPES else CLI_SCOPES
+            val scopes = deviceTokenScopes(authorization.scopes)
             ApiToken(id, userId, orgId, authorization.clientName, kind, scopes, hint, null, now, expiresAt, null, null)
         }
         // An admin token lasts a working day and is approved each time from the console: it takes no workstation.

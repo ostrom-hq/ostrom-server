@@ -7,6 +7,7 @@ import run.ostrom.server.identity.domain.PERSONAL_TOKEN_SCOPES
 import run.ostrom.server.identity.domain.SessionRequiredException
 import run.ostrom.server.identity.domain.StartedSession
 import run.ostrom.server.identity.domain.TokenNotFoundException
+import run.ostrom.server.identity.domain.deviceTokenScopes
 import run.ostrom.server.identity.domain.isBrowserSession
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.CSRF_COOKIE
@@ -167,7 +168,9 @@ private fun Route.deviceAnswerRoutes(dependencies: IdentityRoutesDependencies) =
         val principal = call.requireBrowserSession()
         val code = params.userCode ?: throw OstromException(ErrorKind.INVALID_REQUEST, "userCode is required.")
         val authorization = getDeviceAuthorization(principal.userId(), code)
-        val scopes = authorization.scopes.sorted().takeIf { it.isNotEmpty() }
+        // every scope the admin token will hold, not only the governance writes it asked for (an admin never
+        // approves a power the page does not show); none for the ordinary sign-in
+        val scopes = deviceTokenScopes(authorization.scopes).sorted().takeIf { authorization.scopes.isNotEmpty() }
         call.respond(
             DeviceAuthorizationResponse(
                 userCode = authorization.userCode,
