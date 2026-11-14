@@ -63,8 +63,11 @@ class PersonalMcpServersTest {
         assertEquals(listOf(mine), personal().list(Relay.memberA))
         assertEquals(emptyList(), personal().list(Relay.otherA))
 
-        val changed = personal().update(Relay.memberA, "mine", http.copy(url = "https://mcp.example.com/v2"))
+        val changed = personal().update(Relay.memberA, "mine", http.copy(credentialHeader = "X-Token"))
         assertEquals(2, changed.version)
+        // Its address never changes either: the member's credential never follows a new host.
+        val moved = http.copy(credentialHeader = "X-Token", url = "https://mcp.example.com/v2")
+        assertFailsWith<InvalidMcpServerException> { personal().update(Relay.memberA, "mine", moved) }
         assertFailsWith<InvalidMcpServerException> { personal().update(Relay.memberA, "mine", http.copy(name = "x")) }
         assertFailsWith<McpServerNotFoundException> { personal().update(Relay.otherA, "mine", http) }
         assertFailsWith<McpServerNotFoundException> { personal().delete(Relay.otherA, "mine") }

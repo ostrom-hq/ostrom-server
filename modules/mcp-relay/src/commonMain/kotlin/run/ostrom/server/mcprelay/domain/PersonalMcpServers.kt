@@ -84,6 +84,7 @@ class PersonalMcpServersUseCaseImpl(
         }
         val next = shape(caller, payload)
             .toServer(current.id, caller.orgId, current.version + 1, current.createdAt, caller.memberId)
+        administration.requireSameEndpoint(current, next)
         administration.check(caller, next)
         return repository.updateServer(next) ?: throw McpServerNotFoundException()
     }

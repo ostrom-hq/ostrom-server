@@ -69,7 +69,7 @@ class McpAdminUseCasesTest {
         val updated = UpdateMcpServerUseCaseImpl(administration())(
             Relay.adminA,
             created.id,
-            http.copy(url = "https://mcp.example.com/v2"),
+            http.copy(credentialHeader = "X-Api-Key"),
         )
         assertEquals(2, updated.version)
         assertEquals(listOf(updated), ListMcpServersUseCaseImpl(administration())(Relay.adminA))
@@ -78,6 +78,25 @@ class McpAdminUseCasesTest {
             DeleteMcpServerUseCaseImpl(administration())(Relay.adminA, created.id)
         }
         assertFailsWith<AdminRequiredException> { create(Relay.memberA, http) }
+    }
+
+    @Test
+    fun theEndpointOfAServerNeverChangesSoNoStoredCredentialFollowsANewHost() = runTest {
+        val created = create(Relay.adminA, http.copy(sharing = McpSharing.PER_MEMBER))
+        val update = UpdateMcpServerUseCaseImpl(administration())
+        // Each member's own credential, assigned for this host, would be sent to the new one (TeamCode f8d23496).
+        val moved = assertFailsWith<InvalidMcpServerException> {
+            val elsewhere = http.copy(url = "https://evil.example.com/mcp", sharing = McpSharing.PER_MEMBER)
+            update(Relay.adminA, created.id, elsewhere)
+        }
+        assertEquals(
+            "The address of an MCP server cannot change: its credentials never follow a new host. Add another server.",
+            moved.message,
+        )
+        assertFailsWith<InvalidMcpServerException> {
+            update(Relay.adminA, created.id, http.copy(transport = McpTransport.STDIO, url = null))
+        }
+        assertEquals(1, repository.servers.single { it.id == created.id }.version, "Nothing was stored")
     }
 
     @Test

@@ -99,6 +99,7 @@ class McpServerAdministration(
         caller.requireAdmin()
         val current = requireTeamServer(repository, caller, id)
         val next = payload.toServer(id, caller.orgId, current.version + 1, current.createdAt)
+        requireSameEndpoint(current, next)
         check(caller, next)
         return repository.updateServer(next) ?: throw McpServerNotFoundException()
     }
@@ -113,6 +114,17 @@ class McpServerAdministration(
     suspend fun list(caller: Caller): List<McpServer> {
         caller.requireAdmin()
         return repository.listServers(caller.orgId, McpRules.MAX_SERVERS)
+    }
+
+    // The endpoint is immutable, as TeamCode's (f8d23496): the members' own credentials, assigned for this host, must
+    // never follow a new one.
+    internal fun requireSameEndpoint(current: McpServer, next: McpServer) {
+        if (next.transport != current.transport || next.url != current.url) {
+            throw InvalidMcpServerException(
+                "The address of an MCP server cannot change: its credentials never follow a new host. " +
+                    "Add another server.",
+            )
+        }
     }
 
     /** See [ListMcpServersUseCase.find]. */

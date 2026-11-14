@@ -37,9 +37,11 @@ import kotlin.test.assertNull
 
 /** What the import must never do: fail open, wipe, overwrite or rename what it did not create. */
 class ImportSafetyPostgresTest {
-    private fun logs(tools: List<String>, url: String = "https://l.example.com/mcp") = TeamCodeImportRequest(
+    private fun logs(tools: List<String>) = TeamCodeImportRequest(
         mcpServers = listOf(
-            TeamCodeMcpServerDto("v-logs", "logs", "default", url = url, toolMode = "deny", tools = tools),
+            TeamCodeMcpServerDto(
+                "v-logs", "logs", "default", url = "https://l.example.com/mcp", toolMode = "deny", tools = tools,
+            ),
         ),
         assignments = listOf(TeamCodeAssignmentDto("m1", "v-logs")),
         memberMap = Importing.members,
@@ -72,8 +74,8 @@ class ImportSafetyPostgresTest {
                     it.tool
                 },
             )
-            // Already there, it is not changed either while a denial is missing.
-            val again = report(logs(listOf("delete_all", "bad tool!"), url = "https://l.example.com/v2"))
+            // Already there, it is not assigned either while a denial is missing.
+            val again = report(logs(listOf("delete_all", "bad tool!")))
             assertEquals(line("server", "logs", SKIPPED, refused), again.items[1])
             assertEquals("https://l.example.com/mcp", servers().getValue("logs").url)
             assertEquals(emptyList(), koin.get<ListMcpAssignmentsUseCase>()(adminA, created.id))

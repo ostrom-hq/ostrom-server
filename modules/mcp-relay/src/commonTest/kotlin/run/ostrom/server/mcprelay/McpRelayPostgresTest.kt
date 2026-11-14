@@ -357,9 +357,12 @@ class McpRelayPostgresTest : RelayPostgresHarness() {
             with(server) {
                 grafana()
                 val update =
-                    McpServerDto("grafana", "https://grafana2.example.com/mcp", "http", listOf("GRAFANA_TOKEN"))
+                    McpServerDto("grafana", "https://mcp.grafana.example.com/mcp", "http", listOf("GRAFANA_TOKEN"))
                 val saved = sendJson(HttpMethod.Put, "$admin/servers/grafana", update)
                 assertEquals(2, saved.body<McpServerDto>().version)
+                val moved = update.copy(url = "https://grafana2.example.com/mcp")
+                val refused = sendJson(HttpMethod.Put, "$admin/servers/grafana", moved)
+                assertEquals(HttpStatusCode.BadRequest, refused.status, "Its credentials never follow a new host")
                 val sentry = McpServerDto("sentry", "https://sentry.example.com/mcp", "http")
                 val created = sendJson(HttpMethod.Put, "$admin/servers/sentry", sentry)
                 assertEquals(1, created.body<McpServerDto>().version, "PUT creates a missing server")

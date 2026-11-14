@@ -146,10 +146,32 @@ class ImportPostgresTest {
 
     private fun changed() = Importing.team(
         grafanaToken = "g-token-2",
-        grafanaUrl = "https://g.example.com/v2",
         readOnly = listOf("query_loki_logs", "list_datasources"),
         denied = listOf("update_dashboard", "delete_dashboard"),
     )
+
+    @Test
+    fun aServerWhoseAddressChangedInTeamCodeIsSkippedSoItsCredentialsStay() =
+        serverTest(modules, importOverrides()) { server ->
+            with(server) {
+                report(Importing.team())
+                val moved = Importing.team(grafanaUrl = "https://g.example.com/v2", denied = listOf("delete_dashboard"))
+                for (dryRun in listOf(true, false)) {
+                    val items = report(moved, dryRun = dryRun).items
+                    val line = items.single { it.kind == "server" && it.name == "grafana" }
+                    assertEquals(SKIPPED.name.lowercase(), line.action, "dry run: $dryRun")
+                    assertTrue("address" in line.reason.orEmpty(), line.reason)
+                }
+                val grafana = servers().getValue("grafana")
+                assertEquals("https://g.example.com/mcp", grafana.url)
+                val denials = koin.get<ListArgumentPoliciesUseCase>()(adminA, grafana.id).map { it.tool }.toSet()
+                assertEquals(setOf("update_dashboard", "delete_dashboard"), denials, "Its new denial still applies")
+                // Any other change of a server is still planned by a dry run.
+                val shared = report(Importing.team(discordPerMember = false), dryRun = true).items
+                val discord = shared.single { it.kind == "server" && it.name == "discord" }
+                assertEquals(line("server", "discord", PLANNED), discord)
+            }
+        }
 
     @Test
     fun aChangeInTeamCodeUpdatesOnlyWhatChanged() = serverTest(modules, importOverrides()) { server ->
@@ -159,17 +181,17 @@ class ImportPostgresTest {
             assertEquals(
                 listOf(
                     line("secret", "TEAMCODE_GRAFANA", UPDATED),
-                    line("server", "grafana", UPDATED),
                     line("assignment", "grafana.ro/${otherA.memberId}", UPDATED),
                 ),
                 report.items.filter { it.action == "updated" },
             )
+            assertEquals(line("server", "grafana", UNCHANGED), report.items.single { it.name == "grafana" })
             assertEquals(
                 listOf(line("policy", "grafana/delete_dashboard", CREATED)),
                 report.items.filter { it.action == "created" },
             )
             val grafana = servers().getValue("grafana")
-            assertEquals("https://g.example.com/v2", grafana.url)
+            assertEquals("https://g.example.com/mcp", grafana.url)
             val token = koin.get<RevealSecretsUseCase>()(adminA.orgId, listOfNotNull(grafana.credentialSecretId))
             assertEquals(listOf(SecretValue("g-token-2")), token.values.toList())
             assertEquals(2, koin.get<ListArgumentPoliciesUseCase>()(adminA, grafana.id).size)
@@ -193,7 +215,7 @@ class ImportPostgresTest {
                 assertEquals(
                     listOf(
                         line("secret", "TEAMCODE_GRAFANA", PLANNED),
-                        line("server", "grafana", PLANNED),
+                        line("server", "grafana", UNCHANGED),
                         line("policy", "grafana/update_dashboard", UNCHANGED),
                         line("policy", "grafana/delete_dashboard", PLANNED),
                         line("assignment", "grafana.ro/${otherA.memberId}", PLANNED),
