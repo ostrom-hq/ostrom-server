@@ -11,6 +11,8 @@ import run.ostrom.server.identity.domain.MailAvailability
 import run.ostrom.server.identity.infrastructure.InstanceMailSender
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.MapConfigSource
+import run.ostrom.server.kernel.logging.LogLevel
+import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.settings.InstanceSettings
 import run.ostrom.server.kernel.settings.SettingsSection
 import run.ostrom.server.testing.TestInstanceSettings
@@ -89,6 +91,13 @@ class IdentityModuleRegistrationTest {
         single<ConfigSource> { MapConfigSource(config.toMap()) }
         single<Clock> { Clock.System }
         single<InstanceSettings> { settings }
+        single<Logger> {
+            object : Logger {
+                override fun log(level: LogLevel, message: String, fields: Map<String, Any?>, error: Throwable?) = Unit
+
+                override fun with(fields: Map<String, Any?>): Logger = this
+            }
+        }
     }
 
     private fun withIdentity(vararg config: Pair<String, String>, block: suspend (Koin) -> Unit) = runTest {
