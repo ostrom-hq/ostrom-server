@@ -10,6 +10,9 @@ class NotificationsFeaturesTest {
     @Test
     fun itsFeaturesNeedNoConfiguration() = runTest {
         val koin = koinApplication {}.koin
-        assertEquals(setOf("notifications.v1", "notifications.push.v1"), NotificationsModule.features(koin))
+        assertEquals(
+            setOf("notifications.v1", "notifications.push.v1", "notifications.push.test.v1"),
+            NotificationsModule.features(koin),
+        )
     }
 }

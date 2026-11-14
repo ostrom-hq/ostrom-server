@@ -6,11 +6,13 @@ import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
+import io.ktor.client.request.post
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import org.koin.core.qualifier.named
@@ -81,7 +83,6 @@ class NotificationSettingsPostgresTest {
     }
 
     private val overrides = module {
-        single<NotificationChannel>(named("push")) { SilentChannel("push") }
         single<NotificationChannel>(named("slack")) { SilentChannel("slack") }
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
@@ -159,6 +160,21 @@ class NotificationSettingsPostgresTest {
         }
         assertEquals(HttpStatusCode.NotFound, server.read("stranger").status, "A person of no organization")
         assertEquals(HttpStatusCode.OK, server.read("mia-cli").status, "The token of `ostrom login`")
+    }
+
+    @Test
+    fun aTestPushIsAPersonsOwnAndWaitsTenSeconds() = serverTest(modules, overrides) { server ->
+        val path = "/api/v1/notifications/push/test"
+        assertEquals(HttpStatusCode.Unauthorized, server.client.post(path).status)
+        assertEquals(HttpStatusCode.Forbidden, server.client.post(path) { bearerAuth("agent-a") }.status)
+        assertEquals(HttpStatusCode.NotFound, server.client.post(path) { bearerAuth("stranger") }.status)
+        val off = server.client.post(path) { bearerAuth("mia-a") }
+        assertEquals(HttpStatusCode.Conflict, off.status, "No provider is chosen")
+        assertEquals("push_off", off.body<ApiError>().error.type)
+        val again = server.client.post(path) { bearerAuth("mia-a") }
+        assertEquals(HttpStatusCode.TooManyRequests, again.status)
+        assertEquals("push_test_rate_limited", again.body<ApiError>().error.type)
+        assertEquals("10", again.headers[HttpHeaders.RetryAfter])
     }
 
     @Test

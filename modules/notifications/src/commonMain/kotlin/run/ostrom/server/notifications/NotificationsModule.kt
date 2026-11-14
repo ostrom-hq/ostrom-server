@@ -20,6 +20,12 @@ import run.ostrom.server.notifications.domain.LiveCredentials
 import run.ostrom.server.notifications.domain.NotificationOutbox
 import run.ostrom.server.notifications.domain.PUSH_SETTINGS
 import run.ostrom.server.notifications.domain.NotificationChannel
+import run.ostrom.server.notifications.domain.PUSH_CHANNEL
+import run.ostrom.server.notifications.domain.PushChannel
+import run.ostrom.server.notifications.domain.SendTestPushUseCase
+import run.ostrom.server.notifications.domain.SendTestPushUseCaseImpl
+import run.ostrom.server.notifications.presentation.PushTestRoutesDependencies
+import run.ostrom.server.notifications.presentation.pushTestRoutes
 import run.ostrom.server.notifications.domain.NotificationSettingsRepository
 import run.ostrom.server.notifications.domain.NotificationSettingsService
 import run.ostrom.server.notifications.domain.NotificationSettingsServiceImpl
@@ -135,20 +141,28 @@ object NotificationsModule : ServerModule {
             NotificationSettingsServiceImpl(get(), getAll<NotificationChannel>().map { it.id }.distinct().sorted())
         }
         single { NotificationSettingsRoutesDependencies(get(), get()) }
+        single {
+            PushChannel(get(), get(), get(), get(), get(), get<NotificationSettings>().publicUrl, get())
+        }
+        single<NotificationChannel>(named(PUSH_CHANNEL)) { get<PushChannel>() }
+        single<SendTestPushUseCase> { SendTestPushUseCaseImpl(get(), get()) }
+        single { PushTestRoutesDependencies(get(), get()) }
         single<OrgDeletionListener>(named("notifications-settings")) { NotificationSettingsOrgDeletionListener(get()) }
     }
 
     override fun routes(route: Route, koin: Koin) {
         route.pushDevicesRoutes(koin.get())
         route.notificationSettingsRoutes(koin.get())
+        route.pushTestRoutes(koin.get())
     }
 
     /**
      * Approval notifications, and push to the phones: a phone registers its FCM token and public key whatever the
-     * provider, and its pushes go out once an administrator chooses one (Admin → Settings → push).
+     * provider, and its pushes go out once an administrator chooses one (Admin → Settings → push). Any member signed in
+     * interactively may send a test to their phones.
      */
     override suspend fun features(koin: Koin): Set<String> =
-        setOf(ServerFeatures.NOTIFICATIONS, ServerFeatures.NOTIFICATIONS_PUSH)
+        setOf(ServerFeatures.NOTIFICATIONS, ServerFeatures.NOTIFICATIONS_PUSH, ServerFeatures.NOTIFICATIONS_PUSH_TEST)
 
     /** Sends the queued notifications until the server stops. */
     override fun start(scope: CoroutineScope, koin: Koin) {
