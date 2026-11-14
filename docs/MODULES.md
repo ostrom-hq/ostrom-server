@@ -429,7 +429,7 @@ the CLI's runner image (ostrom-cli `docker/runner`) holds `ostrom` alone. A regi
 Ported from TeamCode's docs/notifications.md ("Push"). The phone app registers its FCM registration token (iOS and
 Android alike) with its P-256 public key (`POST /api/v1/push-devices`, `provider: fcm`, `publicKey` in
 SubjectPublicKeyInfo DER, base64), at every start and when FCM rotates the token;
-`GET /api/v1/push-devices` lists the caller's own phones (never their token or key) and
+the caller lists their own phones (never their token or key, `listPushDevices`) and
 `DELETE /api/v1/push-devices/{id}` removes one (TeamCode has no such list: its Devices page prints a `push` flag).
 Each push is end-to-end encrypted
 for that key (ECIES: an ephemeral P-256 key, HKDF-SHA256 with info `ostrom-push-v1`, AES-256-GCM; the contract's
