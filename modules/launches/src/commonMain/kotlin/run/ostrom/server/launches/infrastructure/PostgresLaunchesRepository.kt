@@ -99,7 +99,7 @@ class PostgresLaunchesRepository(
                 Statement.create(SET_CAPS).bind("org_id", orgId).bind("id", id)
                     .bind("budget_micros", caps.budgetMicros).bind("max_concurrent", caps.maxConcurrent)
                     .bind("paused", caps.paused),
-            ).getOrThrow().isNotEmpty()
+            ).getOrThrow().firstOrNull() != null
         }
 
     override suspend fun labelsOf(orgId: Uuid, id: String): Map<String, String> = find(orgId, id)?.labels.orEmpty()
