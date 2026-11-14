@@ -2,6 +2,7 @@
 package run.ostrom.server.artifacts
 
 import run.ostrom.server.artifacts.domain.ArtifactMaintenanceRepository
+import run.ostrom.server.artifacts.domain.ArtifactsRepository
 import run.ostrom.server.artifacts.fakes.ORG_A
 import run.ostrom.server.artifacts.fakes.ORG_B
 import run.ostrom.server.artifacts.infrastructure.MaintenanceQueries
@@ -125,6 +126,26 @@ class ArtifactMaintenancePostgresTest {
     }
 
     @Test
+    fun aDeletedArtifactLeavesItsFolderUntilItIsProvenEmpty() = serverTest(listOf(ArtifactsModule)) { server ->
+        val maintenance = server.koin.get<ArtifactMaintenanceRepository>()
+        val artifacts = server.koin.get<ArtifactsRepository>()
+        val (owned, expired) = server.artifact(ORG_A, 1, 1.hours) to server.artifact(ORG_A, 1, 2.hours, now - 1.minutes)
+        val elsewhere = server.artifact(ORG_B, 1, 1.hours)
+        assertEquals(emptySet(), maintenance.organizations(now - 1.hours, drafts, publications, 10).toSet())
+        artifacts.delete(ORG_A, owned)
+        assertEquals(1, maintenance.deleteExpired(ORG_A, expired, now, drafts))
+        artifacts.delete(ORG_B, elsewhere)
+        assertEquals(setOf(owned, expired), maintenance.deletedFolders(ORG_A, 10).toSet())
+        assertEquals(1, maintenance.deletedFolders(ORG_A, 1).size)
+        assertEquals(listOf(elsewhere), maintenance.deletedFolders(ORG_B, 10))
+        assertEquals(setOf(ORG_A, ORG_B), maintenance.organizations(now - 1.hours, drafts, publications, 10).toSet())
+        maintenance.folderRemoved(ORG_A, owned)
+        maintenance.folderRemoved(ORG_A, elsewhere)
+        assertEquals(listOf(expired), maintenance.deletedFolders(ORG_A, 10))
+        assertEquals(listOf(elsewhere), maintenance.deletedFolders(ORG_B, 10))
+    }
+
+    @Test
     fun theMaintenanceReadsItsIndexes() = serverTest(listOf(ArtifactsModule)) { server ->
         // 20 000 artifacts of 2 000 organizations, an upload, a content and two publications each, none of them due.
         server.sql(
@@ -149,7 +170,8 @@ class ArtifactMaintenancePostgresTest {
         for (table in MAINTAINED) {
             server.sql("VACUUM ANALYZE $table")
         }
-        val due = dueOrganizationsSql("'$now'", "'$drafts'", "'$publications'", "100")
+        // As the function runs it: the pending folders are few, read whole.
+        val due = dueOrganizationsSql("'$now'", "'$drafts'", "'$publications'", "100", folders = true)
         val plans = mutableListOf(
             due to server.database.superuser.fetchAll("EXPLAIN $due").getOrThrow()
                 .joinToString("\n") { it.get("QUERY PLAN").asString() },
@@ -161,6 +183,7 @@ class ArtifactMaintenancePostgresTest {
             MaintenanceQueries.DELETE_EXPIRED,
             MaintenanceQueries.MARKED,
             MaintenanceQueries.FORGET,
+            MaintenanceQueries.DELETED_FOLDERS,
             "DELETE FROM artifacts_publications WHERE published_at < :publications",
         )
         for (sql in statements) {

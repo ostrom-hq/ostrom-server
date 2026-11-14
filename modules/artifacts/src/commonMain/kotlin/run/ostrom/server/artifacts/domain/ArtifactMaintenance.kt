@@ -49,6 +49,12 @@ interface ArtifactMaintenanceRepository {
 
     /** Forgets contents deleted from the bucket, unless a publication used one again since (its mark cleared). */
     suspend fun forgetBlobs(orgId: Uuid, blobs: List<ArtifactBlob>)
+
+    /** The organization's deleted artifacts whose folder is not proven empty yet, the oldest deletion first. */
+    suspend fun deletedFolders(orgId: Uuid, limit: Int): List<Uuid>
+
+    /** Forgets a deleted artifact whose folder was listed empty. */
+    suspend fun folderRemoved(orgId: Uuid, artifactId: Uuid)
 }
 
 /**
@@ -62,9 +68,9 @@ data class ArtifactBlob(val artifactId: Uuid, val sha256: String)
 /**
  * The scheduled work of artifacts, TeamCode's `ArtifactMaintenance`: the publications the hourly limit no longer
  * counts are forgotten; an expired upload ends and its folder of chunks is deleted from the bucket; a draft never
- * committed for 24 hours and an artifact past its retention are deleted with their folder, the latter audited as
- * `artifact.retention_expired` by the system; the contents marked for collection are deleted from the bucket, then
- * forgotten. Each organization on its own: a failure is tried again at the next pass.
+ * committed for 24 hours and an artifact past its retention are deleted, the latter audited as
+ * `artifact.retention_expired` by the system; a deleted artifact's folder is deleted until it is listed empty (TeamCode's
+ * proof); the contents marked for collection are deleted from the bucket, then forgotten. Each organization on its own: a failure is tried again at the next pass.
  *
  * @param repository The rows.
  * @param contents The artifacts' folders.
@@ -108,8 +114,11 @@ class ArtifactMaintenance(
         val drafts = now - DRAFT_LIFETIME
         for (artifactId in repository.expired(orgId, now, drafts, BATCH)) {
             val latest = repository.deleteExpired(orgId, artifactId, now, drafts) ?: continue
-            contents.remove(orgId, artifactId)
             if (latest > 0) events.record(system(orgId), "retention_expired", artifactId, emptyMap())
+        }
+        // Each deleted artifact's folder, until it is listed empty (the ones just expired included).
+        for (artifactId in repository.deletedFolders(orgId, BATCH)) {
+            if (contents.remove(orgId, artifactId)) repository.folderRemoved(orgId, artifactId)
         }
         // Deleted from the bucket, then forgotten: while one is marked its artifact takes no upload and no version.
         val marked = repository.markedBlobs(orgId, now, BATCH)

@@ -55,12 +55,55 @@ private val ROUTES_UNDER_ROW_LEVEL_SECURITY_SQL: String =
  * before `p_publications`, or contents marked for collection, each found on its own index. Frozen: migration 12 is
  * written from it.
  */
-internal fun dueOrganizationsSql(now: String, drafts: String, publications: String, limit: String): String =
+internal fun dueOrganizationsSql(
+    now: String,
+    drafts: String,
+    publications: String,
+    limit: String,
+    folders: Boolean = false,
+): String =
     "SELECT DISTINCT d.org_id FROM (SELECT u.org_id FROM artifacts_uploads u WHERE u.expires_at <= $now " +
         "UNION ALL SELECT a.org_id FROM artifacts_artifacts a WHERE a.expires_at <= $now " +
         "UNION ALL SELECT a.org_id FROM artifacts_artifacts a WHERE a.latest_version = 0 AND a.created_at < $drafts " +
         "UNION ALL SELECT p.org_id FROM artifacts_publications p WHERE p.published_at < $publications " +
-        "UNION ALL SELECT b.org_id FROM artifacts_blobs b WHERE b.marked_at IS NOT NULL) d LIMIT $limit"
+        "UNION ALL SELECT b.org_id FROM artifacts_blobs b WHERE b.marked_at IS NOT NULL" +
+        (if (folders) " UNION ALL SELECT f.org_id FROM artifacts_folder_deletions f" else "") + ") d LIMIT $limit"
+
+/**
+ * Version 13: TeamCode's proven deletion. Each deleted artifact (by its owner, the maintenance or an ended draft)
+ * leaves a row in `artifacts_folder_deletions`, written by a trigger in the deletion's transaction; the maintenance
+ * deletes the folder, lists it again and forgets the row once it is empty. The due organizations include them.
+ */
+private val FOLDER_DELETIONS_SQL: String =
+    """
+    CREATE TABLE artifacts_folder_deletions (
+        artifact_id UUID PRIMARY KEY,
+        org_id UUID NOT NULL,
+        deleted_at TIMESTAMPTZ NOT NULL
+    );
+    CREATE INDEX artifacts_folder_deletions_org ON artifacts_folder_deletions (org_id, deleted_at);
+    ${tenantTableSql("artifacts_folder_deletions")}
+    CREATE POLICY artifacts_folder_deletions_router ON artifacts_folder_deletions FOR SELECT TO ostrom_router
+        USING (current_user = 'ostrom_router');
+    GRANT SELECT ON artifacts_folder_deletions TO ostrom_router;
+    CREATE FUNCTION artifacts_folder_deleted() RETURNS trigger
+        LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
+        BEGIN
+            INSERT INTO artifacts_folder_deletions (artifact_id, org_id, deleted_at)
+                VALUES (OLD.id, OLD.org_id, now()) ON CONFLICT DO NOTHING;
+            RETURN NULL;
+        END;
+    $$;
+    REVOKE EXECUTE ON FUNCTION artifacts_folder_deleted() FROM PUBLIC;
+    CREATE TRIGGER artifacts_folder_deleted AFTER DELETE ON artifacts_artifacts
+        FOR EACH ROW EXECUTE FUNCTION artifacts_folder_deleted();
+    CREATE OR REPLACE FUNCTION artifacts_due_organizations(p_now TIMESTAMPTZ, p_drafts TIMESTAMPTZ,
+        p_publications TIMESTAMPTZ, p_limit INTEGER) RETURNS SETOF UUID
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        ${dueOrganizationsSql("p_now", "p_drafts", "p_publications", "p_limit", folders = true)};
+    $$;
+    """
+        .trimIndent()
 
 private val MAINTAINED_TABLES =
     listOf("artifacts_uploads", "artifacts_artifacts", "artifacts_publications", "artifacts_blobs")
@@ -328,4 +371,5 @@ val ArtifactsMigrations: List<SchemaMigration> = listOf(
     // The maintenance (TeamCode's ArtifactMaintenance) finds the organizations with work due through one narrow
     // function of the router, then works in each under row-level security.
     SchemaMigration(version = 12, name = "artifacts_maintenance", sql = MAINTENANCE_SQL),
+    SchemaMigration(version = 13, name = "artifacts_folder_deletions", sql = FOLDER_DELETIONS_SQL),
 )
