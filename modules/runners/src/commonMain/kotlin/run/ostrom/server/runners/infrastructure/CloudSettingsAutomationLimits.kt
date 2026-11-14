@@ -29,12 +29,15 @@ internal class CloudSettingsAutomationLimits(
     private val reads = mutableMapOf<Uuid, Read>()
 
     override suspend fun maxRunningPerMember(orgId: Uuid): Int {
-        if (settings == null) return CloudSettings.DEFAULT_MAX_RUNNING_AUTOMATIONS
         val now = clock.now()
-        lock.withLock { reads[orgId] }?.takeIf { now - it.at < TTL }?.let { return it.cap }
-        val cap = settings.current(orgId).maxRunningAutomationsPerMember
-        lock.withLock { reads[orgId] = Read(now, cap) }
-        return cap
+        val fresh = lock.withLock { reads[orgId] }?.takeIf { now - it.at < TTL }
+        return when {
+            settings == null -> CloudSettings.DEFAULT_MAX_RUNNING_AUTOMATIONS
+            fresh != null -> fresh.cap
+            else -> settings.current(orgId).maxRunningAutomationsPerMember.also {
+                lock.withLock { reads[orgId] = Read(now, it) }
+            }
+        }
     }
 
     private companion object {

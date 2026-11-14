@@ -55,10 +55,10 @@ class CloudSettingsTest {
         assertFailsWith<AdminRequiredException> { settings.save(member, CloudSettings(60), null) }
         assertFailsWith<InvalidCloudSettingsException> { settings.save(admin, CloudSettings(-1), null) }
         assertFailsWith<InvalidCloudSettingsException> { settings.save(admin, CloudSettings(1441), null) }
-        assertEquals(1440, settings.save(admin, CloudSettings(1440), null).backgroundWorkMaxMinutes)
+        val saved = settings.save(admin, CloudSettings(1440, 100), null)
+        assertEquals(1440 to 100, saved.backgroundWorkMaxMinutes to saved.maxRunningAutomationsPerMember)
         assertFailsWith<InvalidCloudSettingsException> { settings.save(admin, CloudSettings(60, 0), null) }
         assertFailsWith<InvalidCloudSettingsException> { settings.save(admin, CloudSettings(60, 101), null) }
-        assertEquals(100, settings.save(admin, CloudSettings(60, 100), null).maxRunningAutomationsPerMember)
         assertFailsWith<CloudSettingsConflictException> { settings.save(admin, CloudSettings(30), null) }
     }
 }
