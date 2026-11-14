@@ -25,11 +25,11 @@ class SkillsModuleTest {
     @Test
     fun cloudSessionsReceiveSkillsOnlyWithCloudRunners() = runTest {
         suspend fun features(vararg values: Pair<String, String>): Set<String> {
-            val config = RunnersConfig.from(MapConfigSource(values.toMap()))
+            val config = RunnersConfig.from(MapConfigSource(values.toMap()), cloudModule = true)
             return SkillsModule.features(koinApplication { modules(module { single { config } }) }.koin)
         }
         assertEquals(setOf("skills.v1"), features())
-        val cloud = features("OSTROM_RUNNERS_DRIVER" to "kubernetes", "OSTROM_RUNNERS_SERVER_URL" to "http://s")
+        val cloud = features("OSTROM_RUNNERS_DRIVER" to "kubernetes")
         assertEquals(setOf("skills.v1", "runners.cloud.skills.v1"), cloud)
     }
 }

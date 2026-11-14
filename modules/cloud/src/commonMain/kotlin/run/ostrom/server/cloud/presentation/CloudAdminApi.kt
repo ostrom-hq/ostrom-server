@@ -132,6 +132,8 @@ data class CloudClusterResponse(
     val createdAt: String,
     /** When it was changed last. */
     val updatedAt: String,
+    /** Whether it is the server's own, reached with the server pod's rotating service account (nothing stored). */
+    val inCluster: Boolean = false,
 )
 
 /** `CloudClusterList`. */

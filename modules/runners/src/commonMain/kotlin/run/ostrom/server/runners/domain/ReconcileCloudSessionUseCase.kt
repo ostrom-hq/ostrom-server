@@ -39,6 +39,7 @@ interface ReconcileCloudSessionUseCase {
  * @param clock The time.
  * @param ended Told once a session is terminated, so that what its agent asked there ends with it (its open waits are
  *   cancelled): its agent asks in the cloud session itself.
+ * @param profiles Whether a Kubernetes session's cluster still takes it, at each start.
  * @param backgroundWork How long the agent's background work holds off the idle pause, per organization.
  */
 // Each step is a decision table read top to bottom: an early return per outcome reads better than nested branches,
@@ -53,12 +54,31 @@ class ReconcileCloudSessionUseCaseImpl(
     private val usage: CloudUsageMeter,
     private val clock: Clock,
     private val ended: List<SessionEndListener> = emptyList(),
+    private val profiles: SessionProfiles = NoSessionProfiles,
     private val backgroundWork: BackgroundWorkLimit,
 ) : ReconcileCloudSessionUseCase {
     override suspend fun invoke(session: CloudSession): Instant? {
         val now = clock.now()
-        return when {
-            session.state == SessionState.TERMINATED -> null
+        if (session.state == SessionState.TERMINATED) {
+            return if (session.phase == CLEANUP_BLOCKED) blockedCleanup(session, now) else null
+        }
+        // A session of the former variables gets their cluster's profile first, whatever happened at the upgrade.
+        if (session.profile == null) {
+            profiles.legacy()?.let { return write(session.copy(profile = it, updatedAt = now), now) }
+        }
+        // Its cluster opens again: its retries are no longer counted.
+        if (session.clusterUnreachableSince != null && driver.reachable(session)) {
+            return write(session.copy(clusterUnreachableSince = null, updatedAt = now), now)
+        }
+        return try {
+            step(session, now)
+        } catch (_: RuntimeUnreachableException) {
+            unreachable(session, now)
+        }
+    }
+
+    private suspend fun step(session: CloudSession, now: Instant): Instant? =
+        when {
             session.desiredState == DesiredState.TERMINATED -> terminate(session, now)
             session.state == SessionState.FAILED -> null
             session.preparationFailed -> preparationFailed(session, now)
@@ -67,6 +87,54 @@ class ReconcileCloudSessionUseCaseImpl(
             session.state == SessionState.PAUSING -> pausing(session, now)
             else -> paused(session, now)
         }
+
+    /**
+     * A step found the session's cluster unreachable. It is tried again every [UNREACHABLE_RETRY] for
+     * [UNREACHABLE_GRACE]; past that, the session no longer waits for its cluster, so it can always be stopped and
+     * never holds its place under the running cap: TeamCode's lost execution (a first start fails, a resume or a
+     * running session pauses and is not resumed by itself), and a deletion ends with its cleanup blocked
+     * ([blockedCleanup]).
+     */
+    private suspend fun unreachable(session: CloudSession, now: Instant): Instant? {
+        val since = session.clusterUnreachableSince
+        if (since == null) {
+            return write(session.copy(clusterUnreachableSince = now, updatedAt = now), now + UNREACHABLE_RETRY)
+        }
+        if (now - since < UNREACHABLE_GRACE) return now + UNREACHABLE_RETRY
+        val outcome = when {
+            session.desiredState == DesiredState.TERMINATED -> session.moveTo(SessionState.TERMINATED, now).copy(
+                terminatedAt = now,
+                executionStartedAt = null,
+                phase = CLEANUP_BLOCKED,
+                failure = CLUSTER_LOST_CLEANUP,
+            )
+            session.state == SessionState.CREATING -> session.moveTo(SessionState.FAILED, now)
+                .copy(failure = CLUSTER_LOST, executionStartedAt = null)
+            else -> session.toPaused(now, CLUSTER_LOST).copy(desiredState = DesiredState.PAUSED)
+        }
+        val terminated = outcome.state == SessionState.TERMINATED
+        val next = write(
+            outcome.copy(runnerTokenHash = null, clusterUnreachableSince = null),
+            if (terminated) now + BLOCKED_RECHECK else null,
+        )
+        // Terminated, its cleanup still blocked: what its agent asked ends now (the listeners are idempotent).
+        if (terminated) ended.forEach { it.ended(session.orgId, listOf(session.id.toString())) }
+        return next
+    }
+
+    /**
+     * A session deleted while its cluster was unreachable: its pods and workspace may remain there, so its cleanup is
+     * tried again every [BLOCKED_RECHECK] (TeamCode's blocked deletion), until its cluster opens and they are gone.
+     */
+    private suspend fun blockedCleanup(session: CloudSession, now: Instant): Instant? {
+        if (!driver.reachable(session)) return now + BLOCKED_RECHECK
+        try {
+            driver.stopExecutions(session)
+            if (!driver.deleteWorkspace(session)) return now + STEP_DELAY
+        } catch (_: RuntimeUnreachableException) {
+            return now + BLOCKED_RECHECK
+        }
+        return write(session.copy(phase = "cleaned", failure = null, updatedAt = now), null)
     }
 
     private suspend fun terminate(session: CloudSession, now: Instant): Instant? {
@@ -133,6 +201,7 @@ class ReconcileCloudSessionUseCaseImpl(
     }
 
     private suspend fun startExecution(session: CloudSession, now: Instant): Instant? {
+        profiles.startFailure(session)?.let { return blocked(session, now, it) }
         val refused = planFailure(session, now)
         if (refused != null) {
             driver.stopExecutions(session)
@@ -157,6 +226,19 @@ class ReconcileCloudSessionUseCaseImpl(
         val stored = repository.compareAndSet(next, now + STEP_DELAY) ?: return now
         driver.startExecution(stored.executionSpec(token))
         return now + STEP_DELAY
+    }
+
+    /**
+     * The session's cluster is gone or no longer allows its namespace: nothing is asked of the cluster. A first start
+     * fails; a resume stays paused with the failure, not resumed again by itself (TeamCode's `resume_blocked`).
+     */
+    private suspend fun blocked(session: CloudSession, now: Instant, failure: SessionFailure): Instant? {
+        if (session.state == SessionState.RESUMING) {
+            return write(session.toPaused(now, failure).copy(desiredState = DesiredState.PAUSED), null)
+        }
+        val ended = session.moveTo(SessionState.FAILED, now)
+            .copy(failure = failure, runnerTokenHash = null, executionStartedAt = null)
+        return write(ended, null)
     }
 
     private suspend fun running(session: CloudSession, now: Instant): Instant? {
@@ -304,5 +386,32 @@ class ReconcileCloudSessionUseCaseImpl(
 
         /** The delay between two checks of a running session. */
         private val WATCH_DELAY: Duration = 15.seconds
+
+        /** The delay between two steps of a session whose cluster is unreachable (TeamCode's retry after a failure). */
+        private val UNREACHABLE_RETRY: Duration = 30.seconds
+
+        /** How long a session waits for its unreachable cluster before its execution ends without it. */
+        private val UNREACHABLE_GRACE: Duration = 10.minutes
+
+        /** The delay between two cleanups of a session deleted while its cluster was unreachable. */
+        private val BLOCKED_RECHECK: Duration = 10.minutes
+
+        /** The phase of a session deleted while its cluster was unreachable, until its objects are proven gone. */
+        const val CLEANUP_BLOCKED = "cleanup_blocked"
+
+        /** Why a session's execution ended without its cluster. */
+        private val CLUSTER_LOST = SessionFailure(
+            "cluster_unavailable",
+            "The session's cluster stopped opening: it is gone, or its credentials must be entered again. The " +
+                "session stopped without it.",
+            retryable = true,
+        )
+
+        /** Why a deleted session's objects may remain on its cluster. */
+        private val CLUSTER_LOST_CLEANUP = SessionFailure(
+            "cluster_unavailable",
+            "The session's cluster stopped opening: its pods and workspace are deleted once it opens again.",
+            retryable = true,
+        )
     }
 }

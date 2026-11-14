@@ -331,4 +331,15 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
             ALTER TABLE runners_sessions ADD COLUMN failure_retryable BOOLEAN NOT NULL DEFAULT FALSE;
         """.trimIndent(),
     ),
+    // runners.cloud.profiles.v1: what a Kubernetes session runs on (JSON, SessionProfile), copied from its cloud
+    // profile at creation, or given the former variables' at the session's next step; and since when its steps have
+    // found its cluster unreachable, which bounds how long they are retried.
+    SchemaMigration(
+        version = 14,
+        name = "session_profile",
+        sql = """
+            ALTER TABLE runners_sessions ADD COLUMN profile TEXT;
+            ALTER TABLE runners_sessions ADD COLUMN cluster_unreachable_since TIMESTAMPTZ;
+        """.trimIndent(),
+    ),
 )

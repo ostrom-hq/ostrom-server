@@ -79,6 +79,12 @@ data class CloudRuntime(
  * @property hasServiceAccountToken Whether a token is stored.
  * @property createdAt When it was connected.
  * @property updatedAt When it was changed last.
+ * @property inCluster Whether it is the server's own cluster, reached with the server pod's mounted service account:
+ *   its token and CA are read from the pod's files at each use (the kubelet rotates them), nothing is stored. Only
+ *   the cluster imported from the former `OSTROM_RUNNERS_KUBERNETES_*` variables is; saving a CA and a token turns
+ *   it into a stored cluster.
+ * @property imported Whether it is the cluster imported from the former variables, the one the sessions created before
+ *   cloud profiles run on (never shown: an administrator may rename it).
  */
 data class CloudCluster(
     val id: Uuid,
@@ -92,6 +98,8 @@ data class CloudCluster(
     val hasServiceAccountToken: Boolean,
     val createdAt: Instant,
     val updatedAt: Instant,
+    val inCluster: Boolean = false,
+    val imported: Boolean = false,
 )
 
 /**

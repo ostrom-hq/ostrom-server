@@ -23,6 +23,7 @@ import run.ostrom.server.cloud.infrastructure.CloudMigrations
 import run.ostrom.server.cloud.infrastructure.CloudProfilesRepositoryImpl
 import run.ostrom.server.cloud.infrastructure.CloudRuntimeRepositoryImpl
 import run.ostrom.server.cloud.infrastructure.CloudSettingsRepositoryImpl
+import run.ostrom.server.cloud.infrastructure.readTextFileOrNull
 import run.ostrom.server.cloud.presentation.CloudAdminRoutesDependencies
 import run.ostrom.server.cloud.presentation.cloudAdminRoutes
 import run.ostrom.server.kernel.auth.MemberDirectory
@@ -55,7 +56,9 @@ object CloudModule : ServerModule {
         single { CloudAdminGate(get()) }
         single { CloudRuntimeUseCaseImpl(get(), get(), get(), get(), get()) } binds
             arrayOf(CloudRuntimeUseCase::class, CloudRuntimeSource::class)
-        single { CloudClustersUseCaseImpl(get(), get(), get(), get(), get(), get()) } binds
+        single {
+            CloudClustersUseCaseImpl(get(), get(), get(), get(), get(), get(), ::readTextFileOrNull)
+        } binds
             arrayOf(CloudClustersUseCase::class, CloudClusterAccess::class)
         single<CloudProfilesUseCase> {
             CloudProfilesUseCaseImpl(get(), get(), get(), getOrNull<MemberDirectory>() ?: NoMembers)

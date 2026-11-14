@@ -3,6 +3,7 @@ package run.ostrom.server.cloud
 
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.cloud.domain.CloudClusterAccess
+import run.ostrom.server.cloud.domain.CloudClustersUseCase
 import run.ostrom.server.cloud.domain.CloudProfilesRepository
 import run.ostrom.server.cloud.domain.CloudRuntimeSource
 import run.ostrom.server.cloud.domain.CloudSettingsRepository
@@ -189,6 +190,19 @@ class CloudAdminRoutesPostgresTest {
         val list = http.get("/api/v1/cloud/clusters") { bearerAuth("alice") }.body<CloudClusterListResponse>()
         assertEquals(listOf("prod", "staging"), list.clusters.map { it.name })
         assertEquals(changed, list.clusters.first())
+    }
+
+    @Test
+    fun theImportedInClusterClusterStoresNothingAndSaysSo() = serverTest(listOf(CloudModule), overrides) { server ->
+        val imported = server.koin.get<CloudClustersUseCase>()
+            .importLegacy(mapOf("OSTROM_RUNNERS_DRIVER" to "kubernetes")::get)!!
+        val list = server.client.get("/api/v1/cloud/clusters") { bearerAuth("alice") }.body<CloudClusterListResponse>()
+        val view = list.clusters.single()
+        assertEquals(imported.id.toString(), view.id)
+        assertTrue(view.inCluster)
+        assertFalse(view.caCertificate.configured || view.serviceAccountToken.configured)
+        val raw = server.client.get("/api/v1/cloud/clusters") { bearerAuth("alice") }.bodyAsText()
+        assertTrue(""""inCluster":true""" in raw)
     }
 
     @Test

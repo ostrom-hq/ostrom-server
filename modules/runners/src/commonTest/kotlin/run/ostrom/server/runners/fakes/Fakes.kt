@@ -13,6 +13,7 @@ import run.ostrom.server.runners.domain.ExecutionStatus
 import run.ostrom.server.runners.domain.ResumeOutcome
 import run.ostrom.server.runners.domain.RunnerTokens
 import run.ostrom.server.runners.domain.RuntimeDriver
+import run.ostrom.server.runners.domain.RuntimeUnreachableException
 import run.ostrom.server.runners.domain.SessionLimits
 import run.ostrom.server.runners.domain.SessionState
 import kotlin.time.Clock
@@ -80,28 +81,48 @@ class FakeRuntimeDriver : RuntimeDriver {
     var failStart: Exception? = null
     var holder: Uuid? = null
 
+    /** Whether every operation finds the cluster unreachable. */
+    var unreachable = false
+
+    /** What [reachable] answers; whether operations reach the cluster when null. */
+    var probe: Boolean? = null
+
+    private fun reach() {
+        if (unreachable) throw RuntimeUnreachableException("gone")
+    }
+
     override suspend fun ensureWorkspace(session: CloudSession) {
         calls += "ensureWorkspace"
+        reach()
     }
 
     override suspend fun startExecution(spec: ExecutionSpec) {
         calls += "start:${spec.epoch}"
+        reach()
         failStart?.let { throw it }
         started += spec
     }
 
     override suspend fun executionStatus(session: CloudSession): ExecutionStatus {
         calls += "status"
+        reach()
         return status
     }
 
     override suspend fun stopExecutions(session: CloudSession) {
         calls += "stop"
+        reach()
     }
 
     override suspend fun deleteWorkspace(session: CloudSession): Boolean {
         calls += "deleteWorkspace"
+        reach()
         return workspaceDeleted
+    }
+
+    override suspend fun reachable(session: CloudSession): Boolean {
+        calls += "reachable"
+        return probe ?: !unreachable
     }
 
     override suspend fun holder(session: CloudSession): Uuid? = holder

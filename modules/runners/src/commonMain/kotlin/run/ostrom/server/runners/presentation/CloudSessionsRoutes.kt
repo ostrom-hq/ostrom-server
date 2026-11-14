@@ -60,6 +60,9 @@ fun Route.cloudSessionsRoutes(dependencies: CloudSessionsRoutesDependencies) = w
                 model = request.model,
                 prompt = request.prompt,
                 environment = request.environment?.toDomain(),
+                // A malformed id names no profile (404 on Kubernetes), and is ignored where sessions run on none.
+                profileId = request.profileId?.let { Uuid.parseOrNull(it) ?: Uuid.NIL },
+                image = request.image,
             )
             call.respond(HttpStatusCode.Created, createCloudSession(caller, payload).toResponse())
         }
@@ -241,4 +244,6 @@ fun CloudSession.toResponse() = CloudSessionResponse(
     runnerId = runnerId?.toString(),
     githubAccess = githubAccess.wire,
     environment = environment?.toDto(),
+    profile = profile?.origin?.let { CloudSessionProfileDto(it.id, it.version) },
+    image = profile?.image,
 )

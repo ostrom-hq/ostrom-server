@@ -11,6 +11,7 @@ import run.ostrom.server.runners.domain.RepositorySpec
 import run.ostrom.server.runners.domain.ResumeOutcome
 import run.ostrom.server.runners.domain.SessionFailure
 import run.ostrom.server.runners.domain.SessionLimits
+import run.ostrom.server.runners.domain.SessionProfile
 import run.ostrom.server.runners.domain.SessionState
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.QueryExecutor
@@ -160,7 +161,8 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
                     :last_heartbeat_at, last_activity_at = GREATEST(last_activity_at, :last_activity_at),
                     paused_at = :paused_at, terminated_at = :terminated_at, pausing_since = :pausing_since,
                     runner_stopped_at = :runner_stopped_at, runner_token_hash = :runner_token_hash,
-                    background_since = :background_since, background_seen_at = :background_seen_at
+                    background_since = :background_since, background_seen_at = :background_seen_at, profile =
+                    :profile, cluster_unreachable_since = :cluster_unreachable_since
                     WHERE id = :id AND generation = :generation RETURNING
                     $COLUMNS
                     """,
@@ -327,6 +329,8 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         .bind("runner_token_hash", session.runnerTokenHash)
         .bind("background_since", session.backgroundSince)
         .bind("background_seen_at", session.backgroundSeenAt)
+        .bind("profile", session.profile?.let { RECIPE_JSON.encodeToString(SessionProfile.serializer(), it) })
+        .bind("cluster_unreachable_since", session.clusterUnreachableSince)
 
     private fun ResultSet.Row.toSession(): CloudSession {
         val url = get("repository_url").asStringOrNull()
@@ -370,6 +374,9 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             githubAccess = GitHubAccessMode.fromWire(get("github_access").asString()) ?: GitHubAccessMode.NONE,
             environment = get("environment").asStringOrNull()
                 ?.let { RECIPE_JSON.decodeFromString(CloudEnvironmentSpec.serializer(), it) },
+            profile = get("profile").asStringOrNull()
+                ?.let { RECIPE_JSON.decodeFromString(SessionProfile.serializer(), it) },
+            clusterUnreachableSince = get("cluster_unreachable_since").asInstantOrNull(),
         )
     }
 
@@ -385,7 +392,8 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             phase, epoch, generation, failure_code, failure_message, idle_timeout_minutes, max_run_minutes,
             restricted_egress, created_at, updated_at, execution_started_at, ready_at, last_heartbeat_at,
             last_activity_at, paused_at, terminated_at, pausing_since, runner_stopped_at, runner_token_hash,
-            github_access, background_since, background_seen_at, environment, failure_retryable
+            github_access, background_since, background_seen_at, environment, failure_retryable, profile,
+            cluster_unreachable_since
         """
         const val VALUES = """
             :id, :org_id, :owner_id, :name, :agent, :model, :prompt, :repository_url, :repository_ref, :state,
@@ -393,7 +401,7 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             :max_run_minutes, :restricted_egress, :created_at, :updated_at, :execution_started_at, :ready_at,
             :last_heartbeat_at, :last_activity_at, :paused_at, :terminated_at, :pausing_since, :runner_stopped_at,
             :runner_token_hash, :github_access, :background_since, :background_seen_at, :environment,
-            :failure_retryable
+            :failure_retryable, :profile, :cluster_unreachable_since
         """
     }
 }

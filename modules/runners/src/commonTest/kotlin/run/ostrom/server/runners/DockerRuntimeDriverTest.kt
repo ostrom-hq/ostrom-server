@@ -22,15 +22,13 @@ import run.ostrom.server.runners.infrastructure.DockerRuntimeDriver
 import run.ostrom.server.runners.infrastructure.DockerSettings
 import run.ostrom.server.runners.infrastructure.KubernetesRuntimeDriver
 import run.ostrom.server.runners.infrastructure.RegisteredRuntimeDriver
+import run.ostrom.server.runners.domain.RuntimeUnreachableException
+import run.ostrom.server.runners.infrastructure.KubernetesClusters
+import run.ostrom.server.runners.infrastructure.KubernetesTarget
 import run.ostrom.server.runners.infrastructure.RunnersConfig
 import run.ostrom.server.runners.infrastructure.RuntimeDrivers
 import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.test.runTest
-import kotlinx.io.buffered
-import kotlinx.io.files.Path
-import kotlinx.io.files.SystemFileSystem
-import kotlinx.io.files.SystemTemporaryDirectory
-import kotlinx.io.writeString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
@@ -324,32 +322,35 @@ class DockerRuntimeDriverTest {
     }
 
     @Test
-    fun theConfigurationChoosesTheDriver() {
-        val registered = RegisteredRuntimeDriver(InMemoryRunnerAssignments(), SettableClock(), FakeRunnerWorkSignals())
-        val none = RunnersConfig.from(MapConfigSource(emptyMap()))
-        assertIs<DisabledRuntimeDriver>(RuntimeDrivers.create(none, { registered }, DELIVERY))
-        val kubernetes = RunnersConfig.from(
-            MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "kubernetes", "OSTROM_RUNNERS_SERVER_URL" to "http://s")),
-        )
-        assertIs<KubernetesRuntimeDriver>(RuntimeDrivers.create(kubernetes, { registered }, DELIVERY) { "token" })
-        val docker = RunnersConfig.from(
-            MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "docker", "OSTROM_RUNNERS_SERVER_URL" to "http://s")),
-        )
-        assertIs<DockerRuntimeDriver>(RuntimeDrivers.create(docker, { registered }, DELIVERY))
-        val machines = RunnersConfig.from(
-            MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "Registered", "OSTROM_RUNNERS_SERVER_URL" to "http://s")),
-        )
-        assertEquals(registered, RuntimeDrivers.create(machines, { registered }, DELIVERY))
-        assertEquals("registered", machines.runtimeLabel)
-        assertFalse(RuntimeDrivers.create(docker, { registered }, DELIVERY).relocates, "Only registered runners move")
+    fun aRuntimeWithoutClustersAlwaysOpens() = runTest {
+        assertTrue(DisabledRuntimeDriver().reachable(session()), "Only a cluster can stop opening")
     }
 
     @Test
-    fun theTokenFileIsReadFromDisk() {
-        val path = Path(SystemTemporaryDirectory, "ostrom-runners-token-test")
-        SystemFileSystem.sink(path).buffered().use { it.writeString("sa-token\n") }
-        assertEquals("sa-token\n", RuntimeDrivers.readTextFile(path.toString()))
-        SystemFileSystem.delete(path)
+    fun theConfigurationChoosesTheDriver() {
+        val registered = RegisteredRuntimeDriver(InMemoryRunnerAssignments(), SettableClock(), FakeRunnerWorkSignals())
+        val none = RunnersConfig.from(MapConfigSource(emptyMap()))
+        assertIs<DisabledRuntimeDriver>(RuntimeDrivers.create(none, { registered }, DELIVERY, NO_CLUSTERS))
+        val kubernetes = RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "kubernetes")), true)
+        assertIs<KubernetesRuntimeDriver>(RuntimeDrivers.create(kubernetes, { registered }, DELIVERY, NO_CLUSTERS))
+        val docker = RunnersConfig.from(
+            MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "docker", "OSTROM_RUNNERS_SERVER_URL" to "http://s")),
+        )
+        assertIs<DockerRuntimeDriver>(RuntimeDrivers.create(docker, { registered }, DELIVERY, NO_CLUSTERS))
+        val machines = RunnersConfig.from(
+            MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "Registered", "OSTROM_RUNNERS_SERVER_URL" to "http://s")),
+        )
+        assertEquals(registered, RuntimeDrivers.create(machines, { registered }, DELIVERY, NO_CLUSTERS))
+        assertEquals("registered", machines.runtimeLabel)
+        val onDocker = RuntimeDrivers.create(docker, { registered }, DELIVERY, NO_CLUSTERS)
+        assertFalse(onDocker.relocates, "Only registered runners move")
+    }
+}
+
+private val NO_CLUSTERS = {
+    object : KubernetesClusters {
+        override suspend fun <T> use(clusterId: String, block: suspend (KubernetesTarget) -> T): T =
+            throw RuntimeUnreachableException("none")
     }
 }
 

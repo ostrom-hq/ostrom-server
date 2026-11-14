@@ -3,17 +3,20 @@ package run.ostrom.server.runners.infrastructure
 
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.InvalidConfigException
-import run.ostrom.server.kernel.network.isReachableUrl
 
 /**
  * The runners module's configuration (keys `OSTROM_RUNNERS_…`, docs/MODULES.md). It chooses infrastructure (which
  * runtime runs the pods and how a runner reaches the server), never a product behaviour.
  *
- * @property driver Where executions run: nowhere, a Kubernetes namespace, the server's Docker Engine, or the
- *   organizations' registered runners.
- * @property serverUrl The URL runners use to reach the server (in-cluster service URL on Kubernetes).
- * @property runnerImage The image of the session pod: the runner, the agents and the `ostrom` CLI.
- * @property kubernetes The Kubernetes runtime's settings, when [driver] is `kubernetes`.
+ * @property driver Where executions run: nowhere (`OSTROM_RUNNERS_DRIVER` unset, as before cloud profiles: an
+ *   upgrade never switches a Docker or bare-metal install), the console's Kubernetes clusters (`kubernetes`, with the
+ *   cloud module), the server's Docker Engine, or the organizations' registered runners.
+ * @property serverUrl The URL runners reach the server at (`OSTROM_RUNNERS_SERVER_URL`), required for Docker and
+ *   registered runners; a Kubernetes session's is the cloud runtime's, else this one (the in-cluster service URL of
+ *   an install from before cloud profiles, which a restricted session can reach), else `OSTROM_PUBLIC_URL`.
+ * @property runnerImage The image of a Docker or registered session: the runner, the agents and the `ostrom` CLI; the
+ *   runner image of a Kubernetes one while the cloud runtime names none.
+ * @property kubernetes The pods' priority class and the server pods' labels, for the Kubernetes sessions.
  * @property docker The Docker runtime's settings, when [driver] is `docker`.
  * @property replicaUrl The URL the other replicas reach this one at (`OSTROM_RUNNERS_REPLICA_URL`, the pod's address
  *   with the chart), so that a member attached on one replica sees the terminal whose runner another holds. Unset (one
@@ -42,15 +45,17 @@ data class RunnersConfig(
          * Reads the configuration.
          *
          * @param source The configuration source.
+         * @param cloudModule Whether the cloud module is there: its clusters run the Kubernetes sessions.
          *
          * @return The configuration.
          *
          * @throws InvalidConfigException When a value is invalid, or a driver lacks a required value.
          */
-        fun from(source: ConfigSource): RunnersConfig {
-            val driver = driverKind(source["OSTROM_RUNNERS_DRIVER"]?.lowercase())
+        fun from(source: ConfigSource, cloudModule: Boolean = false): RunnersConfig {
+            val driver = driverKind(source["OSTROM_RUNNERS_DRIVER"]?.lowercase(), cloudModule)
             val serverUrl = source["OSTROM_RUNNERS_SERVER_URL"]?.trimEnd('/').orEmpty()
-            if (driver != DriverKind.NONE && !serverUrl.startsWith("http://") && !serverUrl.startsWith("https://")) {
+            val needsUrl = driver == DriverKind.DOCKER || driver == DriverKind.REGISTERED || serverUrl.isNotEmpty()
+            if (needsUrl && !serverUrl.startsWith("http://") && !serverUrl.startsWith("https://")) {
                 throw InvalidConfigException(
                     "OSTROM_RUNNERS_SERVER_URL must be the http(s) URL runners reach the server at.",
                 )
@@ -60,14 +65,6 @@ data class RunnersConfig(
                 serverUrl = serverUrl,
                 runnerImage = source["OSTROM_RUNNERS_IMAGE"] ?: DEFAULT_RUNNER_IMAGE,
                 kubernetes = KubernetesSettings(
-                    apiUrl = kubernetesApiUrl(source["OSTROM_RUNNERS_KUBERNETES_API_URL"]),
-                    namespace = source["OSTROM_RUNNERS_KUBERNETES_NAMESPACE"] ?: "ostrom",
-                    tokenFile = source["OSTROM_RUNNERS_KUBERNETES_TOKEN_FILE"]
-                        ?: KubernetesSettings.IN_CLUSTER_TOKEN_FILE,
-                    caFile = source["OSTROM_RUNNERS_KUBERNETES_CA_FILE"] ?: KubernetesSettings.IN_CLUSTER_CA_FILE,
-                    storageClass = source["OSTROM_RUNNERS_KUBERNETES_STORAGE_CLASS"],
-                    workspaceSize = source["OSTROM_RUNNERS_WORKSPACE_SIZE"] ?: "10Gi",
-                    imagePullSecret = source["OSTROM_RUNNERS_KUBERNETES_IMAGE_PULL_SECRET"],
                     priorityClass = source["OSTROM_RUNNERS_KUBERNETES_PRIORITY_CLASS"],
                     serverSelector = serverSelector(source["OSTROM_RUNNERS_KUBERNETES_SERVER_SELECTOR"]),
                 ),
@@ -77,23 +74,6 @@ data class RunnersConfig(
                 ),
                 replicaUrl = replicaUrl(source["OSTROM_RUNNERS_REPLICA_URL"]),
             )
-        }
-
-        /**
-         * The API server URL: https, and never a link-local, unspecified or cloud metadata host in any numeric
-         * spelling, so the server's own instance credentials are never a cluster target (TC-CLN-1). Loopback and
-         * private addresses pass (a local `kind` cluster, a private control plane). The URL is the operator's, not a
-         * member's: the name is not resolved again at each connection.
-         */
-        private fun kubernetesApiUrl(raw: String?): String {
-            val url = raw ?: KubernetesSettings.IN_CLUSTER_API_URL
-            if (!isReachableUrl(url)) {
-                throw InvalidConfigException(
-                    "OSTROM_RUNNERS_KUBERNETES_API_URL must be an https URL that is not a link-local, " +
-                        "unspecified or cloud metadata address.",
-                )
-            }
-            return url
         }
 
         /** This replica's URL without its trailing slash, checked; null when unset or blank. */
@@ -119,9 +99,10 @@ data class RunnersConfig(
 
         private val LABEL = Regex("([A-Za-z0-9./_-]+)=([A-Za-z0-9._-]+)")
 
-        private fun driverKind(raw: String?): DriverKind = when (raw) {
+        // Unset is nowhere, as it always was; `kubernetes` is the console's clusters, where the cloud module is.
+        private fun driverKind(raw: String?, cloudModule: Boolean): DriverKind = when (raw) {
             null, "none" -> DriverKind.NONE
-            "kubernetes" -> DriverKind.KUBERNETES
+            "kubernetes" -> if (cloudModule) DriverKind.KUBERNETES else DriverKind.NONE
             "docker" -> DriverKind.DOCKER
             "registered" -> DriverKind.REGISTERED
             else -> throw InvalidConfigException(
@@ -132,46 +113,24 @@ data class RunnersConfig(
 }
 
 /**
- * How the server reaches its Kubernetes namespace. In the cluster, the defaults read the pod's service account.
+ * What every Kubernetes session pod shares, whatever its cluster: the rest (cluster, namespace, image, pull secrets,
+ * resources, workspace) is its profile's.
  *
- * @property apiUrl The API server URL.
- * @property namespace The namespace every object is created in; the server never touches another one.
- * @property tokenFile The service-account token file, read at each call (the kubelet rotates it).
- * @property caFile The cluster's CA bundle.
- * @property storageClass The workspace volumes' storage class; the cluster default when null.
- * @property workspaceSize The size of a workspace volume.
- * @property imagePullSecret The pull secret of a private runner image.
  * @property priorityClass The session pods' priority class, an existing low one so they never preempt the cluster's
  *   other pods; none when null (priority 0, which preempts nothing either).
  * @property serverSelector The labels of the server's pods, the only pods sessions may reach.
  */
 data class KubernetesSettings(
-    val apiUrl: String,
-    val namespace: String,
-    val tokenFile: String,
-    val caFile: String,
-    val storageClass: String?,
-    val workspaceSize: String,
-    val imagePullSecret: String?,
     val priorityClass: String? = null,
     val serverSelector: Map<String, String> = DEFAULT_SERVER_SELECTOR,
 ) {
-    /** Constants and readers of the enclosing type. */
+    /** Constants of the enclosing type. */
     companion object {
         /** The labels the Helm chart puts on the server's pods. */
         val DEFAULT_SERVER_SELECTOR = mapOf(
             "app.kubernetes.io/name" to "ostrom",
             "app.kubernetes.io/component" to "server",
         )
-
-        /** The API server, seen from a pod. */
-        const val IN_CLUSTER_API_URL = "https://kubernetes.default.svc"
-
-        /** The projected service-account token of a pod. */
-        const val IN_CLUSTER_TOKEN_FILE = "/var/run/secrets/kubernetes.io/serviceaccount/token"
-
-        /** The cluster CA of a pod. */
-        const val IN_CLUSTER_CA_FILE = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
     }
 }
 

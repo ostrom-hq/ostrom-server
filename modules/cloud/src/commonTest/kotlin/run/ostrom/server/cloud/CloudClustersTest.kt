@@ -7,7 +7,11 @@ import run.ostrom.server.cloud.domain.CloudAdminRequiredException
 import run.ostrom.server.cloud.domain.CloudClusterConflictException
 import run.ostrom.server.cloud.domain.CloudClusterInput
 import run.ostrom.server.cloud.domain.CloudClusterNotFoundException
+import run.ostrom.server.cloud.domain.CloudClustersRepository
 import run.ostrom.server.cloud.domain.CloudClustersUseCaseImpl
+import run.ostrom.server.cloud.domain.IN_CLUSTER_CA_FILE
+import run.ostrom.server.cloud.domain.IN_CLUSTER_TOKEN_FILE
+import run.ostrom.server.cloud.domain.StoredCloudCluster
 import run.ostrom.server.cloud.domain.InvalidCloudClusterException
 import run.ostrom.server.kernel.settings.InstanceAdministrators
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
@@ -21,6 +25,8 @@ import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
 class CloudClustersTest {
+    /** The files the use case reads, by path: the pod's service account, or a former variable's file. */
+    private val files = mutableMapOf<String, String>()
     private val repository = MemoryClusters()
     private val audit = RecordingAudit()
     private val logger = RecordingLogger()
@@ -32,7 +38,7 @@ class CloudClustersTest {
         audit,
         SettableClock(),
         logger,
-    )
+    ) { files[it] }
     private val alice = CloudAdminCaller(ALICE, person = true)
     private val input = CloudClusterInput(
         name = " prod ",
@@ -157,5 +163,166 @@ class CloudClustersTest {
         repository.rows[cluster.id] = stored.copy(sealedServiceAccountToken = "v1:AAAA")
         assertNull(clusters.credentials(cluster.id))
         assertEquals(listOf(cluster.id.toString(), cluster.id.toString()), logger.events.map { it.third["cluster"] })
+    }
+
+    private fun legacy(vararg values: Pair<String, String>): (String) -> String? =
+        (mapOf("OSTROM_RUNNERS_DRIVER" to "kubernetes") + values)::get
+
+    @Test
+    fun thePodsOwnServiceAccountIsImportedAsAnInClusterClusterReadAtEachUse() = runTest {
+        val cluster = clusters.importLegacy(legacy("OSTROM_RUNNERS_KUBERNETES_STORAGE_CLASS" to "fast"))!!
+
+        assertEquals("imported", cluster.name)
+        assertEquals("https://kubernetes.default.svc", cluster.apiUrl)
+        assertEquals(listOf("ostrom"), cluster.allowedNamespaces)
+        assertEquals("fast", cluster.defaultStorageClass)
+        assertTrue(cluster.inCluster)
+        assertFalse(cluster.hasCaCertificate || cluster.hasServiceAccountToken)
+        val stored = repository.get(cluster.id)!!
+        assertEquals("" to "", stored.sealedCaCertificate to stored.sealedServiceAccountToken, "Nothing stored")
+        assertEquals("cloud.cluster.imported", audit.records.single().event)
+        assertEquals("in_cluster", audit.records.single().details["credentials"])
+
+        assertNull(clusters.credentials(cluster.id), "The pod's files are not readable yet")
+        files[IN_CLUSTER_CA_FILE] = PEM
+        assertNull(clusters.credentials(cluster.id), "No token yet")
+        files[IN_CLUSTER_TOKEN_FILE] = "token-0"
+        files[IN_CLUSTER_CA_FILE] = " "
+        assertNull(clusters.credentials(cluster.id), "A blank CA")
+        files[IN_CLUSTER_CA_FILE] = PEM
+        files[IN_CLUSTER_TOKEN_FILE] = "token-1\n"
+        assertEquals("token-1", clusters.credentials(cluster.id)?.serviceAccountToken)
+        files[IN_CLUSTER_TOKEN_FILE] = "token-2"
+        assertEquals("token-2", clusters.credentials(cluster.id)?.serviceAccountToken, "The rotated token is used")
+        assertEquals(PEM, clusters.credentials(cluster.id)?.caCertificate)
+
+        assertNull(clusters.importLegacy(legacy("OSTROM_RUNNERS_KUBERNETES_NAMESPACE" to "ostrom")), "Once")
+        assertTrue(logger.events.last().second.startsWith("Ignored deprecated variables"))
+    }
+
+    @Test
+    fun explicitFilesAreReadOnceAndSealed() = runTest {
+        files["/etc/ca"] = PEM
+        files["/etc/token"] = " long-lived "
+        val cluster = clusters.importLegacy(
+            legacy(
+                "OSTROM_RUNNERS_KUBERNETES_API_URL" to "https://k8s.acme.dev:6443",
+                "OSTROM_RUNNERS_KUBERNETES_NAMESPACE" to "sessions",
+                "OSTROM_RUNNERS_KUBERNETES_CA_FILE" to "/etc/ca",
+                "OSTROM_RUNNERS_KUBERNETES_TOKEN_FILE" to "/etc/token",
+            ),
+        )!!
+        assertFalse(cluster.inCluster)
+        assertTrue(cluster.hasCaCertificate && cluster.hasServiceAccountToken)
+        files.clear()
+        assertEquals("long-lived", clusters.credentials(cluster.id)?.serviceAccountToken)
+        assertEquals("stored", audit.records.single().details["credentials"])
+    }
+
+    @Test
+    fun unreadableFilesImportAClusterWhoseCredentialsAnAdministratorEnters() = runTest {
+        val cluster = clusters.importLegacy(legacy("OSTROM_RUNNERS_KUBERNETES_TOKEN_FILE" to "/missing"))!!
+        assertFalse(cluster.inCluster || cluster.hasServiceAccountToken)
+        assertNull(clusters.credentials(cluster.id))
+        assertTrue(logger.events.last().second.contains("an administrator enters"))
+        val caOnly = input.copy(name = "imported", apiUrl = cluster.apiUrl, version = 1, serviceAccountToken = null)
+        assertTrue(clusters.update(alice, cluster.id, caOnly).hasCaCertificate)
+        assertNull(clusters.credentials(cluster.id), "Its token is still to be entered")
+        val both = input.copy(name = "imported", apiUrl = cluster.apiUrl, version = 2)
+        val entered = clusters.update(alice, cluster.id, both)
+        assertTrue(entered.hasServiceAccountToken)
+        assertEquals("eyJ.secret.token", clusters.credentials(cluster.id)?.serviceAccountToken)
+    }
+
+    @Test
+    fun aReadableCaWithoutItsTokenStoresNeither() = runTest {
+        files["/etc/ca"] = PEM
+        val cluster = clusters.importLegacy(
+            legacy("OSTROM_RUNNERS_KUBERNETES_CA_FILE" to "/etc/ca", "OSTROM_RUNNERS_KUBERNETES_TOKEN_FILE" to "/none"),
+        )!!
+        assertFalse(cluster.hasCaCertificate || cluster.inCluster)
+        assertEquals("missing", audit.records.single().details["credentials"])
+    }
+
+    @Test
+    fun savingACaAndATokenTurnsAnInClusterClusterIntoAStoredOne() = runTest {
+        val cluster = clusters.importLegacy(legacy())!!
+        val same = input.copy(
+            name = "imported",
+            apiUrl = cluster.apiUrl,
+            version = 1,
+            allowedNamespaces = listOf("ostrom"),
+        )
+        val kept = clusters.update(alice, cluster.id, same.copy(caCertificate = null, serviceAccountToken = null))
+        assertTrue(kept.inCluster, "Saved without credentials, it still reads the pod's")
+        val next = same.copy(version = 2)
+        val halves = listOf(next.copy(serviceAccountToken = null), next.copy(caCertificate = null))
+        for (half in halves) {
+            assertEquals(
+                "caCertificate and serviceAccountToken are given together for an in-cluster cluster.",
+                assertFailsWith<InvalidCloudClusterException> { clusters.update(alice, cluster.id, half) }.message,
+            )
+        }
+        val stored = clusters.update(alice, cluster.id, same.copy(version = 2))
+        assertFalse(stored.inCluster)
+        assertTrue(stored.hasCaCertificate && stored.hasServiceAccountToken)
+        assertEquals("eyJ.secret.token", clusters.credentials(cluster.id)?.serviceAccountToken)
+    }
+
+    @Test
+    fun nothingIsImportedWithoutTheKubernetesDriverOrWithAnInvalidValue() = runTest {
+        assertNull(clusters.importLegacy { null })
+        assertTrue(logger.events.isEmpty(), "Nothing set, nothing said")
+        assertNull(clusters.importLegacy(mapOf("OSTROM_RUNNERS_KUBERNETES_NAMESPACE" to "x")::get))
+        assertTrue(logger.events.single().second.startsWith("Ignored deprecated variables"))
+        assertNull(clusters.importLegacy(legacy("OSTROM_RUNNERS_KUBERNETES_API_URL" to "http://k8s")))
+        assertTrue(logger.events.last().second.startsWith("Did not import"))
+        assertTrue(repository.list().isEmpty())
+        clusters.create(alice, input)
+        assertNull(clusters.importLegacy(legacy()), "A cluster exists: nothing imported")
+    }
+
+    @Test
+    fun aClusterImportedByAnotherReplicaFirstIsNotImportedAgain() = runTest {
+        val racing = object : CloudClustersRepository by repository {
+            override suspend fun insert(stored: StoredCloudCluster): Boolean = false
+        }
+        val other = CloudClustersUseCaseImpl(
+            racing, CloudAdminGate(InstanceAdministrators { false }), cipher, audit, SettableClock(), logger,
+        ) { null }
+        assertNull(other.importLegacy(legacy()))
+        assertTrue(audit.records.isEmpty())
+        assertNull(other.legacyCluster(legacy()), "Lost, and no marked cluster to read again")
+    }
+
+    @Test
+    fun theFormerVariablesClusterIsImportedForTheirSessionsWhateverClustersExist() = runTest {
+        assertNull(clusters.legacyCluster { null }, "Not Kubernetes: none")
+        // An administrator's cluster made before the upgrade, named as the import would be.
+        clusters.create(alice, input.copy(name = "imported"))
+        val imported = clusters.legacyCluster(legacy("OSTROM_RUNNERS_KUBERNETES_NAMESPACE" to "sessions"))!!
+        assertTrue(imported.imported && imported.inCluster)
+        assertEquals(listOf("sessions"), imported.allowedNamespaces)
+        assertEquals("imported-legacy", imported.name, "The administrator's name is kept")
+        assertEquals(imported, clusters.legacyCluster(legacy()), "Imported once, found again at each ask")
+        assertEquals(imported, clusters.legacyCluster { null }, "Found whatever the variables say now")
+        assertFalse(repository.list().single { it.name == "imported" }.imported)
+        assertEquals(1, audit.records.count { it.event == "cloud.cluster.imported" })
+    }
+
+    @Test
+    fun aClusterImportedByAnotherReplicaIsFoundAfterTheLostRace() = runTest {
+        val winner = clusters.importLegacy(legacy())!!
+        var lists = 0
+        val racing = object : CloudClustersRepository by repository {
+            // The first read sees no cluster yet: the other replica's insert lands just after.
+            override suspend fun list() = if (lists++ == 0) emptyList() else repository.list()
+
+            override suspend fun insert(stored: StoredCloudCluster): Boolean = false
+        }
+        val other = CloudClustersUseCaseImpl(
+            racing, CloudAdminGate(InstanceAdministrators { false }), cipher, audit, SettableClock(), logger,
+        ) { null }
+        assertEquals(winner, other.legacyCluster(legacy()))
     }
 }

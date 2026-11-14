@@ -25,11 +25,11 @@ class HooksModuleTest {
     @Test
     fun cloudSessionsReceiveHooksOnlyWithCloudRunners() = runTest {
         suspend fun features(vararg values: Pair<String, String>): Set<String> {
-            val config = RunnersConfig.from(MapConfigSource(values.toMap()))
+            val config = RunnersConfig.from(MapConfigSource(values.toMap()), cloudModule = true)
             return HooksModule.features(koinApplication { modules(module { single { config } }) }.koin)
         }
         assertEquals(setOf("hooks.v1"), features())
-        val cloud = features("OSTROM_RUNNERS_DRIVER" to "kubernetes", "OSTROM_RUNNERS_SERVER_URL" to "http://s")
+        val cloud = features("OSTROM_RUNNERS_DRIVER" to "kubernetes")
         assertEquals(setOf("hooks.v1", "runners.cloud.hooks.v1"), cloud)
     }
 }

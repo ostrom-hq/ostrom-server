@@ -36,4 +36,16 @@ class RunnerDeliveryTest {
         )
         assertEquals("fallback:1", CloudRuntimeRunnerDelivery(null, "fallback:1").current().sessionImage)
     }
+
+    @Test
+    fun theRunnerCallsTheRuntimesServerUrlElseThePublicOne() = runTest {
+        val public = "https://api.acme.dev/"
+        val stored = CloudRuntime(serverUrl = "https://runners.acme.dev")
+        val fromRuntime = CloudRuntimeRunnerDelivery(source(stored), "f", public).current().serverUrl
+        assertEquals("https://runners.acme.dev", fromRuntime)
+        val unset = CloudRuntime()
+        assertEquals("https://api.acme.dev", CloudRuntimeRunnerDelivery(source(unset), "f", public).current().serverUrl)
+        val blank = CloudRuntime(serverUrl = " ")
+        assertEquals("https://api.acme.dev", CloudRuntimeRunnerDelivery(source(blank), "f", public).current().serverUrl)
+    }
 }

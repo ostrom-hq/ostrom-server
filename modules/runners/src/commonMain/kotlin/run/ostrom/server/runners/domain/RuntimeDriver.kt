@@ -62,7 +62,27 @@ interface RuntimeDriver {
      * @return True once the volume is proven gone, false while its deletion is still in progress.
      */
     suspend fun deleteWorkspace(session: CloudSession): Boolean
+
+    /**
+     * Whether the runtime of the session opens now: on Kubernetes, its cluster is still configured, its credentials
+     * and CA open, and its API answers them. Asked only of a session a step found unreachable
+     * ([RuntimeUnreachableException]), to stop counting its retries.
+     *
+     * @param session The session.
+     *
+     * @return True when it opens.
+     */
+    suspend fun reachable(session: CloudSession): Boolean = true
 }
+
+/**
+ * The session's runtime does not open: its cluster is gone, its credentials or its CA no longer open, or its API
+ * refuses them or does not answer. The reconciler tries again for a bounded time, then ends the session's execution
+ * without it (`cluster_unavailable`).
+ *
+ * @param reason What did not open, never a credential or an API's answer.
+ */
+class RuntimeUnreachableException(reason: String) : Exception(reason)
 
 /**
  * One execution to start.
@@ -77,6 +97,7 @@ interface RuntimeDriver {
  * @property limits The session's bounds (egress restriction).
  * @property model The model the agent starts with, if chosen.
  * @property prompt The agent's first message, given at the first execution only.
+ * @property profile What a Kubernetes execution runs on (cluster, namespace, image, resources); null elsewhere.
  */
 data class ExecutionSpec(
     val sessionId: Uuid,
@@ -88,6 +109,7 @@ data class ExecutionSpec(
     val limits: SessionLimits,
     val model: String? = null,
     val prompt: String? = null,
+    val profile: SessionProfile? = null,
 ) {
     override fun toString(): String =
         "ExecutionSpec(sessionId=$sessionId, epoch=$epoch, agent=${agent.wire}, model=$model, runnerToken=***, " +
@@ -102,7 +124,9 @@ data class ExecutionSpec(
  * @return What to start; the first message goes to the first execution only.
  */
 fun CloudSession.executionSpec(runnerToken: String): ExecutionSpec =
-    ExecutionSpec(id, orgId, epoch, agent, repository, runnerToken, limits, model, prompt.takeIf { epoch == 1L })
+    ExecutionSpec(
+        id, orgId, epoch, agent, repository, runnerToken, limits, model, prompt.takeIf { epoch == 1L }, profile,
+    )
 
 /** The state of an execution as the runtime sees it. */
 enum class ExecutionStatus {
