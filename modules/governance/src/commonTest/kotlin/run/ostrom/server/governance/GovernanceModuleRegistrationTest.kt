@@ -19,7 +19,7 @@ class GovernanceModuleRegistrationTest {
     @Test
     fun registersUnderItsNameWithItsMigration() {
         assertEquals("governance", GovernanceModule.name)
-        assertEquals(listOf(1L, 2L), GovernanceModule.migrations.map { it.version })
+        assertEquals(listOf(1L, 2L, 3L), GovernanceModule.migrations.map { it.version })
         koinApplication { modules(GovernanceModule.koinModule) }.close()
     }
 

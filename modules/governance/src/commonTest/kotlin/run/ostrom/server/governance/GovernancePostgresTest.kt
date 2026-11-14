@@ -426,9 +426,12 @@ class GovernancePostgresTest {
                 tx.execute(
                     "INSERT INTO governance_confirmations (org_id, id, kind, scope, method, path, payload, summary, " +
                         "before_json, after_json, requested_by_user, requested_by_member, credential, status, " +
-                        "created_at, expires_at) SELECT CAST('$org' AS uuid), 'gcf_' || md5(random() || '' || i), " +
+                        "result_json, created_at, expires_at) SELECT CAST('$org' AS uuid), " +
+                        "'gcf_' || md5(random() || '' || i), " +
                         "'gates.policy', 'gates.policy', 'PUT', '/p', '{}', 's', 'null', 'null', 'u' || (i % 50), " +
                         "gen_random_uuid(), 'admin', CASE WHEN i % 20 = 0 THEN 'pending' ELSE 'confirmed' END, " +
+                        // a confirmed write has its result, but for the rare one whose server stopped (result_lost)
+                        "CASE WHEN i % 20 = 0 OR i % 500 = 1 THEN NULL ELSE 'null' END, " +
                         "now() - i * INTERVAL '1 minute', now() - i * INTERVAL '1 minute' + INTERVAL '15 minutes' " +
                         "FROM generate_series(1, $count) AS i",
                 ).getOrThrow()
