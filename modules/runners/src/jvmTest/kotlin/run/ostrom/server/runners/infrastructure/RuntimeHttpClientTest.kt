@@ -1,47 +1,36 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners.infrastructure
 
-import java.io.File
-import java.io.FileNotFoundException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
 /** The runtime's client trusts the CA bundle it is given, and only it. */
 class RuntimeHttpClientTest {
-    private fun bundle(text: String): File = File.createTempFile("ostrom-ca", ".pem").apply {
-        writeText(text)
-        deleteOnExit()
-    }
-
     @Test
     fun theBundleIsTheOnlyIssuerTrusted() {
-        val trust = trustingOnly(bundle(TEST_CA))
+        val trust = trustingOnly(TEST_CA)
         assertEquals(listOf("CN=Ostrom test runtime CA"), trust.acceptedIssuers.map { it.subjectX500Principal.name })
+        val issuer = trust.acceptedIssuers.single()
+        trust.checkServerTrusted(arrayOf(issuer), "RSA")
     }
 
     @Test
     fun aBundleWithoutCertificateIsRefused() {
-        val error = assertFailsWith<IllegalArgumentException> { trustingOnly(bundle("")) }
+        val error = assertFailsWith<IllegalArgumentException> { trustingOnly("") }
         assertEquals(true, error.message?.contains("holds no certificate"))
     }
 
     @Test
-    fun theBundleIsReadAtTheFirstHandshakeOnly() {
-        val missing = File.createTempFile("ostrom-ca", ".pem").apply { delete() }
-        runtimeHttpClient(missing.path, 1_000).close()
-        val trust = BundleTrustManager(missing)
-        assertFailsWith<FileNotFoundException> { trust.acceptedIssuers }
-        missing.writeText(TEST_CA)
-        missing.deleteOnExit()
-        val issuer = trust.acceptedIssuers.single()
-        trust.checkServerTrusted(arrayOf(issuer), "RSA")
-        trust.checkClientTrusted(arrayOf(issuer), "RSA")
+    fun aBundleThatDoesNotParseIsRefusedAsAnArgument() {
+        val garbled = "-----BEGIN CERTIFICATE-----\nnot base64 at all\n-----END CERTIFICATE-----"
+        val error = assertFailsWith<IllegalArgumentException> { trustingOnly(garbled) }
+        assertEquals("The CA bundle does not parse.", error.message)
     }
 
     @Test
     fun aClientIsMadeWithOrWithoutABundle() {
-        runtimeHttpClient(bundle(TEST_CA).path, 1_000).close()
+        runtimeHttpClient(TEST_CA, 1_000).close()
         runtimeHttpClient(null, 1_000).close()
     }
 

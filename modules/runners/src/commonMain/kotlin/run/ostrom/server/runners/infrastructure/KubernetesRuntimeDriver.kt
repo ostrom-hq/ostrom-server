@@ -8,6 +8,9 @@ import run.ostrom.server.runners.domain.RuntimeDriver
 import run.ostrom.server.runners.domain.RuntimeNames
 import run.ostrom.server.runners.domain.RunnerDelivery
 import run.ostrom.server.runners.domain.RunnerDeliverySource
+import run.ostrom.server.runners.domain.RuntimeUnreachableException
+import run.ostrom.server.runners.domain.SessionProfile
+import run.ostrom.server.runners.domain.SessionResources
 import io.ktor.client.HttpClient
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.parameter
@@ -20,6 +23,7 @@ import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
+import kotlinx.io.IOException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -31,39 +35,81 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import kotlin.concurrent.Volatile
 import kotlin.uuid.Uuid
 
 /**
- * [RuntimeDriver] on a Kubernetes namespace, through its REST API (no client library: the surface is a handful of
- * calls, as in TeamCode's `KubernetesClusterPort`).
+ * How the driver reaches one cluster, for one operation: its credentials are read again for the next one (an
+ * in-cluster cluster's token rotates, an administrator may replace a stored one).
  *
- * Everything lives in [KubernetesSettings.namespace] (`ostrom` by default, a namespace of its own on a shared
- * cluster): a workspace PersistentVolumeClaim per session, a Secret and a bare Pod (`restartPolicy: Never`) per
- * execution, and two NetworkPolicies shared by the session pods. The server's service account needs a namespaced
- * Role only (`deploy/runners-rbac.yaml`); it never reads or writes anything outside the namespace, and no
- * cluster-wide object (CRD, ClusterRole, PersistentVolume) is used.
+ * @property client The HTTP client, trusting the cluster's CA.
+ * @property apiUrl The API server.
+ * @property token The service-account token.
+ */
+class KubernetesTarget(val client: HttpClient, val apiUrl: String, val token: String) {
+    override fun toString(): String = "KubernetesTarget(apiUrl=$apiUrl, token=***)"
+}
+
+/** The instance's clusters, as the driver reaches them. */
+interface KubernetesClusters {
+    /**
+     * Runs one operation on a cluster, with a client no other step closes while it runs.
+     *
+     * @param clusterId The cluster.
+     * @param block The operation.
+     *
+     * @return What [block] returns.
+     *
+     * @throws RuntimeUnreachableException When the cluster is gone, or its credentials or its CA no longer open.
+     */
+    suspend fun <T> use(clusterId: String, block: suspend (KubernetesTarget) -> T): T
+}
+
+/**
+ * [RuntimeDriver] on Kubernetes, through its REST API (no client library: the surface is a handful of calls, as in
+ * TeamCode's `KubernetesClusterPort`).
  *
- * @param client The HTTP client, trusting the cluster's CA.
- * @param settings The namespace and the workspace volumes.
- * @param serverUrl The URL the runner reaches the server at.
- * @param delivery The images of the session pod and where the runner image keeps `ostrom`.
- * @param token Reads the service-account token, at every call (the kubelet rotates it).
+ * Each session lives on the cluster and in the namespace of its profile ([CloudSession.profile], the console's
+ * clusters, `runners.cloud.profiles.v1`): a workspace PersistentVolumeClaim per session, a Secret and a bare Pod
+ * (`restartPolicy: Never`) per execution, and two NetworkPolicies shared by the session pods of a namespace. The
+ * cluster's service account needs a namespaced Role only (`deploy/runners-rbac.yaml`); no cluster-wide object (CRD,
+ * ClusterRole, PersistentVolume) is used.
+ *
+ * @param clusters Reaches a session's cluster.
+ * @param settings The pods' priority class and the server pods' labels.
+ * @param delivery The runner image, its binary and the URL the runner reaches the server at.
  */
 @Suppress("TooManyFunctions") // The port's operations plus one builder per Kubernetes object.
 class KubernetesRuntimeDriver(
-    private val client: HttpClient,
+    private val clusters: KubernetesClusters,
     private val settings: KubernetesSettings,
-    private val serverUrl: String,
     private val delivery: RunnerDeliverySource,
-    private val token: () -> String,
 ) : RuntimeDriver {
-    private val base = settings.apiUrl.trimEnd('/')
-    private val namespace = settings.namespace
+    /** The cluster and namespace whose NetworkPolicies are in place, so that later starts skip them. */
+    // Replaced whole, never changed in place: concurrent steps at worst apply the same policies twice (a no-op).
+    @Volatile
+    private var policiesApplied: Set<Pair<String, String>> = emptySet()
 
-    /** Set once both NetworkPolicies are in place, so that later starts skip them (they never change at runtime). */
-    private var policiesApplied = false
+    /** One operation on a session's cluster and namespace. */
+    private class Scope(val target: KubernetesTarget, val profile: SessionProfile) {
+        val base = target.apiUrl.trimEnd('/')
+        val namespace = profile.namespace
+    }
 
+    /**
+     * Runs one operation in the cluster and namespace of a session's profile.
+     *
+     * @throws RuntimeUnreachableException When its cluster does not open: tried again later, for a bounded time.
+     */
+    private suspend fun <T> on(profile: SessionProfile, block: suspend (Scope) -> T): T =
+        clusters.use(profile.clusterId) { target -> block(Scope(target, profile)) }
+
+    // A session without a profile has none of its objects anywhere.
     override suspend fun ensureWorkspace(session: CloudSession) {
+        on(session.profile ?: return) { scope -> ensureWorkspace(scope, session) }
+    }
+
+    private suspend fun ensureWorkspace(scope: Scope, session: CloudSession) {
         val claim = buildJsonObject {
             put("apiVersion", "v1")
             put("kind", "PersistentVolumeClaim")
@@ -73,15 +119,21 @@ class KubernetesRuntimeDriver(
             }
             putJsonObject("spec") {
                 putJsonArray("accessModes") { add(JsonPrimitive("ReadWriteOnce")) }
-                settings.storageClass?.let { put("storageClassName", it) }
-                putJsonObject("resources") { putJsonObject("requests") { put("storage", settings.workspaceSize) } }
+                scope.profile.storageClass?.let { put("storageClassName", it) }
+                putJsonObject("resources") {
+                    putJsonObject("requests") { put("storage", "${scope.profile.workspaceGibibytes}Gi") }
+                }
             }
         }
-        create("/api/v1/namespaces/$namespace/persistentvolumeclaims", claim)
+        scope.create("/api/v1/namespaces/${scope.namespace}/persistentvolumeclaims", claim)
     }
 
     override suspend fun startExecution(spec: ExecutionSpec) {
-        applyNetworkPolicies()
+        on(spec.profile ?: return) { scope -> startExecution(scope, spec) }
+    }
+
+    private suspend fun startExecution(scope: Scope, spec: ExecutionSpec) {
+        scope.applyNetworkPolicies()
         val name = RuntimeNames.execution(spec.sessionId, spec.epoch)
         val secret = buildJsonObject {
             put("apiVersion", "v1")
@@ -96,41 +148,70 @@ class KubernetesRuntimeDriver(
                 spec.prompt?.let { put("prompt", it) }
             }
         }
-        create("/api/v1/namespaces/$namespace/secrets", secret)
-        create("/api/v1/namespaces/$namespace/pods", podManifest(spec, name, delivery.current()))
+        scope.create("/api/v1/namespaces/${scope.namespace}/secrets", secret)
+        val pod = podManifest(spec, scope.profile, name, delivery.current())
+        scope.create("/api/v1/namespaces/${scope.namespace}/pods", pod)
     }
 
     override suspend fun executionStatus(session: CloudSession): ExecutionStatus {
-        val name = RuntimeNames.execution(session.id, session.epoch)
-        val response = call(HttpMethod.Get, "$base/api/v1/namespaces/$namespace/pods/$name")
-        if (response.status == HttpStatusCode.NotFound) return ExecutionStatus.MISSING
-        response.requireSuccess("read pod")
-        val pod = Json.parseToJsonElement(response.bodyAsText()).jsonObject
-        return podStatus(pod)
+        val profile = session.profile ?: return ExecutionStatus.MISSING
+        return on(profile) { scope ->
+            val name = RuntimeNames.execution(session.id, session.epoch)
+            val response = scope.call(HttpMethod.Get, "${scope.base}/api/v1/namespaces/${scope.namespace}/pods/$name")
+            if (response.status == HttpStatusCode.NotFound) {
+                ExecutionStatus.MISSING
+            } else {
+                response.requireSuccess("read pod")
+                podStatus(Json.parseToJsonElement(response.bodyAsText()).jsonObject)
+            }
+        }
     }
 
     override suspend fun stopExecutions(session: CloudSession) {
+        on(session.profile ?: return) { scope -> stopExecutions(scope, session) }
+    }
+
+    private suspend fun stopExecutions(scope: Scope, session: CloudSession) {
         val selector = "$SESSION_LABEL=${session.id.toHexString()}"
         for (kind in listOf("pods", "secrets")) {
             val parameters = mapOf("labelSelector" to selector) +
                 if (kind == "pods") mapOf("gracePeriodSeconds" to GRACE_SECONDS.toString()) else emptyMap()
-            call(HttpMethod.Delete, "$base/api/v1/namespaces/$namespace/$kind", parameters = parameters)
+            val path = "${scope.base}/api/v1/namespaces/${scope.namespace}/$kind"
+            scope.call(HttpMethod.Delete, path, parameters = parameters)
                 .requireSuccess("delete $kind")
         }
     }
 
     override suspend fun deleteWorkspace(session: CloudSession): Boolean {
-        val path = "$base/api/v1/namespaces/$namespace/persistentvolumeclaims/${RuntimeNames.workspace(session.id)}"
-        val deleted = call(HttpMethod.Delete, path)
-        if (deleted.status != HttpStatusCode.NotFound) deleted.requireSuccess("delete workspace")
-        // The claim is gone once the API no longer lists it; with the storage class's Delete policy, the
-        // provisioner then deletes the volume (reading PersistentVolumes would need a cluster-wide role).
-        return call(HttpMethod.Get, path).status == HttpStatusCode.NotFound
+        val profile = session.profile ?: return true
+        return on(profile) { scope ->
+            val path = scope.claim(session)
+            val deleted = scope.call(HttpMethod.Delete, path)
+            if (deleted.status != HttpStatusCode.NotFound) deleted.requireSuccess("delete workspace")
+            // The claim is gone once the API no longer lists it; with the storage class's Delete policy, the
+            // provisioner then deletes the volume (reading PersistentVolumes would need a cluster-wide role).
+            scope.call(HttpMethod.Get, path).status == HttpStatusCode.NotFound
+        }
     }
 
+    // Its workspace claim is read: whatever the API answers but a refused token, the cluster opens.
+    override suspend fun reachable(session: CloudSession): Boolean {
+        val profile = session.profile ?: return true
+        return try {
+            on(profile) { scope -> scope.call(HttpMethod.Get, scope.claim(session)) }
+            true
+        } catch (_: RuntimeUnreachableException) {
+            false
+        }
+    }
+
+    private fun Scope.claim(session: CloudSession): String =
+        "$base/api/v1/namespaces/$namespace/persistentvolumeclaims/${RuntimeNames.workspace(session.id)}"
+
     /** The session pods' network: no ingress; DNS, the server, and the internet without private ranges. */
-    private suspend fun applyNetworkPolicies() {
-        if (policiesApplied) return
+    private suspend fun Scope.applyNetworkPolicies() {
+        val key = profile.clusterId to namespace
+        if (key in policiesApplied) return
         for (restricted in listOf(true, false)) {
             val name = if (restricted) RESTRICTED_POLICY else OPEN_POLICY
             val policy = SessionNetworkPolicy.manifest(name, restricted, settings.serverSelector)
@@ -147,13 +228,18 @@ class KubernetesRuntimeDriver(
                 created.requireSuccess("create network policy")
             }
         }
-        policiesApplied = true
+        policiesApplied = policiesApplied + key
     }
 
     // A manifest reads top to bottom like the YAML it stands for: splitting it would scatter one object.
     @Suppress("LongMethod")
-    private fun podManifest(spec: ExecutionSpec, name: String, delivery: RunnerDelivery): JsonObject = buildJsonObject {
-        val image = delivery.sessionImage
+    private fun podManifest(
+        spec: ExecutionSpec,
+        profile: SessionProfile,
+        name: String,
+        delivery: RunnerDelivery,
+    ): JsonObject = buildJsonObject {
+        val image = profile.image
         put("apiVersion", "v1")
         put("kind", "Pod")
         putJsonObject("metadata") {
@@ -170,8 +256,10 @@ class KubernetesRuntimeDriver(
             put("enableServiceLinks", false)
             put("terminationGracePeriodSeconds", GRACE_SECONDS)
             settings.priorityClass?.let { put("priorityClassName", it) }
-            settings.imagePullSecret?.let { secret ->
-                putJsonArray("imagePullSecrets") { add(buildJsonObject { put("name", secret) }) }
+            if (profile.imagePullSecrets.isNotEmpty()) {
+                putJsonArray("imagePullSecrets") {
+                    profile.imagePullSecrets.forEach { secret -> add(buildJsonObject { put("name", secret) }) }
+                }
             }
             // The runner and the agent never share a uid (S2-49): the agent host runs the agent in its own container,
             // which has neither the token nor a view of the runner's or the check host's processes. Every container is
@@ -187,14 +275,14 @@ class KubernetesRuntimeDriver(
             // sidecars (Kubernetes 1.29+): they start before the runner and stop once the runner has ended.
             putJsonArray("initContainers") {
                 add(install(delivery))
-                add(agentHost(image))
+                add(agentHost(image, profile.resources))
                 add(checkHost(image))
             }
             putJsonArray("containers") {
                 add(
                     container("runner", RUNNER_UID, image) {
                         command(CLOUD_RUNNER)
-                        put("env", environment(spec, name))
+                        put("env", environment(spec, name, delivery.serverUrl))
                         put("resources", resources("50m", "64Mi", "500m", "256Mi", "64Mi"))
                         putJsonArray("volumeMounts") {
                             add(mount("agent-socket", RunnerEnvironment.AGENT_SOCKET_DIRECTORY))
@@ -239,7 +327,7 @@ class KubernetesRuntimeDriver(
         }
 
     /** The agent host (`ostrom cloud agent-supervisor`): the agent's uid, the workspace, the agent socket, no token. */
-    private fun agentHost(image: String): JsonObject = container("agent", AGENT_UID, image) {
+    private fun agentHost(image: String, sized: SessionResources?): JsonObject = container("agent", AGENT_UID, image) {
         put("restartPolicy", "Always")
         command(CLOUD_AGENT)
         put("workingDir", WORKSPACE)
@@ -247,7 +335,10 @@ class KubernetesRuntimeDriver(
             add(variable("OSTROM_AGENT_SOCKET", RunnerEnvironment.AGENT_SOCKET))
             add(variable("HOME", "$WORKSPACE/.home"))
         }
-        put("resources", resources("250m", "512Mi", "2", "4Gi", "2Gi"))
+        // The profile's, requests equal to limits (TeamCode's); a back-filled session keeps the former ones.
+        val cpu = sized?.let { "${it.cpuMillis}m" }
+        val memory = sized?.let { "${it.memoryMebibytes}Mi" }
+        put("resources", resources(cpu ?: "250m", memory ?: "512Mi", cpu ?: "2", memory ?: "4Gi", "2Gi"))
         putJsonArray("volumeMounts") {
             add(mount("workspace", WORKSPACE))
             add(mount("tmp", "/tmp"))
@@ -319,7 +410,7 @@ class KubernetesRuntimeDriver(
      * The runner's variables: identifiers as values, the token and the first message read from the execution's
      * Secret by the kubelet, so that they are neither in the pod's spec nor in a file.
      */
-    private fun environment(spec: ExecutionSpec, secret: String): JsonArray = buildJsonArray {
+    private fun environment(spec: ExecutionSpec, secret: String, serverUrl: String): JsonArray = buildJsonArray {
         RunnerEnvironment.of(spec, serverUrl).forEach { (key, value) -> add(variable(key, value)) }
         val keys = listOf(RunnerEnvironment.TOKEN to "token") +
             listOfNotNull(spec.prompt?.let { RunnerEnvironment.PROMPT to "prompt" })
@@ -363,7 +454,7 @@ class KubernetesRuntimeDriver(
             }
         }
 
-    private suspend fun create(path: String, body: JsonObject) {
+    private suspend fun Scope.create(path: String, body: JsonObject) {
         val response = call(HttpMethod.Post, "$base$path", body)
         // Creating what exists is a success: every step can be repeated after a crash.
         if (response.status != HttpStatusCode.Conflict) {
@@ -371,19 +462,31 @@ class KubernetesRuntimeDriver(
         }
     }
 
-    private suspend fun call(
+    private suspend fun Scope.call(
         method: HttpMethod,
         url: String,
         body: JsonObject? = null,
         parameters: Map<String, String> = emptyMap(),
-    ): HttpResponse = client.request(url) {
-        this.method = method
-        bearerAuth(token())
-        parameters.forEach { (key, value) -> parameter(key, value) }
-        if (body != null) {
-            contentType(ContentType.Application.Json)
-            setBody(body.toString())
+    ): HttpResponse {
+        val response = try {
+            target.client.request(url) {
+                this.method = method
+                bearerAuth(target.token)
+                parameters.forEach { (key, value) -> parameter(key, value) }
+                if (body != null) {
+                    contentType(ContentType.Application.Json)
+                    setBody(body.toString())
+                }
+            }
+        } catch (_: IOException) {
+            // Refused, timed out or unresolved: never the cause's text, which may name the cluster's internals.
+            throw RuntimeUnreachableException("The cluster's API does not answer.")
         }
+        // The token no longer opens the cluster: a revoked or expired service account.
+        if (response.status == HttpStatusCode.Unauthorized) {
+            throw RuntimeUnreachableException("The cluster's API refuses the service-account token.")
+        }
+        return response
     }
 
     private fun labels(sessionId: Uuid, epoch: Long?): JsonObject = buildJsonObject {

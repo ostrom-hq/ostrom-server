@@ -137,3 +137,45 @@ class PreparationFailedException : OstromException(
     "The environment cannot be prepared.",
     CloudEnvironmentRules.PREPARATION_FAILED,
 )
+
+/** None of the organization's cloud profiles has this id (`runners.cloud.profiles.v1`). */
+class SessionProfileNotFoundException : OstromException(
+    ErrorKind.NOT_FOUND,
+    "No cloud profile has this id: list the profiles you may use with GET /api/v1/cloud/profiles.",
+    "cloud_profile_not_found",
+)
+
+/** The profile is not assigned to the session's owner, who is neither an owner nor an admin. */
+class ProfileUnassignedException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "This cloud profile is not assigned to you: list the profiles you may use, or ask an administrator.",
+    "profile_unassigned",
+)
+
+/** No profile was named, and the owner may use none or several. */
+class ProfileRequiredException : OstromException(
+    ErrorKind.UNPROCESSABLE,
+    "Name the cloud profile the session runs on (profileId): you may use none or several.",
+    "profile_required",
+)
+
+/** The image is neither the profile's nor one of its allowed overrides. */
+class ImageNotAllowedException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "This image does not match the profile's allowed image overrides.",
+    "image_not_allowed",
+)
+
+/** The profile's cluster is gone, or its credentials must be entered again. */
+class ClusterUnavailableException : OstromException(
+    ErrorKind.CONFLICT,
+    "The profile's cluster is no longer configured, or its credentials must be entered again.",
+    "cluster_unavailable",
+)
+
+/** The profile's cluster no longer allows its namespace. */
+class NamespaceNotAllowedException : OstromException(
+    ErrorKind.CONFLICT,
+    "The profile's namespace is no longer allowed on its cluster.",
+    "namespace_not_allowed",
+)

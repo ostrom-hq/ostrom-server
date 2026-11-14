@@ -26,6 +26,7 @@ import run.ostrom.server.runners.infrastructure.DisabledRuntimeDriver
 import run.ostrom.server.runners.infrastructure.KubernetesSettings
 import run.ostrom.server.runners.infrastructure.RunnerTokensImpl
 import run.ostrom.server.runners.infrastructure.RunnersConfig
+import run.ostrom.server.runners.domain.RunnerDeliverySource
 import run.ostrom.server.runners.presentation.CLOUD_READ
 import run.ostrom.server.runners.presentation.CLOUD_WRITE
 import run.ostrom.server.runners.presentation.callerOf
@@ -174,16 +175,43 @@ class ModelTest {
     }
 
     @Test
+    fun aKubernetesRunnerCallsThePublicUrlWhileTheRuntimeNamesNone() = runTest {
+        val public = module {
+            single<ConfigSource> { MapConfigSource(mapOf("OSTROM_PUBLIC_URL" to "https://api.acme.dev/")) }
+        }
+        val koin = koinApplication { modules(public, RunnersModule.koinModule) }
+        assertEquals("https://api.acme.dev", koin.koin.get<RunnerDeliverySource>().current().serverUrl)
+        koin.close()
+    }
+
+    @Test
+    fun anUpgradedInstallsRunnersServerUrlComesBeforeThePublicOne() = runTest {
+        val upgraded = module {
+            single<ConfigSource> {
+                MapConfigSource(
+                    mapOf(
+                        "OSTROM_RUNNERS_DRIVER" to "kubernetes",
+                        "OSTROM_RUNNERS_SERVER_URL" to "http://ostrom.ostrom.svc:8080/",
+                        "OSTROM_PUBLIC_URL" to "https://api.acme.dev/",
+                    ),
+                )
+            }
+        }
+        val koin = koinApplication { modules(upgraded, RunnersModule.koinModule) }
+        assertEquals("http://ostrom.ostrom.svc:8080", koin.koin.get<RunnerDeliverySource>().current().serverUrl)
+        koin.close()
+        assertFailsWith<InvalidConfigException>("A URL set for Kubernetes is still checked") {
+            val unusable = mapOf("OSTROM_RUNNERS_DRIVER" to "kubernetes", "OSTROM_RUNNERS_SERVER_URL" to "ostrom")
+            RunnersConfig.from(MapConfigSource(unusable), cloudModule = true)
+        }
+    }
+
+    @Test
     fun theConfigurationDefaultsToNoRuntime() {
         val config = RunnersConfig.from(MapConfigSource(emptyMap()))
         assertEquals(RunnersConfig.DriverKind.NONE, config.driver)
         assertNull(config.runtimeLabel)
         assertEquals(RunnersConfig.DEFAULT_RUNNER_IMAGE, config.runnerImage)
-        assertEquals("ostrom", config.kubernetes.namespace)
-        assertEquals("https://kubernetes.default.svc", config.kubernetes.apiUrl)
-        assertEquals("10Gi", config.kubernetes.workspaceSize)
-        assertNull(config.kubernetes.storageClass)
-        assertNull(config.kubernetes.imagePullSecret)
         assertNull(config.kubernetes.priorityClass)
         assertEquals("http://127.0.0.1:2375", config.docker.apiUrl)
         assertNull(config.docker.network)
@@ -194,20 +222,21 @@ class ModelTest {
     }
 
     @Test
-    fun theKubernetesApiUrlIsHttpsAndNeverALinkLocalOrMetadataHost() {
-        fun config(url: String) = RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_KUBERNETES_API_URL" to url)))
-        listOf("https://127.0.0.1:6443", "https://10.0.0.1:6443", "https://[::1]:6443", "https://k8s.internal:6443")
-            .forEach { assertEquals(it, config(it).kubernetes.apiUrl) }
-        listOf(
-            "http://k8s:6443", "https://169.254.169.254", "https://0xa9fea9fe", "https://2852039166", "https://0.0.0.0",
-            "https://[fe80::1]:6443", "https://[::ffff:169.254.169.254]", "https://metadata.google.internal",
-        ).forEach {
-            val refusal = assertFailsWith<InvalidConfigException>(it) { config(it) }
-            assertEquals(
-                "OSTROM_RUNNERS_KUBERNETES_API_URL must be an https URL that is not a link-local, unspecified or " +
-                    "cloud metadata address.",
-                refusal.message,
-            )
+    fun kubernetesRunsOnTheConsolesClustersWithTheCloudModuleAndUnsetStaysOffAsBeforeTheUpgrade() {
+        fun driver(raw: String?, cloud: Boolean) = RunnersConfig.from(
+            MapConfigSource(listOfNotNull(raw?.let { "OSTROM_RUNNERS_DRIVER" to it }).toMap()),
+            cloud,
+        ).driver
+        // An upgrade never switches a Docker or bare-metal install, nor a pod with a mounted service account.
+        assertEquals(RunnersConfig.DriverKind.NONE, driver(null, cloud = true))
+        assertEquals(RunnersConfig.DriverKind.KUBERNETES, driver("kubernetes", cloud = true))
+        assertEquals(RunnersConfig.DriverKind.NONE, driver("kubernetes", cloud = false))
+        assertEquals(RunnersConfig.DriverKind.NONE, driver("none", cloud = true))
+        // Their runner calls the cloud runtime's URL: OSTROM_RUNNERS_SERVER_URL is not needed.
+        val kubernetes = MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "kubernetes"))
+        assertEquals("", RunnersConfig.from(kubernetes, cloudModule = true).serverUrl)
+        assertFailsWith<InvalidConfigException> {
+            RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "docker")), cloudModule = true)
         }
     }
 
@@ -219,31 +248,18 @@ class ModelTest {
                     "OSTROM_RUNNERS_DRIVER" to "Kubernetes",
                     "OSTROM_RUNNERS_SERVER_URL" to "http://ostrom-server.ostrom.svc:8080/",
                     "OSTROM_RUNNERS_IMAGE" to "ghcr.io/x/runner:1",
-                    "OSTROM_RUNNERS_KUBERNETES_API_URL" to "https://k8s:6443",
-                    "OSTROM_RUNNERS_KUBERNETES_NAMESPACE" to "other",
-                    "OSTROM_RUNNERS_KUBERNETES_TOKEN_FILE" to "/t",
-                    "OSTROM_RUNNERS_KUBERNETES_CA_FILE" to "/c",
-                    "OSTROM_RUNNERS_KUBERNETES_STORAGE_CLASS" to "fast",
-                    "OSTROM_RUNNERS_WORKSPACE_SIZE" to "5Gi",
-                    "OSTROM_RUNNERS_KUBERNETES_IMAGE_PULL_SECRET" to "ghcr",
                     "OSTROM_RUNNERS_KUBERNETES_PRIORITY_CLASS" to "ostrom-low",
                     "OSTROM_RUNNERS_KUBERNETES_SERVER_SELECTOR" to " app.kubernetes.io/instance=prod , role=api",
                     "OSTROM_RUNNERS_DOCKER_API_URL" to "http://docker:2375",
                     "OSTROM_RUNNERS_DOCKER_NETWORK" to "ostrom",
                 ),
             ),
+            cloudModule = true,
         )
         assertEquals(RunnersConfig.DriverKind.KUBERNETES, config.driver)
         assertEquals("kubernetes", config.runtimeLabel)
         assertEquals("http://ostrom-server.ostrom.svc:8080", config.serverUrl)
         assertEquals("ghcr.io/x/runner:1", config.runnerImage)
-        assertEquals("https://k8s:6443", config.kubernetes.apiUrl)
-        assertEquals("other", config.kubernetes.namespace)
-        assertEquals("/t", config.kubernetes.tokenFile)
-        assertEquals("/c", config.kubernetes.caFile)
-        assertEquals("fast", config.kubernetes.storageClass)
-        assertEquals("5Gi", config.kubernetes.workspaceSize)
-        assertEquals("ghcr", config.kubernetes.imagePullSecret)
         assertEquals("ostrom-low", config.kubernetes.priorityClass)
         assertEquals(mapOf("app.kubernetes.io/instance" to "prod", "role" to "api"), config.kubernetes.serverSelector)
         assertEquals("http://docker:2375", config.docker.apiUrl)
@@ -287,8 +303,6 @@ class ModelTest {
                 mapOf(
                     "OSTROM_RUNNERS_DRIVER" to "",
                     "OSTROM_RUNNERS_IMAGE" to " ",
-                    "OSTROM_RUNNERS_KUBERNETES_STORAGE_CLASS" to "",
-                    "OSTROM_RUNNERS_KUBERNETES_IMAGE_PULL_SECRET" to " ",
                     "OSTROM_RUNNERS_KUBERNETES_PRIORITY_CLASS" to " ",
                     "OSTROM_RUNNERS_DOCKER_NETWORK" to "",
                 ),
@@ -296,8 +310,6 @@ class ModelTest {
         )
         assertEquals(RunnersConfig.DriverKind.NONE, config.driver)
         assertEquals(RunnersConfig.DEFAULT_RUNNER_IMAGE, config.runnerImage)
-        assertNull(config.kubernetes.storageClass)
-        assertNull(config.kubernetes.imagePullSecret)
         assertNull(config.kubernetes.priorityClass)
         assertNull(config.docker.network)
     }

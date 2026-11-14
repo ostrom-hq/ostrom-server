@@ -76,4 +76,15 @@ val CloudMigrations: List<SchemaMigration> = listOf(
             ${tenantTableSql("cloud_org_settings")}
         """.trimIndent(),
     ),
+    // runners.cloud.profiles.v1: the cluster imported from the former variables may be the server's own, reached with
+    // the server pod's rotating service account, read from its files at each use: nothing sealed is stored for it.
+    // It is marked, whatever its name becomes: the sessions created before profiles are given it.
+    SchemaMigration(
+        version = 4,
+        name = "cloud_cluster_in_cluster",
+        sql = """
+            ALTER TABLE cloud_clusters ADD COLUMN in_cluster BOOLEAN NOT NULL DEFAULT FALSE;
+            ALTER TABLE cloud_clusters ADD COLUMN imported BOOLEAN NOT NULL DEFAULT FALSE;
+        """.trimIndent(),
+    ),
 )

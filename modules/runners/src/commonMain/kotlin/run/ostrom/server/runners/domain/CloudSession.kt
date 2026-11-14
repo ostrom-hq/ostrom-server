@@ -46,6 +46,10 @@ import kotlin.uuid.Uuid
  * @property backgroundSeenAt The last heartbeat of the current execution that reported background work.
  * @property environment The preparation recipe asked for at creation, never edited; null when none was
  *   ([CloudEnvironmentRules.effective] gives the one the runner prepares).
+ * @property profile What a Kubernetes session runs on, copied from its cloud profile at creation; null on Docker and
+ *   registered runners.
+ * @property clusterUnreachableSince Since when the steps of the session have found its cluster unreachable without a
+ *   break ([RuntimeUnreachableException]); null while it opens. Past a bound, its execution ends without the cluster.
  */
 data class CloudSession(
     val id: Uuid,
@@ -79,6 +83,8 @@ data class CloudSession(
     val backgroundSince: Instant? = null,
     val backgroundSeenAt: Instant? = null,
     val environment: CloudEnvironmentSpec? = null,
+    val profile: SessionProfile? = null,
+    val clusterUnreachableSince: Instant? = null,
 ) {
     /**
      * Whether the runner of the current start reported a failed preparation (or the server found one): the
@@ -239,7 +245,7 @@ data class RepositorySpec(
  * Why a session failed or stopped.
  *
  * @property code A stable snake_case key (`start_failed`, `execution_lost`, `idle_timeout`, `max_duration`,
- *   `hours_exhausted`, `preparation_failed`).
+ *   `hours_exhausted`, `preparation_failed`, `cluster_unavailable`, `namespace_not_allowed`).
  * @property message A sentence for humans, never a raw error of the cluster nor a runner's text.
  * @property retryable Whether trying again may succeed, for `preparation_failed` (a clone, a fetch, GitHub).
  */

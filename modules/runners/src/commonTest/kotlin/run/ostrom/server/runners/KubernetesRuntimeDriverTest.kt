@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.runners.domain.RuntimeUnreachableException
 import run.ostrom.server.runners.domain.RunnerDelivery
 import run.ostrom.server.runners.domain.RunnerDeliverySource
 import run.ostrom.server.runners.domain.AgentKind
@@ -8,12 +9,18 @@ import run.ostrom.server.runners.domain.CloudPlan
 import run.ostrom.server.runners.domain.ExecutionSpec
 import run.ostrom.server.runners.domain.ExecutionStatus
 import run.ostrom.server.runners.domain.RepositorySpec
+import run.ostrom.server.runners.domain.RuntimeNames
 import run.ostrom.server.runners.fakes.FakeApi
 import run.ostrom.server.runners.fakes.ORG_A
 import run.ostrom.server.runners.fakes.session
 import run.ostrom.server.runners.infrastructure.KubernetesApiException
 import run.ostrom.server.runners.infrastructure.KubernetesRuntimeDriver
+import run.ostrom.server.runners.domain.ProfileOrigin
+import run.ostrom.server.runners.domain.SessionProfile
+import run.ostrom.server.runners.domain.SessionResources
+import run.ostrom.server.runners.infrastructure.KubernetesClusters
 import run.ostrom.server.runners.infrastructure.KubernetesSettings
+import run.ostrom.server.runners.infrastructure.KubernetesTarget
 import run.ostrom.server.runners.infrastructure.SessionNetworkPolicy
 import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.test.runTest
@@ -32,14 +39,25 @@ import kotlin.test.assertTrue
 class KubernetesRuntimeDriverTest {
     private val api = FakeApi()
     private var tokenReads = 0
-    private val settings = KubernetesSettings("https://k8s/", "ostrom", "/t", "/c", "fast", "5Gi", "ghcr")
-    private val driver = KubernetesRuntimeDriver(
-        api.client,
-        settings,
-        "http://ostrom-server.ostrom.svc:8080",
-        delivery("img:1"),
-    ) { "sa-${++tokenReads}" }
-    private val session = session().copy(epoch = 4)
+    private val settings = KubernetesSettings()
+    private val clusters = object : KubernetesClusters {
+        override suspend fun <T> use(clusterId: String, block: suspend (KubernetesTarget) -> T): T {
+            if (clusterId != CLUSTER) throw RuntimeUnreachableException("gone")
+            return block(KubernetesTarget(api.client, "https://k8s/", "sa-${++tokenReads}"))
+        }
+    }
+    private val driver = KubernetesRuntimeDriver(clusters, settings, delivery("runner:1"))
+    private val profile = SessionProfile(
+        origin = ProfileOrigin("p", 2),
+        clusterId = CLUSTER,
+        namespace = "ostrom",
+        image = "img:1",
+        imagePullSecrets = listOf("ghcr"),
+        resources = SessionResources(1500, 3072),
+        workspaceGibibytes = 5,
+        storageClass = "fast",
+    )
+    private val session = session().copy(epoch = 4, profile = profile)
     private val hex = session.id.toHexString()
     private val ns = "/api/v1/namespaces/ostrom"
 
@@ -57,6 +75,7 @@ class KubernetesRuntimeDriverTest {
             CloudPlan.FREE.sessionLimits().copy(restrictedEgress = restricted),
             model = "claude-opus-5-5".takeIf { restricted },
             prompt = "Fix the tests".takeIf { restricted },
+            profile = profile,
         )
 
     private fun body(index: Int): JsonObject = Json.parseToJsonElement(api.calls[index].body!!).jsonObject
@@ -83,12 +102,7 @@ class KubernetesRuntimeDriverTest {
 
     @Test
     fun aClaimWithoutStorageClassUsesTheClusterDefault() = runTest {
-        KubernetesRuntimeDriver(
-            api.client,
-            settings.copy(storageClass = null, imagePullSecret = null),
-            "http://s",
-            delivery("img"),
-        ) { "t" }.ensureWorkspace(session)
+        driver.ensureWorkspace(session.copy(profile = profile.copy(storageClass = null)))
         assertNull(body(0)["spec"]!!.jsonObject["storageClassName"])
     }
 
@@ -135,6 +149,7 @@ class KubernetesRuntimeDriverTest {
         assertEquals("claude", env["OSTROM_AGENT_COMMAND"])
         assertEquals("4", env["OSTROM_EPOCH"])
         assertEquals("claude-opus-5-5", env["OSTROM_AGENT_MODEL"])
+        assertEquals("http://ostrom-server.ostrom.svc:8080", env["OSTROM_SERVER_URL"])
         assertFalse("Fix the tests" in pod.toString())
         assertFalse("ostrom_runner_abc" in pod.toString())
     }
@@ -262,13 +277,8 @@ class KubernetesRuntimeDriverTest {
 
     @Test
     fun sessionPodsTakeTheConfiguredLowPriorityClass() = runTest {
-        val low = KubernetesRuntimeDriver(
-            api.client,
-            settings.copy(priorityClass = "ostrom-low", imagePullSecret = null),
-            "http://s",
-            delivery("img:1"),
-        ) { "t" }
-        low.startExecution(spec(repository = null))
+        val low = KubernetesRuntimeDriver(clusters, settings.copy(priorityClass = "ostrom-low"), delivery("runner:1"))
+        low.startExecution(spec(repository = null).copy(profile = profile.copy(imagePullSecrets = emptyList())))
         assertEquals("ostrom-low", body(3)["spec"]!!.jsonObject["priorityClassName"]!!.jsonPrimitive.content)
         assertNull(body(3)["spec"]!!.jsonObject["imagePullSecrets"])
     }
@@ -294,7 +304,7 @@ class KubernetesRuntimeDriverTest {
         assertEquals("Kubernetes API: create Pod answered 403.", error.message)
 
         val policies = "/apis/networking.k8s.io/v1/namespaces/ostrom/networkpolicies"
-        val other = KubernetesRuntimeDriver(api.client, settings, "http://s", delivery("img")) { "t" }
+        val other = KubernetesRuntimeDriver(clusters, settings, delivery("runner:1"))
         api.on("POST", policies, HttpStatusCode.Conflict to "{}")
         api.on("GET", "$policies/ostrom-sessions-restricted", HttpStatusCode.Forbidden to "{}")
         assertFailsWith<KubernetesApiException> { other.startExecution(spec()) }
@@ -357,6 +367,67 @@ class KubernetesRuntimeDriverTest {
     }
 
     @Test
+    fun theAgentTakesTheProfilesResourcesAndABackFilledSessionTheFormerOnes() = runTest {
+        driver.startExecution(spec(repository = null))
+        fun agent(index: Int) = body(index)["spec"]!!.jsonObject["initContainers"]!!.jsonArray[1].jsonObject
+        val profiled = agent(3)["resources"]!!.jsonObject
+        assertEquals("1500m", profiled["requests"]!!.jsonObject["cpu"]!!.jsonPrimitive.content)
+        assertEquals("3072Mi", profiled["limits"]!!.jsonObject["memory"]!!.jsonPrimitive.content)
+        driver.startExecution(spec(repository = null).copy(profile = profile.copy(resources = null)))
+        val former = agent(5)["resources"]!!.jsonObject
+        assertEquals("250m", former["requests"]!!.jsonObject["cpu"]!!.jsonPrimitive.content)
+        assertEquals("4Gi", former["limits"]!!.jsonObject["memory"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun eachNamespaceOfEachClusterGetsItsPolicies() = runTest {
+        driver.startExecution(spec(repository = null))
+        driver.startExecution(spec(repository = null).copy(profile = profile.copy(namespace = "team-b")))
+        val created = api.lines().filter { it.endsWith("/networkpolicies") }
+        assertEquals(4, created.size)
+        assertTrue(created.last().contains("/namespaces/team-b/"))
+        assertTrue(api.lines().last().startsWith("POST /api/v1/namespaces/team-b/pods"))
+    }
+
+    @Test
+    fun aSessionWithoutProfileHasNothingOnAnyCluster() = runTest {
+        val bare = session.copy(profile = null)
+        driver.ensureWorkspace(bare)
+        driver.startExecution(spec().copy(profile = null))
+        driver.stopExecutions(bare)
+        assertEquals(ExecutionStatus.MISSING, driver.executionStatus(bare))
+        assertTrue(driver.deleteWorkspace(bare))
+        assertEquals(emptyList(), api.lines())
+    }
+
+    @Test
+    fun anUnreachableClusterFailsTheStepWithoutACall() = runTest {
+        val gone = session.copy(profile = profile.copy(clusterId = "another"))
+        assertFailsWith<RuntimeUnreachableException> { driver.stopExecutions(gone) }
+        assertEquals(emptyList(), api.lines())
+        assertFalse(driver.reachable(gone))
+        assertTrue(driver.reachable(session.copy(profile = null)), "Nothing to reach")
+    }
+
+    @Test
+    fun aClusterThatRefusesItsTokenOrDoesNotAnswerIsUnreachable() = runTest {
+        val claim = "$ns/persistentvolumeclaims/${RuntimeNames.workspace(session.id)}"
+        api.on("GET", claim, HttpStatusCode.NotFound to "{}")
+        assertTrue(driver.reachable(session), "There or not, the claim was read")
+        api.on("GET", claim, HttpStatusCode.OK to "{}")
+        assertTrue(driver.reachable(session))
+        api.on("GET", claim, HttpStatusCode.Forbidden to "{}")
+        assertTrue(driver.reachable(session), "A token accepted but not allowed this read still opens")
+        api.on("GET", "$ns/pods/${RuntimeNames.execution(session.id, 4)}", HttpStatusCode.Unauthorized to "{}")
+        val refused = assertFailsWith<RuntimeUnreachableException> { driver.executionStatus(session) }
+        assertEquals("The cluster's API refuses the service-account token.", refused.message)
+        api.down = true
+        val silent = assertFailsWith<RuntimeUnreachableException> { driver.stopExecutions(session) }
+        assertEquals("The cluster's API does not answer.", silent.message)
+        assertFalse(driver.reachable(session))
+    }
+
+    @Test
     fun thePoliciesBlockPrivateRangesAndRestrictPorts() {
         val selector = mapOf("app.kubernetes.io/name" to "ostrom", "app.kubernetes.io/instance" to "prod")
         val restricted = SessionNetworkPolicy.manifest("r", restricted = true, serverSelector = selector)
@@ -382,6 +453,9 @@ class KubernetesRuntimeDriverTest {
     }
 }
 
-/** The runner image `runner:1`, its binary where the CLI's image keeps it, and [image] for the session's containers. */
-private fun delivery(image: String) =
-    RunnerDeliverySource { RunnerDelivery("runner:1", RunnerDelivery.DEFAULT_RUNNER_BINARY, image) }
+private const val CLUSTER = "0192f6a1-7c3e-7d4a-9b2f-1a2b3c4d5e6f"
+
+/** The runner image [image], its binary where the CLI's image keeps it, and the in-cluster server URL. */
+private fun delivery(image: String) = RunnerDeliverySource {
+    RunnerDelivery(image, RunnerDelivery.DEFAULT_RUNNER_BINARY, "unused:1", "http://ostrom-server.ostrom.svc:8080")
+}

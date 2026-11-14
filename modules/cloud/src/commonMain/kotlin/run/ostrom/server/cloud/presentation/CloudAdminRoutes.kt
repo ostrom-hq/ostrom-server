@@ -156,6 +156,7 @@ internal fun CloudCluster.toResponse() = CloudClusterResponse(
     serviceAccountToken = CloudSecretStateResponse(hasServiceAccountToken),
     createdAt = createdAt.toString(),
     updatedAt = updatedAt.toString(),
+    inCluster = inCluster,
 )
 
 internal fun SaveCloudProfileRequest.toInput() = CloudProfileInput(name, version, spec, assignedMemberIds.toSet())

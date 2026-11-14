@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners.fakes
 
+import kotlinx.io.IOException
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope
@@ -35,9 +36,13 @@ class FakeApi {
         this.answers["$method $path"] = answers.toMutableList()
     }
 
+    /** Whether the API answers nothing at all (refused, timed out). */
+    var down = false
+
     val client = HttpClient(MockEngine { request -> handle(request) }) { expectSuccess = false }
 
     private fun MockRequestHandleScope.handle(request: HttpRequestData): HttpResponseData {
+        if (down) throw IOException("connection refused")
         val call = ApiCall(
             request.method.value,
             request.url.encodedPath,

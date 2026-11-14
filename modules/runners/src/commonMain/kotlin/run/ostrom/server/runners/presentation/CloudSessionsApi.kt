@@ -258,6 +258,9 @@ data class RunnerGitHubTokenResponse(
  * @property prompt The agent's first message, up to 20,000 characters; an interactive agent when absent.
  * @property model The model the agent starts with; the agent's default when absent.
  * @property environment The preparation recipe (`runners.cloud.environment.v1`).
+ * @property profileId The cloud profile a Kubernetes session runs on (`runners.cloud.profiles.v1`); the one the owner
+ *   may use when absent.
+ * @property image The session image instead of the profile's: one of its allowed overrides.
  */
 @Serializable
 data class CreateCloudSessionRequest(
@@ -268,13 +271,24 @@ data class CreateCloudSessionRequest(
     val prompt: String? = null,
     val model: String? = null,
     val environment: CloudEnvironmentDto? = null,
+    val profileId: String? = null,
+    val image: String? = null,
 )
+
+/**
+ * The cloud profile a session runs on, at the version it was created with (`CloudSessionProfile`).
+ *
+ * @property id The profile.
+ * @property version Its version.
+ */
+@Serializable
+data class CloudSessionProfileDto(val id: String, val version: Int)
 
 /**
  * Why a session failed or stopped.
  *
  * @property code A stable key: `start_failed`, `execution_lost`, `idle_timeout`, `max_duration`, `hours_exhausted`,
- *   `preparation_failed`.
+ *   `preparation_failed`, `cluster_unavailable`, `namespace_not_allowed`.
  * @property message A sentence for humans.
  * @property retryable Whether trying again may succeed, for `preparation_failed`.
  */
@@ -304,7 +318,8 @@ data class SessionLimitsDto(
  * (`creating`, `running`, `pausing`, `paused`, `resuming`, `terminated`, `failed`), `desiredStatus` what the
  * owner asked for (`running`, `paused`, `terminated`); `phase` is open. `runnerId` names the registered runner the
  * current execution was handed to, on the session's own read only (`GET /api/v1/cloud/sessions/{id}`).
- * `githubAccess` says whose GitHub access its Git and `gh` use (`owner`, `shared`, `none`).
+ * `githubAccess` says whose GitHub access its Git and `gh` use (`owner`, `shared`, `none`). `profile` and `image`
+ * say what a Kubernetes session runs on (`runners.cloud.profiles.v1`).
  */
 @Serializable
 data class CloudSessionResponse(
@@ -330,6 +345,8 @@ data class CloudSessionResponse(
     val runnerId: String? = null,
     val githubAccess: String = "owner",
     val environment: CloudEnvironmentDto? = null,
+    val profile: CloudSessionProfileDto? = null,
+    val image: String? = null,
 )
 
 /**

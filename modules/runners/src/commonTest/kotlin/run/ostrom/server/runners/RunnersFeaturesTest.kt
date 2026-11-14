@@ -29,9 +29,12 @@ class RunnersFeaturesTest {
     @Test
     fun cloudRunnersAreListedOnlyWithARuntimeDriver() = runTest {
         assertEquals(setOf("runners.v1"), RunnersModule.features(koin(RunnersConfig.DriverKind.NONE)))
-        for (driver in listOf(RunnersConfig.DriverKind.KUBERNETES, RunnersConfig.DriverKind.DOCKER)) {
-            assertEquals(cloud, RunnersModule.features(koin(driver)), "$driver")
-        }
+        assertEquals(cloud, RunnersModule.features(koin(RunnersConfig.DriverKind.DOCKER)))
+        assertEquals(
+            cloud + "runners.cloud.profiles.v1",
+            RunnersModule.features(koin(RunnersConfig.DriverKind.KUBERNETES)),
+            "Sessions on the console's clusters run on the organizations' profiles",
+        )
         assertEquals(
             cloud,
             RunnersModule.features(koin(RunnersConfig.DriverKind.REGISTERED)),

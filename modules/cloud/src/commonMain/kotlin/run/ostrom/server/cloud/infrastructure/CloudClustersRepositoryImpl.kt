@@ -8,6 +8,7 @@ import run.ostrom.server.kernel.http.OstromJson
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
@@ -29,10 +30,11 @@ class CloudClustersRepositoryImpl(private val driver: Driver) : CloudClustersRep
         bind(
             Statement.create(
                 "INSERT INTO cloud_clusters ($COLUMNS) VALUES (:id, :name, :api_url, :ca, :token, :namespaces, " +
-                    ":pods, :storage, :version, :created_at, :updated_at) ON CONFLICT DO NOTHING",
+                    ":pods, :storage, :version, :created_at, :updated_at, :in_cluster, :imported) " +
+                    "ON CONFLICT DO NOTHING",
             ),
             stored,
-        ).bind("created_at", stored.cluster.createdAt),
+        ).bind("created_at", stored.cluster.createdAt).bind("imported", stored.cluster.imported),
     ).getOrThrow() == 1L
 
     // Only the names the statement has: the driver refuses a value bound to none.
@@ -41,7 +43,8 @@ class CloudClustersRepositoryImpl(private val driver: Driver) : CloudClustersRep
             Statement.create(
                 "UPDATE cloud_clusters SET name = :name, api_url = :api_url, sealed_ca = :ca, sealed_token = :token, " +
                     "allowed_namespaces = :namespaces, max_running_pods = :pods, default_storage_class = :storage, " +
-                    "version = :version, updated_at = :updated_at WHERE id = :id AND version = :previous " +
+                    "version = :version, updated_at = :updated_at, in_cluster = :in_cluster " +
+                    "WHERE id = :id AND version = :previous " +
                     "AND NOT EXISTS (SELECT 1 FROM cloud_clusters o WHERE o.name = :name AND o.id <> :id)",
             ),
             stored,
@@ -53,7 +56,7 @@ class CloudClustersRepositoryImpl(private val driver: Driver) : CloudClustersRep
             .bind("ca", stored.sealedCaCertificate).bind("token", stored.sealedServiceAccountToken)
             .bind("namespaces", OstromJson.encodeToString(NAMES, allowedNamespaces))
             .bind("pods", maxRunningPods).bind("storage", defaultStorageClass).bind("version", version)
-            .bind("updated_at", updatedAt)
+            .bind("updated_at", updatedAt).bind("in_cluster", inCluster)
     }
 
     private fun ResultSet.Row.toStored(): StoredCloudCluster {
@@ -67,16 +70,19 @@ class CloudClustersRepositoryImpl(private val driver: Driver) : CloudClustersRep
             maxRunningPods = get("max_running_pods").asInt(),
             defaultStorageClass = get("default_storage_class").asStringOrNull(),
             version = get("version").asInt(),
-            // A cluster is never stored without both (a new one, or a new apiUrl, brings them).
-            hasCaCertificate = true,
-            hasServiceAccountToken = true,
+            // An administrator's cluster always has both (a new one, or a new apiUrl, brings them); the imported one
+            // may have none: in-cluster, or its files unreadable at the import.
+            hasCaCertificate = ca.isNotEmpty(),
+            hasServiceAccountToken = token.isNotEmpty(),
             createdAt = get("created_at").asInstant(),
             updatedAt = get("updated_at").asInstant(),
+            inCluster = get("in_cluster").asBoolean(),
+            imported = get("imported").asBoolean(),
         )
         return StoredCloudCluster(cluster, ca, token)
     }
 }
 
 private const val COLUMNS = "id, name, api_url, sealed_ca, sealed_token, allowed_namespaces, max_running_pods, " +
-    "default_storage_class, version, created_at, updated_at"
+    "default_storage_class, version, created_at, updated_at, in_cluster, imported"
 private val NAMES = ListSerializer(String.serializer())

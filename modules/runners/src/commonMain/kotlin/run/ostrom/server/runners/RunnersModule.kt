@@ -1,7 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.cloud.domain.CloudClusterAccess
+import run.ostrom.server.cloud.domain.CloudClustersUseCase
 import run.ostrom.server.cloud.domain.CloudRuntimeSource
+import run.ostrom.server.runners.domain.CatalogSessionProfiles
+import run.ostrom.server.runners.domain.NoSessionProfiles
+import run.ostrom.server.runners.domain.SessionProfiles
+import run.ostrom.server.runners.infrastructure.CloudKubernetesClusters
+import run.ostrom.server.runners.infrastructure.CloudProfileCatalogImpl
+import run.ostrom.server.runners.infrastructure.LegacyKubernetesImport
+import run.ostrom.server.runners.infrastructure.RunnersConfig.DriverKind.KUBERNETES
 import run.ostrom.server.runners.domain.RunnerDeliverySource
 import run.ostrom.server.runners.infrastructure.CLOUD_ACCESS_SETTINGS
 import run.ostrom.server.runners.infrastructure.CloudRuntimeRunnerDelivery
@@ -13,6 +22,7 @@ import run.ostrom.server.billing.domain.GetAgentUsageUseCase
 import run.ostrom.server.billing.domain.GetPlanLimitsUseCase
 import run.ostrom.server.cloud.domain.CloudSettingsSource
 import run.ostrom.server.kernel.config.ConfigSource
+import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.runners.domain.AllowlistedCloudPlanProvider
@@ -133,7 +143,18 @@ object RunnersModule : ServerModule {
     override val name: String = "runners"
 
     override val koinModule: Module = module {
-        single<RunnersConfig> { RunnersConfig.from(get<ConfigSource>()) }
+        // The console's clusters run the Kubernetes sessions where the cloud module is (always on a full server).
+        single<RunnersConfig> { RunnersConfig.from(get<ConfigSource>(), getOrNull<CloudClusterAccess>() != null) }
+        single<SessionProfiles> {
+            // Kubernetes is chosen only where the cloud module is (RunnersConfig).
+            if (get<RunnersConfig>().driver == RunnersConfig.DriverKind.KUBERNETES) {
+                // The sessions of the former variables, given their cluster's profile at their next step.
+                val legacy = legacyImport(get(), get(), get(), get(), get())
+                CatalogSessionProfiles(CloudProfileCatalogImpl(get(), get()), get(), legacy)
+            } else {
+                NoSessionProfiles
+            }
+        }
         single(named(CLOUD_ACCESS_SETTINGS.name)) { CLOUD_ACCESS_SETTINGS }
         single<CloudSessionsRepository> { CloudSessionsRepositoryImpl(get()) }
         single<CloudAgentSessions> { RunnersCloudAgentSessions(get(), getOrNull<MemberLogins>()) }
@@ -157,12 +178,19 @@ object RunnersModule : ServerModule {
         }
         single<RunnerWorkSignals> { InProcessRunnerWorkSignals(get(), get()) }
         // The console's cloud runtime names the runner image (cloud module); OSTROM_RUNNERS_IMAGE while it names none.
+        // Its server URL, else OSTROM_RUNNERS_SERVER_URL (an upgraded install's in-cluster URL), else the public one.
         single<RunnerDeliverySource> {
-            CloudRuntimeRunnerDelivery(getOrNull<CloudRuntimeSource>(), get<RunnersConfig>().runnerImage)
+            val config = get<RunnersConfig>()
+            val fallbackUrl = config.serverUrl.ifEmpty { get<ConfigSource>()["OSTROM_PUBLIC_URL"].orEmpty() }
+            CloudRuntimeRunnerDelivery(getOrNull<CloudRuntimeSource>(), config.runnerImage, fallbackUrl)
         }
-        single<RuntimeDriver> { RuntimeDrivers.create(get(), { RegisteredRuntimeDriver(get(), get(), get()) }, get()) }
+        single<RuntimeDriver> {
+            RuntimeDrivers.create(get(), { RegisteredRuntimeDriver(get(), get(), get()) }, get()) {
+                CloudKubernetesClusters(get())
+            }
+        }
         single<CreateCloudSessionUseCase> {
-            MeteredCreateCloudSession(CreateCloudSessionUseCaseImpl(get(), get(), get(), get()), get())
+            MeteredCreateCloudSession(CreateCloudSessionUseCaseImpl(get(), get(), get(), get(), get()), get())
         }
         single<GetCloudSessionUseCase> { GetCloudSessionUseCaseImpl(get(), get()) }
         single<ListCloudSessionsUseCase> { ListCloudSessionsUseCaseImpl(get()) }
@@ -174,7 +202,7 @@ object RunnersModule : ServerModule {
             // The organization's cloud settings when the cloud module is there (always on a full server).
             val limit = CloudSettingsBackgroundWorkLimit(getOrNull<CloudSettingsSource>())
             val ended = getAll<SessionEndListener>()
-            ReconcileCloudSessionUseCaseImpl(get(), get(), get(), get(), get(), get(), ended, limit)
+            ReconcileCloudSessionUseCaseImpl(get(), get(), get(), get(), get(), get(), ended, get(), limit)
         }
         single { ReconcilerWorker(get(), get(), get(), get()) }
         // The members' GitHub access when the GitHub integration is there (always on a full server).
@@ -235,6 +263,21 @@ object RunnersModule : ServerModule {
 
     override val migrations: List<SchemaMigration> = RunnersMigrations
 
+    /** The cluster of the former `OSTROM_RUNNERS_KUBERNETES_*` variables, imported once, after the cloud runtime. */
+    override suspend fun initialize(koin: Koin) {
+        val clusters = koin.getOrNull<CloudClustersUseCase>() ?: return
+        if (koin.get<RunnersConfig>().driver != KUBERNETES) return
+        legacyImport(clusters, koin.get(), koin.get(), koin.get(), koin.get()).start()
+    }
+
+    private fun legacyImport(
+        clusters: CloudClustersUseCase,
+        runtime: CloudRuntimeSource,
+        config: RunnersConfig,
+        logger: Logger,
+        source: ConfigSource,
+    ) = LegacyKubernetesImport(clusters, runtime, config.runnerImage, logger, source::get)
+
     override fun routes(route: Route, koin: Koin) {
         route.cloudSessionsRoutes(koin.get())
         route.runnersRoutes(koin.get())
@@ -242,8 +285,8 @@ object RunnersModule : ServerModule {
     }
 
     /**
-     * Registered runners; cloud runners only with a runtime driver configured (`OSTROM_RUNNERS_DRIVER`); their GitHub
-     * access once members can link a GitHub account.
+     * Registered runners; cloud runners only with a runtime (the console's clusters, Docker or registered runners);
+     * their GitHub access once members can link a GitHub account; their profiles on the console's clusters.
      */
     override suspend fun features(koin: Koin): Set<String> {
         if (koin.get<RunnersConfig>().driver == RunnersConfig.DriverKind.NONE) return setOf(ServerFeatures.RUNNERS)
@@ -259,6 +302,8 @@ object RunnersModule : ServerModule {
             ServerFeatures.RUNNERS_CLOUD_ENVIRONMENT.takeIf { members },
             ServerFeatures.RUNNERS_CLOUD_GITHUB.takeIf { github },
             ServerFeatures.RUNNERS_CLOUD_VARIABLES.takeIf { variables },
+            // Sessions on the console's clusters and the organizations' profiles.
+            ServerFeatures.RUNNERS_CLOUD_PROFILES.takeIf { koin.get<RunnersConfig>().driver == KUBERNETES },
         )
     }
 

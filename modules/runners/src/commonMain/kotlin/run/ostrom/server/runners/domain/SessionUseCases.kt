@@ -16,6 +16,8 @@ import kotlin.uuid.Uuid
  * @property id The session's id, chosen by the server's caller (a run of a workflow keys its agent node's session by
  *   its visit, so a start asked again finds the first one); a new random id when absent, always for an API request.
  * @property environment The preparation recipe (`runners.cloud.environment.v1`), if any.
+ * @property profileId The cloud profile a Kubernetes session runs on; the one the owner may use when absent.
+ * @property image The session image instead of the profile's, one of its allowed overrides.
  */
 data class CreateCloudSessionPayload(
     val name: String?,
@@ -25,6 +27,8 @@ data class CreateCloudSessionPayload(
     val prompt: String? = null,
     val id: Uuid? = null,
     val environment: CloudEnvironmentSpec? = null,
+    val profileId: Uuid? = null,
+    val image: String? = null,
 )
 
 /** Creates a cloud session for the caller, within their organization's plan. */
@@ -40,6 +44,8 @@ interface CreateCloudSessionUseCase {
      * @throws InvalidCloudSessionRequestException When the request is malformed.
      * @throws CloudSessionLimitException When the organization runs as many sessions as its plan allows.
      * @throws CloudHoursExhaustedException When the organization used its hours of the period.
+     * @throws SessionProfileNotFoundException When a Kubernetes session names no profile of the organization; and
+     *   the other refusals of [SessionProfiles.choose].
      */
     suspend operator fun invoke(caller: Caller, payload: CreateCloudSessionPayload): CloudSession
 }
@@ -51,14 +57,19 @@ interface CreateCloudSessionUseCase {
  * @param plans The organizations' plans.
  * @param usage The hours used.
  * @param clock The time.
+ * @param profiles The profile a Kubernetes session runs on; none elsewhere.
  */
 class CreateCloudSessionUseCaseImpl(
     private val repository: CloudSessionsRepository,
     private val plans: CloudPlanProvider,
     private val usage: CloudUsageMeter,
     private val clock: Clock,
+    private val profiles: SessionProfiles = NoSessionProfiles,
 ) : CreateCloudSessionUseCase {
-    override suspend fun invoke(caller: Caller, payload: CreateCloudSessionPayload): CloudSession {
+    override suspend fun invoke(caller: Caller, payload: CreateCloudSessionPayload): CloudSession =
+        existing(caller, payload) ?: created(caller, payload)
+
+    private suspend fun created(caller: Caller, payload: CreateCloudSessionPayload): CloudSession {
         val agent = AgentKind.fromWire(payload.agent) ?: throw InvalidCloudSessionRequestException(
             "Unknown agent ${payload.agent.take(MAX_ECHO)}: use ${AgentKind.entries.joinToString { it.wire }}.",
         )
@@ -79,6 +90,7 @@ class CreateCloudSessionUseCaseImpl(
         ensureValid(prompt == null || prompt.length <= MAX_PROMPT_LENGTH) {
             "The prompt must be at most $MAX_PROMPT_LENGTH characters."
         }
+        val profile = profiles.choose(caller, payload.profileId, payload.image)
         val plan = plans.planFor(caller.orgId)
         val now = clock.now()
         requireHoursLeft(usage, plan, caller.orgId, now)
@@ -101,11 +113,22 @@ class CreateCloudSessionUseCaseImpl(
             model = model,
             prompt = prompt,
             environment = payload.environment,
+            profile = profile,
         )
         if (!repository.createWithinCap(session, plan.maxRunningSessions)) {
             throw CloudSessionLimitException(plan.maxRunningSessions)
         }
         return session
+    }
+
+    /**
+     * A start asked again under the same id (a workflow node after a restart) finds the first one, before any rule
+     * that could refuse it now (its profile, the plan's cap or hours).
+     */
+    private suspend fun existing(caller: Caller, payload: CreateCloudSessionPayload): CloudSession? {
+        val existing = payload.id?.let { repository.get(caller.orgId, it) } ?: return null
+        ensureValid(existing.ownerId == caller.memberId) { "Another member's session has this id." }
+        return existing
     }
 
     /** The name of a session asked without one: its repository's, the first of its recipe's, or none. */

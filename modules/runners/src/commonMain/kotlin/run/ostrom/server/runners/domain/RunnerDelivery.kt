@@ -9,9 +9,15 @@ package run.ostrom.server.runners.domain
  *
  * @property runnerImage The image holding the `ostrom` Linux binary (ghcr.io/ostrom-hq/ostrom-runner).
  * @property runnerBinary Where the binary is in [runnerImage].
- * @property sessionImage The image of the session's containers.
+ * @property sessionImage The image of the session's containers, where the session names none (its profile does).
+ * @property serverUrl The URL a Kubernetes session's runner calls back: the runtime's, else the server's public URL.
  */
-data class RunnerDelivery(val runnerImage: String, val runnerBinary: String, val sessionImage: String) {
+data class RunnerDelivery(
+    val runnerImage: String,
+    val runnerBinary: String,
+    val sessionImage: String,
+    val serverUrl: String = "",
+) {
     /** Constants of the delivery. */
     companion object {
         /** Where the init container puts the binary, in the volume every container mounts. */
