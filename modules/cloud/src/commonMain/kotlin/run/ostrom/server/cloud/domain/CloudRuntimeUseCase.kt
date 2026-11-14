@@ -173,7 +173,7 @@ class CloudRuntimeUseCaseImpl(
         const val DRIVER = "OSTROM_RUNNERS_DRIVER"
         const val IMAGE = "OSTROM_RUNNERS_IMAGE"
         const val SERVER_URL = "OSTROM_RUNNERS_SERVER_URL"
-        const val DEFAULT_IMAGE = "ghcr.io/ostrom-hq/ostrom-runner:latest"
+        const val DEFAULT_IMAGE = "docker.io/ostromhq/ostrom-runner:latest"
 
         fun normalize(runtime: CloudRuntime) = runtime.copy(
             runnerImage = runtime.runnerImage.trimmedOrNull(),
