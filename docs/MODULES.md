@@ -274,6 +274,16 @@ What lives in the console so far:
 | Section | Moved from | Since |
 |---|---|---|
 | Administrators | `OSTROM_INSTANCE_ADMINS` | the `admin` module |
+| Cloud runtime (on or off, runner delivery image and binary, callback URL, retention, per-member limits, transfers) | `OSTROM_RUNNERS_DRIVER`, `OSTROM_RUNNERS_IMAGE`, `OSTROM_RUNNERS_SERVER_URL` | the `cloud` module |
+| Cloud clusters (API URL, sealed CA bundle and service-account token, allowed namespaces, pod ceiling) | — | the `cloud` module |
+
+The `cloud` module follows TeamCode's cloud model. The instance's administrators set the runtime and connect clusters:
+a cluster's API URL is an https URL that is never a link-local, unspecified or metadata address in any numeric
+spelling, its CA bundle and token are sealed (`cloud-cluster:<id>:ca|token`) and never returned, and a changed URL
+needs both again. Turning the runtime off refuses only new sessions. Each organization's owners and admins publish
+versioned cloud profiles (cluster, namespace, the team's own session image, allowed image overrides, pull secrets,
+resources, idle timeouts) and assign them to members; a published version never changes. Every save is optimistic (a
+`409` when another came first) and audited without a credential.
 
 ### Memory under the container limit
 
@@ -452,6 +462,7 @@ anonymous call gets 401 `unauthorized`. A module lists a key of ostrom-core's `S
 | `automations` | `automations.v1`, `waits.v1` | — |
 | `billing` | `billing.v1` | Stripe configured (`OSTROM_STRIPE_SECRET_KEY`) |
 | `budgets` | `budgets.v1` | — |
+| `cloud` | `cloud.admin.v1` | — |
 | `compiler` | `packages.v1`, `workflows.v1` | — |
 | `events` | `events.v1` | — |
 | `gates` | `gates.v1` | — |

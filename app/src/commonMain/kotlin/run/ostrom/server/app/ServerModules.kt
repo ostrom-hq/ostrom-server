@@ -6,6 +6,7 @@ import run.ostrom.server.artifacts.ArtifactsModule
 import run.ostrom.server.automations.AutomationsModule
 import run.ostrom.server.billing.BillingModule
 import run.ostrom.server.budgets.BudgetsModule
+import run.ostrom.server.cloud.CloudModule
 import run.ostrom.server.compiler.CompilerModule
 import run.ostrom.server.events.EventsModule
 import run.ostrom.server.gates.GatesModule
@@ -56,6 +57,7 @@ fun serverModules(): List<ServerModule> = listOf(
     AdminModule,
     // The feed the other modules publish to, through the kernel's OrgEventPublisher.
     EventsModule,
+    CloudModule,
     UsageModule,
     GatewayModule,
     BudgetsModule,
