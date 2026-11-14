@@ -95,10 +95,12 @@ private fun serve() {
     }
     val workers = CoroutineScope(SupervisorJob() + Dispatchers.Default + failures)
     try {
-        val database = connectPostgres(config.database).also { driver = it }
+        // OSTROM_DATABASE_MAX_CONNECTIONS is split between sqlx4k's pool and the JVM pool while both remain (JVM step
+        // 4): `/ready` reads the JVM pool's state, and the modules on Exposed query it.
+        val database = connectPostgres(config.database.copy(maxConnections = config.database.driverConnections))
+            .also { driver = it }
         runBlocking { database.requireRowLevelSecurity() }
-        // The JVM pool (docs/decisions/0001, step 2): `/ready` reads its state, and the modules on Exposed query it.
-        val pool = JdbcDatabase(config.database, JdbcDatabase.MIN_POOL_SIZE).also { jdbc = it }
+        val pool = JdbcDatabase(config.database, config.database.jdbcConnections).also { jdbc = it }
         val signer = runBlocking { Ed25519InstanceSigner.loadOrCreate(config.signingKeyFile) }
         val kernel = kernelModule(
             logger,
@@ -176,8 +178,9 @@ private fun oneShot(
     var jdbc: JdbcDatabase? = null
     val workers = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     try {
-        val database = connectPostgres(config.database).also { driver = it }
-        val pool = JdbcDatabase(config.database, JdbcDatabase.MIN_POOL_SIZE).also { jdbc = it }
+        val database = connectPostgres(config.database.copy(maxConnections = config.database.driverConnections))
+            .also { driver = it }
+        val pool = JdbcDatabase(config.database, config.database.jdbcConnections).also { jdbc = it }
         val signer = runBlocking { Ed25519InstanceSigner.loadOrCreate(config.signingKeyFile) }
         val kernel =
             kernelModule(logger, database, signer, source, migrationRunner = pool.migrationRunner(logger), jdbc = pool)
