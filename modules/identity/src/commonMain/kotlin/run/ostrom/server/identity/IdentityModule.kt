@@ -305,7 +305,7 @@ object IdentityModule : ServerModule {
             InstanceMailSender(get(), get(HTTP), directory)
         } binds arrayOf(MailSender::class, MailAvailability::class)
         single<SignInMethodsSource> {
-            InstanceSignInMethods(get(), get(HTTP), get(), get<MailAvailability>()::available)
+            InstanceSignInMethods(get(), get(HTTP), get(), get(), get<MailAvailability>()::available)
         }
         single<OAuthAttemptsRepository> { OAuthAttemptsRepositoryImpl(get<JdbcDatabase>()) }
         single<MagicLinksRepository> { MagicLinksRepositoryImpl(get<JdbcDatabase>()) }

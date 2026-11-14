@@ -19,6 +19,10 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.http.Url
 import kotlinx.coroutines.test.runTest
+import run.ostrom.server.kernel.logging.LogLevel
+import run.ostrom.server.kernel.logging.Logger
+import kotlinx.coroutines.CancellationException
+import kotlin.test.assertFailsWith
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -136,9 +140,7 @@ class SignInSettingsTest {
     @Test
     fun theOfferedProvidersFollowTheSettingsAndGoogleLetsThePersonPickAnAccount() = runTest {
         var mailing = false
-        val methods = InstanceSignInMethods(settings, HttpClient(MockEngine { error("unused") }), Clock.System) {
-            mailing
-        }
+        val methods = InstanceSignInMethods(settings, http, Clock.System, warnings) { mailing }
         assertEquals(emptyList(), methods.current().keys)
         stored.save("google", mapOf("clientId" to "g", "clientSecret" to "s2"))
         stored.save("github-sign-in", mapOf("clientId" to "Iv1.a", "clientSecret" to "s1"))
@@ -153,4 +155,32 @@ class SignInSettingsTest {
         assertEquals("github.com", github.host)
         assertFalse(github.parameters.contains("prompt"))
     }
+
+    @Test
+    fun aFailedReadOfTheAppLeavesOnlyGitHubOut() = runTest {
+        stored.save("google", mapOf("clientId" to "g", "clientSecret" to "s2"))
+        val failing = SignInSettings(stored) { error("github_apps unreachable") }
+        val methods = InstanceSignInMethods(failing, http, Clock.System, warnings) { true }
+        assertEquals(listOf("google", "email"), methods.current().keys)
+        assertEquals(listOf("GitHub sign-in left out: its settings could not be read"), logged)
+    }
+
+    @Test
+    fun aCancelledReadIsNotTakenForAFailure() = runTest {
+        val cancelled = SignInSettings(stored) { throw CancellationException("stopping") }
+        val methods = InstanceSignInMethods(cancelled, http, Clock.System, warnings) { true }
+        assertFailsWith<CancellationException> { methods.current() }
+        assertEquals(emptyList(), logged)
+    }
+
+    private val http = HttpClient(MockEngine { error("unused") })
+    private val logged = mutableListOf<String>()
+    private val warnings = object : Logger {
+        override fun log(level: LogLevel, message: String, fields: Map<String, Any?>, error: Throwable?) {
+            logged += message
+        }
+
+        override fun with(fields: Map<String, Any?>): Logger = this
+    }
+
 }
