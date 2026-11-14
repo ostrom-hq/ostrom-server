@@ -120,11 +120,11 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
      * bench's large pool inside its timing); another coroutine waits like another process.
      *
      * CI's PostgreSQL service has `max_connections` 100 and Gradle runs the modules' tests in parallel, each test
-     * with pools of its own (up to 12 connections, [create], and the 2 of a test server's JDBC pool). Two read
-     * benches of 20 callers and the launch path's pool of 50 at once ran out of connections (« sorry, too many
-     * clients already », on main and on pull requests, 03/11/2026), and two benches timing at once on the runner's
-     * few cores measured each other: a route's p95 went over its budget on a pull request that never touched it
-     * (ReportsReadsBenchTest, server#282).
+     * with pools of its own (up to 12 connections, [create], and the 2 of a test server's JDBC pool, 4 for a
+     * bench's). Two read benches of 20 callers and the launch path's pool of 50 at once ran out of connections
+     * (« sorry, too many clients already », on main and on pull requests, 03/11/2026), and two benches timing at
+     * once on the runner's few cores measured each other: a route's p95 went over its budget on a pull request that
+     * never touched it (ReportsReadsBenchTest, server#282).
      *
      * @param block What runs alone.
      * @return What [block] returns.
