@@ -21,7 +21,6 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
@@ -186,6 +185,13 @@ class TeamCodeWorkflowMapperTest {
         val refused = TeamCodeWorkflowMapper.map(secret, mapping)
         assertNull(refused.raw)
         assertEquals(listOf("One-time fields (a.token) have no equivalent in Ostrom."), refused.notes)
+
+        val looping = fix.copy(
+            definition = definition("""{"start": "g", "nodes": [{"id": "g", "kind": "loop", "title": "G"}]}"""),
+        )
+        val unknown = TeamCodeWorkflowMapper.map(looping, mapping)
+        assertNull(unknown.raw)
+        assertEquals(listOf("Nodes of a kind Ostrom has no equivalent of (g: loop)."), unknown.notes)
     }
 
     @Test
@@ -208,8 +214,7 @@ class TeamCodeWorkflowMapperTest {
                    "actions": [{"id": "ok", "label": "OK"}], "transitions": [{"on": "ok", "to": "e"}]},
                   {"id": "e", "kind": "human", "title": "E", "assignee": {"kind": "owner"},
                    "actions": [{"id": "ok", "label": "OK"}], "transitions": [{"on": "ok", "to": "f"}]},
-                  {"id": "f", "kind": "workflow", "title": "F", "transitions": [{"on": "delivered", "to": "g"}]},
-                  {"id": "g", "kind": "loop", "title": "G"}
+                  {"id": "f", "kind": "workflow", "title": "F"}
                 ]}
                 """,
             ),
@@ -222,7 +227,6 @@ class TeamCodeWorkflowMapperTest {
         assertEquals(listOf(null, null, "acme/web"), workflow.nodes.take(3).map { it.run?.repository })
         assertEquals(listOf(null, null), workflow.nodes.slice(3..4).map { it.approvers })
         assertNull(workflow.nodes[5].workflowId)
-        assertEquals(WorkflowNodeKind.UNKNOWN, workflow.nodes[6].kind)
         assertEquals(emptySet(), mapped.calls)
         assertEquals(
             listOf(
@@ -235,8 +239,6 @@ class TeamCodeWorkflowMapperTest {
             ),
             mapped.notes,
         )
-        // The save refuses what Ostrom cannot run, naming the node.
-        assertFailsWith<IllegalArgumentException> { WorkflowChecks.check(workflow) }
     }
 
     @Test

@@ -63,6 +63,25 @@ class AutomationsModuleRegistrationTest {
     }
 
     @Test
+    fun withoutAModuleThatRunsWorkflowsTheImportRefusesAWorkflowAction() = runTest {
+        val koin = koinApplication {
+            allowOverride(true)
+            modules(
+                AutomationsModule.koinModule,
+                module {
+                    single<AutomationsRepository> { InMemoryAutomations() }
+                    single<WebhookSecrets> { PlainSecrets }
+                    single<Clock> { TestClock() }
+                },
+            )
+        }.koin
+        val imported = ImportedAutomation("teamcode/a1", aliceAuto.memberId, workflowDefinition(), null)
+        assertFailsWith<InvalidAutomationException> {
+            koin.get<ImportAutomationsUseCase>().import(aliceAuto.orgId, imported, dryRun = false)
+        }
+    }
+
+    @Test
     fun webhookUrlsUseThePublicUrlWithoutItsTrailingSlash() {
         val configured = MapConfigSource(mapOf("OSTROM_PUBLIC_URL" to "https://ostrom.example/"))
         assertEquals("https://ostrom.example", publicUrlOf(configured))

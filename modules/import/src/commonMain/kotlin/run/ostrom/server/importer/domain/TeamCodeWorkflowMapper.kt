@@ -62,16 +62,19 @@ object TeamCodeWorkflowMapper {
     fun map(workflow: TeamCodeWorkflow, mapping: TeamCodeMapping): MappedWorkflow {
         val id = idOf(workflow.id)
         val definition = definitionOf(workflow)
-        val oneTime = definition?.nodes.orEmpty().flatMap { node ->
-            node.fields.filter { it.oneTime }.map { "${node.id}.${it.id}" }
+        val nodes = definition?.nodes.orEmpty()
+        val oneTime = nodes.flatMap { node -> node.fields.filter { it.oneTime }.map { "${node.id}.${it.id}" } }
+        val unknown = nodes.filter { it.kind !in KINDS }.map { "${it.id}: ${it.kind.take(MAX_KIND)}" }
+        val refusal = when {
+            definition == null -> UNREADABLE
+            oneTime.isNotEmpty() -> "One-time fields (${oneTime.joinToString()}) have no equivalent in Ostrom."
+            unknown.isNotEmpty() -> "Nodes of a kind Ostrom has no equivalent of (${unknown.joinToString()})."
+            else -> null
         }
-        return when {
-            definition == null -> MappedWorkflow(id, null, emptySet(), listOf(UNREADABLE))
-            oneTime.isNotEmpty() -> {
-                val note = "One-time fields (${oneTime.joinToString()}) have no equivalent in Ostrom."
-                MappedWorkflow(id, null, emptySet(), listOf(note))
-            }
-            else -> mapReadable(id, workflow, definition, mapping)
+        return if (definition == null || refusal != null) {
+            MappedWorkflow(id, null, emptySet(), listOfNotNull(refusal))
+        } else {
+            mapReadable(id, workflow, definition, mapping)
         }
     }
 
@@ -114,9 +117,9 @@ object TeamCodeWorkflowMapper {
     }
 
     private fun node(node: Node, mapping: TeamCodeMapping, notes: MutableList<String>): WorkflowNode {
-        val base = WorkflowNode(node.id, WorkflowNodeKind.UNKNOWN, node.title, maxVisits = node.maxVisits)
+        val base = WorkflowNode(node.id, WorkflowNodeKind.AGENT, node.title, maxVisits = node.maxVisits)
+        // Only the kinds of KINDS reach here: a workflow with another kind is not imported.
         return when (node.kind) {
-            AGENT -> base.copy(kind = WorkflowNodeKind.AGENT, run = agentRun(node, mapping, notes))
             HUMAN -> base.copy(
                 kind = WorkflowNodeKind.WAIT,
                 approvers = approvers(node, mapping, notes),
@@ -132,8 +135,7 @@ object TeamCodeWorkflowMapper {
                 workflowId = node.workflowId?.let(::idOf),
                 arguments = node.arguments,
             )
-            // An unknown kind stays unknown: the save refuses it, naming the node.
-            else -> base
+            else -> base.copy(run = agentRun(node, mapping, notes))
         }
     }
 
@@ -211,6 +213,8 @@ private const val SOURCE_KIND = "teamcode"
 private const val AGENT = "agent"
 private const val HUMAN = "human"
 private const val WORKFLOW = "workflow"
+private val KINDS = setOf(AGENT, HUMAN, WORKFLOW)
+private const val MAX_KIND = 40
 private const val MEMBER = "member"
 private const val UNREADABLE = "TeamCode's definition could not be read."
 
