@@ -6,6 +6,8 @@ import run.ostrom.server.automations.domain.TimedWaitsRepository
 import run.ostrom.server.automations.domain.Wait
 import run.ostrom.server.automations.domain.WaitAnswer
 import run.ostrom.server.automations.domain.WaitEventTarget
+import run.ostrom.server.kernel.events.OrgEventPublisher
+import run.ostrom.server.kernel.events.OrgEventType
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
@@ -16,11 +18,13 @@ import kotlin.uuid.Uuid
 /**
  * [TimedWaitsRepository] on PostgreSQL. The clock's scan and an event address read `automations_waits` across
  * organizations only through the functions of [AutomationsMigrations] version 6, owned by `ostrom_router`, which
- * return ids, organizations and a secret's hash; each wait is then resolved confined to its organization ([inTenant]).
+ * return ids, organizations and a secret's hash; each wait is then resolved confined to its organization ([inTenant]),
+ * with its `cloud.wait.resolved` event in the same transaction.
  *
  * @param driver The database.
+ * @param events The organization's event feed.
  */
-internal class TimedWaitsRepositoryImpl(private val driver: Driver) : TimedWaitsRepository {
+internal class TimedWaitsRepositoryImpl(private val driver: Driver, private val events: OrgEventPublisher) : TimedWaitsRepository {
     override suspend fun due(now: Instant, limit: Int): List<DueWait> = driver.fetchAll(
         // The serving role alone runs the function; it returns ids and organizations, nothing of a wait's content.
         Statement.create(
@@ -41,8 +45,7 @@ internal class TimedWaitsRepositoryImpl(private val driver: Driver) : TimedWaits
         // The clock resolves a wait once its instant has come; an event, only a wait for an event. Either way the first
         // update on `status = 'open'` wins, and the answer and its wake are written at once.
         val condition = if (due) "COALESCE(due_at, timeout_at) <= :at" else "resolver = 'event'"
-        return driver.fetchInOrg(
-            orgId,
+        return driver.changeInOrg(orgId, events, { it.event(OrgEventType.WAIT_RESOLVED, answer.action) }) {
             Statement.create(
                 """
                 UPDATE automations_waits SET status = 'resolved', answer_action = :action, answer_values = :values,
@@ -55,7 +58,7 @@ internal class TimedWaitsRepositoryImpl(private val driver: Driver) : TimedWaits
                 .bind("author", answer.author)
                 .bind("at", answer.answeredAt)
                 .bind("id", id)
-                .bind("org_id", orgId),
-        ).getOrThrow().firstOrNull()?.toWait()
+                .bind("org_id", orgId)
+        }.firstOrNull()
     }
 }

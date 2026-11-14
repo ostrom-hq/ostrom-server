@@ -29,8 +29,11 @@ import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.TokenAuthenticator
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
+import run.ostrom.server.kernel.events.OrgEventDraft
+import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.sessions.AgentSession
 import run.ostrom.server.kernel.sessions.AgentSessions
+import io.github.smyrgeorge.sqlx4k.Transaction
 import org.koin.dsl.module
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -313,5 +316,22 @@ class InMemoryTimedWaits(private val waits: InMemoryWaits) : TimedWaitsRepositor
         val timer = wait.timer ?: return null
         if (if (due) timer.at > answer.answeredAt else wait.resolver != WaitResolver.EVENT) return null
         return waits.resolve(orgId, id, answer)
+    }
+}
+
+/** The organization's event feed, recording what the repositories publish and in which organization. */
+class RecordingOrgEvents : OrgEventPublisher {
+    val published = mutableListOf<Pair<Uuid, OrgEventDraft>>()
+
+    override suspend fun publish(orgId: Uuid, events: List<OrgEventDraft>) {
+        events.forEach { published += orgId to it }
+    }
+
+    override suspend fun publishIn(
+        transaction: Transaction,
+        orgId: Uuid,
+        events: List<OrgEventDraft>,
+    ) {
+        events.forEach { published += orgId to it }
     }
 }

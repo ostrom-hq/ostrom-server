@@ -22,6 +22,7 @@ import run.ostrom.server.automations.fakes.BOB
 import run.ostrom.server.automations.fakes.ORG_A
 import run.ostrom.server.automations.fakes.ORG_B
 import run.ostrom.server.automations.fakes.RecordingEvents
+import run.ostrom.server.automations.fakes.RecordingOrgEvents
 import run.ostrom.server.automations.fakes.alice
 import run.ostrom.server.automations.fakes.bob
 import run.ostrom.server.automations.fakes.testIdentities
@@ -31,6 +32,8 @@ import run.ostrom.server.automations.presentation.AnswerWaitRequest
 import run.ostrom.server.automations.presentation.CreateWaitRequest
 import run.ostrom.server.automations.presentation.WaitResponse
 import run.ostrom.server.automations.presentation.WaitsResponse
+import run.ostrom.server.kernel.events.OrgEventPublisher
+import run.ostrom.server.kernel.events.OrgEventType
 import run.ostrom.server.kernel.http.ApiError
 import run.ostrom.server.kernel.sessions.SessionEndListener
 import run.ostrom.server.testing.serverTest
@@ -47,8 +50,9 @@ import io.ktor.client.statement.HttpResponse
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
-import kotlinx.serialization.json.JsonPrimitive
 import org.koin.dsl.module
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -118,6 +122,44 @@ class WaitsPostgresTest {
         assertEquals(emptyList(), repository.list(WaitFilter(ORG_A, createdBy = ALICE.toString()), null, 10))
         assertEquals(4, repository.list(WaitFilter(ORG_A, assignee = ALICE.toString(), runId = "r1"), null, 10).size)
         assertEquals(emptyList(), repository.list(WaitFilter(ORG_A, assignee = "x"), null, 10))
+    }
+
+    @Test
+    fun eachWaitAskedAnsweredOrWithdrawnIsHeardOnTheFeed() {
+        val feed = RecordingOrgEvents()
+        serverTest(listOf(AutomationsModule), module { single<OrgEventPublisher> { feed } }) { server ->
+            val repository = server.koin.get<WaitsRepository>()
+            val asked = wait(key = "e1")
+            assertEquals(CreateOutcome.CREATED, repository.createWithinLimit(asked, 5))
+            assertEquals(CreateOutcome.DUPLICATE, repository.createWithinLimit(wait(key = "e1"), 5), "A duplicate is not heard")
+            val alone = wait(session = null).copy(assignee = "agent:x")
+            assertEquals(CreateOutcome.CREATED, repository.createWithinLimit(alone, 5))
+            repository.resolve(ORG_A, asked.id, WaitAnswer("approve", mapOf("feedback" to JsonPrimitive("secret words")), ALICE.toString(), t0))
+            assertNull(repository.resolve(ORG_A, asked.id, WaitAnswer("approve", emptyMap(), ALICE.toString(), t0)), "Once")
+            repository.cancel(ORG_A, alone.id, t0)
+            val ended = wait(session = "s9")
+            assertEquals(CreateOutcome.CREATED, repository.createWithinLimit(ended, 5))
+            repository.cancelOpenOfSessions(ORG_A, listOf("s9"), t0)
+
+            assertEquals(
+                listOf(
+                    OrgEventType.WAIT_CREATED to asked.id, OrgEventType.WAIT_CREATED to alone.id, OrgEventType.WAIT_RESOLVED to asked.id,
+                    OrgEventType.WAIT_CANCELLED to alone.id, OrgEventType.WAIT_CREATED to ended.id, OrgEventType.WAIT_CANCELLED to ended.id,
+                ),
+                feed.published.map { (_, event) -> event.type to Uuid.parse(event.subjectId) },
+            )
+            assertEquals(setOf(ORG_A), feed.published.map { it.first }.toSet())
+            val (created, otherAssignee, resolved) = feed.published.map { it.second }
+            assertEquals(ALICE, created.memberId, "The assignee's event")
+            assertEquals(
+                mapOf("waitId" to asked.id.toString(), "sessionId" to "s1", "waitKind" to "human_request", "assigneeId" to ALICE.toString()),
+                created.data.mapValues { it.value.jsonPrimitive.content },
+            )
+            assertNull(otherAssignee.memberId, "An assignee that is not a member id")
+            assertNull(otherAssignee.data["sessionId"])
+            assertEquals("approve", resolved.data["action"]?.jsonPrimitive?.content)
+            assertFalse("secret words" in resolved.data.toString(), "Never the answer's values")
+        }
     }
 
     @Test
