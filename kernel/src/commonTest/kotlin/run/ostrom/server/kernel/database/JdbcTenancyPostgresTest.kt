@@ -113,12 +113,14 @@ class JdbcTenancyPostgresTest {
             List(JdbcDatabase.MIN_POOL_SIZE) {
                 async {
                     jdbc.query {
-                        together.countDown()
-                        together.await(LATCH_SECONDS, TimeUnit.SECONDS)
-                        exec("SELECT pg_backend_pid(), current_user, current_setting('ostrom.org_id', true)") { result ->
+                        // Exposed takes its connection at the first statement: read, then hold it for the other.
+                        val session = exec(SESSION) { result ->
                             result.next()
                             Triple(result.getInt(1), result.getString(2), result.getString(3))
                         }!!
+                        together.countDown()
+                        together.await(LATCH_SECONDS, TimeUnit.SECONDS)
+                        session
                     }
                 }
             }.awaitAll()
@@ -166,5 +168,6 @@ class JdbcTenancyPostgresTest {
 
     private companion object {
         const val LATCH_SECONDS = 10L
+        const val SESSION = "SELECT pg_backend_pid(), current_user, current_setting('ostrom.org_id', true)"
     }
 }
