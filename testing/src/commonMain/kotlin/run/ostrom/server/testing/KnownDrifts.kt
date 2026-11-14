@@ -22,5 +22,8 @@ object KnownDrifts {
         "createArtifactUpload 413 \$ STATUS" to
             "an upload over the bound answers 413, which ostrom-core#188 did not declare when it marked the route " +
                 "served",
+        // A person outside any organization is answered 404: ostrom-core declares it when it marks these served.
+        "getCompilerSettings 404 \$ STATUS" to "the 404 outside an organization, declared in ostrom-core next",
+        "saveCompilerSettings 404 \$ STATUS" to "the 404 outside an organization, declared in ostrom-core next",
     )
 }

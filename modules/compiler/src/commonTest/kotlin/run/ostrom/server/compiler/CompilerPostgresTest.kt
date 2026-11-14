@@ -544,6 +544,67 @@ class CompilerPostgresTest {
     }
 
     @Test
+    fun anOwnerOrAnAdminSetsHowTheOrganizationCompilesInTheConsole() = compilerTest { server ->
+        val path = "/api/v1/packages/settings"
+        // Nothing stored: the defaults, which every member and a starting session read.
+        for (who in listOf("user:a:member", "agent:a:l1", "pat:a:lead")) {
+            val initial = server.call(who, path)
+            assertEquals(HttpStatusCode.OK, initial.status, who)
+            assertEquals("""{"pin":"auto"}""", initial.bodyAsText(), who)
+        }
+        assertEquals(HttpStatusCode.Unauthorized, server.call(null, path).status)
+        assertEquals(HttpStatusCode.Unauthorized, server.call(null, path, "PUT", compileSettings("manual")).status)
+        assertEquals(HttpStatusCode.NotFound, server.call("user:lonely", path).status, "no organization")
+        assertEquals(HttpStatusCode.NotFound, server.call("user:lonely", path, "PUT", compileSettings("auto")).status)
+        // Only an owner or an admin, in the browser, saves them.
+        for (who in listOf("user:a:member", "pat:a:lead", "agent:a:l1", "cli:a:dev", "mobile:a:lead", "bot:a:ci")) {
+            val refused = server.call(who, path, "PUT", compileSettings("manual"))
+            assertEquals(HttpStatusCode.Forbidden, refused.status, who)
+        }
+        val invalid = server.call("user:a:admin", path, "PUT", compileSettings("sometimes"))
+        assertEquals(HttpStatusCode.BadRequest, invalid.status)
+        assertEquals("invalid_compiler_settings", invalid.errorType())
+
+        val saved = server.call("user:a:admin", path, "PUT", compileSettings("manual", listOf("Lead"), "ops"))
+        assertEquals(HttpStatusCode.OK, saved.status)
+        val body = saved.body<JsonObject>()
+        assertEquals(listOf("lead"), body.getValue("codePublishers").jsonArray.map { it.jsonPrimitive.content })
+        assertEquals("admin", body.getValue("updatedBy").jsonPrimitive.content)
+        val version = body.getValue("updatedAt").jsonPrimitive.content
+        assertEquals(body, server.call("user:a:member", path).body<JsonObject>())
+        assertEquals("compiler.settings.changed", audited.single().event)
+        // The next compilation applies them; another organization keeps its defaults.
+        val sources = server.koin.get<CompilerSources>()
+        assertEquals(CompilerSettings(true, listOf("lead"), "ops"), sources.settings(orgA))
+        assertEquals(CompilerSettings(), sources.settings(orgB))
+        assertEquals("""{"pin":"auto"}""", server.call("user:b:lead", path).bodyAsText())
+
+        // A save of what another save replaced is a conflict; the version read saves.
+        for (stale in listOf(null, "2026-01-01T00:00:00Z")) {
+            val conflict = server.call("user:a:lead", path, "PUT", compileSettings("auto", updatedAt = stale))
+            assertEquals(HttpStatusCode.Conflict, conflict.status, stale)
+            assertEquals("compiler_settings_conflict", conflict.errorType())
+        }
+        val again = server.call("user:a:lead", path, "PUT", compileSettings("auto", updatedAt = version))
+        assertEquals(HttpStatusCode.OK, again.status)
+        assertEquals(CompilerSettings(), sources.settings(orgA))
+    }
+
+    private fun compileSettings(
+        pin: String,
+        publishers: List<String>? = null,
+        approver: String? = null,
+        updatedAt: String? = null,
+    ): JsonObject = JsonObject(
+        listOfNotNull(
+            "pin" to JsonPrimitive(pin),
+            publishers?.let { "codePublishers" to JsonArray(it.map(::JsonPrimitive)) },
+            approver?.let { "prodApprover" to JsonPrimitive(it) },
+            updatedAt?.let { "updatedAt" to JsonPrimitive(it) },
+        ).toMap(),
+    )
+
+    @Test
     fun theEditingRightsLetEditorsDecideExceptOnAGate() = compilerTest { server ->
         val settingsPath = "/api/v1/workflows/settings"
         // Unset: owners and admins only; anyone reads, with whether they may edit.
@@ -828,6 +889,8 @@ class CompilerPostgresTest {
     fun rowLevelSecurityHidesOtherOrganizationsEvenWithoutAWhereClause() = compilerTest { server ->
         server.call("user:a:lead", "/api/v1/workflows", "POST", release())
         server.call("user:a:lead", "/api/v1/workflows/settings", "PUT", settings("all"))
+        // Auto: a manual pin would leave the agent below without a pin to set.
+        server.call("user:a:lead", "/api/v1/packages/settings", "PUT", compileSettings("auto"))
         server.call("agent:a:l1", "/api/v1/packages/current?repo=acme-api")
         // The test server's driver is the serving role, as in production: row level security applies to it.
         val tables = listOf(
@@ -838,6 +901,7 @@ class CompilerPostgresTest {
             "compiler_pins",
             "compiler_audit",
             "compiler_workflow_settings",
+            "compiler_settings",
         )
         val counts = server.driver.transaction {
             suspend fun count(org: Uuid?): List<String> {

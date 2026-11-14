@@ -125,4 +125,21 @@ val CompilerMigrations: List<SchemaMigration> = listOf(
         );
         """.trimIndent() + "\n" + SETTINGS_TABLES.joinToString("\n", transform = ::isolated).removeSuffix(";"),
     ),
+    // How the organization compiles, one row per organization that saved it: `auto` or `manual` pins, the code
+    // publishers (a JSON array of lower-case logins, NULL for every person who decides) and the production approver.
+    // `updated_at` is the version a save names.
+    SchemaMigration(
+        4,
+        "compiler_settings",
+        """
+        CREATE TABLE compiler_settings (
+            org_id UUID NOT NULL PRIMARY KEY,
+            pin TEXT NOT NULL,
+            code_publishers TEXT,
+            prod_approver TEXT,
+            updated_by TEXT NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL
+        );
+        """.trimIndent() + "\n" + isolated("compiler_settings").removeSuffix(";"),
+    ),
 )

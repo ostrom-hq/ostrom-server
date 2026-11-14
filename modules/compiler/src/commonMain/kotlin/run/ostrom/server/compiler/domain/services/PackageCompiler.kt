@@ -309,7 +309,7 @@ object PackageCompiler {
                         reason = if (allowed) {
                             "decided by a code publisher"
                         } else {
-                            "${decision.by} may not publish code (OSTROM_CODE_PUBLISHERS)"
+                            "${decision.by} may not publish code (code publishers, compiler settings)"
                         },
                     )
                 }

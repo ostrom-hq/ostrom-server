@@ -74,9 +74,9 @@ data class PackageAudit(
 )
 
 /**
- * How an organization compiles: `OSTROM_PIN`, `OSTROM_CODE_PUBLISHERS`, the production approver.
+ * How an organization compiles, as its owners and admins set it in the console (`/api/v1/packages/settings`).
  *
- * @property manualPin True when a person pins each version (`OSTROM_PIN=manual`).
+ * @property manualPin True when a person pins each version (`pin` `manual`).
  * @property codePublishers Who may publish code in a script, lower case, or null for everyone.
  * @property prodApprover The approver of a gate that names none.
  */

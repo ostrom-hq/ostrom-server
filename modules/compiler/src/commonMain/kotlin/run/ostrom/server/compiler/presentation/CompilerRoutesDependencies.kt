@@ -3,6 +3,7 @@ package run.ostrom.server.compiler.presentation
 
 import run.ostrom.server.compiler.domain.repositories.CompilerRepository
 import run.ostrom.server.compiler.domain.usecases.ApproversGraphUseCase
+import run.ostrom.server.compiler.domain.usecases.CompilerSettingsUseCase
 import run.ostrom.server.compiler.domain.usecases.GatePolicyUseCase
 import run.ostrom.server.compiler.domain.usecases.GatesCatalogUseCase
 import run.ostrom.server.compiler.domain.usecases.PreviewPackageUseCase
@@ -24,6 +25,7 @@ import run.ostrom.server.gates.domain.services.GateActorResolver
  * @property policy The catalogue, signed for a repository's hooks (S2-20).
  * @property approvers Who approves what, from the catalogue.
  * @property workflows Reads and saves workflows.
+ * @property compilerSettings How the organization compiles.
  * @property publicUrl The address sessions call back (`OSTROM_PUBLIC_URL`), else the request's origin.
  */
 data class CompilerRoutesDependencies(
@@ -37,5 +39,6 @@ data class CompilerRoutesDependencies(
     val approvers: ApproversGraphUseCase,
     val workflows: WorkflowsUseCase,
     val settings: WorkflowSettingsUseCase,
+    val compilerSettings: CompilerSettingsUseCase,
     val publicUrl: String?,
 )

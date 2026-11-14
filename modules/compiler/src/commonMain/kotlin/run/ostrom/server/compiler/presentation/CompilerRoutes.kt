@@ -40,6 +40,7 @@ fun Route.compilerRoutes(dependencies: CompilerRoutesDependencies) {
         packagesRoutes(dependencies)
         workflowsRoutes(dependencies)
         settingsRoutes(dependencies)
+        compilerSettingsRoutes(dependencies)
     }
 }
 

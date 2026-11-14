@@ -101,7 +101,9 @@ object RulesModule : ServerModule {
         }
         // The compiler binds its default sources only when none is bound: these replace them, repositories and
         // settings still read from the compiler's configuration.
-        single<CompilerSources> { RulesCompilerSources(get(), DefaultCompilerSources(get())) }
+        single<CompilerSources> {
+            RulesCompilerSources(get(), DefaultCompilerSources(get(), DefaultCompilerSources.legacy(get())))
+        }
         single<AnalysisRepository> { PostgresAnalysisRepository(get()) }
         single<StartAnalysisUseCase> { StartAnalysisUseCaseImpl(get(), get(), get(), get(), get()) }
         single<GetAnalysisStateUseCase> { GetAnalysisStateUseCaseImpl(get(), get(), get()) }

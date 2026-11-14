@@ -84,7 +84,8 @@ class PackageCompilerTest {
         assertEquals(5, allowed.timeoutSec)
         assertEquals(true, allowed.network)
         val refused = compiled(inputs(listOf(decided), codePublishers = listOf("rev-b")))
-        assertEquals("dev-a may not publish code (OSTROM_CODE_PUBLISHERS)", refused.scripts.single().approval.reason)
+        val reason = refused.scripts.single().approval.reason
+        assertEquals("dev-a may not publish code (code publishers, compiler settings)", reason)
         assertEquals(PackageMode.SHADOW, refused.hooks.single().mode)
         assertEquals(refused.scripts.single().approval.reason, refused.hooks.single().why)
         val undecided = compiled(inputs(listOf(decided), decisions = emptyList())).scripts.single()
