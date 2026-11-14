@@ -239,6 +239,8 @@ class ConfigTest {
         assertEquals(JdbcDatabase.MIN_POOL_SIZE, fewest.jdbcConnections, "the fewest still opens a valid JDBC pool")
         val most = ServerConfig.from(MapConfigSource(database + ("OSTROM_DATABASE_MAX_CONNECTIONS" to "64"))).database
         assertEquals(32 to 32, most.jdbcConnections to most.driverConnections)
+        assertEquals(5, default.forDriver().maxConnections, "sqlx4k's pool opens with its share only")
+        assertEquals(default.url, default.forDriver().url)
     }
 
     @Test

@@ -411,7 +411,7 @@ The budget across replicas (CRL-01), to keep at or under 80 % of PostgreSQL's `m
 
 With the chart's defaults (an HPA of at most 10 replicas, a surge of 1, Polis off, `max_connections` 200):
 11 × (10 + 1) + 2 + 1 + 1 + 3 = 128 ≤ 160. Above 10 replicas or 12 connections each, raise `max_connections`
-first. The chart refuses to render values over this budget (ostrom-helm, `server.database.maxConnections`).
+first. The chart refuses to render values over this budget with its bundled PostgreSQL (ostrom-helm#53).
 
 ### Memory under the container limit
 

@@ -97,8 +97,7 @@ private fun serve() {
     try {
         // OSTROM_DATABASE_MAX_CONNECTIONS is split between sqlx4k's pool and the JVM pool while both remain (JVM step
         // 4): `/ready` reads the JVM pool's state, and the modules on Exposed query it.
-        val database = connectPostgres(config.database.copy(maxConnections = config.database.driverConnections))
-            .also { driver = it }
+        val database = connectPostgres(config.database.forDriver()).also { driver = it }
         runBlocking { database.requireRowLevelSecurity() }
         val pool = JdbcDatabase(config.database, config.database.jdbcConnections).also { jdbc = it }
         val signer = runBlocking { Ed25519InstanceSigner.loadOrCreate(config.signingKeyFile) }
@@ -178,8 +177,7 @@ private fun oneShot(
     var jdbc: JdbcDatabase? = null
     val workers = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     try {
-        val database = connectPostgres(config.database.copy(maxConnections = config.database.driverConnections))
-            .also { driver = it }
+        val database = connectPostgres(config.database.forDriver()).also { driver = it }
         val pool = JdbcDatabase(config.database, config.database.jdbcConnections).also { jdbc = it }
         val signer = runBlocking { Ed25519InstanceSigner.loadOrCreate(config.signingKeyFile) }
         val kernel =

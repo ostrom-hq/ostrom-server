@@ -258,6 +258,9 @@ data class DatabaseConfig(
     /** The JDBC pool's share of [maxConnections]: the larger half, the modules on Exposed (identity first) using it. */
     val jdbcConnections: Int get() = maxConnections - driverConnections
 
+    /** This configuration sized for sqlx4k's pool: [driverConnections] connections, the only one to open it with. */
+    fun forDriver(): DatabaseConfig = copy(maxConnections = driverConnections)
+
     override fun toString(): String =
         "DatabaseConfig(url=$url, username=$username, password=***, maxConnections=$maxConnections)"
 
