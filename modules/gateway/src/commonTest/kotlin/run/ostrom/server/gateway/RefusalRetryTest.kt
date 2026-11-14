@@ -22,7 +22,7 @@ class RefusalRetryTest {
             setOf(
                 "invalid", "unauthenticated", "credential_not_allowed", "model_not_allowed", "budget_exhausted",
                 "budget_insufficient", "no_credential", "invalid_workload", "invalid_request_id",
-                "provider_terms_required",
+                "provider_terms_required", "launch_paused", "launch_budget_exhausted",
             ),
             final,
         )

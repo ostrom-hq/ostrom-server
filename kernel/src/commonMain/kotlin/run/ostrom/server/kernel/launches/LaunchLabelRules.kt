@@ -30,18 +30,16 @@ object LaunchLabelRules {
      *   holds a control character.
      */
     fun check(labels: Map<String, String>): Map<String, String> {
-        if (labels.size > MAX) throw InvalidLabelException("labels: at most $MAX.")
-        labels.forEach { (key, value) ->
-            if (!KEY.matches(key)) {
-                throw InvalidLabelException(
-                    "label key: 1 to 63 characters, lowercase letters or digits, " +
-                        "then letters, digits, '.', '_', '/' or '-'.",
-                )
-            }
-            if (value.length > MAX_VALUE || value.any { it.isISOControl() }) {
-                throw InvalidLabelException("label value: up to $MAX_VALUE characters, without control characters.")
-            }
+        val problem = when {
+            labels.size > MAX -> "labels: at most $MAX."
+            labels.keys.any { !KEY.matches(it) } ->
+                "label key: 1 to 63 characters, lowercase letters or digits, " +
+                    "then letters, digits, '.', '_', '/' or '-'."
+            labels.values.any { it.length > MAX_VALUE || it.any(Char::isISOControl) } ->
+                "label value: up to $MAX_VALUE characters, without control characters."
+            else -> null
         }
+        if (problem != null) throw InvalidLabelException(problem)
         return labels
     }
 

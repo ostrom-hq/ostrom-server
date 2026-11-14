@@ -103,6 +103,7 @@ class AdmissionQueueTest {
     }
 
     /** [QueueTurns.decide], with no other member limited. */
+    @Suppress("LongParameterList") // One default per fact a test of the queue changes.
     private fun decide(
         call: QueueCandidate,
         others: List<QueueCandidate>,

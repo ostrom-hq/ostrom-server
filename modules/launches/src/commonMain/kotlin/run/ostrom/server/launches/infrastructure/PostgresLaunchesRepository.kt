@@ -29,6 +29,7 @@ import kotlin.uuid.Uuid
  *
  * @param driver The connection pool.
  */
+@Suppress("TooManyFunctions") // One function per statement of the launches table.
 class PostgresLaunchesRepository(
     private val driver: Driver,
     private val clock: Clock = Clock.System,

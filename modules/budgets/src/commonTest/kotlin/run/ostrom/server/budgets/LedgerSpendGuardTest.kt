@@ -141,6 +141,9 @@ class LedgerSpendGuardTest {
             ),
             admitted.single(),
         )
+        admitted.clear()
+        assertEquals(SpendDecision.Allowed, spendGuard.check(launched.copy(launchBudgetMicros = null)))
+        assertEquals(emptyList(), admitted, "No budget on the launch and no other limit: nothing is held")
         // Another limit stops too: the launch's budget joins it.
         cached = BudgetDecision.Allowed(2_000_000)
         repository.defaultLimits[orgA] = 2_000_000

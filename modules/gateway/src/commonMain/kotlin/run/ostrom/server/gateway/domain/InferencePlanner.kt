@@ -85,17 +85,15 @@ class InferencePlanner(
         policy: ModelPolicy,
         callId: Uuid,
     ): InferencePlan.Refused? {
-        if (!policy.allows(caller.memberId, body.model)) {
-            return refused(
-                RefusalKind.MODEL_NOT_ALLOWED,
-                modelNotAllowed(body.model),
-                body.model,
-            )
-        }
         // A paused launch is refused before any budget is held: the pause is an administrator's, final until lifted.
-        if (caller.caps?.paused == true) {
-            return refused(RefusalKind.LAUNCH_PAUSED, "This launch is paused by an administrator.", body.model)
+        val first = when {
+            !policy.allows(caller.memberId, body.model) ->
+                refused(RefusalKind.MODEL_NOT_ALLOWED, modelNotAllowed(body.model), body.model)
+            caller.caps?.paused == true ->
+                refused(RefusalKind.LAUNCH_PAUSED, "This launch is paused by an administrator.", body.model)
+            else -> null
         }
+        if (first != null) return first
         return when (val decision = spend.check(caller, callId, call.protocol, body)) {
             SpendDecision.Allowed -> null
             is SpendDecision.Exhausted ->

@@ -93,9 +93,10 @@ class SpendHoldsPostgresTest {
         val rest = launched(4_000, "lch_1")
         server.settle(rest, 4_000)
         assertEquals(Admission.Exhausted(SpendScope.LAUNCH, 10_000), server.admit(launched(1, "lch_1"), budget))
+        val unlaunched = SpendHold(TestCallers.orgA, member, Uuid.random(), 99_000)
         assertEquals(
             Admission.Admitted,
-            server.admit(SpendHold(TestCallers.orgA, member, Uuid.random(), 99_000), budget),
+            server.admit(unlaunched, budget.copy(orgMicros = 1_000_000)),
             "A call of no launch has no launch budget",
         )
     }

@@ -136,7 +136,7 @@ class LedgerSpendGuard(
         SpendScope.ORG -> "your organization's"
         SpendScope.MEMBER -> "your"
         // A launch's budget has its own refusal, which never asks for an owner.
-        SpendScope.WORKFLOW, SpendScope.LAUNCH -> "this workflow's"
+        else -> "this workflow's"
     }
 
     /**
