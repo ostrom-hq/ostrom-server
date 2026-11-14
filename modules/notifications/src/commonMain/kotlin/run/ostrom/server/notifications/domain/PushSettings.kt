@@ -70,13 +70,14 @@ class FirebaseServiceAccount(
                 null
             } ?: return null
             fun field(name: String) = (root[name] as? JsonPrimitive)?.takeIf { it.isString }?.content
-            val project = field("project_id")?.takeIf(PROJECT_ID::matches)
-            val email = field("client_email")?.takeIf(CLIENT_EMAIL::matches)
-            val key = field("private_key")?.takeIf { "PRIVATE KEY-----" in it }
-            val keyId = field("private_key_id")?.takeIf { it.isNotEmpty() }
             val valid = field("type") == "service_account" && field("token_uri") == GOOGLE_TOKEN_URI
-            return if (valid && project != null && email != null && key != null && keyId != null) {
-                FirebaseServiceAccount(project, email, keyId, key)
+            val project = field("project_id")?.takeIf { valid && PROJECT_ID.matches(it) }
+            val email = field("client_email")?.takeIf(CLIENT_EMAIL::matches)
+            // The private key with its id: the assertion's signature and the header naming it.
+            val signer = field("private_key")?.takeIf { "PRIVATE KEY-----" in it }
+                ?.let { key -> field("private_key_id")?.takeIf { it.isNotEmpty() }?.let { key to it } }
+            return if (project != null && email != null && signer != null) {
+                FirebaseServiceAccount(project, email, signer.second, signer.first)
             } else {
                 null
             }

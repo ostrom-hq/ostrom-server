@@ -34,15 +34,16 @@ interface PushSender {
  * notification is tried again (NotificationOutbox).
  *
  * @param reason What failed, naming the service and its status only: never a token.
+ * @property forGood Whether another attempt would only be refused again ([PushRejectedException]).
  */
-open class PushNotSentException(reason: String) : Exception(reason)
+open class PushNotSentException(reason: String, val forGood: Boolean = false) : Exception(reason)
 
 /**
  * The push service refused the notification for good (its credentials, the message): it is not tried again.
  *
  * @param reason What failed, a short code of ours (`fcm_403`): never a token nor the provider's answer.
  */
-class PushRejectedException(reason: String) : PushNotSentException(reason)
+class PushRejectedException(reason: String) : PushNotSentException(reason, forGood = true)
 
 /**
  * An approver, as the notifications reach them in one organization.
