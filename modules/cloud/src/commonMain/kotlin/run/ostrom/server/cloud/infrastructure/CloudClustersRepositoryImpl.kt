@@ -27,7 +27,7 @@ class CloudClustersRepositoryImpl(private val driver: Driver) : CloudClustersRep
 
     override suspend fun version(id: Uuid): Int? = driver.fetchAll(
         Statement.create("SELECT version FROM cloud_clusters WHERE id = :id").bind("id", id),
-    ).getOrThrow().firstOrNull()?.get("version")?.asInt()
+    ).getOrThrow().map { it.get("version").asInt() }.firstOrNull()
 
     // A name taken is no row inserted, as a lost race is: the use case answers a conflict for both.
     override suspend fun insert(stored: StoredCloudCluster): Boolean = driver.execute(

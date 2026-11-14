@@ -182,7 +182,6 @@ interface CloudSessionsRepository {
     suspend fun addUsage(orgId: Uuid, month: String, seconds: Long)
 }
 
-/** What [CloudSessionsRepository.resumeWithinCap] did. */
 /**
  * A session as a cross-organization read names it.
  *
@@ -191,6 +190,7 @@ interface CloudSessionsRepository {
  */
 data class SessionRef(val orgId: Uuid, val id: Uuid)
 
+/** What [CloudSessionsRepository.resumeWithinCap] did. */
 sealed interface ResumeOutcome {
     /**
      * The desired state is now running.

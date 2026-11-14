@@ -50,6 +50,7 @@ class BackfillSessionProfilesUseCaseImpl(
     }
 
     // Another writer came first (an API call, a step): read again, unless it gave the profile itself.
+    @Suppress("ReturnCount") // Gone or given meanwhile, then written.
     private suspend fun give(session: CloudSession?, profile: SessionProfile): Boolean {
         var read = session
         repeat(ATTEMPTS) {

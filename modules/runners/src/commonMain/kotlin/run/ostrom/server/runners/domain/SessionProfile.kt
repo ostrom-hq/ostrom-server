@@ -253,6 +253,7 @@ class CatalogSessionProfiles(
          *
          * @return Whether it matches.
          */
+        @Suppress("ReturnCount") // No star, then the prefix and the suffix, then each middle.
         fun matchesImagePattern(pattern: String, image: String): Boolean {
             val parts = pattern.split('*')
             val prefix = parts.first()
