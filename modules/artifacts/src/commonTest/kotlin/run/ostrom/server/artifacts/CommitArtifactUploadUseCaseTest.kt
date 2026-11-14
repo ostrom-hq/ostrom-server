@@ -34,6 +34,7 @@ import run.ostrom.server.artifacts.fakes.alice
 import run.ostrom.server.artifacts.fakes.aliceAgent
 import run.ostrom.server.artifacts.fakes.bob
 import run.ostrom.server.artifacts.fakes.carol
+import run.ostrom.server.artifacts.fakes.gateOf
 import run.ostrom.server.artifacts.infrastructure.Sha256ContentDigest
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -68,7 +69,8 @@ class CommitArtifactUploadUseCaseTest {
         clock,
         recorder,
     )
-    private val use = CommitArtifactUploadUseCaseImpl(artifacts, uploads, contents, digest, clock, recorder)
+    private val use =
+        CommitArtifactUploadUseCaseImpl(artifacts, uploads, gateOf(storage, clock), digest, clock, recorder)
     private val page = "<h1>Report</h1>".encodeToByteArray()
     private val style = "h1 { color: red }".encodeToByteArray()
 

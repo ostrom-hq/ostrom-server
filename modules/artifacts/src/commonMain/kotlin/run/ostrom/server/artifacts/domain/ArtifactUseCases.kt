@@ -46,6 +46,7 @@ internal class PublishArtifactUseCaseImpl(
     private val digest: ContentDigest,
     private val clock: Clock,
     private val events: ArtifactEvents,
+    private val gate: PublicationGate,
 ) : PublishArtifactUseCase {
     private val rules = ArtifactAccessRules(repository)
 
@@ -55,7 +56,7 @@ internal class PublishArtifactUseCaseImpl(
         access: String,
         files: List<UploadedFile>,
     ): Artifact {
-        contents.requireActive(caller.orgId)
+        gate.admit(caller)
         val checkedTitle = ArtifactRules.title(title)
         val checkedAccess = parseAccess(access)
         if (checkedAccess == ArtifactAccess.LINK && !caller.person) {
@@ -80,12 +81,13 @@ internal class PublishArtifactUseCaseImpl(
         val version = ArtifactVersion(id, 1, ArtifactRules.entry(files.map { it.path }), recorded, now, caller.memberId)
         contents.write(caller.orgId, id, blobs)
         repository.create(artifact, version)
+        gate.published(caller, id, now)
         events.record(caller, "created", id, mapOf("title" to checkedTitle, "access" to checkedAccess.wire))
         return artifact
     }
 
     override suspend fun addVersion(caller: ArtifactCaller, id: Uuid, files: List<UploadedFile>): ArtifactVersion {
-        contents.requireActive(caller.orgId)
+        gate.admit(caller)
         val artifact = rules.owned(caller, id)
         checked(caller, id, files)
         val (recorded, blobs) = record(files)
@@ -103,6 +105,7 @@ internal class PublishArtifactUseCaseImpl(
         // the artifact's folder already holds, or that the collection removes).
         contents.write(caller.orgId, id, blobs - known)
         repository.addVersion(caller.orgId, version, now) ?: throw ArtifactConflictException()
+        gate.published(caller, id, now)
         events.record(caller, "version_published", id, mapOf("version" to version.number.toString()))
         return version
     }

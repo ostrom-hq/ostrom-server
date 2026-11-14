@@ -40,6 +40,7 @@ import run.ostrom.server.artifacts.fakes.alice
 import run.ostrom.server.artifacts.fakes.aliceAgent
 import run.ostrom.server.artifacts.fakes.bob
 import run.ostrom.server.artifacts.fakes.carol
+import run.ostrom.server.artifacts.fakes.gateOf
 import run.ostrom.server.artifacts.infrastructure.Sha256ContentDigest
 import kotlinx.coroutines.test.runTest
 import kotlin.coroutines.cancellation.CancellationException
@@ -78,7 +79,7 @@ class UploadArtifactUseCaseTest {
     private suspend fun announced(bytes: ByteArray) = AnnouncedFile(digest.sha256(bytes), bytes.size.toLong())
 
     private suspend fun published(caller: ArtifactCaller, vararg files: ByteArray) =
-        PublishArtifactUseCaseImpl(artifacts, contents, digest, clock, recorder).create(
+        PublishArtifactUseCaseImpl(artifacts, contents, digest, clock, recorder, gateOf(storage, clock)).create(
             caller,
             "Report",
             "team",

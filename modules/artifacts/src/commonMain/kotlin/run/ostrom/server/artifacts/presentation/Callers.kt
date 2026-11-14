@@ -7,6 +7,7 @@ import run.ostrom.server.artifacts.domain.MissingScopeException
 import run.ostrom.server.artifacts.domain.NotAMemberException
 import run.ostrom.server.artifacts.domain.UploadedFile
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.WriteAccess
@@ -50,6 +51,7 @@ suspend fun PrincipalOrgResolver.artifactCallerOf(principal: AuthenticatedPrinci
         credentialId = principal.credentialId,
         subjectId = principal.subjectId,
         principal = principal,
+        administrator = member.role == OrgRole.OWNER || member.role == OrgRole.ADMIN,
     )
 }
 

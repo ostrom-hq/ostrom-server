@@ -15,5 +15,8 @@ object KnownDrifts {
     val drifts: Map<String, String> = mapOf(
         // ostrom-core#189 declares it (ArtifactConflict); gradle/ostrom-core.ref moves to it with the next bump.
         "publishArtifactVersion 409 \$.current UNDECLARED" to "ostrom-core#189, past the pinned contract",
+        // TC-ART-29's publishesPerHour: ostrom-core declares the 429 of both publications in the pull request after.
+        "publishArtifact 429 \$ STATUS" to "the publications' 429, declared in ostrom-core next",
+        "publishArtifactVersion 429 \$ STATUS" to "the publications' 429, declared in ostrom-core next",
     )
 }
