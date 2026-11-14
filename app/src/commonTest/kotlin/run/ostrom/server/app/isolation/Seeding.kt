@@ -140,7 +140,7 @@ private suspend fun Seeder.environment(party: Party) {
     keep(Seed.ENV_PERSONAL, personal, "id")
 }
 
-// A team artifact shared with the member, a link artifact, an automation and a wait.
+// A team artifact shared with the member, a link artifact, an automation, a wait and a webhook.
 private suspend fun Seeder.content(party: Party) {
     val owner = party.browser
     val team = send("team artifact", "POST /api/v1/artifacts", owner, artifact(party, "team"))
@@ -167,6 +167,14 @@ private suspend fun Seeder.content(party: Party) {
     keep(Seed.AUTOMATION, automation, "id")
     val wait = send("wait", "POST /api/v1/waits", owner, """{"question": {"title": "${party.marker} ship it?"}}""")
     keep(Seed.WAIT, wait, "id")
+    val webhook = send(
+        "webhook",
+        "POST /api/v1/webhooks",
+        owner,
+        """{"url": "https://example.com/${party.marker}", "types": ["cloud.wait.created"],""" +
+            """ "description": "${party.marker} hook"}""",
+    )
+    keep(Seed.WEBHOOK, webhook, "webhook.id")
 }
 
 // A team skill pinned for all members, with a retired-able older version, and the member set to yes; a report of it

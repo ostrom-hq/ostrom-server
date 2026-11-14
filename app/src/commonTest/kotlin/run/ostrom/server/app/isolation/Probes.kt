@@ -15,6 +15,13 @@ private val CLOUD_WRITES = CLOUD_READS + setOf(
     "POST /api/v1/cloud/sessions/{id}/resume", "POST /api/v1/cloud/sessions/{id}/terminal/ticket",
 )
 
+// A service key manages the webhooks with cloud:admin only (TeamCode: an admin's key), never with a lesser scope.
+private val WEBHOOKS = setOf(
+    "GET /api/v1/webhooks", "POST /api/v1/webhooks", "GET /api/v1/webhooks/{id}", "PUT /api/v1/webhooks/{id}",
+    "DELETE /api/v1/webhooks/{id}", "GET /api/v1/webhooks/{id}/deliveries", "POST /api/v1/webhooks/{id}/test",
+    "POST /api/v1/webhooks/{id}/rotate-secret",
+)
+
 private val ARTIFACT_READS = setOf(
     "GET /api/v1/artifacts", "GET /api/v1/artifacts/{id}", "GET /api/v1/artifacts/{id}/versions",
     "GET /api/v1/artifacts/{id}/versions/{number}/file", "GET /api/v1/artifacts/{id}/members",
@@ -38,7 +45,7 @@ internal val SERVICE_KEY_ROUTES: Map<String, Set<String>> = mapOf(
     "usage:read" to USAGE_READS + "GET /api/v1/inference/queue",
     "cloud:read" to CLOUD_READS,
     "cloud:write" to CLOUD_WRITES,
-    "cloud:admin" to CLOUD_WRITES,
+    "cloud:admin" to CLOUD_WRITES + WEBHOOKS,
     "artifacts:read" to ARTIFACT_READS,
     "artifacts:write" to ARTIFACT_READS + setOf(
         "POST /api/v1/artifacts", "POST /api/v1/artifacts/{id}/versions", "PUT /api/v1/artifacts/{id}/members/{login}",

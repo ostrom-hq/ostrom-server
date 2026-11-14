@@ -17,7 +17,7 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
-/** The purge of the events past their seven days, and the erasure of a deleted organization's journal. */
+/** The purge of the events past their seven days, and the erasure of a deleted organization's journal and webhooks. */
 class EventsPurgeWorkerTest {
     private val now = Instant.parse("2026-11-13T10:00:00Z")
     private val clock = object : Clock {
@@ -55,10 +55,12 @@ class EventsPurgeWorkerTest {
     fun aDeletedOrganizationKeepsItsJournalUntilItsDeletionIsFinal() = runTest {
         val events = InMemoryEvents()
         val org = Uuid.random()
-        val listener = EventsOrgDeletionListener(events)
+        val webhooks = InMemoryWebhooks()
+        val listener = EventsOrgDeletionListener(events, webhooks)
         listener.deleted(org)
         assertEquals(emptyList(), events.erased)
         listener.purge(org)
         assertEquals(listOf(org), events.erased)
+        assertEquals(listOf(org), webhooks.erased, "Its webhooks and their deliveries too")
     }
 }

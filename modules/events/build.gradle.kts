@@ -11,9 +11,16 @@ kotlin {
             implementation(project(":kernel"))
             // TENANT_ROLE_SQL and tenantTableSql: the grants of the tenant role its tables share with every module.
             implementation(project(":modules:secrets"))
+            // The webhooks' signatures and secrets.
+            implementation(libs.cryptography.core)
+        }
+        // The JDK provides HMAC-SHA256 there.
+        jvmMain.dependencies {
+            implementation(libs.cryptography.jdk)
         }
         commonTest.dependencies {
             implementation(project(":testing"))
+            implementation(libs.ktor.client.mock)
         }
     }
 }
