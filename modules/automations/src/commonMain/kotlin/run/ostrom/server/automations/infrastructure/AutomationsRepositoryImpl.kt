@@ -51,12 +51,13 @@ private const val RUN_SELECT = """
 
 /**
  * The started runs of workflow actions of one organization, least recently followed first, marked followed now (on
- * `automations_runs_followed`). A run another replica follows at the same time is skipped, not waited for.
+ * `automations_runs_followed`). A run another replica follows at the same time is skipped, not waited for. The pick is
+ * a materialized CTE: a `LIMIT` inside `IN (...)` may be evaluated again per row and pick more than the limit.
  */
 internal const val FOLLOWED_SQL = """
-    UPDATE automations_runs SET followed_at = :now WHERE org_id = :org_id AND id IN (SELECT id FROM automations_runs
-    WHERE org_id = :org_id AND status = 'started' AND workflow_run_id IS NOT NULL ORDER BY followed_at NULLS FIRST, id
-    LIMIT :limit FOR UPDATE SKIP LOCKED) RETURNING $RUN_SELECT
+    WITH picked AS MATERIALIZED (SELECT id AS picked_id FROM automations_runs WHERE org_id = :org_id AND status =
+    'started' AND workflow_run_id IS NOT NULL ORDER BY followed_at NULLS FIRST, id LIMIT :limit FOR UPDATE SKIP LOCKED)
+    UPDATE automations_runs SET followed_at = :now FROM picked WHERE id = picked_id RETURNING $RUN_SELECT
 """
 
 /**
