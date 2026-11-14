@@ -8,6 +8,7 @@ import run.ostrom.server.runners.domain.CloudSetup
 import run.ostrom.server.runners.domain.GitIdentity
 import run.ostrom.server.runners.domain.InvalidCloudSessionRequestException
 import run.ostrom.server.runners.domain.PreparationFailure
+import run.ostrom.server.runners.domain.PreparationFailures
 import run.ostrom.server.runners.domain.PreparationPhase
 import run.ostrom.server.runners.domain.PreparationStep
 import run.ostrom.server.runners.domain.PreparedEnvironment
@@ -167,7 +168,7 @@ class CloudEnvironmentRulesTest {
             PreparationFailure(PreparationStep.SETUP_START, 1, 1),
             PreparationFailure(PreparationStep.GIT_IDENTITY),
         )
-        valid.forEach { CloudEnvironmentRules.validate(it, spec) }
+        valid.forEach { PreparationFailures.validate(it, spec) }
         val invalid = listOf(
             PreparationFailure(PreparationStep.CLONE, 1),
             PreparationFailure(PreparationStep.SETUP_CREATE, 1),
@@ -178,14 +179,14 @@ class CloudEnvironmentRulesTest {
         )
         for (failure in invalid) {
             assertFailsWith<InvalidCloudSessionRequestException>("$failure") {
-                CloudEnvironmentRules.validate(failure, spec)
+                PreparationFailures.validate(failure, spec)
             }
         }
     }
 
     @Test
     fun onlyNetworkStepsMayBeRetried() {
-        val retryable = PreparationStep.entries.filter(CloudEnvironmentRules::retryable)
+        val retryable = PreparationStep.entries.filter(PreparationFailures::retryable)
         assertEquals(listOf(PreparationStep.CLONE, PreparationStep.FETCH, PreparationStep.RUNNER), retryable)
     }
 
@@ -193,7 +194,7 @@ class CloudEnvironmentRulesTest {
     fun theServerWritesTheMessageOfEveryStep() {
         val spec = CloudEnvironmentSpec(repositories = listOf(repo), workingDirectory = "api/src")
         fun message(step: PreparationStep, index: Int? = null, exit: Int? = null) =
-            CloudEnvironmentRules.message(PreparationFailure(step, index, exit), spec, 3)
+            PreparationFailures.message(PreparationFailure(step, index, exit), spec, 3)
         val log = " Details are in /workspace/.ostrom/logs/prepare-e3.log."
         assertEquals(
             "Configuring the Git identity failed (exit code 1).",
@@ -213,12 +214,12 @@ class CloudEnvironmentRulesTest {
         val branchOnly = spec.copy(repositories = listOf(repo.copy(ref = null)))
         assertEquals(
             "Checking out task-1 in api failed.$log",
-            CloudEnvironmentRules.message(PreparationFailure(PreparationStep.CHECKOUT, 0), branchOnly, 3),
+            PreparationFailures.message(PreparationFailure(PreparationStep.CHECKOUT, 0), branchOnly, 3),
         )
         val neither = spec.copy(repositories = listOf(repo.copy(ref = null, branch = null)))
         assertEquals(
             "Checking out the requested ref in api failed.$log",
-            CloudEnvironmentRules.message(PreparationFailure(PreparationStep.CHECKOUT, 0), neither, 3),
+            PreparationFailures.message(PreparationFailure(PreparationStep.CHECKOUT, 0), neither, 3),
         )
         assertEquals("Checking out the requested ref in a repository failed.$log", message(PreparationStep.CHECKOUT))
         assertEquals(
@@ -235,7 +236,7 @@ class CloudEnvironmentRulesTest {
         )
         assertEquals(
             "The working directory . does not exist after cloning.",
-            CloudEnvironmentRules.message(
+            PreparationFailures.message(
                 PreparationFailure(PreparationStep.WORKING_DIRECTORY),
                 CloudEnvironmentSpec(),
                 3,

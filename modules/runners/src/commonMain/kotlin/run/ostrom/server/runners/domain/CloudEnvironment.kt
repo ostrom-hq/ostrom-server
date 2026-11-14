@@ -158,7 +158,6 @@ object CloudEnvironmentRules {
 
     private const val MAX_PATH_LENGTH = 255
     private const val MAX_SEGMENTS = 8
-    private const val MAX_EXIT_CODE = 255
 
     /** A path segment: never `.`, `..` nor a hidden directory such as the runner's `.ostrom` and `.home`. */
     private val segment = Regex("[A-Za-z0-9_][A-Za-z0-9._-]{0,99}")
@@ -166,9 +165,6 @@ object CloudEnvironmentRules {
     private val refPattern = Regex("[A-Za-z0-9._/-]{1,200}")
     private val variable = Regex("[A-Z_][A-Z0-9_]{0,127}")
     private val domain = Regex("[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?")
-
-    /** The steps that may succeed on another attempt (network, GitHub); setup commands and paths fail again. */
-    private val retryableSteps = setOf(PreparationStep.CLONE, PreparationStep.FETCH, PreparationStep.RUNNER)
 
     /**
      * Checks a recipe a member asks for.
@@ -273,7 +269,8 @@ object CloudEnvironmentRules {
      */
     fun gitIdentity(login: String, github: RunnerGitHubToken, spec: CloudEnvironmentSpec): GitIdentity {
         if (github is RunnerGitHubToken.Linked) {
-            val local = github.userId?.let { "$it+${github.login}" } ?: github.login
+            val id = github.userId
+            val local = if (id == null) github.login else "$id+${github.login}"
             return GitIdentity(github.login, "$local@users.noreply.github.com")
         }
         val local = login.lowercase()
@@ -283,6 +280,14 @@ object CloudEnvironmentRules {
     }
 
     private const val ASCII = 128
+}
+
+/** A reported preparation failure: its checks, whether it may be retried, and the session's message. */
+object PreparationFailures {
+    private const val MAX_EXIT_CODE = 255
+
+    /** The steps that may succeed on another attempt (network, GitHub); setup commands and paths fail again. */
+    private val retryableSteps = setOf(PreparationStep.CLONE, PreparationStep.FETCH, PreparationStep.RUNNER)
 
     /**
      * Checks a reported failure's index and exit code against the recipe.
@@ -319,25 +324,35 @@ object CloudEnvironmentRules {
      */
     fun message(failure: PreparationFailure, spec: CloudEnvironmentSpec, epoch: Long): String {
         val exit = failure.exitCode?.let { " (exit code $it)" }.orEmpty()
-        val repository = failure.index?.let { spec.repositories.getOrNull(it) }
         val log = " Details are in /workspace/.ostrom/logs/prepare-e$epoch.log."
-        val command = (failure.index ?: 0) + 1
+        val repository = failure.index?.let { spec.repositories.getOrNull(it) }
         return when (failure.step) {
             PreparationStep.GIT_IDENTITY -> "Configuring the Git identity failed$exit."
-            PreparationStep.CLONE ->
-                "Cloning ${repository?.url ?: "a repository"} into ${repository?.path ?: "the workspace"} " +
-                    "failed$exit. Private repositories need the owner's GitHub access.$log"
-            PreparationStep.CHECKOUT ->
-                "Checking out ${repository?.ref ?: repository?.branch ?: "the requested ref"} in " +
-                    "${repository?.path ?: "a repository"} failed$exit.$log"
-            PreparationStep.FETCH ->
-                "Fetching ${repository?.path ?: "a repository"} failed$exit. Private repositories need the " +
-                    "owner's GitHub access.$log"
+            PreparationStep.CLONE, PreparationStep.CHECKOUT, PreparationStep.FETCH ->
+                repositoryMessage(failure.step, repository, exit) + log
             PreparationStep.WORKING_DIRECTORY ->
                 "The working directory ${spec.workingDirectory ?: "."} does not exist after cloning."
-            PreparationStep.SETUP_CREATE -> "Setup command $command (create) failed$exit.$log"
-            PreparationStep.SETUP_START -> "Setup command $command (start) failed$exit.$log"
+            PreparationStep.SETUP_CREATE -> "Setup command ${(failure.index ?: 0) + 1} (create) failed$exit.$log"
+            PreparationStep.SETUP_START -> "Setup command ${(failure.index ?: 0) + 1} (start) failed$exit.$log"
             PreparationStep.RUNNER -> "The runner could not prepare the environment."
+        }
+    }
+
+    /** The message of a failed clone, checkout or fetch, naming the repository when the runner gave its index. */
+    private fun repositoryMessage(step: PreparationStep, repository: CloudRepository?, exit: String): String {
+        val github = " Private repositories need the owner's GitHub access."
+        if (repository == null) {
+            return when (step) {
+                PreparationStep.CLONE -> "Cloning a repository into the workspace failed$exit.$github"
+                PreparationStep.CHECKOUT -> "Checking out the requested ref in a repository failed$exit."
+                else -> "Fetching a repository failed$exit.$github"
+            }
+        }
+        val ref = repository.ref ?: repository.branch ?: "the requested ref"
+        return when (step) {
+            PreparationStep.CLONE -> "Cloning ${repository.url} into ${repository.path} failed$exit.$github"
+            PreparationStep.CHECKOUT -> "Checking out $ref in ${repository.path} failed$exit."
+            else -> "Fetching ${repository.path} failed$exit.$github"
         }
     }
 }

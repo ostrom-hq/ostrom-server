@@ -26,6 +26,8 @@ import run.ostrom.server.runners.presentation.CreateCloudSessionRequest
 import run.ostrom.server.runners.presentation.RunnerEnvironmentResponse
 import run.ostrom.server.runners.presentation.RunnerGitIdentityDto
 import run.ostrom.server.runners.presentation.RunnerHeartbeatResponse
+import run.ostrom.server.runners.presentation.toDomain
+import run.ostrom.server.runners.presentation.toDto
 import run.ostrom.server.runners.presentation.toResponse
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
@@ -225,6 +227,25 @@ class RunnerEnvironmentPostgresTest {
         assertNull(bare.copy(failure = SessionFailure("idle_timeout", "Paused.")).toResponse().failure?.retryable)
         val failed = bare.copy(failure = SessionFailure("preparation_failed", "Fetch failed.", retryable = true))
         assertEquals(true, failed.toResponse().failure?.retryable)
+    }
+
+    @Test
+    fun aRepositoryNamedWithoutAPathIsClonedUnderItsNameAndTheRecipeReadsBackAsAsked() {
+        val asked = CloudEnvironmentDto(
+            repositories = listOf(
+                CloudRepositoryDto("https://github.com/acme/api.git"),
+                CloudRepositoryDto("https://github.com/acme/web", path = "apps/web", ref = "v2", branch = "task"),
+            ),
+            workingDirectory = "apps/web",
+            setup = CloudSetupDto(create = listOf("npm ci"), start = listOf("npm start")),
+            requiredVariables = listOf("NPM_TOKEN"),
+            requireGitHub = true,
+            gitEmailDomain = "acme.dev",
+        )
+        val spec = asked.toDomain()
+        assertEquals(listOf("api", "apps/web"), spec.repositories.map { it.path })
+        val named = asked.repositories.first().copy(path = "api")
+        assertEquals(asked.copy(repositories = listOf(named, asked.repositories.last())), spec.toDto())
     }
 
     private companion object {

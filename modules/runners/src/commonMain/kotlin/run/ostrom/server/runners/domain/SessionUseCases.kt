@@ -62,10 +62,7 @@ class CreateCloudSessionUseCaseImpl(
         val agent = AgentKind.fromWire(payload.agent) ?: throw InvalidCloudSessionRequestException(
             "Unknown agent ${payload.agent.take(MAX_ECHO)}: use ${AgentKind.entries.joinToString { it.wire }}.",
         )
-        val name = payload.name?.let { it.trim().takeIf(String::isNotEmpty) }
-            ?: payload.repository?.let { CloudEnvironmentRules.defaultPath(it.url) }
-            ?: payload.environment?.repositories?.firstOrNull()?.let { CloudEnvironmentRules.defaultPath(it.url) }
-            ?: agent.wire
+        val name = payload.name?.let { it.trim().takeIf(String::isNotEmpty) } ?: defaultName(payload) ?: agent.wire
         ensureValid(name.length <= MAX_NAME_LENGTH && name.none { it.isISOControl() }) {
             "The name must be 1 to $MAX_NAME_LENGTH characters, without control characters."
         }
@@ -109,6 +106,12 @@ class CreateCloudSessionUseCaseImpl(
             throw CloudSessionLimitException(plan.maxRunningSessions)
         }
         return session
+    }
+
+    /** The name of a session asked without one: its repository's, the first of its recipe's, or none. */
+    private fun defaultName(payload: CreateCloudSessionPayload): String? {
+        val url = payload.repository?.url ?: payload.environment?.repositories?.firstOrNull()?.url ?: return null
+        return CloudEnvironmentRules.defaultPath(url)
     }
 
     private fun validateRepository(repository: RepositorySpec) {

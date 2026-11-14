@@ -135,11 +135,11 @@ class RunnerEnvironmentUseCaseImpl(
             val failure = report.failure
             val next = if (failure != null) {
                 val spec = CloudEnvironmentRules.effective(session)
-                CloudEnvironmentRules.validate(failure, spec)
+                PreparationFailures.validate(failure, spec)
                 failed(
                     session,
-                    CloudEnvironmentRules.message(failure, spec, session.epoch),
-                    CloudEnvironmentRules.retryable(failure.step),
+                    PreparationFailures.message(failure, spec, session.epoch),
+                    PreparationFailures.retryable(failure.step),
                 )
             } else if (session.phase == report.phase.wire) {
                 return answer(session)

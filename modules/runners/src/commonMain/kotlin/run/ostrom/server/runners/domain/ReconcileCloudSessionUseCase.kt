@@ -57,6 +57,7 @@ class ReconcileCloudSessionUseCaseImpl(
             session.state == SessionState.TERMINATED -> null
             session.desiredState == DesiredState.TERMINATED -> terminate(session, now)
             session.state == SessionState.FAILED -> null
+            session.preparationFailed -> preparationFailed(session, now)
             session.state == SessionState.CREATING || session.state == SessionState.RESUMING -> starting(session, now)
             session.state == SessionState.RUNNING -> running(session, now)
             session.state == SessionState.PAUSING -> pausing(session, now)
@@ -78,7 +79,6 @@ class ReconcileCloudSessionUseCaseImpl(
             driver.stopExecutions(session)
             return write(session.toPaused(now, session.failure), null)
         }
-        if (session.preparationFailed) return preparationFailed(session, now)
         val startedAt = session.executionStartedAt ?: return startExecution(session, now)
         val status = driver.executionStatus(session)
         if (status == ExecutionStatus.HOST_LOST) {
