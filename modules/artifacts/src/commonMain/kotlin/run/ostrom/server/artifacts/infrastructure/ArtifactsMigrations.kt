@@ -51,14 +51,19 @@ private val ROUTES_UNDER_ROW_LEVEL_SECURITY_SQL: String =
         .trimIndent()
 
 /**
- * The organizations with expired uploads, expired artifacts, drafts created before `p_drafts`, or publications made
- * before `p_publications`, each found on its own index.
+ * The organizations with expired uploads, expired artifacts, drafts created before `p_drafts`, publications made
+ * before `p_publications`, or contents marked for collection, each found on its own index. Frozen: migration 12 is
+ * written from it.
  */
 internal fun dueOrganizationsSql(now: String, drafts: String, publications: String, limit: String): String =
     "SELECT DISTINCT d.org_id FROM (SELECT u.org_id FROM artifacts_uploads u WHERE u.expires_at <= $now " +
         "UNION ALL SELECT a.org_id FROM artifacts_artifacts a WHERE a.expires_at <= $now " +
         "UNION ALL SELECT a.org_id FROM artifacts_artifacts a WHERE a.latest_version = 0 AND a.created_at < $drafts " +
-        "UNION ALL SELECT p.org_id FROM artifacts_publications p WHERE p.published_at < $publications) d LIMIT $limit"
+        "UNION ALL SELECT p.org_id FROM artifacts_publications p WHERE p.published_at < $publications " +
+        "UNION ALL SELECT b.org_id FROM artifacts_blobs b WHERE b.marked_at IS NOT NULL) d LIMIT $limit"
+
+private val MAINTAINED_TABLES =
+    listOf("artifacts_uploads", "artifacts_artifacts", "artifacts_publications", "artifacts_blobs")
 
 private const val DUE_FUNCTION = "artifacts_due_organizations(TIMESTAMPTZ, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER)"
 
@@ -68,7 +73,7 @@ private val MAINTENANCE_SQL: String =
     CREATE INDEX artifacts_uploads_expiry ON artifacts_uploads (expires_at);
     CREATE INDEX artifacts_artifacts_draft_age ON artifacts_artifacts (created_at) WHERE latest_version = 0;
     CREATE INDEX artifacts_publications_age ON artifacts_publications (published_at);
-    ${listOf("artifacts_uploads", "artifacts_artifacts", "artifacts_publications").joinToString("\n") {
+    ${MAINTAINED_TABLES.joinToString("\n") {
         "CREATE POLICY ${it}_router ON $it FOR SELECT TO ostrom_router USING (current_user = 'ostrom_router');\n" +
             "GRANT SELECT ON $it TO ostrom_router;"
     }}

@@ -20,6 +20,8 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
+private val MAINTAINED = listOf("artifacts_artifacts", "artifacts_uploads", "artifacts_publications", "artifacts_blobs")
+
 /** TC-ART-34 against a real PostgreSQL: what the maintenance finds across organizations and ends in each. */
 class ArtifactMaintenancePostgresTest {
     private val now = Instant.parse("2026-11-14T10:00:00Z")
@@ -101,12 +103,13 @@ class ArtifactMaintenancePostgresTest {
             "SELECT sha256 FROM artifacts_blobs WHERE artifact_id = '$pending' AND marked_at IS NOT NULL",
         ).getOrThrow().map { it.get("sha256").asString() }
         assertEquals(listOf("orphan"), marked)
-        assertEquals(setOf(ORG_A), maintenance.organizations(now, drafts, publications, 10).toSet())
+        // The marked content keeps org B due, for its collection.
+        assertEquals(setOf(ORG_A, ORG_B), maintenance.organizations(now, drafts, publications, 10).toSet())
     }
 
     @Test
     fun theMaintenanceReadsItsIndexes() = serverTest(listOf(ArtifactsModule)) { server ->
-        // 20 000 artifacts of 2 000 organizations, an upload and two publications each, none of them due.
+        // 20 000 artifacts of 2 000 organizations, an upload, a content and two publications each, none of them due.
         server.sql(
             "INSERT INTO artifacts_artifacts (id, org_id, owner_id, title, access, latest_version, created_at, " +
                 "updated_at, expires_at) SELECT CAST(md5('a' || i) AS uuid), CAST(md5('o' || (i % 2000)) AS uuid), " +
@@ -122,7 +125,11 @@ class ArtifactMaintenancePostgresTest {
                 "CAST(md5('o' || (i % 2000)) AS uuid), 'm', CAST(md5('a' || i) AS uuid), '$now' " +
                 "FROM generate_series(0, 39999) AS i",
         )
-        for (table in listOf("artifacts_artifacts", "artifacts_uploads", "artifacts_publications")) {
+        server.sql(
+            "INSERT INTO artifacts_blobs (artifact_id, org_id, sha256, size) SELECT CAST(md5('a' || i) AS uuid), " +
+                "CAST(md5('o' || (i % 2000)) AS uuid), 'x', 1 FROM generate_series(0, 19999) AS i",
+        )
+        for (table in MAINTAINED) {
             server.sql("VACUUM ANALYZE $table")
         }
         val due = dueOrganizationsSql("'$now'", "'$drafts'", "'$publications'", "100")
@@ -145,7 +152,7 @@ class ArtifactMaintenancePostgresTest {
                 .joinToString("\n") { it.get("QUERY PLAN").asString() }
         }
         for ((sql, plan) in plans) {
-            for (table in listOf("artifacts_artifacts", "artifacts_uploads", "artifacts_publications")) {
+            for (table in MAINTAINED) {
                 assertFalse("Seq Scan on $table" in plan, "The maintenance scans $table:\n$sql\n$plan")
             }
         }
