@@ -2,12 +2,11 @@
 package run.ostrom.server.runners
 
 import run.ostrom.server.kernel.config.MapConfigSource
-import run.ostrom.server.runners.domain.NoRunnerVariables
 import run.ostrom.server.runners.domain.RunnerGitHubToken
 import run.ostrom.server.runners.domain.RunnerGitHubTokens
-import run.ostrom.server.runners.domain.RunnerVariableValues
-import run.ostrom.server.runners.domain.RunnerVariables
 import run.ostrom.server.runners.infrastructure.RunnersConfig
+import run.ostrom.server.secrets.domain.EnvironmentValues
+import run.ostrom.server.secrets.domain.ResolveEnvironmentUseCase
 import kotlinx.coroutines.test.runTest
 import org.koin.dsl.koinApplication
 import org.koin.dsl.module
@@ -62,7 +61,7 @@ class RunnersFeaturesTest {
 
     @Test
     fun cloudVariablesAreListedOnceTheSecretsModuleResolvesThem() = runTest {
-        for (variables in listOf(NoRunnerVariables, RunnerVariables { _, _ -> RunnerVariableValues.NONE })) {
+        for (bound in listOf(true, false)) {
             val koin = koinApplication {
                 modules(
                     module {
@@ -70,11 +69,15 @@ class RunnersFeaturesTest {
                             val docker = RunnersConfig.DriverKind.DOCKER
                             RunnersConfig.from(MapConfigSource(emptyMap())).copy(driver = docker)
                         }
-                        single<RunnerVariables> { variables }
+                        if (bound) {
+                            single<ResolveEnvironmentUseCase> {
+                                ResolveEnvironmentUseCase { _, _ -> EnvironmentValues(emptyMap(), emptyList()) }
+                            }
+                        }
                     },
                 )
             }.koin
-            val listed = setOfNotNull("runners.cloud.variables.v1".takeIf { variables !== NoRunnerVariables })
+            val listed = setOfNotNull("runners.cloud.variables.v1".takeIf { bound })
             assertEquals(setOf("runners.v1", "runners.cloud.v1") + listed, RunnersModule.features(koin))
         }
     }
