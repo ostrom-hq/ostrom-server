@@ -128,7 +128,7 @@ class ListBoundsPostgresTest {
         ids: Map<String, String>,
         f: Findings,
     ) {
-        val path = path(list.operation.path, ada.orgId, ids)
+        val path = path(list.operation.path, ada.orgId, ids) + required(list)
         val plain = read(ada, path, "")
         if (plain.status != HttpStatusCode.OK) {
             f.unreached[list.operation.id] = plain.status.value
@@ -191,7 +191,7 @@ class ListBoundsPostgresTest {
         } else {
             setOf(HttpStatusCode.BadRequest)
         }
-        val bobs = path(list.operation.path, bob.orgId, emptyMap())
+        val bobs = path(list.operation.path, bob.orgId, emptyMap()) + required(list)
         list.cursors.forEach { name ->
             val replayed = read(bob, bobs, "$name=${cursor.encodeURLParameter()}")
             val text = replayed.bodyAsText()
@@ -283,7 +283,10 @@ class ListBoundsPostgresTest {
     }
 
     private suspend fun TestServer.read(person: Person, path: String, query: String): HttpResponse =
-        client.get(if (query.isEmpty()) path else "$path?$query") { session(person) }
+        client.get(if (query.isEmpty()) path else "$path${if ('?' in path) "&" else "?"}$query") { session(person) }
+
+    // The query parameters a list requires, so that the walk reaches it.
+    private fun required(list: ListOperation): String = REQUIRED_QUERY[list.operation.id]?.let { "?$it" }.orEmpty()
 
     private fun HttpRequestBuilder.session(person: Person) {
         val session = person.session
@@ -323,6 +326,9 @@ class ListBoundsPostgresTest {
         val SUCCESS = 200..299
         val PARAMETER = Regex("\\{(\\w+)}")
         val RESOURCE = Regex("\\{(?!org\\b|orgId\\b)\\w+}")
+
+        /** The query a list requires: the words of a search. */
+        val REQUIRED_QUERY = mapOf("searchMemory" to "q=lists")
 
         /** The lists a minimal bootstrap cannot reach, with the status they answer. */
         val UNREACHED = mapOf(

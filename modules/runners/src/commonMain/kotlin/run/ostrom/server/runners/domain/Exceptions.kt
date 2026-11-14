@@ -7,6 +7,10 @@ import run.ostrom.server.kernel.errors.OstromException
 /** The session does not exist or belongs to another organization or member. */
 class CloudSessionNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Cloud session not found.")
 
+/** This server prepares no cloud session (no organizations module): the runner clones as before. */
+class RunnerPreparationNotServedException :
+    OstromException(ErrorKind.NOT_FOUND, "This server prepares no cloud session.")
+
 /**
  * The request is malformed.
  *

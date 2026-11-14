@@ -15,6 +15,7 @@ import run.ostrom.server.runners.domain.RunnerExecutionRequest
 import run.ostrom.server.runners.domain.RunnerGitHubRequest
 import run.ostrom.server.runners.domain.RunnerGitHubToken
 import run.ostrom.server.runners.domain.RunnerHeartbeat
+import run.ostrom.server.runners.domain.RunnerPreparationNotServedException
 import run.ostrom.server.runners.domain.RunnerUnauthenticatedException
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -137,7 +138,28 @@ private fun Route.runnerChannelRoutes(dependencies: CloudSessionsRoutesDependenc
             call.respond(RunnerVariablesResponse(values.variables, values.unavailable))
         }
     }
-    runnerEnvironment?.let { preparationRoutes(dependencies, it) }
+    if (runnerEnvironment != null) {
+        preparationRoutes(dependencies, runnerEnvironment)
+    } else {
+        unservedPreparation(dependencies)
+    }
+}
+
+/**
+ * Without the preparation, its routes check the runner's token as the others do, then answer the contract's 404, a
+ * JSON error the runner reads as "clone as before".
+ */
+private fun Route.unservedPreparation(dependencies: CloudSessionsRoutesDependencies) {
+    bodyLimit(HEARTBEAT_BODY_LIMIT) {
+        post<RunnerEnvironmentApi> {
+            dependencies.checkRunnerToken(call.runnerToken())
+            throw RunnerPreparationNotServedException()
+        }
+        post<RunnerPreparationApi> {
+            dependencies.checkRunnerToken(call.runnerToken())
+            throw RunnerPreparationNotServedException()
+        }
+    }
 }
 
 /** The runner's preparation (`runners.cloud.environment.v1`): what to prepare, and its phases or its failure. */

@@ -6,7 +6,6 @@ import run.ostrom.server.artifacts.domain.uploads.AnnouncedFile
 import run.ostrom.server.artifacts.domain.uploads.ArtifactUploadNotFoundException
 import run.ostrom.server.artifacts.domain.uploads.UploadArtifactUseCase
 import run.ostrom.server.artifacts.domain.uploads.UploadLimits
-import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.authenticated
 import run.ostrom.server.kernel.auth.requirePrincipal
 import run.ostrom.server.kernel.http.bodyLimit
@@ -25,7 +24,7 @@ import kotlin.uuid.Uuid
  * @param uploads The use case.
  * @param orgResolver The member a request acts for.
  */
-fun Route.artifactUploadRoutes(uploads: UploadArtifactUseCase, orgResolver: PrincipalOrgResolver) {
+fun Route.artifactUploadRoutes(uploads: UploadArtifactUseCase, orgResolver: ArtifactOrgResolver) {
     authenticated {
         post<ArtifactUploadsApi> {
             val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), ARTIFACTS_WRITE)

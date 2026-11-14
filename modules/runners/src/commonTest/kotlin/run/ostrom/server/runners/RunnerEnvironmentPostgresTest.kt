@@ -93,7 +93,12 @@ class RunnerEnvironmentPostgresTest {
             val (id, token) = server.started()
             for (path in listOf("environment", "preparation")) {
                 val body = """{"sessionId":"$id","epoch":1,"phase":"running_setup"}"""
-                assertEquals(HttpStatusCode.NotFound, server.runner(path, "Bearer $token", body).status, path)
+                val answer = server.runner(path, "Bearer $token", body)
+                assertEquals(HttpStatusCode.NotFound, answer.status, path)
+                // The contract's error, as JSON.
+                assertTrue("\"not_found\"" in answer.bodyAsText(), path)
+                // The runner's token is checked first, as on the other routes of its channel.
+                assertEquals(HttpStatusCode.Unauthorized, server.runner(path, null, body).status, path)
             }
         }
 

@@ -10,7 +10,6 @@ import run.ostrom.server.artifacts.domain.UploadedFile
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.auth.PrincipalKind
-import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.WriteAccess
 import run.ostrom.server.kernel.auth.mayWrite
 import kotlin.io.encoding.Base64
@@ -42,11 +41,16 @@ fun AuthenticatedPrincipal.allowsArtifacts(scope: String): Boolean =
  * @throws MissingScopeException When the credential lacks [scope].
  * @throws NotAMemberException When it acts for no organization.
  */
-suspend fun PrincipalOrgResolver.artifactCallerOf(principal: AuthenticatedPrincipal, scope: String): ArtifactCaller {
+suspend fun ArtifactOrgResolver.artifactCallerOf(principal: AuthenticatedPrincipal, scope: String): ArtifactCaller {
     if (!principal.allowsArtifacts(scope)) throw MissingScopeException(scope)
-    // The origin of a publication is the agent token's launch, read here from the credential and nowhere else.
-    val agent = (this as? ArtifactOrgResolver)?.agentOf(principal, null)
-    val member = if (agent != null) agent.member else resolve(principal, null) ?: throw NotAMemberException()
+    // The origin of a publication is the agent token's launch, read here from the credential and nowhere else; an
+    // agent token is read once, a dead launch's refused without a second lookup.
+    val agent = if (principal.kind == PrincipalKind.AGENT) {
+        agentOf(principal, null) ?: throw NotAMemberException()
+    } else {
+        null
+    }
+    val member = agent?.member ?: resolve(principal, null) ?: throw NotAMemberException()
     return ArtifactCaller(
         orgId = member.orgId,
         memberId = member.memberId.toString(),
