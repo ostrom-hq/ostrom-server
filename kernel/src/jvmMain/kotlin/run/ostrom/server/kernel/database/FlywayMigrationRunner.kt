@@ -17,7 +17,7 @@ import org.flywaydb.core.Flyway
 import org.flywaydb.core.api.FlywayException
 import org.flywaydb.core.api.MigrationVersion
 import org.flywaydb.core.api.migration.Context
-import org.flywaydb.core.api.migration.BaseJavaMigration
+import org.flywaydb.core.api.migration.JavaMigration
 
 /**
  * [MigrationRunner] on Flyway (docs/decisions/0001, step 2; CRL-05), as TeamCode's `Database.migrate`, one history
@@ -113,7 +113,7 @@ class FlywayMigrationRunner(
         val flyway = Flyway.configure()
             .dataSource(source)
             .table(table)
-            .locations()
+            .locations(*emptyArray<String>())
             .javaMigrations(*migrations.map(::ModuleMigration).toTypedArray())
             .baselineOnMigrate(true)
             .baselineVersion(MigrationVersion.fromVersion(baseline.toString()))
@@ -148,12 +148,14 @@ class FlywayMigrationRunner(
     private class Applied(val version: Long, val checksum: Int, val success: Boolean, val baseline: Boolean)
 
     /** One [SchemaMigration] as Flyway sees it: its version, its name, the CRC32 of its SQL. */
-    private class ModuleMigration(private val migration: SchemaMigration) : BaseJavaMigration() {
+    private class ModuleMigration(private val migration: SchemaMigration) : JavaMigration {
         override fun getVersion(): MigrationVersion = MigrationVersion.fromVersion(migration.version.toString())
 
         override fun getDescription(): String = migration.name
 
         override fun getChecksum(): Int = checksum(migration)
+
+        override fun canExecuteInTransaction(): Boolean = true
 
         override fun migrate(context: Context) {
             context.connection.run(migration.sql)
