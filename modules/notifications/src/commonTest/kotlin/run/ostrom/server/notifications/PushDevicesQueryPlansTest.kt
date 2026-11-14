@@ -28,7 +28,7 @@ class PushDevicesQueryPlansTest {
     private fun seed(org: Uuid, owner: String, count: Int, prefix: String): String =
         "INSERT INTO notifications_push_devices (org_id, id, member_id, push_token, provider, platform, locale, " +
             "created_at, seen_at, user_id, credential_id, browser) SELECT CAST('$org' AS uuid), gen_random_uuid(), " +
-            "$owner, 'ExpoPushToken[$prefix' || i || ']', 'expo', 'ios', NULL, now() - i * INTERVAL '1 minute', " +
+            "$owner, 'fcm-token-$prefix' || i, 'fcm', 'ios', NULL, now() - i * INTERVAL '1 minute', " +
             "now() - i * INTERVAL '1 minute', $owner, gen_random_uuid(), i % 2 = 0 FROM generate_series(1, $count) AS i"
 
     @Test

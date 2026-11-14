@@ -313,8 +313,8 @@ private suspend fun Seeder.administration(party: Party) {
         "push device",
         "POST /api/v1/push-devices",
         phone,
-        """{"pushToken": "ExponentPushToken[${party.marker}]", "provider": "expo", "platform": "ios",""" +
-            """ "locale": "fr"}""",
+        """{"pushToken": "fcm-token:${party.marker}-0123456789", "provider": "fcm", "platform": "ios",""" +
+            """ "locale": "fr", "publicKey": "$PHONE_KEY"}""",
     )
     keep(Seed.PUSH_DEVICE, device, "id")
 }
@@ -381,3 +381,7 @@ internal suspend fun TestServer.anotherLaunch(party: Party): Map<Seed, String> {
 
 /** One file announced, its chunks never sent: the upload stays open for the hour the matrix runs. */
 internal val UPLOAD_BODY = """{"files": [{"sha256": "${"a".repeat(64)}", "size": 1}]}"""
+
+// A phone's P-256 public key (SubjectPublicKeyInfo DER, base64), as the app registers it with its FCM token.
+private const val PHONE_KEY = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAErk/gFJHBFOfxoyNsYaVJVQ9V24LFSHJeDBl+kT9Lz+VM8qRL3kDoYuz" +
+    "DxGhTqrV7NtPatu0gc+GFnan8LoAuUA=="

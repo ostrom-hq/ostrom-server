@@ -23,7 +23,7 @@ class PushDevicesSignOutListenerTest {
     private val listener = PushDevicesSignOutListener(repository, { if (it == user) orgs else emptyList() }, logger)
 
     private fun phone(org: Uuid, credential: PushCredential) = PushDevice(
-        Uuid.random(), org, Uuid.random(), "ExponentPushToken[${Uuid.random()}]", "expo", "ios", null,
+        Uuid.random(), org, Uuid.random(), "fcm-token-${Uuid.random()}", "fcm", "ios", null,
         Instant.DISTANT_PAST, Instant.DISTANT_PAST, credential,
     ).also { repository.devices += it }
 

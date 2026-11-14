@@ -40,9 +40,15 @@ class ApproverNotificationsChannelTest {
         return ApproverNotificationsChannel(approvers, devices, SetLiveCredentials(live), notices, outbox, mails)
     }
 
-    private fun phone(orgId: Uuid, approver: Approver, token: String, credential: Uuid? = Uuid.random()) =
+    private fun phone(
+        orgId: Uuid,
+        approver: Approver,
+        token: String,
+        credential: Uuid? = Uuid.random(),
+        provider: String = "fcm",
+    ) =
         PushDevice(
-            Uuid.random(), orgId, approver.memberId, token, "expo", "ios", null, Instant.DISTANT_PAST,
+            Uuid.random(), orgId, approver.memberId, token, provider, "ios", null, Instant.DISTANT_PAST,
             Instant.DISTANT_PAST, credential?.let { PushCredential(approver.userId, it, browser = false) },
         ).also { device ->
             devices.devices += device
@@ -51,20 +57,22 @@ class ApproverNotificationsChannelTest {
 
     @Test
     fun eachApproverHearsOnTheirLivePhonesOfTheGatesOrganizationAndByEmail() = runTest {
-        val first = phone(org, bob, "ExponentPushToken[bob-phone-1]")
-        val second = phone(org, bob, "ExponentPushToken[bob-phone-2]")
-        phone(otherOrg, bob, "ExponentPushToken[bob-other-org]")
+        val first = phone(org, bob, "fcm-token-bob-phone-1")
+        val second = phone(org, bob, "fcm-token-bob-phone-2")
+        phone(otherOrg, bob, "fcm-token-bob-other-org")
         val revoked = Uuid.random()
-        phone(org, bob, "ExponentPushToken[bob-revoked]", credential = revoked)
+        phone(org, bob, "fcm-token-bob-revoked", credential = revoked)
         live -= revoked
-        phone(org, bob, "ExponentPushToken[bob-unbound]", credential = null)
+        phone(org, bob, "fcm-token-bob-unbound", credential = null)
+        // An older app's phone, registered with Expo: no key to encrypt for, never notified.
+        phone(org, bob, "ExponentPushToken[bob-old-app]", provider = "expo")
         val gate = sampleGate(org)
         val request = sampleRequest(gate, "BOB")
 
         channel().requested(gate, listOf(request))
         runCurrent()
 
-        // One push per phone: a phone Expo refuses is tried again alone, never the approver's other phones.
+        // One push per phone: a phone FCM refuses is tried again alone, never the approver's other phones.
         assertEquals(listOf(1, 1), push.calls.map { it.size })
         val sent = push.calls.flatten()
         val phones = setOf(first.pushToken, second.pushToken)
@@ -76,20 +84,20 @@ class ApproverNotificationsChannelTest {
 
     @Test
     fun anApproverWhoTurnedRequestsOffIsStillToldByEmailAndOneWithoutAddressOnlyByPush() = runTest {
-        phone(org, carol, "ExponentPushToken[carol-phone]")
-        phone(org, dan, "ExponentPushToken[dan-phone-1]")
+        phone(org, carol, "fcm-token-carol-phone")
+        phone(org, dan, "fcm-token-dan-phone-1")
         val gate = sampleGate(org)
 
         channel().requested(gate, listOf(sampleRequest(gate, "carol"), sampleRequest(gate, "dan")))
         runCurrent()
 
-        assertEquals(listOf(listOf("ExponentPushToken[dan-phone-1]")), push.calls.map { c -> c.map { it.to } })
+        assertEquals(listOf(listOf("fcm-token-dan-phone-1")), push.calls.map { c -> c.map { it.to } })
         assertEquals(listOf("carol@example.com"), mail.calls.map { it.to })
     }
 
     @Test
     fun theAskerIsNotToldWhileAnotherApproverMayAnswerNorAnyoneOfAnAnsweredRequest() = runTest {
-        phone(org, ana, "ExponentPushToken[ana-phone-1]")
+        phone(org, ana, "fcm-token-ana-phone-1")
         val gate = sampleGate(org, askedBy = listOf("Ana"))
         val requests = listOf(
             sampleRequest(gate, "ana"),
@@ -106,7 +114,7 @@ class ApproverNotificationsChannelTest {
 
     @Test
     fun theOnlyApproverIsToldEvenWhenTheyAsked() = runTest {
-        phone(org, ana, "ExponentPushToken[ana-phone-1]")
+        phone(org, ana, "fcm-token-ana-phone-1")
         val gate = sampleGate(org, askedBy = listOf("ana"))
 
         channel().requested(gate, listOf(sampleRequest(gate, "ana")))
@@ -118,7 +126,7 @@ class ApproverNotificationsChannelTest {
 
     @Test
     fun anUnknownApproverIsSkippedAndNoEmailLeavesAnInstanceThatSendsNone() = runTest {
-        phone(org, bob, "ExponentPushToken[bob-phone-1]")
+        phone(org, bob, "fcm-token-bob-phone-1")
         val gate = sampleGate(org)
 
         channel(mailing = false).requested(gate, listOf(sampleRequest(gate, "nobody"), sampleRequest(gate, "bob")))
@@ -130,7 +138,7 @@ class ApproverNotificationsChannelTest {
 
     @Test
     fun nothingIsSentOnceAGateIsDecided() = runTest {
-        phone(org, bob, "ExponentPushToken[bob-phone-1]")
+        phone(org, bob, "fcm-token-bob-phone-1")
         val gate = sampleGate(org)
         val channel = channel()
 

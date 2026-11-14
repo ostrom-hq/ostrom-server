@@ -20,7 +20,6 @@ import run.ostrom.server.notifications.domain.LiveCredentials
 import run.ostrom.server.notifications.domain.NotificationOutbox
 import run.ostrom.server.notifications.domain.PUSH_SETTINGS
 import run.ostrom.server.notifications.domain.PersonOrganizations
-import run.ostrom.server.notifications.domain.ProviderPushSender
 import run.ostrom.server.notifications.domain.PushEncryption
 import run.ostrom.server.notifications.domain.PushDevicesRepository
 import run.ostrom.server.notifications.domain.PushDevicesSignOutListener
@@ -29,7 +28,6 @@ import run.ostrom.server.notifications.domain.RegisterPushDeviceUseCase
 import run.ostrom.server.notifications.domain.RegisterPushDeviceUseCaseImpl
 import run.ostrom.server.notifications.infrastructure.CachedFirebaseSenders
 import run.ostrom.server.notifications.infrastructure.EciesPushEncryption
-import run.ostrom.server.notifications.infrastructure.ExpoPushSender
 import run.ostrom.server.notifications.infrastructure.FirebasePushSender
 import run.ostrom.server.notifications.infrastructure.IdentityLiveCredentials
 import run.ostrom.server.notifications.infrastructure.MemberApprovers
@@ -97,10 +95,7 @@ object NotificationsModule : ServerModule {
         }
         single<PushSender> {
             val settings = get<NotificationSettings>()
-            ProviderPushSender(
-                expo = ExpoPushSender(get(HTTP), settings.expoPushUrl, settings.expoAccessToken),
-                fcm = EncryptedPushSender(get(), get(), get(), get(), settings.publicUrl, get()),
-            )
+            EncryptedPushSender(get(), get(), get(), get(), settings.publicUrl, get())
         }
         single { NotificationOutbox(get(), get(), get()) }
         single<Approvers> { MemberApprovers(get(), get(), get()) }
@@ -126,8 +121,7 @@ object NotificationsModule : ServerModule {
 
     /**
      * Approval notifications, and push to the phones: a phone registers its FCM token and public key whatever the
-     * provider, and its pushes go out once an administrator chooses one (Admin → Settings → push); the deprecated
-     * Expo push service needs no configuration.
+     * provider, and its pushes go out once an administrator chooses one (Admin → Settings → push).
      */
     override suspend fun features(koin: Koin): Set<String> =
         setOf(ServerFeatures.NOTIFICATIONS, ServerFeatures.NOTIFICATIONS_PUSH)

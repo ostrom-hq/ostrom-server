@@ -22,8 +22,8 @@ class PushDevicesApi {
 /**
  * Body of `registerPushDevice`: a phone, as the app registers it.
  *
- * @property pushToken The FCM registration token (`fcm`), or the Expo push token (`expo`, deprecated).
- * @property provider `fcm`, or `expo` (deprecated).
+ * @property pushToken The FCM registration token.
+ * @property provider `fcm`.
  * @property platform `ios` or `android`.
  * @property locale The phone's language.
  * @property publicKey The phone's P-256 public key (SubjectPublicKeyInfo, DER, base64), required with `fcm`.
@@ -41,7 +41,7 @@ data class PushDeviceRequest(
  * A registered phone (contract `PushDevice`): never its push token.
  *
  * @property id The device.
- * @property provider `expo`.
+ * @property provider `fcm`.
  * @property platform `ios` or `android`.
  * @property locale The phone's language, absent when it gave none.
  * @property createdAt When it was first registered, ISO-8601.

@@ -330,13 +330,14 @@ Android alike) with its P-256 public key (`POST /api/v1/push-devices`, `provider
 SubjectPublicKeyInfo DER, base64), at every start and when FCM rotates the token. Each push is end-to-end encrypted
 for that key (ECIES: an ephemeral P-256 key, HKDF-SHA256 with info `ostrom-push-v1`, AES-256-GCM; the contract's
 `PushPayload`), so the provider sees a token and an opaque blob, and the text exists in clear only on the server and
-the phone. The FCM message carries `{"p": <payload>, "v": "1"}`: on iOS a generic alert with `mutable-content` the
-app's notification service extension replaces, on Android a high-priority data message, both with an opaque collapse
-key and a one-hour expiry. The server signs its own OAuth assertion with the service account (RS256) and keeps the
-access token until a minute before it expires. A token FCM no longer knows (404) forgets its phone, unless the app
+the phone. The FCM message carries `{"p": <payload>, "v": "1"}`: on iOS a generic alert with `mutable-content` the app's
+notification service extension replaces, on Android a high-priority data message, both with an opaque collapse key and a
+one-hour expiry. The server signs its own OAuth assertion with the service account (RS256) and keeps the access token
+until a minute before it expires. A token FCM no longer knows (404 `UNREGISTERED`) forgets its phone, unless the app
 registered it anew; a 401, 408, 429, 5xx or no answer is tried again; any other refusal, or `firebase` without its key,
-is given up at once. While the provider is `off`, phones register and nothing is sent. The deprecated `expo` phones
-still go to Expo's push service until the apps register FCM.
+is given up at once. While the provider is `off`, phones register and nothing is sent. Expo is gone, as in TeamCode: a
+`provider: expo` registration is refused (400), and a phone an older app registered with Expo is never notified (it has
+no key to encrypt for) until the app registers FCM.
 
 ### Memory under the container limit
 
@@ -616,7 +617,7 @@ anonymous call gets 401 `unauthorized`. A module lists a key of ostrom-core's `S
 | `integrations-github` | `github.v1`; `github.link.v1` | a stored GitHub App (created by the manifest flow, or imported once from the former variables); the second once that App's OAuth client (id and secret) is known |
 | `mcp-relay` | `mcp.v1`, `mcp.personal.v1` (members' own servers) | — |
 | `memory` | `memory.v1` | — |
-| `notifications` | `notifications.v1`, `notifications.push.v1` | — (phones register their FCM token and P-256 key; pushes go out once an administrator picks the provider in Admin → Settings → push. Deprecated Expo: `OSTROM_EXPO_ACCESS_TOKEN` only when the project requires one) |
+| `notifications` | `notifications.v1`, `notifications.push.v1` | — (phones register their FCM token and P-256 key; pushes go out once an administrator picks the provider in Admin → Settings → push.) |
 | `receipts` | `receipts.v1` | — |
 | `reports` | `reports.v1` | — |
 | `rules` | `rules.v1`, `reports.v1` (the analysis) | — |

@@ -11,9 +11,8 @@ import kotlin.uuid.Uuid
  * @property id The device.
  * @property orgId The organization.
  * @property memberId The member the phone notifies.
- * @property pushToken The FCM registration token (`fcm`) or the Expo push token (`expo`, deprecated), never answered
- *   back nor logged.
- * @property provider `fcm`, or `expo` (deprecated).
+ * @property pushToken The FCM registration token, never answered back nor logged.
+ * @property provider `fcm` (`expo` for a phone an older app registered: never notified).
  * @property platform `ios` or `android`.
  * @property locale The phone's language, if it gave one.
  * @property createdAt When the phone was first registered.
@@ -21,7 +20,7 @@ import kotlin.uuid.Uuid
  * @property credential Who registered it, with which credential: null for a phone registered before the server
  *   kept it, which is notified again once the app registers it anew.
  * @property publicKey The phone's P-256 public key (SubjectPublicKeyInfo, DER, base64) every `fcm` push is encrypted
- *   for; null for an `expo` phone.
+ *   for; null for an older `expo` phone.
  */
 data class PushDevice(
     val id: Uuid,
@@ -50,9 +49,8 @@ data class PushCredential(val userId: Uuid, val credentialId: Uuid, val browser:
 /**
  * A phone, as the app registers it (`registerPushDevice`).
  *
- * @property pushToken The FCM registration token (`fcm`), or the Expo push token (`ExponentPushToken[…]`, `expo`,
- *   deprecated).
- * @property provider `fcm`, or `expo` (deprecated).
+ * @property pushToken The FCM registration token.
+ * @property provider `fcm`.
  * @property platform `ios` or `android`.
  * @property locale The phone's language, if any.
  * @property publicKey The phone's P-256 public key, required with `fcm`.

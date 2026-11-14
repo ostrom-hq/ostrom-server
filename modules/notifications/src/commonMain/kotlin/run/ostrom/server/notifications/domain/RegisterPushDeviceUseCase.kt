@@ -19,7 +19,7 @@ interface RegisterPushDeviceUseCase {
      * @return The device.
      *
      * @throws InvalidPushDeviceException When it is not the FCM registration token of an iOS or Android phone with its
-     *   P-256 public key (or, deprecated, an Expo push token).
+     *   P-256 public key.
      */
     suspend operator fun invoke(
         orgId: Uuid,
@@ -30,9 +30,8 @@ interface RegisterPushDeviceUseCase {
 }
 
 /**
- * [RegisterPushDeviceUseCase] on the repository. An `fcm` phone sends its FCM registration token and the P-256 public
- * key its pushes are encrypted for, as TeamCode's apps do (`PushRegistrationService`); an `expo` phone, deprecated, its
- * Expo push token alone.
+ * [RegisterPushDeviceUseCase] on the repository. A phone sends its FCM registration token and the P-256 public key its
+ * pushes are encrypted for, as TeamCode's apps do (`PushRegistrationService`).
  *
  * @param repository The phones.
  * @param encryption Checks the phone's public key.
@@ -52,12 +51,9 @@ class RegisterPushDeviceUseCaseImpl(
         val token = registration.pushToken.trim()
         val locale = registration.locale.orEmpty().trim().ifEmpty { null }
         val publicKey = registration.publicKey.orEmpty().trim().ifEmpty { null }
-        val valid = registration.platform in PLATFORMS && (locale == null || LOCALE.matches(locale)) &&
-            when (registration.provider) {
-                FCM -> FCM_TOKEN.matches(token) && publicKey != null && encryption.acceptsKey(publicKey)
-                EXPO -> EXPO_TOKEN.matches(token) && publicKey == null
-                else -> false
-            }
+        val phone = registration.provider == FCM && registration.platform in PLATFORMS && FCM_TOKEN.matches(token)
+        val language = locale == null || LOCALE.matches(locale)
+        val valid = phone && language && publicKey != null && encryption.acceptsKey(publicKey)
         if (!valid) throw InvalidPushDeviceException()
         val now = clock.now()
         val device = PushDevice(
@@ -74,12 +70,8 @@ const val MAX_PHONES = 10
 /** The provider of a phone that registered its FCM registration token: iOS and Android alike. */
 const val FCM = "fcm"
 
-/** The provider of a phone that registered an Expo push token: deprecated, refused once the apps register FCM. */
-const val EXPO = "expo"
-
 // Top-level, not in a private companion: a companion property has a getter nothing calls, which Kover counts.
 private val PLATFORMS = setOf("ios", "android")
-private val EXPO_TOKEN = Regex("Expo(nent)?PushToken\\[[A-Za-z0-9_-]{8,100}]")
 
 // TeamCode's PushPayloads.tokenPattern: what FCM hands an installation.
 private val FCM_TOKEN = Regex("[A-Za-z0-9_:\\-.]{20,512}")

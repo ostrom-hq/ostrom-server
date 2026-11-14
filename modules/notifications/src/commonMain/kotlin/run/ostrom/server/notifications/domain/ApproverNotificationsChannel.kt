@@ -44,7 +44,8 @@ class ApproverNotificationsChannel(
         for (request in answerable(gate, requests)) {
             val approver = approvers.reach(gate.orgId, request.approverId) ?: continue
             if (approver.pushes) {
-                devices.ofMember(gate.orgId, approver.memberId).filter { reachable(approver, it) }
+                // A phone an older app registered with Expo has no key to encrypt for: never notified.
+                devices.ofMember(gate.orgId, approver.memberId).filter { it.provider == FCM && reachable(approver, it) }
                     .forEach { add(Notice.Push(gate.id, listOf(notices.push(request, it)))) }
             }
             val email = approver.email
