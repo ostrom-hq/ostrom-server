@@ -245,7 +245,7 @@ class CloudAdminRoutesPostgresTest {
         assertEquals(HttpStatusCode.Unauthorized, http.get(path).status)
         assertEquals(HttpStatusCode.Forbidden, http.get(path) { bearerAuth("alicekey") }.status)
         val defaults = http.get(path) { bearerAuth("bob") }.body<CloudSettingsResponse>()
-        assertEquals(CloudSettingsResponse(240), defaults)
+        assertEquals(CloudSettingsResponse(240, 2), defaults)
 
         val first = """{"backgroundWorkMaxMinutes":60}"""
         assertEquals(HttpStatusCode.Forbidden, http.send("PUT", path, "bob", first).status)
@@ -265,12 +265,26 @@ class CloudAdminRoutesPostgresTest {
         assertTrue("invalid_cloud_settings" in invalid.bodyAsText())
         val outOfRange = http.send("PUT", path, "alice", """{"backgroundWorkMaxMinutes":2000}""")
         assertEquals(HttpStatusCode.BadRequest, outOfRange.status)
+        val over = """{"backgroundWorkMaxMinutes":5,"maxRunningAutomationsPerMember":101}"""
+        val tooMany = http.send("PUT", path, "alice", over)
+        assertEquals(HttpStatusCode.BadRequest, tooMany.status)
+        // The cap is saved with the others; a save without it keeps the stored one.
+        val capped = http.get(path) { bearerAuth("bob") }.body<CloudSettingsResponse>()
+        val withCap = """{"backgroundWorkMaxMinutes":0,"maxRunningAutomationsPerMember":5,""" +
+            """"updatedAt":"${capped.updatedAt}"}"""
+        val five = http.send("PUT", path, "alice", withCap).body<CloudSettingsResponse>()
+        assertEquals(5, five.maxRunningAutomationsPerMember)
+        val without = """{"backgroundWorkMaxMinutes":10,"updatedAt":"${five.updatedAt}"}"""
+        val kept = http.send("PUT", path, "alice", without)
+        assertEquals(5, kept.body<CloudSettingsResponse>().maxRunningAutomationsPerMember)
+        assertEquals(5, server.koin.get<CloudSettingsSource>().current(ORG_A).maxRunningAutomationsPerMember)
 
         // Organization B sees its own defaults and its save never touches A's.
-        assertEquals(CloudSettingsResponse(240), http.get(path) { bearerAuth("carol") }.body<CloudSettingsResponse>())
+        val carols = http.get(path) { bearerAuth("carol") }.body<CloudSettingsResponse>()
+        assertEquals(CloudSettingsResponse(240, 2), carols)
         http.send("PUT", path, "carol", """{"backgroundWorkMaxMinutes":15}""")
         val repository = server.koin.get<CloudSettingsRepository>()
-        assertEquals(0, repository.get(ORG_A)?.backgroundWorkMaxMinutes)
+        assertEquals(10, repository.get(ORG_A)?.backgroundWorkMaxMinutes)
         assertEquals(15, repository.get(ORG_B)?.backgroundWorkMaxMinutes)
     }
 

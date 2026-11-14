@@ -30,7 +30,8 @@ internal fun Route.cloudSettingsRoutes(dependencies: CloudAdminRoutesDependencie
         val expected = request.updatedAt?.let {
             Instant.parseOrNull(it) ?: throw InvalidCloudSettingsException("updatedAt is a date-time.")
         }
-        val saved = settings.save(caller, CloudSettings(request.backgroundWorkMaxMinutes), expected)
+        val cap = request.maxRunningAutomationsPerMember ?: settings.get(caller).maxRunningAutomationsPerMember
+        val saved = settings.save(caller, CloudSettings(request.backgroundWorkMaxMinutes, cap), expected)
         audit.record(
             OrgAuditRecord(
                 caller.orgId,
@@ -38,7 +39,10 @@ internal fun Route.cloudSettingsRoutes(dependencies: CloudAdminRoutesDependencie
                 "cloud.settings.saved",
                 "cloud_settings",
                 caller.orgId.toString(),
-                mapOf("backgroundWorkMaxMinutes" to saved.backgroundWorkMaxMinutes.toString()),
+                mapOf(
+                    "backgroundWorkMaxMinutes" to saved.backgroundWorkMaxMinutes.toString(),
+                    "maxRunningAutomationsPerMember" to saved.maxRunningAutomationsPerMember.toString(),
+                ),
             ),
         )
         call.respond(saved.toResponse())
@@ -47,6 +51,7 @@ internal fun Route.cloudSettingsRoutes(dependencies: CloudAdminRoutesDependencie
 
 internal fun CloudSettings.toResponse() = CloudSettingsResponse(
     backgroundWorkMaxMinutes = backgroundWorkMaxMinutes,
+    maxRunningAutomationsPerMember = maxRunningAutomationsPerMember,
     updatedAt = updatedAt?.toString(),
     updatedBy = updatedBy?.toString(),
 )

@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.automations.domain
 
+import run.ostrom.server.kernel.audit.DiscardingOrgAuditTrail
+import run.ostrom.server.kernel.audit.OrgAuditRecord
+import run.ostrom.server.kernel.audit.OrgAuditTrail
+import run.ostrom.server.kernel.audit.auditDetails
+import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.errors.Pages
 import kotlinx.coroutines.CancellationException
@@ -103,11 +108,14 @@ interface RunAutomationsUseCase {
      * Cancels a run of an automation the caller owns or administers: a queued run ends `cancelled` at once, a started
      * one has its session paused first (TC-AUT-17).
      *
+     * The cancel is written to the organization's audit log (`automation.run_cancelled`), with the credential used.
+     *
+     * @param actor The credential of the request.
      * @throws AutomationNotFoundException When the caller cannot see the automation.
      * @throws AutomationRunNotFoundException When it has no such run.
      * @throws AutomationRunEndedException When the run is over already.
      */
-    suspend fun cancel(caller: AutomationCaller, id: Uuid, runId: Uuid): AutomationRun
+    suspend fun cancel(actor: AuthenticatedPrincipal, caller: AutomationCaller, id: Uuid, runId: Uuid): AutomationRun
 
     /**
      * One scheduler pass: expires the history, fails the runs queued too long, runs the due crons, starts the runs
@@ -127,7 +135,9 @@ interface RunAutomationsUseCase {
  * @param secrets Checks webhook signatures.
  * @param members Tells whether an owner is still a member; every owner is when null (no directory bound).
  * @param clock The time.
- * @param maxRunning How many sessions of one member's automation runs may work at once; a run over it waits, queued.
+ * @param audit The organization's audit log: a cancelled run is written to it, never its prompt or payload.
+ * @param limits The cap of sessions of one member's automation runs that may work at once; a run over it waits,
+ *   queued.
  * @param workflows Starts, follows and cancels the workflow runs of workflow actions (TC-AUT-5).
  */
 // The steps of one run pipeline, shared by its three triggers, and its ports.
@@ -138,7 +148,8 @@ class RunAutomationsUseCaseImpl(
     private val secrets: WebhookSecrets,
     private val members: MemberDirectory?,
     private val clock: Clock,
-    private val maxRunning: Int = DEFAULT_MAX_RUNNING,
+    private val limits: AutomationLimits = AutomationLimits { DEFAULT_MAX_RUNNING },
+    private val audit: OrgAuditTrail = DiscardingOrgAuditTrail(),
     private val workflows: AutomationWorkflows = NoWorkflows,
 ) : RunAutomationsUseCase {
     override suspend fun trigger(id: Uuid, delivery: WebhookDelivery, body: ByteArray, version: String): Triggered {
@@ -218,7 +229,12 @@ class RunAutomationsUseCaseImpl(
         return RunPage(items.take(size), items.getOrNull(size)?.let { items[size - 1].id })
     }
 
-    override suspend fun cancel(caller: AutomationCaller, id: Uuid, runId: Uuid): AutomationRun {
+    override suspend fun cancel(
+        actor: AuthenticatedPrincipal,
+        caller: AutomationCaller,
+        id: Uuid,
+        runId: Uuid,
+    ): AutomationRun {
         val automation = repository.visibleTo(caller, id)
         val run = repository.findRun(automation.orgId, automation.id, runId) ?: throw AutomationRunNotFoundException()
         when {
@@ -230,6 +246,16 @@ class RunAutomationsUseCaseImpl(
         val now = clock.now().truncatedToMillis()
         val ended = run.copy(status = RunStatus.CANCELLED, reason = CANCELLED, updatedAt = now)
         if (!repository.endRun(ended, run.status)) throw AutomationRunEndedException()
+        audit.record(
+            OrgAuditRecord(
+                orgId = automation.orgId,
+                actor = actor,
+                event = "automation.run_cancelled",
+                subjectType = "automation",
+                subjectId = "${automation.id}/${run.id}",
+                details = auditDetails("source" to run.source.wire, "was" to run.status.wire),
+            ),
+        )
         return ended
     }
 
@@ -382,7 +408,7 @@ class RunAutomationsUseCaseImpl(
     }
 
     /**
-     * Whether the automation's owner already has [maxRunning] sessions of automation runs working: the sessions of
+     * Whether the automation's owner already has the cap of sessions of automation runs working: the sessions of
      * their started runs of the last day (a run lasts 24 hours at most) that still hold an execution, newest first.
      */
     private suspend fun atCapacity(automation: Automation): Boolean {
@@ -392,6 +418,7 @@ class RunAutomationsUseCaseImpl(
             clock.now().truncatedToMillis() - WORKING_WINDOW,
             WORKING_SCAN,
         )
+        val maxRunning = limits.maxRunningPerMember(automation.orgId)
         var working = 0
         for (session in sessions) {
             if (launcher.isWorking(automation.orgId, session)) working++

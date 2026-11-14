@@ -8,6 +8,7 @@ import run.ostrom.server.runners.infrastructure.CloudRuntimeRunnerDelivery
 import run.ostrom.server.runners.infrastructure.SettingsAllowedOrgs
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.automations.domain.AutomationLauncher
+import run.ostrom.server.automations.domain.AutomationLimits
 import run.ostrom.server.billing.domain.GetAgentUsageUseCase
 import run.ostrom.server.billing.domain.GetPlanLimitsUseCase
 import run.ostrom.server.cloud.domain.CloudSettingsSource
@@ -75,6 +76,7 @@ import run.ostrom.server.runners.infrastructure.BillingCloudUsageMeter
 import run.ostrom.server.runners.infrastructure.CloudSessionAutomationLauncher
 import run.ostrom.server.runners.infrastructure.CloudSettingsBackgroundWorkLimit
 import run.ostrom.server.runners.infrastructure.CloudSessionsRepositoryImpl
+import run.ostrom.server.runners.infrastructure.CloudSettingsAutomationLimits
 import run.ostrom.server.runners.infrastructure.DockerExecutionPlan
 import run.ostrom.server.runners.infrastructure.InProcessRunnerWorkSignals
 import run.ostrom.server.runners.infrastructure.KtorTerminalForwarder
@@ -201,6 +203,7 @@ object RunnersModule : ServerModule {
             TerminalRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), replica)
         }
         single<AutomationLauncher> { CloudSessionAutomationLauncher(get(), get(), get()) }
+        single<AutomationLimits> { CloudSettingsAutomationLimits(getOrNull<CloudSettingsSource>()) }
     }
 
     override val migrations: List<SchemaMigration> = RunnersMigrations

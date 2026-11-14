@@ -9,6 +9,7 @@ import run.ostrom.server.automations.domain.RunPage
 import run.ostrom.server.automations.domain.Triggered
 import run.ostrom.server.automations.domain.WebhookDelivery
 import run.ostrom.server.automations.infrastructure.AutomationScheduler
+import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.logging.Logger
 import kotlinx.coroutines.CancellationException
@@ -44,7 +45,12 @@ class AutomationSchedulerTest {
         override suspend fun trigger(id: Uuid, delivery: WebhookDelivery, body: ByteArray, version: String): Triggered =
             error("unused")
 
-        override suspend fun cancel(caller: AutomationCaller, id: Uuid, runId: Uuid): AutomationRun = error("unused")
+        override suspend fun cancel(
+            actor: AuthenticatedPrincipal,
+            caller: AutomationCaller,
+            id: Uuid,
+            runId: Uuid,
+        ): AutomationRun = error("unused")
 
         override suspend fun test(
             caller: AutomationCaller,

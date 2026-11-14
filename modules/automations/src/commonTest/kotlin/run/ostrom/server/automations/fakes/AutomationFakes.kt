@@ -24,8 +24,13 @@ import run.ostrom.server.automations.domain.RunSource
 import run.ostrom.server.automations.domain.RunStatus
 import run.ostrom.server.automations.domain.TriggerKind
 import run.ostrom.server.automations.domain.WebhookSecrets
+import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import run.ostrom.server.kernel.auth.PrincipalKind
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
+
+/** The credential of a test's request. */
+val testActor = AuthenticatedPrincipal("alice", PrincipalKind.USER, setOf("automations:write"))
 
 val aliceAuto = AutomationCaller(ORG_A, ALICE.toString(), admin = false, interactive = true)
 val aliceKey = AutomationCaller(ORG_A, ALICE.toString(), admin = false, interactive = false)

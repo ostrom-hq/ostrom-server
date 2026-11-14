@@ -211,3 +211,13 @@ interface WebhookSecrets {
     /** The SHA-256 of [data], in hexadecimal. */
     suspend fun digest(data: ByteArray): String
 }
+
+/** How many automation runs of one member may work at once, a cloud setting of the organization. */
+fun interface AutomationLimits {
+    /**
+     * The cap (TeamCode's `maxRunningAutomationsPerMember`, 2 by default): a run over it stays queued.
+     *
+     * @param orgId The organization.
+     */
+    suspend fun maxRunningPerMember(orgId: Uuid): Int
+}

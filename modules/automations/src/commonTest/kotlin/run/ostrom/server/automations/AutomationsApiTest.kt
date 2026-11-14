@@ -10,6 +10,7 @@ import run.ostrom.server.automations.fakes.ALICE
 import run.ostrom.server.automations.fakes.ORG_A
 import run.ostrom.server.automations.fakes.RecordingLauncher
 import run.ostrom.server.automations.fakes.testIdentities
+import run.ostrom.server.automations.infrastructure.DefaultAutomationLimits
 import run.ostrom.server.automations.infrastructure.UnavailableLauncher
 import run.ostrom.server.automations.presentation.AutomationActionRequest
 import run.ostrom.server.automations.presentation.AutomationRequest
@@ -310,6 +311,7 @@ class AutomationsApiTest {
         assertEquals("cloud_sessions_unavailable", history.items.single().reason)
         assertFalse(UnavailableLauncher.isWorking(ORG_A, "s1"))
         assertFalse(UnavailableLauncher.pause(ORG_A, "alice", "s1"))
+        assertEquals(2, DefaultAutomationLimits.maxRunningPerMember(ORG_A))
     }
 
     @Test

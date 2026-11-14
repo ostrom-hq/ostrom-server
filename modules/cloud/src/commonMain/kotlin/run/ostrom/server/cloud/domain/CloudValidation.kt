@@ -139,7 +139,10 @@ internal fun String?.trimmedOrNull(): String? = this?.let { value -> value.trim(
  *
  * @return The reason, naming the field.
  */
-internal fun settingsProblem(settings: CloudSettings): String? =
-    "backgroundWorkMaxMinutes is 0 to 1440.".takeIf {
-        settings.backgroundWorkMaxMinutes !in 0..CloudSettings.MAX_BACKGROUND_WORK_MINUTES
-    }
+internal fun settingsProblem(settings: CloudSettings): String? = when {
+    settings.backgroundWorkMaxMinutes !in 0..CloudSettings.MAX_BACKGROUND_WORK_MINUTES ->
+        "backgroundWorkMaxMinutes is 0 to 1440."
+    settings.maxRunningAutomationsPerMember !in 1..CloudSettings.MAX_RUNNING_AUTOMATIONS ->
+        "maxRunningAutomationsPerMember is 1 to 100."
+    else -> null
+}

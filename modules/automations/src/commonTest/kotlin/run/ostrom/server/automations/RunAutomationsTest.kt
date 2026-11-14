@@ -6,6 +6,7 @@ import run.ostrom.server.automations.domain.AutomationAction
 import run.ostrom.server.automations.domain.AutomationDefinition
 import run.ostrom.server.automations.domain.AutomationDisabledException
 import run.ostrom.server.automations.domain.AutomationForbiddenException
+import run.ostrom.server.automations.domain.AutomationLimits
 import run.ostrom.server.automations.domain.AutomationNotFoundException
 import run.ostrom.server.automations.domain.AutomationRateLimitException
 import run.ostrom.server.automations.domain.AutomationRunEndedException
@@ -32,12 +33,15 @@ import run.ostrom.server.automations.fakes.PlainSecrets
 import run.ostrom.server.automations.fakes.RecordingLauncher
 import run.ostrom.server.automations.fakes.TestClock
 import run.ostrom.server.automations.fakes.aliceAuto
+import run.ostrom.server.automations.fakes.testActor
 import run.ostrom.server.automations.fakes.bobAuto
 import run.ostrom.server.automations.fakes.cronDefinition
 import run.ostrom.server.automations.fakes.aliceKey
 import run.ostrom.server.automations.fakes.daveAuto
 import run.ostrom.server.automations.fakes.webhookDefinition
 import run.ostrom.server.automations.presentation.toResponse
+import run.ostrom.server.kernel.audit.OrgAuditRecord
+import run.ostrom.server.kernel.audit.OrgAuditTrail
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.errors.ErrorKind
 import kotlinx.coroutines.CancellationException
@@ -400,13 +404,29 @@ class RunAutomationsTest {
     @Test
     fun aTestCountsLikeAnyRunAndTheCapIsTheConfiguredOne() = runTest {
         val automation = roomy()
-        val one = RunAutomationsUseCaseImpl(repository, launcher, PlainSecrets, owners, clock, maxRunning = 1)
+        val limits = AutomationLimits { 1 }
+        val one = RunAutomationsUseCaseImpl(repository, launcher, PlainSecrets, owners, clock, limits = limits)
         launcher.working += one.trigger(automation.id, signed(automation, key = "1"), body).run.sessionId!!
         val payload = buildJsonObject { putJsonObject("ticket") { put("number", "TKT-1") } }
         assertEquals(RunStatus.QUEUED, one.test(aliceAuto, automation.id, payload, "t1").run.status)
         assertEquals(1, launcher.launched.size)
         // The default cap is two: with one working session a second still starts.
         assertEquals(RunStatus.STARTED, runs.test(aliceAuto, automation.id, payload, "t2").run.status)
+    }
+
+    @Test
+    fun theCapIsReadAtEachDecisionSoRaisingItStartsTheWaitingRun() = runTest {
+        val automation = roomy()
+        var cap = 1
+        val capped = RunAutomationsUseCaseImpl(
+            repository, launcher, PlainSecrets, owners, clock, limits = AutomationLimits { cap },
+        )
+        launcher.working += capped.trigger(automation.id, signed(automation, key = "1"), body).run.sessionId!!
+        val waiting = capped.trigger(automation.id, signed(automation, key = "2"), body).run
+        assertEquals(RunStatus.QUEUED, waiting.status)
+        cap = 2
+        capped.tick()
+        assertEquals(RunStatus.STARTED, repository.runs.getValue(waiting.id).status)
     }
 
     @Test
@@ -497,7 +517,7 @@ class RunAutomationsTest {
         val automation = roomy()
         fillCap(automation)
         val waiting = runs.trigger(automation.id, signed(automation, key = "3"), body).run
-        val cancelled = runs.cancel(aliceAuto, automation.id, waiting.id)
+        val cancelled = runs.cancel(testActor, aliceAuto, automation.id, waiting.id)
         assertEquals(RunStatus.CANCELLED, cancelled.status)
         assertEquals("cancelled", cancelled.reason)
         assertEquals(cancelled, repository.runs.getValue(waiting.id))
@@ -508,7 +528,32 @@ class RunAutomationsTest {
         runs.tick()
         assertEquals(RunStatus.CANCELLED, repository.runs.getValue(waiting.id).status)
         assertEquals(2, launcher.launched.size)
-        assertFailsWith<AutomationRunEndedException> { runs.cancel(aliceAuto, automation.id, waiting.id) }
+        assertFailsWith<AutomationRunEndedException> { runs.cancel(testActor, aliceAuto, automation.id, waiting.id) }
+    }
+
+    @Test
+    fun aCancelIsWrittenToTheOrganizationsAuditLogWithoutAnyPromptOrPayload() = runTest {
+        val records = mutableListOf<OrgAuditRecord>()
+        val audited = RunAutomationsUseCaseImpl(
+            repository, launcher, PlainSecrets, owners, clock, audit = OrgAuditTrail { records += it },
+        )
+        val automation = roomy()
+        val started = audited.trigger(automation.id, signed(automation, key = "1"), body).run
+        launcher.working += started.sessionId!!
+        assertFailsWith<AutomationRunNotFoundException> {
+            audited.cancel(testActor, aliceAuto, automation.id, Uuid.random())
+        }
+        assertTrue(records.isEmpty(), "A refused cancel writes nothing")
+        audited.cancel(testActor, daveAuto, automation.id, started.id)
+        val record = records.single()
+        assertEquals("automation.run_cancelled", record.event)
+        assertEquals(automation.orgId, record.orgId)
+        assertEquals(testActor, record.actor)
+        assertEquals("automation", record.subjectType)
+        assertEquals("${automation.id}/${started.id}", record.subjectId)
+        assertEquals(mapOf("source" to "webhook", "was" to "started"), record.details)
+        assertFailsWith<AutomationRunEndedException> { audited.cancel(testActor, daveAuto, automation.id, started.id) }
+        assertEquals(1, records.size, "An ended run is not cancelled twice")
     }
 
     @Test
@@ -516,36 +561,36 @@ class RunAutomationsTest {
         val automation = roomy()
         val started = runs.trigger(automation.id, signed(automation, key = "1"), body).run
         launcher.working += started.sessionId!!
-        val cancelled = runs.cancel(daveAuto, automation.id, started.id)
+        val cancelled = runs.cancel(testActor, daveAuto, automation.id, started.id)
         assertEquals(RunStatus.CANCELLED, cancelled.status)
         assertEquals("session-1", cancelled.sessionId)
         assertEquals(listOf("${aliceAuto.memberId}:session-1"), launcher.paused)
         assertEquals(RunStatus.CANCELLED, repository.runs.getValue(started.id).status)
         val next = runs.trigger(automation.id, signed(automation, key = "2"), body).run
         launcher.working += next.sessionId!!
-        assertEquals(RunStatus.CANCELLED, runs.cancel(aliceKey, automation.id, next.id).status)
+        assertEquals(RunStatus.CANCELLED, runs.cancel(testActor, aliceKey, automation.id, next.id).status)
     }
 
     @Test
     fun aRunThatEndedOrWhoseSessionIsOverCannotBeCancelled() = runTest {
         val automation = roomy()
         val idle = runs.trigger(automation.id, signed(automation, key = "1"), body).run
-        assertFailsWith<AutomationRunEndedException> { runs.cancel(aliceAuto, automation.id, idle.id) }
+        assertFailsWith<AutomationRunEndedException> { runs.cancel(testActor, aliceAuto, automation.id, idle.id) }
         assertEquals(RunStatus.STARTED, repository.runs.getValue(idle.id).status)
         launcher.working += idle.sessionId!!
         launcher.pauses = false
-        assertFailsWith<AutomationRunEndedException> { runs.cancel(aliceAuto, automation.id, idle.id) }
+        assertFailsWith<AutomationRunEndedException> { runs.cancel(testActor, aliceAuto, automation.id, idle.id) }
         launcher.pauses = true
         repository.runs[idle.id] = idle.copy(sessionId = null)
-        assertFailsWith<AutomationRunEndedException> { runs.cancel(aliceAuto, automation.id, idle.id) }
+        assertFailsWith<AutomationRunEndedException> { runs.cancel(testActor, aliceAuto, automation.id, idle.id) }
         repository.runs[idle.id] = idle
         // Ended by someone else while the session is being paused.
         launcher.onPause = { repository.runs[idle.id] = idle.copy(status = RunStatus.FAILED) }
-        assertFailsWith<AutomationRunEndedException> { runs.cancel(aliceAuto, automation.id, idle.id) }
+        assertFailsWith<AutomationRunEndedException> { runs.cancel(testActor, aliceAuto, automation.id, idle.id) }
         launcher.onPause = {}
         for (status in listOf(RunStatus.FAILED, RunStatus.SKIPPED_OVERLAP, RunStatus.INVALID_PAYLOAD)) {
             repository.runs[idle.id] = idle.copy(status = status)
-            assertFailsWith<AutomationRunEndedException> { runs.cancel(aliceAuto, automation.id, idle.id) }
+            assertFailsWith<AutomationRunEndedException> { runs.cancel(testActor, aliceAuto, automation.id, idle.id) }
         }
     }
 
@@ -555,10 +600,12 @@ class RunAutomationsTest {
         val other = hook(webhookDefinition("Other"))
         val run = runs.trigger(automation.id, signed(automation, key = "1"), body).run
         launcher.working += run.sessionId!!
-        assertFailsWith<AutomationNotFoundException> { runs.cancel(bobAuto, automation.id, run.id) }
-        assertFailsWith<AutomationNotFoundException> { runs.cancel(aliceAuto, Uuid.random(), run.id) }
-        assertFailsWith<AutomationRunNotFoundException> { runs.cancel(aliceAuto, automation.id, Uuid.random()) }
-        assertFailsWith<AutomationRunNotFoundException> { runs.cancel(aliceAuto, other.id, run.id) }
+        assertFailsWith<AutomationNotFoundException> { runs.cancel(testActor, bobAuto, automation.id, run.id) }
+        assertFailsWith<AutomationNotFoundException> { runs.cancel(testActor, aliceAuto, Uuid.random(), run.id) }
+        assertFailsWith<AutomationRunNotFoundException> {
+            runs.cancel(testActor, aliceAuto, automation.id, Uuid.random())
+        }
+        assertFailsWith<AutomationRunNotFoundException> { runs.cancel(testActor, aliceAuto, other.id, run.id) }
         assertEquals(RunStatus.STARTED, repository.runs.getValue(run.id).status)
     }
 
@@ -567,7 +614,7 @@ class RunAutomationsTest {
         val automation = hook(webhookDefinition().copy(overlap = Overlap.ALLOW, maxRunsPerDay = 2))
         val first = runs.trigger(automation.id, signed(automation, key = "1"), body).run
         launcher.working += first.sessionId!!
-        runs.cancel(aliceAuto, automation.id, first.id)
+        runs.cancel(testActor, aliceAuto, automation.id, first.id)
         launcher.working.clear()
         runs.trigger(automation.id, signed(automation, key = "2"), body)
         assertFailsWith<AutomationRateLimitException> {

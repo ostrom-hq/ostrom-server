@@ -26,6 +26,7 @@ import run.ostrom.server.automations.fakes.RecordingLauncher
 import run.ostrom.server.automations.fakes.RecordingWorkflows
 import run.ostrom.server.automations.fakes.TestClock
 import run.ostrom.server.automations.fakes.aliceAuto
+import run.ostrom.server.automations.fakes.testActor
 import run.ostrom.server.automations.fakes.daveAuto
 import run.ostrom.server.automations.fakes.workflowDefinition
 import run.ostrom.server.automations.presentation.AutomationActionRequest
@@ -224,12 +225,12 @@ class WorkflowActionTest {
     fun cancellingAStartedRunCancelsItsWorkflowRunAsTheOwnerWhoeverCancels() = runTest {
         val automation = manage.create(aliceAuto, workflowDefinition()).automation
         val run = runs.test(aliceAuto, automation.id, null, "t1").run
-        val cancelled = runs.cancel(daveAuto, automation.id, run.id)
+        val cancelled = runs.cancel(testActor, daveAuto, automation.id, run.id)
         assertEquals(RunStatus.CANCELLED, cancelled.status)
         assertEquals(listOf("${aliceAuto.memberId}:wfr_1"), workflows.cancelled)
         val other = runs.test(aliceAuto, automation.id, null, "t2").run
         workflows.cancels = false
-        assertFailsWith<AutomationRunEndedException> { runs.cancel(aliceAuto, automation.id, other.id) }
+        assertFailsWith<AutomationRunEndedException> { runs.cancel(testActor, aliceAuto, automation.id, other.id) }
         assertEquals(RunStatus.STARTED, repository.runs.getValue(other.id).status)
     }
 

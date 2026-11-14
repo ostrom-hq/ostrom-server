@@ -231,12 +231,16 @@ data class CloudProfileInput(
  * @property backgroundWorkMaxMinutes How long the agent's background work (background subagents and commands,
  *   monitors, scheduled wake-ups) holds off the idle pause, from the start of its unbroken stretch; 0 never holds it
  *   off (TeamCode af1a5f7b).
+ * @property maxRunningAutomationsPerMember How many cloud sessions started by a member's automations may work at
+ *   once, per owner in this organization; a run over it waits queued (up to 30 minutes). A run started by a workflow
+ *   action does not count (TeamCode's team setting).
  * @property updatedAt When it was saved last; null while nothing is stored.
  * @property updatedBy The member who saved it last; null while nothing is stored.
  */
 @Serializable
 data class CloudSettings(
     val backgroundWorkMaxMinutes: Int = DEFAULT_BACKGROUND_WORK_MAX_MINUTES,
+    val maxRunningAutomationsPerMember: Int = DEFAULT_MAX_RUNNING_AUTOMATIONS,
     @Transient val updatedAt: Instant? = null,
     @Transient val updatedBy: Uuid? = null,
 ) {
@@ -247,5 +251,11 @@ data class CloudSettings(
 
         /** The largest cap: a day. */
         const val MAX_BACKGROUND_WORK_MINUTES = 1440
+
+        /** The cap of running automations per member while the organization saved none, TeamCode's. */
+        const val DEFAULT_MAX_RUNNING_AUTOMATIONS = 2
+
+        /** The largest cap of running automations per member. */
+        const val MAX_RUNNING_AUTOMATIONS = 100
     }
 }

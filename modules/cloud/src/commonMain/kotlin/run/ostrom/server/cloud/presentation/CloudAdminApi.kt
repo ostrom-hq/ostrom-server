@@ -215,6 +215,8 @@ class CloudSettingsApi
 data class CloudSettingsResponse(
     /** How long background work holds off the idle pause, in minutes. */
     val backgroundWorkMaxMinutes: Int,
+    /** How many automation runs of one member may work at once in the organization. */
+    val maxRunningAutomationsPerMember: Int,
     /** The last save; absent while nothing is stored. */
     val updatedAt: String? = null,
     /** Who saved last; absent while nothing is stored. */
@@ -226,6 +228,8 @@ data class CloudSettingsResponse(
 data class SaveCloudSettingsRequest(
     /** How long background work holds off the idle pause, in minutes. */
     val backgroundWorkMaxMinutes: Int,
+    /** The cap of running automation runs per member, 1 to 100; absent keeps the stored one. */
+    val maxRunningAutomationsPerMember: Int? = null,
     /** The `updatedAt` of the settings edited; absent while nothing is stored. */
     val updatedAt: String? = null,
 )

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.automations
 
+import run.ostrom.server.automations.domain.AutomationLimits
 import run.ostrom.server.automations.domain.AutomationWorkflows
 import run.ostrom.server.automations.domain.AutomationsRepository
 import run.ostrom.server.automations.domain.ImportAutomationsUseCase
@@ -16,6 +17,8 @@ import run.ostrom.server.automations.fakes.RecordingWorkflows
 import run.ostrom.server.automations.fakes.TestClock
 import run.ostrom.server.automations.fakes.aliceAuto
 import run.ostrom.server.automations.fakes.workflowDefinition
+import run.ostrom.server.kernel.audit.DiscardingOrgAuditTrail
+import run.ostrom.server.kernel.audit.OrgAuditTrail
 import run.ostrom.server.kernel.config.MapConfigSource
 import kotlinx.coroutines.test.runTest
 import org.koin.dsl.koinApplication
@@ -23,6 +26,7 @@ import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 import kotlin.time.Clock
 
 class AutomationsModuleRegistrationTest {
@@ -46,6 +50,7 @@ class AutomationsModuleRegistrationTest {
                     single<WebhookSecrets> { PlainSecrets }
                     single<Clock> { TestClock() }
                     single<AutomationWorkflows> { workflows }
+                    single<OrgAuditTrail> { DiscardingOrgAuditTrail() }
                 },
             )
         }.koin
@@ -60,6 +65,27 @@ class AutomationsModuleRegistrationTest {
         assertFailsWith<InvalidAutomationException> {
             koin.get<ImportAutomationsUseCase>().import(aliceAuto.orgId, imported, dryRun = false)
         }
+    }
+
+    @Test
+    fun aBoundLimitReplacesTheDefaultCapOfTwo() = runTest {
+        val koin = koinApplication {
+            allowOverride(true)
+            modules(
+                AutomationsModule.koinModule,
+                module {
+                    single<AutomationsRepository> { InMemoryAutomations() }
+                    single<WebhookSecrets> { PlainSecrets }
+                    single<Clock> { TestClock() }
+                    single<OrgAuditTrail> { DiscardingOrgAuditTrail() }
+                    single<AutomationLimits> { AutomationLimits { 9 } }
+                },
+            )
+        }.koin
+        assertNotNull(koin.get<RunAutomationsUseCase>())
+        assertEquals(9, koin.get<AutomationLimits>().maxRunningPerMember(aliceAuto.orgId))
+        // The module's definitions are shared by every application: closing drops the use case this one built.
+        koin.close()
     }
 
     @Test
