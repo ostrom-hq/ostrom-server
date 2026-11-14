@@ -17,6 +17,7 @@ import io.ktor.server.plugins.callid.callId
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.response.respond
 import kotlinx.coroutines.CancellationException
+import java.sql.SQLException
 
 /** The HTTP status of each [ErrorKind] (CONVENTIONS section 3.2). */
 val ErrorKind.httpStatus: HttpStatusCode
@@ -101,8 +102,37 @@ private suspend fun ApplicationCall.answerFailure(cause: Throwable, logger: Logg
             respondError(ErrorKind.INTERNAL, "Internal error.")
         }
         else -> {
-            logger.error("unexpected failure", fields + mapOf("error" to cause::class.simpleName))
-            respondError(ErrorKind.INTERNAL, "Internal error.")
+            val jdbc = cause.jdbcFailure()
+            when {
+                jdbc?.sqlState == UNIQUE_VIOLATION -> respondError(ErrorKind.CONFLICT, "The resource already exists.")
+                jdbc != null -> {
+                    // As for SQLError: the SQLSTATE and the class, never the message (it quotes row values).
+                    val state = listOfNotNull(jdbc.sqlState?.let { "sql_state" to it })
+                    logger.error("database failure", fields + mapOf("error" to jdbc::class.simpleName) + state)
+                    respondError(ErrorKind.INTERNAL, "Internal error.")
+                }
+                else -> {
+                    logger.error("unexpected failure", fields + mapOf("error" to cause::class.simpleName))
+                    respondError(ErrorKind.INTERNAL, "Internal error.")
+                }
+            }
         }
     }
 }
+
+/** PostgreSQL's SQLSTATE of a unique violation. */
+private const val UNIQUE_VIOLATION = "23505"
+
+/**
+ * The JDBC failure behind this one, for the modules on Exposed: an `ExposedSQLException` (a [SQLException] whose
+ * SQLSTATE is its cause's), a [SQLException] itself, or one wrapped in another exception's causes. Null when no
+ * cause is a database failure.
+ */
+private fun Throwable.jdbcFailure(): SQLException? {
+    val failures = generateSequence(this) { it.cause }.take(MAX_CAUSES).filterIsInstance<SQLException>().toList()
+    // A unique violation anywhere in the causes wins over a wrapper's own SQLSTATE (a pool's, or none).
+    return failures.firstOrNull { it.sqlState == UNIQUE_VIOLATION } ?: failures.firstOrNull()
+}
+
+/** How deep the causes are searched: a cycle of causes never loops. */
+private const val MAX_CAUSES = 8

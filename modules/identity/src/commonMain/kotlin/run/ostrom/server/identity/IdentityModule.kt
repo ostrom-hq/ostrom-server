@@ -170,6 +170,7 @@ import run.ostrom.server.kernel.auth.PhoneUnlockProofs
 import run.ostrom.server.kernel.auth.ServiceKeyAudit
 import run.ostrom.server.kernel.auth.SignOutListener
 import run.ostrom.server.kernel.auth.TokenAuthenticator
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.database.repeatDue
@@ -216,18 +217,18 @@ object IdentityModule : ServerModule {
         single { IdentityConfig.from(get()) }
         single<SecretGenerator> { SecureSecretGenerator() }
         single<SecretHasher> { Sha256SecretHasher() }
-        single { RateLimiterImpl(get(), get()) }
+        single { RateLimiterImpl(get<JdbcDatabase>(), get()) }
         single<RateLimiter> { get<RateLimiterImpl>() }
         single<RateLimitWindows> { get<RateLimiterImpl>() }
 
-        single<UsersRepository> { UsersRepositoryImpl(get()) }
-        single<LinkedIdentities> { LinkedIdentitiesImpl(get()) }
-        single<WebSessionsRepository> { WebSessionsRepositoryImpl(get()) }
-        single<ApiTokensRepository> { ApiTokensRepositoryImpl(get(), get()) }
-        single<ServiceKeysRepository> { ServiceKeysRepositoryImpl(get()) }
-        single<ElevatedTokensRepository> { ElevatedTokensRepositoryImpl(get()) }
-        single<DeviceAuthorizationsRepository> { DeviceAuthorizationsRepositoryImpl(get()) }
-        single<AuditRepository> { AuditRepositoryImpl(get()) }
+        single<UsersRepository> { UsersRepositoryImpl(get<JdbcDatabase>()) }
+        single<LinkedIdentities> { LinkedIdentitiesImpl(get<JdbcDatabase>()) }
+        single<WebSessionsRepository> { WebSessionsRepositoryImpl(get<JdbcDatabase>()) }
+        single<ApiTokensRepository> { ApiTokensRepositoryImpl(get<JdbcDatabase>(), get()) }
+        single<ServiceKeysRepository> { ServiceKeysRepositoryImpl(get<JdbcDatabase>()) }
+        single<ElevatedTokensRepository> { ElevatedTokensRepositoryImpl(get<JdbcDatabase>()) }
+        single<DeviceAuthorizationsRepository> { DeviceAuthorizationsRepositoryImpl(get<JdbcDatabase>()) }
+        single<AuditRepository> { AuditRepositoryImpl(get<JdbcDatabase>()) }
 
         single<AuditLog> { AuditLogImpl(get(), get(), get(), get()) }
         single { TransactionalAuditLog(get()) }
@@ -243,7 +244,7 @@ object IdentityModule : ServerModule {
             val config = get<IdentityConfig>()
             CredentialAuthenticatorImpl(get(), get(), get(), get(), config.allowedOrigins, config.sessionCookiePrefix)
         }
-        single<SetupLinksRepository> { SetupLinksRepositoryImpl(get()) }
+        single<SetupLinksRepository> { SetupLinksRepositoryImpl(get<JdbcDatabase>()) }
         single(named(GITHUB_SIGN_IN_SETTINGS.name)) { GITHUB_SIGN_IN_SETTINGS }
         single(named(GOOGLE_SIGN_IN_SETTINGS.name)) { GOOGLE_SIGN_IN_SETTINGS }
         single(named(SIGN_UP_SETTINGS.name)) { SIGN_UP_SETTINGS }
@@ -302,8 +303,8 @@ object IdentityModule : ServerModule {
         single<SignInMethodsSource> {
             InstanceSignInMethods(get(), get(HTTP), get(), get<MailAvailability>()::available)
         }
-        single<OAuthAttemptsRepository> { OAuthAttemptsRepositoryImpl(get()) }
-        single<MagicLinksRepository> { MagicLinksRepositoryImpl(get()) }
+        single<OAuthAttemptsRepository> { OAuthAttemptsRepositoryImpl(get<JdbcDatabase>()) }
+        single<MagicLinksRepository> { MagicLinksRepositoryImpl(get<JdbcDatabase>()) }
         single<StartOAuthSignInUseCase> { StartOAuthSignInUseCaseImpl(get(), get(), get()) }
         single { SignInServices(get(), get(), get(), get(), get<IdentityConfig>()::callbackUrl) }
         single<CompleteOAuthSignInUseCase> { CompleteOAuthSignInUseCaseImpl(get(), get(), get(), get(), get(), get()) }
@@ -317,17 +318,17 @@ object IdentityModule : ServerModule {
         single<LauncherLoginUseCase> { LauncherLoginUseCaseImpl(get(), get(), get(), get()) }
         single<GrantSignUpUseCase> { GrantSignUpUseCaseImpl(get(), get()) }
         single { SignInRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
-        single<MobileCodesRepository> { MobileCodesRepositoryImpl(get()) }
-        single<MobileTokensRepository> { MobileTokensRepositoryImpl(get()) }
-        single<PhoneUnlockProofs> { PhoneUnlockProofsImpl(get()) }
-        single<NotificationPreferencesRepository> { NotificationPreferencesRepositoryImpl(get()) }
+        single<MobileCodesRepository> { MobileCodesRepositoryImpl(get<JdbcDatabase>()) }
+        single<MobileTokensRepository> { MobileTokensRepositoryImpl(get<JdbcDatabase>()) }
+        single<PhoneUnlockProofs> { PhoneUnlockProofsImpl(get<JdbcDatabase>()) }
+        single<NotificationPreferencesRepository> { NotificationPreferencesRepositoryImpl(get<JdbcDatabase>()) }
         single<CompleteMobileSignInUseCase> { CompleteMobileSignInUseCaseImpl(get(), get(), get(), get(), get()) }
         single<ExchangeMobileCodeUseCase> { ExchangeMobileCodeUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single<UnlockMobileAppUseCase> { UnlockMobileAppUseCaseImpl(get(), get(), get(), get(), get()) }
         single<GetNotificationPreferencesUseCase> { GetNotificationPreferencesUseCaseImpl(get()) }
         single<SetNotificationPreferencesUseCase> { SetNotificationPreferencesUseCaseImpl(get(), get()) }
         single { MobileRoutesDependencies(get(), get(), get(), get()) }
-        single<SignInLinksRepository> { SignInLinksRepositoryImpl(get()) }
+        single<SignInLinksRepository> { SignInLinksRepositoryImpl(get<JdbcDatabase>()) }
         single<CreateSignInLinkUseCase> { CreateSignInLinkUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single<ExchangeSignInLinkUseCase> { ExchangeSignInLinkUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single { SessionRoutesDependencies(get(), get(), get()) }

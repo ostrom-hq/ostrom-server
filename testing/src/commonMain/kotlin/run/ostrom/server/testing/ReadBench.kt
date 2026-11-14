@@ -169,6 +169,8 @@ private fun SentStatement.copy(prefix: String): Statement {
     val copy = Statement.create(prefix + sql)
     // A null bound with `bindNull` is a typed null, bound again as it is.
     statement?.namedParametersValues.orEmpty().forEach { (name, value) -> copy.bind(name, value) }
+    // An Exposed statement's values are bound by position (ExposedRecorder).
+    statement?.positionalParametersValues.orEmpty().forEachIndexed { index, value -> copy.bind(index, value) }
     return copy
 }
 

@@ -186,6 +186,9 @@ class ReplayLoadPostgresTest {
         }.map { sent ->
             val explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) ${sent.sql}")
             sent.statement?.namedParametersValues.orEmpty().forEach { (name, value) -> explain.bind(name, value) }
+            // The modules on Exposed send `?` placeholders, recorded with their values by position (ExposedRecorder).
+            sent.statement?.positionalParametersValues.orEmpty()
+                .forEachIndexed { index, value -> explain.bind(index, value) }
             server.driver.withOrganization(orgA) { tx ->
                 tx.fetchAll(explain).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
             }

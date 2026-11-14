@@ -2,12 +2,11 @@
 
 package run.ostrom.server.identity
 
-import run.ostrom.server.identity.infrastructure.LIVE_ELEVATED_TOKENS_OF_USER_SQL
-import run.ostrom.server.identity.infrastructure.LIVE_ELEVATED_TOKENS_SQL
+import run.ostrom.server.identity.infrastructure.liveElevatedTokens
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.withOrganization
+import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -51,19 +50,16 @@ class ElevatedTokensQueryPlansTest {
         fixtures.execute(seed(orgB, admin, "ADMIN", 400, "f")).getOrThrow()
         fixtures.execute("VACUUM ANALYZE identity_api_tokens").getOrThrow()
 
-        val all = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $LIVE_ELEVATED_TOKENS_SQL")
-        val everyMembers = plan(server.driver, all)
+        val everyMembers = server.plan(null)
         assertFalse("Seq Scan on identity_api_tokens" in everyMembers, "The list scans the table:\n$everyMembers")
         assertTrue("identity_api_tokens_elevated" in everyMembers, "The list skips its index:\n$everyMembers")
 
-        val ofOne = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $LIVE_ELEVATED_TOKENS_OF_USER_SQL").bind("user", admin)
-        val own = plan(server.driver, ofOne)
+        val own = server.plan(admin)
         assertFalse("Seq Scan on identity_api_tokens" in own, "A member's list scans the table:\n$own")
     }
 
-    private suspend fun plan(driver: Driver, statement: Statement): String =
-        driver.withOrganization(orgA) { tx ->
-            tx.fetchAll(statement.bind("org", orgA).bind("now", Clock.System.now()).bind("limit", 100))
-                .getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
+    private suspend fun TestServer.plan(owner: Uuid?): String =
+        koin.get<JdbcDatabase>().withOrganization(orgA) {
+            plan { liveElevatedTokens(orgA, owner, Clock.System.now(), 100) }
         }
 }

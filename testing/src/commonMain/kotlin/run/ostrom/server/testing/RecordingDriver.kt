@@ -25,8 +25,8 @@ class SentStatement(val sql: String, val statement: Statement?, val transaction:
  * statements of one request, to count them (no N+1) and replay them under `EXPLAIN` ([explain]).
  *
  * Recorded: `execute` and `fetchAll`, on the pool and inside [transaction], the only ways the server reaches the
- * database (`begin`, `transactionCatching` and the flows of `fetch` are passed through unrecorded: no server code
- * uses them on a read route).
+ * database through sqlx4k (`begin`, `transactionCatching` and the flows of `fetch` are passed through unrecorded: no
+ * server code uses them on a read route); and every statement of the modules on Exposed ([ExposedRecorder]).
  *
  * @param inner The pool.
  */
@@ -52,6 +52,9 @@ class RecordingDriver(private val inner: Driver) : Driver by inner {
             sent.store(null)
         }
     }
+
+    /** Whether a [record] runs. */
+    internal val isRecording: Boolean get() = sent.load() != null
 
     internal fun newTransaction(): Int = transactions.addAndFetch(1)
 

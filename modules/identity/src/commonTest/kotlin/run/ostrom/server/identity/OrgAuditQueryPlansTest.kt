@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.identity
 
-import run.ostrom.server.identity.infrastructure.orgAuditSql
-import run.ostrom.server.kernel.database.inOrg
+import run.ostrom.server.identity.domain.OrgAuditQuery
+import run.ostrom.server.identity.infrastructure.OrgAuditPage
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -28,12 +27,8 @@ class OrgAuditQueryPlansTest {
             "CAST('$org' AS uuid), NULL, CASE WHEN i % 10 = 0 THEN 'org.renamed' ELSE 'budget.changed' END, 't', " +
             "'x' || i, '{}', now(), md5('p' || i), md5('h' || i), 's', 'k' FROM generate_series(1, $count) AS i"
 
-    private suspend fun Driver.plan(sql: String, before: Long, bind: Statement.() -> Statement = { this }): String =
-        inOrg(orgA) {
-            val statement = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql")
-                .bind("chain", orgA.toString()).bind("before", before).bind("limit", PAGE + 1).bind()
-            fetchAll(statement).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
-        }
+    private suspend fun JdbcDatabase.plan(query: OrgAuditQuery): String =
+        inOrg(orgA) { plan { OrgAuditPage(orgA, query.copy(limit = PAGE + 1)).query() } }
 
     @Test
     fun theAuditPageAndItsLinksReadTheChainsIndex() = serverTest(listOf(IdentityModule)) { server ->
@@ -43,12 +38,11 @@ class OrgAuditQueryPlansTest {
         fixtures.execute(seed(orgA, 5_000)).getOrThrow()
         fixtures.execute("VACUUM ANALYZE identity_audit_events").getOrThrow()
 
+        val database = server.koin.get<JdbcDatabase>()
         val plans = linkedMapOf(
-            "newest page" to server.driver.plan(orgAuditSql(byActor = false, byAction = false), Long.MAX_VALUE),
-            "page by its cursor" to server.driver.plan(orgAuditSql(byActor = false, byAction = false), 2_500),
-            "one event name" to server.driver.plan(orgAuditSql(byActor = false, byAction = true), Long.MAX_VALUE) {
-                bind("action", "org.renamed")
-            },
+            "newest page" to database.plan(OrgAuditQuery()),
+            "page by its cursor" to database.plan(OrgAuditQuery(beforeSequence = 2_500)),
+            "one event name" to database.plan(OrgAuditQuery(action = "org.renamed")),
         )
         val report = plans.entries.joinToString("\n\n") { (name, plan) -> "-- $name\n$plan" }
         println("-- audit log plans\n$report")
