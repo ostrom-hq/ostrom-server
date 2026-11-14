@@ -108,7 +108,7 @@ interface GatesRepository {
  * The reads and writes of one transaction. Locking reads hold their rows until the transaction ends. The lock of a
  * session ([GateSessionEnds.lockSession]) comes before every other lock of the transaction.
  */
-interface GatesTransaction : GateSessionEnds {
+interface GatesTransaction : GateSessionEnds, GateAnnouncements {
     /**
      * Serializes every transaction on the same key (a PostgreSQL advisory lock): two hooks asking for the same action
      * at once create one gate.

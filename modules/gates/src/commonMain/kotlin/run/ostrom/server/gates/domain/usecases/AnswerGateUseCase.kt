@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.gates.domain.usecases
 
+import run.ostrom.server.kernel.events.OrgEventType
 import run.ostrom.server.gates.domain.models.ActorKind
 import run.ostrom.server.gates.domain.models.Answer
 import run.ostrom.server.gates.domain.models.AnswerChannel
@@ -124,6 +125,7 @@ class AnswerGateUseCaseImpl(
             )
             updateGate(next)
             updateRequests(answered)
+            announce(OrgEventType.APPROVAL_DECIDED, next, answered)
             next to answered
         }
         val requests = decided.second

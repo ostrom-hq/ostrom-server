@@ -86,7 +86,7 @@ object GatesModule : ServerModule {
     override val name: String = "gates"
 
     override val koinModule: Module = module {
-        single { PostgresGatesRepository(get()) }
+        single { PostgresGatesRepository(get(), get(), getOrNull()) }
         single<GatesRepository> { get<PostgresGatesRepository>() }
         // The history of boundary actions, which the rules' replay reads.
         single<GateHistory> { get<PostgresGatesRepository>() }

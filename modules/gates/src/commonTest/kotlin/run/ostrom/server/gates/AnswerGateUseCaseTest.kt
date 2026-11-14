@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.gates
 
+import run.ostrom.server.kernel.events.OrgEventType
 import run.ostrom.server.gates.domain.models.ActorKind
 import run.ostrom.server.gates.domain.models.Answer
 import run.ostrom.server.gates.domain.models.AnswerChannel
@@ -132,6 +133,15 @@ class AnswerGateUseCaseTest {
         assertEquals("rcpt_${view.gate.id}", answered.gate.receiptId)
         assertEquals("rcpt_${view.gate.id}", bench.repository.gates.getValue(view.gate.id).receiptId)
         assertEquals(1, bench.notifier.decided.size)
+        assertEquals(
+            Triple(
+                OrgEventType.APPROVAL_DECIDED,
+                view.gate.id,
+                listOf(RequestStatus.CLOSED, RequestStatus.APPROVED, RequestStatus.CLOSED),
+            ),
+            bench.repository.announced.last(),
+            "Every request of the gate is answered in the feed",
+        )
         assertTrue(answered.waitingFor.isEmpty())
 
         assertFailsWith<GateAlreadyDecidedException>("The closed request cannot open it again") {

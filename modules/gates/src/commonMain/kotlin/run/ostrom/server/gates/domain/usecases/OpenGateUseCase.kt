@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.gates.domain.usecases
 
+import run.ostrom.server.kernel.events.OrgEventType
 import run.ostrom.core.api.models.CheckAttestation
 import run.ostrom.server.gates.domain.models.ActorKind
 import run.ostrom.server.gates.domain.models.ApprovalRequest
@@ -186,7 +187,11 @@ class OpenGateUseCaseImpl(
             ApprovalRequest(Uuid.random(), gate.id, gate.orgId, approver, RequestStatus.PENDING, createdAt = now)
         }
         insertGate(gate)
-        if (requests.isNotEmpty()) insertRequests(requests)
+        // Only an enforced gate asks approvers: each is told through the feed, in this transaction, last.
+        if (requests.isNotEmpty()) {
+            insertRequests(requests)
+            announce(OrgEventType.APPROVAL_REQUESTED, gate, requests)
+        }
         return Opened(gate, requests, created = true)
     }
 

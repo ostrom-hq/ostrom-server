@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.gates
 
+import run.ostrom.server.kernel.events.OrgEventType
 import run.ostrom.server.gates.domain.models.Answer
 import run.ostrom.server.gates.domain.models.AskedVia
 import run.ostrom.server.gates.domain.models.Evidence
@@ -50,6 +51,11 @@ class OpenGateUseCaseTest {
         )
         assertEquals(listOf("rev-b"), view.waitingFor, "The asker is not waited for while someone else can say yes")
         assertEquals(1, bench.notifier.requested.size)
+        assertEquals(
+            listOf(Triple(OrgEventType.APPROVAL_REQUESTED, view.gate.id, List(2) { RequestStatus.PENDING })),
+            bench.repository.announced,
+            "Each approver's request is in the feed, in the gate's transaction",
+        )
         assertEquals(listOf("lyes"), view.gate.askedBy)
         assertEquals(listOf(SESSION), view.gate.sessionIds)
     }
@@ -62,6 +68,7 @@ class OpenGateUseCaseTest {
 
         assertEquals(first.gate.id, second.gate.id, "A piped push is the same push")
         assertEquals(1, bench.notifier.requested.size, "Nobody is disturbed twice")
+        assertEquals(1, bench.repository.announced.size, "A joined gate asks nobody again")
         assertEquals(0, bench.repository.gateUpdates, "Nothing changed: the gate is not rewritten")
         assertEquals(1, bench.repository.gates.size)
     }

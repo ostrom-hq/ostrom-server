@@ -39,6 +39,16 @@ enum class OrgEventType(val wire: String, val subject: String) {
      * session's owner; the subject is the session.
      */
     TODO_UPDATED("cloud.todo", "session"),
+
+    /**
+     * A gate asks an approver for their yes (an enforced gate opened): `{approvalId, gateId, repo?}`, never its label
+     * nor its evidence. One per approval request; it belongs to the approver (a login that names no member is left
+     * out); the subject is the request. Ostrom's own: the notifications module tells the approver from it.
+     */
+    APPROVAL_REQUESTED("cloud.approval.requested", "approval"),
+
+    /** A gate was answered: `{approvalId, gateId, status}` (`approved` or `rejected`), one per request of the gate. */
+    APPROVAL_DECIDED("cloud.approval.decided", "approval"),
     ;
 
     /** Reads a wire name. */
