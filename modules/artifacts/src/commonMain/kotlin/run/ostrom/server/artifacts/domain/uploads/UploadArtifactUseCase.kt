@@ -9,6 +9,7 @@ import run.ostrom.server.artifacts.domain.ArtifactEvents
 import run.ostrom.server.artifacts.domain.ArtifactRules
 import run.ostrom.server.artifacts.domain.ArtifactsRepository
 import run.ostrom.server.artifacts.domain.ContentDigest
+import run.ostrom.server.artifacts.domain.PublicationGate
 import run.ostrom.server.artifacts.domain.ensureValid
 import run.ostrom.server.artifacts.domain.storage.ArtifactContents
 import run.ostrom.server.artifacts.domain.storage.UploadChunks
@@ -70,8 +71,9 @@ interface UploadArtifactUseCase {
  *
  * @property uploads The uploads, without bytes.
  * @property chunks Their chunks, in the bucket.
+ * @property gate The quotas a new artifact's draft is checked on.
  */
-class UploadStores(val uploads: ArtifactUploadsRepository, val chunks: UploadChunks)
+class UploadStores(val uploads: ArtifactUploadsRepository, val chunks: UploadChunks, val gate: PublicationGate)
 
 /** [UploadArtifactUseCase]. */
 internal class UploadArtifactUseCaseImpl(
@@ -90,6 +92,8 @@ internal class UploadArtifactUseCaseImpl(
         val announced = announced(files)
         val now = clock.now()
         val existing = artifactId?.let { rules.owned(caller, it) }
+        // A new artifact counts in `artifactsPerMember` from its draft on: TeamCode checks it here and at its commit.
+        if (existing == null) stores.gate.withinQuotas(caller.orgId, caller.memberId, 0, newArtifact = true)
         val target = existing ?: draftOf(caller, now)
         val draft = target.takeIf { existing == null }
         val held = if (existing == null) emptySet() else artifacts.blobDigests(caller.orgId, existing.id)

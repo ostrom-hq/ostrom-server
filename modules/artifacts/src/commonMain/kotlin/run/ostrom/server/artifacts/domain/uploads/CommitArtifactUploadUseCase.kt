@@ -112,6 +112,8 @@ internal class CommitArtifactUploadUseCaseImpl(
             ?.takeIf { it.artifactId == artifact.id && it.isOpenFor(caller, now) }
             ?: throw ArtifactUploadNotFoundException()
         requireHeld(caller, artifact, files)
+        // The upload's files are in the folder already: the folder is counted as it holds them.
+        gate.withinQuotas(caller.orgId, artifact.ownerId, 0, newArtifact = artifact.draft)
         val settings = settingsOf(caller, artifact, commit)
         val version = ArtifactVersion(
             artifactId = artifact.id,

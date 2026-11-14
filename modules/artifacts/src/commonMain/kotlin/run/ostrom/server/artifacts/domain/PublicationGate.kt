@@ -41,6 +41,18 @@ interface PublicationGate {
      */
     suspend fun admit(caller: ArtifactCaller)
 
+    /**
+     * Refuses a publication that would put the owner or the organization over a quota, the version's folder counted
+     * as it would be (TeamCode's `quotaMemberBytes`, `quotaTeamBytes` and `quotaArtifactsPerMember`).
+     *
+     * @param ownerId The artifact's owner, whose quota a version by anyone counts in.
+     * @param added The bytes the folder gains.
+     * @param newArtifact Whether the publication makes an artifact (counted in `artifactsPerMember`).
+     *
+     * @throws ArtifactQuotaExceededException When it would.
+     */
+    suspend fun withinQuotas(orgId: Uuid, ownerId: String, added: Long, newArtifact: Boolean)
+
     /** Counts a version the caller published. */
     suspend fun published(caller: ArtifactCaller, artifactId: Uuid, at: Instant)
 }
@@ -50,11 +62,13 @@ interface PublicationGate {
  *
  * @param storage The settings.
  * @param publications The publications of the last hour.
+ * @param usages What owners and organizations hold.
  * @param clock The time.
  */
 class PublicationGateImpl(
     private val storage: ArtifactStorageRepository,
     private val publications: ArtifactPublicationsRepository,
+    private val usages: ArtifactUsageRepository,
     private val clock: Clock = Clock.System,
 ) : PublicationGate {
     override suspend fun admit(caller: ArtifactCaller) {
@@ -70,6 +84,21 @@ class PublicationGateImpl(
             val wait = recent.first() + WINDOW - now
             throw ArtifactPublishRateLimitedException(wait.inWholeSeconds + 1)
         }
+    }
+
+    override suspend fun withinQuotas(orgId: Uuid, ownerId: String, added: Long, newArtifact: Boolean) {
+        val quotas = storage.overview(orgId).settings.quotas
+        val usage = usages.usage(orgId, ownerId)
+        val refusal = when {
+            newArtifact && usage.ownerArtifacts >= quotas.artifactsPerMember ->
+                "The owner already holds ${quotas.artifactsPerMember} artifacts, the organization's limit."
+            usage.ownerBytes + added > quotas.memberBytes ->
+                "This publication would put its owner over ${quotas.memberBytes} bytes of artifacts."
+            usage.orgBytes + added > quotas.orgBytes ->
+                "This publication would put the organization over ${quotas.orgBytes} bytes of artifacts."
+            else -> null
+        }
+        if (refusal != null) throw ArtifactQuotaExceededException(refusal)
     }
 
     override suspend fun published(caller: ArtifactCaller, artifactId: Uuid, at: Instant) {

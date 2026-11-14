@@ -67,6 +67,7 @@ internal class PublishArtifactUseCaseImpl(
         val now = clock.now()
         val id = Uuid.random()
         val (recorded, blobs) = record(files)
+        gate.withinQuotas(caller.orgId, caller.memberId, blobs.bytes(), newArtifact = true)
         val artifact = Artifact(
             id = id,
             orgId = caller.orgId,
@@ -92,6 +93,7 @@ internal class PublishArtifactUseCaseImpl(
         checked(caller, id, files)
         val (recorded, blobs) = record(files)
         val known = repository.blobDigests(artifact.orgId, id)
+        gate.withinQuotas(caller.orgId, artifact.ownerId, (blobs - known).bytes(), newArtifact = false)
         val now = clock.now()
         val version = ArtifactVersion(
             artifactId = id,
@@ -249,3 +251,6 @@ internal fun linkSlugFor(access: ArtifactAccess): String? =
 
 /** The event of a publication refused. */
 private const val PUBLISH_REFUSED = "publish_refused"
+
+/** The bytes of distinct contents. */
+private fun Map<String, ByteArray>.bytes(): Long = values.sumOf { it.size.toLong() }
