@@ -5,6 +5,8 @@ import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.audit.OrgAuditTrail
 import run.ostrom.server.mcprelay.domain.HostedProcessChange
 import run.ostrom.server.mcprelay.domain.HostedProcessRecord
+import run.ostrom.server.mcprelay.domain.HostedProcesses
+import run.ostrom.server.mcprelay.domain.ListHostedProcessesUseCase
 import run.ostrom.server.mcprelay.domain.McpAssignment
 import run.ostrom.server.mcprelay.domain.McpRelayRepository
 import run.ostrom.server.mcprelay.domain.McpSharing
@@ -82,12 +84,17 @@ class McpHostedPostgresTest : RelayPostgresHarness() {
         }
 
     @Test
-    fun aRestartIsJournaledWithItsServerAndMemberThenAnsweredWithNoContent() {
+    fun theListAndARestartAreAnsweredOnceAnMcpHostServesThem() {
         val restarted = mutableListOf<Pair<String, Uuid?>>()
         val journal = mutableListOf<OrgAuditRecord>()
         val withHost = module {
             includes(overrides)
             single<OrgAuditTrail> { OrgAuditTrail { journal += it } }
+            single<ListHostedProcessesUseCase> {
+                object : ListHostedProcessesUseCase {
+                    override suspend fun invoke(caller: Caller) = HostedProcesses(true, "1.0.0", emptyList())
+                }
+            }
             single<RestartHostedProcessUseCase> {
                 object : RestartHostedProcessUseCase {
                     override suspend fun invoke(
@@ -104,6 +111,9 @@ class McpHostedPostgresTest : RelayPostgresHarness() {
         }
         serverTest(listOf(SecretsModule, McpRelayModule), withHost) { server ->
             with(server) {
+                val list = client.get("$admin/hosted") { bearerAuth("admin-a") }
+                assertEquals(HttpStatusCode.OK, list.status, list.bodyAsText())
+                assertTrue("\"hostReachable\":true" in list.bodyAsText(), list.bodyAsText())
                 val restart = "$admin/hosted/restart"
                 val shared = sendJson(HttpMethod.Post, restart, McpHostedRestartDto("shared"))
                 assertEquals(HttpStatusCode.NoContent, shared.status, shared.bodyAsText())

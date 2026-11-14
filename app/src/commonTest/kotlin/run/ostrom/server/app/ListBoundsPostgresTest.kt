@@ -24,7 +24,7 @@ import run.ostrom.server.orgs.domain.OrgsRepository
 import run.ostrom.server.testing.Contract
 import run.ostrom.server.testing.SentStatement
 import run.ostrom.server.testing.TestServer
-import run.ostrom.server.testing.serverTest
+import run.ostrom.server.testing.benchTest
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -75,10 +75,11 @@ class ListBoundsPostgresTest {
         single<ArtifactObjectStore> { MatrixBucket() }
     }
 
+    // Every served list, read about ten times each: more than a test's minute, the time of a read bench.
     @Test
     fun everyListOfTheContractBoundsItsPageAndRefusesACursorItDidNotGive() =
-        serverTest(serverModules(), unthrottled) { server ->
-            val contract = Contract.from(EnvironmentConfigSource()) ?: return@serverTest
+        benchTest(serverModules(), unthrottled) { server ->
+            val contract = Contract.from(EnvironmentConfigSource()) ?: return@benchTest
             with(server) {
                 val ada = person("ada")
                 val bob = person("bob")
