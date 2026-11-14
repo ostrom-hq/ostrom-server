@@ -6,10 +6,12 @@ import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.audit.OrgAuditTrail
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.sessions.CloudSessionWakes
+import run.ostrom.server.kernel.sessions.PendingWaitAnswers
 import run.ostrom.server.runners.domain.AllowlistedCloudPlanProvider
 import run.ostrom.server.runners.domain.CloudPlan
 import run.ostrom.server.runners.domain.CloudPlanProvider
 import run.ostrom.server.runners.domain.CloudSession
+import run.ostrom.server.runners.domain.ReconcileCloudSessionUseCase
 import run.ostrom.server.runners.domain.CloudSessionsRepository
 import run.ostrom.server.runners.domain.DesiredState
 import run.ostrom.server.runners.domain.ResumeOutcome
@@ -219,8 +221,11 @@ class CloudSessionsPostgresTest {
                 }
             }
             single<OrgAuditTrail> { OrgAuditTrail { audit += it } }
+            // The idle guard's answers, as automations binds them.
+            single<PendingWaitAnswers> { PendingWaitAnswers { _, _, _ -> false } }
         }
         serverTest(listOf(RunnersModule), overrides) { server ->
+            assertNotNull(server.koin.get<ReconcileCloudSessionUseCase>())
             val repository = server.koin.get<CloudSessionsRepository>()
             val wakes = server.koin.get<CloudSessionWakes>()
             val paused = session(state = SessionState.PAUSED, desired = DesiredState.PAUSED, createdAt = t0)

@@ -756,6 +756,17 @@ itself, still set on a session its owner pauses again on purpose, so a scan on i
 wake lost between the commit and the resume (a replica that stops) leaves the session paused with its answer, as at its
 cap, until it is resumed.
 
+A cloud session that runs is not resumed by an answer, and its Stop hook does not hold the agent (Claude Code's terminal
+redraws while a hook runs, which the runner counts as activity: a held hook would keep the session from its idle
+pause). So an answer given while the session ran idle, never taken by its agent, would wait for someone to resume it
+once the idle guard paused it. TeamCode never has the case: its pod reads the queued message after the turn. Here the
+idle guard asks the kernel's `PendingWaitAnswers` (bound by `automations`, one read through the partial index of the
+answers not handed over) whether an answer resolved since the execution started is still there; if so, the pause is
+followed by a resume (desired state `running`), and the new execution's runner hands the answer over as its first
+message. An answer older than the execution was offered to it when it started, so one its agent never takes (an agent
+without the waits' server) restarts nothing. A pause the owner asks for, or any other guard (`max_duration`, hours),
+pauses as before.
+
 ## Commands
 
 | Command | What it does | Exit |

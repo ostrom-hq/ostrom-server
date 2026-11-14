@@ -39,6 +39,7 @@ import run.ostrom.server.automations.domain.WakeWaitsUseCaseImpl
 import run.ostrom.server.automations.infrastructure.AutomationScheduler
 import run.ostrom.server.automations.infrastructure.CloudWakingWaitEvents
 import run.ostrom.server.automations.infrastructure.NoCloudSessionWakes
+import run.ostrom.server.automations.infrastructure.PendingWaitAnswersImpl
 import run.ostrom.server.automations.infrastructure.DefaultAutomationLimits
 import run.ostrom.server.automations.infrastructure.AutomationsMigrations
 import run.ostrom.server.automations.infrastructure.AutomationsRepositoryImpl
@@ -66,6 +67,7 @@ import run.ostrom.server.kernel.events.WaitSummaries
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.sessions.AgentSessions
 import run.ostrom.server.kernel.sessions.CloudSessionWakes
+import run.ostrom.server.kernel.sessions.PendingWaitAnswers
 import run.ostrom.server.kernel.sessions.SessionEndListener
 import run.ostrom.server.kernel.workflows.AutomationUsage
 import io.ktor.server.routing.Route
@@ -88,7 +90,8 @@ import org.koin.dsl.module
  * starts is not deleted under it. Its [SessionEndListener] cancels the open waits of a session that ends. It binds
  * [WaitSummaries], so the notification router reads the waits the event journal names. A wait resolved (answered,
  * its time reached, its event received or timed out) wakes its session through the runners module's
- * [CloudSessionWakes]: a paused cloud session resumes; unbound, none does.
+ * [CloudSessionWakes]: a paused cloud session resumes; unbound, none does. It binds [PendingWaitAnswers], so the
+ * runners' idle guard starts an idle cloud session's execution again for an answer given while it ran.
  */
 object AutomationsModule : ServerModule {
     override val name: String = "automations"
@@ -104,6 +107,8 @@ object AutomationsModule : ServerModule {
             )
         }
         single<TimedWaitsRepository> { TimedWaitsRepositoryImpl(get(), get()) }
+        // The runners' idle guard asks whether an answer waits for a cloud session's agent.
+        single<PendingWaitAnswers> { PendingWaitAnswersImpl(get()) }
         // The notification router reads the waits the journal names through the kernel's port.
         single<WaitSummaries> { WaitSummariesImpl(get()) }
         single<WaitSessions> {

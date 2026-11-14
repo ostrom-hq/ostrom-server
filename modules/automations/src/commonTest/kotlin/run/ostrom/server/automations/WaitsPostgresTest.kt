@@ -3,6 +3,7 @@ package run.ostrom.server.automations
 
 import run.ostrom.server.automations.domain.AnswerWaitUseCase
 import run.ostrom.server.kernel.sessions.CloudSessionWakes
+import run.ostrom.server.kernel.sessions.PendingWaitAnswers
 import run.ostrom.server.automations.fakes.RecordingWakes
 import run.ostrom.server.automations.domain.AskWait
 import run.ostrom.server.automations.domain.AskWaitUseCase
@@ -271,6 +272,24 @@ class WaitsPostgresTest {
         assertEquals(emptyList(), repository.takeAnswered(ORG_A, segments, 10), "Once")
         assertEquals(listOf(elsewhere.id), repository.takeAnswered(ORG_B, segments, 10).map { it.id })
     }
+
+    @Test
+    fun anAnswerNotHandedOverIsPendingForItsSessionSinceItsResolution() =
+        serverTest(listOf(AutomationsModule)) { server ->
+            val repository = server.koin.get<WaitsRepository>()
+            val pending = server.koin.get<PendingWaitAnswers>()
+            val asked = wait(session = "c-1")
+            repository.createWithinLimit(asked, 5)
+            assertFalse(pending.answeredSince(ORG_A, "c-1", t0), "Open, not answered")
+            repository.resolve(ORG_A, asked.id, WaitAnswer("approve", emptyMap(), ALICE.toString(), t0 + 2.minutes))
+
+            assertTrue(pending.answeredSince(ORG_A, "c-1", t0 + 1.minutes))
+            assertFalse(pending.answeredSince(ORG_A, "c-1", t0 + 2.minutes), "Resolved before the execution started")
+            assertFalse(pending.answeredSince(ORG_B, "c-1", t0), "Another organization's")
+            assertFalse(pending.answeredSince(ORG_A, "c-2", t0), "Another session's")
+            repository.takeAnswered(ORG_A, listOf("c-1"), 10)
+            assertFalse(pending.answeredSince(ORG_A, "c-1", t0), "Handed over")
+        }
 
     private fun open(session: String) = WaitFilter(ORG_A, status = WaitStatus.OPEN, sessionId = session)
 

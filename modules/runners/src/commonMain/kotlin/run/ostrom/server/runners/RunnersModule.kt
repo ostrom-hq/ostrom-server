@@ -33,6 +33,7 @@ import run.ostrom.server.runners.domain.AuthenticateRunnerUseCase
 import run.ostrom.server.runners.domain.AuthenticateRunnerUseCaseImpl
 import run.ostrom.server.runners.domain.ChangeCloudSessionUseCase
 import run.ostrom.server.runners.domain.ChangeCloudSessionUseCaseImpl
+import run.ostrom.server.runners.domain.NoPendingWaitAnswers
 import run.ostrom.server.runners.domain.WakeCloudSessionUseCase
 import run.ostrom.server.runners.domain.WakeCloudSessionUseCaseImpl
 import run.ostrom.server.runners.domain.CheckRunnerTokenUseCase
@@ -127,6 +128,7 @@ import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.sessions.CloudAgentSessions
 import run.ostrom.server.kernel.sessions.CloudSessionWakes
+import run.ostrom.server.kernel.sessions.PendingWaitAnswers
 import run.ostrom.server.kernel.sessions.SessionEndListener
 import run.ostrom.server.runners.infrastructure.RunnersCloudAgentSessions
 import run.ostrom.server.runners.infrastructure.RunnersSessionNames
@@ -220,7 +222,8 @@ object RunnersModule : ServerModule {
             // The organization's cloud settings when the cloud module is there (always on a full server).
             val limit = CloudSettingsBackgroundWorkLimit(getOrNull<CloudSettingsSource>())
             val ended = getAll<SessionEndListener>()
-            ReconcileCloudSessionUseCaseImpl(get(), get(), get(), get(), get(), get(), ended, get(), limit)
+            val answers = getOrNull<PendingWaitAnswers>() ?: NoPendingWaitAnswers
+            ReconcileCloudSessionUseCaseImpl(get(), get(), get(), get(), get(), get(), ended, get(), answers, limit)
         }
         single { ReconcilerWorker(get(), get(), get(), get()) }
         // The members' GitHub access when the GitHub integration is there (always on a full server).
