@@ -28,7 +28,7 @@ val GOOGLE_SIGN_IN_SETTINGS: SettingsSection = SettingsSection(
  * Sign-in with GitHub, set by an administrator of the instance in the console: the OAuth client people sign in with,
  * and GitHub's web and API URLs (GitHub Enterprise Server, or a fake GitHub in end-to-end tests). Wins once its client
  * id and secret are set; while it is empty, people sign in through the instance's GitHub App's OAuth client
- * ([GitHubAppSignIn]), as TeamCode does. `ostrom login` with a GitHub token checks it against either client.
+ * ([GitHubAppSignIn]), as TeamCode does. `ostrom login` with a GitHub token checks it against the client in use.
  */
 val GITHUB_SIGN_IN_SETTINGS: SettingsSection = SettingsSection(
     "github-sign-in",
@@ -78,18 +78,12 @@ class SignInSettings(private val settings: InstanceSettings, private val app: Gi
     /**
      * GitHub's sign-in: the `github-sign-in` settings once their client id and secret are set; otherwise through the
      * instance's GitHub App when its OAuth client is known (its id and a secret that opens), as TeamCode does. Closed
-     * when neither is usable.
+     * when neither is usable. `ostrom login` checks a GitHub token against this one client only: a member's GitHub link
+     * token, which the App's client also issues, is no Ostrom sign-in while the settings' client is set.
      *
      * @return It, or null while neither the settings' client nor the App's is set.
      */
     suspend fun github(): GitHubSignIn? = gitHubSettings() ?: appSignIn()
-
-    /**
-     * Every GitHub sign-in this instance knows, the settings' first: a token either client issued is Ostrom's.
-     *
-     * @return Them, empty while neither is set.
-     */
-    suspend fun gitHubClients(): List<GitHubSignIn> = listOfNotNull(gitHubSettings(), appSignIn())
 
     private suspend fun appSignIn(): GitHubSignIn? = app.client()?.let {
         GitHubSignIn(OAuthClient(it.clientId, it.clientSecret), it.webUrl.trimEnd('/'), it.apiUrl.trimEnd('/'))

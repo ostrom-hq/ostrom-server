@@ -317,7 +317,7 @@ object IdentityModule : ServerModule {
             RequestMagicLinkUseCaseImpl(get(), get(), get(), get(), ::magicLinkMail, config::magicLinkUrl)
         }
         single<VerifyMagicLinkUseCase> { VerifyMagicLinkUseCaseImpl(get(), get(), get(), get(), get()) }
-        single<GitHubTokenVerifier> { GitHubTokenVerifierImpl(get<SignInSettings>()::gitHubClients, get(HTTP)) }
+        single<GitHubTokenVerifier> { GitHubTokenVerifierImpl(get<SignInSettings>()::github, get(HTTP)) }
         single<IssueCliTokenUseCase> { IssueCliTokenUseCaseImpl(get(), get(), get(), get(), get()) }
         single<LauncherLoginUseCase> { LauncherLoginUseCaseImpl(get(), get(), get(), get()) }
         single<GrantSignUpUseCase> { GrantSignUpUseCaseImpl(get(), get()) }

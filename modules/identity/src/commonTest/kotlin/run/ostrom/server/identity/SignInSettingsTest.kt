@@ -72,8 +72,6 @@ class SignInSettingsTest {
             "The github-sign-in section wins once set",
         )
         assertFalse("app-secret" in app.toString())
-        // A token either client issued checks (`ostrom login`), the settings' first.
-        assertEquals(listOf("Iv1.settings", "Iv1.app"), settings.gitHubClients().map { it.client.clientId })
         // The section empty: as TeamCode, through the App's OAuth client.
         stored.save("github-sign-in", mapOf("clientId" to "", "clientSecret" to ""))
         assertEquals(
@@ -83,7 +81,6 @@ class SignInSettingsTest {
         // Neither (no App stored, or its secret no longer opens): GitHub sign-in is off.
         app = null
         assertNull(settings.github(), "Neither: GitHub sign-in is off")
-        assertTrue(settings.gitHubClients().isEmpty())
         // A server without the integrations-github module: no App, ever.
         assertNull(NoGitHubAppSignIn.client())
         assertNull(SignInSettings(stored, NoGitHubAppSignIn).github())

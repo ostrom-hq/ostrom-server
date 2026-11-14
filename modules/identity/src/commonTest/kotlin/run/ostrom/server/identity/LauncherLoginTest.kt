@@ -85,7 +85,7 @@ private fun signIn(client: OAuthClient) = GitHubSignIn(client, "https://gh.test"
 class LauncherLoginTest {
     private val github = FakeGitHub()
     private val app = OAuthClient("ostrom-app", "app-secret")
-    private val verifier = GitHubTokenVerifierImpl({ listOf(signIn(app)) }, github.http)
+    private val verifier = GitHubTokenVerifierImpl({ signIn(app) }, github.http)
     private val users = InMemoryUsersRepository()
     private val tokens = InMemoryApiTokensRepository()
     private val limiter = ScriptedRateLimiter()
@@ -181,16 +181,13 @@ class LauncherLoginTest {
         assertFailsWith<ProviderRejectedException> { verifier.verify("gho_ostrom") }
         github.status = null
         val wrong = OAuthClient("ostrom-app", "wrong")
-        val wrongSecret = GitHubTokenVerifierImpl({ listOf(signIn(wrong)) }, github.http)
+        val wrongSecret = GitHubTokenVerifierImpl({ signIn(wrong) }, github.http)
         assertNull(wrongSecret.verify("gho_ostrom"))
-        val unconfigured = GitHubTokenVerifierImpl({ emptyList() }, github.http)
+        val unconfigured = GitHubTokenVerifierImpl({ null }, github.http)
         assertFailsWith<ProviderNotConfiguredException> { unconfigured.verify("gho_ostrom") }
-        // A client that does not know the token first, then the one that issued it: the latter's answer counts.
-        val both = GitHubTokenVerifierImpl({ listOf(signIn(OAuthClient("Iv1.app", "s")), signIn(app)) }, github.http)
-        assertEquals("583231", both.verify("gho_ostrom")?.id?.toString())
         val unreachable = HttpClient(MockEngine { error("network down") }) { expectSuccess = false }
         assertFailsWith<ProviderRejectedException> {
-            GitHubTokenVerifierImpl({ listOf(signIn(app)) }, unreachable).verify("gho_ostrom")
+            GitHubTokenVerifierImpl({ signIn(app) }, unreachable).verify("gho_ostrom")
         }
     }
 
