@@ -605,11 +605,17 @@ class RunEnginePostgresTest {
             val steps = server.koin.get<StepSessions>()
             assertFalse(steps.asked(ada.org.id, session))
             val question = WaitSpec("Which base?", actions = listOf(WaitAction("ok", "OK")))
-            val wait = Wait(
-                Uuid.random(), ada.org.id, "human_request", WaitStatus.OPEN, "s-1", null, ada.memberId.toString(),
+            val waits = server.koin.get<WaitsRepository>()
+            suspend fun askedIn(where: String) = Wait(
+                Uuid.random(), ada.org.id, "human_request", WaitStatus.OPEN, where, null, ada.memberId.toString(),
                 ada.memberId.toString(), question, null, clock.now(), null, null,
-            )
-            server.koin.get<WaitsRepository>().createWithinLimit(wait, 5)
+            ).also { waits.createWithinLimit(it, 5) }
+            // A cloud agent's token asks in its cloud session itself, with no segment of the sessions module.
+            val inCloud = askedIn(session.toString())
+            assertTrue(steps.asked(ada.org.id, session), "Asked in the cloud session itself")
+            waits.cancel(ada.org.id, inCloud.id, clock.now())
+            assertFalse(steps.asked(ada.org.id, session))
+            askedIn("s-1")
             assertTrue(steps.asked(ada.org.id, session))
             assertFalse(steps.asked(eve.org.id, session), "Another organization's")
             assertEquals(HttpStatusCode.OK to NOTHING_PENDING, server.pendingOf(token, "?sessionId=$session"))
@@ -619,24 +625,6 @@ class RunEnginePostgresTest {
                     listOf(steps.ownedBy(ada.org.id, Uuid.random(), "ada"), steps.ownedBy(eve.org.id, session, "ada")),
             )
         }
-
-    @Test
-    fun aQuestionTheStepsCloudAgentAsksInItsCloudSessionHoldsTheStep() = engineTest { server ->
-        val step = server.sessionStep()
-        val (ada, session) = step.ada to step.session
-        val token = server.agentTokenOf(step)
-        val steps = server.koin.get<StepSessions>()
-        assertFalse(steps.asked(ada.org.id, session))
-        // A cloud agent's token asks in its cloud session itself, with no segment of the sessions module.
-        val question = WaitSpec("Which base?", actions = listOf(WaitAction("ok", "OK")))
-        val wait = Wait(
-            Uuid.random(), ada.org.id, "human_request", WaitStatus.OPEN, session.toString(), null,
-            ada.memberId.toString(), ada.memberId.toString(), question, null, clock.now(), null, null,
-        )
-        server.koin.get<WaitsRepository>().createWithinLimit(wait, 5)
-        assertTrue(steps.asked(ada.org.id, session))
-        assertEquals(HttpStatusCode.OK to NOTHING_PENDING, server.pendingOf(token, ""))
-    }
 
     @Test
     fun theSessionsAgentTokenDeliversForTheStepItsSessionWorksOnFoundThroughTheSessionIndex() = engineTest { server ->

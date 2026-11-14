@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.kernel.sessions.SessionEndListener
 import run.ostrom.server.runners.domain.BackgroundWork
 import run.ostrom.server.runners.domain.CloudPlan
 import run.ostrom.server.runners.domain.CloudSession
@@ -21,9 +22,11 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlin.uuid.Uuid
 
 class ReconcileCloudSessionUseCaseTest {
     private val repository = InMemoryCloudSessionsRepository()
@@ -530,6 +533,23 @@ class ReconcileCloudSessionUseCaseTest {
 
         assertNull(reconcile(stored(running)))
         assertEquals(SessionState.TERMINATED, stored(running).state)
+    }
+
+    @Test
+    fun aTerminatedSessionEndsWhatItsAgentAskedThereOnceWritten() = runTest {
+        val ended = mutableListOf<Pair<Uuid, List<String>>>()
+        val listener = SessionEndListener { org, ids -> ended += org to ids }
+        val listening =
+            ReconcileCloudSessionUseCaseImpl(repository, driver, tokens, plans, meter, clock, listOf(listener)) {
+                backgroundCap
+            }
+        val running = runningSession(desired = DesiredState.TERMINATED)
+        repository.loseNextRaces = 1
+        assertEquals(clock.now, listening(running))
+        assertTrue(ended.isEmpty(), "Not before the session is terminated")
+
+        assertNull(listening(stored(running)))
+        assertEquals(listOf(running.orgId to listOf(running.id.toString())), ended)
     }
 
     @Test

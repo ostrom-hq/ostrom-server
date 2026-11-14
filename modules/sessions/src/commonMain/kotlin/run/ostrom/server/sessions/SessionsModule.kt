@@ -69,7 +69,7 @@ object SessionsModule : ServerModule {
             CloseSessionUseCaseImpl(get(), get(), get(), get(), sessionCosts(), get())
         }
         single { SessionSegments(get(), get(), get()) }
-        single<StartSessionUseCase> { StartSessionUseCaseImpl(get(), get()) }
+        single<StartSessionUseCase> { StartSessionUseCaseImpl(get(), get(), getOrNull<CloudAgentSessions>()) }
         single<EndSessionUseCase> { EndSessionUseCaseImpl(get(), get(), getAll<SessionEndListener>()) }
         single<AgentSessions> { SessionsAgentDirectory(get(), getOrNull<CloudAgentSessions>()) }
         single<ReceiptOwners> { SessionsReceiptOwners(get()) }

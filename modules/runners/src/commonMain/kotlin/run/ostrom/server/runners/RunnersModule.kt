@@ -111,6 +111,7 @@ import kotlinx.coroutines.launch
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.sessions.CloudAgentSessions
+import run.ostrom.server.kernel.sessions.SessionEndListener
 import run.ostrom.server.runners.infrastructure.RunnersCloudAgentSessions
 import org.koin.core.Koin
 import org.koin.core.module.Module
@@ -172,7 +173,7 @@ object RunnersModule : ServerModule {
         single<ReconcileCloudSessionUseCase> {
             // The organization's cloud settings when the cloud module is there (always on a full server).
             val limit = CloudSettingsBackgroundWorkLimit(getOrNull<CloudSettingsSource>())
-            ReconcileCloudSessionUseCaseImpl(get(), get(), get(), get(), get(), get(), limit)
+            ReconcileCloudSessionUseCaseImpl(get(), get(), get(), get(), get(), get(), getAll<SessionEndListener>(), limit)
         }
         single { ReconcilerWorker(get(), get(), get(), get()) }
         // The members' GitHub access when the GitHub integration is there (always on a full server).
