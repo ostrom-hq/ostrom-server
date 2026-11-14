@@ -3,11 +3,13 @@ package run.ostrom.server.testing
 
 import run.ostrom.server.kernel.config.EnvironmentConfigSource
 import run.ostrom.server.kernel.config.MapConfigSource
+import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.database.UnsafeDatabaseRoleException
 import run.ostrom.server.kernel.database.requireRowLevelSecurity
 import run.ostrom.server.kernel.module.ServerModule
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.ktor.client.request.get
 import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.CompletableDeferred
@@ -213,6 +215,22 @@ class TestDatabaseTest {
     @Test
     fun serverTestServesTheModulesRoutes() = serverTest(emptyList()) { server ->
         assertEquals(HttpStatusCode.OK, server.client.get("/health").status)
+    }
+
+    @Test
+    fun serverTestCanMigrateWithFlyway() = serverTest(listOf(Migrated), migrations = TestMigrations.FLYWAY) { server ->
+        val history = server.database.owner.fetchAll("SELECT count(*) AS n FROM flyway_probe WHERE success")
+            .getOrThrow().single().get("n").asLong()
+        assertEquals(1L, history, "the probe's migration is in its Flyway history")
+        assertEquals(HttpStatusCode.OK, server.client.get("/health").status)
+    }
+
+    /** A module with one migration. */
+    private object Migrated : ServerModule {
+        override val name: String = "probe"
+        override val koinModule: Module = module {}
+        override val migrations: List<SchemaMigration> =
+            listOf(SchemaMigration(1, "create_probe", "CREATE TABLE probe_items (id BIGINT PRIMARY KEY);"))
     }
 
     @Test

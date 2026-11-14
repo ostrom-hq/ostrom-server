@@ -1,42 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.todos.infrastructure
 
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.ResultSet
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.Transaction
-import kotlin.uuid.Uuid
-
-/**
- * The role every organization-scoped query runs as: not a superuser, owner of nothing, so the row-level security
- * policies always apply to it (SECURITY-AUDIT S2-01). The same role and setting as the identity module's `inOrg` and
- * the relay modules' `inTenant`, so all converge on the kernel's entry point when it lands.
- */
-internal const val TENANT_ROLE: String = "ostrom_tenant"
-
-/** The transaction-local setting the policies read: the organization of the query. */
-internal const val TENANT_SETTING: String = "ostrom.org_id"
-
-/**
- * Runs [block] in a transaction confined to one organization: the transaction switches to [TENANT_ROLE] and sets
- * [TENANT_SETTING]; a tenant table then only shows and accepts the rows of [orgId], whatever the query says.
- *
- * @param orgId The organization.
- * @param block The queries; a failure inside rolls the transaction back.
- *
- * @return What [block] returns.
- */
-internal suspend fun <T> Driver.inTenant(orgId: Uuid, block: suspend Transaction.() -> T): T = transaction {
-    execute("SET LOCAL ROLE $TENANT_ROLE").getOrThrow()
-    execute(
-        Statement.create("SELECT set_config('$TENANT_SETTING', :org, true)").bind("org", orgId.toString()),
-    ).getOrThrow()
-    block()
-}
-
-/** One query confined to [orgId] (see [inTenant]). */
-internal suspend fun Driver.fetchInOrg(orgId: Uuid, statement: Statement): Result<ResultSet> =
-    inTenant(orgId) { Result.success(fetchAll(statement).getOrThrow()) }
+import run.ostrom.server.kernel.database.TENANT_ROLE
+import run.ostrom.server.kernel.database.TENANT_SETTING
 
 /**
  * The SQL that creates [TENANT_ROLE] (tolerating one created by another module, database or test) and grants it to
