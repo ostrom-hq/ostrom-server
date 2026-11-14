@@ -98,7 +98,8 @@ class StripeGatewayImpl(
     ) : this(client, { config }, idempotencyKey)
 
     private val priceIds = mutableMapOf<String, String>()
-    private var pricesOf: StripeConfig? = null
+    // The account (key and API) the cached price ids are of: a webhook secret's rotation keeps them.
+    private var pricesOf: Pair<String, String>? = null
     private val priceLock = Mutex()
 
     override suspend fun createCustomer(orgId: Uuid, name: String?, email: String?): String = call(
@@ -117,14 +118,17 @@ class StripeGatewayImpl(
     }
 
     override suspend fun priceId(lookupKey: String): String = priceLock.withLock {
-        // Another account (test to live, another API) has other price ids.
-        val current = account()
-        if (current != pricesOf) {
+        // Another account (test to live, another API) has other price ids. One read of the account, so a price is
+        // never cached under an account it was not looked up in.
+        val current = config()
+        val of = current.secretKey to current.baseUrl
+        if (of != pricesOf) {
             priceIds.clear()
-            pricesOf = current
+            pricesOf = of
         }
         priceIds[lookupKey] ?: run {
-            val prices = call(HttpMethod.Get, "/v1/prices", listOf("lookup_keys[0]" to lookupKey, "active" to "true"))
+            val query = listOf("lookup_keys[0]" to lookupKey, "active" to "true")
+            val prices = call(HttpMethod.Get, "/v1/prices", query, using = current)
             val id = prices.array("data").map { it.jsonObject }.firstOrNull()?.string("id")
                 ?: throw BillingNotConfiguredException()
             priceIds[lookupKey] = id
@@ -228,13 +232,14 @@ class StripeGatewayImpl(
         path: String,
         params: List<Pair<String, String>>,
         key: String? = null,
+        using: StripeConfig? = null,
     ): JsonObject {
         val form = params.joinToString("&") { (key, value) ->
             "${key.encodeURLParameter()}=${value.encodeURLParameter()}"
         }
         // A GET carries its parameters in the query (a lookup key, an expansion, a limit); a customer read has none.
         val query = if (method == HttpMethod.Get && form.isNotEmpty()) "?$form" else ""
-        val config = config()
+        val config = using ?: config()
         val url = config.baseUrl.trimEnd('/') + path + query
         val response = client.request(url) {
             this.method = method

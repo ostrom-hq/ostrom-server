@@ -168,6 +168,8 @@ class StripeGatewayImplTest {
         )
         assertEquals("price_1", gateway.priceId("ostrom_team_monthly"))
         assertEquals("price_1", gateway.priceId("ostrom_team_monthly"), "Cached for the same account")
+        account = account?.copy(webhookSecrets = listOf("whsec_rotated"))
+        assertEquals("price_1", gateway.priceId("ostrom_team_monthly"), "A webhook secret's rotation keeps it")
         account = StripeConfig("sk_live_b", "https://b.stripe.test")
         assertEquals("price_2", gateway.priceId("ostrom_team_monthly"), "Another account's price")
         assertEquals(listOf("https://a.stripe.test/v1/prices", "https://b.stripe.test/v1/prices"), urls)
