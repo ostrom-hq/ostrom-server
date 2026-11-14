@@ -16,3 +16,6 @@
 # Python tooling of ops/ (coverage, bytecode).
 __pycache__/
 .coverage
+# The instance's secrets key (default data/secrets.key, relative to the working directory) is generated at first
+# start, never committed: any module's test run or `gradlew run` may write one.
+secrets.key

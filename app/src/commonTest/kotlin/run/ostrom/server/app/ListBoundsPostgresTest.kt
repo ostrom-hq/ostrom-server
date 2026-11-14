@@ -30,7 +30,7 @@ import run.ostrom.server.orgs.domain.OrgsRepository
 import run.ostrom.server.testing.Contract
 import run.ostrom.server.testing.SentStatement
 import run.ostrom.server.testing.TestServer
-import run.ostrom.server.testing.serverTest
+import run.ostrom.server.testing.benchTest
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -96,10 +96,12 @@ class ListBoundsPostgresTest {
         override suspend fun stop(key: String): Boolean = false
     }
 
+    // benchTest, not serverTest: the walk makes about a thousand calls (every list, three limits, cursors) and took
+    // 62 s against serverTest's one minute; the bench's five minutes leave room for a slower runner.
     @Test
     fun everyListOfTheContractBoundsItsPageAndRefusesACursorItDidNotGive() =
-        serverTest(serverModules(), unthrottled) { server ->
-            val contract = Contract.from(EnvironmentConfigSource()) ?: return@serverTest
+        benchTest(serverModules(), unthrottled) { server ->
+            val contract = Contract.from(EnvironmentConfigSource()) ?: return@benchTest
             with(server) {
                 val ada = person("ada")
                 val bob = person("bob")
