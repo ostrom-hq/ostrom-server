@@ -78,6 +78,7 @@ class RunnerVariablesPostgresTest {
 
         val fenced = server.ask("Bearer $token", """{"sessionId":"${running.id}","epoch":1}""")
         assertEquals(HttpStatusCode.Conflict, fenced.status)
+        assertTrue(""""type":"execution_fenced"""" in fenced.bodyAsText(), "The contract's type")
         val other = server.ask("Bearer $token", """{"sessionId":"${Uuid.random()}","epoch":2}""")
         assertEquals(HttpStatusCode.Conflict, other.status)
         assertEquals(HttpStatusCode.Unauthorized, server.ask("Bearer ostrom_runner_wrong", body).status)

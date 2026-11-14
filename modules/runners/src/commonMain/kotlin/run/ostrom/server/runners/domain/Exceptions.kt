@@ -45,10 +45,11 @@ class CloudHoursExhaustedException(hours: Int) : OstromException(
  */
 class CloudSessionStateException(message: String) : OstromException(ErrorKind.CONFLICT, message)
 
-/** The runner's credential is not the current execution's: it must stop and exit. */
+/** The runner's credential is not the current execution's: it must stop and exit (`execution_fenced`, as declared). */
 class ExecutionFencedException : OstromException(
     ErrorKind.CONFLICT,
     "This execution is no longer the session's current one.",
+    "execution_fenced",
 )
 
 /** The runner's credential is unknown. */

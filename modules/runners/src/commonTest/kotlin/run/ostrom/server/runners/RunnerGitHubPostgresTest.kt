@@ -28,6 +28,7 @@ import io.ktor.client.request.post
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -36,6 +37,7 @@ import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -156,6 +158,7 @@ class RunnerGitHubPostgresTest {
         val stale = RunnerGitHubTokenRequest(running.id.toString(), 1)
         val fenced = server.ask("Bearer $token", """{"sessionId":"${stale.sessionId}","epoch":${stale.epoch}}""")
         assertEquals(HttpStatusCode.Conflict, fenced.status)
+        assertTrue(""""type":"execution_fenced"""" in fenced.bodyAsText(), "The contract's type")
         assertEquals(HttpStatusCode.Unauthorized, server.ask("Bearer ostrom_runner_wrong", body).status)
         assertEquals(HttpStatusCode.Unauthorized, server.ask(null, body).status)
         assertEquals(HttpStatusCode.Unauthorized, server.ask("Bearer alice", body).status, "A member's token")
