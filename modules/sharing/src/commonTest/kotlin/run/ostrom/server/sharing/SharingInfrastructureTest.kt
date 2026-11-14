@@ -194,6 +194,10 @@ class SharingInfrastructureTest {
                 url,
             )
         }
+    }
+
+    @Test
+    fun theSharingSectionImportsBothTokenEndpointsAndChecksEach() {
         assertEquals(
             listOf(
                 "claudeTokenUrl" to "OSTROM_SHARING_CLAUDE_TOKEN_URL",
