@@ -101,7 +101,7 @@ data class GitHubManifestTarget(
  * @param store The stored App and the states.
  * @param api GitHub.
  * @param admins Who may start it.
- * @param target Where the App points.
+ * @param target Where the App points, read at each start (GitHub's address and the App's name are the console's).
  * @param clock The clock.
  */
 class GitHubAppManifests(
@@ -109,7 +109,7 @@ class GitHubAppManifests(
     private val store: GitHubAppStore,
     private val api: GitHubManifestApi,
     private val admins: InstanceAdmins,
-    private val target: GitHubManifestTarget,
+    private val target: () -> GitHubManifestTarget,
     private val clock: Clock,
 ) {
     /**
@@ -132,12 +132,13 @@ class GitHubAppManifests(
         }
         val state = Uuid.random().toHexString() + Uuid.random().toHexString()
         store.saveState(sha256Hex("$state:$session"), principal.subjectId, clock.now() + STATE_LIFETIME)
+        val where = target()
         val page = if (owner == null) {
-            "${target.webUrl}/settings/apps/new"
+            "${where.webUrl}/settings/apps/new"
         } else {
-            "${target.webUrl}/organizations/$owner/settings/apps/new"
+            "${where.webUrl}/organizations/$owner/settings/apps/new"
         }
-        return ManifestForm("$page?state=$state", manifest())
+        return ManifestForm("$page?state=$state", manifest(where))
     }
 
     /**
@@ -179,7 +180,7 @@ class GitHubAppManifests(
 
     private fun refuse(error: OstromException): Nothing = throw error
 
-    private fun manifest(): String = buildJsonObject {
+    private fun manifest(target: GitHubManifestTarget): String = buildJsonObject {
         val api = target.publicUrl
         put("name", target.appName)
         put("url", target.webOrigin)

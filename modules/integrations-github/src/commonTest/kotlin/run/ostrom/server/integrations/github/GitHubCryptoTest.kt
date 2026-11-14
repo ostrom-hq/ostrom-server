@@ -75,8 +75,6 @@ class GitHubCryptoTest {
             "OSTROM_GITHUB_APP_PEM" to "-----BEGIN RSA PRIVATE KEY-----\\nabc\\n-----END RSA PRIVATE KEY-----",
             "OSTROM_GITHUB_WEBHOOK_SECRET" to "s3cret",
             "OSTROM_GITHUB_APP_SLUG" to "ostrom-dev",
-            "OSTROM_GITHUB_API" to "https://ghe.example/api/v3/",
-            "OSTROM_GITHUB_WEB" to "https://ghe.example/",
             "OSTROM_WEB_ORIGIN" to "https://console.example/",
             "OSTROM_GITHUB_APP_CLIENT_ID" to "Iv1.abc",
             "OSTROM_GITHUB_APP_CLIENT_SECRET" to "client-s3cret",
@@ -85,8 +83,6 @@ class GitHubCryptoTest {
         val settings = GitHubSettings.from(source(values))
         assertEquals("123", settings.appId)
         assertEquals("-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----", settings.privateKeyPem)
-        assertEquals("https://ghe.example/api/v3", settings.apiUrl)
-        assertEquals("https://ghe.example", settings.webUrl)
         assertEquals("https://console.example", settings.webOrigin)
         assertTrue(settings.configured)
         assertEquals("Iv1.abc", settings.clientId)

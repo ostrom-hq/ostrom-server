@@ -169,9 +169,9 @@ class GitHubDirectoryPostgresTest {
                 override suspend fun sign(gate: Gate): String = "rcpt_${gate.id}"
             }
         }
-        // No App in the environment: the manifest flow is open.
+        // No App stored: the manifest flow is open.
         single { GitHubSettings(null, null, null, null, webOrigin = "https://console.example") }
-        single { GitHubAppSetup("https://api.example", "Ostrom") }
+        single { GitHubAppSetup("https://api.example") }
         // The instance's administrator (the admin module's, stored): the owner of organization A.
         single<InstanceAdmins> {
             object : InstanceAdmins {

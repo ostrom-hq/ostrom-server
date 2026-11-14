@@ -33,6 +33,8 @@ import run.ostrom.server.integrations.github.domain.GitHubRepositoryReader
 import run.ostrom.server.integrations.github.domain.GitHubUserAuthApi
 import run.ostrom.server.integrations.github.domain.HandleWebhookUseCase
 import run.ostrom.server.integrations.github.domain.HandleWebhookUseCaseImpl
+import run.ostrom.server.integrations.github.domain.ImportGitHubAppUseCase
+import run.ostrom.server.integrations.github.domain.ImportGitHubAppUseCaseImpl
 import run.ostrom.server.integrations.github.domain.InstanceAdmins
 import run.ostrom.server.integrations.github.domain.ListGitHubReposUseCase
 import run.ostrom.server.integrations.github.domain.ListGitHubReposUseCaseImpl
@@ -43,7 +45,9 @@ import run.ostrom.server.integrations.github.domain.StoredInstanceAdmins
 import run.ostrom.server.integrations.github.domain.installPage
 import run.ostrom.server.integrations.github.domain.oauthApp
 import run.ostrom.server.integrations.github.infrastructure.AppJwts
+import run.ostrom.server.integrations.github.infrastructure.GITHUB_SETTINGS
 import run.ostrom.server.integrations.github.infrastructure.GitHubAppSetup
+import run.ostrom.server.integrations.github.infrastructure.GitHubHost
 import run.ostrom.server.integrations.github.infrastructure.GitHubMigrations
 import run.ostrom.server.integrations.github.infrastructure.GitHubSettings
 import run.ostrom.server.integrations.github.infrastructure.HttpGitHubApi
@@ -72,13 +76,16 @@ import run.ostrom.server.integrations.github.presentation.gitHubManifestRoutes
 import run.ostrom.server.integrations.github.presentation.gitHubRoutes
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.rules.domain.services.RepositoryReader
 import run.ostrom.server.runners.domain.RunnerGitHubTokens
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.server.routing.Route
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.koin.core.Koin
 import org.koin.core.module.Module
@@ -86,6 +93,7 @@ import org.koin.core.qualifier.named
 import org.koin.dsl.bind
 import org.koin.dsl.module
 import org.koin.dsl.onClose
+import kotlin.time.Duration.Companion.seconds
 
 /** Koin name of the HTTP client to GitHub. */
 val GITHUB_HTTP = named("github-http")
@@ -94,11 +102,12 @@ val GITHUB_HTTP = named("github-http")
  * The integrations-github module: the GitHub App installed per organization, its webhooks, the head of a pull
  * request read from GitHub for the gates ([PullRequestHeads]), and the `ostrom-gate` check run ([GateChannel]); each
  * organization's directory (repositories and teams) read from its installation and kept in the database; and the
- * manifest flow, which creates the instance's App when the environment names none; and the rules analysis's
+ * manifest flow, which creates the instance's App when none is stored; and the rules analysis's
  * [RepositoryReader], which reads the files, CODEOWNERS and branch protection of the installation's
  * repositories; and the members' GitHub links, which give each member's cloud sessions their own Git and `gh` access
- * (device flow, web flow, refresh, unlink). Its settings come from the
- * environment (`OSTROM_GITHUB_*`, `OSTROM_PUBLIC_URL`; the instance's administrators are the admin module's).
+ * (device flow, web flow, refresh, unlink). GitHub's address and the App's name are the console's settings
+ * ([GITHUB_SETTINGS]); only `OSTROM_PUBLIC_URL` and `OSTROM_WEB_ORIGIN` come from the environment (the instance's
+ * administrators are the admin module's).
  */
 object GitHubIntegrationModule : ServerModule {
     override val name: String = "integrations-github"
@@ -116,19 +125,23 @@ object GitHubIntegrationModule : ServerModule {
         // From the environment; a test binds its own.
         single { GitHubSettings.from(get()) }
         single { GitHubAppSetup.from(get()) }
+        // GitHub's address and the App's name: the console's settings.
+        single(named(GITHUB_SETTINGS.name)) { GITHUB_SETTINGS }
+        single { GitHubHost(get()) }
         single<GitHubRepository> { PostgresGitHubRepository(get()) }
         single<GitHubOriginsRepository> { PostgresGitHubOriginsRepository(get()) }
         // The orgs module's lookup: `?org=` and `{org}` read an id or a short name, as the `Ostrom-Org` header does.
         single<OrgReferences> { OrgsOrgReferences(get()) }
         single<GitHubAppStore> { PostgresGitHubAppStore(get(), get()) }
-        single<GitHubAppSource> { GitHubAppSourceImpl(get<GitHubSettings>().credentials(), get(), get()) }
+        single<GitHubAppSource> { GitHubAppSourceImpl(get(), get()) }
+        single<ImportGitHubAppUseCase> { ImportGitHubAppUseCaseImpl(get(), get(), get()) }
         single { AppJwts(get(), get()) }
         single {
             val jwts = get<AppJwts>()
             val apps = get<GitHubAppSource>()
-            val settings = get<GitHubSettings>()
-            // The OAuth client is the App's, read like its key: the environment's, or the one the manifest created.
-            HttpGitHubApi(get(GITHUB_HTTP), settings.apiUrl, { jwts.current() }, get(), settings.webUrl) {
+            val host = get<GitHubHost>()
+            // The OAuth client is the App's, read like its key: the stored App's.
+            HttpGitHubApi(get(GITHUB_HTTP), { host.apiUrl }, { jwts.current() }, get(), { host.webUrl }) {
                 apps.current().oauthClient()
             }
         }
@@ -138,11 +151,16 @@ object GitHubIntegrationModule : ServerModule {
         single<GitHubCiApi> { get<HttpGitHubApi>() }
         single<GitHubContentsApi> {
             val api = get<HttpGitHubApi>()
-            val apiUrl = get<GitHubSettings>().apiUrl
-            HttpGitHubContentsApi(get(GITHUB_HTTP), apiUrl, get()) { id, wanted -> api.installationToken(id, wanted) }
+            val host = get<GitHubHost>()
+            HttpGitHubContentsApi(get(GITHUB_HTTP), { host.apiUrl }, get()) { id, wanted ->
+                api.installationToken(id, wanted)
+            }
         }
         // The rules analysis reads each organization's repositories through its own installation, read-only.
-        single<RepositoryReader> { GitHubRepositoryReader(get(), get(), get(), get<GitHubSettings>().webUrl) }
+        single<RepositoryReader> {
+            val host = get<GitHubHost>()
+            GitHubRepositoryReader(get(), get(), get()) { host.webUrl }
+        }
         single<GitHubDirectoryRepository> { PostgresGitHubDirectoryRepository(get()) }
         single { GitHubDirectorySync(get(), get(), get(), get(), get()) }
         single<ListGitHubReposUseCase> { ListGitHubReposUseCaseImpl(get(), get()) }
@@ -151,9 +169,11 @@ object GitHubIntegrationModule : ServerModule {
         single {
             val settings = get<GitHubSettings>()
             val setup = get<GitHubAppSetup>()
-            GitHubManifestTarget(setup.publicUrl, settings.webOrigin, settings.webUrl, setup.appName)
+            val host = get<GitHubHost>()
+            GitHubAppManifests(get(), get(), get(), get(), {
+                GitHubManifestTarget(setup.publicUrl, settings.webOrigin, host.webUrl, host.appName)
+            }, get())
         }
-        single { GitHubAppManifests(get(), get(), get(), get(), get(), get()) }
         single<PullRequestHeads> { GitHubPullRequestHeads(get(), get(), get()) }
         single<CiChecks> {
             val apps = get<GitHubAppSource>()
@@ -167,21 +187,21 @@ object GitHubIntegrationModule : ServerModule {
         single {
             val apps = get<GitHubAppSource>()
             val sync = get<GitHubDirectorySync>()
-            val webUrl = get<GitHubSettings>().webUrl
-            GitHubInstalls(get(), get(), get(), { installPage(webUrl, apps.current().installSlug) }, get()) {
+            val host = get<GitHubHost>()
+            GitHubInstalls(get(), get(), get(), { installPage(host.webUrl, apps.current().installSlug) }, get()) {
                 sync.installed(it)
             }
         }
         single {
             val apps = get<GitHubAppSource>()
             val signature = WebhookSignature { apps.current().webhookSecret }
-            GitHubRoutesDependencies(get(), get(), get(), get(), get(), signature, get(), apps, get())
+            GitHubRoutesDependencies(get(), get(), get(), get(), get(), signature, get(), apps, get(), get())
         }
         single { GitHubDirectoryRoutesDependencies(get(), get(), get(), get(), get()) }
         // The members' links: the App's OAuth client links, refreshes and revokes; tokens sealed by the secrets key.
         single<GitHubUserAuthApi> {
-            val settings = get<GitHubSettings>()
-            HttpGitHubUserAuth(get(GITHUB_HTTP), settings.apiUrl, settings.webUrl, get())
+            val host = get<GitHubHost>()
+            HttpGitHubUserAuth(get(GITHUB_HTTP), { host.apiUrl }, { host.webUrl }, get())
         }
         single<GitHubLinkStore> { PostgresGitHubLinkStore(get(), get()) }
         // Cloud sessions are on with a runtime driver: a new link starts only then.
@@ -198,8 +218,8 @@ object GitHubIntegrationModule : ServerModule {
         single<RunnerGitHubTokens> { LinkedRunnerGitHubTokens(get(), get()) }
         single { GitHubLinkRoutesDependencies(get(), get(), get<GitHubSettings>().webOrigin) }
         single {
-            val settings = get<GitHubSettings>()
-            GitHubManifestRoutesDependencies(get(), settings.webUrl, settings.webOrigin)
+            val host = get<GitHubHost>()
+            GitHubManifestRoutesDependencies(get(), { host.webUrl }, get<GitHubSettings>().webOrigin)
         }
     }
 
@@ -213,9 +233,9 @@ object GitHubIntegrationModule : ServerModule {
     }
 
     /**
-     * The GitHub App integration, only once the instance has an App: the environment's, or the one the
-     * manifest flow created (read again at each call, so an App created by the console counts at once); the members'
-     * links once that App's OAuth client is known and cloud sessions are on.
+     * The GitHub App integration, only once the instance has an App: the stored one, created by the manifest flow or
+     * imported once from the former variables (read again at each call, so an App created by the console counts at
+     * once); the members' links once that App's OAuth client is known and cloud sessions are on.
      */
     override suspend fun features(koin: Koin): Set<String> {
         val app = koin.get<GitHubAppSource>().current()
@@ -225,10 +245,37 @@ object GitHubIntegrationModule : ServerModule {
         return setOfNotNull(ServerFeatures.GITHUB.takeIf { app.named }, ServerFeatures.GITHUB_LINK.takeIf { links })
     }
 
+    /**
+     * Imports, once, the App the former variables still name into the stored App, then reads the console's GitHub
+     * settings (the admin module, before this one, imported their former variables).
+     */
+    override suspend fun initialize(koin: Koin) {
+        koin.get<ImportGitHubAppUseCase>()(koin.get<GitHubSettings>().credentials())
+        koin.get<GitHubHost>().refresh()
+    }
+
     override fun start(scope: CoroutineScope, koin: Koin) {
         val sync = koin.get<GitHubDirectorySync>()
         scope.launch { sync.run() }
+        val host = koin.get<GitHubHost>()
+        val logger = koin.get<Logger>()
+        // GitHub's address as an administrator changes it in the console, on every replica within a minute.
+        scope.launch {
+            while (true) {
+                delay(HOST_REFRESH)
+                try {
+                    host.refresh()
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    logger.warn("GitHub settings read failed", mapOf("error" to error::class.simpleName))
+                }
+            }
+        }
     }
 
     private const val TIMEOUT_MS = 10_000L
 }
+
+// Top-level, not in the object: a property there has a getter nothing calls, which Kover counts.
+private val HOST_REFRESH = 30.seconds

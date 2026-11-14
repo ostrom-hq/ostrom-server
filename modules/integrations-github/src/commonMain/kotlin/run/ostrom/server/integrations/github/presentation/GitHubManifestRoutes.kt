@@ -46,12 +46,12 @@ class GitHubManifestCallbackPath(val code: String? = null, val state: String? = 
  * What the manifest routes need.
  *
  * @property manifests The manifest flow.
- * @property webUrl GitHub's web address, the only place the page may post to.
+ * @property webUrl GitHub's web address, the only place the page may post to, read at each start.
  * @property webOrigin The console, where the callback sends the browser back.
  */
 data class GitHubManifestRoutesDependencies(
     val manifests: GitHubAppManifests,
-    val webUrl: String,
+    val webUrl: () -> String,
     val webOrigin: String,
 )
 
@@ -80,7 +80,7 @@ fun Route.gitHubManifestRoutes(dependencies: GitHubManifestRoutesDependencies) =
             val nonce = Uuid.random().toHexString()
             call.response.header(
                 "Content-Security-Policy",
-                "default-src 'none'; script-src 'nonce-$nonce'; style-src 'unsafe-inline'; form-action $webUrl; " +
+                "default-src 'none'; script-src 'nonce-$nonce'; style-src 'unsafe-inline'; form-action ${webUrl()}; " +
                     "base-uri 'none'; frame-ancestors 'none'",
             )
             call.response.header("Referrer-Policy", "no-referrer")

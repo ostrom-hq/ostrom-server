@@ -37,7 +37,7 @@ import kotlin.time.Instant
  * for, so the approvals and the code owners' review come from the rulesets that apply to the branch.
  *
  * @param http The client (`expectSuccess = false`).
- * @param apiUrl GitHub's API.
+ * @param apiUrl GitHub's API, read at each call (the console's `github` settings).
  * @param clock The clock, against `X-RateLimit-Reset`.
  * @param maxWait The longest wait for a rate limit before the read fails.
  * @param pause How a wait is spent; a test passes its own.
@@ -45,7 +45,7 @@ import kotlin.time.Instant
  */
 class HttpGitHubContentsApi(
     private val http: HttpClient,
-    private val apiUrl: String,
+    private val apiUrl: () -> String,
     private val clock: Clock,
     private val maxWait: Duration = 60.seconds,
     private val pause: suspend (Duration) -> Unit = { delay(it) },
@@ -91,7 +91,7 @@ class HttpGitHubContentsApi(
     private suspend fun get(token: String, path: String): HttpResponse {
         var attempts = 0
         while (true) {
-            val response = http.exchange(HttpMethod.Get, "$apiUrl$path", path) { headers(token) }
+            val response = http.exchange(HttpMethod.Get, "${apiUrl()}$path", path) { headers(token) }
             val wait = limited(response) ?: return response
             attempts++
             if (attempts > RETRIES || wait > maxWait) {

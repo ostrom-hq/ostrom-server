@@ -6,7 +6,8 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 /**
- * The GitHub App of the instance: from the environment, or created by the manifest flow and stored sealed.
+ * The GitHub App of the instance: created by the manifest flow (or imported once from the former variables) and
+ * stored sealed.
  *
  * @property appId Its id.
  * @property slug Its slug, for the install link.
@@ -41,8 +42,8 @@ data class GitHubAppCredentials(
  * @property owner The account that owns it.
  * @property privateKeyPem Its private key.
  * @property webhookSecret Its webhook secret.
- * @property clientId Its OAuth client id.
- * @property clientSecret Its OAuth client secret.
+ * @property clientId Its OAuth client id (null only for an App imported from variables without one).
+ * @property clientSecret Its OAuth client secret (null likewise).
  */
 data class CreatedGitHubApp(
     val id: Long,
@@ -50,8 +51,8 @@ data class CreatedGitHubApp(
     val owner: String?,
     val privateKeyPem: String,
     val webhookSecret: String?,
-    val clientId: String,
-    val clientSecret: String,
+    val clientId: String?,
+    val clientSecret: String?,
 ) {
     // The key and the secrets never appear in a log or a dump.
     override fun toString(): String = "CreatedGitHubApp(id=$id, slug=$slug, owner=$owner)"
@@ -101,29 +102,23 @@ interface GitHubAppStore {
 }
 
 /**
- * [GitHubAppSource]: **the environment's App wins** whenever it names one (`OSTROM_GITHUB_APP_ID` or
- * `OSTROM_GITHUB_APP_SLUG`), as #44 reads it; the stored App only serves an instance whose environment names none.
- * A deployment that pins its App in its secret store is never changed by a row of its database, and an operator
- * who set the variables keeps the App they chose. The stored App is read at most every [STORED_FOR] (a server that
- * did not create it sees it within that time), opened only by the store.
+ * [GitHubAppSource]: the stored App, read at most every [STORED_FOR] (a server that did not create it sees it within
+ * that time), opened only by the store. The former variables are only imported once ([ImportGitHubAppUseCase]).
  *
- * @param environment The App of the environment.
  * @param store The stored App.
  * @param clock The clock.
  */
 class GitHubAppSourceImpl(
-    private val environment: GitHubAppCredentials,
     private val store: GitHubAppStore,
     private val clock: Clock,
 ) : GitHubAppSource {
     private var held: Pair<Instant, GitHubAppCredentials?>? = null
 
     override suspend fun current(): GitHubAppCredentials {
-        if (environment.named) return environment
         val now = clock.now()
         val fresh = held?.takeIf { now - it.first < STORED_FOR }
         val stored = if (fresh != null) fresh.second else store.app().also { held = now to it }
-        return stored ?: environment
+        return stored ?: GitHubAppCredentials()
     }
 
     override fun forget() {

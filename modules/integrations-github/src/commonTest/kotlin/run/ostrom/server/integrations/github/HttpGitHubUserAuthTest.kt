@@ -50,8 +50,8 @@ class HttpGitHubUserAuthTest {
             expectSuccess = false
             install(HttpTimeout)
         },
-        API,
-        WEB,
+        { API },
+        { WEB },
         clock,
     )
 

@@ -17,13 +17,13 @@ import kotlin.uuid.Uuid
  * @param installations Each organization's installation.
  * @param directory The repositories an installation is granted.
  * @param contents Their files and branch protection.
- * @param webUrl GitHub's web address, for the repositories' pages.
+ * @param webUrl GitHub's web address, for the repositories' pages, read at each use.
  */
 class GitHubRepositoryReader(
     private val installations: GitHubRepository,
     private val directory: GitHubDirectoryApi,
     private val contents: GitHubContentsApi,
-    private val webUrl: String,
+    private val webUrl: () -> String,
 ) : RepositoryReader {
     override suspend fun repositories(orgId: Uuid): RepositoryListing {
         val installation = installations.installation(orgId) ?: return RepositoryListing.NotConnected(NOT_INSTALLED)
@@ -66,7 +66,7 @@ class GitHubRepositoryReader(
         archived = repo.archived,
         description = repo.description,
         pushedAt = repo.pushedAt?.toString(),
-        webUrl = "$webUrl/$account/${repo.name}",
+        webUrl = "${webUrl()}/$account/${repo.name}",
     )
 
     // GitHub's sentence becomes the analysis's: it names the call, never a token.

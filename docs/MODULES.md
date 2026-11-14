@@ -284,6 +284,14 @@ What lives in the console so far:
 | Sign-up (`sign-up`): `invite`, the default (the setup link of `ostrom-server bootstrap`, an invitation or an organization's SSO only; only owners and admins, or the setup link's person, create organizations), or `open` (anyone who signs in, who may create organizations: ostrom.run). Serve logs a warning while an invite-only instance has no account | `OSTROM_SIGNUP` | the `identity` module |
 | Sign-in with Google (`google`): the OAuth client, its secret sealed, and Google's issuer, consent page and token endpoint, each replaced alone (a fake Google in end-to-end tests). Offered once the client id and secret are set, without a restart | `OSTROM_GOOGLE_CLIENT_ID`, `OSTROM_GOOGLE_CLIENT_SECRET`, `OSTROM_GOOGLE_ISSUER`, `OSTROM_GOOGLE_AUTHORIZATION_URL`, `OSTROM_GOOGLE_TOKEN_URL` | the `identity` module |
 | Sign-in with GitHub (`github-sign-in`): the OAuth client people sign in with (and `ostrom login` checks a GitHub token against), its secret sealed, GitHub's web and API URLs (GitHub Enterprise Server, a fake GitHub). Offered once the client id and secret are set | `OSTROM_GITHUB_CLIENT_ID`, `OSTROM_GITHUB_CLIENT_SECRET`, `OSTROM_GITHUB_WEB_URL`, `OSTROM_GITHUB_API_URL` | the `identity` module |
+| GitHub (`github`: API URL, web URL, the name of the App the manifest flow creates) | `OSTROM_GITHUB_API`, `OSTROM_GITHUB_WEB`, `OSTROM_GITHUB_APP_NAME` | the `integrations-github` module |
+| GitHub App (id, slug, sealed private key, webhook secret and OAuth client secret, OAuth client id; created by the manifest flow on **Admin → GitHub**) | `OSTROM_GITHUB_APP_ID`, `OSTROM_GITHUB_APP_SLUG`, `OSTROM_GITHUB_APP_PEM`, `OSTROM_GITHUB_WEBHOOK_SECRET`, `OSTROM_GITHUB_APP_CLIENT_ID`, `OSTROM_GITHUB_APP_CLIENT_SECRET` | the `integrations-github` module |
+
+The GitHub App is kept as TeamCode keeps it, in its own table (`github_apps`, one row, the key and secrets sealed),
+not in a settings section: the manifest flow creates it once, and the stored App is the only one the server uses. At
+start, when no App is stored and the former variables name a complete one (an id, a slug and a private key), it is
+imported once, with a warning that the variables are deprecated; afterwards they are ignored with a warning. GitHub's
+address is read again every 30 seconds, so a change in the console reaches every replica within a minute.
 
 The `cloud` module follows TeamCode's cloud model. The instance's administrators set the runtime and connect clusters:
 a cluster's API URL is an https URL that is never a link-local, unspecified or metadata address in any numeric
@@ -527,7 +535,7 @@ anonymous call gets 401 `unauthorized`. A module lists a key of ostrom-core's `S
 | `hooks` | `hooks.v1` | — |
 | `identity` | `audit.v1` | — |
 | `import` | `import.teamcode.v1` | — |
-| `integrations-github` | `github.v1`; `github.link.v1` | a GitHub App: the environment's (`OSTROM_GITHUB_APP_ID` or `_SLUG`) or the manifest flow's; the latter once that App's OAuth client (id and secret) is known |
+| `integrations-github` | `github.v1`; `github.link.v1` | a stored GitHub App (created by the manifest flow, or imported once from the former variables); the second once that App's OAuth client (id and secret) is known |
 | `mcp-relay` | `mcp.v1` | — |
 | `notifications` | `notifications.v1`, `notifications.push.v1` | — (Expo's push service needs no key; `OSTROM_EXPO_ACCESS_TOKEN` only when the project requires one) |
 | `receipts` | `receipts.v1` | — |

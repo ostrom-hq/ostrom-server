@@ -17,6 +17,8 @@ import run.ostrom.server.identity.domain.LinkedIdentities
 import run.ostrom.server.identity.domain.UsersRepository
 import run.ostrom.server.integrations.github.domain.GateCheck
 import run.ostrom.server.integrations.github.domain.GitHubApi
+import run.ostrom.server.integrations.github.domain.GitHubAppCredentials
+import run.ostrom.server.integrations.github.domain.GitHubAppStore
 import run.ostrom.server.integrations.github.domain.GitHubInstallation
 import run.ostrom.server.integrations.github.domain.GitHubInstallationOrigin
 import run.ostrom.server.integrations.github.domain.GitHubOriginsRepository
@@ -139,14 +141,13 @@ class GitHubPostgresTest {
                 override suspend fun sign(gate: Gate): String = "rcpt_${gate.id}"
             }
         }
-        single {
-            GitHubSettings(
-                "123", null, secret, slug, webOrigin = "https://console.example",
-                clientId = "Iv1.test", clientSecret = "client-secret",
-            )
+        single { GitHubSettings(null, null, null, null, webOrigin = "https://console.example") }
+        // The instance's App, as the manifest flow (or the one-time import of the former variables) stored it.
+        single<GitHubAppStore> {
+            MemoryGitHubAppStore(GitHubAppCredentials("123", slug, null, secret, "Iv1.test", "client-secret"))
         }
         single<GitHubApi> { github }
-        // Seals an App the manifest flow would create (none in these tests: the environment names one).
+        // Seals the members' links.
         single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
         // The identity module's users: the GitHub user 7 signed in to Ostrom as dev.
         val users = LinkedGitHubUsers(mapOf(7L to "dev"))

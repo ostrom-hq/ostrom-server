@@ -44,9 +44,9 @@ class GitHubAppManifestsTest {
     private val target =
         GitHubManifestTarget("https://api.example", "https://console.example", "https://github.com", "Ostrom")
 
-    private fun manifests(environment: GitHubAppCredentials = GitHubAppCredentials()): GitHubAppManifests {
-        val apps = GitHubAppSourceImpl(environment, store, clock)
-        return GitHubAppManifests(apps, store, api, StoredInstanceAdmins { it == ADMIN_ID }, target, clock)
+    private fun manifests(): GitHubAppManifests {
+        val apps = GitHubAppSourceImpl(store, clock)
+        return GitHubAppManifests(apps, store, api, StoredInstanceAdmins { it == ADMIN_ID }, { target }, clock)
     }
 
     @Test
@@ -92,19 +92,20 @@ class GitHubAppManifestsTest {
         assertFailsWith<NotAnInstanceAdminException> { manifests().start(service, null, SESSION) }
         assertFailsWith<NotAnInstanceAdminException> { manifests().start(stranger, null, SESSION) }
         val nobody = GitHubAppManifests(
-            GitHubAppSourceImpl(GitHubAppCredentials(), store, clock),
+            GitHubAppSourceImpl(store, clock),
             store,
             api,
             StoredInstanceAdmins { false },
-            target,
+            { target },
             clock,
         )
         assertFailsWith<NotAnInstanceAdminException> { nobody.start(admin, null, SESSION) }
-        val named = manifests(GitHubAppCredentials(slug = "env"))
-        assertFailsWith<GitHubAppExistsException> { named.start(admin, null, SESSION) }
         for (owner in listOf("-acme", "acme/x", "a".repeat(40), "")) {
             assertEquals(ErrorKind.INVALID_REQUEST, kindOf { manifests().start(admin, owner, SESSION) })
         }
+        assertTrue(store.states.isEmpty())
+        store.stored = GitHubAppCredentials(slug = "stored")
+        assertFailsWith<GitHubAppExistsException> { manifests().start(admin, null, SESSION) }
         assertTrue(store.states.isEmpty())
     }
 
@@ -160,11 +161,11 @@ class GitHubAppManifestsTest {
         // Another server stored one between the check and the save.
         val racing = MemoryGitHubAppStore()
         val raced = GitHubAppManifests(
-            GitHubAppSourceImpl(GitHubAppCredentials(), MemoryGitHubAppStore(), clock),
+            GitHubAppSourceImpl(MemoryGitHubAppStore(), clock),
             racing,
             api,
             StoredInstanceAdmins { it == ADMIN_ID },
-            target,
+            { target },
             clock,
         )
         val state = raced.start(admin, null, SESSION).action.substringAfter("state=")
@@ -185,16 +186,10 @@ class GitHubAppManifestsTest {
     }
 
     @Test
-    fun theEnvironmentsAppWinsAndTheStoredOneIsReadAtMostEveryMinute() = runTest {
-        val env = GitHubAppCredentials(appId = "1", privateKeyPem = "pem")
+    fun theStoredAppIsTheOnlyOneAndIsReadAtMostEveryMinute() = runTest {
+        assertEquals(GitHubAppCredentials(), GitHubAppSourceImpl(MemoryGitHubAppStore(), clock).current())
         store.stored = GitHubAppCredentials(appId = "2", slug = "stored")
-        assertSame(env, GitHubAppSourceImpl(env, store, clock).current())
-        assertEquals(0, store.reads)
-
-        val unnamed = GitHubAppCredentials(webhookSecret = "env-secret")
-        val source = GitHubAppSourceImpl(unnamed, MemoryGitHubAppStore(), clock)
-        assertEquals("env-secret", source.current().webhookSecret, "Nothing stored: the environment, even unnamed")
-        val stored = GitHubAppSourceImpl(GitHubAppCredentials(), store, clock)
+        val stored = GitHubAppSourceImpl(store, clock)
         assertEquals("stored", stored.current().slug)
         store.stored = null
         clock.now += 30.seconds
@@ -221,7 +216,7 @@ class GitHubAppManifestsTest {
     @Test
     fun theJwtIsMadeOncePerAppAndOnlyWithAnIdAndAKey() = runTest {
         val apps = MemoryGitHubAppStore()
-        val source = GitHubAppSourceImpl(GitHubAppCredentials(), apps, clock)
+        val source = GitHubAppSourceImpl(apps, clock)
         val jwts = AppJwts(source, clock)
         assertNull(jwts.current())
         apps.stored = GitHubAppCredentials(appId = "1")
@@ -239,16 +234,9 @@ class GitHubAppManifestsTest {
     @Test
     fun theSetupIsReadFromTheEnvironment() {
         val defaults = GitHubAppSetup.from(MapConfigSource(emptyMap()))
-        assertEquals(GitHubAppSetup("http://localhost:8080", "Ostrom"), defaults)
-        val set = GitHubAppSetup.from(
-            MapConfigSource(
-                mapOf(
-                    "OSTROM_PUBLIC_URL" to " https://api.acme.dev/ ",
-                    "OSTROM_GITHUB_APP_NAME" to " Acme Ostrom ",
-                ),
-            ),
-        )
-        assertEquals(GitHubAppSetup("https://api.acme.dev", "Acme Ostrom"), set)
+        assertEquals(GitHubAppSetup("http://localhost:8080"), defaults)
+        val set = GitHubAppSetup.from(MapConfigSource(mapOf("OSTROM_PUBLIC_URL" to " https://api.acme.dev/ ")))
+        assertEquals(GitHubAppSetup("https://api.acme.dev"), set)
         val settings = GitHubSettings("1", "pem", "hook", "slug")
         assertEquals(GitHubAppCredentials("1", "slug", "pem", "hook"), settings.credentials())
     }

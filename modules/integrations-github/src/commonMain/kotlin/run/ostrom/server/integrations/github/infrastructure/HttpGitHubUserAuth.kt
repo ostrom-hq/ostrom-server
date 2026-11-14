@@ -44,15 +44,15 @@ import kotlin.time.Duration.Companion.seconds
  * revocation of a GitHub App's user-to-server tokens. Bodies are read up to 64 KiB and never surface in an error.
  *
  * @param http The client (`expectSuccess = false`).
- * @param apiUrl GitHub's API.
- * @param webUrl GitHub's web address, where the OAuth endpoints are.
+ * @param apiUrl GitHub's API, read at each call (the console's `github` settings).
+ * @param webUrl GitHub's web address, where the OAuth endpoints are, read at each call.
  * @param clock The clock, for the expiries.
  */
 @Suppress("TooManyFunctions") // GitHub's user-to-server endpoints, one call each, and their shared readers.
 class HttpGitHubUserAuth(
     private val http: HttpClient,
-    private val apiUrl: String,
-    private val webUrl: String,
+    private val apiUrl: () -> String,
+    private val webUrl: () -> String,
     private val clock: Clock,
 ) : GitHubUserAuthApi {
     @Suppress("CyclomaticComplexMethod") // Each field GitHub sends is checked before anything is stored.
@@ -67,7 +67,7 @@ class HttpGitHubUserAuth(
         val interval = body.long("interval") ?: DEFAULT_INTERVAL
         val valid = deviceCode != null && deviceCode.isNotBlank() && deviceCode.length <= MAX_TOKEN &&
             userCode != null && USER_CODE.matches(userCode) &&
-            uri != null && uri.startsWith("$webUrl/") && uri.length <= MAX_URI &&
+            uri != null && uri.startsWith("${webUrl()}/") && uri.length <= MAX_URI &&
             expiresIn != null && expiresIn in 1..MAX_EXPIRES_IN && interval in 1..MAX_POLL_INTERVAL
         if (!valid) throw GitHubCallException("GitHub answered an unexpected device code.")
         return GitHubDeviceAuthorization(deviceCode, userCode, uri, expiresIn.toInt(), interval.toInt())
@@ -92,7 +92,7 @@ class HttpGitHubUserAuth(
     }
 
     override fun authorizationUrl(clientId: String, redirectUri: String, state: String, codeChallenge: String): String =
-        URLBuilder("$webUrl/login/oauth/authorize").apply {
+        URLBuilder("${webUrl()}/login/oauth/authorize").apply {
             parameters.append("client_id", clientId)
             parameters.append("redirect_uri", redirectUri)
             parameters.append("state", state)
@@ -141,7 +141,7 @@ class HttpGitHubUserAuth(
     }
 
     override suspend fun user(accessToken: String): GitHubIdentity {
-        val (status, body) = send(HttpMethod.Get, "$apiUrl$USER_PATH", USER_PATH) {
+        val (status, body) = send(HttpMethod.Get, "${apiUrl()}$USER_PATH", USER_PATH) {
             header(HttpHeaders.Authorization, "Bearer $accessToken")
             rest()
         }
@@ -156,7 +156,7 @@ class HttpGitHubUserAuth(
     override suspend fun revoke(app: GitHubOAuthApp, accessToken: String) {
         val basic = Base64.Default.encode("${app.clientId}:${app.clientSecret}".encodeToByteArray())
         val path = "/applications/${app.clientId.encodeURLPathPart()}/token"
-        val (status, _) = send(HttpMethod.Delete, "$apiUrl$path", path) {
+        val (status, _) = send(HttpMethod.Delete, "${apiUrl()}$path", path) {
             header(HttpHeaders.Authorization, "Basic $basic")
             rest()
             contentType(ContentType.Application.Json)
@@ -203,7 +203,7 @@ class HttpGitHubUserAuth(
     }
 
     private suspend fun form(path: String, fields: List<Pair<String, String>>) =
-        send(HttpMethod.Post, "$webUrl$path", path) {
+        send(HttpMethod.Post, "${webUrl()}$path", path) {
             header(HttpHeaders.Accept, ContentType.Application.Json.toString())
             header(HttpHeaders.UserAgent, USER_AGENT)
             setBody(FormDataContent(Parameters.build { fields.forEach { (key, value) -> append(key, value) } }))

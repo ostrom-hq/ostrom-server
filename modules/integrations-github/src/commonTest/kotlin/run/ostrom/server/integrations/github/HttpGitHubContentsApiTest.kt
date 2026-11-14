@@ -67,9 +67,9 @@ class HttpGitHubContentsApiTest {
         }
         val url = "https://api.github.test"
         return if (waits) {
-            HttpGitHubContentsApi(http, url, clock, maxWait, tokens = tokens)
+            HttpGitHubContentsApi(http, { url }, clock, maxWait, tokens = tokens)
         } else {
-            HttpGitHubContentsApi(http, url, clock, maxWait, { pauses += it }, tokens)
+            HttpGitHubContentsApi(http, { url }, clock, maxWait, { pauses += it }, tokens)
         }
     }
 
