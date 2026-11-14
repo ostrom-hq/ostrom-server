@@ -74,7 +74,8 @@ class McpRelayManagementPostgresTest : RelayPostgresHarness() {
                     assertEquals(HttpStatusCode.Forbidden, refused.status)
                     assertTrue("step_up_required" in refused.bodyAsText(), refused.bodyAsText())
                 }
-                assertEquals(McpSettingsDto("ostrom"), client.get("$admin/settings") { bearerAuth("admin-a") }.body())
+                val settings = client.get("$admin/settings") { bearerAuth("admin-a") }.body<McpSettingsDto>()
+                assertEquals(McpSettingsDto("ostrom", false), settings)
                 assertEquals(HttpStatusCode.NoContent, client.delete(path) { bearerAuth("admin-a") }.status)
             }
         }
@@ -156,7 +157,7 @@ class McpRelayManagementPostgresTest : RelayPostgresHarness() {
                 assertEquals(HttpStatusCode.NotFound, client.delete("$policies/nope") { bearerAuth("admin-a") }.status)
 
                 val settings = client.get("$admin/settings") { bearerAuth("member-a") }.body<McpSettingsDto>()
-                assertEquals(McpSettingsDto("ostrom"), settings)
+                assertEquals(McpSettingsDto("ostrom", false), settings)
                 val before = client.get("$admin/calls?before=2030-01-01T00:00:00Z") { bearerAuth("admin-a") }
                 assertEquals(emptyList(), before.body<McpCallsPage>().items)
                 // The last two are instants the parser reads but PostgreSQL cannot store: a 400, not a 500.

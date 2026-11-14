@@ -20,11 +20,13 @@ import run.ostrom.server.mcprelay.domain.McpOperation
 import run.ostrom.server.mcprelay.domain.McpOutcome
 import run.ostrom.server.mcprelay.domain.McpRelayRepository
 import run.ostrom.server.mcprelay.domain.McpServer
+import run.ostrom.server.mcprelay.domain.McpServerLimitException
 import run.ostrom.server.mcprelay.domain.McpSettings
 import run.ostrom.server.mcprelay.domain.McpSharing
 import run.ostrom.server.mcprelay.domain.McpTransport
 import run.ostrom.server.mcprelay.domain.McpUpstream
 import run.ostrom.server.mcprelay.domain.McpUsage
+import run.ostrom.server.mcprelay.domain.PersonalServerOutcome
 import run.ostrom.server.mcprelay.domain.ToolPolicy
 import run.ostrom.server.mcprelay.domain.UpstreamResult
 import run.ostrom.server.mcprelay.domain.UpstreamTarget
@@ -177,16 +179,51 @@ class InMemoryRelayRepository : McpRelayRepository {
         return true
     }
 
+    override suspend fun createPersonalServer(server: McpServer, limit: Int): PersonalServerOutcome = when {
+        servers.count { it.orgId == server.orgId && it.ownerMemberId == server.ownerMemberId } >= limit ->
+            PersonalServerOutcome.LIMIT
+        !createServer(server) -> PersonalServerOutcome.NAME_TAKEN
+        else -> {
+            assignments +=
+                McpAssignment(server.orgId, server.id, server.ownerMemberId, ToolPolicy.ALL, null, server.createdAt)
+            PersonalServerOutcome.CREATED
+        }
+    }
+
     override suspend fun updateServer(server: McpServer): McpServer? {
-        val index = servers.indexOfFirst { it.orgId == server.orgId && it.id == server.id }
+        val index = servers.indexOfFirst {
+            it.orgId == server.orgId && it.id == server.id && it.ownerMemberId == server.ownerMemberId
+        }
         if (index < 0) return null
         servers[index] = server
         return server
     }
 
-    override suspend fun deleteServer(orgId: Uuid, id: Uuid): Boolean {
-        assignments.removeAll { it.serverId == id }
-        return servers.removeAll { it.orgId == orgId && it.id == id }
+    override suspend fun deleteServer(orgId: Uuid, id: Uuid, ownerMemberId: Uuid?): Boolean {
+        val gone = servers.removeAll {
+            it.orgId == orgId && it.id == id && (ownerMemberId == null || it.ownerMemberId == ownerMemberId)
+        }
+        if (gone) assignments.removeAll { it.serverId == id }
+        return gone
+    }
+
+    override suspend fun getServerByName(orgId: Uuid, name: String): McpServer? =
+        servers.firstOrNull { it.orgId == orgId && it.name == name }
+
+    override suspend fun listPersonalServers(orgId: Uuid, ownerMemberId: Uuid?, limit: Int): List<McpServer> =
+        servers.filter {
+            it.orgId == orgId && it.personal && (ownerMemberId == null || it.ownerMemberId == ownerMemberId)
+        }
+            .sortedWith(compareBy({ it.ownerMemberId.toString() }, { it.name })).take(limit)
+
+    override suspend fun promoteServer(orgId: Uuid, id: Uuid, limit: Int): McpServer? {
+        if (servers.count { it.orgId == orgId && !it.personal } >= limit) {
+            throw McpServerLimitException("An organization has at most $limit team MCP servers.")
+        }
+        val index = servers.indexOfFirst { it.orgId == orgId && it.id == id && it.personal }
+        if (index < 0) return null
+        servers[index] = servers[index].copy(ownerMemberId = null, version = servers[index].version + 1)
+        return servers[index]
     }
 
     override suspend fun getServer(orgId: Uuid, id: Uuid): McpServer? = servers.firstOrNull {
@@ -195,7 +232,7 @@ class InMemoryRelayRepository : McpRelayRepository {
     }
 
     override suspend fun listServers(orgId: Uuid, limit: Int): List<McpServer> = servers.filter {
-        it.orgId == orgId
+        it.orgId == orgId && !it.personal
     }.sortedBy { it.name }.take(limit)
 
     override suspend fun putAssignment(assignment: McpAssignment) {

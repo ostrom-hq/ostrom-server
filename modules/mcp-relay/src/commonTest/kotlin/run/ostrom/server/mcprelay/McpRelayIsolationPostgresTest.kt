@@ -116,12 +116,13 @@ class McpRelayIsolationPostgresTest : RelayPostgresHarness() {
                 assertEquals(HttpStatusCode.OK, mine.status, mine.bodyAsText())
 
                 val readByB = read("$admin/settings", "admin-b").body<McpSettingsDto>()
-                assertEquals(McpSettingsDto("ostrom"), readByB, "B reads its own default, not A's prefix")
+                assertEquals(McpSettingsDto("ostrom", false), readByB, "B reads its own default, not A's prefix")
                 val writtenByB = sendJson(HttpMethod.Put, "$admin/settings", McpSettingsDto("other"), "admin-b")
-                assertEquals(McpSettingsDto("other"), writtenByB.body<McpSettingsDto>())
+                assertEquals(McpSettingsDto("other", false), writtenByB.body<McpSettingsDto>())
 
-                assertEquals(McpSettingsDto("teamcode"), read("$admin/settings").body<McpSettingsDto>(), "A unchanged")
-                assertEquals(McpSettingsDto("other"), read("$admin/settings", "admin-b").body<McpSettingsDto>())
+                val readByA = read("$admin/settings").body<McpSettingsDto>()
+                assertEquals(McpSettingsDto("teamcode", false), readByA, "A unchanged")
+                assertEquals(McpSettingsDto("other", false), read("$admin/settings", "admin-b").body<McpSettingsDto>())
             }
         }
 }

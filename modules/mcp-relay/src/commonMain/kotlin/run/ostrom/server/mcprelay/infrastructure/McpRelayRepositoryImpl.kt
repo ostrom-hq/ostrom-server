@@ -15,19 +15,24 @@ import run.ostrom.server.mcprelay.domain.McpOperation
 import run.ostrom.server.mcprelay.domain.McpOutcome
 import run.ostrom.server.mcprelay.domain.McpRelayRepository
 import run.ostrom.server.mcprelay.domain.McpServer
+import run.ostrom.server.mcprelay.domain.McpServerLimitException
 import run.ostrom.server.mcprelay.domain.McpSettings
 import run.ostrom.server.mcprelay.domain.McpSharing
 import run.ostrom.server.mcprelay.domain.McpTransport
 import run.ostrom.server.mcprelay.domain.McpUsage
+import run.ostrom.server.mcprelay.domain.PersonalServerOutcome
 import run.ostrom.server.mcprelay.domain.PolicyEffect
 import run.ostrom.server.mcprelay.domain.StdioLauncher
 import run.ostrom.server.mcprelay.domain.StdioSpec
 import run.ostrom.server.mcprelay.domain.ToolPolicy
 import run.ostrom.server.secrets.infrastructure.executeInOrg
 import run.ostrom.server.secrets.infrastructure.fetchInOrg
+import run.ostrom.server.secrets.infrastructure.inTenant
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.Transaction
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
@@ -60,25 +65,104 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
         ).bindServer(server).bind("created_at", server.createdAt),
     ).getOrThrow() == 1L
 
+    override suspend fun createPersonalServer(server: McpServer, limit: Int): PersonalServerOutcome {
+        val owner = requireNotNull(server.ownerMemberId) { "A personal server has an owner." }
+        return driver.inTenant(server.orgId) {
+            lock("mcp-personal:${server.orgId}:$owner")
+            val owned = fetchAll(
+                Statement.create(
+                    "SELECT COUNT(*) AS owned FROM mcp_relay_servers " +
+                        "WHERE org_id = :org_id AND owner_member_id = :owner",
+                ).bind("org_id", server.orgId).bind("owner", owner),
+            ).getOrThrow().first().get("owned").asLong()
+            when {
+                owned >= limit -> PersonalServerOutcome.LIMIT
+                execute(
+                    Statement.create(
+                        "INSERT INTO mcp_relay_servers (id, org_id, name, transport, url, credential_secret_id, " +
+                            "credential_header, stdio, sharing, version, created_at, owner_member_id) VALUES (:id, " +
+                            ":org_id, :name, :transport, :url, :credential, :header, :stdio, :sharing, :version, " +
+                            ":created_at, :owner) ON CONFLICT (org_id, name) DO NOTHING",
+                    ).bindServer(server).bind("created_at", server.createdAt).bind("owner", owner),
+                ).getOrThrow() != 1L -> PersonalServerOutcome.NAME_TAKEN
+                else -> {
+                    execute(
+                        Statement.create(
+                            "INSERT INTO mcp_relay_assignments (org_id, server_id, member_id, tools, " +
+                                "credential_secret_id, assigned_at) VALUES (:org_id, :server_id, :member_id, NULL, " +
+                                "NULL, :assigned_at)",
+                        )
+                            .bind("org_id", server.orgId)
+                            .bind("server_id", server.id)
+                            .bind("member_id", owner)
+                            .bind("assigned_at", server.createdAt),
+                    ).getOrThrow()
+                    PersonalServerOutcome.CREATED
+                }
+            }
+        }
+    }
+
     override suspend fun updateServer(server: McpServer): McpServer? {
-        val updated = driver.executeInOrg(
-            server.orgId,
-            Statement.create(
-                "UPDATE mcp_relay_servers SET name = :name, transport = :transport, url = :url, " +
-                    "credential_secret_id = :credential, credential_header = :header, stdio = :stdio, " +
-                    "sharing = :sharing, version = :version " +
-                    "WHERE org_id = :org_id AND id = :id",
-            ).bindServer(server),
-        ).getOrThrow()
+        val owner = if (server.ownerMemberId == null) "owner_member_id IS NULL" else "owner_member_id = :owner"
+        val statement = Statement.create(
+            "UPDATE mcp_relay_servers SET name = :name, transport = :transport, url = :url, " +
+                "credential_secret_id = :credential, credential_header = :header, stdio = :stdio, " +
+                "sharing = :sharing, version = :version " +
+                "WHERE org_id = :org_id AND id = :id AND $owner",
+        ).bindServer(server)
+        server.ownerMemberId?.let { statement.bind("owner", it) }
+        val updated = driver.executeInOrg(server.orgId, statement).getOrThrow()
         return if (updated == 1L) server else null
     }
 
-    override suspend fun deleteServer(orgId: Uuid, id: Uuid): Boolean = driver.executeInOrg(
+    override suspend fun deleteServer(orgId: Uuid, id: Uuid, ownerMemberId: Uuid?): Boolean {
+        val owner = if (ownerMemberId == null) "" else " AND owner_member_id = :owner"
+        val statement = Statement.create("DELETE FROM mcp_relay_servers WHERE org_id = :org_id AND id = :id$owner")
+            .bind("org_id", orgId).bind("id", id)
+        ownerMemberId?.let { statement.bind("owner", it) }
+        return driver.executeInOrg(orgId, statement).getOrThrow() == 1L
+    }
+
+    override suspend fun getServerByName(orgId: Uuid, name: String): McpServer? = driver.fetchInOrg(
         orgId,
-        Statement.create(
-            "DELETE FROM mcp_relay_servers WHERE org_id = :org_id AND id = :id",
-        ).bind("org_id", orgId).bind("id", id),
-    ).getOrThrow() == 1L
+        Statement.create("SELECT $SERVER_COLUMNS FROM mcp_relay_servers s WHERE s.org_id = :org_id AND s.name = :name")
+            .bind("org_id", orgId).bind("name", name),
+    ).getOrThrow().firstOrNull()?.toServer()
+
+    override suspend fun listPersonalServers(orgId: Uuid, ownerMemberId: Uuid?, limit: Int): List<McpServer> {
+        val owner = if (ownerMemberId == null) "s.owner_member_id IS NOT NULL" else "s.owner_member_id = :owner"
+        val statement = Statement.create(
+            "SELECT $SERVER_COLUMNS FROM mcp_relay_servers s WHERE s.org_id = :org_id AND $owner " +
+                "ORDER BY s.owner_member_id, s.name LIMIT :limit",
+        ).bind("org_id", orgId).bind("limit", limit)
+        ownerMemberId?.let { statement.bind("owner", it) }
+        return driver.fetchInOrg(orgId, statement).getOrThrow().map { it.toServer() }
+    }
+
+    override suspend fun promoteServer(orgId: Uuid, id: Uuid, limit: Int): McpServer? = driver.inTenant(orgId) {
+        lock("mcp-team:$orgId")
+        val team = fetchAll(
+            Statement.create(
+                "SELECT COUNT(*) AS team FROM mcp_relay_servers WHERE org_id = :org_id AND owner_member_id IS NULL",
+            ).bind("org_id", orgId),
+        ).getOrThrow().first().get("team").asLong()
+        if (team >= limit) throw McpServerLimitException("An organization has at most $limit team MCP servers.")
+        fetchAll(
+            Statement.create(
+                "UPDATE mcp_relay_servers s SET owner_member_id = NULL, version = s.version + 1 " +
+                    "WHERE s.org_id = :org_id AND s.id = :id AND s.owner_member_id IS NOT NULL " +
+                    "RETURNING $SERVER_COLUMNS",
+            ).bind("org_id", orgId).bind("id", id),
+        ).getOrThrow().firstOrNull()?.toServer()
+    }
+
+    private suspend fun Transaction.lock(key: String) {
+        fetchAll(
+            Statement.create("SELECT 1 AS locked FROM (SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))) AS l")
+                .bind("key", key),
+        ).getOrThrow()
+    }
 
     override suspend fun getServer(orgId: Uuid, id: Uuid): McpServer? = driver.fetchInOrg(
         orgId,
@@ -89,7 +173,8 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
     override suspend fun listServers(orgId: Uuid, limit: Int): List<McpServer> = driver.fetchInOrg(
         orgId,
         Statement.create(
-            "SELECT $SERVER_COLUMNS FROM mcp_relay_servers s WHERE s.org_id = :org_id ORDER BY s.name LIMIT :limit",
+            "SELECT $SERVER_COLUMNS FROM mcp_relay_servers s WHERE s.org_id = :org_id AND s.owner_member_id IS NULL " +
+                "ORDER BY s.name LIMIT :limit",
         )
             .bind("org_id", orgId).bind("limit", limit),
     ).getOrThrow().map { it.toServer() }
@@ -208,17 +293,21 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
 
     override suspend fun settings(orgId: Uuid): McpSettings = driver.fetchInOrg(
         orgId,
-        Statement.create("SELECT agent_prefix FROM mcp_relay_settings WHERE org_id = :org_id").bind("org_id", orgId),
-    ).getOrThrow().firstOrNull()?.let { McpSettings(it.get("agent_prefix").asString()) }
+        Statement.create("SELECT agent_prefix, member_hosted_mcp FROM mcp_relay_settings WHERE org_id = :org_id")
+            .bind("org_id", orgId),
+    ).getOrThrow().firstOrNull()?.let {
+        McpSettings(it.get("agent_prefix").asString(), it.get("member_hosted_mcp").asBoolean())
+    }
         ?: McpSettings(McpSettings.DEFAULT_PREFIX)
 
     override suspend fun putSettings(orgId: Uuid, settings: McpSettings) {
         driver.executeInOrg(
             orgId,
             Statement.create(
-                "INSERT INTO mcp_relay_settings (org_id, agent_prefix) VALUES (:org_id, :prefix) ON CONFLICT " +
-                    "(org_id) DO UPDATE SET agent_prefix = EXCLUDED.agent_prefix",
-            ).bind("org_id", orgId).bind("prefix", settings.agentPrefix),
+                "INSERT INTO mcp_relay_settings (org_id, agent_prefix, member_hosted_mcp) VALUES (:org_id, :prefix, " +
+                    ":hosted) ON CONFLICT (org_id) DO UPDATE SET agent_prefix = EXCLUDED.agent_prefix, " +
+                    "member_hosted_mcp = EXCLUDED.member_hosted_mcp",
+            ).bind("org_id", orgId).bind("prefix", settings.agentPrefix).bind("hosted", settings.memberHostedMcp),
         ).getOrThrow()
     }
 
@@ -453,6 +542,7 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
         sharing = McpSharing.valueOf(get("s_sharing").asString()),
         version = get("s_version").asInt(),
         createdAt = get("s_created_at").asInstant(),
+        ownerMemberId = get("s_owner").asUuidOrNull(),
     )
 
     private fun ResultSet.Row.toAssignment() = McpAssignment(
@@ -503,7 +593,8 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
         const val SERVER_COLUMNS =
             "s.id AS s_id, s.org_id AS s_org_id, s.name AS s_name, s.transport AS s_transport, s.url AS s_url, " +
                 "s.credential_secret_id AS s_credential, s.credential_header AS s_header, s.stdio AS s_stdio, " +
-                "s.sharing AS s_sharing, s.version AS s_version, s.created_at AS s_created_at"
+                "s.sharing AS s_sharing, s.version AS s_version, s.created_at AS s_created_at, " +
+                "s.owner_member_id AS s_owner"
         const val STATE_COLUMNS = "org_id, server_id, member_id, process_key, state, failure, changed_at"
         const val ASSIGNMENT_COLUMNS =
             "a.org_id AS a_org_id, a.server_id AS a_server_id, a.member_id AS a_member_id, a.tools AS a_tools, " +

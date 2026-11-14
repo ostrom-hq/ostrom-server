@@ -10,6 +10,6 @@ class McpRelayFeaturesTest {
     @Test
     fun itsFeaturesNeedNoConfiguration() = runTest {
         val koin = koinApplication {}.koin
-        assertEquals(setOf("mcp.v1"), McpRelayModule.features(koin))
+        assertEquals(setOf("mcp.v1", "mcp.personal.v1"), McpRelayModule.features(koin))
     }
 }

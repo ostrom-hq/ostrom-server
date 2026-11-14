@@ -560,7 +560,7 @@ anonymous call gets 401 `unauthorized`. A module lists a key of ostrom-core's `S
 | `identity` | `audit.v1` | — |
 | `import` | `import.teamcode.v1` | — |
 | `integrations-github` | `github.v1`; `github.link.v1` | a stored GitHub App (created by the manifest flow, or imported once from the former variables); the second once that App's OAuth client (id and secret) is known |
-| `mcp-relay` | `mcp.v1` | — |
+| `mcp-relay` | `mcp.v1`, `mcp.personal.v1` (members' own servers) | — |
 | `memory` | `memory.v1` | — |
 | `notifications` | `notifications.v1`, `notifications.push.v1` | — (Expo's push service needs no key; `OSTROM_EXPO_ACCESS_TOKEN` only when the project requires one) |
 | `receipts` | `receipts.v1` | — |

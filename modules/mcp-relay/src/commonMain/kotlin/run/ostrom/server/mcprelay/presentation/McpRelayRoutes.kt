@@ -58,6 +58,7 @@ import kotlin.uuid.Uuid
 fun Route.mcpRelayRoutes(dependencies: McpRelayRoutesDependencies) {
     authenticated {
         serverRoutes(dependencies)
+        personalRoutes(dependencies)
         assignmentRoutes(dependencies)
         policyRoutes(dependencies)
         journalRoutes(dependencies)
@@ -79,7 +80,7 @@ private fun Route.serverRoutes(dependencies: McpRelayRoutesDependencies) = with(
         if (params.mine || !caller.role.isAdmin || !console) {
             call.respond(McpServersPage(listMemberServers(caller).map { it.toDto() }))
         } else {
-            val servers = listServers(caller)
+            val servers = if (params.personal) personal.review(caller) else listServers(caller)
             val names = directory.namesById(caller.orgId, servers.flatMap { it.secretIds() })
             call.respond(McpServersPage(servers.map { it.toDto(names) }))
         }
@@ -101,7 +102,7 @@ private fun Route.serverRoutes(dependencies: McpRelayRoutesDependencies) = with(
             throw InvalidMcpServerException("The name of the body differs from the name of the path.")
         }
         val payload = request.toPayload(directory.idsByName(caller.orgId, null, request.secretNamesUsed()))
-        val existing = listServers(caller).firstOrNull { it.name == params.name }
+        val existing = listServers.find(caller, params.name)
         val (server, event) = if (existing == null) {
             createServer(caller, payload) to SERVER_CREATED
         } else {
@@ -183,16 +184,23 @@ private fun Route.policyRoutes(dependencies: McpRelayRoutesDependencies) = with(
 private fun Route.journalRoutes(dependencies: McpRelayRoutesDependencies) = with(dependencies) {
     get<McpApi.Settings> {
         val caller = call.requireCaller(callers, RelayScopes.MCP_READ)
-        call.respond(McpSettingsDto(getSettings(caller).agentPrefix))
+        val settings = getSettings(caller)
+        call.respond(McpSettingsDto(settings.agentPrefix, settings.memberHostedMcp))
     }
     put<McpApi.Settings> {
         val caller = call.requireCaller(callers, RelayScopes.MCP_ADMIN)
         call.requireRecentSignIn("change an MCP server")
         val principal = call.requirePrincipal()
-        val settings = putSettings(caller, McpSettings(call.receive<McpSettingsDto>().agentPrefix))
-        val details = auditDetails("agent_prefix" to settings.agentPrefix)
+        val request = call.receive<McpSettingsDto>()
+        // Absent, the members' hosted commands keep the stored answer.
+        val hosted = request.memberHostedMcp ?: getSettings(caller).memberHostedMcp
+        val settings = putSettings(caller, McpSettings(request.agentPrefix, hosted))
+        val details = auditDetails(
+            "agent_prefix" to settings.agentPrefix,
+            "member_hosted_mcp" to settings.memberHostedMcp,
+        )
         audit.record(OrgAuditRecord(caller.orgId, principal, "mcp.settings.changed", "settings", "mcp", details))
-        call.respond(McpSettingsDto(settings.agentPrefix))
+        call.respond(McpSettingsDto(settings.agentPrefix, settings.memberHostedMcp))
     }
     get<McpApi.Calls> { params ->
         val caller = call.requireCaller(callers, RelayScopes.MCP_READ)
@@ -256,7 +264,7 @@ private fun Route.endpointRoutes(dependencies: McpRelayRoutesDependencies) = wit
 private const val MAX_CALLS_PAGE = 200
 
 private suspend fun McpRelayRoutesDependencies.serverId(caller: Caller, name: String): Uuid {
-    val server = listServers(caller).firstOrNull { it.name == name } ?: throw McpServerNotFoundException()
+    val server = listServers.find(caller, name) ?: throw McpServerNotFoundException()
     return server.id
 }
 

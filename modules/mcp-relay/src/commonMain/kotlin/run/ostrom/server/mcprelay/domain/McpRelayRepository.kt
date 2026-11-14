@@ -11,27 +11,65 @@ import kotlin.uuid.Uuid
 @Suppress("TooManyFunctions") // One port per module's storage, as in the other modules.
 interface McpRelayRepository {
     /**
-     * Inserts a server.
+     * Inserts a team server.
      *
-     * @return False when the org already has a server with this name.
+     * @return False when the org already has a server with this name, a member's own included.
      */
     suspend fun createServer(server: McpServer): Boolean
 
     /**
-     * Replaces a server's definition, bumping its version.
+     * Inserts a member's own server and assigns it to them, every tool, in one transaction; the member's servers are
+     * counted under a lock, so two at once never pass [limit].
+     *
+     * @param server The server, with its owner.
+     * @param limit The most personal servers a member keeps.
+     */
+    suspend fun createPersonalServer(server: McpServer, limit: Int): PersonalServerOutcome
+
+    /**
+     * Replaces a server's definition, bumping its version; only while its owner is still [McpServer.ownerMemberId]
+     * (null: a team server).
      *
      * @return The server after the change, or null when it does not exist.
      */
     suspend fun updateServer(server: McpServer): McpServer?
 
-    /** Deletes a server with its assignments and policies (journal rows stay). @return True when deleted. */
-    suspend fun deleteServer(orgId: Uuid, id: Uuid): Boolean
+    /**
+     * Deletes a server with its assignments and policies (journal rows stay).
+     *
+     * @param ownerMemberId Only the server of this member, or any when null.
+     *
+     * @return True when deleted.
+     */
+    suspend fun deleteServer(orgId: Uuid, id: Uuid, ownerMemberId: Uuid? = null): Boolean
 
     /** Reads a server by id. */
     suspend fun getServer(orgId: Uuid, id: Uuid): McpServer?
 
-    /** Lists the org's servers by name (at most [limit]). */
+    /** Reads a server, team or personal, by name. */
+    suspend fun getServerByName(orgId: Uuid, name: String): McpServer?
+
+    /** Lists the org's team servers by name (at most [limit]). */
     suspend fun listServers(orgId: Uuid, limit: Int): List<McpServer>
+
+    /**
+     * Lists personal servers, by owner then name (at most [limit]).
+     *
+     * @param ownerMemberId Only this member's, or every member's when null.
+     */
+    suspend fun listPersonalServers(orgId: Uuid, ownerMemberId: Uuid?, limit: Int): List<McpServer>
+
+    /**
+     * Makes a personal server a team server: its owner is cleared and keeps their assignment. The team's servers are
+     * counted in the same transaction, under a lock that serializes promotions.
+     *
+     * @param limit The most team servers.
+     *
+     * @return The server after the change, or null when there is no personal server with this id.
+     *
+     * @throws McpServerLimitException When the team already has [limit] servers.
+     */
+    suspend fun promoteServer(orgId: Uuid, id: Uuid, limit: Int): McpServer?
 
     /**
      * Replaces the assignment of a member (or of the whole org when [McpAssignment.memberId] is null).
@@ -65,7 +103,7 @@ interface McpRelayRepository {
     /** A server's argument policies, oldest first. */
     suspend fun listPolicies(orgId: Uuid, serverId: Uuid): List<ArgumentPolicy>
 
-    /** The org's settings, or the defaults. */
+    /** The org's settings, or the defaults (`memberHostedMcp` off). */
     suspend fun settings(orgId: Uuid): McpSettings
 
     /** Replaces the org's settings. */
@@ -144,4 +182,16 @@ interface McpRelayRepository {
         changes: List<HostedProcessChange>,
         removals: List<HostedProcessRecord>,
     ): Int
+}
+
+/** How storing a member's own server ended. */
+enum class PersonalServerOutcome {
+    /** Stored and assigned to its owner. */
+    CREATED,
+
+    /** The organization already has a server with this name. */
+    NAME_TAKEN,
+
+    /** The member already keeps the most personal servers. */
+    LIMIT,
 }

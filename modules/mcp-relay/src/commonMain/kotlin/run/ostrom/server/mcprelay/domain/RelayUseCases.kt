@@ -61,7 +61,7 @@ class ListMemberServersUseCaseImpl(
 ) : ListMemberServersUseCase {
     override suspend fun invoke(caller: Caller): List<MemberServer> {
         val prefix = repository.settings(caller.orgId).agentPrefix
-        val servers = repository.effectiveServers(caller.orgId, caller.memberId, McpRules.MAX_SERVERS)
+        val servers = repository.effectiveServers(caller.orgId, caller.memberId, McpRules.MAX_REACHED)
         val agentNames = servers.groupBy { McpRules.agentName(prefix, it.server.name) }
         // Two servers that would get the same agent name (`a.b` and `a_b`) are both left out rather than one hidden.
         val listed = servers.filter { agentNames.getValue(McpRules.agentName(prefix, it.server.name)).size == 1 }
