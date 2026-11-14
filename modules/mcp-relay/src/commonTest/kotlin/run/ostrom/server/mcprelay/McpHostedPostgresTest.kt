@@ -1,28 +1,34 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.mcprelay
 
+import run.ostrom.server.kernel.audit.OrgAuditRecord
+import run.ostrom.server.kernel.audit.OrgAuditTrail
 import run.ostrom.server.mcprelay.domain.HostedProcessChange
 import run.ostrom.server.mcprelay.domain.HostedProcessRecord
 import run.ostrom.server.mcprelay.domain.McpAssignment
 import run.ostrom.server.mcprelay.domain.McpRelayRepository
 import run.ostrom.server.mcprelay.domain.McpSharing
 import run.ostrom.server.mcprelay.domain.McpTransport
+import run.ostrom.server.mcprelay.domain.RestartHostedProcessUseCase
 import run.ostrom.server.mcprelay.domain.StdioLauncher
 import run.ostrom.server.mcprelay.domain.StdioSpec
 import run.ostrom.server.mcprelay.domain.ToolPolicy
 import run.ostrom.server.mcprelay.presentation.McpHostedRestartDto
 import run.ostrom.server.secrets.SecretsModule
+import run.ostrom.server.secrets.domain.Caller
 import run.ostrom.server.testing.serverTest
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
+import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
+import kotlin.uuid.Uuid
 
 /** The recorded states of hosted processes on PostgreSQL, and the hosted routes over HTTP. */
 class McpHostedPostgresTest : RelayPostgresHarness() {
@@ -74,6 +80,42 @@ class McpHostedPostgresTest : RelayPostgresHarness() {
             repository.applyStdioStates(Relay.orgA, emptyList(), listOf(sharedReady, recovered))
             assertEquals(emptyList(), repository.stdioStates(Relay.orgA, 10))
         }
+
+    @Test
+    fun aRestartIsJournaledWithItsServerAndMemberThenAnsweredWithNoContent() {
+        val restarted = mutableListOf<Pair<String, Uuid?>>()
+        val journal = mutableListOf<OrgAuditRecord>()
+        val withHost = module {
+            includes(overrides)
+            single<OrgAuditTrail> { OrgAuditTrail { journal += it } }
+            single<RestartHostedProcessUseCase> {
+                object : RestartHostedProcessUseCase {
+                    override suspend fun invoke(
+                        caller: Caller,
+                        server: String,
+                        memberId: Uuid?,
+                        journal: suspend () -> Unit,
+                    ) {
+                        journal()
+                        restarted += server to memberId
+                    }
+                }
+            }
+        }
+        serverTest(listOf(SecretsModule, McpRelayModule), withHost) { server ->
+            with(server) {
+                val restart = "$admin/hosted/restart"
+                val shared = sendJson(HttpMethod.Post, restart, McpHostedRestartDto("shared"))
+                assertEquals(HttpStatusCode.NoContent, shared.status, shared.bodyAsText())
+                val member = Relay.memberA.memberId
+                val personal = McpHostedRestartDto("personal", member.toString())
+                assertEquals(HttpStatusCode.NoContent, sendJson(HttpMethod.Post, restart, personal).status)
+                assertEquals(listOf("shared" to null, "personal" to member), restarted)
+                assertEquals(listOf("shared", "personal/$member"), journal.map { it.subjectId })
+                assertTrue(journal.all { it.event == "mcp.stdio.restarted" && it.orgId == Relay.orgA })
+            }
+        }
+    }
 
     @Test
     fun theHostedRoutesNeedACredentialAnAdministratorAndAnMcpHost() =

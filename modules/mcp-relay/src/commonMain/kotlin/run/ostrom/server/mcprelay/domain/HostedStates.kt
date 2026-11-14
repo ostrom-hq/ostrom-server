@@ -353,8 +353,10 @@ class HostedProcessAdministration(
             // When the host answered, it is the truth (a process it does not know is idle); otherwise the record.
             val (state, failure) = if (status != null) {
                 HostedProcessStateRules.observe(process.key, live, record)
+            } else if (record == null) {
+                HostedProcessStates.IDLE to null
             } else {
-                (record?.stateFor(process.key) ?: HostedProcessStates.IDLE) to record?.failureFor(process.key)
+                record.stateFor(process.key) to record.failureFor(process.key)
             }
             HostedProcess(
                 server = server.name,

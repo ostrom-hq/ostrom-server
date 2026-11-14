@@ -408,7 +408,7 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
         if (memberId == null) "member_id IS NULL" else "member_id = :member_id"
 
     private fun Statement.bindMember(record: HostedProcessRecord): Statement =
-        record.memberId?.let { bind("member_id", it) } ?: this
+        if (record.memberId == null) this else bind("member_id", record.memberId)
 
     private fun ResultSet.Row.toRecord() = HostedProcessRecord(
         orgId = get("org_id").asUuid(),
