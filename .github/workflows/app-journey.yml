@@ -1,14 +1,14 @@
 name: App journey
 
-# The mobile app's flows against the real server (ostrom-app .maestro/real/, demo/PARCOURS.md 6.7) on a PUBLISHED image
+# The app's journey against the real server (ostrom-app companion/src/jvmTest/.../RealServerJourneyTest.kt, demo/PARCOURS.md 6.7) on a PUBLISHED image
 # of this server: by default the newest published `sha-<commit>` of main's last commits, never `latest`, which a slower run of an older commit may still
 # hold. The job prepares the server through its own routes (ostrom-app scripts/real-server-session.sh): the phone's
 # person signs in with GitHub (the demo stack's fake GitHub, ostrom-helm compose/demo/fake-github.mjs), owns the
 # organization and approves pushes to main; another member asks two; the phone's session comes from the app's own
-# sign-in routes (PKCE, `POST /auth/mobile/token`). The app is built here from ostrom-app with that session (a release
-# APK for an x86_64 emulator), its Maestro flows say yes to one request and no to the other on an Android emulator of
-# this same Linux runner (the server runs on the host, the emulator reaches it at 10.0.2.2), and the job then checks the
-# gates and their receipts through the API. A model call through the gateway, to ostrom-e2e's fake provider, spends the
+# sign-in routes (PKCE, `POST /auth/mobile/token`). The app (Kotlin Multiplatform, Compose) runs here from ostrom-app with
+# that session: its RealServerJourneyTest drives the whole app on the desktop JVM of this runner, over the JDK HTTP client
+# to the server on the host, says yes to one request and no to the other, and the job then checks the gates and their
+# receipts through the API. A model call through the gateway, to ostrom-e2e's fake provider, spends the
 # organization's tiny budget: the app's Spending tab shows it passed (PARCOURS 3.5). It runs in this repository because its
 # token reads its own GHCR packages, which ostrom-app's cannot yet (as cli-journey.yml and console-journey.yml). On
 # demand, and, off the org's one-`ci`-job rule on purpose (as demo-stack.yml), on a pull request only when the pull
@@ -89,12 +89,10 @@ jobs:
             src/fake-tokens.ts
           sparse-checkout-cone-mode: false
           persist-credentials: false
-      # Node 24 runs the fake provider's TypeScript as it is (type stripping), and builds the app later.
+      # Node 24 runs the fake provider's TypeScript as it is (type stripping) and the fake GitHub.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: app/package-lock.json
       - name: Start the fake model provider
         # The gateway's Anthropic API (OSTROM_GATEWAY_ANTHROPIC_URL): every model call bills 300 000 input tokens, $1.50
         # at claude-opus-5's $5 per million, past the organization's $0.01 budget that real-server-session.sh sets
@@ -205,9 +203,7 @@ jobs:
         env:
           OUTPUTS: ${{ toJSON(steps.session.outputs) }}
         run: |
-          names="token unlock_key login yes_approval no_approval yes_gate no_gate asker_token"
-          # The repository of the requests, once the app's flow reads it (its Activity screen).
-          if grep -q OSTROM_E2E_REPO app/.maestro/real/journey.yaml; then names="$names repo"; fi
+          names="token unlock_key login yes_approval no_approval yes_gate no_gate asker_token repo"
           for name in $names; do
             if [ -z "$(jq -r --arg n "$name" '.[$n] // ""' <<< "$OUTPUTS")" ]; then
               echo "::error::The session step gave no $name: the app or the checks would fail later, unclearly"
@@ -230,21 +226,19 @@ jobs:
           fi
           bare="$(curl -fsS "${auth[@]}" http://127.0.0.1:4600/api/v1/auth/me | jq -r '.member.role // "none"')"
           echo "With Ostrom-Org: $role; without: $bare"
-      - name: Free disk space on the runner
+      # The app builds ostrom-core from source at the commit it pins, as its own CI does.
+      - name: Read the ostrom-core commit the app pins
+        id: core
+        # An app ref from before the Kotlin Multiplatform app (ostrom-app#65) pins none: it has no journey to run here.
         run: |
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /usr/share/swift \
-            /opt/hostedtoolcache/CodeQL /opt/microsoft /opt/google/chrome \
-            /usr/local/share/powershell /usr/local/share/chromium
-          free_kib=$(df --output=avail -k / | tail -n 1)
-          echo "Free on / after the cleanup: $((free_kib / 1024 / 1024)) GiB"
-          if [ "$free_kib" -lt $((8 * 1024 * 1024)) ]; then
-            echo "::error::Less than 8 GiB free after the cleanup: the build and the emulator would not fit"
-            exit 1
-          fi
-      - name: Enable KVM
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+          [ -s app/gradle/ostrom-core.ref ] || { echo "::error::ostrom-app $APP_REF pins no ostrom-core (gradle/ostrom-core.ref): it predates the Kotlin Multiplatform app"; exit 1; }
+          echo "sha=$(tr -d '[:space:]' < app/gradle/ostrom-core.ref)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-core
+          ref: ${{ steps.core.outputs.sha }}
+          path: app/.core
+          persist-credentials: false
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
@@ -252,76 +246,19 @@ jobs:
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-provider: basic
-      - name: Install the app's dependencies
-        working-directory: app
-        run: npm ci
-      # The emulator reaches the runner at 10.0.2.2, over plain HTTP: allowed in this build only, never in a store build.
-      - name: Build the Android app against the server (release, x86_64)
+      - name: The app against the server (Compose UI on the desktop JVM)
         working-directory: app
         env:
-          EXPO_PUBLIC_OSTROM_REAL_E2E: "1"
-          EXPO_PUBLIC_OSTROM_E2E_SERVER: http://10.0.2.2:4600
-          EXPO_PUBLIC_OSTROM_E2E_TOKEN: ${{ steps.session.outputs.token }}
-          EXPO_PUBLIC_OSTROM_E2E_LOGIN: ${{ steps.session.outputs.login }}
-          EXPO_PUBLIC_OSTROM_E2E_UNLOCK_KEY: ${{ steps.session.outputs.unlock_key }}
-        run: |
-          npx expo prebuild --platform android --no-install
-          sed -i 's/<application /<application android:usesCleartextTraffic="true" /' android/app/src/main/AndroidManifest.xml
-          grep -q 'usesCleartextTraffic="true"' android/app/src/main/AndroidManifest.xml
-          cd android && ./gradlew assembleRelease -PreactNativeArchitectures=x86_64 --no-daemon
-          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/journey.apk"
-      # The app's own sign-in, through Chrome, the server and the fake GitHub, in a build given no session
-      # (ostrom-app .maestro/real-browser/, AUDIT-SECU-APP-2 N1): the server's page that asks before a code goes back to
-      # the app. The emulator reaches the server and the fake GitHub on 127.0.0.1 (`adb reverse`), the address the
-      # server sends the browser to; skipped for an app ref without those flows.
-      - name: Build the Android app that signs in through the browser, given no session
-        if: hashFiles('app/.maestro/real-browser/*.yaml') != ''
-        working-directory: app
-        env:
-          EXPO_PUBLIC_OSTROM_REAL_E2E: "1"
-          EXPO_PUBLIC_OSTROM_E2E_SERVER: http://127.0.0.1:4600
-          EXPO_PUBLIC_OSTROM_E2E_SIGN_IN: browser
-          SESSION_TOKEN: ${{ steps.session.outputs.token }}
-        run: |
-          # The bundle is made again with these variables: Metro's cache and Gradle's up-to-date check would keep the
-          # first build's, which carries the session.
-          rm -rf "${TMPDIR:-/tmp}"/metro-* "${TMPDIR:-/tmp}"/haste-map-* node_modules/.cache
-          cd android
-          ./gradlew createBundleReleaseJsAndAssets --rerun -PreactNativeArchitectures=x86_64 --no-daemon
-          ./gradlew assembleRelease -PreactNativeArchitectures=x86_64 --no-daemon
-          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/browser.apk"
-          bundle="$RUNNER_TEMP/browser-bundle"
-          unzip -p "$RUNNER_TEMP/browser.apk" assets/index.android.bundle > "$bundle"
-          if grep -aqF "$SESSION_TOKEN" "$bundle"; then
-            echo "::error::The browser build carries the journey's session: it would skip the sign-in it must prove"
-            exit 1
-          fi
-          grep -aqF "http://127.0.0.1:4600" "$bundle" || { echo "::error::The browser build does not carry its server"; exit 1; }
-      - name: Install Maestro (pinned)
-        env:
-          MAESTRO_VERSION: 2.12.0
-        run: |
-          curl -fsSL "https://get.maestro.mobile.dev" | bash
-          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
-      - name: The app's flows against the server
-        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
-        env:
+          OSTROM_E2E_SERVER: http://127.0.0.1:4600
+          OSTROM_E2E_TOKEN: ${{ steps.session.outputs.token }}
+          OSTROM_E2E_UNLOCK_KEY: ${{ steps.session.outputs.unlock_key }}
           OSTROM_E2E_LOGIN: ${{ steps.session.outputs.login }}
           OSTROM_E2E_YES: ${{ steps.session.outputs.yes_approval }}
           OSTROM_E2E_NO: ${{ steps.session.outputs.no_approval }}
-          # The repository of the requests, which the Activity screen shows (checked above once the flow reads it).
           OSTROM_E2E_REPO: ${{ steps.session.outputs.repo }}
-        with:
-          working-directory: app
-          api-level: 35
-          arch: x86_64
-          target: google_apis
-          disable-animations: true
-          disk-size: 4096M
-          script: |
-            adb install "$RUNNER_TEMP/journey.apk"
-            scripts/run-maestro.sh .maestro/real -e OSTROM_E2E_LOGIN="$OSTROM_E2E_LOGIN" -e OSTROM_E2E_YES="$OSTROM_E2E_YES" -e OSTROM_E2E_NO="$OSTROM_E2E_NO" -e OSTROM_E2E_REPO="$OSTROM_E2E_REPO"
-            if [ -f "$RUNNER_TEMP/browser.apk" ]; then adb uninstall run.ostrom.app && adb reverse tcp:4600 tcp:4600 && adb reverse tcp:8080 tcp:8080 && adb install "$RUNNER_TEMP/browser.apk" && scripts/run-maestro.sh .maestro/real-browser -e OSTROM_E2E_LOGIN="$OSTROM_E2E_LOGIN"; fi
+        run: >-
+          ./gradlew -Postrom.core.path=.core --no-daemon
+          :companion:jvmTest --tests run.ostrom.app.RealServerJourneyTest --rerun
       - name: The server took the yes and the no, and signed both receipts
         # Read by the asker's token (gates:read, receipts:read): what the phone sent, as the server recorded it.
         env:
@@ -356,7 +293,7 @@ jobs:
         with:
           name: app-journey-report
           path: |
-            app/maestro-report-*.xml
-            app/maestro-output/
+            app/companion/build/reports/tests/jvmTest/
+            app/companion/build/test-results/jvmTest/
           if-no-files-found: ignore
           retention-days: 7
