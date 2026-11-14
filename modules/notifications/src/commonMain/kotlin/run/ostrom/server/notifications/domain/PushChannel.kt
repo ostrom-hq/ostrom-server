@@ -10,7 +10,6 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import run.ostrom.core.api.models.PushPayload
-import run.ostrom.server.kernel.settings.InstanceSettings
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
@@ -30,22 +29,18 @@ private class PushTarget(val device: PushDevice, val publicKey: String)
 /**
  * Push to the members' phones (TeamCode's `PushChannel`): one push per `fcm` phone that registered a key and whose
  * credential still works, encrypted for that phone and sent through the provider an administrator chose in the
- * instance's `push` settings. While it is `off`, nobody is reachable. The provider sees a token and a blob; the text
- * exists in clear only on this server and on the phone.
+ * instance's `push` settings (the relay or the instance's own Firebase project). While it is `off`, nobody is
+ * reachable. The provider sees a token and a blob; the text exists in clear only on this server and on the phone.
  *
- * @param settings The instance's settings.
- * @param senders The Firebase senders.
+ * @param providers The provider in force.
  * @param encryption The payload's encryption.
  * @param devices The phones.
  * @param credentials Whether a phone's credential still works.
  * @param origin The server's public URL, which account of the app a push is for.
  * @param clock The payload's date.
  */
-// The settings, the senders, the cipher, the phones, the credentials, the origin, the clock.
-@Suppress("LongParameterList")
 class PushChannel(
-    private val settings: InstanceSettings,
-    private val senders: FirebaseSenders,
+    private val providers: PushProviders,
     private val encryption: PushEncryption,
     private val devices: PushDevicesRepository,
     private val credentials: LiveCredentials,
@@ -100,12 +95,7 @@ class PushChannel(
     }
 
     // The sender of the provider in force, or null while push is off or cannot name an account of the app.
-    private suspend fun sender(): FcmSender? {
-        val values = settings.read(PUSH_SETTINGS.name)
-        val account = values[FIREBASE_SERVICE_ACCOUNT_FIELD]
-        val firebase = PushProvider.of(values[PROVIDER_FIELD]) == PushProvider.FIREBASE
-        return if (firebase && account != null && origin.isNotEmpty()) senders.sender(account) else null
-    }
+    private suspend fun sender(): FcmSender? = if (origin.isEmpty()) null else providers.inForce().sender
 
     private suspend fun targets(orgId: Uuid, memberId: Uuid): List<PushTarget> =
         devices.ofMember(orgId, memberId).mapNotNull { device ->

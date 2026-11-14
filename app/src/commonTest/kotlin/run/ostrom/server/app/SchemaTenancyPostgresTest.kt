@@ -263,6 +263,7 @@ class SchemaTenancyPostgresTest {
             "instance_info" to "serving role: the instance's one identity row",
             "instance_scheduled_work" to "serving role: the leases of the periodic jobs, one row per job",
             "instance_signing_keys" to "serving role: the public keys of the instance's receipt signatures",
+            "notifications_push_relay_instances" to "serving role: the instance's key at each push relay, sealed",
         )
 
         // The known exceptions, each a finding of the RLS audit (docs/tenancy.md, "Known exceptions"): remove a line

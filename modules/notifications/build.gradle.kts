@@ -16,6 +16,8 @@ kotlin {
             implementation(project(":modules:orgs"))
             // The gate channel the gates module tells of each request.
             implementation(project(":modules:gates"))
+            // The secrets key, which seals the instance's signing key at the push relay.
+            implementation(project(":modules:secrets"))
             // Outbound HTTPS to FCM and Google's token endpoint: the app's CIO client.
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.engine.defaults)

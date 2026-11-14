@@ -3,6 +3,7 @@
 // domain/src/main/kotlin/me/nathanfallet/teamcode/domain/notifications/PushSettings.kt; see NOTICE.
 package run.ostrom.server.notifications.domain
 
+import run.ostrom.server.kernel.network.isReachableUrl
 import run.ostrom.server.kernel.settings.SettingsField
 import run.ostrom.server.kernel.settings.SettingsSection
 import kotlinx.serialization.SerializationException
@@ -10,10 +11,16 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
-/** Who sends the instance's `fcm` pushes: nobody, or the instance's own Firebase project. */
+/**
+ * Who sends the instance's `fcm` pushes: nobody, the Ostrom Push relay of the published apps, or the instance's own
+ * Firebase project.
+ */
 enum class PushProvider(val wire: String) {
     /** Nothing is sent; phones still register. */
     OFF("off"),
+
+    /** The Ostrom Push relay, which holds the Firebase project of the apps on the App Store and Google Play. */
+    RELAY("relay"),
 
     /** The Firebase project whose service account the administrator saved: the one the apps are built with. */
     FIREBASE("firebase"),
@@ -32,6 +39,28 @@ enum class PushProvider(val wire: String) {
 
 /** The field of [PUSH_SETTINGS] that names the provider. */
 const val PROVIDER_FIELD = "provider"
+
+/** The field of [PUSH_SETTINGS] that names the relay, [DEFAULT_RELAY_URL] when unset. */
+const val RELAY_URL_FIELD = "relayUrl"
+
+/** The Ostrom Push relay of the published apps (`push/` in this repository). */
+const val DEFAULT_RELAY_URL = "https://push.ostrom.run"
+
+/**
+ * Why a relay URL is refused (TeamCode's `validateRelayUrl`): `https`, a host and nothing after it, and never a
+ * link-local or cloud metadata address. A private address passes: a relay of one's own on one's network.
+ *
+ * @param url The URL, without a trailing slash.
+ *
+ * @return Why, or null when it may be used.
+ */
+fun relayUrlRefusal(url: String): String? {
+    return when {
+        !BARE_HTTPS.matches(url) -> "use an https relay URL without a path, such as $DEFAULT_RELAY_URL."
+        !isReachableUrl(url) -> "the relay URL must not point at a link-local or cloud metadata address."
+        else -> null
+    }
+}
 
 /** The secret field of [PUSH_SETTINGS] that holds the Firebase service account JSON key. */
 const val FIREBASE_SERVICE_ACCOUNT_FIELD = "firebaseServiceAccount"
@@ -87,15 +116,17 @@ class FirebaseServiceAccount(
 
 /**
  * The instance's push settings (Admin → Settings → `push`), stored and sealed by the admin module: `provider` (`off`,
- * the default, or `firebase`) and the Firebase project's service account JSON key, a write-only secret sealed with the
- * secrets key. Never an environment variable nor a Helm value.
+ * the default, `relay` or `firebase`), the relay's URL ([DEFAULT_RELAY_URL] when unset), and the Firebase project's
+ * service account JSON key, a write-only secret sealed with the secrets key. Never an environment variable nor a Helm
+ * value.
  */
 val PUSH_SETTINGS: SettingsSection = SettingsSection(
     "push",
     listOf(
         SettingsField(PROVIDER_FIELD, check = { value ->
-            if (PushProvider.entries.any { it.wire == value }) null else "off or firebase."
+            if (PushProvider.entries.any { it.wire == value }) null else "off, relay or firebase."
         }),
+        SettingsField(RELAY_URL_FIELD, check = ::relayUrlRefusal),
         SettingsField(FIREBASE_SERVICE_ACCOUNT_FIELD, secret = true, check = { value ->
             if (FirebaseServiceAccount.parse(value) == null) SERVICE_ACCOUNT_REFUSAL else null
         }),
@@ -107,5 +138,7 @@ const val GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
 
 private const val SERVICE_ACCOUNT_REFUSAL = "paste the JSON key of a Google service account of the Firebase project " +
     "(type service_account, token_uri $GOOGLE_TOKEN_URI)."
+// `https://`, a name or an address and maybe a port, then nothing: no path, query, user or trailing slash.
+private val BARE_HTTPS = Regex("https://([A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*|\\[[0-9A-Fa-f:.]+])(:[0-9]{1,5})?")
 private val PROJECT_ID = Regex("[a-z][a-z0-9-]{4,62}")
 private val CLIENT_EMAIL = Regex("[A-Za-z0-9._%+-]{1,128}@[A-Za-z0-9.-]{1,128}")
