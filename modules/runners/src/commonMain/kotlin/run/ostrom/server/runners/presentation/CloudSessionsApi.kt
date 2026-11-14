@@ -80,6 +80,31 @@ class RunnerHeartbeatApi
 @Resource("/api/v1/cloud/runner/github")
 class RunnerGitHubApi
 
+/** `POST /api/v1/cloud/runner/variables` (`fetchRunnerVariables`): the owner's environment variables. */
+@Serializable
+@Resource("/api/v1/cloud/runner/variables")
+class RunnerVariablesApi
+
+/**
+ * The contract's `RunnerExecution`: the execution a runner call is for.
+ *
+ * @property sessionId The session the runner was started for.
+ * @property epoch The execution the runner was started for.
+ */
+@Serializable
+data class RunnerExecutionBody(val sessionId: String, val epoch: Long)
+
+/**
+ * The contract's `EnvironmentValues`, never logged.
+ *
+ * @property variables The values by name.
+ * @property unavailable The variables withheld, by name.
+ */
+@Serializable
+data class RunnerVariablesResponse(val variables: Map<String, String>, val unavailable: List<String>) {
+    override fun toString(): String = "RunnerVariablesResponse(${variables.keys.sorted()}, unavailable=$unavailable)"
+}
+
 /**
  * The body of `PUT /api/v1/cloud/sessions/{id}/github`.
  *

@@ -111,3 +111,10 @@ class SessionNotPausedException : OstromException(
     "Pause the session before removing its GitHub access.",
     "session_not_paused",
 )
+
+/** The session no longer runs: its runner gets no environment variable. */
+class VariablesUnavailableException : OstromException(
+    ErrorKind.CONFLICT,
+    "This session does not run: its environment variables are not served.",
+    "variables_unavailable",
+)

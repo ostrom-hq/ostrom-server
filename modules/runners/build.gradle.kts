@@ -15,6 +15,8 @@ kotlin {
             implementation(project(":modules:billing"))
             // The console's cloud runtime: the runner image a session's init container copies `ostrom` from.
             implementation(project(":modules:cloud"))
+            // The members' environment values the runner hands the agent ([ResolveEnvironmentUseCase]).
+            implementation(project(":modules:secrets"))
             implementation(libs.cryptography.core)
             implementation(libs.ktor.client.core)
             // The hops of a terminal to the replica holding its runner (TerminalForwarder).

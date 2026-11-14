@@ -58,6 +58,9 @@ import run.ostrom.server.runners.domain.RunnerGitHubTokens
 import run.ostrom.server.runners.domain.RunnerHeartbeatUseCase
 import run.ostrom.server.runners.domain.RunnerHeartbeatUseCaseImpl
 import run.ostrom.server.runners.domain.RunnerTokens
+import run.ostrom.server.runners.domain.RunnerVariables
+import run.ostrom.server.runners.domain.RunnerVariablesUseCase
+import run.ostrom.server.runners.domain.RunnerVariablesUseCaseImpl
 import run.ostrom.server.runners.domain.RunnerWorkSignals
 import run.ostrom.server.runners.domain.RuntimeDriver
 import run.ostrom.server.runners.domain.SetCloudSessionGitHubAccessUseCase
@@ -84,6 +87,7 @@ import run.ostrom.server.runners.infrastructure.TerminalRelay
 import run.ostrom.server.runners.infrastructure.TerminalReplica
 import run.ostrom.server.runners.infrastructure.TerminalTicketsImpl
 import run.ostrom.server.runners.infrastructure.replicaHttpClient
+import run.ostrom.server.runners.infrastructure.runnerVariables
 import run.ostrom.server.runners.presentation.CloudSessionsRoutesDependencies
 import run.ostrom.server.runners.presentation.RunnerRuntime
 import run.ostrom.server.runners.presentation.RunnersRoutesDependencies
@@ -91,6 +95,7 @@ import run.ostrom.server.runners.presentation.TerminalRoutesDependencies
 import run.ostrom.server.runners.presentation.cloudSessionsRoutes
 import run.ostrom.server.runners.presentation.runnersRoutes
 import run.ostrom.server.runners.presentation.terminalRoutes
+import run.ostrom.server.secrets.domain.ResolveEnvironmentUseCase
 import io.ktor.server.routing.Route
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -158,7 +163,9 @@ object RunnersModule : ServerModule {
         single<RunnerGitHubTokenUseCase> {
             RunnerGitHubTokenUseCaseImpl(get(), get(), getOrNull<RunnerGitHubTokens>() ?: NoRunnerGitHubTokens)
         }
-        single { CloudSessionsRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single<RunnerVariables> { runnerVariables(getOrNull<ResolveEnvironmentUseCase>()) }
+        single<RunnerVariablesUseCase> { RunnerVariablesUseCaseImpl(get(), get(), get()) }
+        single { CloudSessionsRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single<ListRunnersUseCase> { ListRunnersUseCaseImpl(get(), get()) }
         single<RegisteredRunnersRepository> { RegisteredRunnersRepositoryImpl(get()) }
         single<ListRegisteredRunnersUseCase> { ListRegisteredRunnersUseCaseImpl(get(), get()) }
@@ -204,10 +211,13 @@ object RunnersModule : ServerModule {
     override suspend fun features(koin: Koin): Set<String> {
         if (koin.get<RunnersConfig>().driver == RunnersConfig.DriverKind.NONE) return setOf(ServerFeatures.RUNNERS)
         val github = koin.getOrNull<RunnerGitHubTokens>()?.available() == true
+        // The members' values, once the secrets module resolves them.
+        val variables = koin.getOrNull<ResolveEnvironmentUseCase>() != null
         return setOfNotNull(
             ServerFeatures.RUNNERS,
             ServerFeatures.RUNNERS_CLOUD,
             ServerFeatures.RUNNERS_CLOUD_GITHUB.takeIf { github },
+            ServerFeatures.RUNNERS_CLOUD_VARIABLES.takeIf { variables },
         )
     }
 
