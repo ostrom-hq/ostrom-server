@@ -7,6 +7,7 @@ import run.ostrom.server.cloud.domain.CloudSettingsSource
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.time.Clock
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -18,10 +19,12 @@ import kotlin.uuid.Uuid
  *
  * @param settings The cloud settings; null without the cloud module, where the default cap holds.
  * @param clock The clock of the cache.
+ * @param ttl How long a read of an organization holds.
  */
 internal class CloudSettingsAutomationLimits(
     private val settings: CloudSettingsSource?,
     private val clock: Clock = Clock.System,
+    private val ttl: Duration = 30.seconds,
 ) : AutomationLimits {
     private class Read(val at: Instant, val cap: Int)
 
@@ -30,7 +33,7 @@ internal class CloudSettingsAutomationLimits(
 
     override suspend fun maxRunningPerMember(orgId: Uuid): Int {
         val now = clock.now()
-        val fresh = lock.withLock { reads[orgId] }?.takeIf { now - it.at < TTL }
+        val fresh = lock.withLock { reads[orgId] }?.takeIf { now - it.at < ttl }
         return when {
             settings == null -> CloudSettings.DEFAULT_MAX_RUNNING_AUTOMATIONS
             fresh != null -> fresh.cap
@@ -38,9 +41,5 @@ internal class CloudSettingsAutomationLimits(
                 lock.withLock { reads[orgId] = Read(now, it) }
             }
         }
-    }
-
-    private companion object {
-        val TTL = 30.seconds
     }
 }
