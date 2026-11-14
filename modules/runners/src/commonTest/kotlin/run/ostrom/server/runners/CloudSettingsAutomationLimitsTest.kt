@@ -12,6 +12,7 @@ import kotlin.test.assertEquals
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
+import kotlin.uuid.Uuid
 
 class CloudSettingsAutomationLimitsTest {
     private class Moving(var now: Instant = Instant.fromEpochSeconds(1_000)) : Clock {
@@ -28,12 +29,13 @@ class CloudSettingsAutomationLimitsTest {
     @Test
     fun anOrganizationsCapIsReadOnceEvery30SecondsAndNeverSharedWithAnother() = runTest {
         val caps = mutableMapOf(ORG_A to 3, ORG_B to 9)
-        val reads = mutableListOf<Any>()
+        val reads = mutableListOf<Uuid>()
         val clock = Moving()
-        val limits = CloudSettingsAutomationLimits(
-            { org -> CloudSettings(maxRunningAutomationsPerMember = caps.getValue(org)).also { reads += org } },
-            clock,
-        )
+        val source = CloudSettingsSource { org ->
+            reads += org
+            CloudSettings(maxRunningAutomationsPerMember = caps.getValue(org))
+        }
+        val limits = CloudSettingsAutomationLimits(source, clock)
         assertEquals(3, limits.maxRunningPerMember(ORG_A))
         assertEquals(9, limits.maxRunningPerMember(ORG_B))
         caps[ORG_A] = 5
