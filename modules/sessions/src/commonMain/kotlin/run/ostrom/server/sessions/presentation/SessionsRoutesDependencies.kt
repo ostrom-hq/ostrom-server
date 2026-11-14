@@ -6,6 +6,7 @@ import run.ostrom.server.sessions.domain.usecases.EndSessionUseCase
 import run.ostrom.server.sessions.domain.usecases.GetSessionUseCase
 import run.ostrom.server.sessions.domain.usecases.ListSessionsUseCase
 import run.ostrom.server.sessions.domain.usecases.ReopenSessionUseCase
+import run.ostrom.server.sessions.domain.usecases.ReportSessionActivityUseCase
 import run.ostrom.server.sessions.domain.usecases.ReportSeenUseCase
 import run.ostrom.server.sessions.domain.usecases.SessionAliveUseCase
 import run.ostrom.server.sessions.domain.usecases.StartSessionUseCase
@@ -21,6 +22,7 @@ import run.ostrom.server.sessions.domain.usecases.StartSessionUseCase
  * @property seen Records a skill or sub-agent opened.
  * @property get Reads one.
  * @property list Lists them.
+ * @property activity Records whether the agent works or waits for a person.
  */
 data class SessionsRoutesDependencies(
     val actors: GateActorResolver,
@@ -31,4 +33,5 @@ data class SessionsRoutesDependencies(
     val seen: ReportSeenUseCase,
     val get: GetSessionUseCase,
     val list: ListSessionsUseCase,
+    val activity: ReportSessionActivityUseCase,
 )

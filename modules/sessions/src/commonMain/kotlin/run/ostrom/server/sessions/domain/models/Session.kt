@@ -34,6 +34,10 @@ import kotlin.uuid.Uuid
  * @property costUsd What it cost.
  * @property exitCode The launcher's exit code.
  * @property seen The skills and sub-agents of its package it opened.
+ * @property activity Whether its agent works or waits for a person, as its hooks last reported it.
+ * @property activityAt When [activity] began, by the server's clock.
+ * @property activityObservedAt The reporter's clock of the newest report: a report observed before it changes
+ *   nothing. Kept when a silence clears [activity].
  */
 data class Session(
     val orgId: Uuid,
@@ -60,6 +64,9 @@ data class Session(
     val costUsd: Double? = null,
     val exitCode: Int? = null,
     val seen: List<SeenItem> = emptyList(),
+    val activity: SessionActivityState? = null,
+    val activityAt: Instant? = null,
+    val activityObservedAt: Instant? = null,
 ) {
     /** True when Ostrom closed it for lack of a sign of life: its launcher, still there, reopens a segment. */
     val lost: Boolean get() = endedAt != null && source.orEmpty().startsWith(LOST)
@@ -143,3 +150,46 @@ data class SessionQuery(
         const val PAGE: Int = 100
     }
 }
+
+/**
+ * Whether a session's agent works or waits for a person (`sessions.activity.v1`), TeamCode's `RunActivity`.
+ *
+ * @property wire Its name in the contract.
+ */
+enum class SessionActivityState(val wire: String) {
+    /** A prompt was sent, a tool ran, or the turn ended with background work in flight. */
+    WORKING("working"),
+
+    /** The turn ended and the agent waits for the next message, or it asks a permission or a question. */
+    WAITING_FOR_HUMAN("waiting_for_human"),
+    ;
+
+    /** Reads a wire name. */
+    companion object {
+        /**
+         * The state named [wire].
+         *
+         * @throws InvalidSessionActivityException For another name.
+         */
+        fun parse(wire: String): SessionActivityState = entries.firstOrNull { it.wire == wire }
+            ?: throw InvalidSessionActivityException("Use working or waiting_for_human.")
+
+        /** The state stored as [wire], or null for none (or a name a later version wrote). */
+        fun stored(wire: String?): SessionActivityState? = entries.firstOrNull { it.wire == wire }
+    }
+}
+
+/**
+ * A segment's activity once a report is applied.
+ *
+ * @property id The segment.
+ * @property state The stored state; null when a silence cleared it and the report was superseded.
+ * @property since When [state] began.
+ * @property superseded True when a report observed later was already stored: nothing was written.
+ */
+data class ActivityChange(
+    val id: String,
+    val state: SessionActivityState?,
+    val since: Instant?,
+    val superseded: Boolean = false,
+)

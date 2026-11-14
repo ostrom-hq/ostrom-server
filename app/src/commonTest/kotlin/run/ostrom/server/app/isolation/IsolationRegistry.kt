@@ -478,6 +478,7 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "POST /api/v1/sessions" to
         Case.Target(body = """{"id": "{{SESSION}}", "agent": "claude-code", "repo": "acme/api"}"""),
     "GET /api/v1/sessions/{id}" to target("id" to SESSION),
+    "POST /api/v1/sessions/{id}/activity" to target("id" to SESSION, body = """{"state": "working"}"""),
     "POST /api/v1/sessions/{id}/alive" to target("id" to SESSION),
     "POST /api/v1/sessions/{id}/end" to target("id" to SESSION),
     "POST /api/v1/sessions/{id}/reopen" to target("id" to SESSION),

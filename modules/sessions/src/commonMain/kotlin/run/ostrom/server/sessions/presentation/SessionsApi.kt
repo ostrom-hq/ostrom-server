@@ -53,6 +53,11 @@ class SessionsApi(
         @Serializable
         @Resource("seen")
         class Seen(val parent: Id)
+
+        /** Whether the agent works or waits for a person. */
+        @Serializable
+        @Resource("activity")
+        class Activity(val parent: Id)
     }
 }
 
@@ -87,6 +92,8 @@ class SessionsApi(
  * @property exitCode The launcher's exit code.
  * @property ended True once ended (the answer to a sign of life).
  * @property lost True when closed for lack of a sign of life: its launcher reopens a segment.
+ * @property activity `working` or `waiting_for_human`, only while the segment is open.
+ * @property activitySince When [activity] began.
  */
 @Serializable
 data class SessionDto(
@@ -117,6 +124,8 @@ data class SessionDto(
     val exitCode: Int? = null,
     val ended: Boolean? = null,
     val lost: Boolean? = null,
+    val activity: String? = null,
+    val activitySince: String? = null,
 )
 
 /**
@@ -213,3 +222,28 @@ data class SessionResponse(val session: SessionDto, val receipt: JsonObject? = n
  */
 @Serializable
 data class SessionsPage(val items: List<SessionDto>, val next: String? = null)
+
+/**
+ * An activity report (contract `SessionActivityRequest`).
+ *
+ * @property state `working` or `waiting_for_human`.
+ * @property observedAt ISO time the hook fired, by the reporter's clock.
+ */
+@Serializable
+data class SessionActivityRequest(val state: String, val observedAt: String? = null)
+
+/**
+ * The stored activity (contract `SessionActivity`).
+ *
+ * @property id The segment.
+ * @property state The stored state.
+ * @property since When it began.
+ * @property superseded True when nothing was written: a report observed later was stored.
+ */
+@Serializable
+data class SessionActivityDto(
+    val id: String,
+    val state: String? = null,
+    val since: String? = null,
+    val superseded: Boolean,
+)

@@ -3,6 +3,7 @@ package run.ostrom.server.sessions.infrastructure
 
 import run.ostrom.server.sessions.domain.models.SeenItem
 import run.ostrom.server.sessions.domain.models.Session
+import run.ostrom.server.sessions.domain.models.SessionActivityState
 import run.ostrom.server.sessions.domain.models.SessionQuery
 import run.ostrom.server.sessions.domain.repositories.SessionsRepository
 import run.ostrom.server.sessions.domain.repositories.SessionsTransaction
@@ -134,7 +135,8 @@ class PostgresSessionsRepository(private val driver: Driver) : SessionsRepositor
         val COLUMN_NAMES = listOf(
             "org_id", "id", "root_id", "segment", "resumed_from", "previous_receipt_id", "launch_id", "repo",
             "real_repo", "cwd", "agent", "dev", "harness_version", "package_digest", "model", "source", "started_at",
-            "ended_at", "last_seen_at", "receipt_id", "tools", "cost_usd", "exit_code", "seen",
+            "ended_at", "last_seen_at", "receipt_id", "tools", "cost_usd", "exit_code", "seen", "activity",
+            "activity_at", "activity_observed_at",
         )
         val COLUMNS = COLUMN_NAMES.joinToString(", ")
         val VALUES = COLUMN_NAMES.joinToString(", ") { ":$it" }
@@ -168,6 +170,9 @@ class PostgresSessionsRepository(private val driver: Driver) : SessionsRepositor
             .bindOrNull("cost_usd", session.costUsd, Double::class)
             .bindOrNull("exit_code", session.exitCode, Int::class)
             .bind("seen", json.encodeToString(seenList, session.seen.map { it.toRecord() }))
+            .bindOrNull("activity", session.activity?.wire, String::class)
+            .bindOrNull("activity_at", session.activityAt, Instant::class)
+            .bindOrNull("activity_observed_at", session.activityObservedAt, Instant::class)
 
         fun SeenItem.toRecord() = SeenRecord(kind, name, via, at.toString())
 
@@ -198,6 +203,9 @@ class PostgresSessionsRepository(private val driver: Driver) : SessionsRepositor
             costUsd = get("cost_usd").asStringOrNull()?.toDouble(),
             exitCode = get("exit_code").asStringOrNull()?.toInt(),
             seen = json.decodeFromString(seenList, get("seen").asString()).map { it.toItem() },
+            activity = SessionActivityState.stored(get("activity").asStringOrNull()),
+            activityAt = get("activity_at").asInstantOrNull(),
+            activityObservedAt = get("activity_observed_at").asInstantOrNull(),
         )
     }
 }
