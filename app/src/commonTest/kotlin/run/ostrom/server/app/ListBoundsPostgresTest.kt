@@ -195,7 +195,8 @@ class ListBoundsPostgresTest {
         list.cursors.forEach { name ->
             val replayed = read(bob, bobs, "$name=${cursor.encodeURLParameter()}")
             val text = replayed.bodyAsText()
-            if (replayed.status !in refused) f.broken += "$id $name=<A's>: ${replayed.status}, not 400"
+            val accepted = id in POSITION_CURSORS && replayed.status == HttpStatusCode.OK
+            if (replayed.status !in refused && !accepted) f.broken += "$id $name=<A's>: ${replayed.status}, not 400"
             if (seen.any { it in text }) f.broken += "$id $name=<A's>: B was answered A's rows"
         }
     }
@@ -333,6 +334,12 @@ class ListBoundsPostgresTest {
         val SUCCESS = 200..299
         val PARAMETER = Regex("\\{(\\w+)}")
         val RESOURCE = Regex("\\{(?!org\\b|orgId\\b)\\w+}")
+
+        /**
+         * The lists whose cursor is a position (`<updatedAt>_<id>` of the memory), not a row of A: B replaying A's is
+         * answered B's own page, which row-level security keeps to B's rows (A's rows are still checked absent).
+         */
+        val POSITION_CURSORS = setOf("listMemory")
 
         /** The query a list requires: the words of a search. */
         val REQUIRED_QUERY = mapOf("searchMemory" to "q=lists")
