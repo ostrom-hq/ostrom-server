@@ -88,7 +88,7 @@ class MemoryRoutesPostgresTest {
         assertNull(index.next)
         assertTrue("Merge" !in read("ada", "$MEMORY/index").bodyAsText(), "the index never carries content")
         assertEquals(listOf(team.id), ids("ada", "$MEMORY/index?scope=team"))
-        assertEquals(listOf(mine.id), ids("ada", "$MEMORY/index?tags=editor,x"))
+        assertEquals(listOf(mine.id), ids("ada", "$MEMORY/index?tags=editor,%20,x"))
 
         val found = read("ada", "$MEMORY/search?q=deploy%20ORDER").body<MemorySearchResult>()
         assertEquals(listOf(team.id), found.entries.map { it.id })
