@@ -59,6 +59,11 @@ kotlin {
         // The JDK provides Ed25519 there.
         jvmMain.dependencies {
             implementation(libs.cryptography.jdk)
+            // The JVM database layer (docs/decisions/0001, step 2): Exposed transactions over a HikariCP pool.
+            api(libs.exposed.core)
+            api(libs.exposed.jdbc)
+            implementation(libs.hikari)
+            runtimeOnly(libs.postgresql.jdbc)
             // Loading a key file needs its public key, which the JDK alone cannot derive from an Ed25519 private key.
             runtimeOnly(libs.bouncycastle.bcprov)
         }
