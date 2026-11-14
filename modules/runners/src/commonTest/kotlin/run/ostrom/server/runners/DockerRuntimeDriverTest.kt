@@ -132,6 +132,11 @@ class DockerRuntimeDriverTest {
         )
         assertNull(agentHost["GroupAdd"])
         assertFalse("ostrom_runner_xyz" in agent.toString())
+    }
+
+    @Test
+    fun theCheckHostHasTheAgentsUidTheWorkspaceItsSocketAndTheBinaryOnly() = runTest {
+        driver.startExecution(spec)
         // The check host: the agent's uid, the workspace, the check socket and the binary only, no secret.
         val checks = body(5)
         assertEquals(SESSION_IMAGE, checks["Image"]!!.jsonPrimitive.content)
