@@ -23,6 +23,7 @@ import run.ostrom.server.gateway.domain.ModelCallTracer
 import run.ostrom.server.gateway.domain.ModelUsageSink
 import run.ostrom.server.gateway.domain.NoModelCallObserver
 import run.ostrom.server.gateway.domain.NoModelUsageSink
+import run.ostrom.server.gateway.domain.OrgPrices
 import run.ostrom.server.gateway.domain.PriceTable
 import run.ostrom.server.gateway.domain.RefusalKind
 import run.ostrom.server.gateway.domain.RelayInferenceUseCaseImpl
@@ -299,6 +300,22 @@ class RelayInferenceTest {
         clock,
         cancellations = CancellationWatch(markers),
     )
+
+    @Test
+    fun aPriceTableThatCannotBeReadLeavesTheCallRecordedAndUnpriced() = runTest {
+        val broken = OrgPrices { error("the table is down") }
+        RelayInferenceUseCaseImpl(
+            planner(settings, shared, keys = InstanceProviderKeys(anthropic = "sk-an")),
+            FakeUpstream(eventAnswer()),
+            broken,
+            { sink.record(it) },
+            { observed += it },
+            clock,
+        )(Gw.memberA, call(), RecordingResponder())
+        assertEquals(1, records.size)
+        assertEquals(false, records.single().priced)
+        assertEquals(0, records.single().costMicros)
+    }
 
     @Test
     fun aCallWithTheClientsIdStopsOnItsMarkerAndOneWithoutIsNeverWatched() = runTest {

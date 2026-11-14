@@ -14,7 +14,7 @@ import kotlin.uuid.Uuid
  * The table that prices an org's model calls. Bound in Koin by the gateway module: [PriceTable] itself prices every org
  * with the built-in rows, [DatabaseOrgPrices] reads the org's own.
  */
-interface OrgPrices {
+fun interface OrgPrices {
     /** The table that prices the org's calls today. */
     suspend fun of(orgId: Uuid): PriceTable
 }
