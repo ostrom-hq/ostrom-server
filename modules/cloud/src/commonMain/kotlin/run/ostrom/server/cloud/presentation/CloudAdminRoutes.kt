@@ -45,9 +45,10 @@ fun Route.cloudAdminRoutes(dependencies: CloudAdminRoutesDependencies) = with(de
             val caller = call.requirePrincipal().cloudAdmin()
             gate.require(caller)
             val request = call.receive<SaveCloudRuntimeRequest>()
-            val keep = request.maxRunningAutomationsPerMember == null
-            val saved = runtime.save(caller, request.toRuntime(), request.expectedUpdate(), keepAutomationCap = keep)
-            call.respond(saved.toResponse(publicUrl))
+            val expected = request.updatedAt?.let {
+                Instant.parseOrNull(it) ?: throw InvalidCloudRuntimeException("updatedAt is a date-time.")
+            }
+            call.respond(runtime.save(caller, request.toRuntime(), expected).toResponse(publicUrl))
         }
         get<CloudClustersApi> {
             val list = clusters.list(call.requirePrincipal().cloudAdmin())
@@ -102,10 +103,6 @@ internal fun AuthenticatedPrincipal.cloudAdmin(): CloudAdminCaller = CloudAdminC
     person = mayWrite(WriteAccess.PERSON),
 )
 
-private fun SaveCloudRuntimeRequest.expectedUpdate(): Instant? = updatedAt?.let {
-    Instant.parseOrNull(it) ?: throw InvalidCloudRuntimeException("updatedAt is a date-time.")
-}
-
 internal fun SaveCloudRuntimeRequest.toRuntime() = CloudRuntime(
     enabled = enabled,
     runnerImage = runnerImage,
@@ -116,7 +113,6 @@ internal fun SaveCloudRuntimeRequest.toRuntime() = CloudRuntime(
     failedWorkspaceRetentionDays = failedWorkspaceRetentionDays,
     maxRunningSessionsPerMember = maxRunningSessionsPerMember,
     maxRetainedSessionsPerMember = maxRetainedSessionsPerMember,
-    maxRunningAutomationsPerMember = maxRunningAutomationsPerMember ?: CloudRuntime().maxRunningAutomationsPerMember,
     transcriptRetentionDays = transcriptRetentionDays,
     memberTransfers = memberTransfers,
 )
@@ -132,7 +128,6 @@ internal fun CloudRuntime.toResponse(publicUrl: String) = CloudRuntimeResponse(
     failedWorkspaceRetentionDays = failedWorkspaceRetentionDays,
     maxRunningSessionsPerMember = maxRunningSessionsPerMember,
     maxRetainedSessionsPerMember = maxRetainedSessionsPerMember,
-    maxRunningAutomationsPerMember = maxRunningAutomationsPerMember,
     transcriptRetentionDays = transcriptRetentionDays,
     memberTransfers = memberTransfers,
     updatedAt = updatedAt?.toString(),
