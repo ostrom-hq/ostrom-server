@@ -44,5 +44,8 @@ class RunnersCloudAgentSessionsTest {
         assertNull(sessions.find(ORG_A, legacy.id.toString()), "An owner id that names no member")
         val gone = session(SessionState.RUNNING, ownerId = Uuid.random().toString()).also(repository::put)
         assertNull(sessions.find(ORG_A, gone.id.toString()), "An owner who is no member any more")
+        val owned = session(SessionState.RUNNING, ownerId = ada.toString()).also(repository::put)
+        val unbound = RunnersCloudAgentSessions(repository, null)
+        assertNull(unbound.find(ORG_A, owned.id.toString()), "Without the orgs module no owner is known")
     }
 }

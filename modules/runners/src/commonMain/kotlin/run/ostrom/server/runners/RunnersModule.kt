@@ -136,7 +136,7 @@ object RunnersModule : ServerModule {
         single<RunnersConfig> { RunnersConfig.from(get<ConfigSource>()) }
         single(named(CLOUD_ACCESS_SETTINGS.name)) { CLOUD_ACCESS_SETTINGS }
         single<CloudSessionsRepository> { CloudSessionsRepositoryImpl(get()) }
-        single<CloudAgentSessions> { RunnersCloudAgentSessions(get(), getOrNull<MemberLogins>() ?: NoMemberLogins) }
+        single<CloudAgentSessions> { RunnersCloudAgentSessions(get(), getOrNull<MemberLogins>()) }
         single<RunnerTokens> { RunnerTokensImpl() }
         // Billing's plans and hours counter when the billing module is there (always on a full server); the free
         // plan and the sessions' own monthly counter otherwise.

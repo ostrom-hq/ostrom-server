@@ -694,7 +694,7 @@ The agent of a cloud session runs with its launch's agent token (`OSTROM_AGENT_T
 session id of the `sessions` module. Like TeamCode's execution credential (`tcex_`, confined to the cloud session it was
 issued for), the token of a cloud session's launch acts on that cloud session whatever a request names, and needs to
 name none: its todo (`/api/v1/todos/session` and the routes under it), its waits (`/api/v1/waits/mcp`, the Stop hook's `/api/v1/waits/wake`),
-its team memory proposals (`POST /api/v1/memory`) and its workflow step's delivery (`/api/v1/workflows/mcp`) are the
+its team memory proposals (a `team` entry an agent writes) and its workflow step's delivery (`/api/v1/workflows/mcp`) are the
 cloud session's, keyed by its id, which every execution of it shares. The `launches` module's `LaunchWaitAgents` binds
 it (the token is live only while the execution it was opened in runs); the `runners` module binds the kernel's
 `CloudAgentSessions`, on which the `sessions` module's `AgentSessions` and the todo fall back for an id no segment has,

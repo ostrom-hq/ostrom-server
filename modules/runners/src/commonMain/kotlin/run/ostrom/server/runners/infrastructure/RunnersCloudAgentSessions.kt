@@ -13,15 +13,16 @@ import kotlin.uuid.Uuid
  * segment, which every execution shares.
  *
  * @param sessions The cloud sessions.
- * @param logins The members' logins (the orgs module).
+ * @param logins The members' logins, when the orgs module is there: without it, no owner is known and no cloud session
+ *   is found.
  */
 internal class RunnersCloudAgentSessions(
     private val sessions: CloudSessionsRepository,
-    private val logins: MemberLogins,
+    private val logins: MemberLogins?,
 ) : CloudAgentSessions {
     override suspend fun find(orgId: Uuid, sessionId: String): AgentSession? {
         val session = Uuid.parseOrNull(sessionId)?.let { sessions.get(orgId, it) } ?: return null
-        val login = Uuid.parseOrNull(session.ownerId)?.let { logins.loginsOf(orgId, listOf(it))[it] }
+        val login = Uuid.parseOrNull(session.ownerId)?.let { logins?.loginsOf(orgId, listOf(it))?.get(it) }
         return login?.let { AgentSession(it, session.state.holdsExecution, listOf(session.id.toString())) }
     }
 }
