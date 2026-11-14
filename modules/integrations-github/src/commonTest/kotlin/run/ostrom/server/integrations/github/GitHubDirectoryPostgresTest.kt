@@ -169,9 +169,9 @@ class GitHubDirectoryPostgresTest {
                 override suspend fun sign(gate: Gate): String = "rcpt_${gate.id}"
             }
         }
-        // No App in the environment: the manifest flow is open.
+        // No App stored: the manifest flow is open.
         single { GitHubSettings(null, null, null, null, webOrigin = "https://console.example") }
-        single { GitHubAppSetup("https://api.example", "Ostrom") }
+        single { GitHubAppSetup("https://api.example") }
         // The instance's administrator (the admin module's, stored): the owner of organization A.
         single<InstanceAdmins> {
             object : InstanceAdmins {
@@ -449,6 +449,13 @@ class GitHubDirectoryPostgresTest {
         val noHook = createdApp().copy(webhookSecret = null)
         sealed.saveApp(noHook, "usr_admin", NOW)
         assertNull(sealed.app()?.webhookSecret)
+
+        // An App imported once from the former variables may have no OAuth client.
+        server.driver.execute("DELETE FROM github_apps").getOrThrow()
+        sealed.saveApp(createdApp().copy(clientId = null, clientSecret = null), "environment", NOW)
+        val imported = sealed.app()
+        assertEquals(null to null, imported?.clientId to imported?.clientSecret)
+        assertEquals("ostrom-acme", imported?.slug)
     }
 
     @Test

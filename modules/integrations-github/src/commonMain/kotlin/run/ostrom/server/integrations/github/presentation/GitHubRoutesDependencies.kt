@@ -7,6 +7,7 @@ import run.ostrom.server.integrations.github.domain.GitHubInstalls
 import run.ostrom.server.integrations.github.domain.GitHubRepository
 import run.ostrom.server.integrations.github.domain.HandleWebhookUseCase
 import run.ostrom.server.integrations.github.domain.OrgReferences
+import run.ostrom.server.integrations.github.infrastructure.GitHubHost
 import run.ostrom.server.integrations.github.infrastructure.GitHubSettings
 import run.ostrom.server.integrations.github.infrastructure.WebhookSignature
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
@@ -20,9 +21,10 @@ import run.ostrom.server.kernel.auth.PrincipalOrgResolver
  * @property installs The install flow.
  * @property webhooks Handles a verified webhook.
  * @property signature Verifies a webhook.
- * @property settings The App's environment (GitHub's web address, the console).
- * @property apps The App in use: the environment's, or the one the manifest flow created.
+ * @property settings The console's origin.
+ * @property apps The App in use: the stored one (created by the manifest flow, or imported once).
  * @property orgs Reads the organization an install start names (`?org=`).
+ * @property host GitHub's web address, as the console's `github` settings set it.
  */
 data class GitHubRoutesDependencies(
     val actors: GateActorResolver,
@@ -34,4 +36,5 @@ data class GitHubRoutesDependencies(
     val settings: GitHubSettings,
     val apps: GitHubAppSource,
     val orgs: OrgReferences,
+    val host: GitHubHost,
 )

@@ -125,7 +125,7 @@ fun Route.gitHubRoutes(dependencies: GitHubRoutesDependencies) = with(dependenci
                     installed = installation != null,
                     slug = slug,
                     installationId = installation?.installationId,
-                    htmlUrl = slug?.let { "${settings.webUrl}/apps/$it" },
+                    htmlUrl = slug?.let { "${host.webUrl}/apps/$it" },
                 ),
             )
         }

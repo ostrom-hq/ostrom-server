@@ -56,19 +56,20 @@ import kotlin.time.Instant
  * proof. The person's calls of the install ([GitHubPeopleApi]) go through [HttpGitHubPeople].
  *
  * @param http The client (`expectSuccess = false`).
- * @param apiUrl GitHub's API (`https://api.github.com`, or `https://<host>/api/v3` for GitHub Enterprise Server).
+ * @param apiUrl GitHub's API (`https://api.github.com`, or `https://<host>/api/v3` for GitHub Enterprise Server), read
+ *   at each call (the console's `github` settings).
  * @param jwt The App's JWT, read at each exchange (the App can be created after the start), or null when the App is
  *   not configured: then every authenticated call fails.
  * @param clock The clock.
- * @param webUrl GitHub's web address, where the OAuth code of the install is exchanged.
+ * @param webUrl GitHub's web address, where the OAuth code of the install is exchanged, read at each call.
  * @param oauth The App's OAuth client, read at each exchange, or null when it has none: then the install fails.
  */
 class HttpGitHubApi(
     private val http: HttpClient,
-    private val apiUrl: String,
+    private val apiUrl: () -> String,
     private val jwt: suspend () -> AppJwt?,
     private val clock: Clock,
-    webUrl: String,
+    webUrl: () -> String,
     oauth: suspend () -> AppOAuthClient?,
 ) : GitHubApi,
     GitHubCiApi,
@@ -79,11 +80,12 @@ class HttpGitHubApi(
     private val lock = Mutex()
 
     // GitHub Enterprise Server serves GraphQL at /api/graphql, next to the REST API's /api/v3.
-    private val graphqlUrl = if (apiUrl.endsWith(ENTERPRISE_REST)) {
-        apiUrl.removeSuffix(ENTERPRISE_REST) + "/api"
-    } else {
-        apiUrl
-    }
+    // A getter, read at each call: GitHub's address is the console's.
+    private val graphqlUrl: String
+        get() {
+            val api = apiUrl()
+            return if (api.endsWith(ENTERPRISE_REST)) api.removeSuffix(ENTERPRISE_REST) + "/api" else api
+        }
 
     override suspend fun pullRequest(installationId: Long, repo: String, number: Int): GitHubPull? {
         // The hook of the agent waits for this answer: GitHub has 2 seconds.
@@ -171,7 +173,7 @@ class HttpGitHubApi(
                     put("after", after)
                 }
             }
-            val response = http.exchange(HttpMethod.Post, "$graphqlUrl/graphql", "/graphql") {
+            val response = http.exchange(HttpMethod.Post, "${graphqlUrl}/graphql", "/graphql") {
                 headers(token)
                 contentType(ContentType.Application.Json)
                 setBody(query.toString())
@@ -247,7 +249,7 @@ class HttpGitHubApi(
         token: String?,
         body: JsonObject?,
         timeoutMs: Long? = null,
-    ): HttpResponse = http.exchange(method, "$apiUrl$path", path) {
+    ): HttpResponse = http.exchange(method, "${apiUrl()}$path", path) {
         headers(token)
         timeoutMs?.let { timeout { requestTimeoutMillis = it } }
         body?.let {
@@ -398,8 +400,8 @@ private val json = Json { ignoreUnknownKeys = true }
  */
 class HttpGitHubPeople(
     private val http: HttpClient,
-    private val apiUrl: String,
-    private val webUrl: String,
+    private val apiUrl: () -> String,
+    private val webUrl: () -> String,
     private val oauth: suspend () -> AppOAuthClient?,
 ) : GitHubPeopleApi {
     override suspend fun userToken(code: String): String? {
@@ -409,7 +411,7 @@ class HttpGitHubPeople(
             append("client_secret", client.secret)
             append("code", code)
         }
-        val response = http.exchange(HttpMethod.Post, "$webUrl$OAUTH_TOKEN_PATH", OAUTH_TOKEN_PATH) {
+        val response = http.exchange(HttpMethod.Post, "${webUrl()}$OAUTH_TOKEN_PATH", OAUTH_TOKEN_PATH) {
             header(HttpHeaders.Accept, ContentType.Application.Json.toString())
             header(HttpHeaders.UserAgent, USER_AGENT)
             setBody(FormDataContent(form))
@@ -423,7 +425,7 @@ class HttpGitHubPeople(
         var page = 1
         do {
             val path = "/user/installations?per_page=$INSTALLATIONS_PAGE&page=$page"
-            val response = http.exchange(HttpMethod.Get, "$apiUrl$path", path) { headers(userToken) }
+            val response = http.exchange(HttpMethod.Get, "${apiUrl()}$path", path) { headers(userToken) }
             val batch = decode<UserInstallations>(response, "installations").installations
             batch.mapTo(ids) { it.id }
             page++
@@ -432,7 +434,7 @@ class HttpGitHubPeople(
     }
 
     override suspend fun userLogin(userToken: String): String {
-        val response = http.exchange(HttpMethod.Get, "$apiUrl$USER_PATH", USER_PATH) { headers(userToken) }
+        val response = http.exchange(HttpMethod.Get, "${apiUrl()}$USER_PATH", USER_PATH) { headers(userToken) }
         return decode<UserLogin>(response, "person").login
     }
 

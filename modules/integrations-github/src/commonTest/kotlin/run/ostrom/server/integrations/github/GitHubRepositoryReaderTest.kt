@@ -24,7 +24,7 @@ class GitHubRepositoryReaderTest {
         repos[43] = listOf(repo("globex-secret"))
     }
     private val contents = FakeGitHubContentsApi().acmeApi()
-    private val reader = GitHubRepositoryReader(installations, directory, contents, GITHUB)
+    private val reader = GitHubRepositoryReader(installations, directory, contents) { GITHUB }
 
     private suspend fun installBoth() {
         installations.saveInstallation(GitHubInstallation(ORG, 42, "acme"), NOW)

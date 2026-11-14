@@ -34,8 +34,8 @@ class PostgresGitHubAppStore(private val driver: Driver, private val cipher: Sec
             slug = row.get("slug").asString(),
             privateKeyPem = open(row.get("private_key_sealed").asString(), id, KEY),
             webhookSecret = row.get("webhook_secret_sealed").asStringOrNull()?.let { open(it, id, WEBHOOK) },
-            clientId = row.get("client_id").asString(),
-            clientSecret = open(row.get("client_secret_sealed").asString(), id, CLIENT),
+            clientId = row.get("client_id").asStringOrNull(),
+            clientSecret = row.get("client_secret_sealed").asStringOrNull()?.let { open(it, id, CLIENT) },
         )
     }
 
@@ -46,7 +46,8 @@ class PostgresGitHubAppStore(private val driver: Driver, private val cipher: Sec
                 "webhook_secret_sealed, created_by, created_at) VALUES (:id, :slug, :owner, :client, :key, " +
                 ":secret, :webhook, :by, :at) ON CONFLICT (singleton) DO NOTHING",
         ).bind("id", app.id).bind("slug", app.slug).bind("owner", app.owner).bind("client", app.clientId)
-            .bind("key", seal(app.privateKeyPem, id, KEY)).bind("secret", seal(app.clientSecret, id, CLIENT))
+            .bind("key", seal(app.privateKeyPem, id, KEY))
+            .bind("secret", app.clientSecret?.let { seal(it, id, CLIENT) })
             .bind("webhook", app.webhookSecret?.let { seal(it, id, WEBHOOK) }).bind("by", by).bind("at", at)
         return driver.execute(statement).getOrThrow() == 1L
     }

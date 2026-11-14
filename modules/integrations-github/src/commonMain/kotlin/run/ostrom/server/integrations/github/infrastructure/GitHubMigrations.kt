@@ -196,4 +196,13 @@ val GitHubMigrations: List<SchemaMigration> = listOf(
         ${tenant("github_link_attempts")}
         """.trimIndent(),
     ),
+    // An App imported once from the former variables may have no OAuth client (the manifest's always has one).
+    SchemaMigration(
+        5,
+        "github_app_oauth_client_optional",
+        """
+        ALTER TABLE github_apps ALTER COLUMN client_id DROP NOT NULL;
+        ALTER TABLE github_apps ALTER COLUMN client_secret_sealed DROP NOT NULL
+        """.trimIndent(),
+    ),
 )

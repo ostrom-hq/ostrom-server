@@ -14,6 +14,8 @@ import run.ostrom.server.identity.domain.UsersRepository
 import run.ostrom.server.integrations.github.domain.CloudSessionsSwitch
 import run.ostrom.server.integrations.github.domain.GitHubAccountInUseException
 import run.ostrom.server.integrations.github.domain.GitHubApi
+import run.ostrom.server.integrations.github.domain.GitHubAppCredentials
+import run.ostrom.server.integrations.github.domain.GitHubAppStore
 import run.ostrom.server.integrations.github.domain.GitHubDevicePoll
 import run.ostrom.server.integrations.github.domain.GitHubIdentity
 import run.ostrom.server.integrations.github.domain.GitHubLinkAttempt
@@ -125,10 +127,11 @@ class GitHubLinkPostgresTest {
         single<OrgAuditTrail> { audit }
         single<Clock> { clock }
         single<SecretCipher> { cipher }
-        single {
-            GitHubSettings(
-                "123", null, "whsec", "ostrom-dev", webOrigin = CONSOLE,
-                clientId = CLIENT_ID, clientSecret = "client-secret",
+        single { GitHubSettings(null, null, null, null, webOrigin = CONSOLE) }
+        // The instance's App, as the manifest flow (or the one-time import of the former variables) stored it.
+        single<GitHubAppStore> {
+            MemoryGitHubAppStore(
+                GitHubAppCredentials("123", "ostrom-dev", null, "whsec", CLIENT_ID, "client-secret"),
             )
         }
         // The rest of the module, as GitHubPostgresTest binds it.
