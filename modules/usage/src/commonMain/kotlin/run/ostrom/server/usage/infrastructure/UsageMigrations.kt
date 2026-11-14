@@ -157,6 +157,95 @@ private val DAILY_TOTALS_SQL: String = listOf(
     """.trimIndent(),
 ).joinToString("\n")
 
+/** The spend of a day of the whole ledger, as version 10 writes it for the calls recorded before it. */
+internal const val SPEND_DAYS_OF_THE_LEDGER: String =
+    "INSERT INTO usage_spend_days (org_id, day, member_id, workflow_id, cost_micros) " +
+        "SELECT org_id, CAST(at AT TIME ZONE 'UTC' AS DATE), member_id, workflow_id, SUM(cost_micros) " +
+        "FROM usage_events WHERE cost_micros <> 0 GROUP BY 1, 2, 3, 4 HAVING SUM(cost_micros) <> 0"
+
+/** The key of a day's spend, in the order each statement locks them. */
+private const val SPEND_DAY_KEY = "org_id, day, member_id, workflow_id"
+
+/** The calls of a transition table that cost something, by [SPEND_DAY_KEY], their cost signed. */
+private fun signedSpend(calls: String, sign: String) =
+    "SELECT c.org_id, CAST(c.at AT TIME ZONE 'UTC' AS DATE) AS day, c.member_id, c.workflow_id, " +
+        "${sign}c.cost_micros AS cost_micros FROM $calls c WHERE c.cost_micros <> 0"
+
+/** As [applyCalls], on the spend of the days: a day's spend that comes back to zero is dropped. */
+private fun applySpend(added: String?, removed: String?): String {
+    val signed = listOfNotNull(added?.let { signedSpend(it, "") }, removed?.let { signedSpend(it, "-") })
+    val upsert = "INSERT INTO usage_spend_days AS d ($SPEND_DAY_KEY, cost_micros) " +
+        "SELECT $SPEND_DAY_KEY, SUM(cost_micros) FROM (${signed.joinToString(" UNION ALL ")}) s " +
+        "GROUP BY 1, 2, 3, 4 HAVING SUM(cost_micros) <> 0 ORDER BY 1, 2, 3, 4 ON CONFLICT ($SPEND_DAY_KEY) " +
+        "DO UPDATE SET cost_micros = d.cost_micros + EXCLUDED.cost_micros;"
+    val drop = removed?.let {
+        " DELETE FROM usage_spend_days d WHERE d.cost_micros = 0 AND (d.org_id, d.day) IN " +
+            "(SELECT c.org_id, CAST(c.at AT TIME ZONE 'UTC' AS DATE) FROM $it c);"
+    }.orEmpty()
+    return upsert + drop
+}
+
+/** The trigger functions of version 10, handed to `ostrom_router`. */
+private val SPEND_DAY_FUNCTIONS =
+    listOf("usage_spend_days_add", "usage_spend_days_remove", "usage_spend_days_change", "usage_spend_days_clear")
+
+/**
+ * Version 10, TeamCode #163: the spend of each UTC day, by organization, member and workflow, which a budget's
+ * admission reads instead of adding up the month's calls while it holds the organization's lock (UsageQueries
+ * .holdTotals): a month is at most 31 days of an organization's members and workflows, whatever its calls. Kept as
+ * version 7 keeps `usage_daily` (statement triggers run as `ostrom_router`, one upsert in key order, the ledger locked
+ * while the router writes the spend of the calls recorded before), and exact: every call whose cost is not zero
+ * counts, as in the sums it replaces.
+ */
+private val SPEND_DAYS_SQL: String = listOf(
+    """
+    LOCK TABLE usage_events IN SHARE ROW EXCLUSIVE MODE;
+    CREATE TABLE usage_spend_days (
+        org_id UUID NOT NULL,
+        day DATE NOT NULL,
+        member_id UUID,
+        workflow_id TEXT,
+        cost_micros BIGINT NOT NULL
+    );
+    CREATE UNIQUE INDEX usage_spend_days_key ON usage_spend_days ($SPEND_DAY_KEY) INCLUDE (cost_micros)
+        NULLS NOT DISTINCT;
+    CREATE INDEX usage_spend_days_member ON usage_spend_days (org_id, member_id, day) INCLUDE (cost_micros);
+    CREATE INDEX usage_spend_days_workflow ON usage_spend_days (org_id, workflow_id, day) INCLUDE (cost_micros)
+        WHERE workflow_id IS NOT NULL;
+    ALTER TABLE usage_spend_days ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE usage_spend_days FORCE ROW LEVEL SECURITY;
+    CREATE POLICY usage_spend_days_tenant ON usage_spend_days FOR SELECT
+        USING (org_id = CAST(NULLIF(current_setting('ostrom.org_id', true), '') AS UUID));
+    GRANT SELECT ON usage_spend_days TO ostrom_tenant;
+    CREATE POLICY usage_spend_days_router ON usage_spend_days FOR ALL TO ostrom_router
+        USING (current_user = 'ostrom_router') WITH CHECK (current_user = 'ostrom_router');
+    GRANT SELECT, INSERT, UPDATE, DELETE ON usage_spend_days TO ostrom_router;
+    """.trimIndent(),
+    dailyFunction("usage_spend_days_add", applySpend("usage_events_added", null)),
+    dailyFunction("usage_spend_days_remove", applySpend(null, "usage_events_removed")),
+    dailyFunction("usage_spend_days_change", applySpend("usage_events_added", "usage_events_removed")),
+    dailyFunction("usage_spend_days_clear", "DELETE FROM usage_spend_days;"),
+    "GRANT CREATE ON SCHEMA public TO ostrom_router;",
+    SPEND_DAY_FUNCTIONS.joinToString("\n") {
+        "REVOKE EXECUTE ON FUNCTION $it() FROM PUBLIC; ALTER FUNCTION $it() OWNER TO ostrom_router;"
+    },
+    "REVOKE CREATE ON SCHEMA public FROM ostrom_router;",
+    """
+    CREATE TRIGGER usage_spend_days_add AFTER INSERT ON usage_events
+        REFERENCING NEW TABLE AS usage_events_added FOR EACH STATEMENT EXECUTE FUNCTION usage_spend_days_add();
+    CREATE TRIGGER usage_spend_days_remove AFTER DELETE ON usage_events
+        REFERENCING OLD TABLE AS usage_events_removed FOR EACH STATEMENT EXECUTE FUNCTION usage_spend_days_remove();
+    CREATE TRIGGER usage_spend_days_change AFTER UPDATE ON usage_events
+        REFERENCING OLD TABLE AS usage_events_removed NEW TABLE AS usage_events_added
+        FOR EACH STATEMENT EXECUTE FUNCTION usage_spend_days_change();
+    CREATE TRIGGER usage_spend_days_clear AFTER TRUNCATE ON usage_events
+        FOR EACH STATEMENT EXECUTE FUNCTION usage_spend_days_clear();
+    SET LOCAL ROLE ostrom_router;
+    $SPEND_DAYS_OF_THE_LEDGER;
+    RESET ROLE
+    """.trimIndent(),
+).joinToString("\n")
+
 /**
  * The schema of the usage module; its tables start with `usage_`. The spend indexes include `cost_micros` so that the
  * budget sums are index-only scans; `usage_events_at` serves the retention purge. `usage_holds` keeps the budget held
@@ -266,4 +355,5 @@ val UsageMigrations: List<SchemaMigration> = listOf(
                 INCLUDE (member_id, workflow_id, micros, expires_at);
         """.trimIndent(),
     ),
+    SchemaMigration(version = 10, name = "usage_spend_days", sql = SPEND_DAYS_SQL),
 )
