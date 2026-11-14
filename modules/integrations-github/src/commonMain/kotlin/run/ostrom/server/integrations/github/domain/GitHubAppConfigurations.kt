@@ -189,14 +189,16 @@ class GitHubAppConfigurations(
         val key = input.privateKey ?: current?.privateKeyPem
             ?: refuse(InvalidGitHubAppException("Provide the App's private key."))
         val verified = verify(input.appId, key)
-        if (verified.id != input.appId || verified.clientId != input.clientId) refuse(GitHubAppMismatchException())
+        // GitHub names the App's client; an answer without one is checked on the id alone, as TeamCode does.
+        val client = verified.clientId ?: input.clientId
+        if (verified.id != input.appId || client != input.clientId) refuse(GitHubAppMismatchException())
         val webhook = input.webhookSecret ?: current?.webhookSecret
         val app = CreatedGitHubApp(input.appId, verified.slug, verified.owner, key, webhook, input.clientId, secret)
         if (!store.replaceApp(app, input.version, principal.subjectId, clock.now())) {
             refuse(GitHubAppConflictException())
         }
         apps.forget()
-        current?.let { change.applied(it, input.appId, input.clientId) }
+        // Recorded as soon as the App is stored: what the change ends elsewhere may still fail after it.
         audit.record(
             InstanceAuditRecord(
                 Uuid.parseOrNull(principal.subjectId),
@@ -206,10 +208,17 @@ class GitHubAppConfigurations(
                 mapOf("clientId" to input.clientId),
             ),
         )
+        current?.let { change.applied(it, input.appId, input.clientId) }
         return GitHubAppConfiguration(store.app(), callbackUrls)
     }
 
-    private suspend fun requireAdmin(principal: AuthenticatedPrincipal) {
+    /**
+     * Refuses anyone but an administrator of the instance signed in, before a body is read.
+     *
+     * @param principal The caller.
+     * @throws NotAnInstanceAdminException Otherwise.
+     */
+    suspend fun requireAdmin(principal: AuthenticatedPrincipal) {
         if (!admins.isAdmin(principal)) refuse(NotAnInstanceAdminException())
     }
 

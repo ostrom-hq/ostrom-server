@@ -93,6 +93,8 @@ fun Route.gitHubAppConfigurationRoutes(dependencies: GitHubAppConfigurationRoute
         }
         put<GitHubAppConfigurationPath> {
             val principal = call.requirePrincipal()
+            // Refused before the body (a private key) is even read.
+            configurations.requireAdmin(principal)
             val request = call.receive<SaveGitHubAppConfigurationRequest>()
             call.respond(configurations.save(principal, request.toInput()).toResponse())
         }

@@ -442,6 +442,8 @@ class GitHubDirectoryPostgresTest {
             assertEquals(HttpStatusCode.Forbidden, server.get(caller, path).status, caller)
             assertEquals(HttpStatusCode.Forbidden, server.save(caller, appJson()).status, caller)
         }
+        // A caller who may not save is refused before its body is read.
+        assertEquals(HttpStatusCode.Forbidden, server.save("admin:a:ops", "not json").status)
         val empty = server.get("user:a:owner", path).body<GitHubAppConfigurationResponse>()
         assertFalse(empty.configured)
         assertTrue("https://api.example/api/v1/auth/github/callback" in empty.callbackUrls)

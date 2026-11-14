@@ -228,11 +228,12 @@ class GitHubAppConfigurationsTest {
         assertEquals("github_app_mismatch", typeOf { configurations().save(admin, input()) }, "Another App's key")
         verified = { id, _ -> VerifiedGitHubApp(id, "other", null, "Iv1.other") }
         assertEquals("github_app_mismatch", typeOf { configurations().save(admin, input()) }, "Another App's client")
-        verified = { id, _ -> VerifiedGitHubApp(id, "other", null, null) }
-        assertEquals("github_app_mismatch", typeOf { configurations().save(admin, input()) })
         verified = { _, _ -> throw CancellationException("stopped") }
         assertFailsWith<CancellationException> { configurations().save(admin, input()) }
         assertNull(store.stored)
+        // An answer without the client is checked on the id alone (TeamCode's verifyApp).
+        verified = { id, _ -> VerifiedGitHubApp(id, "other", null, null) }
+        assertEquals(CLIENT, configurations().save(admin, input()).app?.clientId)
     }
 
     @Test
