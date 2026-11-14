@@ -34,12 +34,21 @@ interface PersonalMcpServersUseCase {
 
     /**
      * Makes a member's own server a team server (administrators): its owner keeps their assignment. A team server is
-     * returned as it is.
+     * returned as it is. A server that names its owner's personal secrets is refused: a team server would send them
+     * for everyone.
      *
-     * @throws McpServerNotFoundException, McpServerLimitException
+     * @throws McpServerNotFoundException, McpServerLimitException, McpServerNotPromotedException
      */
-    suspend fun promote(caller: Caller, name: String): McpServer
+    suspend fun promote(caller: Caller, name: String): Promotion
 }
+
+/**
+ * What a promotion did.
+ *
+ * @property server The team server.
+ * @property formerOwner The member it belonged to, or null when it already was a team server.
+ */
+data class Promotion(val server: McpServer, val formerOwner: Uuid?)
 
 /**
  * [PersonalMcpServersUseCase] on the repository, with a team server's checks ([McpServerAdministration.check]).
@@ -90,14 +99,17 @@ class PersonalMcpServersUseCaseImpl(
         return repository.listPersonalServers(caller.orgId, null, McpRules.MAX_PERSONAL_LISTED)
     }
 
-    override suspend fun promote(caller: Caller, name: String): McpServer {
+    override suspend fun promote(caller: Caller, name: String): Promotion {
         caller.requireAdmin()
         val server = repository.getServerByName(caller.orgId, name) ?: throw McpServerNotFoundException()
-        if (!server.personal) return server
-        // Promoted by someone else meanwhile: the team server it now is.
-        return repository.promoteServer(caller.orgId, server.id, McpRules.MAX_SERVERS)
-            ?: repository.getServer(caller.orgId, server.id)
-            ?: throw McpServerNotFoundException()
+        if (!server.personal) return Promotion(server, null)
+        if (server.credentialSecretId != null || server.stdio?.secretEnv.orEmpty().isNotEmpty()) {
+            throw McpServerNotPromotedException("It uses its owner's personal secrets: they remove them first.")
+        }
+        // Changed, promoted or deleted since it was read: the administrator reads it again.
+        val promoted = repository.promoteServer(caller.orgId, server.id, server.version, McpRules.MAX_SERVERS)
+            ?: throw McpServerNotPromotedException("It changed meanwhile: read it again.")
+        return Promotion(promoted, server.ownerMemberId)
     }
 
     /** Another member's server, or a team one, is not found: the caller changes only their own. */

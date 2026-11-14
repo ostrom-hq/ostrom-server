@@ -216,11 +216,11 @@ class InMemoryRelayRepository : McpRelayRepository {
         }
             .sortedWith(compareBy({ it.ownerMemberId.toString() }, { it.name })).take(limit)
 
-    override suspend fun promoteServer(orgId: Uuid, id: Uuid, limit: Int): McpServer? {
+    override suspend fun promoteServer(orgId: Uuid, id: Uuid, version: Int, limit: Int): McpServer? {
         if (servers.count { it.orgId == orgId && !it.personal } >= limit) {
             throw McpServerLimitException("An organization has at most $limit team MCP servers.")
         }
-        val index = servers.indexOfFirst { it.orgId == orgId && it.id == id && it.personal }
+        val index = servers.indexOfFirst { it.orgId == orgId && it.id == id && it.personal && it.version == version }
         if (index < 0) return null
         servers[index] = servers[index].copy(ownerMemberId = null, version = servers[index].version + 1)
         return servers[index]

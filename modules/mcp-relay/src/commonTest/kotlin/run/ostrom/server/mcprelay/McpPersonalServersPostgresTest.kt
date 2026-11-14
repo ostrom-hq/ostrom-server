@@ -152,6 +152,9 @@ class McpPersonalServersPostgresTest : RelayPostgresHarness() {
                 val renewed = sendJson(HttpMethod.Put, "$MINE/sentry", remote("sentry", listOf("MINE")), "member-a")
                 assertEquals(listOf("MINE"), renewed.body<McpServerDto>().secretNames)
                 assertEquals(listOf("MINE"), page(MINE, "member-a").single().secretNames)
+                // A team server would send the owner's secret for everyone.
+                val keyed = client.post("$admin/servers/sentry/promote") { bearerAuth("admin-a") }
+                assertEquals(HttpStatusCode.Conflict, keyed.status)
             }
         }
 
@@ -193,9 +196,11 @@ class McpPersonalServersPostgresTest : RelayPostgresHarness() {
 
             val team = Relay.server("grafana", transport = McpTransport.HTTP)
             assertTrue(repository.createServer(team))
-            assertNull(repository.promoteServer(Relay.orgA, team.id, 64), "Only a member's server is promoted")
-            assertFailsWith<McpServerLimitException> { repository.promoteServer(Relay.orgA, mine.id, 1) }
-            assertNull(repository.promoteServer(Relay.orgB, mine.id, 64))
-            assertNull(repository.promoteServer(Relay.orgA, mine.id, 64)?.ownerMemberId)
+            assertNull(repository.promoteServer(Relay.orgA, team.id, 1, 64), "Only a member's server is promoted")
+            assertFailsWith<McpServerLimitException> { repository.promoteServer(Relay.orgA, mine.id, 1, 1) }
+            assertNull(repository.promoteServer(Relay.orgB, mine.id, 1, 64))
+            assertNull(repository.promoteServer(Relay.orgA, mine.id, 2, 64), "Changed since it was read")
+            val promoted = repository.promoteServer(Relay.orgA, mine.id, 1, 64)
+            assertEquals(null to 2, promoted?.ownerMemberId to promoted?.version)
         }
 }

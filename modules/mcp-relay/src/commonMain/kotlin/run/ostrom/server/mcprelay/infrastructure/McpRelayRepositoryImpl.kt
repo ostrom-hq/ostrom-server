@@ -140,22 +140,23 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
         return driver.fetchInOrg(orgId, statement).getOrThrow().map { it.toServer() }
     }
 
-    override suspend fun promoteServer(orgId: Uuid, id: Uuid, limit: Int): McpServer? = driver.inTenant(orgId) {
-        lock("mcp-team:$orgId")
-        val team = fetchAll(
-            Statement.create(
-                "SELECT COUNT(*) AS team FROM mcp_relay_servers WHERE org_id = :org_id AND owner_member_id IS NULL",
-            ).bind("org_id", orgId),
-        ).getOrThrow().first().get("team").asLong()
-        if (team >= limit) throw McpServerLimitException("An organization has at most $limit team MCP servers.")
-        fetchAll(
-            Statement.create(
-                "UPDATE mcp_relay_servers s SET owner_member_id = NULL, version = s.version + 1 " +
-                    "WHERE s.org_id = :org_id AND s.id = :id AND s.owner_member_id IS NOT NULL " +
-                    "RETURNING $SERVER_COLUMNS",
-            ).bind("org_id", orgId).bind("id", id),
-        ).getOrThrow().firstOrNull()?.toServer()
-    }
+    override suspend fun promoteServer(orgId: Uuid, id: Uuid, version: Int, limit: Int): McpServer? =
+        driver.inTenant(orgId) {
+            lock("mcp-team:$orgId")
+            val team = fetchAll(
+                Statement.create(
+                    "SELECT COUNT(*) AS team FROM mcp_relay_servers WHERE org_id = :org_id AND owner_member_id IS NULL",
+                ).bind("org_id", orgId),
+            ).getOrThrow().first().get("team").asLong()
+            if (team >= limit) throw McpServerLimitException("An organization has at most $limit team MCP servers.")
+            fetchAll(
+                Statement.create(
+                    "UPDATE mcp_relay_servers s SET owner_member_id = NULL, version = s.version + 1 " +
+                        "WHERE s.org_id = :org_id AND s.id = :id AND s.version = :version " +
+                        "AND s.owner_member_id IS NOT NULL RETURNING $SERVER_COLUMNS",
+                ).bind("org_id", orgId).bind("id", id).bind("version", version),
+            ).getOrThrow().firstOrNull()?.toServer()
+        }
 
     private suspend fun Transaction.lock(key: String) {
         fetchAll(

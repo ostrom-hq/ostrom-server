@@ -57,8 +57,7 @@ internal fun Route.personalRoutes(dependencies: McpRelayRoutesDependencies) = wi
     post<McpApi.Servers.Name.Promote> { params ->
         val caller = call.requireCaller(callers, RelayScopes.MCP_ADMIN)
         call.requireRecentSignIn("change an MCP server")
-        val owner = listServers.find(caller, params.parent.name)?.ownerMemberId
-        val server = personal.promote(caller, params.parent.name)
+        val (server, owner) = personal.promote(caller, params.parent.name)
         if (owner != null) {
             recordChange(call, caller, "mcp.server.promoted", server.name, mapOf("owner" to owner.toString()))
         }

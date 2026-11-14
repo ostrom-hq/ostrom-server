@@ -270,3 +270,7 @@ class McpHostedNotAllowedException :
         "Members may not declare a hosted MCP command here: an administrator allows it in the MCP settings.",
         "hosted_not_allowed",
     )
+
+/** A member's server that cannot become a team server as it is. */
+class McpServerNotPromotedException(reason: String) :
+    OstromException(ErrorKind.CONFLICT, "This MCP server is not promoted. $reason")

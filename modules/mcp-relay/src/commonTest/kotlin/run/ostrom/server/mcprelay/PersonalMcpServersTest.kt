@@ -14,6 +14,7 @@ import run.ostrom.server.mcprelay.domain.McpServerAdministration
 import run.ostrom.server.mcprelay.domain.McpServerLimitException
 import run.ostrom.server.mcprelay.domain.McpServerNameTakenException
 import run.ostrom.server.mcprelay.domain.McpServerNotFoundException
+import run.ostrom.server.mcprelay.domain.McpServerNotPromotedException
 import run.ostrom.server.mcprelay.domain.McpServerPayload
 import run.ostrom.server.mcprelay.domain.McpServerPersonalException
 import run.ostrom.server.mcprelay.domain.McpSettings
@@ -21,6 +22,7 @@ import run.ostrom.server.mcprelay.domain.McpSharing
 import run.ostrom.server.mcprelay.domain.McpTransport
 import run.ostrom.server.mcprelay.domain.PersonalMcpServersUseCaseImpl
 import run.ostrom.server.mcprelay.domain.PolicyEffect
+import run.ostrom.server.mcprelay.domain.Promotion
 import run.ostrom.server.mcprelay.domain.StdioLauncher
 import run.ostrom.server.mcprelay.domain.StdioSpec
 import run.ostrom.server.mcprelay.domain.ToolPolicy
@@ -32,7 +34,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
-import kotlin.test.assertSame
 import kotlin.uuid.Uuid
 
 /** A member's own MCP servers (TeamCode #269): theirs to change, an administrator's to review, promote or delete. */
@@ -143,28 +144,35 @@ class PersonalMcpServersTest {
             DeleteArgumentPolicyUseCaseImpl(repository)(Relay.adminA, mine.id, Uuid.random())
         }
 
-        val promoted = personal().promote(Relay.adminA, "mine")
+        val promotion = personal().promote(Relay.adminA, "mine")
+        assertEquals(Relay.memberA.memberId, promotion.formerOwner)
+        val promoted = promotion.server
         assertNull(promoted.ownerMemberId)
         assertEquals(listOf(Relay.memberA.memberId), repository.assignments.map { it.memberId }, "The owner keeps it")
-        assertSame(promoted, personal().promote(Relay.adminA, "mine"), "A team server is returned as it is")
+        assertEquals(Promotion(promoted, null), personal().promote(Relay.adminA, "mine"), "A team one, as it is")
         assertFailsWith<McpServerNotFoundException> { personal().promote(Relay.adminA, "nope") }
     }
 
     @Test
-    fun aServerPromotedOrDeletedMeanwhileIsReturnedOrNotFound() = runTest {
-        val mine = personal().create(Relay.memberA, http)
-        val promotedMeanwhile = object : McpRelayRepository by repository {
-            override suspend fun promoteServer(orgId: Uuid, id: Uuid, limit: Int): McpServer? = null
-
-            override suspend fun getServer(orgId: Uuid, id: Uuid): McpServer = mine.copy(ownerMemberId = null)
+    fun aServerChangedMeanwhileOrUsingItsOwnersSecretsIsNotPromoted() = runTest {
+        personal().create(Relay.memberA, http)
+        val changed = object : McpRelayRepository by repository {
+            override suspend fun promoteServer(orgId: Uuid, id: Uuid, version: Int, limit: Int): McpServer? = null
         }
-        assertNull(personal(promotedMeanwhile).promote(Relay.adminA, "mine").ownerMemberId)
-        val deletedMeanwhile = object : McpRelayRepository by repository {
-            override suspend fun promoteServer(orgId: Uuid, id: Uuid, limit: Int): McpServer? = null
-
-            override suspend fun getServer(orgId: Uuid, id: Uuid): McpServer? = null
-        }
-        assertFailsWith<McpServerNotFoundException> { personal(deletedMeanwhile).promote(Relay.adminA, "mine") }
+        assertFailsWith<McpServerNotPromotedException> { personal(changed).promote(Relay.adminA, "mine") }
+        val secret = Uuid.random()
+        repository.servers += Relay.server("keyed", credential = secret).copy(ownerMemberId = Relay.memberA.memberId)
+        assertFailsWith<McpServerNotPromotedException> { personal().promote(Relay.adminA, "keyed") }
+        repository.servers += Relay.server("hosted", transport = McpTransport.STDIO).copy(
+            ownerMemberId = Relay.memberA.memberId,
+            stdio = StdioSpec(StdioLauncher.NPM, "db-mcp@1.0.0", secretEnv = mapOf("TOKEN" to secret)),
+        )
+        assertFailsWith<McpServerNotPromotedException> { personal().promote(Relay.adminA, "hosted") }
+        repository.servers += Relay.server("plain", transport = McpTransport.STDIO).copy(
+            ownerMemberId = Relay.memberA.memberId,
+            stdio = StdioSpec(StdioLauncher.NPM, "db-mcp@1.0.0"),
+        )
+        assertNull(personal().promote(Relay.adminA, "plain").server.ownerMemberId)
     }
 
     @Test

@@ -63,13 +63,14 @@ interface McpRelayRepository {
      * Makes a personal server a team server: its owner is cleared and keeps their assignment. The team's servers are
      * counted in the same transaction, under a lock that serializes promotions.
      *
+     * @param version The version the caller checked: a server changed since is not promoted.
      * @param limit The most team servers.
      *
-     * @return The server after the change, or null when there is no personal server with this id.
+     * @return The server after the change, or null when there is no personal server with this id and version.
      *
      * @throws McpServerLimitException When the team already has [limit] servers.
      */
-    suspend fun promoteServer(orgId: Uuid, id: Uuid, limit: Int): McpServer?
+    suspend fun promoteServer(orgId: Uuid, id: Uuid, version: Int, limit: Int): McpServer?
 
     /**
      * Replaces the assignment of a member (or of the whole org when [McpAssignment.memberId] is null).
