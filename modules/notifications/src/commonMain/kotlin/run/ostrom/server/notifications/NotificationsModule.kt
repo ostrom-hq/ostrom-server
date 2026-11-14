@@ -176,6 +176,7 @@ object NotificationsModule : ServerModule {
         val settings = koin.get<NotificationSettings>()
         val mailing = koin.get<MailAvailability>()
         val logger = koin.get<Logger>()
+        settings.warnDeprecated(logger)
         scope.launch {
             // Whether e-mails go now: an administrator may set the mail provider in the console later. A failed read
             // (the database at start) only makes the line quieter.
@@ -188,7 +189,7 @@ object NotificationsModule : ServerModule {
             }
             logger.log(
                 settings.startLevel(emails),
-                "approval notifications started; e-mail links open OSTROM_WEB_ORIGIN",
+                "approval notifications started; e-mail links open OSTROM_CONSOLE_URL",
                 mapOf("settings" to settings.toString(), "emails" to emails),
             )
         }

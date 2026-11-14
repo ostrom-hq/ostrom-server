@@ -259,7 +259,6 @@ jobs:
           OSTROM_GITHUB_APP_CLIENT_ID=Iv1.fake
           OSTROM_GITHUB_APP_CLIENT_SECRET=fake-client-secret
           OSTROM_GITHUB_WEBHOOK_SECRET=whsec_github_web_journey
-          OSTROM_WEB_ORIGIN=http://localhost:4173
           OSTROM_READS_PER_MINUTE=6000
           OSTROM_READS_IN_FLIGHT=64
           OSTROM_READ_WAITS_IN_FLIGHT=256

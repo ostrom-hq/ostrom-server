@@ -73,7 +73,7 @@ data class ManifestForm(val action: String, val manifest: String)
  * Where the App created by the manifest sends people and events.
  *
  * @property publicUrl The API's public URL (`OSTROM_PUBLIC_URL`), for the callbacks and the webhook.
- * @property webOrigin The console (`OSTROM_WEB_ORIGIN`), the App's home page.
+ * @property webOrigin The console (`OSTROM_CONSOLE_URL`), the App's home page.
  * @property webUrl GitHub's web address.
  * @property appName The name of the App on GitHub.
  */
