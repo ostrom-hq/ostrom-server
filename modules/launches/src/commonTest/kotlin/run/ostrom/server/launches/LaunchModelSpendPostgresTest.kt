@@ -94,25 +94,26 @@ class LaunchModelSpendPostgresTest {
         expectSuccess = false
     }
 
-    /** The environment (the test database), its owners signing up as on ostrom.run (serverTest's default). */
+    /** The environment (the test database). */
     private val config = object : ConfigSource {
         private val environment = EnvironmentConfigSource()
 
-        override fun get(key: String): String? = if (key == "OSTROM_SIGNUP") "open" else environment[key]
+        override fun get(key: String): String? = environment[key]
     }
 
     private val overrides = module {
         single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
         single<ConfigSource> { config }
-        // The instance's Anthropic key and URL, as an administrator saves them in the console.
+        // The instance's Anthropic key and URL, as an administrator saves them in the console, and its owners signing
+        // up as on ostrom.run.
         single<InstanceSettings> {
             InstanceSettings { section ->
-                if (section == "gateway") {
-                    SettingsValues(
+                when (section) {
+                    "gateway" -> SettingsValues(
                         mapOf("anthropicUrl" to "https://anthropic.test", "anthropicApiKey" to "sk-ant-api03-instance"),
                     )
-                } else {
-                    SettingsValues.EMPTY
+                    "sign-up" -> SettingsValues(mapOf("mode" to "open"))
+                    else -> SettingsValues.EMPTY
                 }
             }
         }
