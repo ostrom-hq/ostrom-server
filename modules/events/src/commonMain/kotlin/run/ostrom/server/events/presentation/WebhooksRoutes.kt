@@ -30,21 +30,21 @@ import kotlin.uuid.Uuid
 fun Route.webhooksRoutes(dependencies: WebhooksRoutesDependencies) = with(dependencies) {
     authenticated {
         get<WebhooksApi> {
-            val actor = orgs.webhookActorOf(call.requirePrincipal(), write = false)
+            val actor = orgs.webhookActorOf(call.requirePrincipal())
             call.respond(WebhookList(webhooks.list(actor).map { it.toResponse() }))
         }
         post<WebhooksApi> {
-            val actor = orgs.webhookActorOf(call.requirePrincipal(), write = true)
+            val actor = orgs.webhookActorOf(call.requirePrincipal())
             val request = call.receive<CreateWebhookRequest>()
             val created = webhooks.create(actor, request.url, request.types, request.description.orEmpty())
             call.respond(HttpStatusCode.Created, created.toResponse())
         }
         get<WebhooksApi.Id> { params ->
-            val actor = orgs.webhookActorOf(call.requirePrincipal(), write = false)
+            val actor = orgs.webhookActorOf(call.requirePrincipal())
             call.respond(webhooks.get(actor, webhookId(params.id)).toResponse())
         }
         put<WebhooksApi.Id> { params ->
-            val actor = orgs.webhookActorOf(call.requirePrincipal(), write = true)
+            val actor = orgs.webhookActorOf(call.requirePrincipal())
             val request = call.receive<UpdateWebhookRequest>()
             val changed = webhooks.update(
                 actor,
@@ -58,7 +58,7 @@ fun Route.webhooksRoutes(dependencies: WebhooksRoutesDependencies) = with(depend
             call.respond(changed.toResponse())
         }
         delete<WebhooksApi.Id> { params ->
-            val actor = orgs.webhookActorOf(call.requirePrincipal(), write = true)
+            val actor = orgs.webhookActorOf(call.requirePrincipal())
             webhooks.delete(actor, webhookId(params.id))
             call.respond(HttpStatusCode.NoContent)
         }
@@ -69,13 +69,13 @@ fun Route.webhooksRoutes(dependencies: WebhooksRoutesDependencies) = with(depend
 /** The log, the test and the rotation. */
 private fun Route.actionRoutes(dependencies: WebhooksRoutesDependencies) = with(dependencies) {
     get<WebhooksApi.Id.Deliveries> { params ->
-        val actor = orgs.webhookActorOf(call.requirePrincipal(), write = false)
+        val actor = orgs.webhookActorOf(call.requirePrincipal())
         val limit = params.limit ?: WebhookRules.DEFAULT_LOG_PAGE
         val log = webhooks.deliveries(actor, webhookId(params.parent.id), limit)
         call.respond(WebhookDeliveryList(log.map { it.toResponse() }))
     }
     post<WebhooksApi.Id.Test> { params ->
-        val actor = orgs.webhookActorOf(call.requirePrincipal(), write = true)
+        val actor = orgs.webhookActorOf(call.requirePrincipal())
         val queued = try {
             webhooks.test(actor, webhookId(params.parent.id))
         } catch (limited: WebhookTestRateException) {
@@ -85,7 +85,7 @@ private fun Route.actionRoutes(dependencies: WebhooksRoutesDependencies) = with(
         call.respond(HttpStatusCode.Accepted, queued.toResponse())
     }
     post<WebhooksApi.Id.RotateSecret> { params ->
-        val actor = orgs.webhookActorOf(call.requirePrincipal(), write = true)
+        val actor = orgs.webhookActorOf(call.requirePrincipal())
         call.respond(webhooks.rotateSecret(actor, webhookId(params.parent.id)).toResponse())
     }
 }
