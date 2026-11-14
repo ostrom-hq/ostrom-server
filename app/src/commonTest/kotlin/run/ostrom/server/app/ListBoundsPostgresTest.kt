@@ -12,12 +12,18 @@ import run.ostrom.server.identity.domain.StartedSession
 import run.ostrom.server.identity.domain.VerifiedIdentity
 import run.ostrom.server.kernel.auth.CSRF_COOKIE
 import run.ostrom.server.kernel.auth.CSRF_HEADER
+import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.auth.ORG_HEADER
 import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.auth.SESSION_COOKIE
 import run.ostrom.server.kernel.config.EnvironmentConfigSource
 import run.ostrom.server.kernel.http.ReadLimits
 import run.ostrom.server.kernel.http.ReadThrottle
+import run.ostrom.server.mcprelay.domain.HostStatus
+import run.ostrom.server.mcprelay.domain.HostedProcessAdministration
+import run.ostrom.server.mcprelay.domain.ListHostedProcessesUseCase
+import run.ostrom.server.mcprelay.domain.McpHostControl
+import run.ostrom.server.mcprelay.domain.UpstreamTarget
 import run.ostrom.server.orgs.domain.Member
 import run.ostrom.server.orgs.domain.Org
 import run.ostrom.server.orgs.domain.OrgsRepository
@@ -73,6 +79,21 @@ class ListBoundsPostgresTest {
         single { ReadThrottle(Clock.System, ReadLimits(MANY, MANY, MANY), ReadThrottle.MAX_SUBJECTS) }
         // Artifacts are on with a bucket only: an in-memory one.
         single<ArtifactObjectStore> { MatrixBucket() }
+        // The hosted processes are read from an MCP host: the real administration over a host that answers with no
+        // process running, as the test server runs none (without a host the list is refused, 409).
+        single<ListHostedProcessesUseCase> {
+            HostedProcessAdministration(get(), getOrNull<MemberDirectory>(), IdleMcpHost)
+        }
+    }
+
+    private object IdleMcpHost : McpHostControl {
+        override suspend fun warm(target: UpstreamTarget) = Unit
+
+        override suspend fun retain(keys: Collection<String>): Int = 0
+
+        override suspend fun status(): HostStatus = HostStatus("test") { null }
+
+        override suspend fun stop(key: String): Boolean = false
     }
 
     @Test
@@ -190,7 +211,8 @@ class ListBoundsPostgresTest {
     }
 
     // Two rules and two artifacts (a page of one has a next), an automation and an MCP server (their sub-lists), an
-    // accepted workflow and one run of it (the runs, listed by the organization and by the workflow): the ids of the
+    // accepted workflow and one run of it (the runs, listed by the organization and by the workflow), a webhook with one
+    // test delivery: the ids of the
     // created resources by their collection, for the paths that name one.
     private suspend fun TestServer.seed(ada: Person): Map<String, String> {
         repeat(2) { n ->
@@ -216,6 +238,14 @@ class ListBoundsPostgresTest {
                 "foundAt": "2026-11-03T10:00:00Z", "inputs": []}""",
         )
         workflow?.let { write(ada, "/api/v1/workflows/$it/runs", "{}") }
+        // A webhook and its test delivery (the delivery log of the webhook).
+        val webhook = write(
+            ada,
+            "/api/v1/webhooks",
+            """{"url": "https://example.com/lists", "types": ["cloud.wait.created"], "description": "Lists"}""",
+            "webhook",
+        )
+        webhook?.let { write(ada, "/api/v1/webhooks/$it/test", "{}") }
         val artifact = read(ada, "/api/v1/artifacts", "").let { items(it)?.firstOrNull()?.id() }
         // A team skill, a personal skill and a team hook, each with one version (their versions and assignments).
         write(ada, "/api/v1/skills/lists/versions", SKILL_VERSION)
@@ -225,6 +255,7 @@ class ListBoundsPostgresTest {
             automation?.let { "/api/v1/automations" to it },
             workflow?.let { "/api/v1/workflows" to it },
             artifact?.let { "/api/v1/artifacts" to it },
+            webhook?.let { "/api/v1/webhooks" to it },
             "/api/v1/mcp/servers" to "lists",
             "/api/v1/skills" to "lists",
             "/api/v1/me/skills" to "mine",
@@ -234,13 +265,20 @@ class ListBoundsPostgresTest {
     }
 
     // The id of what a write created, or null when it was refused (the lists under it are then unreached).
-    private suspend fun TestServer.write(person: Person, path: String, body: String): String? {
+    private suspend fun TestServer.write(
+        person: Person,
+        path: String,
+        body: String,
+        under: String? = null,
+    ): String? {
         val answer = client.post(path) {
             session(person)
             contentType(ContentType.Application.Json)
             setBody(body)
         }
-        return if (answer.status.value in SUCCESS) Json.parseToJsonElement(answer.bodyAsText()).id() else null
+        if (answer.status.value !in SUCCESS) return null
+        val created = Json.parseToJsonElement(answer.bodyAsText())
+        return (if (under == null) created else (created as? JsonObject)?.get(under))?.id()
     }
 
     private suspend fun TestServer.read(person: Person, path: String, query: String): HttpResponse =
@@ -292,10 +330,6 @@ class ListBoundsPostgresTest {
             "listCloudClusters" to 403,
             "listInstanceAdmins" to 403,
             "listInstanceSettings" to 403,
-            // The hosted MCP processes are read live from an MCP host, which the test server runs none of (409).
-            "listMcpHostedProcesses" to 409,
-            // A webhook's deliveries, under a webhook the bootstrap does not make (404); the events module bounds them.
-            "listWebhookDeliveries" to 404,
         )
 
         /**

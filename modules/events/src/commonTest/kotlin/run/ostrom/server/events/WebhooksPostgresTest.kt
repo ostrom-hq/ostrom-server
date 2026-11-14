@@ -216,6 +216,10 @@ class WebhooksPostgresTest {
         val log = server.client.get("/api/v1/webhooks/$id/deliveries?limit=2") { bearerAuth("key-a") }
             .body<WebhookDeliveryList>()
         assertEquals(2, log.items.size)
+        for (size in listOf("0", "-1")) {
+            val refused = server.client.get("/api/v1/webhooks/$id/deliveries?limit=$size") { bearerAuth("key-a") }
+            assertEquals(HttpStatusCode.BadRequest, refused.status, "limit=$size")
+        }
         assertTrue(log.items.all { it.state == "pending" && it.eventType == "webhook.test" })
         assertTrue(log.items.all { it.nextAttemptAt != null })
 
