@@ -95,6 +95,12 @@ class ConfigAndCallersTest {
         assertEquals(ORG_A, caller.orgId)
         assertEquals(ALICE.toString(), caller.memberId)
         assertFalse(caller.person, "A token a program presents is no person")
+        assertFalse(caller.administrator)
+        // Owners and administrators publish when only they may.
+        for (who in listOf("dave", "carol")) {
+            val person = AuthenticatedPrincipal(who, PrincipalKind.USER, setOf("user:*"))
+            assertTrue(TestOrgResolver.artifactCallerOf(person, ARTIFACTS_WRITE).administrator)
+        }
         TestOrgResolver.artifactCallerOf(principal(PrincipalKind.SERVICE, ARTIFACTS_READ), ARTIFACTS_READ)
         TestOrgResolver.artifactCallerOf(principal(PrincipalKind.USER, "user:*"), ARTIFACTS_WRITE)
         assertFailsWith<MissingScopeException> {

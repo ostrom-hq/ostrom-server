@@ -36,6 +36,7 @@ import run.ostrom.server.artifacts.fakes.aliceAgent
 import run.ostrom.server.artifacts.fakes.bob
 import run.ostrom.server.artifacts.fakes.carol
 import run.ostrom.server.artifacts.fakes.dave
+import run.ostrom.server.artifacts.fakes.gateOf
 import run.ostrom.server.artifacts.infrastructure.SealedViewTickets
 import run.ostrom.server.artifacts.infrastructure.Sha256ContentDigest
 import run.ostrom.server.kernel.errors.InvalidPageException
@@ -67,7 +68,8 @@ class ArtifactUseCasesTest {
     private val storage = InMemoryStorage().active(ORG_A, ORG_B)
     private val bucket = InMemoryBucket()
     private val contents = BucketArtifactContents(storage, bucket)
-    private val publish = PublishArtifactUseCaseImpl(repository, contents, digest, clock, recorder)
+    private val publish =
+        PublishArtifactUseCaseImpl(repository, contents, digest, clock, recorder, gateOf(storage, clock))
     private val read = ReadArtifactsUseCaseImpl(repository, contents)
     private val manage = ManageArtifactUseCaseImpl(repository, contents, clock, recorder)
     private var signer: InstanceSigner? = null

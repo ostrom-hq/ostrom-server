@@ -14,10 +14,10 @@ import run.ostrom.server.artifacts.domain.ArtifactVersion
 import run.ostrom.server.artifacts.domain.ArtifactsRepository
 import run.ostrom.server.artifacts.domain.ContentDigest
 import run.ostrom.server.artifacts.domain.InvalidArtifactRequestException
+import run.ostrom.server.artifacts.domain.PublicationGate
 import run.ostrom.server.artifacts.domain.ensureValid
 import run.ostrom.server.artifacts.domain.linkSlugFor
 import run.ostrom.server.artifacts.domain.parseAccess
-import run.ostrom.server.artifacts.domain.storage.ArtifactContents
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
@@ -86,7 +86,7 @@ interface CommitArtifactUploadUseCase {
 internal class CommitArtifactUploadUseCaseImpl(
     private val artifacts: ArtifactsRepository,
     private val uploads: ArtifactUploadsRepository,
-    private val contents: ArtifactContents,
+    private val gate: PublicationGate,
     private val digest: ContentDigest,
     private val clock: Clock,
     private val events: ArtifactEvents,
@@ -94,7 +94,7 @@ internal class CommitArtifactUploadUseCaseImpl(
     private val rules = ArtifactAccessRules(artifacts)
 
     override suspend fun commit(caller: ArtifactCaller, artifactId: Uuid, commit: UploadCommit): CommittedVersion {
-        contents.requireActive(caller.orgId)
+        gate.admit(caller)
         val artifact = rules.owned(caller, artifactId)
         val now = clock.now().toMicroseconds()
         val files = filesOf(commit)
@@ -132,6 +132,7 @@ internal class CommitArtifactUploadUseCaseImpl(
             artifacts.updateSettings(settings.copy(latestVersion = version.number, updatedAt = now))
         }
         uploads.end(caller.orgId, upload)
+        gate.published(caller, artifact.id, now)
         val event = if (artifact.draft) "created" else "version_published"
         events.record(caller, event, artifact.id, mapOf("version" to version.number.toString()))
         return CommittedVersion(version, replayed = false)

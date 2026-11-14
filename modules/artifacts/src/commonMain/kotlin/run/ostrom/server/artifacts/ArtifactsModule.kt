@@ -4,10 +4,13 @@ package run.ostrom.server.artifacts
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.artifacts.domain.ArtifactEvents
 import run.ostrom.server.artifacts.domain.ArtifactLocations
+import run.ostrom.server.artifacts.domain.ArtifactPublicationsRepository
 import run.ostrom.server.artifacts.domain.ArtifactsRepository
 import run.ostrom.server.artifacts.domain.ContentDigest
 import run.ostrom.server.artifacts.domain.ManageArtifactUseCase
 import run.ostrom.server.artifacts.domain.ManageArtifactUseCaseImpl
+import run.ostrom.server.artifacts.domain.PublicationGate
+import run.ostrom.server.artifacts.domain.PublicationGateImpl
 import run.ostrom.server.artifacts.domain.PublishArtifactUseCase
 import run.ostrom.server.artifacts.domain.PublishArtifactUseCaseImpl
 import run.ostrom.server.artifacts.domain.ReadArtifactsUseCase
@@ -30,6 +33,7 @@ import run.ostrom.server.artifacts.domain.uploads.CommitArtifactUploadUseCaseImp
 import run.ostrom.server.artifacts.domain.uploads.UploadArtifactUseCase
 import run.ostrom.server.artifacts.domain.uploads.UploadArtifactUseCaseImpl
 import run.ostrom.server.artifacts.domain.uploads.UploadStores
+import run.ostrom.server.artifacts.infrastructure.ArtifactPublicationsRepositoryImpl
 import run.ostrom.server.artifacts.infrastructure.ArtifactUploadsRepositoryImpl
 import run.ostrom.server.artifacts.infrastructure.ArtifactsConfig
 import run.ostrom.server.artifacts.infrastructure.ArtifactsMigrations
@@ -78,7 +82,9 @@ object ArtifactsModule : ServerModule {
         single<ContentDigest> { Sha256ContentDigest() }
         single<ArtifactEvents> { AuditedArtifactEvents(get()) }
         single<ArtifactContents> { BucketArtifactContents(get(), get()) }
-        single<PublishArtifactUseCase> { PublishArtifactUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<ArtifactPublicationsRepository> { ArtifactPublicationsRepositoryImpl(get()) }
+        single<PublicationGate> { PublicationGateImpl(get(), get()) }
+        single<PublishArtifactUseCase> { PublishArtifactUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single<ReadArtifactsUseCase> { ReadArtifactsUseCaseImpl(get(), get()) }
         single<ManageArtifactUseCase> { ManageArtifactUseCaseImpl(get(), get(), get(), get()) }
         single<ViewTicketSeal> { SealedViewTickets(get()) }

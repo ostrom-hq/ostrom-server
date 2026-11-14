@@ -243,4 +243,20 @@ val ArtifactsMigrations: List<SchemaMigration> = listOf(
         name = "artifacts_blobs_without_bytes",
         sql = "ALTER TABLE artifacts_blobs DROP COLUMN bytes;",
     ),
+    // Each publication of a version, for `publishesPerHour`: a pruned version still counts, as TeamCode counts them
+    // from its audit log. The maintenance forgets those past the hour.
+    SchemaMigration(
+        version = 9,
+        name = "artifacts_publications",
+        sql = """
+            CREATE TABLE artifacts_publications (
+                org_id UUID NOT NULL,
+                member_id TEXT NOT NULL,
+                artifact_id UUID NOT NULL,
+                published_at TIMESTAMPTZ NOT NULL
+            );
+            CREATE INDEX artifacts_publications_member ON artifacts_publications (org_id, member_id, published_at);
+            ${tenantTableSql("artifacts_publications")}
+        """.trimIndent(),
+    ),
 )

@@ -126,6 +126,8 @@ class UploadedFile(val path: String, val bytes: ByteArray)
  * @property subjectId The person behind the credential (the principal's `subjectId`), whose credential a reading
  *   ticket checks is still live; null when unknown.
  * @property principal The credential itself, named as the actor of the audit log's lines; null when unknown.
+ * @property administrator Whether they are an owner or an administrator of the organization, who publish when
+ *   `whoCanPublish` is `admins`.
  */
 data class ArtifactCaller(
     val orgId: Uuid,
@@ -134,6 +136,7 @@ data class ArtifactCaller(
     val credentialId: String? = null,
     val subjectId: String? = null,
     val principal: AuthenticatedPrincipal? = null,
+    val administrator: Boolean = false,
 )
 
 /**

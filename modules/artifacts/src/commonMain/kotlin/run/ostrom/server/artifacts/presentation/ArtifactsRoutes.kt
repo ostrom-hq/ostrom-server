@@ -5,6 +5,7 @@ import run.ostrom.server.artifacts.domain.Artifact
 import run.ostrom.server.artifacts.domain.ArtifactCaller
 import run.ostrom.server.artifacts.domain.ArtifactConflictException
 import run.ostrom.server.artifacts.domain.ArtifactNotFoundException
+import run.ostrom.server.artifacts.domain.ArtifactPublishRateLimitedException
 import run.ostrom.server.artifacts.domain.ArtifactRelation
 import run.ostrom.server.artifacts.domain.ArtifactRules
 import run.ostrom.server.artifacts.domain.ArtifactTicketsRateLimitedException
@@ -64,7 +65,8 @@ fun Route.artifactsRoutes(dependencies: ArtifactsRoutesDependencies) = with(depe
             post<ArtifactsApi> {
                 val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), ARTIFACTS_WRITE)
                 val request = call.receive<PublishArtifactRequest>()
-                val artifact = publish.create(caller, request.title, request.access, request.files.toUploads())
+                val files = request.files.toUploads()
+                val artifact = call.publishing { publish.create(caller, request.title, request.access, files) }
                 call.respond(HttpStatusCode.Created, toResponse(artifact, caller))
             }
             post<ArtifactsApi.Id.Versions> { params ->
@@ -72,7 +74,7 @@ fun Route.artifactsRoutes(dependencies: ArtifactsRoutesDependencies) = with(depe
                 val request = call.receive<PublishVersionRequest>()
                 val id = artifactId(params.parent.id)
                 if (request.uploadId == null) {
-                    val version = publish.addVersion(caller, id, request.files.toUploads())
+                    val version = call.publishing { publish.addVersion(caller, id, request.files.toUploads()) }
                     call.respond(HttpStatusCode.Created, version.toResponse())
                 } else {
                     call.respondCommit(commit, caller, id, request.toCommit(request.uploadId))
@@ -246,7 +248,7 @@ private suspend fun ApplicationCall.respondCommit(
     upload: UploadCommit,
 ) {
     val committed = try {
-        commit.commit(caller, id, upload)
+        publishing { commit.commit(caller, id, upload) }
     } catch (conflict: ArtifactConflictException) {
         val error = ErrorDetail(conflict.type, conflict.message)
         respond(HttpStatusCode.Conflict, ArtifactConflictResponse(error, conflict.current?.toResponse()))
@@ -255,3 +257,12 @@ private suspend fun ApplicationCall.respondCommit(
     val status = if (committed.replayed) HttpStatusCode.OK else HttpStatusCode.Created
     respond(status, committed.version.toResponse().copy(replayed = committed.replayed))
 }
+
+// A publication over the hourly limit says when to try again, as TeamCode's `Retry-After`.
+private suspend fun <T> ApplicationCall.publishing(block: suspend () -> T): T = try {
+    block()
+} catch (limited: ArtifactPublishRateLimitedException) {
+    response.header(HttpHeaders.RetryAfter, limited.retryAfterSeconds.toString())
+    throw limited
+}
+

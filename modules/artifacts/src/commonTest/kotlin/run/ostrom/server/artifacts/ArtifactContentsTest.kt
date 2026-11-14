@@ -26,6 +26,7 @@ import run.ostrom.server.artifacts.fakes.VIEWER
 import run.ostrom.server.artifacts.fakes.active
 import run.ostrom.server.artifacts.fakes.alice
 import run.ostrom.server.artifacts.fakes.bob
+import run.ostrom.server.artifacts.fakes.gateOf
 import run.ostrom.server.artifacts.infrastructure.SealedViewTickets
 import run.ostrom.server.artifacts.infrastructure.Sha256ContentDigest
 import run.ostrom.server.kernel.signing.Ed25519InstanceSigner
@@ -115,7 +116,8 @@ class ArtifactContentsTest {
     fun whileInactiveEveryActionButDeletionIsRefusedAndPagesAreNotFound() = runTest {
         val repository = InMemoryArtifacts()
         val clock = TestClock()
-        val publish = PublishArtifactUseCaseImpl(repository, contents, digest, clock) { _, _, _, _ -> }
+        val publish =
+            PublishArtifactUseCaseImpl(repository, contents, digest, clock, { _, _, _, _ -> }, gateOf(storage, clock))
         val read = ReadArtifactsUseCaseImpl(repository, contents)
         val manage = ManageArtifactUseCaseImpl(repository, contents, clock) { _, _, _, _ -> }
         val view = ViewArtifactUseCaseImpl(

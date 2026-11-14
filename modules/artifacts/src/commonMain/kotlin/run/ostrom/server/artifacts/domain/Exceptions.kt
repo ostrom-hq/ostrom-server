@@ -53,6 +53,24 @@ class ArtifactTicketsRateLimitedException(val retryAfterSeconds: Long) : OstromE
     "Too many artifact pages were opened in a minute. Try again in a moment.",
 )
 
+/** The organization lets only its owners and administrators publish (`whoCanPublish: admins`). */
+class ArtifactPublishForbiddenException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "Only the organization's owners and administrators publish artifacts.",
+    "artifact_publish_forbidden",
+)
+
+/**
+ * The member published more versions in the last hour than the organization allows (`publishesPerHour`).
+ *
+ * @property retryAfterSeconds When the oldest of them leaves the hour, for `Retry-After`.
+ */
+class ArtifactPublishRateLimitedException(val retryAfterSeconds: Long) : OstromException(
+    ErrorKind.RATE_LIMITED,
+    "Too many versions were published in the last hour. Try again later.",
+    "artifact_rate_limited",
+)
+
 /** The caller acts for no organization: answered like an unknown organization. */
 class NotAMemberException : OstromException(ErrorKind.NOT_FOUND, "Organization not found.")
 
