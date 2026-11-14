@@ -59,8 +59,8 @@ enum class OrgEventType(val wire: String, val subject: String) {
  *
  * @property type The event's type.
  * @property subjectId Which subject it is about (a wait's id, a run's id).
- * @property memberId The member the subject belongs to, who sees the event besides the owners and the admins; null
- *   for an event of the whole organization, which only they see.
+ * @property memberId The member the subject belongs to, the only one who sees the event (TeamCode #238); null
+ *   for an event of the whole organization, which only the owners and the admins see.
  * @property data The type's facts: identifiers and short labels, at most [MAX_EVENT_DATA] characters as JSON, never a
  *   transcript, a prompt, a secret or a value a person typed.
  */
