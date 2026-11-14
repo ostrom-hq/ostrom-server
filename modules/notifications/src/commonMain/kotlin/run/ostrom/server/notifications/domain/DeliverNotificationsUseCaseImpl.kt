@@ -62,22 +62,27 @@ class DeliverNotificationsUseCaseImpl(
         val now = clock.now()
         val due = mutableListOf<NotificationDelivery>()
         val asks = mutableListOf<Pair<ApprovalDelivery, GateSummary>>()
+        // The rows claimed, sent or not (one about a closed wait is failed unsent): the batch bounds the claims.
+        var taken = 0
         suspend fun claim(org: Uuid, limit: Int): Boolean = guarded(CLAIM_FAILED, false) {
             val claimed = deliveries.claimDue(org, limit, now, LEASE)
+            taken += claimed.size
             due += stillOpen(org, claimed.filterIsInstance<NotificationDelivery>())
             asks += stillAsked(org, claimed.filterIsInstance<ApprovalDelivery>())
             claimed.size >= limit
         }
         val orgs = deliveries.workingOrgs(now, DeliveryRules.ORGS_PER_PASS)
         // Each organization's share first, the longest waiting first, so one organization's burst never fills the
-        // batch while others wait; the room left then goes to those that had more due, in the same order.
+        // batch while others wait; the room left then goes to those that filled their share, in the same order.
         val share = DeliveryRules.fairShare(orgs.size)
-        val more = orgs.filter { org ->
-            val room = DeliveryRules.BATCH - due.size - asks.size
-            room > 0 && claim(org, minOf(share, room))
+        val more = mutableListOf<Uuid>()
+        for (org in orgs) {
+            val room = DeliveryRules.BATCH - taken
+            if (room <= 0) break
+            if (claim(org, minOf(share, room))) more += org
         }
         for (org in more) {
-            val room = DeliveryRules.BATCH - due.size - asks.size
+            val room = DeliveryRules.BATCH - taken
             if (room <= 0) break
             claim(org, room)
         }

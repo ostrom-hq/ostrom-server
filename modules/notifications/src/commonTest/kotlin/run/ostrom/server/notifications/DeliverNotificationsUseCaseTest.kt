@@ -357,6 +357,24 @@ class DeliverNotificationsUseCaseTest {
     }
 
     @Test
+    fun deliveriesFailedUnsentStillCountAgainstThePassesBatch() {
+        runTest {
+            val deliveries = MemoryDeliveries()
+            deliveries.due[orgA] = MutableList(DeliveryRules.BATCH + 10) {
+                NotificationDelivery(notification(orgA, "w-2"), "push", 0)
+            }
+            deliveries.due[orgB] = mutableListOf(NotificationDelivery(notification(orgB, null), "push", 0))
+            val waits = CountingWaits(listOf(summary("w-2", mia, open = false)))
+
+            val attempted = useCase(FakeJournal(), waits, deliveries, listOf(FakeChannel("push")))()
+
+            assertEquals(1, attempted, "A's deliveries are about a closed wait")
+            assertEquals(DeliveryRules.BATCH, deliveries.recorded.size, "At most a batch claimed, sent or not")
+            assertEquals(listOf(orgA to 25, orgB to 25, orgA to 24), deliveries.claims)
+        }
+    }
+
+    @Test
     fun aShareIsAnEvenPartOfTheBatchAndAtLeastOne() {
         assertEquals(DeliveryRules.BATCH, DeliveryRules.fairShare(0))
         assertEquals(DeliveryRules.BATCH, DeliveryRules.fairShare(1))
