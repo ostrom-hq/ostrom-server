@@ -18,8 +18,9 @@ class SettingsField(
     val secret: Boolean = false,
     val required: Boolean = false,
     val legacyVariable: String? = null,
-    val check: (String) -> String? = { null },
+    // Before [check], so that a trailing lambda (`SettingsField("mode") { … }`) stays the check.
     val verify: (suspend (String) -> String?)? = null,
+    val check: (String) -> String? = { null },
 ) {
     /**
      * Why a value is refused: [check], then [verify].
