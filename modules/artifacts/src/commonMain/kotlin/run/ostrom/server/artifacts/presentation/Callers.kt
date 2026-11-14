@@ -45,12 +45,9 @@ suspend fun ArtifactOrgResolver.artifactCallerOf(principal: AuthenticatedPrincip
     if (!principal.allowsArtifacts(scope)) throw MissingScopeException(scope)
     // The origin of a publication is the agent token's launch, read here from the credential and nowhere else; an
     // agent token is read once, a dead launch's refused without a second lookup.
-    val agent = if (principal.kind == PrincipalKind.AGENT) {
-        agentOf(principal, null) ?: throw NotAMemberException()
-    } else {
-        null
-    }
-    val member = agent?.member ?: resolve(principal, null) ?: throw NotAMemberException()
+    val agent = if (principal.kind == PrincipalKind.AGENT) agentOf(principal, null) else null
+    val member = (if (principal.kind == PrincipalKind.AGENT) agent?.member else resolve(principal, null))
+        ?: throw NotAMemberException()
     return ArtifactCaller(
         orgId = member.orgId,
         memberId = member.memberId.toString(),
