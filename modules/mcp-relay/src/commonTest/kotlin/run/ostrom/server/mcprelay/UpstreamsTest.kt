@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.mcprelay
 
+import run.ostrom.server.kernel.logging.LogLevel
+import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.mcprelay.domain.HostedProcessStatus
 import run.ostrom.server.mcprelay.domain.McpOutcome
 import run.ostrom.server.mcprelay.domain.McpTransport
@@ -209,6 +211,41 @@ class UpstreamsTest {
                 1.seconds,
             )
         assertEquals("The MCP server's address is not allowed.", (private as UpstreamResult.Failure).message)
+    }
+
+    @Test
+    fun aTlsFailureIsNamedApartFromAServerThatCannotBeReachedAndBothAreLoggedWithoutTheirMessage() = realTime {
+        val warnings = mutableListOf<Pair<String, Map<String, Any?>>>()
+        val logger = object : Logger {
+            override fun log(level: LogLevel, message: String, fields: Map<String, Any?>, error: Throwable?) {
+                if (level == LogLevel.WARN) warnings += message to fields
+            }
+
+            override fun with(fields: Map<String, Any?>): Logger = this
+        }
+        fun failing(error: Exception, log: Logger? = logger) =
+            HttpMcpUpstream(client { _, _ -> throw error }, UpstreamAddressGuard(), logger = log)
+        val target = httpTarget()
+        val handshake = SSLHandshakeFake("PKIX path building failed for upstream_token")
+        val untrusted = failing(handshake).listTools(target, 5.seconds)
+        assertEquals(HttpMcpUpstream.TLS_FAILURE, (untrusted as UpstreamResult.Failure).message)
+        assertEquals(McpOutcome.UPSTREAM_ERROR, untrusted.outcome)
+        val wrapped = IllegalStateException("handshake", CertificateFake())
+        val expired = failing(wrapped).callTool(httpTarget(), "t", JsonObject(emptyMap()), 5.seconds)
+        assertEquals(HttpMcpUpstream.TLS_FAILURE, (expired as UpstreamResult.Failure).message, "Found in its causes")
+        val refused = failing(IllegalStateException("Connection refused"), null).listTools(httpTarget(), 5.seconds)
+        assertEquals(HttpMcpUpstream.UNREACHABLE, (refused as UpstreamResult.Failure).message)
+        failing(IllegalStateException("Connection refused")).listTools(httpTarget(), 5.seconds)
+        assertEquals(
+            listOf("mcp upstream tls failure", "mcp upstream tls failure", "mcp upstream unreachable"),
+            warnings.map { it.first },
+        )
+        val server = target.server
+        assertEquals(
+            mapOf("org" to server.orgId.toString(), "server" to server.id.toString(), "error" to "SSLHandshakeFake"),
+            warnings.first().second,
+        )
+        assertTrue(warnings.none { (_, fields) -> fields.values.any { "upstream_token" in it.toString() } })
     }
 
     @Test
@@ -601,3 +638,9 @@ class UpstreamsTest {
 }
 
 fun realTime(block: suspend CoroutineScope.() -> Unit) = runTest { withContext(Dispatchers.Default) { block() } }
+
+/** Named as the JVM's handshake failure is, which the upstream recognises by its class name. */
+private class SSLHandshakeFake(message: String) : Exception(message)
+
+/** Named as a certificate failure is. */
+private class CertificateFake : Exception("certificate expired")
