@@ -89,6 +89,18 @@ class ActionProfileTest {
     }
 
     @Test
+    fun aProfileDeletedSinceTheAutomationNamedItNeverBlocksAnotherChange() = runTest {
+        val saved = manage.create(aliceAuto, session(profile.toString())).automation
+        val none = CloudProfileDirectory { emptyList() }
+        val gone = ManageAutomationsUseCaseImpl(repository, PlainSecrets, clock, workflows, none)
+        val renamed = session(profile.toString()).copy(name = "Renamed")
+        assertEquals("Renamed", gone.update(aliceAuto, saved.id, 1, renamed).definition.name)
+        assertFailsWith<InvalidAutomationException> {
+            gone.update(aliceAuto, saved.id, 2, session(Uuid.random().toString()))
+        }
+    }
+
+    @Test
     fun anotherOrganizationsProfileIsUnknown() = runTest {
         assertFailsWith<InvalidAutomationException> { manage.create(carolAuto, session(profile.toString())) }
     }

@@ -122,7 +122,7 @@ class ManageAutomationsUseCaseImpl(
     ): Automation {
         val current = repository.ownedBy(caller, id)
         if (current.version != version) throw StaleAutomationException()
-        val checked = checked(caller, definition)
+        val checked = checked(caller, definition, current.definition.action.profileId)
         val now = clock.now().truncatedToMillis()
         val updated = current.copy(
             definition = checked,
@@ -172,11 +172,16 @@ class ManageAutomationsUseCaseImpl(
 
     /**
      * The definition's rules, its profile among the organization's (TeamCode refuses an unknown one at save too), and a
-     * workflow action's against its workflow as it is now.
+     * workflow action's against its workflow as it is now. The profile the automation already named is kept as it is:
+     * one deleted since never blocks an unrelated change (its runs say `cloud_profile_not_found`).
      */
-    private suspend fun checked(caller: AutomationCaller, definition: AutomationDefinition): AutomationDefinition {
+    private suspend fun checked(
+        caller: AutomationCaller,
+        definition: AutomationDefinition,
+        previousProfileId: String? = null,
+    ): AutomationDefinition {
         val checked = AutomationRules.check(definition)
-        val profileId = checked.action.profileId?.let(Uuid::parse)
+        val profileId = checked.action.profileId?.takeIf { it != previousProfileId }?.let(Uuid::parse)
         if (profileId != null && profiles?.has(caller.orgId, profileId) == false) {
             throw InvalidAutomationException("action.profileId: no cloud profile of the organization has this id.")
         }

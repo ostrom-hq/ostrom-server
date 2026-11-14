@@ -260,11 +260,16 @@ class WorkflowsUseCaseImpl(
     }
 
     // An agent node names a profile of the organization (TeamCode refuses an unknown one at save too); one its run's
-    // starter may not use fails that session, with its key as the run's failureCode.
+    // starter may not use fails that session, with its key as the run's failureCode. A profile the stored workflow
+    // already named is kept as it is: one deleted since never blocks an unrelated change (its sessions are refused).
+    // Read outside the lock, so a profile deleted meanwhile is caught by the session's creation, never earlier.
     private suspend fun requireProfiles(orgId: Uuid, workflow: Workflow) {
         if (profiles == null || !WorkflowChecks.runsOnServer(workflow)) return
+        val kept = repository.workflow(orgId, workflow.id)?.let { profilesOf(it.doc.workflow) }.orEmpty()
         val named = workflow.nodes.filter { it.kind == WorkflowNodeKind.AGENT }
-            .mapNotNull { node -> node.run?.profileId?.let { node.id to Uuid.parseOrNull(it) } }
+            .mapNotNull { node -> node.run?.profileId?.let { node.id to it } }
+            .filter { (_, id) -> id !in kept }
+            .map { (node, id) -> node to Uuid.parseOrNull(id) }
         if (named.isEmpty()) return
         val known = profiles.profiles(orgId).map { it.id }.toSet()
         named.firstOrNull { it.second !in known }?.let { (node, _) ->
@@ -313,6 +318,10 @@ class WorkflowsUseCaseImpl(
         repository.addDecision(orgId, decision.copy(receiptId = receipt))
     }
 }
+
+// The profiles a workflow's agent nodes name.
+private fun profilesOf(workflow: Workflow): Set<String> =
+    workflow.nodes.filter { it.kind == WorkflowNodeKind.AGENT }.mapNotNull { it.run?.profileId }.toSet()
 
 private fun requireFreeName(workflow: Workflow, others: List<Workflow>) {
     val name = workflow.name.trim()

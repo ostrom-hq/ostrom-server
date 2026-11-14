@@ -402,5 +402,12 @@ class WorkflowsUseCaseTest {
         assertFailsWith<OstromException> {
             checked.save(elsewhere, raw(naming("theirs", profile.toString())), null, "lead", create = true)
         }
+        // A profile deleted since the workflow named it never blocks another change; naming another unknown one does.
+        val gone = WorkflowsUseCaseImpl(repository, signer, clock, profiles = CloudProfileDirectory { emptyList() })
+        val renamed = naming("known", profile.toString()).copy(name = "Known again")
+        assertEquals(2, gone.save(org, raw(renamed), 1, "lead", create = false).version)
+        assertFailsWith<OstromException> {
+            gone.save(org, raw(naming("known", Uuid.random().toString())), 2, "lead", create = false)
+        }
     }
 }
