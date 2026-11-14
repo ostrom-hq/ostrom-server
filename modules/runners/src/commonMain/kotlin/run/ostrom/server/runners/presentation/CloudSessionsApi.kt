@@ -319,8 +319,9 @@ data class SessionLimitsDto(
  * owner asked for (`running`, `paused`, `terminated`); `phase` is open. `runnerId` names the registered runner the
  * current execution was handed to, on the session's own read only (`GET /api/v1/cloud/sessions/{id}`).
  * `githubAccess` says whose GitHub access its Git and `gh` use (`owner`, `shared`, `none`). `profile` and `image`
- * say what a Kubernetes session runs on (`runners.cloud.profiles.v1`). `expiresAt`, on a paused session, says when it is
- * terminated with its workspace, and `terminatedReason`, on a terminated one, why it ended (`deleted`, `expired`).
+ * say what a Kubernetes session runs on (`runners.cloud.profiles.v1`). `expiresAt`, on a paused session, says when it
+ * is terminated with its workspace, and `terminatedReason`, on a terminated one, why it ended (`deleted`,
+ * `expired`).
  */
 @Serializable
 data class CloudSessionResponse(

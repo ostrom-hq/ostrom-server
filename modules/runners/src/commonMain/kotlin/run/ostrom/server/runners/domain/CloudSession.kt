@@ -51,8 +51,8 @@ import kotlin.uuid.Uuid
  * @property clusterUnreachableSince Since when the steps of the session have found its cluster unreachable without a
  *   break ([RuntimeUnreachableException]); null while it opens. Past a bound, its execution ends without the cluster.
  * @property expiresAt When a paused session is terminated with its workspace (TeamCode's `expiresAt`), from the
- *   instance's paused retention in force when it paused ([PausedRetention]); null while it is not paused, or when paused
- *   sessions are kept. Resuming clears it.
+ *   instance's paused retention in force when it paused ([PausedRetention]); null while it is not paused, or when
+ *   paused sessions are kept. Resuming clears it.
  * @property terminatedReason Why a terminated session ended: [TERMINATED_DELETED] or [TERMINATED_EXPIRED]; null
  *   before it is asked to end.
  */

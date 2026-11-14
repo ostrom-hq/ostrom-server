@@ -12,5 +12,5 @@ import run.ostrom.server.runners.domain.PausedRetention
  * @param runtime The cloud runtime; null on a server without the cloud module, which keeps the default.
  */
 class CloudRuntimePausedRetention(private val runtime: CloudRuntimeSource?) : PausedRetention {
-    override suspend fun days(): Int? = (runtime?.current() ?: CloudRuntime()).pausedRetentionDays
+    override suspend fun days(): Int? = (if (runtime == null) CloudRuntime() else runtime.current()).pausedRetentionDays
 }

@@ -29,8 +29,8 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 /**
- * Paused sessions expire as TeamCode's (`runners.cloud.retention.v1`, TC-CLR-6): `expiresAt` from the retention in force
- * when a session pauses, cleared by a resume; past it, the session is terminated with its workspace, `expired`.
+ * Paused sessions expire as TeamCode's (`runners.cloud.retention.v1`, TC-CLR-6): `expiresAt` from the retention in
+ * force when a session pauses, cleared by a resume; past it, the session is terminated with its workspace, `expired`.
  */
 class CloudSessionExpiryTest {
     private val repository = InMemoryCloudSessionsRepository()
@@ -148,6 +148,9 @@ class CloudSessionExpiryTest {
         assertEquals(clock.now + 1.days, stored(old).expiresAt)
         assertEquals((clock.now + 1.days).toString(), stored(old).toResponse().expiresAt)
 
+        val unknown = put(session(state = SessionState.PAUSED, desired = DesiredState.PAUSED))
+        assertEquals(clock.now + 30.days, reconcile(unknown), "Without its pause: from now")
+
         days = null
         val kept = paused(null)
         assertNull(reconcile(kept))
@@ -157,7 +160,8 @@ class CloudSessionExpiryTest {
     @Test
     fun anExecutionLostPausesTheSessionUntilItExpires() = runTest {
         val running = put(
-            session(state = SessionState.RUNNING).copy(epoch = 1, readyAt = t0, lastHeartbeatAt = t0, lastActivityAt = t0),
+            session(state = SessionState.RUNNING)
+                .copy(epoch = 1, readyAt = t0, lastHeartbeatAt = t0, lastActivityAt = t0),
         )
         clock.now = t0 + 2.minutes
 
