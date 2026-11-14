@@ -9,6 +9,7 @@ import run.ostrom.server.kernel.config.MapConfigSource
 import run.ostrom.server.kernel.config.ServerConfig
 import run.ostrom.server.kernel.config.parseConfigFile
 import run.ostrom.server.kernel.config.readConfigFile
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.http.CallCeilingSettings
 import run.ostrom.server.kernel.http.ReadLimits
 import run.ostrom.server.kernel.logging.LogLevel
@@ -219,6 +220,27 @@ class ConfigTest {
         assertFailsWith<InvalidConfigException> {
             ServerConfig.from(MapConfigSource(database + ("OSTROM_LOG_LEVEL" to "loud")))
         }
+    }
+
+    @Test
+    fun boundsTheConnectionsAndSplitsThemBetweenThePools() {
+        val tooFew = assertFailsWith<InvalidConfigException> {
+            ServerConfig.from(MapConfigSource(database + ("OSTROM_DATABASE_MAX_CONNECTIONS" to "3")))
+        }
+        assertEquals("OSTROM_DATABASE_MAX_CONNECTIONS must be between 4 and 64.", tooFew.message)
+        assertFailsWith<InvalidConfigException> {
+            ServerConfig.from(MapConfigSource(database + ("OSTROM_DATABASE_MAX_CONNECTIONS" to "65")))
+        }
+        val default = ServerConfig.from(MapConfigSource(database)).database
+        assertEquals(5 to 5, default.jdbcConnections to default.driverConnections)
+        val odd = ServerConfig.from(MapConfigSource(database + ("OSTROM_DATABASE_MAX_CONNECTIONS" to "11"))).database
+        assertEquals(6 to 5, odd.jdbcConnections to odd.driverConnections, "the JDBC pool takes the larger half")
+        val fewest = ServerConfig.from(MapConfigSource(database + ("OSTROM_DATABASE_MAX_CONNECTIONS" to "4"))).database
+        assertEquals(JdbcDatabase.MIN_POOL_SIZE, fewest.jdbcConnections, "the fewest still opens a valid JDBC pool")
+        val most = ServerConfig.from(MapConfigSource(database + ("OSTROM_DATABASE_MAX_CONNECTIONS" to "64"))).database
+        assertEquals(32 to 32, most.jdbcConnections to most.driverConnections)
+        assertEquals(5, default.forDriver().maxConnections, "sqlx4k's pool opens with its share only")
+        assertEquals(default.url, default.forDriver().url)
     }
 
     @Test
