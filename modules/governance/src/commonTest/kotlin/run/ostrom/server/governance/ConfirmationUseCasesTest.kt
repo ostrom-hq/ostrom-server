@@ -208,6 +208,26 @@ class ConfirmationUseCasesTest {
     }
 
     @Test
+    fun aConfirmedWriteStillBeingMadeIsWaitedOnUntilItsResultIsWritten() = runTest {
+        // confirmed, its result not written yet: the CLI waiting here must not read a confirmation with no result
+        // (it would say an invitation sent invited nobody)
+        val opened = open(request())
+        val making = opened.copy(status = ConfirmationStatus.CONFIRMED, settled = false)
+        repository.rows[opened.id] = making
+        assertEquals(ConfirmationStatus.PENDING, making.shownAt(clock.now))
+        assertEquals(ConfirmationStatus.CONFIRMED, making.statusAt(clock.now), "Stored as confirmed")
+        clock.now += 16.minutes
+        assertEquals(ConfirmationStatus.PENDING, making.shownAt(clock.now), "Never expired once confirmed")
+        val unsettled = get(token("ada"), opened.id, 3.seconds)
+        assertEquals(false, unsettled.settled)
+        assertEquals(3.seconds, waits.waited, "Waited on, as a pending one")
+        waits.during = { repository.settle(orgA, opened.id, JsonPrimitive("never"), null) }
+        val settled = get(token("ada"), opened.id, 10.seconds)
+        assertEquals(ConfirmationStatus.CONFIRMED to JsonPrimitive("never"), settled.status to settled.result)
+        assertEquals(ConfirmationStatus.CONFIRMED, settled.shownAt(clock.now))
+    }
+
+    @Test
     fun aConfirmationWithAFreshSignInMakesTheWriteAsTheConfirmersDecisionOnce() = runTest {
         val opened = open(request())
         val confirmed = confirm(browser("olga"), opened.id)

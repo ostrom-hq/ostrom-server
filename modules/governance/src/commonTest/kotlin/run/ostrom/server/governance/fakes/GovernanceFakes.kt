@@ -70,6 +70,7 @@ class InMemoryConfirmations : ConfirmationsRepository {
                 answeredBy = outcome.by,
                 answeredAt = outcome.at,
                 error = outcome.error,
+                settled = outcome.status != ConfirmationStatus.CONFIRMED,
             )
         }
         return row != null
@@ -78,7 +79,7 @@ class InMemoryConfirmations : ConfirmationsRepository {
     override suspend fun settle(orgId: Uuid, id: String, result: JsonElement?, error: ConfirmationError?) {
         val row = rows.getValue(id)
         rows[id] = if (error == null) {
-            row.copy(result = result)
+            row.copy(result = result, settled = true)
         } else {
             row.copy(status = ConfirmationStatus.FAILED, error = error)
         }

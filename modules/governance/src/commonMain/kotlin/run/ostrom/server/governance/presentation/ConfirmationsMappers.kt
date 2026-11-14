@@ -12,7 +12,8 @@ import kotlinx.serialization.json.JsonNull
 import kotlin.time.Instant
 
 /**
- * The contract's view of a confirmation at [now]: a pending one past its expiry reads expired.
+ * The contract's view of a confirmation at [now]: a pending one past its expiry reads expired, a confirmed one
+ * still being written reads pending ([Confirmation.shownAt]).
  *
  * @param people Names the people.
  * @param now The current time.
@@ -22,7 +23,7 @@ import kotlin.time.Instant
 internal suspend fun Confirmation.toDto(people: ConfirmationPeople, now: Instant) = ConfirmationDto(
     id = id,
     kind = write.kind,
-    status = statusAt(now).wire,
+    status = shownAt(now).wire,
     method = method,
     path = path,
     scope = scope,
