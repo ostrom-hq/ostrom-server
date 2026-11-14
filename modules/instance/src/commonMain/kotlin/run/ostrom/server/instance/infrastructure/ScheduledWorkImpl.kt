@@ -72,9 +72,9 @@ class ScheduledWorkImpl(private val driver: Driver) : ScheduledWork {
 
     private companion object {
         const val MAX_NAME = 100
-        val MAX_TIMEOUT = 5.minutes
+        private val MAX_TIMEOUT: Duration = 5.minutes
 
         /** A claimed lease outlives the run's timeout by this much, so a slow release never lets a second run in. */
-        val MARGIN = 15.seconds
+        private val MARGIN: Duration = 15.seconds
     }
 }
