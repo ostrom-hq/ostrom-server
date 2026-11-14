@@ -12,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlin.concurrent.thread
@@ -21,6 +22,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import org.flywaydb.core.api.FlywayException
@@ -215,12 +217,14 @@ class FlywayMigrationRunnerTest {
                 List(3) { async { migrateModules(database.ownerConfig, logger, modules) } }.awaitAll()
             }
             assertEquals(3, applied(), "Each version applied by one pass only")
-            val locks = database.superuser.fetchAll(
-                // This test's database only: other tests' passes take the same key on theirs at the same time.
-                "SELECT count(*) AS n FROM pg_locks WHERE locktype = 'advisory' AND objid = " +
-                    (MIGRATION_LOCK_KEY and 0xFFFFFFFFL) +
-                    " AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
-            ).getOrThrow().single().get("n").asLong()
+            // A pass releases the lock by closing its connection; the backend drops it from pg_locks a moment later
+            // (CI run 43567561020 read it still held once), so the check waits a few seconds for it to go.
+            var locks = heldMigrationLocks(database)
+            repeat(LOCK_RELEASE_CHECKS) {
+                if (locks == 0L) return@repeat
+                delay(LOCK_RELEASE_PAUSE)
+                locks = heldMigrationLocks(database)
+            }
             assertEquals(0, locks, "The migration lock is released")
         }
     }
@@ -243,6 +247,13 @@ class FlywayMigrationRunnerTest {
         }
     }
 
+    private suspend fun heldMigrationLocks(database: TestDatabase): Long = database.superuser.fetchAll(
+        // This test's database only: other tests' passes take the same key on theirs at the same time.
+        "SELECT count(*) AS n FROM pg_locks WHERE locktype = 'advisory' AND objid = " +
+            (MIGRATION_LOCK_KEY and 0xFFFFFFFFL) +
+            " AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
+    ).getOrThrow().single().get("n").asLong()
+
     private suspend fun TestDatabase.canWrite(role: String, table: String): Boolean = owner.fetchAll(
         Statement.create(
             "SELECT has_table_privilege(:role, :table, 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') AS w",
@@ -257,5 +268,7 @@ class FlywayMigrationRunnerTest {
 
     private companion object {
         const val RELEASE_AFTER_MILLIS = 4_000L
+        const val LOCK_RELEASE_CHECKS = 50
+        val LOCK_RELEASE_PAUSE = 100.milliseconds
     }
 }
