@@ -56,14 +56,14 @@ interface CompleteMobileSignInUseCase {
 /**
  * [CompleteMobileSignInUseCase].
  *
- * @param methods The configured providers.
+ * @param methods The providers offered now.
  * @param attempts Where attempts are kept.
  * @param services Makes and hashes the code; the clock and the callback URLs.
  * @param resolveUser Finds, merges or creates the account.
  * @param codes Where the one-time codes are kept.
  */
 class CompleteMobileSignInUseCaseImpl(
-    private val methods: SignInMethods,
+    private val methods: SignInMethodsSource,
     private val attempts: OAuthAttemptsRepository,
     private val services: SignInServices,
     private val resolveUser: ResolveUserUseCase,

@@ -7,14 +7,11 @@ import run.ostrom.server.identity.domain.Mail
 import run.ostrom.server.identity.domain.MailNotSentException
 import run.ostrom.server.identity.fakes.SettableClock
 import run.ostrom.server.identity.infrastructure.DirectoryMailSender
-import run.ostrom.server.identity.infrastructure.OAuthClient
-import run.ostrom.server.identity.infrastructure.OidcEndpoints
 import run.ostrom.server.identity.infrastructure.ResendMailSender
 import run.ostrom.server.identity.infrastructure.UnconfiguredMailSender
 import run.ostrom.server.identity.infrastructure.magicLinkMail
 import run.ostrom.server.identity.presentation.IdentityConfig
 import run.ostrom.server.identity.presentation.SignInConfig
-import run.ostrom.server.kernel.config.InvalidConfigException
 import run.ostrom.server.kernel.config.MapConfigSource
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -34,7 +31,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
@@ -106,60 +102,20 @@ class MailAndConfigTest {
     }
 
     @Test
-    fun withoutCredentialsNoMethodIsConfigured() {
-        val config = SignInConfig.from(MapConfigSource(emptyMap()))
-
-        assertNull(config.github)
-        assertNull(config.google)
-        assertNull(config.resendApiKey)
-        assertNull(config.mailDirectory)
-        assertEquals("https://github.com", config.githubWebUrl)
-        assertEquals("https://api.github.com", config.githubApiUrl)
-        assertEquals(OidcEndpoints.GOOGLE, config.googleEndpoints)
-        assertEquals("Ostrom <login@mail.ostrom.run>", config.mailFrom)
-    }
-
-    @Test
-    fun credentialsAndFakeEndpointsAreRead() {
-        val config = SignInConfig.from(
+    fun theMailSenderIsReadFromTheEnvironment() {
+        val none = SignInConfig.from(MapConfigSource(emptyMap()))
+        val set = SignInConfig.from(
             MapConfigSource(
                 mapOf(
-                    "OSTROM_GITHUB_CLIENT_ID" to " Iv1.a ", "OSTROM_GITHUB_CLIENT_SECRET" to "s1",
-                    "OSTROM_GITHUB_WEB_URL" to "http://fake:9000/", "OSTROM_GITHUB_API_URL" to "http://fake:9000/api/",
-                    "OSTROM_GOOGLE_CLIENT_ID" to "g", "OSTROM_GOOGLE_CLIENT_SECRET" to "s2",
-                    "OSTROM_GOOGLE_ISSUER" to "http://fake:9001",
-                    "OSTROM_GOOGLE_AUTHORIZATION_URL" to "http://fake:9001/auth",
-                    "OSTROM_GOOGLE_TOKEN_URL" to "http://fake:9001/token",
                     "OSTROM_RESEND_API_KEY" to "re_x",
                     "OSTROM_MAIL_FROM" to "Me <me@x.test>",
-                    "OSTROM_MAIL_DIR" to "/tmp/m",
+                    "OSTROM_MAIL_DIR" to "/m",
                 ),
             ),
         )
 
-        assertEquals(OAuthClient("Iv1.a", "s1"), config.github)
-        assertEquals("http://fake:9000", config.githubWebUrl)
-        assertEquals("http://fake:9000/api", config.githubApiUrl)
-        assertEquals(OAuthClient("g", "s2"), config.google)
-        assertEquals(
-            OidcEndpoints(setOf("http://fake:9001"), "http://fake:9001/auth", "http://fake:9001/token"),
-            config.googleEndpoints,
-        )
-        assertEquals("re_x", config.resendApiKey)
-        assertEquals("Me <me@x.test>", config.mailFrom)
-        assertEquals("/tmp/m", config.mailDirectory)
-    }
-
-    @Test
-    fun halfConfiguredMethodsRefuseToStart() {
-        listOf(
-            mapOf("OSTROM_GITHUB_CLIENT_ID" to "a"),
-            mapOf("OSTROM_GOOGLE_CLIENT_SECRET" to "a"),
-            mapOf("OSTROM_GOOGLE_ISSUER" to "http://x"),
-            mapOf("OSTROM_GOOGLE_ISSUER" to "http://x", "OSTROM_GOOGLE_AUTHORIZATION_URL" to "http://x/a"),
-            mapOf("OSTROM_GOOGLE_AUTHORIZATION_URL" to "http://x/a"),
-            mapOf("OSTROM_GOOGLE_TOKEN_URL" to "http://x/t"),
-        ).forEach { assertFailsWith<InvalidConfigException>(it.toString()) { SignInConfig.from(MapConfigSource(it)) } }
+        assertEquals(SignInConfig(null, "Ostrom <login@mail.ostrom.run>", null), none)
+        assertEquals(SignInConfig("re_x", "Me <me@x.test>", "/m"), set)
     }
 
     @Test

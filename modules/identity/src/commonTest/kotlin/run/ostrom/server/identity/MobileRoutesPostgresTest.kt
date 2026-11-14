@@ -2,6 +2,7 @@
 
 package run.ostrom.server.identity
 
+import run.ostrom.server.identity.fakes.offered
 import run.ostrom.server.identity.domain.APP_REDIRECT_URI
 import run.ostrom.server.identity.domain.IdentityProvider
 import run.ostrom.server.identity.domain.SignInMethods
@@ -61,7 +62,7 @@ import org.koin.dsl.module
 class MobileRoutesPostgresTest {
     private val github = FakeOAuthProvider(IdentityProvider.GITHUB)
     private val overrides = module {
-        single { SignInMethods(mapOf(IdentityProvider.GITHUB to github), email = false) }
+        single { SignInMethods(mapOf(IdentityProvider.GITHUB to github), email = false).offered() }
     }
     private val verifier = "app-verifier-" + "x".repeat(50)
 

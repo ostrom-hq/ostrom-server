@@ -2,6 +2,7 @@
 
 package run.ostrom.server.identity
 
+import run.ostrom.server.identity.fakes.offered
 import run.ostrom.server.identity.domain.AccountLinkRequiredException
 import run.ostrom.server.identity.domain.CompleteOAuthSignInUseCaseImpl
 import run.ostrom.server.identity.domain.IdentityProvider
@@ -60,6 +61,7 @@ class SignInUseCasesTest {
     private val google = FakeOAuthProvider(IdentityProvider.GOOGLE)
     private val methods =
         SignInMethods(mapOf(IdentityProvider.GITHUB to github, IdentityProvider.GOOGLE to google), email = true)
+            .offered()
     private val resolve = ResolveUserUseCaseImpl(users, openSignUp(clock), RecordingAuditLog(), clock)
     private val startSession = StartWebSessionUseCaseImpl(sessions, generator, hasher, clock)
     private val callback = { provider: IdentityProvider -> "https://api.test/v1/auth/${provider.key}/callback" }
@@ -110,7 +112,7 @@ class SignInUseCasesTest {
     @Test
     fun anUnknownOrUnconfiguredProviderIsRefused() = runTest {
         val onlyGithub = StartOAuthSignInUseCaseImpl(
-            SignInMethods(mapOf(IdentityProvider.GITHUB to github), email = false),
+            SignInMethods(mapOf(IdentityProvider.GITHUB to github), email = false).offered(),
             attempts, services,
         )
 
@@ -257,7 +259,7 @@ class SignInUseCasesTest {
     fun linkRequestsCheckTheAddressAndTheConfiguration() = runTest {
         assertFailsWith<InvalidEmailException> { request("not-an-email", null, "ip", null) }
         val unconfigured = RequestMagicLinkUseCaseImpl(
-            SignInMethods(emptyMap(), email = false), links, mail, services,
+            SignInMethods(emptyMap(), email = false).offered(), links, mail, services,
             { to, link -> Mail(to, "s", link, link) }, { it },
         )
         assertFailsWith<ProviderNotConfiguredException> { unconfigured("ada@example.com", null, "ip", null) }
@@ -266,8 +268,8 @@ class SignInUseCasesTest {
     }
 
     @Test
-    fun theOfferedMethodsAreListedInOrder() {
-        assertEquals(listOf("github", "google", "email"), methods.keys)
+    fun theOfferedMethodsAreListedInOrder() = runTest {
+        assertEquals(listOf("github", "google", "email"), methods.current().keys)
         assertEquals(emptyList(), SignInMethods(emptyMap(), email = false).keys)
     }
 

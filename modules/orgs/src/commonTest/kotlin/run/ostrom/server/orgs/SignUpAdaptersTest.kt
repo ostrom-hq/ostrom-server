@@ -46,7 +46,7 @@ class SignUpAdaptersTest {
     fun theGateAsksTheInstancesPolicy() = runTest {
         val setupPerson = Uuid.random()
         val policy = object : SignUpPolicy {
-            override val mode = SignUpMode.INVITE
+            override suspend fun mode() = SignUpMode.INVITE
 
             override suspend fun admits(identity: VerifiedIdentity, grant: SignUpGrant) = false
 

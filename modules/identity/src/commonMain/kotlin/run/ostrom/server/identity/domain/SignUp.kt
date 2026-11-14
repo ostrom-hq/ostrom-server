@@ -13,7 +13,8 @@ import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * Who may get a new account on this instance (`OSTROM_SIGNUP`). [key] is the configured and published name.
+ * Who may get a new account on this instance (the `sign-up` settings of the console). [key] is the configured and
+ * published name.
  *
  * TeamCode has no public registration: its first administrator is created once, then administrators add members. An
  * Ostrom instance is [INVITE] unless its operator opens it ([OPEN], ostrom.run): a sign-in then creates an account
@@ -150,8 +151,12 @@ interface SignUpInvitations {
 
 /** Who may get an account, and who may create organizations, on this instance. */
 interface SignUpPolicy {
-    /** The instance's mode. */
-    val mode: SignUpMode
+    /**
+     * The instance's mode now, as an administrator set it in the console.
+     *
+     * @return The mode.
+     */
+    suspend fun mode(): SignUpMode
 
     /**
      * Whether a sign-in may create an account: always on an open instance; on an invite-only one, for an
@@ -196,7 +201,7 @@ interface SignUpPolicy {
 /**
  * [SignUpPolicy].
  *
- * @param mode The instance's mode.
+ * @param readMode Reads the instance's mode now.
  * @param setupLinks The setup links.
  * @param invitations The organizations' invitations, when the orgs module runs.
  * @param hasher Hashes the tokens.
@@ -204,7 +209,7 @@ interface SignUpPolicy {
  * @param grants Makes the setup link's person an administrator of the instance.
  */
 class SignUpPolicyImpl(
-    override val mode: SignUpMode,
+    private val readMode: suspend () -> SignUpMode,
     private val setupLinks: SetupLinksRepository,
     private val invitations: SignUpInvitations?,
     private val hasher: SecretHasher,
@@ -214,7 +219,7 @@ class SignUpPolicyImpl(
     override suspend fun admits(identity: VerifiedIdentity, grant: SignUpGrant): Boolean {
         val token = (grant as? SignUpGrant.Presented)?.token
         // An organization's SSO provisions its own people: its administrators configured it.
-        val vouched = mode == SignUpMode.OPEN || grant == SignUpGrant.Operator || identity.connectionId != null
+        val vouched = mode() == SignUpMode.OPEN || grant == SignUpGrant.Operator || identity.connectionId != null
         return vouched || token != null && accepts(token)
     }
 
@@ -234,7 +239,9 @@ class SignUpPolicyImpl(
         }
     }
 
-    override suspend fun mayCreateOrgs(userId: Uuid): Boolean = mode == SignUpMode.OPEN || setupLinks.usedBy(userId)
+    override suspend fun mode(): SignUpMode = readMode()
+
+    override suspend fun mayCreateOrgs(userId: Uuid): Boolean = mode() == SignUpMode.OPEN || setupLinks.usedBy(userId)
 
     private fun isSetupToken(token: String) = token.startsWith(SETUP_TOKEN_PREFIX + "_")
 }

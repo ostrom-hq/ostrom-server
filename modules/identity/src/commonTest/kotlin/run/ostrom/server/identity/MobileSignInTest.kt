@@ -2,6 +2,7 @@
 
 package run.ostrom.server.identity
 
+import run.ostrom.server.identity.fakes.offered
 import run.ostrom.server.identity.domain.ANSWER_SCOPE
 import run.ostrom.server.identity.domain.APP_REDIRECT_URI
 import run.ostrom.server.identity.domain.ApiToken
@@ -89,6 +90,7 @@ class MobileSignInTest {
     private val google = FakeOAuthProvider(IdentityProvider.GOOGLE)
     private val methods =
         SignInMethods(mapOf(IdentityProvider.GITHUB to github, IdentityProvider.GOOGLE to google), email = false)
+            .offered()
     private val callback = { provider: IdentityProvider -> "https://api.test/v1/auth/${provider.key}/callback" }
     private val services = SignInServices(generator, hasher, limiter, clock, callback)
     private val resolve = ResolveUserUseCaseImpl(users, openSignUp(clock), RecordingAuditLog(), clock)
@@ -223,7 +225,7 @@ class MobileSignInTest {
 
     @Test
     fun aStrangerOnAnInviteOnlyInstanceIsSentBackToTheAppWithoutAccount() = runTest {
-        val closed = SignUpPolicyImpl(SignUpMode.INVITE, InMemorySetupLinks(), null, hasher, clock)
+        val closed = SignUpPolicyImpl({ SignUpMode.INVITE }, InMemorySetupLinks(), null, hasher, clock)
         val closedResolve = ResolveUserUseCaseImpl(users, closed, RecordingAuditLog(), clock)
         val closedMobile = CompleteMobileSignInUseCaseImpl(methods, attempts, services, closedResolve, codes)
         val state = startMobile()
