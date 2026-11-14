@@ -29,6 +29,8 @@ import run.ostrom.server.sessions.domain.usecases.ReopenSessionUseCase
 import run.ostrom.server.sessions.domain.usecases.ReopenSessionUseCaseImpl
 import run.ostrom.server.sessions.domain.usecases.ReportSeenUseCase
 import run.ostrom.server.sessions.domain.usecases.ReportSeenUseCaseImpl
+import run.ostrom.server.sessions.domain.usecases.ReportSessionActivityUseCase
+import run.ostrom.server.sessions.domain.usecases.ReportSessionActivityUseCaseImpl
 import run.ostrom.server.sessions.domain.usecases.SessionAliveUseCase
 import run.ostrom.server.sessions.domain.usecases.SessionAliveUseCaseImpl
 import run.ostrom.server.sessions.domain.usecases.SessionSegments
@@ -75,11 +77,12 @@ object SessionsModule : ServerModule {
         single<SessionAliveUseCase> { SessionAliveUseCaseImpl(get(), get()) }
         single<ReopenSessionUseCase> { ReopenSessionUseCaseImpl(get(), get()) }
         single<ReportSeenUseCase> { ReportSeenUseCaseImpl(get(), get()) }
+        single<ReportSessionActivityUseCase> { ReportSessionActivityUseCaseImpl(get(), get()) }
         single<GetSessionUseCase> { GetSessionUseCaseImpl(get(), get(), get(), get()) }
         single<ListSessionsUseCase> { ListSessionsUseCaseImpl(get()) }
         single<SweepStaleSessionsUseCase> { SweepStaleSessionsUseCaseImpl(get(), get(), get(), get()) }
         single(named(ACTIVE_SESSIONS)) { CachedCount(ActiveSessionsCount(get(), get())::read) }
-        single { SessionsRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { SessionsRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = SessionsMigrations
@@ -88,8 +91,9 @@ object SessionsModule : ServerModule {
         route.sessionsRoutes(koin.get(), koin.get())
     }
 
-    /** Agent sessions. */
-    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.SESSIONS)
+    /** Agent sessions, and whether their agent works or waits for a person. */
+    override suspend fun features(koin: Koin): Set<String> =
+        setOf(ServerFeatures.SESSIONS, ServerFeatures.SESSIONS_ACTIVITY)
 
     /**
      * Closes the lost sessions every 30 s, on one replica at a time (ScheduledWork); a failing run is logged and the

@@ -11,9 +11,12 @@ import run.ostrom.server.kernel.auth.requirePrincipal
 import run.ostrom.server.kernel.errors.Pages
 import run.ostrom.server.kernel.http.ReadThrottle
 import run.ostrom.server.kernel.http.throttledReads
+import run.ostrom.server.sessions.domain.models.ActivityChange
 import run.ostrom.server.sessions.domain.models.EndSession
 import run.ostrom.server.sessions.domain.models.GateAnswer
+import run.ostrom.server.sessions.domain.models.InvalidSessionActivityException
 import run.ostrom.server.sessions.domain.models.Session
+import run.ostrom.server.sessions.domain.models.SessionActivityState
 import run.ostrom.server.sessions.domain.models.SessionQuery
 import run.ostrom.server.sessions.domain.models.SessionView
 import run.ostrom.server.sessions.domain.models.StartSession
@@ -24,6 +27,7 @@ import io.ktor.server.resources.get
 import io.ktor.server.resources.post
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
+import kotlin.time.Instant
 
 /**
  * The sessions routes of the contract. Every route is authenticated; the organization and the person always come
@@ -65,6 +69,13 @@ fun Route.sessionsRoutes(dependencies: SessionsRoutesDependencies, throttle: Rea
         post<SessionsApi.Id.Reopen> { params ->
             val reopened = reopen(call.actor(actors, SessionScopes.writing), params.parent.id)
             call.respond(get.view(reopened.session).toResponse(reopened.reopened))
+        }
+        post<SessionsApi.Id.Activity> { params ->
+            val actor = call.actor(actors, SessionScopes.writing)
+            val body = call.receive<SessionActivityRequest>()
+            val state = SessionActivityState.parse(body.state)
+            val observedAt = body.observedAt?.let(::observedTime)
+            call.respond(activity(actor, params.parent.id, state, observedAt).toDto())
         }
         post<SessionsApi.Id.Seen> { params ->
             val body = call.receive<SeenRequest>()
@@ -140,6 +151,17 @@ internal fun Session.toDto(gates: List<String>? = null, gateAnswers: List<Sessio
     exitCode = exitCode,
     ended = endedAt != null,
     lost = lost,
+    // only while the segment is open: after its end it would be a guess (TeamCode's run activity)
+    activity = activity?.wire.takeIf { endedAt == null },
+    activitySince = activityAt?.toString().takeIf { endedAt == null },
 )
+
+private fun ActivityChange.toDto() = SessionActivityDto(id, state?.wire, since?.toString(), superseded)
+
+private fun observedTime(value: String): Instant = try {
+    Instant.parse(value)
+} catch (_: IllegalArgumentException) {
+    throw InvalidSessionActivityException("observedAt must be an ISO date-time.")
+}
 
 private const val PAGE = 50

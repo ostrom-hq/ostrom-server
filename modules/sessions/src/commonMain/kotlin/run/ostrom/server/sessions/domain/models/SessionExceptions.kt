@@ -46,3 +46,22 @@ class SessionResumedElsewhereException(rootId: String, open: String) : OstromExc
  * @param reason What is wrong.
  */
 class InvalidSessionRequestException(reason: String) : OstromException(ErrorKind.INVALID_REQUEST, reason)
+
+/**
+ * An activity report with another state, or an `observedAt` that is not a time.
+ *
+ * @param reason What is wrong.
+ */
+class InvalidSessionActivityException(reason: String) :
+    OstromException(ErrorKind.INVALID_REQUEST, reason, type = "invalid_session_activity")
+
+/**
+ * An activity report for a segment that ended: its launcher reports to the segment it reopens.
+ *
+ * @param session The ended segment.
+ */
+class SessionEndedException(session: Session) : OstromException(
+    ErrorKind.CONFLICT,
+    "Session ${session.id} has ended.",
+    type = "session_ended",
+)

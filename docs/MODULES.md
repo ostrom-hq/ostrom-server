@@ -734,7 +734,7 @@ anonymous call gets 401 `unauthorized`. A module lists a key of ostrom-core's `S
 | `rules` | `rules.v1`, `reports.v1` (the analysis) | — |
 | `runners` | `runners.v1`; `runners.cloud.v1`; `runners.cloud.github.v1`; `runners.cloud.variables.v1`; `runners.cloud.environment.v1` | the second with a runtime driver (`OSTROM_RUNNERS_DRIVER` not `none`); the third also once members can link a GitHub account (`github.link.v1`); the fourth also with the secrets module (`environment.v1`); the fifth also with the orgs module, which says who is an active member |
 | `secrets` | `secrets.v1`, `environment.v1` (environment variants) | — |
-| `sessions` | `sessions.v1` | — |
+| `sessions` | `sessions.v1`, `sessions.activity.v1` (whether the agent works or waits for a person) | — |
 | `sharing` | `sharing.v1` | — |
 | `skills` | `skills.v1`; `runners.cloud.skills.v1` | the second with a runtime driver (`OSTROM_RUNNERS_DRIVER` not `none`) |
 | `todos` | `todos.v1` | — |

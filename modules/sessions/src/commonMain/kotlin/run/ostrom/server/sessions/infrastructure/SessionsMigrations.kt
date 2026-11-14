@@ -150,4 +150,17 @@ val SessionsMigrations: List<SchemaMigration> = listOf(
         CREATE INDEX sessions_open ON sessions_sessions (org_id, started_at DESC, id DESC) WHERE ended_at IS NULL
         """.trimIndent(),
     ),
+    // Whether the agent works or waits for a person (`sessions.activity.v1`), TeamCode's `agent_runs.activity`,
+    // `activity_at` and `activity_observed_at`. Nullable columns without a default: adding them rewrites no row, and
+    // no index reads them, so a report is a HOT update.
+    SchemaMigration(
+        7,
+        "sessions_activity",
+        """
+        ALTER TABLE sessions_sessions
+            ADD COLUMN activity TEXT,
+            ADD COLUMN activity_at TIMESTAMPTZ,
+            ADD COLUMN activity_observed_at TIMESTAMPTZ
+        """.trimIndent(),
+    ),
 )

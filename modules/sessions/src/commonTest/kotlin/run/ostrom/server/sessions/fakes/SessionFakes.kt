@@ -28,6 +28,7 @@ import run.ostrom.server.sessions.domain.usecases.GetSessionUseCaseImpl
 import run.ostrom.server.sessions.domain.usecases.ListSessionsUseCaseImpl
 import run.ostrom.server.sessions.domain.usecases.ReopenSessionUseCaseImpl
 import run.ostrom.server.sessions.domain.usecases.ReportSeenUseCaseImpl
+import run.ostrom.server.sessions.domain.usecases.ReportSessionActivityUseCaseImpl
 import run.ostrom.server.sessions.domain.usecases.SessionAliveUseCaseImpl
 import run.ostrom.server.sessions.domain.usecases.SessionSegments
 import run.ostrom.server.sessions.domain.usecases.StartSessionUseCaseImpl
@@ -210,6 +211,7 @@ class SessionBench {
     val alive = SessionAliveUseCaseImpl(repository, clock)
     val reopen = ReopenSessionUseCaseImpl(repository, segments)
     val seen = ReportSeenUseCaseImpl(repository, clock)
+    val activity = ReportSessionActivityUseCaseImpl(repository, clock)
     val approvers = FakeApprovers()
     val get = GetSessionUseCaseImpl(repository, gates, sign, approvers)
     val list = ListSessionsUseCaseImpl(repository)
