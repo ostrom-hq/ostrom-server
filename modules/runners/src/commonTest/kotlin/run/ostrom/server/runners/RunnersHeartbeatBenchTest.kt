@@ -36,7 +36,7 @@ class RunnersHeartbeatBenchTest {
         mapOf(
             "OSTROM_RUNNERS_DRIVER" to "registered",
             "OSTROM_RUNNERS_SERVER_URL" to "http://host.docker.internal:4600",
-            "OSTROM_RUNNERS_IMAGE" to "ghcr.io/ostrom-hq/ostrom-runner:test",
+            "OSTROM_RUNNERS_IMAGE" to "docker.io/ostromhq/ostrom-runner:test",
         ),
     )
 

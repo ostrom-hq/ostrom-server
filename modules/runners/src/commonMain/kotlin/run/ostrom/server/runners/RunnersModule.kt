@@ -188,11 +188,11 @@ object RunnersModule : ServerModule {
         single<RunnerAssignmentsRepository> { RunnerAssignmentsRepositoryImpl(get()) }
         single<ExecutionPlanner> {
             // The registered runner's own engine chooses the network; the server only says where it is reached.
-            val config = get<RunnersConfig>()
-            DockerExecutionPlan(null, config.serverUrl, config.runnerImage)
+            DockerExecutionPlan(null, get<RunnersConfig>().serverUrl, get())
         }
         single<RunnerWorkSignals> { InProcessRunnerWorkSignals(get(), get()) }
         // The console's cloud runtime names the runner image (cloud module); OSTROM_RUNNERS_IMAGE while it names none.
+        // A Docker or registered session runs OSTROM_RUNNERS_IMAGE, a Kubernetes one its profile's image.
         // Its server URL, else OSTROM_RUNNERS_SERVER_URL (an upgraded install's in-cluster URL), else the public one.
         single<RunnerDeliverySource> {
             val config = get<RunnersConfig>()

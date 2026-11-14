@@ -191,7 +191,7 @@ data class PlannedObject(val name: String, val body: JsonObject) {
     override fun toString(): String = "PlannedObject(name=$name)"
 }
 
-/** Computes what an execution is on a Docker Engine, with its secrets. */
+/** Computes what an execution is on a Docker Engine, with its secrets and the delivery current at its start. */
 fun interface ExecutionPlanner {
     /**
      * Plans an execution.
@@ -200,5 +200,5 @@ fun interface ExecutionPlanner {
      *
      * @return Its plan.
      */
-    fun plan(spec: ExecutionSpec): ExecutionPlan
+    suspend fun plan(spec: ExecutionSpec): ExecutionPlan
 }
