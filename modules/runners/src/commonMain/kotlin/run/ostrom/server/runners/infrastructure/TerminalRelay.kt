@@ -2,6 +2,7 @@
 package run.ostrom.server.runners.infrastructure
 
 import kotlinx.coroutines.channels.Channel
+import kotlin.concurrent.Volatile
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.uuid.Uuid
@@ -13,8 +14,8 @@ import kotlin.uuid.Uuid
  * One room per session: at most one runner link (a newer epoch replaces an older one, an older epoch is refused),
  * any number of client links, and a scrollback of the last [scrollbackBytes] bytes of output that a new client
  * receives first. A client that does not keep up (its queue of [clientQueue] frames is full) is dropped rather
- * than slowing the others or the runner. The relay lives in the server's memory: one replica serves the
- * terminals (`.coord/QUESTIONS.md`).
+ * than slowing the others or the runner. The relay lives in the memory of the replica holding the runner's socket;
+ * a member attached on another replica is relayed to it as a hop client ([connectHopClient], `TerminalHosts`).
  *
  * @param scrollbackBytes The scrollback kept per session.
  * @param clientQueue Frames queued per client before it is dropped.
@@ -55,10 +56,19 @@ class TerminalRelay(
         val outbound = Channel<RunnerBound>(capacity)
     }
 
-    /** A client's link. */
-    class ClientLink internal constructor(capacity: Int) {
-        /** What to send to the client; closed when the client is dropped for not keeping up. */
+    /**
+     * A client's link.
+     *
+     * @property hop Whether it is another replica relaying its own client: dropped as soon as the runner is not here.
+     */
+    class ClientLink internal constructor(capacity: Int, val hop: Boolean = false) {
+        /** What to send to the client; closed when the client is dropped for not keeping up, or for [moved]. */
         val outbound = Channel<ClientBound>(capacity)
+
+        /** Whether this hop client was dropped because the runner left, not for falling behind. */
+        @Volatile
+        var moved: Boolean = false
+            internal set
     }
 
     private class Room(scrollbackBytes: Int) {
@@ -92,14 +102,16 @@ class TerminalRelay(
      *
      * @param sessionId The session.
      * @param link The runner's link.
+     *
+     * @return Whether it was the session's runner until now (false when another replaced it).
      */
-    suspend fun disconnectRunner(sessionId: Uuid, link: RunnerLink) = mutex.withLock {
-        val room = rooms[sessionId] ?: return@withLock
-        if (room.runner !== link) return@withLock
+    suspend fun disconnectRunner(sessionId: Uuid, link: RunnerLink): Boolean = mutex.withLock {
+        val room = rooms[sessionId]?.takeIf { it.runner === link } ?: return@withLock false
         link.outbound.close()
         room.runner = null
         room.broadcast(ClientBound.Runner(false))
         room.dropIfIdle(sessionId)
+        true
     }
 
     /**
@@ -123,13 +135,29 @@ class TerminalRelay(
      * @return Its link.
      */
     suspend fun connectClient(sessionId: Uuid): ClientLink = mutex.withLock {
-        val room = rooms.getOrPut(sessionId) { Room(scrollbackBytes) }
-        ClientLink(clientQueue).also { link ->
-            val history = room.scrollback.snapshot()
-            if (history.isNotEmpty()) link.outbound.trySend(ClientBound.Output(history))
-            link.outbound.trySend(ClientBound.Runner(room.runner != null))
-            room.clients += link
-        }
+        rooms.getOrPut(sessionId) { Room(scrollbackBytes) }.join(ClientLink(clientQueue))
+    }
+
+    private fun Room.join(link: ClientLink): ClientLink {
+        val history = scrollback.snapshot()
+        if (history.isNotEmpty()) link.outbound.trySend(ClientBound.Output(history))
+        link.outbound.trySend(ClientBound.Runner(runner != null))
+        clients += link
+        return link
+    }
+
+    /**
+     * Connects another replica relaying its member to this one's runner. Its queue starts with the scrollback and the
+     * runner's state; it is dropped (its queue closed) once the runner leaves, so that the other replica looks again
+     * for where the runner is.
+     *
+     * @param sessionId The session.
+     *
+     * @return Its link, or null when the runner is not here.
+     */
+    suspend fun connectHopClient(sessionId: Uuid): ClientLink? = mutex.withLock {
+        val room = rooms[sessionId]?.takeIf { it.runner != null } ?: return@withLock null
+        room.join(ClientLink(clientQueue, hop = true))
     }
 
     /**
@@ -168,6 +196,15 @@ class TerminalRelay(
         toRunner(sessionId, RunnerBound.Resize(columns, rows))
 
     /**
+     * Whether the session's runner is connected to this replica.
+     *
+     * @param sessionId The session.
+     *
+     * @return True while its socket is open here.
+     */
+    suspend fun runnerHere(sessionId: Uuid): Boolean = mutex.withLock { rooms[sessionId]?.runner != null }
+
+    /**
      * The number of rooms, runners and clients, for tests and metrics.
      *
      * @return Rooms, connected runners, connected clients.
@@ -182,7 +219,9 @@ class TerminalRelay(
     }
 
     private fun Room.broadcast(frame: ClientBound) {
-        val slow = clients.filter { !it.outbound.trySend(frame).isSuccess }
+        // A hop client is told nothing of a runner gone: it is dropped, and its replica looks for the runner again.
+        if (frame == ClientBound.Runner(false)) clients.filter { it.hop }.forEach { it.moved = true }
+        val slow = clients.filter { it.moved || !it.outbound.trySend(frame).isSuccess }
         slow.forEach {
             it.outbound.close()
             clients -= it

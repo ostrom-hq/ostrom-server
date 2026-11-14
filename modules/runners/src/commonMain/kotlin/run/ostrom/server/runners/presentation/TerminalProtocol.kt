@@ -48,10 +48,12 @@ internal suspend fun forwardToRunner(
  * behind (it closes its queue), then closes the socket.
  *
  * @param outbound The client's queue.
+ * @param closing The close sent then: falling behind, unless the caller knows better (a hop client moved).
  * @param send Sends a frame on the socket.
  */
 internal suspend fun forwardToClient(
     outbound: ReceiveChannel<TerminalRelay.ClientBound>,
+    closing: () -> CloseReason = { CloseReason(TerminalCloseCodes.TOO_SLOW, TOO_SLOW) },
     send: suspend (Frame) -> Unit,
 ) {
     for (frame in outbound) {
@@ -60,7 +62,7 @@ internal suspend fun forwardToClient(
             is TerminalRelay.ClientBound.Runner -> send(controlFrame(TerminalControl.Runner(frame.connected)))
         }
     }
-    send(Frame.Close(CloseReason(TerminalCloseCodes.TOO_SLOW, TOO_SLOW)))
+    send(Frame.Close(closing()))
 }
 
 /** 1 MiB: a pasted file, never more. */
@@ -73,7 +75,7 @@ internal const val NEWER_EXECUTION = "A newer execution holds this terminal."
 private const val TOO_SLOW = "This terminal did not keep up with the output: attach again."
 
 /** A text frame of the protocol. */
-private fun controlFrame(control: TerminalControl): Frame.Text =
+internal fun controlFrame(control: TerminalControl): Frame.Text =
     Frame.Text(TerminalJson.encodeToString(TerminalControl.serializer(), control))
 
 /**

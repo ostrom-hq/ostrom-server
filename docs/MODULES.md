@@ -516,6 +516,12 @@ owner, so the serving role reads the history (the start-up check) and never rewr
   organization's row of `events_cursors`, so the sequence has no gap and commit order is sequence order; each open
   stream of the feed (`events.v1`) reads the journal every second on its own replica, so an event published on one
   replica reaches the streams of all of them within a poll. Events are kept 7 days.
+- **A cloud session's terminal is relayed by the replica holding its runner's socket** (TC-REP-1). That replica
+  records the hold in `runners_terminal_hosts` (renewed every 30 s, 90 s lease by the database's clock, the newest
+  execution wins). A member attached on another replica is relayed to it as a hop client, at its pod address
+  (`OSTROM_RUNNERS_REPLICA_URL`), on a single-use ticket of theirs. When the runner moves, the member hears
+  `{"type":"runner","connected":false}` and is attached where it now is, on the same socket. Unset (one replica),
+  every terminal is served where it is attached.
 - **SQLite** (tests and local mode) is not wired yet: sqlx4k has a SQLite driver with the same `Driver` interface;
   repositories must stay portable SQL where they can.
 - **The instance signer is provisional** (`kernel/signing`): it moves to `ostrom-core` once published; the

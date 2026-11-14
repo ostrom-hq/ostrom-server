@@ -19,6 +19,9 @@ import kotlin.uuid.Uuid
  * @property docker The Docker runtime's settings, when [driver] is `docker`.
  * @property allowedOrgs The organizations cloud sessions are open to (`OSTROM_RUNNERS_ALLOWED_ORGS`: `*`, or ids
  *   separated by commas; none when unset, audit S2-10).
+ * @property replicaUrl The URL the other replicas reach this one at (`OSTROM_RUNNERS_REPLICA_URL`, the pod's address
+ *   with the chart), so that a member attached on one replica sees the terminal whose runner another holds. Unset (one
+ *   replica), every terminal is served where it is attached.
  */
 data class RunnersConfig(
     val driver: DriverKind,
@@ -27,6 +30,7 @@ data class RunnersConfig(
     val kubernetes: KubernetesSettings,
     val docker: DockerSettings,
     val allowedOrgs: AllowedOrgs = AllowedOrgs.NONE,
+    val replicaUrl: String? = null,
 ) {
     /** The runtimes. */
     enum class DriverKind { NONE, KUBERNETES, DOCKER, REGISTERED }
@@ -77,6 +81,7 @@ data class RunnersConfig(
                     network = source["OSTROM_RUNNERS_DOCKER_NETWORK"],
                 ),
                 allowedOrgs = allowedOrgs(source["OSTROM_RUNNERS_ALLOWED_ORGS"].orEmpty()),
+                replicaUrl = replicaUrl(source["OSTROM_RUNNERS_REPLICA_URL"]),
             )
         }
 
@@ -93,6 +98,16 @@ data class RunnersConfig(
                     "OSTROM_RUNNERS_KUBERNETES_API_URL must be an https URL that is not a link-local, " +
                         "unspecified or cloud metadata address.",
                 )
+            }
+            return url
+        }
+
+        /** This replica's URL without its trailing slash, checked; null when unset or blank. */
+        private fun replicaUrl(raw: String?): String? {
+            val url = raw.orEmpty().trimEnd('/')
+            if (url.isEmpty()) return null
+            if (!url.startsWith("http://") && !url.startsWith("https://")) {
+                throw InvalidConfigException("OSTROM_RUNNERS_REPLICA_URL must be the http(s) URL replicas reach it at.")
             }
             return url
         }
