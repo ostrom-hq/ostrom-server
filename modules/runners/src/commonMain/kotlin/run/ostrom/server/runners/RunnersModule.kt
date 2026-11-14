@@ -59,6 +59,8 @@ import run.ostrom.server.runners.domain.RunnerAssignmentsRepository
 import run.ostrom.server.runners.domain.RunnerGitHubTokenUseCase
 import run.ostrom.server.runners.domain.RunnerGitHubTokenUseCaseImpl
 import run.ostrom.server.runners.domain.RunnerGitHubTokens
+import run.ostrom.server.runners.domain.RunnerEnvironmentUseCaseImpl
+import run.ostrom.server.runners.domain.NoMemberLogins
 import run.ostrom.server.runners.domain.RunnerHeartbeatUseCase
 import run.ostrom.server.runners.domain.RunnerHeartbeatUseCaseImpl
 import run.ostrom.server.runners.domain.RunnerTokens
@@ -106,6 +108,8 @@ import io.ktor.server.routing.Route
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
+import run.ostrom.server.kernel.auth.MemberDirectory
+import run.ostrom.server.kernel.auth.MemberLogins
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
@@ -174,7 +178,24 @@ object RunnersModule : ServerModule {
         }
         single<RunnerVariables> { runnerVariables(getOrNull<ResolveEnvironmentUseCase>()) }
         single<RunnerVariablesUseCase> { RunnerVariablesUseCaseImpl(get(), get(), get()) }
-        single { CloudSessionsRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        // Without the orgs module nobody vouches for an owner: the preparation routes are not served (404), so a
+        // runner falls back to the legacy clone instead of failing every session.
+        single {
+            val environment = getOrNull<MemberDirectory>()?.let { members ->
+                RunnerEnvironmentUseCaseImpl(
+                    get(),
+                    get(),
+                    get(),
+                    getOrNull<RunnerGitHubTokens>() ?: NoRunnerGitHubTokens,
+                    members,
+                    getOrNull<MemberLogins>() ?: NoMemberLogins,
+                    get(),
+                )
+            }
+            CloudSessionsRoutesDependencies(
+                get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), environment,
+            )
+        }
         single<ListRunnersUseCase> { ListRunnersUseCaseImpl(get(), get()) }
         single<RegisteredRunnersRepository> { RegisteredRunnersRepositoryImpl(get()) }
         single<ListRegisteredRunnersUseCase> { ListRegisteredRunnersUseCaseImpl(get(), get()) }
@@ -223,9 +244,13 @@ object RunnersModule : ServerModule {
         val github = koin.getOrNull<RunnerGitHubTokens>()?.available() == true
         // The members' values, once the secrets module resolves them.
         val variables = koin.getOrNull<ResolveEnvironmentUseCase>() != null
+        val members = koin.getOrNull<MemberDirectory>() != null
         return setOfNotNull(
             ServerFeatures.RUNNERS,
             ServerFeatures.RUNNERS_CLOUD,
+            // The recipe, the Git identity and the owner's values (none without the secrets module), once the orgs
+            // module says who is an active member: without it, no session would prepare.
+            ServerFeatures.RUNNERS_CLOUD_ENVIRONMENT.takeIf { members },
             ServerFeatures.RUNNERS_CLOUD_GITHUB.takeIf { github },
             ServerFeatures.RUNNERS_CLOUD_VARIABLES.takeIf { variables },
         )

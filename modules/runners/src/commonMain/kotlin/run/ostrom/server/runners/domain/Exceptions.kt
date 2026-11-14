@@ -119,3 +119,17 @@ class VariablesUnavailableException : OstromException(
     "This session does not run: its environment variables are not served.",
     "variables_unavailable",
 )
+
+/** The runner asks for its preparation once its session no longer prepares (ready, paused, or failed already). */
+class NotPreparingException : OstromException(
+    ErrorKind.CONFLICT,
+    "The session is not preparing an environment.",
+    "not_preparing",
+)
+
+/** The session's environment cannot be prepared: the session records why, and its execution stops. */
+class PreparationFailedException : OstromException(
+    ErrorKind.CONFLICT,
+    "The environment cannot be prepared.",
+    CloudEnvironmentRules.PREPARATION_FAILED,
+)

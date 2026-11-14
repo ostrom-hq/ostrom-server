@@ -57,6 +57,7 @@ class ReconcileCloudSessionUseCaseImpl(
             session.state == SessionState.TERMINATED -> null
             session.desiredState == DesiredState.TERMINATED -> terminate(session, now)
             session.state == SessionState.FAILED -> null
+            session.preparationFailed -> preparationFailed(session, now)
             session.state == SessionState.CREATING || session.state == SessionState.RESUMING -> starting(session, now)
             session.state == SessionState.RUNNING -> running(session, now)
             session.state == SessionState.PAUSING -> pausing(session, now)
@@ -106,6 +107,21 @@ class ReconcileCloudSessionUseCaseImpl(
         if (!driver.deleteWorkspace(session)) return now + STEP_DELAY
         val ended = session.moveTo(SessionState.FAILED, now)
             .copy(failure = failure, runnerTokenHash = null, executionStartedAt = null)
+        return write(ended, null)
+    }
+
+    /**
+     * The runner reported a failed preparation, or the server found one: the execution stops; a resume pauses and
+     * keeps the workspace (not resumed again by itself), a first execution fails and deletes it.
+     */
+    private suspend fun preparationFailed(session: CloudSession, now: Instant): Instant? {
+        driver.stopExecutions(session)
+        if (session.state == SessionState.RESUMING) {
+            return write(session.toPaused(now, session.failure).copy(desiredState = DesiredState.PAUSED), null)
+        }
+        if (!driver.deleteWorkspace(session)) return now + STEP_DELAY
+        val ended = session.moveTo(SessionState.FAILED, now)
+            .copy(runnerTokenHash = null, executionStartedAt = null)
         return write(ended, null)
     }
 

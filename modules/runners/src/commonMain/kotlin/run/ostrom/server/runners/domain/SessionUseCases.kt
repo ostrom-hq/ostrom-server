@@ -15,6 +15,7 @@ import kotlin.uuid.Uuid
  * @property prompt The agent's first message, if any.
  * @property id The session's id, chosen by the server's caller (a run of a workflow keys its agent node's session by
  *   its visit, so a start asked again finds the first one); a new random id when absent, always for an API request.
+ * @property environment The preparation recipe (`runners.cloud.environment.v1`), if any.
  */
 data class CreateCloudSessionPayload(
     val name: String?,
@@ -23,6 +24,7 @@ data class CreateCloudSessionPayload(
     val model: String? = null,
     val prompt: String? = null,
     val id: Uuid? = null,
+    val environment: CloudEnvironmentSpec? = null,
 )
 
 /** Creates a cloud session for the caller, within their organization's plan. */
@@ -60,13 +62,17 @@ class CreateCloudSessionUseCaseImpl(
         val agent = AgentKind.fromWire(payload.agent) ?: throw InvalidCloudSessionRequestException(
             "Unknown agent ${payload.agent.take(MAX_ECHO)}: use ${AgentKind.entries.joinToString { it.wire }}.",
         )
-        val name = payload.name?.let { it.trim().takeIf(String::isNotEmpty) }
-            ?: payload.repository?.let { it.url.substringAfterLast('/').removeSuffix(".git") }
-            ?: agent.wire
+        val name = payload.name?.let { it.trim().takeIf(String::isNotEmpty) } ?: defaultName(payload) ?: agent.wire
         ensureValid(name.length <= MAX_NAME_LENGTH && name.none { it.isISOControl() }) {
             "The name must be 1 to $MAX_NAME_LENGTH characters, without control characters."
         }
         payload.repository?.let { validateRepository(it) }
+        payload.environment?.let { environment ->
+            ensureValid(payload.repository == null || environment.repositories.isEmpty()) {
+                "Name the repositories in the environment, or repo, not both."
+            }
+            CloudEnvironmentRules.validate(environment)
+        }
         val model = payload.model?.let { it.trim().takeIf(String::isNotEmpty) }
         ensureValid(model == null || MODEL.matches(model)) { "The model is not a valid model name." }
         val prompt = payload.prompt?.takeIf { it.isNotBlank() }
@@ -94,6 +100,7 @@ class CreateCloudSessionUseCaseImpl(
             updatedAt = now,
             model = model,
             prompt = prompt,
+            environment = payload.environment,
         )
         if (!repository.createWithinCap(session, plan.maxRunningSessions)) {
             throw CloudSessionLimitException(plan.maxRunningSessions)
@@ -101,10 +108,23 @@ class CreateCloudSessionUseCaseImpl(
         return session
     }
 
+    /** The name of a session asked without one: its repository's, the first of its recipe's, or none. */
+    private fun defaultName(payload: CreateCloudSessionPayload): String? {
+        val repositories = payload.environment?.repositories.orEmpty()
+        val url = when {
+            payload.repository != null -> payload.repository.url
+            repositories.isNotEmpty() -> repositories.first().url
+            else -> return null
+        }
+        return CloudEnvironmentRules.defaultPath(url)
+    }
+
     private fun validateRepository(repository: RepositorySpec) {
         ensureValid(GITHUB_REPOSITORY.matches(repository.url)) {
             "The repository must be an https://github.com/<owner>/<name> URL."
         }
+        // Cloned into a directory of its name (CloudEnvironmentRules.effective): never `..`, nor a hidden one.
+        CloudEnvironmentRules.validatePath(CloudEnvironmentRules.defaultPath(repository.url))
         val ref = repository.ref ?: return
         ensureValid(GIT_REF.matches(ref) && !ref.contains("..") && !ref.startsWith("-")) {
             "The repository ref is not a valid branch, tag or commit."

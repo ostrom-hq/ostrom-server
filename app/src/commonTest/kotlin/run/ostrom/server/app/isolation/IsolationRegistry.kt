@@ -572,6 +572,9 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "POST /api/v1/cloud/runner/heartbeat" to Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1}"""),
     "POST /api/v1/cloud/runner/github" to Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1}"""),
     "POST /api/v1/cloud/runner/variables" to Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1}"""),
+    "POST /api/v1/cloud/runner/environment" to Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1}"""),
+    "POST /api/v1/cloud/runner/preparation" to
+        Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1, "phase": "running_setup"}"""),
     "POST /api/v1/cloud/runner/launch" to Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1}"""),
     "POST /api/v1/cloud/runner/checks" to Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1}"""),
     "POST /api/v1/cloud/runner/skills" to Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1}"""),
