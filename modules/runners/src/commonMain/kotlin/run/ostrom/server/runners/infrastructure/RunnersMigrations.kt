@@ -321,4 +321,14 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
         sql = "ALTER TABLE runners_sessions ADD COLUMN background_since TIMESTAMPTZ, " +
             "ADD COLUMN background_seen_at TIMESTAMPTZ",
     ),
+    // runners.cloud.environment.v1: the preparation recipe asked for at creation (JSON, never edited), and whether
+    // a failed preparation may succeed on another attempt.
+    SchemaMigration(
+        version = 13,
+        name = "session_environment",
+        sql = """
+            ALTER TABLE runners_sessions ADD COLUMN environment TEXT;
+            ALTER TABLE runners_sessions ADD COLUMN failure_retryable BOOLEAN NOT NULL DEFAULT FALSE;
+        """.trimIndent(),
+    ),
 )

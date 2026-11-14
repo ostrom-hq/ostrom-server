@@ -44,8 +44,14 @@ sealed interface RunnerGitHubToken {
      * @property token The user-to-server token, never logged.
      * @property expiresAt When it expires, null when the App does not expire user tokens.
      * @property login The GitHub account.
+     * @property userId The GitHub account's numeric id, for its no-reply address; null when unknown.
      */
-    class Linked(val token: String, val expiresAt: Instant?, val login: String) : RunnerGitHubToken {
+    class Linked(
+        val token: String,
+        val expiresAt: Instant?,
+        val login: String,
+        val userId: Long? = null,
+    ) : RunnerGitHubToken {
         override val wire: String = "linked"
 
         override fun toString(): String = "Linked($login, expiresAt=$expiresAt)"

@@ -26,7 +26,8 @@ class LinkedRunnerGitHubTokens(
         // A session owned by something else than a member (an id that is not a UUID) has no link.
         val member = Uuid.parseOrNull(memberId) ?: return RunnerGitHubToken.NotLinked
         return when (val access = resolver.access(orgId, member)) {
-            is GitHubAccess.Linked -> RunnerGitHubToken.Linked(access.token, access.expiresAt, access.login)
+            is GitHubAccess.Linked ->
+                RunnerGitHubToken.Linked(access.token, access.expiresAt, access.login, access.userId)
             GitHubAccess.NotLinked -> RunnerGitHubToken.NotLinked
             GitHubAccess.Unavailable -> RunnerGitHubToken.Unavailable
         }

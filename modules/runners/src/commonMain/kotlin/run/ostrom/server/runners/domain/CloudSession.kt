@@ -44,6 +44,8 @@ import kotlin.uuid.Uuid
  * @property backgroundSince When the current execution's runner started reporting the agent's background work without
  *   a break ([BackgroundWork]); null before any report.
  * @property backgroundSeenAt The last heartbeat of the current execution that reported background work.
+ * @property environment The preparation recipe asked for at creation, never edited; null when none was
+ *   ([CloudEnvironmentRules.effective] gives the one the runner prepares).
  */
 data class CloudSession(
     val id: Uuid,
@@ -76,7 +78,16 @@ data class CloudSession(
     val githubAccess: GitHubAccessMode = GitHubAccessMode.OWNER,
     val backgroundSince: Instant? = null,
     val backgroundSeenAt: Instant? = null,
-)
+    val environment: CloudEnvironmentSpec? = null,
+) {
+    /**
+     * Whether the runner of the current start reported a failed preparation (or the server found one): the
+     * session is never reported ready, and the reconciler stops the execution.
+     */
+    val preparationFailed: Boolean
+        get() = (state == SessionState.CREATING || state == SessionState.RESUMING) &&
+            failure?.code == CloudEnvironmentRules.PREPARATION_FAILED
+}
 
 /**
  * Whose GitHub access a session's Git and `gh` use, through the runner's credential socket (the agent never holds a
@@ -228,12 +239,14 @@ data class RepositorySpec(
  * Why a session failed or stopped.
  *
  * @property code A stable snake_case key (`start_failed`, `execution_lost`, `idle_timeout`, `max_duration`,
- *   `hours_exhausted`).
- * @property message A sentence for humans, never a raw error of the cluster.
+ *   `hours_exhausted`, `preparation_failed`).
+ * @property message A sentence for humans, never a raw error of the cluster nor a runner's text.
+ * @property retryable Whether trying again may succeed, for `preparation_failed` (a clone, a fetch, GitHub).
  */
 data class SessionFailure(
     val code: String,
     val message: String,
+    val retryable: Boolean = false,
 )
 
 /**

@@ -58,6 +58,9 @@ import run.ostrom.server.runners.domain.RunnerAssignmentsRepository
 import run.ostrom.server.runners.domain.RunnerGitHubTokenUseCase
 import run.ostrom.server.runners.domain.RunnerGitHubTokenUseCaseImpl
 import run.ostrom.server.runners.domain.RunnerGitHubTokens
+import run.ostrom.server.runners.domain.RunnerEnvironmentUseCase
+import run.ostrom.server.runners.domain.RunnerEnvironmentUseCaseImpl
+import run.ostrom.server.runners.domain.NoActiveMembers
 import run.ostrom.server.runners.domain.RunnerHeartbeatUseCase
 import run.ostrom.server.runners.domain.RunnerHeartbeatUseCaseImpl
 import run.ostrom.server.runners.domain.RunnerTokens
@@ -104,6 +107,8 @@ import io.ktor.server.routing.Route
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
+import run.ostrom.server.kernel.auth.MemberDirectory
+import run.ostrom.server.kernel.auth.MemberLogins
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
@@ -172,7 +177,21 @@ object RunnersModule : ServerModule {
         }
         single<RunnerVariables> { runnerVariables(getOrNull<ResolveEnvironmentUseCase>()) }
         single<RunnerVariablesUseCase> { RunnerVariablesUseCaseImpl(get(), get(), get()) }
-        single { CloudSessionsRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        // An owner nobody vouches for (no orgs module) is no active member: their sessions prepare nothing.
+        single<RunnerEnvironmentUseCase> {
+            RunnerEnvironmentUseCaseImpl(
+                get(),
+                get(),
+                get(),
+                getOrNull<RunnerGitHubTokens>() ?: NoRunnerGitHubTokens,
+                getOrNull<MemberDirectory>() ?: NoActiveMembers,
+                getOrNull<MemberLogins>() ?: NoActiveMembers,
+                get(),
+            )
+        }
+        single {
+            CloudSessionsRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
+        }
         single<ListRunnersUseCase> { ListRunnersUseCaseImpl(get(), get()) }
         single<RegisteredRunnersRepository> { RegisteredRunnersRepositoryImpl(get()) }
         single<ListRegisteredRunnersUseCase> { ListRegisteredRunnersUseCaseImpl(get(), get()) }
@@ -223,6 +242,8 @@ object RunnersModule : ServerModule {
         return setOfNotNull(
             ServerFeatures.RUNNERS,
             ServerFeatures.RUNNERS_CLOUD,
+            // The recipe, the Git identity and the owner's values (none without the secrets module).
+            ServerFeatures.RUNNERS_CLOUD_ENVIRONMENT,
             ServerFeatures.RUNNERS_CLOUD_GITHUB.takeIf { github },
             ServerFeatures.RUNNERS_CLOUD_VARIABLES.takeIf { variables },
         )

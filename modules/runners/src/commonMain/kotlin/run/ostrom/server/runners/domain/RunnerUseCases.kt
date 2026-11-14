@@ -139,7 +139,8 @@ class RunnerHeartbeatUseCaseImpl(
             updatedAt = now,
         )
         val starting = session.state == SessionState.CREATING || session.state == SessionState.RESUMING
-        if (starting && heartbeat.ready) {
+        // A failed preparation is never reported ready, even by a runner that claims it is.
+        if (starting && heartbeat.ready && !session.preparationFailed) {
             SessionStateMachine.requireTransition(session.state, SessionState.RUNNING)
             next = next.copy(
                 state = SessionState.RUNNING,
@@ -156,7 +157,8 @@ class RunnerHeartbeatUseCaseImpl(
     }
 
     private fun instructionFor(session: CloudSession): RunnerInstruction {
-        val stopping = session.state == SessionState.PAUSING || session.desiredState != DesiredState.RUNNING
+        val stopping = session.state == SessionState.PAUSING || session.desiredState != DesiredState.RUNNING ||
+            session.preparationFailed
         return if (stopping) RunnerInstruction.STOP else RunnerInstruction.RUN
     }
 

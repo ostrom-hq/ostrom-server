@@ -18,6 +18,9 @@ import kotlin.test.assertEquals
 import kotlin.uuid.Uuid
 
 class RunnersFeaturesTest {
+    /** What every cloud runtime serves: sessions, and the preparation of their recipe. */
+    private val cloud = setOf("runners.v1", "runners.cloud.v1", "runners.cloud.environment.v1")
+
     private fun koin(driver: RunnersConfig.DriverKind) = koinApplication {
         modules(module { single { RunnersConfig.from(MapConfigSource(emptyMap())).copy(driver = driver) } })
     }.koin
@@ -26,10 +29,10 @@ class RunnersFeaturesTest {
     fun cloudRunnersAreListedOnlyWithARuntimeDriver() = runTest {
         assertEquals(setOf("runners.v1"), RunnersModule.features(koin(RunnersConfig.DriverKind.NONE)))
         for (driver in listOf(RunnersConfig.DriverKind.KUBERNETES, RunnersConfig.DriverKind.DOCKER)) {
-            assertEquals(setOf("runners.v1", "runners.cloud.v1"), RunnersModule.features(koin(driver)), "$driver")
+            assertEquals(cloud, RunnersModule.features(koin(driver)), "$driver")
         }
         assertEquals(
-            setOf("runners.v1", "runners.cloud.v1"),
+            cloud,
             RunnersModule.features(koin(RunnersConfig.DriverKind.REGISTERED)),
             "Cloud sessions on the organization's registered runners",
         )
@@ -57,7 +60,7 @@ class RunnersFeaturesTest {
                 )
             }.koin
             val github = setOfNotNull("runners.cloud.github.v1".takeIf { available })
-            val expected = setOf("runners.v1", "runners.cloud.v1") + github
+            val expected = cloud + github
             assertEquals(expected, RunnersModule.features(koin))
         }
     }
@@ -81,7 +84,7 @@ class RunnersFeaturesTest {
                 )
             }.koin
             val listed = setOfNotNull("runners.cloud.variables.v1".takeIf { bound })
-            assertEquals(setOf("runners.v1", "runners.cloud.v1") + listed, RunnersModule.features(koin))
+            assertEquals(cloud + listed, RunnersModule.features(koin))
             val variables = runnerVariables(koin.getOrNull<ResolveEnvironmentUseCase>())
             assertEquals(bound, variables is ResolvedRunnerVariables, "Resolved by the secrets module, or none")
             assertEquals(!bound, variables === NoRunnerVariables)

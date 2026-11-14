@@ -2,6 +2,7 @@
 package run.ostrom.server.runners.infrastructure
 
 import run.ostrom.server.runners.domain.AgentKind
+import run.ostrom.server.runners.domain.CloudEnvironmentSpec
 import run.ostrom.server.runners.domain.CloudSession
 import run.ostrom.server.runners.domain.CloudSessionsRepository
 import run.ostrom.server.runners.domain.DesiredState
@@ -22,6 +23,7 @@ import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
+import kotlinx.serialization.json.Json
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -153,12 +155,13 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
                     """
                     UPDATE runners_sessions SET state = :state, desired_state = :desired_state, phase = :phase,
                     epoch = :epoch, generation = generation + 1, failure_code = :failure_code, failure_message =
-                    :failure_message, updated_at = :updated_at, execution_started_at = :execution_started_at,
-                    ready_at = :ready_at, last_heartbeat_at = :last_heartbeat_at, last_activity_at =
-                    GREATEST(last_activity_at, :last_activity_at), paused_at = :paused_at, terminated_at =
-                    :terminated_at, pausing_since = :pausing_since, runner_stopped_at = :runner_stopped_at,
-                    runner_token_hash = :runner_token_hash, background_since = :background_since,
-                    background_seen_at = :background_seen_at WHERE id = :id AND generation = :generation RETURNING
+                    :failure_message, failure_retryable = :failure_retryable, updated_at = :updated_at,
+                    execution_started_at = :execution_started_at, ready_at = :ready_at, last_heartbeat_at =
+                    :last_heartbeat_at, last_activity_at = GREATEST(last_activity_at, :last_activity_at),
+                    paused_at = :paused_at, terminated_at = :terminated_at, pausing_since = :pausing_since,
+                    runner_stopped_at = :runner_stopped_at, runner_token_hash = :runner_token_hash,
+                    background_since = :background_since, background_seen_at = :background_seen_at
+                    WHERE id = :id AND generation = :generation RETURNING
                     $COLUMNS
                     """,
                 ).bindUpdate(session).bind("generation", session.generation),
@@ -298,6 +301,10 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         .bind("restricted_egress", session.limits.restrictedEgress)
         .bind("created_at", session.createdAt)
         .bind("github_access", session.githubAccess.wire)
+        .bind(
+            "environment",
+            session.environment?.let { RECIPE_JSON.encodeToString(CloudEnvironmentSpec.serializer(), it) },
+        )
 
     /** Binds the columns a reconciler or heartbeat write changes. */
     private fun Statement.bindUpdate(session: CloudSession): Statement = bind("id", session.id)
@@ -307,6 +314,7 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         .bind("epoch", session.epoch)
         .bind("failure_code", session.failure?.code)
         .bind("failure_message", session.failure?.message)
+        .bind("failure_retryable", session.failure?.retryable ?: false)
         .bind("updated_at", session.updatedAt)
         .bind("execution_started_at", session.executionStartedAt)
         .bind("ready_at", session.readyAt)
@@ -335,7 +343,9 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             phase = get("phase").asStringOrNull(),
             epoch = get("epoch").asLong(),
             generation = get("generation").asLong(),
-            failure = failureCode?.let { SessionFailure(it, get("failure_message").asString()) },
+            failure = failureCode?.let {
+                SessionFailure(it, get("failure_message").asString(), get("failure_retryable").asBoolean())
+            },
             limits = SessionLimits(
                 idleTimeoutMinutes = get("idle_timeout_minutes").asInt(),
                 maxRunMinutes = get("max_run_minutes").asInt(),
@@ -358,6 +368,8 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             prompt = get("prompt").asStringOrNull(),
             // A name this version does not know grants nothing.
             githubAccess = GitHubAccessMode.fromWire(get("github_access").asString()) ?: GitHubAccessMode.NONE,
+            environment = get("environment").asStringOrNull()
+                ?.let { RECIPE_JSON.decodeFromString(CloudEnvironmentSpec.serializer(), it) },
         )
     }
 
@@ -365,19 +377,23 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         /** A placeholder for an unused timestamp parameter (PostgreSQL cannot read Instant.DISTANT_PAST). */
         private val EPOCH: Instant = Instant.fromEpochSeconds(0)
 
+        /** The recipe's JSON on the row: a field a later version adds is ignored by this one. */
+        private val RECIPE_JSON = Json { ignoreUnknownKeys = true }
+
         const val COLUMNS = """
             id, org_id, owner_id, name, agent, model, prompt, repository_url, repository_ref, state, desired_state,
             phase, epoch, generation, failure_code, failure_message, idle_timeout_minutes, max_run_minutes,
             restricted_egress, created_at, updated_at, execution_started_at, ready_at, last_heartbeat_at,
             last_activity_at, paused_at, terminated_at, pausing_since, runner_stopped_at, runner_token_hash,
-            github_access, background_since, background_seen_at
+            github_access, background_since, background_seen_at, environment, failure_retryable
         """
         const val VALUES = """
             :id, :org_id, :owner_id, :name, :agent, :model, :prompt, :repository_url, :repository_ref, :state,
             :desired_state, :phase, :epoch, 0, :failure_code, :failure_message, :idle_timeout_minutes,
             :max_run_minutes, :restricted_egress, :created_at, :updated_at, :execution_started_at, :ready_at,
             :last_heartbeat_at, :last_activity_at, :paused_at, :terminated_at, :pausing_since, :runner_stopped_at,
-            :runner_token_hash, :github_access, :background_since, :background_seen_at
+            :runner_token_hash, :github_access, :background_since, :background_seen_at, :environment,
+            :failure_retryable
         """
     }
 }

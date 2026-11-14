@@ -4,6 +4,7 @@ package run.ostrom.server.runners.presentation
 import run.ostrom.server.kernel.auth.authenticated
 import run.ostrom.server.kernel.auth.requirePrincipal
 import run.ostrom.server.kernel.http.bodyLimit
+import run.ostrom.server.runners.domain.CloudEnvironmentRules
 import run.ostrom.server.runners.domain.CloudSession
 import run.ostrom.server.runners.domain.CloudSessionNotFoundException
 import run.ostrom.server.runners.domain.CreateCloudSessionPayload
@@ -56,6 +57,7 @@ fun Route.cloudSessionsRoutes(dependencies: CloudSessionsRoutesDependencies) = w
                 repository = request.repo?.let { RepositorySpec(it, request.ref) },
                 model = request.model,
                 prompt = request.prompt,
+                environment = request.environment?.toDomain(),
             )
             call.respond(HttpStatusCode.Created, createCloudSession(caller, payload).toResponse())
         }
@@ -133,6 +135,25 @@ private fun Route.runnerChannelRoutes(dependencies: CloudSessionsRoutesDependenc
             call.response.header(HttpHeaders.CacheControl, "no-store")
             call.respond(RunnerVariablesResponse(values.variables, values.unavailable))
         }
+        // What to prepare, with the owner's values: never cached, never logged.
+        post<RunnerEnvironmentApi> {
+            val token = call.runnerToken()
+            checkRunnerToken(token)
+            val request = call.receive<RunnerExecutionBody>()
+            val prepared = runnerEnvironment.environment(
+                token,
+                RunnerExecutionRequest(parseId(request.sessionId), request.epoch),
+            )
+            call.response.header(HttpHeaders.CacheControl, "no-store")
+            call.respond(prepared.toResponse())
+        }
+        post<RunnerPreparationApi> {
+            val token = call.runnerToken()
+            checkRunnerToken(token)
+            val request = call.receive<RunnerPreparationRequest>()
+            val answer = runnerEnvironment.progress(token, request.toReport(parseId(request.sessionId)))
+            call.respond(RunnerHeartbeatResponse(answer.instruction.wire, answer.state.wire))
+        }
     }
 }
 
@@ -179,7 +200,10 @@ fun CloudSession.toResponse() = CloudSessionResponse(
     desiredStatus = desiredState.wire,
     phase = phase,
     epoch = epoch,
-    failure = failure?.let { SessionFailureDto(it.code, it.message) },
+    failure = failure?.let {
+        val preparation = it.code == CloudEnvironmentRules.PREPARATION_FAILED
+        SessionFailureDto(it.code, it.message, it.retryable.takeIf { preparation })
+    },
     limits = SessionLimitsDto(limits.idleTimeoutMinutes, limits.maxRunMinutes, limits.restrictedEgress),
     createdAt = createdAt.toString(),
     updatedAt = updatedAt.toString(),
@@ -189,4 +213,5 @@ fun CloudSession.toResponse() = CloudSessionResponse(
     endedAt = terminatedAt?.toString(),
     runnerId = runnerId?.toString(),
     githubAccess = githubAccess.wire,
+    environment = environment?.toDto(),
 )
