@@ -67,6 +67,7 @@ class OrgEventsRepositoryImpl(private val driver: Driver) : OrgEventsRepository 
         driver.withOrganization(orgId) { tx ->
             tx.execute(Statement.create(ERASE_JOURNAL_SQL).bind("org_id", orgId)).getOrThrow()
             tx.execute(Statement.create(ERASE_CURSOR_SQL).bind("org_id", orgId)).getOrThrow()
+            tx.execute(Statement.create(ERASE_READERS_SQL).bind("org_id", orgId)).getOrThrow()
         }
     }
 
@@ -81,6 +82,7 @@ class OrgEventsRepositoryImpl(private val driver: Driver) : OrgEventsRepository 
                 "ORDER BY seq LIMIT :limit"
         const val ERASE_JOURNAL_SQL = "DELETE FROM events_journal WHERE org_id = :org_id"
         const val ERASE_CURSOR_SQL = "DELETE FROM events_cursors WHERE org_id = :org_id"
+        const val ERASE_READERS_SQL = "DELETE FROM events_readers WHERE org_id = :org_id"
 
         suspend fun QueryExecutor.headOf(orgId: Uuid): Long =
             fetchAll(Statement.create(HEAD_SQL).bind("org_id", orgId)).getOrThrow().first().get("last_seq").asLong()

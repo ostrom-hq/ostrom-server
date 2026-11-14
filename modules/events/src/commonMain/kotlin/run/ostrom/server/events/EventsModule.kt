@@ -29,6 +29,7 @@ import run.ostrom.server.events.infrastructure.EventsPurgeWorker
 import run.ostrom.server.events.infrastructure.HmacWebhookSigner
 import run.ostrom.server.events.infrastructure.HttpWebhookSender
 import run.ostrom.server.events.infrastructure.JournalOrgEventPublisher
+import run.ostrom.server.events.infrastructure.OrgEventJournalImpl
 import run.ostrom.server.events.infrastructure.OrgEventsRepositoryImpl
 import run.ostrom.server.events.infrastructure.WebhooksConfig
 import run.ostrom.server.events.infrastructure.WebhooksRepositoryImpl
@@ -40,6 +41,7 @@ import run.ostrom.server.events.presentation.feedJson
 import run.ostrom.server.events.presentation.webhooksRoutes
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.database.scheduledWork
+import run.ostrom.server.kernel.events.OrgEventJournal
 import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.module.OrgDeletionListener
 import run.ostrom.server.kernel.module.ServerModule
@@ -63,7 +65,8 @@ private val REQUEST_TIMEOUT = 10.seconds
  * in PostgreSQL that every replica writes and reads. Modules publish to it through the kernel's [OrgEventPublisher],
  * which this module binds, preferably in the transaction of the change they report; `GET /api/v1/events` streams it,
  * and the events are kept 7 days. Its outgoing webhooks (TeamCode's `webhooks`) send the feed's events to the
- * organization's own services as signed requests, through the kernel's outbound client only.
+ * organization's own services as signed requests, through the kernel's outbound client only. Other modules read the
+ * journal after the fact through the kernel's [OrgEventJournal], each with its own cursor.
  */
 object EventsModule : ServerModule {
     override val name: String = "events"
@@ -71,6 +74,8 @@ object EventsModule : ServerModule {
     override val koinModule: Module = module {
         single<OrgEventsRepository> { OrgEventsRepositoryImpl(get()) }
         single<OrgEventPublisher> { JournalOrgEventPublisher(get(), get()) }
+        // The modules that turn the journal's events into their own work (the notification router) read it here.
+        single<OrgEventJournal> { OrgEventJournalImpl(get()) }
         single<OpenEventFeedUseCase> { OpenEventFeedUseCaseImpl(get()) }
         single { EventsRoutesDependencies(get(), get(), get()) }
         single { EventsPurgeWorker(get(), get(), get()) }

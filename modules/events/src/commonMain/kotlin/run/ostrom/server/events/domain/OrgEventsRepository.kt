@@ -48,7 +48,7 @@ interface OrgEventsRepository {
     suspend fun purge(before: Instant, limit: Int): Int
 
     /**
-     * Erases an organization's journal and its cursor, once its deletion is final.
+     * Erases an organization's journal, its cursor and its readers' cursors, once its deletion is final.
      *
      * @param orgId The organization.
      */
