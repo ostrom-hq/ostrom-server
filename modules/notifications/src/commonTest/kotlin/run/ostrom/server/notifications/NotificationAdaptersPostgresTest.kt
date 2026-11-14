@@ -23,8 +23,8 @@ import run.ostrom.server.notifications.domain.Approvers
 import run.ostrom.server.notifications.domain.LiveCredentials
 import run.ostrom.server.notifications.domain.PersonOrganizations
 import run.ostrom.server.notifications.domain.PushCredential
+import run.ostrom.server.notifications.domain.ProviderPushSender
 import run.ostrom.server.notifications.domain.PushSender
-import run.ostrom.server.notifications.infrastructure.ExpoPushSender
 import run.ostrom.server.orgs.OrgsModule
 import run.ostrom.server.orgs.domain.Member
 import run.ostrom.server.orgs.domain.Org
@@ -122,8 +122,8 @@ class NotificationAdaptersPostgresTest {
     }
 
     @Test
-    fun theServerSendsThroughExpoAndTellsApproversAsAGateChannel() = serverTest(modules) { server ->
-        assertTrue(server.koin.get<PushSender>() is ExpoPushSender)
+    fun theServerSendsThroughEachPhonesProviderAndTellsApproversAsAGateChannel() = serverTest(modules) { server ->
+        assertTrue(server.koin.get<PushSender>() is ProviderPushSender)
         val channel = server.koin.getAll<GateChannel>().single()
         assertTrue(channel is ApproverNotificationsChannel)
         assertEquals("notifications", channel.name)
