@@ -238,7 +238,7 @@ private fun failed(logger: Logger, message: String, error: Throwable) {
 }
 
 // The JDBC pool is closed even when a module's stop fails, so that its threads never hold the JVM up.
-private fun shutDown(workers: CoroutineScope, koin: Koin?, driver: Driver?, jdbc: JdbcDatabase?) {
+private fun shutDown(workers: CoroutineScope, koin: Koin?, driver: Driver?, jdbc: JdbcDatabase? = null) {
     try {
         workers.cancel()
         koin?.close()
