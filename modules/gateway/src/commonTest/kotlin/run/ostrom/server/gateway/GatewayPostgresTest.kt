@@ -56,7 +56,6 @@ import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -379,9 +378,11 @@ class GatewayPostgresTest : GatewayHttpFixture() {
             val notAllowed = infer("chat/completions", """{"model":"gpt-5"}""")
             assertEquals(HttpStatusCode.Forbidden, notAllowed.status)
             assertEquals("model_not_allowed", errorField(notAllowed, "code"))
+            assertEquals("false", notAllowed.headers["x-should-retry"], "Retrying never allows the model")
             val invalid = infer("messages", "[]")
             assertEquals(HttpStatusCode.BadRequest, invalid.status)
             assertEquals("invalid_request_error", errorField(invalid, "type"))
+            assertEquals("false", invalid.headers["x-should-retry"])
             val budget = infer("messages", """{"model":"claude-opus-5"}""") { header("x-api-key", "other-a") }
             assertEquals(HttpStatusCode.TooManyRequests, budget.status)
             assertEquals("rate_limit_error", errorField(budget, "type"))
@@ -391,7 +392,7 @@ class GatewayPostgresTest : GatewayHttpFixture() {
             assertEquals(HttpStatusCode.ServiceUnavailable, noKey.status)
             assertEquals("api_error", errorField(noKey, "type"))
             assertEquals("no_credential", noKey.headers["x-ostrom-error"], "The gateway's own refusal says so")
-            assertNull(noKey.headers["x-should-retry"])
+            assertEquals("false", noKey.headers["x-should-retry"], "No account comes back by itself")
             val tooLarge = infer("messages", "x".repeat((MAX_INFERENCE_REQUEST_BYTES + 1).toInt()))
             assertEquals(HttpStatusCode.BadRequest, tooLarge.status)
             assertEquals(

@@ -2,6 +2,8 @@
 package run.ostrom.server.gateway.domain
 
 import run.ostrom.server.sharing.domain.AccountLease
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 /**
@@ -72,16 +74,16 @@ enum class RefusalKind(
     val retryable: Boolean = true,
 ) {
     /** The body is not a valid request. */
-    INVALID(BAD_REQUEST, "invalid_request_error", "invalid_request_error"),
+    INVALID(BAD_REQUEST, "invalid_request_error", "invalid_request_error", retryable = false),
 
     /** The token is not a member's. */
-    UNAUTHENTICATED(UNAUTHORIZED, "authentication_error", "authentication_error"),
+    UNAUTHENTICATED(UNAUTHORIZED, "authentication_error", "authentication_error", retryable = false),
 
     /** The credential may not call models (a device, or a token without the scope). */
-    CREDENTIAL_NOT_ALLOWED(FORBIDDEN, "permission_error", "permission_error"),
+    CREDENTIAL_NOT_ALLOWED(FORBIDDEN, "permission_error", "permission_error", retryable = false),
 
     /** The org does not allow this model. */
-    MODEL_NOT_ALLOWED(FORBIDDEN, "permission_error", "permission_error"),
+    MODEL_NOT_ALLOWED(FORBIDDEN, "permission_error", "permission_error", retryable = false),
 
     /** A monthly budget is reached. */
     BUDGET_EXHAUSTED(TOO_MANY_REQUESTS, "rate_limit_error", "insufficient_quota", retryable = false),
@@ -93,7 +95,7 @@ enum class RefusalKind(
     NO_CAPACITY(TOO_MANY_REQUESTS, "rate_limit_error", "rate_limit_exceeded"),
 
     /** The org has neither a usable account nor a key for this provider. */
-    NO_CREDENTIAL(SERVICE_UNAVAILABLE, "api_error", "server_error"),
+    NO_CREDENTIAL(SERVICE_UNAVAILABLE, "api_error", "server_error", retryable = false),
 
     /** The provider could not be reached. */
     UPSTREAM_UNREACHABLE(BAD_GATEWAY, "api_error", "server_error"),
@@ -102,10 +104,10 @@ enum class RefusalKind(
     OVERLOADED(SERVICE_UNAVAILABLE, "overloaded_error", "server_error"),
 
     /** `x-ostrom-workload` is neither `interactive` nor `background`, or is sent twice. */
-    INVALID_WORKLOAD(BAD_REQUEST, "invalid_request_error", "invalid_request_error"),
+    INVALID_WORKLOAD(BAD_REQUEST, "invalid_request_error", "invalid_request_error", retryable = false),
 
     /** `x-ostrom-client-request-id` is not one lowercase UUID. */
-    INVALID_REQUEST_ID(BAD_REQUEST, "invalid_request_error", "invalid_request_error"),
+    INVALID_REQUEST_ID(BAD_REQUEST, "invalid_request_error", "invalid_request_error", retryable = false),
 
     /**
      * The org's admission queue, or the member's share of it, is full. Never `overloaded_error`: Claude Code retries it
@@ -138,7 +140,23 @@ enum class RefusalKind(
  * @property message Safe for the agent: no credential, no other member's data.
  * @property retryAt When retrying makes sense.
  */
-data class InferenceRefusal(val kind: RefusalKind, val message: String, val retryAt: Instant? = null)
+data class InferenceRefusal(val kind: RefusalKind, val message: String, val retryAt: Instant? = null) {
+    /**
+     * Whether an agent should retry at [now] (TeamCode e7dbca54): never for a [RefusalKind] retrying does not change,
+     * nor when the earliest return is more than [RETRY_HORIZON] away (every account cooling down past it), so Claude
+     * Code shows the cause at once instead of looping on it.
+     */
+    fun shouldRetry(now: Instant): Boolean {
+        val at = retryAt
+        return kind.retryable && (at == null || at - now <= RETRY_HORIZON)
+    }
+
+    /** How far ahead a return is still worth an agent's retries. */
+    companion object {
+        /** TeamCode's: two minutes. */
+        val RETRY_HORIZON: Duration = 120.seconds
+    }
+}
 
 /** What [InferencePlanner] decides. */
 sealed interface InferencePlan {
