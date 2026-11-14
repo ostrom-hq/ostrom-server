@@ -108,6 +108,16 @@ class ApiPricesTest {
     }
 
     @Test
+    fun aRowOfAnotherDayOrProviderIsNotTheSameRowAsADefault() = runTest {
+        val earlier = ModelPrice("anthropic", "claude-opus-5", 1, 1, 1, 1, PriceTable.LIST_PRICES_DAY - 1)
+        val openai = ModelPrice("openai", "claude-opus-5", 1, 1, 1, 1, PriceTable.LIST_PRICES_DAY)
+        PutApiPricesUseCaseImpl(repository)(Gw.adminA, listOf(earlier, openai))
+        val after = LoadApiPriceDefaultsUseCaseImpl(repository)(Gw.adminA).after
+        assertEquals(PriceTable.ANTHROPIC_LIST_PRICES.size + 2, after.size, "Both are kept and the default is added")
+        assertTrue(earlier in after && openai in after)
+    }
+
+    @Test
     fun loadingTheDefaultsAddsTheMissingRowsAndKeepsWhatWasTyped() = runTest {
         val typed = ModelPrice("anthropic", "claude-opus-5", 1, 1, 1, 1, PriceTable.LIST_PRICES_DAY)
         PutApiPricesUseCaseImpl(repository)(Gw.adminA, listOf(typed))
