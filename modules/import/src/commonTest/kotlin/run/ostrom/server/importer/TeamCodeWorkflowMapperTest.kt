@@ -167,7 +167,7 @@ class TeamCodeWorkflowMapperTest {
     }
 
     @Test
-    fun whatOstromCannotCarryIsNotedAndAnUnreadableOrOneTimeDefinitionIsNotImported() {
+    fun anUnreadableOrOneTimeDefinitionIsNotImported() {
         val unreadable = TeamCodeWorkflowMapper.map(fix.copy(definition = definition("""{"start": "x"}""")), mapping)
         assertNull(unreadable.raw)
         assertEquals(listOf("TeamCode's definition could not be read."), unreadable.notes)
@@ -186,7 +186,10 @@ class TeamCodeWorkflowMapperTest {
         val refused = TeamCodeWorkflowMapper.map(secret, mapping)
         assertNull(refused.raw)
         assertEquals(listOf("One-time fields (a.token) have no equivalent in Ostrom."), refused.notes)
+    }
 
+    @Test
+    fun whatOstromCannotCarryIsNoted() {
         val odd = fix.copy(
             updatedById = null,
             createdAt = null,

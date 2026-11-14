@@ -193,8 +193,9 @@ class WorkflowsUseCaseImpl(
         return outcome
     }
 
-    // A save; [creation] is the decision a new workflow records (`edit`, or `import`).
-    @Suppress("LongParameterList") // The save's own parameters, and the decision of a creation.
+    // A save; [creation] is the decision a new workflow records (`edit`, or `import`). Its parameters are the save's
+    // and the decision of a creation; its refusals are the save's (exists, limit, not found, conflict).
+    @Suppress("LongParameterList", "ThrowsCount")
     private suspend fun store(
         orgId: Uuid,
         raw: JsonObject,

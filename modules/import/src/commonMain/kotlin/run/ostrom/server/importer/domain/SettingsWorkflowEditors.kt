@@ -26,12 +26,16 @@ class SettingsWorkflowEditors(private val settings: WorkflowSettingsUseCase) : W
         val role = if (caller.role == MemberRole.OWNER) OrgRole.OWNER else OrgRole.ADMIN
         val current = settings.settings(caller.orgId, by, role).editors
         val ids = change.memberIds.map { it.toString() }.distinct()
-        if (current.mode == change.mode && current.memberIds.orEmpty().toSet() == ids.toSet()) {
-            return ImportAction.UNCHANGED
+        val same = current.mode == change.mode && current.memberIds.orEmpty().toSet() == ids.toSet()
+        return when {
+            same -> ImportAction.UNCHANGED
+            dryRun -> ImportAction.PLANNED
+            else -> {
+                val editors = WorkflowEditors(change.mode, ids.takeIf { it.isNotEmpty() })
+                settings.save(caller.orgId, by, role, principal, editors)
+                ImportAction.UPDATED
+            }
         }
-        if (dryRun) return ImportAction.PLANNED
-        settings.save(caller.orgId, by, role, principal, WorkflowEditors(change.mode, ids.takeIf { it.isNotEmpty() }))
-        return ImportAction.UPDATED
     }
 }
 

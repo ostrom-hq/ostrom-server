@@ -61,19 +61,34 @@ object TeamCodeWorkflowMapper {
      */
     fun map(workflow: TeamCodeWorkflow, mapping: TeamCodeMapping): MappedWorkflow {
         val id = idOf(workflow.id)
-        val definition = try {
-            lenient.decodeFromJsonElement(Definition.serializer(), workflow.definition)
-        } catch (expected: SerializationException) {
-            // Never the parser's message: it may quote the definition.
-            return MappedWorkflow(id, null, emptySet(), listOf(UNREADABLE))
-        }
-        val oneTime = definition.nodes.flatMap { node ->
+        val definition = definitionOf(workflow)
+        val oneTime = definition?.nodes.orEmpty().flatMap { node ->
             node.fields.filter { it.oneTime }.map { "${node.id}.${it.id}" }
         }
-        if (oneTime.isNotEmpty()) {
-            val note = "One-time fields (${oneTime.joinToString()}) have no equivalent in Ostrom."
-            return MappedWorkflow(id, null, emptySet(), listOf(note))
+        return when {
+            definition == null -> MappedWorkflow(id, null, emptySet(), listOf(UNREADABLE))
+            oneTime.isNotEmpty() -> {
+                val note = "One-time fields (${oneTime.joinToString()}) have no equivalent in Ostrom."
+                MappedWorkflow(id, null, emptySet(), listOf(note))
+            }
+            else -> mapReadable(id, workflow, definition, mapping)
         }
+    }
+
+    // Never the parser's message: it may quote the definition.
+    private fun definitionOf(workflow: TeamCodeWorkflow): Definition? = try {
+        lenient.decodeFromJsonElement(Definition.serializer(), workflow.definition)
+    } catch (expected: SerializationException) {
+        null
+    }
+
+    // A definition read, and without what Ostrom cannot carry.
+    private fun mapReadable(
+        id: String,
+        workflow: TeamCodeWorkflow,
+        definition: Definition,
+        mapping: TeamCodeMapping,
+    ): MappedWorkflow {
         val notes = mutableListOf<String>()
         val nodes = definition.nodes.map { node(it, mapping, notes) }
         val document = Workflow(
@@ -223,6 +238,8 @@ private class Input(
 @Serializable
 private class Limits(val maxNodes: Int = 50, val maxVisits: Int = 100, val maxDepth: Int = 3)
 
+// TeamCode's JSON, as it is.
+@Suppress("LongParameterList")
 @Serializable
 private class Node(
     val id: String,
@@ -242,6 +259,8 @@ private class Node(
     val maxVisits: Int = 3,
 )
 
+// TeamCode's JSON, as it is.
+@Suppress("LongParameterList")
 @Serializable
 private class Field(
     val id: String,

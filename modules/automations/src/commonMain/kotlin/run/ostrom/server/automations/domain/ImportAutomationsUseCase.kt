@@ -4,6 +4,7 @@ package run.ostrom.server.automations.domain
 import dev.whyoleg.cryptography.CryptographyProvider
 import dev.whyoleg.cryptography.algorithms.SHA256
 import kotlin.time.Clock
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
@@ -72,44 +73,69 @@ class ImportAutomationsUseCaseImpl(
         }
         val id = importedAutomationId(orgId, automation.sourceKey)
         val current = repository.get(orgId, id)
-        val outcome = when {
+        val outcome = outcome(current, automation, definition)
+        if (!dryRun && outcome != AutomationImport.UNCHANGED) {
+            val now = clock.now().truncatedToMillis()
+            if (current == null) {
+                create(orgId, id, automation, definition, now)
+            } else {
+                update(current, automation, definition, now)
+            }
+        }
+        return outcome
+    }
+
+    private fun outcome(current: Automation?, automation: ImportedAutomation, definition: AutomationDefinition) =
+        when {
             current == null -> AutomationImport.CREATED
             current.owner != automation.owner -> throw InvalidAutomationException(OTHER_OWNER)
             current.definition == definition && (automation.enabled ?: current.enabled) == current.enabled ->
                 AutomationImport.UNCHANGED
             else -> AutomationImport.UPDATED
         }
-        if (dryRun || outcome == AutomationImport.UNCHANGED) return outcome
-        val now = clock.now().truncatedToMillis()
-        if (current == null) {
-            val enabled = automation.enabled == true
-            val created = Automation(
-                id = id,
-                orgId = orgId,
-                owner = automation.owner,
-                definition = definition,
-                enabled = enabled,
-                version = 1,
-                secretGeneration = 1,
-                previousSecretValidUntil = null,
-                nextRunAt = if (enabled) AutomationRules.nextRun(definition, now) else null,
-                createdAt = now,
-                updatedAt = now,
-            )
-            val limit = ManageAutomationsUseCaseImpl.MAX_PER_MEMBER
-            if (!repository.createWithinLimit(created, limit)) throw AutomationLimitException(limit)
-        } else {
-            val enabled = automation.enabled ?: current.enabled
-            val changed = current.copy(
-                definition = definition,
-                enabled = enabled,
-                version = if (current.definition == definition) current.version else current.version + 1,
-                nextRunAt = if (enabled) AutomationRules.nextRun(definition, now) else null,
-                updatedAt = now,
-            )
-            repository.update(changed, current) ?: throw StaleAutomationException()
-        }
-        return outcome
+
+    /** Creates it paused, unless TeamCode had it enabled. */
+    private suspend fun create(
+        orgId: Uuid,
+        id: Uuid,
+        automation: ImportedAutomation,
+        definition: AutomationDefinition,
+        now: Instant,
+    ) {
+        val enabled = automation.enabled == true
+        val created = Automation(
+            id = id,
+            orgId = orgId,
+            owner = automation.owner,
+            definition = definition,
+            enabled = enabled,
+            version = 1,
+            secretGeneration = 1,
+            previousSecretValidUntil = null,
+            nextRunAt = if (enabled) AutomationRules.nextRun(definition, now) else null,
+            createdAt = now,
+            updatedAt = now,
+        )
+        val limit = ManageAutomationsUseCaseImpl.MAX_PER_MEMBER
+        if (!repository.createWithinLimit(created, limit)) throw AutomationLimitException(limit)
+    }
+
+    /** Takes the imported definition, a new version only when it changed. */
+    private suspend fun update(
+        current: Automation,
+        automation: ImportedAutomation,
+        definition: AutomationDefinition,
+        now: Instant,
+    ) {
+        val enabled = automation.enabled ?: current.enabled
+        val changed = current.copy(
+            definition = definition,
+            enabled = enabled,
+            version = if (current.definition == definition) current.version else current.version + 1,
+            nextRunAt = if (enabled) AutomationRules.nextRun(definition, now) else null,
+            updatedAt = now,
+        )
+        repository.update(changed, current) ?: throw StaleAutomationException()
     }
 }
 
