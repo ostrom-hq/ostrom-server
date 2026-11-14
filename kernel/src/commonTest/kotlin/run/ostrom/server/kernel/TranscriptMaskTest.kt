@@ -120,6 +120,7 @@ class TranscriptMaskTest {
         assertNull(TranscriptMask.detect("Basic //46//46//46"), "Bytes that are not text")
         assertNull(TranscriptMask.detect("token abcdefghijk."), "A trailing dot is not part of the value")
         assertNull(TranscriptMask.detect("token 123456789012"), "A short run of digits is a number")
+        assertNull(TranscriptMask.detect("token ABCDEFGHxyzabc"), "A long acronym is not an identifier")
         assertNull(TranscriptMask.detect("token refreshintervalx"), "A single lowercase word")
         assertNull(TranscriptMask.detect("token abcdefghijklmnopqrstuvwxyz"), "Letters of one case")
         // The transcript mask finds what the scanner finds.
