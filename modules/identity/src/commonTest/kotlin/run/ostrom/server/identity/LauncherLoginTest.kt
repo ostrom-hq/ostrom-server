@@ -185,7 +185,7 @@ class LauncherLoginTest {
         assertNull(wrongSecret.verify("gho_ostrom"))
         val unconfigured = GitHubTokenVerifierImpl({ emptyList() }, github.http)
         assertFailsWith<ProviderNotConfiguredException> { unconfigured.verify("gho_ostrom") }
-        // The App's client first, then the settings' one that issued the token (stored before the App was).
+        // A client that does not know the token first, then the one that issued it: the latter's answer counts.
         val both = GitHubTokenVerifierImpl({ listOf(signIn(OAuthClient("Iv1.app", "s")), signIn(app)) }, github.http)
         assertEquals("583231", both.verify("gho_ostrom")?.id?.toString())
         val unreachable = HttpClient(MockEngine { error("network down") }) { expectSuccess = false }

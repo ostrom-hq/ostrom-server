@@ -22,8 +22,8 @@ import kotlinx.serialization.Serializable
  * the client id and secret of Ostrom's GitHub app). GitHub answers 404 for a token it did not issue to that app (a
  * token of another OAuth app, a personal access token, a revoked one), and otherwise names the account it belongs to.
  *
- * Every client this instance knows is asked in turn (the GitHub App's, then the `github-sign-in` settings'): a token
- * issued by the settings' client before the App's was stored still checks.
+ * Every client this instance knows is asked in turn (the `github-sign-in` settings', then the GitHub App's): a token
+ * issued by either client checks, whichever one sign-in uses now.
  *
  * @param github Reads GitHub's sign-ins as set now (each OAuth client and its GitHub's API URL), empty while none is.
  * @param http The HTTP client.
