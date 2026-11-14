@@ -404,17 +404,17 @@ class GovernancePostgresTest {
         assertTrue(repository.answer(orgA, id, outcome))
         val expire = server.koin.get<ExpireConfirmationsUseCase>()
         Time.offset = 19.minutes
-        assertEquals(0, expire.everywhere(), "Within its grace: still being made")
+        expire.everywhere()
         assertEquals("pending", server.read("ada-token", id).body<ConfirmationDto>().status)
         Time.offset = 21.minutes
-        assertEquals(1, expire.everywhere())
+        expire.everywhere()
         val failed = server.read("ada-token", id).body<ConfirmationDto>()
         assertEquals("failed" to "result_lost", failed.status to failed.error?.type)
         assertEquals(ConfirmationRules.RESULT_LOST_MESSAGE, failed.error?.message)
         // a result that comes after changes nothing
         repository.settle(orgA, id, JsonPrimitive("never"), null)
         assertEquals(ConfirmationStatus.FAILED to null, repository.get(orgA, id)?.let { it.status to it.result })
-        assertEquals(0, expire.everywhere(), "Once")
+        assertEquals(0, expire.everywhere(), "Once: nothing left to sweep there")
         val actions = server.koin.get<AuditRepository>().list(orgA, null, null, 50).map { it.entry.action }
         assertTrue("governance.confirmation.failed" in actions, "$actions")
     }
@@ -457,9 +457,15 @@ class GovernancePostgresTest {
             },
         )
         val sweep = server.database.superuser.fetchAll(
-            "EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM governance_expired_organizations(now(), 100)",
+            "EXPLAIN (ANALYZE, BUFFERS) SELECT DISTINCT c.org_id FROM governance_confirmations c " +
+                "WHERE c.status = 'pending' AND c.expires_at <= now() LIMIT 100",
         ).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
         plans["the sweep's organizations (the router function's query)"] = sweep
+        val lost = server.database.superuser.fetchAll(
+            "EXPLAIN (ANALYZE, BUFFERS) SELECT DISTINCT c.org_id FROM governance_confirmations c " +
+                "WHERE c.status = 'confirmed' AND c.result_json IS NULL AND c.expires_at <= now() LIMIT 100",
+        ).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
+        plans["the sweep's organizations with a lost result (the router function's query)"] = lost
         val report = plans.entries.joinToString("\n\n") { (name, plan) -> "-- $name\n$plan" }
         SystemFileSystem.createDirectories(Path("build/reports/explain"))
         SystemFileSystem.sink(Path("build/reports/explain/governance.txt")).buffered().use { it.writeString(report) }

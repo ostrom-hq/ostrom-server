@@ -195,9 +195,10 @@ class PostgresConfirmationsRepository(private val driver: Driver) : Confirmation
         const val SETTLE_RESULT: String = "UPDATE governance_confirmations SET result_json = :result " +
             "WHERE org_id = :org_id AND id = :id AND status = 'confirmed'"
 
-        /** Marks a confirmed write that failed, by its key. */
+        /** Marks a confirmed write that failed, by its key; never one the sweep already failed (result lost). */
         const val SETTLE_ERROR: String = "UPDATE governance_confirmations SET status = 'failed', " +
-            "error_type = :error_type, error_message = :error_message WHERE org_id = :org_id AND id = :id"
+            "error_type = :error_type, error_message = :error_message WHERE org_id = :org_id AND id = :id " +
+            "AND status = 'confirmed'"
 
         /** The sweep's read across organizations. */
         const val EXPIRED_ORGANIZATIONS: String =

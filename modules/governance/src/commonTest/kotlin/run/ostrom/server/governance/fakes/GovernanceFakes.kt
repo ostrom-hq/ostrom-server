@@ -92,8 +92,10 @@ class InMemoryConfirmations : ConfirmationsRepository {
         rows[id] = if (error == null) {
             // as in PostgreSQL: never on one the sweep already failed
             if (row.status == ConfirmationStatus.CONFIRMED) row.copy(result = result, settled = true) else row
-        } else {
+        } else if (row.status == ConfirmationStatus.CONFIRMED) {
             row.copy(status = ConfirmationStatus.FAILED, error = error)
+        } else {
+            row
         }
     }
 

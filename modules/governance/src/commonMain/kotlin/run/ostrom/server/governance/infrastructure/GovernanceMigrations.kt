@@ -89,7 +89,8 @@ val GovernanceMigrations: List<SchemaMigration> = listOf(
     ),
     // A confirmed write whose result was never written (its server stopped between the answer and the result) is
     // failed by the sweep, `result_lost`, 5 minutes past its expiry (ConfirmationRules.RESULT_GRACE, decision of
-    // 14/11/2026): the sweep's function finds those organizations too.
+    // 14/11/2026): the sweep's function finds those organizations too, from their expiry on; the grace itself is the
+    // repository's bound parameter, never repeated here.
     SchemaMigration(
         version = 3,
         name = "confirmation_result_lost",
@@ -99,14 +100,12 @@ val GovernanceMigrations: List<SchemaMigration> = listOf(
         CREATE OR REPLACE FUNCTION governance_expired_organizations(p_now TIMESTAMPTZ, p_limit INTEGER)
             RETURNS SETOF UUID
             LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
-            SELECT DISTINCT o.org_id FROM (
-                (SELECT c.org_id FROM governance_confirmations c
-                    WHERE c.status = 'pending' AND c.expires_at <= p_now LIMIT p_limit)
-                UNION ALL
-                (SELECT c.org_id FROM governance_confirmations c
-                    WHERE c.status = 'confirmed' AND c.result_json IS NULL
-                    AND c.expires_at <= p_now - INTERVAL '5 minutes' LIMIT p_limit)
-            ) o LIMIT p_limit;
+            (SELECT DISTINCT c.org_id FROM governance_confirmations c
+                WHERE c.status = 'pending' AND c.expires_at <= p_now)
+            UNION
+            (SELECT DISTINCT c.org_id FROM governance_confirmations c
+                WHERE c.status = 'confirmed' AND c.result_json IS NULL AND c.expires_at <= p_now)
+            LIMIT p_limit;
         $$
         """.trimIndent(),
     ),
