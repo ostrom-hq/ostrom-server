@@ -150,13 +150,10 @@ data class InferenceRefusal(val kind: RefusalKind, val message: String, val retr
         val at = retryAt
         return kind.retryable && (at == null || at - now <= RETRY_HORIZON)
     }
-
-    /** How far ahead a return is still worth an agent's retries. */
-    companion object {
-        /** TeamCode's: two minutes. */
-        val RETRY_HORIZON: Duration = 120.seconds
-    }
 }
+
+/** How far ahead a return is still worth an agent's retries: TeamCode's two minutes. */
+private val RETRY_HORIZON: Duration = 120.seconds
 
 /** What [InferencePlanner] decides. */
 sealed interface InferencePlan {
