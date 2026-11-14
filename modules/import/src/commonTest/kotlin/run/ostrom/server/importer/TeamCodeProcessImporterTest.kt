@@ -53,7 +53,9 @@ class TeamCodeProcessImporterTest {
         ),
         editors = TeamCodeWorkflowEditors("members", listOf("m1", "m3")),
         automations = listOf(
-            TeamCodeAutomation("a1", "m1", "Nightly", "cron", "0 21 * * *", "Europe/Paris", actionKind = "cloud"),
+            TeamCodeAutomation(
+                "a1", "m1", "Nightly", "cron", "0 21 * * *", "Europe/Paris", actionKind = "cloud", enabled = true,
+            ),
             TeamCodeAutomation("a2", "m3", "Orphan", "cron", actionKind = "cloud"),
         ),
     )
