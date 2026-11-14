@@ -5,6 +5,7 @@ import run.ostrom.server.integrations.github.domain.CHECK_NAME
 import run.ostrom.server.integrations.github.domain.CheckRun
 import run.ostrom.server.integrations.github.domain.CreatedGitHubApp
 import run.ostrom.server.integrations.github.domain.GitHubApi
+import run.ostrom.server.integrations.github.domain.GitHubAppVerifier
 import run.ostrom.server.integrations.github.domain.GitHubCallException
 import run.ostrom.server.integrations.github.domain.GitHubCiApi
 import run.ostrom.server.integrations.github.domain.GitHubCiRun
@@ -14,6 +15,7 @@ import run.ostrom.server.integrations.github.domain.GitHubPeopleApi
 import run.ostrom.server.integrations.github.domain.GitHubPull
 import run.ostrom.server.integrations.github.domain.GitHubRepo
 import run.ostrom.server.integrations.github.domain.GitHubTeam
+import run.ostrom.server.integrations.github.domain.VerifiedGitHubApp
 import run.ostrom.server.integrations.github.domain.isRepositoryName
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.timeout
@@ -64,6 +66,7 @@ import kotlin.time.Instant
  * @param webUrl GitHub's web address, where the OAuth code of the install is exchanged, read at each call.
  * @param oauth The App's OAuth client, read at each exchange, or null when it has none: then the install fails.
  */
+@Suppress("TooManyFunctions") // GitHub's App endpoints, one call each, and their shared signing and readers.
 class HttpGitHubApi(
     private val http: HttpClient,
     private val apiUrl: () -> String,
@@ -75,6 +78,7 @@ class HttpGitHubApi(
     GitHubCiApi,
     GitHubDirectoryApi,
     GitHubManifestApi,
+    GitHubAppVerifier,
     GitHubPeopleApi by HttpGitHubPeople(http, apiUrl, webUrl, oauth) {
     private val tokens = mutableMapOf<Pair<Long, Map<String, String>>, InstallationToken>()
     private val lock = Mutex()
@@ -207,6 +211,27 @@ class HttpGitHubApi(
             clientId = app.clientId,
             clientSecret = app.clientSecret,
         )
+    }
+
+    // As the App the key signs for (TeamCode's verifyApp): 401 or 404 is GitHub refusing that key for that id.
+    override suspend fun verifyApp(appId: Long, privateKeyPem: String): VerifiedGitHubApp? {
+        val token = signed(appId, privateKeyPem) ?: return null
+        val response = send(HttpMethod.Get, "/app", token, null)
+        return if (response.status == HttpStatusCode.Unauthorized || response.status == HttpStatusCode.NotFound) {
+            null
+        } else {
+            val app = decode<AppInfo>(response, "App")
+            VerifiedGitHubApp(app.id, app.slug, app.owner?.login, app.clientId)
+        }
+    }
+
+    // A JWT of the App, or null for a key that is no RSA private key.
+    private suspend fun signed(appId: Long, privateKeyPem: String): String? = try {
+        AppJwt(appId.toString(), privateKeyPem, clock).token()
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        null
     }
 
     private suspend fun call(
@@ -342,6 +367,14 @@ class HttpGitHubApi(
 
     @Serializable
     private data class Name(val name: String)
+
+    @Serializable
+    private data class AppInfo(
+        val id: Long,
+        val slug: String,
+        val owner: Account? = null,
+        @SerialName("client_id") val clientId: String? = null,
+    )
 
     @Serializable
     private data class Conversion(

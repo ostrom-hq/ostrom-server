@@ -103,6 +103,9 @@ interface GitHubRepository {
      */
     suspend fun forgetInstallation(installationId: Long)
 
+    /** @return How many organizations of the instance installed the App, every organization's. */
+    suspend fun installationCount(): Long
+
     /**
      * Stores the hash of an install state.
      *

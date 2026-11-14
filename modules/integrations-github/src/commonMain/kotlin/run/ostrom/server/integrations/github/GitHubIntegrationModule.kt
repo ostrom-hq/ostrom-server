@@ -10,10 +10,13 @@ import run.ostrom.server.integrations.github.domain.CloudSessionsSwitch
 import run.ostrom.server.integrations.github.domain.GitHubAccessResolver
 import run.ostrom.server.integrations.github.domain.GitHubAccounts
 import run.ostrom.server.integrations.github.domain.GitHubApi
+import run.ostrom.server.integrations.github.domain.GitHubAppChange
+import run.ostrom.server.integrations.github.domain.GitHubAppConfigurations
 import run.ostrom.server.integrations.github.domain.GitHubAppManifests
 import run.ostrom.server.integrations.github.domain.GitHubAppSource
 import run.ostrom.server.integrations.github.domain.GitHubAppSourceImpl
 import run.ostrom.server.integrations.github.domain.GitHubAppStore
+import run.ostrom.server.integrations.github.domain.GitHubAppVerifier
 import run.ostrom.server.integrations.github.domain.GitHubCiApi
 import run.ostrom.server.integrations.github.domain.GitHubCiChecks
 import run.ostrom.server.integrations.github.domain.GitHubContentsApi
@@ -42,6 +45,7 @@ import run.ostrom.server.integrations.github.domain.ListGitHubTeamsUseCase
 import run.ostrom.server.integrations.github.domain.ListGitHubTeamsUseCaseImpl
 import run.ostrom.server.integrations.github.domain.OrgReferences
 import run.ostrom.server.integrations.github.domain.StoredInstanceAdmins
+import run.ostrom.server.integrations.github.domain.appCallbackUrls
 import run.ostrom.server.integrations.github.domain.installPage
 import run.ostrom.server.integrations.github.domain.oauthApp
 import run.ostrom.server.integrations.github.infrastructure.AppJwts
@@ -66,10 +70,12 @@ import run.ostrom.server.integrations.github.infrastructure.RunnersCloudSwitch
 import run.ostrom.server.integrations.github.infrastructure.WebhookSignature
 import run.ostrom.server.integrations.github.infrastructure.credentials
 import run.ostrom.server.integrations.github.infrastructure.oauthClient
+import run.ostrom.server.integrations.github.presentation.GitHubAppConfigurationRoutesDependencies
 import run.ostrom.server.integrations.github.presentation.GitHubDirectoryRoutesDependencies
 import run.ostrom.server.integrations.github.presentation.GitHubLinkRoutesDependencies
 import run.ostrom.server.integrations.github.presentation.GitHubManifestRoutesDependencies
 import run.ostrom.server.integrations.github.presentation.GitHubRoutesDependencies
+import run.ostrom.server.integrations.github.presentation.gitHubAppConfigurationRoutes
 import run.ostrom.server.integrations.github.presentation.gitHubDirectoryRoutes
 import run.ostrom.server.integrations.github.presentation.gitHubLinkRoutes
 import run.ostrom.server.integrations.github.presentation.gitHubManifestRoutes
@@ -148,6 +154,7 @@ object GitHubIntegrationModule : ServerModule {
         single<GitHubApi> { get<HttpGitHubApi>() }
         single<GitHubDirectoryApi> { get<HttpGitHubApi>() }
         single<GitHubManifestApi> { get<HttpGitHubApi>() }
+        single<GitHubAppVerifier> { get<HttpGitHubApi>() }
         single<GitHubCiApi> { get<HttpGitHubApi>() }
         single<GitHubContentsApi> {
             val api = get<HttpGitHubApi>()
@@ -221,6 +228,13 @@ object GitHubIntegrationModule : ServerModule {
             val host = get<GitHubHost>()
             GitHubManifestRoutesDependencies(get(), { host.webUrl }, get<GitHubSettings>().webOrigin)
         }
+        // The App entered by hand (TeamCode's GitHub App form), in the table the manifest flow fills.
+        single { GitHubAppChange(get(), get(), get(), get()) }
+        single {
+            val callbacks = appCallbackUrls(get<GitHubAppSetup>().publicUrl)
+            GitHubAppConfigurations(get(), get(), get(), get(), get(), get(), callbacks, get())
+        }
+        single { GitHubAppConfigurationRoutesDependencies(get()) }
     }
 
     override val migrations: List<SchemaMigration> = GitHubMigrations
@@ -229,6 +243,7 @@ object GitHubIntegrationModule : ServerModule {
         route.gitHubRoutes(koin.get())
         route.gitHubDirectoryRoutes(koin.get())
         route.gitHubManifestRoutes(koin.get())
+        route.gitHubAppConfigurationRoutes(koin.get())
         route.gitHubLinkRoutes(koin.get())
     }
 

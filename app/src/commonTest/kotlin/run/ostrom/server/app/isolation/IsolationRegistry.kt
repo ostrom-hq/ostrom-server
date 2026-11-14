@@ -619,6 +619,9 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
         target("memberId" to MEMBER_ID, body = """{"enabled": false}""", admin = true),
     "GET /api/v1/github/app/install/callback" to Case.Exempt(CALLBACK),
     "GET /api/v1/github/app/manifest/start" to Case.Target(),
+    // The instance's App entered by hand: an administrator of the instance only, never another organization's caller.
+    "GET /api/v1/github/app/configuration" to Case.Target(),
+    "PUT /api/v1/github/app/configuration" to Case.Target(body = """{"appId": 1, "clientId": "Iv1.taken"}"""),
     "GET /api/v1/github/app/manifest/callback" to Case.Exempt(CALLBACK),
     // The members' GitHub links: the caller's own, or another member's for an owner or an admin.
     "GET /api/v1/github/link" to Case.Target(),

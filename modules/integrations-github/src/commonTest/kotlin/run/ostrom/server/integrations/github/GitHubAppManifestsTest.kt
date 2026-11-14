@@ -76,6 +76,8 @@ class GitHubAppManifestsTest {
             listOf(
                 "https://api.example/api/v1/github/app/install/callback",
                 "https://api.example/api/v1/github/link/callback",
+                // Sign-in with GitHub through the App's OAuth client (the identity module's callback).
+                "https://api.example/api/v1/auth/github/callback",
             ),
             manifest["callback_urls"]?.jsonArray?.map { it.jsonPrimitive.content },
         )

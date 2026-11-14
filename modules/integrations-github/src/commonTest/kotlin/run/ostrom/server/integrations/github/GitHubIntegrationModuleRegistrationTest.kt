@@ -80,6 +80,7 @@ class GitHubIntegrationModuleRegistrationTest {
             3L to "create_github_origins_and_deliveries",
             4L to "create_github_links",
             5L to "github_app_oauth_client_optional",
+            6L to "github_app_by_hand",
         )
         assertEquals(expected, migrations)
         koinApplication { modules(GitHubIntegrationModule.koinModule) }.close()

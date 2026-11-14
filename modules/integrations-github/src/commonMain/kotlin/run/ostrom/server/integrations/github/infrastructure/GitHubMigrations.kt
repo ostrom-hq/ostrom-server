@@ -34,6 +34,23 @@ private fun tenant(table: String) = """
         WITH CHECK (org_id = $ORG);
 """.trimIndent()
 
+// The cross-organization reads of a change of the App, functions of `ostrom_router` (docs/tenancy.md).
+private const val INSTALLATIONS_COUNT = "github_installations_count()"
+private const val OTHER_CLIENTS = "github_links_of_other_clients(TEXT)"
+
+// A function handed to `ostrom_router`, which only `ostrom_app` may run.
+private fun routed(function: String) = """
+    REVOKE EXECUTE ON FUNCTION $function FROM PUBLIC;
+    DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+            GRANT EXECUTE ON FUNCTION $function TO ostrom_app;
+        END IF;
+    END $$;
+    GRANT CREATE ON SCHEMA public TO ostrom_router;
+    ALTER FUNCTION $function OWNER TO ostrom_router;
+    REVOKE CREATE ON SCHEMA public FROM ostrom_router;
+""".trimIndent()
+
 /**
  * The GitHub integration's schema. Version 1: one installation of the App per organization, the single-use states of
  * the install flow (their SHA-256 only), and the check run published per gate. Version 2: each organization's
@@ -46,7 +63,9 @@ private fun tenant(table: String) = """
  * instance's (an id and a time), so that a replayed delivery is ignored. Version 4: the members' GitHub links (one per
  * member of an organization, one member per GitHub account in it, the tokens sealed) and their pending attempts (the
  * device code or PKCE verifier sealed, the hash of the browser session of a web link), both an organization's rows
- * under forced row level security.
+ * under forced row level security. Version 6: the App's version and last save, for the App entered by hand, and the two
+ * functions of `ostrom_router` a change of the App reads across organizations with (the installations' count, the
+ * members whose link another client issued).
  */
 val GitHubMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -203,6 +222,47 @@ val GitHubMigrations: List<SchemaMigration> = listOf(
         """
         ALTER TABLE github_apps ALTER COLUMN client_id DROP NOT NULL;
         ALTER TABLE github_apps ALTER COLUMN client_secret_sealed DROP NOT NULL
+        """.trimIndent(),
+    ),
+    // The App entered by hand (TeamCode's GitHub App form): a version an administrator's change must name, and who
+    // saved it last. A change of the App reads across organizations only through two functions of `ostrom_router`
+    // (docs/tenancy.md): the count of the installations, when its id changes, and the members whose link another
+    // client issued, when its client changes (ids only: each link is then removed in its own organization).
+    SchemaMigration(
+        6,
+        "github_app_by_hand",
+        """
+        ALTER TABLE github_apps ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+        ALTER TABLE github_apps ADD COLUMN updated_by TEXT;
+        ALTER TABLE github_apps ADD COLUMN updated_at TIMESTAMPTZ;
+        UPDATE github_apps SET updated_by = created_by, updated_at = created_at;
+        ALTER TABLE github_apps ALTER COLUMN updated_by SET NOT NULL;
+        ALTER TABLE github_apps ALTER COLUMN updated_at SET NOT NULL;
+        DO $$ BEGIN
+            CREATE ROLE ostrom_router NOLOGIN NOSUPERUSER NOBYPASSRLS;
+        EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
+        END $$;
+        DO $$ BEGIN
+            GRANT ostrom_router TO CURRENT_USER;
+        EXCEPTION WHEN unique_violation THEN NULL;
+        END $$;
+        GRANT USAGE ON SCHEMA public TO ostrom_router;
+        CREATE POLICY github_installations_router ON github_installations FOR SELECT TO ostrom_router
+            USING (current_user = 'ostrom_router');
+        GRANT SELECT (installation_id) ON github_installations TO ostrom_router;
+        CREATE POLICY github_links_router ON github_links FOR SELECT TO ostrom_router
+            USING (current_user = 'ostrom_router');
+        GRANT SELECT (org_id, member_id, client_id) ON github_links TO ostrom_router;
+        CREATE FUNCTION $INSTALLATIONS_COUNT RETURNS BIGINT
+            LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+            SELECT count(installation_id) FROM github_installations;
+        $$;
+        CREATE FUNCTION github_links_of_other_clients(p_client TEXT) RETURNS TABLE (org_id UUID, member_id UUID)
+            LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+            SELECT l.org_id, l.member_id FROM github_links l WHERE l.client_id <> p_client;
+        $$;
+        ${routed(INSTALLATIONS_COUNT)}
+        ${routed(OTHER_CLIENTS)}
         """.trimIndent(),
     ),
 )

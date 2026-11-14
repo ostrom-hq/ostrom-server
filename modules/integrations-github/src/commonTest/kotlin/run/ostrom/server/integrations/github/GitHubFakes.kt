@@ -41,9 +41,11 @@ class SettableClock(var now: Instant = NOW) : Clock {
 
 class RecordingLogger : Logger {
     val lines = mutableListOf<Pair<LogLevel, String>>()
+    val fields = mutableListOf<Map<String, Any?>>()
 
     override fun log(level: LogLevel, message: String, fields: Map<String, Any?>, error: Throwable?) {
         lines += level to message
+        this.fields += fields
     }
 
     override fun with(fields: Map<String, Any?>): Logger = this
@@ -138,6 +140,8 @@ class MemoryGitHubRepository(val origins: MemoryGitHubOrigins = MemoryGitHubOrig
         installations.removeAll { it.installationId == installationId }
         origins.byId.remove(installationId)
     }
+
+    override suspend fun installationCount(): Long = installations.size.toLong()
 
     override suspend fun saveState(orgId: Uuid, stateHash: String, by: String, expiresAt: Instant) {
         states[stateHash] = orgId to expiresAt

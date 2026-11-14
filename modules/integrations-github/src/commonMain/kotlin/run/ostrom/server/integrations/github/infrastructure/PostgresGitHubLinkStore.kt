@@ -208,6 +208,29 @@ class PostgresGitHubLinkStore(private val driver: Driver, private val cipher: Se
         return GitHubRevocable(row.get("client_id").asString(), tokens.accessToken)
     }
 
+    // The members come from the function of `ostrom_router` (docs/tenancy.md); each link goes in its organization.
+    override suspend fun removeLinksOfOtherClients(clientId: String): List<GitHubRevocable> {
+        val members = driver.fetchAll(
+            Statement.create("SELECT org_id, member_id FROM github_links_of_other_clients(:client)")
+                .bind("client", clientId),
+        ).getOrThrow().map { it.get("org_id").asUuid() to it.get("member_id").asUuid() }
+        return members.flatMap { (orgId, memberId) ->
+            // Gone meanwhile (unlinked, or linked again with the kept client): nothing is removed.
+            val removed = scoped(orgId) {
+                fetch(
+                    Statement.create(
+                        "DELETE FROM github_links WHERE org_id = :org AND member_id = :member " +
+                            "AND client_id <> :client RETURNING client_id, tokens_sealed",
+                    ).bind("org", orgId).bind("member", memberId).bind("client", clientId),
+                )
+            }
+            removed.mapNotNull { row ->
+                open(orgId, memberId, row.get("tokens_sealed").asString())
+                    ?.let { GitHubRevocable(row.get("client_id").asString(), it.accessToken) }
+            }
+        }
+    }
+
     @Suppress("CyclomaticComplexMethod") // Every state a link can be in, in the one locked read that decides.
     override suspend fun claim(
         orgId: Uuid,

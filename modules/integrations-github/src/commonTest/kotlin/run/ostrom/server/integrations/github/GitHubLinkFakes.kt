@@ -192,6 +192,12 @@ class MemoryGitHubLinkStore : GitHubLinkStore {
     override suspend fun removeLink(orgId: Uuid, memberId: Uuid): GitHubRevocable? =
         links.remove(orgId to memberId)?.let { (link, tokens) -> GitHubRevocable(link.clientId, tokens.accessToken) }
 
+    override suspend fun removeLinksOfOtherClients(clientId: String): List<GitHubRevocable> {
+        val stale = links.filterValues { (link, _) -> link.clientId != clientId }
+        stale.keys.forEach { links.remove(it) }
+        return stale.values.map { (link, tokens) -> GitHubRevocable(link.clientId, tokens.accessToken) }
+    }
+
     override suspend fun claim(
         orgId: Uuid,
         memberId: Uuid,

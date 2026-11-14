@@ -3,6 +3,7 @@ package run.ostrom.server.integrations.github
 
 import run.ostrom.server.integrations.github.domain.GitHubCallException
 import run.ostrom.server.integrations.github.domain.GitHubTeam
+import run.ostrom.server.integrations.github.domain.VerifiedGitHubApp
 import run.ostrom.server.integrations.github.infrastructure.AppJwt
 import run.ostrom.server.integrations.github.infrastructure.HttpGitHubApi
 import run.ostrom.server.integrations.github.infrastructure.instantOrNull
@@ -187,6 +188,31 @@ class HttpGitHubDirectoryApiTest {
         assertNull(github.convertManifest("unknown"))
         assertNull(github.convertManifest("used"))
         assertFailsWith<GitHubCallException> { github.convertManifest("down") }
+    }
+
+    @Test
+    fun anAppEnteredByHandIsCheckedAsTheAppItsKeySignsFor() = runTest {
+        val key = pem()
+        var answer = HttpStatusCode.OK to
+            """{"id":77,"slug":"ostrom-acme","owner":{"login":"acme"},"client_id":"Iv1.acme","name":"Ostrom"}"""
+        handler = { request ->
+            assertEquals("/app", request.url.encodedPath)
+            assertTrue(request.headers[HttpHeaders.Authorization].orEmpty().startsWith("Bearer ey"), "The App's JWT")
+            json(answer.second, answer.first)
+        }
+        val github = api()
+        assertEquals(VerifiedGitHubApp(77, "ostrom-acme", "acme", "Iv1.acme"), github.verifyApp(77, key))
+        answer = HttpStatusCode.OK to """{"id":78,"slug":"bare"}"""
+        assertEquals(VerifiedGitHubApp(78, "bare", null, null), github.verifyApp(78, key))
+        answer = HttpStatusCode.Unauthorized to "{}"
+        assertNull(github.verifyApp(77, key), "GitHub refuses the key for this id")
+        answer = HttpStatusCode.NotFound to "{}"
+        assertNull(github.verifyApp(77, key))
+        answer = HttpStatusCode.InternalServerError to "{}"
+        assertFailsWith<GitHubCallException> { github.verifyApp(77, key) }
+        val before = calls.size
+        assertNull(github.verifyApp(77, "-----BEGIN RSA PRIVATE KEY-----\nbm9wZQ==\n-----END RSA PRIVATE KEY-----"))
+        assertEquals(before, calls.size, "A key that is no RSA key never reaches GitHub")
     }
 
     @Test

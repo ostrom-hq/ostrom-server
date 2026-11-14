@@ -105,6 +105,23 @@ class MemoryGitHubAppStore(var stored: GitHubAppCredentials? = null) : GitHubApp
         return true
     }
 
+    // A first App is version 1, each change raises it; the manifest's saveApp above leaves it unset, as before.
+    override suspend fun replaceApp(app: CreatedGitHubApp, expectedVersion: Int?, by: String, at: Instant): Boolean {
+        if (stored?.version != expectedVersion) return false
+        stored = GitHubAppCredentials(
+            app.id.toString(),
+            app.slug,
+            app.privateKeyPem,
+            app.webhookSecret,
+            app.clientId,
+            app.clientSecret,
+            app.owner,
+            (expectedVersion ?: 0) + 1,
+            at,
+        )
+        return true
+    }
+
     override suspend fun saveState(stateHash: String, by: String, expiresAt: Instant) {
         states[stateHash] = by to expiresAt
     }
