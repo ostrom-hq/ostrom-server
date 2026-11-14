@@ -13,5 +13,5 @@ import kotlin.uuid.Uuid
  */
 class CloudSettingsBackgroundWorkLimit(private val settings: CloudSettingsSource?) : BackgroundWorkLimit {
     override suspend fun maxMinutes(orgId: Uuid): Int =
-        settings?.current(orgId)?.backgroundWorkMaxMinutes ?: BackgroundWork.DEFAULT_MAX_MINUTES
+        if (settings == null) BackgroundWork.DEFAULT_MAX_MINUTES else settings.current(orgId).backgroundWorkMaxMinutes
 }

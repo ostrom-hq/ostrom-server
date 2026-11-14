@@ -34,7 +34,8 @@ internal object ListOperations {
 
     /**
      * The `served` GET operations that answer a list: named `list…`, paged (`limit`, `after`, `before`), or answering
-     * an array or an object with `items`. A single resource (the path ends with a parameter) is not a list.
+     * an array or an object with `items`. A single resource (the path ends with a parameter) is not a list, nor is an
+     * operation without a JSON answer (the event feed's stream, which never ends).
      *
      * @param contract The contract.
      * @return The list operations, in the contract's order.
@@ -62,10 +63,10 @@ internal object ListOperations {
     }
 
     private fun ContractOperation.isList(schema: ContractSchema): Boolean {
-        val declared = response(200)?.json
-        val body = declared?.get("\$ref")?.jsonPrimitive?.contentOrNull?.let(schema::resolve) ?: declared
-        val array = body?.get("type")?.jsonPrimitive?.contentOrNull == "array"
-        val items = body?.get("properties")?.jsonObject?.containsKey("items") == true
+        val declared = response(200)?.json ?: return false
+        val body = declared.get("\$ref")?.jsonPrimitive?.contentOrNull?.let(schema::resolve) ?: declared
+        val array = body.get("type")?.jsonPrimitive?.contentOrNull == "array"
+        val items = body.get("properties")?.jsonObject?.containsKey("items") == true
         return id.startsWith("list") || query.keys.any { it == "limit" || it in CURSORS } || array || items
     }
 }
