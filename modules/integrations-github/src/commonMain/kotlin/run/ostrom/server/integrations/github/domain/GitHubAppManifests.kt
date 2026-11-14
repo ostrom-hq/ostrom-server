@@ -2,7 +2,8 @@
 package run.ostrom.server.integrations.github.domain
 
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
-import run.ostrom.server.kernel.auth.PrincipalKind
+import run.ostrom.server.kernel.auth.WriteAccess
+import run.ostrom.server.kernel.auth.mayWrite
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
 import run.ostrom.server.kernel.settings.InstanceAdministrators
@@ -54,7 +55,8 @@ interface InstanceAdmins {
  */
 class StoredInstanceAdmins(private val administrators: InstanceAdministrators) : InstanceAdmins {
     override suspend fun isAdmin(principal: AuthenticatedPrincipal): Boolean {
-        val person = Uuid.parseOrNull(principal.subjectId)?.takeIf { principal.kind == PrincipalKind.USER }
+        // A person signed in, as the admin routes ask: never a token, even an administrator's own.
+        val person = Uuid.parseOrNull(principal.subjectId)?.takeIf { principal.mayWrite(WriteAccess.PERSON) }
         return person != null && administrators.isAdmin(person)
     }
 }

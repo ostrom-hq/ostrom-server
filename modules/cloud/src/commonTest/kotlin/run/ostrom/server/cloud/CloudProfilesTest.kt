@@ -10,6 +10,7 @@ import run.ostrom.server.cloud.domain.CloudProfilesUseCaseImpl
 import run.ostrom.server.cloud.domain.CloudResources
 import run.ostrom.server.cloud.domain.InvalidCloudProfileException
 import run.ostrom.server.cloud.domain.StoredCloudCluster
+import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.secrets.domain.AdminRequiredException
 import run.ostrom.server.secrets.domain.Caller
 import run.ostrom.server.secrets.domain.MemberRole
@@ -131,5 +132,22 @@ class CloudProfilesTest {
         )
         val chosen = with(spec.copy(storageClass = "fast", agentVersion = "2.1", agentKind = "codex"))
         assertEquals("fast", profiles.create(admin, chosen).spec.storageClass)
+    }
+
+    @Test
+    fun onlyTheOrganizationsMembersAreAssigned() = runTest {
+        connect()
+        val directory = object : MemberDirectory {
+            override suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean =
+                orgId == ORG_A && memberId == BOB.toString()
+        }
+        val checked = CloudProfilesUseCaseImpl(repository, clusters, clock, directory)
+        val base = input.copy(assignedMemberIds = setOf(BOB.toString()))
+
+        assertEquals(setOf(BOB.toString()), checked.create(admin, base).assignedMemberIds)
+        val refused = assertFailsWith<InvalidCloudProfileException> {
+            checked.create(admin, base.copy(assignedMemberIds = setOf(BOB.toString(), "someone-else")))
+        }
+        assertTrue("not a member" in refused.message.orEmpty())
     }
 }

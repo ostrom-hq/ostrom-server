@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.cloud.domain
 
+import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.secrets.domain.Caller
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
@@ -55,6 +56,7 @@ class CloudProfilesUseCaseImpl(
     private val repository: CloudProfilesRepository,
     private val clusters: CloudClustersRepository,
     private val clock: Clock,
+    private val members: MemberDirectory? = null,
 ) : CloudProfilesUseCase {
     override suspend fun list(caller: Caller): List<CloudProfile> {
         val all = repository.list(caller.orgId)
@@ -64,7 +66,7 @@ class CloudProfilesUseCaseImpl(
     override suspend fun create(caller: Caller, input: CloudProfileInput): CloudProfile {
         caller.requireAdmin()
         val clean = normalize(input)
-        check(clean, expectedVersion = 0)
+        check(caller.orgId, clean, expectedVersion = 0)
         val now = clock.nowMillis()
         val profile =
             CloudProfile(Uuid.random(), caller.orgId, clean.name, 1, clean.spec, clean.assignedMemberIds, now, now)
@@ -76,7 +78,7 @@ class CloudProfilesUseCaseImpl(
         caller.requireAdmin()
         val before = repository.get(caller.orgId, id) ?: throw CloudProfileNotFoundException()
         val clean = normalize(input)
-        check(clean, expectedVersion = before.version)
+        check(caller.orgId, clean, expectedVersion = before.version)
         val profile = before.copy(
             name = clean.name,
             version = before.version + 1,
@@ -88,10 +90,15 @@ class CloudProfilesUseCaseImpl(
         return profile
     }
 
-    private suspend fun check(input: CloudProfileInput, expectedVersion: Int) {
+    private suspend fun check(orgId: Uuid, input: CloudProfileInput, expectedVersion: Int) {
         if (input.version != expectedVersion) throw CloudProfileConflictException()
         val cluster = Uuid.parseOrNull(input.spec.clusterId)?.let { clusters.get(it)?.cluster }
         profileProblem(input, cluster)?.let { throw InvalidCloudProfileException(it) }
+        // Only the organization's members: an id of someone else, or of a member who left, never gets the profile.
+        val directory = members ?: return
+        if (input.assignedMemberIds.any { !directory.isActiveMember(orgId, it) }) {
+            throw InvalidCloudProfileException("assignedMemberIds names someone not a member of the organization.")
+        }
     }
 
     private companion object {

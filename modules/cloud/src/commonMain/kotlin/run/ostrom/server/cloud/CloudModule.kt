@@ -48,9 +48,9 @@ object CloudModule : ServerModule {
         single { CloudAdminGate(get()) }
         single { CloudRuntimeUseCaseImpl(get(), get(), get(), get(), get()) } binds
             arrayOf(CloudRuntimeUseCase::class, CloudRuntimeSource::class)
-        single { CloudClustersUseCaseImpl(get(), get(), get(), get(), get()) } binds
+        single { CloudClustersUseCaseImpl(get(), get(), get(), get(), get(), get()) } binds
             arrayOf(CloudClustersUseCase::class, CloudClusterAccess::class)
-        single<CloudProfilesUseCase> { CloudProfilesUseCaseImpl(get(), get(), get()) }
+        single<CloudProfilesUseCase> { CloudProfilesUseCaseImpl(get(), get(), get(), getOrNull()) }
         single {
             CloudAdminRoutesDependencies(
                 get(),

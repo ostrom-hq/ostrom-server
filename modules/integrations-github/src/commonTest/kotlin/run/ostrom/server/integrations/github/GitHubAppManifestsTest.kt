@@ -14,6 +14,7 @@ import run.ostrom.server.integrations.github.infrastructure.GitHubAppSetup
 import run.ostrom.server.integrations.github.infrastructure.GitHubSettings
 import run.ostrom.server.integrations.github.infrastructure.credentials
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import run.ostrom.server.kernel.auth.PrincipalChannel
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.config.MapConfigSource
 import run.ostrom.server.kernel.errors.ErrorKind
@@ -40,7 +41,8 @@ class GitHubAppManifestsTest {
     private val clock = SettableClock()
     private val store = MemoryGitHubAppStore()
     private val api = FakeGitHubDirectoryApi()
-    private val admin = AuthenticatedPrincipal(ADMIN_ID.toString(), PrincipalKind.USER, emptySet())
+    private val admin =
+        AuthenticatedPrincipal(ADMIN_ID.toString(), PrincipalKind.USER, emptySet(), channel = PrincipalChannel.BROWSER)
     private val target =
         GitHubManifestTarget("https://api.example", "https://console.example", "https://github.com", "Ostrom")
 
@@ -91,6 +93,9 @@ class GitHubAppManifestsTest {
         val stranger = AuthenticatedPrincipal("usr_other", PrincipalKind.USER, emptySet())
         assertFailsWith<NotAnInstanceAdminException> { manifests().start(service, null, SESSION) }
         assertFailsWith<NotAnInstanceAdminException> { manifests().start(stranger, null, SESSION) }
+        // The administrator's own API token is not the administrator signed in.
+        val token = AuthenticatedPrincipal(ADMIN_ID.toString(), PrincipalKind.USER, emptySet())
+        assertFailsWith<NotAnInstanceAdminException> { manifests().start(token, null, SESSION) }
         val nobody = GitHubAppManifests(
             GitHubAppSourceImpl(GitHubAppCredentials(), store, clock),
             store,

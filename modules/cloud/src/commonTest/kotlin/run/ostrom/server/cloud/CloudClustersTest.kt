@@ -23,6 +23,7 @@ import kotlin.uuid.Uuid
 class CloudClustersTest {
     private val repository = MemoryClusters()
     private val audit = RecordingAudit()
+    private val logger = RecordingLogger()
     private val cipher = AesGcmSecretCipher(ByteArray(32) { 7 })
     private val clusters = CloudClustersUseCaseImpl(
         repository,
@@ -30,6 +31,7 @@ class CloudClustersTest {
         cipher,
         audit,
         SettableClock(),
+        logger,
     )
     private val alice = CloudAdminCaller(ALICE, person = true)
     private val input = CloudClusterInput(
@@ -154,5 +156,6 @@ class CloudClustersTest {
         assertNull(clusters.credentials(cluster.id))
         repository.rows[cluster.id] = stored.copy(sealedServiceAccountToken = "v1:AAAA")
         assertNull(clusters.credentials(cluster.id))
+        assertEquals(listOf(cluster.id.toString(), cluster.id.toString()), logger.events.map { it.third["cluster"] })
     }
 }
