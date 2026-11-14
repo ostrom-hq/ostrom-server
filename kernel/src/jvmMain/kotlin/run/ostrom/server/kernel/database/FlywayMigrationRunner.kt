@@ -14,6 +14,7 @@ import kotlinx.coroutines.withContext
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import org.flywaydb.core.Flyway
+import org.flywaydb.core.api.FlywayException
 import org.flywaydb.core.api.MigrationVersion
 import org.flywaydb.core.api.migration.Context
 import org.flywaydb.core.api.migration.BaseJavaMigration
@@ -51,7 +52,7 @@ class FlywayMigrationRunner(
         while (true) {
             val applied = try {
                 withContext(Dispatchers.IO) { pass(table, baseline, migrations) }
-            } catch (error: RuntimeException) {
+            } catch (error: FlywayException) {
                 if (attempt == attempts || !error.isLockTimeout()) throw error
                 null
             } finally {
@@ -178,7 +179,7 @@ class FlywayMigrationRunner(
         private fun checksum(migration: SchemaMigration): Int =
             CRC32().apply { update(migration.sql.toByteArray(Charsets.UTF_8)) }.value.toInt()
 
-        private fun RuntimeException.isLockTimeout(): Boolean =
+        private fun FlywayException.isLockTimeout(): Boolean =
             generateSequence<Throwable>(this) { it.cause }
                 .any { it is SQLException && it.sqlState == LOCK_NOT_AVAILABLE }
 
