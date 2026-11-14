@@ -4,7 +4,6 @@ package run.ostrom.server.budgets
 import run.ostrom.server.budgets.domain.BudgetAction
 import run.ostrom.server.budgets.domain.BudgetAlert
 import run.ostrom.server.budgets.domain.BudgetAlerts
-import run.ostrom.server.budgets.domain.BudgetDecisionCache
 import run.ostrom.server.budgets.domain.BudgetLimit
 import run.ostrom.server.budgets.domain.BudgetLimits
 import run.ostrom.server.budgets.domain.BudgetSettings
@@ -153,15 +152,6 @@ class RecordingAlerts : BudgetAlerts {
     override suspend fun publish(alert: BudgetAlert) {
         failure?.let { throw it }
         alerts += alert
-    }
-}
-
-/** Remembers the orgs invalidated. */
-class RecordingCache : BudgetDecisionCache {
-    val invalidated = mutableListOf<Uuid>()
-
-    override suspend fun invalidate(orgId: Uuid) {
-        invalidated += orgId
     }
 }
 

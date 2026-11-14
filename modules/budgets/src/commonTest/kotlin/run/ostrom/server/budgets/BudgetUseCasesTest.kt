@@ -32,9 +32,8 @@ class BudgetUseCasesTest {
     private val clock = TestClock()
     private val repository = InMemoryBudgetsRepository()
     private val spend = FakeSpendReader()
-    private val cache = RecordingCache()
     private val getBudgets = GetBudgetsUseCaseImpl(repository, spend, clock)
-    private val set = SetBudgetUseCaseImpl(repository, cache, clock, getBudgets)
+    private val set = SetBudgetUseCaseImpl(repository, clock, getBudgets)
     private val member = TestCallers.memberA.memberId
 
     @Test
@@ -48,7 +47,6 @@ class BudgetUseCasesTest {
         assertEquals(10_000_000L, overview.settings.defaultMemberLimitMicros)
         assertEquals(1_234L, overview.orgSpentMicros)
         assertEquals(BudgetPeriod(TestCallers.monthStart, TestCallers.nextMonth), overview.period)
-        assertEquals(listOf(TestCallers.orgA, TestCallers.orgA), cache.invalidated, "The guard forgets the old limits")
 
         set(TestCallers.adminA, BudgetTarget.Org, emptyList())
         val cleared = set(TestCallers.adminA, BudgetTarget.DefaultMember, emptyList())
@@ -78,7 +76,6 @@ class BudgetUseCasesTest {
             set(TestCallers.memberA, BudgetTarget.Member(member), listOf(BudgetLimit(1)))
         }
         assertFailsWith<AdminRequiredException> { set(TestCallers.memberA, BudgetTarget.Member(member), emptyList()) }
-        assertEquals(emptyList(), cache.invalidated)
     }
 
     @Test
@@ -88,7 +85,6 @@ class BudgetUseCasesTest {
         assertEquals(listOf(MemberBudget(member, 3_000_000, TestCallers.epoch)), given.settings.overrides)
         set(TestCallers.adminA, BudgetTarget.Member(member), emptyList())
         assertEquals(emptyList(), getBudgets(TestCallers.adminA).settings.overrides)
-        assertEquals(listOf(TestCallers.orgA, TestCallers.orgA), cache.invalidated)
     }
 
     @Test
@@ -184,7 +180,6 @@ class BudgetUseCasesTest {
         val removed = set(TestCallers.adminA, BudgetTarget.DefaultMember, emptyList())
         assertEquals(emptyList(), removed.settings.defaultMember)
         assertEquals(9_000_000, repository.orgLimits[TestCallers.orgA])
-        assertEquals(listOf(TestCallers.orgA, TestCallers.orgA), cache.invalidated)
         assertFailsWith<InvalidBudgetException> { set(TestCallers.adminA, BudgetTarget.Org, listOf(BudgetLimit(-1))) }
         assertFailsWith<AdminRequiredException> { set(TestCallers.memberA, BudgetTarget.Org, listOf(BudgetLimit(1))) }
 

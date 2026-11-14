@@ -16,18 +16,18 @@ import kotlin.uuid.Uuid
 
 /**
  * The gateway's [SpendGuard] on the limits and the ledger: past a limit that stops, the gateway refuses; a limit that
- * warns never refuses ([BudgetGuard] measures it for its alerts and audit line). [BudgetGuard] answers first, from its
- * cache (a map lookup on the hot path): without a limit that stops, the call goes with no lock and no hold; with one
- * reached, it is refused at once; its alerts at 80 % and 100 % go from there. Otherwise the limits are read again and
- * the ledger admits the call against fresh sums of the month and of the day under the org's lock ([SpendAdmission]):
- * calls at once never hold more than a limit leaves. A limit set on another replica applies within the guard's cache
- * time (5 s); on this one, at once (the limit's use cases forget the cached decisions).
+ * warns never refuses ([BudgetGuard] measures it for its alerts and audit line). [BudgetGuard] answers first, from
+ * the limits and the spend as they are now: without a limit that stops, the call goes with no lock and no hold; with
+ * one reached, it is refused at once; its alerts at 80 % and 100 % go from there. Otherwise the limits are read again
+ * and the ledger admits the call against fresh sums of the month and of the day under the org's lock
+ * ([SpendAdmission]): calls at once never hold more than a limit leaves. Nothing is cached in the process, so a limit
+ * set on any replica applies to the next call on every one.
  *
  * What it does not promise: a provider that bills more than the call's reserve (an input larger than its estimate)
  * can take the spend past a limit, by that gap; the output part of the reserve is bounded by the call's `max_tokens`.
  *
  * @param repository The limits.
- * @param guard The cached decision and its alerts.
+ * @param guard The decision and its alerts.
  * @param admission The ledger's admission.
  * @param clock The time.
  */
@@ -41,11 +41,11 @@ class LedgerSpendGuard(
         val now = clock.now()
         val month = BudgetPeriod.of(now)
         val day = BudgetPeriod.day(now)
-        val answer = when (val cached = guard.check(request.orgId, request.memberId, request.workflowId)) {
-            // No limit that stops applied when the guard last looked (its cache, forgotten when a limit changes here).
+        val answer = when (val decided = guard.check(request.orgId, request.memberId, request.workflowId)) {
+            // No limit that stops applies.
             BudgetDecision.Allowed(null) -> Admission.Admitted
             is BudgetDecision.Exhausted ->
-                Admission.Exhausted(cached.scope.toSpendScope(), cached.limitMicros, cached.window == BudgetWindow.DAY)
+                Admission.Exhausted(decided.scope.toSpendScope(), decided.limitMicros, decided.window == BudgetWindow.DAY)
             else -> admission.admit(
                 SpendHold(request.orgId, request.memberId, request.callId, request.reserveMicros, request.workflowId),
                 repository.limits(request.orgId, request.memberId, request.workflowId).stopping(day.start),

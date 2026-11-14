@@ -5,7 +5,6 @@ import run.ostrom.server.budgets.domain.BUDGETS_ACTOR
 import run.ostrom.server.budgets.domain.AuditedBudgetAlerts
 import run.ostrom.server.budgets.domain.BudgetAction
 import run.ostrom.server.budgets.domain.BudgetAlert
-import run.ostrom.server.budgets.domain.BudgetCacheSettings
 import run.ostrom.server.budgets.domain.BudgetDecision
 import run.ostrom.server.budgets.domain.BudgetGuardImpl
 import run.ostrom.server.budgets.domain.BudgetLimit
@@ -18,7 +17,6 @@ import run.ostrom.server.budgets.domain.monthlyMicros
 import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.audit.OrgAuditTrail
 import run.ostrom.server.kernel.logging.LogLevel
-import run.ostrom.server.testing.checkTime
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -26,10 +24,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.days
-import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
-import kotlin.time.TimeSource
 import kotlin.uuid.Uuid
 
 class BudgetGuardTest {
@@ -156,51 +152,40 @@ class BudgetGuardTest {
     }
 
     @Test
-    fun aDecisionIsReusedForFiveSecondsThenRecomputed() = runTest {
+    fun everyCheckReadsTheSpendAsItIsNow() = runTest {
         overrideMember(1_000)
         spend.spent[orgA to member] = 100
         assertEquals(BudgetDecision.Allowed(900), guard.check(orgA, member))
 
         spend.spent[orgA to member] = 1_000
-        clock.advance(4_999.milliseconds)
-        assertEquals(BudgetDecision.Allowed(900), guard.check(orgA, member), "Cached")
-        assertEquals(1, repository.limitReads)
-
-        clock.advance(1.milliseconds)
         assertEquals(
             BudgetDecision.Exhausted(BudgetScope.MEMBER, 1_000, TestCallers.nextMonth),
             guard.check(orgA, member),
+            "In the same millisecond: nothing is cached",
         )
         assertEquals(2, repository.limitReads)
     }
 
     @Test
-    fun invalidatingAnOrgForgetsItsDecisionsOnly() = runTest {
+    fun aLimitSetOnAnotherReplicaAppliesToTheNextCheck() = runTest {
+        // Another replica: its own guard, the same database.
+        val elsewhere = BudgetGuardImpl(repository, spend, alerts, clock, logger)
         overrideMember(1_000)
-        repository.orgLimits[TestCallers.orgB] = 1_000
-        guard.check(orgA, member)
-        guard.check(TestCallers.orgB, TestCallers.adminB.memberId)
+        assertEquals(BudgetDecision.Allowed(1_000), guard.check(orgA, member))
         overrideMember(50)
-
-        guard.invalidate(orgA)
-
-        assertEquals(BudgetDecision.Allowed(50), guard.check(orgA, member), "The new limit applies at once")
-        guard.check(TestCallers.orgB, TestCallers.adminB.memberId)
-        assertEquals(3, repository.limitReads, "Org B stayed cached")
+        assertEquals(BudgetDecision.Allowed(50), elsewhere.check(orgA, member))
+        assertEquals(BudgetDecision.Allowed(50), guard.check(orgA, member), "Applied at once, with no invalidation")
     }
 
     @Test
-    fun theOrgSpendIsReadOncePerOrgForAllItsMembers() = runTest {
+    fun theOrgSpendIsReadAtEveryCheck() = runTest {
         repository.orgLimits[orgA] = 1_000_000
         spend.spent[orgA to null] = 10
 
         guard.check(orgA, member)
         guard.check(orgA, admin)
 
-        assertEquals(listOf<Pair<Uuid, Uuid?>>(orgA to null), spend.reads)
-        clock.advance(5.seconds)
-        guard.check(orgA, member)
-        assertEquals(2, spend.reads.size, "Read again once expired")
+        assertEquals(listOf<Pair<Uuid, Uuid?>>(orgA to null, orgA to null), spend.reads)
     }
 
     @Test
@@ -324,12 +309,9 @@ class BudgetGuardTest {
     }
 
     @Test
-    fun aLimitChangedDuringACheckIsNotCachedOverByIt() = runTest {
+    fun aLimitChangedDuringACheckAppliesToTheNextOne() = runTest {
         repository.orgLimits[orgA] = 1_000_000
-        spend.duringRead = {
-            repository.orgLimits[orgA] = 0
-            guard.invalidate(orgA)
-        }
+        spend.duringRead = { repository.orgLimits[orgA] = 0 }
         assertEquals(BudgetDecision.Allowed(1_000_000), guard.check(orgA, member), "Read before the change")
 
         assertEquals(
@@ -346,7 +328,6 @@ class BudgetGuardTest {
         guard.check(orgA, member)
 
         overrideMember(1_100)
-        guard.invalidate(orgA)
         guard.check(orgA, member)
 
         assertEquals(listOf(1_000L, 1_100L), alerts.alerts.map { it.limitMicros })
@@ -371,45 +352,6 @@ class BudgetGuardTest {
         guard.check(orgA, member)
 
         assertEquals(listOf(TestCallers.monthStart, TestCallers.nextMonth), alerts.alerts.map { it.periodStart })
-    }
-
-    @Test
-    fun theCacheStaysBoundedDroppingExpiredEntriesFirst() = runTest {
-        val small = BudgetGuardImpl(repository, spend, alerts, clock, logger, BudgetCacheSettings(maxEntries = 2))
-        val members = List(3) { Uuid.random() }
-        small.check(orgA, members[0])
-        clock.advance(5.seconds)
-        small.check(orgA, members[1])
-        small.check(orgA, members[2])
-        assertEquals(3, repository.limitReads, "The expired entry made room")
-
-        small.check(orgA, members[1])
-        assertEquals(3, repository.limitReads, "Still cached")
-        small.check(orgA, members[0])
-        assertEquals(4, repository.limitReads, "Full of live entries: the cache was cleared")
-        small.check(orgA, members[1])
-        assertEquals(5, repository.limitReads)
-    }
-
-    @Test
-    fun tenThousandCachedChecksReadTheLimitsOnceAndKeepTheirTimeBudget() = runTest {
-        repository.orgLimits[orgA] = 1_000_000
-        overrideMember(10_000)
-        // An untimed pass first: on the JVM the first calls also pay class loading and the JIT, not the cache.
-        repeat(10_000) { guard.check(orgA, member) }
-
-        // The best of five passes: the cost of the cache, not a pause of the shared CI runner.
-        val elapsed = List(5) {
-            val mark = TimeSource.Monotonic.markNow()
-            repeat(10_000) { guard.check(orgA, member) }
-            mark.elapsedNow()
-        }.min()
-
-        // What the Build holds, on any runner: 60 000 checks read the limits once, a check that reads the database
-        // instead of the cache reads them every time. The time, 20 µs a check at most under Kover's instrumentation
-        // (about 6 µs measured on a shared runner), is held by checkTime: the Build's summary and the Perf workflow.
-        assertEquals(1, repository.limitReads, "Read once, then cached")
-        checkTime("10 000 cached budget checks (BudgetGuard), best of 5", elapsed, 200.milliseconds)
     }
 
     @Test

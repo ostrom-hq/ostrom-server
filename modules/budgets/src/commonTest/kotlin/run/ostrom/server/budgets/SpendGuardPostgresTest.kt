@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.budgets
 
-import run.ostrom.server.budgets.domain.BudgetDecisionCache
 import run.ostrom.server.budgets.domain.BudgetLimit
 import run.ostrom.server.budgets.domain.BudgetTarget
 import run.ostrom.server.budgets.domain.BudgetsRepository
@@ -75,8 +74,7 @@ class SpendGuardPostgresTest {
         assertEquals(SpendDecision.Allowed, server.koin.get<SpendGuard>().check(request(1_000_000)), "No limit yet")
         val limit = listOf(BudgetLimit(10_000))
         server.koin.get<BudgetsRepository>().replaceLimits(TestCallers.orgA, BudgetTarget.Org, limit, clock.now())
-        // As the limit's use cases do: the cached "no limit" is forgotten at once on this replica.
-        server.koin.get<BudgetDecisionCache>().invalidate(TestCallers.orgA)
+        // Nothing cached: the next call sees the limit, as on every replica.
 
         val calls = List(20) { request(3_000) }
         val decisions = server.atOnce(calls)

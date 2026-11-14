@@ -437,7 +437,7 @@ class BudgetsPostgresTest {
         assertEquals(listOf(both), server.budgets().items, "Listed whole, both windows")
         server.koin.get<WorkflowRemovals>().removed(orgA, "nightly")
         assertEquals(emptyList(), server.budgets().items)
-        assertEquals(BudgetDecision.Allowed(null), guard.check(orgA, member, "nightly"), "Its cached decision too")
+        assertEquals(BudgetDecision.Allowed(null), guard.check(orgA, member, "nightly"), "Its decision too")
         val alertsLeft = Statement.create("SELECT COUNT(*) AS n FROM budgets_alerts WHERE workflow_id IS NOT NULL")
         assertEquals(0L, server.driver.fetchInOrg(orgA, alertsLeft).getOrThrow().first().get("n").asLong())
         server.koin.get<WorkflowRemovals>().removed(orgA, "review")
