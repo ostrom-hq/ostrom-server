@@ -1,7 +1,9 @@
 name: Runner image
 
 # Builds the cloud session image (runner/Dockerfile) from main when the runner changes, smoke-tests it and pushes it to
-# GHCR (private package). Pull requests stay on the one `ci` job (org CI rules), which builds and tests :runner.
+# GHCR (private package) and to Docker Hub, docker.io/ostromhq/ostrom-runner (public, as the server image): the
+# console's journeys in ostrom-web start their cloud sessions and machines on it, and that repository's token cannot
+# read the GHCR package. Pull requests stay on the one `ci` job (org CI rules), which builds and tests :runner.
 on:
   push:
     branches: [main]
@@ -83,3 +85,19 @@ jobs:
           docker tag ostrom-runner:ci ghcr.io/ostrom-hq/ostrom-runner:latest
           docker push "ghcr.io/ostrom-hq/ostrom-runner:$SHA"
           docker push ghcr.io/ostrom-hq/ostrom-runner:latest
+
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: docker.io
+          username: ostromhq
+          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
+
+      # The same image, public: `sha-<commit>` pins one, `latest` is main's.
+      - name: Push to Docker Hub
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          docker tag ostrom-runner:ci "docker.io/ostromhq/ostrom-runner:sha-$SHA"
+          docker tag ostrom-runner:ci docker.io/ostromhq/ostrom-runner:latest
+          docker push "docker.io/ostromhq/ostrom-runner:sha-$SHA"
+          docker push docker.io/ostromhq/ostrom-runner:latest
