@@ -51,10 +51,15 @@ class OrgAuditQueryPlansTest {
             assertTrue("identity_audit_events_chain_sequence_key" in plan, "$name skips the chain's index:\n$plan")
             // The line before each one is looked up for the page's lines only, never the chain read whole.
             assertFalse("Materialize" in plan || "Join Filter" in plan, "$name reads the whole chain:\n$plan")
+            // The page is cut before the lateral read: it runs once per line of the page, never once per line older
+            // than the cursor (5 000 loops for `?before=5000` on main e362671).
+            val loops = LOOPS.findAll(plan).maxOf { it.groupValues[1].toInt() }
+            assertTrue(loops <= PAGE + 1, "$name reads the line before $loops lines, not the page's:\n$plan")
         }
     }
 
     private companion object {
         const val PAGE = 50
+        val LOOPS = Regex("loops=(\\d+)")
     }
 }
