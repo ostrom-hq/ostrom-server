@@ -69,6 +69,8 @@ class GitHubAppManifestsTest {
             .mapValues { it.value.jsonPrimitive.content }
         assertEquals("write", permissions["checks"])
         assertEquals("read", permissions["members"])
+        // Sign-in with GitHub through the App reads the person's verified emails.
+        assertEquals("read", permissions["emails"])
         // The cloud sessions' user tokens clone and push: never more than the App's own permissions.
         assertEquals("write", permissions["contents"])
         assertEquals("write", permissions["pull_requests"])

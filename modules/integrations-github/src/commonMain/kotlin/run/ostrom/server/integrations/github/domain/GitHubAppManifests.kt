@@ -245,6 +245,8 @@ private val PERMISSIONS = listOf(
     "actions" to "read",
     "checks" to "write",
     "contents" to "write",
+    // Sign-in with GitHub through the App reads the person's verified addresses (`GET /user/emails`).
+    "emails" to "read",
     "issues" to "read",
     "members" to "read",
     "metadata" to "read",
