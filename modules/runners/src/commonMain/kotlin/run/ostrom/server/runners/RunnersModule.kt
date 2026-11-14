@@ -20,6 +20,8 @@ import run.ostrom.server.runners.infrastructure.SettingsAllowedOrgs
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.automations.domain.AutomationLauncher
 import run.ostrom.server.automations.domain.AutomationLimits
+import run.ostrom.server.automations.domain.WaitSecretSessions
+import run.ostrom.server.automations.domain.WaitSecretSource
 import run.ostrom.server.billing.domain.GetAgentUsageUseCase
 import run.ostrom.server.billing.domain.GetPlanLimitsUseCase
 import run.ostrom.server.cloud.domain.CloudSettingsSource
@@ -92,6 +94,7 @@ import run.ostrom.server.runners.domain.TerminalTickets
 import run.ostrom.server.runners.infrastructure.BillingCloudPlanProvider
 import run.ostrom.server.runners.infrastructure.BillingCloudUsageMeter
 import run.ostrom.server.runners.infrastructure.CloudSessionAutomationLauncher
+import run.ostrom.server.runners.infrastructure.CloudSessionWaitSecretSessions
 import run.ostrom.server.runners.infrastructure.CloudSettingsBackgroundWorkLimit
 import run.ostrom.server.runners.infrastructure.CloudSessionsRepositoryImpl
 import run.ostrom.server.runners.infrastructure.CloudSettingsAutomationLimits
@@ -232,7 +235,11 @@ object RunnersModule : ServerModule {
             RunnerGitHubTokenUseCaseImpl(get(), get(), getOrNull<RunnerGitHubTokens>() ?: NoRunnerGitHubTokens)
         }
         single<RunnerVariables> { runnerVariables(getOrNull<ResolveEnvironmentUseCase>()) }
-        single<RunnerVariablesUseCase> { RunnerVariablesUseCaseImpl(get(), get(), get()) }
+        single<RunnerVariablesUseCase> {
+            RunnerVariablesUseCaseImpl(get(), get(), get(), getOrNull<WaitSecretSource>(), getOrNull<MemberDirectory>())
+        }
+        // The agent of a cloud session, for the secret fields of its waits (waits.secrets.v1).
+        single<WaitSecretSessions> { CloudSessionWaitSecretSessions(get()) }
         // Without the orgs module nobody vouches for an owner: the preparation routes are not served (404), so a
         // runner falls back to the legacy clone instead of failing every session.
         single {

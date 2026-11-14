@@ -8,6 +8,8 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(project(":kernel"))
+            // Seals the secrets of answered waits (waits.secrets.v1).
+            implementation(project(":modules:secrets"))
             implementation(libs.kotlinx.datetime)
             implementation(libs.cryptography.core)
         }

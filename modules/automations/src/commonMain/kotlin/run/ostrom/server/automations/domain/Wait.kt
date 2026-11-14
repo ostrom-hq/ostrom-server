@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.automations.domain
 
+import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
@@ -50,6 +51,17 @@ enum class WaitFieldType(val wire: String) {
     @SerialName("date")
     DATE("date"),
 
+    /** The name of a file the person uploaded, a string. */
+    @SerialName("file")
+    FILE("file"),
+
+    /**
+     * A value the agent needs and nobody else reads: kept sealed apart from the wait, which only says `provided`
+     * (`waits.secrets.v1`).
+     */
+    @SerialName("secret")
+    SECRET("secret"),
+
     /** No value: it shows its help. */
     @SerialName("info")
     INFO("info"),
@@ -68,6 +80,7 @@ enum class WaitFieldType(val wire: String) {
  * @property multiple Whether a `choice` field takes several options.
  * @property allowOther Whether a `choice` field accepts a free answer.
  * @property maxLength The longest `text` answer.
+ * @property oneTime A `secret` only: deleted once the server has served it to the session's runner.
  */
 @Serializable
 data class WaitField(
@@ -81,6 +94,7 @@ data class WaitField(
     val multiple: Boolean = false,
     val allowOther: Boolean = false,
     val maxLength: Int? = null,
+    val oneTime: Boolean = false,
 )
 
 /**
@@ -240,6 +254,8 @@ data class WaitTimer(
  * @property session For an agent token, the segment of its session open now, which the server found: it asks there.
  * @property segments For an agent token, the segments of its session its launch opened, the open one included: the
  *   waits asked there are its own, also after the launcher reopened the session.
+ * @property principal The credential of the request, for the audit log; null where none acts (an agent token's
+ *   caller, a test).
  */
 data class WaitCaller(
     val orgId: Uuid,
@@ -249,6 +265,7 @@ data class WaitCaller(
     val agent: Boolean = false,
     val session: String? = null,
     val segments: List<String>? = null,
+    val principal: AuthenticatedPrincipal? = null,
 ) {
     /** Whether this caller acts as an administrator here. */
     val actsAsAdmin: Boolean get() = admin && interactive
@@ -264,4 +281,53 @@ enum class CreateOutcome {
 
     /** The asker already used this idempotency key: nothing stored. */
     DUPLICATE,
+}
+
+/**
+ * A secret to keep for the session of the wait it answers (`waits.secrets.v1`). It holds the value: never log or
+ * print it.
+ *
+ * @property envName The variable it reaches the agent as, `OSTROM_WAIT_<FIELD ID UPPER-CASED>`.
+ * @property fieldId The field it came from.
+ * @property value The value.
+ * @property oneTime Whether serving it deletes it.
+ * @property expiresAt When it is deleted, used or not.
+ */
+class WaitSecret(
+    val envName: String,
+    val fieldId: String,
+    val value: String,
+    val oneTime: Boolean,
+    val expiresAt: Instant,
+) {
+    override fun toString(): String = "WaitSecret(name=$envName, oneTime=$oneTime, value=[REDACTED])"
+}
+
+/**
+ * The secrets served to a session's runner: the values by variable name, and the names of those the server deleted
+ * by serving them.
+ *
+ * @property values The values, never logged.
+ * @property oneTime The names in [values] that were one-time.
+ */
+class ServedSecrets(val values: Map<String, String> = emptyMap(), val oneTime: Set<String> = emptySet()) {
+    override fun toString(): String =
+        "ServedSecrets(names=${values.keys.sorted()}, oneTime=${oneTime.sorted()}, values=[REDACTED])"
+}
+
+/**
+ * Where a session's runner gets the secrets of its answered waits (`fetchRunnerVariables`, `waits.secrets.v1`): the
+ * runners module asks it for the cloud session it serves. A one-time secret is deleted by being served.
+ */
+fun interface WaitSecretSource {
+    /**
+     * The unexpired secrets kept for [sessionId] while [ownerId] ran it.
+     *
+     * @param orgId The organization.
+     * @param sessionId The cloud session.
+     * @param ownerId The member the session runs for: another's secrets are never served.
+     *
+     * @return The secrets; none for a session that has none.
+     */
+    suspend fun serve(orgId: Uuid, sessionId: String, ownerId: String): ServedSecrets
 }

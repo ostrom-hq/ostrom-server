@@ -68,11 +68,26 @@ interface WaitsRepository {
     suspend fun list(filter: WaitFilter, before: Uuid?, limit: Int): List<Wait>
 
     /**
-     * Records the answer of an open wait.
+     * Records the answer of an open wait. The [secrets] are sealed and bound to the wait's session in the same
+     * transaction, only when this answer is the one that resolves it; a secret of the same name on the session is
+     * replaced.
      *
+     * @param secrets The values of the answer's secret fields; the answer holds `provided` for them.
      * @return The resolved wait, or null when it is not open any more (another answer won).
+     * @throws SecretsUnavailableException When [secrets] is not empty and the server has no key to seal with.
      */
-    suspend fun resolve(orgId: Uuid, id: Uuid, answer: WaitAnswer): Wait?
+    suspend fun resolve(orgId: Uuid, id: Uuid, answer: WaitAnswer, secrets: List<WaitSecret> = emptyList()): Wait?
+
+    /**
+     * The unexpired secrets kept for a session while [ownerId] ran it, in one transaction: a one-time secret is
+     * deleted by being read, so two replicas never serve it twice.
+     *
+     * @param orgId The organization.
+     * @param sessionId The session.
+     * @param ownerId The member it runs for; the secrets another asked of it are not served.
+     * @param now The time.
+     */
+    suspend fun serveSecrets(orgId: Uuid, sessionId: String, ownerId: String, now: Instant): ServedSecrets
 
     /**
      * Cancels an open wait.
@@ -149,6 +164,16 @@ interface TimedWaitsRepository {
      * @return The resolved wait, or null when it is not open any more (or not due, or not an event's).
      */
     suspend fun settle(orgId: Uuid, id: Uuid, answer: WaitAnswer, due: Boolean): Wait?
+
+    /**
+     * Deletes the secrets whose lifetime ended, of every organization, used or not.
+     *
+     * @param now The time.
+     * @param limit At most this many.
+     *
+     * @return How many it deleted.
+     */
+    suspend fun purgeSecrets(now: Instant, limit: Int): Int
 }
 
 /** The secrets of the event addresses: 256 random bits each, kept as their SHA-256 only. */
