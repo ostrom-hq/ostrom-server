@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.sharing
 
-import run.ostrom.server.kernel.config.ConfigSource
-import run.ostrom.server.kernel.config.MapConfigSource
+import run.ostrom.server.kernel.settings.InstanceSettings
+import run.ostrom.server.kernel.settings.SettingsValues
 import run.ostrom.server.secrets.infrastructure.executeInOrg
 import run.ostrom.server.secrets.infrastructure.fetchInOrg
 import run.ostrom.server.sharing.domain.AccountChangedException
@@ -446,8 +446,10 @@ class SharingPostgresTest : SharingPostgresHarness() {
         val seen = mutableListOf<String>()
         val fakeProvider = module {
             includes(overrides)
-            single<ConfigSource> {
-                MapConfigSource(mapOf("OSTROM_SHARING_CLAUDE_TOKEN_URL" to "http://provider.localtest.me:8080/token"))
+            // The endpoint an administrator saved in the console.
+            single<InstanceSettings> {
+                val endpoint = "http://provider.localtest.me:8080/token"
+                InstanceSettings { SettingsValues(mapOf("claudeTokenUrl" to endpoint)) }
             }
             single(SharingModule.HTTP_CLIENT) {
                 HttpClient(

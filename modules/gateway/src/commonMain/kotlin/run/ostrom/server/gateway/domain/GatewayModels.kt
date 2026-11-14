@@ -282,12 +282,17 @@ data class ModelPolicy(
 }
 
 /**
- * What a model call needs of its org, read once per call.
+ * What a model call needs of its org and of the instance, read once per call.
  *
  * @property settings The gateway settings.
  * @property policy The model policy.
+ * @property providers The instance's provider keys and URLs ([GatewayInstanceSettings]).
  */
-data class GatewayOrgConfig(val settings: GatewaySettings = GatewaySettings(), val policy: ModelPolicy = ModelPolicy())
+data class GatewayOrgConfig(
+    val settings: GatewaySettings = GatewaySettings(),
+    val policy: ModelPolicy = ModelPolicy(),
+    val providers: InstanceProviders = InstanceProviders.NONE,
+)
 
 /** Storage of the org's settings and model policy, confined to the org. */
 interface GatewaySettingsRepository {

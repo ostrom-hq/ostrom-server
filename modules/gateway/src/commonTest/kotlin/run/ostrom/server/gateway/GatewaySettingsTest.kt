@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.gateway
 
+import run.ostrom.server.gateway.domain.GatewayInstanceSettings
 import run.ostrom.server.gateway.domain.GatewayRules
 import run.ostrom.server.gateway.domain.GatewaySettings
 import run.ostrom.server.gateway.domain.GetGatewaySettingsUseCaseImpl
@@ -13,8 +14,7 @@ import run.ostrom.server.gateway.domain.ProviderEndpoints
 import run.ostrom.server.gateway.domain.PutGatewaySettingsUseCaseImpl
 import run.ostrom.server.gateway.domain.PutModelPolicyUseCaseImpl
 import run.ostrom.server.gateway.domain.modelNotAllowed
-import run.ostrom.server.kernel.config.InvalidConfigException
-import run.ostrom.server.kernel.config.MapConfigSource
+import run.ostrom.server.kernel.settings.SettingsValues
 import run.ostrom.server.secrets.domain.AdminRequiredException
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -146,29 +146,52 @@ class GatewaySettingsTest {
     }
 
     @Test
-    fun theInstanceConfigurationSetsKeysAndProviderUrls() {
-        val defaults = GatewayConfig.from(MapConfigSource(emptyMap()))
+    fun theInstanceSettingsSetKeysAndProviderUrls() {
+        val defaults = GatewayInstanceSettings.providers(SettingsValues.EMPTY)
         assertEquals(ProviderEndpoints(), defaults.endpoints)
         assertNull(defaults.keys.of(InferenceProvider.ANTHROPIC))
-        val custom = GatewayConfig.from(
-            MapConfigSource(
+        val custom = GatewayInstanceSettings.providers(
+            SettingsValues(
                 mapOf(
-                    "OSTROM_GATEWAY_ANTHROPIC_API_KEY" to "sk-an",
-                    "OSTROM_GATEWAY_OPENAI_API_KEY" to "sk-op",
-                    "OSTROM_GATEWAY_OPENROUTER_API_KEY" to "sk-or",
-                    "OSTROM_GATEWAY_ANTHROPIC_URL" to "http://proxy.local:8080/",
-                    "OSTROM_GATEWAY_CODEX_URL" to "https://codex.local/backend",
+                    "anthropicApiKey" to "sk-an",
+                    "openaiApiKey" to "sk-op",
+                    "openrouterApiKey" to "sk-or",
+                    "anthropicUrl" to "http://proxy.local:8080/",
+                    "codexUrl" to "https://codex.local/backend",
                 ),
             ),
         )
         assertEquals("http://proxy.local:8080", custom.endpoints.anthropic)
         assertEquals("https://codex.local/backend", custom.endpoints.codex)
         assertEquals("https://api.openai.com", custom.endpoints.openai)
+        assertEquals("sk-an", custom.keys.anthropic)
+        assertEquals("sk-op", custom.keys.openai)
         assertEquals("sk-or", custom.keys.openrouter)
-        val error = assertFailsWith<InvalidConfigException> {
-            GatewayConfig.from(MapConfigSource(mapOf("OSTROM_GATEWAY_OPENROUTER_URL" to "ftp://x")))
-        }
-        assertEquals("OSTROM_GATEWAY_OPENROUTER_URL must be an http(s) URL.", error.message)
-        assertFalse("sk-an" in custom.toString(), "Keys never printed")
+        assertFalse("sk-an" in custom.keys.toString(), "Keys never printed")
+    }
+
+    @Test
+    fun theConsolesGatewaySectionSealsTheKeysAndChecksTheUrls() {
+        val section = GatewayInstanceSettings.SECTION
+        assertEquals("gateway", section.name)
+        assertEquals(
+            listOf(
+                "anthropicApiKey" to "OSTROM_GATEWAY_ANTHROPIC_API_KEY",
+                "openaiApiKey" to "OSTROM_GATEWAY_OPENAI_API_KEY",
+                "openrouterApiKey" to "OSTROM_GATEWAY_OPENROUTER_API_KEY",
+                "anthropicUrl" to "OSTROM_GATEWAY_ANTHROPIC_URL",
+                "openaiUrl" to "OSTROM_GATEWAY_OPENAI_URL",
+                "openrouterUrl" to "OSTROM_GATEWAY_OPENROUTER_URL",
+                "codexUrl" to "OSTROM_GATEWAY_CODEX_URL",
+            ),
+            section.fields.map { it.name to it.legacyVariable },
+        )
+        assertEquals(listOf(true, true, true, false, false, false, false), section.fields.map { it.secret })
+        val key = checkNotNull(section.field("anthropicApiKey"))
+        assertNull(key.check("sk-ant-api03-x"))
+        val url = checkNotNull(section.field("openrouterUrl"))
+        assertNull(url.check("http://127.0.0.1:4620"))
+        assertNull(url.check("https://openrouter.ai/api"))
+        assertEquals("A provider's base URL is an http or https URL.", url.check("ftp://x"))
     }
 }

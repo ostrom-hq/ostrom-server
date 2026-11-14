@@ -1,27 +1,42 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.sharing
 
-import run.ostrom.server.kernel.config.ConfigSource
-import run.ostrom.server.kernel.config.InvalidConfigException
+import run.ostrom.server.kernel.settings.SettingsField
+import run.ostrom.server.kernel.settings.SettingsSection
+import run.ostrom.server.kernel.settings.SettingsValues
 import run.ostrom.server.sharing.domain.AccountProvider
 import run.ostrom.server.sharing.infrastructure.HttpOAuthRefresher
 import io.ktor.http.Url
 
 /**
- * The sharing module's configuration, from the instance (Docker environment, Helm values): the providers' OAuth token
- * endpoints, for a proxy or the local demo's fake provider. The refresh tokens are sent there, so an endpoint is https,
- * or http to a local host only. The variables are listed in docs/MODULES.md.
+ * The sharing module's settings (Admin → Settings → sharing): the providers' OAuth token endpoints, for a proxy or the
+ * end-to-end bench's fake provider, set by an administrator of the instance and read at each refresh. The refresh
+ * tokens are sent there, so an endpoint is https, or http to a local host only. `OSTROM_SHARING_CLAUDE_TOKEN_URL` and
+ * `OSTROM_SHARING_CODEX_TOKEN_URL` are imported once.
  *
  * An endpoint is read by a strict grammar (scheme, host of letters, digits, dots and hyphens, an optional port, then a
  * path or a query), and the decision is taken on the host the HTTP client parses, never on the raw string: a `#`, an
  * `@` (credentials), a backslash or a host the grammar does not know is refused, so `http://evil.example#@localhost/`
  * can never pass for a local host.
  */
-object SharingConfig {
-    /** The variable that sets each provider's token endpoint. */
-    val TOKEN_URL_KEYS: Map<AccountProvider, String> = mapOf(
+object SharingSettings {
+    /** The field that sets each provider's token endpoint. */
+    val TOKEN_URL_FIELDS: Map<AccountProvider, String> = mapOf(
+        AccountProvider.CLAUDE to "claudeTokenUrl",
+        AccountProvider.CODEX to "codexTokenUrl",
+    )
+
+    private val LEGACY_VARIABLES = mapOf(
         AccountProvider.CLAUDE to "OSTROM_SHARING_CLAUDE_TOKEN_URL",
         AccountProvider.CODEX to "OSTROM_SHARING_CODEX_TOKEN_URL",
+    )
+
+    /** The section the admin module serves and stores. */
+    val SECTION: SettingsSection = SettingsSection(
+        "sharing",
+        TOKEN_URL_FIELDS.map { (provider, field) ->
+            SettingsField(field, legacyVariable = LEGACY_VARIABLES.getValue(provider), check = { refusal(field, it) })
+        },
     )
 
     /** The hosts reached in clear: this machine, and the names that resolve to it. */
@@ -44,30 +59,31 @@ object SharingConfig {
     private const val MAX_PORT = 65_535
 
     /**
-     * Reads the token endpoints, the providers' own by default.
+     * The token endpoints a stored section sets, the providers' own for those unset.
      *
-     * @param source The instance's configuration.
+     * @param values The stored section.
      *
      * @return The endpoint per provider.
-     *
-     * @throws InvalidConfigException When an endpoint is not https, or http to a local host.
      */
-    fun tokenEndpoints(source: ConfigSource): Map<AccountProvider, String> =
+    fun tokenEndpoints(values: SettingsValues): Map<AccountProvider, String> =
         HttpOAuthRefresher.ENDPOINTS.mapValues { (provider, default) ->
-            val key = TOKEN_URL_KEYS.getValue(provider)
-            val value = source[key]
-            if (value == null) default else checked(key, value.trim())
+            values[TOKEN_URL_FIELDS.getValue(provider)]?.trim() ?: default
         }
 
-    private fun checked(key: String, value: String): String {
-        if (value.any { it.isWhitespace() } || !allowed(value)) {
-            throw InvalidConfigException(
-                "$key must be an https URL, or http to a local host (localhost, 127.0.0.1, *.localhost, " +
-                    "*.localtest.me), with a plain host name or IPv4 address, a port up to 65535, and no " +
-                    "credentials (@), fragment (#) or backslash.",
-            )
-        }
-        return value
+    /**
+     * Why the console refuses an endpoint.
+     *
+     * @param field The field's name.
+     * @param value The endpoint.
+     *
+     * @return The refusal, or null when the endpoint is https, or http to a local host.
+     */
+    fun refusal(field: String, value: String): String? = if (value.any { it.isWhitespace() } || !allowed(value)) {
+        "$field must be an https URL, or http to a local host (localhost, 127.0.0.1, *.localhost, " +
+            "*.localtest.me), with a plain host name or IPv4 address, a port up to 65535, and no " +
+            "credentials (@), fragment (#) or backslash."
+    } else {
+        null
     }
 
     private fun allowed(value: String): Boolean {
