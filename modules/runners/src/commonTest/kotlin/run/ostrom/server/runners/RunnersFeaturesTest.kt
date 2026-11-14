@@ -19,8 +19,8 @@ import kotlin.test.assertEquals
 import kotlin.uuid.Uuid
 
 class RunnersFeaturesTest {
-    /** What every cloud runtime serves. */
-    private val cloud = setOf("runners.v1", "runners.cloud.v1")
+    /** What every cloud runtime serves: its agent tokens are bound to their cloud session. */
+    private val cloud = setOf("runners.v1", "runners.cloud.v1", "runners.cloud.agent.v1")
 
     private fun koin(driver: RunnersConfig.DriverKind) = koinApplication {
         modules(module { single { RunnersConfig.from(MapConfigSource(emptyMap())).copy(driver = driver) } })

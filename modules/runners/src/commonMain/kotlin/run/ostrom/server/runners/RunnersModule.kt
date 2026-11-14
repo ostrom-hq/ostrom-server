@@ -285,8 +285,9 @@ object RunnersModule : ServerModule {
     }
 
     /**
-     * Registered runners; cloud runners only with a runtime (the console's clusters, Docker or registered runners);
-     * their GitHub access once members can link a GitHub account; their profiles on the console's clusters.
+     * Registered runners; cloud runners only with a runtime (the console's clusters, Docker or registered runners),
+     * their agent token bound to their cloud session ([CloudAgentSessions], bound with them); their GitHub access once
+     * members can link a GitHub account; their profiles on the console's clusters.
      */
     override suspend fun features(koin: Koin): Set<String> {
         if (koin.get<RunnersConfig>().driver == RunnersConfig.DriverKind.NONE) return setOf(ServerFeatures.RUNNERS)
@@ -297,6 +298,7 @@ object RunnersModule : ServerModule {
         return setOfNotNull(
             ServerFeatures.RUNNERS,
             ServerFeatures.RUNNERS_CLOUD,
+            ServerFeatures.RUNNERS_CLOUD_AGENT,
             // The recipe, the Git identity and the owner's values (none without the secrets module), once the orgs
             // module says who is an active member: without it, no session would prepare.
             ServerFeatures.RUNNERS_CLOUD_ENVIRONMENT.takeIf { members },
