@@ -449,6 +449,13 @@ class GitHubDirectoryPostgresTest {
         val noHook = createdApp().copy(webhookSecret = null)
         sealed.saveApp(noHook, "usr_admin", NOW)
         assertNull(sealed.app()?.webhookSecret)
+
+        // An App imported once from the former variables may have no OAuth client.
+        server.driver.execute("DELETE FROM github_apps").getOrThrow()
+        sealed.saveApp(createdApp().copy(clientId = null, clientSecret = null), "environment", NOW)
+        val imported = sealed.app()
+        assertEquals(null to null, imported?.clientId to imported?.clientSecret)
+        assertEquals("ostrom-acme", imported?.slug)
     }
 
     @Test

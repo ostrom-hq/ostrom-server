@@ -46,11 +46,17 @@ class ImportGitHubAppTest {
         val import = ImportGitHubAppUseCaseImpl(store, logger, clock)
         import(GitHubAppCredentials(webhookSecret = "hook"))
         assertTrue(logger.lines.isEmpty())
-        for (partial in listOf(full.copy(appId = "x"), full.copy(privateKeyPem = null), full.copy(slug = null))) {
+        val partials = listOf(
+            full.copy(appId = "x"),
+            full.copy(appId = null),
+            full.copy(privateKeyPem = null),
+            full.copy(slug = null),
+        )
+        for (partial in partials) {
             import(partial)
         }
         assertNull(store.stored)
-        assertEquals(3, logger.lines.count { "not imported" in it.second })
+        assertEquals(4, logger.lines.count { "not imported" in it.second })
     }
 
     @Test

@@ -251,6 +251,8 @@ object GitHubIntegrationModule : ServerModule {
      */
     override suspend fun initialize(koin: Koin) {
         koin.get<ImportGitHubAppUseCase>()(koin.get<GitHubSettings>().credentials())
+        // Whatever was read before the import is read again.
+        koin.get<GitHubAppSource>().forget()
         koin.get<GitHubHost>().refresh()
     }
 
