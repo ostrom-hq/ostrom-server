@@ -488,4 +488,14 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
             CREATE INDEX identity_rate_limits_ends ON identity_rate_limits (ends_at)
         """.trimIndent(),
     ),
+    // The audit page's estimate (OrgAuditPage): an organization's chain is named after it, so `chain = ?` already
+    // decides `org_id = ?`, but the planner counted both and expected a few dozen lines of a chain of thousands, then
+    // bitmap-scanned and sorted the whole chain instead of walking its index backwards to the page's limit. Built at
+    // the next ANALYZE (autovacuum's or a test's).
+    SchemaMigration(
+        version = 19,
+        name = "audit_chain_org_dependency",
+        sql = "CREATE STATISTICS identity_audit_events_chain_org (dependencies) ON chain, org_id " +
+            "FROM identity_audit_events",
+    ),
 )

@@ -58,6 +58,12 @@ class OrgAuditQueryPlansTest {
             }
             assertTrue(loops <= PAGE + 1, "$name reads the line before $loops lines, not the page's:\n$plan")
         }
+        // Without a filter the page walks the chain's index backwards and stops at its limit, never sorting the chain
+        // read whole (IdentityMigrations version 19 tells the planner that the chain decides the organization).
+        for (name in listOf("newest page", "page by its cursor")) {
+            val plan = plans.getValue(name)
+            assertFalse("Sort" in plan, "$name sorts the chain:\n$plan")
+        }
     }
 
     private companion object {
