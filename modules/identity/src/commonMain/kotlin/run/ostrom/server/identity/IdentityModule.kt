@@ -250,7 +250,8 @@ object IdentityModule : ServerModule {
         single(named(GITHUB_SIGN_IN_SETTINGS.name)) { GITHUB_SIGN_IN_SETTINGS }
         single(named(GOOGLE_SIGN_IN_SETTINGS.name)) { GOOGLE_SIGN_IN_SETTINGS }
         single(named(SIGN_UP_SETTINGS.name)) { SIGN_UP_SETTINGS }
-        // The integrations-github module's App, when it is in the server: its OAuth client signs people in first.
+        // The integrations-github module's App, when it is in the server: its OAuth client signs people in while the
+        // github-sign-in settings are empty.
         single { SignInSettings(get(), getOrNull<GitHubAppSignIn>() ?: NoGitHubAppSignIn) }
         single<SignUpPolicy> {
             val settings = get<SignInSettings>()

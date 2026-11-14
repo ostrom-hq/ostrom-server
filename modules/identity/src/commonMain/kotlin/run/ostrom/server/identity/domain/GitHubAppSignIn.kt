@@ -3,7 +3,8 @@ package run.ostrom.server.identity.domain
 
 /**
  * The OAuth client of the instance's GitHub App, and the GitHub it lives on, for signing in with GitHub through the
- * App as TeamCode does (its web flow authorizes with the App's client id and exchanges the code with its secret).
+ * App as TeamCode does (its web flow authorizes with the App's client id and exchanges the code with its secret), while
+ * the `github-sign-in` settings are empty.
  *
  * @property clientId The App's OAuth client id.
  * @property clientSecret Its secret: never in a log nor a dump.

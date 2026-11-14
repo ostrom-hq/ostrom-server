@@ -26,10 +26,9 @@ val GOOGLE_SIGN_IN_SETTINGS: SettingsSection = SettingsSection(
 
 /**
  * Sign-in with GitHub, set by an administrator of the instance in the console: the OAuth client people sign in with,
- * and GitHub's web and API URLs (GitHub Enterprise Server, or a fake GitHub in end-to-end tests). Used only while the
- * instance's GitHub App has no usable OAuth client ([GitHubAppSignIn]): the App's is used first, as TeamCode signs in
- * through its App. Offered once the client id and secret are set; `ostrom login` with a GitHub token checks it against
- * the same client.
+ * and GitHub's web and API URLs (GitHub Enterprise Server, or a fake GitHub in end-to-end tests). Wins once its client
+ * id and secret are set; while it is empty, people sign in through the instance's GitHub App's OAuth client
+ * ([GitHubAppSignIn]), as TeamCode does. `ostrom login` with a GitHub token checks it against either client.
  */
 val GITHUB_SIGN_IN_SETTINGS: SettingsSection = SettingsSection(
     "github-sign-in",
@@ -73,23 +72,24 @@ data class GoogleSignIn(val client: OAuthClient, val endpoints: OidcEndpoints)
  * seconds per replica): a provider is offered once its client id and secret are set, without a restart.
  *
  * @param settings The instance's settings.
- * @param app The instance's GitHub App, whose OAuth client GitHub's sign-in uses first.
+ * @param app The instance's GitHub App, whose OAuth client GitHub's sign-in uses while the settings' is unset.
  */
 class SignInSettings(private val settings: InstanceSettings, private val app: GitHubAppSignIn) {
     /**
-     * GitHub's sign-in: through the instance's GitHub App when its OAuth client is known (its id and a secret that
-     * opens), as TeamCode does; otherwise the `github-sign-in` settings. Closed when neither is usable.
+     * GitHub's sign-in: the `github-sign-in` settings once their client id and secret are set; otherwise through the
+     * instance's GitHub App when its OAuth client is known (its id and a secret that opens), as TeamCode does. Closed
+     * when neither is usable.
      *
-     * @return It, or null while neither the App's client nor the settings' is set.
+     * @return It, or null while neither the settings' client nor the App's is set.
      */
-    suspend fun github(): GitHubSignIn? = appSignIn() ?: gitHubSettings()
+    suspend fun github(): GitHubSignIn? = gitHubSettings() ?: appSignIn()
 
     /**
-     * Every GitHub sign-in this instance knows, the App's first: a token either client issued is Ostrom's.
+     * Every GitHub sign-in this instance knows, the settings' first: a token either client issued is Ostrom's.
      *
      * @return Them, empty while neither is set.
      */
-    suspend fun gitHubClients(): List<GitHubSignIn> = listOfNotNull(appSignIn(), gitHubSettings())
+    suspend fun gitHubClients(): List<GitHubSignIn> = listOfNotNull(gitHubSettings(), appSignIn())
 
     private suspend fun appSignIn(): GitHubSignIn? = app.client()?.let {
         GitHubSignIn(OAuthClient(it.clientId, it.clientSecret), it.webUrl.trimEnd('/'), it.apiUrl.trimEnd('/'))

@@ -8,8 +8,8 @@ import run.ostrom.server.integrations.github.domain.oauthApp
 
 /**
  * [GitHubAppSignIn] on the instance's stored App, as TeamCode signs people in through its App: its OAuth client (an id
- * and a secret that opens with the secrets key) on the GitHub the integration talks to. A stored App whose secret no
- * longer opens has no client: sign-in then reads the `github-sign-in` settings.
+ * and a secret that opens with the secrets key) on the GitHub the integration talks to. Sign-in uses it only while the
+ * `github-sign-in` settings are empty; a stored App whose secret no longer opens has no client.
  *
  * @param apps The App in use.
  * @param host GitHub's addresses, the console's settings.

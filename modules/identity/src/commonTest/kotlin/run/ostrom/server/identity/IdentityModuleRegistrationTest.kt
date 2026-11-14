@@ -73,11 +73,12 @@ class IdentityModuleRegistrationTest {
     }
 
     @Test
-    fun theGitHubAppsClientBoundByItsModuleSignsPeopleInFirst() = runTest {
+    fun theGitHubAppsClientBoundByItsModuleSignsPeopleInWhileTheSectionIsEmpty() = runTest {
         val client = GitHubAppOAuthClient("Iv1.app", "app-secret", "https://gh.test", "https://api.gh.test")
         val integration = module { single<GitHubAppSignIn> { GitHubAppSignIn { client } } }
         val app = koinApplication { modules(kernel(), integration, IdentityModule.koinModule) }
         try {
+            // No github-sign-in saved in this test: the App's client is the one.
             assertEquals("Iv1.app", app.koin.get<SignInSettings>().github()?.client?.clientId)
         } finally {
             app.close()

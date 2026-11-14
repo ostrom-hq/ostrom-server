@@ -63,21 +63,25 @@ class SignInSettingsTest {
     }
 
     @Test
-    fun theInstancesGitHubAppSignsPeopleInFirstThenTheSettingsThenNobody() = runTest {
+    fun theSettingsWinThenTheInstancesGitHubAppThenNobody() = runTest {
         stored.save("github-sign-in", mapOf("clientId" to "Iv1.settings", "clientSecret" to "s1"))
         app = GitHubAppOAuthClient("Iv1.app", "app-secret", "https://ghe.example/", "https://ghe.example/api/v3/")
         assertEquals(
-            GitHubSignIn(OAuthClient("Iv1.app", "app-secret"), "https://ghe.example", "https://ghe.example/api/v3"),
+            GitHubSignIn(OAuthClient("Iv1.settings", "s1"), "https://github.com", "https://api.github.com"),
             settings.github(),
-            "As TeamCode, through the App's OAuth client",
+            "The github-sign-in section wins once set",
         )
         assertFalse("app-secret" in app.toString())
-        // A token either client issued checks (`ostrom login`), the App's first.
-        assertEquals(listOf("Iv1.app", "Iv1.settings"), settings.gitHubClients().map { it.client.clientId })
-        // No App client (none stored, or its secret no longer opens): the settings.
-        app = null
-        assertEquals("Iv1.settings", settings.github()?.client?.clientId)
+        // A token either client issued checks (`ostrom login`), the settings' first.
+        assertEquals(listOf("Iv1.settings", "Iv1.app"), settings.gitHubClients().map { it.client.clientId })
+        // The section empty: as TeamCode, through the App's OAuth client.
         stored.save("github-sign-in", mapOf("clientId" to "", "clientSecret" to ""))
+        assertEquals(
+            GitHubSignIn(OAuthClient("Iv1.app", "app-secret"), "https://ghe.example", "https://ghe.example/api/v3"),
+            settings.github(),
+        )
+        // Neither (no App stored, or its secret no longer opens): GitHub sign-in is off.
+        app = null
         assertNull(settings.github(), "Neither: GitHub sign-in is off")
         assertTrue(settings.gitHubClients().isEmpty())
         // A server without the integrations-github module: no App, ever.
