@@ -28,7 +28,9 @@ class ScheduledWorkImpl(private val driver: Driver) : ScheduledWork {
     ): Boolean {
         require(name.length in 1..MAX_NAME) { "A job name has 1 to $MAX_NAME characters." }
         require(interval.isPositive()) { "A job's interval is positive." }
-        require(timeout.isPositive() && timeout <= MAX_TIMEOUT) { "A job's timeout is positive and at most $MAX_TIMEOUT." }
+        require(timeout.isPositive() && timeout <= MAX_TIMEOUT) {
+            "A job's timeout is positive and at most $MAX_TIMEOUT."
+        }
         val owner = Uuid.random()
         if (!claim(name, owner, timeout + MARGIN)) return false
         try {

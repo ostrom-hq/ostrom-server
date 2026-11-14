@@ -259,6 +259,7 @@ class SchemaTenancyPostgresTest {
             "identity_users" to "serving role: the people, members of any number of organizations",
             "identity_web_sessions" to "serving role: a person's browser sessions, by hash, before an organization",
             "instance_info" to "serving role: the instance's one identity row",
+            "instance_scheduled_work" to "serving role: the leases of the periodic jobs, one row per job",
             "instance_signing_keys" to "serving role: the public keys of the instance's receipt signatures",
         )
 

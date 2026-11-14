@@ -33,8 +33,8 @@ class ScheduledWorkPostgresTest {
     @Test
     fun aDueJobRunsThenWaitsForItsInterval() = leaseTest { work, _ ->
         var runs = 0
-        assertTrue(work.runDue("memory/settle", interval = 1.hours) { runs++ })
-        assertFalse(work.runDue("memory/settle", interval = 1.hours) { runs++ })
+        assertTrue(work.runDue("memory/settle", interval = 1.hours, timeout = 1.seconds) { runs++ })
+        assertFalse(work.runDue("memory/settle", interval = 1.hours, timeout = 1.seconds) { runs++ })
         assertEquals(1, runs)
     }
 
@@ -46,7 +46,7 @@ class ScheduledWorkPostgresTest {
         val ran = coroutineScope {
             listOf(first, second).map { work ->
                 async {
-                    work.runDue("memory/curate", interval = 1.hours) {
+                    work.runDue("memory/curate", interval = 1.hours, timeout = 1.seconds) {
                         runs++
                         delay(300.milliseconds)
                     }
@@ -60,25 +60,25 @@ class ScheduledWorkPostgresTest {
     @Test
     fun aJobRunsAgainOnceItsIntervalIsOver() = leaseTest { work, replica ->
         var runs = 0
-        assertTrue(work.runDue("mcp/retain", interval = 50.milliseconds) { runs++ })
+        assertTrue(work.runDue("mcp/retain", interval = 50.milliseconds, timeout = 1.seconds) { runs++ })
         delay(200.milliseconds)
-        assertTrue(replica().runDue("mcp/retain", interval = 50.milliseconds) { runs++ })
+        assertTrue(replica().runDue("mcp/retain", interval = 50.milliseconds, timeout = 1.seconds) { runs++ })
         assertEquals(2, runs)
     }
 
     @Test
     fun jobsOfDifferentNamesDoNotWaitForEachOther() = leaseTest { work, _ ->
-        assertTrue(work.runDue("a", interval = 1.hours) {})
-        assertTrue(work.runDue("b", interval = 1.hours) {})
+        assertTrue(work.runDue("a", interval = 1.hours, timeout = 1.seconds) {})
+        assertTrue(work.runDue("b", interval = 1.hours, timeout = 1.seconds) {})
     }
 
     @Test
     fun aFailingRunGivesTheLeaseBackAndFails() = leaseTest { work, _ ->
         assertFailsWith<IllegalStateException> {
-            work.runDue("broken", interval = 50.milliseconds) { error("boom") }
+            work.runDue("broken", interval = 50.milliseconds, timeout = 1.seconds) { error("boom") }
         }
         delay(200.milliseconds)
-        assertTrue(work.runDue("broken", interval = 50.milliseconds) {})
+        assertTrue(work.runDue("broken", interval = 50.milliseconds, timeout = 1.seconds) {})
     }
 
     @Test
@@ -87,7 +87,7 @@ class ScheduledWorkPostgresTest {
             work.runDue("slow", interval = 50.milliseconds, timeout = 50.milliseconds) { delay(10.seconds) }
         }
         delay(200.milliseconds)
-        assertTrue(work.runDue("slow", interval = 50.milliseconds) {})
+        assertTrue(work.runDue("slow", interval = 50.milliseconds, timeout = 1.seconds) {})
     }
 
     @Test
@@ -99,6 +99,6 @@ class ScheduledWorkPostgresTest {
         refused("job", interval = Duration.ZERO)
         refused("job", timeout = Duration.ZERO)
         refused("job", timeout = 6.minutes)
-        assertTrue(work.runDue("x".repeat(100), timeout = 5.minutes) {})
+        assertTrue(work.runDue("x".repeat(100), 1.seconds, 5.minutes) {})
     }
 }

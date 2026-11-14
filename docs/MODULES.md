@@ -51,7 +51,7 @@ object OrgsModule : ServerModule {
 
 **Periodic work that one replica runs at a time** goes through the kernel's `ScheduledWork` (bound by the instance
 module on its `instance_scheduled_work` table, TeamCode's `SqlScheduledWork`): the module's `start` loop calls
-`work.runDue("module/job", interval, timeout) { … }` as often as it likes, and the job runs once per interval across
+`work.runDue("module/job", interval, timeout) { … }` (TeamCode used 60 s and 45 s by default) as often as it likes, and the job runs once per interval across
 every replica, the lease claimed and released on the database's clock. A module that needs it lists the instance
 module before it (it always does: the instance module comes first).
 

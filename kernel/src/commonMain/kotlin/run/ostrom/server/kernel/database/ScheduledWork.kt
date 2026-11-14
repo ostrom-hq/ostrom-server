@@ -2,7 +2,6 @@
 package run.ostrom.server.kernel.database
 
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.seconds
 
 /**
  * Periodic work that one replica runs at a time, as TeamCode's `SqlScheduledWork`: a lease row per job, claimed and
@@ -18,8 +17,9 @@ interface ScheduledWork {
      * holding it loses it when the lease ends.
      *
      * @param name The job, 1 to 100 characters (`memory/settle`, `mcp/retain`).
-     * @param interval The time between the end of one run and the start of the next.
-     * @param timeout The longest a run may take, at most 5 minutes; past it [block] is cancelled.
+     * @param interval The time between the end of one run and the start of the next (TeamCode's default: 60 s).
+     * @param timeout The longest a run may take, at most 5 minutes (TeamCode's default: 45 s); past it [block] is
+     *   cancelled.
      * @param block The work.
      *
      * @return Whether this call ran [block]: false when the job was not due or another replica held it.
@@ -28,8 +28,8 @@ interface ScheduledWork {
      */
     suspend fun runDue(
         name: String,
-        interval: Duration = 60.seconds,
-        timeout: Duration = 45.seconds,
+        interval: Duration,
+        timeout: Duration,
         block: suspend () -> Unit,
     ): Boolean
 }
