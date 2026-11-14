@@ -116,7 +116,7 @@ class HostedStatesTest {
         assertEquals(HostedSweep.Done(2, 3, 0), sweep())
         assertEquals(listOf(shared.id), repository.states.filter { it.orgId == Relay.orgA }.map { it.serverId })
         host.statusFails = true
-        assertEquals(HostedSweep.HostUnavailable, sweep())
+        assertEquals(HostedSweep.StatesUnrecorded, sweep(), "Retained, but no state read: not the host refusing")
     }
 
     @Test
@@ -133,6 +133,9 @@ class HostedStatesTest {
             Relay.orgA, personal.id, Relay.memberA.memberId, personal.key(Relay.memberA.memberId), "backoff",
             "crashed", Relay.epoch,
         )
+        repository.states += HostedProcessRecord(
+            Relay.orgA, shared.id, null, shared.key(), "failed", "crashed", Relay.epoch,
+        )
         val host = FakeHostControl()
         host.processes[shared.key()] = status("ready").copy(starts = 2, stderr = "x".repeat(5000), rssBytes = 9)
         host.processes[personal.key(Relay.otherA.memberId)] = status("failed", "start_failed")
@@ -145,17 +148,18 @@ class HostedStatesTest {
         assertEquals("1.2.3", live.hostVersion)
         assertEquals(listOf("personal", "personal", "shared"), live.processes.map { it.server })
         val byMember = live.processes.associateBy { it.memberId }
-        assertEquals("backoff" to "crashed", byMember.getValue(Relay.memberA.memberId).let { it.state to it.failure })
+        // The host answered without this process: it is idle, its last failure kept, as the sweep would record it.
+        assertEquals("idle" to "crashed", byMember.getValue(Relay.memberA.memberId).let { it.state to it.failure })
         val other = byMember.getValue(Relay.otherA.memberId)
         assertEquals("failed" to "start_failed", other.state to other.failure)
         val sharedProcess = byMember.getValue(null)
-        assertEquals("ready", sharedProcess.state)
+        assertEquals("ready" to null, sharedProcess.state to sharedProcess.failure, "Recovered: no stale failure")
         assertEquals(4096, sharedProcess.status!!.stderr.length, "The last 4 KiB of stderr")
         assertEquals("npm" to "mcp-shared@1.0.0", sharedProcess.launcher to sharedProcess.packageName)
         host.fail = true
         val recorded = admin(Relay.adminA)
         assertFalse(recorded.hostReachable)
-        assertEquals(listOf("backoff", "idle", "idle"), recorded.processes.map { it.state })
+        assertEquals(listOf("backoff", "idle", "failed"), recorded.processes.map { it.state })
         assertFailsWith<OstromException> { admin(Relay.memberA) }
         val disabled = HostedProcessAdministration(repository, members, null)
         assertFailsWith<McpHostDisabledException> { disabled(Relay.adminA) }

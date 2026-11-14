@@ -261,8 +261,8 @@ class HostMcpUpstream(
 
         private const val HOST_ENVELOPE = 64 * 1024L
 
-        // Up to 16 processes with 64 KiB of stderr each, escaped.
-        private const val STATUS_ENVELOPE = 4 * 1024 * 1024L
+        // Up to 16 processes with 64 KiB of stderr each, escaped up to six times (\u00XX): past it, no parse.
+        private const val STATUS_ENVELOPE = 8 * 1024 * 1024L
         private const val STATUS = "/v1/status"
         private val CONTROL_TIMEOUT = 30.seconds
         private const val MAX_ERROR = 1000

@@ -208,6 +208,9 @@ sealed interface HostedSweep {
 
     /** The host did not answer, or refused the relay. */
     data object HostUnavailable : HostedSweep
+
+    /** The host retained the keys, but the states could not be read from it or written to the database. */
+    data object StatesUnrecorded : HostedSweep
 }
 
 /**
@@ -242,15 +245,25 @@ class RetainHostedMcpProcessesUseCaseImpl(
             ?.let { HostedProcessExpansion.expand(it, MAX_KEYS) { orgId -> roster(orgId) } }
             ?: return HostedSweep.Incomplete
         val keys = processes.mapTo(HashSet()) { it.key }
-        return try {
-            val stopped = host.retain(keys)
-            HostedSweep.Done(keys.size, stopped, record(processes, host.status()))
+        val stopped = try {
+            host.retain(keys)
         } catch (error: CancellationException) {
             throw error
         } catch (_: Exception) {
-            HostedSweep.HostUnavailable
+            null
         }
+        return if (stopped == null) HostedSweep.HostUnavailable else recorded(processes, keys.size, stopped)
     }
+
+    // Apart from the retain: a database or status failure is not the host refusing to stop processes.
+    private suspend fun recorded(processes: List<HostedProcessRef>, keys: Int, stopped: Int): HostedSweep =
+        try {
+            HostedSweep.Done(keys, stopped, record(processes, host.status()))
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            HostedSweep.StatesUnrecorded
+        }
 
     // Each org's states in its own transactions. The rows of an org left without hosted assignments stay until its
     // servers go (their foreign key); no view shows them, since every view starts from current assignments.

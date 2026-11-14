@@ -154,14 +154,7 @@ object HostedProcessStateRules {
         now: Instant,
     ): HostedProcessChange? {
         val key = process.key
-        val previousFailure = stored?.failureFor(key)
-        val state = if (status == null) HostedProcessStates.IDLE else HostedProcessStates.known(status.state)
-        val reported = status?.lastFailure?.takeIf { FAILURE_CODE.matches(it) }
-        val failure = when {
-            HostedProcessStates.failing(state) -> reported ?: previousFailure ?: state
-            state == HostedProcessStates.READY -> null
-            else -> previousFailure
-        }
+        val (state, failure) = observe(key, status, stored)
         // Without a stored row there is no failure to keep: an idle process then has nothing worth a row.
         val unchanged = if (stored == null) {
             state == HostedProcessStates.IDLE
@@ -171,6 +164,26 @@ object HostedProcessStateRules {
         if (unchanged) return null
         val next = HostedProcessRecord(process.orgId, process.serverId, process.memberId, key, state, failure, now)
         return HostedProcessChange(stored, next)
+    }
+
+    /**
+     * The state and failure of a process once the host has answered: a failing one keeps its last failure, a ready
+     * one has none, any other keeps what was recorded.
+     *
+     * @param key The process key.
+     * @param status What the host says of it; null when it does not know it (idle).
+     * @param stored What the relay recorded.
+     */
+    fun observe(key: String, status: HostedProcessStatus?, stored: HostedProcessRecord?): Pair<String, String?> {
+        val previousFailure = stored?.failureFor(key)
+        val state = if (status == null) HostedProcessStates.IDLE else HostedProcessStates.known(status.state)
+        val reported = status?.lastFailure?.takeIf { FAILURE_CODE.matches(it) }
+        val failure = when {
+            HostedProcessStates.failing(state) -> reported ?: previousFailure ?: state
+            state == HostedProcessStates.READY -> null
+            else -> previousFailure
+        }
+        return state to failure
     }
 }
 
@@ -273,7 +286,7 @@ data class HostedProcesses(val hostReachable: Boolean, val hostVersion: String?,
 class McpHostedTooManyException :
     OstromException(
         ErrorKind.CONFLICT,
-        "This organization has more than 10,000 hosted MCP processes; they cannot be listed at once.",
+        "This organization's hosted MCP processes cannot be listed: more than 10,000, or its members cannot be read.",
         "mcp_hosted_too_many",
     )
 
@@ -337,22 +350,19 @@ class HostedProcessAdministration(
             val stdio = server.stdio ?: return@mapNotNull null
             val record = records[process.serverId to process.memberId]
             val live = status?.of(process.key)
-            val recordedFailure = record?.failureFor(process.key)
+            // When the host answered, it is the truth (a process it does not know is idle); otherwise the record.
+            val (state, failure) = if (status != null) {
+                HostedProcessStateRules.observe(process.key, live, record)
+            } else {
+                (record?.stateFor(process.key) ?: HostedProcessStates.IDLE) to record?.failureFor(process.key)
+            }
             HostedProcess(
                 server = server.name,
                 memberId = process.memberId,
                 launcher = stdio.launcher.wire,
                 packageName = stdio.packageName,
-                state = when {
-                    live != null -> HostedProcessStates.known(live.state)
-                    record != null -> record.stateFor(process.key)
-                    else -> HostedProcessStates.IDLE
-                },
-                failure = when {
-                    recordedFailure != null -> recordedFailure
-                    live != null && HostedProcessStates.failing(live.state) -> live.lastFailure
-                    else -> null
-                },
+                state = state,
+                failure = failure,
                 status = live?.copy(stderr = live.stderr.takeLast(MAX_STDERR)),
             )
         }.sortedWith(compareBy({ it.server }, { it.memberId }))
