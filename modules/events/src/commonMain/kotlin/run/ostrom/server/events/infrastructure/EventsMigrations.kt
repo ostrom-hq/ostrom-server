@@ -191,8 +191,70 @@ private val WEBHOOKS_SQL: String =
     """
         .trimIndent()
 
+/** Where the readers of the journal start and stand across organizations, owned by `ostrom_router`. */
+private val READER_ROUTER_FUNCTIONS = listOf("events_readers_behind(TEXT, INTEGER)")
+
+/**
+ * Version 3: the cursors of the journal's readers (the kernel's `OrgEventJournal`, TeamCode's `notification_cursors`):
+ * one row per organization and reader, the last sequence the reader turned into its own work, moved in the reader's
+ * own transaction. Confined to the organization of the transaction; `events_readers_behind`, owned by `ostrom_router`,
+ * starts a reader at the head of every organization it has not seen and lists those it is behind on, across
+ * organizations (docs/tenancy.md).
+ */
+private val READERS_SQL: String =
+    """
+    CREATE TABLE events_readers (
+        org_id UUID NOT NULL,
+        reader TEXT NOT NULL,
+        seq BIGINT NOT NULL,
+        PRIMARY KEY (org_id, reader)
+    );
+    ${tenantTableSql("events_readers")}
+    DO $$ BEGIN
+        CREATE ROLE ostrom_router NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
+    END $$;
+    DO $$ BEGIN
+        GRANT ostrom_router TO CURRENT_USER;
+    EXCEPTION WHEN unique_violation THEN NULL;
+    END $$;
+    CREATE POLICY events_readers_router_read ON events_readers FOR SELECT TO ostrom_router
+        USING (current_user = 'ostrom_router');
+    CREATE POLICY events_readers_router_start ON events_readers FOR INSERT TO ostrom_router
+        WITH CHECK (current_user = 'ostrom_router');
+    GRANT SELECT, INSERT ON events_readers TO ostrom_router;
+    CREATE FUNCTION events_readers_behind(p_reader TEXT, p_limit INTEGER)
+        RETURNS TABLE (org_id UUID, from_seq BIGINT, head BIGINT)
+        LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        WITH started AS (
+            INSERT INTO events_readers (org_id, reader, seq)
+            SELECT c.org_id, p_reader, c.last_seq FROM events_cursors c
+            WHERE NOT EXISTS (
+                SELECT 1 FROM events_readers r WHERE r.org_id = c.org_id AND r.reader = p_reader
+            )
+            ON CONFLICT DO NOTHING
+            RETURNING 1
+        )
+        SELECT r.org_id, r.seq, c.last_seq FROM events_readers r
+            JOIN events_cursors c ON c.org_id = r.org_id
+            WHERE r.reader = p_reader AND r.seq < c.last_seq
+            ORDER BY r.org_id LIMIT p_limit;
+    $$;
+    ${READER_ROUTER_FUNCTIONS.joinToString("\n") { "REVOKE EXECUTE ON FUNCTION $it FROM PUBLIC;" }}
+    DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+            ${READER_ROUTER_FUNCTIONS.joinToString("\n") { "GRANT EXECUTE ON FUNCTION $it TO ostrom_app;" }}
+        END IF;
+    END $$;
+    GRANT CREATE ON SCHEMA public TO ostrom_router;
+    ${READER_ROUTER_FUNCTIONS.joinToString("\n") { "ALTER FUNCTION $it OWNER TO ostrom_router;" }}
+    REVOKE CREATE ON SCHEMA public FROM ostrom_router
+    """
+        .trimIndent()
+
 /** The schema of the events module; its tables start with `events_`. */
 val EventsMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(1, "create_journal", TENANT_ROLE_SQL + "\n" + JOURNAL_SQL),
     SchemaMigration(2, "create_webhooks", WEBHOOKS_SQL),
+    SchemaMigration(3, "create_readers", READERS_SQL),
 )

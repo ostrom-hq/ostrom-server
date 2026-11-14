@@ -34,6 +34,8 @@ import run.ostrom.server.automations.presentation.WaitResponse
 import run.ostrom.server.automations.presentation.WaitsResponse
 import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.events.OrgEventType
+import run.ostrom.server.kernel.events.WaitSummaries
+import run.ostrom.server.kernel.events.WaitSummary
 import run.ostrom.server.kernel.http.ApiError
 import run.ostrom.server.kernel.sessions.SessionEndListener
 import run.ostrom.server.testing.serverTest
@@ -123,6 +125,31 @@ class WaitsPostgresTest {
         assertEquals(4, repository.list(WaitFilter(ORG_A, assignee = ALICE.toString(), runId = "r1"), null, 10).size)
         assertEquals(emptyList(), repository.list(WaitFilter(ORG_A, assignee = "x"), null, 10))
     }
+
+    @Test
+    fun theNotificationRouterReadsTheWaitsTheJournalNamesInTheirOrganizationOnly() =
+        serverTest(listOf(AutomationsModule)) { server ->
+            val repository = server.koin.get<WaitsRepository>()
+            val summaries = server.koin.get<WaitSummaries>()
+            val asked = wait()
+            val answered = wait(session = null, at = t0 + 1.minutes)
+            val elsewhere = wait(org = ORG_B)
+            for (each in listOf(asked, answered, elsewhere)) {
+                assertEquals(CreateOutcome.CREATED, repository.createWithinLimit(each, 5))
+            }
+            repository.resolve(ORG_A, answered.id, WaitAnswer("approve", emptyMap(), ALICE.toString(), t0))
+            val ids = setOf(asked.id, answered.id, elsewhere.id).map { it.toString() }.toSet() + "not-a-wait"
+            val read = summaries.of(ORG_A, ids).sortedBy { it.open }
+            val alice = ALICE.toString()
+            assertEquals(
+                listOf(
+                    WaitSummary(answered.id.toString(), alice, null, "human_request", "human", false, "Review"),
+                    WaitSummary(asked.id.toString(), alice, "s1", "human_request", "human", true, "Review"),
+                ),
+                read,
+            )
+            assertEquals(emptyList(), summaries.of(ORG_A, emptySet()))
+        }
 
     @Test
     fun eachWaitAskedAnsweredOrWithdrawnIsHeardOnTheFeed() {

@@ -47,6 +47,7 @@ import run.ostrom.server.automations.infrastructure.SilentWaitEvents
 import run.ostrom.server.automations.infrastructure.TimedWaitsRepositoryImpl
 import run.ostrom.server.automations.infrastructure.UnavailableLauncher
 import run.ostrom.server.automations.infrastructure.WaitEventSecretsImpl
+import run.ostrom.server.automations.infrastructure.WaitSummariesImpl
 import run.ostrom.server.automations.infrastructure.WaitsRepositoryImpl
 import run.ostrom.server.automations.infrastructure.WebhookSecretsImpl
 import run.ostrom.server.automations.presentation.AutomationsRoutesDependencies
@@ -57,6 +58,7 @@ import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.events.WaitSummaries
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.sessions.AgentSessions
 import run.ostrom.server.kernel.sessions.SessionEndListener
@@ -77,7 +79,8 @@ import org.koin.dsl.module
  * in no session, no one is told of it, an automation's runs fail `cloud_sessions_unavailable`, and no agent token asks
  * through the waits MCP server. An [AutomationWorkflows] bound by the module that runs workflows lets an action start
  * a workflow run; until then no workflow exists for one. It binds [AutomationUsage], so a workflow an automation
- * starts is not deleted under it. Its [SessionEndListener] cancels the open waits of a session that ends.
+ * starts is not deleted under it. Its [SessionEndListener] cancels the open waits of a session that ends. It binds
+ * [WaitSummaries], so the notification router reads the waits the event journal names.
  */
 object AutomationsModule : ServerModule {
     override val name: String = "automations"
@@ -85,6 +88,8 @@ object AutomationsModule : ServerModule {
     override val koinModule: Module = module {
         single<WaitsRepository> { WaitsRepositoryImpl(get(), get()) }
         single<TimedWaitsRepository> { TimedWaitsRepositoryImpl(get(), get()) }
+        // The notification router reads the waits the journal names through the kernel's port.
+        single<WaitSummaries> { WaitSummariesImpl(get()) }
         single<WaitSessions> {
             WaitSessionsImpl(
                 getOrNull<AgentSessions>() ?: NoAgentSessions,
