@@ -101,7 +101,7 @@ class ArtifactMaintenanceTest {
         assertEquals(listOf(upload), rows.ended)
         assertEquals(setOf(blob(raced)), bucket.objects.keys)
         // A draft goes silently; an artifact past its retention is audited, by the system.
-        assertEquals(listOf(Triple("system", "retention_expired", retained)), events)
+        assertEquals(listOf<Triple<String, String, Uuid?>>(Triple("system", "retention_expired", retained)), events)
     }
 
     @Test
