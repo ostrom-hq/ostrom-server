@@ -102,12 +102,16 @@ class RunEngineTest {
         override suspend fun runs(orgId: Uuid, query: RunsQuery): List<WorkflowRun> = rows.values.map { it.run }
     }
 
+    // A started session exists and works, as the cloud sessions' does; [onStart] looks at the run when it is asked.
     private class Agents(var state: AgentState? = null) : RunAgents {
         val started = mutableListOf<AgentRequest>()
         val stopped = mutableListOf<Uuid>()
+        var onStart: () -> Unit = {}
 
         override suspend fun start(orgId: Uuid, request: AgentRequest): String? {
+            onStart()
             started += request
+            state = state ?: AgentState.WORKING
             return null
         }
 
@@ -238,6 +242,44 @@ class RunEngineTest {
     }
 
     @Test
+    fun anAgentVisitNamesItsSessionOnlyOnceTheSessionIsAsked() = runTest {
+        stored(RunGraph("a", listOf(AGENT_NODE)))
+        val before = mutableListOf<String?>()
+        agents.onStart = {
+            val now = runs.rows.getValue(RUN).run
+            before += listOf(now.sessionId, now.visits.last().sessionId)
+        }
+
+        val playing = played()
+
+        // E2E-PARC-022: a read between the visit's beginning and its session's start never finds an id without a
+        // session; once asked, the visit and the run name it.
+        assertEquals(listOf<String?>(null, null), before)
+        val session = sessionOf(RUN, 1).toString()
+        assertEquals(listOf<Any?>(session, session), listOf(playing.sessionId, playing.visits.single().sessionId))
+        assertEquals(1, agents.started.size)
+    }
+
+    @Test
+    fun aSessionAskedButNotNamedIsNamedAndANamedOneGoneIsAskedAgain() = runTest {
+        // The engine stopped between asking the session and naming it: the session works, the visit names none.
+        val asked = visit(1, "a", WorkflowNodeKind.AGENT, RunMoves.RUNNING)
+        stored(RunGraph("a", listOf(AGENT_NODE)), run(status = RunStatus.RUNNING, visits = listOf(asked)))
+        agents.state = AgentState.WORKING
+
+        val named = played()
+
+        val session = sessionOf(RUN, 1).toString()
+        assertEquals(listOf<Any?>(session, session), listOf(named.sessionId, named.visits.single().sessionId))
+        assertEquals(0, agents.started.size, "A session that exists is not asked again")
+        // A visit that names a session nobody has any more asks it again, and the run is left as it is.
+        agents.state = null
+        assertEquals(clock.now + PlayRunUseCaseImpl.POLL, play.play(RunRef(ORG, RUN), OWNER))
+        assertEquals(named, runs.rows.getValue(RUN).run)
+        assertEquals(1, agents.started.size)
+    }
+
+    @Test
     fun theSessionOfAVisitIsTheRunsIdChangedByItsSequence() {
         val first = sessionOf(RUN, 1)
         assertEquals(first, sessionOf(RUN, 1))
@@ -290,6 +332,8 @@ class RunEngineTest {
         // A trigger after an agent keeps the run's session: only an agent node changes it.
         val kept = moves.begin(run().copy(sessionId = "s"), RunGraph("t", listOf(TRIGGER)), "t").next
         assertEquals("s", kept.sessionId)
+        // A second agent names no session until its own is asked, not the first agent's.
+        assertNull(moves.begin(run().copy(sessionId = "s"), RunGraph("a", listOf(AGENT_NODE)), "a").next.sessionId)
     }
 
     @Test

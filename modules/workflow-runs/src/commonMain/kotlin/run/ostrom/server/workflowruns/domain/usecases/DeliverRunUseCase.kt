@@ -107,11 +107,14 @@ class RunDeliveries(
         session: Uuid? = null,
     ): WorkflowRun {
         val run = played.run
-        val (step, _) = ready(orgId, played, session) ?: throw NothingToDeliverException()
+        val (step, sessionId) = ready(orgId, played, session) ?: throw NothingToDeliverException()
         val (visit, _, deliverable) = step
         val text = Deliverables.validate(deliverable, output)
         val now = clock.now()
-        val next = RunMoves(DELIVERY, now).finish(run, RunMoves.DELIVERED, output = text).next
+        val moves = RunMoves(DELIVERY, now)
+        // A delivery that comes before the engine named the session names it: the step's visit always does.
+        val named = if (visit.sessionId == null) moves.dispatched(run, sessionId).next else run
+        val next = moves.finish(named, RunMoves.DELIVERED, output = text).next
         val audit = RunAudit("delivered", auditDetails("node" to visit.nodeId, "seq" to visit.seq), person)
         // One change on the run as read: a second delivery, or the engine failing the visit meanwhile, finds it
         // changed.
