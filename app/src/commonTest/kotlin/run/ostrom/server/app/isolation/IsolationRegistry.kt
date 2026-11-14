@@ -19,6 +19,7 @@ import run.ostrom.server.app.isolation.Seed.LAUNCH
 import run.ostrom.server.app.isolation.Seed.LINK_SLUG
 import run.ostrom.server.app.isolation.Seed.MCP_POLICY
 import run.ostrom.server.app.isolation.Seed.MCP_SERVER
+import run.ostrom.server.app.isolation.Seed.MEMORY
 import run.ostrom.server.app.isolation.Seed.MEMBER_ID
 import run.ostrom.server.app.isolation.Seed.MEMBER_LOGIN
 import run.ostrom.server.app.isolation.Seed.ORG_ID
@@ -234,6 +235,17 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "POST /api/v1/secrets" to Case.Target(body = """{"name": "TAKEN", "value": "v", "scope": "org"}"""),
     "PUT /api/v1/secrets/{name}" to target("name" to SECRET, body = """{"value": "taken", "scope": "org"}"""),
     "DELETE /api/v1/secrets/{name}" to target("name" to SECRET),
+
+    // The agent memory (memory.v1): the organization's entries and the caller's own, never another's.
+    "GET /api/v1/memory/index" to Case.Target(),
+    "GET /api/v1/memory/search" to Case.Target(query = "q=memory"),
+    "POST /api/v1/memory" to Case.Target(body = """{"title": "Taken", "summary": "Taken", "content": "Taken"}"""),
+    "GET /api/v1/memory/{id}" to target("id" to MEMORY),
+    "PATCH /api/v1/memory/{id}" to target(
+        "id" to MEMORY,
+        body = """{"expectedVersion": 1, "title": "Taken", "summary": "Taken", "content": "Taken"}""",
+    ),
+    "DELETE /api/v1/memory/{id}" to target("id" to MEMORY),
 
     // Environment variants: the caller's own values, the administrators' variants, assignments and exclusions.
     "GET /api/v1/environment" to Case.Target(),

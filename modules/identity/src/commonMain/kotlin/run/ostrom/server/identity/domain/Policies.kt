@@ -59,8 +59,15 @@ const val AGENT_SCOPE = "agent:session"
  */
 const val WORKFLOW_SESSION_SCOPE = "workflow:session"
 
+/**
+ * The scope that reads and writes the memory (`memory.v1`, TeamCode's `memory`): the organization's entries and the
+ * holder's own personal ones. An agent token is issued with it, and a member may put it on a personal token or a
+ * service key; an agent's or a key's organization entry is a proposal, never a direct write.
+ */
+const val MEMORY_SCOPE = "memory:use"
+
 /** The scopes an agent token is issued with. */
-val AGENT_SCOPES: Set<String> = setOf(AGENT_SCOPE, WORKFLOW_SESSION_SCOPE)
+val AGENT_SCOPES: Set<String> = setOf(AGENT_SCOPE, WORKFLOW_SESSION_SCOPE, MEMORY_SCOPE)
 
 /**
  * The scope that answers a gate. No token the person can create or the CLI holds has it (audit S2-04, S2-31): such a
@@ -310,6 +317,7 @@ val CI_SERVICE_KEY_SCOPES: Set<String> = ServiceKeyScopes.CI
 val MEMBER_SERVICE_KEY_SCOPES: Set<String> = setOf(
     "inference:use", "mcp:use", "usage:read", "cloud:read", "cloud:write", "artifacts:read", "artifacts:write",
     "skills:read", "hooks:read",
+    MEMORY_SCOPE,
 )
 
 /**

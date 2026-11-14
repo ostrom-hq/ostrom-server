@@ -21,6 +21,7 @@ import run.ostrom.server.integrations.slack.SlackIntegrationModule
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.launches.LaunchesModule
 import run.ostrom.server.mcprelay.McpRelayModule
+import run.ostrom.server.memory.MemoryModule
 import run.ostrom.server.notifications.NotificationsModule
 import run.ostrom.server.orgs.OrgsModule
 import run.ostrom.server.receipts.ReceiptsModule
@@ -71,6 +72,8 @@ fun serverModules(): List<ServerModule> = listOf(
     HooksModule,
     // After the sessions, automations (waits) and artifacts it reads.
     TodosModule,
+    // After the launches, whose agent tokens it resolves.
+    MemoryModule,
     GitHubIntegrationModule,
     SlackIntegrationModule,
     SharingModule,

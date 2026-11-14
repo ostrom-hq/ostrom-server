@@ -18,5 +18,11 @@ object KnownDrifts {
         // TC-ART-29's publishesPerHour: ostrom-core declares the 429 of both publications in the pull request after.
         "publishArtifact 429 \$ STATUS" to "the publications' 429, declared in ostrom-core next",
         "publishArtifactVersion 429 \$ STATUS" to "the publications' 429, declared in ostrom-core next",
+        // Met once gradle/ostrom-core.ref passed ostrom-core#187/#188 (served markings by their own pull requests).
+        "createArtifactUpload 413 \$ STATUS" to
+            "an upload over the bound answers 413, which ostrom-core#188 did not declare when it marked the route " +
+                "served",
+        "getWorkflowSettings 404 \$ STATUS" to "another organization's answer, undeclared by ostrom-core#187",
+        "saveWorkflowSettings 404 \$ STATUS" to "another organization's answer, undeclared by ostrom-core#187",
     )
 }

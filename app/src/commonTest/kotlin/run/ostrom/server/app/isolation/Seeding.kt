@@ -28,6 +28,7 @@ internal suspend fun TestServer.seed(party: Party, spends: Boolean) {
     seeder.sharing(party)
     activateArtifacts(party)
     seeder.environment(party)
+    seeder.memory(party)
     seeder.content(party)
     seeder.skills(party)
     seeder.hooks(party)
@@ -138,6 +139,18 @@ private suspend fun Seeder.environment(party: Party) {
         """{"variable": "${variable}_MINE", "name": "${party.marker}", "value": "own-${party.marker}"}""",
     )
     keep(Seed.ENV_PERSONAL, personal, "id")
+}
+
+// An organization memory entry holding the marker (memory.v1).
+private suspend fun Seeder.memory(party: Party) {
+    val entry = send(
+        "memory entry",
+        "POST /api/v1/memory",
+        party.browser,
+        """{"scope": "team", "title": "${party.marker} memory", "summary": "${party.marker}", """ +
+            """"content": "memory of ${party.marker}", "tags": ["isolation"]}""",
+    )
+    keep(Seed.MEMORY, entry, "id")
 }
 
 // A team artifact shared with the member, a link artifact, an automation, a wait and a webhook.

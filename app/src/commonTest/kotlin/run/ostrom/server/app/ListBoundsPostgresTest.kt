@@ -271,8 +271,11 @@ class ListBoundsPostgresTest {
         val PARAMETER = Regex("\\{(\\w+)}")
         val RESOURCE = Regex("\\{(?!org\\b|orgId\\b)\\w+}")
 
-        /** The lists a minimal bootstrap cannot reach, with the status they answer. */
-        val UNREACHED = mapOf<String, Int>()
+        /**
+         * The lists a minimal bootstrap cannot reach, with the status they answer: the instance's administration
+         * (ostrom-core#186), for an instance administrator only, which no organization's person is here.
+         */
+        val UNREACHED = mapOf("listInstanceAdmins" to 403, "listInstanceSettings" to 403)
 
         /**
          * The paged lists whose page of A is empty after the minimal bootstrap: nothing of A to replay in B. Their

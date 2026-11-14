@@ -67,6 +67,7 @@ val PERSONAL_TOKEN_SCOPES: List<TokenScope> = listOf(
     TokenScope("usage:write", "Record usage events."),
     TokenScope("billing:read", "Read the plan, the usage and the invoices; a billing change stays in the console."),
     TokenScope("import:write", "Import a TeamCode team."),
+    TokenScope("memory:use", "Read and write the memory: the organization's entries and your own."),
 )
 
 /** The scopes of [PERSONAL_TOKEN_SCOPES], for a membership check. */
