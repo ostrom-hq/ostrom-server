@@ -82,9 +82,18 @@ class SignInSettings(private val settings: InstanceSettings, private val app: Gi
      *
      * @return It, or null while neither the App's client nor the settings' is set.
      */
-    suspend fun github(): GitHubSignIn? = app.client()?.let {
+    suspend fun github(): GitHubSignIn? = appSignIn() ?: gitHubSettings()
+
+    /**
+     * Every GitHub sign-in this instance knows, the App's first: a token either client issued is Ostrom's.
+     *
+     * @return Them, empty while neither is set.
+     */
+    suspend fun gitHubClients(): List<GitHubSignIn> = listOfNotNull(appSignIn(), gitHubSettings())
+
+    private suspend fun appSignIn(): GitHubSignIn? = app.client()?.let {
         GitHubSignIn(OAuthClient(it.clientId, it.clientSecret), it.webUrl.trimEnd('/'), it.apiUrl.trimEnd('/'))
-    } ?: gitHubSettings()
+    }
 
     private suspend fun gitHubSettings(): GitHubSignIn? {
         val values = settings.read(GITHUB_SIGN_IN_SETTINGS.name)

@@ -95,7 +95,7 @@ class AccountSecurityRoutesPostgresTest {
         }
         single<GitHubTokenVerifier> {
             val app = GitHubSignIn(OAuthClient("ostrom-app", "app-secret"), "https://gh.test", "https://api.gh.test")
-            GitHubTokenVerifierImpl({ app }, gitHub.http)
+            GitHubTokenVerifierImpl({ listOf(app) }, gitHub.http)
         }
     }
 
