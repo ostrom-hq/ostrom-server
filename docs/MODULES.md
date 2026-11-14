@@ -61,8 +61,9 @@ module before it (it always does: the instance module comes first).
 every call; `work.repeatDue(ScheduledJob(name, interval, timeout), logger, failure) { … }` is the loop: it runs the job when it is
 due, waits its interval after a run and asks again every minute at most while another replica holds it, and logs a
 failed or overrunning run by its type only. The jobs on it: `mcp/purge` (hourly) and `mcp/retain` (each minute),
-`identity/purge`, `launches/purge` and `usage/purge` (hourly), `events/purge` (each minute) and `sessions/sweep`
-(every 30 s).
+`identity/purge`, `launches/purge` and `usage/purge` (hourly), `events/purge` (each minute), `sessions/sweep`
+(every 30 s), and the notification router's `notifications/deliver` (every second: the journal's new events become
+rows of `notifications_deliveries`, then the due ones are sent) and `notifications/maintain` (each minute).
 
 The kernel binds, for every module: `Logger`, `JdbcDatabase` (Exposed over the HikariCP pool), `Driver` (sqlx4k, for
 the modules not yet on Exposed), `InstanceSigner`, `kotlin.time.Clock`,

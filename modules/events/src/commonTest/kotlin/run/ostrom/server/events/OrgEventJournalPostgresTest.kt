@@ -8,6 +8,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import org.koin.dsl.module
 import run.ostrom.server.events.domain.OrgEventsRepository
 import run.ostrom.server.events.infrastructure.OrgEventJournalImpl
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.kernel.events.JournalPosition
 import run.ostrom.server.kernel.events.OrgEventDraft
@@ -85,6 +86,36 @@ class OrgEventJournalPostgresTest {
         }
         assertEquals(emptyList(), journal.behind(reader, 10))
         assertFailsWith<IllegalArgumentException> { journal.behind("Not a reader", 10) }
+    }
+
+    @Test
+    fun aReaderOnExposedMovesItsCursorInItsOwnTransaction() = serverTest(listOf(EventsModule), overrides) { server ->
+        val journal = server.koin.get<OrgEventJournal>()
+        val database = server.koin.get<JdbcDatabase>()
+        server.publish(orgA, wait("w-1"))
+        journal.behind(reader, 10)
+        server.publish(orgA, wait("w-2"))
+        val position = journal.behind(reader, 10).single()
+
+        // Rolled back with the reader's work, the cursor stays where it was.
+        assertFailsWith<IllegalStateException> {
+            database.inOrg(orgA) {
+                assertTrue(journal.advanceIn(this, reader, position, position.head))
+                error("The work fails")
+            }
+        }
+        assertEquals(listOf(position), journal.behind(reader, 10))
+        database.inOrg(orgB) {
+            assertFalse(journal.advanceIn(this, reader, position, position.head), "Not B's cursor")
+        }
+        database.inOrg(orgA) {
+            assertTrue(journal.advanceIn(this, reader, position, position.head))
+            assertFalse(journal.advanceIn(this, reader, position, position.head), "A page is handled once")
+        }
+        assertEquals(emptyList(), journal.behind(reader, 10))
+        assertFailsWith<IllegalArgumentException> {
+            database.inOrg(orgA) { journal.advanceIn(this, "Not a reader", position, position.head) }
+        }
     }
 
     @Test

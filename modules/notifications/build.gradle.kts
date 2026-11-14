@@ -31,6 +31,9 @@ kotlin {
         commonTest.dependencies {
             implementation(project(":testing"))
             implementation(project(":modules:instance"))
+            // The event journal the router reads, and the cipher the events module needs.
+            implementation(project(":modules:events"))
+            implementation(project(":modules:secrets"))
             implementation(libs.ktor.client.mock)
         }
     }
