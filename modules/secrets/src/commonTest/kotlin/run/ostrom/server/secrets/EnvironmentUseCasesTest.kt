@@ -29,6 +29,7 @@ import run.ostrom.server.secrets.domain.VariantLimitException
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -79,6 +80,14 @@ class EnvironmentUseCasesTest {
         }
     }
 
+    @Test
+    fun aDirectoryThatCannotListTheMembersGrantsNobodyInBulk() = runTest {
+        val repository = Storage(stored = StoredEnvironmentVariant(variant, null))
+        val result = variants(repository).bulkAssign(admin, variant.id)
+        assertEquals(emptyList(), repository.bulkMembers)
+        assertEquals(0, result.assigned)
+    }
+
     private fun variants(repository: EnvironmentRepository) =
         ManageEnvironmentVariantsUseCaseImpl(repository, cipher, members, DiscardingOrgAuditTrail(), clock)
 
@@ -89,6 +98,8 @@ class EnvironmentUseCasesTest {
         private val stored: StoredEnvironmentVariant? = null,
         private val updated: UpdateVariantOutcome = UpdateVariantOutcome.NotFound,
     ) : EnvironmentRepository {
+        var bulkMembers: List<Uuid>? = null
+
         override suspend fun get(orgId: Uuid, id: Uuid) = stored
 
         override suspend fun createTeam(stored: StoredEnvironmentVariant, limit: Int) = created
@@ -121,7 +132,10 @@ class EnvironmentUseCasesTest {
             variant: EnvironmentVariant,
             memberIds: List<Uuid>,
             assignedAt: Instant,
-        ): BulkAssignment = unused()
+        ): BulkAssignment {
+            bulkMembers = memberIds
+            return BulkAssignment(memberIds.size, 0, 0, emptyList())
+        }
 
         override suspend fun exclude(orgId: Uuid, memberId: Uuid, variable: String): Boolean = unused()
 
