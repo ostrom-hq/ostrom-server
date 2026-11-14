@@ -75,6 +75,7 @@ fun testIdentities(audit: RecordingAudit = RecordingAudit()) = module {
         }
     }
     single<OrgAuditTrail> { audit }
+    testRunners()
 }
 
 /** The test identities' organizations: a key acts as its creator, always as a plain member. */

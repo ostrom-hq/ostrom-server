@@ -3,6 +3,7 @@ package run.ostrom.server.skills.domain
 
 import run.ostrom.server.kernel.auth.MemberDirectory
 import kotlin.time.Clock
+import kotlin.uuid.Uuid
 
 /**
  * The files of an effective version, checked against its digest.
@@ -44,6 +45,22 @@ interface SkillDeliveryUseCase {
 
     /** What [memberId]'s workstations reported: the member themself, or an owner or an admin in the console. */
     suspend fun installations(caller: CatalogCaller, memberId: String): List<Installation>
+
+    /**
+     * The skills a cloud session's [owner] receives, for its runner: as [effective], none for an owner who is no
+     * longer an active member.
+     *
+     * @return Sorted by name.
+     */
+    suspend fun forRunner(owner: RunnerOwner): List<EffectiveSkill>
+
+    /**
+     * The files of [version] of [name] for a cloud session's [owner], only while it is their effective pinned version.
+     *
+     * @throws CatalogNotFoundException Otherwise.
+     * @throws ArtifactIntegrityException When the stored files no longer match the digest.
+     */
+    suspend fun downloadForRunner(owner: RunnerOwner, name: String, version: String): SkillDownload
 }
 
 /** [SkillDeliveryUseCase] (TeamCode's `ResolveEffectiveSkillsUseCase`, `DownloadSkillUseCase` and reports). */
@@ -58,19 +75,31 @@ internal class SkillDeliveryUseCaseImpl(
         if (memberId != caller.memberId && !members.isActiveMember(caller.orgId, memberId)) {
             throw CatalogNotFoundException("Member not found.")
         }
-        return resolve(caller, memberId)
+        return resolve(caller.orgId, memberId)
     }
 
-    private suspend fun resolve(caller: CatalogCaller, memberId: String): List<EffectiveSkill> =
-        repository.read(caller.orgId) {
+    private suspend fun resolve(orgId: Uuid, memberId: String): List<EffectiveSkill> =
+        repository.read(orgId) {
             candidates(memberId, (SkillLimits.SKILLS + SkillLimits.PERSONAL).toInt())
         }.mapNotNull { candidate -> candidate.effectiveFor(memberId) }.sortedBy { it.name }
 
     override suspend fun download(caller: CatalogCaller, name: String, version: String): SkillDownload {
         CatalogAccess.requireReader(caller, caller.memberId, SkillScopes.READ)
-        val skill = resolve(caller, caller.memberId).firstOrNull { it.name == name && it.version == version }
+        return download(caller.orgId, caller.memberId, name, version)
+    }
+
+    override suspend fun forRunner(owner: RunnerOwner): List<EffectiveSkill> =
+        if (members.isActiveMember(owner.orgId, owner.memberId)) resolve(owner.orgId, owner.memberId) else emptyList()
+
+    override suspend fun downloadForRunner(owner: RunnerOwner, name: String, version: String): SkillDownload {
+        if (!members.isActiveMember(owner.orgId, owner.memberId)) throw CatalogNotFoundException("Member not found.")
+        return download(owner.orgId, owner.memberId, name, version)
+    }
+
+    private suspend fun download(orgId: Uuid, memberId: String, name: String, version: String): SkillDownload {
+        val skill = resolve(orgId, memberId).firstOrNull { it.name == name && it.version == version }
             ?: throw CatalogNotFoundException("This skill version is not delivered to you, or is not the pinned one.")
-        val files = repository.read(caller.orgId) { files(skill.versionId) }
+        val files = repository.read(orgId) { files(skill.versionId) }
         val entries = ArtifactTree.recompute(files, sha256)
         if (ArtifactTree.digest(entries, sha256) != skill.digest) throw ArtifactIntegrityException("skill_integrity")
         return SkillDownload(skill, entries, files.sortedBy { it.path })

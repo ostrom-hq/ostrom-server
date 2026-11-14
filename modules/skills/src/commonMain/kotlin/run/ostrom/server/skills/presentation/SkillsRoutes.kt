@@ -7,6 +7,7 @@ import run.ostrom.server.kernel.http.bodyLimit
 import run.ostrom.server.skills.domain.CatalogCaller
 import run.ostrom.server.skills.domain.Publication
 import run.ostrom.server.skills.domain.SkillChange
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.receive
@@ -14,6 +15,7 @@ import io.ktor.server.resources.delete
 import io.ktor.server.resources.get
 import io.ktor.server.resources.post
 import io.ktor.server.resources.put
+import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 
@@ -148,6 +150,24 @@ fun Route.skillsRoutes(dependencies: SkillsRoutesDependencies) = with(dependenci
             val installations = delivery.installations(call.caller(), params.memberId)
             call.respond(SkillInstallationListDto(installations.map { it.toDto() }))
         }
+    }
+
+    // The runner channel: the execution's runner token, checked before the body is read, never a member's.
+    post<RunnerSkillsApi> {
+        val token = call.runnerToken()
+        runners.check(token)
+        val body = call.receive<RunnerExecutionDto>()
+        val owner = runners.owner(token, body.sessionId.toSessionId(), body.epoch)
+        call.response.header(HttpHeaders.CacheControl, "no-store")
+        call.respond(SkillManifestDto(owner.memberId, delivery.forRunner(owner).map { it.toDto() }))
+    }
+    post<RunnerSkillsApi.Artifact> {
+        val token = call.runnerToken()
+        runners.check(token)
+        val body = call.receive<RunnerArtifactRequestDto>()
+        val owner = runners.owner(token, body.sessionId.toSessionId(), body.epoch)
+        call.response.header(HttpHeaders.CacheControl, "no-store")
+        call.respond(delivery.downloadForRunner(owner, body.name, body.version).toDto())
     }
 }
 

@@ -367,3 +367,40 @@ data class SkillInstallationDto(
 /** ostrom-core `SkillInstallationList`. @property items The reports. */
 @Serializable
 data class SkillInstallationListDto(val items: List<SkillInstallationDto>)
+
+/**
+ * `POST /api/v1/cloud/runner/skills` (`fetchRunnerSkills`): the skills a cloud session's owner receives, asked by
+ * its runner with the execution's runner token.
+ */
+@Serializable
+@Resource("/api/v1/cloud/runner/skills")
+class RunnerSkillsApi {
+    /**
+     * `POST /api/v1/cloud/runner/skills/artifact` (`downloadRunnerSkill`).
+     *
+     * @property parent The runner's delivery.
+     */
+    @Serializable
+    @Resource("artifact")
+    class Artifact(val parent: RunnerSkillsApi = RunnerSkillsApi())
+}
+
+/**
+ * The execution a runner call is for (`RunnerExecution`).
+ *
+ * @property sessionId The cloud session.
+ * @property epoch Its current execution.
+ */
+@Serializable
+data class RunnerExecutionDto(val sessionId: String, val epoch: Long)
+
+/**
+ * The execution a runner call is for, and the version it downloads (`RunnerArtifactRequest`).
+ *
+ * @property sessionId The cloud session.
+ * @property epoch Its current execution.
+ * @property name The skill.
+ * @property version Its pinned version, from the owner's manifest.
+ */
+@Serializable
+data class RunnerArtifactRequestDto(val sessionId: String, val epoch: Long, val name: String, val version: String)

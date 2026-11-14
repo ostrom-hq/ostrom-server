@@ -9,12 +9,17 @@ import run.ostrom.server.skills.domain.CatalogCaller
 import run.ostrom.server.skills.presentation.AssignmentDto
 import run.ostrom.server.skills.presentation.AssignmentListDto
 import run.ostrom.server.skills.presentation.PinSkillRequest
+import run.ostrom.server.skills.presentation.RunnerArtifactRequestDto
+import run.ostrom.server.skills.presentation.RunnerExecutionDto
 import run.ostrom.server.skills.presentation.SetAssignmentRequest
 import run.ostrom.server.skills.presentation.SetAudienceRequest
 import run.ostrom.server.skills.presentation.catalogCallerOf
 import run.ostrom.server.skills.presentation.toArtifactFiles
 import run.ostrom.server.skills.presentation.toDecision
+import run.ostrom.server.skills.presentation.runnerToken
 import run.ostrom.server.skills.presentation.toDto
+import run.ostrom.server.skills.presentation.toSessionId
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.receive
@@ -22,6 +27,7 @@ import io.ktor.server.resources.delete
 import io.ktor.server.resources.get
 import io.ktor.server.resources.post
 import io.ktor.server.resources.put
+import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 
@@ -32,9 +38,12 @@ import io.ktor.server.routing.Route
  *
  * @param dependencies The use cases.
  */
-fun Route.hooksRoutes(dependencies: HooksRoutesDependencies) = authenticated {
-    catalogRoutes(dependencies)
-    deliveryRoutes(dependencies)
+fun Route.hooksRoutes(dependencies: HooksRoutesDependencies) {
+    authenticated {
+        catalogRoutes(dependencies)
+        deliveryRoutes(dependencies)
+    }
+    runnerRoutes(dependencies)
 }
 
 /** The catalog: publication (the console or a CI's key), and everything else for administrators in the console. */
@@ -106,6 +115,29 @@ private fun Route.deliveryRoutes(dependencies: HooksRoutesDependencies) = with(d
     }
     get<HookDeliveryApi.Download> { params ->
         call.respond(delivery.download(call.caller(), params.name, params.version).toDto())
+    }
+}
+
+/**
+ * What a cloud session's runner installs for its owner: the execution's runner token, checked before the body is
+ * read, never a member's.
+ */
+private fun Route.runnerRoutes(dependencies: HooksRoutesDependencies) = with(dependencies) {
+    post<RunnerHooksApi> {
+        val token = call.runnerToken()
+        runners.check(token)
+        val body = call.receive<RunnerExecutionDto>()
+        val owner = runners.owner(token, body.sessionId.toSessionId(), body.epoch)
+        call.response.header(HttpHeaders.CacheControl, "no-store")
+        call.respond(HookManifestDto(owner.memberId, delivery.forRunner(owner).map { it.toDto() }))
+    }
+    post<RunnerHooksApi.Artifact> {
+        val token = call.runnerToken()
+        runners.check(token)
+        val body = call.receive<RunnerArtifactRequestDto>()
+        val owner = runners.owner(token, body.sessionId.toSessionId(), body.epoch)
+        call.response.header(HttpHeaders.CacheControl, "no-store")
+        call.respond(delivery.downloadForRunner(owner, body.name, body.version).toDto())
     }
 }
 
