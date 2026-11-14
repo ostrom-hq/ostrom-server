@@ -76,6 +76,41 @@ private val ROUTES_UNDER_ROW_LEVEL_SECURITY_SQL: String =
     """
         .trimIndent()
 
+/** What a server's start reads across organizations to give the former sessions a profile: owned by `ostrom_router`. */
+private const val WITHOUT_PROFILE_FUNCTION = "runners_sessions_without_profile(UUID, INTEGER)"
+
+/**
+ * Version 15: the sessions of every organization created before cloud profiles and still without one (but the
+ * terminated ones), by id after a cursor, ids and organizations only (BackfillSessionProfilesUseCase); each is then
+ * read and written in its own organization. A partial index holds them alone, so the pass reads nothing once all have
+ * their profile. The router reads the four columns it needs of `runners_sessions`, inside its functions only (RLS audit
+ * R9).
+ */
+private val SESSIONS_WITHOUT_PROFILE_SQL: String =
+    """
+    CREATE INDEX runners_sessions_profile_missing ON runners_sessions (id)
+        WHERE profile IS NULL AND state <> 'terminated';
+    CREATE POLICY runners_sessions_router ON runners_sessions FOR SELECT TO ostrom_router
+        USING (current_user = 'ostrom_router');
+    GRANT SELECT (id, org_id, profile, state) ON runners_sessions TO ostrom_router;
+    CREATE FUNCTION runners_sessions_without_profile(p_after UUID, p_limit INTEGER)
+        RETURNS TABLE (session_id UUID, org_id UUID)
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        SELECT s.id, s.org_id FROM runners_sessions s WHERE s.profile IS NULL AND s.state <> 'terminated'
+            AND (p_after IS NULL OR s.id > p_after) ORDER BY s.id LIMIT p_limit;
+    $$;
+    REVOKE EXECUTE ON FUNCTION $WITHOUT_PROFILE_FUNCTION FROM PUBLIC;
+    DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+            GRANT EXECUTE ON FUNCTION $WITHOUT_PROFILE_FUNCTION TO ostrom_app;
+        END IF;
+    END $$;
+    GRANT CREATE ON SCHEMA public TO ostrom_router;
+    ALTER FUNCTION $WITHOUT_PROFILE_FUNCTION OWNER TO ostrom_router;
+    REVOKE CREATE ON SCHEMA public FROM ostrom_router;
+    """
+        .trimIndent()
+
 /** What a registered runner's heartbeat reads across organizations: a function owned by `ostrom_router`. */
 private val REGISTERED_ROUTER_FUNCTIONS = listOf("runners_registered_key(UUID)")
 
@@ -342,4 +377,5 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
             ALTER TABLE runners_sessions ADD COLUMN cluster_unreachable_since TIMESTAMPTZ;
         """.trimIndent(),
     ),
+    SchemaMigration(version = 15, name = "sessions_without_profile", sql = SESSIONS_WITHOUT_PROFILE_SQL),
 )

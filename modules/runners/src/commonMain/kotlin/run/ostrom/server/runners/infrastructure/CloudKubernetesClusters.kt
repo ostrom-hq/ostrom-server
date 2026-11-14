@@ -12,8 +12,9 @@ import kotlinx.coroutines.withContext
 import kotlin.uuid.Uuid
 
 /**
- * [KubernetesClusters] on the console's clusters (cloud module): their credentials are read at each operation, and
- * one HTTP client is kept per cluster, trusting its CA, made again when the cluster's version or CA changes.
+ * [KubernetesClusters] on the console's clusters (cloud module): their credentials are asked at each operation (the
+ * cloud module opens them again once the cluster's version changes, and once 30 seconds old), and one HTTP client is kept
+ * per cluster, trusting its CA, made again when the cluster's version or CA changes.
  *
  * A client is counted while operations use it: one replaced by a newer version is closed by its last operation, never
  * under one still running. Clients are made under one lock, so two operations never both make one and lose the other.
@@ -39,7 +40,8 @@ class CloudKubernetesClusters(
         val credentials = access.credentials(id) ?: throw RuntimeUnreachableException(GONE)
         val lease = acquire(id, credentials)
         try {
-            return block(KubernetesTarget(lease.client, credentials.cluster.apiUrl, credentials.serviceAccountToken))
+            val cluster = credentials.cluster
+            return block(KubernetesTarget(lease.client, cluster.apiUrl, credentials.serviceAccountToken, cluster.version))
         } finally {
             withContext(NonCancellable) { release(lease) }
         }
