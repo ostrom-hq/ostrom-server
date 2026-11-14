@@ -115,6 +115,8 @@ class CreateCloudSessionUseCaseImpl(
         ensureValid(GITHUB_REPOSITORY.matches(repository.url)) {
             "The repository must be an https://github.com/<owner>/<name> URL."
         }
+        // Cloned into a directory of its name (CloudEnvironmentRules.effective): never `..`, nor a hidden one.
+        CloudEnvironmentRules.validatePath(CloudEnvironmentRules.defaultPath(repository.url))
         val ref = repository.ref ?: return
         ensureValid(GIT_REF.matches(ref) && !ref.contains("..") && !ref.startsWith("-")) {
             "The repository ref is not a valid branch, tag or commit."

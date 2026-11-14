@@ -83,6 +83,11 @@ class PreparationLifecycleTest {
             val outside = CloudEnvironmentSpec(workingDirectory = "/")
             create(alice, CreateCloudSessionPayload("x", "claude", null, environment = outside))
         }
+        for (url in listOf("https://github.com/acme/..", "https://github.com/acme/.github")) {
+            assertFailsWith<InvalidCloudSessionRequestException>(url) {
+                create(alice, CreateCloudSessionPayload("x", "claude", RepositorySpec(url, null)))
+            }
+        }
         assertEquals(emptyList(), repository.sessions.values.toList())
     }
 

@@ -239,11 +239,13 @@ object RunnersModule : ServerModule {
         val github = koin.getOrNull<RunnerGitHubTokens>()?.available() == true
         // The members' values, once the secrets module resolves them.
         val variables = koin.getOrNull<ResolveEnvironmentUseCase>() != null
+        val members = koin.getOrNull<MemberDirectory>() != null
         return setOfNotNull(
             ServerFeatures.RUNNERS,
             ServerFeatures.RUNNERS_CLOUD,
-            // The recipe, the Git identity and the owner's values (none without the secrets module).
-            ServerFeatures.RUNNERS_CLOUD_ENVIRONMENT,
+            // The recipe, the Git identity and the owner's values (none without the secrets module), once the orgs
+            // module says who is an active member: without it, no session would prepare.
+            ServerFeatures.RUNNERS_CLOUD_ENVIRONMENT.takeIf { members },
             ServerFeatures.RUNNERS_CLOUD_GITHUB.takeIf { github },
             ServerFeatures.RUNNERS_CLOUD_VARIABLES.takeIf { variables },
         )

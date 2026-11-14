@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.config.MapConfigSource
 import run.ostrom.server.runners.domain.NoRunnerVariables
 import run.ostrom.server.runners.domain.RunnerGitHubToken
@@ -18,8 +19,8 @@ import kotlin.test.assertEquals
 import kotlin.uuid.Uuid
 
 class RunnersFeaturesTest {
-    /** What every cloud runtime serves: sessions, and the preparation of their recipe. */
-    private val cloud = setOf("runners.v1", "runners.cloud.v1", "runners.cloud.environment.v1")
+    /** What every cloud runtime serves. */
+    private val cloud = setOf("runners.v1", "runners.cloud.v1")
 
     private fun koin(driver: RunnersConfig.DriverKind) = koinApplication {
         modules(module { single { RunnersConfig.from(MapConfigSource(emptyMap())).copy(driver = driver) } })
@@ -89,5 +90,24 @@ class RunnersFeaturesTest {
             assertEquals(bound, variables is ResolvedRunnerVariables, "Resolved by the secrets module, or none")
             assertEquals(!bound, variables === NoRunnerVariables)
         }
+    }
+
+    @Test
+    fun theRecipeIsListedOnceTheOrgsModuleSaysWhoIsAMember() = runTest {
+        val koin = koinApplication {
+            modules(
+                module {
+                    single {
+                        RunnersConfig.from(MapConfigSource(emptyMap())).copy(driver = RunnersConfig.DriverKind.DOCKER)
+                    }
+                    single<MemberDirectory> {
+                        object : MemberDirectory {
+                            override suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean = true
+                        }
+                    }
+                },
+            )
+        }.koin
+        assertEquals(cloud + "runners.cloud.environment.v1", RunnersModule.features(koin))
     }
 }
