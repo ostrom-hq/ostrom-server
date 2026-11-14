@@ -270,7 +270,7 @@ internal class McpImporter(
             .toSet()
         val refused = when {
             // As in TeamCode, an endpoint never changes: the stored credentials would follow a new host.
-            existing.transport != payload.transport || existing.url != payload.url -> ENDPOINT_CHANGED
+            (existing.transport to existing.url) != (payload.transport to payload.url) -> ENDPOINT_CHANGED
             dryRun -> null
             else -> deny(caller, existing, planned.deniedTools.filter { it !in present })
         }

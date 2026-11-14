@@ -165,6 +165,10 @@ class ImportPostgresTest {
                 val grafana = servers().getValue("grafana")
                 assertEquals("https://g.example.com/mcp", grafana.url)
                 assertEquals(1, koin.get<ListArgumentPoliciesUseCase>()(adminA, grafana.id).size, "Nothing denied")
+                // Any other change of a server is still planned by a dry run.
+                val shared = report(Importing.team(discordPerMember = false), dryRun = true).items
+                val discord = shared.single { it.kind == "server" && it.name == "discord" }
+                assertEquals(line("server", "discord", PLANNED), discord)
             }
         }
 
