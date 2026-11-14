@@ -215,7 +215,7 @@ class GetCloudSessionUseCaseImpl(
     // a paused, terminated or failed session runs nowhere: no lookup
     override suspend fun invoke(caller: Caller, id: Uuid): CloudSession = repository.ownedBy(caller, id).let {
         when (it.state) {
-            SessionState.PAUSED, SessionState.TERMINATED, SessionState.FAILED -> it
+            SessionState.PAUSED, SessionState.TRANSFERRING, SessionState.TERMINATED, SessionState.FAILED -> it
             else -> it.copy(runnerId = driver.holder(it))
         }
     }
@@ -335,6 +335,10 @@ class ChangeCloudSessionUseCaseImpl(
         val session = repository.ownedBy(caller, id)
         if (session.state.isFinal || session.desiredState == DesiredState.TERMINATED) {
             throw CloudSessionStateException("This session is over.")
+        }
+        // An accepted transfer pauses the session; only the transfer itself resumes it, for the recipient.
+        if (session.transferId != null || session.state == SessionState.TRANSFERRING) {
+            throw SessionTransferringException()
         }
         if (session.desiredState == DesiredState.RUNNING) return session
         val plan = plans.planFor(caller.orgId)

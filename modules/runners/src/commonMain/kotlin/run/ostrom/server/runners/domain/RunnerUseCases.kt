@@ -148,6 +148,8 @@ class RunnerHeartbeatUseCaseImpl(
                 readyAt = now,
                 lastActivityAt = now,
                 failure = null,
+                // The runner reset what another member left before it reported ready.
+                untrustedWorkspace = false,
             )
         }
         if (heartbeat.stopped && session.state == SessionState.PAUSING && session.runnerStoppedAt == null) {

@@ -125,7 +125,12 @@ class RunnerEnvironmentUseCaseImpl(
         }
         val login = Uuid.parseOrNull(session.ownerId)?.let { logins.loginsOf(session.orgId, listOf(it))[it] }
             ?: session.ownerId
-        return PreparedEnvironment(spec, CloudEnvironmentRules.gitIdentity(login, access, spec), resolved)
+        return PreparedEnvironment(
+            spec,
+            CloudEnvironmentRules.gitIdentity(login, access, spec),
+            resolved,
+            session.untrustedWorkspace,
+        )
     }
 
     override suspend fun progress(token: String, report: RunnerPreparationReport): HeartbeatAnswer {

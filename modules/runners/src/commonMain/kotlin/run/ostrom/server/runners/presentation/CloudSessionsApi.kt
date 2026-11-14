@@ -156,6 +156,7 @@ data class RunnerGitIdentityDto(val name: String, val email: String)
  * @property git The owner's Git identity.
  * @property variables The owner's environment variables, by name.
  * @property unavailable The variables withheld, by name.
+ * @property untrustedWorkspace True after a transfer, until an execution of the new owner is ready; absent otherwise.
  */
 @Serializable
 data class RunnerEnvironmentResponse(
@@ -163,6 +164,7 @@ data class RunnerEnvironmentResponse(
     val git: RunnerGitIdentityDto,
     val variables: Map<String, String>,
     val unavailable: List<String>,
+    val untrustedWorkspace: Boolean? = null,
 ) {
     override fun toString(): String =
         "RunnerEnvironmentResponse(${environment.repositories.size} repositories, ${variables.keys.sorted()}, " +
@@ -347,6 +349,7 @@ data class CloudSessionResponse(
     val environment: CloudEnvironmentDto? = null,
     val profile: CloudSessionProfileDto? = null,
     val image: String? = null,
+    val transferId: String? = null,
 )
 
 /**

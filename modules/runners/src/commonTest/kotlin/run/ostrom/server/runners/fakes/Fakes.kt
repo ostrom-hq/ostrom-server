@@ -200,6 +200,8 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
         val current = get(orgId, id) ?: return ResumeOutcome.NotFound
         if (!current.state.holdsExecution && holding(orgId, id) >= maxRunning) return ResumeOutcome.AtCap
         if (current.state.isFinal || current.desiredState == DesiredState.TERMINATED) return ResumeOutcome.NotFound
+        // As the SQL: a session moving to another owner is not resumed.
+        if (current.transferId != null || current.state == SessionState.TRANSFERRING) return ResumeOutcome.NotFound
         val updated = current.copy(
             desiredState = DesiredState.RUNNING,
             generation = current.generation + 1,

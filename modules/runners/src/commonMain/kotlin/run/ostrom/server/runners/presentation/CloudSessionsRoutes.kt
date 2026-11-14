@@ -246,4 +246,5 @@ fun CloudSession.toResponse() = CloudSessionResponse(
     environment = environment?.toDto(),
     profile = profile?.origin?.let { CloudSessionProfileDto(it.id, it.version) },
     image = profile?.image,
+    transferId = transferId?.toString(),
 )

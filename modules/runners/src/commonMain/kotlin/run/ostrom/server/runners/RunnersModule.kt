@@ -117,6 +117,13 @@ import run.ostrom.server.runners.presentation.RunnerRuntime
 import run.ostrom.server.runners.presentation.RunnersRoutesDependencies
 import run.ostrom.server.runners.presentation.TerminalRoutesDependencies
 import run.ostrom.server.runners.presentation.cloudSessionsRoutes
+import run.ostrom.server.runners.presentation.cloudTransfersRoutes
+import run.ostrom.server.runners.presentation.CloudTransfersRoutesDependencies
+import run.ostrom.server.runners.infrastructure.CloudTransfersRepositoryImpl
+import run.ostrom.server.runners.infrastructure.MemberTransferRecipients
+import run.ostrom.server.runners.infrastructure.RuntimeMemberTransferPolicy
+import run.ostrom.server.runners.domain.CloudTransfersUseCaseImpl
+import run.ostrom.server.runners.domain.CompleteCloudTransferUseCase
 import run.ostrom.server.runners.presentation.runnersRoutes
 import run.ostrom.server.runners.presentation.terminalRoutes
 import run.ostrom.server.secrets.domain.ResolveEnvironmentUseCase
@@ -169,7 +176,8 @@ object RunnersModule : ServerModule {
         }
         single<BackfillSessionProfilesUseCase> { BackfillSessionProfilesUseCaseImpl(get(), get(), get()) }
         single(named(CLOUD_ACCESS_SETTINGS.name)) { CLOUD_ACCESS_SETTINGS }
-        single<CloudSessionsRepository> { CloudSessionsRepositoryImpl(get()) }
+        single { CloudSessionsRepositoryImpl(get()) }
+        single<CloudSessionsRepository> { get<CloudSessionsRepositoryImpl>() }
         single<CloudAgentSessions> { RunnersCloudAgentSessions(get(), getOrNull<MemberLogins>()) }
         // The notification router titles a notification with its cloud session's name.
         single<SessionNames> { RunnersSessionNames(get()) }
@@ -223,7 +231,28 @@ object RunnersModule : ServerModule {
             val limit = CloudSettingsBackgroundWorkLimit(getOrNull<CloudSettingsSource>())
             val ended = getAll<SessionEndListener>()
             val answers = getOrNull<PendingWaitAnswers>() ?: NoPendingWaitAnswers
-            ReconcileCloudSessionUseCaseImpl(get(), get(), get(), get(), get(), get(), ended, get(), answers, limit)
+            ReconcileCloudSessionUseCaseImpl(
+                get(), get(), get(), get(), get(), get(), ended, get(), answers, get<TransferWiring>().complete, limit,
+            )
+        }
+        // Ownership transfers need the orgs module's members: without it nobody can be named, and none is served.
+        single {
+            val members = getOrNull<MemberDirectory>()
+            val logins = getOrNull<MemberLogins>()
+            if (members == null || logins == null) {
+                TransferWiring(null, null)
+            } else {
+                val transfers = CloudTransfersRepositoryImpl(get(), get())
+                val recipients = MemberTransferRecipients(members, logins)
+                val policy = RuntimeMemberTransferPolicy(getOrNull<CloudRuntimeSource>())
+                TransferWiring(
+                    CloudTransfersRoutesDependencies(
+                        CloudTransfersUseCaseImpl(get(), transfers, recipients, policy, get(), get()),
+                        get(),
+                    ),
+                    CompleteCloudTransferUseCase(get(), transfers, get(), recipients, get(), get()),
+                )
+            }
         }
         single { ReconcilerWorker(get(), get(), get(), get()) }
         // The members' GitHub access when the GitHub integration is there (always on a full server).
@@ -309,6 +338,7 @@ object RunnersModule : ServerModule {
 
     override fun routes(route: Route, koin: Koin) {
         route.cloudSessionsRoutes(koin.get())
+        koin.get<TransferWiring>().routes?.let { route.cloudTransfersRoutes(it) }
         route.runnersRoutes(koin.get())
         route.terminalRoutes(koin.get())
     }
@@ -333,6 +363,8 @@ object RunnersModule : ServerModule {
             ServerFeatures.RUNNERS_CLOUD_ENVIRONMENT.takeIf { members },
             ServerFeatures.RUNNERS_CLOUD_GITHUB.takeIf { github },
             ServerFeatures.RUNNERS_CLOUD_VARIABLES.takeIf { variables },
+            // Giving a session to another member, once the orgs module names the members.
+            ServerFeatures.RUNNERS_CLOUD_TRANSFER.takeIf { koin.getOrNull<TransferWiring>()?.routes != null },
             // Sessions on the console's clusters and the organizations' profiles.
             ServerFeatures.RUNNERS_CLOUD_PROFILES.takeIf { koin.get<RunnersConfig>().driver == KUBERNETES },
         )
@@ -346,3 +378,12 @@ object RunnersModule : ServerModule {
         scope.launch { signals.watch() }
     }
 }
+
+/**
+ * What the ownership transfers need, built once: their routes and the reconciler's side of them, both null without the
+ * orgs module.
+ *
+ * @property routes The routes' dependencies.
+ * @property complete The owner change at the paused boundary.
+ */
+class TransferWiring(val routes: CloudTransfersRoutesDependencies?, val complete: CompleteCloudTransferUseCase?)

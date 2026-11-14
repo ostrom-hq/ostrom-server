@@ -144,7 +144,7 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
                     """
                     UPDATE runners_sessions SET desired_state = 'running', generation = generation + 1,
                     updated_at = :now WHERE id = :id AND org_id = :org_id AND desired_state <> 'terminated' AND
-                    state NOT IN ('terminated', 'failed') RETURNING $COLUMNS
+                    state NOT IN ('terminated', 'failed', 'transferring') AND transfer_id IS NULL RETURNING $COLUMNS
                     """,
                 ).bind("now", now).bind("id", id).bind("org_id", orgId),
             ).getOrThrow().firstOrNull() ?: return@inTenant ResumeOutcome.NotFound
@@ -153,40 +153,57 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         }
 
     override suspend fun compareAndSet(session: CloudSession, nextReconcileAt: Instant?): CloudSession? =
-        driver.inTenant(session.orgId) {
-            val updated = fetchAll(
+        driver.inTenant(session.orgId) { compareAndSetIn(this, session, nextReconcileAt) }
+
+    /**
+     * Writes a session if nobody changed it since it was read, and asks the reconciler for its next look
+     * ([compareAndSet]), inside a transaction the caller runs: a transfer writes it with its own rows.
+     *
+     * @param executor The tenant transaction.
+     * @param session The session as it must be stored.
+     * @param nextReconcileAt When the reconciler must look at it again.
+     *
+     * @return The stored session, or null when another writer changed it first.
+     */
+    internal suspend fun compareAndSetIn(
+        executor: QueryExecutor,
+        session: CloudSession,
+        nextReconcileAt: Instant?,
+    ): CloudSession? = with(executor) {
+        val updated = fetchAll(
+            Statement.create(
+                """
+                UPDATE runners_sessions SET state = :state, desired_state = :desired_state, phase = :phase,
+                epoch = :epoch, generation = generation + 1, failure_code = :failure_code, failure_message =
+                :failure_message, failure_retryable = :failure_retryable, updated_at = :updated_at,
+                execution_started_at = :execution_started_at, ready_at = :ready_at, last_heartbeat_at =
+                :last_heartbeat_at, last_activity_at = GREATEST(last_activity_at, :last_activity_at),
+                paused_at = :paused_at, terminated_at = :terminated_at, pausing_since = :pausing_since,
+                runner_stopped_at = :runner_stopped_at, runner_token_hash = :runner_token_hash,
+                background_since = :background_since, background_seen_at = :background_seen_at, profile =
+                :profile, cluster_unreachable_since = :cluster_unreachable_since, owner_id = :owner_id,
+                transfer_id = :transfer_id, untrusted_workspace = :untrusted_workspace
+                WHERE id = :id AND generation = :generation RETURNING
+                $COLUMNS
+                """,
+            ).bindUpdate(session).bind("generation", session.generation),
+        ).getOrThrow().firstOrNull()?.toSession()
+        if (updated != null) {
+            execute(
                 Statement.create(
                     """
-                    UPDATE runners_sessions SET state = :state, desired_state = :desired_state, phase = :phase,
-                    epoch = :epoch, generation = generation + 1, failure_code = :failure_code, failure_message =
-                    :failure_message, failure_retryable = :failure_retryable, updated_at = :updated_at,
-                    execution_started_at = :execution_started_at, ready_at = :ready_at, last_heartbeat_at =
-                    :last_heartbeat_at, last_activity_at = GREATEST(last_activity_at, :last_activity_at),
-                    paused_at = :paused_at, terminated_at = :terminated_at, pausing_since = :pausing_since,
-                    runner_stopped_at = :runner_stopped_at, runner_token_hash = :runner_token_hash,
-                    background_since = :background_since, background_seen_at = :background_seen_at, profile =
-                    :profile, cluster_unreachable_since = :cluster_unreachable_since
-                    WHERE id = :id AND generation = :generation RETURNING
-                    $COLUMNS
+                    UPDATE runners_session_routes SET runner_token_hash = :hash, next_reconcile_at = CASE WHEN
+                    CAST(:has_next AS BOOLEAN) THEN LEAST(COALESCE(next_reconcile_at, :next_at), :next_at) ELSE
+                    next_reconcile_at END WHERE session_id = :id
                     """,
-                ).bindUpdate(session).bind("generation", session.generation),
-            ).getOrThrow().firstOrNull()?.toSession()
-            if (updated != null) {
-                execute(
-                    Statement.create(
-                        """
-                        UPDATE runners_session_routes SET runner_token_hash = :hash, next_reconcile_at = CASE WHEN
-                        CAST(:has_next AS BOOLEAN) THEN LEAST(COALESCE(next_reconcile_at, :next_at), :next_at) ELSE
-                        next_reconcile_at END WHERE session_id = :id
-                        """,
-                    ).bind("hash", session.runnerTokenHash)
-                        .bind("has_next", nextReconcileAt != null)
-                        .bind("next_at", nextReconcileAt ?: session.updatedAt)
-                        .bind("id", session.id),
-                ).getOrThrow()
-            }
-            updated
+                ).bind("hash", session.runnerTokenHash)
+                    .bind("has_next", nextReconcileAt != null)
+                    .bind("next_at", nextReconcileAt ?: session.updatedAt)
+                    .bind("id", session.id),
+            ).getOrThrow()
         }
+        updated
+    }
 
     override suspend fun touchActivity(id: Uuid, at: Instant) {
         val orgId = orgOf(id) ?: return
@@ -304,7 +321,6 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
     /** Binds every column of an insert (sqlx4k refuses a name the statement does not use). */
     private fun Statement.bindInsert(session: CloudSession): Statement = bindUpdate(session)
         .bind("org_id", session.orgId)
-        .bind("owner_id", session.ownerId)
         .bind("name", session.name)
         .bind("agent", session.agent.wire)
         .bind("model", session.model)
@@ -344,6 +360,9 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         .bind("background_seen_at", session.backgroundSeenAt)
         .bind("profile", session.profile?.let { RECIPE_JSON.encodeToString(SessionProfile.serializer(), it) })
         .bind("cluster_unreachable_since", session.clusterUnreachableSince)
+        .bind("owner_id", session.ownerId)
+        .bind("transfer_id", session.transferId)
+        .bind("untrusted_workspace", session.untrustedWorkspace)
 
     private fun ResultSet.Row.toSession(): CloudSession {
         val url = get("repository_url").asStringOrNull()
@@ -390,6 +409,8 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             profile = get("profile").asStringOrNull()
                 ?.let { RECIPE_JSON.decodeFromString(SessionProfile.serializer(), it) },
             clusterUnreachableSince = get("cluster_unreachable_since").asInstantOrNull(),
+            transferId = get("transfer_id").asUuidOrNull(),
+            untrustedWorkspace = get("untrusted_workspace").asBoolean(),
         )
     }
 
@@ -406,7 +427,7 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             restricted_egress, created_at, updated_at, execution_started_at, ready_at, last_heartbeat_at,
             last_activity_at, paused_at, terminated_at, pausing_since, runner_stopped_at, runner_token_hash,
             github_access, background_since, background_seen_at, environment, failure_retryable, profile,
-            cluster_unreachable_since
+            cluster_unreachable_since, transfer_id, untrusted_workspace
         """
         const val VALUES = """
             :id, :org_id, :owner_id, :name, :agent, :model, :prompt, :repository_url, :repository_ref, :state,
@@ -414,7 +435,7 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             :max_run_minutes, :restricted_egress, :created_at, :updated_at, :execution_started_at, :ready_at,
             :last_heartbeat_at, :last_activity_at, :paused_at, :terminated_at, :pausing_since, :runner_stopped_at,
             :runner_token_hash, :github_access, :background_since, :background_seen_at, :environment,
-            :failure_retryable, :profile, :cluster_unreachable_since
+            :failure_retryable, :profile, :cluster_unreachable_since, :transfer_id, :untrusted_workspace
         """
     }
 }

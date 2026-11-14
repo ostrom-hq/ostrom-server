@@ -45,6 +45,8 @@ interface ReconcileCloudSessionUseCase {
  * @param answers Whether answers to the session's waits, given while its execution ran, were never handed over: the
  *   idle guard then starts the execution again instead of pausing it, so its runner hands them over (an answer to a
  *   running session resumes nothing, and nothing would resume it once paused).
+ * @param transfers The owner change of an accepted transfer; null where the server offers none (a session then never
+ *   holds one).
  * @param backgroundWork How long the agent's background work holds off the idle pause, per organization.
  */
 // Each step is a decision table read top to bottom: an early return per outcome reads better than nested branches,
@@ -61,6 +63,7 @@ class ReconcileCloudSessionUseCaseImpl(
     private val ended: List<SessionEndListener> = emptyList(),
     private val profiles: SessionProfiles = NoSessionProfiles,
     private val answers: PendingWaitAnswers = NoPendingWaitAnswers,
+    private val transfers: CompleteCloudTransferUseCase? = null,
     private val backgroundWork: BackgroundWorkLimit,
 ) : ReconcileCloudSessionUseCase {
     override suspend fun invoke(session: CloudSession): Instant? {
@@ -83,14 +86,19 @@ class ReconcileCloudSessionUseCaseImpl(
         }
     }
 
+    @Suppress("CyclomaticComplexMethod") // A flat decision table over the session's state.
     private suspend fun step(session: CloudSession, now: Instant): Instant? =
         when {
+            session.transferId != null && transfers != null && session.desiredState == DesiredState.TERMINATED ->
+                transfers.abandon(session)
             session.desiredState == DesiredState.TERMINATED -> terminate(session, now)
             session.state == SessionState.FAILED -> null
             session.preparationFailed -> preparationFailed(session, now)
             session.state == SessionState.CREATING || session.state == SessionState.RESUMING -> starting(session, now)
             session.state == SessionState.RUNNING -> running(session, now)
             session.state == SessionState.PAUSING -> pausing(session, now)
+            session.state == SessionState.TRANSFERRING -> transfers?.step(session) ?: (now + WATCH_DELAY)
+            session.transferId != null && transfers != null -> transfers.begin(session)
             else -> paused(session, now)
         }
 
@@ -348,8 +356,11 @@ class ReconcileCloudSessionUseCaseImpl(
     }
 
     /** Writes a step; a lost race asks for an immediate new look, which re-reads the row. */
-    private suspend fun write(next: CloudSession, nextReconcileAt: Instant?): Instant? =
-        if (repository.compareAndSet(next, nextReconcileAt) == null) clock.now() else nextReconcileAt
+    private suspend fun write(next: CloudSession, nextReconcileAt: Instant?): Instant? {
+        // A pause that an accepted transfer asked for is followed by the owner change: look again at once.
+        val at = nextReconcileAt ?: clock.now().takeIf { next.transferId != null && next.state == SessionState.PAUSED }
+        return if (repository.compareAndSet(next, at) == null) clock.now() else at
+    }
 
     private fun CloudSession.moveTo(state: SessionState, now: Instant): CloudSession {
         SessionStateMachine.requireTransition(this.state, state)

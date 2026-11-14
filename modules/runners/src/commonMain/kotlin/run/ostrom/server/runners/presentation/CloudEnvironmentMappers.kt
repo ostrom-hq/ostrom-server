@@ -41,6 +41,7 @@ fun PreparedEnvironment.toResponse() = RunnerEnvironmentResponse(
     git = RunnerGitIdentityDto(git.name, git.email),
     variables = variables.variables,
     unavailable = variables.unavailable,
+    untrustedWorkspace = untrustedWorkspace.takeIf { it },
 )
 
 /**
