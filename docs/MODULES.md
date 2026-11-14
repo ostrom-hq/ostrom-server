@@ -301,7 +301,7 @@ Every request is already logged once by the kernel (method, route template — n
 | `OSTROM_POSTHOG_API_KEY`, `OSTROM_POSTHOG_HOST` | —, EU cloud | The PostHog exporter ostrom-core builds (the server itself sends no product event); read at start, before the database, as `OTEL_*` |
 | `OSTROM_POD_NAME` | random | `service.instance.id` (`ServerConfig.instanceId`; the chart sets it from the pod name) |
 | `OSTROM_WEBHOOKS_ALLOW_PRIVATE_TARGETS` | `false` | `true` lets outgoing webhooks reach loopback and private addresses (an internal receiver); link-local, unspecified and metadata addresses stay refused |
-| `OSTROM_CONSOLE_URL` | `https://app.ostrom.run` | The console, which every module reads: billing's Checkout and portal return pages and limit messages, GitHub's check links and install returns, the approval e-mails' links. The former `OSTROM_WEB_ORIGIN` is read while it alone is set, with a deprecation warning at start |
+| `OSTROM_CONSOLE_URL` | `https://app.ostrom.run` | The console, which every module reads: billing's Checkout and portal return pages and limit messages, GitHub's check links and install returns, the approval e-mails' links. The GitHub integration and the notifications still read the former `OSTROM_WEB_ORIGIN` while it alone is set, with a deprecation warning at start (the other modules never read it) |
 
 A module that needs its own keys reads them from the `ConfigSource` bound in Koin (`get<ConfigSource>()`: the
 environment, then `OSTROM_CONFIG_FILE`), with the `OSTROM_<MODULE>_…` prefix, and adds them to this table. In a

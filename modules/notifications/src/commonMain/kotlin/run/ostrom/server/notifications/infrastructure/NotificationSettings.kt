@@ -28,7 +28,7 @@ data class NotificationSettings(
         if (webOriginDeprecated) {
             logger.warn(
                 "Deprecated variable: the console's address is OSTROM_CONSOLE_URL; remove OSTROM_WEB_ORIGIN.",
-                mapOf("variable" to "OSTROM_WEB_ORIGIN"),
+                mapOf("variable" to "OSTROM_WEB_ORIGIN", "module" to "notifications"),
             )
         }
     }
