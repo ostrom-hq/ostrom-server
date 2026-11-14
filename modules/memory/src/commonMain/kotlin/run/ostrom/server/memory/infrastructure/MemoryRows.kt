@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.memory.infrastructure
 
+import run.ostrom.server.memory.domain.CurationSettings
 import run.ostrom.server.memory.domain.MemoryEntry
 import run.ostrom.server.memory.domain.MemoryIndexEntry
 import run.ostrom.server.memory.domain.MemoryOrigin
+import run.ostrom.server.memory.domain.MemoryReview
 import run.ostrom.server.memory.domain.MemoryScope
 import run.ostrom.server.memory.domain.MemoryStatus
+import run.ostrom.server.memory.domain.ReviewKind
 import io.github.smyrgeorge.sqlx4k.QueryExecutor
 import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
@@ -89,3 +93,29 @@ internal class RefsJson {
 
     fun decode(text: String): List<String> = Json.decodeFromString(serializer, text)
 }
+
+internal fun ResultSet.Row.toSettings(): CurationSettings = CurationSettings(
+    enabled = get("curation_enabled").asBoolean(),
+    lastRunAt = get("last_run_at").asInstantOrNull(),
+    lastRunId = get("last_run_id").asStringOrNull(),
+    lastSuperseded = get("last_superseded").asInt(),
+    lastQueued = get("last_queued").asInt(),
+)
+
+/** A review joined with its two entries' titles and origins. */
+internal fun ResultSet.Row.toReview(): MemoryReview = MemoryReview(
+    id = id(),
+    scope = scopeOf(get("scope").asString()),
+    ownerId = get("owner_id").asString().ifEmpty { null },
+    kind = ReviewKind.entries.single { it.wire == get("kind").asString() },
+    reason = get("reason").asString(),
+    olderId = get("older_id").asUuid(),
+    olderTitle = get("older_title").asString(),
+    olderOrigin = originOf(get("older_origin").asString()),
+    newerId = get("newer_id").asUuid(),
+    newerTitle = get("newer_title").asString(),
+    newerOrigin = originOf(get("newer_origin").asString()),
+    createdAt = get("created_at").asInstant(),
+)
+
+internal fun originOf(wire: String): MemoryOrigin = MemoryOrigin.entries.single { it.wire == wire }
