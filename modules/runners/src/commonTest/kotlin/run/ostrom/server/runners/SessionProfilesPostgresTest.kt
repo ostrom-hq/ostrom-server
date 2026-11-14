@@ -106,6 +106,38 @@ class SessionProfilesPostgresTest {
     }
 
     @Test
+    fun everySessionOfTheFormerVariablesIsGivenItsProfileAtTheNextStartOnce() = serverTest(
+        listOf(CloudModule, RunnersModule),
+        kubernetes,
+    ) { server ->
+        val koin = server.koin
+        val sessions = koin.get<CloudSessionsRepository>()
+        val cluster = koin.get<CloudClustersRepository>().list().single()
+        // Before the upgrade: paused for months in two organizations, never stepped again; one ended long ago.
+        val ofA = session(state = SessionState.PAUSED, createdAt = t0)
+        val ofB = session(orgId = ORG_B, state = SessionState.PAUSED, createdAt = t0)
+        val ended = session(state = SessionState.TERMINATED, createdAt = t0)
+        for (legacy in listOf(ofA, ofB, ended)) assertTrue(sessions.createWithinCap(legacy, 5))
+        val first = sessions.withoutProfile(null, 1).single()
+        val rest = sessions.withoutProfile(first.id, 10)
+        assertEquals(setOf(ofA.id, ofB.id), (listOf(first) + rest).map { it.id }.toSet(), "By id after the cursor")
+
+        RunnersModule.initialize(koin)
+
+        for (legacy in listOf(ofA, ofB)) {
+            val given = checkNotNull(sessions.get(legacy.orgId, legacy.id))
+            assertEquals(cluster.id.toString(), given.profile?.clusterId)
+            assertEquals(20, given.profile?.workspaceGibibytes)
+            assertEquals(SessionState.PAUSED, given.state, "Given its profile, nothing else")
+        }
+        assertNull(sessions.get(ORG_A, ended.id)?.profile, "A terminated session has nothing left to run")
+        assertEquals(emptyList(), sessions.withoutProfile(null, 10))
+        val generations = listOf(ofA, ofB).map { sessions.get(it.orgId, it.id)?.generation }
+        RunnersModule.initialize(koin)
+        assertEquals(generations, listOf(ofA, ofB).map { sessions.get(it.orgId, it.id)?.generation }, "Then a no-op")
+    }
+
+    @Test
     fun anUnsetDriverKeepsAnUpgradedServerOffKubernetes() = serverTest(
         listOf(CloudModule, RunnersModule),
         overrides,

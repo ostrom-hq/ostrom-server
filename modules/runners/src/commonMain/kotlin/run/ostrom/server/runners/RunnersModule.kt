@@ -4,6 +4,8 @@ package run.ostrom.server.runners
 import run.ostrom.server.cloud.domain.CloudClusterAccess
 import run.ostrom.server.cloud.domain.CloudClustersUseCase
 import run.ostrom.server.cloud.domain.CloudRuntimeSource
+import run.ostrom.server.runners.domain.BackfillSessionProfilesUseCase
+import run.ostrom.server.runners.domain.BackfillSessionProfilesUseCaseImpl
 import run.ostrom.server.runners.domain.CatalogSessionProfiles
 import run.ostrom.server.runners.domain.NoSessionProfiles
 import run.ostrom.server.runners.domain.SessionProfiles
@@ -155,6 +157,7 @@ object RunnersModule : ServerModule {
                 NoSessionProfiles
             }
         }
+        single<BackfillSessionProfilesUseCase> { BackfillSessionProfilesUseCaseImpl(get(), get(), get()) }
         single(named(CLOUD_ACCESS_SETTINGS.name)) { CLOUD_ACCESS_SETTINGS }
         single<CloudSessionsRepository> { CloudSessionsRepositoryImpl(get()) }
         single<CloudAgentSessions> { RunnersCloudAgentSessions(get(), getOrNull<MemberLogins>()) }
@@ -263,11 +266,19 @@ object RunnersModule : ServerModule {
 
     override val migrations: List<SchemaMigration> = RunnersMigrations
 
-    /** The cluster of the former `OSTROM_RUNNERS_KUBERNETES_*` variables, imported once, after the cloud runtime. */
+    /**
+     * The cluster of the former `OSTROM_RUNNERS_KUBERNETES_*` variables, imported once, after the cloud runtime; then
+     * every session created before cloud profiles is given one on it now, not only at its next step.
+     */
     override suspend fun initialize(koin: Koin) {
         val clusters = koin.getOrNull<CloudClustersUseCase>() ?: return
         if (koin.get<RunnersConfig>().driver != KUBERNETES) return
-        legacyImport(clusters, koin.get(), koin.get(), koin.get(), koin.get()).start()
+        val logger = koin.get<Logger>()
+        legacyImport(clusters, koin.get(), koin.get(), logger, koin.get()).start()
+        val given = koin.get<BackfillSessionProfilesUseCase>()()
+        if (given > 0) {
+            logger.info("Gave the sessions of the former variables their cloud profile.", mapOf("sessions" to given))
+        }
     }
 
     private fun legacyImport(

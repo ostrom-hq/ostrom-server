@@ -243,15 +243,33 @@ class CatalogSessionProfiles(
         private val IMAGE = Regex("[A-Za-z0-9][A-Za-z0-9._/:@+-]{0,511}")
 
         /**
-         * Whether an image matches an override: `*` matches any run of characters, everything else is literal.
+         * Whether an image matches an override: `*` matches any run of characters, everything else is literal. No
+         * regular expression, which could backtrack: the literal parts are found in order, each at its first place
+         * after the one before (which leaves the most room to the next), so a match costs at most the image's length
+         * times the pattern's.
          *
          * @param pattern The override.
          * @param image The image asked for.
          *
          * @return Whether it matches.
          */
-        fun matchesImagePattern(pattern: String, image: String): Boolean =
-            Regex(pattern.split('*').joinToString(".*") { Regex.escape(it) }).matches(image)
+        fun matchesImagePattern(pattern: String, image: String): Boolean {
+            val parts = pattern.split('*')
+            val prefix = parts.first()
+            val suffix = parts.last()
+            if (parts.size == 1) return image == pattern
+            // The prefix and the suffix never overlap: `a*a` does not match `a`.
+            if (image.length < prefix.length + suffix.length) return false
+            if (!image.startsWith(prefix) || !image.endsWith(suffix)) return false
+            val end = image.length - suffix.length
+            var from = prefix.length
+            for (middle in parts.subList(1, parts.size - 1)) {
+                val at = image.indexOf(middle, from)
+                if (at < 0 || at + middle.length > end) return false
+                from = at + middle.length
+            }
+            return true
+        }
     }
 }
 

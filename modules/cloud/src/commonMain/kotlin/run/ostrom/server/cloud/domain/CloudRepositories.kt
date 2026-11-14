@@ -56,6 +56,15 @@ interface CloudClustersRepository {
     suspend fun get(id: Uuid): StoredCloudCluster?
 
     /**
+     * The version of one cluster, which each save increments: whether credentials read before still hold.
+     *
+     * @param id The cluster.
+     *
+     * @return It, or null when there is no such cluster.
+     */
+    suspend fun version(id: Uuid): Int?
+
+    /**
      * Inserts a new cluster.
      *
      * @param stored It, at version 1.

@@ -234,6 +234,13 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
     override suspend fun claimDue(owner: String, now: Instant, leaseUntil: Instant, limit: Int): List<CloudSession> =
         sessions.values.filter { s -> next[s.id]?.let { it <= now } == true }.take(limit)
 
+    // By id as PostgreSQL orders UUIDs: their lowercase text sorts the same.
+    override suspend fun withoutProfile(after: Uuid?, limit: Int): List<CloudSession> = sessions.values
+        .filter { it.profile == null && it.state != SessionState.TERMINATED }
+        .sortedBy { it.id.toString() }
+        .filter { after == null || it.id.toString() > after.toString() }
+        .take(limit)
+
     override suspend fun release(id: Uuid, owner: String, nextReconcileAt: Instant?) {
         released += id to nextReconcileAt
         next[id] = nextReconcileAt

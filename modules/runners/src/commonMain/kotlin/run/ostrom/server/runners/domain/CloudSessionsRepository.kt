@@ -151,6 +151,18 @@ interface CloudSessionsRepository {
     suspend fun release(id: Uuid, owner: String, nextReconcileAt: Instant?)
 
     /**
+     * The sessions of every organization created before cloud profiles, still without one, but the terminated ones:
+     * read across organizations through `runners_sessions_without_profile` (owned by `ostrom_router`), each then in
+     * its own.
+     *
+     * @param after The last session of the page before, or null for the first page.
+     * @param limit How many at most.
+     *
+     * @return They, by id.
+     */
+    suspend fun withoutProfile(after: Uuid?, limit: Int): List<CloudSession>
+
+    /**
      * Reads the execution seconds an organization used in a month.
      *
      * @param orgId The organization.
