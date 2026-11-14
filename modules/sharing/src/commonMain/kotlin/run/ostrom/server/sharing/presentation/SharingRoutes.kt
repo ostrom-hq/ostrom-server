@@ -225,7 +225,13 @@ private fun SharedAccountView.toResponse(caller: Caller) = SharedAccountResponse
 )
 
 /** Its status, `pending_handover` or `access_only` in place of `ready` while Ostrom does not renew its tokens. */
-private fun SharedAccount.wireStatus(): String =
+private fun SharedAccount.wireStatus(): String = wireStatus(status, ownership)
+
+/**
+ * An account's status in the API: `pending_handover` or `access_only` in place of `ready` while Ostrom does not renew
+ * its tokens, the status in lower case otherwise.
+ */
+internal fun wireStatus(status: AccountStatus, ownership: RefreshOwnership): String =
     if (status == AccountStatus.READY && ownership != RefreshOwnership.OSTROM) {
         ownership.name.lowercase()
     } else {

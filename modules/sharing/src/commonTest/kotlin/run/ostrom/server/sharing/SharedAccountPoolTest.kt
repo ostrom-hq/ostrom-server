@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.sharing
 
+import run.ostrom.server.kernel.logging.JsonLogger
+import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.sharing.domain.AccountCredentials
 import run.ostrom.server.sharing.domain.AccountLimits
 import run.ostrom.server.sharing.domain.AccountProvider
@@ -17,6 +19,7 @@ import run.ostrom.server.sharing.domain.RefreshResult
 import run.ostrom.server.sharing.domain.SharedAccount
 import run.ostrom.server.sharing.domain.SharedAccountPool
 import run.ostrom.server.sharing.domain.UNKNOWN_RESET
+import run.ostrom.server.sharing.infrastructure.ProviderQuotaHeaderParser
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -395,6 +398,24 @@ class SharedAccountPoolTest {
         leased.stalled()
         assertNull(cooldown(), "An account removed meanwhile has nothing to rest")
         assertEquals(account.id, leased.account.id)
+    }
+
+    @Test
+    fun everyObservedWindowIsAlsoRecordedInTheHistoryTheForecastsRead() = runTest {
+        val account = account("a")
+        val history = InMemoryQuotaHistory()
+        val pool = SharedAccountPool(
+            repository, repository, tokens(repository, cipher, refresher, clock, logged::add),
+            InMemorySlots(clock, repository), ProviderQuotaHeaderParser(), spend, clock,
+            logger = JsonLogger(LogLevel.ERROR, sink = {}), history = history,
+        )
+        val result = pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null)
+        val leased = assertIs<LeaseResult.Leased>(result).lease
+        leased.observe(200, mapOf("anthropic-ratelimit-unified-5h-utilization" to "0.42"))
+        leased.observe(200, emptyMap())
+        val (org, recorded, reading) = history.readings.single()
+        assertEquals(Sharing.orgA to account.id, org to recorded)
+        assertEquals(0.42, reading.utilization)
     }
 
     @Test

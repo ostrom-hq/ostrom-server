@@ -175,8 +175,9 @@ sealed interface LeaseResult {
  * @param groups The accounts lent to the member through their groups: an account that does not name the member serves
  *   them when one of their groups, where they are not paused, holds it.
  * @param logger Where an account resting until its owner acts is reported.
+ * @param history The windows' readings over time, which the forecasts read: each observation is recorded there too.
  */
-// One port per owner: accounts, windows, tokens, slots, headers, spend, time, groups, logs.
+// One port per owner: accounts, windows, tokens, slots, headers, spend, time, groups, logs, history.
 @Suppress("LongParameterList")
 class SharedAccountPool(
     internal val accounts: SharedAccountRepository,
@@ -188,6 +189,7 @@ class SharedAccountPool(
     internal val clock: Clock,
     private val groups: AccountGroups = NoAccountGroups,
     internal val logger: Logger,
+    private val history: QuotaHistoryRepository = NoQuotaHistory,
 ) {
     /**
      * Leases an account.
@@ -301,7 +303,10 @@ class SharedAccountPool(
         val account = lease.account
         val now = clock.now()
         val observed = parser.parse(account.provider, headers, now)
-        if (observed.isNotEmpty()) windows.put(account.orgId, account.id, observed)
+        if (observed.isNotEmpty()) {
+            windows.put(account.orgId, account.id, observed)
+            history.record(account.orgId, account.id, observed)
+        }
         when (status) {
             TOO_MANY_REQUESTS -> accounts.setCooldown(account.orgId, account.id, cooldownEnd(observed, headers, now))
             NO_ANSWER -> accounts.rest(account, now + STALL_COOLDOWN)
