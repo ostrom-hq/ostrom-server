@@ -116,7 +116,8 @@ internal class SpendingReads(
         )
 
     /**
-     * The first segment of each of [launchIds], by their order.
+     * The first segment of each of [launchIds], by their order; of several sessions of a launch at the same segment,
+     * the first by id, so that every read of the report gives the same one.
      *
      * @param launchIds The launches.
      * @return The read.
@@ -125,7 +126,7 @@ internal class SpendingReads(
         .select(sessions.launchId, sessions.id, sessions.agent, sessions.repo)
         .withDistinctOn(sessions.launchId)
         .where { (sessions.orgId eq orgId) and (sessions.launchId eq anyFrom(launchIds, TextColumnType())) }
-        .orderBy(sessions.launchId to SortOrder.ASC, sessions.segment to SortOrder.ASC)
+        .orderBy(sessions.launchId to SortOrder.ASC, sessions.segment to SortOrder.ASC, sessions.id to SortOrder.ASC)
 
     /**
      * Reads the window and adds it up four ways, in this transaction.
