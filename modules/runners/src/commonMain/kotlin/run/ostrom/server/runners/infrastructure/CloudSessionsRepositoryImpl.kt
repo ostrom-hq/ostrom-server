@@ -364,6 +364,7 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         .bind("owner_id", session.ownerId)
         .bind("transfer_id", session.transferId)
         .bind("untrusted_workspace", session.untrustedWorkspace)
+        .bind("github_access", session.githubAccess.wire)
 
     private fun ResultSet.Row.toSession(): CloudSession {
         val url = get("repository_url").asStringOrNull()
