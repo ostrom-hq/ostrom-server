@@ -7,15 +7,17 @@ import run.ostrom.server.identity.domain.ResolveUserUseCase
 import run.ostrom.server.identity.domain.User
 import run.ostrom.server.identity.domain.VerifiedIdentity
 import run.ostrom.server.kernel.auth.OrgRole
-import run.ostrom.server.kernel.database.inOrg
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.switchToTenantRole
 import run.ostrom.server.orgs.domain.Member
 import run.ostrom.server.orgs.domain.Org
+import run.ostrom.server.orgs.infrastructure.MemberSearch
 import run.ostrom.server.orgs.infrastructure.MembersRepositoryImpl
 import run.ostrom.server.orgs.infrastructure.OrgsRepositoryImpl
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import org.jetbrains.exposed.v1.jdbc.select
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
@@ -39,14 +41,14 @@ class MemberSearchPostgresTest {
 
     private fun org(slug: String) = Org(Uuid.random(), slug, slug.uppercase(), null, null, now)
 
-    private fun search(org: Uuid) =
-        Statement.create("SELECT member_id FROM orgs_search_members(CAST(:org AS uuid), 'a', NULL, 10)")
-            .bind("org", org.toString())
+    private fun JdbcTransaction.search(org: Uuid) =
+        MemberSearch(org, "a", null, 10).let { it.select(it.memberId).toList() }
 
     @Test
+    @Suppress("LongMethod") // The function's guarantees, one after the other, read top to bottom.
     fun theSearchKeepsToTheSessionsOrganizationAndReadsThePrefixAsAValue() =
         serverTest(listOf(IdentityModule, OrgsModule)) { server ->
-            val orgs = OrgsRepositoryImpl(server.driver, server.koin.get())
+            val orgs = OrgsRepositoryImpl(server.koin.get(), server.koin.get())
             val acme = org("acme")
             val globex = org("globex")
             val owners = listOf(acme, globex).map { org ->
@@ -64,7 +66,7 @@ class MemberSearchPostgresTest {
                         "INTERVAL '${index + 1} minutes')",
                 ).getOrThrow()
             }
-            val members = MembersRepositoryImpl(server.driver)
+            val members = MembersRepositoryImpl(server.koin.get())
             suspend fun found(org: Org, prefix: String) =
                 members.search(org.id, prefix, null, names.size + 1).size
 
@@ -75,39 +77,45 @@ class MemberSearchPostgresTest {
 
             // Asked for another organization than the session's, or without one: refused.
             // The function raises, which aborts the transaction: the whole call fails.
-            val other = assertFails { server.driver.inOrg(globex.id) { fetchAll(search(acme.id)).getOrThrow() } }
+            val jdbc = server.koin.get<JdbcDatabase>()
+            val other = assertFails { jdbc.inOrg(globex.id) { search(acme.id) } }
             assertTrue("not the session's organization" in other.message.orEmpty(), "Another organization")
             val none = assertFails {
-                server.driver.transaction {
-                    execute("SET LOCAL ROLE ostrom_tenant").getOrThrow()
-                    fetchAll(search(acme.id)).getOrThrow()
+                jdbc.query {
+                    switchToTenantRole()
+                    search(acme.id)
                 }
             }
             assertTrue("not the session's organization" in none.message.orEmpty(), "A session without one")
 
             // Owned by its own role, its search_path fixed, run by the tenant role only.
             val function = server.database.superuser.fetchAll(
-                "SELECT pg_get_userbyid(p.proowner) AS owner, p.prosecdef AS definer, " +
+                "SELECT pg_get_userbyid(p.proowner) AS owner, CAST(p.prosecdef AS TEXT) AS definer, " +
                     "array_to_string(p.proconfig, ' ') AS config, " +
-                    "has_function_privilege('ostrom_tenant', p.oid, 'EXECUTE') AS tenant, " +
-                    "has_function_privilege('ostrom_router', p.oid, 'EXECUTE') AS router " +
+                    "CAST(has_function_privilege('ostrom_tenant', p.oid, 'EXECUTE') AS TEXT) AS tenant, " +
+                    "CAST(has_function_privilege('ostrom_router', p.oid, 'EXECUTE') AS TEXT) AS router " +
                     "FROM pg_proc p WHERE p.proname = 'orgs_search_members'",
             ).getOrThrow().single()
             assertEquals("ostrom_member_search", function.get("owner").asString())
-            assertTrue(function.get("definer").asBoolean())
+            assertTrue(function.get("definer").asString() == "true")
             assertTrue("search_path=pg_catalog, public, pg_temp" in function.get("config").asString())
-            assertTrue(function.get("tenant").asBoolean())
-            assertFalse(function.get("router").asBoolean(), "No other role: EXECUTE is revoked from PUBLIC")
+            assertTrue(function.get("tenant").asString() == "true")
+            assertFalse(function.get("router").asString() == "true", "No other role: EXECUTE is revoked from PUBLIC")
 
             // Its role reads three columns of identity_users, never an e-mail or anything else of a user.
             val columns = server.database.superuser.fetchAll(
-                "SELECT has_column_privilege('ostrom_member_search', 'identity_users', 'primary_email', 'SELECT') " +
-                    "OR has_table_privilege('ostrom_member_search', 'identity_user_emails', 'SELECT') AS email, " +
-                    "has_table_privilege('ostrom_member_search', 'identity_users', 'SELECT') AS whole, " +
-                    "has_column_privilege('ostrom_member_search', 'identity_users', 'login', 'SELECT') AS login",
+                "SELECT CAST(has_column_privilege('ostrom_member_search', 'identity_users', 'primary_email', " +
+                    "'SELECT') OR has_table_privilege('ostrom_member_search', 'identity_user_emails', 'SELECT') " +
+                    "AS TEXT) AS email, " +
+                    "CAST(has_table_privilege('ostrom_member_search', 'identity_users', 'SELECT') AS TEXT) AS whole, " +
+                    "CAST(has_column_privilege('ostrom_member_search', 'identity_users', 'login', 'SELECT') AS TEXT) " +
+                    "AS login",
             ).getOrThrow().single()
-            assertFalse(columns.get("email").asBoolean(), "The search's role reads no e-mail")
-            assertFalse(columns.get("whole").asBoolean(), "The search's role reads no whole row of identity_users")
-            assertTrue(columns.get("login").asBoolean())
+            assertFalse(columns.get("email").asString() == "true", "The search's role reads no e-mail")
+            assertFalse(
+                columns.get("whole").asString() == "true",
+                "The search's role reads no whole row of identity_users",
+            )
+            assertTrue(columns.get("login").asString() == "true")
         }
 }

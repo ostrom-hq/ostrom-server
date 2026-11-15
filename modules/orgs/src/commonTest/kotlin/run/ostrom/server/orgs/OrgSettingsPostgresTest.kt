@@ -25,7 +25,6 @@ import run.ostrom.server.orgs.presentation.OrgsResponse
 import run.ostrom.server.orgs.presentation.UpdateOrgRequest
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.ktor.client.call.body
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.delete
@@ -151,7 +150,7 @@ class OrgSettingsPostgresTest {
 
     // A check across organizations and modules, as no request does: the superuser's pool.
     private suspend fun TestServer.count(sql: String): Long =
-        database.superuser.fetchAll(sql).getOrThrow().single().get("n").asLong()
+        database.superuser.fetchAll(sql).getOrThrow().single().get("n").asString().toLong()
 
     @Test
     fun anOwnerOrAdminSetsTheTimeZoneAndTheShortNameNeverChanges() =
