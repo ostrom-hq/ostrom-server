@@ -253,4 +253,23 @@ class CompleteCloudTransferUseCaseTest {
         assertEquals(t0, reconcile(creating))
         assertEquals(SessionState.PAUSED, stored(creating).state)
     }
+
+    @Test
+    fun aServerWithoutTransfersReturnsAStrandedSessionToItsOwner() = runTest {
+        val (transferring, _) = moving(state = SessionState.TRANSFERRING)
+        val bare = ReconcileCloudSessionUseCaseImpl(
+            repository,
+            driver,
+            FakeRunnerTokens(),
+            FixedPlans(),
+            RepositoryCloudUsageMeter(repository),
+            clock,
+        ) { BackgroundWork.DEFAULT_MAX_MINUTES }
+
+        bare(transferring)
+
+        assertEquals(SessionState.PAUSED, stored(transferring).state)
+        assertNull(stored(transferring).transferId)
+        assertEquals("alice", stored(transferring).ownerId)
+    }
 }

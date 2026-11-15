@@ -97,6 +97,18 @@ class ReconcileCloudSessionUseCaseImpl(
             session.state == SessionState.CREATING || session.state == SessionState.RESUMING -> starting(session, now)
             session.state == SessionState.RUNNING -> running(session, now)
             session.state == SessionState.PAUSING -> pausing(session, now)
+            // A server restarted without the orgs module cannot finish a transfer: the session returns to its owner.
+            session.transferId != null && transfers == null &&
+                (session.state == SessionState.TRANSFERRING || session.state == SessionState.PAUSED) ->
+                write(
+                    session.copy(
+                        state = SessionState.PAUSED,
+                        phase = null,
+                        transferId = null,
+                        updatedAt = now,
+                    ),
+                    now,
+                )
             session.state == SessionState.TRANSFERRING -> transfers?.step(session) ?: (now + WATCH_DELAY)
             session.transferId != null && transfers != null -> transfers.begin(session)
             else -> paused(session, now)

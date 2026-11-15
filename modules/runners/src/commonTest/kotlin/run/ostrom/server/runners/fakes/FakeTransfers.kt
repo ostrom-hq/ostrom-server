@@ -82,7 +82,8 @@ class InMemoryCloudTransfersRepository(
         next: CloudSession,
         transfer: CloudTransfer,
     ): TransferCompletion {
-        val current = transfers[transfer.id] ?: return TransferCompletion.Conflict
+        val current = transfers[transfer.id]?.takeIf { it.version == transfer.version - 1 }
+            ?: return TransferCompletion.Conflict
         val stored = sessions.compareAndSet(next, next.updatedAt) ?: return TransferCompletion.Conflict
         transfers[transfer.id] = transfer.copy(version = current.version + 1)
         return TransferCompletion.Completed(transfers.getValue(transfer.id), stored)

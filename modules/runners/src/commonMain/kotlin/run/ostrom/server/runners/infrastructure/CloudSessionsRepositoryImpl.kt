@@ -182,7 +182,8 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
                 runner_stopped_at = :runner_stopped_at, runner_token_hash = :runner_token_hash,
                 background_since = :background_since, background_seen_at = :background_seen_at, profile =
                 :profile, cluster_unreachable_since = :cluster_unreachable_since, owner_id = :owner_id,
-                transfer_id = :transfer_id, untrusted_workspace = :untrusted_workspace
+                transfer_id = :transfer_id, untrusted_workspace = :untrusted_workspace,
+                github_access = :github_access
                 WHERE id = :id AND generation = :generation RETURNING
                 $COLUMNS
                 """,

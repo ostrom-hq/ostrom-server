@@ -6,6 +6,7 @@ import run.ostrom.server.kernel.logging.JsonLogger
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.runners.domain.CloudTransfer
 import run.ostrom.server.runners.domain.DesiredState
+import run.ostrom.server.runners.domain.GitHubAccessMode
 import run.ostrom.server.runners.domain.SessionChange
 import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.runners.domain.TransferCompletion
@@ -59,6 +60,7 @@ class CloudTransfersPostgresTest {
             val sessions = CloudSessionsRepositoryImpl(database.driver)
             val transfers = CloudTransfersRepositoryImpl(database.driver, sessions)
             val paused = session(state = SessionState.PAUSED, desired = DesiredState.PAUSED)
+                .copy(githubAccess = GitHubAccessMode.SHARED)
             check(sessions.createWithinCap(paused, 10))
             val stored = sessions.get(ORG_A, paused.id)!!
 
@@ -87,10 +89,12 @@ class CloudTransfersPostgresTest {
 
             val moving = sessions.get(ORG_A, paused.id)!!
             val done = accepted.copy(state = TransferState.COMPLETED, version = 3, completedAt = now)
-            val owned = moving.copy(ownerId = "bob", transferId = null, untrustedWorkspace = true, updatedAt = now)
+            val owned = moving.copy(ownerId = "bob", transferId = null, untrustedWorkspace = true,
+                githubAccess = GitHubAccessMode.OWNER, updatedAt = now)
             assertIs<TransferCompletion.Completed>(transfers.complete(moving, owned, done))
             val after = sessions.get(ORG_A, paused.id)!!
             assertEquals("bob", after.ownerId)
+            assertEquals(GitHubAccessMode.OWNER, after.githubAccess)
             assertEquals(true, after.untrustedWorkspace)
             assertNull(after.transferId)
             assertEquals(TransferState.COMPLETED, transfers.find(ORG_A, first.id)?.state)

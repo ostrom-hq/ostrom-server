@@ -148,10 +148,11 @@ class CloudTransfersRepositoryImpl(
         next: CloudSession,
         transfer: CloudTransfer,
     ): TransferCompletion {
-        val current = find(transfer.orgId, transfer.id)
-        val stored = current?.let {
+        // Guarded by the version the step observed: a transfer cancelled or failed since does not complete.
+        val observed = transfer.copy(version = transfer.version - 1)
+        val stored = run {
             attempt(transfer.orgId) {
-                writeTransfer(it, transfer.copy(version = it.version + 1)) ?: throw Lost()
+                writeTransfer(observed, transfer) ?: throw Lost()
                 val session = sessions.compareAndSetIn(this, next, next.updatedAt) ?: throw Lost()
                 // Nothing issued to the former owner survives the change: their terminal tickets go.
                 execute(
