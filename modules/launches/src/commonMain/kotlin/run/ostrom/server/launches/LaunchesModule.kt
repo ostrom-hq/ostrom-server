@@ -10,6 +10,7 @@ import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.database.repeatDue
 import run.ostrom.server.kernel.database.scheduledWork
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.sessions.LaunchLabels
@@ -49,6 +50,7 @@ import run.ostrom.server.launches.infrastructure.OrgsHooksCheckRules
 import run.ostrom.server.launches.infrastructure.PostgresLaunchesRepository
 import run.ostrom.server.launches.infrastructure.RunnerCloudExecutions
 import run.ostrom.server.launches.infrastructure.LaunchInferenceTokens
+import run.ostrom.server.launches.presentation.launchesOperations
 import run.ostrom.server.runners.domain.RunnerInferenceTokens
 import run.ostrom.server.launches.presentation.LaunchesRoutesDependencies
 import run.ostrom.server.launches.presentation.launchesRoutes
@@ -82,6 +84,8 @@ import kotlin.time.Duration.Companion.minutes
  */
 object LaunchesModule : ServerModule {
     override val name: String = "launches"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { launchesOperations() }
 
     override val koinModule: Module = module {
         single<LaunchesRepository> { PostgresLaunchesRepository(get(), get()) }

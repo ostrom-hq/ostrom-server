@@ -52,6 +52,7 @@ import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.sessions.presentation.SessionDto
 import run.ostrom.server.sessions.presentation.SessionResponse
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
 import org.jetbrains.exposed.v1.core.eq
@@ -153,6 +154,11 @@ class LaunchesPostgresTest {
         val created = call(person.cliToken, "/api/v1/launches", body)
         assertEquals(HttpStatusCode.Created, created.status, created.bodyAsText())
         return created.body()
+    }
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(modules) { server ->
+        server.assertApiCatalogue(LaunchesModule)
     }
 
     @Test

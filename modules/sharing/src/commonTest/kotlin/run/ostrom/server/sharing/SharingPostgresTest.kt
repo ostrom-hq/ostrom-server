@@ -26,6 +26,7 @@ import run.ostrom.server.sharing.presentation.ShareAccountRequest
 import run.ostrom.server.sharing.presentation.SharedAccountResponse
 import run.ostrom.server.sharing.presentation.SharedAccountsResponse
 import run.ostrom.server.sharing.presentation.UpdateAccountRequest
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.HttpClient
@@ -66,6 +67,11 @@ import kotlin.uuid.Uuid
  * security between orgs.
  */
 class SharingPostgresTest : SharingPostgresHarness() {
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(modules, overrides) { server ->
+        server.assertApiCatalogue(SharingModule)
+    }
+
     @Test
     fun aSharedAccountIsSealedAtRestAndLeasedByThePool() = serverTest(modules, overrides) { server ->
         with(server) {

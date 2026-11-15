@@ -44,6 +44,7 @@ import run.ostrom.server.notifications.domain.SendTestPushUseCase
 import run.ostrom.server.notifications.domain.SwitchedOff
 import run.ostrom.server.orgs.OrgsModule
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -116,6 +117,11 @@ class NotificationSettingsPostgresTest {
 
     private fun on(channel: String, vararg off: String) = NotificationKind.entries.map {
         NotificationSetting(channel, it.wire, it.wire !in off)
+    }
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(modules, overrides) { server ->
+        server.assertApiCatalogue(NotificationsModule)
     }
 
     @Test

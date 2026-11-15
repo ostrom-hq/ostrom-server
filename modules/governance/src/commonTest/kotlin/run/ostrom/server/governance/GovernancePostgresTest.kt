@@ -45,6 +45,7 @@ import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.databaseNow
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
 import io.ktor.client.call.body
@@ -228,6 +229,12 @@ class GovernancePostgresTest {
         }
 
     private suspend fun HttpResponse.type(): String = bodyAsText().substringAfter("\"type\":\"").substringBefore('"')
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() =
+        serverTest(listOf(IdentityModule, GovernanceModule, GovernedModule()), overrides) { server ->
+            server.assertApiCatalogue(GovernanceModule)
+        }
 
     @Test
     fun anAdminsTokenWritesNothingUntilAnOwnerConfirmsOnceWithAFreshSignIn() = governanceTest { server ->

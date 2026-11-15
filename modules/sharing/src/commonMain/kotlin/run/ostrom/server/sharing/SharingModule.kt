@@ -7,6 +7,7 @@ import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.database.repeatDue
 import run.ostrom.server.kernel.database.scheduledWork
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.settings.InstanceSettings
@@ -68,6 +69,7 @@ import run.ostrom.server.sharing.presentation.GroupRoutesDependencies
 import run.ostrom.server.sharing.presentation.SharingRoutesDependencies
 import run.ostrom.server.sharing.presentation.forecastRoutes
 import run.ostrom.server.sharing.presentation.groupRoutes
+import run.ostrom.server.sharing.presentation.sharingOperations
 import run.ostrom.server.sharing.presentation.sharingRoutes
 import io.ktor.client.HttpClient
 import io.ktor.server.routing.Route
@@ -89,6 +91,8 @@ import kotlin.time.Duration.Companion.seconds
  */
 object SharingModule : ServerModule {
     override val name: String = "sharing"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { sharingOperations() }
 
     /** The Koin name of the OAuth refresh HTTP client, replaced by tests. */
     val HTTP_CLIENT = named("sharingHttpClient")
