@@ -140,6 +140,7 @@ private fun ApiCatalog.cloudProfileOperations() {
             ok<CloudProfileResponse>("The profile created.", HttpStatusCode.Created)
             badRequest("A value the server refuses, naming the field (`invalid_cloud_profile`).")
             notFound("The organization is not one the caller belongs to.")
+            conflict("A `version` other than 0, or another profile has this name (`cloud_profile_conflict`).")
             storageClass()
         }
     }
@@ -185,12 +186,13 @@ private fun ApiCatalog.cloudSettingsOperations() {
         tag(TAG)
         summary = "Save the organization's cloud session settings."
         description = "An owner or an admin of the organization, signed in as a person (TeamCode's team cloud " +
-            "settings). A `PUT` replaces every setting; `updatedAt` is the one of the settings edited (absent " +
-            "while nothing is stored). Running sessions apply it at their next idle check."
+            "settings). A `PUT` replaces the settings it carries (an absent `maxRunningAutomationsPerMember` " +
+            "keeps the stored one); `updatedAt` is the one of the settings edited (absent while nothing is " +
+            "stored). Running sessions apply it at their next idle check."
         parameters {
             organizationHeader()
         }
-        body<SaveCloudSettingsRequest>("Every setting, and the `updatedAt` of the settings it replaces.")
+        body<SaveCloudSettingsRequest>("The settings, and the `updatedAt` of the settings they replace.")
         responses {
             ok<CloudSettingsResponse>("The settings saved.")
             badRequest("A value out of range, naming the field (`invalid_cloud_settings`).")

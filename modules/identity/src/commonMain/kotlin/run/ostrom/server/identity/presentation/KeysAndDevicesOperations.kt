@@ -223,6 +223,7 @@ private fun ApiCatalog.notificationPreferencesOperations() {
         body<NotificationPreferencesBody>("Every switch, and the quiet hours if any.")
         responses {
             ok<NotificationPreferencesBody>("The preferences saved.")
+            badRequest("Quiet hours that are not two different `HH:MM` and a time zone name (`invalid_request`).")
         }
     }
 }
