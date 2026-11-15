@@ -49,7 +49,11 @@ private fun ApiCatalog.cloudSessionListing() {
             organizationHeader()
             queryText("kind", "The kind of session to list, `cloud`, `remote` or `local`; repeat it to list several.")
             queryText("owner", "The caller's member id; anything else is refused.")
-            queryText("status", "A status of session to list; repeat it to list several.")
+            queryText(
+                "status",
+                "A status of session to list, `creating`, `running`, `pausing`, `paused`, `resuming`, " +
+                    "`transferring`, `terminated` or `failed`; repeat it to list several.",
+            )
             queryText("before", "The `next` of the previous page.")
             queryLimit("How many sessions a page holds.", maximum = 50)
         }

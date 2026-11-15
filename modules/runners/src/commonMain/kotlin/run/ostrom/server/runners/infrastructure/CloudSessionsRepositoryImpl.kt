@@ -356,7 +356,11 @@ internal fun sessionList(
 ): Query {
     val s = RunnersSessionsTable
     val kind = s.kind eq anyFrom(kinds.map { it.wire }.sorted(), TextColumnType())
-    val state: Op<Boolean> = if (states.isEmpty()) Op.TRUE else s.state inList states.map { it.wire }.sorted()
+    val state: Op<Boolean> = if (states.isEmpty()) {
+        Op.TRUE
+    } else {
+        s.state eq anyFrom(states.map { it.wire }.sorted(), TextColumnType())
+    }
     val cursor: Op<Boolean> = if (before == null) {
         Op.TRUE
     } else {
