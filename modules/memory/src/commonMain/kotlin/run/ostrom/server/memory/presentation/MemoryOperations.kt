@@ -265,7 +265,11 @@ private fun ApiCatalog.proposalOperations() {
         }
         responses {
             ok<MemoryProposals>("The proposals, oldest first.")
-            error(HttpStatusCode.Forbidden, FORBIDDEN_TEAM)
+            error(
+                HttpStatusCode.Forbidden,
+                "A token rather than a person (`memory_team_forbidden`), or a credential without `memory:use` " +
+                    "(`credential_scope`).",
+            )
         }
     }
     post("/api/v1/memory/proposals/{id}/accept") {

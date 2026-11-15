@@ -217,7 +217,7 @@ private fun ApiCatalog.decisionOperations() {
         summary = "Self-approval policy."
         description = "`never` for an organization that never chose: a yes always comes from another person " +
             "(S2-15). `sole-approver`, which lets the gate's only approver approve their own action, marked " +
-            "self-approved in the receipt, applies only once an owner or an admin sets it Scope `rules:read` or " +
+            "self-approved in the receipt, applies only once an owner or an admin sets it. Scope `rules:read` or " +
             "`gates:read`."
         parameters {
             organizationHeader()
@@ -267,7 +267,7 @@ private fun ApiCatalog.analysisOperations() {
     post("/api/v1/analysis/restart") {
         operationId = "restartAnalysis"
         tag(ANALYSIS_TAG)
-        summary = "Restart a failed analysis."
+        summary = "Start the analysis again, from a fresh run."
         description = "A browser session of an owner or an admin only (403 otherwise); 202 with a fresh " +
             "run, whether or not the last one failed; its id. 409 when a run of the same kind is already going. " +
             "It reads every repository and spends on the organization's model."
