@@ -176,9 +176,9 @@ enum class CloudInputKind(val wire: String) {
     companion object {
         /**
          * @param value A stored name.
-         * @return The kind, or null when the name is unknown.
+         * @return The kind; [MESSAGE] for a name this version does not know.
          */
-        fun parse(value: String): CloudInputKind? = entries.singleOrNull { it.wire == value }
+        fun parse(value: String): CloudInputKind = entries.singleOrNull { it.wire == value } ?: MESSAGE
     }
 }
 

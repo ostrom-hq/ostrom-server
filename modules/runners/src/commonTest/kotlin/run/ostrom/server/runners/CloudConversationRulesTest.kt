@@ -213,6 +213,7 @@ class CloudConversationRulesTest {
         refused(QuestionAnswer(2, listOf(0)))
         refused(QuestionAnswer(0, listOf(2)))
         refused(QuestionAnswer(0, listOf(0, 1)))
+        refused(QuestionAnswer(1, listOf(3)))
         val unknownShapes = PermissionAnswer("q1", true, null, listOf(QuestionAnswer(5, listOf(7))))
         CloudConversationRules.checkAnswer(question.copy(questions = null), unknownShapes, approver = false)
         val twins = question.copy(

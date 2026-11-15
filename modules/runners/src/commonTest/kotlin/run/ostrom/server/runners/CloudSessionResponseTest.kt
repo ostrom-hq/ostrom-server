@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.runners.domain.CloudHumanWait
 import run.ostrom.server.runners.domain.DesiredState
 import run.ostrom.server.runners.domain.SessionFailure
 import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.runners.fakes.session
+import run.ostrom.server.runners.presentation.CloudSessionWaitingDto
 import run.ostrom.server.runners.presentation.toResponse
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -29,6 +31,8 @@ class CloudSessionResponseTest {
         assertEquals("2026-10-30T10:01:00Z", response.readyAt)
         assertEquals("2026-10-30T10:02:00Z", response.lastActivityAt)
         assertEquals("2026-10-30T10:03:00Z", response.pausedAt)
+        val waiting = session().copy(waiting = CloudHumanWait("permission", "r1", t0, 7, 1)).toResponse().waiting
+        assertEquals(CloudSessionWaitingDto("permission", "r1", "2026-10-30T10:00:00Z", 7), waiting)
         assertEquals("2026-10-30T10:04:00Z", response.endedAt)
         assertEquals("terminated", response.status)
         assertNull(response.terminatedReason, "A session terminated before the reason was recorded")

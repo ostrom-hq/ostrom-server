@@ -33,6 +33,15 @@ import run.ostrom.server.runners.fakes.session
 import run.ostrom.server.cloud.domain.CloudRuntime
 import run.ostrom.server.cloud.domain.CloudRuntimeSource
 import run.ostrom.server.runners.infrastructure.CloudConversationMaintenance
+import run.ostrom.server.kernel.database.ScheduledJob
+import run.ostrom.server.kernel.database.ScheduledWork
+import run.ostrom.server.kernel.logging.LogLevel
+import run.ostrom.server.kernel.logging.Logger
+import run.ostrom.server.runners.presentation.END
+import run.ostrom.server.runners.presentation.KEEP_ALIVE
+import run.ostrom.server.runners.presentation.frames
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -41,6 +50,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.uuid.Uuid
@@ -121,6 +131,22 @@ class CloudConversationServiceTest {
         service.follow(alice, session.id, 0, { batches += it.size }, { idles++ })
         assertEquals(listOf(200, 50), batches)
         assertTrue(idles >= 1)
+    }
+
+    @Test
+    fun aStreamWritesItsPagesAKeepAliveAndItsEndAsFrames() = runTest {
+        val session = conversation()
+        store.events += event(1)
+        var polls = 0
+        store.onLastSeq = {
+            polls++
+            if (polls == 40) sessions.put(sessions.sessions.getValue(session.id).copy(state = SessionState.TERMINATED))
+        }
+        val frames = mutableListOf<String>()
+        service.frames(alice, session.id, 0) { frames += it }
+        assertTrue(frames.first().startsWith("id: 1\nevent: status\n"))
+        assertTrue(KEEP_ALIVE in frames)
+        assertEquals(END, frames.last())
     }
 
     @Test
@@ -304,5 +330,43 @@ class CloudConversationServiceTest {
         CloudConversationMaintenance(store, service, runtime(null), clock).run()
         CloudConversationMaintenance(store, service, null, clock).run()
         assertEquals(1, store.purged.size, "Kept forever")
+    }
+
+    @Test
+    fun theMaintenanceRunsUnderItsLeaseAndLogsAFailedPass() = runTest {
+        val leases = mutableListOf<ScheduledJob>()
+        val warnings = mutableListOf<String>()
+        val ran = CompletableDeferred<Unit>()
+        val work = object : ScheduledWork {
+            override suspend fun runDue(
+                name: String,
+                interval: Duration,
+                timeout: Duration,
+                block: suspend () -> Unit,
+            ): Boolean {
+                leases += ScheduledJob(name, interval, timeout)
+                try {
+                    block()
+                } finally {
+                    ran.complete(Unit)
+                }
+                return true
+            }
+        }
+        val logger = object : Logger {
+            override fun log(level: LogLevel, message: String, fields: Map<String, Any?>, error: Throwable?) {
+                warnings += message
+            }
+
+            override fun with(fields: Map<String, Any?>): Logger = this
+        }
+        val broken = object : CloudRuntimeSource {
+            override suspend fun current(): CloudRuntime = error("database")
+        }
+        val job = launch { CloudConversationMaintenance(store, service, broken, clock).repeat(work, logger) }
+        ran.await()
+        job.cancel()
+        assertEquals(listOf(CloudConversationMaintenance.JOB), leases)
+        assertEquals(listOf("conversation maintenance failed"), warnings)
     }
 }

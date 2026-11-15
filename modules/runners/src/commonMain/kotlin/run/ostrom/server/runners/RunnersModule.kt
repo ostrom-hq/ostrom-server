@@ -52,7 +52,6 @@ import run.ostrom.server.runners.infrastructure.CloudConversationMaintenance
 import run.ostrom.server.runners.infrastructure.CloudConversationStoreImpl
 import run.ostrom.server.runners.presentation.CloudConversationRoutesDependencies
 import run.ostrom.server.runners.presentation.cloudConversationRoutes
-import run.ostrom.server.kernel.database.repeatDue
 import run.ostrom.server.kernel.database.scheduledWork
 import run.ostrom.server.runners.domain.CloudUsageMeter
 import run.ostrom.server.runners.domain.CreateCloudSessionUseCase
@@ -391,12 +390,6 @@ object RunnersModule : ServerModule {
         val signals = koin.get<RunnerWorkSignals>()
         scope.launch { signals.watch() }
         val maintenance = koin.get<CloudConversationMaintenance>()
-        val work = koin.scheduledWork()
-        val logger = koin.get<Logger>()
-        scope.launch {
-            work.repeatDue(CloudConversationMaintenance.JOB, logger, "conversation maintenance failed") {
-                maintenance.run()
-            }
-        }
+        scope.launch { maintenance.repeat(koin.scheduledWork(), koin.get()) }
     }
 }

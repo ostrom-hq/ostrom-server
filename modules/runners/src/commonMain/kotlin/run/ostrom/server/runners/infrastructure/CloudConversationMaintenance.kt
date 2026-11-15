@@ -3,6 +3,9 @@ package run.ostrom.server.runners.infrastructure
 
 import run.ostrom.server.cloud.domain.CloudRuntimeSource
 import run.ostrom.server.kernel.database.ScheduledJob
+import run.ostrom.server.kernel.database.ScheduledWork
+import run.ostrom.server.kernel.database.repeatDue
+import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.runners.domain.CloudConversationService
 import run.ostrom.server.runners.domain.CloudConversationStore
 import kotlin.time.Clock
@@ -28,10 +31,20 @@ class CloudConversationMaintenance(
     /** One pass of each sweep, each bounded. */
     suspend fun run() {
         val now = clock.now()
-        runtime?.current()?.transcriptRetentionDays?.let { days -> store.purge(now - days.days, BATCH) }
+        val days = if (runtime == null) null else runtime.current().transcriptRetentionDays
+        if (days != null) store.purge(now - days.days, BATCH)
         store.cancelEnded(BATCH, now)
         conversation.wakePending(BATCH)
     }
+
+    /**
+     * Runs the sweeps every minute, under the instance's lease; a failed pass is logged and the next one runs.
+     *
+     * @param work The instance's scheduled work.
+     * @param logger Where a failed pass goes.
+     */
+    suspend fun repeat(work: ScheduledWork, logger: Logger): Nothing =
+        work.repeatDue(JOB, logger, "conversation maintenance failed") { run() }
 
     /** The job and its bounds. */
     companion object {

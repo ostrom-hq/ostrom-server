@@ -56,16 +56,7 @@ private fun Route.transcriptRoutes(dependencies: CloudConversationRoutesDependen
         val after = cursor(call.request.headers[LAST_EVENT_ID] ?: params.after) ?: 0L
         // Refused before the answer is committed, so a refusal is a plain error.
         conversation.openStream(caller, id, after)
-        call.stream { send ->
-            conversation.follow(
-                caller,
-                id,
-                after,
-                emit = { events -> send(events.joinToString("") { eventFrame(it) }) },
-                idle = { send(": keep-alive\n\n") },
-            )
-            send("event: end\ndata: {}\n\n")
-        }
+        call.stream { send -> conversation.frames(caller, id, after, send) }
     }
     get<CloudAgentsApi> { params ->
         val caller = orgResolver.callerOf(call.requirePrincipal(), CLOUD_READ)

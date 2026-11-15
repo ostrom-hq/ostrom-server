@@ -5,7 +5,7 @@ import run.ostrom.server.runners.domain.CloudEvent
 import run.ostrom.server.runners.domain.CloudEventPage
 import run.ostrom.server.runners.domain.CloudInput
 import run.ostrom.server.runners.domain.CloudSubagent
-import kotlinx.serialization.json.Json
+import run.ostrom.server.runners.domain.storedObject
 import kotlinx.serialization.json.JsonObject
 import run.ostrom.server.runners.domain.CloudConversationRules
 import run.ostrom.server.runners.domain.PermissionAnswer
@@ -21,11 +21,7 @@ internal fun CloudEvent.toDto() = CloudEventDto(
     type = type.wire,
     at = at.toString(),
     epoch = epoch,
-    data = try {
-        Json.parseToJsonElement(data) as? JsonObject
-    } catch (_: IllegalArgumentException) {
-        null
-    } ?: JsonObject(emptyMap()),
+    data = storedObject(data) ?: JsonObject(emptyMap()),
     feed = feed,
 )
 

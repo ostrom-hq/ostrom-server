@@ -120,6 +120,9 @@ class CloudConversationStorePostgresTest {
         assertEquals(listOf(3L, 4L, 5L), rest.events.map { it.seq })
         assertNull(rest.nextAfter)
         assertEquals(3L, rest.nextBefore)
+        val past = store.events(ORG_A, session.id, 9, null, 10, null)
+        assertTrue(past.events.isEmpty())
+        assertNull(past.nextBefore, "Nothing follows the end")
 
         val back = store.events(ORG_A, session.id, null, 5, 2, null)
         assertEquals(listOf(3L, 4L), back.events.map { it.seq })

@@ -14,6 +14,7 @@ import run.ostrom.server.runners.domain.CloudInput
 import run.ostrom.server.runners.domain.CloudInputKind
 import run.ostrom.server.runners.domain.CloudInputPage
 import run.ostrom.server.runners.domain.CloudInputStatus
+import run.ostrom.server.runners.domain.storedObject
 import run.ostrom.server.runners.domain.CloudSessionNotFoundException
 import run.ostrom.server.runners.domain.CloudSubagent
 import run.ostrom.server.runners.domain.DesiredState
@@ -29,7 +30,6 @@ import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -114,7 +114,7 @@ internal class CloudConversationStoreImpl(
                 first,
                 last,
                 if (rows.size > limit) page.last().seq else null,
-                page.firstOrNull()?.seq?.takeIf { first != null && it > first },
+                first?.let { oldest -> page.firstOrNull()?.seq?.takeIf { it > oldest } },
             )
         }
     }
@@ -240,9 +240,9 @@ internal class CloudConversationStoreImpl(
             val scope = (t.orgId eq orgId) and (t.sessionId eq sessionId)
             var condition: Op<Boolean> = scope
             if (beforeId != null) {
-                val cursor = t.select(t.createdAt).where { scope and (t.id eq beforeId) }.singleOrNull()
-                    ?.get(t.createdAt)
+                val known = t.select(t.createdAt).where { scope and (t.id eq beforeId) }.singleOrNull()
                     ?: throw CloudConversationRules.invalid("invalid_cursor", "Unknown input cursor.")
+                val cursor = known[t.createdAt]
                 val older = (t.createdAt less cursor) or ((t.createdAt eq cursor) and (t.id less beforeId))
                 condition = condition and older
             }
@@ -342,7 +342,7 @@ internal class CloudConversationStoreImpl(
             if (input.kind == CloudInputKind.PERMISSION) {
                 // Who answered which request, and how; the answer's texts stay in the input.
                 put("authorId", input.authorId)
-                val answer = jsonObject(input.text)
+                val answer = storedObject(input.text)
                 answer.str("requestId")?.let { put("requestId", it) }
                 answer.str("behavior")?.let { put("behavior", it) }
             }
@@ -406,7 +406,7 @@ internal class CloudConversationStoreImpl(
         val asked = e.select(e.data, e.epoch)
             .where { (e.orgId eq orgId) and (e.sessionId eq sessionId) and (e.seq eq anchor) }.single()
         // A head that matched on data that is not JSON (cut by hand) names no request.
-        return jsonObject(asked[e.data])?.let { data ->
+        return storedObject(asked[e.data])?.let { data ->
             permissionRequestRecord(requestId, data, requestState(orgId, sessionId, anchor, requestId))
                 .copy(epoch = asked[e.epoch])
         }
@@ -415,22 +415,22 @@ internal class CloudConversationStoreImpl(
     /** Whether the request stored at [anchor] is still open: the first closing event after it. */
     private fun requestState(orgId: Uuid, sessionId: Uuid, anchor: Long, requestId: String): PermissionRequestState {
         val e = RunnersSessionEvents
-        fun closing(type: CloudEventType, closes: (JsonObject) -> Boolean): Long? =
+        fun closing(type: CloudEventType, closes: (JsonObject?) -> Boolean): Long? =
             e.select(e.seq, e.data).where {
                 (e.orgId eq orgId) and (e.sessionId eq sessionId) and (e.type eq type.wire) and (e.seq greater anchor)
             }.orderBy(e.seq to SortOrder.ASC).limit(MAX_CLOSING_SCANNED)
-                .firstOrNull { row -> jsonObject(row[e.data])?.let(closes) == true }?.get(e.seq)
+                .firstOrNull { row -> closes(storedObject(row[e.data])) }?.get(e.seq)
         // The request's turn ends at the first turn event after it that is an end; the oldest closing event wins.
         val ended = closing(CloudEventType.TURN) { it.str("phase") in CloudConversationRules.TURN_END_PHASES }
         val answered = closing(CloudEventType.INPUT) {
-            it.str("requestId") == requestId && it.str("status") == CloudInputStatus.CONSUMED.wire
+            (it.str("requestId") to it.str("status")) == (requestId to CloudInputStatus.CONSUMED.wire)
         }
         val expired = closing(CloudEventType.PERMISSION_EXPIRED) { it.str("requestId") == requestId }
         return listOfNotNull(
             ended?.let { it to PermissionRequestState.ENDED },
             answered?.let { it to PermissionRequestState.ANSWERED },
             expired?.let { it to PermissionRequestState.EXPIRED },
-        ).minByOrNull { it.first }?.second ?: PermissionRequestState.OPEN
+        ).sortedBy { it.first }.firstOrNull()?.second ?: PermissionRequestState.OPEN
     }
 
     /** Queued and delivered inputs of a session, oldest first; the caller holds the session row lock. */
@@ -493,7 +493,7 @@ private fun readInput(row: ResultRow): CloudInput {
         id = row[t.id],
         orgId = row[t.orgId],
         sessionId = row[t.sessionId],
-        kind = CloudInputKind.parse(row[t.kind]) ?: CloudInputKind.MESSAGE,
+        kind = CloudInputKind.parse(row[t.kind]),
         status = CloudInputStatus.parse(row[t.status]),
         authorId = row[t.authorId],
         credentialId = row[t.credentialId],
@@ -512,18 +512,10 @@ private fun readInput(row: ResultRow): CloudInput {
     )
 }
 
-/** Stored JSON text (an event's data, a permission answer) as an object; null when absent or not an object. */
-private fun jsonObject(text: String?): JsonObject? = text?.let {
-    try {
-        Json.parseToJsonElement(it) as? JsonObject
-    } catch (_: IllegalArgumentException) {
-        null
-    }
-}
 
 private fun JsonObject?.str(name: String): String? = (this?.get(name) as? JsonPrimitive)?.contentOrNull
 
-private fun requestIdOf(text: String?): String? = jsonObject(text).str("requestId")
+private fun requestIdOf(text: String?): String? = storedObject(text).str("requestId")
 
 /** A stored `permission.request`: whether it is a question, and each question's shape when its input was kept. */
 private fun permissionRequestRecord(

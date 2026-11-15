@@ -176,9 +176,9 @@ class CloudConversationServiceImpl(
             val page = if (store.lastSeq(caller.orgId, id) > cursor) {
                 store.events(caller.orgId, id, cursor, null, CloudConversationRules.MAX_PAGE, null)
             } else {
-                null
+                CloudEventPage(emptyList(), null, cursor, null, null)
             }
-            if (page != null && page.events.isNotEmpty()) {
+            if (page.events.isNotEmpty()) {
                 emit(page.events)
                 cursor = page.events.last().seq
                 quiet = 0
