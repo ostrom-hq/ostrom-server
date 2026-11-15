@@ -62,8 +62,9 @@ private fun bucketsRead(seconds: Double, limit: Int, where: () -> Op<Boolean>): 
     val query = e.select(bucket, e.provider, e.name, input, output, cacheRead, cacheWrite)
         .where { where() and (e.kind eq UsageKind.MODEL.name) }
         .groupBy(bucket, e.provider, e.name)
-        // Past the bound, whole recent buckets rather than an arbitrary subset (TeamCode's reads).
-        .orderBy(bucket to SortOrder.DESC)
+        // Past the bound, the recent buckets (TeamCode's reads), and within the oldest one kept, the same models at
+        // every read.
+        .orderBy(bucket to SortOrder.DESC, e.provider to SortOrder.ASC_NULLS_FIRST, e.name to SortOrder.ASC)
         .limit(limit)
     return Read(query) {
         TokenBucket(it[bucket], it[e.provider], it[e.name], it[input], it[output], it[cacheRead], it[cacheWrite])

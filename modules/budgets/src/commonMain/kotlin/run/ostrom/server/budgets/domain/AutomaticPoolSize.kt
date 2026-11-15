@@ -198,11 +198,7 @@ class SplitWindowUsageUseCase {
     ): WindowUsageSplit? {
         val length = windowPeriod(window) ?: return null
         return history
-            .mapNotNull { reading ->
-                reading.resetsAt
-                    ?.takeIf { it > now && reading.observedAt <= now && reading.utilization in 0.0..1.0 }
-                    ?.let { reading to it }
-            }
+            .mapNotNull { reading -> currentReset(reading, now)?.let { reading to it } }
             .maxByOrNull { it.first.observedAt }
             ?.let { (latest, resetsAt) ->
                 val since = resetsAt - length
@@ -504,4 +500,11 @@ interface PoolSizingService {
 
     /** The scheduled job: recompute and store every org's automatic value. */
     suspend fun refresh()
+}
+
+/** The reset of a reading of a window still open at [now] (read by then, in range, its reset ahead); null otherwise. */
+private fun currentReset(reading: QuotaWindow, now: Instant): Instant? {
+    val reset = reading.resetsAt ?: return null
+    val open = reset > now && reading.observedAt <= now && reading.utilization in 0.0..1.0
+    return if (open) reset else null
 }

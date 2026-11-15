@@ -4,7 +4,10 @@ package run.ostrom.server.budgets
 import run.ostrom.server.budgets.domain.AccountPoolShare
 import run.ostrom.server.budgets.domain.AutomaticDaily
 import run.ostrom.server.budgets.domain.BudgetAction
+import run.ostrom.server.budgets.domain.BudgetAlert
 import run.ostrom.server.budgets.domain.BudgetLimit
+import run.ostrom.server.budgets.domain.BudgetPeriod
+import run.ostrom.server.budgets.domain.BudgetScope
 import run.ostrom.server.budgets.domain.BudgetTarget
 import run.ostrom.server.budgets.domain.BudgetWindow
 import run.ostrom.server.budgets.domain.BudgetsRepository
@@ -209,6 +212,33 @@ class PoolSizePostgresTest {
         assertTrue(limits.limits(TestCallers.orgB, TestCallers.adminB.memberId).org.isEmpty())
 
         assertFailsWith<AdminRequiredException> { sizing.report(TestCallers.memberA) }
+    }
+
+    @Test
+    fun theAutomaticLimitsAlertsAreMarkedOncePerThresholdAndDay() = serverTest(modules, overrides) { server ->
+        server.seed()
+        val limits = server.koin.get<BudgetsRepository>()
+        val settings = server.koin.get<PacingSettingsRepository>()
+        server.koin.get<PoolSizingService>().refresh()
+        settings.update(org, null, true)
+        val automatic = assertNotNull(server.koin.get<PoolSizeRepository>().read(org)).micros
+        // No org limit typed at all: the automatic one stops.
+        assertEquals(listOf(BudgetLimit(automatic, BudgetWindow.DAY)), limits.orgDaily())
+        val day = BudgetPeriod.day(now).start
+        val alert = BudgetAlert(org, null, BudgetScope.ORG, 80, automatic, automatic, day, BudgetWindow.DAY)
+        assertTrue(limits.markAlerted(alert, now))
+        assertFalse(limits.markAlerted(alert.copy(limitMicros = automatic + 1), now), "The next pass moved the amount")
+        limits.unmarkAlerted(alert.copy(limitMicros = automatic + 2))
+        assertTrue(limits.markAlerted(alert, now), "Taken back whatever the amount, a failed alert is sent again")
+        // Typed limits keep their marks by amount: a member's, the org's monthly one, and the daily one once off.
+        val ofMember = alert.copy(scope = BudgetScope.MEMBER, memberId = member)
+        assertTrue(limits.markAlerted(ofMember, now))
+        assertTrue(limits.markAlerted(ofMember.copy(limitMicros = automatic + 1), now))
+        val monthly = alert.copy(window = BudgetWindow.MONTH, periodStart = BudgetPeriod.of(now).start)
+        assertTrue(limits.markAlerted(monthly, now))
+        assertTrue(limits.markAlerted(monthly.copy(limitMicros = automatic + 1), now))
+        settings.update(org, null, false)
+        assertTrue(limits.markAlerted(alert.copy(limitMicros = automatic + 1), now), "A typed daily limit's own")
     }
 
     @Test

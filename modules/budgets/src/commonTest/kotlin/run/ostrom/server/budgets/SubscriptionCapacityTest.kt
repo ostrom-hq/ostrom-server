@@ -4,6 +4,7 @@ package run.ostrom.server.budgets
 import run.ostrom.server.budgets.domain.AccountPoolShare
 import run.ostrom.server.budgets.domain.EstimateWindowCapacityUseCase
 import run.ostrom.server.budgets.domain.HourCost
+import run.ostrom.server.budgets.domain.ModelUsage
 import run.ostrom.server.budgets.domain.PoolContribution
 import run.ostrom.server.budgets.domain.PoolSizeEstimate
 import run.ostrom.server.budgets.domain.PoolSizeReport
@@ -15,17 +16,22 @@ import run.ostrom.server.budgets.domain.TokenMix
 import run.ostrom.server.budgets.domain.WindowCapacity
 import run.ostrom.server.budgets.domain.WindowUsageSplit
 import run.ostrom.server.budgets.domain.allTokens
+import run.ostrom.server.budgets.domain.priceHours
 import run.ostrom.server.budgets.domain.dailyCapacity
+import run.ostrom.server.budgets.presentation.toResponse
 import run.ostrom.server.gateway.domain.ModelPrice
 import run.ostrom.server.gateway.domain.PriceTable
 import run.ostrom.server.gateway.domain.TokenUsage
 import run.ostrom.server.sharing.domain.AccountStatus
 import run.ostrom.server.sharing.domain.QuotaWindow
+import run.ostrom.server.usage.domain.TokenBucket
 import kotlin.math.roundToLong
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
@@ -106,6 +112,7 @@ class SubscriptionCapacityTest {
         assertNull(splitter.split("seven_day", listOf(reading(.4, resetsAt = null)), emptyList(), 1, now), "No reset")
         assertNull(splitter.split("seven_day", listOf(reading(.4, now + 1.hours)), emptyList(), 1, now), "Not read yet")
         assertNull(splitter.split("seven_day", listOf(reading(1.4)), emptyList(), 1, now), "Out of range")
+        assertNull(splitter.split("seven_day", listOf(reading(-.1)), emptyList(), 1, now), "Below range")
         assertNull(splitter.split("model:opus", listOf(reading(.4)), emptyList(), 1, now), "A window of unknown length")
     }
 
@@ -195,6 +202,7 @@ class SubscriptionCapacityTest {
             PricedTokens("anthropic", "claude-opus-5-5", 2, half),
             PricedTokens("codex", "gpt-5", 2, TokenUsage(input = 1_000_000)),
             PricedTokens(null, "mystery", 2, TokenUsage(output = 10)),
+            PricedTokens("acme", "widget", 2, TokenUsage(input = 5)),
         )
         val mix = TokenMix.of(prices, usage)
         val priced = mix.models.first()
@@ -207,7 +215,8 @@ class SubscriptionCapacityTest {
         assertNull(codex.cost, "An unpriced model has no cost, and no part in the conversion")
         assertEquals(1_000_000L, codex.unpricedTokens)
         assertEquals("", mix.models.single { it.model == "mystery" }.provider, "No provider recorded")
-        assertEquals(listOf("/mystery", "openai/gpt-5"), mix.unpricedModels)
+        assertEquals("acme", mix.models.single { it.model == "widget" }.provider, "A provider of no price family")
+        assertEquals(listOf("/mystery", "acme/widget", "openai/gpt-5"), mix.unpricedModels)
         assertEquals(103.0 / 49, assertNotNull(mix.tokensPerMicro), 1e-9)
         val report = PoolSizeReport(
             false, null, null, null, false,
@@ -238,5 +247,48 @@ class SubscriptionCapacityTest {
         assertEquals(150L, report.outsideWeeklyMicros, "Weekly windows only; unknown ones are left out")
         assertEquals(2, report.outsideUnknownAccounts, "c is not learned and d has no reading: the sum is a floor")
         assertNull(report.copy(usage = mapOf(accountId("c") to listOf(split("seven_day", null)))).outsideWeeklyMicros)
+    }
+
+    @Test
+    fun anHourIsPricedAtTheOrgsPricesAndMarkedWhenAModelWithTokensHasNone() {
+        val opus = ModelPrice("anthropic", "claude-opus-5-5", 4_000_000, 5_000_000, 200_000, 20_000_000)
+        val prices = PriceTable(listOf(opus))
+        val hours = priceHours(
+            prices,
+            listOf(
+                TokenBucket(10, "claude", "claude-opus-5-5", 1_000_000, 0, 0, 0),
+                // An unpriced model without a token says nothing.
+                TokenBucket(10, "codex", "gpt-5", 0, 0, 0, 0),
+                TokenBucket(11, "claude", "claude-opus-5-5", 500_000, 0, 0, 0),
+                TokenBucket(11, null, "mystery", 1, 0, 0, 0),
+            ),
+        ).associateBy { it.hourNumber }
+        assertEquals(4_000_000, hours.getValue(10).micros)
+        assertFalse(hours.getValue(10).unpriced)
+        assertEquals(2_000_000, hours.getValue(11).micros)
+        assertTrue(hours.getValue(11).unpriced)
+    }
+
+    @Test
+    fun theResponseOmitsWhatIsUnknown() {
+        val share = AccountPoolShare(accountId("a"), PoolContribution.NO_FRESH_OBSERVATION, 0)
+        val report = PoolSizeReport(
+            false, null, null, null, false, PoolSizeEstimate(0, listOf(share), PoolSizeEstimate.NO_ESTIMATE),
+            emptyList(),
+            emptyMap(),
+            mix = TokenMix(listOf(ModelUsage("openai", "gpt-5", TokenUsage(input = 3), null, 3)), null),
+        )
+        val response = report.toResponse()
+        assertNull(response.automaticComputedAt)
+        assertEquals("manual", response.source)
+        assertEquals("no_fresh_observation", response.accounts.single().status)
+        assertTrue(response.accounts.single().windows.isEmpty() && response.accounts.single().usage.isEmpty())
+        val model = response.models.single()
+        assertNull(model.totalMicros)
+        assertNull(model.inputMicros)
+        assertNull(model.outputMicros)
+        assertNull(model.cacheReadMicros)
+        assertNull(model.cacheWriteMicros)
+        assertEquals(3, model.unpricedTokens)
     }
 }

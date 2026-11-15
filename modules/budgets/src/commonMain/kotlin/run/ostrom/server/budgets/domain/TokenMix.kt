@@ -109,7 +109,7 @@ data class TokenMix(val models: List<ModelUsage>, val tokensPerMicro: Double?) {
         fun of(prices: PriceTable, usage: List<PricedTokens>): TokenMix {
             var pricedTokens = 0L
             var pricedMicros = 0L
-            val models = usage.groupBy { (providerOf(it.provider)?.family ?: it.provider.orEmpty()) to it.model }
+            val models = usage.groupBy { familyOf(it.provider) to it.model }
                 .map { (key, rows) ->
                     var tokens = TokenUsage()
                     var cost: PricedCost? = null
@@ -133,10 +133,19 @@ data class TokenMix(val models: List<ModelUsage>, val tokensPerMicro: Double?) {
                     ModelUsage(key.first, key.second, tokens, cost, unpriced)
                 }
                 .sortedWith(
-                    compareByDescending<ModelUsage> { it.cost?.totalMicros ?: -1L }
+                    compareByDescending<ModelUsage> { it.sortMicros() }
                         .thenBy { it.provider }.thenBy { it.model },
                 )
             return TokenMix(models, if (pricedMicros > 0) pricedTokens.toDouble() / pricedMicros else null)
         }
     }
 }
+
+/** The price table's family of a provider wire (`claude` and `anthropic` are `anthropic`), the wire when unknown. */
+private fun familyOf(wire: String?): String {
+    val provider = providerOf(wire)
+    return if (provider != null) provider.family else wire.orEmpty()
+}
+
+/** The cost a model is sorted on, the unpriced ones last. */
+private fun ModelUsage.sortMicros(): Long = if (cost == null) -1L else cost.totalMicros

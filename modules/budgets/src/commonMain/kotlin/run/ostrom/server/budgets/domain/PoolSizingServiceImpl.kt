@@ -103,10 +103,12 @@ class PoolSizingServiceImpl(
 
     /** Without a figure the stored value is left to age: after an hour the typed budget applies again. */
     private suspend fun refresh(orgId: Uuid) {
-        val estimate = inputs(orgId, clock.now()).estimate
+        // One instant for the estimate, its smoothing and its time: what is stored is what was read.
+        val now = clock.now()
+        val estimate = inputs(orgId, now).estimate
         if (estimate.reason != null) return
-        store.store(orgId, clock.now()) { previous ->
-            AutomaticPoolSize.smooth(previous, estimate.dailyMicros, clock.now())
+        store.store(orgId, now) { previous ->
+            AutomaticPoolSize.smooth(previous, estimate.dailyMicros, now)
                 .coerceIn(0, BudgetRules.MAX_LIMIT_MICROS)
         }
     }
@@ -146,18 +148,8 @@ class PoolSizingServiceImpl(
 
     /** One account's hours since [since], priced at the org's prices; an hour with an unpriced model is marked. */
     private suspend fun hourCosts(prices: PriceTable, orgId: Uuid, accountId: Uuid, since: Instant): List<HourCost> =
-        sources.tokens.accountHours(orgId, accountId, since, HOUR_ROWS)
-            .groupBy { it.bucket }
-            .map { (hour, models) ->
-                val priced = models.map { prices.costOf(providerOf(it.provider), it.model, it.tokens()) to it }
-                HourCost(
-                    hour,
-                    priced.sumOf { it.first?.totalMicros ?: 0 },
-                    priced.any { (cost, row) -> cost == null && row.tokens().allTokens > 0 },
-                )
-            }
+        priceHours(prices, sources.tokens.accountHours(orgId, accountId, since, HOUR_ROWS))
 
-    private fun TokenBucket.tokens() = TokenUsage(input, output, cacheRead, cacheWrite)
 
     private companion object {
         const val POOL_SIZING_ACCOUNTS = 64
@@ -173,3 +165,25 @@ class PoolSizingServiceImpl(
         const val MIX_DAYS = 6
     }
 }
+
+/**
+ * The ledger's hours of one account at [prices] (TeamCode's `hourCosts`): each hour's cost, and whether a model with
+ * tokens had no price in it.
+ */
+internal fun priceHours(prices: PriceTable, buckets: List<TokenBucket>): List<HourCost> =
+    buckets.groupBy { it.bucket }.map { (hour, models) ->
+        var micros = 0L
+        var unpriced = false
+        for (row in models) {
+            val cost = prices.costOf(providerOf(row.provider), row.model, row.tokens())
+            if (cost != null) {
+                micros += cost.totalMicros
+            } else if (row.tokens().allTokens > 0) {
+                unpriced = true
+            }
+        }
+        HourCost(hour, micros, unpriced)
+    }
+
+/** The bucket's tokens, as the gateway prices them. */
+internal fun TokenBucket.tokens(): TokenUsage = TokenUsage(input, output, cacheRead, cacheWrite)
