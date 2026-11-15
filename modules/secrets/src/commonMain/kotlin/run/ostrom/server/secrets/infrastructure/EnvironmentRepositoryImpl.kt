@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.secrets.infrastructure
 
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.lockKeyUntilCommit
 import run.ostrom.server.secrets.domain.AssignedEnvironmentValue
 import run.ostrom.server.secrets.domain.AssignmentSource
 import run.ostrom.server.secrets.domain.BulkAssignment
@@ -16,57 +18,75 @@ import run.ostrom.server.secrets.domain.StoredEnvironmentVariant
 import run.ostrom.server.secrets.domain.UpdateVariantOutcome
 import run.ostrom.server.secrets.domain.VariantChange
 import run.ostrom.server.secrets.domain.VariantLimitException
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.ResultSet
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.Transaction
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
+import org.jetbrains.exposed.v1.core.JoinType
+import org.jetbrains.exposed.v1.core.Op
+import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.andIfNotNull
+import org.jetbrains.exposed.v1.core.case
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.isNotNull
+import org.jetbrains.exposed.v1.core.isNull
+import org.jetbrains.exposed.v1.core.lowerCase
+import org.jetbrains.exposed.v1.core.neq
+import org.jetbrains.exposed.v1.core.plus
+import org.jetbrains.exposed.v1.core.statements.insertValue
+import org.jetbrains.exposed.v1.core.stringParam
+import org.jetbrains.exposed.v1.core.vendors.ForUpdateOption
+import org.jetbrains.exposed.v1.jdbc.deleteReturning
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
+import org.jetbrains.exposed.v1.jdbc.insertIgnore
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.updateReturning
+import org.jetbrains.exposed.v1.jdbc.upsert
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * [EnvironmentRepository] on PostgreSQL (tables `environment_*` of [SecretsMigrations]). Every write that touches a
- * member's selection of a variable (assign, bulk, exclude, a personal variant) takes the transaction-scoped advisory
- * lock of that variable, and every create or rename takes the lock of its owner's names, so concurrent writes on two
- * replicas are serialized by the database.
+ * [EnvironmentRepository] on the tables `environment_*` of [SecretsMigrations]: every statement filters on its
+ * organization and runs in it (`inOrg`), under row-level security. Every write that touches a member's selection of a
+ * variable (assign, bulk, exclude, a personal variant) takes the transaction-scoped advisory lock of that variable,
+ * and every create or rename takes the lock of its owner's names, so concurrent writes on two replicas are serialized
+ * by the database. The locks keep the sqlx4k repository's `hashtextextended`, so that both versions take turns during
+ * a rollout.
  *
- * @param driver The database.
+ * @param database The serving role's pool.
  */
-@Suppress("TooManyFunctions") // The port's methods, one statement or one transaction each.
-class EnvironmentRepositoryImpl(private val driver: Driver) : EnvironmentRepository {
-    override suspend fun list(orgId: Uuid, personal: Boolean, ownerMemberId: Uuid?): List<EnvironmentVariant> {
-        val owner = when {
-            !personal -> "owner_member_id IS NULL"
-            ownerMemberId == null -> "owner_member_id IS NOT NULL"
-            else -> "owner_member_id = :owner"
+@Suppress("TooManyFunctions") // The port's methods, one transaction each.
+class EnvironmentRepositoryImpl(private val database: JdbcDatabase) : EnvironmentRepository {
+    override suspend fun list(orgId: Uuid, personal: Boolean, ownerMemberId: Uuid?): List<EnvironmentVariant> =
+        database.inOrg(orgId) {
+            val owner = when {
+                !personal -> v.ownerMemberId.isNull()
+                ownerMemberId == null -> v.ownerMemberId.isNotNull()
+                else -> v.ownerMemberId eq ownerMemberId
+            }
+            v.select(VARIANT_COLUMNS)
+                .where { (v.orgId eq orgId) and owner }
+                .orderBy(
+                    v.ownerMemberId to SortOrder.ASC_NULLS_FIRST,
+                    v.variable to SortOrder.ASC,
+                    v.name.lowerCase() to SortOrder.ASC,
+                    v.id to SortOrder.ASC,
+                )
+                .limit(EnvironmentRules.TEAM_LIMIT)
+                .map { it.toVariant() }
         }
-        val statement = Statement.create(
-            "SELECT $COLUMNS FROM environment_variants WHERE org_id = :org_id AND $owner " +
-                "ORDER BY owner_member_id NULLS FIRST, variable, lower(name), id LIMIT :limit",
-        )
-            .bind("org_id", orgId)
-            .bind("limit", EnvironmentRules.TEAM_LIMIT)
-        if (personal && ownerMemberId != null) statement.bind("owner", ownerMemberId)
-        return driver.fetchInOrg(orgId, statement).getOrThrow().map { it.toVariant() }
-    }
 
-    override suspend fun get(orgId: Uuid, id: Uuid): StoredEnvironmentVariant? = driver.fetchInOrg(
-        orgId,
-        Statement.create("SELECT $COLUMNS, envelope FROM environment_variants WHERE org_id = :org_id AND id = :id")
-            .bind("org_id", orgId)
-            .bind("id", id),
-    ).getOrThrow().firstOrNull()?.let { StoredEnvironmentVariant(it.toVariant(), it.get("envelope").asStringOrNull()) }
+    override suspend fun get(orgId: Uuid, id: Uuid): StoredEnvironmentVariant? = database.inOrg(orgId) {
+        v.select(VARIANT_COLUMNS + v.envelope)
+            .where { (v.orgId eq orgId) and (v.id eq id) }
+            .singleOrNull()
+            ?.let { StoredEnvironmentVariant(it.toVariant(), it[v.envelope]) }
+    }
 
     override suspend fun createTeam(stored: StoredEnvironmentVariant, limit: Int): CreateVariantOutcome {
         val variant = stored.variant
-        return driver.inTenant(variant.orgId) {
-            lock(teamKey(variant.orgId))
-            lock(nameKey(variant.orgId, variant.variable, null))
+        return database.inOrg(variant.orgId) {
+            lockKeyUntilCommit(teamKey(variant.orgId))
+            lockKeyUntilCommit(nameKey(variant.orgId, variant.variable, null))
             when {
                 teamCount(variant.orgId) >= limit -> CreateVariantOutcome.LIMIT
                 insert(stored) -> CreateVariantOutcome.CREATED
@@ -78,30 +98,18 @@ class EnvironmentRepositoryImpl(private val driver: Driver) : EnvironmentReposit
     override suspend fun createPersonal(stored: StoredEnvironmentVariant, limit: Int): CreateVariantOutcome {
         val variant = stored.variant
         val owner = requireNotNull(variant.ownerMemberId) { "A personal variant has an owner." }
-        return driver.inTenant(variant.orgId) {
-            lock(variableKey(variant.orgId, variant.variable))
-            lock(nameKey(variant.orgId, variant.variable, owner))
-            val row = fetchAll(
-                Statement.create(
-                    "SELECT " +
-                        "(SELECT COUNT(*) FROM environment_exclusions WHERE org_id = :org_id AND member_id = :owner " +
-                        "AND variable = :variable) AS excluded, " +
-                        "(SELECT COUNT(*) FROM environment_assignments WHERE org_id = :org_id AND member_id = :owner " +
-                        "AND variable = :variable) AS taken, " +
-                        "(SELECT COUNT(*) FROM environment_variants WHERE org_id = :org_id " +
-                        "AND owner_member_id = :owner) AS owned",
-                )
-                    .bind("org_id", variant.orgId)
-                    .bind("owner", owner)
-                    .bind("variable", variant.variable),
-            ).getOrThrow().first()
+        val orgId = variant.orgId
+        return database.inOrg(orgId) {
+            lockKeyUntilCommit(variableKey(orgId, variant.variable))
+            lockKeyUntilCommit(nameKey(orgId, variant.variable, owner))
             when {
-                row.get("excluded").asLong() > 0 -> CreateVariantOutcome.EXCLUDED
-                row.get("taken").asLong() > 0 -> CreateVariantOutcome.SLOT_TAKEN
-                row.get("owned").asLong() >= limit -> CreateVariantOutcome.LIMIT
+                excluded(orgId, owner, variant.variable) -> CreateVariantOutcome.EXCLUDED
+                assigned(orgId, owner, variant.variable) -> CreateVariantOutcome.SLOT_TAKEN
+                v.select(v.id).where { (v.orgId eq orgId) and (v.ownerMemberId eq owner) }.count() >= limit ->
+                    CreateVariantOutcome.LIMIT
                 !insert(stored) -> CreateVariantOutcome.NAME_TAKEN
                 else -> {
-                    upsertAssignment(variant.orgId, owner, variant, AssignmentSource.DIRECT, null, variant.createdAt)
+                    upsertAssignment(orgId, owner, variant, AssignmentSource.DIRECT, null, variant.createdAt)
                     CreateVariantOutcome.CREATED
                 }
             }
@@ -113,75 +121,59 @@ class EnvironmentRepositoryImpl(private val driver: Driver) : EnvironmentReposit
         id: Uuid,
         ownerMemberId: Uuid?,
         change: VariantChange,
-    ): UpdateVariantOutcome = driver.inTenant(orgId) {
-        val current = fetchAll(
-            Statement.create(
-                "SELECT $COLUMNS FROM environment_variants " +
-                    "WHERE org_id = :org_id AND id = :id AND ${owner(ownerMemberId)} FOR UPDATE",
-            ).bindKey(orgId, id, ownerMemberId),
-        ).getOrThrow().firstOrNull()?.toVariant()
+    ): UpdateVariantOutcome = database.inOrg(orgId) {
+        val current = v.select(VARIANT_COLUMNS)
+            .where { (v.orgId eq orgId) and (v.id eq id) and ownedBy(ownerMemberId) }
+            .forUpdate()
+            .singleOrNull()
+            ?.toVariant()
         when {
             current == null -> UpdateVariantOutcome.NotFound
             current.version != change.expectedVersion -> UpdateVariantOutcome.VersionConflict
             else -> {
-                lock(nameKey(orgId, current.variable, ownerMemberId))
+                lockKeyUntilCommit(nameKey(orgId, current.variable, ownerMemberId))
                 val name = change.name
                 if (name != null && nameTaken(orgId, current.variable, ownerMemberId, name, id)) {
                     UpdateVariantOutcome.NameTaken
                 } else {
-                    val statement = Statement.create(
-                        "UPDATE environment_variants SET name = COALESCE(:name, name), " +
-                            "envelope = COALESCE(:envelope, envelope), version = version + 1, updated_at = :at " +
-                            "WHERE org_id = :org_id AND id = :id RETURNING $COLUMNS",
-                    ).bind("org_id", orgId)
-                        .bind("id", id)
-                        .bind("at", change.updatedAt)
-                    if (name == null) statement.bindNull("name", String::class) else statement.bind("name", name)
                     val envelope = change.envelope
-                    if (envelope == null) {
-                        statement.bindNull("envelope", String::class)
-                    } else {
-                        statement.bind("envelope", envelope)
-                    }
                     // The row is locked since it was read: the version cannot have moved.
-                    UpdateVariantOutcome.Updated(fetchAll(statement).getOrThrow().first().toVariant())
+                    val row = v.updateReturning(VARIANT_COLUMNS, where = { (v.orgId eq orgId) and (v.id eq id) }) {
+                        if (name != null) it[this.name] = name
+                        if (envelope != null) it[this.envelope] = envelope
+                        it[version] = version + 1
+                        it[updatedAt] = change.updatedAt
+                    }.single()
+                    UpdateVariantOutcome.Updated(row.toVariant())
                 }
             }
         }
     }
 
-    override suspend fun delete(orgId: Uuid, id: Uuid, ownerMemberId: Uuid?): EnvironmentVariant? {
-        val owner = if (ownerMemberId == null) "" else " AND owner_member_id = :owner"
-        val statement = Statement.create(
-            "DELETE FROM environment_variants WHERE org_id = :org_id AND id = :id$owner RETURNING $COLUMNS",
-        )
-            .bind("org_id", orgId)
-            .bind("id", id)
-        if (ownerMemberId != null) statement.bind("owner", ownerMemberId)
-        return driver.fetchInOrg(orgId, statement).getOrThrow().firstOrNull()?.toVariant()
-    }
+    override suspend fun delete(orgId: Uuid, id: Uuid, ownerMemberId: Uuid?): EnvironmentVariant? =
+        database.inOrg(orgId) {
+            v.deleteReturning(VARIANT_COLUMNS) {
+                (v.orgId eq orgId) and (v.id eq id) andIfNotNull ownerMemberId?.let { v.ownerMemberId eq it }
+            }.singleOrNull()?.toVariant()
+        }
 
     override suspend fun promote(orgId: Uuid, id: Uuid, updatedAt: Instant, limit: Int): EnvironmentVariant? =
-        driver.inTenant(orgId) {
-            lock(teamKey(orgId))
+        database.inOrg(orgId) {
+            lockKeyUntilCommit(teamKey(orgId))
             val current = lockedVariant(orgId, id)
             if (current == null) {
                 null
             } else {
-                lock(nameKey(orgId, current.variable, null))
+                lockKeyUntilCommit(nameKey(orgId, current.variable, null))
                 if (teamCount(orgId) >= limit) throw VariantLimitException(limit)
                 if (nameTaken(orgId, current.variable, null, current.name, id)) {
                     null
                 } else {
-                    fetchAll(
-                        Statement.create(
-                            "UPDATE environment_variants SET owner_member_id = NULL, version = version + 1, " +
-                                "updated_at = :at WHERE org_id = :org_id AND id = :id RETURNING $COLUMNS",
-                        )
-                            .bind("org_id", orgId)
-                            .bind("id", id)
-                            .bind("at", updatedAt),
-                    ).getOrThrow().first().toVariant()
+                    v.updateReturning(VARIANT_COLUMNS, where = { (v.orgId eq orgId) and (v.id eq id) }) {
+                        it[ownerMemberId] = null
+                        it[version] = version + 1
+                        it[this.updatedAt] = updatedAt
+                    }.single().toVariant()
                 }
             }
         }
@@ -193,20 +185,11 @@ class EnvironmentRepositoryImpl(private val driver: Driver) : EnvironmentReposit
         source: AssignmentSource,
         memberEnvelope: String?,
         assignedAt: Instant,
-    ): EnvironmentAssignment? = driver.inTenant(orgId) {
-        lock(variableKey(orgId, variant.variable))
+    ): EnvironmentAssignment? = database.inOrg(orgId) {
+        lockKeyUntilCommit(variableKey(orgId, variant.variable))
         // Read again under the lock, held until the commit: a variant deleted meanwhile is a 404, not a broken key.
         val fresh = lockedVariant(orgId, variant.id) ?: throw EnvironmentVariantNotFoundException()
-        val excluded = fetchAll(
-            Statement.create(
-                "SELECT 1 AS excluded FROM environment_exclusions " +
-                    "WHERE org_id = :org_id AND member_id = :member AND variable = :variable",
-            )
-                .bind("org_id", orgId)
-                .bind("member", memberId)
-                .bind("variable", variant.variable),
-        ).getOrThrow().firstOrNull() != null
-        if (excluded) {
+        if (excluded(orgId, memberId, variant.variable)) {
             null
         } else {
             upsertAssignment(orgId, memberId, fresh, source, memberEnvelope, assignedAt)
@@ -224,8 +207,8 @@ class EnvironmentRepositoryImpl(private val driver: Driver) : EnvironmentReposit
         }
     }
 
-    override suspend fun unassign(orgId: Uuid, memberId: Uuid, variable: String): Boolean = driver.inTenant(orgId) {
-        lock(variableKey(orgId, variable))
+    override suspend fun unassign(orgId: Uuid, memberId: Uuid, variable: String): Boolean = database.inOrg(orgId) {
+        lockKeyUntilCommit(variableKey(orgId, variable))
         deleteAssignment(orgId, memberId, variable)
     }
 
@@ -237,27 +220,16 @@ class EnvironmentRepositoryImpl(private val driver: Driver) : EnvironmentReposit
     ): BulkAssignment {
         val members = memberIds.distinct()
         if (members.isEmpty()) return BulkAssignment(0, 0, 0, emptyList())
-        return driver.inTenant(orgId) {
-            lock(variableKey(orgId, variant.variable))
+        return database.inOrg(orgId) {
+            lockKeyUntilCommit(variableKey(orgId, variant.variable))
             lockedVariant(orgId, variant.id) ?: throw EnvironmentVariantNotFoundException()
-            val excluded = memberSet(
-                "SELECT member_id FROM environment_exclusions " +
-                    "WHERE org_id = :org_id AND variable = :variable AND member_id IN :members",
-                orgId,
-                variant.variable,
-                members,
-            )
-            val current = fetchAll(
-                Statement.create(
-                    "SELECT member_id, variant_id, source FROM environment_assignments " +
-                        "WHERE org_id = :org_id AND variable = :variable AND member_id IN :members",
-                )
-                    .bind("org_id", orgId)
-                    .bind("variable", variant.variable)
-                    .bind("members", members),
-            ).getOrThrow().associate { row ->
-                row.get("member_id").asUuid() to (row.get("variant_id").asUuid() to row.get("source").asString())
-            }
+            val excluded = x.select(x.memberId)
+                .where { (x.orgId eq orgId) and (x.variable eq variant.variable) and (x.memberId inList members) }
+                .map { it[x.memberId] }
+                .toSet()
+            val current = a.select(a.memberId, a.variantId, a.assignedBy)
+                .where { (a.orgId eq orgId) and (a.variable eq variant.variable) and (a.memberId inList members) }
+                .associate { it[a.memberId] to (it[a.variantId] to it[a.assignedBy]) }
             val direct = current.filterValues { it.second == AssignmentSource.DIRECT.wire }.keys
             val targets = members.filter { it !in excluded && it !in direct }
             val changed = targets.filter { current[it]?.first != variant.id }
@@ -273,136 +245,119 @@ class EnvironmentRepositoryImpl(private val driver: Driver) : EnvironmentReposit
         }
     }
 
-    override suspend fun exclude(orgId: Uuid, memberId: Uuid, variable: String): Boolean = driver.inTenant(orgId) {
-        lock(variableKey(orgId, variable))
+    override suspend fun exclude(orgId: Uuid, memberId: Uuid, variable: String): Boolean = database.inOrg(orgId) {
+        lockKeyUntilCommit(variableKey(orgId, variable))
         deleteAssignment(orgId, memberId, variable)
-        execute(
-            Statement.create(
-                "INSERT INTO environment_exclusions (org_id, member_id, variable) " +
-                    "VALUES (:org_id, :member, :variable) ON CONFLICT (org_id, member_id, variable) DO NOTHING",
-            )
-                .bind("org_id", orgId)
-                .bind("member", memberId)
-                .bind("variable", variable),
-        ).getOrThrow() == 1L
+        x.insertIgnore {
+            it[this.orgId] = orgId
+            it[this.memberId] = memberId
+            it[this.variable] = variable
+        }.insertedCount == 1
     }
 
-    override suspend fun include(orgId: Uuid, memberId: Uuid, variable: String): Boolean = driver.inTenant(orgId) {
-        lock(variableKey(orgId, variable))
-        execute(
-            Statement.create(
-                "DELETE FROM environment_exclusions " +
-                    "WHERE org_id = :org_id AND member_id = :member AND variable = :variable",
-            )
-                .bind("org_id", orgId)
-                .bind("member", memberId)
-                .bind("variable", variable),
-        ).getOrThrow() == 1L
+    override suspend fun include(orgId: Uuid, memberId: Uuid, variable: String): Boolean = database.inOrg(orgId) {
+        lockKeyUntilCommit(variableKey(orgId, variable))
+        x.deleteWhere { (x.orgId eq orgId) and (x.memberId eq memberId) and (x.variable eq variable) } == 1
     }
 
-    override suspend fun assignments(orgId: Uuid, memberId: Uuid?): List<EnvironmentAssignment> {
-        val member = if (memberId == null) "" else " AND a.member_id = :member"
-        val statement = Statement.create(
-            "SELECT a.member_id, a.variable, a.variant_id, v.name, v.version, a.source, " +
-                "(v.owner_member_id IS NOT NULL) AS personal, (a.envelope IS NOT NULL) AS has_member_value, " +
-                "a.assigned_at FROM environment_assignments a " +
-                "JOIN environment_variants v ON v.org_id = a.org_id AND v.id = a.variant_id " +
-                "WHERE a.org_id = :org_id$member ORDER BY a.member_id, a.variable LIMIT :limit",
-        ).bind("org_id", orgId).bind("limit", EnvironmentRules.ASSIGNMENTS_PAGE)
-        if (memberId != null) statement.bind("member", memberId)
-        return driver.fetchInOrg(orgId, statement).getOrThrow().map { row ->
-            EnvironmentAssignment(
-                memberId = row.get("member_id").asUuid(),
-                variable = row.get("variable").asString(),
-                variantId = row.get("variant_id").asUuid(),
-                variantName = row.get("name").asString(),
-                version = row.get("version").asInt(),
-                source = AssignmentSource.fromWire(row.get("source").asString()),
-                personal = row.get("personal").asBoolean(),
-                hasMemberValue = row.get("has_member_value").asBoolean(),
-                assignedAt = row.get("assigned_at").asInstant(),
-            )
+    override suspend fun assignments(orgId: Uuid, memberId: Uuid?): List<EnvironmentAssignment> =
+        database.inOrg(orgId) {
+            val personal = v.ownerMemberId.isNotNull()
+            val hasMemberValue = a.envelope.isNotNull()
+            assignedVariants()
+                .select(
+                    a.memberId, a.variable, a.variantId, v.name, v.version, a.assignedBy, personal, hasMemberValue,
+                    a.assignedAt,
+                )
+                .where { (a.orgId eq orgId) andIfNotNull memberId?.let { a.memberId eq it } }
+                .orderBy(a.memberId to SortOrder.ASC, a.variable to SortOrder.ASC)
+                .limit(EnvironmentRules.ASSIGNMENTS_PAGE)
+                .map { row ->
+                    EnvironmentAssignment(
+                        memberId = row[a.memberId],
+                        variable = row[a.variable],
+                        variantId = row[a.variantId],
+                        variantName = row[v.name],
+                        version = row[v.version],
+                        source = AssignmentSource.fromWire(row[a.assignedBy]),
+                        personal = row[personal],
+                        hasMemberValue = row[hasMemberValue],
+                        assignedAt = row[a.assignedAt],
+                    )
+                }
         }
-    }
 
-    override suspend fun exclusions(orgId: Uuid, memberId: Uuid?): List<EnvironmentExclusion> {
-        val member = if (memberId == null) "" else " AND member_id = :member"
-        val statement = Statement.create(
-            "SELECT member_id, variable FROM environment_exclusions WHERE org_id = :org_id$member " +
-                "ORDER BY member_id, variable LIMIT :limit",
-        ).bind("org_id", orgId).bind("limit", EnvironmentRules.ASSIGNMENTS_PAGE)
-        if (memberId != null) statement.bind("member", memberId)
-        return driver.fetchInOrg(orgId, statement).getOrThrow().map { row ->
-            EnvironmentExclusion(row.get("member_id").asUuid(), row.get("variable").asString())
+    override suspend fun exclusions(orgId: Uuid, memberId: Uuid?): List<EnvironmentExclusion> =
+        database.inOrg(orgId) {
+            x.select(x.memberId, x.variable)
+                .where { (x.orgId eq orgId) andIfNotNull memberId?.let { x.memberId eq it } }
+                .orderBy(x.memberId to SortOrder.ASC, x.variable to SortOrder.ASC)
+                .limit(EnvironmentRules.ASSIGNMENTS_PAGE)
+                .map { EnvironmentExclusion(it[x.memberId], it[x.variable]) }
         }
-    }
 
     override suspend fun assignedValues(orgId: Uuid, memberId: Uuid): List<AssignedEnvironmentValue> =
-        driver.fetchInOrg(
-            orgId,
-            Statement.create(
-                "SELECT a.variable, a.variant_id, v.binding, " +
-                    "CASE WHEN v.binding = 'shared' THEN v.envelope ELSE a.envelope END AS envelope " +
-                    "FROM environment_assignments a " +
-                    "JOIN environment_variants v ON v.org_id = a.org_id AND v.id = a.variant_id " +
-                    "WHERE a.org_id = :org_id AND a.member_id = :member ORDER BY a.variable",
-            )
-                .bind("org_id", orgId)
-                .bind("member", memberId),
-        ).getOrThrow().map { row ->
-            // A binding this version cannot read withholds that variable only (null: named in `unavailable`).
-            AssignedEnvironmentValue(
-                variable = row.get("variable").asString(),
-                variantId = row.get("variant_id").asUuid(),
-                binding = EnvironmentBinding.fromWire(row.get("binding").asString()),
-                envelope = row.get("envelope").asStringOrNull(),
-            )
+        database.inOrg(orgId) {
+            // A shared variant's value is the variant's, a per-member one's the member's own.
+            val envelope = case().When(v.binding eq EnvironmentBinding.SHARED.wire, v.envelope).Else(a.envelope)
+            assignedVariants()
+                .select(a.variable, a.variantId, v.binding, envelope)
+                .where { (a.orgId eq orgId) and (a.memberId eq memberId) }
+                .orderBy(a.variable)
+                .map { row ->
+                    // A binding this version cannot read withholds that variable only (null: named in `unavailable`).
+                    AssignedEnvironmentValue(
+                        variable = row[a.variable],
+                        variantId = row[a.variantId],
+                        binding = EnvironmentBinding.fromWire(row[v.binding]),
+                        envelope = row[envelope],
+                    )
+                }
         }
 
+    // The assignments with their variant, joined on the organization too.
+    private fun assignedVariants() =
+        a.join(v, JoinType.INNER, additionalConstraint = { (v.orgId eq a.orgId) and (v.id eq a.variantId) })
+
     // The variant, its row locked against a delete or a change until the commit.
-    private suspend fun Transaction.lockedVariant(orgId: Uuid, id: Uuid): EnvironmentVariant? = fetchAll(
-        Statement.create("SELECT $COLUMNS FROM environment_variants WHERE org_id = :org_id AND id = :id FOR SHARE")
-            .bind("org_id", orgId)
-            .bind("id", id),
-    ).getOrThrow().firstOrNull()?.toVariant()
+    private fun lockedVariant(orgId: Uuid, id: Uuid): EnvironmentVariant? = v.select(VARIANT_COLUMNS)
+        .where { (v.orgId eq orgId) and (v.id eq id) }
+        .forUpdate(ForUpdateOption.PostgreSQL.ForShare())
+        .singleOrNull()
+        ?.toVariant()
 
-    private suspend fun Transaction.teamCount(orgId: Uuid): Long = fetchAll(
-        Statement.create(
-            "SELECT COUNT(*) AS n FROM environment_variants WHERE org_id = :org_id AND owner_member_id IS NULL",
-        ).bind("org_id", orgId),
-    ).getOrThrow().first().get("n").asLong()
+    private fun teamCount(orgId: Uuid): Long =
+        v.select(v.id).where { (v.orgId eq orgId) and v.ownerMemberId.isNull() }.count()
 
-    private suspend fun Transaction.lock(key: String) {
-        fetchAll(
-            Statement.create("SELECT 1 AS locked FROM (SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))) AS l")
-                .bind("key", key),
-        ).getOrThrow()
-    }
+    private fun excluded(orgId: Uuid, memberId: Uuid, variable: String): Boolean = x.select(x.memberId)
+        .where { (x.orgId eq orgId) and (x.memberId eq memberId) and (x.variable eq variable) }
+        .empty()
+        .not()
 
-    private suspend fun Transaction.insert(stored: StoredEnvironmentVariant): Boolean {
+    private fun assigned(orgId: Uuid, memberId: Uuid, variable: String): Boolean = a.select(a.memberId)
+        .where { (a.orgId eq orgId) and (a.memberId eq memberId) and (a.variable eq variable) }
+        .empty()
+        .not()
+
+    // ON CONFLICT DO NOTHING: a name taken (case-insensitively, by the same owner) is the use case's refusal.
+    private fun insert(stored: StoredEnvironmentVariant): Boolean {
         val variant = stored.variant
-        val statement = Statement.create(
-            "INSERT INTO environment_variants (id, org_id, variable, name, binding, owner_member_id, envelope, " +
-                "version, created_at, updated_at) VALUES (:id, :org_id, :variable, :name, :binding, :owner, " +
-                ":envelope, :version, :created_at, :updated_at) ON CONFLICT DO NOTHING",
-        )
-            .bind("id", variant.id)
-            .bind("org_id", variant.orgId)
-            .bind("variable", variant.variable)
-            .bind("name", variant.name)
-            .bind("binding", variant.binding.wire)
-            .bind("version", variant.version)
-            .bind("created_at", variant.createdAt)
-            .bind("updated_at", variant.updatedAt)
-        val owner = variant.ownerMemberId
-        if (owner == null) statement.bindNull("owner", Uuid::class) else statement.bind("owner", owner)
-        val envelope = stored.envelope
-        if (envelope == null) statement.bindNull("envelope", String::class) else statement.bind("envelope", envelope)
-        return execute(statement).getOrThrow() == 1L
+        return v.insertIgnore {
+            it[id] = variant.id
+            it[orgId] = variant.orgId
+            it[this.variable] = variant.variable
+            it[name] = variant.name
+            it[binding] = variant.binding.wire
+            it[ownerMemberId] = variant.ownerMemberId
+            it[envelope] = stored.envelope
+            it[version] = variant.version
+            it[createdAt] = variant.createdAt
+            it[updatedAt] = variant.updatedAt
+        }.insertedCount == 1
     }
 
     @Suppress("LongParameterList") // The row's columns.
-    private suspend fun Transaction.upsertAssignment(
+    private fun upsertAssignment(
         orgId: Uuid,
         memberId: Uuid,
         variant: EnvironmentVariant,
@@ -410,98 +365,71 @@ class EnvironmentRepositoryImpl(private val driver: Driver) : EnvironmentReposit
         memberEnvelope: String?,
         assignedAt: Instant,
     ) {
-        val statement = Statement.create(
-            "INSERT INTO environment_assignments (org_id, member_id, variable, variant_id, source, envelope, " +
-                "assigned_at) VALUES (:org_id, :member, :variable, :variant, :source, :envelope, :at) " +
-                "ON CONFLICT (org_id, member_id, variable) DO UPDATE SET variant_id = EXCLUDED.variant_id, " +
-                "source = EXCLUDED.source, envelope = EXCLUDED.envelope, assigned_at = EXCLUDED.assigned_at",
-        )
-            .bind("org_id", orgId)
-            .bind("member", memberId)
-            .bind("variable", variant.variable)
-            .bind("variant", variant.id)
-            .bind("source", source.wire)
-            .bind("at", assignedAt)
-        if (memberEnvelope == null) {
-            statement.bindNull("envelope", String::class)
-        } else {
-            statement.bind("envelope", memberEnvelope)
+        a.upsert(
+            a.orgId, a.memberId, a.variable,
+            onUpdate = {
+                it[a.variantId] = insertValue(a.variantId)
+                it[a.assignedBy] = insertValue(a.assignedBy)
+                it[a.envelope] = insertValue(a.envelope)
+                it[a.assignedAt] = insertValue(a.assignedAt)
+            },
+        ) {
+            it[this.orgId] = orgId
+            it[this.memberId] = memberId
+            it[variable] = variant.variable
+            it[variantId] = variant.id
+            it[assignedBy] = source.wire
+            it[envelope] = memberEnvelope
+            it[this.assignedAt] = assignedAt
         }
-        execute(statement).getOrThrow()
     }
 
-    private suspend fun Transaction.deleteAssignment(orgId: Uuid, memberId: Uuid, variable: String): Boolean =
-        execute(
-            Statement.create(
-                "DELETE FROM environment_assignments " +
-                    "WHERE org_id = :org_id AND member_id = :member AND variable = :variable",
-            )
-                .bind("org_id", orgId)
-                .bind("member", memberId)
-                .bind("variable", variable),
-        ).getOrThrow() == 1L
+    private fun deleteAssignment(orgId: Uuid, memberId: Uuid, variable: String): Boolean =
+        a.deleteWhere { (a.orgId eq orgId) and (a.memberId eq memberId) and (a.variable eq variable) } == 1
 
-    private suspend fun Transaction.nameTaken(
-        orgId: Uuid,
-        variable: String,
-        ownerMemberId: Uuid?,
-        name: String,
-        except: Uuid,
-    ): Boolean {
-        val statement = Statement.create(
-            "SELECT 1 AS taken FROM environment_variants WHERE org_id = :org_id AND variable = :variable " +
-                "AND lower(name) = lower(:name) AND ${owner(ownerMemberId)} AND id <> :id",
-        ).bindKey(orgId, except, ownerMemberId)
-            .bind("variable", variable)
-            .bind("name", name)
-        return fetchAll(statement).getOrThrow().firstOrNull() != null
-    }
+    private fun nameTaken(orgId: Uuid, variable: String, ownerMemberId: Uuid?, name: String, except: Uuid): Boolean =
+        v.select(v.id)
+            .where {
+                (v.orgId eq orgId) and (v.variable eq variable) and
+                    (v.name.lowerCase() eq stringParam(name).lowerCase()) and ownedBy(ownerMemberId) and
+                    (v.id neq except)
+            }
+            .empty()
+            .not()
 
-    private suspend fun Transaction.memberSet(
-        sql: String,
-        orgId: Uuid,
-        variable: String,
-        members: List<Uuid>,
-    ): Set<Uuid> = fetchAll(
-        Statement.create(sql)
-            .bind("org_id", orgId)
-            .bind("variable", variable)
-            .bind("members", members),
-    ).getOrThrow().map { it.get("member_id").asUuid() }.toSet()
+    private fun ownedBy(ownerMemberId: Uuid?): Op<Boolean> =
+        if (ownerMemberId == null) v.ownerMemberId.isNull() else v.ownerMemberId eq ownerMemberId
 
-    private fun owner(ownerMemberId: Uuid?): String =
-        if (ownerMemberId == null) "owner_member_id IS NULL" else "owner_member_id = :owner"
-
-    private fun Statement.bindKey(orgId: Uuid, id: Uuid, ownerMemberId: Uuid?): Statement {
-        bind("org_id", orgId)
-        bind("id", id)
-        if (ownerMemberId != null) bind("owner", ownerMemberId)
-        return this
-    }
-
-    private fun ResultSet.Row.toVariant(): EnvironmentVariant = EnvironmentVariant(
-        id = get("id").asUuid(),
-        orgId = get("org_id").asUuid(),
-        variable = get("variable").asString(),
-        name = get("name").asString(),
+    private fun ResultRow.toVariant(): EnvironmentVariant = EnvironmentVariant(
+        id = this[v.id],
+        orgId = this[v.orgId],
+        variable = this[v.variable],
+        name = this[v.name],
         // A binding this version cannot read is served as per-member: it never exposes a shared value.
-        binding = EnvironmentBinding.fromWire(get("binding").asString()) ?: EnvironmentBinding.PER_MEMBER,
-        ownerMemberId = get("owner_member_id").asUuidOrNull(),
-        hasValue = get("has_value").asBoolean(),
-        version = get("version").asInt(),
-        createdAt = get("created_at").asInstant(),
-        updatedAt = get("updated_at").asInstant(),
+        binding = EnvironmentBinding.fromWire(this[v.binding]) ?: EnvironmentBinding.PER_MEMBER,
+        ownerMemberId = this[v.ownerMemberId],
+        hasValue = this[HAS_VALUE],
+        version = this[v.version],
+        createdAt = this[v.createdAt],
+        updatedAt = this[v.updatedAt],
     )
-
-    private companion object {
-        const val COLUMNS = "id, org_id, variable, name, binding, owner_member_id, " +
-            "(envelope IS NOT NULL) AS has_value, version, created_at, updated_at"
-
-        fun variableKey(orgId: Uuid, variable: String) = "environment-variable:$orgId:$variable"
-
-        fun teamKey(orgId: Uuid) = "environment-team:$orgId"
-
-        fun nameKey(orgId: Uuid, variable: String, owner: Uuid?) =
-            "environment-name:$orgId:$variable:${owner ?: "team"}"
-    }
 }
+
+private val v = EnvironmentVariants
+private val a = EnvironmentAssignments
+private val x = EnvironmentExclusions
+
+/** Whether the variant holds a value, read instead of the value itself. */
+private val HAS_VALUE = v.envelope.isNotNull()
+
+private val VARIANT_COLUMNS = listOf(
+    v.id, v.orgId, v.variable, v.name, v.binding, v.ownerMemberId, HAS_VALUE, v.version, v.createdAt,
+    v.updatedAt,
+)
+
+private fun variableKey(orgId: Uuid, variable: String) = "environment-variable:$orgId:$variable"
+
+private fun teamKey(orgId: Uuid) = "environment-team:$orgId"
+
+private fun nameKey(orgId: Uuid, variable: String, owner: Uuid?) =
+    "environment-name:$orgId:$variable:${owner ?: "team"}"
