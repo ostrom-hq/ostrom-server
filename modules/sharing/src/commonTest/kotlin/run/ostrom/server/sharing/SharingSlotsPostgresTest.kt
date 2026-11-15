@@ -7,13 +7,18 @@ import run.ostrom.server.secrets.infrastructure.executeInOrg
 import run.ostrom.server.secrets.infrastructure.fetchInOrg
 import run.ostrom.server.sharing.domain.AccountProvider
 import run.ostrom.server.sharing.domain.AccountRefreshRepository
+import run.ostrom.server.sharing.domain.AccountSlotRepository
 import run.ostrom.server.sharing.domain.AccountSlot
 import run.ostrom.server.sharing.domain.AccountTokenCipher
 import run.ostrom.server.sharing.domain.AccountTokens
 import run.ostrom.server.sharing.domain.LeaseResult
 import run.ostrom.server.sharing.domain.NoAccountSpendReader
+import run.ostrom.server.sharing.domain.QuotaWindow
+import run.ostrom.server.sharing.domain.QuotaWindowRepository
 import run.ostrom.server.sharing.domain.SharedAccountPool
+import run.ostrom.server.sharing.domain.SharedAccountRepository
 import run.ostrom.server.sharing.infrastructure.AccountSlotRepositoryImpl
+import run.ostrom.server.sharing.infrastructure.sessionHash
 import run.ostrom.server.sharing.presentation.SharedAccountResponse
 import run.ostrom.server.sharing.presentation.SharedAccountsResponse
 import run.ostrom.server.sharing.presentation.UpdateAccountRequest
@@ -29,6 +34,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Clock
@@ -50,7 +56,7 @@ class SharingSlotsPostgresTest : SharingPostgresHarness() {
             Clock.System,
             JsonLogger(LogLevel.ERROR, sink = {}),
         ),
-        AccountSlotRepositoryImpl(driver),
+        AccountSlotRepositoryImpl(koin.get()),
         koin.get(),
         NoAccountSpendReader(),
         Clock.System,
@@ -90,7 +96,7 @@ class SharingSlotsPostgresTest : SharingPostgresHarness() {
                 Sharing.orgA,
                 Statement.create("UPDATE sharing_slots SET expires_at = now() + INTERVAL '1 second'"),
             ).getOrThrow()
-            AccountSlotRepositoryImpl(driver).renew(Sharing.orgA, AccountSlot(held, account))
+            AccountSlotRepositoryImpl(koin.get()).renew(Sharing.orgA, AccountSlot(held, account))
             val renewed = driver.fetchInOrg(
                 Sharing.orgA,
                 Statement.create("SELECT id FROM sharing_slots WHERE expires_at > now() + INTERVAL '14 minutes'"),
@@ -157,4 +163,54 @@ class SharingSlotsPostgresTest : SharingPostgresHarness() {
             assertEquals(2, kept.getOrThrow().size, "Org A's sessions are untouched")
         }
     }
+
+    @Test
+    fun aSessionIsRememberedOnlyWithinTheMembersAndTheOrganizationsBounds() =
+        serverTest(modules, overrides) { server ->
+            with(server) {
+                val account = shareAs("member-a").body<SharedAccountResponse>().id
+                val pool = koin.get<SharedAccountPool>()
+                suspend fun lease(session: String, member: Uuid = Sharing.memberA.memberId) {
+                    val result = pool.lease(Sharing.orgA, member, AccountProvider.CLAUDE, session)
+                    assertIs<LeaseResult.Leased>(result).lease.release()
+                }
+                suspend fun remembered(session: String): Boolean = driver.fetchInOrg(
+                    Sharing.orgA,
+                    Statement.create("SELECT 1 FROM sharing_affinities WHERE session_hash = :hash")
+                        .bind("hash", sessionHash(session)),
+                ).getOrThrow().size > 0
+                // Live sessions written as the module writes them, `count` of them for [member].
+                suspend fun fill(member: Uuid, count: Int) {
+                    driver.executeInOrg(
+                        Sharing.orgA,
+                        Statement.create(
+                            "INSERT INTO sharing_affinities (org_id, member_id, session_hash, account_id, " +
+                                "expires_at) SELECT org_id, CAST('$member' AS uuid), md5('$member' || i), id, " +
+                                "now() + INTERVAL '1 hour' FROM sharing_accounts, generate_series(1, $count) AS i " +
+                                "WHERE id = CAST('$account' AS uuid)",
+                        ),
+                    ).getOrThrow()
+                }
+
+                lease("known")
+                assertTrue(remembered("known"))
+                fill(Sharing.memberA.memberId, AccountSlotRepository.MAX_MEMBER_AFFINITIES - 1)
+                lease("past-the-member")
+                assertFalse(remembered("past-the-member"), "A member at their bound starts no new session")
+                lease("known")
+                assertTrue(remembered("known"), "A session already remembered is kept")
+
+                driver.executeInOrg(Sharing.orgA, Statement.create("DELETE FROM sharing_affinities")).getOrThrow()
+                fill(Sharing.otherA.memberId, AccountSlotRepository.MAX_ORG_AFFINITIES)
+                lease("past-the-organization")
+                assertFalse(remembered("past-the-organization"), "Nor a member of an organization at its bound")
+
+                // Another organization's account, or none: nothing is written, nothing deleted.
+                val windows = koin.get<QuotaWindowRepository>()
+                val window = QuotaWindow("five_hour", 0.5, null, Clock.System.now())
+                windows.put(Sharing.orgB, Uuid.parse(account), listOf(window))
+                assertTrue(windows.byAccount(Sharing.orgA).isEmpty() && windows.byAccount(Sharing.orgB).isEmpty())
+                assertFalse(koin.get<SharedAccountRepository>().delete(Sharing.orgA, Uuid.random()))
+            }
+        }
 }

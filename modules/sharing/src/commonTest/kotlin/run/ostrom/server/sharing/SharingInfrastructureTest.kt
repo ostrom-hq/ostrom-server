@@ -10,7 +10,6 @@ import run.ostrom.server.sharing.domain.AccountStatus
 import run.ostrom.server.sharing.domain.AccountTokenCipher
 import run.ostrom.server.sharing.domain.OAuthRefresher
 import run.ostrom.server.sharing.domain.RefreshResult
-import run.ostrom.server.sharing.infrastructure.AWAITING_SIGN_IN
 import run.ostrom.server.sharing.infrastructure.HttpOAuthRefresher
 import run.ostrom.server.sharing.infrastructure.ProviderQuotaHeaderParser
 import io.ktor.client.HttpClient
@@ -59,11 +58,6 @@ class SharingInfrastructureTest {
         // Real time: a short timeout only where the provider hangs, a cold JVM's first call can take longer.
         timeout = if (hang) 300.milliseconds else 30.seconds,
     )
-
-    @Test
-    fun aStaleWriteKeepsExactlyTheStatusesOnlySharingAgainLeaves() {
-        assertEquals(AccountStatus.entries.filter { it.awaitsSignIn }.joinToString { "'${it.name}'" }, AWAITING_SIGN_IN)
-    }
 
     @Test
     fun aRefreshUsesThePublicClientOfEachProvider() = realTime {

@@ -1,93 +1,61 @@
 // SPDX-License-Identifier: Apache-2.0
+// The repository and its reads, one function each, so that the query-plan test explains the very statements it sends.
+@file:Suppress("TooManyFunctions")
+
 package run.ostrom.server.sharing.infrastructure
 
-import run.ostrom.server.secrets.infrastructure.executeInOrg
-import run.ostrom.server.secrets.infrastructure.fetchInOrg
-import run.ostrom.server.secrets.infrastructure.inTenant
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.sharing.domain.GroupMember
 import run.ostrom.server.sharing.domain.GroupRepository
 import run.ostrom.server.sharing.domain.GroupRules
 import run.ostrom.server.sharing.domain.SharingGroup
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.Transaction
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
+import org.jetbrains.exposed.v1.core.Count
+import org.jetbrains.exposed.v1.core.QueryParameter
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.UuidColumnType
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.count
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.lowerCase
+import org.jetbrains.exposed.v1.core.neq
+import org.jetbrains.exposed.v1.core.stringParam
+import org.jetbrains.exposed.v1.jdbc.Query
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
+import org.jetbrains.exposed.v1.jdbc.insertIgnore
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
-/** The organization's groups by name (the request path of `GET /groups`). */
-internal const val GROUPS_OF_ORG_SQL: String =
-    "SELECT id, org_id, name, created_at FROM sharing_groups WHERE org_id = :org_id " +
-        "ORDER BY lower(name), id LIMIT ${GroupRules.MAX_GROUPS}"
-
-/** The members of the organization's groups. */
-internal const val GROUP_MEMBERS_OF_ORG_SQL: String =
-    "SELECT group_id, member_id, paused_until FROM sharing_group_members WHERE org_id = :org_id"
-
-/** The accounts lent to the organization's groups. */
-internal const val GROUP_ACCOUNTS_OF_ORG_SQL: String =
-    "SELECT group_id, account_id FROM sharing_group_accounts WHERE org_id = :org_id"
-
-/** One group (the request path of `GET /groups/{id}` and of every write). */
-internal const val GROUP_SQL: String =
-    "SELECT id, org_id, name, created_at FROM sharing_groups WHERE org_id = :org_id AND id = :id"
-
-/** The members of one group. */
-internal const val GROUP_MEMBERS_SQL: String =
-    "SELECT group_id, member_id, paused_until FROM sharing_group_members WHERE org_id = :org_id AND group_id = :id"
-
-/** The accounts lent to one group. */
-internal const val GROUP_ACCOUNTS_SQL: String =
-    "SELECT group_id, account_id FROM sharing_group_accounts WHERE org_id = :org_id AND group_id = :id"
-
-/** How many groups the organization has (before a new one). */
-internal const val GROUPS_COUNT_SQL: String = "SELECT count(*) AS n FROM sharing_groups WHERE org_id = :org_id"
-
-/** Another group of the organization with this name, whatever the case. */
-internal const val GROUP_NAME_TAKEN_SQL: String =
-    "SELECT id FROM sharing_groups WHERE org_id = :org_id AND lower(name) = lower(:name) AND id <> :id LIMIT 1"
-
 /**
- * [GroupRepository] on PostgreSQL ([SharingMigrations]). Every query runs confined to the organization it names
- * (`fetchInOrg`, `executeInOrg`, `inTenant`): row-level security hides and refuses the rows of every other one, and
- * an account is lent only when the organization's own `sharing_accounts` shows it.
+ * [GroupRepository] on PostgreSQL ([SharingMigrations]) through Exposed. Every query runs confined to the organization
+ * it names (`inOrg`): row-level security hides and refuses the rows of every other one, and an account is lent only
+ * when the organization's own `sharing_accounts` shows it.
  *
- * @param driver The database.
+ * @param database The serving role's pool.
  */
-class GroupRepositoryImpl(private val driver: Driver) : GroupRepository {
-    override suspend fun list(orgId: Uuid): List<SharingGroup> = read(
-        orgId,
-        Statement.create(GROUPS_OF_ORG_SQL),
-        Statement.create(GROUP_MEMBERS_OF_ORG_SQL),
-        Statement.create(GROUP_ACCOUNTS_OF_ORG_SQL),
-    )
+class GroupRepositoryImpl(private val database: JdbcDatabase) : GroupRepository {
+    override suspend fun list(orgId: Uuid): List<SharingGroup> = database.inOrg(orgId) {
+        read(groupsOfOrg(orgId), groupMembersOfOrg(orgId), groupAccountsOfOrg(orgId))
+    }
 
-    override suspend fun get(orgId: Uuid, id: Uuid): SharingGroup? = read(
-        orgId,
-        Statement.create(GROUP_SQL).bind("id", id),
-        Statement.create(GROUP_MEMBERS_SQL).bind("id", id),
-        Statement.create(GROUP_ACCOUNTS_SQL).bind("id", id),
-    ).singleOrNull()
+    override suspend fun get(orgId: Uuid, id: Uuid): SharingGroup? = database.inOrg(orgId) {
+        read(groupOf(orgId, id), groupMembersOf(orgId, id), groupAccountsOf(orgId, id)).singleOrNull()
+    }
 
-    override suspend fun count(orgId: Uuid): Int = driver.fetchInOrg(
-        orgId,
-        Statement.create(GROUPS_COUNT_SQL).bind("org_id", orgId),
-    ).getOrThrow().single().get("n").asInt()
+    override suspend fun count(orgId: Uuid): Int = database.inOrg(orgId) {
+        val n = SharingGroups.id.count()
+        groupsCount(orgId, n).single()[n].toInt()
+    }
 
-    override suspend fun create(group: SharingGroup): Boolean = driver.inTenant(group.orgId) {
-        val made = fetchAll(
-            Statement.create(
-                "INSERT INTO sharing_groups (id, org_id, name, created_at) " +
-                    "VALUES (:id, :org_id, :name, :created_at) ON CONFLICT DO NOTHING RETURNING id",
-            )
-                .bind("id", group.id)
-                .bind("org_id", group.orgId)
-                .bind("name", group.name)
-                .bind("created_at", group.createdAt),
-        ).getOrThrow().toList().isNotEmpty()
+    override suspend fun create(group: SharingGroup): Boolean = database.inOrg(group.orgId) {
+        val g = SharingGroups
+        val made = g.insertIgnore {
+            it[id] = group.id
+            it[orgId] = group.orgId
+            it[name] = group.name
+            it[createdAt] = group.createdAt
+        }.insertedCount == 1
         if (made) {
             group.members.forEach { putMember(group.orgId, group.id, it.memberId) }
             lend(group.orgId, group.id, group.accounts)
@@ -96,121 +64,127 @@ class GroupRepositoryImpl(private val driver: Driver) : GroupRepository {
     }
 
     override suspend fun update(orgId: Uuid, id: Uuid, name: String?, accounts: Set<Uuid>?): Boolean =
-        driver.inTenant(orgId) {
-            val taken = name != null && fetchAll(
-                Statement.create(GROUP_NAME_TAKEN_SQL).bind("org_id", orgId).bind("id", id).bind("name", name),
-            ).getOrThrow().toList().isNotEmpty()
+        database.inOrg(orgId) {
+            val taken = name != null && !groupNameTaken(orgId, id, name).empty()
             if (!taken) {
-                if (name != null) {
-                    execute(
-                        Statement.create("UPDATE sharing_groups SET name = :name WHERE org_id = :org_id AND id = :id")
-                            .bind("org_id", orgId)
-                            .bind("id", id)
-                            .bind("name", name),
-                    ).getOrThrow()
-                }
+                val g = SharingGroups
+                if (name != null) g.update({ (g.orgId eq orgId) and (g.id eq id) }) { it[g.name] = name }
                 if (accounts != null) {
-                    execute(
-                        Statement.create("DELETE FROM sharing_group_accounts WHERE org_id = :org_id AND group_id = :id")
-                            .bind("org_id", orgId)
-                            .bind("id", id),
-                    ).getOrThrow()
+                    val ga = SharingGroupAccounts
+                    ga.deleteWhere { (ga.orgId eq orgId) and (ga.groupId eq id) }
                     lend(orgId, id, accounts)
                 }
             }
             !taken
         }
 
-    override suspend fun delete(orgId: Uuid, id: Uuid): Boolean = driver.executeInOrg(
-        orgId,
-        Statement.create("DELETE FROM sharing_groups WHERE org_id = :org_id AND id = :id")
-            .bind("org_id", orgId)
-            .bind("id", id),
-    ).getOrThrow() == 1L
-
-    override suspend fun addMember(orgId: Uuid, id: Uuid, memberId: Uuid) {
-        driver.inTenant(orgId) { putMember(orgId, id, memberId) }
+    override suspend fun delete(orgId: Uuid, id: Uuid): Boolean = database.inOrg(orgId) {
+        SharingGroups.deleteWhere { (SharingGroups.orgId eq orgId) and (SharingGroups.id eq id) } == 1
     }
 
-    override suspend fun removeMember(orgId: Uuid, id: Uuid, memberId: Uuid): Boolean = driver.executeInOrg(
-        orgId,
-        Statement.create(
-            "DELETE FROM sharing_group_members WHERE org_id = :org_id AND group_id = :id AND member_id = :member",
-        )
-            .bind("org_id", orgId)
-            .bind("id", id)
-            .bind("member", memberId),
-    ).getOrThrow() == 1L
+    override suspend fun addMember(orgId: Uuid, id: Uuid, memberId: Uuid) {
+        database.inOrg(orgId) { putMember(orgId, id, memberId) }
+    }
+
+    override suspend fun removeMember(orgId: Uuid, id: Uuid, memberId: Uuid): Boolean = database.inOrg(orgId) {
+        val m = SharingGroupMembers
+        m.deleteWhere { (m.orgId eq orgId) and (m.groupId eq id) and (m.memberId eq memberId) } == 1
+    }
 
     override suspend fun pauseMember(orgId: Uuid, id: Uuid, memberId: Uuid, until: Instant): Boolean =
-        driver.executeInOrg(
-            orgId,
-            Statement.create(
-                "UPDATE sharing_group_members SET paused_until = :until " +
-                    "WHERE org_id = :org_id AND group_id = :id AND member_id = :member",
-            )
-                .bind("org_id", orgId)
-                .bind("id", id)
-                .bind("member", memberId)
-                .bind("until", until),
-        ).getOrThrow() == 1L
-
-    /** Reads groups with their members and accounts; each statement binds `:org_id` here. */
-    private suspend fun read(
-        orgId: Uuid,
-        groups: Statement,
-        members: Statement,
-        accounts: Statement,
-    ): List<SharingGroup> = driver.inTenant(orgId) {
-        val heads = fetchAll(groups.bind("org_id", orgId)).getOrThrow().toList()
-        val memberRows = fetchAll(members.bind("org_id", orgId)).getOrThrow().toList()
-            .groupBy({ it.get("group_id").asUuid() }) {
-                GroupMember(it.get("member_id").asUuid(), it.get("paused_until").asInstantOrNull())
-            }
-        val accountRows = fetchAll(accounts.bind("org_id", orgId)).getOrThrow().toList()
-            .groupBy({ it.get("group_id").asUuid() }) { it.get("account_id").asUuid() }
-        heads.map { row ->
-            val id = row.get("id").asUuid()
-            SharingGroup(
-                id = id,
-                orgId = row.get("org_id").asUuid(),
-                name = row.get("name").asString(),
-                members = memberRows[id].orEmpty().sortedBy { it.memberId.toString() },
-                accounts = accountRows[id].orEmpty().toSet(),
-                createdAt = row.get("created_at").asInstant(),
-            )
+        database.inOrg(orgId) {
+            val m = SharingGroupMembers
+            m.update({ (m.orgId eq orgId) and (m.groupId eq id) and (m.memberId eq memberId) }) {
+                it[pausedUntil] = until
+            } == 1
         }
+}
+
+/** Reads groups with their members and accounts. */
+private fun read(groups: Query, members: Query, accounts: Query): List<SharingGroup> {
+    val g = SharingGroups
+    val m = SharingGroupMembers
+    val ga = SharingGroupAccounts
+    val heads = groups.toList()
+    val memberRows = members.toList().groupBy({ it[m.groupId] }) { GroupMember(it[m.memberId], it[m.pausedUntil]) }
+    val accountRows = accounts.toList().groupBy({ it[ga.groupId] }) { it[ga.accountId] }
+    return heads.map { row ->
+        val id = row[g.id]
+        SharingGroup(
+            id = id,
+            orgId = row[g.orgId],
+            name = row[g.name],
+            members = memberRows[id].orEmpty().sortedBy { it.memberId.toString() },
+            accounts = accountRows[id].orEmpty().toSet(),
+            createdAt = row[g.createdAt],
+        )
     }
 }
 
 /** Adds a member to a group; one already there keeps their pause. */
-private suspend fun Transaction.putMember(orgId: Uuid, groupId: Uuid, memberId: Uuid) {
-    execute(
-        Statement.create(
-            "INSERT INTO sharing_group_members (org_id, group_id, member_id, paused_until) " +
-                "VALUES (:org_id, :group_id, :member, NULL) ON CONFLICT DO NOTHING",
-        )
-            .bind("org_id", orgId)
-            .bind("group_id", groupId)
-            .bind("member", memberId),
-    ).getOrThrow()
+private fun putMember(orgId: Uuid, groupId: Uuid, memberId: Uuid) {
+    SharingGroupMembers.insertIgnore {
+        it[this.orgId] = orgId
+        it[this.groupId] = groupId
+        it[this.memberId] = memberId
+        it[pausedUntil] = null
+    }
 }
 
 /**
  * Lends [accounts] to a group: each through the organization's own row of `sharing_accounts`, so an id of another
  * organization (which a foreign key alone would accept) lends nothing.
  */
-private suspend fun Transaction.lend(orgId: Uuid, groupId: Uuid, accounts: Set<Uuid>) {
+private fun lend(orgId: Uuid, groupId: Uuid, accounts: Set<Uuid>) {
+    val a = SharingAccounts
+    val ga = SharingGroupAccounts
     accounts.forEach { account ->
-        execute(
-            Statement.create(
-                "INSERT INTO sharing_group_accounts (org_id, group_id, account_id) " +
-                    "SELECT org_id, :group_id, id FROM sharing_accounts WHERE org_id = :org_id AND id = :account " +
-                    "ON CONFLICT DO NOTHING",
-            )
-                .bind("org_id", orgId)
-                .bind("group_id", groupId)
-                .bind("account", account),
-        ).getOrThrow()
+        val own = a.select(a.orgId, QueryParameter(groupId, UuidColumnType()), a.id)
+            .where { (a.orgId eq orgId) and (a.id eq account) }
+        ga.insertIgnore(own, listOf(ga.orgId, ga.groupId, ga.accountId))
     }
 }
+
+private val GROUP_COLUMNS = SharingGroups.run { listOf(id, orgId, name, createdAt) }
+
+/** The organization's groups by name (the request path of `GET /groups`). */
+internal fun groupsOfOrg(orgId: Uuid): Query = SharingGroups.select(GROUP_COLUMNS)
+    .where { SharingGroups.orgId eq orgId }
+    .orderBy(SharingGroups.name.lowerCase() to SortOrder.ASC, SharingGroups.id to SortOrder.ASC)
+    .limit(GroupRules.MAX_GROUPS)
+
+/** The members of the organization's groups. */
+internal fun groupMembersOfOrg(orgId: Uuid): Query = SharingGroupMembers.run {
+    select(groupId, memberId, pausedUntil).where { this@run.orgId eq orgId }
+}
+
+/** The accounts lent to the organization's groups. */
+internal fun groupAccountsOfOrg(orgId: Uuid): Query = SharingGroupAccounts.run {
+    select(groupId, accountId).where { this@run.orgId eq orgId }
+}
+
+/** One group (the request path of `GET /groups/{id}` and of every write). */
+internal fun groupOf(orgId: Uuid, id: Uuid): Query = SharingGroups.select(GROUP_COLUMNS)
+    .where { (SharingGroups.orgId eq orgId) and (SharingGroups.id eq id) }
+
+/** The members of one group. */
+internal fun groupMembersOf(orgId: Uuid, id: Uuid): Query = SharingGroupMembers.run {
+    select(groupId, memberId, pausedUntil).where { (this@run.orgId eq orgId) and (groupId eq id) }
+}
+
+/** The accounts lent to one group. */
+internal fun groupAccountsOf(orgId: Uuid, id: Uuid): Query = SharingGroupAccounts.run {
+    select(groupId, accountId).where { (this@run.orgId eq orgId) and (groupId eq id) }
+}
+
+/** How many groups the organization has (before a new one), counted in [n]. */
+internal fun groupsCount(orgId: Uuid, n: Count): Query =
+    SharingGroups.select(n).where { SharingGroups.orgId eq orgId }
+
+/** Another group of the organization with this name, whatever the case. */
+internal fun groupNameTaken(orgId: Uuid, id: Uuid, name: String): Query = SharingGroups.select(SharingGroups.id)
+    .where {
+        (SharingGroups.orgId eq orgId) and (SharingGroups.name.lowerCase() eq stringParam(name).lowerCase()) and
+            (SharingGroups.id neq id)
+    }
+    .limit(1)

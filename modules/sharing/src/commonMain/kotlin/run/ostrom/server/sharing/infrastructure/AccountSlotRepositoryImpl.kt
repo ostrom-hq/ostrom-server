@@ -1,159 +1,214 @@
 // SPDX-License-Identifier: Apache-2.0
+// The repository and its reads, one function each, so that the query-plan test explains the very statements it sends.
+@file:Suppress("TooManyFunctions")
+
 package run.ostrom.server.sharing.infrastructure
 
-import run.ostrom.server.secrets.infrastructure.executeInOrg
-import run.ostrom.server.secrets.infrastructure.fetchInOrg
-import run.ostrom.server.secrets.infrastructure.inTenant
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.databaseNow
+import run.ostrom.server.kernel.database.databaseNowPlus
+import run.ostrom.server.kernel.database.write
 import run.ostrom.server.sharing.domain.AccountSlot
 import run.ostrom.server.sharing.domain.AccountSlotRepository
 import run.ostrom.server.sharing.domain.ActiveSession
+import run.ostrom.server.sharing.domain.RefreshOwnership
 import run.ostrom.server.sharing.domain.SharedAccount
 import run.ostrom.server.sharing.domain.SlotView
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.ResultSet
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
+import java.security.MessageDigest
+import org.jetbrains.exposed.v1.core.Count
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.UuidColumnType
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.anyFrom
+import org.jetbrains.exposed.v1.core.count
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.core.lessEq
+import org.jetbrains.exposed.v1.core.neq
+import org.jetbrains.exposed.v1.core.statements.DeleteStatement
+import org.jetbrains.exposed.v1.core.statements.InsertStatement
+import org.jetbrains.exposed.v1.core.statements.StatementBuilder
+import org.jetbrains.exposed.v1.core.statements.UpdateStatement
+import org.jetbrains.exposed.v1.core.statements.UpsertStatement
+import org.jetbrains.exposed.v1.jdbc.Query
+import org.jetbrains.exposed.v1.jdbc.select
 import kotlin.time.Duration
 import kotlin.uuid.Uuid
 
 /**
- * [AccountSlotRepository] on PostgreSQL ([SharingMigrations] version 8). A take locks the candidates' rows
- * (`FOR UPDATE`, in id order so that two takes never deadlock), counts their unexpired slots, and inserts the slot in
- * the same transaction: two replicas never fill an account past its limit together. Expiry is the database's clock.
- * A session id is stored as its SHA-256 digest only. The org's expired slots and affinities are deleted as a take goes,
- * so neither table keeps an org's dead rows past its next lease.
+ * [AccountSlotRepository] on PostgreSQL ([SharingMigrations] version 8) through Exposed. A take locks the candidates'
+ * rows (`FOR UPDATE`, in id order so that two takes never deadlock), counts their unexpired slots, and inserts the slot
+ * in the same transaction: two replicas never fill an account past its limit together. Expiry is the database's clock.
+ * A session id is stored as its SHA-256 digest only. The org's expired slots and affinities are deleted as a take
+ * goes, so neither table keeps an org's dead rows past its next lease.
  *
- * @param driver The database.
+ * @param database The serving role's pool.
  */
-class AccountSlotRepositoryImpl(private val driver: Driver) : AccountSlotRepository {
+class AccountSlotRepositoryImpl(private val database: JdbcDatabase) : AccountSlotRepository {
     override suspend fun take(
         orgId: Uuid,
         memberId: Uuid,
         session: String?,
         candidates: List<SharedAccount>,
         pick: (SlotView) -> SharedAccount?,
-    ): AccountSlot? = driver.inTenant(orgId) {
-        fun sql(text: String) = Statement.create(text).bind("org_id", orgId)
-        val ids = candidates.joinToString(",") { it.id.toString() }
-        val serving = fetchAll(sql(SLOT_LOCK_SQL).bind("ids", ids)).getOrThrow().map { it.get("id").asUuid() }.toSet()
-        val active = fetchAll(sql(SLOT_ACTIVE_OF_SQL).bind("ids", ids)).getOrThrow().counts()
-        val remembered = session?.let {
-            fetchAll(sql(SLOT_REMEMBERED_SQL).bind("member_id", memberId).bind("session", it)).getOrThrow()
-                .firstOrNull()?.let { row -> row.get("account_id").asUuid() }
+    ): AccountSlot? = database.inOrg(orgId) {
+        val ids = candidates.map { it.id }
+        val serving = slotLock(orgId, ids).map { it[SharingAccounts.id] }.toSet()
+        val active = counts(slotsActive(orgId, ids))
+        val hash = if (session == null) null else sessionHash(session)
+        val remembered = if (hash == null) null else slotRemembered(orgId, memberId, hash).firstOrNull()
+        val account = pick(SlotView(active, remembered?.get(SharingAffinities.accountId), serving))
+        if (account == null) return@inOrg null
+        val slot = AccountSlot(Uuid.random(), account.id)
+        write { slotPurge(orgId) }
+        write { slotInsert(orgId, slot) }
+        if (hash != null) {
+            write { affinityPurge(orgId) }
+            if (mayRemember(orgId, memberId, hash)) write { affinityRemember(orgId, memberId, hash, account.id) }
         }
-        pick(SlotView(active, remembered, serving))?.let { account ->
-            val slot = AccountSlot(Uuid.random(), account.id)
-            execute(sql(SLOT_PURGE_SQL)).getOrThrow()
-            execute(sql(SLOT_INSERT_SQL).bind("id", slot.id).bind("account_id", account.id)).getOrThrow()
-            if (session != null) {
-                execute(sql(AFFINITY_PURGE_SQL)).getOrThrow()
-                execute(
-                    sql(AFFINITY_REMEMBER_SQL)
-                        .bind("member_id", memberId)
-                        .bind("account_id", account.id)
-                        .bind("session", session),
-                ).getOrThrow()
-            }
-            slot
-        }
+        slot
     }
 
     override suspend fun release(orgId: Uuid, slot: AccountSlot) {
-        driver.executeInOrg(
-            orgId,
-            Statement.create(SLOT_RELEASE_SQL).bind("org_id", orgId).bind("id", slot.id),
-        ).getOrThrow()
+        database.inOrg(orgId) { write { slotRelease(orgId, slot.id) } }
     }
 
     override suspend fun renew(orgId: Uuid, slot: AccountSlot) {
-        driver.executeInOrg(
-            orgId,
-            Statement.create(SLOT_RENEW_SQL).bind("org_id", orgId).bind("id", slot.id),
-        ).getOrThrow()
+        database.inOrg(orgId) { write { slotRenew(orgId, slot.id) } }
     }
 
-    override suspend fun active(orgId: Uuid): Map<Uuid, Int> = driver.fetchInOrg(
-        orgId,
-        Statement.create(SLOT_ACTIVE_SQL).bind("org_id", orgId),
-    ).getOrThrow().counts()
+    override suspend fun active(orgId: Uuid): Map<Uuid, Int> = database.inOrg(orgId) { counts(slotsActive(orgId)) }
 
-    override suspend fun activeSessions(orgId: Uuid, within: Duration): List<ActiveSession> = driver.fetchInOrg(
-        orgId,
-        Statement.create(AFFINITY_ACTIVE_SQL)
-            .bind("org_id", orgId)
-            .bind("seconds", (AccountSlotRepository.AFFINITY - within).inWholeSeconds),
-    ).getOrThrow().map {
-        ActiveSession(it.get("member_id").asUuid(), it.get("session_hash").asString(), it.get("account_id").asUuid())
+    override suspend fun activeSessions(orgId: Uuid, within: Duration): List<ActiveSession> = database.inOrg(orgId) {
+        val f = SharingAffinities
+        affinitiesActive(orgId, AccountSlotRepository.AFFINITY - within).map {
+            ActiveSession(it[f.memberId], it[f.sessionHash], it[f.accountId])
+        }
     }
-
-    private fun ResultSet.counts(): Map<Uuid, Int> =
-        associate { it.get("account_id").asUuid() to it.get("active").asLong().toInt() }
 }
 
-private val SLOT_SECONDS = AccountSlotRepository.SLOT_LEASE.inWholeSeconds
-private val AFFINITY_SECONDS = AccountSlotRepository.AFFINITY.inWholeSeconds
-private const val IDS = "ANY(CAST(string_to_array(:ids, ',') AS UUID[]))"
-private const val HASH = "encode(sha256(convert_to(:session, 'UTF8')), 'hex')"
+private val ACTIVE: Count = SharingSlots.id.count()
 
-/** The rows of the candidates still serving, locked in id order. */
-internal const val SLOT_LOCK_SQL =
-    "SELECT id FROM sharing_accounts WHERE org_id = :org_id AND id = $IDS AND status = 'READY' " +
-        "AND ownership <> 'PENDING_HANDOVER' ORDER BY id FOR UPDATE"
-
-/** The unexpired slots of the candidates. */
-internal const val SLOT_ACTIVE_OF_SQL =
-    "SELECT account_id, count(*) AS active FROM sharing_slots " +
-        "WHERE org_id = :org_id AND account_id = $IDS AND expires_at > now() GROUP BY account_id"
-
-/** The account a member's session used last, while its affinity lasts. */
-internal const val SLOT_REMEMBERED_SQL =
-    "SELECT account_id FROM sharing_affinities WHERE org_id = :org_id AND member_id = :member_id " +
-        "AND session_hash = $HASH AND expires_at > now()"
-
-/** The org's expired slots. */
-internal const val SLOT_PURGE_SQL = "DELETE FROM sharing_slots WHERE org_id = :org_id AND expires_at <= now()"
-
-/** A new slot, expiring after its lease. */
-internal val SLOT_INSERT_SQL =
-    "INSERT INTO sharing_slots (id, org_id, account_id, expires_at) " +
-        "VALUES (:id, :org_id, :account_id, now() + INTERVAL '$SLOT_SECONDS seconds')"
-
-/**
- * The sessions leased within a span: their affinity, renewed for [AccountSlotRepository.AFFINITY] at each lease, ends
- * more than `:seconds` (the affinity minus the span) from now. By the expiry index, at most the org's bound.
- */
-internal val AFFINITY_ACTIVE_SQL =
-    "SELECT member_id, session_hash, account_id FROM sharing_affinities WHERE org_id = :org_id " +
-        "AND expires_at > now() + :seconds * INTERVAL '1 second' LIMIT ${AccountSlotRepository.MAX_ORG_AFFINITIES}"
-
-/** The unexpired slots of the org. */
-internal const val SLOT_ACTIVE_SQL =
-    "SELECT account_id, count(*) AS active FROM sharing_slots WHERE org_id = :org_id AND expires_at > now() " +
-        "GROUP BY account_id"
-
-/** A slot still held, extended by its lease from now. */
-internal val SLOT_RENEW_SQL =
-    "UPDATE sharing_slots SET expires_at = now() + INTERVAL '$SLOT_SECONDS seconds' WHERE org_id = :org_id AND id = :id"
-
-/** One slot given back. */
-internal const val SLOT_RELEASE_SQL = "DELETE FROM sharing_slots WHERE org_id = :org_id AND id = :id"
-
-/** The org's expired affinities. */
-internal const val AFFINITY_PURGE_SQL = "DELETE FROM sharing_affinities WHERE org_id = :org_id AND expires_at <= now()"
+private fun counts(query: Query): Map<Uuid, Int> = query.associate { it[SharingSlots.accountId] to it[ACTIVE].toInt() }
 
 /**
  * A session already remembered is renewed; a new one is remembered while the member and the org are under their
  * bounds, so that one member never evicts another's sessions by minting ids (TeamCode's bounds).
  */
-internal val AFFINITY_REMEMBER_SQL =
-    "INSERT INTO sharing_affinities (org_id, member_id, session_hash, account_id, expires_at) " +
-        "SELECT CAST(:org_id AS UUID), CAST(:member_id AS UUID), $HASH, CAST(:account_id AS UUID), " +
-        "now() + INTERVAL '$AFFINITY_SECONDS seconds' " +
-        "WHERE EXISTS (SELECT 1 FROM sharing_affinities WHERE org_id = :org_id AND member_id = :member_id " +
-        "AND session_hash = $HASH) " +
-        "OR ((SELECT count(*) FROM sharing_affinities WHERE org_id = :org_id AND member_id = :member_id) < " +
-        "${AccountSlotRepository.MAX_MEMBER_AFFINITIES} AND (SELECT count(*) FROM sharing_affinities " +
-        "WHERE org_id = :org_id AND expires_at > now()) < ${AccountSlotRepository.MAX_ORG_AFFINITIES}) " +
-        "ON CONFLICT (org_id, member_id, session_hash) DO UPDATE " +
-        "SET account_id = EXCLUDED.account_id, expires_at = EXCLUDED.expires_at"
+private fun mayRemember(orgId: Uuid, memberId: Uuid, hash: String): Boolean {
+    if (!affinityKnown(orgId, memberId, hash).empty()) return true
+    val member = memberAffinities(orgId, memberId).single()[AFFINITIES]
+    val org = orgAffinities(orgId).single()[AFFINITIES]
+    return member < AccountSlotRepository.MAX_MEMBER_AFFINITIES && org < AccountSlotRepository.MAX_ORG_AFFINITIES
+}
+
+private val AFFINITIES: Count = SharingAffinities.sessionHash.count()
+
+/** The session's affinity, live or not. */
+internal fun affinityKnown(orgId: Uuid, memberId: Uuid, hash: String): Query = SharingAffinities
+    .select(SharingAffinities.sessionHash)
+    .where { own(orgId, memberId) and (SharingAffinities.sessionHash eq hash) }
+
+/** How many sessions the member has remembered. */
+internal fun memberAffinities(orgId: Uuid, memberId: Uuid): Query =
+    SharingAffinities.select(AFFINITIES).where { own(orgId, memberId) }
+
+/** How many live sessions the organization has remembered. */
+internal fun orgAffinities(orgId: Uuid): Query = SharingAffinities.select(AFFINITIES)
+    .where { (SharingAffinities.orgId eq orgId) and (SharingAffinities.expiresAt greater databaseNow()) }
+
+private fun own(orgId: Uuid, memberId: Uuid) = (SharingAffinities.orgId eq orgId) and
+    (SharingAffinities.memberId eq memberId)
+
+/** A session id's digest, as stored: the hex of its UTF-8 bytes' SHA-256. */
+internal fun sessionHash(session: String): String =
+    MessageDigest.getInstance("SHA-256").digest(session.encodeToByteArray()).joinToString("") { "%02x".format(it) }
+
+/** The rows of the candidates still serving, locked in id order. */
+internal fun slotLock(orgId: Uuid, ids: List<Uuid>): Query {
+    val a = SharingAccounts
+    return a.select(a.id)
+        .where {
+            (a.orgId eq orgId) and (a.id eq anyFrom(ids, UuidColumnType())) and (a.status eq READY) and
+                (a.ownership neq RefreshOwnership.PENDING_HANDOVER.name)
+        }
+        .orderBy(a.id to SortOrder.ASC)
+        .forUpdate()
+}
+
+/** The unexpired slots of the org, or of the candidates [ids] when given. */
+internal fun slotsActive(orgId: Uuid, ids: List<Uuid>? = null): Query {
+    val s = SharingSlots
+    return s.select(s.accountId, ACTIVE)
+        .where {
+            val live = (s.orgId eq orgId) and (s.expiresAt greater databaseNow())
+            if (ids == null) live else live and (s.accountId eq anyFrom(ids, UuidColumnType()))
+        }
+        .groupBy(s.accountId)
+}
+
+/** The account a member's session used last, while its affinity lasts. */
+internal fun slotRemembered(orgId: Uuid, memberId: Uuid, hash: String): Query {
+    val f = SharingAffinities
+    return f.select(f.accountId)
+        .where { own(orgId, memberId) and (f.sessionHash eq hash) and (f.expiresAt greater databaseNow()) }
+}
+
+/** The org's expired slots. */
+internal fun StatementBuilder.slotPurge(orgId: Uuid): DeleteStatement =
+    SharingSlots.deleteWhere { (SharingSlots.orgId eq orgId) and (SharingSlots.expiresAt lessEq databaseNow()) }
+
+/** A new slot, expiring after its lease. */
+internal fun StatementBuilder.slotInsert(orgId: Uuid, slot: AccountSlot): InsertStatement<Number> =
+    SharingSlots.insert {
+        it[id] = slot.id
+        it[this.orgId] = orgId
+        it[accountId] = slot.accountId
+        it[expiresAt] = databaseNowPlus(AccountSlotRepository.SLOT_LEASE)
+    }
+
+/**
+ * The sessions leased within a span: their affinity, renewed for [AccountSlotRepository.AFFINITY] at each lease, ends
+ * more than [left] (the affinity minus the span) from now. By the expiry index, at most the org's bound.
+ */
+internal fun affinitiesActive(orgId: Uuid, left: Duration): Query {
+    val f = SharingAffinities
+    return f.select(f.memberId, f.sessionHash, f.accountId)
+        .where { (f.orgId eq orgId) and (f.expiresAt greater databaseNowPlus(left.inWholeSeconds)) }
+        .limit(AccountSlotRepository.MAX_ORG_AFFINITIES)
+}
+
+/** A slot still held, extended by its lease from now. */
+internal fun StatementBuilder.slotRenew(orgId: Uuid, id: Uuid): UpdateStatement =
+    SharingSlots.update({ (SharingSlots.orgId eq orgId) and (SharingSlots.id eq id) }) {
+        it[expiresAt] = databaseNowPlus(AccountSlotRepository.SLOT_LEASE)
+    }
+
+/** One slot given back. */
+internal fun StatementBuilder.slotRelease(orgId: Uuid, id: Uuid): DeleteStatement =
+    SharingSlots.deleteWhere { (SharingSlots.orgId eq orgId) and (SharingSlots.id eq id) }
+
+/** The org's expired affinities. */
+internal fun StatementBuilder.affinityPurge(orgId: Uuid): DeleteStatement = SharingAffinities.deleteWhere {
+    (SharingAffinities.orgId eq orgId) and (SharingAffinities.expiresAt lessEq databaseNow())
+}
+
+/** The session remembered on [accountId], or renewed there. */
+internal fun StatementBuilder.affinityRemember(
+    orgId: Uuid,
+    memberId: Uuid,
+    hash: String,
+    accountId: Uuid,
+): UpsertStatement<Long> = SharingAffinities.upsert(
+    SharingAffinities.orgId,
+    SharingAffinities.memberId,
+    SharingAffinities.sessionHash,
+) {
+    it[this.orgId] = orgId
+    it[this.memberId] = memberId
+    it[sessionHash] = hash
+    it[this.accountId] = accountId
+    it[expiresAt] = databaseNowPlus(AccountSlotRepository.AFFINITY)
+}
+
+private const val READY = "READY"

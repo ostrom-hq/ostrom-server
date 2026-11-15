@@ -1,24 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.sharing
 
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
-import run.ostrom.server.secrets.infrastructure.inTenant
-import run.ostrom.server.sharing.infrastructure.ACCOUNTS_LENT_TO_MEMBER_SQL
-import run.ostrom.server.sharing.infrastructure.ACCOUNT_GROUPS_DELETE_SQL
-import run.ostrom.server.sharing.infrastructure.ACCOUNT_GROUP_LEND_SQL
-import run.ostrom.server.sharing.infrastructure.GROUPS_COUNT_SQL
-import run.ostrom.server.sharing.infrastructure.GROUPS_OF_ORG_SQL
-import run.ostrom.server.sharing.infrastructure.GROUP_ACCOUNTS_OF_ORG_SQL
-import run.ostrom.server.sharing.infrastructure.GROUP_ACCOUNTS_SQL
-import run.ostrom.server.sharing.infrastructure.GROUP_MEMBERS_OF_ORG_SQL
-import run.ostrom.server.sharing.infrastructure.GROUP_MEMBERS_SQL
-import run.ostrom.server.sharing.infrastructure.GROUP_NAME_TAKEN_SQL
-import run.ostrom.server.sharing.infrastructure.GROUP_SQL
+import run.ostrom.server.sharing.infrastructure.SharingGroups
+import run.ostrom.server.sharing.infrastructure.accountGroupLend
+import run.ostrom.server.sharing.infrastructure.accountGroupsDelete
+import run.ostrom.server.sharing.infrastructure.accountsLentToMember
+import run.ostrom.server.sharing.infrastructure.groupAccountsOf
+import run.ostrom.server.sharing.infrastructure.groupAccountsOfOrg
+import run.ostrom.server.sharing.infrastructure.groupMembersOf
+import run.ostrom.server.sharing.infrastructure.groupMembersOfOrg
+import run.ostrom.server.sharing.infrastructure.groupNameTaken
+import run.ostrom.server.sharing.infrastructure.groupOf
+import run.ostrom.server.sharing.infrastructure.groupsCount
+import run.ostrom.server.sharing.infrastructure.groupsOfOrg
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
+import org.jetbrains.exposed.v1.core.count
+import org.jetbrains.exposed.v1.core.statements.Statement
+import org.jetbrains.exposed.v1.core.statements.StatementBuilder
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertFalse
@@ -79,33 +82,23 @@ class SharingGroupsQueryPlansTest {
             fixtures.execute("VACUUM ANALYZE $it").getOrThrow()
         }
 
-        mapOf(
-            "the list" to GROUPS_OF_ORG_SQL,
-            "the members of the list" to GROUP_MEMBERS_OF_ORG_SQL,
-            "the accounts of the list" to GROUP_ACCOUNTS_OF_ORG_SQL,
-            "one group" to GROUP_SQL,
-            "its members" to GROUP_MEMBERS_SQL,
-            "its accounts" to GROUP_ACCOUNTS_SQL,
-            "the count" to GROUPS_COUNT_SQL,
-            "a name taken" to GROUP_NAME_TAKEN_SQL,
-            "the accounts lent to a member" to ACCOUNTS_LENT_TO_MEMBER_SQL,
-            "an account lent to a group" to ACCOUNT_GROUP_LEND_SQL,
-            "the groups of an account dropped" to ACCOUNT_GROUPS_DELETE_SQL,
-        ).forEach { (what, sql) ->
-            val plan = plan(server.driver, sql)
+        val n = SharingGroups.id.count()
+        val database = server.koin.get<JdbcDatabase>()
+        mapOf<String, StatementBuilder.() -> Statement<*>>(
+            "the list" to { groupsOfOrg(orgA) },
+            "the members of the list" to { groupMembersOfOrg(orgA) },
+            "the accounts of the list" to { groupAccountsOfOrg(orgA) },
+            "one group" to { groupOf(orgA, groupA) },
+            "its members" to { groupMembersOf(orgA, groupA) },
+            "its accounts" to { groupAccountsOf(orgA, groupA) },
+            "the count" to { groupsCount(orgA, n) },
+            "a name taken" to { groupNameTaken(orgA, groupA, "backend") },
+            "the accounts lent to a member" to { accountsLentToMember(orgA, memberA, Clock.System.now()) },
+            "an account lent to a group" to { accountGroupLend(orgA, accountA, groupA) },
+            "the groups of an account dropped" to { accountGroupsDelete(orgA, accountA) },
+        ).forEach { (what, statement) ->
+            val plan = database.inOrg(orgA) { plan(statement).also { rollback() } }
             assertFalse("Seq Scan" in plan, "$what scans a table:\n$plan")
-        }
-    }
-
-    private suspend fun plan(driver: Driver, sql: String): String {
-        val statement = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org_id", orgA)
-            .let { if (":id" in sql) it.bind("id", groupA) else it }
-            .let { if (":name" in sql) it.bind("name", "backend") else it }
-            .let { if (":account" in sql) it.bind("account", accountA) else it }
-            .let { if (":group_id" in sql) it.bind("group_id", groupA) else it }
-            .let { if (":member" in sql) it.bind("member", memberA).bind("now", Clock.System.now()) else it }
-        return driver.inTenant(orgA) {
-            fetchAll(statement).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
         }
     }
 }

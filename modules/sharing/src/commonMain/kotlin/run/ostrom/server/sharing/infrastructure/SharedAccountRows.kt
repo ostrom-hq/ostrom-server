@@ -1,97 +1,75 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.sharing.infrastructure
 
-import run.ostrom.server.secrets.infrastructure.executeInOrg
 import run.ostrom.server.sharing.domain.AccountLimits
 import run.ostrom.server.sharing.domain.AccountProvider
 import run.ostrom.server.sharing.domain.AccountStatus
 import run.ostrom.server.sharing.domain.RefreshOwnership
 import run.ostrom.server.sharing.domain.SharedAccount
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.ResultSet
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asDouble
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLongOrNull
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
 import kotlinx.serialization.builtins.SetSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
-import kotlin.reflect.KClass
+import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.statements.UpdateBuilder
 import kotlin.uuid.Uuid
 
 /** The columns of an account row, tokens excluded: the envelope is only read by its own query. */
-internal const val ACCOUNT_COLUMNS: String =
-    "id, org_id, provider, label, email, provider_account_id, owner_member_id, priority, status, max_concurrent, " +
-        "utilization_ceiling, monthly_budget_micros, allowed_members, cooldown_until, created_at, version, " +
-        "daily_budget_micros, ownership"
+internal val ACCOUNT_COLUMNS = SharingAccounts.run {
+    listOf(
+        id, orgId, provider, label, email, providerAccountId, ownerMemberId, priority, status, maxConcurrent,
+        utilizationCeiling, monthlyBudgetMicros, allowedMembers, cooldownUntil, createdAt, version, dailyBudgetMicros,
+        ownership,
+    )
+}
+
+/** The statuses only sharing again leaves ([AccountStatus.awaitsSignIn]), kept by a stale write. */
+internal val AWAITING_SIGN_IN: List<String> = AccountStatus.entries.filter { it.awaitsSignIn }.map { it.name }
 
 private val MEMBERS = SetSerializer(String.serializer())
 
-/**
- * Sets one column of one account, confined to [orgId]; [value] binds `:value`. [bump] bumps its version: a status
- * change does, the pool's routine writes (a refresh, a cool-down) do not, so they never fail a conditional write.
- */
-internal suspend fun Driver.setColumn(
-    orgId: Uuid,
-    id: Uuid,
-    assignment: String,
-    bump: Boolean,
-    value: Statement.() -> Statement,
-) {
-    val version = if (bump) ", version = version + 1" else ""
-    executeInOrg(
-        orgId,
-        Statement.create("UPDATE sharing_accounts SET $assignment$version WHERE org_id = :org_id AND id = :id")
-            .bind("org_id", orgId)
-            .bind("id", id)
-            .value(),
-    ).getOrThrow()
+/** Writes [limits]: the concurrency, the ceiling, the budgets and the allowed members (a JSON array, or NULL). */
+internal fun UpdateBuilder<*>.limits(limits: AccountLimits) {
+    val a = SharingAccounts
+    val allowed = limits.allowedMembers
+    this[a.maxConcurrent] = limits.maxConcurrent
+    this[a.utilizationCeiling] = limits.utilizationCeiling
+    this[a.monthlyBudgetMicros] = limits.monthlyBudgetMicros
+    this[a.dailyBudgetMicros] = limits.dailyBudgetMicros
+    this[a.allowedMembers] = if (allowed == null) {
+        null
+    } else {
+        Json.encodeToString(MEMBERS, allowed.map { it.toString() }.toSet())
+    }
 }
 
-/**
- * Binds `:max_concurrent`, `:ceiling`, `:budget`, `:daily` and `:allowed` (a JSON array of member ids, or NULL).
- */
-internal fun Statement.bindLimits(limits: AccountLimits): Statement = bind("max_concurrent", limits.maxConcurrent)
-    .bind("ceiling", limits.utilizationCeiling)
-    .bindNullable("budget", limits.monthlyBudgetMicros, Long::class)
-    .bindNullable("daily", limits.dailyBudgetMicros, Long::class)
-    .bindNullable(
-        "allowed",
-        limits.allowedMembers?.let { members -> Json.encodeToString(MEMBERS, members.map { it.toString() }.toSet()) },
-        String::class,
-    )
-
-/** Binds [value], or a typed NULL. */
-internal fun Statement.bindNullable(name: String, value: Any?, type: KClass<*>): Statement =
-    if (value == null) bindNull(name, type) else bind(name, value)
-
 /** Reads an account row of [ACCOUNT_COLUMNS]. */
-internal fun ResultSet.Row.toAccount() = SharedAccount(
-    id = get("id").asUuid(),
-    orgId = get("org_id").asUuid(),
-    provider = AccountProvider.valueOf(get("provider").asString()),
-    label = get("label").asString(),
-    email = get("email").asStringOrNull(),
-    providerAccountId = get("provider_account_id").asString(),
-    ownerMemberId = get("owner_member_id").asUuidOrNull(),
-    priority = get("priority").asInt(),
-    status = AccountStatus.valueOf(get("status").asString()),
-    limits = AccountLimits(
-        maxConcurrent = get("max_concurrent").asInt(),
-        utilizationCeiling = get("utilization_ceiling").asDouble(),
-        monthlyBudgetMicros = get("monthly_budget_micros").asLongOrNull(),
-        allowedMembers = get("allowed_members").asStringOrNull()?.let { text ->
-            Json.decodeFromString(MEMBERS, text).map(Uuid::parse).toSet()
-        },
-        dailyBudgetMicros = get("daily_budget_micros").asLongOrNull(),
-    ),
-    cooldownUntil = get("cooldown_until").asInstantOrNull(),
-    createdAt = get("created_at").asInstant(),
-    version = get("version").asLong(),
-    ownership = RefreshOwnership.valueOf(get("ownership").asString()),
-)
+internal fun ResultRow.toAccount(): SharedAccount {
+    val a = SharingAccounts
+    val allowed = this[a.allowedMembers]
+    return SharedAccount(
+        id = this[a.id],
+        orgId = this[a.orgId],
+        provider = AccountProvider.valueOf(this[a.provider]),
+        label = this[a.label],
+        email = this[a.email],
+        providerAccountId = this[a.providerAccountId],
+        ownerMemberId = this[a.ownerMemberId],
+        priority = this[a.priority],
+        status = AccountStatus.valueOf(this[a.status]),
+        limits = AccountLimits(
+            maxConcurrent = this[a.maxConcurrent],
+            utilizationCeiling = this[a.utilizationCeiling],
+            monthlyBudgetMicros = this[a.monthlyBudgetMicros],
+            allowedMembers = if (allowed == null) {
+                null
+            } else {
+                Json.decodeFromString(MEMBERS, allowed).map(Uuid::parse).toSet()
+            },
+            dailyBudgetMicros = this[a.dailyBudgetMicros],
+        ),
+        cooldownUntil = this[a.cooldownUntil],
+        createdAt = this[a.createdAt],
+        version = this[a.version],
+        ownership = RefreshOwnership.valueOf(this[a.ownership]),
+    )
+}

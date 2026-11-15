@@ -79,7 +79,7 @@ data class RefreshState(
     val ownership: RefreshOwnership = RefreshOwnership.OSTROM,
 )
 
-/** What a look at a [RefreshState] writes, in the transaction that holds the row's lock. */
+/** What a look at a [RefreshState] writes, only while the row still holds that state. */
 sealed interface RefreshWrite {
     /** Nothing. */
     data object Keep : RefreshWrite
@@ -100,8 +100,8 @@ sealed interface RefreshWrite {
  */
 interface AccountRefreshRepository {
     /**
-     * Locks the account's row (`FOR UPDATE`), gives its state to [decide] (null when the account is gone), writes what
-     * it answers, and commits.
+     * Gives the account's state to [decide] (null when the account is gone) and writes what it answers, only on the
+     * state it decided on: a write meanwhile (another replica's claim, new tokens) makes it read and decide again.
      *
      * @return What [decide] returned beside its write.
      */
