@@ -39,6 +39,7 @@ import run.ostrom.server.orgs.domain.OrgNotFoundException
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
 import dev.whyoleg.cryptography.CryptographyProvider
 import dev.whyoleg.cryptography.algorithms.HMAC
@@ -239,6 +240,12 @@ class GitHubPostgresTest {
 
     private val opened = """{"action":"opened","installation":{"id":42},"repository":{"full_name":"acme/api"},""" +
         """"pull_request":{"number":6,"state":"open","base":{"ref":"main"},"user":{"login":"dev"}}}"""
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() =
+        serverTest(listOf(GatesModule, GitHubIntegrationModule), overrides) { server ->
+            server.assertApiCatalogue(GitHubIntegrationModule)
+        }
 
     @Test
     fun anOwnerInstallsTheAppThenAPullRequestWaitsForItsYesOnGitHub() = gitHubTest { server ->

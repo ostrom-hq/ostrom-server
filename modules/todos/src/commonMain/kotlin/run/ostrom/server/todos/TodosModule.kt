@@ -3,6 +3,7 @@ package run.ostrom.server.todos
 
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.sessions.CloudAgentSessions
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.todos.domain.ChangeTodoUseCase
@@ -26,6 +27,7 @@ import run.ostrom.server.todos.infrastructure.TodosMigrations
 import run.ostrom.server.todos.infrastructure.TodosRepositoryImpl
 import run.ostrom.server.todos.presentation.TodoCallers
 import run.ostrom.server.todos.presentation.TodosRoutesDependencies
+import run.ostrom.server.todos.presentation.todosOperations
 import run.ostrom.server.todos.presentation.todosRoutes
 import io.ktor.server.routing.Route
 import org.koin.core.Koin
@@ -40,6 +42,8 @@ import org.koin.dsl.module
  */
 object TodosModule : ServerModule {
     override val name: String = "todos"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { todosOperations() }
 
     override val koinModule: Module = module {
         single<TodosRepository> { TodosRepositoryImpl(get(), get()) }
