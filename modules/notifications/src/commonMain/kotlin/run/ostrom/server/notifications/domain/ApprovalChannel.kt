@@ -31,4 +31,15 @@ interface ApprovalChannel {
      * @return What the attempt produced.
      */
     suspend fun send(delivery: ApprovalDelivery, gate: GateSummary, link: String): ChannelResult
+
+    /**
+     * Tells the channel an approver's request was answered, so it updates what it posted for it (the outcome, no more
+     * buttons). Queued and retried like [send], and sent although the gate is decided; a channel that kept nothing
+     * for the request delivers at once.
+     *
+     * @param delivery The delivery: [ApprovalDelivery.decision] is the request's status, its title what was posted.
+     *
+     * @return What the attempt produced.
+     */
+    suspend fun decided(delivery: ApprovalDelivery): ChannelResult = ChannelResult.DELIVERED
 }

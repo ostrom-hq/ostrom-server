@@ -166,11 +166,16 @@ class NotificationDeliveriesPostgresTest {
             val gate = sampleGate()
             val approval = approvalDelivery(orgA, gate, memberId = mia).copy(eventSeq = 1, createdAt = t0)
             val email = approval.copy(id = Uuid.random(), channel = "email")
+            val answer = approval.copy(
+                id = Uuid.random(), eventSeq = 9, channel = "chat", body = "", decision = "closed",
+            )
             val broken = (2L..4L).map {
                 approvalDelivery(orgA, gate, memberId = mia).copy(eventSeq = it, createdAt = t0)
             }
-            repository.enqueue(JournalPosition(orgA, 0, 4), 4, listOf(approval, email, delivery(orgA, 5)) + broken)
+            val page = listOf(approval, email, answer, delivery(orgA, 5)) + broken
+            repository.enqueue(JournalPosition(orgA, 0, 4), 4, page)
             assertEquals(1, server.count("event_seq = 1 AND channel = 'push' AND kind = 'approval'"))
+            assertEquals(1, server.count("event_seq = 9 AND kind = 'approval_decided' AND body = 'closed'"))
             assertEquals(
                 "approval:${approval.approvalId}:${gate.id}:bob:ana asks for your yes",
                 server.database.superuser.fetchAll(
@@ -189,7 +194,7 @@ class NotificationDeliveriesPostgresTest {
 
             val claimed = repository.claimDue(orgA, 10, t0 + 1.minutes, 1.minutes)
 
-            assertEquals(setOf(approval, email), claimed.filterIsInstance<ApprovalDelivery>().toSet())
+            assertEquals(setOf(approval, email, answer), claimed.filterIsInstance<ApprovalDelivery>().toSet())
             assertEquals(listOf(5L), claimed.filterIsInstance<NotificationDelivery>().map { it.notification.eventSeq })
             assertEquals(3, server.count("state = 'failed' AND last_error = 'unknown_kind'"))
 

@@ -7,11 +7,9 @@ import io.ktor.server.routing.Route
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
-import org.koin.dsl.bind
 import org.koin.dsl.module
 import org.koin.dsl.onClose
 import run.ostrom.core.api.models.ServerFeatures
-import run.ostrom.server.gates.domain.services.GateChannel
 import run.ostrom.server.integrations.slack.domain.GetSlackLinkUseCase
 import run.ostrom.server.integrations.slack.domain.GetSlackLinkUseCaseImpl
 import run.ostrom.server.integrations.slack.domain.LinkSlackUseCase
@@ -22,7 +20,6 @@ import run.ostrom.server.integrations.slack.domain.SlackApi
 import run.ostrom.server.integrations.slack.domain.SlackApprovalChannel
 import run.ostrom.server.integrations.slack.domain.SlackApprovalMessagesRepository
 import run.ostrom.server.integrations.slack.domain.SlackApps
-import run.ostrom.server.integrations.slack.domain.SlackGateChannel
 import run.ostrom.server.integrations.slack.domain.SlackLinksRepository
 import run.ostrom.server.integrations.slack.domain.SlackNotificationChannel
 import run.ostrom.server.integrations.slack.domain.SlackPeople
@@ -102,10 +99,9 @@ object SlackIntegrationModule : ServerModule {
             ReceiveSlackInteractionUseCaseImpl(get(), get(), get(), get(), get(), get(), get())
         }
         single { SlackRoutesDependencies(get(), get(), get(), get(), get()) }
-        // The notifications' channel and the approvals' way, and the gates' channel that closes the messages.
+        // The notifications' channel and the approvals' way; the approvals' answers close the messages through the queue.
         single<NotificationChannel>(named(SlackSettings.NAME)) { SlackNotificationChannel(get(), get(), get(), get()) }
         single<ApprovalChannel>(named(SlackSettings.NAME)) { SlackApprovalChannel(get(), get(), get(), get(), get()) }
-        single(named("slack-gates")) { SlackGateChannel(get(), get(), get(), get()) } bind GateChannel::class
         single<OrgDeletionListener>(named("integrations-slack")) { SlackOrgDeletionListener(get(), get()) }
     }
 

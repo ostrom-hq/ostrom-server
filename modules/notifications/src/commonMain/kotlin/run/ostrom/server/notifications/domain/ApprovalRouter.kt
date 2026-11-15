@@ -44,6 +44,13 @@ class ApprovalRouter(
         entries: List<JournalEntry>,
         now: Instant,
         newId: () -> Uuid,
+    ): List<ApprovalDelivery> = requests(orgId, entries, now, newId) + answers(orgId, entries, now, newId)
+
+    private suspend fun requests(
+        orgId: Uuid,
+        entries: List<JournalEntry>,
+        now: Instant,
+        newId: () -> Uuid,
     ): List<ApprovalDelivery> {
         val events = entries.mapNotNull(ApprovalRules::event)
         val gateIds = events.map { it.gateId.toString() }.toSet()
@@ -74,6 +81,47 @@ class ApprovalRouter(
                     body = ApprovalNotices.body(gate),
                     createdAt = now,
                 )
+            }
+        }
+    }
+
+    // The answers the page names: one row per approver and bound channel, whether or not the channel reaches them now
+    // (a message posted before they unlinked or switched off is still to be updated); a channel that holds none
+    // delivers at once. Nothing a gate or an approver's switch decided applies: the request was told, so it is closed.
+    private suspend fun answers(
+        orgId: Uuid,
+        entries: List<JournalEntry>,
+        now: Instant,
+        newId: () -> Uuid,
+    ): List<ApprovalDelivery> {
+        val decisions = entries.mapNotNull(ApprovalRules::decision)
+        val bound = channels().distinctBy { it.id }
+        if (decisions.isEmpty() || bound.isEmpty()) return emptyList()
+        val known = gates.of(orgId, decisions.map { it.gateId.toString() }.toSet()).associateBy { it.id }
+        val reached = approvers.reach(orgId, decisions.map { it.approver }.toSet())
+        return decisions.flatMap { decision ->
+            val approver = reached[decision.approver]
+            val gate = known[decision.gateId.toString()]
+            if (approver == null || gate == null) {
+                emptyList()
+            } else {
+                bound.map { channel ->
+                    ApprovalDelivery(
+                        id = newId(),
+                        orgId = orgId,
+                        memberId = approver.memberId,
+                        approver = decision.approver,
+                        approvalId = decision.approvalId,
+                        gateId = decision.gateId,
+                        channel = channel.id,
+                        attempts = 0,
+                        eventSeq = decision.eventSeq,
+                        title = ApprovalNotices.title(gate),
+                        body = "",
+                        createdAt = now,
+                        decision = decision.status,
+                    )
+                }
             }
         }
     }
@@ -109,11 +157,12 @@ class ApprovalRouter(
      * Sends one delivery within [DeliveryRules.SEND_DEADLINE].
      *
      * @param delivery The delivery.
-     * @param gate Its gate, as [stillAsked] read it.
+     * @param gate Its gate, as [stillAsked] read it; null for an answer ([ApprovalDelivery.decision]), sent whatever
+     *   the gate is.
      *
      * @return What the attempt produced: a timeout or a failed read is retried; never throws but for cancellation.
      */
-    suspend fun send(delivery: ApprovalDelivery, gate: GateSummary): ChannelResult = try {
+    suspend fun send(delivery: ApprovalDelivery, gate: GateSummary?): ChannelResult = try {
         withTimeoutOrNull(DeliveryRules.SEND_DEADLINE) { sender.send(delivery, gate) } ?: ChannelResult.retry(TIMEOUT)
     } catch (error: CancellationException) {
         throw error

@@ -15,6 +15,7 @@ import run.ostrom.server.notifications.domain.NotificationKind
 import run.ostrom.server.notifications.domain.PushMessage
 import run.ostrom.server.notifications.domain.PushSender
 import run.ostrom.server.notifications.domain.SwitchedOff
+import kotlinx.serialization.json.JsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.time.Instant
@@ -35,12 +36,18 @@ class ApprovalChannelsTest {
     private inner class ChatChannel : ApprovalChannel {
         override val id: String = "chat"
         val sent = mutableListOf<Pair<ApprovalDelivery, String>>()
+        val answered = mutableListOf<ApprovalDelivery>()
 
         override suspend fun reachable(orgId: Uuid, memberIds: Set<Uuid>): Set<Uuid> =
             memberIds.intersect(setOf(bob.memberId, carol.memberId))
 
         override suspend fun send(delivery: ApprovalDelivery, gate: GateSummary, link: String): ChannelResult {
             sent += delivery to link
+            return ChannelResult.DELIVERED
+        }
+
+        override suspend fun decided(delivery: ApprovalDelivery): ChannelResult {
+            answered += delivery
             return ChannelResult.DELIVERED
         }
     }
@@ -112,6 +119,67 @@ class ApprovalChannelsTest {
                 Uuid.random()
             }
             assertEquals(emptyList(), nobody)
+        }
+    }
+
+    @Test
+    fun anAnswerIsQueuedOnEveryBoundChannelWhomeverItReachesAndSentWhateverTheGate() {
+        runTest {
+            val chat = ChatChannel()
+            val decided = sampleGate(open = false, pending = emptyList())
+            val router = ApprovalRouter(MapGates(listOf(decided)), approvers, mailing, sender(chat), { listOf(chat) })
+            val approval = Uuid.random()
+            val entries = listOf(
+                approvalDecided(1, approval, decided, "bob", "approved"),
+                approvalDecided(2, Uuid.random(), decided, "dan", "closed"),
+                approvalDecided(3, Uuid.random(), decided, "nobody", "closed"),
+                approvalDecided(4, Uuid.random(), sampleGate(), "bob", "closed"),
+                approvalDecided(5, Uuid.random(), decided, "bob", "approved").copy(data = JsonObject(emptyMap())),
+            )
+
+            val queued = router.queue(org, entries, now) { Uuid.random() }
+
+            assertEquals(
+                listOf(Triple(1L, "chat", "approved"), Triple(2L, "chat", "closed")),
+                queued.map { Triple(it.eventSeq, it.channel, it.decision) },
+                "Dan is not reached by chat any more, his message may still be there; no member, no gate, no data",
+            )
+            val answer = queued.first()
+            assertEquals("ana asks for your yes", answer.title)
+            assertEquals(approval, answer.approvalId)
+            assertEquals(ChannelResult.DELIVERED, router.send(answer, null), "Whatever the gate")
+            assertEquals(listOf(answer), chat.answered)
+            assertEquals(emptyList(), chat.sent, "An answer is no request")
+            assertEquals(ChannelResult.failed("channel_unavailable"), router.send(answer.copy(channel = "other"), null))
+            val push = answer.copy(channel = "push")
+            assertEquals(ChannelResult.failed("channel_unavailable"), router.send(push, null), "Push keeps nothing")
+        }
+    }
+
+    @Test
+    fun withoutABoundChannelAnAnswerQueuesNothingAndReadsNothing() {
+        runTest {
+            val gates = MapGates(listOf(sampleGate(open = false)))
+            val router = ApprovalRouter(gates, approvers, mailing, sender(null), { emptyList() })
+            val entry = approvalDecided(1, Uuid.random(), gates.gates.single(), "bob", "rejected")
+
+            assertEquals(emptyList(), router.queue(org, listOf(entry), now) { Uuid.random() })
+            assertEquals(emptyList(), gates.asked)
+        }
+    }
+
+    @Test
+    fun aChannelThatKeepsNothingDeliversAnAnswerAtOnce() {
+        runTest {
+            val quiet = object : ApprovalChannel {
+                override val id: String = "chat"
+                override suspend fun reachable(orgId: Uuid, memberIds: Set<Uuid>): Set<Uuid> = emptySet()
+                override suspend fun send(delivery: ApprovalDelivery, gate: GateSummary, link: String) =
+                    ChannelResult.failed("never")
+            }
+            val gate = sampleGate(open = false)
+            val answer = approvalDelivery(org, gate, channel = "chat", memberId = bob.memberId).copy(decision = "closed")
+            assertEquals(ChannelResult.DELIVERED, quiet.decided(answer))
         }
     }
 }

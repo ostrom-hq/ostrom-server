@@ -80,6 +80,9 @@ data class NotificationDelivery(
  * @property title What the approver is told, kept for support.
  * @property body The gate's label and repository, kept for support.
  * @property createdAt When it was queued.
+ * @property decision Null for a request to tell; otherwise the request's status once its gate was answered
+ *   (`approved`, `rejected` or `closed`): the row, of kind [ApprovalRules.DECIDED_KIND], asks the channel to update the
+ *   message it posted for the request, and is sent even though the gate is decided.
  */
 data class ApprovalDelivery(
     override val id: Uuid,
@@ -94,6 +97,7 @@ data class ApprovalDelivery(
     val title: String,
     val body: String,
     val createdAt: Instant,
+    val decision: String? = null,
 ) : QueuedDelivery {
     /** The row's `collapse_key`, for support; phones collapse a request's pushes by its id (EncryptedPushSender). */
     val collapseKey: String get() = "approval:$approvalId"
@@ -143,7 +147,7 @@ interface NotificationDeliveriesRepository {
     /**
      * Claims up to [limit] of the organization's due deliveries until [now] plus [lease], skipping those another
      * replica is claiming. A delivery of a kind this server does not know (neither a [NotificationKind] nor
-     * [ApprovalRules.KIND]) is failed instead.
+     * [ApprovalRules.KIND] or [ApprovalRules.DECIDED_KIND]) is failed instead.
      *
      * @param orgId The organization.
      * @param limit The most deliveries.

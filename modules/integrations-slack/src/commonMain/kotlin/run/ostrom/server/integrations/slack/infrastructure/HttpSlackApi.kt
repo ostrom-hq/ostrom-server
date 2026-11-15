@@ -74,6 +74,16 @@ class HttpSlackApi(
         call("chat.update", token) { json(message, "channel" to posted.channel, posted.ts) }
     }
 
+    override suspend fun deleteMessage(token: String, posted: SlackPosted) {
+        call("chat.delete", token) {
+            val json = buildJsonObject {
+                put("channel", posted.channel)
+                put("ts", posted.ts)
+            }
+            setBody(TextContent(json.toString(), ContentType.Application.Json))
+        }
+    }
+
     private fun io.ktor.client.request.HttpRequestBuilder.json(
         message: SlackMessage,
         channel: Pair<String, String>,

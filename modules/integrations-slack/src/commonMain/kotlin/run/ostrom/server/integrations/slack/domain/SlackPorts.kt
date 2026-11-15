@@ -80,6 +80,14 @@ interface SlackApi {
      * @param message What it says now.
      */
     suspend fun updateMessage(token: String, posted: SlackPosted, message: SlackMessage)
+
+    /**
+     * `chat.delete`: takes back a message of the bot (`chat:write` covers it).
+     *
+     * @param token The bot token.
+     * @param posted The message.
+     */
+    suspend fun deleteMessage(token: String, posted: SlackPosted)
 }
 
 /**
@@ -122,6 +130,7 @@ interface SlackLinksRepository {
      *
      * @param orgId The organization.
      * @param link The link.
+     * @throws SlackUserTakenException When another member of the organization linked that Slack account meanwhile.
      */
     suspend fun save(orgId: Uuid, link: StoredSlackLink)
 
@@ -147,7 +156,7 @@ data class SlackApprovalMessage(val approvalId: Uuid, val gateId: Uuid, val post
 /** The yes requests' messages, so they are updated once the gate is decided. */
 interface SlackApprovalMessagesRepository {
     /**
-     * Keeps a message; the request's former one is replaced (an attempt sent again).
+     * Keeps a message; the request's former one, if any, is replaced.
      *
      * @param orgId The organization.
      * @param message The message.
@@ -156,11 +165,11 @@ interface SlackApprovalMessagesRepository {
 
     /**
      * @param orgId The organization.
-     * @param gateId A gate.
+     * @param approvalId An approver's request.
      *
-     * @return The messages of its requests.
+     * @return The message posted for it, or null.
      */
-    suspend fun ofGate(orgId: Uuid, gateId: Uuid): List<SlackApprovalMessage>
+    suspend fun of(orgId: Uuid, approvalId: Uuid): SlackApprovalMessage?
 
     /** @param orgId The organization whose messages are forgotten. */
     suspend fun deleteAll(orgId: Uuid)

@@ -49,13 +49,17 @@ import run.ostrom.server.identity.domain.User
 import run.ostrom.server.identity.domain.VerifiedIdentity
 import run.ostrom.server.instance.InstanceModule
 import run.ostrom.server.integrations.slack.domain.LinkSlackUseCase
+import run.ostrom.server.integrations.slack.domain.LinkSlackUseCaseImpl
 import run.ostrom.server.integrations.slack.domain.SlackApi
 import run.ostrom.server.integrations.slack.domain.SlackLinksRepository
+import run.ostrom.server.integrations.slack.domain.SlackUser
+import run.ostrom.server.integrations.slack.domain.SlackUserTakenException
+import run.ostrom.server.integrations.slack.domain.StoredSlackLink
 import run.ostrom.server.integrations.slack.infrastructure.HmacSlackSigner
 import run.ostrom.server.integrations.slack.infrastructure.HttpSlackApi
 import run.ostrom.server.integrations.slack.infrastructure.linksOf
 import run.ostrom.server.integrations.slack.infrastructure.memberOfSlackUser
-import run.ostrom.server.integrations.slack.infrastructure.messagesOfGate
+import run.ostrom.server.integrations.slack.infrastructure.messageOf
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.OrgPrincipal
@@ -84,6 +88,7 @@ import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Clock
@@ -235,9 +240,39 @@ class SlackPostgresTest {
         assertEquals("", rejected.bodyAsText())
         assertEquals(GateStatus.REJECTED, gates.get(org.id, asked.gate.id)?.status)
         assertEquals(AnswerChannel.SLACK, gates.requestsOf(org.id, asked.gate.id).single().channel)
+        // Slack wants its answer within 3 s: the webhook never waits for Slack, the queue closes the message.
+        assertTrue(calls.none { it.first == "chat.update" }, "Answered before any message was updated")
+        repeat(5) { if (calls.none { it.first == "chat.update" }) deliver() }
         val update = calls.single { it.first == "chat.update" }.second
         assertTrue("\"channel\":\"D-1\"" in update && "Rejected by bob-s." in update, update)
         assertEquals(HttpStatusCode.OK, server.interaction("U-bob-s", "${org.id}:${request.id}").status, "Decided")
+    }
+
+    @Test
+    fun twoMembersLinkingTheSameSlackAccountAtOnceGetTheTakenRefusalNotAnError() =
+        serverTest(modules, overrides) { server ->
+        val (org, bobMember) = server.memberOf(null, server.person("bob-s"), "acme")
+        val (_, eveMember) = server.memberOf(org, server.person("eve-s"), "acme")
+        val links = server.koin.get<SlackLinksRepository>()
+        links.save(org.id, StoredSlackLink(bobMember, "U-same", now))
+
+        // The second member's use case read the links before the first one wrote: the unique key answers.
+        assertFailsWith<SlackUserTakenException> { links.save(org.id, StoredSlackLink(eveMember, "U-same", now)) }
+        assertEquals(bobMember, links.memberOf(org.id, "U-same"))
+        assertEquals(null, links.of(org.id, eveMember))
+        links.save(org.id, StoredSlackLink(bobMember, "U-same", now))
+
+        val raced = object : SlackLinksRepository by links {
+            override suspend fun memberOf(orgId: Uuid, slackUserId: String): Uuid? = null
+        }
+        val same = object : SlackApi by server.koin.get<SlackApi>() {
+            override suspend fun lookupByEmail(token: String, email: String) = SlackUser("U-same", false, false)
+        }
+        val link = LinkSlackUseCaseImpl(
+            server.koin.get(), same, server.koin.get(), raced, server.koin.get(), Clock.System,
+        )
+        assertFailsWith<SlackUserTakenException> { link(org.id, eveMember) }
+        assertEquals(null, links.of(org.id, eveMember))
     }
 
     @Test
@@ -344,7 +379,7 @@ class SlackPostgresTest {
         val reads = listOf(
             "the links of members" to linksOf(org, setOf(Uuid.random(), Uuid.random())),
             "the member of a Slack user" to memberOfSlackUser(org, "U42"),
-            "the messages of a gate" to messagesOfGate(org, Uuid.random()),
+            "the message of a request" to messageOf(org, Uuid.random()),
         )
         for ((name, read) in reads) {
             val plan = database.inOrg(org) { plan { read } }

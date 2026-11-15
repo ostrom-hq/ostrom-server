@@ -14,7 +14,7 @@ import kotlin.uuid.Uuid
 
 /**
  * Writes a new pending row of [delivery]: a member's notification keeps its wait and session, an approval its
- * request, gate and approver (kind [ApprovalRules.KIND]); the other's columns stay null.
+ * request, gate and approver (kind [ApprovalRules.KIND], or [ApprovalRules.DECIDED_KIND] with the status in the body); the other's columns stay null.
  *
  * @param orgId The organization.
  * @param delivery The delivery.
@@ -47,9 +47,10 @@ internal fun BatchInsertStatement.fill(orgId: Uuid, delivery: QueuedDelivery) {
         is ApprovalDelivery -> {
             this[t.eventSeq] = delivery.eventSeq
             this[t.memberId] = delivery.memberId
-            this[t.kind] = ApprovalRules.KIND
+            this[t.kind] = if (delivery.decision == null) ApprovalRules.KIND else ApprovalRules.DECIDED_KIND
             this[t.title] = delivery.title
-            this[t.body] = delivery.body
+            // An answer keeps the request's status where a request keeps the gate's text.
+            this[t.body] = delivery.decision ?: delivery.body
             this[t.sessionId] = null
             this[t.waitId] = null
             this[t.collapseKey] = delivery.collapseKey
@@ -71,12 +72,13 @@ internal fun ResultRow.toDelivery(): QueuedDelivery? {
     val kind = NotificationKind.parse(this[NotificationDeliveries.kind])
     return when {
         kind != null -> toNotification(kind)
-        this[NotificationDeliveries.kind] == ApprovalRules.KIND -> toApproval()
+        this[NotificationDeliveries.kind] == ApprovalRules.KIND -> toApproval(decided = false)
+        this[NotificationDeliveries.kind] == ApprovalRules.DECIDED_KIND -> toApproval(decided = true)
         else -> null
     }
 }
 
-private fun ResultRow.toApproval(): ApprovalDelivery? {
+private fun ResultRow.toApproval(decided: Boolean): ApprovalDelivery? {
     val t = NotificationDeliveries
     val approvalId = this[t.approvalId]
     val gateId = this[t.gateId]
@@ -93,8 +95,9 @@ private fun ResultRow.toApproval(): ApprovalDelivery? {
         attempts = this[t.attempts],
         eventSeq = this[t.eventSeq],
         title = this[t.title],
-        body = this[t.body],
+        body = if (decided) "" else this[t.body],
         createdAt = this[t.createdAt],
+        decision = if (decided) this[t.body] else null,
     )
 }
 

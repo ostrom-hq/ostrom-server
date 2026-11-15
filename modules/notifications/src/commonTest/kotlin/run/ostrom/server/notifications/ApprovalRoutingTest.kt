@@ -7,6 +7,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import run.ostrom.server.identity.domain.MailAvailability
 import run.ostrom.server.kernel.events.OrgEventType
+import run.ostrom.server.notifications.domain.ApprovalDecision
 import run.ostrom.server.notifications.domain.ApprovalDelivery
 import run.ostrom.server.notifications.domain.ApprovalEvent
 import run.ostrom.server.notifications.domain.ApprovalNotices
@@ -86,6 +87,19 @@ class ApprovalRoutingTest {
         assertNull(ApprovalRules.event(event.copy(data = JsonObject(emptyMap()))))
         assertNull(ApprovalRules.event(event.copy(data = JsonObject(event.data - "gateId"))))
         assertNull(ApprovalRules.event(event.copy(data = JsonObject(event.data - "approver"))))
+    }
+
+    @Test
+    fun anAnswerIsNamedOnlyWhenTheGatesWroteItWithItsStatus() {
+        val gate = sampleGate()
+        val approval = Uuid.random()
+        val event = approvalDecided(6, approval, gate, "bob", "rejected")
+        assertEquals(ApprovalDecision(6, approval, Uuid.parse(gate.id), "bob", "rejected"), ApprovalRules.decision(event))
+        assertNull(ApprovalRules.decision(approvalRequested(6, approval, gate, "bob")), "Another type")
+        assertNull(ApprovalRules.decision(event.copy(data = JsonObject(event.data - "status"))))
+        assertNull(ApprovalRules.decision(event.copy(data = JsonObject(event.data - "approver"))))
+        assertNull(ApprovalRules.decision(event.copy(data = JsonObject(event.data + ("gateId" to JsonPrimitive("x"))))))
+        assertNull(ApprovalRules.decision(event.copy(data = JsonObject(event.data + ("approvalId" to JsonPrimitive("x"))))))
     }
 
     @Test

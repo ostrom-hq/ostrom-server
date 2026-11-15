@@ -38,8 +38,10 @@ class SlackInstanceSettings(var configured: Boolean = true) : InstanceSettings {
 class FakeSlackApi(private val users: Map<String, SlackUser> = emptyMap()) : SlackApi {
     var failure: SlackCallException? = null
     var postFailure: SlackCallException? = null
+    var deleteFailure: SlackCallException? = null
     val posted = mutableListOf<Pair<String, SlackMessage>>()
     val updated = mutableListOf<Pair<SlackPosted, SlackMessage>>()
+    val deleted = mutableListOf<SlackPosted>()
     val lookedUp = mutableListOf<String>()
 
     override suspend fun authTest(token: String): String? = if (token == BOT_TOKEN) null else "invalid_auth"
@@ -59,6 +61,11 @@ class FakeSlackApi(private val users: Map<String, SlackUser> = emptyMap()) : Sla
     override suspend fun updateMessage(token: String, posted: SlackPosted, message: SlackMessage) {
         failure?.let { throw it }
         updated += posted to message
+    }
+
+    override suspend fun deleteMessage(token: String, posted: SlackPosted) {
+        (failure ?: deleteFailure)?.let { throw it }
+        deleted += posted
     }
 }
 
@@ -91,12 +98,18 @@ class InMemorySlackLinks : SlackLinksRepository {
 class InMemorySlackMessages : SlackApprovalMessagesRepository {
     val messages = mutableMapOf<Pair<Uuid, Uuid>, SlackApprovalMessage>()
 
+    /** The saves that fail, while above zero. */
+    var failingSaves = 0
+
     override suspend fun save(orgId: Uuid, message: SlackApprovalMessage) {
+        if (failingSaves > 0) {
+            failingSaves--
+            error("The database is down")
+        }
         messages[orgId to message.approvalId] = message
     }
 
-    override suspend fun ofGate(orgId: Uuid, gateId: Uuid): List<SlackApprovalMessage> =
-        messages.filter { it.key.first == orgId && it.value.gateId == gateId }.values.toList()
+    override suspend fun of(orgId: Uuid, approvalId: Uuid): SlackApprovalMessage? = messages[orgId to approvalId]
 
     override suspend fun deleteAll(orgId: Uuid) {
         messages.keys.removeAll { it.first == orgId }

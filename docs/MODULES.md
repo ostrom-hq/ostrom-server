@@ -387,7 +387,7 @@ What lives in the console so far:
 | Gateway (`gateway`: the instance's sealed Anthropic, OpenAI and OpenRouter keys, the providers' base URLs), read at each model call | `OSTROM_GATEWAY_ANTHROPIC_API_KEY`, `OSTROM_GATEWAY_OPENAI_API_KEY`, `OSTROM_GATEWAY_OPENROUTER_API_KEY`, `OSTROM_GATEWAY_ANTHROPIC_URL`, `OSTROM_GATEWAY_OPENAI_URL`, `OSTROM_GATEWAY_OPENROUTER_URL`, `OSTROM_GATEWAY_CODEX_URL` | the `gateway` module |
 | Sharing (`sharing`: the providers' OAuth token endpoints), read at each refresh | `OSTROM_SHARING_CLAUDE_TOKEN_URL`, `OSTROM_SHARING_CODEX_TOKEN_URL` | the `sharing` module |
 | Push (`push`): `provider` (`off` by default, `relay` or `firebase`), the relay's URL (`relayUrl`, `https://push.ostrom.run` when unset) and the Firebase project's service account JSON key (`firebaseServiceAccount`, sealed) | new, never a variable | FCM push (`notifications`) |
-| Slack (`slack`): the Slack app's bot token (`botToken`, `xoxb-…`, checked with Slack's `auth.test` when saved) and signing secret (`signingSecret`), both sealed, read at each use. With both, members link the Slack account of their proven e-mail address in My notifications (`users.lookupByEmail`; one member per Slack account), the `slack` notification channel sends one direct message per notification, and yes requests are posted with Approve (a link to the console's `/yes/{id}`) and Reject (answered in Slack: the app's interactivity request URL is the server's Slack webhook). One workspace per instance. The app needs the bot scopes `chat:write`, `users:read` and `users:read.email` | — | the `integrations-slack` module |
+| Slack (`slack`): the Slack app's bot token (`botToken`, `xoxb-…`, checked with Slack's `auth.test` when saved) and signing secret (`signingSecret`), both sealed, read at each use. With both, members link the Slack account of their proven e-mail address in My notifications (`/api/v1/slack/link`, by `users.lookupByEmail`; one member per Slack account), the `slack` notification channel sends one direct message per notification, and yes requests are posted with Approve (a link to the console's `/yes/{id}`) and Reject (answered in Slack: the app's interactivity request URL is the server's `/webhooks/slack`; the server acknowledges it at once and closes the messages through the notifications' queue). One workspace per instance. The app needs the bot scopes `chat:write`, `users:read` and `users:read.email` | — | the `integrations-slack` module |
 | License (`license`: the sealed enterprise license key, verified on save and at start; a key that does not verify is never stored, and one that stops verifying grants nothing, with its reason logged) | `OSTROM_LICENSE_KEY` (or its `_FILE`) | the `license` module (`ee/`) |
 
 The GitHub App is kept as TeamCode keeps it, in its own table (`github_apps`, one row, the key and secrets sealed),
@@ -837,7 +837,7 @@ anonymous call gets 401 `unauthorized`. A module lists a key of ostrom-core's `S
 | `identity` | `audit.v1` | — |
 | `import` | `import.teamcode.v1` | — |
 | `integrations-github` | `github.v1`; `github.link.v1` | a stored GitHub App (created by the manifest flow, or imported once from the former variables); the second once that App's OAuth client (id and secret) is known |
-| `integrations-slack` | `slack.v1` | — (`SlackLink.configured` says whether the `slack` settings section holds the bot token and the signing secret) |
+| `integrations-slack` | `slack.v1` (`/api/v1/slack/link` and `/webhooks/slack`) | — (`SlackLink.configured` says whether the `slack` settings section holds the bot token and the signing secret) |
 | `mcp-relay` | `mcp.v1`, `mcp.personal.v1` (members' own servers) | — |
 | `memory` | `memory.v1` | — |
 | `notifications` | `notifications.v1`, `notifications.push.v1` | — (phones register their FCM token and P-256 key; pushes go out once an administrator picks the provider in Admin → Settings → push.) |
@@ -853,8 +853,8 @@ anonymous call gets 401 `unauthorized`. A module lists a key of ostrom-core's `S
 | `usage` | `usage.v1` | — |
 | `workflow-runs` | `workflows.v1`, `notifications.v1` (the hooks' notifications) | — |
 
-`slack.v1` and `license.v1` are not listed: the Slack module is an empty skeleton and the `ee/` license module serves
-no route yet. A module that adds a feature, or a route behind a configuration, updates its `features` and this table.
+`license.v1` is not listed: the `ee/` license module serves no route yet. A module that adds a feature, or a route
+behind a configuration, updates its `features` and this table.
 
 The database roles of a deployment (the Helm chart creates them): an **owner**, which owns the schema and runs
 `migrate`, and a **serving role** that owns nothing, `NOSUPERUSER NOBYPASSRLS`, granted `USAGE` on the schema and,
