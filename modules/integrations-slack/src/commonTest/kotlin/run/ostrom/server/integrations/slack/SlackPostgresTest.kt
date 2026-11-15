@@ -53,6 +53,10 @@ import run.ostrom.server.integrations.slack.domain.SlackApi
 import run.ostrom.server.integrations.slack.domain.SlackLinksRepository
 import run.ostrom.server.integrations.slack.infrastructure.HmacSlackSigner
 import run.ostrom.server.integrations.slack.infrastructure.HttpSlackApi
+import run.ostrom.server.integrations.slack.infrastructure.linksOf
+import run.ostrom.server.integrations.slack.infrastructure.memberOfSlackUser
+import run.ostrom.server.integrations.slack.infrastructure.messagesOfGate
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.OrgPrincipal
 import run.ostrom.server.kernel.auth.OrgRole
@@ -76,9 +80,11 @@ import run.ostrom.server.orgs.domain.Org
 import run.ostrom.server.orgs.domain.OrgsRepository
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -315,6 +321,35 @@ class SlackPostgresTest {
         assertEquals(HttpStatusCode.Conflict, refused.status)
         assertTrue("slack_not_configured" in refused.bodyAsText())
         assertEquals(setOf(ServerFeatures.SLACK), SlackIntegrationModule.features(server.koin), "Served all the same")
+    }
+
+    @Test
+    fun theReadsOfAMessageFromSlackLookUpTheirIndexes() = serverTest(modules, overrides) { server ->
+        // Fixtures only: other organizations' links and messages, and the statistics.
+        val fixtures = server.database.superuser
+        fixtures.execute(
+            "INSERT INTO slack_links (org_id, member_id, slack_user_id, linked_at) " +
+                "SELECT gen_random_uuid(), gen_random_uuid(), 'U' || n, now() FROM generate_series(1, 5000) n",
+        ).getOrThrow()
+        fixtures.execute(
+            "INSERT INTO slack_approval_messages (org_id, approval_id, gate_id, slack_channel, ts) " +
+                "SELECT gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 'C', n::text " +
+                "FROM generate_series(1, 5000) n",
+        ).getOrThrow()
+        listOf("slack_links", "slack_approval_messages").forEach {
+            fixtures.execute("VACUUM ANALYZE $it").getOrThrow()
+        }
+        val database = server.koin.get<JdbcDatabase>()
+        val org = Uuid.random()
+        val reads = listOf(
+            "the links of members" to linksOf(org, setOf(Uuid.random(), Uuid.random())),
+            "the member of a Slack user" to memberOfSlackUser(org, "U42"),
+            "the messages of a gate" to messagesOfGate(org, Uuid.random()),
+        )
+        for ((name, read) in reads) {
+            val plan = database.inOrg(org) { plan { read } }
+            assertFalse("Seq Scan" in plan, "The read of $name scans its table:\n$plan")
+        }
     }
 
     private companion object {
