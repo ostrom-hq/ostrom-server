@@ -332,63 +332,6 @@ internal class CloudConversationStoreImpl(
         } > 0
     }
 
-    /** Final status for an input, with its `input` event. The caller holds the session row lock. */
-    private fun finish(input: CloudInput, status: CloudInputStatus, reason: String, now: Instant) {
-        val data = buildJsonObject {
-            put("inputId", input.id.toString())
-            put("kind", input.kind.wire)
-            put("status", status.wire)
-            put("reason", reason)
-            if (input.kind == CloudInputKind.PERMISSION) {
-                // Who answered which request, and how; the answer's texts stay in the input.
-                put("authorId", input.authorId)
-                val answer = storedObject(input.text)
-                answer.str("requestId")?.let { put("requestId", it) }
-                answer.str("behavior")?.let { put("behavior", it) }
-            }
-        }
-        val seq = serverEvent(input.orgId, input.sessionId, CloudEventType.INPUT, data.toString(), now)
-        val t = RunnersSessionInputs
-        t.update({ (t.orgId eq input.orgId) and (t.id eq input.id) }) {
-            it[t.status] = status.wire
-            it[finishedAt] = now
-            it[t.reason] = reason
-            it[eventSeq] = seq
-            it[wakePending] = false
-        }
-    }
-
-    /** A server-written event (epoch 0); the caller holds the session row lock. @return Its sequence number. */
-    private fun serverEvent(orgId: Uuid, sessionId: Uuid, type: CloudEventType, data: String, now: Instant): Long {
-        val c = RunnersSessionTranscripts
-        val cursor = c.select(c.columns).where { (c.orgId eq orgId) and (c.sessionId eq sessionId) }.singleOrNull()
-        val seq = (cursor?.get(c.lastSeq) ?: 0L) + 1
-        val e = RunnersSessionEvents
-        e.insert {
-            it[e.sessionId] = sessionId
-            it[e.seq] = seq
-            it[e.orgId] = orgId
-            it[epoch] = 0
-            it[runnerSeq] = null
-            it[e.type] = type.wire
-            it[at] = now
-            it[e.data] = data
-            it[feed] = ""
-        }
-        if (cursor != null) {
-            c.update({ (c.orgId eq orgId) and (c.sessionId eq sessionId) }) { it[lastSeq] = seq }
-        } else {
-            c.insert {
-                it[c.sessionId] = sessionId
-                it[c.orgId] = orgId
-                it[lastSeq] = seq
-                it[runnerEpoch] = 0
-                it[runnerSeq] = 0
-            }
-        }
-        return seq
-    }
-
     /**
      * Through the index (session, type, seq): the newest of the session's latest requests whose stored event starts
      * with this `requestId` (the runner writes it first, so only that head is read), then what closed it since.
@@ -410,29 +353,6 @@ internal class CloudConversationStoreImpl(
             permissionRequestRecord(requestId, data, requestState(orgId, sessionId, anchor, requestId))
                 .copy(epoch = asked[e.epoch])
         }
-    }
-
-    /** Whether the request stored at [anchor] is still open: the first closing event after it. */
-    private fun requestState(orgId: Uuid, sessionId: Uuid, anchor: Long, requestId: String): PermissionRequestState {
-        val e = RunnersSessionEvents
-        fun closing(type: CloudEventType, closes: (JsonObject?) -> Boolean): Long? =
-            e.select(e.seq, e.data).where {
-                (e.orgId eq orgId) and (e.sessionId eq sessionId) and (e.type eq type.wire) and (e.seq greater anchor)
-            }.orderBy(e.seq to SortOrder.ASC).limit(MAX_CLOSING_SCANNED)
-                .firstOrNull { row -> closes(storedObject(row[e.data])) }?.get(e.seq)
-        // The request's turn ends at the first turn event after it that is an end; the oldest closing event wins.
-        val ended = closing(CloudEventType.TURN) { it.str("phase") in CloudConversationRules.TURN_END_PHASES }
-        val answered = closing(CloudEventType.INPUT) {
-            (it.str("requestId") to it.str("status")) == (requestId to CloudInputStatus.CONSUMED.wire)
-        }
-        val expired = closing(CloudEventType.PERMISSION_EXPIRED) { it.str("requestId") == requestId }
-        return listOfNotNull(
-            ended?.let { it to PermissionRequestState.ENDED },
-            answered?.let { it to PermissionRequestState.ANSWERED },
-            expired?.let { it to PermissionRequestState.EXPIRED },
-            // Nothing closed it: still open.
-            Long.MAX_VALUE to PermissionRequestState.OPEN,
-        ).sortedBy { it.first }.first().second
     }
 
     /** Queued and delivered inputs of a session, oldest first; the caller holds the session row lock. */
@@ -462,12 +382,6 @@ internal class CloudConversationStoreImpl(
         /** Every input a session may hold pending: messages and interrupts, plus permission answers. */
         const val MAX_PENDING_ALL =
             CloudConversationRules.MAX_PENDING_INPUTS + CloudConversationRules.MAX_PENDING_PERMISSION_ANSWERS
-
-        /** How many later `turn`, `input` or `permission.expired` events are read to find what closed a request. */
-        const val MAX_CLOSING_SCANNED = 200
-
-        /** Enough of a stored `permission.request` for its leading `requestId` (at most 128 characters, escaped). */
-        const val REQUEST_HEAD_CHARS = 300
     }
 }
 
@@ -492,7 +406,8 @@ private fun readEvent(row: ResultRow): CloudEvent {
     )
 }
 
-private fun readInput(row: ResultRow): CloudInput {
+/** An input as stored. */
+internal fun readInput(row: ResultRow): CloudInput {
     val t = RunnersSessionInputs
     return CloudInput(
         id = row[t.id],
@@ -517,8 +432,8 @@ private fun readInput(row: ResultRow): CloudInput {
     )
 }
 
-
-private fun JsonObject?.str(name: String): String? = (this?.get(name) as? JsonPrimitive)?.contentOrNull
+/** A string field of stored JSON, if it is one. */
+internal fun JsonObject?.str(name: String): String? = (this?.get(name) as? JsonPrimitive)?.contentOrNull
 
 private fun requestIdOf(text: String?): String? = storedObject(text).str("requestId")
 
