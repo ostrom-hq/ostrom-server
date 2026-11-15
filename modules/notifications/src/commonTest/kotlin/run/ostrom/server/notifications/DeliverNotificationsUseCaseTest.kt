@@ -567,7 +567,7 @@ class DeliverNotificationsUseCaseTest {
             deliveries.pending =
                 setOf(answer.approvalId to "chat", answer.approvalId to "push", Uuid.random() to "chat")
 
-            assertEquals(1, useCase(FakeJournal(), CountingWaits(emptyList()), deliveries, emptyList())())
+            assertEquals(0, useCase(FakeJournal(), CountingWaits(emptyList()), deliveries, emptyList())())
 
             assertEquals(emptyList(), answers, "Its request is still to be told on chat: the answer waits")
             val waiting = deliveries.recorded.getValue(answer.id)

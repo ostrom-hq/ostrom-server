@@ -47,12 +47,12 @@ class ApprovalSender(
         val channel = channels().firstOrNull { it.id == delivery.channel }
         // An answer only goes to a module's channel, which updates what it posted: whether the approver is still a
         // member does not matter, their message must close.
-        if (delivery.decision != null) {
-            return if (channel == null) ChannelResult.failed(CHANNEL_UNAVAILABLE) else channel.decided(delivery)
-        }
-        val approver = approvers.reach(delivery.orgId, setOf(delivery.approver))[delivery.approver]
-            ?: return ChannelResult.failed(NOT_A_MEMBER)
+        val answer = delivery.decision != null
+        val login = delivery.approver
+        val approver = if (answer) null else approvers.reach(delivery.orgId, setOf(login))[login]
         return when {
+            answer -> if (channel == null) ChannelResult.failed(CHANNEL_UNAVAILABLE) else channel.decided(delivery)
+            approver == null -> ChannelResult.failed(NOT_A_MEMBER)
             gate == null -> ChannelResult.failed(CHANNEL_UNAVAILABLE)
             delivery.channel == PUSH_CHANNEL -> push(delivery, approver)
             delivery.channel == ApprovalRules.EMAIL_CHANNEL -> email(delivery, approver, gate)

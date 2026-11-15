@@ -127,18 +127,24 @@ class SlackApprovalChannel(
         if (takeBack(app, posted)) ChannelResult.retry(NOT_KEPT) else ChannelResult.DELIVERED
     }
 
-    // Whether the message is gone: deleted, or already not there.
+    // Whether the message is gone: deleted, or already not there; null while Slack fails the call.
     private suspend fun takeBack(app: SlackApp, posted: SlackPosted): Boolean {
-        repeat(DELETE_TRIES) {
-            try {
+        var gone: Boolean? = null
+        var tries = 0
+        while (gone == null && tries < DELETE_TRIES) {
+            tries++
+            gone = try {
                 api.deleteMessage(app.botToken, posted)
-                return true
+                true
             } catch (failure: SlackCallException) {
-                if (failure.code == GONE) return true
-                if (!failure.retryable) return false
+                when {
+                    failure.code == GONE -> true
+                    failure.retryable -> null
+                    else -> false
+                }
             }
         }
-        return false
+        return gone == true
     }
 
     /**

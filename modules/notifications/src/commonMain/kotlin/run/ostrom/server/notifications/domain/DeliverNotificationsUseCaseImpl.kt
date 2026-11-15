@@ -43,7 +43,7 @@ import kotlin.uuid.Uuid
  * @param logger Where an organization's failed pass is reported, by the error's type only.
  * @param newId Makes a delivery's id.
  */
-@Suppress("LongParameterList") // The pass's collaborators, each a port.
+@Suppress("LongParameterList", "TooManyFunctions") // The pass's collaborators, each a port; its steps.
 class DeliverNotificationsUseCaseImpl(
     private val journal: OrgEventJournal,
     private val waits: WaitSummaries,
@@ -224,12 +224,15 @@ class DeliverNotificationsUseCaseImpl(
      * using one of their attempts (the upkeep gives up a delivery pending for too long, the request's included).
      */
     private suspend fun unlessRequestPending(orgId: Uuid, answers: List<ApprovalDelivery>): List<ApprovalDelivery> {
-        if (answers.isEmpty()) return answers
-        // Unknown: none is sent, the claim's leases end and they are claimed again.
-        val pending = guarded(PENDING_READ_FAILED, null) {
+        // Unknown (a failed read): none is sent, the claim's leases end and they are claimed again.
+        val pending = if (answers.isEmpty()) emptySet() else guarded(PENDING_READ_FAILED, null) {
             deliveries.pendingRequests(orgId, answers.map { it.approvalId }.toSet())
-        } ?: return emptyList()
-        val (waiting, ready) = answers.partition { it.approvalId to it.channel in pending }
+        }
+        val (waiting, ready) = if (pending == null) {
+            emptyList<ApprovalDelivery>() to emptyList()
+        } else {
+            answers.partition { it.approvalId to it.channel in pending }
+        }
         val retryAt = clock.now() + DeliveryRules.REQUEST_WAIT
         for (delivery in waiting) {
             val outcome = DeliveryOutcome(DeliveryState.PENDING, delivery.attempts, retryAt, REQUEST_PENDING)
