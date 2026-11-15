@@ -395,10 +395,7 @@ private fun ApiCatalog.journalOperations() {
         }
         responses {
             ok<McpCallsPage>("A page of calls, and the cursor of the next one when there is one.")
-            badRequest(
-                "A `limit` of 0 or less, `dev` not a member id, or `before` neither an instant nor a `next` " +
-                    "(`invalid_request`).",
-            )
+            badRequest("A `limit` under 1, `dev` not a member id, or `before` neither an instant nor a `next`.")
         }
     }
     get("/api/v1/mcp/usage") {
