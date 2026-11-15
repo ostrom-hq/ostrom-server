@@ -11,22 +11,28 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
-/** The pace the capacity controller advises (TeamCode's `Pace`). */
-enum class Pace {
+/**
+ * The pace the capacity controller advises (TeamCode's `Pace`).
+ *
+ * @property strictness Its rank from the loosest (0) to the strictest, which [PACING_STRICTNESS] orders by: every pace
+ *   states its own, so a new one cannot be left out.
+ */
+@Suppress("MagicNumber") // The ranks, stated by each pace.
+enum class Pace(val strictness: Int) {
     /** Observations are missing or stale. */
-    UNKNOWN,
+    UNKNOWN(2),
 
     /** Within the observed capacity. */
-    NORMAL,
+    NORMAL(1),
 
     /** Every usable account is projected to run out before one resets: admissions are spaced. */
-    SLOW_DOWN,
+    SLOW_DOWN(3),
 
     /** Spare capacity even at twice the rate. */
-    CAN_INCREASE,
+    CAN_INCREASE(0),
 
     /** No usable account left. */
-    PAUSE,
+    PAUSE(4),
     ;
 
     /** The name in the API. */
@@ -88,13 +94,8 @@ enum class SlowDownLevel(val minimumAffordableShare: Double, val interval: Durat
     }
 }
 
-/** The paces from the loosest to the strictest. */
-private val PACE_STRICTNESS = listOf(Pace.CAN_INCREASE, Pace.NORMAL, Pace.UNKNOWN, Pace.SLOW_DOWN, Pace.PAUSE)
-
 /** Tightening first: a higher pace, then a longer interval, then fewer permitted requests (zero is unlimited). */
-val PACING_STRICTNESS: Comparator<PacingAdvice> = compareBy<PacingAdvice> {
-    PACE_STRICTNESS.indexOf(it.pace)
-}.thenBy { it.minInterval }.thenByDescending { if (it.maxConcurrent <= 0) Int.MAX_VALUE else it.maxConcurrent }
+val PACING_STRICTNESS: Comparator<PacingAdvice> = compareBy<PacingAdvice> { it.pace.strictness }.thenBy { it.minInterval }.thenByDescending { if (it.maxConcurrent <= 0) Int.MAX_VALUE else it.maxConcurrent }
 
 /** The tightest enabled limit, or 0 (unlimited) when none applies (TeamCode's `concurrencyCeiling`). */
 fun concurrencyCeiling(limits: Iterable<Int>): Int = limits.filter { it > 0 }.minOrNull() ?: 0

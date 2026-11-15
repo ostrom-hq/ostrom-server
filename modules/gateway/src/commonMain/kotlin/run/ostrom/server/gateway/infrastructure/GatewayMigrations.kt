@@ -153,7 +153,10 @@ val GatewayMigrations: List<SchemaMigration> = listOf(
                 recovery_min_interval_ms BIGINT,
                 last_admitted_at TIMESTAMPTZ,
                 last_admitted_request UUID,
-                PRIMARY KEY (org_id, member_id, scope_key)
+                PRIMARY KEY (org_id, member_id, scope_key),
+                -- A recovery is its three columns together, or none (DirectiveRepositoryImpl reads them so).
+                CHECK ((recovery_pace IS NULL) = (recovery_started_at IS NULL)
+                    AND (recovery_pace IS NULL) = (recovery_min_interval_ms IS NULL))
             );
             CREATE INDEX gateway_directives_expiry ON gateway_directives (org_id, expires_at);
             CREATE TABLE gateway_directive_deliveries (
