@@ -495,9 +495,7 @@ private fun ApiCatalog.endpointOperations() {
             organizationHeader()
             pathId("server", "The relayed server's name.")
         }
-        responses {
-            error(HttpStatusCode.MethodNotAllowed, "No stream is offered.")
-        }
+        responses { error(HttpStatusCode.MethodNotAllowed, "No stream is offered.") }
     }
     delete("/api/v1/mcp/{server}") {
         operationId = "relayMcpSession"
@@ -508,8 +506,6 @@ private fun ApiCatalog.endpointOperations() {
             organizationHeader()
             pathId("server", "The relayed server's name.")
         }
-        responses {
-            error(HttpStatusCode.MethodNotAllowed, "No session is held.")
-        }
+        responses { error(HttpStatusCode.MethodNotAllowed, "No session is held.") }
     }
 }

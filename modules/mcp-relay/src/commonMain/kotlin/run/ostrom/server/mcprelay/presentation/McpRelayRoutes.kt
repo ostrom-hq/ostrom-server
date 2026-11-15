@@ -12,6 +12,8 @@ import run.ostrom.server.kernel.auth.requireRecentSignIn
 import run.ostrom.server.kernel.database.storableInstantOrNull
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
+import run.ostrom.server.kernel.http.ApiError
+import run.ostrom.server.kernel.http.ErrorDetail
 import run.ostrom.server.kernel.http.heldCalls
 import run.ostrom.server.mcprelay.domain.InvalidMcpServerException
 import run.ostrom.server.mcprelay.domain.McpCallCursor
@@ -257,12 +259,16 @@ private fun Route.endpointRoutes(dependencies: McpRelayRoutesDependencies) = wit
                 call.respondText(body.toString(), ContentType.Application.Json, status)
             }
         }
-        routeGet { call.respond(HttpStatusCode.MethodNotAllowed) }
-        routeDelete { call.respond(HttpStatusCode.MethodNotAllowed) }
+        // The error envelope itself: StatusPages would add it on the way out, past what the contract check sees.
+        routeGet { call.respond(HttpStatusCode.MethodNotAllowed, NOT_SERVED) }
+        routeDelete { call.respond(HttpStatusCode.MethodNotAllowed, NOT_SERVED) }
     }
 }
 
 private const val MAX_CALLS_PAGE = 200
+
+// What GET and DELETE answer: the relay is stateless, no stream and no session (the kernel's 405 envelope).
+private val NOT_SERVED = ApiError(ErrorDetail("method_not_allowed", "Method not allowed."))
 
 private suspend fun McpRelayRoutesDependencies.serverId(caller: Caller, name: String): Uuid {
     val server = listServers.find(caller, name) ?: throw McpServerNotFoundException()

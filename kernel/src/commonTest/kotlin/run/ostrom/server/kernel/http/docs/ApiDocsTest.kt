@@ -74,6 +74,7 @@ class ApiDocsTest {
                 patch("/api/v1/items/{id}") { call.respond(HttpStatusCode.OK) }
                 delete("/api/v1/items/{id}") { call.respond(HttpStatusCode.NoContent) }
                 get("/api/v1/items/extra") { call.respond(HttpStatusCode.OK) }
+                get("/api/v1/items/plain") { call.respond(HttpStatusCode.OK) }
                 route("/api/v1/items/any") { handle { call.respond(HttpStatusCode.OK) } }
             }
             route.post("/webhooks/items") { call.respond(HttpStatusCode.Accepted) }
@@ -136,6 +137,7 @@ class ApiDocsTest {
                 responses { empty("Received.", HttpStatusCode.Accepted) }
             }
             get("/api/v1/items/ghost") { operationId = "ghost" }
+            get("/api/v1/items/plain") { operationId = "plainItems" }
             conditionally { get("/api/v1/items/sometimes") { operationId = "sometimes" } }
             delete("/api/v1/items/{id}") { operationId = "deleteItemAgain" }
         }
@@ -198,6 +200,16 @@ class ApiDocsTest {
     private fun JsonObject.response(status: String): String =
         this["responses"]!!.jsonObject[status]!!.jsonObject["description"]!!.jsonPrimitive.content
 
+    // A public operation needs nothing and answers no 401.
+    private fun assertPublicOperations(document: JsonObject) {
+        val webhook = document.operation("/webhooks/items", "post")
+        assertEquals(JsonArray(emptyList()), webhook["security"], "A public operation says it needs nothing")
+        assertFalse("401" in webhook["responses"]!!.jsonObject)
+        assertTrue(webhook["description"]!!.jsonPrimitive.content.endsWith(ApiAccess(true, signed = true).text))
+        val health = document.operation("/api/v1/health", "get")["description"]!!.jsonPrimitive.content
+        assertTrue(health.endsWith("No authentication."), health)
+    }
+
     // The patch keeps its own 403 body beside the shared one; of two delete entries, the first is used.
     private fun assertUpdateAndRemove(document: JsonObject) {
         val update = document.operation("/api/v1/items/{id}", "patch")
@@ -256,15 +268,12 @@ class ApiDocsTest {
         assertEquals(setOf("text/html"), page.keys, "A page, not JSON")
         assertUpdateAndRemove(document)
 
-        val webhook = document.operation("/webhooks/items", "post")
-        assertEquals(JsonArray(emptyList()), webhook["security"], "A public operation says it needs nothing")
-        assertFalse("401" in webhook["responses"]!!.jsonObject)
-        assertTrue(webhook["description"]!!.jsonPrimitive.content.endsWith(ApiAccess(true, signed = true).text))
-        val health = document.operation("/api/v1/health", "get")["description"]!!.jsonPrimitive.content
-        assertTrue(health.endsWith("No authentication."), health)
+        assertPublicOperations(document)
 
         val paths = document["paths"]!!.jsonObject
         assertNull(document.operation("/api/v1/items/extra", "get")["operationId"], "Kept, undescribed")
+        val plain = document.operation("/api/v1/items/plain", "get")["responses"]!!.jsonObject
+        assertTrue("401" in plain, "An entry without responses still gets the shared ones: $plain")
         val pending = document.operation("/api/v1/pending", "get")["parameters"]!!.jsonArray
         assertEquals("q", pending.single().jsonObject["name"]!!.jsonPrimitive.content, "Its query parameter is kept")
         assertTrue("/api/v1/pending" in paths, "A module without a catalogue still appears")

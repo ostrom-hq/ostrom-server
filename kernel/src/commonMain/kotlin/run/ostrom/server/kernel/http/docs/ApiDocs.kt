@@ -140,7 +140,7 @@ class ApiDocs {
      * @return One line per part.
      */
     fun signature(): String = sections.joinToString("\n") { section ->
-        val entries = section.catalog?.operations?.joinToString(",") { it.key }
+        val entries = section.catalog?.let { catalog -> catalog.operations.joinToString(",") { it.key } }
         val routes = section.routes.mapNotNull { it.key() }.joinToString(",")
         "${section.owner} catalogue=${section.catalogSource ?: "none"} entries=${entries.orEmpty()} routes=$routes"
     }
