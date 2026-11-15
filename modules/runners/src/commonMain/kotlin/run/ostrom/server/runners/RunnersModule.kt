@@ -206,7 +206,6 @@ import run.ostrom.server.runners.infrastructure.RunnersCloudSessionWakes
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
-import org.koin.core.scope.Scope
 import org.koin.dsl.module
 import org.koin.dsl.onClose
 import kotlin.time.Duration.Companion.minutes
