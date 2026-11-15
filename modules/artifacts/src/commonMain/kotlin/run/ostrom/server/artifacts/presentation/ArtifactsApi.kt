@@ -12,10 +12,24 @@ import kotlinx.serialization.Serializable
  *
  * @property before The cursor of the previous page.
  * @property limit The page size, 1 to 100.
+ * @property scope `team` (the default), `mine` or `shared`.
+ * @property origin `local_run`, `cloud_session` or `api`.
+ * @property access `personal`, `team` or `link`.
+ * @property cloudSession Only what the launches of this cloud session published.
+ * @property launch Only what this launch published.
  */
+@Suppress("LongParameterList") // One query parameter per filter of the route.
 @Serializable
 @Resource("/api/v1/artifacts")
-class ArtifactsApi(val before: String? = null, val limit: Int? = null) {
+class ArtifactsApi(
+    val before: String? = null,
+    val limit: Int? = null,
+    val scope: String? = null,
+    val origin: String? = null,
+    val access: String? = null,
+    val cloudSession: String? = null,
+    val launch: String? = null,
+) {
     /**
      * `GET`, `PATCH` and `DELETE /api/v1/artifacts/{id}`.
      *
@@ -213,6 +227,7 @@ data class ArtifactsResponse(val items: List<ArtifactResponse>, val next: String
 data class ArtifactVersionResponse(
     val number: Int,
     val files: List<String>,
+    val fileDetails: List<ArtifactVersionFileResponse>? = null,
     val entry: String,
     val createdAt: String,
     val createdBy: String,
@@ -220,6 +235,22 @@ data class ArtifactVersionResponse(
     val baseVersion: Int? = null,
     val replayed: Boolean? = null,
     val origin: ArtifactOriginResponse? = null,
+)
+
+/**
+ * A file of a version with its size and type (TeamCode's files panel).
+ *
+ * @property path Its path in the version.
+ * @property size Its size in bytes.
+ * @property contentType The type it is served with.
+ * @property sha256 The SHA-256 of its bytes, in hex.
+ */
+@Serializable
+data class ArtifactVersionFileResponse(
+    val path: String,
+    val size: Long,
+    val contentType: String,
+    val sha256: String? = null,
 )
 
 /**

@@ -4,11 +4,14 @@ package run.ostrom.server.artifacts
 import run.ostrom.server.artifacts.domain.ArtifactAccess
 import run.ostrom.server.artifacts.domain.ArtifactConflictException
 import run.ostrom.server.artifacts.domain.ArtifactEvents
+import run.ostrom.server.artifacts.domain.ArtifactFilter
 import run.ostrom.server.artifacts.domain.ArtifactLocations
 import run.ostrom.server.artifacts.domain.ArtifactNotFoundException
 import run.ostrom.server.artifacts.domain.ArtifactNotWritableException
+import run.ostrom.server.artifacts.domain.ArtifactOriginKind
 import run.ostrom.server.artifacts.domain.ArtifactPagesUnavailableException
 import run.ostrom.server.artifacts.domain.ArtifactPersonRequiredException
+import run.ostrom.server.artifacts.domain.ArtifactScope
 import run.ostrom.server.artifacts.domain.ArtifactSecretException
 import run.ostrom.server.artifacts.domain.ArtifactTicket
 import run.ostrom.server.artifacts.domain.ArtifactTicketsRateLimitedException
@@ -245,6 +248,24 @@ class ArtifactUseCasesTest {
         val last = read.list(bob, null, null).last()
         assertEquals(emptyList(), read.list(bob, last.id, null), "After the last")
         assertFailsWith<InvalidPageException> { read.list(bob, Uuid.random(), null) }
+    }
+
+    @Test
+    fun aListingFilterReadsTheQueryParametersAndRefusesTheUnknown() {
+        assertEquals(ArtifactFilter(), ArtifactFilter.parse(null, "", "", "", ""))
+        assertEquals(
+            ArtifactFilter(ArtifactScope.SHARED, ArtifactOriginKind.CLOUD_SESSION, ArtifactAccess.LINK, "cs-1", "l_2"),
+            ArtifactFilter.parse("shared", "cloud_session", "link", "cs-1", "l_2"),
+        )
+        assertEquals(ArtifactScope.MINE, ArtifactFilter.parse("mine", null, null, null, null).scope)
+        assertEquals(ArtifactOriginKind.LOCAL_RUN, ArtifactFilter.parse(null, "local_run", null, null, null).origin)
+        assertEquals(ArtifactOriginKind.API, ArtifactFilter.parse(null, "api", null, null, null).origin)
+        assertFailsWith<InvalidArtifactRequestException> { ArtifactFilter.parse("all", null, null, null, null) }
+        assertFailsWith<InvalidArtifactRequestException> { ArtifactFilter.parse(null, "web", null, null, null) }
+        assertFailsWith<InvalidArtifactRequestException> { ArtifactFilter.parse(null, null, "public", null, null) }
+        assertFailsWith<InvalidArtifactRequestException> { ArtifactFilter.parse(null, null, null, "a b", null) }
+        val tooLong = "x".repeat(65)
+        assertFailsWith<InvalidArtifactRequestException> { ArtifactFilter.parse(null, null, null, null, tooLong) }
     }
 
     @Test

@@ -5,7 +5,10 @@ import run.ostrom.server.artifacts.domain.Artifact
 import run.ostrom.server.artifacts.domain.ArtifactAccess
 import run.ostrom.server.artifacts.domain.ArtifactCaller
 import run.ostrom.server.artifacts.domain.ArtifactFile
+import run.ostrom.server.artifacts.domain.ArtifactFilter
 import run.ostrom.server.artifacts.domain.ArtifactOrigin
+import run.ostrom.server.artifacts.domain.ArtifactOriginKind
+import run.ostrom.server.artifacts.domain.ArtifactScope
 import run.ostrom.server.artifacts.domain.ArtifactVersion
 import run.ostrom.server.artifacts.domain.ArtifactsRepository
 import io.github.smyrgeorge.sqlx4k.Driver
@@ -117,7 +120,12 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
 
     override suspend fun getByLinkSlug(slug: String): Artifact? = route("artifacts_route_by_slug", "TEXT", slug)
 
-    override suspend fun listReadable(caller: ArtifactCaller, before: Uuid?, limit: Int): List<Artifact> {
+    override suspend fun listReadable(
+        caller: ArtifactCaller,
+        before: Uuid?,
+        limit: Int,
+        filter: ArtifactFilter,
+    ): List<Artifact> {
         val cursor = if (before == null) {
             ""
         } else {
@@ -129,13 +137,35 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
             SELECT $COLUMNS FROM artifacts_artifacts a WHERE a.org_id = :org_id AND a.latest_version > 0 AND
             (a.owner_id = :member OR
             a.access <> 'personal' OR EXISTS (SELECT 1 FROM artifacts_members m WHERE m.artifact_id = a.id AND
-            m.member_id = :member))$cursor ORDER BY a.updated_at DESC, a.id DESC LIMIT :limit
+            m.member_id = :member))${narrowing(filter)}$cursor ORDER BY a.updated_at DESC, a.id DESC LIMIT :limit
             """,
         ).bind("org_id", caller.orgId)
             .bind("member", caller.memberId)
             .bind("limit", limit)
         if (before != null) statement.bind("before", before)
+        filter.access?.let { statement.bind("access", it.wire) }
+        filter.cloudSession?.let { statement.bind("cloud_session", it) }
+        filter.launch?.let { statement.bind("launch", it) }
         return driver.fetchInOrg(caller.orgId, statement).getOrThrow().map { it.toArtifact() }
+    }
+
+    /** The conditions a listing's filter adds: the scope, the origin, the access, the session and the launch. */
+    private fun narrowing(filter: ArtifactFilter): String = buildString {
+        when (filter.scope) {
+            ArtifactScope.TEAM -> Unit
+            ArtifactScope.MINE -> append(" AND a.owner_id = :member")
+            ArtifactScope.SHARED -> append(
+                " AND EXISTS (SELECT 1 FROM artifacts_members s WHERE s.artifact_id = a.id AND s.member_id = :member)",
+            )
+        }
+        if (filter.origin == ArtifactOriginKind.API) append(" AND a.origin_launch_id IS NULL")
+        if (filter.origin == ArtifactOriginKind.LOCAL_RUN) {
+            append(" AND a.origin_launch_id IS NOT NULL AND a.origin_session_id IS NULL")
+        }
+        if (filter.origin == ArtifactOriginKind.CLOUD_SESSION) append(" AND a.origin_session_id IS NOT NULL")
+        if (filter.access != null) append(" AND a.access = :access")
+        if (filter.cloudSession != null) append(" AND a.origin_session_id = :cloud_session")
+        if (filter.launch != null) append(" AND a.origin_launch_id = :launch")
     }
 
     override suspend fun versions(orgId: Uuid, artifactId: Uuid): List<ArtifactVersion> = driver.fetchInOrg(

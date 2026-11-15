@@ -4,6 +4,7 @@ package run.ostrom.server.todos
 import run.ostrom.server.artifacts.domain.Artifact
 import run.ostrom.server.artifacts.domain.ArtifactAccess
 import run.ostrom.server.artifacts.domain.ArtifactCaller
+import run.ostrom.server.artifacts.domain.ArtifactFilter
 import run.ostrom.server.artifacts.domain.ArtifactVersion
 import run.ostrom.server.artifacts.domain.ArtifactsRepository
 import run.ostrom.server.automations.domain.AnswerWaitUseCase
@@ -219,7 +220,12 @@ class AdaptersTest {
         override suspend fun get(orgId: Uuid, id: Uuid): Artifact? = byId[id]?.takeIf { it.orgId == orgId }
         override suspend fun getById(id: Uuid): Artifact? = unused()
         override suspend fun getByLinkSlug(slug: String): Artifact? = unused()
-        override suspend fun listReadable(caller: ArtifactCaller, before: Uuid?, limit: Int): List<Artifact> = unused()
+        override suspend fun listReadable(
+            caller: ArtifactCaller,
+            before: Uuid?,
+            limit: Int,
+            filter: ArtifactFilter,
+        ): List<Artifact> = unused()
         override suspend fun versions(orgId: Uuid, artifactId: Uuid): List<ArtifactVersion> = unused()
         override suspend fun version(orgId: Uuid, artifactId: Uuid, number: Int): ArtifactVersion? = unused()
         override suspend fun blobDigests(orgId: Uuid, artifactId: Uuid): Set<String> = unused()

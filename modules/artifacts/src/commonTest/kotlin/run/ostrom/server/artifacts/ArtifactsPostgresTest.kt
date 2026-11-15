@@ -4,6 +4,11 @@ package run.ostrom.server.artifacts
 import run.ostrom.server.artifacts.domain.Artifact
 import run.ostrom.server.artifacts.domain.ArtifactAccess
 import run.ostrom.server.artifacts.domain.ArtifactFile
+import run.ostrom.server.artifacts.domain.ArtifactFilter
+import run.ostrom.server.artifacts.domain.ArtifactOrigin
+import run.ostrom.server.artifacts.domain.ArtifactOriginKind
+import run.ostrom.server.artifacts.domain.ArtifactRules
+import run.ostrom.server.artifacts.domain.ArtifactScope
 import run.ostrom.server.artifacts.domain.ArtifactVersion
 import run.ostrom.server.artifacts.domain.ArtifactsRepository
 import run.ostrom.server.artifacts.fakes.ALICE
@@ -196,6 +201,31 @@ class ArtifactsPostgresTest {
         assertEquals(2, repository.listReadable(alice, first.id, 10).size)
     }
 
+    @Test
+    fun listingNarrowsByScopeOriginAccessSessionAndLaunch() = serverTest(listOf(ArtifactsModule)) { server ->
+        val repository = server.koin.get<ArtifactsRepository>()
+        val direct = artifact(access = ArtifactAccess.TEAM)
+        val local = artifact(access = ArtifactAccess.TEAM).copy(origin = ArtifactOrigin("run-1"))
+        val cloud = artifact().copy(origin = ArtifactOrigin("run-2", "session-1"))
+        val others = artifact(owner = BOB, access = ArtifactAccess.TEAM)
+        val invited = artifact(owner = BOB)
+        listOf(direct, local, cloud, others, invited).forEach { repository.create(it, version(it, 1, "a" to "s")) }
+        repository.setMember(ORG_A, invited.id, ALICE.toString(), share = true)
+
+        suspend fun ids(filter: ArtifactFilter) = repository.listReadable(alice, null, 10, filter).map { it.id }.toSet()
+        assertEquals(setOf(direct.id, local.id, cloud.id, others.id, invited.id), ids(ArtifactFilter()))
+        assertEquals(setOf(direct.id, local.id, cloud.id), ids(ArtifactFilter(scope = ArtifactScope.MINE)))
+        assertEquals(setOf(invited.id), ids(ArtifactFilter(scope = ArtifactScope.SHARED)))
+        val directTeam = ArtifactFilter(origin = ArtifactOriginKind.API, access = ArtifactAccess.TEAM)
+        assertEquals(setOf(direct.id, others.id), ids(directTeam))
+        assertEquals(setOf(local.id), ids(ArtifactFilter(origin = ArtifactOriginKind.LOCAL_RUN)))
+        assertEquals(setOf(cloud.id), ids(ArtifactFilter(origin = ArtifactOriginKind.CLOUD_SESSION)))
+        assertEquals(setOf(cloud.id), ids(ArtifactFilter(cloudSession = "session-1")))
+        assertEquals(setOf(local.id), ids(ArtifactFilter(launch = "run-1")))
+        assertEquals(emptySet(), ids(ArtifactFilter(launch = "run-1", cloudSession = "session-1")))
+        assertEquals(setOf(local.id), ids(ArtifactFilter(scope = ArtifactScope.MINE, launch = "run-1")), "Combined")
+    }
+
     /**
      * A request to the content origin. The test client only reaches `localhost`: the content origin's host is sent in
      * the `Host` header, which is what the content routes read.
@@ -242,6 +272,28 @@ class ArtifactsPostgresTest {
         val versions = client.get("/api/v1/artifacts/${created.id}/versions") { bearerAuth("alice") }
             .body<ArtifactVersionsResponse>()
         assertEquals(listOf(listOf("index.html"), listOf("img/a.png", "index.html")), versions.items.map { it.files })
+        assertEquals(
+            listOf("img/a.png" to "image/png", "index.html" to ArtifactRules.contentType("index.html")),
+            versions.items.last().fileDetails.orEmpty().map { it.path to it.contentType },
+        )
+        assertEquals(listOf(3L, 11L), versions.items.last().fileDetails.orEmpty().map { it.size })
+        assertEquals(
+            HttpStatusCode.BadRequest,
+            client.get("/api/v1/artifacts?scope=everyone") { bearerAuth("alice") }.status,
+        )
+        assertEquals(
+            HttpStatusCode.BadRequest,
+            client.get("/api/v1/artifacts?origin=elsewhere") { bearerAuth("alice") }.status,
+        )
+        assertEquals(
+            HttpStatusCode.BadRequest,
+            client.get("/api/v1/artifacts?launch=a%20b") { bearerAuth("alice") }.status,
+        )
+        assertEquals(
+            listOf(created.id),
+            client.get("/api/v1/artifacts?scope=mine&access=personal&origin=api") { bearerAuth("alice") }
+                .body<ArtifactsResponse>().items.map { it.id },
+        )
 
         val file = client.get("/api/v1/artifacts/${created.id}/versions/1/file?path=img/a.png") { bearerAuth("alice") }
         assertContentEquals(byteArrayOf(1, 2, 3), file.readRawBytes())

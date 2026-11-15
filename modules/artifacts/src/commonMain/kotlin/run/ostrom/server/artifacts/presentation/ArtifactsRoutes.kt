@@ -4,9 +4,10 @@ package run.ostrom.server.artifacts.presentation
 import run.ostrom.server.artifacts.domain.Artifact
 import run.ostrom.server.artifacts.domain.ArtifactCaller
 import run.ostrom.server.artifacts.domain.ArtifactConflictException
+import run.ostrom.server.artifacts.domain.ArtifactFilter
 import run.ostrom.server.artifacts.domain.ArtifactNotFoundException
-import run.ostrom.server.artifacts.domain.ArtifactRetryLaterException
 import run.ostrom.server.artifacts.domain.ArtifactRelation
+import run.ostrom.server.artifacts.domain.ArtifactRetryLaterException
 import run.ostrom.server.artifacts.domain.ArtifactRules
 import run.ostrom.server.artifacts.domain.ArtifactTicketsRateLimitedException
 import run.ostrom.server.artifacts.domain.ArtifactVersion
@@ -83,7 +84,8 @@ fun Route.artifactsRoutes(dependencies: ArtifactsRoutesDependencies) = with(depe
         }
         get<ArtifactsApi> { params ->
             val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), ARTIFACTS_READ)
-            val page = read.list(caller, params.before?.let { parseId(it) }, params.limit)
+            val filter = with(params) { ArtifactFilter.parse(scope, origin, access, cloudSession, launch) }
+            val page = read.list(caller, params.before?.let { parseId(it) }, params.limit, filter)
             val limit = params.limit ?: DEFAULT_LIMIT
             val next = page.lastOrNull()?.let { last -> last.id.toString().takeIf { page.size == limit } }
             call.respond(ArtifactsResponse(page.map { toResponse(it, caller) }, next))
@@ -209,6 +211,7 @@ internal fun ArtifactsRoutesDependencies.viewerUrl(artifact: Artifact) = "${loca
 internal fun ArtifactVersion.toResponse() = ArtifactVersionResponse(
     number = number,
     files = files.map { it.path },
+    fileDetails = files.map { ArtifactVersionFileResponse(it.path, it.size, it.contentType, it.sha256) },
     entry = entry,
     createdAt = createdAt.toString(),
     createdBy = createdBy,

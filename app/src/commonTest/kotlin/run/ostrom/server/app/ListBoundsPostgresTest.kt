@@ -172,7 +172,10 @@ class ListBoundsPostgresTest {
             listOf(GARBAGE, "${Uuid.random()}").forEach { cursor ->
                 val status = read(ada, path, "$name=${cursor.encodeURLParameter()}").status
                 val declared = name in list.cursors
-                if (declared && status != HttpStatusCode.BadRequest) f.broken += "$id $name=$cursor: $status, not 400"
+                val refusedAsMissing = id in NOT_FOUND_CURSORS && status == HttpStatusCode.NotFound
+                if (declared && status != HttpStatusCode.BadRequest && !refusedAsMissing) {
+                    f.broken += "$id $name=$cursor: $status, not 400"
+                }
                 if (status.value >= SERVER_ERROR) f.broken += "$id $name=$cursor: $status"
             }
         }
@@ -186,7 +189,7 @@ class ListBoundsPostgresTest {
             return
         }
         // Under one of A's resources (an automation's runs), B is told it does not exist, as for any id.
-        val refused = if (RESOURCE.containsMatchIn(list.operation.path)) {
+        val refused = if (RESOURCE.containsMatchIn(list.operation.path) || id in NOT_FOUND_CURSORS) {
             setOf(HttpStatusCode.BadRequest, HttpStatusCode.NotFound)
         } else {
             setOf(HttpStatusCode.BadRequest)
@@ -382,11 +385,19 @@ class ListBoundsPostgresTest {
             "listCloudSessions",
             "listMcpCalls",
             "listNotifications",
+            "listPendingUsage",
             "listRepos",
             "listSessions",
             "listTeams",
             "listUsageEvents",
+            "listUsageReconciliations",
             "listWaits",
         )
+
+        /**
+         * The lists whose `before` is the id of a hold under review (TeamCode's Usage review): one that names none of
+         * the organization's (forged, or another's) is a 404, as a hold asked for by its id, never a page of another's.
+         */
+        val NOT_FOUND_CURSORS = setOf("listPendingUsage", "listUsageReconciliations")
     }
 }

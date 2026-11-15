@@ -154,10 +154,16 @@ interface ReadArtifactsUseCase {
      *
      * @param before The last artifact of the previous page.
      * @param limit The page size, 1 to 100 (20 by default).
+     * @param filter What the page narrows to (all of what the caller reads by default).
      *
      * @return The page.
      */
-    suspend fun list(caller: ArtifactCaller, before: Uuid?, limit: Int?): List<Artifact>
+    suspend fun list(
+        caller: ArtifactCaller,
+        before: Uuid?,
+        limit: Int?,
+        filter: ArtifactFilter = ArtifactFilter(),
+    ): List<Artifact>
 
     /**
      * Reads an artifact.
@@ -193,12 +199,17 @@ internal class ReadArtifactsUseCaseImpl(
 ) : ReadArtifactsUseCase {
     private val rules = ArtifactAccessRules(repository)
 
-    override suspend fun list(caller: ArtifactCaller, before: Uuid?, limit: Int?): List<Artifact> {
+    override suspend fun list(
+        caller: ArtifactCaller,
+        before: Uuid?,
+        limit: Int?,
+        filter: ArtifactFilter,
+    ): List<Artifact> {
         contents.requireActive(caller.orgId)
         val size = limit ?: DEFAULT_PAGE
         ensureValid(size in 1..MAX_PAGE) { "limit must be between 1 and $MAX_PAGE." }
         // A `before` that names no artifact of the organization (forged, or another's) is a 400, not an empty page.
-        return Pages.checked("before", before, repository.listReadable(caller, before, size)) {
+        return Pages.checked("before", before, repository.listReadable(caller, before, size, filter)) {
             repository.get(caller.orgId, it) != null
         }
     }

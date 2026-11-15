@@ -3,6 +3,8 @@ package run.ostrom.server.artifacts.fakes
 
 import run.ostrom.server.artifacts.domain.Artifact
 import run.ostrom.server.artifacts.domain.ArtifactCaller
+import run.ostrom.server.artifacts.domain.ArtifactFilter
+import run.ostrom.server.artifacts.domain.ArtifactScope
 import run.ostrom.server.artifacts.domain.ArtifactVersion
 import run.ostrom.server.artifacts.domain.ArtifactsRepository
 import run.ostrom.server.artifacts.domain.ViewTicket
@@ -200,8 +202,17 @@ class InMemoryArtifacts : ArtifactsRepository {
     override suspend fun getByLinkSlug(slug: String): Artifact? = artifacts.values.firstOrNull { it.linkSlug == slug }
 
     // After `before`, the ones that follow it; none after an artifact it does not hold, as the database.
-    override suspend fun listReadable(caller: ArtifactCaller, before: Uuid?, limit: Int): List<Artifact> {
+    override suspend fun listReadable(
+        caller: ArtifactCaller,
+        before: Uuid?,
+        limit: Int,
+        filter: ArtifactFilter,
+    ): List<Artifact> {
         val all = artifacts.values.filter { it.orgId == caller.orgId && !it.draft }
+            .filter { filter.scope != ArtifactScope.MINE || it.ownerId == caller.memberId }
+            .filter { filter.access == null || it.access == filter.access }
+            .filter { filter.cloudSession == null || it.origin?.cloudSessionId == filter.cloudSession }
+            .filter { filter.launch == null || it.origin?.launchId == filter.launch }
         val at = if (before == null) -1 else all.indexOfFirst { it.id == before }
         return if (before != null && at < 0) emptyList() else all.drop(at + 1).take(limit)
     }
