@@ -86,6 +86,7 @@ class RunsAutomationWorkflowsTest {
             inputs: Map<String, String>,
             person: Uuid?,
             key: String,
+            profileId: String?,
         ): StartedRun = error("An automation starts as a member.")
     }
 

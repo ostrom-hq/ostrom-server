@@ -51,7 +51,8 @@ class CloudRunAgents(
             create(Caller(orgId, member.memberId.toString()), payload)
             null
         } catch (refused: OstromException) {
-            ProfileRefusals.keyOf(refused)?.let(::profileRefused) ?: refused.message
+            val key = ProfileRefusals.keyOf(refused)
+            if (key != null) profileRefused(key) else refused.message
         }
     }
 

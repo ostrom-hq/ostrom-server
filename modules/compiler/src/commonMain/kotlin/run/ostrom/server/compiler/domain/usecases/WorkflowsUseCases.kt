@@ -265,9 +265,9 @@ class WorkflowsUseCaseImpl(
     // Read outside the lock, so a profile deleted meanwhile is caught by the session's creation, never earlier.
     private suspend fun requireProfiles(orgId: Uuid, workflow: Workflow) {
         if (profiles == null || !WorkflowChecks.runsOnServer(workflow)) return
-        val kept = repository.workflow(orgId, workflow.id)?.let { profilesOf(it.doc.workflow) }.orEmpty()
-        val named = workflow.nodes.filter { it.kind == WorkflowNodeKind.AGENT }
-            .mapNotNull { node -> node.run?.profileId?.let { node.id to it } }
+        val stored = repository.workflow(orgId, workflow.id)
+        val kept = stored?.let { namedProfiles(it.doc.workflow) }.orEmpty().map { it.second }.toSet()
+        val named = namedProfiles(workflow)
             .filter { (_, id) -> id !in kept }
             .map { (node, id) -> node to Uuid.parseOrNull(id) }
         if (named.isEmpty()) return
@@ -319,9 +319,10 @@ class WorkflowsUseCaseImpl(
     }
 }
 
-// The profiles a workflow's agent nodes name.
-private fun profilesOf(workflow: Workflow): Set<String> =
-    workflow.nodes.filter { it.kind == WorkflowNodeKind.AGENT }.mapNotNull { it.run?.profileId }.toSet()
+// The profiles a workflow's agent nodes name, by node.
+private fun namedProfiles(workflow: Workflow): List<Pair<String, String>> =
+    workflow.nodes.filter { it.kind == WorkflowNodeKind.AGENT }
+        .flatMap { node -> listOfNotNull(node.run).mapNotNull { it.profileId }.map { node.id to it } }
 
 private fun requireFreeName(workflow: Workflow, others: List<Workflow>) {
     val name = workflow.name.trim()

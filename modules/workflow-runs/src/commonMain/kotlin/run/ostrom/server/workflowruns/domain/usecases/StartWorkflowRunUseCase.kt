@@ -93,6 +93,7 @@ interface StartWorkflowRunUseCase {
      *   workflow's ([RunInputs]), or the profile is none of the organization's.
      * @throws RunLimitException When the caller has [MAX_UNFINISHED] unfinished runs.
      */
+    @Suppress("LongParameterList") // A manual start's request (workflow, inputs, profile), its caller and its key.
     suspend fun startKeyed(
         actor: GateActor,
         workflowId: String,
@@ -168,6 +169,7 @@ class StartWorkflowRunUseCaseImpl(
         return run
     }
 
+    @Suppress("LongParameterList") // A manual start's request (workflow, inputs, profile), its caller and its key.
     override suspend fun startKeyed(
         actor: GateActor,
         workflowId: String,
@@ -186,7 +188,7 @@ class StartWorkflowRunUseCaseImpl(
     }
 
     // What a manual start stores, once the caller, the workflow and the inputs are checked.
-    @Suppress("ThrowsCount") // The three refusals of a start: who, which workflow, and whether it can run.
+    @Suppress("ThrowsCount", "LongParameterList") // A start's three refusals: who, which workflow, whether it runs.
     private suspend fun prepare(
         actor: GateActor,
         workflowId: String,

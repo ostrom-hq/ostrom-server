@@ -34,7 +34,10 @@ class ActionProfileTest {
     private val repository = InMemoryAutomations()
     private val launcher = RecordingLauncher()
     private val workflows = RecordingWorkflows().apply {
-        inputs["triage"] = listOf(WorkflowInputSpec("ticket", required = false, hasDefault = false))
+        inputs["triage"] = listOf(
+            WorkflowInputSpec("ticket", required = false, hasDefault = false),
+            WorkflowInputSpec("note", required = false, hasDefault = false),
+        )
     }
     private val clock = TestClock(Instant.parse("2026-11-14T10:00:00Z"))
     private val directory = CloudProfileDirectory { orgId ->
@@ -78,7 +81,7 @@ class ActionProfileTest {
     fun aProfileThatIsNotAnIdOrNoneOfTheOrganizationsIsRefusedNamingTheField() = runTest {
         val malformed = refusal(session("backend"))
         assertEquals("action.profileId: a cloud profile's id (a UUID).", malformed.message)
-        assertEquals("invalid_automation", malformed.type)
+        assertEquals("invalid_request", malformed.type)
         val unknown = refusal(workflow(Uuid.random().toString()))
         assertEquals("action.profileId: no cloud profile of the organization has this id.", unknown.message)
         val saved = manage.create(aliceAuto, session(null)).automation

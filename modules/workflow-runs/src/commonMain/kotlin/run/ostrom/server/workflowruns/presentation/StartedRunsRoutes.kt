@@ -35,7 +35,8 @@ internal fun Route.startedRunsRoutes(dependencies: WorkflowRunsRoutesDependencie
             if (!Idempotency.isValid(it)) throw InvalidRunException(MALFORMED_KEY)
         }
         if (key == null) {
-            call.respond(HttpStatusCode.Created, startRun(actor, params.id, body.inputs, personOf(call), body.profileId))
+            val run = startRun(actor, params.id, body.inputs, personOf(call), body.profileId)
+            call.respond(HttpStatusCode.Created, run)
         } else {
             val started = startRun.startKeyed(actor, params.id, body.inputs, personOf(call), key, body.profileId)
             if (started.replayed) call.response.header(Idempotency.REPLAYED_HEADER, "true")
