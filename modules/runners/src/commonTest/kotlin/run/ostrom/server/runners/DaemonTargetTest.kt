@@ -198,9 +198,6 @@ class DaemonTargetTest {
 
     private companion object {
         val DaemonPresenceTtl = run.ostrom.server.kernel.auth.DaemonPresence.ONLINE_TTL
-    }
-
-    private companion object {
         const val CONVERSATION = "0f3c2b1a-9d8e-4c7b-a6f5-e4d3c2b1a090"
     }
 }

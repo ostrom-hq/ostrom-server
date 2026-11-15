@@ -51,6 +51,9 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -60,8 +63,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 /**
  * The device daemon's routes against a real PostgreSQL (TeamCode's daemon route tests): the daemon of the caller's
@@ -234,6 +235,19 @@ class DeviceDaemonRoutesPostgresTest {
         assertTrue("Fix the tests" in daemons.answers.getValue(request))
     }
 
+    // The daemon's side of a listing: it polls until a member waits for one, then answers it.
+    private suspend fun daemonAnswers(http: HttpClient, page: DaemonListingAnswerRequest) {
+        while (true) {
+            val listing = http.poll("alice-laptop").body<DaemonPollResponse>().listings.firstOrNull()
+            if (listing != null) {
+                assertEquals(listOf("f1", 5), listOf(listing.folderId, listing.limit))
+                http.answer("alice-laptop", listing.requestId, page)
+                return
+            }
+            delay(50)
+        }
+    }
+
     @Test
     fun theOwnerListsAFoldersConversationsAndContinuesOne() = serverTest(listOf(RunnersModule), daemon) { server ->
         val http = server.client
@@ -244,14 +258,8 @@ class DeviceDaemonRoutesPostgresTest {
             next = "2026-10-30T09:00:00Z",
         )
         val daemonSide = launch {
-            while (true) {
-                val listing = http.poll("alice-laptop").body<DaemonPollResponse>().listings.firstOrNull()
-                if (listing != null) {
-                    assertEquals(listOf("f1", 5), listOf(listing.folderId, listing.limit))
-                    http.answer("alice-laptop", listing.requestId, page)
-                    break
-                }
-                delay(50)
+            withTimeout(15.seconds) {
+                daemonAnswers(http, page)
             }
         }
         val listed = http.get("/api/v1/devices/$LAPTOP/folders/f1/resumable?limit=5") { bearerAuth("alice") }
@@ -263,6 +271,10 @@ class DeviceDaemonRoutesPostgresTest {
         assertEquals("2026-10-30T09:00:00Z", body.next)
         http.get("/api/v1/devices/$LAPTOP/folders/f1/resumable?limit=many") { bearerAuth("alice") }
             .assertRefused(HttpStatusCode.BadRequest, "invalid_limit")
+        http.get("/api/v1/devices/$LAPTOP/folders/f1/resumable?limit=51") { bearerAuth("alice") }
+            .assertRefused(HttpStatusCode.BadRequest, "invalid_limit")
+        http.get("/api/v1/devices/$LAPTOP/folders/f1/resumable?before=yesterday") { bearerAuth("alice") }
+            .assertRefused(HttpStatusCode.BadRequest, "invalid_cursor")
         http.get("/api/v1/devices/$LAPTOP/folders/a.b/resumable") { bearerAuth("alice") }
             .assertRefused(HttpStatusCode.UnprocessableEntity, "folder_not_published")
         http.get("/api/v1/devices/laptop/folders/f1/resumable") { bearerAuth("alice") }

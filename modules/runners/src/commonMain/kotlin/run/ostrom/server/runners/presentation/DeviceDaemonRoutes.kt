@@ -123,8 +123,10 @@ private fun Route.ownerRoutes(dependencies: DeviceDaemonRoutesDependencies) = wi
         val folderId = params.folderId.takeIf(DeviceDaemonRules::validFolderId)
             ?: throw DeviceDaemonRules.folderNotPublished("This device")
         val limit = params.limit?.let {
-            it.toIntOrNull()
-                ?: throw RemoteSessionRules.invalid("invalid_limit", "Use a limit from 1 to $MAX_LISTING_LIMIT.")
+            it.toIntOrNull() ?: throw RemoteSessionRules.invalid(
+                "invalid_limit",
+                "Use a limit from 1 to ${DeviceDaemonRules.MAX_LISTING_LIMIT}.",
+            )
         } ?: DeviceDaemonRules.DEFAULT_LISTING_LIMIT
         val answer = daemon.resumable(principal, id, folderId, limit, params.before)
         call.respond(
@@ -135,8 +137,6 @@ private fun Route.ownerRoutes(dependencies: DeviceDaemonRoutesDependencies) = wi
         )
     }
 }
-
-private const val MAX_LISTING_LIMIT = DeviceDaemonRules.MAX_LISTING_LIMIT
 
 private fun DaemonOrder.toDto() = DaemonOrderDto(
     sessionId = sessionId.toString(),
