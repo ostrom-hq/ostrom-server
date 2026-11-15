@@ -35,6 +35,7 @@ import run.ostrom.server.identity.domain.VerifiedIdentity
 import run.ostrom.server.instance.InstanceModule
 import run.ostrom.server.kernel.auth.ORG_HEADER
 import run.ostrom.server.kernel.auth.OrgRole
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.kernel.http.OstromJson
 import run.ostrom.server.launches.LaunchesModule
@@ -55,19 +56,24 @@ import run.ostrom.server.runners.domain.SessionLimits
 import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.sessions.SessionsModule
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.workflowruns.domain.repositories.RunAudience
 import run.ostrom.server.workflowruns.domain.repositories.RunQuery
 import run.ostrom.server.workflowruns.domain.repositories.WorkflowRunsRepository
 import run.ostrom.server.workflowruns.domain.services.RunSessions
-import run.ostrom.server.workflowruns.infrastructure.RunQueries
+import run.ostrom.server.workflowruns.infrastructure.WorkflowRunsChecks
+import run.ostrom.server.workflowruns.infrastructure.attestedChecks
+import run.ostrom.server.workflowruns.infrastructure.checksPage
+import run.ostrom.server.workflowruns.infrastructure.firstNotification
+import run.ostrom.server.workflowruns.infrastructure.holds
+import run.ostrom.server.workflowruns.infrastructure.notificationsPage
 import run.ostrom.server.workflowruns.infrastructure.RunsGateCheckProofs
 import run.ostrom.server.workflowruns.presentation.BUNDLE_FORMAT
 import run.ostrom.server.workflowruns.presentation.ChecksPage
 import run.ostrom.server.workflowruns.presentation.NotificationsPage
 import run.ostrom.server.workflowruns.presentation.WorkflowReceiptResponse
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -79,6 +85,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import org.jetbrains.exposed.v1.jdbc.Query
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -601,6 +608,7 @@ class WorkflowRunsPostgresTest {
         }
 
     @Test
+    @Suppress("LongMethod") // One table of every read's plan.
     fun theRequestPathQueriesUseTheirIndexes() =
         serverTest(modules) { server ->
             val ada = server.person("ada")
@@ -628,43 +636,51 @@ class WorkflowRunsPostgresTest {
             // Statistics only: the serving role owns no table, the owner analyzes them.
             server.database.owner.execute("ANALYZE workflow_runs_checks").getOrThrow()
             server.database.owner.execute("ANALYZE workflow_runs_notifications").getOrThrow()
-            val plans = listOf(
-                Triple("checks of a session", RunQueries.checks(RunQuery(sessionId = "s-1")), "session"),
-                Triple("checks of a node", RunQueries.checks(RunQuery(nodeId = "n-check")), "workflow_runs_checks_"),
-                Triple("checks of the organization", RunQueries.checks(RunQuery()), "at"),
-                Triple("checks before a cursor", RunQueries.checks(RunQuery(before = "chk_x")), "pkey"),
-                Triple("notifications of a session", RunQueries.notifications(RunQuery(sessionId = "s-1")), "session"),
-                Triple("notifications of the organization", RunQueries.notifications(RunQuery()), "at"),
+            val org = ada.org.id
+            val plans = listOf<Triple<String, () -> Query, String>>(
+                Triple("checks of a session", { checksPage(org, RunQuery(sessionId = "s-1")).query }, "session"),
+                Triple(
+                    "checks of a node",
+                    { checksPage(org, RunQuery(nodeId = "n-check")).query },
+                    "workflow_runs_checks_",
+                ),
+                Triple("checks of the organization", { checksPage(org, RunQuery()).query }, "at"),
+                Triple("checks before a cursor", { checksPage(org, RunQuery(before = "chk_x")).query }, "pkey"),
+                Triple(
+                    "notifications of a session",
+                    { notificationsPage(org, RunQuery(sessionId = "s-1")).query },
+                    "session",
+                ),
+                Triple("notifications of the organization", { notificationsPage(org, RunQuery()).query }, "at"),
                 Triple(
                     "notifications by status",
-                    RunQueries.notifications(RunQuery(status = NotificationStatus.SENT)),
+                    { notificationsPage(org, RunQuery(status = NotificationStatus.SENT)).query },
                     "workflow_runs_notifications_",
                 ),
-                Triple("an action's first notification", RunQueries.FIRST_NOTIFICATION, "once"),
+                Triple(
+                    "an action's first notification",
+                    { firstNotification(org, "s-1", "nt-1", "k").query },
+                    "once",
+                ),
                 // TeamCode #238: a member's own (`dev`), and those of the sessions whose gates they approve.
-                Triple("checks of a member", RunQueries.checks(RunQuery(audience = member)), "dev"),
-                Triple("notifications of a member", RunQueries.notifications(RunQuery(audience = member)), "dev"),
-                Triple("a member's cursor", RunQueries.holds("workflow_runs_checks", member), "pkey"),
-                Triple("the attested runs of a session", RunQueries.ATTESTED, "session"),
+                Triple("checks of a member", { checksPage(org, RunQuery(audience = member)).query }, "dev"),
+                Triple(
+                    "notifications of a member",
+                    { notificationsPage(org, RunQuery(audience = member)).query },
+                    "dev",
+                ),
+                Triple("a member's cursor", { holds(WorkflowRunsChecks, org, "chk_x", member) }, "pkey"),
+                Triple("the attested runs of a session", { attestedChecks(org, "s-1").query }, "session"),
             )
-            plans.forEach { (name, sql, index) ->
-                val plan = server.driver.withOrganization(ada.org.id) { tx ->
-                    tx.execute("SET LOCAL enable_seqscan = off").getOrThrow()
-                    val explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org_id", ada.org.id)
-                        .bindIfPresent(sql, "limit", PAGE).bindIfPresent(sql, "session_id", "s-1")
-                        .bindIfPresent(sql, "before", "chk_x").bindIfPresent(sql, "notify_id", "nt-1")
-                        .bindIfPresent(sql, "action_key", "k").bindIfPresent(sql, "node_id", "n-check")
-                        .bindIfPresent(sql, "status", "sent").bindIfPresent(sql, "dev", "ada")
-                        .bindIfPresent(sql, "sessions", """["s-1", "s-2"]""").bindIfPresent(sql, "id", "chk_x")
-                    tx.fetchAll(explain).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
+            plans.forEach { (name, query, index) ->
+                val plan = server.koin.get<JdbcDatabase>().withOrganization(org) {
+                    exec("SET LOCAL enable_seqscan = off")
+                    plan { query() }.also { rollback() }
                 }
                 println("-- $name\n$plan")
                 assertTrue("Index" in plan && index in plan, "$name\n$plan")
             }
         }
-
-    private fun Statement.bindIfPresent(sql: String, name: String, value: Any): Statement =
-        if (":$name" in sql) bind(name, value) else this
 
     private fun notification(id: String, sessionId: String? = "s-1") = Notification(
         id = id,

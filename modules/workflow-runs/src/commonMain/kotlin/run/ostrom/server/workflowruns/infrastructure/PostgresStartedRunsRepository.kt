@@ -3,7 +3,12 @@ package run.ostrom.server.workflowruns.infrastructure
 
 import run.ostrom.core.api.models.WorkflowRun
 import run.ostrom.server.identity.infrastructure.TransactionalAuditLog
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.Read
+import run.ostrom.server.kernel.database.lockUntilCommit
+import run.ostrom.server.kernel.database.rowBefore
 import run.ostrom.server.kernel.database.withOrganization
+import run.ostrom.server.kernel.database.write
 import run.ostrom.server.kernel.http.OstromJson
 import run.ostrom.server.workflowruns.domain.models.RunAudit
 import run.ostrom.server.workflowruns.domain.models.RunGraph
@@ -11,33 +16,37 @@ import run.ostrom.server.workflowruns.domain.repositories.KeyedAdd
 import run.ostrom.server.workflowruns.domain.repositories.KeyedRunsRepository
 import run.ostrom.server.workflowruns.domain.repositories.RunsQuery
 import run.ostrom.server.workflowruns.domain.repositories.StartedRunsRepository
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
+import org.jetbrains.exposed.v1.core.Op
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.isNull
+import org.jetbrains.exposed.v1.core.statements.StatementBuilder
+import org.jetbrains.exposed.v1.core.statements.UpdateBuilder
+import org.jetbrains.exposed.v1.jdbc.Query
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.upsertReturning
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
  * [StartedRunsRepository] and [KeyedRunsRepository] on PostgreSQL (`workflow_runs_started`,
  * [WorkflowRunsMigrations]), every query in a transaction scoped to one organization by `ostrom.org_id`, which row
- * level security enforces.
+ * level security enforces. The audit line of a start is appended in the transaction that stores the run
+ * ([withOrganizationRecording]).
  *
- * @param driver The connection pool.
+ * @param database The serving role's pool.
  * @param audit The organization's signed audit log, written in the transaction that starts a run.
  */
 class PostgresStartedRunsRepository(
-    private val driver: Driver,
+    private val database: JdbcDatabase,
     private val audit: TransactionalAuditLog,
 ) : StartedRunsRepository, KeyedRunsRepository {
     override suspend fun add(orgId: Uuid, run: WorkflowRun, startedAt: Instant, graph: RunGraph, audit: RunAudit) {
-        driver.withOrganization(orgId) { tx ->
-            tx.execute(
-                Statement.create(StartedRunQueries.INSERT).bind("org_id", orgId).bind("id", run.id)
-                    .bind("workflow_id", run.workflowId).bind("status", run.status.value)
-                    .bind("started_at", startedAt).bind("due_at", startedAt)
-                    .bind("body", OstromJson.encodeToString(WorkflowRun.serializer(), run))
-                    .bind("graph", OstromJson.encodeToString(RunGraph.serializer(), graph)),
-            ).getOrThrow()
-            this.audit.recordRun(tx, orgId, run.id, audit)
+        database.withOrganizationRecording(this.audit, orgId, run.id, listOf(audit)) { record ->
+            write { insertRun(orgId, run, startedAt, graph) }
+            record()
         }
     }
 
@@ -49,141 +58,121 @@ class PostgresStartedRunsRepository(
         audit: RunAudit,
         key: String?,
         maxUnfinished: Int,
-    ): KeyedAdd = driver.withOrganization(orgId) { tx ->
+    ): KeyedAdd = database.withOrganizationRecording(this.audit, orgId, run.id, listOf(audit)) { record ->
         // One starter's starts wait for each other: the look-up, the count and the insert decide together.
-        tx.fetchAll(
-            Statement.create(StartedRunQueries.LOCK_STARTER).bind("key", "workflow-runs:$orgId:${run.startedBy}"),
-        ).getOrThrow()
-        val existing = if (key == null) {
-            null
-        } else {
-            tx.fetchAll(
-                Statement.create(StartedRunQueries.KEYED).bind("org_id", orgId).bind("started_by", run.startedBy)
-                    .bind("key", key),
-            ).getOrThrow().firstOrNull()
-        }
-        val unfinished = tx.fetchAll(
-            Statement.create(StartedRunQueries.UNFINISHED).bind("org_id", orgId).bind("started_by", run.startedBy)
-                .bind("limit", maxUnfinished),
-        ).getOrThrow().size
+        lockUntilCommit("workflow-runs:$orgId:${run.startedBy}")
+        val existing = key?.let { keyedRun(orgId, run.startedBy, it).firstOrNull() }
+        val unfinished = unfinishedRuns(orgId, run.startedBy, maxUnfinished).toList().size
         when {
-            existing != null -> KeyedAdd.Existing(
-                OstromJson.decodeFromString(WorkflowRun.serializer(), existing.get("body").asString()),
-            )
+            existing != null -> KeyedAdd.Existing(existing)
             unfinished >= maxUnfinished -> KeyedAdd.AtLimit
             else -> {
-                val insert = if (key == null) {
-                    Statement.create(StartedRunQueries.INSERT)
-                } else {
-                    Statement.create(StartedRunQueries.INSERT_KEYED).bind("key", key)
-                }
-                tx.execute(
-                    insert.bind("org_id", orgId).bind("id", run.id)
-                        .bind("workflow_id", run.workflowId).bind("status", run.status.value)
-                        .bind("started_at", startedAt).bind("due_at", startedAt)
-                        .bind("body", OstromJson.encodeToString(WorkflowRun.serializer(), run))
-                        .bind("graph", OstromJson.encodeToString(RunGraph.serializer(), graph)),
-                ).getOrThrow()
-                this.audit.recordRun(tx, orgId, run.id, audit)
+                write { insertRun(orgId, run, startedAt, graph, key) }
+                record()
                 KeyedAdd.Added(run)
             }
         }
     }
 
     override suspend fun addChild(orgId: Uuid, child: WorkflowRun, seq: Int, graph: RunGraph, audit: RunAudit): String =
-        driver.withOrganization(orgId) { tx ->
-            val startedAt = Instant.parse(child.startedAt)
-            val stored = tx.fetchAll(
-                Statement.create(StartedRunQueries.INSERT_CHILD).bind("org_id", orgId).bind("id", child.id)
-                    .bind("workflow_id", child.workflowId).bind("status", child.status.value)
-                    .bind("started_at", startedAt).bind("due_at", startedAt)
-                    .bind("body", OstromJson.encodeToString(WorkflowRun.serializer(), child))
-                    .bind("graph", OstromJson.encodeToString(RunGraph.serializer(), graph))
-                    .bind("parent_run_id", "${child.parentRunId}").bind("parent_seq", seq),
-            ).getOrThrow().firstOrNull() != null
-            if (stored) this.audit.recordRun(tx, orgId, child.id, audit)
-            tx.fetchAll(
-                Statement.create(StartedRunQueries.CHILD).bind("org_id", orgId)
-                    .bind("parent_run_id", "${child.parentRunId}").bind("parent_seq", seq),
-            ).getOrThrow().first().get("id").asString()
+        database.withOrganizationRecording(this.audit, orgId, child.id, listOf(audit)) { record ->
+            val parent = "${child.parentRunId}"
+            // A second start of the same visit stores nothing and returns no row: `ON CONFLICT (org_id, parent_run_id,
+            // parent_seq) DO UPDATE … WHERE FALSE`, the sqlx4k `DO NOTHING` on that target alone.
+            val stored = R.upsertReturning(
+                R.orgId, R.parentRunId, R.parentSeq,
+                returning = listOf(R.id),
+                onUpdate = { it[R.id] = R.id },
+                where = { Op.FALSE },
+            ) {
+                it.startedRow(orgId, child, Instant.parse(child.startedAt), graph)
+                it[parentRunId] = parent
+                it[parentSeq] = seq
+            }.any()
+            // The head moved: the transaction is rolled back and this result dropped, the start runs again.
+            if (stored && !record()) return@withOrganizationRecording ""
+            childOf(orgId, parent, seq).single()
         }
 
-    override suspend fun find(orgId: Uuid, id: String): WorkflowRun? = driver.withOrganization(orgId) { tx ->
-        tx.fetchAll(Statement.create(StartedRunQueries.FIND).bind("org_id", orgId).bind("id", id)).getOrThrow()
-            .firstOrNull()?.let { OstromJson.decodeFromString(WorkflowRun.serializer(), it.get("body").asString()) }
+    override suspend fun find(orgId: Uuid, id: String): WorkflowRun? = database.withOrganization(orgId) {
+        findRun(orgId, id).singleOrNull()
     }
 
-    override suspend fun runs(orgId: Uuid, query: RunsQuery): List<WorkflowRun> = driver.withOrganization(orgId) { tx ->
-        var statement = Statement.create(StartedRunQueries.page(query)).bind("org_id", orgId).bind("limit", query.limit)
-        query.workflowId?.let { statement = statement.bind("workflow_id", it) }
-        query.startedBy?.let { statement = statement.bind("started_by", it) }
-        query.status?.let { statement = statement.bind("status", it.value) }
-        query.before?.let { statement = statement.bind("before", it) }
-        tx.fetchAll(statement).getOrThrow().map {
-            OstromJson.decodeFromString(WorkflowRun.serializer(), it.get("body").asString())
-        }
+    override suspend fun runs(orgId: Uuid, query: RunsQuery): List<WorkflowRun> = database.withOrganization(orgId) {
+        runsPage(orgId, query).rows()
     }
 }
 
-/** The SQL of [PostgresStartedRunsRepository], also read by the query plans test. */
-object StartedRunQueries {
-    /** Stores a run, due at once for the engine. */
-    const val INSERT: String =
-        "INSERT INTO workflow_runs_started (org_id, id, workflow_id, status, started_at, body, graph, next_step_at) " +
-            "VALUES (:org_id, :id, :workflow_id, :status, :started_at, CAST(:body AS JSONB), CAST(:graph AS JSONB), " +
-            ":due_at)"
+private val R = WorkflowRunsStarted
 
-    /** Stores a child run unless its parent's visit already has one: a row back when stored. */
-    const val INSERT_CHILD: String =
-        "INSERT INTO workflow_runs_started (org_id, id, workflow_id, status, started_at, body, graph, next_step_at, " +
-            "parent_run_id, parent_seq) VALUES (:org_id, :id, :workflow_id, :status, :started_at, " +
-            "CAST(:body AS JSONB), CAST(:graph AS JSONB), :due_at, :parent_run_id, :parent_seq) " +
-            "ON CONFLICT (org_id, parent_run_id, parent_seq) DO NOTHING RETURNING id"
+private fun decode(body: String): WorkflowRun = OstromJson.decodeFromString(WorkflowRun.serializer(), body)
 
-    /** Holds one starter's keyed starts until the transaction ends. */
-    const val LOCK_STARTER: String = "SELECT pg_advisory_xact_lock(hashtext(:key))"
-
-    /** The run a starter started under a key (on `workflow_runs_started_key`). */
-    const val KEYED: String =
-        "SELECT body FROM workflow_runs_started WHERE org_id = :org_id AND started_by = :started_by " +
-            "AND idempotency_key = :key"
-
-    /** A starter's unfinished runs, child runs aside, up to the cap (on `workflow_runs_started_unfinished`). */
-    const val UNFINISHED: String =
-        "SELECT id FROM workflow_runs_started WHERE org_id = :org_id AND started_by = :started_by " +
-            "AND status IN ('queued', 'running', 'waiting') AND parent_run_id IS NULL LIMIT :limit"
-
-    /** Stores a run started under a key, due at once for the engine. */
-    const val INSERT_KEYED: String =
-        "INSERT INTO workflow_runs_started (org_id, id, workflow_id, status, started_at, body, graph, next_step_at, " +
-            "idempotency_key) VALUES (:org_id, :id, :workflow_id, :status, :started_at, CAST(:body AS JSONB), " +
-            "CAST(:graph AS JSONB), :due_at, :key)"
-
-    /** The child run of a parent's visit. */
-    const val CHILD: String =
-        "SELECT id FROM workflow_runs_started WHERE org_id = :org_id AND parent_run_id = :parent_run_id " +
-            "AND parent_seq = :parent_seq"
-
-    /** One run. */
-    const val FIND: String = "SELECT body FROM workflow_runs_started WHERE org_id = :org_id AND id = :id"
-
-    /**
-     * A page of runs, newest first.
-     *
-     * @param query Which filters are bound.
-     * @return The SQL.
-     */
-    fun page(query: RunsQuery): String {
-        val cursor = "(started_at, id) < " +
-            "(SELECT started_at, id FROM workflow_runs_started WHERE org_id = :org_id AND id = :before)"
-        val where = listOfNotNull(
-            "org_id = :org_id",
-            "workflow_id = :workflow_id".takeIf { query.workflowId != null },
-            "started_by = :started_by".takeIf { query.startedBy != null },
-            "status = :status".takeIf { query.status != null },
-            cursor.takeIf { query.before != null },
-        )
-        return "SELECT body FROM workflow_runs_started WHERE ${where.joinToString(" AND ")} " +
-            "ORDER BY started_at DESC, id DESC LIMIT :limit"
-    }
+/** What every stored run sets: its key, its columns, its body and graph, due at once for the engine. */
+private fun UpdateBuilder<*>.startedRow(orgId: Uuid, run: WorkflowRun, startedAt: Instant, graph: RunGraph) {
+    this[R.orgId] = orgId
+    this[R.id] = run.id
+    this[R.workflowId] = run.workflowId
+    this[R.status] = run.status.value
+    this[R.startedAt] = startedAt
+    this[R.body] = jsonbOf(OstromJson.encodeToString(WorkflowRun.serializer(), run))
+    this[R.graph] = jsonbOf(OstromJson.encodeToString(RunGraph.serializer(), graph))
+    this[R.nextStepAt] = startedAt
 }
+
+/** Stores a run, due at once for the engine, under [key] when it starts under one. */
+internal fun StatementBuilder.insertRun(
+    orgId: Uuid,
+    run: WorkflowRun,
+    startedAt: Instant,
+    graph: RunGraph,
+    key: String? = null,
+) = R.insert {
+    it.startedRow(orgId, run, startedAt, graph)
+    if (key != null) it[idempotencyKey] = key
+}
+
+/** The run a starter started under a key (on `workflow_runs_started_key`). */
+internal fun keyedRun(orgId: Uuid, startedBy: String, key: String): Read<WorkflowRun> = Read(
+    R.select(R.body).where { (R.orgId eq orgId) and (R.startedBy eq startedBy) and (R.idempotencyKey eq key) },
+) { decode(it[R.body]) }
+
+/** A starter's unfinished runs, child runs aside, up to the cap (on `workflow_runs_started_unfinished`). */
+internal fun unfinishedRuns(orgId: Uuid, startedBy: String, limit: Int): Query = R.select(R.id).where {
+    (R.orgId eq orgId) and (R.startedBy eq startedBy) and (R.status inList UNFINISHED) and R.parentRunId.isNull()
+}.limit(limit)
+
+/** The child run of a parent's visit. */
+internal fun childOf(orgId: Uuid, parentRunId: String, parentSeq: Int): Read<String> = Read(
+    R.select(R.id).where { (R.orgId eq orgId) and (R.parentRunId eq parentRunId) and (R.parentSeq eq parentSeq) },
+) { it[R.id] }
+
+/** One run. */
+internal fun findRun(orgId: Uuid, id: String): Read<WorkflowRun> =
+    Read(R.select(R.body).where { (R.orgId eq orgId) and (R.id eq id) }) { decode(it[R.body]) }
+
+/**
+ * A page of runs, newest first.
+ *
+ * @param orgId The organization.
+ * @param query Which filters apply.
+ *
+ * @return The read.
+ */
+internal fun runsPage(orgId: Uuid, query: RunsQuery): Read<WorkflowRun> {
+    val filters = listOfNotNull(
+        R.orgId eq orgId,
+        query.workflowId?.let { R.workflowId eq it },
+        query.startedBy?.let { R.startedBy eq it },
+        query.status?.let { R.status eq it.value },
+        query.before?.let { before ->
+            val cursor = R.select(R.startedAt, R.id).where { (R.orgId eq orgId) and (R.id eq before) }
+            rowBefore(listOf(R.startedAt, R.id), cursor)
+        },
+    )
+    return Read(
+        R.select(R.body).where { filters.reduce { all, next -> all and next } }
+            .orderBy(R.startedAt to SortOrder.DESC, R.id to SortOrder.DESC).limit(query.limit),
+    ) { decode(it[R.body]) }
+}
+
+private val UNFINISHED = listOf("queued", "running", "waiting")

@@ -34,6 +34,7 @@ import run.ostrom.server.identity.domain.VerifiedIdentity
 import run.ostrom.server.instance.InstanceModule
 import run.ostrom.server.kernel.auth.OrgPrincipal
 import run.ostrom.server.kernel.auth.OrgRole
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.kernel.http.OstromJson
 import run.ostrom.server.launches.LaunchesModule
@@ -57,6 +58,7 @@ import run.ostrom.server.runners.domain.FreeCloudPlanProvider
 import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.sessions.SessionsModule
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.workflowruns.domain.engine.PlayRunUseCaseImpl
 import run.ostrom.server.workflowruns.domain.engine.RunMoves
@@ -74,8 +76,7 @@ import run.ostrom.server.workflowruns.domain.services.RunGates
 import run.ostrom.server.workflowruns.domain.services.StepSessions
 import run.ostrom.server.workflowruns.fakes.FixedClock
 import run.ostrom.server.workflowruns.infrastructure.CloudRunAgents
-import run.ostrom.server.workflowruns.infrastructure.EngineQueries
-import io.github.smyrgeorge.sqlx4k.Statement
+import run.ostrom.server.workflowruns.infrastructure.runOfSession
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -656,11 +657,9 @@ class RunEnginePostgresTest {
         val nothing = server.call(ada.token, SESSION_DELIVER, """{"sessionId":"$own","output":"$pr"}""")
         assertEquals(HttpStatusCode.Conflict, nothing.status, nothing.bodyAsText())
         // The run of a session is found through the visits' session index.
-        val plan = server.driver.withOrganization(ada.org.id) { tx ->
-            tx.execute("SET LOCAL enable_seqscan = off").getOrThrow()
-            val explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) ${EngineQueries.OF_SESSION}")
-                .bind("org_id", ada.org.id).bind("session_id", session)
-            tx.fetchAll(explain).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
+        val plan = server.koin.get<JdbcDatabase>().withOrganization(ada.org.id) {
+            exec("SET LOCAL enable_seqscan = off")
+            plan { runOfSession(ada.org.id, session).query }.also { rollback() }
         }
         println("-- run of a session\n$plan")
         assertTrue("workflow_runs_visits_session" in plan, plan)

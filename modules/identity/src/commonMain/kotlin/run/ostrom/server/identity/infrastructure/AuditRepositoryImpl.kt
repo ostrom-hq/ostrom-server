@@ -206,11 +206,8 @@ internal class OrgAuditPage(private val orgId: Uuid, private val filters: OrgAud
         row.getOrNull(priorHash).takeIf { row.getOrNull(priorSequence) == row[page[t.sequence]] - 1 }
 }
 
-/** The last event of a chain: what the next one is chained to. */
-private class Head(val sequence: Long, val hash: String)
-
 /** The head of [chain], null while it is empty; [orgId] is the chain's organization, null for the account's. */
-private fun JdbcTransaction.headOf(chain: String, orgId: Uuid?): Head? {
+internal fun JdbcTransaction.headOf(chain: String, orgId: Uuid?): AuditHead? {
     val t = IdentityAuditEvents
     val ofChain = if (orgId == null) t.orgId.isNull() else t.orgId eq orgId
     return t.select(t.sequence, t.hash)
@@ -218,7 +215,7 @@ private fun JdbcTransaction.headOf(chain: String, orgId: Uuid?): Head? {
         .orderBy(t.sequence, SortOrder.DESC)
         .limit(1)
         .singleOrNull()
-        ?.let { Head(it[t.sequence], it[t.hash]) }
+        ?.let { AuditHead(it[t.sequence], it[t.hash]) }
 }
 
 /**
@@ -233,12 +230,18 @@ private fun JdbcTransaction.headOf(chain: String, orgId: Uuid?): Head? {
  *
  * @return The chain's head after this transaction: [event] if it was appended, else the head it was not chained to.
  */
-private fun JdbcTransaction.appendOnHead(chain: String, orgId: Uuid?, event: AuditEvent): Head {
-    val t = IdentityAuditEvents
+private fun JdbcTransaction.appendOnHead(chain: String, orgId: Uuid?, event: AuditEvent): AuditHead {
     lockUntilCommit(chain)
     val head = headOf(chain, orgId)
     // The hash of an event covers its sequence: chained to the head's hash, it is the head's next.
     if (head != null && head.hash != event.previousHash) return head
+    insertEvent(chain, event)
+    return AuditHead(event.sequence, event.hash)
+}
+
+/** Inserts [event] into [chain], which the caller holds the lock of. */
+internal fun JdbcTransaction.insertEvent(chain: String, event: AuditEvent) {
+    val t = IdentityAuditEvents
     t.insert {
         it[id] = event.id
         it[this.chain] = chain
@@ -255,7 +258,6 @@ private fun JdbcTransaction.appendOnHead(chain: String, orgId: Uuid?, event: Aud
         it[signature] = event.signature
         it[keyId] = event.keyId
     }
-    return Head(event.sequence, event.hash)
 }
 
 /**
