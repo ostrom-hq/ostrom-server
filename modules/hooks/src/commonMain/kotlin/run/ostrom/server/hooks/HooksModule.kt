@@ -11,9 +11,11 @@ import run.ostrom.server.hooks.domain.PublishHookVersionUseCase
 import run.ostrom.server.hooks.domain.PublishHookVersionUseCaseImpl
 import run.ostrom.server.hooks.infrastructure.HooksMigrations
 import run.ostrom.server.hooks.infrastructure.HooksRepositoryImpl
+import run.ostrom.server.hooks.presentation.hooksOperations
 import run.ostrom.server.hooks.presentation.HooksRoutesDependencies
 import run.ostrom.server.hooks.presentation.hooksRoutes
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.runners.infrastructure.RunnersConfig
 import run.ostrom.server.skills.infrastructure.JdkSha256
@@ -31,6 +33,8 @@ import org.koin.dsl.module
  */
 object HooksModule : ServerModule {
     override val name: String = "hooks"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { hooksOperations() }
 
     override val koinModule: Module = module {
         single<HooksRepository> { HooksRepositoryImpl(get()) }

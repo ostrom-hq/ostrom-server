@@ -21,6 +21,7 @@ import run.ostrom.server.rules.fakes.call
 import run.ostrom.server.rules.presentation.BulkRulesRequest
 import run.ostrom.server.rules.presentation.NewRuleRequest
 import run.ostrom.server.rules.presentation.RuleDto
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import io.ktor.client.call.body
@@ -59,6 +60,11 @@ class RulesAuditPostgresTest {
 
     private suspend fun TestServer.lines(orgId: Uuid): List<AuditEvent> =
         koin.get<AuditRepository>().listOrg(orgId, OrgAuditQuery()).map { it.event }.reversed()
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(modules, overrides) { server ->
+        server.assertApiCatalogue(RulesModule)
+    }
 
     @Test
     fun everyRuleChangeAndAnalysisLeavesASignedLineInItsAuthorsNameInItsOwnOrganization() =

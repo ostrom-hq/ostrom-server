@@ -44,6 +44,7 @@ import run.ostrom.server.orgs.presentation.OrgsResponse
 import run.ostrom.server.orgs.presentation.TransferRequest
 import run.ostrom.server.orgs.presentation.UpdateMemberRequest
 import run.ostrom.server.orgs.presentation.UpdateOrgRequest
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import io.ktor.client.call.body
@@ -134,6 +135,11 @@ class OrgsRoutesPostgresTest {
         )
         koin.get<ApiTokensRepository>().create(row, koin.get<SecretHasher>().hash(secret))
         return secret
+    }
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(modules, overrides) { server ->
+        server.assertApiCatalogue(OrgsModule)
     }
 
     @Test
