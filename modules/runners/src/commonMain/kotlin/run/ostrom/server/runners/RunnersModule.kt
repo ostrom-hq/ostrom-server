@@ -44,6 +44,8 @@ import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.runners.domain.AllowlistedCloudPlanProvider
 import run.ostrom.server.runners.domain.AuthenticateRunnerUseCase
 import run.ostrom.server.runners.domain.AuthenticateRunnerUseCaseImpl
+import run.ostrom.server.runners.domain.RunnerPrincipalResolver
+import run.ostrom.server.runners.domain.RunnerTokenPrincipalResolver
 import run.ostrom.server.runners.domain.ChangeCloudSessionUseCase
 import run.ostrom.server.runners.domain.ChangeCloudSessionUseCaseImpl
 import run.ostrom.server.runners.domain.NoPendingWaitAnswers
@@ -61,6 +63,12 @@ import run.ostrom.server.runners.infrastructure.CloudConversationMaintenance
 import run.ostrom.server.runners.infrastructure.CloudConversationStoreImpl
 import run.ostrom.server.runners.presentation.CloudConversationRoutesDependencies
 import run.ostrom.server.runners.presentation.cloudConversationRoutes
+import run.ostrom.server.runners.domain.RunnerConversationStore
+import run.ostrom.server.runners.domain.RunnerConversationUseCase
+import run.ostrom.server.runners.domain.RunnerConversationUseCaseImpl
+import run.ostrom.server.runners.infrastructure.RunnerConversationStoreImpl
+import run.ostrom.server.runners.presentation.RunnerConversationRoutesDependencies
+import run.ostrom.server.runners.presentation.runnerConversationRoutes
 import run.ostrom.server.kernel.database.scheduledWork
 import run.ostrom.server.runners.domain.CloudUsageMeter
 import run.ostrom.server.runners.domain.CreateCloudSessionUseCase
@@ -298,6 +306,8 @@ object RunnersModule : ServerModule {
         }
         single { TerminalRelay() }
         single<TerminalTickets> { TerminalTicketsImpl(get(), get()) }
+        // Who a runner call's credential names; the remote sessions add a device owner's resolver to this list.
+        single<List<RunnerPrincipalResolver>> { listOf(RunnerTokenPrincipalResolver(get(), get())) }
         single<AuthenticateRunnerUseCase> { AuthenticateRunnerUseCaseImpl(get(), get()) }
         single<OpenTerminalUseCase> { OpenTerminalUseCaseImpl(get()) }
         single<IssueTerminalTicketUseCase> { IssueTerminalTicketUseCaseImpl(get(), get()) }
@@ -319,6 +329,12 @@ object RunnersModule : ServerModule {
         single<CloudConversationService> { CloudConversationServiceImpl(get(), get(), get(), get(), get()) }
         single { CloudConversationRoutesDependencies(get(), get()) }
         single { CloudConversationMaintenance(get(), get(), getOrNull<CloudRuntimeSource>(), get()) }
+        // The runner's side of the conversation: its agent, transcript upload and inputs.
+        single<RunnerConversationStore> { RunnerConversationStoreImpl(get(), get()) }
+        single<RunnerConversationUseCase> {
+            RunnerConversationUseCaseImpl(get(), get(), get(), getOrNull<MemberLogins>() ?: NoMemberLogins, get())
+        }
+        single { RunnerConversationRoutesDependencies(get(), get()) }
         single<AutomationLimits> { CloudSettingsAutomationLimits(getOrNull<CloudSettingsSource>()) }
     }
 
@@ -352,6 +368,7 @@ object RunnersModule : ServerModule {
         route.runnersRoutes(koin.get())
         route.terminalRoutes(koin.get())
         route.cloudConversationRoutes(koin.get())
+        route.runnerConversationRoutes(koin.get())
     }
 
     /**

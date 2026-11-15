@@ -7,6 +7,7 @@ import run.ostrom.server.runners.domain.CheckRunnerTokenUseCase
 import run.ostrom.server.runners.domain.CloudSession
 import run.ostrom.server.runners.domain.DesiredState
 import run.ostrom.server.runners.domain.ExecutionFencedException
+import run.ostrom.server.runners.domain.RunnerExecution
 import run.ostrom.server.runners.domain.RunnerUnauthenticatedException
 import run.ostrom.server.runners.domain.SessionLimits
 import run.ostrom.server.runners.domain.SessionState
@@ -48,8 +49,12 @@ fun Module.testRunners() {
     }
     single<AuthenticateRunnerUseCase> {
         object : AuthenticateRunnerUseCase {
-            override suspend fun invoke(token: String, sessionId: Uuid, epoch: Long): CloudSession {
-                val session = RUNNERS[token] ?: throw RunnerUnauthenticatedException()
+            override suspend fun resolve(credential: String): RunnerExecution =
+                RUNNERS[credential]?.let { RunnerExecution(it.orgId, it.id, it.epoch) }
+                    ?: throw ExecutionFencedException()
+
+            override suspend fun invoke(credential: String, sessionId: Uuid, epoch: Long): CloudSession {
+                val session = RUNNERS[credential] ?: throw RunnerUnauthenticatedException()
                 if (session.id != sessionId || session.epoch != epoch) throw ExecutionFencedException()
                 return session
             }
