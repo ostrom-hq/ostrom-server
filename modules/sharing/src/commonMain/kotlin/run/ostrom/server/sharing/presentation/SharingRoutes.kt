@@ -40,8 +40,8 @@ import kotlin.uuid.Uuid
 /**
  * The shared accounts routes: any member shares its own subscription and sees the pool (neutral labels for accounts
  * of others), admins and owners change and remove; people are named by login, as the contract names them. Reading
- * needs `accounts:read`, writing `accounts:write`; an agent's or a device's credential reaches none of them (S2-03,
- * S2-21), and no answer ever holds an account's tokens.
+ * needs `accounts:read`, writing `accounts:write`; an agent's or a device's credential reaches none of them, and the
+ * CLI token only reads, with `accounts:read` (S2-03, S2-21), and no answer ever holds an account's tokens.
  *
  * @param dependencies The use cases.
  */

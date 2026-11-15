@@ -113,10 +113,19 @@ val NEVER_ON_A_TOKEN: Set<String> = setOf(ANSWER_SCOPE, AGENT_SCOPE, WORKFLOW_SE
  *
  * `environment:read` reads the person's own environment values (`GET /api/v1/environment`), which `ostrom claude`
  * gives its agent, as TeamCode's `teamcode run` does: they are the person's own, as in their shell.
+ *
+ * Four reads for the capacity figures `ostrom status` and `ostrom agents hint|watch` show, as TeamCode's `teamcode
+ * status` and `teamcode agents hint|watch` do (TC-CAP-21, TC-CAP-24): [GUIDANCE_SCOPE] (the capacity advice for the
+ * person's sessions, and the claim and receipt that record its delivery), `budgets:read` (`GET /api/v1/budgets/me`,
+ * the person's own budget), `accounts:read` (the pool's accounts and its capacity, with the member's own visibility:
+ * a member sees neutral labels) and `inference:read` (the queue's counts). They are the person's own figures, read
+ * only, as in TeamCode's CLI; none of them writes governance. A CLI token issued before they joined this set does not
+ * hold them: `ostrom login` again.
  */
 val CLI_SCOPES: Set<String> = setOf(
     "profile:read", "orgs:read", "workflows:read", "sessions:write", "receipts:read", "gates:read", "mcp:read",
     "rules:read", "cloud:write", "environment:read", "skills:read", "skills:write", "hooks:read",
+    GUIDANCE_SCOPE, "budgets:read", "accounts:read", "inference:read",
 )
 
 /**
@@ -130,12 +139,13 @@ val ADMIN_SCOPES: Set<String> = GovernanceScopes.ALL
 val ADMIN_TOKEN_LIFETIME: Duration = 8.hours
 
 /**
- * The reads the token of `ostrom login --admin` makes to write the governance, which the device's token lacks: the
- * model policy `ostrom policy set models` reads before it writes it again (it keeps the default and the members'
- * lists). Reads, not governance scopes: a personal token keeps them, and `ostrom login --admin` does not ask for them
- * (the browser shows the writes it approves). Only a read of what this token writes belongs here: `inference:read`
- * opens `GET /api/v1/policy/models` alone (the inference settings take `inference:admin`), `accounts:read` the shared
- * accounts a handover names ([ADMIN_HANDOVER_SCOPE]).
+ * The reads the token of `ostrom login --admin` makes to write the governance: the model policy `ostrom policy set
+ * models` reads before it writes it again (it keeps the default and the members' lists). The ordinary CLI token holds
+ * them too now ([CLI_SCOPES], for the capacity figures), so the set adds nothing to [ADMIN_TOKEN_SCOPES] and stays as
+ * the statement of what the admin token reads. Reads, not governance scopes: a personal token keeps them, and `ostrom
+ * login --admin` does not ask for them (the browser shows the writes it approves). Only a read of what this token
+ * writes belongs here: `inference:read` opens `GET /api/v1/policy/models` alone (the inference settings take
+ * `inference:admin`), `accounts:read` the shared accounts a handover names ([ADMIN_HANDOVER_SCOPE]).
  */
 val ADMIN_READ_SCOPES: Set<String> = setOf("inference:read", "accounts:read")
 

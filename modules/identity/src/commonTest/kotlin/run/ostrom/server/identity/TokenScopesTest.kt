@@ -2,13 +2,17 @@
 
 package run.ostrom.server.identity
 
+import run.ostrom.server.identity.domain.ADMIN_SCOPES
 import run.ostrom.server.identity.domain.CLI_SCOPES
+import run.ostrom.server.identity.domain.GUIDANCE_SCOPE
 import run.ostrom.server.identity.domain.InvalidScopesException
 import run.ostrom.server.identity.domain.MAX_SCOPES
 import run.ostrom.server.identity.domain.NEVER_ON_A_TOKEN
 import run.ostrom.server.identity.domain.NOTIFICATIONS_WRITE_SCOPE
 import run.ostrom.server.identity.domain.PERSONAL_TOKEN_SCOPES
 import run.ostrom.server.identity.domain.PERSONAL_TOKEN_SCOPE_NAMES
+import run.ostrom.server.identity.domain.TokenKind
+import run.ostrom.server.identity.domain.grantedScopes
 import run.ostrom.server.identity.domain.validateScopes
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -63,6 +67,18 @@ class TokenScopesTest {
     @Test
     fun theCliTokenScopesAreInTheCatalogue() {
         assertTrue(PERSONAL_TOKEN_SCOPE_NAMES.containsAll(CLI_SCOPES))
+    }
+
+    @Test
+    fun theCliTokenReadsTheCapacityFiguresAndNothingThatGoverns() {
+        // `ostrom status` and `ostrom agents hint|watch` (TeamCode's teamcode status and agents hint|watch)
+        val capacity = setOf(GUIDANCE_SCOPE, "budgets:read", "accounts:read", "inference:read")
+        val granted = grantedScopes(TokenKind.CLI, CLI_SCOPES)
+        assertTrue(granted.containsAll(capacity), "$granted")
+        // still never a gate answer, an agent's scope, a governance write, a workflow write or the inference use
+        val forbidden = NEVER_ON_A_TOKEN + ADMIN_SCOPES + setOf("workflows:write", "inference:use", "inference:admin")
+        assertTrue((granted intersect forbidden).isEmpty(), "${granted intersect forbidden}")
+        assertTrue(grantedScopes(TokenKind.CLI, forbidden + capacity) == capacity)
     }
 
     @Test

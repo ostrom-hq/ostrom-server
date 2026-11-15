@@ -59,7 +59,8 @@ class PacingRoutesPostgresTest : GatewayHttpFixture() {
             assertEquals(HttpStatusCode.Unauthorized, client.get("/api/v1/policy/pacing").status)
             val read = client.get("/api/v1/policy/pacing") { bearerAuth("use-a") }
             assertEquals(PacingSettingsDto(observationOnly = false, autoPoolSize = false), read.body())
-            for (token in listOf("member-a", "use-a", "stale-admin-a")) {
+            // the CLI token reads the advice (`guidance`) but never changes the settings, even an administrator's
+            for (token in listOf("member-a", "use-a", "stale-admin-a", "cli-admin-a")) {
                 val refused = putJson("/api/v1/policy/pacing", token, PacingSettingsDto(true))
                 assertEquals(HttpStatusCode.Forbidden, refused.status, token)
             }

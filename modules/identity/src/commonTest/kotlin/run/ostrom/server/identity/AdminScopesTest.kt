@@ -44,9 +44,9 @@ class AdminScopesTest {
         // ostrom policy set models keeps the default and the members' lists: it reads the policy before writing it
         assertTrue("inference:read" in ADMIN_TOKEN_SCOPES, "$ADMIN_TOKEN_SCOPES")
         assertTrue("inference:read" in grantedScopes(TokenKind.ADMIN, ADMIN_TOKEN_SCOPES))
-        // a read, not a governance scope: a personal token still holds it, the device's token still does not
+        // a read, not a governance scope: a personal token holds it, and so does the device's token (capacity figures)
         assertEquals(setOf("inference:read"), grantedScopes(TokenKind.PERSONAL, setOf("inference:read")))
-        assertTrue("inference:read" !in grantedScopes(TokenKind.CLI, ADMIN_TOKEN_SCOPES))
+        assertTrue("inference:read" in grantedScopes(TokenKind.CLI, ADMIN_TOKEN_SCOPES))
         // reads only, which the browser does not show: never a write slipped in unseen
         assertTrue(ADMIN_READ_SCOPES.all { it.endsWith(":read") }, "$ADMIN_READ_SCOPES")
         assertTrue((ADMIN_READ_SCOPES intersect ADMIN_SCOPES).isEmpty())
@@ -57,9 +57,9 @@ class AdminScopesTest {
         // ostrom accounts handover finds the account by its name, then hands it over (TeamCode's accounts handover)
         val granted = grantedScopes(TokenKind.ADMIN, ADMIN_TOKEN_SCOPES)
         assertTrue(setOf("accounts:read", "accounts:write").all { it in granted }, "$granted")
-        // the device's token of a plain `ostrom login` never does
+        // the device's token of a plain `ostrom login` reads the accounts (capacity figures), never hands one over
         val cli = grantedScopes(TokenKind.CLI, ADMIN_TOKEN_SCOPES)
-        assertTrue("accounts:read" !in cli && "accounts:write" !in cli, "$cli")
+        assertTrue("accounts:read" in cli && "accounts:write" !in cli, "$cli")
         assertTrue(ADMIN_HANDOVER_SCOPE !in ADMIN_SCOPES, "Not a governance scope: the browser approves those")
     }
 
