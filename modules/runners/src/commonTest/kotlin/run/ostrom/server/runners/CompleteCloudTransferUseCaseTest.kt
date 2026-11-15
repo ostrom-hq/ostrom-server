@@ -10,6 +10,7 @@ import run.ostrom.server.runners.domain.CompleteCloudTransferUseCase
 import run.ostrom.server.runners.domain.DesiredState
 import run.ostrom.server.runners.domain.ExecutionStatus
 import run.ostrom.server.runners.domain.GitHubAccessMode
+import run.ostrom.server.runners.domain.PausedRetention
 import run.ostrom.server.runners.domain.ReconcileCloudSessionUseCaseImpl
 import run.ostrom.server.runners.domain.RepositoryCloudUsageMeter
 import run.ostrom.server.runners.domain.SessionState
@@ -27,9 +28,12 @@ import run.ostrom.server.runners.fakes.session
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.coroutines.cancellation.CancellationException
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
@@ -379,5 +383,79 @@ class CompleteCloudTransferUseCaseTest {
         val stranded = session(state = SessionState.TRANSFERRING, desired = DesiredState.PAUSED)
             .also(repository::put)
         assertEquals(t0 + 15.seconds, bare(stranded))
+    }
+
+    private fun reconciling(retention: PausedRetention) = ReconcileCloudSessionUseCaseImpl(
+        repository,
+        driver,
+        FakeRunnerTokens(),
+        FixedPlans(),
+        RepositoryCloudUsageMeter(repository),
+        clock,
+        transfers = CompleteCloudTransferUseCase(
+            repository,
+            transfers,
+            driver,
+            recipients,
+            OrgAuditTrail { audit += it },
+            clock,
+            retention,
+        ),
+        retention = retention,
+    ) { BackgroundWork.DEFAULT_MAX_MINUTES }
+
+    private fun expiredAndMoving(resume: Boolean = false): CloudSession {
+        val (paused, _) = moving(resume = resume)
+        // Past its expiry: without the transfer the next step would terminate it.
+        return paused.copy(pausedAt = t0 - 40.days, expiresAt = t0 - 1.days, expiryBackfill = true)
+            .also(repository::put)
+    }
+
+    @Test
+    fun aSessionPastItsExpiryIsNotTerminatedWhileAnAcceptedTransferHoldsItAndTheRecipientGetsTheFullRetention() =
+        runTest {
+            val paused = expiredAndMoving()
+            val use = reconciling { 7 }
+
+            use(paused)
+            assertEquals(SessionState.TRANSFERRING, stored(paused).state)
+            assertEquals(DesiredState.PAUSED, stored(paused).desiredState)
+            use(stored(paused))
+
+            val after = stored(paused)
+            assertEquals("bob", after.ownerId)
+            assertEquals(SessionState.PAUSED, after.state)
+            assertEquals(DesiredState.PAUSED, after.desiredState)
+            assertNull(after.terminatedReason)
+            assertEquals(t0 + 7.days, after.expiresAt)
+            assertEquals(t0, after.pausedAt)
+            assertFalse(after.expiryBackfill)
+        }
+
+    @Test
+    fun aRetentionThatCannotBeReadGivesTheRecipientTheFallbackAndACancellationPropagates() = runTest {
+        val paused = expiredAndMoving()
+        val use = reconciling { error("unreadable") }
+        use(paused)
+        use(stored(paused))
+        assertEquals(t0 + PausedRetention.FALLBACK_DAYS.days, stored(paused).expiresAt)
+
+        val (second, _) = moving()
+        val cancelled = reconciling { throw CancellationException("cancelled") }
+        cancelled(second)
+        assertFailsWith<CancellationException> { cancelled(stored(second)) }
+    }
+
+    @Test
+    fun aTransferThatResumesLeavesNoExpiry() = runTest {
+        val paused = expiredAndMoving(resume = true)
+        val use = reconciling { 7 }
+
+        use(paused)
+        use(stored(paused))
+
+        assertEquals(SessionState.RESUMING, stored(paused).state)
+        assertNull(stored(paused).expiresAt)
+        assertFalse(stored(paused).expiryBackfill)
     }
 }

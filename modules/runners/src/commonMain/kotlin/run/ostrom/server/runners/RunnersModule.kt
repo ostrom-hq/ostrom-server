@@ -8,6 +8,7 @@ import run.ostrom.server.runners.domain.BackfillSessionProfilesUseCase
 import run.ostrom.server.runners.domain.BackfillSessionProfilesUseCaseImpl
 import run.ostrom.server.runners.domain.CatalogSessionProfiles
 import run.ostrom.server.runners.domain.KeepPausedSessions
+import run.ostrom.server.runners.domain.PausedRetention
 import run.ostrom.server.runners.domain.NoSessionProfiles
 import run.ostrom.server.runners.domain.SessionProfiles
 import run.ostrom.server.runners.infrastructure.CloudKubernetesClusters
@@ -231,14 +232,16 @@ object RunnersModule : ServerModule {
         single<CheckRunnerTokenUseCase> { CheckRunnerTokenUseCaseImpl(get(), get()) }
         single<RunnerHeartbeatUseCase> { RunnerHeartbeatUseCaseImpl(get(), get(), get(), get()) }
         single<RecordCloudSessionActivityUseCase> { RecordCloudSessionActivityUseCaseImpl(get(), get()) }
+        // The console's paused retention, for every runtime; paused sessions are kept without the cloud module.
+        single<PausedRetention> {
+            getOrNull<CloudRuntimeSource>()?.let { CloudRuntimePausedRetention(it, get<Logger>()) } ?: KeepPausedSessions
+        }
         single<ReconcileCloudSessionUseCase> {
             // The organization's cloud settings when the cloud module is there (always on a full server).
             val limit = CloudSettingsBackgroundWorkLimit(getOrNull<CloudSettingsSource>())
             val ended = getAll<SessionEndListener>()
             val answers = getOrNull<PendingWaitAnswers>() ?: NoPendingWaitAnswers
-            // The console's paused retention, for every runtime; paused sessions are kept without the cloud module.
-            val retention = getOrNull<CloudRuntimeSource>()
-                ?.let { CloudRuntimePausedRetention(it, get<Logger>()) } ?: KeepPausedSessions
+            val retention = get<PausedRetention>()
             val transfers = get<TransferWiring>().complete
             ReconcileCloudSessionUseCaseImpl(
                 get(), get(), get(), get(), get(), get(), ended, get(), answers, transfers, retention, limit,
@@ -259,7 +262,15 @@ object RunnersModule : ServerModule {
                         CloudTransfersUseCaseImpl(get(), transfers, recipients, policy, get(), get()),
                         get(),
                     ),
-                    CompleteCloudTransferUseCase(get(), transfers, get(), recipients, get(), get()),
+                    CompleteCloudTransferUseCase(
+                        get(),
+                        transfers,
+                        get(),
+                        recipients,
+                        get(),
+                        get(),
+                        get<PausedRetention>(),
+                    ),
                 )
             }
         }

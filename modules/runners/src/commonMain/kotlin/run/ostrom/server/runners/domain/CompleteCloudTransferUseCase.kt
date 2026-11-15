@@ -6,8 +6,10 @@ import run.ostrom.server.kernel.audit.OrgAuditTrail
 import run.ostrom.server.kernel.audit.auditDetails
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.PrincipalKind
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
@@ -32,7 +34,10 @@ import kotlin.time.Instant
  * @param recipients The organization's members, checked again at the boundary.
  * @param audit The organization's audit log.
  * @param clock The time.
+ * @param retention How long a paused session keeps its workspace: the recipient gets all of it, as TeamCode's, so a
+ *   session about to expire is not handed over for deletion.
  */
+@Suppress("LongParameterList") // The ports a step reads and writes, each named at its one call site.
 class CompleteCloudTransferUseCase(
     private val repository: CloudSessionsRepository,
     private val transfers: CloudTransfersRepository,
@@ -40,6 +45,7 @@ class CompleteCloudTransferUseCase(
     private val recipients: TransferRecipients,
     private val audit: OrgAuditTrail,
     private val clock: Clock,
+    private val retention: PausedRetention = KeepPausedSessions,
 ) {
     /** A paused session with an accepted transfer starts its owner change. */
     suspend fun begin(session: CloudSession): Instant? {
@@ -52,7 +58,7 @@ class CompleteCloudTransferUseCase(
         return now
     }
 
-    private fun handedOver(session: CloudSession, transfer: CloudTransfer, now: Instant): CloudSession {
+    private suspend fun handedOver(session: CloudSession, transfer: CloudTransfer, now: Instant): CloudSession {
         val owned = session.copy(
             ownerId = transfer.toMemberId,
             transferId = null,
@@ -72,10 +78,28 @@ class CompleteCloudTransferUseCase(
                 phase = "scheduling",
                 desiredState = DesiredState.RUNNING,
                 executionStartedAt = null,
+                expiresAt = null,
+                expiryBackfill = false,
             )
         } else {
-            owned.copy(state = SessionState.PAUSED, phase = null, desiredState = DesiredState.PAUSED)
+            owned.copy(
+                state = SessionState.PAUSED,
+                phase = null,
+                desiredState = DesiredState.PAUSED,
+                pausedAt = now,
+                expiresAt = retentionDays()?.let { now + it.days },
+                expiryBackfill = false,
+            )
         }
+    }
+
+    /** The retention in force; a retention that cannot be read is [PausedRetention.FALLBACK_DAYS]. */
+    private suspend fun retentionDays(): Int? = try {
+        retention.days()
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        PausedRetention.FALLBACK_DAYS
     }
 
     /** One bounded step of `transferring`. */
