@@ -30,6 +30,7 @@ import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.days
@@ -185,6 +186,38 @@ class IdentityPostgresTest {
         assertTrue(tokens.revoke(ada.id, cli.id, now))
         assertTrue(!tokens.revoke(ada.id, cli.id, now))
         assertEquals(1, tokens.revokeOfAgentSession("run-1", now))
+    }
+
+    @Test
+    fun anAgentSessionGetsAnotherTokenOnlyWhileOneOfItsTokensIsLive() = serverTest(listOf(IdentityModule)) { server ->
+        val users = server.koin.get<UsersRepository>()
+        val tokens = server.koin.get<ApiTokensRepository>()
+        val ada = user().also { users.create(it, github("1"), null, now) }
+        val launch = token(ada.id, TokenKind.AGENT, expiresAt = now + 1.days, session = "run-1")
+        tokens.create(launch, "hash-launch")
+        val org = assertNotNull(launch.orgId)
+        fun another(session: String = "run-1", orgId: Uuid = org) =
+            launch.copy(id = Uuid.random(), orgId = orgId, agentSessionId = session, expiresAt = now + 1.hours)
+
+        val renewed = another()
+        assertTrue(tokens.createForLiveAgentSession(renewed, "hash-renewed", now))
+        assertEquals(renewed, tokens.findBySecretHash("hash-renewed"))
+        assertTrue(!tokens.createForLiveAgentSession(another("run-2"), "hash-other", now), "No such agent session")
+        assertTrue(!tokens.createForLiveAgentSession(another(orgId = Uuid.random()), "hash-org", now), "Another org's")
+        assertTrue(!tokens.createForLiveAgentSession(another(), "hash-late", now + 2.days), "Every token expired")
+        assertNull(tokens.findBySecretHash("hash-late"))
+
+        assertTrue(!tokens.revokeAgentToken(Uuid.random(), renewed.id, now), "Only in the token's organization")
+        assertTrue(tokens.revokeAgentToken(org, renewed.id, now))
+        assertTrue(!tokens.revokeAgentToken(org, renewed.id, now), "Revoked once")
+        assertNull(tokens.findBySecretHash("hash-launch")?.revokedAt, "The launch's own token is left alone")
+        assertEquals(1, tokens.revokeOfAgentSession("run-1", now))
+        assertTrue(!tokens.createForLiveAgentSession(another(), "hash-ended", now), "An ended agent session")
+        assertFailsWith<IllegalArgumentException> { tokens.createForLiveAgentSession(token(ada.id), "hash-x", now) }
+        val sessionless = another().copy(agentSessionId = null)
+        assertFailsWith<IllegalArgumentException> { tokens.createForLiveAgentSession(sessionless, "hash-y", now) }
+        val personal = token(ada.id).also { tokens.create(it, "hash-personal") }
+        assertTrue(!tokens.revokeAgentToken(org, personal.id, now), "Not an agent token")
     }
 
     @Test

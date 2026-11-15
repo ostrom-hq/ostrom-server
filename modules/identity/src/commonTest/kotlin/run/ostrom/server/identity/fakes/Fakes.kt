@@ -229,6 +229,23 @@ class InMemoryApiTokensRepository : ApiTokensRepository {
         return live.size.toLong()
     }
 
+    override suspend fun createForLiveAgentSession(token: ApiToken, secretHash: String, now: Instant): Boolean {
+        val live = tokens.values.any {
+            it.kind == TokenKind.AGENT && it.agentSessionId == token.agentSessionId && it.orgId == token.orgId &&
+                it.revokedAt == null && it.expiresAt?.let { at -> at > now } == true
+        }
+        if (live) create(token, secretHash)
+        return live
+    }
+
+    override suspend fun revokeAgentToken(orgId: Uuid, id: Uuid, at: Instant): Boolean {
+        val token = tokens.values.firstOrNull {
+            it.id == id && it.orgId == orgId && it.kind == TokenKind.AGENT && it.revokedAt == null
+        } ?: return false
+        update(token.id) { it.copy(revokedAt = at) }
+        return true
+    }
+
     override suspend fun purgeAgentTokens(before: Instant): Long {
         val gone = tokens.filterValues { it.kind == TokenKind.AGENT && it.expiresAt?.let { at -> at < before } == true }
         gone.keys.forEach { tokens.remove(it) }

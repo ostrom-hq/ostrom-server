@@ -82,6 +82,10 @@ import run.ostrom.server.identity.domain.ResolveUserUseCase
 import run.ostrom.server.identity.domain.ResolveUserUseCaseImpl
 import run.ostrom.server.identity.domain.RevokeAgentTokensUseCase
 import run.ostrom.server.identity.domain.RevokeAgentTokensUseCaseImpl
+import run.ostrom.server.identity.domain.RenewAgentTokenUseCase
+import run.ostrom.server.identity.domain.RenewAgentTokenUseCaseImpl
+import run.ostrom.server.identity.domain.RevokeAgentTokenUseCase
+import run.ostrom.server.identity.domain.RevokeAgentTokenUseCaseImpl
 import run.ostrom.server.identity.domain.RevokeTokenUseCase
 import run.ostrom.server.identity.domain.RevokeTokenUseCaseImpl
 import run.ostrom.server.identity.domain.RotateTokenUseCase
@@ -214,7 +218,8 @@ import org.koin.dsl.onClose
  *
  * Other modules use it through the interfaces it binds: [AuditLog] to record a sensitive action,
  * [ResolveUserUseCase] and [StartWebSessionUseCase] to sign someone in (SSO), [IssueAgentTokenUseCase] and
- * [RevokeAgentTokensUseCase] for agent sessions.
+ * [RevokeAgentTokensUseCase] for agent sessions, [RenewAgentTokenUseCase] and [RevokeAgentTokenUseCase] for a cloud
+ * execution's inference credential.
  */
 object IdentityModule : ServerModule {
     // Declared before koinModule: the object initializes in order, and the module lambda runs at once.
@@ -284,6 +289,8 @@ object IdentityModule : ServerModule {
         single<RotateTokenUseCase> { RotateTokenUseCaseImpl(get(), get(), get(), get(), get()) }
         single<IssueAgentTokenUseCase> { IssueAgentTokenUseCaseImpl(get(), get(), get(), get()) }
         single<RevokeAgentTokensUseCase> { RevokeAgentTokensUseCaseImpl(get(), get()) }
+        single<RenewAgentTokenUseCase> { RenewAgentTokenUseCaseImpl(get(), get(), get(), get()) }
+        single<RevokeAgentTokenUseCase> { RevokeAgentTokenUseCaseImpl(get(), get()) }
         single<CreateServiceKeyUseCase> { CreateServiceKeyUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single<ListServiceKeysUseCase> { ListServiceKeysUseCaseImpl(get(), get()) }
         single<DeleteServiceKeyUseCase> { DeleteServiceKeyUseCaseImpl(get(), get(), get()) }
