@@ -332,6 +332,8 @@ class ImportCatalogPostgresTest {
             assertEquals(HttpStatusCode.BadRequest, import(badFile).status)
             val badBinding = TeamCodeImportRequest(variables = listOf(TeamCodeVariableDto("v", "A_KEY", "n", "group")))
             assertEquals(HttpStatusCode.BadRequest, import(badBinding).status)
+            val valued = TeamCodeVariableDto("v", "A_KEY", "n", "perMember", value = "not-a-member-value")
+            assertEquals(HttpStatusCode.BadRequest, import(TeamCodeImportRequest(variables = listOf(valued))).status)
         }
     }
 

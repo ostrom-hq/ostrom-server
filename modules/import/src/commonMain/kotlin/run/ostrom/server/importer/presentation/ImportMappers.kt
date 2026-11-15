@@ -103,9 +103,11 @@ private fun TeamCodeVariableDto.toDomain() = TeamCodeVariable(
     id = id,
     variable = variable,
     name = name,
-    perMember = when (binding) {
-        "shared" -> false
-        "perMember" -> true
+    perMember = when {
+        binding == "shared" -> false
+        // A per-member variant's values are the members': one on the variant would be rewritten at every run.
+        binding == "perMember" && value == null -> true
+        binding == "perMember" -> throw InvalidImportException("The per-member variant $variable/$name has a value.")
         else -> throw InvalidImportException("The binding of $variable/$name is neither shared nor perMember.")
     },
     ownerId = ownerId,
