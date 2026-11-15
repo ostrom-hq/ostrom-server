@@ -201,6 +201,7 @@ class RunnerEnvironmentPostgresTest {
 
         for (bad in listOf(
             report("unknown_phase"),
+            report("running_setup", """{"step":"unknown_step"}"""),
             report("running_setup", """{"step":"workspace","index":5}"""),
             report("running_setup", """{"step":"setup_start","index":3}"""),
         )) {
