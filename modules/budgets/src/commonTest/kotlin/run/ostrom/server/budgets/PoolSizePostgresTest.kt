@@ -242,6 +242,75 @@ class PoolSizePostgresTest {
     }
 
     @Test
+    fun theAutomaticLimitOnceReachedIsListedAtTheAmountInForceAndTheTypedOneItReplacesIsNot() =
+        serverTest(modules, overrides) { server ->
+            server.seed()
+            val limits = server.koin.get<BudgetsRepository>()
+            val settings = server.koin.get<PacingSettingsRepository>()
+            val store = server.koin.get<PoolSizeRepository>()
+            server.koin.get<PoolSizingService>().refresh()
+            val automatic = assertNotNull(store.read(org)).micros
+            val day = BudgetPeriod.day(now).start
+            suspend fun exceeded(memberId: Uuid? = null) =
+                limits.exceeded(org, memberId, day, TestCallers.monthStart, 10)
+            val typed = BudgetLimit(2_000_000, BudgetWindow.DAY)
+            limits.replaceLimits(org, BudgetTarget.Org, listOf(typed), now)
+            val reachedTyped =
+                BudgetAlert(org, null, BudgetScope.ORG, 100, typed.micros, typed.micros, day, BudgetWindow.DAY)
+            assertTrue(limits.markAlerted(reachedTyped, now))
+            assertEquals(listOf(typed), exceeded().map { it.limit }, "Off: the typed limit reached")
+
+            settings.update(org, null, true)
+            assertEquals(emptyList(), exceeded(), "On: the typed daily limit is no longer the one in force")
+            val reached = BudgetAlert(org, null, BudgetScope.ORG, 100, automatic, automatic, day, BudgetWindow.DAY)
+            assertTrue(limits.markAlerted(reached, now))
+            val listed = exceeded().single()
+            assertEquals(BudgetScope.ORG, listed.scope)
+            assertEquals(BudgetLimit(automatic, BudgetWindow.DAY), listed.limit, "No typed limit: it stops")
+            assertEquals(now, listed.since)
+            assertEquals(emptyList(), exceeded(member), "A member's list holds no org limit")
+
+            // The next pass moved the amount: the list shows what is in force now, not the amount at the crossing.
+            store.store(org, now) { automatic + 1_000 }
+            assertEquals(automatic + 1_000, exceeded().single().limit.micros)
+            // A typed action that changed since is another limit than the one reached.
+            limits.replaceLimits(org, BudgetTarget.Org, listOf(typed.copy(action = BudgetAction.WARN)), now)
+            assertEquals(emptyList(), exceeded())
+            limits.replaceLimits(org, BudgetTarget.Org, listOf(typed), now)
+
+            // Other limits reached are listed as they are; with no typed daily limit the automatic one still stops.
+            val monthly = BudgetLimit(50_000_000)
+            val ofMember = BudgetLimit(40_000_000)
+            limits.replaceLimits(org, BudgetTarget.Org, listOf(monthly), now)
+            limits.replaceLimits(org, BudgetTarget.Member(member), listOf(ofMember), now)
+            val month = BudgetPeriod.of(now).start
+            val reachedMonth =
+                reached.copy(limitMicros = monthly.micros, window = BudgetWindow.MONTH, periodStart = month)
+            assertTrue(limits.markAlerted(reachedMonth, now))
+            val reachedMember =
+                reachedMonth.copy(scope = BudgetScope.MEMBER, memberId = member, limitMicros = ofMember.micros)
+            assertTrue(limits.markAlerted(reachedMember, now))
+            val all = exceeded().map { it.scope to it.limit }
+            assertEquals(
+                setOf(
+                    BudgetScope.ORG to BudgetLimit(automatic + 1_000, BudgetWindow.DAY),
+                    BudgetScope.ORG to monthly,
+                    BudgetScope.MEMBER to ofMember,
+                ),
+                all.toSet(),
+            )
+            assertEquals(3, all.size)
+            limits.replaceLimits(org, BudgetTarget.Org, listOf(typed), now)
+            limits.replaceLimits(org, BudgetTarget.Member(member), emptyList(), now)
+
+            settings.update(org, null, false)
+            val back = exceeded().map { it.limit }
+            assertEquals(listOf(typed), back, "Off again: the typed limit, not the automatic one")
+            assertEquals(emptyList(), exceeded(TestCallers.adminB.memberId))
+            assertEquals(emptyList(), limits.exceeded(TestCallers.orgB, null, day, TestCallers.monthStart, 10))
+        }
+
+    @Test
     fun theControllersAllowanceFollowsTheGuard() = serverTest(modules, overrides) { server ->
         val limits = server.koin.get<BudgetsRepository>()
         val guard = server.koin.get<SpendGuard>()

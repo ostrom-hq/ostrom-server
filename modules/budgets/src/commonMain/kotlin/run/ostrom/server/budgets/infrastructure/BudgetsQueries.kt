@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.budgets.infrastructure
 
+import run.ostrom.server.budgets.domain.AutomaticPoolBudgetsRepository
 import run.ostrom.server.budgets.domain.BudgetAction
 import run.ostrom.server.budgets.domain.BudgetLimit
 import run.ostrom.server.budgets.domain.BudgetScope
@@ -123,6 +124,10 @@ internal fun exceededRead(
                 (sameSubject or byDefault)
         },
     )
+    // The automatic daily limit's alerts carry a mark instead of an amount (it moves at every pass): the decorator
+    // that applies the automatic value keeps them while it is in force.
+    val automatic = (a[alerts.scope] eq ORG) and (a[alerts.period] eq "DAY") and
+        (a[alerts.limitMicros] eq AutomaticPoolBudgetsRepository.AUTOMATIC_MARK)
     val current = ((a[alerts.period] eq "DAY") and (a[alerts.periodStart] eq day)) or
         ((a[alerts.period] eq "MONTH") and (a[alerts.periodStart] eq month))
     val whose = memberId?.let { a[alerts.memberId] eq it }
@@ -131,7 +136,8 @@ internal fun exceededRead(
         a[alerts.limitMicros], a[alerts.alertedAt],
     )
         .where {
-            ((a[alerts.orgId] eq orgId) and (a[alerts.threshold] eq REACHED) and current andIfNotNull whose) and applies
+            ((a[alerts.orgId] eq orgId) and (a[alerts.threshold] eq REACHED) and current andIfNotNull whose) and
+                (applies or automatic)
         }
         .orderBy(
             a[alerts.alertedAt] to SortOrder.ASC,
