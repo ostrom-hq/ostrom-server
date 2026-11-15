@@ -49,6 +49,8 @@ data class CloudRuntimeResponse(
     val runnerImage: String? = null,
     /** Where the binary is in it. */
     val runnerBinary: String,
+    /** The image of Docker and registered sessions' containers: the stored one, else the default. */
+    val sessionImage: String,
     /** The stored callback origin. */
     val serverUrl: String? = null,
     /** The origin pods call back. */
@@ -80,6 +82,8 @@ data class SaveCloudRuntimeRequest(
     val runnerImage: String? = null,
     /** Where the binary is in it. */
     val runnerBinary: String,
+    /** The image of Docker and registered sessions' containers; absent keeps the stored one, blank the default. */
+    val sessionImage: String? = null,
     /** The callback origin. */
     val serverUrl: String? = null,
     /** The workspace claim's access mode. */

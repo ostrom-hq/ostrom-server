@@ -14,6 +14,8 @@ import kotlin.uuid.Uuid
  * @property runnerImage The delivery image holding the `ostrom` Linux binary at [runnerBinary], copied into each
  *   session pod by an init container; null before an administrator sets it.
  * @property runnerBinary Where the binary is in [runnerImage].
+ * @property sessionImage The image the containers of a Docker or registered session run (the agents, git, the
+ *   session's accounts): those sessions have no profile. A Kubernetes session runs its profile's image.
  * @property serverUrl The https origin session pods call back; null uses the server's public URL.
  * @property workspaceAccessMode `ReadWriteOncePod`, or `ReadWriteOnce` for storage drivers without it.
  * @property pausedRetentionDays Days a paused session keeps its workspace; null keeps it.
@@ -29,6 +31,7 @@ data class CloudRuntime(
     val enabled: Boolean = false,
     val runnerImage: String? = null,
     val runnerBinary: String = DEFAULT_RUNNER_BINARY,
+    val sessionImage: String = DEFAULT_SESSION_IMAGE,
     val serverUrl: String? = null,
     val workspaceAccessMode: String = DEFAULT_ACCESS_MODE,
     val pausedRetentionDays: Int? = DEFAULT_PAUSED_RETENTION_DAYS,
@@ -43,6 +46,9 @@ data class CloudRuntime(
     companion object {
         /** Where the CLI release's runner image keeps the binary. */
         const val DEFAULT_RUNNER_BINARY: String = "/usr/local/bin/ostrom"
+
+        /** The session image the CLI's release publishes (ostrom-cli docker/cloud-session-image). */
+        const val DEFAULT_SESSION_IMAGE: String = "docker.io/ostromhq/ostrom-session:latest"
 
         /** The access mode of a workspace claim by default. */
         const val DEFAULT_ACCESS_MODE: String = "ReadWriteOncePod"

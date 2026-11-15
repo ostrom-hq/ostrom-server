@@ -178,6 +178,7 @@ class CloudRuntimeUseCaseImpl(
         fun normalize(runtime: CloudRuntime) = runtime.copy(
             runnerImage = runtime.runnerImage.trimmedOrNull(),
             runnerBinary = runtime.runnerBinary.trim().ifEmpty { CloudRuntime.DEFAULT_RUNNER_BINARY },
+            sessionImage = runtime.sessionImage.trim().ifEmpty { CloudRuntime.DEFAULT_SESSION_IMAGE },
             serverUrl = runtime.serverUrl.trimmedOrNull()?.trimEnd('/'),
             workspaceAccessMode = runtime.workspaceAccessMode.trim(),
             memberTransfers = runtime.memberTransfers.trim().lowercase(),

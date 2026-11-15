@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.cloud.domain.CloudRuntime
 import run.ostrom.server.runners.domain.CloudSessionsRepository
 import run.ostrom.server.runners.domain.DesiredState
 import run.ostrom.server.runners.domain.ExecutionStatus
@@ -112,7 +113,8 @@ class RegisteredSessionsPostgresTest {
             assertEquals(server.koin.get<RunnerTokens>().hash(token), fresh().runnerTokenHash)
             assertTrue("OSTROM_SERVER_URL=http://host.docker.internal:4600" in env)
             assertTrue("OSTROM_AGENT_PROMPT=Fix the tests" in env)
-            assertEquals("docker.io/ostromhq/ostrom-runner:test", runner["Image"]!!.jsonPrimitive.content)
+            // The session's containers run the runtime's session image, the runner image only delivers the binary.
+            assertEquals(CloudRuntime.DEFAULT_SESSION_IMAGE, runner["Image"]!!.jsonPrimitive.content)
             assertNull(runner["HostConfig"]!!.jsonObject["NetworkMode"], "The runner's engine chooses the network")
             assertEquals(emptyList(), server.work(b.id, b.token).executions, "Taken by one runner only")
 
