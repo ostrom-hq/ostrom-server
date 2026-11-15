@@ -383,4 +383,32 @@ val UsageMigrations: List<SchemaMigration> = listOf(
             CREATE INDEX usage_holds_launch ON usage_holds (org_id, launch_id) WHERE launch_id IS NOT NULL
         """.trimIndent(),
     ),
+    // TeamCode's usage reconciliation (`capacity.usagereconciliation.v1`): an administrator's final correction of an
+    // expired hold, one a hold, kept as long as the holds (UsageReconciliationRepositoryImpl). The history is read
+    // newest first, of the org or of a member.
+    SchemaMigration(
+        version = 13,
+        name = "usage_reconciliations",
+        sql = """
+            CREATE TABLE usage_reconciliations (
+                call_id UUID PRIMARY KEY,
+                org_id UUID NOT NULL,
+                member_id UUID NOT NULL,
+                workflow_id TEXT,
+                launch_id TEXT,
+                provider_request_id TEXT,
+                held_at TIMESTAMPTZ NOT NULL,
+                previous_micros BIGINT NOT NULL,
+                micros BIGINT NOT NULL,
+                source TEXT NOT NULL,
+                reference TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                reconciled_by UUID NOT NULL,
+                reconciled_at TIMESTAMPTZ NOT NULL
+            );
+            CREATE INDEX usage_reconciliations_org_at ON usage_reconciliations (org_id, reconciled_at, call_id);
+            CREATE INDEX usage_reconciliations_org_member_at
+                ON usage_reconciliations (org_id, member_id, reconciled_at, call_id);
+        """.trimIndent() + "\n" + tenantTableSql("usage_reconciliations"),
+    ),
 )

@@ -3,6 +3,8 @@ package run.ostrom.server.usage
 
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.gateway.domain.ModelUsageSink
+import run.ostrom.server.kernel.audit.OrgAuditTrail
+import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.database.EveryCallScheduledWork
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.ScheduledJob
@@ -18,17 +20,26 @@ import run.ostrom.server.kernel.settings.SettingsSection
 import run.ostrom.server.secrets.domain.CallerResolver
 import run.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
 import run.ostrom.server.sessions.domain.services.SessionCosts
+import run.ostrom.server.usage.domain.GetUsageReviewUseCase
+import run.ostrom.server.usage.domain.GetUsageReviewUseCaseImpl
 import run.ostrom.server.usage.domain.IngestUsageEventsUseCase
 import run.ostrom.server.usage.domain.IngestUsageEventsUseCaseImpl
+import run.ostrom.server.usage.domain.ListPendingUsageUseCase
+import run.ostrom.server.usage.domain.ListPendingUsageUseCaseImpl
 import run.ostrom.server.usage.domain.ListUsageEventsUseCase
 import run.ostrom.server.usage.domain.ListUsageEventsUseCaseImpl
+import run.ostrom.server.usage.domain.ListUsageReconciliationsUseCase
+import run.ostrom.server.usage.domain.ListUsageReconciliationsUseCaseImpl
 import run.ostrom.server.usage.domain.PurgeUsageUseCase
 import run.ostrom.server.usage.domain.PurgeUsageUseCaseImpl
+import run.ostrom.server.usage.domain.ReconcileUsageUseCase
+import run.ostrom.server.usage.domain.ReconcileUsageUseCaseImpl
 import run.ostrom.server.usage.domain.SpendAdmission
 import run.ostrom.server.usage.domain.SpendAdmissionImpl
 import run.ostrom.server.usage.domain.SpendReader
 import run.ostrom.server.usage.domain.SpendReaderImpl
 import run.ostrom.server.usage.domain.UsageFeed
+import run.ostrom.server.usage.domain.UsageReconciliationRepository
 import run.ostrom.server.usage.domain.UsageRecorder
 import run.ostrom.server.usage.domain.UsageRecorderImpl
 import run.ostrom.server.usage.domain.UsageReportUseCase
@@ -46,6 +57,7 @@ import run.ostrom.server.usage.infrastructure.ReplicatedUsageFeed
 import run.ostrom.server.usage.infrastructure.UsageFeedImpl
 import run.ostrom.server.usage.infrastructure.UsageFeedReadsImpl
 import run.ostrom.server.usage.infrastructure.UsageMigrations
+import run.ostrom.server.usage.infrastructure.UsageReconciliationRepositoryImpl
 import run.ostrom.server.usage.infrastructure.UsageRepositoryImpl
 import run.ostrom.server.usage.presentation.UsageRoutesDependencies
 import run.ostrom.server.usage.presentation.usageRoutes
@@ -60,6 +72,7 @@ import org.koin.dsl.module
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
+import kotlin.uuid.Uuid
 
 /**
  * The usage module: the central ledger. It binds [UsageRecorder], [SpendReader] and [SpendAdmission], which the
@@ -91,8 +104,17 @@ object UsageModule : ServerModule {
             val settings = get<InstanceSettings>()
             PurgeUsageUseCaseImpl(get(), get(), { UsageSettings.retention(settings) })
         }
+        // The usage review (capacity.usagereconciliation.v1).
+        single<UsageReconciliationRepository> { UsageReconciliationRepositoryImpl(get<JdbcDatabase>()) }
+        single<ListPendingUsageUseCase> { ListPendingUsageUseCaseImpl(get(), logins()) }
+        single<ListUsageReconciliationsUseCase> { ListUsageReconciliationsUseCaseImpl(get(), logins()) }
+        single<GetUsageReviewUseCase> { GetUsageReviewUseCaseImpl(get(), logins()) }
+        single<ReconcileUsageUseCase> { ReconcileUsageUseCaseImpl(get(), logins()) }
         single {
-            UsageRoutesDependencies(callerResolver(), get(), get(), get(), get(), get())
+            UsageRoutesDependencies(
+                callerResolver(), get(), get(), get(), get(), get(),
+                get(), get(), get(), get(), get<OrgAuditTrail>(),
+            )
         }
     }
 
@@ -102,8 +124,9 @@ object UsageModule : ServerModule {
         route.usageRoutes(koin.get())
     }
 
-    /** Usage metering and its events. */
-    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.USAGE)
+    /** Usage metering and its events, and the review of unknown usage. */
+    override suspend fun features(koin: Koin): Set<String> =
+        setOf(ServerFeatures.USAGE, ServerFeatures.CAPACITY_USAGE_RECONCILIATION)
 
     override fun start(scope: CoroutineScope, koin: Koin) {
         val purge = koin.get<PurgeUsageUseCase>()
@@ -142,3 +165,13 @@ object UsageModule : ServerModule {
  * until the identity and orgs modules bind theirs).
  */
 internal fun Scope.callerResolver(): CallerResolver = getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get())
+
+/** The orgs module's [MemberLogins], or none known (every member is then named by id) without it. */
+internal fun Scope.logins(): MemberLogins = getOrNull<MemberLogins>() ?: NoLogins
+
+/** No login known: every member is named by id. */
+internal object NoLogins : MemberLogins {
+    override suspend fun idsOf(orgId: Uuid, logins: Collection<String>): Map<String, Uuid> = emptyMap()
+
+    override suspend fun loginsOf(orgId: Uuid, memberIds: Collection<Uuid>): Map<Uuid, String> = emptyMap()
+}

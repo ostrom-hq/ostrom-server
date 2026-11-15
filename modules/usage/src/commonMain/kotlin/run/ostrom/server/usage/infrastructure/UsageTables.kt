@@ -59,6 +59,31 @@ internal object UsageHolds : Table("usage_holds") {
     override val primaryKey = PrimaryKey(callId)
 }
 
+/**
+ * The final corrections of unknown charges (version 13, TeamCode's `usage_reconciliations`): one a hold at most, with
+ * the attribution the call had when it was held. Kept as long as their holds (`HoldWindow.RETENTION`).
+ */
+internal object UsageReconciliations : Table("usage_reconciliations") {
+    val callId = uuid("call_id")
+    val orgId = uuid("org_id")
+    val memberId = uuid("member_id")
+    val workflowId = text("workflow_id").nullable()
+    val launchId = text("launch_id").nullable()
+    val providerRequestId = text("provider_request_id").nullable()
+    val heldAt = instant("held_at")
+    val previousMicros = long("previous_micros")
+    val micros = long("micros")
+
+    /** A [run.ostrom.server.usage.domain.UsageEvidence] name. */
+    val evidence = text("source")
+    val reference = text("reference")
+    val reason = text("reason")
+    val reconciledBy = uuid("reconciled_by")
+    val reconciledAt = instant("reconciled_at")
+
+    override val primaryKey = PrimaryKey(callId)
+}
+
 /** The spend of each UTC day by member and workflow (version 10), written by the ledger's triggers only. */
 internal object UsageSpendDays : Table("usage_spend_days") {
     val orgId = uuid("org_id")
