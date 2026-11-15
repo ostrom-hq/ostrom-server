@@ -355,7 +355,7 @@ private suspend fun TestServer.offerTransfer(party: Party, session: CloudSession
         toMemberId = "${Uuid.random()}", initiatedBy = session.ownerId, state = TransferState.OFFERED, resume = false,
         version = 0, createdAt = now, updatedAt = now, expiresAt = now + CloudTransfer.OFFER_VALIDITY,
     )
-    val opened = CloudTransfersRepositoryImpl(driver, koin.get()).open(transfer, now, session = null)
+    val opened = CloudTransfersRepositoryImpl(koin.get()).open(transfer, now, session = null)
     if (opened is TransferOpening.Opened) {
         party.values[Seed.TRANSFER] = "${transfer.id}"
     } else {

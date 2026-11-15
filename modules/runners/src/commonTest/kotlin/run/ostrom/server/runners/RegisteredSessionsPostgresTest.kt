@@ -2,6 +2,8 @@
 package run.ostrom.server.runners
 
 import run.ostrom.server.cloud.domain.CloudRuntime
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.runners.infrastructure.RunnersAssignments
 import run.ostrom.server.runners.domain.CloudSessionsRepository
 import run.ostrom.server.runners.domain.DesiredState
 import run.ostrom.server.runners.domain.ExecutionStatus
@@ -24,7 +26,7 @@ import run.ostrom.server.runners.presentation.RegisteredRunnerHeartbeatResponse
 import run.ostrom.server.runners.presentation.ReportedExecutionDto
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
+import org.jetbrains.exposed.v1.jdbc.selectAll
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.post
@@ -312,8 +314,7 @@ class RegisteredSessionsPostgresTest {
 
         assertEquals(emptyList(), server.work(carols.id, carols.token).executions)
         // As the serving role, without an organization, the table shows nothing.
-        val direct = server.driver.fetchAll(Statement.create("SELECT session_id FROM runners_assignments")).getOrThrow()
-        assertEquals(0, direct.size)
+        assertEquals(0L, server.koin.get<JdbcDatabase>().query { RunnersAssignments.selectAll().count() })
 
         // Its own organization's runner takes it, but a newer execution replaced it: never handed over.
         val stale = sessions.getById(created.id)!!

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.runners.domain.RegisteredRunner
 import run.ostrom.server.runners.domain.RegisteredRunnersRepository
 import run.ostrom.server.runners.domain.RunnerRegistrationOutcome
@@ -10,15 +11,20 @@ import run.ostrom.server.runners.fakes.ORG_A
 import run.ostrom.server.runners.fakes.ORG_B
 import run.ostrom.server.runners.fakes.testIdentities
 import run.ostrom.server.runners.infrastructure.RegisteredRunnersRepositoryImpl
-import run.ostrom.server.runners.infrastructure.inTenant
+import run.ostrom.server.runners.infrastructure.RunnersRegistered
+import run.ostrom.server.runners.infrastructure.runnerCount
+import run.ostrom.server.runners.infrastructure.runnerList
 import run.ostrom.server.runners.presentation.RegisterRunnerRequest
 import run.ostrom.server.runners.presentation.RegisteredRunnerDto
 import run.ostrom.server.runners.presentation.RunnerDto
 import run.ostrom.server.runners.presentation.RunnersPage
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import org.jetbrains.exposed.v1.jdbc.deleteAll
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.update
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.delete
@@ -66,9 +72,8 @@ class RegisteredRunnersPostgresTest {
         lastSeenAt = null,
     )
 
-    private suspend fun TestServer.count(orgId: Uuid): Long = driver.inTenant(orgId) {
-        fetchAll(Statement.create("SELECT COUNT(*) AS n FROM runners_registered")).getOrThrow().first().get("n")
-            .asLong()
+    private suspend fun TestServer.count(orgId: Uuid): Long = koin.get<JdbcDatabase>().inOrg(orgId) {
+        RunnersRegistered.selectAll().count()
     }
 
     @Test
@@ -118,19 +123,20 @@ class RegisteredRunnersPostgresTest {
         assertEquals(1L, server.count(ORG_A))
         // No WHERE org_id: the policy alone hides organization A's rows.
         assertEquals(0L, server.count(ORG_B))
-        for (sql in listOf("UPDATE runners_registered SET name = 'x'", "DELETE FROM runners_registered")) {
-            assertEquals(0L, server.driver.inTenant(ORG_B) { execute(Statement.create(sql)).getOrThrow() }, sql)
-        }
+        val jdbc = server.koin.get<JdbcDatabase>()
+        assertEquals(0, jdbc.inOrg(ORG_B) { RunnersRegistered.update { it[name] = "x" } })
+        assertEquals(0, jdbc.inOrg(ORG_B) { RunnersRegistered.deleteAll() })
         assertFailsWith<Exception> {
-            server.driver.inTenant(ORG_B) {
-                execute(
-                    Statement.create(
-                        """
-                        INSERT INTO runners_registered (id, org_id, name, labels, key_hash, registered_by, created_at)
-                        VALUES (:id, :org, 'x', '[]', 'h', 'carol', :at)
-                        """,
-                    ).bind("id", Uuid.random()).bind("org", ORG_A).bind("at", t0),
-                ).getOrThrow()
+            jdbc.inOrg(ORG_B) {
+                RunnersRegistered.insert {
+                    it[id] = Uuid.random()
+                    it[orgId] = ORG_A
+                    it[name] = "x"
+                    it[labels] = "[]"
+                    it[keyHash] = "h"
+                    it[registeredBy] = "carol"
+                    it[createdAt] = t0
+                }
             }
         }
         assertEquals(listOf("a"), server.koin.get<RegisteredRunnersRepository>().list(ORG_A, 10).map { it.name })
@@ -150,11 +156,9 @@ class RegisteredRunnersPostgresTest {
             assertEquals("1.2.0", created.version)
 
             // Only the key's hash is stored, with who registered it.
-            val stored = server.driver.inTenant(ORG_A) {
-                fetchAll(Statement.create("SELECT key_hash, registered_by FROM runners_registered")).getOrThrow()
-            }.single()
-            assertEquals(server.koin.get<RunnerTokens>().hash(created.token), stored.get("key_hash").asString())
-            assertEquals(DANA.toString(), stored.get("registered_by").asString())
+            val stored = server.koin.get<JdbcDatabase>().inOrg(ORG_A) { RunnersRegistered.selectAll().single() }
+            assertEquals(server.koin.get<RunnerTokens>().hash(created.token), stored[RunnersRegistered.keyHash])
+            assertEquals(DANA.toString(), stored[RunnersRegistered.registeredBy])
 
             // Every member of the organization lists it, a service token with `cloud:read` too; never its key.
             val expected = RunnerDto(created.id, "build-1", listOf("linux", "gpu"), "offline", null, "1.2.0")
@@ -246,39 +250,26 @@ class RegisteredRunnersPostgresTest {
 
     @Test
     fun theRequestPathReadsUseTheNameIndex() = serverTest(listOf(RunnersModule)) { server ->
+        val fixtures = server.database.superuser
         for ((org, rows) in listOf(ORG_B to 4_000, ORG_A to 100)) {
-            server.driver.inTenant(org) {
-                execute(
-                    Statement.create(
-                        """
-                        INSERT INTO runners_registered (id, org_id, name, labels, key_hash, registered_by, created_at)
-                        SELECT gen_random_uuid(), CAST(:org AS UUID), 'r' || i, '[]', md5(:org || i), 'dana', now()
-                        FROM generate_series(1, $rows) AS i
-                        """,
-                    ).bind("org", org.toString()),
-                ).getOrThrow()
-            }
+            fixtures.execute(
+                "INSERT INTO runners_registered (id, org_id, name, labels, key_hash, registered_by, created_at) " +
+                    "SELECT gen_random_uuid(), CAST('$org' AS UUID), 'r' || i, '[]', md5('$org' || i), 'dana', now() " +
+                    "FROM generate_series(1, $rows) AS i",
+            ).getOrThrow()
         }
         // Statistics only, which no request writes: the serving role may not vacuum (#68).
-        server.database.superuser.execute("VACUUM ANALYZE runners_registered").getOrThrow()
+        fixtures.execute("VACUUM ANALYZE runners_registered").getOrThrow()
+        val jdbc = server.koin.get<JdbcDatabase>()
         val plans = linkedMapOf(
-            "list of an organization" to server.explain(RegisteredRunnersRepositoryImpl.LIST_SQL, limit = true),
-            "count of an organization" to server.explain(RegisteredRunnersRepositoryImpl.COUNT_SQL, limit = false),
+            "list of an organization" to jdbc.inOrg(ORG_A) { plan { runnerList(ORG_A, 100) } },
+            "count of an organization" to jdbc.inOrg(ORG_A) { plan { runnerCount(ORG_A).query } },
         )
         val report = plans.entries.joinToString("\n\n") { (name, plan) -> "-- $name\n$plan" }
         SystemFileSystem.createDirectories(Path("build/reports/explain"))
         SystemFileSystem.sink(Path("build/reports/explain/runners.txt")).buffered().use { it.writeString(report) }
         for ((name, plan) in plans) {
             assertFalse("Seq Scan on runners_registered" in plan, "$name scans the table:\n$plan")
-        }
-    }
-
-    /** The plan of [sql] in org A, scoped like the repository's reads. */
-    private suspend fun TestServer.explain(sql: String, limit: Boolean): String {
-        val base = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org_id", ORG_A)
-        val statement = if (limit) base.bind("limit", 100) else base
-        return driver.inTenant(ORG_A) {
-            fetchAll(statement).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
         }
     }
 

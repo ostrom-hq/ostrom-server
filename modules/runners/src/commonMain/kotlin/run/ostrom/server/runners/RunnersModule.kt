@@ -370,7 +370,7 @@ object RunnersModule : ServerModule {
             if (members == null || logins == null) {
                 TransferWiring(null, null)
             } else {
-                val transfers = CloudTransfersRepositoryImpl(get(), get())
+                val transfers = CloudTransfersRepositoryImpl(get())
                 val recipients = MemberTransferRecipients(members, logins)
                 val policy = RuntimeMemberTransferPolicy(getOrNull<CloudRuntimeSource>())
                 TransferWiring(
@@ -459,7 +459,7 @@ object RunnersModule : ServerModule {
         single<AutomationLauncher> { CloudSessionAutomationLauncher(get(), get(), get()) }
         // Conversation sessions: their transcript, inputs and options, announced.
         single { ConversationAnnouncement() }
-        single<CloudConversationStore> { CloudConversationStoreImpl(get(), get()) }
+        single<CloudConversationStore> { CloudConversationStoreImpl(get()) }
         single<CloudConversationService> {
             CloudConversationServiceImpl(get(), get(), get(), get(), get(), getOrNull<CloudRuntimeSource>())
         }
@@ -650,7 +650,7 @@ private fun filesService(scope: Scope): CloudFileService? = with(scope) {
     val objects = getOrNull<ArtifactObjectStore>() ?: return null
     val storage = ArtifactCloudFileStorage(get<ArtifactStorageRepository>())
     CloudFileServiceImpl(
-        CloudFileStoreImpl(get(), get(), get()), get(), get(), storage, objects, getOrNull<CloudRuntimeSource>(), get(),
+        CloudFileStoreImpl(get(), get()), get(), get(), storage, objects, getOrNull<CloudRuntimeSource>(), get(),
         get(),
     )
 }

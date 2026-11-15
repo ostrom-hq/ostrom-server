@@ -5,6 +5,7 @@ import run.ostrom.server.identity.domain.AGENT_SCOPE
 import run.ostrom.server.identity.domain.ApiToken
 import run.ostrom.server.identity.domain.ApiTokensRepository
 import run.ostrom.server.identity.domain.AuditEntry
+import run.ostrom.server.identity.domain.AuditEvent
 import run.ostrom.server.identity.domain.AuditIntegrity
 import run.ostrom.server.identity.domain.AuditLog
 import run.ostrom.server.identity.domain.AuditRepository
@@ -14,6 +15,7 @@ import run.ostrom.server.identity.domain.IdentityProvider
 import run.ostrom.server.identity.domain.ResolveUserUseCase
 import run.ostrom.server.identity.domain.TokenKind
 import run.ostrom.server.identity.domain.VerifiedIdentity
+import run.ostrom.server.identity.infrastructure.IdentityTransactionalOrgAuditTrail
 import run.ostrom.server.identity.infrastructure.TransactionalAuditLog
 import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.audit.TransactionalOrgAuditTrail
@@ -219,19 +221,85 @@ class IdentityTenancyPostgresTest {
         val person = AuthenticatedPrincipal("$ada", PrincipalKind.USER, setOf("user:*"))
         fun change(event: String) = OrgAuditRecord(orgA, person, event, "cloud_session", "s", mapOf("owner" to "b"))
 
+        val database = s.koin.get<JdbcDatabase>()
         assertFails {
-            s.driver.inOrg(orgA) {
-                trail.record(this, change("cloud.session.paused"))
+            trail.recording(database, change("cloud.session.paused")) { append ->
+                check(append())
                 error("the change fails")
             }
         }
-        s.driver.inOrg(orgA) { trail.record(this, change("cloud.session.created")) }
+        assertEquals("kept", trail.recording(database, change("cloud.session.created")) { append ->
+            check(append())
+            "kept"
+        })
 
         val lines = s.koin.get<AuditRepository>().listOrg(orgA, OrgAuditQuery(limit = 10))
         assertEquals(listOf("cloud.session.created"), lines.map { it.event.entry.action })
         val entry = lines.single().event.entry
         assertEquals(ada, entry.actorId)
         assertEquals(mapOf("owner" to "b", "credential" to "api_token"), entry.details)
+    }
+
+    // Another writer appends between the head's read and the change's append: the change is rolled back and runs again
+    // on the new head, so the chain keeps no gap and no fork, and the change's own writes are not kept twice.
+    @Test
+    fun aChangeWhoseHeadMovedIsRolledBackAndRunAgainOnTheNewHead() = serverTest(listOf(IdentityModule)) { s ->
+        val real = s.koin.get<AuditLog>()
+        val database = s.koin.get<JdbcDatabase>()
+        var signed = 0
+        val moving = object : AuditLog by real {
+            override fun sign(entry: AuditEntry): suspend (String?, Long) -> AuditEvent {
+                val signature = real.sign(entry)
+                return { previousHash, sequence ->
+                    if (++signed == 1) real.record(AuditEntry(orgA, null, "meanwhile", "t", "1"))
+                    signature(previousHash, sequence)
+                }
+            }
+        }
+        val trail = IdentityTransactionalOrgAuditTrail(TransactionalAuditLog(moving))
+        val person = AuthenticatedPrincipal("${Uuid.random()}", PrincipalKind.USER, setOf("user:*"))
+        var runs = 0
+        val record = OrgAuditRecord(orgA, person, "cloud.session.created", "cloud_session", "s")
+        val result = trail.recording(database, record) { append ->
+            runs += 1
+            check(append() == (runs == 2)) { "The first run's head moved: refused; the second chains." }
+            runs
+        }
+
+        assertEquals(2, result)
+        assertEquals(2, signed)
+        val lines = s.koin.get<AuditRepository>().listOrg(orgA, OrgAuditQuery(limit = 10))
+        assertEquals(listOf("cloud.session.created", "meanwhile"), lines.map { it.event.entry.action })
+        val verifier = s.koin.get<AuditVerifier>()
+        assertEquals(List(2) { AuditIntegrity.VERIFIED }, lines.map { verifier.integrity(it) })
+    }
+
+    // A head that moves every time is given up on after a bounded number of attempts, nothing kept.
+    @Test
+    fun aChangeWhoseHeadKeepsMovingFailsAfterItsAttempts() = serverTest(listOf(IdentityModule)) { s ->
+        val real = s.koin.get<AuditLog>()
+        val database = s.koin.get<JdbcDatabase>()
+        var signed = 0
+        val moving = object : AuditLog by real {
+            override fun sign(entry: AuditEntry): suspend (String?, Long) -> AuditEvent {
+                val signature = real.sign(entry)
+                return { previousHash, sequence ->
+                    real.record(AuditEntry(orgA, null, "meanwhile", "t", "${++signed}"))
+                    signature(previousHash, sequence)
+                }
+            }
+        }
+        val trail = IdentityTransactionalOrgAuditTrail(TransactionalAuditLog(moving))
+        val person = AuthenticatedPrincipal("${Uuid.random()}", PrincipalKind.USER, setOf("user:*"))
+        assertFailsWith<IllegalStateException> {
+            trail.recording(database, OrgAuditRecord(orgA, person, "never", "cloud_session", "s")) { append ->
+                append()
+            }
+        }
+        assertEquals(8, signed)
+        val lines = s.koin.get<AuditRepository>().listOrg(orgA, OrgAuditQuery(limit = 20))
+        val actions = lines.map { it.event.entry.action }
+        assertEquals(List(8) { "meanwhile" }, actions)
     }
 
     // Identity appends on Exposed (AuditLog.record), the modules still on sqlx4k in their own transaction

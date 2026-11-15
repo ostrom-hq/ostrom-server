@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.runners.domain.CloudSessionsRepository
 import run.ostrom.server.runners.domain.DeletionState
 import run.ostrom.server.runners.domain.DesiredState
@@ -65,7 +66,7 @@ class CloudWorkspaceDeletionPostgresTest {
             .copy(epoch = 1, profile = clusterProfile().copy(clusterId = "another"))
         for (created in listOf(running, paused, deleting, done, elsewhere)) repository.createWithinCap(created, 10)
 
-        val store = LiveCloudObjectsRepositoryImpl(server.driver)
+        val store = LiveCloudObjectsRepositoryImpl(server.koin.get<JdbcDatabase>())
         val live = store.liveObjects(FAKE_CLUSTER)
 
         assertEquals(setOf(RuntimeNames.workspace(running.id), RuntimeNames.workspace(paused.id)), live.claims)

@@ -15,7 +15,9 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
-import io.github.smyrgeorge.sqlx4k.Statement
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import org.jetbrains.exposed.v1.jdbc.update
 import org.koin.dsl.module
 import run.ostrom.core.api.Idempotency
 import run.ostrom.core.api.OnBehalfOf
@@ -25,13 +27,14 @@ import run.ostrom.server.kernel.audit.TransactionalOrgAuditTrail
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.auth.OrgRole
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.runners.fakes.ALICE
 import run.ostrom.server.runners.fakes.BOB
 import run.ostrom.server.runners.fakes.CAROL
 import run.ostrom.server.runners.fakes.DANA
 import run.ostrom.server.runners.fakes.ORG_A
 import run.ostrom.server.runners.fakes.testIdentities
-import run.ostrom.server.runners.infrastructure.inTenant
+import run.ostrom.server.runners.infrastructure.RunnersSessionsTable
 import run.ostrom.server.runners.presentation.CloudSessionResponse
 import run.ostrom.server.runners.presentation.CloudSessionsResponse
 import run.ostrom.server.runners.presentation.CreateCloudSessionRequest
@@ -57,9 +60,18 @@ class CloudSessionsOnBehalfPostgresTest {
         includes(testIdentities)
         single<OrgAuditTrail> { OrgAuditTrail { audit += it } }
         single<TransactionalOrgAuditTrail> {
-            TransactionalOrgAuditTrail { _, record ->
-                check(!journalFails) { "The audit log is unavailable." }
-                audit += record
+            object : TransactionalOrgAuditTrail {
+                override suspend fun <T> recording(
+                    database: JdbcDatabase,
+                    record: OrgAuditRecord,
+                    change: JdbcTransaction.(append: () -> Boolean) -> T,
+                ): T = database.inOrg(record.orgId) {
+                    change {
+                        check(!journalFails) { "The audit log is unavailable." }
+                        audit += record
+                        true
+                    }
+                }
             }
         }
         single<MemberDirectory> {
@@ -155,11 +167,9 @@ class CloudSessionsOnBehalfPostgresTest {
         val read = server.client.get("/api/v1/cloud/sessions/${session.id}") { bearerAuth("bob") }
         assertEquals(session.createdBy, read.body<CloudSessionResponse>().createdBy)
         // A row missing the effective member answers no attribution rather than half of one.
-        server.driver.inTenant(ORG_A) {
-            execute(
-                Statement.create("UPDATE runners_sessions SET created_by_effective_member_id = NULL WHERE id = :id")
-                    .bind("id", Uuid.parse(session.id)),
-            ).getOrThrow()
+        server.koin.get<JdbcDatabase>().inOrg(ORG_A) {
+            val s = RunnersSessionsTable
+            s.update({ s.id eq Uuid.parse(session.id) }) { it[createdByEffectiveMemberId] = null }
         }
         val partial = server.client.get("/api/v1/cloud/sessions/${session.id}") { bearerAuth("bob") }
         assertNull(partial.body<CloudSessionResponse>().createdBy)

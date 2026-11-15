@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners.infrastructure
 
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.write
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.runners.domain.CloudInferenceCredentialStore
 import run.ostrom.server.runners.domain.CloudSession
@@ -11,16 +13,29 @@ import run.ostrom.server.runners.domain.IssuedInferenceCredential
 import run.ostrom.server.runners.domain.RunnerInferenceTokens
 import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.runners.domain.runsInference
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.QueryExecutor
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import org.jetbrains.exposed.v1.core.Op
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.UuidColumnType
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.anyFrom
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.inSubQuery
+import org.jetbrains.exposed.v1.core.max
+import org.jetbrains.exposed.v1.core.neq
+import org.jetbrains.exposed.v1.core.statements.DeleteStatement
+import org.jetbrains.exposed.v1.core.statements.InsertStatement
+import org.jetbrains.exposed.v1.core.statements.ReturningStatement
+import org.jetbrains.exposed.v1.core.statements.StatementBuilder
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import org.jetbrains.exposed.v1.jdbc.Query
+import org.jetbrains.exposed.v1.jdbc.select
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
@@ -34,13 +49,13 @@ import kotlin.uuid.Uuid
  * its organization; only the purge's read crosses organizations, through `runners_stale_inference_credentials`, owned
  * by `ostrom_router`.
  *
- * @param driver The database.
+ * @param database The JDBC pool.
  * @param tokens The launches module's agent tokens.
  * @param clock The clock.
  * @param logger Where a failed revocation is logged (the session's id and the error's class only).
  */
 class CloudInferenceCredentialStoreImpl(
-    private val driver: Driver,
+    private val database: JdbcDatabase,
     private val tokens: RunnerInferenceTokens,
     private val clock: Clock,
     private val logger: Logger,
@@ -49,7 +64,7 @@ class CloudInferenceCredentialStoreImpl(
         val minted = tokens.issue(session, ttl) ?: return InferenceIssuance.NoLaunch
         var older: List<Uuid>? = null
         try {
-            older = driver.inTenant(session.orgId) { record(session, minted, keep) }
+            older = database.inOrg(session.orgId) { record(session, minted, keep) }
         } finally {
             // Not recorded (fenced, failed or cancelled): the token was never handed out, and is revoked at once.
             if (older == null) withContext(NonCancellable) { tokens.revoke(session.orgId, listOf(minted.id)) }
@@ -72,19 +87,16 @@ class CloudInferenceCredentialStoreImpl(
      *
      * @return The tokens of the deleted credentials, to revoke; null when the execution is fenced.
      */
-    private suspend fun QueryExecutor.record(session: CloudSession, minted: InferenceToken, keep: Int): List<Uuid>? {
-        val row = fetchAll(
-            Statement.create(
-                "SELECT epoch, state, desired_state, runner_token_hash FROM runners_sessions " +
-                    "WHERE id = :id FOR UPDATE",
-            ).bind("id", session.id),
-        ).getOrThrow().firstOrNull()
+    private fun JdbcTransaction.record(session: CloudSession, minted: InferenceToken, keep: Int): List<Uuid>? {
+        val s = RunnersSessionsTable
+        val row = s.select(s.epoch, s.state, s.desiredState, s.runnerTokenHash).where { s.id eq session.id }
+            .forUpdate().firstOrNull()
         val current = row?.let {
             session.copy(
-                epoch = it.get("epoch").asLong(),
-                state = SessionState.fromWire(it.get("state").asString()),
-                desiredState = DesiredState.fromWire(it.get("desired_state").asString()),
-                runnerTokenHash = it.get("runner_token_hash").asStringOrNull(),
+                epoch = it[s.epoch],
+                state = SessionState.fromWire(it[s.state]),
+                desiredState = DesiredState.fromWire(it[s.desiredState]),
+                runnerTokenHash = it[s.runnerTokenHash],
             )
         }
         val live = current != null && current.runsInference && current.epoch == session.epoch &&
@@ -93,43 +105,25 @@ class CloudInferenceCredentialStoreImpl(
     }
 
     /** Records [minted] and deletes the execution's credentials past the newest [keep], returning their tokens. */
-    private suspend fun QueryExecutor.insert(session: CloudSession, minted: InferenceToken, keep: Int): List<Uuid> {
-        // Creation times strictly increase per execution, so "newest" never depends on a tie-break.
-        execute(
-            Statement.create(
-                """
-                INSERT INTO runners_inference_credentials (token_id, org_id, session_id, epoch, created_at, expires_at)
-                SELECT :token_id, :org_id, :session_id, :epoch, GREATEST(CAST(:now AS TIMESTAMPTZ),
-                    COALESCE(max(created_at) + INTERVAL '1 millisecond', CAST(:now AS TIMESTAMPTZ))), :expires_at
-                FROM runners_inference_credentials WHERE session_id = :session_id AND epoch = :epoch
-                """,
-            ).bind("token_id", minted.id).bind("org_id", session.orgId).bind("session_id", session.id)
-                .bind("epoch", session.epoch).bind("now", clock.now()).bind("expires_at", minted.expiresAt),
-        ).getOrThrow()
-        return fetchAll(
-            Statement.create(
-                """
-                DELETE FROM runners_inference_credentials WHERE token_id IN (
-                    SELECT token_id FROM runners_inference_credentials WHERE session_id = :session_id AND epoch = :epoch
-                    ORDER BY created_at DESC OFFSET :keep
-                ) RETURNING token_id
-                """,
-            ).bind("session_id", session.id).bind("epoch", session.epoch).bind("keep", keep),
-        ).getOrThrow().map { it.get("token_id").asUuid() }
+    private fun JdbcTransaction.insert(session: CloudSession, minted: InferenceToken, keep: Int): List<Uuid> {
+        // Creation times strictly increase per execution, so "newest" never depends on a tie-break: the session row
+        // lock held here serializes the issuers of an execution.
+        val c = RunnersInferenceCredentials
+        val newest = c.createdAt.max()
+        val latest = c.select(newest).where { (c.sessionId eq session.id) and (c.epoch eq session.epoch) }
+            .single()[newest]
+        val now = clock.now()
+        val createdAt = if (latest == null) now else maxOf(now, latest + 1.milliseconds)
+        write { credentialInsert(session, minted, createdAt) }
+        return returned { credentialsPast(session, keep) }.map { it[c.tokenId] }
     }
 
     override suspend fun revokeEnded(session: CloudSession) {
         try {
             val live = session.runsInference
-            val stale = driver.inTenant(session.orgId) {
-                fetchAll(
-                    Statement.create(
-                        """
-                        SELECT token_id FROM runners_inference_credentials WHERE session_id = :session_id
-                        AND (NOT CAST(:live AS BOOLEAN) OR epoch <> :epoch)
-                        """,
-                    ).bind("session_id", session.id).bind("live", live).bind("epoch", session.epoch),
-                ).getOrThrow().map { it.get("token_id").asUuid() }
+            val stale = database.inOrg(session.orgId) {
+                val c = RunnersInferenceCredentials
+                credentialsEnded(session, live).map { it[c.tokenId] }
             }
             if (stale.isNotEmpty()) revokeAndDelete(session.orgId, stale)
         } catch (cancelled: CancellationException) {
@@ -144,11 +138,10 @@ class CloudInferenceCredentialStoreImpl(
     }
 
     override suspend fun purge(limit: Int): Int {
-        val stale = driver.fetchAll(
-            Statement.create(
-                "SELECT org_id, token_id FROM runners_stale_inference_credentials(CAST(:limit AS INTEGER))",
-            ).bind("limit", limit),
-        ).getOrThrow().map { it.get("org_id").asUuid() to it.get("token_id").asUuid() }
+        val stale = database.query {
+            val c = RunnersStaleInferenceCredentials
+            c.of(limit).select(c.orgId, c.tokenId).map { it[c.orgId] to it[c.tokenId] }
+        }
         // One organization's failure never holds back the others: it is logged and tried again the next minute.
         return stale.groupBy({ it.first }, { it.second }).entries.sumOf { (orgId, ids) ->
             val done = guarded(orgId, "Purging an organization's stale inference credentials failed.") {
@@ -177,13 +170,39 @@ class CloudInferenceCredentialStoreImpl(
     /** The tokens first, then their rows: a row outlives its token's revocation only if that revocation failed. */
     private suspend fun revokeAndDelete(orgId: Uuid, ids: List<Uuid>) {
         tokens.revoke(orgId, ids)
-        driver.inTenant(orgId) {
-            execute(
-                Statement.create(
-                    "DELETE FROM runners_inference_credentials WHERE " +
-                        "token_id = ANY(CAST(string_to_array(CAST(:ids AS TEXT), ',') AS UUID[]))",
-                ).bind("ids", ids.joinToString(",")),
-            ).getOrThrow()
-        }
+        database.inOrg(orgId) { write { credentialsForgotten(ids) } }
     }
 }
+
+/** A credential recorded, created at [createdAt]. */
+internal fun StatementBuilder.credentialInsert(
+    session: CloudSession,
+    minted: InferenceToken,
+    createdAt: Instant,
+): InsertStatement<Number> = RunnersInferenceCredentials.insert {
+    it[tokenId] = minted.id
+    it[orgId] = session.orgId
+    it[sessionId] = session.id
+    it[epoch] = session.epoch
+    it[this.createdAt] = createdAt
+    it[expiresAt] = minted.expiresAt
+}
+
+/** The execution's credentials past its newest [keep], deleted; returns their tokens. */
+internal fun StatementBuilder.credentialsPast(session: CloudSession, keep: Int): ReturningStatement {
+    val c = RunnersInferenceCredentials
+    val past = c.select(c.tokenId).where { (c.sessionId eq session.id) and (c.epoch eq session.epoch) }
+        .orderBy(c.createdAt to SortOrder.DESC).offset(keep.toLong())
+    return c.deleteReturning(listOf(c.tokenId)) { c.tokenId inSubQuery past }
+}
+
+/** The session's credentials of an execution that ended: all of them when it no longer runs, else the older ones. */
+internal fun credentialsEnded(session: CloudSession, live: Boolean): Query {
+    val c = RunnersInferenceCredentials
+    val ended: Op<Boolean> = if (live) c.epoch neq session.epoch else Op.TRUE
+    return c.select(c.tokenId).where { (c.sessionId eq session.id) and ended }
+}
+
+/** Credentials deleted once their tokens are revoked. */
+internal fun StatementBuilder.credentialsForgotten(ids: List<Uuid>): DeleteStatement =
+    RunnersInferenceCredentials.deleteWhere { RunnersInferenceCredentials.tokenId eq anyFrom(ids, UuidColumnType()) }

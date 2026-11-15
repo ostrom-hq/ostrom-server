@@ -1,9 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners.infrastructure
 
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.databaseNow
+import run.ostrom.server.kernel.database.databaseNowPlus
+import run.ostrom.server.kernel.database.write
 import run.ostrom.server.runners.domain.TerminalHosts
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.core.less
+import org.jetbrains.exposed.v1.core.lessEq
+import org.jetbrains.exposed.v1.core.or
+import org.jetbrains.exposed.v1.core.statements.DeleteStatement
+import org.jetbrains.exposed.v1.core.statements.StatementBuilder
+import org.jetbrains.exposed.v1.core.statements.UpdateBuilder
+import org.jetbrains.exposed.v1.core.statements.UpsertStatement
+import org.jetbrains.exposed.v1.core.statements.insertValue
+import org.jetbrains.exposed.v1.jdbc.Query
+import org.jetbrains.exposed.v1.jdbc.select
 import kotlin.uuid.Uuid
 
 /**
@@ -11,69 +26,107 @@ import kotlin.uuid.Uuid
  * row-level security, timed by the database's clock: a hold names [replicaUrl], and only a newer or the same execution
  * takes a session over from another replica.
  *
- * @param driver The database.
+ * @param database The JDBC pool.
  * @param replicaUrl This replica's URL, as the others reach it.
  */
-class TerminalHostsImpl(private val driver: Driver, private val replicaUrl: String) : TerminalHosts {
-    override suspend fun hold(orgId: Uuid, sessionId: Uuid, epoch: Long) = driver.inTenant(orgId) {
+class TerminalHostsImpl(private val database: JdbcDatabase, private val replicaUrl: String) : TerminalHosts {
+    override suspend fun hold(orgId: Uuid, sessionId: Uuid, epoch: Long) = database.inOrg(orgId) {
         // The organization's holds past their lease (their replica died) are dropped as new ones are taken.
-        execute(Statement.create(TERMINAL_HOST_PURGE_SQL).bind("org_id", orgId)).getOrThrow()
-        execute(held(TERMINAL_HOST_HOLD_SQL, orgId, sessionId, epoch)).getOrThrow()
-        Unit
+        write { terminalHostPurge(orgId) }
+        write { terminalHostHold(orgId, sessionId, epoch, replicaUrl) }
     }
 
-    override suspend fun renew(orgId: Uuid, sessionId: Uuid, epoch: Long) = driver.inTenant(orgId) {
-        execute(held(TERMINAL_HOST_RENEW_SQL, orgId, sessionId, epoch)).getOrThrow()
-        Unit
+    override suspend fun renew(orgId: Uuid, sessionId: Uuid, epoch: Long) = database.inOrg(orgId) {
+        write { terminalHostRenew(orgId, sessionId, epoch, replicaUrl) }
     }
 
-    override suspend fun release(orgId: Uuid, sessionId: Uuid, epoch: Long) = driver.inTenant(orgId) {
-        execute(held(TERMINAL_HOST_RELEASE_SQL, orgId, sessionId, epoch)).getOrThrow()
-        Unit
+    override suspend fun release(orgId: Uuid, sessionId: Uuid, epoch: Long) = database.inOrg(orgId) {
+        write { terminalHostRelease(orgId, sessionId, epoch, replicaUrl) }
     }
 
-    override suspend fun host(orgId: Uuid, sessionId: Uuid): String? = driver.inTenant(orgId) {
-        val statement = Statement.create(TERMINAL_HOST_FIND_SQL).bind("org_id", orgId).bind("session_id", sessionId)
-        fetchAll(statement).getOrThrow().firstOrNull()?.let { it.get("replica_url").asString() }
+    override suspend fun host(orgId: Uuid, sessionId: Uuid): String? = database.inOrg(orgId) {
+        terminalHostFind(orgId, sessionId).firstOrNull()?.get(RunnersTerminalHosts.replicaUrl)
     }
-
-    private fun held(sql: String, orgId: Uuid, sessionId: Uuid, epoch: Long) = Statement.create(sql)
-        .bind("org_id", orgId).bind("session_id", sessionId).bind("epoch", epoch).bind("url", replicaUrl)
 }
 
-private val LEASE_SECONDS = TerminalHosts.LEASE.inWholeSeconds
+/** The organization's holds past their lease. */
+internal fun StatementBuilder.terminalHostPurge(orgId: Uuid): DeleteStatement = RunnersTerminalHosts.deleteWhere {
+    (RunnersTerminalHosts.orgId eq orgId) and (RunnersTerminalHosts.expiresAt lessEq databaseNow())
+}
 
 /** This replica holds the session, unless a newer execution is held elsewhere (the expired are purged first). */
-internal val TERMINAL_HOST_HOLD_SQL =
-    "INSERT INTO runners_terminal_hosts (session_id, org_id, epoch, replica_url, expires_at) " +
-        "VALUES (:session_id, :org_id, :epoch, :url, now() + INTERVAL '$LEASE_SECONDS seconds') " +
-        "ON CONFLICT (session_id) DO UPDATE SET epoch = EXCLUDED.epoch, replica_url = EXCLUDED.replica_url, " +
-        "expires_at = EXCLUDED.expires_at " +
-        "WHERE runners_terminal_hosts.epoch <= EXCLUDED.epoch"
-
-/** The organization's holds past their lease. */
-internal const val TERMINAL_HOST_PURGE_SQL =
-    "DELETE FROM runners_terminal_hosts WHERE org_id = :org_id AND expires_at <= now()"
+internal fun StatementBuilder.terminalHostHold(
+    orgId: Uuid,
+    sessionId: Uuid,
+    epoch: Long,
+    url: String,
+): UpsertStatement<Long> {
+    val h = RunnersTerminalHosts
+    return h.upsert(
+        h.sessionId,
+        onUpdate = {
+            it[h.epoch] = insertValue(h.epoch)
+            it[h.replicaUrl] = insertValue(h.replicaUrl)
+            it[h.expiresAt] = insertValue(h.expiresAt)
+        },
+        where = { h.epoch lessEq epoch },
+    ) { it.heldValues(orgId, sessionId, epoch, url) }
+}
 
 /**
  * This replica's hold, extended, or written again when it was lost (a failed write, a purge after a long outage); never
  * over another replica's live hold of the same or a newer execution.
  */
-internal val TERMINAL_HOST_RENEW_SQL =
-    "INSERT INTO runners_terminal_hosts (session_id, org_id, epoch, replica_url, expires_at) " +
-        "VALUES (:session_id, :org_id, :epoch, :url, now() + INTERVAL '$LEASE_SECONDS seconds') " +
-        "ON CONFLICT (session_id) DO UPDATE SET epoch = EXCLUDED.epoch, replica_url = EXCLUDED.replica_url, " +
-        "expires_at = EXCLUDED.expires_at " +
-        "WHERE runners_terminal_hosts.epoch < EXCLUDED.epoch OR runners_terminal_hosts.expires_at <= now() " +
-        "OR (runners_terminal_hosts.epoch = EXCLUDED.epoch " +
-        "AND runners_terminal_hosts.replica_url = EXCLUDED.replica_url)"
+internal fun StatementBuilder.terminalHostRenew(
+    orgId: Uuid,
+    sessionId: Uuid,
+    epoch: Long,
+    url: String,
+): UpsertStatement<Long> {
+    val h = RunnersTerminalHosts
+    return h.upsert(
+        h.sessionId,
+        onUpdate = {
+            it[h.epoch] = insertValue(h.epoch)
+            it[h.replicaUrl] = insertValue(h.replicaUrl)
+            it[h.expiresAt] = insertValue(h.expiresAt)
+        },
+        where = {
+            (h.epoch less epoch) or (h.expiresAt lessEq databaseNow()) or
+                ((h.epoch eq epoch) and (h.replicaUrl eq url))
+        },
+    ) { it.heldValues(orgId, sessionId, epoch, url) }
+}
 
 /** This replica's hold, given back. */
-internal const val TERMINAL_HOST_RELEASE_SQL =
-    "DELETE FROM runners_terminal_hosts " +
-        "WHERE org_id = :org_id AND session_id = :session_id AND epoch = :epoch AND replica_url = :url"
+internal fun StatementBuilder.terminalHostRelease(
+    orgId: Uuid,
+    sessionId: Uuid,
+    epoch: Long,
+    url: String,
+): DeleteStatement = RunnersTerminalHosts.deleteWhere {
+    (RunnersTerminalHosts.orgId eq orgId) and (RunnersTerminalHosts.sessionId eq sessionId) and
+        (RunnersTerminalHosts.epoch eq epoch) and (RunnersTerminalHosts.replicaUrl eq url)
+}
 
 /** The session's live host. */
-internal const val TERMINAL_HOST_FIND_SQL =
-    "SELECT replica_url FROM runners_terminal_hosts " +
-        "WHERE org_id = :org_id AND session_id = :session_id AND expires_at > now()"
+internal fun terminalHostFind(orgId: Uuid, sessionId: Uuid): Query {
+    val h = RunnersTerminalHosts
+    return h.select(h.replicaUrl)
+        .where { (h.orgId eq orgId) and (h.sessionId eq sessionId) and (h.expiresAt greater databaseNow()) }
+}
+
+/** The values of a hold: it ends [TerminalHosts.LEASE] from now by the database's clock. */
+private fun UpdateBuilder<*>.heldValues(
+    orgId: Uuid,
+    sessionId: Uuid,
+    epoch: Long,
+    url: String,
+) {
+    val h = RunnersTerminalHosts
+    this[h.sessionId] = sessionId
+    this[h.orgId] = orgId
+    this[h.epoch] = epoch
+    this[h.replicaUrl] = url
+    this[h.expiresAt] = databaseNowPlus(TerminalHosts.LEASE)
+}

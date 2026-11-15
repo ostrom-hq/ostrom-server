@@ -84,27 +84,3 @@ internal object RunnersSessionInputs : Table("runners_session_inputs") {
 
     override val primaryKey = PrimaryKey(id)
 }
-
-/** The columns of `runners_sessions` the conversation reads under its lock and writes (the rest is sqlx4k's). */
-internal object RunnersSessionsTable : Table("runners_sessions") {
-    val id = uuid("id")
-    val orgId = uuid("org_id")
-    val state = text("state")
-    val desiredState = text("desired_state")
-    val epoch = long("epoch")
-    val generation = long("generation")
-    val updatedAt = instant("updated_at")
-    val model = text("model").nullable()
-    val effort = text("effort").nullable()
-    val bypassBy = text("bypass_by").nullable()
-    val bypassCredentialId = text("bypass_credential_id").nullable()
-    val bypassAt = instant("bypass_at").nullable()
-    val ownerId = text("owner_id")
-    val waitingReason = text("waiting_reason").nullable()
-    val waitingRequestId = text("waiting_request_id").nullable()
-    val waitingSince = instant("waiting_since").nullable()
-    val waitingEventSeq = long("waiting_event_seq").nullable()
-    val waitingEpoch = long("waiting_epoch").nullable()
-
-    override val primaryKey = PrimaryKey(id)
-}

@@ -13,10 +13,6 @@ import run.ostrom.server.runners.domain.CloudInputStatus
 import run.ostrom.server.runners.domain.CloudSessionNotFoundException
 import run.ostrom.server.runners.domain.DesiredState
 import run.ostrom.server.runners.domain.SessionState
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import org.jetbrains.exposed.v1.core.JoinType
 import org.jetbrains.exposed.v1.core.Op
 import org.jetbrains.exposed.v1.core.and
@@ -41,16 +37,14 @@ import kotlin.uuid.Uuid
  * [CloudFileStore] on PostgreSQL through Exposed (TeamCode's `SqlCloudFileStore`, the tables of [RunnersMigrations]'
  * `session_files`). Every write that counts a session's files locks the session row first (as inputs do), and the
  * author's daily counter is locked after it. What crosses organizations (the expiry, the files to delete, the past
- * days' counters) goes through the `ostrom_router` functions of that version on [driver].
+ * days' counters) goes through the `ostrom_router` functions of that version.
  *
  * @param database The JDBC pool.
- * @param driver The sqlx4k pool, for the functions across organizations.
  * @param clock The time the rows are written at.
  */
 @Suppress("TooManyFunctions") // TeamCode's store, one function per operation and its two quota checks.
 internal class CloudFileStoreImpl(
     private val database: JdbcDatabase,
-    private val driver: Driver,
     private val clock: Clock,
 ) : CloudFileStore {
     override suspend fun begin(file: CloudFile, expectedOwnerId: String, announcedBytes: Long): CloudFileBegin =
@@ -164,17 +158,13 @@ internal class CloudFileStoreImpl(
             }.singleOrNull()?.let(::readFile)
         }
 
-    override suspend fun expire(limit: Int): Int = driver.fetchAll(
-        Statement.create(
-            "SELECT runners_files_expire(CAST(:now AS TIMESTAMPTZ), CAST(:limit AS INTEGER)) AS n",
-        ).bind("now", clock.now()).bind("limit", limit),
-    ).getOrThrow().first().get("n").asLong().toInt()
+    override suspend fun expire(limit: Int): Int = database.query { scalar(expireFiles(clock.now(), limit)).toInt() }
 
     override suspend fun deleting(limit: Int): List<CloudFile> {
-        val due = driver.fetchAll(
-            Statement.create("SELECT org_id, id FROM runners_files_deleting(CAST(:limit AS INTEGER))")
-                .bind("limit", limit),
-        ).getOrThrow().map { it.get("org_id").asUuid() to it.get("id").asUuid() }
+        val due = database.query {
+            val d = RunnersFilesDeleting
+            d.of(limit).select(d.orgId, d.id).map { it[d.orgId] to it[d.id] }
+        }
         return due.groupBy({ it.first }, { it.second }).flatMap { (orgId, ids) ->
             database.inOrg(orgId) {
                 val f = RunnersSessionFiles
@@ -191,9 +181,7 @@ internal class CloudFileStoreImpl(
         }
     }
 
-    override suspend fun purgeUsage(day: Long): Int = driver.fetchAll(
-        Statement.create("SELECT runners_file_usage_purge(CAST(:day AS BIGINT)) AS n").bind("day", day),
-    ).getOrThrow().first().get("n").asLong().toInt()
+    override suspend fun purgeUsage(day: Long): Int = database.query { scalar(purgeFileUsage(day)).toInt() }
 
     /**
      * The session's own bounds: files no message names yet (when a new one is [unsent]) and bytes its host has not

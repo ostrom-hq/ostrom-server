@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.runners.domain.RegisteredRunnerKey
 import run.ostrom.server.runners.domain.RegisteredRunnersRepository
 import run.ostrom.server.runners.domain.RunnerTokens
@@ -8,17 +9,15 @@ import run.ostrom.server.runners.fakes.ORG_A
 import run.ostrom.server.runners.fakes.ORG_B
 import run.ostrom.server.runners.fakes.SettableClock
 import run.ostrom.server.runners.fakes.testIdentities
-import run.ostrom.server.runners.infrastructure.RegisteredRunnersRepositoryImpl
-import run.ostrom.server.runners.infrastructure.inTenant
+import run.ostrom.server.runners.infrastructure.RunnersRegistered
+import run.ostrom.server.runners.infrastructure.runnerTouch
 import run.ostrom.server.runners.presentation.RegisterRunnerRequest
 import run.ostrom.server.runners.presentation.RegisteredRunnerDto
 import run.ostrom.server.runners.presentation.RegisteredRunnerHeartbeatResponse
 import run.ostrom.server.runners.presentation.RunnersPage
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
@@ -34,6 +33,7 @@ import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.writeString
+import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -116,8 +116,8 @@ class RegisteredRunnersHeartbeatPostgresTest {
             val repository = server.koin.get<RegisteredRunnersRepository>()
 
             // As the serving role, without an organization: the table shows nothing, the function one runner's key.
-            val direct = server.driver.fetchAll(Statement.create("SELECT org_id FROM runners_registered")).getOrThrow()
-            assertEquals(0, direct.size)
+            val jdbc = server.koin.get<JdbcDatabase>()
+            assertEquals(0L, jdbc.query { RunnersRegistered.selectAll().count() })
             assertEquals(RegisteredRunnerKey(ORG_A, hash), repository.keyOf(id))
             assertNull(repository.keyOf(Uuid.random()))
 
@@ -128,42 +128,36 @@ class RegisteredRunnersHeartbeatPostgresTest {
             assertFalse(repository.touch(ORG_B, id, hash, later + 30.seconds, 9))
             assertFalse(repository.touch(ORG_A, id, "another-hash", later + 30.seconds, 9))
             assertEquals(3, repository.list(ORG_A, 10).single().capacity, "The capacity of its last heartbeat")
-            val seen = server.driver.inTenant(ORG_A) {
-                fetchAll(Statement.create("SELECT last_seen_at FROM runners_registered")).getOrThrow()
-            }.single().get("last_seen_at").asInstant()
+            val seen = jdbc.inOrg(ORG_A) { RunnersRegistered.selectAll().single()[RunnersRegistered.lastSeenAt] }
             assertEquals(later, seen)
         }
 
     @Test
     fun theHeartbeatsQueriesUseTheirIndexes() = serverTest(listOf(RunnersModule)) { server ->
+        val jdbc = server.koin.get<JdbcDatabase>()
+        val fixtures = server.database.superuser
         for ((org, rows) in listOf(ORG_B to 4_000, ORG_A to 100)) {
-            server.driver.inTenant(org) {
-                execute(
-                    Statement.create(
-                        """
-                        INSERT INTO runners_registered (id, org_id, name, labels, key_hash, registered_by, created_at)
-                        SELECT gen_random_uuid(), CAST(:org AS UUID), 'r' || i, '[]', md5(:org || i), 'dana', now()
-                        FROM generate_series(1, $rows) AS i
-                        """,
-                    ).bind("org", org.toString()),
-                ).getOrThrow()
-            }
+            fixtures.execute(
+                "INSERT INTO runners_registered (id, org_id, name, labels, key_hash, registered_by, created_at) " +
+                    "SELECT gen_random_uuid(), CAST('$org' AS UUID), 'r' || i, '[]', md5('$org' || i), 'dana', now() " +
+                    "FROM generate_series(1, $rows) AS i",
+            ).getOrThrow()
         }
         // Statistics only, which no request writes: the serving role may not vacuum (#68).
-        server.database.superuser.execute("VACUUM ANALYZE runners_registered").getOrThrow()
-        val one = server.driver.inTenant(ORG_A) {
-            fetchAll(Statement.create("SELECT id, key_hash FROM runners_registered LIMIT 1")).getOrThrow()
-        }.single()
-        val id = one.get("id").asUuid()
-        val hash = one.get("key_hash").asString()
+        fixtures.execute("VACUUM ANALYZE runners_registered").getOrThrow()
+        val one = jdbc.inOrg(ORG_A) { RunnersRegistered.selectAll().limit(1).single() }
+        val id = one[RunnersRegistered.id]
+        val hash = one[RunnersRegistered.keyHash]
         // The function's own query, as `ostrom_router` reads it (its policy opens every row), then the write.
         val plans = linkedMapOf(
-            "key of a runner (body of runners_registered_key)" to server.plan(
-                null,
-                "SELECT r.org_id, r.key_hash FROM runners_registered r WHERE r.id = :id",
-            ) { bind("id", id) },
-            "sign of life" to server.plan(ORG_A, RegisteredRunnersRepositoryImpl.TOUCH_SQL) {
-                bind("at", clock.now).bind("capacity", 2).bind("org_id", ORG_A).bind("id", id).bind("key_hash", hash)
+            "key of a runner (body of runners_registered_key)" to fixtures
+                .fetchAll(
+                    "EXPLAIN (ANALYZE, BUFFERS) SELECT r.org_id, r.key_hash FROM runners_registered r " +
+                        "WHERE r.id = CAST('$id' AS UUID)",
+                )
+                .getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() },
+            "sign of life" to jdbc.inOrg(ORG_A) {
+                plan { runnerTouch(ORG_A, id, hash, clock.now, 2) }.also { rollback() }
             },
         )
         val report = plans.entries.joinToString("\n\n") { (name, plan) -> "-- $name\n$plan" }
@@ -177,17 +171,6 @@ class RegisteredRunnersHeartbeatPostgresTest {
                 .any { "Index Scan using $it " in plan }
             assertTrue(unique, "$name does not use a unique index:\n$plan")
         }
-    }
-
-    /** The plan of [sql]: in [org]'s transaction, or as the test's superuser for a router function's body. */
-    private suspend fun TestServer.plan(org: Uuid?, sql: String, bind: Statement.() -> Statement): String {
-        val explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind()
-        val rows = if (org == null) {
-            database.superuser.fetchAll(explain).getOrThrow()
-        } else {
-            driver.inTenant(org) { fetchAll(explain).getOrThrow() }
-        }
-        return rows.joinToString("\n") { it.get("QUERY PLAN").asString() }
     }
 
     private suspend fun TestServer.register(token: String, name: String): RegisteredRunnerDto {

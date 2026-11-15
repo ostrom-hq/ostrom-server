@@ -1,15 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners.infrastructure
 
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.databaseNow
+import run.ostrom.server.kernel.database.databaseNowPlus
+import run.ostrom.server.kernel.database.write
 import run.ostrom.server.runners.domain.Caller
 import run.ostrom.server.runners.domain.RunnerTokens
 import run.ostrom.server.runners.domain.TerminalTicket
 import run.ostrom.server.runners.domain.TerminalTickets
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.core.lessEq
+import org.jetbrains.exposed.v1.core.statements.DeleteStatement
+import org.jetbrains.exposed.v1.core.statements.ReturningStatement
+import org.jetbrains.exposed.v1.core.statements.StatementBuilder
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
@@ -21,36 +27,34 @@ import kotlin.uuid.Uuid
  * security. The organization is written in the ticket (`ostrom_term_<org>_<secret>`): its redemption, before any
  * credential, reads inside that organization only, and a ticket naming another organization finds nothing there.
  *
- * @param driver The database.
+ * @param database The JDBC pool.
  * @param tokens Draws and hashes the random values.
  * @param lifetime How long a ticket stays valid.
  */
 class TerminalTicketsImpl(
-    private val driver: Driver,
+    private val database: JdbcDatabase,
     private val tokens: RunnerTokens,
     private val lifetime: Duration = DEFAULT_LIFETIME,
 ) : TerminalTickets {
     override suspend fun issue(caller: Caller, sessionId: Uuid): TerminalTicket {
         val value = PREFIX + caller.orgId.toHexString() + "_" + tokens.mint().substringAfter('_').substringAfter('_')
-        val insert = Statement.create(TERMINAL_TICKET_INSERT_SQL)
-            .bind("hash", tokens.hash(value)).bind("org_id", caller.orgId).bind("session_id", sessionId)
-            .bind("member_id", caller.memberId).bind("admin", caller.admin)
-            .bind("seconds", lifetime.inWholeSeconds)
-        val expiresAt = driver.inTenant(caller.orgId) {
+        val hash = tokens.hash(value)
+        val expiresAt = database.inOrg(caller.orgId) {
             // The organization's tickets past their end, never read again, are dropped as new ones are issued.
-            execute(Statement.create(TERMINAL_TICKET_PURGE_SQL).bind("org_id", caller.orgId)).getOrThrow()
-            fetchAll(insert).getOrThrow().single().get("expires_at").asInstant()
+            write { ticketPurge(caller.orgId) }
+            returned { ticketInsert(caller, sessionId, hash, lifetime) }.single()[RunnersTerminalTickets.expiresAt]
         }
         return TerminalTicket(value, expiresAt)
     }
 
     override suspend fun redeem(value: String, sessionId: Uuid): Caller? {
         val orgId = orgOf(value) ?: return null
-        val redeem = Statement.create(TERMINAL_TICKET_REDEEM_SQL).bind("org_id", orgId).bind("hash", tokens.hash(value))
+        val hash = tokens.hash(value)
         // Spent whatever happens next: a ticket tried on another session opens nothing afterwards.
-        val row = driver.inTenant(orgId) { fetchAll(redeem).getOrThrow().firstOrNull() }
-        val live = row != null && row.get("live").asBoolean() && row.get("session_id").asUuid() == sessionId
-        return if (live) Caller(orgId, row.get("member_id").asString(), row.get("admin").asBoolean()) else null
+        val row = database.inOrg(orgId) { returned { ticketRedeem(orgId, hash) }.firstOrNull() }
+        val t = RunnersTerminalTickets
+        val live = row != null && row[LIVE] && row[t.sessionId] == sessionId
+        return if (live) Caller(orgId, row[t.memberId], row[t.admin]) else null
     }
 
     private fun orgOf(value: String): Uuid? {
@@ -67,17 +71,36 @@ class TerminalTicketsImpl(
     }
 }
 
-/** A new ticket, ending [TerminalTicketsImpl]'s lifetime from now by the database's clock. */
-internal const val TERMINAL_TICKET_INSERT_SQL =
-    "INSERT INTO runners_terminal_tickets (token_hash, org_id, session_id, member_id, admin, expires_at) " +
-        "VALUES (:hash, :org_id, :session_id, :member_id, :admin, now() + make_interval(secs => :seconds)) " +
-        "RETURNING expires_at"
+/** Whether a ticket redeemed was still valid, as the redemption returns it. */
+private val LIVE = RunnersTerminalTickets.expiresAt greater databaseNow()
+
+/** A new ticket, ending [lifetime] from now by the database's clock; returns when it ends. */
+internal fun StatementBuilder.ticketInsert(
+    caller: Caller,
+    sessionId: Uuid,
+    hash: String,
+    lifetime: Duration,
+): ReturningStatement {
+    val t = RunnersTerminalTickets
+    return t.insertReturning(listOf(t.expiresAt)) {
+        it[tokenHash] = hash
+        it[orgId] = caller.orgId
+        it[this.sessionId] = sessionId
+        it[memberId] = caller.memberId
+        it[admin] = caller.admin
+        it[expiresAt] = databaseNowPlus(lifetime)
+    }
+}
 
 /** The organization's tickets past their end. */
-internal const val TERMINAL_TICKET_PURGE_SQL =
-    "DELETE FROM runners_terminal_tickets WHERE org_id = :org_id AND expires_at <= now()"
+internal fun StatementBuilder.ticketPurge(orgId: Uuid): DeleteStatement = RunnersTerminalTickets.deleteWhere {
+    (RunnersTerminalTickets.orgId eq orgId) and (RunnersTerminalTickets.expiresAt lessEq databaseNow())
+}
 
 /** A ticket spent: deleted, with what it opens and whether it was still valid. */
-internal const val TERMINAL_TICKET_REDEEM_SQL =
-    "DELETE FROM runners_terminal_tickets WHERE org_id = :org_id AND token_hash = :hash " +
-        "RETURNING session_id, member_id, admin, expires_at > now() AS live"
+internal fun StatementBuilder.ticketRedeem(orgId: Uuid, hash: String): ReturningStatement {
+    val t = RunnersTerminalTickets
+    return t.deleteReturning(listOf(t.sessionId, t.memberId, t.admin, LIVE)) {
+        (t.orgId eq orgId) and (t.tokenHash eq hash)
+    }
+}

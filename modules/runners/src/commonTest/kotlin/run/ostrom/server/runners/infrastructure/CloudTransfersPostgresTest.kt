@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners.infrastructure
 
-import io.github.smyrgeorge.sqlx4k.Statement
 import kotlinx.coroutines.test.runTest
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.update
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.logging.JsonLogger
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.runners.domain.CloudTransfer
@@ -32,6 +34,8 @@ import kotlin.uuid.Uuid
 
 /** The transfers' SQL on PostgreSQL: the session's compare-and-set, the one open transfer, the key and the tenant. */
 class CloudTransfersPostgresTest {
+    private val pools = mutableListOf<JdbcDatabase>()
+
     private val now = Instant.parse("2026-11-14T10:00:00Z")
 
     private fun transfer(
@@ -61,8 +65,9 @@ class CloudTransfersPostgresTest {
         val database = TestDatabase.create() ?: return@runTest
         try {
             database.migrationRunner(JsonLogger(LogLevel.WARN)).migrate("runners", RunnersMigrations)
-            val sessions = CloudSessionsRepositoryImpl(database.driver)
-            val transfers = CloudTransfersRepositoryImpl(database.driver, sessions)
+            val jdbc = jdbc(database)
+            val sessions = CloudSessionsRepositoryImpl(jdbc)
+            val transfers = CloudTransfersRepositoryImpl(jdbc)
             val paused = session(state = SessionState.PAUSED, desired = DesiredState.PAUSED)
                 .copy(githubAccess = GitHubAccessMode.SHARED)
             check(sessions.createWithinCap(paused, 10))
@@ -104,7 +109,7 @@ class CloudTransfersPostgresTest {
             assertEquals(TransferState.COMPLETED, transfers.find(ORG_A, first.id)?.state)
             assertIs<TransferCompletion.Conflict>(transfers.complete(moving, owned, done))
         } finally {
-            database.close()
+            finish(database)
         }
     }
 
@@ -112,8 +117,18 @@ class CloudTransfersPostgresTest {
         database: TestDatabase,
     ): Pair<CloudSessionsRepositoryImpl, CloudTransfersRepositoryImpl> {
         database.migrationRunner(JsonLogger(LogLevel.WARN)).migrate("runners", RunnersMigrations)
-        val sessions = CloudSessionsRepositoryImpl(database.driver)
-        return sessions to CloudTransfersRepositoryImpl(database.driver, sessions)
+        val jdbc = jdbc(database)
+        return CloudSessionsRepositoryImpl(jdbc) to CloudTransfersRepositoryImpl(jdbc)
+    }
+
+    /** A pool of the serving role on [database], closed by [finish] before the database goes. */
+    private fun jdbc(database: TestDatabase): JdbcDatabase =
+        JdbcDatabase(database.servingConfig, JdbcDatabase.MIN_POOL_SIZE).also { pools += it }
+
+    private suspend fun finish(database: TestDatabase) {
+        pools.forEach { it.close() }
+        pools.clear()
+        database.close()
     }
 
     private suspend fun pausedSession(sessions: CloudSessionsRepositoryImpl) =
@@ -152,7 +167,7 @@ class CloudTransfersPostgresTest {
             assertEquals(listOf(older.id), ids(query(TransferDirection.BOTH, before = newer.id)))
             assertEquals(listOf(newer.id), ids(query(TransferDirection.BOTH, limit = 1)))
         } finally {
-            database.close()
+            finish(database)
         }
     }
 
@@ -197,13 +212,14 @@ class CloudTransfersPostgresTest {
             assertEquals("Too slow.", transfers.update(third, failed)?.failure?.message)
 
             // A state this version does not know reads as a failed transfer, never an open one.
-            database.superuser.execute(
-                Statement.create("UPDATE runners_session_transfers SET state = 'weird' WHERE id = :id")
-                    .bind("id", again.id),
-            ).getOrThrow()
+            jdbc(database).inOrg(ORG_A) {
+                RunnersSessionTransfers.update({ RunnersSessionTransfers.id eq again.id }) {
+                    it[state] = "weird"
+                }
+            }
             assertEquals(TransferState.FAILED, transfers.find(ORG_A, again.id)?.state)
         } finally {
-            database.close()
+            finish(database)
         }
     }
 
@@ -224,7 +240,7 @@ class CloudTransfersPostgresTest {
             assertEquals(TransferState.ACCEPTED, transfers.find(ORG_A, accepted.id)?.state)
             assertEquals("alice", sessions.get(ORG_A, target.id)?.ownerId)
         } finally {
-            database.close()
+            finish(database)
         }
     }
 
@@ -244,7 +260,7 @@ class CloudTransfersPostgresTest {
             assertEquals("recipient_unavailable", transfers.find(ORG_A, failed.id)?.failure?.code)
             assertEquals(1, sessions.get(ORG_A, target.id)?.generation)
         } finally {
-            database.close()
+            finish(database)
         }
     }
 }

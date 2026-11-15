@@ -8,12 +8,11 @@ import run.ostrom.server.runners.domain.KeyedCreateOutcome
 import run.ostrom.server.runners.fakes.ORG_A
 import run.ostrom.server.runners.fakes.testIdentities
 import run.ostrom.server.runners.fakes.session
-import run.ostrom.server.runners.infrastructure.inTenant
+import run.ostrom.server.runners.infrastructure.RunnersCreateKeys
 import run.ostrom.server.runners.presentation.CloudSessionResponse
 import run.ostrom.server.runners.presentation.CreateCloudSessionRequest
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.header
@@ -41,6 +40,8 @@ import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
 import kotlin.uuid.Uuid
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.selectAll
 
 /** Against a real PostgreSQL: a creation's `Idempotency-Key` (`runners.cloud.idempotency.v1`, TeamCode's create). */
 class CloudSessionIdempotencyPostgresTest {
@@ -108,16 +109,16 @@ class CloudSessionIdempotencyPostgresTest {
         val repository = server.koin.get<CloudSessionsRepository>()
         val now = Clock.System.now()
         // A record whose session no longer exists.
-        server.driver.inTenant(ORG_A) {
-            execute(
-                Statement.create(
-                    """
-                    INSERT INTO runners_create_keys (org_id, member_id, idempotency_key, request_digest, session_id,
-                        created_at, expires_at) VALUES (:org_id, 'alice', 'k', :digest, :session_id, :now, :expires_at)
-                    """,
-                ).bind("org_id", ORG_A).bind("digest", DIGEST).bind("session_id", Uuid.random()).bind("now", now)
-                    .bind("expires_at", now + 1.hours),
-            ).getOrThrow()
+        server.koin.get<JdbcDatabase>().inOrg(ORG_A) {
+            RunnersCreateKeys.insert {
+                it[orgId] = ORG_A
+                it[memberId] = "alice"
+                it[idempotencyKey] = "k"
+                it[requestDigest] = DIGEST
+                it[sessionId] = Uuid.random()
+                it[createdAt] = now
+                it[expiresAt] = now + 1.hours
+            }
         }
 
         assertEquals(
@@ -135,11 +136,8 @@ class CloudSessionIdempotencyPostgresTest {
 
         assertEquals(1, repository.purgeExpiredCreateKeys())
         assertEquals(0, repository.purgeExpiredCreateKeys())
-        val left = server.driver.inTenant(ORG_A) {
-            fetchAll(Statement.create("SELECT COUNT(*) AS n FROM runners_create_keys")).getOrThrow()
-                .first().get("n").asLong()
-        }
-        assertEquals(1, left)
+        val left = server.koin.get<JdbcDatabase>().inOrg(ORG_A) { RunnersCreateKeys.selectAll().count() }
+        assertEquals(1L, left)
     }
 
     @Test
@@ -147,10 +145,7 @@ class CloudSessionIdempotencyPostgresTest {
         val repository = server.koin.get<CloudSessionsRepository>()
         val now = Clock.System.now()
         repository.createKeyed(session(createdAt = now - 2.hours), 5, CreateKey("old", DIGEST, now - 1.hours))
-        suspend fun left() = server.driver.inTenant(ORG_A) {
-            fetchAll(Statement.create("SELECT COUNT(*) AS n FROM runners_create_keys")).getOrThrow()
-                .first().get("n").asLong()
-        }
+        suspend fun left() = server.koin.get<JdbcDatabase>().inOrg(ORG_A) { RunnersCreateKeys.selectAll().count() }
         val job = Job()
         RunnersModule.start(CoroutineScope(currentCoroutineContext() + job), server.koin)
         withTimeout(20.seconds) {

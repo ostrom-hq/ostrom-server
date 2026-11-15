@@ -3,10 +3,11 @@ package run.ostrom.server.kernel.audit
 
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.PrincipalKind
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.module.serverKoin
 import run.ostrom.server.testing.TestDatabase
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
 import kotlinx.coroutines.test.runTest
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -23,13 +24,19 @@ class TransactionalOrgAuditTrailPostgresTest {
         val database = TestDatabase.create() ?: return@runTest
         try {
             val actor = AuthenticatedPrincipal("user-1", PrincipalKind.USER, emptySet())
-            val answer = database.driver.transaction {
-                trail.record(this, OrgAuditRecord(Uuid.random(), actor, "cloud.session.paused", "cloud_session", "s"))
-                fetchAll("SELECT 1 AS n").getOrThrow().single().get("n").asInt()
+            val record = OrgAuditRecord(Uuid.random(), actor, "cloud.session.paused", "cloud_session", "s")
+            val answer = JdbcDatabase(database.servingConfig, JdbcDatabase.MIN_POOL_SIZE).use { jdbc ->
+                trail.recording(jdbc, record) { append ->
+                    assertEquals(true, append(), "Nothing to chain: the change goes on")
+                    one()
+                }
             }
             assertEquals(1, answer)
         } finally {
             database.close()
         }
     }
+
+    private fun JdbcTransaction.one(): Int =
+        exec("SELECT 1 AS n") { rs -> rs.next(); rs.getInt("n") } ?: error("No row.")
 }

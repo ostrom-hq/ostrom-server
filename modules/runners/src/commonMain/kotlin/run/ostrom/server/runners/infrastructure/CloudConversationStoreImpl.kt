@@ -26,10 +26,6 @@ import run.ostrom.server.runners.domain.PermissionRequestRecord
 import run.ostrom.server.runners.domain.PermissionRequestState
 import run.ostrom.server.runners.domain.QuestionShape
 import run.ostrom.server.runners.domain.SessionState
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -62,16 +58,12 @@ import kotlin.uuid.Uuid
  * [RunnersMigrations] version 16). Every query names its organization and runs in [JdbcDatabase.inOrg]; a write that
  * numbers events or counts inputs locks the session row first (`FOR UPDATE`), so replicas agree. What crosses
  * organizations (the purge, the wake sweep, the inputs of ended sessions) goes through the `ostrom_router` functions
- * of version 16 on [driver], and is then done in each organization.
+ * of version 16, and is then done in each organization.
  *
  * @param database The JDBC pool.
- * @param driver The sqlx4k pool, for the functions across organizations.
  */
 @Suppress("TooManyFunctions") // TeamCode's one store of the conversation's tables.
-internal class CloudConversationStoreImpl(
-    private val database: JdbcDatabase,
-    private val driver: Driver,
-) : CloudConversationStore {
+internal class CloudConversationStoreImpl(private val database: JdbcDatabase) : CloudConversationStore {
     override suspend fun events(
         orgId: Uuid,
         sessionId: Uuid,
@@ -268,19 +260,17 @@ internal class CloudConversationStoreImpl(
         }
     }
 
-    override suspend fun pendingWakes(limit: Int): List<PendingWake> = driver.fetchAll(
-        Statement.create(
-            "SELECT session_id, org_id, input_id FROM runners_conversation_wakes(CAST(:limit AS INTEGER))",
-        ).bind("limit", limit),
-    ).getOrThrow().map {
-        PendingWake(it.get("org_id").asUuid(), it.get("session_id").asUuid(), it.get("input_id").asUuid())
+    override suspend fun pendingWakes(limit: Int): List<PendingWake> = database.query {
+        val w = RunnersConversationWakes
+        w.of(limit).select(w.sessionId, w.orgId, w.inputId)
+            .map { PendingWake(it[w.orgId], it[w.sessionId], it[w.inputId]) }
     }
 
     override suspend fun cancelEnded(limit: Int, now: Instant): Int {
-        val ended = driver.fetchAll(
-            Statement.create("SELECT session_id, org_id FROM runners_conversation_ended(CAST(:limit AS INTEGER))")
-                .bind("limit", limit),
-        ).getOrThrow().map { it.get("org_id").asUuid() to it.get("session_id").asUuid() }
+        val ended = database.query {
+            val e = RunnersConversationEnded
+            e.of(limit).select(e.sessionId, e.orgId).map { it[e.orgId] to it[e.sessionId] }
+        }
         var changed = 0
         for ((orgId, sessionId) in ended) {
             changed += database.inOrg(orgId) {
@@ -294,11 +284,8 @@ internal class CloudConversationStoreImpl(
         return changed
     }
 
-    override suspend fun purge(before: Instant, limit: Int): Int = driver.fetchAll(
-        Statement.create(
-            "SELECT runners_conversation_purge(CAST(:before AS TIMESTAMPTZ), CAST(:limit AS INTEGER)) AS n",
-        ).bind("before", before).bind("limit", limit),
-    ).getOrThrow().first().get("n").asLong().toInt()
+    override suspend fun purge(before: Instant, limit: Int): Int =
+        database.query { scalar(purgeConversation(before, limit)).toInt() }
 
     override suspend fun setPermissionBypass(
         orgId: Uuid,
