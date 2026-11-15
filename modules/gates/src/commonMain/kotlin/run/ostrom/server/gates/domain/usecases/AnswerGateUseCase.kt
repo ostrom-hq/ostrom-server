@@ -113,7 +113,8 @@ class AnswerGateUseCaseImpl(
 
     // The GitHub accounts an answerer linked are another module's read: never inside the gate's transaction (CRL-03).
     // A yes that needs them (the gate's author is a GitHub account no one linked) ends its transaction with nothing
-    // written; they are read, and the answer runs again on the gate as it is then.
+    // written; they are read, and the answer runs again on the gate as it is then. The phone's unlock was used once,
+    // before the first pass (as before the links moved out): the second pass checks the same answer, and uses none.
     private suspend fun decide(answering: Answering, gitHubIds: List<Long>?): Outcome.Decided =
         when (val outcome = repository.transaction(answering.actor.orgId) { attempt(answering, gitHubIds) }) {
             is Outcome.Decided -> outcome
