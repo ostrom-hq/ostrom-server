@@ -307,6 +307,25 @@ class SessionUseCasesTest {
     }
 
     @Test
+    fun aLocalSessionIsNeitherPausedNorResumedByAPerson() = runTest {
+        val kind = run.ostrom.server.runners.domain.SessionKind.LOCAL
+        val running = session(state = SessionState.RUNNING).copy(kind = kind).also(repository::put)
+        val offline = session(state = SessionState.PAUSED, desired = DesiredState.PAUSED).copy(kind = kind)
+            .also(repository::put)
+        val paused = assertFailsWith<run.ostrom.server.runners.domain.RemoteSessionException> {
+            change.pause(alice, running.id)
+        }
+        val resumed = assertFailsWith<run.ostrom.server.runners.domain.RemoteSessionException> {
+            change.resume(alice, offline.id)
+        }
+        assertEquals("local_session" to "local_session", paused.type to resumed.type)
+        assertEquals(DesiredState.RUNNING, repository.sessions.getValue(running.id).desiredState)
+        assertEquals(DesiredState.PAUSED, repository.sessions.getValue(offline.id).desiredState)
+        // Its launch ends it: a deletion is accepted.
+        assertEquals(DesiredState.TERMINATED, change.delete(alice, running.id).desiredState)
+    }
+
+    @Test
     fun aSessionBeingTransferredIsResumedOnlyByTheTransfer() = runTest {
         val accepted = session(state = SessionState.PAUSED, desired = DesiredState.PAUSED)
             .copy(transferId = Uuid.random())

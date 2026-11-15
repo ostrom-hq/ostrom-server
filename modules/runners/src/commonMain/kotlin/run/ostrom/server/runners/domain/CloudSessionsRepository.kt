@@ -198,6 +198,17 @@ interface CloudSessionsRepository {
     suspend fun hostedOn(deviceId: Uuid, live: Boolean = false): List<SessionRef>
 
     /**
+     * The local session of a launch (TeamCode's `findLocal`): one per launch in an organization, whatever its state
+     * (a unique index holds it).
+     *
+     * @param orgId The organization.
+     * @param launchId The `ostrom <agent>` launch.
+     *
+     * @return The session, or null.
+     */
+    suspend fun findLocal(orgId: Uuid, launchId: String): CloudSession?
+
+    /**
      * A device daemon's queue (TeamCode's `DeviceDaemonStore.orders`): the organization's sessions started through the
      * device's daemon (a folder) that wait for their host and should run, oldest request first.
      *

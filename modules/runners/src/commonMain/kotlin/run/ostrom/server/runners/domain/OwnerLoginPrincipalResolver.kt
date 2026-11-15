@@ -13,7 +13,8 @@ import kotlin.uuid.Uuid
  * has no pod, so its host presents its owner's own sign-in, accepted only for a person's CLI sign-in from the session's
  * device, for the session's current, live execution. Anything else is no credential of this resolver, so the call is
  * fenced (`409 execution_fenced`) and the host exits. Revoking the sign-in or removing the device stops the host at its
- * next call.
+ * next call. A local session (`runners.cloud.local.v1`) is hosted by its launch from any device of its owner's: the
+ * owner's sign-in from a device is accepted for it, with the call's claim.
  *
  * The credential alone names the device, not the session (one device hosts several): [resolve] with the call's claim
  * decides; without it, the credential is known when the device hosts a live execution of its owner's, the first one
@@ -59,7 +60,9 @@ class OwnerLoginPrincipalResolver(
         epoch: Long?,
     ): RunnerExecution? {
         val session = repository.getById(sessionId) ?: return null
-        if (session.kind != SessionKind.REMOTE || session.host?.deviceId != device) return null
+        if (session.kind == SessionKind.CLOUD) return null
+        // A local session runs on whichever device of its owner the launch runs on (TeamCode's host check).
+        if (session.kind == SessionKind.REMOTE && session.host?.deviceId != device) return null
         val live = !session.state.isFinal && session.executionStartedAt != null
         if (!live || session.epoch != (epoch ?: session.epoch)) return null
         val member = orgs.resolve(principal, session.orgId) ?: return null

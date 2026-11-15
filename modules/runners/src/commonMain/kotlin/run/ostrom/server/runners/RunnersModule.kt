@@ -188,11 +188,14 @@ import kotlinx.coroutines.launch
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.auth.DeviceRemovalListener
 import run.ostrom.server.kernel.auth.SignedInDevices
+import run.ostrom.server.runners.domain.CreateLocalSessionUseCase
+import run.ostrom.server.runners.domain.CreateLocalSessionUseCaseImpl
 import run.ostrom.server.runners.domain.CreateRemoteSessionUseCase
 import run.ostrom.server.runners.domain.CreateRemoteSessionUseCaseImpl
 import run.ostrom.server.runners.domain.EndRemovedDeviceSessions
 import run.ostrom.server.runners.domain.HostRemoteSessionUseCase
 import run.ostrom.server.runners.domain.HostRemoteSessionUseCaseImpl
+import run.ostrom.server.runners.domain.LocalLaunches
 import run.ostrom.server.runners.domain.OwnerLoginPrincipalResolver
 import run.ostrom.server.runners.domain.RemoteIdleTimeout
 import run.ostrom.server.runners.infrastructure.CloudSettingsRemoteIdleTimeout
@@ -337,6 +340,8 @@ object RunnersModule : ServerModule {
             DaemonWiring(routes)
         }
         single<HostRemoteSessionUseCase> { HostRemoteSessionUseCaseImpl(get(), getOrNull<SignedInDevices>(), get()) }
+        // Local sessions: of a launch the launches module keeps (runners.cloud.local.v1).
+        single<CreateLocalSessionUseCase> { CreateLocalSessionUseCaseImpl(get(), getOrNull<LocalLaunches>(), get()) }
         single { RemoteHostViews(getOrNull<SignedInDevices>(), get()) }
         // A removed device ends the remote sessions it hosted (the identity module calls it).
         single<DeviceRemovalListener> { EndRemovedDeviceSessions(get(), get(), get<Logger>()) }
@@ -415,7 +420,7 @@ object RunnersModule : ServerModule {
             val inference = get<InferenceWiring>().store?.let { RunnerInferenceUseCaseImpl(get(), it) }
             CloudSessionsRoutesDependencies(
                 get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), environment, get(), get(), get(),
-                inference, get(),
+                inference, get(), get(),
             )
         }
         single<ListRunnersUseCase> { ListRunnersUseCaseImpl(get(), get()) }
@@ -563,6 +568,11 @@ object RunnersModule : ServerModule {
             ServerFeatures.RUNNERS_CLOUD_REMOTE_DAEMON.takeIf { announced && koin.daemonParts() != null },
             // Continuing a device's Claude Code conversation: the daemon lists them, the listing sealed as above.
             ServerFeatures.RUNNERS_CLOUD_REMOTE_RESUME.takeIf { announced && koin.daemonParts() != null },
+            // Local sessions are hosted like remote ones, and their waits and todo are their launch's: announced with
+            // remote sessions, once the launches module keeps the launches (TeamCode's waits and todo prerequisites).
+            ServerFeatures.RUNNERS_CLOUD_LOCAL.takeIf {
+                announced && koin.getOrNull<SignedInDevices>() != null && koin.getOrNull<LocalLaunches>() != null
+            },
         ) + conversation
     }
 

@@ -328,6 +328,15 @@ class CloudSessionsRepositoryImpl(
         ).bind("device", deviceId).bind("live", live),
     ).getOrThrow().map { SessionRef(it.get("org_id").asUuid(), it.get("session_id").asUuid()) }
 
+    // On the unique index of version 27, inside the organization.
+    override suspend fun findLocal(orgId: Uuid, launchId: String): CloudSession? = driver.inTenant(orgId) {
+        fetchAll(
+            Statement.create(
+                "SELECT $COLUMNS FROM runners_sessions WHERE org_id = :org_id AND launch_id = :launch_id",
+            ).bind("org_id", orgId).bind("launch_id", launchId),
+        ).getOrThrow().firstOrNull()?.toSession()
+    }
+
     // Read every second by each waiting daemon: the partial index of version 23 holds only the waiting sessions.
     override suspend fun daemonOrders(orgId: Uuid, deviceId: Uuid, limit: Int): List<CloudSession> {
         val statement = Statement.create(
@@ -520,6 +529,7 @@ class CloudSessionsRepositoryImpl(
         .bind("host_permission_mode", session.host?.permissionMode)
         .bind("host_folder_id", session.host?.folderId)
         .bind("host_resume_session_id", session.host?.resumeSessionId)
+        .bind("launch_id", session.launchId)
         .bind("created_by_initiator_id", session.createdBy?.initiatorId)
         .bind("created_by_credential_id", session.createdBy?.credentialId)
         .bind("created_by_effective_member_id", session.createdBy?.effectiveMemberId)
@@ -572,7 +582,6 @@ class CloudSessionsRepositoryImpl(
 
     private fun ResultSet.Row.toSession(): CloudSession {
         val url = get("repository_url").asStringOrNull()
-        val failureCode = get("failure_code").asStringOrNull()
         return CloudSession(
             id = get("id").asUuid(),
             orgId = get("org_id").asUuid(),
@@ -585,7 +594,7 @@ class CloudSessionsRepositoryImpl(
             phase = get("phase").asStringOrNull(),
             epoch = get("epoch").asLong(),
             generation = get("generation").asLong(),
-            failure = failureCode?.let {
+            failure = get("failure_code").asStringOrNull()?.let {
                 SessionFailure(it, get("failure_message").asString(), get("failure_retryable").asBoolean())
             },
             limits = SessionLimits(
@@ -630,6 +639,7 @@ class CloudSessionsRepositoryImpl(
             kind = SessionKind.fromWire(get("kind").asString()) ?: SessionKind.CLOUD,
             host = host(),
             createdBy = createdBy(),
+            launchId = get("launch_id").asStringOrNull(),
         )
     }
 
@@ -703,7 +713,7 @@ class CloudSessionsRepositoryImpl(
             workspace_volume_name, workspace_volume_handle, workspace_problem_code, workspace_problem_message,
             workspace_problem_retryable, mode, effort, kind, host_device_id, host_directory_name,
             host_permission_mode, host_folder_id, created_by_initiator_id, created_by_credential_id,
-            created_by_effective_member_id, host_resume_session_id
+            created_by_effective_member_id, host_resume_session_id, launch_id
         """
 
         /** What a read returns: also the Bypass and the wait, which only the conversation's store writes. */
@@ -721,7 +731,7 @@ class CloudSessionsRepositoryImpl(
             :workspace_volume_handle, :workspace_problem_code, :workspace_problem_message,
             :workspace_problem_retryable, :mode, :effort, :kind, :host_device_id, :host_directory_name,
             :host_permission_mode, :host_folder_id, :created_by_initiator_id, :created_by_credential_id,
-            :created_by_effective_member_id, :host_resume_session_id
+            :created_by_effective_member_id, :host_resume_session_id, :launch_id
         """
     }
 }

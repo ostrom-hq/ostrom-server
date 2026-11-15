@@ -310,12 +310,14 @@ data class RunnerGitHubTokenResponse(
  * @property image The session image instead of the profile's: one of its allowed overrides.
  * @property mode `terminal` or `conversation`.
  * @property effort The agent's effort.
- * @property kind `cloud` (absent) or `remote` (`runners.cloud.remote.v1`): on the caller's own device.
+ * @property kind `cloud` (absent), `remote` (`runners.cloud.remote.v1`): on the caller's own device, or `local`
+ *   (`runners.cloud.local.v1`): the session of the caller's own running `ostrom <agent>` launch.
  * @property directoryName With [kind] `remote`: the last segment of the directory the agent works in.
  * @property permissionMode With [kind] `remote`: `ask` (absent) or `bypass`.
  * @property deviceId With [kind] `remote`: another device of the caller's (`runners.cloud.remote.daemon.v1`).
  * @property folderId With [deviceId]: one of its published folders.
  * @property resumeSessionId With [deviceId] and [folderId]: the device's conversation it continues.
+ * @property launchId With [kind] `local`: the caller's own `ostrom <agent>` launch, still running.
  */
 @Serializable
 data class CreateCloudSessionRequest(
@@ -336,6 +338,7 @@ data class CreateCloudSessionRequest(
     val deviceId: String? = null,
     val folderId: String? = null,
     val resumeSessionId: String? = null,
+    val launchId: String? = null,
 )
 
 /**
@@ -439,7 +442,8 @@ data class SessionLimitsDto(
  * `githubAccess` says whose GitHub access its Git and `gh` use (`owner`, `shared`, `none`). `profile` and `image`
  * say what a Kubernetes session runs on (`runners.cloud.profiles.v1`). `expiresAt`, on a paused session, says when it
  * is terminated with its workspace, and `terminatedReason`, on a terminated one, why it ended (`deleted`,
- * `expired`). `createdBy` says who created it (`runners.cloud.onbehalf.v1`), absent for an older session.
+ * `expired`). `createdBy` says who created it (`runners.cloud.onbehalf.v1`), absent for an older session. `launchId`
+ * names the `ostrom <agent>` launch a local session is attached to (`runners.cloud.local.v1`).
  */
 @Serializable
 data class CloudSessionResponse(
@@ -478,6 +482,7 @@ data class CloudSessionResponse(
     val kind: String? = null,
     val host: CloudSessionHostDto? = null,
     val createdBy: CloudAttributionDto? = null,
+    val launchId: String? = null,
 )
 
 /**

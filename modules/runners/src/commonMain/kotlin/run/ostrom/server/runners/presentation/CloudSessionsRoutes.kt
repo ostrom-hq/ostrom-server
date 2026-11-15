@@ -274,6 +274,7 @@ fun CloudSession.toResponse() = CloudSessionResponse(
     // Absent for a cloud session: a client from before remote sessions reads it as before.
     kind = kind.wire.takeIf { kind != SessionKind.CLOUD },
     createdBy = createdBy?.let { CloudAttributionDto(it.initiatorId, it.credentialId, it.effectiveMemberId) },
+    launchId = launchId,
 )
 
 internal const val MALFORMED_KEY = "Idempotency-Key: 1 to 128 characters of A-Za-z0-9._:-."

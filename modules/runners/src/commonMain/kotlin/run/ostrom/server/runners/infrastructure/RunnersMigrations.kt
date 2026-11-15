@@ -893,4 +893,16 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
         name = "host_resume_session",
         sql = "ALTER TABLE runners_sessions ADD COLUMN host_resume_session_id TEXT",
     ),
+    // runners.cloud.local.v1: the `ostrom <agent>` launch a local session is attached to (TeamCode's run_id), one
+    // session per launch in an organization (TeamCode's unique(team, run)), which makes a second creation for the
+    // same launch find the first one.
+    SchemaMigration(
+        version = 27,
+        name = "local_sessions",
+        sql = """
+            ALTER TABLE runners_sessions ADD COLUMN launch_id TEXT;
+            CREATE UNIQUE INDEX runners_sessions_launch ON runners_sessions (org_id, launch_id)
+                WHERE launch_id IS NOT NULL;
+        """.trimIndent(),
+    ),
 )

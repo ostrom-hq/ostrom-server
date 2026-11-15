@@ -68,9 +68,12 @@ import kotlin.uuid.Uuid
  * @property waiting Why the agent waits for a person, while it does.
  * @property workspaceDeletion The proof its workspace is gone, provider volume included, on a runtime that
  *   [proves it][RuntimeDriver.provesDeletion] (Kubernetes); null elsewhere, and before it ends.
- * @property kind Where it runs: a pod the server starts, or its owner's own device ([SessionKind.REMOTE]).
- * @property host The device a remote session runs on; null for a cloud session.
+ * @property kind Where it runs: a pod the server starts, its owner's own device ([SessionKind.REMOTE]), or the
+ *   terminal of its owner's `ostrom <agent>` ([SessionKind.LOCAL]).
+ * @property host The device a remote session runs on; null for a cloud or a local session.
  * @property createdBy Who created it (`runners.cloud.onbehalf.v1`); null for a session created before it was recorded.
+ * @property launchId The `ostrom <agent>` launch a local session is attached to (`runners.cloud.local.v1`); null for
+ *   every other kind.
  */
 data class CloudSession(
     val id: Uuid,
@@ -119,6 +122,7 @@ data class CloudSession(
     val kind: SessionKind = SessionKind.CLOUD,
     val host: RemoteHost? = null,
     val createdBy: CloudAttribution? = null,
+    val launchId: String? = null,
 ) {
     /** Its workspace's deletion while it is pending or blocked, and so looked at again until it is proven gone. */
     val cleanup: WorkspaceDeletion?

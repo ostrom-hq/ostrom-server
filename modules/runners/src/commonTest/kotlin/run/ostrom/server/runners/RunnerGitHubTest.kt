@@ -147,6 +147,13 @@ class RunnerGitHubTest {
         }
         assertEquals("github_access_unsupported", refused.type)
         repository.sessions.remove(remote.id)
+        // A local session uses the GitHub access of the device its launch runs on.
+        val local = execution().copy(kind = run.ostrom.server.runners.domain.SessionKind.LOCAL).also(repository::put)
+        val localRefused = assertFailsWith<run.ostrom.server.runners.domain.RemoteSessionException> {
+            access(alice, principal, local.id, "shared")
+        }
+        assertEquals("github_access_unsupported", localRefused.type)
+        repository.sessions.remove(local.id)
 
         assertFailsWith<SessionNotPausedException> { access(alice, principal, session.id, "none") }
         repository.put(repository.sessions.getValue(session.id).copy(state = SessionState.PAUSED))

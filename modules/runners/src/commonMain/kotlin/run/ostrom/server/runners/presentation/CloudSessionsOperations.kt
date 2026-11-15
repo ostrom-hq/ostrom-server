@@ -35,15 +35,15 @@ private fun ApiCatalog.cloudSessionListing() {
         operationId = "listCloudSessions"
         tag(TAG)
         summary = "The caller's cloud agent sessions, newest first."
-        description = "With `runners.cloud.remote.v1`, `kind` (repeatable) chooses the kinds listed, `cloud` or " +
-            "`remote` (400 `invalid_kind` otherwise); without it, cloud sessions only, so a client from " +
-            "before remote sessions never lists one it cannot show. A page of `limit` sessions (20 by " +
-            "default) is followed by `next` while there may be more. With `runners.cloud.sessions.owner.v1` " +
-            "(TeamCode's `owner`), `owner` is the caller's member id, or absent; another member's id, a login or " +
-            "`all` is 403 `forbidden`, administrators included. $ORG_RESOLUTION"
+        description = "With `runners.cloud.remote.v1`, `kind` (repeatable) chooses the kinds listed, `cloud`, " +
+            "`remote` or `local` (`runners.cloud.local.v1`; 400 `invalid_kind` otherwise); without it, cloud " +
+            "sessions only, so a client from before remote sessions never lists one it cannot show. A page of " +
+            "`limit` sessions (20 by default) is followed by `next` while there may be more. With " +
+            "`runners.cloud.sessions.owner.v1` (TeamCode's `owner`), `owner` is the caller's member id, or absent; " +
+            "another member's id, a login or `all` is 403 `forbidden`, administrators included. $ORG_RESOLUTION"
         parameters {
             organizationHeader()
-            queryText("kind", "The kind of session to list, `cloud` or `remote`; repeat it to list both.")
+            queryText("kind", "The kind of session to list, `cloud`, `remote` or `local`; repeat it to list several.")
             queryText("owner", "The caller's member id; anything else is refused.")
             queryText("before", "The `next` of the previous page.")
             queryNumber("limit", "How many sessions a page holds.")
@@ -63,16 +63,20 @@ private fun ApiCatalog.cloudSessionCreation() {
         tag(TAG)
         summary = "Start a cloud agent session."
         description = "`kind` is `cloud` (the default: a pod the server starts) or `remote` " +
-            "(`runners.cloud.remote.v1`: a session on the caller's own device, with its own fields). A cloud " +
-            "session takes none of a remote session's fields (400 `invalid_session`); a remote session takes " +
-            "no repository, environment, profile or image (400 `invalid_session`) and always runs in mode " +
-            "`conversation` (400 `invalid_mode`). With an `Idempotency-Key` (`runners.cloud.idempotency.v1`), " +
-            "the key is scoped to the organization, the initiating member and the route, and the server " +
-            "stores a SHA-256 of the canonical request in the transaction that creates the session, for 24 " +
-            "hours. The same key with the same request answers `202` with the session's current view and " +
-            "`Idempotency-Replayed: true`, creating nothing; the same key with another request is 422 " +
-            "`idempotency_conflict`; concurrent requests with one key create one session and the others " +
-            "replay. A malformed key is 400 `invalid_request`. The key is optional. $ORG_RESOLUTION"
+            "(`runners.cloud.remote.v1`: a session on the caller's own device, with its own fields). A cloud session " +
+            "takes none of a remote session's fields (400 `invalid_session`); a remote session takes no repository, " +
+            "environment, profile or image (400 `invalid_session`) and always runs in mode `conversation` (400 " +
+            "`invalid_mode`). `local` (`runners.cloud.local.v1`) opens the session of the caller's own running " +
+            "`ostrom <agent>` launch (`launchId`, 400 `invalid_launch` when absent or malformed, 404 " +
+            "`launch_not_found` when unknown, ended or another person's) and takes nothing else (400 " +
+            "`invalid_session`); a second request for the same launch answers `202` with the first session and " +
+            "`Idempotency-Replayed: true`, whatever the key. With an `Idempotency-Key` " +
+            "(`runners.cloud.idempotency.v1`), the key is scoped to the organization, the initiating member and the " +
+            "route, and the server stores a SHA-256 of the canonical request in the transaction that creates the " +
+            "session, for 24 hours. The same key with the same request answers `202` with the session's current view " +
+            "and `Idempotency-Replayed: true`, creating nothing; the same key with another request is 422 " +
+            "`idempotency_conflict`; concurrent requests with one key create one session and the others replay. A " +
+            "malformed key is 400 `invalid_request`. The key is optional. $ORG_RESOLUTION"
         parameters {
             onBehalfHeader()
             organizationHeader()
@@ -90,14 +94,15 @@ private fun ApiCatalog.cloudSessionCreation() {
                 HttpStatusCode.Accepted,
             )
             badRequest("A malformed `Idempotency-Key`, an unknown `kind`, or fields that do not fit the kind " +
-                "(`invalid_request`, `invalid_kind`, `invalid_session`, `invalid_mode`).")
+                "(`invalid_request`, `invalid_kind`, `invalid_session`, `invalid_mode`, `invalid_launch`).")
             error(HttpStatusCode.PaymentRequired, "The plan runs as many cloud sessions as it allows, or its " +
                 "cloud hours of the period are used up (`payment_required`).")
             error(HttpStatusCode.Forbidden, "A cloud profile not assigned to the owner (`profile_unassigned`), an " +
                 "image the profile does not allow (`image_not_allowed`), or cloud sessions closed to the " +
                 "organization (`forbidden`).")
-            notFound("No cloud profile has the `profileId` (`cloud_profile_not_found`), or the caller is no " +
-                "member of an organization the request can act in (`not_found`).")
+            notFound("No cloud profile has the `profileId` (`cloud_profile_not_found`), no running launch of the " +
+                "caller's has the `launchId` (`launch_not_found`), or the caller is no member of an organization " +
+                "the request can act in (`not_found`).")
             conflict("The profile's cluster is gone or its namespace is no longer allowed (`cluster_unavailable`, " +
                 "`namespace_not_allowed`).")
             error(HttpStatusCode.UnprocessableEntity, "The `Idempotency-Key` was used with another request " +
@@ -153,7 +158,7 @@ private fun ApiCatalog.cloudSessionPause() {
         tag(TAG)
         summary = "Pause a cloud session; the workspace is kept."
         description = "The agent stops and its pod is gone; the workspace is kept until the session expires or is " +
-            "resumed. $ORG_RESOLUTION"
+            "resumed. A local session is 409 `local_session`: it lives as long as its launch. $ORG_RESOLUTION"
         parameters {
             onBehalfHeader()
             organizationHeader()
@@ -184,8 +189,9 @@ private fun ApiCatalog.cloudSessionResume() {
             error(HttpStatusCode.PaymentRequired, "The plan runs as many cloud sessions as it allows, or its " +
                 "cloud hours of the period are used up (`payment_required`).")
             notFound(NO_SESSION)
-            conflict("A session that is not paused, one being transferred (`session_transferring`), or one that " +
-                "changed meanwhile (`conflict`, `session_busy`).")
+            conflict("A session that is not paused, one being transferred (`session_transferring`), a local one, " +
+                "which its own launch hosts again (`local_session`), or one that changed meanwhile (`conflict`, " +
+                "`session_busy`).")
         }
     }
 }
@@ -199,7 +205,9 @@ private fun ApiCatalog.cloudSessionHosting() {
             "opens a new epoch with a pending execution and answers the organization, that epoch and the " +
             "session; the previous live execution ends as `replaced`. The host then calls the runner " +
             "channel with that epoch and the same sign-in, which the server accepts for the current epoch " +
-            "only (409 `execution_fenced` for an older one). $ORG_RESOLUTION"
+            "only (409 `execution_fenced` for an older one). A local session (`runners.cloud.local.v1`) is " +
+            "hosted by its launch from any device of its owner's sign-in; a paused one (`host_offline`) resumes, " +
+            "a deleted one is 409 `session_not_running`. $ORG_RESOLUTION"
         parameters {
             organizationHeader()
             pathId("id", SESSION_ID)
@@ -236,7 +244,8 @@ private fun ApiCatalog.cloudSessionGitHubAccess() {
             ok<CloudSessionResponse>("The session, with its new access.")
             error(HttpStatusCode.Forbidden, "Not the owner in person (`github_owner_only`).")
             notFound(NO_SESSION)
-            conflict("Removing the access of a session that is not paused (`session_not_paused`).")
+            conflict("Removing the access of a session that is not paused (`session_not_paused`), or a remote or " +
+                "local session, which uses its device's own access (`github_access_unsupported`).")
         }
     }
 }

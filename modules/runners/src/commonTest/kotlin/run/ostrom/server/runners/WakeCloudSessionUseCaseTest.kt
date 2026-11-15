@@ -75,6 +75,14 @@ class WakeCloudSessionUseCaseTest {
     }
 
     @Test
+    fun aLocalSessionIsNeverWokenOnlyItsLaunchResumesIt() = runTest {
+        val local = paused().copy(kind = run.ostrom.server.runners.domain.SessionKind.LOCAL).also(repository::put)
+        assertEquals(CloudSessionWake.NOT_PAUSED, wake(ORG_A, local.id.toString(), waitId))
+        assertEquals(DesiredState.PAUSED, repository.sessions.getValue(local.id).desiredState)
+        assertEquals(emptyList(), audit)
+    }
+
+    @Test
     fun aMessageWakesItsSessionAndTheAuditLogNamesIt() = runTest {
         val paused = paused()
         val inputId = Uuid.random()

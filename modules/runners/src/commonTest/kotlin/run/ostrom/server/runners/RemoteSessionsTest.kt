@@ -99,7 +99,8 @@ class RemoteSessionsTest {
     fun aSessionKindIsReadByItsWireName() {
         assertEquals(SessionKind.REMOTE, SessionKind.fromWire("remote"))
         assertEquals(SessionKind.CLOUD, SessionKind.fromWire("cloud"))
-        assertNull(SessionKind.fromWire("local"))
+        assertEquals(SessionKind.LOCAL, SessionKind.fromWire("local"))
+        assertNull(SessionKind.fromWire("pod"))
     }
 
     @Test

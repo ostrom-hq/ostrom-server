@@ -3,6 +3,7 @@
 package run.ostrom.server.identity
 
 import run.ostrom.server.identity.domain.AGENT_SCOPE
+import run.ostrom.server.identity.domain.AgentSessionLiveUseCaseImpl
 import run.ostrom.server.identity.domain.ApiToken
 import run.ostrom.server.identity.domain.CreatePersonalTokenUseCaseImpl
 import run.ostrom.server.identity.domain.InvalidScopesException
@@ -28,8 +29,10 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
@@ -248,5 +251,20 @@ class TokenUseCasesTest {
         assertEquals(false, revokeOne(orgId, renewed.token.id), "Revoked once")
         RevokeAgentTokensUseCaseImpl(tokens, clock)("run-1")
         assertNull(renew(userId, orgId, "run-1", 1.hours), "The agent session ended")
+    }
+
+    @Test
+    fun anAgentSessionRunsWhileOneOfItsTokensIsLive() = runTest {
+        val live = AgentSessionLiveUseCaseImpl(tokens, clock)
+        val orgId = Uuid.random()
+        assertFalse(live(orgId, "run-1"), "No launch token yet")
+        issueAgent(userId, orgId, "run-1", 1.hours)
+        assertTrue(live(orgId, "run-1"))
+        assertFalse(live(Uuid.random(), "run-1"), "Another organization's")
+        clock.now += 2.hours
+        assertFalse(live(orgId, "run-1"), "Every token expired")
+        clock.now -= 2.hours
+        RevokeAgentTokensUseCaseImpl(tokens, clock)("run-1")
+        assertFalse(live(orgId, "run-1"), "The agent session ended")
     }
 }

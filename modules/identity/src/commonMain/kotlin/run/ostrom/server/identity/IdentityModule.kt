@@ -83,6 +83,8 @@ import run.ostrom.server.identity.domain.ResolveUserUseCase
 import run.ostrom.server.identity.domain.ResolveUserUseCaseImpl
 import run.ostrom.server.identity.domain.RevokeAgentTokensUseCase
 import run.ostrom.server.identity.domain.RevokeAgentTokensUseCaseImpl
+import run.ostrom.server.identity.domain.AgentSessionLiveUseCase
+import run.ostrom.server.identity.domain.AgentSessionLiveUseCaseImpl
 import run.ostrom.server.identity.domain.RenewAgentTokenUseCase
 import run.ostrom.server.identity.domain.RenewAgentTokenUseCaseImpl
 import run.ostrom.server.identity.domain.RevokeAgentTokenUseCase
@@ -227,8 +229,8 @@ import org.koin.dsl.onClose
  *
  * Other modules use it through the interfaces it binds: [AuditLog] to record a sensitive action,
  * [ResolveUserUseCase] and [StartWebSessionUseCase] to sign someone in (SSO), [IssueAgentTokenUseCase] and
- * [RevokeAgentTokensUseCase] for agent sessions, [RenewAgentTokenUseCase] and [RevokeAgentTokenUseCase] for a cloud
- * execution's inference credential.
+ * [RevokeAgentTokensUseCase] and [AgentSessionLiveUseCase] for agent sessions, [RenewAgentTokenUseCase] and
+ * [RevokeAgentTokenUseCase] for a cloud execution's inference credential.
  */
 object IdentityModule : ServerModule {
     // Declared before koinModule: the object initializes in order, and the module lambda runs at once.
@@ -302,6 +304,7 @@ object IdentityModule : ServerModule {
         single<IssueAgentTokenUseCase> { IssueAgentTokenUseCaseImpl(get(), get(), get(), get()) }
         single<RevokeAgentTokensUseCase> { RevokeAgentTokensUseCaseImpl(get(), get()) }
         single<RenewAgentTokenUseCase> { RenewAgentTokenUseCaseImpl(get(), get(), get(), get()) }
+        single<AgentSessionLiveUseCase> { AgentSessionLiveUseCaseImpl(get(), get()) }
         single<RevokeAgentTokenUseCase> { RevokeAgentTokenUseCaseImpl(get(), get()) }
         single<CreateServiceKeyUseCase> { CreateServiceKeyUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single<ListServiceKeysUseCase> { ListServiceKeysUseCaseImpl(get(), get()) }

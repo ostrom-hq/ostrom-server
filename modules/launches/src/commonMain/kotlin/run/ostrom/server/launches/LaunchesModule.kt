@@ -38,6 +38,7 @@ import run.ostrom.server.launches.domain.usecases.SetLaunchLimitsUseCaseImpl
 import run.ostrom.server.launches.infrastructure.IdentityAgentTokens
 import run.ostrom.server.launches.infrastructure.LaunchAgentMembers
 import run.ostrom.server.launches.infrastructure.IdentityLauncherResolver
+import run.ostrom.server.launches.infrastructure.LaunchesLocalLaunches
 import run.ostrom.server.launches.infrastructure.LaunchAgents
 import run.ostrom.server.launches.infrastructure.LaunchGateActors
 import run.ostrom.server.launches.infrastructure.LaunchLabelsDirectory
@@ -51,6 +52,7 @@ import run.ostrom.server.launches.infrastructure.PostgresLaunchesRepository
 import run.ostrom.server.launches.infrastructure.RunnerCloudExecutions
 import run.ostrom.server.launches.infrastructure.LaunchInferenceTokens
 import run.ostrom.server.launches.presentation.launchesOperations
+import run.ostrom.server.runners.domain.LocalLaunches
 import run.ostrom.server.runners.domain.RunnerInferenceTokens
 import run.ostrom.server.launches.presentation.LaunchesRoutesDependencies
 import run.ostrom.server.launches.presentation.launchesRoutes
@@ -92,6 +94,8 @@ object LaunchesModule : ServerModule {
         single<LauncherResolver> { IdentityLauncherResolver(get(), get(), get()) }
         single<AgentTokenService> { IdentityAgentTokens(get(), get()) }
         single<CloudExecutions> { RunnerCloudExecutions(get()) }
+        // The runners module's local sessions (runners.cloud.local.v1): one per running launch of its person.
+        single<LocalLaunches> { LaunchesLocalLaunches(get(), get(), get()) }
         // The runners module's inference credential of an execution: another agent token of its launch.
         single<RunnerInferenceTokens> { LaunchInferenceTokens(get(), get(), get(), get()) }
         single { LaunchAgents(get(), get(), get(), get()) }

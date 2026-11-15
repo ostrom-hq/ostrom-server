@@ -421,6 +421,7 @@ interface ChangeCloudSessionUseCase {
      *
      * @throws CloudSessionNotFoundException When it does not exist or is not the caller's.
      * @throws CloudSessionStateException When the session is over.
+     * @throws RemoteSessionException `local_session` (409) for a local session.
      */
     suspend fun pause(caller: Caller, id: Uuid): CloudSession
 
@@ -436,6 +437,7 @@ interface ChangeCloudSessionUseCase {
      * @throws CloudSessionStateException When the session is over.
      * @throws CloudSessionLimitException When the organization runs as many sessions as its plan allows.
      * @throws CloudHoursExhaustedException When the organization used its hours of the period.
+     * @throws RemoteSessionException `local_session` (409) for a local session.
      */
     suspend fun resume(caller: Caller, id: Uuid): CloudSession
 
@@ -470,6 +472,8 @@ class ChangeCloudSessionUseCaseImpl(
     override suspend fun pause(caller: Caller, id: Uuid): CloudSession {
         val session = repository.ownedBy(caller, id)
         if (session.state.isFinal) throw CloudSessionStateException("This session is over.")
+        // A local session lives as long as its launch: only its host going silent pauses it.
+        if (session.kind == SessionKind.LOCAL) throw LocalSessionRules.localSession()
         if (session.desiredState == DesiredState.PAUSED) return session
         val journal = caller.journal(session, "cloud.session.paused")
         return repository.setDesiredState(caller.orgId, id, DesiredState.PAUSED, clock.now(), journal)
@@ -481,6 +485,8 @@ class ChangeCloudSessionUseCaseImpl(
         if (session.state.isFinal || session.desiredState == DesiredState.TERMINATED) {
             throw CloudSessionStateException("This session is over.")
         }
+        // Its own launch takes the next epoch (POST /cloud/sessions/{id}/host): nobody else resumes it.
+        if (session.kind == SessionKind.LOCAL) throw LocalSessionRules.localSession()
         // An accepted transfer pauses the session; only the transfer itself resumes it, for the recipient.
         if (session.transferId != null || session.state == SessionState.TRANSFERRING) {
             throw SessionTransferringException()

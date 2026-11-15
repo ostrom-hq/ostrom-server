@@ -31,6 +31,9 @@ enum class SessionKind(val wire: String) {
 
     /** Its owner's own device runs it, always in [SessionMode.CONVERSATION]. */
     REMOTE("remote"),
+
+    /** The terminal of its owner's `ostrom <agent>` launch, its host ([LocalSessionRules]). */
+    LOCAL("local"),
     ;
 
     /** Constants and readers of the enclosing type. */
@@ -445,9 +448,10 @@ data class CloudHost(val orgId: Uuid, val epoch: Long, val session: CloudSession
 /** Starts the next execution of a remote session on its host (`POST /api/v1/cloud/sessions/{id}/host`). */
 interface HostRemoteSessionUseCase {
     /**
-     * Starts it (TeamCode's `host`): only the owner, from the session's device. A new epoch fences the execution it
-     * replaces (a host started twice: the first one gets `409 execution_fenced` and exits). A paused session resumes;
-     * a creating one keeps creating.
+     * Starts it (TeamCode's `host`): only the owner, from the session's device, or for a local session from any device
+     * of the owner's sign-in (`runners.cloud.local.v1`). A new epoch fences the execution it replaces (a host started
+     * twice: the first one gets `409 execution_fenced` and exits). A paused session resumes; a creating one keeps
+     * creating.
      *
      * @param caller The member.
      * @param principal Their credential.
@@ -474,13 +478,15 @@ class HostRemoteSessionUseCaseImpl(
 ) : HostRemoteSessionUseCase {
     override suspend fun invoke(caller: Caller, principal: AuthenticatedPrincipal, id: Uuid): CloudHost {
         val found = repository.ownedBy(caller, id)
-        if (found.kind != SessionKind.REMOTE) {
+        if (found.kind == SessionKind.CLOUD) {
             throw RemoteSessionRules.conflict(
                 "not_remote",
                 "This is a cloud session; it runs in a pod the server starts.",
             )
         }
-        RemoteSessionRules.requireHost(RemoteSessionRules.deviceOf(devices, principal), found)
+        val device = RemoteSessionRules.deviceOf(devices, principal)
+        // A local session's host is the launch itself, on whichever of its owner's devices it runs: none is bound.
+        if (found.kind == SessionKind.REMOTE) RemoteSessionRules.requireHost(device, found)
         repeat(MAX_ATTEMPTS) {
             val current = repository.ownedBy(caller, id)
             if (current.state.isFinal || current.desiredState == DesiredState.TERMINATED) {

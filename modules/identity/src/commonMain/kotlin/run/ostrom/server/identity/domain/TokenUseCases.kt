@@ -325,6 +325,33 @@ class RevokeAgentTokensUseCaseImpl(
 }
 
 /**
+ * Whether an agent session still runs, for the launches module: a launch is running while one of its agent tokens is
+ * live (`runners.cloud.local.v1`, the local session of a launch). Ending the launch revokes them; they expire with it.
+ */
+fun interface AgentSessionLiveUseCase {
+    /**
+     * @param orgId The organization of the session.
+     * @param agentSessionId The agent session.
+     * @return Whether one of its agent tokens is neither revoked nor expired.
+     */
+    suspend operator fun invoke(orgId: Uuid, agentSessionId: String): Boolean
+}
+
+/**
+ * [AgentSessionLiveUseCase] on the repository.
+ *
+ * @param tokens The tokens.
+ * @param clock The clock.
+ */
+class AgentSessionLiveUseCaseImpl(
+    private val tokens: ApiTokensRepository,
+    private val clock: Clock,
+) : AgentSessionLiveUseCase {
+    override suspend fun invoke(orgId: Uuid, agentSessionId: String): Boolean =
+        tokens.agentSessionLive(orgId, agentSessionId, clock.nowMillis())
+}
+
+/**
  * Issues another agent token of an agent session that still has a live one, for the launches module: a cloud session's
  * runner renews its execution's inference credential with it (`runners.cloud.inference.v1`). The token is an agent
  * token like the launch's own ([AGENT_SCOPES]), so every route reads it as the launch's agent; an ended agent session
