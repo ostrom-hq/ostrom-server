@@ -347,8 +347,12 @@ class SessionLifecycleTest {
         val failing = SweepStaleSessionsUseCaseImpl(
             bench.repository,
             object : CloseSessionUseCase {
-                override suspend fun invoke(orgId: Uuid, id: String, end: EndSession): Session =
-                    if (id == "s-1") error("boom") else bench.close(orgId, id, end)
+                override suspend fun invoke(
+                    orgId: Uuid,
+                    id: String,
+                    end: EndSession,
+                    endsIf: (Session) -> Boolean,
+                ): Session = if (id == "s-1") error("boom") else bench.close(orgId, id, end, endsIf)
             },
             bench.clock,
             bench.logger,

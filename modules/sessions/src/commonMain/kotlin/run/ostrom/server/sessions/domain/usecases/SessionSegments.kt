@@ -62,9 +62,6 @@ class SessionSegments(
             return found(tx, open, start, labels)
         }
         if (open != null) supersede(open, opening)
-        // An end that failed before its receipt (a superseded segment's, or its launcher's): signed first, so that the
-        // next segment cites it.
-        if (last != null && last.receiptId == null) throw SupersededSegmentException(last)
         val source = opening.source
         val segment = (last?.segment ?: 0) + 1
         val session = Session(
@@ -96,10 +93,10 @@ class SessionSegments(
 
     /**
      * Runs [attempt], a transaction that calls [open] under the root's lock, until it opens or finds a segment. When
-     * [open] supersedes the live segment of another launch (or finds the last one ended without its receipt), that
-     * transaction ends without writing, the segment is ended with its receipt signed ([CloseSessionUseCase], never
-     * inside a transaction: CRL-03), and [attempt] runs again on what is written then, so the new segment chains to
-     * the ended one and its receipt.
+     * [open] supersedes the live segment of another launch, that transaction ends without writing, the segment is
+     * ended with its receipt signed ([CloseSessionUseCase], never inside a transaction: CRL-03) if it may still be
+     * replaced once locked, and [attempt] runs again on what is written then, so the new segment chains to the ended
+     * one, or refuses the start if the segment came back to life meanwhile (S2-48).
      *
      * @param orgId The organization.
      * @param attempt The caller's transaction.
@@ -109,15 +106,17 @@ class SessionSegments(
     suspend fun <T> replacing(orgId: Uuid, attempt: suspend () -> T): T {
         var ended = 0
         while (true) {
-            val live = try {
+            val superseded = try {
                 return attempt()
             } catch (e: SupersededSegmentException) {
-                e.live
+                e
             }
+            val live = superseded.live
             // Other launches keep taking the session over between the ends: a conflict, as a reopen elsewhere.
             if (ended == MAX_SUPERSEDED) throw SessionResumedElsewhereException(live.rootId, live.id)
             ended += 1
-            close(orgId, live.id, EndSession(source = Session.SUPERSEDED))
+            // Checked again under the segment's lock: a launch that gave a sign of life meanwhile keeps its segment.
+            close(orgId, live.id, EndSession(source = Session.SUPERSEDED)) { superseded.mayReplace || silent(it) }
         }
     }
 
@@ -126,7 +125,7 @@ class SessionSegments(
     // [replacing] runs the caller's transaction again: this one has written nothing yet.
     private fun supersede(open: Session, opening: Opening): Nothing {
         if (!opening.mayReplace && !silent(open)) throw NotYourSessionException()
-        throw SupersededSegmentException(open)
+        throw SupersededSegmentException(open, opening.mayReplace)
     }
 
     private suspend fun found(
@@ -225,5 +224,6 @@ class SessionSegments(
     }
 }
 
-/** [SessionSegments.open] found [live] to end first: another launch's open segment, or one ended without a receipt. */
-internal class SupersededSegmentException(val live: Session) : RuntimeException("superseded ${live.id}")
+/** [SessionSegments.open] found [live], another launch's open segment, which ends before the next one opens. */
+internal class SupersededSegmentException(val live: Session, val mayReplace: Boolean) :
+    RuntimeException("superseded ${live.id}")

@@ -189,7 +189,12 @@ class StartSessionTest {
         val never = object : CloseSessionUseCase {
             var asked = 0
 
-            override suspend fun invoke(orgId: Uuid, id: String, end: EndSession): Session {
+            override suspend fun invoke(
+                orgId: Uuid,
+                id: String,
+                end: EndSession,
+                endsIf: (Session) -> Boolean,
+            ): Session {
                 asked += 1
                 return bench.repository.get(orgId, id) ?: error("kept")
             }
@@ -203,19 +208,28 @@ class StartSessionTest {
     }
 
     @Test
-    fun aSupersededSegmentWhoseReceiptFailedIsSignedBeforeTheNextOneCitesIt() = runTest {
+    fun aSilentLaunchThatComesBackBeforeItsSegmentEndsKeepsIt() = runTest {
         val bench = SessionBench()
-        bench.start(agent("launch-1"), start)
-        bench.sign.failing = 1
-        assertFailsWith<IllegalStateException> { bench.start(user(), start.copy(launchId = "launch-2")) }
-        val unsigned = bench.repository.get(ORG, "s-1") ?: error("kept")
-        assertEquals(Session.SUPERSEDED, unsigned.source, "Ended before its receipt failed")
-        assertNull(unsigned.receiptId)
-
-        val next = bench.start(user(), start.copy(launchId = "launch-2"))
-        assertEquals("s-1~r2", next.id)
-        assertEquals("rcpt_session_s-1", next.previousReceiptId, "The retry signed it first")
-        assertEquals("rcpt_session_s-1", bench.repository.get(ORG, "s-1")?.receiptId)
+        val first = bench.start(agent("launch-1"), start)
+        bench.clock.now += SweepStaleSessionsUseCaseImpl.STALE_AFTER
+        // The sign of life lands between the start's first transaction and the end.
+        val late = object : CloseSessionUseCase {
+            override suspend fun invoke(
+                orgId: Uuid,
+                id: String,
+                end: EndSession,
+                endsIf: (Session) -> Boolean,
+            ): Session {
+                bench.alive(agent("launch-1"), id)
+                return bench.close(orgId, id, end, endsIf)
+            }
+        }
+        val segments = SessionSegments(late, bench.clock, OstromMetrics(bench.meter))
+        val starts = StartSessionUseCaseImpl(bench.repository, segments)
+        assertFailsWith<NotYourSessionException> { starts(agent("launch-2"), start) }
+        val kept = bench.repository.get(ORG, first.id) ?: error("kept")
+        assertNull(kept.endedAt, "S2-48: checked again under the segment's lock")
+        assertNull(kept.receiptId)
     }
 
     @Test

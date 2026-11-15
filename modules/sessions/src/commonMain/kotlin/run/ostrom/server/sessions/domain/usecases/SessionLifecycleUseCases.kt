@@ -161,10 +161,8 @@ class ReopenSessionUseCaseImpl(
     override suspend fun invoke(actor: GateActor, id: String): Reopened {
         val found = repository.get(actor.orgId, id) ?: throw SessionNotFoundException()
         SessionAccess.ensureOwner(actor, found)
-        // The last segment is ended when one opens here: [replacing] signs its receipt first if its end failed before.
-        return segments.replacing(actor.orgId) {
-            repository.transaction(actor.orgId) { reopen(this, actor, found.rootId, id) }
-        }
+        // The last segment is ended when one opens here, so [SessionSegments.open] supersedes none.
+        return repository.transaction(actor.orgId) { reopen(this, actor, found.rootId, id) }
     }
 
     // The root, then its segments: the order every start takes its locks in.

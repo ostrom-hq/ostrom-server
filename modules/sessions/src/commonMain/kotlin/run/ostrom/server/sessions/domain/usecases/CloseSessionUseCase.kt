@@ -36,9 +36,16 @@ interface CloseSessionUseCase {
      * @param orgId The organization.
      * @param id The segment.
      * @param end What the end says.
-     * @return The ended segment.
+     * @param endsIf Whether the open segment, as read under its lock, may still end: a superseded one that came back
+     *   to life keeps running (S2-48). Every open segment by default.
+     * @return The segment, ended unless [endsIf] kept it open.
      */
-    suspend operator fun invoke(orgId: Uuid, id: String, end: EndSession): Session
+    suspend operator fun invoke(
+        orgId: Uuid,
+        id: String,
+        end: EndSession,
+        endsIf: (Session) -> Boolean = { true },
+    ): Session
 }
 
 /**
@@ -68,17 +75,17 @@ class CloseSessionUseCaseImpl(
     // reads come first, the end is written under the lock, the gates are read once it is written (each in a short
     // transaction of their own), the receipt is signed after, and its id written last: an end that fails in between
     // leaves a segment ended without its receipt, which the next end signs.
-    override suspend fun invoke(orgId: Uuid, id: String, end: EndSession): Session {
+    override suspend fun invoke(orgId: Uuid, id: String, end: EndSession, endsIf: (Session) -> Boolean): Session {
         val seen = repository.get(orgId, id) ?: throw SessionNotFoundException()
         return if (seen.receiptId != null) {
             locked(orgId, id) { merged(it, end) to null }.first
         } else {
-            signed(orgId, seen, end)
+            signed(orgId, seen, end, endsIf)
         }
     }
 
     // The end of a segment without its receipt yet: read, written, signed, then its receipt's id written.
-    private suspend fun signed(orgId: Uuid, seen: Session, end: EndSession): Session {
+    private suspend fun signed(orgId: Uuid, seen: Session, end: EndSession, endsIf: (Session) -> Boolean): Session {
         val id = seen.id
         val endedAt = seen.endedAt ?: now()
         val measured = end.copy(
@@ -95,6 +102,7 @@ class CloseSessionUseCaseImpl(
                 session.receiptId != null -> merged(session, end) to null
                 // Another end wrote its time and failed before its receipt: this one signs it, as it was written.
                 written != null -> merged(session, end).let { it to Told(written, it.told()) }
+                !endsIf(session) -> session to null
                 else -> endedOf(session, endedAt, measured, end) to Told(endedAt, measured)
             }
         }
