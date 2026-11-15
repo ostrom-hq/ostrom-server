@@ -2,6 +2,8 @@
 package run.ostrom.server.integrations.slack.infrastructure
 
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.database.TENANT_ROLE
+import run.ostrom.server.kernel.database.TENANT_ROLE_SQL
 
 private const val ORG = "CAST(NULLIF(current_setting('ostrom.org_id', TRUE), '') AS UUID)"
 
@@ -9,7 +11,8 @@ private const val ORG = "CAST(NULLIF(current_setting('ostrom.org_id', TRUE), '')
  * Version 1: each member's Slack link (`slack_links`, one per member of an organization, the Slack user found by
  * their proven e-mail address, and a Slack account linked by one member only). Version 2: the yes requests' messages
  * in the approvers' Slack (`slack_approval_messages`, one per request), updated once their gate is decided. Both
- * confined to the organization of the transaction (docs/tenancy.md).
+ * confined to the organization of the transaction (docs/tenancy.md). Version 3: the tenant role the repositories
+ * switch to on Exposed (`JdbcDatabase.inOrg`) reads and writes both.
  */
 val SlackMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -47,5 +50,11 @@ val SlackMigrations: List<SchemaMigration> = listOf(
         CREATE POLICY slack_approval_messages_org ON slack_approval_messages
             USING (org_id = $ORG) WITH CHECK (org_id = $ORG)
         """.trimIndent(),
+    ),
+    SchemaMigration(
+        3,
+        "grant_slack_tables_to_tenant",
+        TENANT_ROLE_SQL + "\n" +
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON slack_links, slack_approval_messages TO $TENANT_ROLE",
     ),
 )

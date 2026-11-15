@@ -1,128 +1,147 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.integrations.slack.infrastructure
 
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.ResultSet
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import run.ostrom.server.integrations.slack.domain.SlackApprovalMessage
 import run.ostrom.server.integrations.slack.domain.SlackApprovalMessagesRepository
 import run.ostrom.server.integrations.slack.domain.SlackLinksRepository
 import run.ostrom.server.integrations.slack.domain.SlackPosted
 import run.ostrom.server.integrations.slack.domain.StoredSlackLink
-import run.ostrom.server.kernel.database.withOrganization
+import run.ostrom.server.kernel.database.JdbcDatabase
+import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.statements.insertValue
+import org.jetbrains.exposed.v1.jdbc.Query
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.upsert
 import kotlin.uuid.Uuid
 
 /**
- * [SlackLinksRepository] on `slack_links` (version 1 of [SlackMigrations]), every statement confined to its
- * organization.
+ * [SlackLinksRepository] on `slack_links` (version 1 of [SlackMigrations]): every statement filters on its
+ * organization and runs in it (`inOrg`), under row-level security.
  *
- * @param driver The database.
+ * @param database The serving role's pool.
  */
-class PostgresSlackLinksRepository(private val driver: Driver) : SlackLinksRepository {
-    override suspend fun of(orgId: Uuid, memberId: Uuid): StoredSlackLink? = driver.withOrganization(orgId) { tx ->
-        tx.fetchAll(Statement.create(OF_SQL).bind("org_id", orgId).bind("member_id", memberId))
-            .getOrThrow().firstOrNull()?.toLink()
+class PostgresSlackLinksRepository(private val database: JdbcDatabase) : SlackLinksRepository {
+    override suspend fun of(orgId: Uuid, memberId: Uuid): StoredSlackLink? = database.inOrg(orgId) {
+        linksOf(orgId, setOf(memberId)).singleOrNull()?.toLink()
     }
 
     override suspend fun ofMembers(orgId: Uuid, memberIds: Set<Uuid>): List<StoredSlackLink> {
         if (memberIds.isEmpty()) return emptyList()
-        return driver.withOrganization(orgId) { tx ->
-            tx.fetchAll(
-                Statement.create(OF_MEMBERS_SQL).bind("org_id", orgId).bind("members", memberIds.joinToString(",")),
-            ).getOrThrow().map { it.toLink() }
-        }
+        return database.inOrg(orgId) { linksOf(orgId, memberIds).map { it.toLink() } }
     }
 
-    override suspend fun memberOf(orgId: Uuid, slackUserId: String): Uuid? = driver.withOrganization(orgId) { tx ->
-        tx.fetchAll(Statement.create(MEMBER_OF_SQL).bind("org_id", orgId).bind("slack_user_id", slackUserId))
-            .getOrThrow().firstOrNull()?.let { it.get("member_id").asUuid() }
+    override suspend fun memberOf(orgId: Uuid, slackUserId: String): Uuid? = database.inOrg(orgId) {
+        memberOfSlackUser(orgId, slackUserId).singleOrNull()?.get(SlackLinks.memberId)
     }
 
     override suspend fun save(orgId: Uuid, link: StoredSlackLink) {
-        driver.withOrganization(orgId) { tx ->
-            tx.execute(
-                Statement.create(SAVE_SQL).bind("org_id", orgId).bind("member_id", link.memberId)
-                    .bind("slack_user_id", link.slackUserId).bind("linked_at", link.linkedAt),
-            ).getOrThrow()
+        database.inOrg(orgId) {
+            val l = SlackLinks
+            l.upsert(
+                l.orgId,
+                l.memberId,
+                onUpdate = {
+                    it[l.slackUserId] = insertValue(l.slackUserId)
+                    it[l.linkedAt] = insertValue(l.linkedAt)
+                },
+            ) {
+                it[this.orgId] = orgId
+                it[memberId] = link.memberId
+                it[slackUserId] = link.slackUserId
+                it[linkedAt] = link.linkedAt
+            }
         }
     }
 
     override suspend fun remove(orgId: Uuid, memberId: Uuid) {
-        driver.withOrganization(orgId) { tx ->
-            tx.execute(Statement.create(REMOVE_SQL).bind("org_id", orgId).bind("member_id", memberId)).getOrThrow()
+        database.inOrg(orgId) {
+            SlackLinks.deleteWhere { (this.orgId eq orgId) and (this.memberId eq memberId) }
         }
     }
 
     override suspend fun deleteAll(orgId: Uuid) {
-        driver.withOrganization(orgId) { tx ->
-            tx.execute(Statement.create(DELETE_SQL).bind("org_id", orgId)).getOrThrow()
+        database.inOrg(orgId) { SlackLinks.deleteWhere { this.orgId eq orgId } }
+    }
+
+    private fun ResultRow.toLink() = StoredSlackLink(
+        memberId = this[SlackLinks.memberId],
+        slackUserId = this[SlackLinks.slackUserId],
+        linkedAt = this[SlackLinks.linkedAt],
+    )
+}
+
+/** The links of [memberIds] in [orgId], one each at most: by the primary key, bounded by the members asked for. */
+internal fun linksOf(orgId: Uuid, memberIds: Set<Uuid>): Query {
+    val l = SlackLinks
+    return l.select(l.memberId, l.slackUserId, l.linkedAt)
+        .where { (l.orgId eq orgId) and (l.memberId inList memberIds) }
+        .limit(memberIds.size)
+}
+
+/** The member of [orgId] linked to [slackUserId]: by the unique `(org_id, slack_user_id)`. */
+internal fun memberOfSlackUser(orgId: Uuid, slackUserId: String): Query {
+    val l = SlackLinks
+    return l.select(l.memberId).where { (l.orgId eq orgId) and (l.slackUserId eq slackUserId) }
+}
+
+/**
+ * [SlackApprovalMessagesRepository] on `slack_approval_messages` (version 2 of [SlackMigrations]): every statement
+ * filters on its organization and runs in it (`inOrg`), under row-level security.
+ *
+ * @param database The serving role's pool.
+ */
+class PostgresSlackApprovalMessagesRepository(private val database: JdbcDatabase) : SlackApprovalMessagesRepository {
+    override suspend fun save(orgId: Uuid, message: SlackApprovalMessage) {
+        database.inOrg(orgId) {
+            val m = SlackApprovalMessages
+            m.upsert(
+                m.orgId,
+                m.approvalId,
+                onUpdate = {
+                    it[m.slackChannel] = insertValue(m.slackChannel)
+                    it[m.ts] = insertValue(m.ts)
+                },
+            ) {
+                it[this.orgId] = orgId
+                it[approvalId] = message.approvalId
+                it[gateId] = message.gateId
+                it[slackChannel] = message.posted.channel
+                it[ts] = message.posted.ts
+            }
         }
     }
 
-    private fun ResultSet.Row.toLink() = StoredSlackLink(
-        memberId = get("member_id").asUuid(),
-        slackUserId = get("slack_user_id").asString(),
-        linkedAt = get("linked_at").asInstant(),
-    )
+    override suspend fun ofGate(orgId: Uuid, gateId: Uuid): List<SlackApprovalMessage> = database.inOrg(orgId) {
+        messagesOfGate(orgId, gateId).map { row ->
+            SlackApprovalMessage(
+                approvalId = row[SlackApprovalMessages.approvalId],
+                gateId = row[SlackApprovalMessages.gateId],
+                posted = SlackPosted(row[SlackApprovalMessages.slackChannel], row[SlackApprovalMessages.ts]),
+            )
+        }
+    }
 
-    private companion object {
-        const val COLUMNS = "member_id, slack_user_id, linked_at"
-        const val OF_SQL = "SELECT $COLUMNS FROM slack_links WHERE org_id = :org_id AND member_id = :member_id"
-        const val OF_MEMBERS_SQL = "SELECT $COLUMNS FROM slack_links WHERE org_id = :org_id " +
-            "AND member_id = ANY(CAST(string_to_array(CAST(:members AS TEXT), ',') AS UUID[]))"
-        const val MEMBER_OF_SQL = "SELECT member_id FROM slack_links WHERE org_id = :org_id " +
-            "AND slack_user_id = :slack_user_id"
-        const val SAVE_SQL = "INSERT INTO slack_links (org_id, member_id, slack_user_id, linked_at) " +
-            "VALUES (:org_id, :member_id, :slack_user_id, :linked_at) ON CONFLICT (org_id, member_id) " +
-            "DO UPDATE SET slack_user_id = EXCLUDED.slack_user_id, linked_at = EXCLUDED.linked_at"
-        const val REMOVE_SQL = "DELETE FROM slack_links WHERE org_id = :org_id AND member_id = :member_id"
-        const val DELETE_SQL = "DELETE FROM slack_links WHERE org_id = :org_id"
+    override suspend fun deleteAll(orgId: Uuid) {
+        database.inOrg(orgId) { SlackApprovalMessages.deleteWhere { this.orgId eq orgId } }
     }
 }
 
 /**
- * [SlackApprovalMessagesRepository] on `slack_approval_messages` (version 2 of [SlackMigrations]), every statement
- * confined to its organization.
- *
- * @param driver The database.
+ * The messages of [gateId]'s requests, one per approver told: by the index `(org_id, gate_id)`, at most
+ * [MAX_MESSAGES_OF_A_GATE].
  */
-class PostgresSlackApprovalMessagesRepository(private val driver: Driver) : SlackApprovalMessagesRepository {
-    override suspend fun save(orgId: Uuid, message: SlackApprovalMessage) {
-        driver.withOrganization(orgId) { tx ->
-            tx.execute(
-                Statement.create(SAVE_SQL).bind("org_id", orgId).bind("approval_id", message.approvalId)
-                    .bind("gate_id", message.gateId).bind("slack_channel", message.posted.channel)
-                    .bind("ts", message.posted.ts),
-            ).getOrThrow()
-        }
-    }
-
-    override suspend fun ofGate(orgId: Uuid, gateId: Uuid): List<SlackApprovalMessage> =
-        driver.withOrganization(orgId) { tx ->
-            tx.fetchAll(Statement.create(OF_GATE_SQL).bind("org_id", orgId).bind("gate_id", gateId))
-                .getOrThrow().map { row ->
-                    SlackApprovalMessage(
-                        approvalId = row.get("approval_id").asUuid(),
-                        gateId = row.get("gate_id").asUuid(),
-                        posted = SlackPosted(row.get("slack_channel").asString(), row.get("ts").asString()),
-                    )
-                }
-        }
-
-    override suspend fun deleteAll(orgId: Uuid) {
-        driver.withOrganization(orgId) { tx ->
-            tx.execute(Statement.create(DELETE_SQL).bind("org_id", orgId)).getOrThrow()
-        }
-    }
-
-    private companion object {
-        const val SAVE_SQL = "INSERT INTO slack_approval_messages (org_id, approval_id, gate_id, slack_channel, ts) " +
-            "VALUES (:org_id, :approval_id, :gate_id, :slack_channel, :ts) ON CONFLICT (org_id, approval_id) " +
-            "DO UPDATE SET slack_channel = EXCLUDED.slack_channel, ts = EXCLUDED.ts"
-        const val OF_GATE_SQL = "SELECT approval_id, gate_id, slack_channel, ts FROM slack_approval_messages " +
-            "WHERE org_id = :org_id AND gate_id = :gate_id"
-        const val DELETE_SQL = "DELETE FROM slack_approval_messages WHERE org_id = :org_id"
-    }
+internal fun messagesOfGate(orgId: Uuid, gateId: Uuid): Query {
+    val m = SlackApprovalMessages
+    return m.select(m.approvalId, m.gateId, m.slackChannel, m.ts)
+        .where { (m.orgId eq orgId) and (m.gateId eq gateId) }
+        .orderBy(m.approvalId to SortOrder.ASC)
+        .limit(MAX_MESSAGES_OF_A_GATE)
 }
+
+/** A gate asks its approvers, an organization's members with the right: the bound, far above a real gate's. */
+internal const val MAX_MESSAGES_OF_A_GATE = 1_000
