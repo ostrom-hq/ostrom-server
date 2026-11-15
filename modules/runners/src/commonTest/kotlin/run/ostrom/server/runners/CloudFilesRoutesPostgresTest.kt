@@ -8,6 +8,7 @@ import run.ostrom.server.cloud.domain.CloudRuntimeSource
 import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.audit.OrgAuditTrail
 import run.ostrom.server.kernel.errors.OstromException
+import run.ostrom.server.kernel.http.docs.API_OPENAPI_PATH
 import run.ostrom.server.runners.domain.CloudConversationStore
 import run.ostrom.server.runners.domain.CloudEventType
 import run.ostrom.server.runners.domain.CloudFile
@@ -188,6 +189,20 @@ class CloudFilesRoutesPostgresTest {
 
     private fun png(size: Int) = ByteArray(size).also {
         byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A).copyInto(it)
+    }
+
+    @Test
+    fun theFileRoutesAreDescribedWhereTheyAreMounted() = serverTest(listOf(RunnersModule), overrides()) { server ->
+        val paths = Json.parseToJsonElement(server.client.get(API_OPENAPI_PATH).bodyAsText()).jsonObject
+            .getValue("paths").jsonObject
+        val described = listOf(
+            "/api/v1/cloud/files/policy" to "get",
+            "/api/v1/cloud/sessions/{id}/files" to "post",
+            "/api/v1/cloud/runner/files/{id}" to "get",
+        ).map { (path, method) ->
+            paths.getValue(path).jsonObject.getValue(method).jsonObject.getValue("operationId").jsonPrimitive.content
+        }
+        assertEquals(listOf("getCloudFilePolicy", "uploadCloudFile", "cloudRunnerFile"), described)
     }
 
     @Test

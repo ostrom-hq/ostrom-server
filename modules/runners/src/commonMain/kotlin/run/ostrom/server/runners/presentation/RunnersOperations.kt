@@ -68,6 +68,7 @@ internal fun ApiCatalog.runnersOperations() {
     cloudTransferOperations()
     cloudTerminalOperations()
     cloudConversationOperations()
+    cloudFileOperations()
     registeredRunnerOperations()
     runnerChannelOperations()
     runnerConversationOperations()
