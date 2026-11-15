@@ -288,7 +288,8 @@ class CloudTransfersUseCaseImpl(
     /** An open transfer whose offer is past its validity is expired on the spot. */
     private suspend fun requireOpen(transfer: CloudTransfer, now: Instant) {
         if (!transfer.state.open) throw TransferNotOpenException()
-        if (transfer.state == TransferState.OFFERED && transfer.expiresAt != null && transfer.expiresAt <= now) {
+        // Only an offer has an expiry: an accepted transfer (the other open state) never reaches here, and has none.
+        if (transfer.expiresAt != null && transfer.expiresAt <= now) {
             transfers.update(
                 transfer,
                 transfer.copy(state = TransferState.EXPIRED, updatedAt = now, version = transfer.version + 1),
