@@ -26,6 +26,7 @@ import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.TokenAuthenticator
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
 import io.ktor.client.call.body
 import io.ktor.client.request.HttpRequestBuilder
@@ -94,6 +95,11 @@ class KeysAndDevicesRoutesPostgresTest {
         client.delete(path) { signedIn(person) }.status
 
     private suspend fun TestServer.authenticate(secret: String) = koin.get<TokenAuthenticator>().authenticate(secret)
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(listOf(IdentityModule), overrides) { server ->
+        server.assertApiCatalogue(IdentityModule)
+    }
 
     @Test
     fun anOwnerCreatesListsAndDeletesTheOrganizationsKeysAndOnlyTheHashIsStored() =

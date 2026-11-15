@@ -2,6 +2,7 @@
 package run.ostrom.server.identity
 
 import run.ostrom.core.api.models.ServerFeatures
+import run.ostrom.server.identity.presentation.identityOperations
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.identity.domain.AnswerDeviceAuthorizationUseCase
 import run.ostrom.server.identity.domain.AnswerDeviceAuthorizationUseCaseImpl
@@ -192,6 +193,7 @@ import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.database.repeatDue
 import run.ostrom.server.kernel.database.scheduledWork
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.InstanceBootstrapper
 import run.ostrom.server.kernel.module.ServerModule
@@ -230,6 +232,8 @@ object IdentityModule : ServerModule {
     private const val HTTP_TIMEOUT_MS = 10_000L
 
     override val name: String = "identity"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { identityOperations() }
 
     override val koinModule: Module = module {
         single { IdentityConfig.from(get()) }
