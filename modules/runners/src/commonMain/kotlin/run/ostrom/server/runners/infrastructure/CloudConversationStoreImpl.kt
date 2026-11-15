@@ -468,11 +468,14 @@ internal class CloudConversationStoreImpl(
 
         /** Enough of a stored `permission.request` for its leading `requestId` (at most 128 characters, escaped). */
         const val REQUEST_HEAD_CHARS = 300
-
-        val PENDING = CloudInputStatus.PENDING.map { it.wire }
-        val FINAL_STATES = listOf(SessionState.TERMINATED.wire, SessionState.FAILED.wire)
     }
 }
+
+/** The statuses an input is still pending in, as stored. */
+private val PENDING = CloudInputStatus.PENDING.map { it.wire }
+
+/** The states a session has ended in, as stored. */
+private val FINAL_STATES = listOf(SessionState.TERMINATED.wire, SessionState.FAILED.wire)
 
 /** The same idempotency key with another request: TeamCode's `422 idempotency_conflict`. */
 private fun idempotencyConflict() = CloudConversationException(

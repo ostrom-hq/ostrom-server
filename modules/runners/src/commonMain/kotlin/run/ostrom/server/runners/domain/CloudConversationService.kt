@@ -443,17 +443,17 @@ class CloudConversationServiceImpl(
         const val MAX_PENDING = CloudConversationRules.MAX_PENDING_INPUTS
         const val SUBJECT = "cloud_session"
 
-        /** Refusals of the plan or the owner, which the sweep tries once more. */
-        val RETRIED = setOf(
-            CloudSessionWake.AT_CAP,
-            CloudSessionWake.NO_HOURS,
-            CloudSessionWake.CLOSED,
-            CloudSessionWake.OWNER_GONE,
-        )
-
         fun notRunning() = CloudConversationRules.conflict(
             "session_not_running",
             "The cloud session is terminated or being deleted.",
         )
     }
 }
+
+/** Refusals of the plan or the owner, which the sweep tries once more. */
+private val RETRIED = setOf(
+    CloudSessionWake.AT_CAP,
+    CloudSessionWake.NO_HOURS,
+    CloudSessionWake.CLOSED,
+    CloudSessionWake.OWNER_GONE,
+)
