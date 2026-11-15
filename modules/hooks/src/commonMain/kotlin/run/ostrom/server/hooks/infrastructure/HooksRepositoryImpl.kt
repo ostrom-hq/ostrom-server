@@ -70,6 +70,7 @@ private class ExposedHooksStore(private val orgId: Uuid) : HooksStore {
     override fun insertHook(hook: Hook) {
         h.insert {
             it.hookValues(hook)
+            it[id] = hook.id
             it[orgId] = this@ExposedHooksStore.orgId
             it[name] = hook.name
             it[createdAt] = hook.createdAt
@@ -200,8 +201,8 @@ private class ExposedHooksStore(private val orgId: Uuid) : HooksStore {
         })
         .select(HOOK_COLUMNS + p[HooksVersions.version])
 
+    // The columns a change writes; the id, the name and the creation are the insert's only.
     private fun UpdateBuilder<*>.hookValues(hook: Hook) {
-        this[h.id] = hook.id
         this[h.pinnedVersionId] = hook.pinnedVersionId
         this[h.allMembers] = hook.allMembers
         this[h.updatedAt] = hook.updatedAt
