@@ -48,6 +48,7 @@ internal fun CloudInput.toDto() = CloudInputDto(
     finishedAt = finishedAt?.toString(),
     reason = reason,
     eventSeq = eventSeq,
+    fileIds = files.map { it.id.toString() },
 )
 
 internal fun AnswerCloudPermissionBody.toDomain(): PermissionAnswer {

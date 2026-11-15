@@ -8,6 +8,7 @@ import run.ostrom.server.kernel.database.repeatDue
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.runners.domain.CloudConversationService
 import run.ostrom.server.runners.domain.CloudConversationStore
+import run.ostrom.server.runners.domain.CloudFileService
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.minutes
@@ -15,18 +16,21 @@ import kotlin.time.Duration.Companion.minutes
 /**
  * TeamCode's conversation sweeps, on the instance's scheduled work: the transcript retention (the cloud runtime's
  * `transcriptRetentionDays`, kept forever when null or without the cloud module), the inputs of sessions that ended,
- * and the messages still waiting to wake their session.
+ * the messages still waiting to wake their session, and the files sent to sessions (`runners.cloud.files.v1`: expired
+ * or released files' bytes, then their rows, and the past days' counters).
  *
  * @param store The transcript and inputs.
  * @param conversation Wakes the sessions.
  * @param runtime The instance's cloud runtime; null without the cloud module.
  * @param clock The time.
+ * @param files The files sent to sessions; null when this server takes none.
  */
 class CloudConversationMaintenance(
     private val store: CloudConversationStore,
     private val conversation: CloudConversationService,
     private val runtime: CloudRuntimeSource?,
     private val clock: Clock,
+    private val files: CloudFileService? = null,
 ) {
     /** One pass of each sweep, each bounded. */
     suspend fun run() {
@@ -35,6 +39,7 @@ class CloudConversationMaintenance(
         if (days != null) store.purge(now - days.days, BATCH)
         store.cancelEnded(BATCH, now)
         conversation.wakePending(BATCH)
+        files?.sweep()
     }
 
     /**

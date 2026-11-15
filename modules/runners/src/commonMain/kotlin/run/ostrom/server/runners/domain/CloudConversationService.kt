@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners.domain
 
+import run.ostrom.server.cloud.domain.CloudRuntime
+import run.ostrom.server.cloud.domain.CloudRuntimeSource
 import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.audit.OrgAuditTrail
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -51,7 +53,16 @@ interface CloudConversationService {
     )
 
     /**
-     * Sends a message, waking a paused session unless [InputRequest.wake] is false.
+     * The session a member may send a message to, checked exactly as [send] does: a conversation session that takes
+     * inputs, and its owner only while its agent uses the owner's GitHub access. An upload is authorized so.
+     *
+     * @return The session.
+     */
+    suspend fun authorizeMessage(caller: Caller, id: Uuid): CloudSession
+
+    /**
+     * Sends a message, waking a paused session unless [InputRequest.wake] is false. With [InputRequest.fileIds] (at
+     * most 5, distinct) it carries the caller's files uploaded to this session; its text may then be empty.
      *
      * @return The input, `woke` when it resumed the session.
      */
@@ -132,6 +143,7 @@ interface CloudConversationService {
  * @param wake Resumes a paused session for a message, as for the answer to a wait.
  * @param audit The organization's audit log.
  * @param clock The time.
+ * @param runtime The instance's cloud runtime, for a message's file limit; null without the cloud module.
  * @param sleep Waits between two polls of a stream.
  */
 @Suppress("TooManyFunctions", "LongParameterList") // TeamCode's one service; its collaborators.
@@ -141,6 +153,7 @@ class CloudConversationServiceImpl(
     private val wake: WakeCloudSessionUseCase,
     private val audit: OrgAuditTrail,
     private val clock: Clock,
+    private val runtime: CloudRuntimeSource? = null,
     private val sleep: suspend (Long) -> Unit = { delay(it) },
 ) : CloudConversationService {
     override suspend fun events(
@@ -211,11 +224,23 @@ class CloudConversationServiceImpl(
         request: InputRequest,
     ): InputOutcome {
         val text = request.text ?: throw CloudConversationRules.invalid("invalid_message", "Send a message text.")
-        CloudConversationRules.validateMessage(text)
-        val session = writable(caller, id)
-        requireInstructor(caller, session)
+        val fileIds = request.fileIds
+        CloudConversationRules.validateMessage(text, files = fileIds.isNotEmpty())
+        if (fileIds.size > CloudFileRules.MAX_FILES_PER_MESSAGE || fileIds.toSet().size != fileIds.size) {
+            throw CloudConversationRules.invalid(
+                "invalid_files",
+                "Name at most ${CloudFileRules.MAX_FILES_PER_MESSAGE} distinct files.",
+            )
+        }
+        val session = authorizeMessage(caller, id)
         val input = newInput(caller, principal, session, CloudInputKind.MESSAGE, text, request)
-        return when (val outcome = store.insertInput(NewInput(input, request.expectedLastEventSeq), MAX_PENDING)) {
+        val fileBytes = when {
+            fileIds.isEmpty() -> 0
+            runtime == null -> CloudFileRules.messageLimit(CloudRuntime())
+            else -> CloudFileRules.messageLimit(runtime.current())
+        }
+        val new = NewInput(input, request.expectedLastEventSeq, fileIds = fileIds, fileBytes = fileBytes)
+        return when (val outcome = store.insertInput(new, MAX_PENDING)) {
             is InputOutcome.Replayed -> outcome
             // Only a sleeping session is woken: a running one needs no lookup nor write.
             is InputOutcome.Accepted -> if (request.wake && sleeping(session)) {
@@ -224,6 +249,12 @@ class CloudConversationServiceImpl(
                 outcome
             }
         }
+    }
+
+    override suspend fun authorizeMessage(caller: Caller, id: Uuid): CloudSession {
+        val session = writable(caller, id)
+        requireInstructor(caller, session)
+        return session
     }
 
     override suspend fun interrupt(

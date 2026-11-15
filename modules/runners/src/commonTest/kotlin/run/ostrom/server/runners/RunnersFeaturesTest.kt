@@ -7,6 +7,10 @@ import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.auth.OrgPrincipal
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.config.MapConfigSource
+import run.ostrom.server.runners.domain.Caller
+import run.ostrom.server.runners.domain.CloudFileBody
+import run.ostrom.server.runners.domain.CloudFileService
+import run.ostrom.server.runners.domain.RunnerExecution
 import run.ostrom.server.runners.domain.CloudTransfersUseCaseImpl
 import run.ostrom.server.runners.domain.ConversationAnnouncement
 import run.ostrom.server.runners.domain.NoRunnerVariables
@@ -222,5 +226,39 @@ class RunnersFeaturesTest {
             )
             assertEquals(cloud + listed, RunnersModule.features(koin))
         }
+    }
+
+    @Test
+    fun filesAreAnnouncedOnceTheirBytesHaveABucket() = runTest {
+        val docker = RunnersConfig.from(MapConfigSource(emptyMap())).copy(driver = RunnersConfig.DriverKind.DOCKER)
+        val files = object : CloudFileService {
+            override suspend fun policy(caller: Caller) = error("Not called")
+
+            override suspend fun upload(
+                caller: Caller,
+                principal: AuthenticatedPrincipal,
+                sessionId: Uuid,
+                rawName: String?,
+                announcedBytes: Long?,
+                clientKey: String?,
+                body: CloudFileBody,
+            ) = error("Not called")
+
+            override suspend fun runnerFile(execution: RunnerExecution, fileId: Uuid) = error("Not called")
+
+            override suspend fun sweep(limit: Int) = 0
+        }
+        fun koin(announced: Boolean, service: CloudFileService?) = koinApplication {
+            modules(
+                module {
+                    single { docker }
+                    single { ConversationAnnouncement(announced) }
+                    single { FilesWiring(service) }
+                },
+            )
+        }.koin
+        assertTrue("runners.cloud.files.v1" in RunnersModule.features(koin(true, files)))
+        assertFalse("runners.cloud.files.v1" in RunnersModule.features(koin(true, null)), "No bucket for the bytes")
+        assertFalse("runners.cloud.files.v1" in RunnersModule.features(koin(false, files)), "No conversation")
     }
 }

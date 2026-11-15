@@ -148,6 +148,101 @@ private val INFERENCE_CREDENTIALS_SQL: String =
     REVOKE CREATE ON SCHEMA public FROM ostrom_router;
     """.trimIndent()
 
+/** What the files' sweep does across organizations: functions owned by `ostrom_router` (version 24). */
+private val FILES_ROUTER_FUNCTIONS = listOf(
+    "runners_files_expire(TIMESTAMPTZ, INTEGER)",
+    "runners_files_deleting(INTEGER)",
+    "runners_file_usage_purge(BIGINT)",
+)
+
+/**
+ * Version 24 (`runners.cloud.files.v1`, TeamCode's `V20261024120000.1` and `.2`): `runners_session_files` holds the
+ * metadata of the files members send to sessions (the bytes are in the organization's artifact bucket), unique per
+ * session, author and idempotency key, with the message that carries each; `runners_file_usage` the per-member daily
+ * counters. No key to `runners_sessions`: a deleted session's files keep their rows until the sweep removed their
+ * bytes. Both are tenant tables; the sweep finds the expired and the deleted files of every organization, and the past
+ * days' counters, only through [FILES_ROUTER_FUNCTIONS], then reads and deletes the files' rows in each organization.
+ */
+private val SESSION_FILES_SQL: String =
+    """
+    CREATE TABLE runners_session_files (
+        id UUID PRIMARY KEY,
+        org_id UUID NOT NULL,
+        session_id UUID NOT NULL,
+        author_id TEXT NOT NULL,
+        credential_id TEXT,
+        name TEXT NOT NULL,
+        content_type TEXT,
+        size BIGINT NOT NULL,
+        sha256 TEXT,
+        client_key TEXT,
+        request_digest TEXT,
+        input_id UUID,
+        created_at TIMESTAMPTZ NOT NULL,
+        completed_at TIMESTAMPTZ,
+        expires_at TIMESTAMPTZ NOT NULL,
+        consumed_at TIMESTAMPTZ,
+        deleting_since TIMESTAMPTZ
+    );
+    CREATE UNIQUE INDEX runners_session_files_key ON runners_session_files (session_id, author_id, client_key);
+    CREATE INDEX runners_session_files_session ON runners_session_files (session_id, deleting_since);
+    CREATE INDEX runners_session_files_input ON runners_session_files (input_id);
+    CREATE INDEX runners_session_files_sweep ON runners_session_files (deleting_since, expires_at);
+    CREATE TABLE runners_file_usage (
+        org_id UUID NOT NULL,
+        member_id TEXT NOT NULL,
+        day BIGINT NOT NULL,
+        bytes BIGINT NOT NULL,
+        files INTEGER NOT NULL,
+        PRIMARY KEY (org_id, member_id, day)
+    );
+    CREATE INDEX runners_file_usage_day ON runners_file_usage (day);
+    ${tenantTableSql("runners_session_files")}
+    ${tenantTableSql("runners_file_usage")}
+    CREATE POLICY runners_session_files_router_read ON runners_session_files FOR SELECT TO ostrom_router
+        USING (current_user = 'ostrom_router');
+    CREATE POLICY runners_session_files_router_expire ON runners_session_files FOR UPDATE TO ostrom_router
+        USING (current_user = 'ostrom_router') WITH CHECK (current_user = 'ostrom_router');
+    GRANT SELECT (id, org_id, expires_at, deleting_since), UPDATE (deleting_since) ON runners_session_files
+        TO ostrom_router;
+    CREATE POLICY runners_file_usage_router_read ON runners_file_usage FOR SELECT TO ostrom_router
+        USING (current_user = 'ostrom_router');
+    CREATE POLICY runners_file_usage_router_purge ON runners_file_usage FOR DELETE TO ostrom_router
+        USING (current_user = 'ostrom_router');
+    GRANT SELECT (org_id, member_id, day), DELETE ON runners_file_usage TO ostrom_router;
+    CREATE FUNCTION runners_files_expire(p_now TIMESTAMPTZ, p_limit INTEGER) RETURNS BIGINT
+        LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        WITH marked AS (
+            UPDATE runners_session_files SET deleting_since = p_now WHERE id IN (
+                SELECT f.id FROM runners_session_files f
+                    WHERE f.deleting_since IS NULL AND f.expires_at < p_now LIMIT p_limit
+            ) RETURNING 1
+        ) SELECT count(*) FROM marked;
+    $$;
+    CREATE FUNCTION runners_files_deleting(p_limit INTEGER) RETURNS TABLE (org_id UUID, id UUID)
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        SELECT f.org_id, f.id FROM runners_session_files f WHERE f.deleting_since IS NOT NULL
+            ORDER BY f.deleting_since, f.id LIMIT p_limit;
+    $$;
+    CREATE FUNCTION runners_file_usage_purge(p_day BIGINT) RETURNS BIGINT
+        LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        WITH gone AS (
+            DELETE FROM runners_file_usage WHERE (org_id, member_id, day) IN (
+                SELECT u.org_id, u.member_id, u.day FROM runners_file_usage u WHERE u.day < p_day LIMIT 1000
+            ) RETURNING 1
+        ) SELECT count(*) FROM gone;
+    $$;
+    ${FILES_ROUTER_FUNCTIONS.joinToString("\n") { "REVOKE EXECUTE ON FUNCTION $it FROM PUBLIC;" }}
+    DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+            ${FILES_ROUTER_FUNCTIONS.joinToString("\n") { "GRANT EXECUTE ON FUNCTION $it TO ostrom_app;" }}
+        END IF;
+    END $$;
+    GRANT CREATE ON SCHEMA public TO ostrom_router;
+    ${FILES_ROUTER_FUNCTIONS.joinToString("\n") { "ALTER FUNCTION $it OWNER TO ostrom_router;" }}
+    REVOKE CREATE ON SCHEMA public FROM ostrom_router;
+    """.trimIndent()
+
 /**
  * Version 3: `runners_session_routes` under forced row-level security like the other tables (a request reads and
  * writes only its organization's routes), and what crosses organizations moved into narrow `SECURITY DEFINER`
@@ -779,4 +874,6 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
                 ADD COLUMN created_by_credential_id TEXT, ADD COLUMN created_by_effective_member_id TEXT;
         """.trimIndent(),
     ),
+    // runners.cloud.files.v1: the files members send to sessions, and their daily counters.
+    SchemaMigration(version = 24, name = "session_files", sql = SESSION_FILES_SQL),
 )

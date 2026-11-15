@@ -13,6 +13,8 @@ private val CLOUD_READS = setOf(
     "GET /api/v1/cloud/sessions/{id}/events", "GET /api/v1/cloud/sessions/{id}/events/stream",
     "GET /api/v1/cloud/sessions/{id}/agents", "GET /api/v1/cloud/sessions/{id}/messages",
     "GET /api/v1/cloud/sessions/{id}/messages/{input}",
+    // The organization's file policy (TeamCode's CLOUD_READ).
+    "GET /api/v1/cloud/files/policy",
 )
 
 private val CLOUD_WRITES = CLOUD_READS + setOf(
@@ -22,6 +24,8 @@ private val CLOUD_WRITES = CLOUD_READS + setOf(
     "POST /api/v1/cloud/sessions/{id}/messages", "POST /api/v1/cloud/sessions/{id}/interrupt",
     "POST /api/v1/cloud/sessions/{id}/permissions", "POST /api/v1/cloud/sessions/{id}/tasks/stop",
     "PUT /api/v1/cloud/sessions/{id}/model", "PUT /api/v1/cloud/sessions/{id}/effort",
+    // A file sent to a session, authorized as a message (TeamCode's CLOUD_WRITE).
+    "POST /api/v1/cloud/sessions/{id}/files",
 )
 
 // A service key manages the webhooks with cloud:admin only (TeamCode: an admin's key), never with a lesser scope.

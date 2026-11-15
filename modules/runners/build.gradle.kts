@@ -15,6 +15,8 @@ kotlin {
             implementation(project(":modules:billing"))
             // The console's cloud runtime: the runner image a session's init container copies `ostrom` from.
             implementation(project(":modules:cloud"))
+            // The organization's artifact bucket, where the files sent to sessions are kept (runners.cloud.files.v1).
+            implementation(project(":modules:artifacts"))
             // The members' environment values the runner hands the agent ([ResolveEnvironmentUseCase]).
             implementation(project(":modules:secrets"))
             implementation(libs.cryptography.core)

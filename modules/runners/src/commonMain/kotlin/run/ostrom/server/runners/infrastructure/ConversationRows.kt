@@ -9,6 +9,7 @@ import run.ostrom.server.runners.domain.CloudInputKind
 import run.ostrom.server.runners.domain.CloudInputStatus
 import run.ostrom.server.runners.domain.PermissionRequestState
 import run.ostrom.server.runners.domain.storedObject
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -43,6 +44,22 @@ internal fun finish(input: CloudInput, status: CloudInputStatus, reason: String?
             put("inputId", input.id.toString())
             put("authorId", input.authorId)
             put("text", TranscriptMask.bound(input.text.orEmpty()))
+            // Name, size and type only: never the path the host wrote the file to.
+            if (input.files.isNotEmpty()) {
+                put(
+                    "files",
+                    JsonArray(
+                        input.files.map { file ->
+                            buildJsonObject {
+                                put("id", file.id.toString())
+                                put("name", file.name)
+                                put("size", file.size)
+                                put("contentType", file.contentType)
+                            }
+                        },
+                    ),
+                )
+            }
         }
     } else {
         buildJsonObject {
@@ -70,6 +87,10 @@ internal fun finish(input: CloudInput, status: CloudInputStatus, reason: String?
         it[t.reason] = reason
         it[eventSeq] = seq
         it[wakePending] = false
+    }
+    // Whatever the outcome, the message's files are no longer needed: the sweep removes their bytes.
+    if (input.kind == CloudInputKind.MESSAGE) {
+        releaseFiles(input.orgId, input.id, status == CloudInputStatus.CONSUMED, now)
     }
     return input.copy(status = status, finishedAt = now, consumedAt = consumed, reason = reason, eventSeq = seq)
 }

@@ -112,7 +112,8 @@ data class RunnerEventsResponse(val acceptedThrough: Long, val lastSeq: Long)
  * @property epoch The execution.
  * @property waitMillis How long to wait for inputs, at most 20,000.
  * @property desiredStatus The desired state the runner last knew: the poll ends as soon as the session's differs.
- * @property acceptsFiles The runner downloads a message's files; this server's messages carry none yet.
+ * @property acceptsFiles The runner downloads a message's files: without it, a message with files is rejected for it
+ *   (`files_unsupported`).
  * @property acceptsTaskStops The runner stops background tasks.
  * @property acceptsModelChanges The runner changes its agent's model.
  * @property acceptsEffortChanges The runner changes its agent's effort.
@@ -136,9 +137,16 @@ data class RunnerInputsRequest(
  * @property kind `message`, `interrupt`, `permission`, `stop_task`, `set_model` or `set_effort`.
  * @property text A message's text; a permission answer's JSON; a task's id; a model or effort.
  * @property attempt How many times it was handed, this one included.
+ * @property files The files a message carries (`runners.cloud.files.v1`): downloaded before the agent reads it.
  */
 @Serializable
-data class RunnerInputDto(val id: String, val kind: String, val text: String? = null, val attempt: Int)
+data class RunnerInputDto(
+    val id: String,
+    val kind: String,
+    val text: String? = null,
+    val attempt: Int,
+    val files: List<RunnerFileDto> = emptyList(),
+)
 
 /**
  * The inputs handed.

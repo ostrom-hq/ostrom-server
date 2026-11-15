@@ -24,6 +24,8 @@ import kotlin.uuid.Uuid
  * @property maxRetainedSessionsPerMember Sessions one member keeps.
  * @property transcriptRetentionDays Days transcript events are kept; null keeps them.
  * @property memberTransfers `offer`, or `disabled` (administrators only).
+ * @property fileMaxMebibytes The largest file a member sends to a session (`runners.cloud.files.v1`).
+ * @property messageFileMebibytes The files of one message together.
  * @property updatedAt When it was saved last; null while nothing is stored.
  */
 @Serializable
@@ -40,6 +42,8 @@ data class CloudRuntime(
     val maxRetainedSessionsPerMember: Int = DEFAULT_MAX_RETAINED,
     val transcriptRetentionDays: Int? = DEFAULT_TRANSCRIPT_RETENTION_DAYS,
     val memberTransfers: String = TRANSFERS_OFFER,
+    val fileMaxMebibytes: Int = DEFAULT_FILE_MEBIBYTES,
+    val messageFileMebibytes: Int = DEFAULT_MESSAGE_FILE_MEBIBYTES,
     val updatedAt: Instant? = null,
 ) {
     /** The defaults and the accepted values. */
@@ -61,6 +65,15 @@ data class CloudRuntime(
 
         /** The transfer settings accepted. */
         val TRANSFERS: Set<String> = setOf(TRANSFERS_OFFER, "disabled")
+
+        /** The largest file sent to a session by default, in MiB (TeamCode's). */
+        const val DEFAULT_FILE_MEBIBYTES: Int = 20
+
+        /** The files of one message together by default, in MiB (TeamCode's). */
+        const val DEFAULT_MESSAGE_FILE_MEBIBYTES: Int = 25
+
+        /** The most either file limit may be, in MiB. */
+        const val MAX_FILE_MEBIBYTES: Int = 100
 
         private const val DEFAULT_PAUSED_RETENTION_DAYS = 30
         private const val DEFAULT_FAILED_RETENTION_DAYS = 7

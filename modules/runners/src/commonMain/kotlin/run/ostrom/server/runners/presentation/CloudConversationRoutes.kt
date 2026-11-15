@@ -25,7 +25,8 @@ import kotlin.uuid.Uuid
 /**
  * The conversation routes of a cloud session (TeamCode's `CloudConversationRoutes`, members' side): the transcript
  * (`events`, `events/stream`, `agents`), the inputs (`messages`, `interrupt`, `permissions`, `tasks/stop`) and the
- * agent's options (`permission-bypass`, `model`, `effort`). The `files` routes are not served yet.
+ * agent's options (`permission-bypass`, `model`, `effort`), and the files of `runners.cloud.files.v1` when this server
+ * takes them.
  *
  * @param dependencies The service.
  */
@@ -34,6 +35,7 @@ fun Route.cloudConversationRoutes(dependencies: CloudConversationRoutesDependenc
         transcriptRoutes(dependencies)
         inputRoutes(dependencies)
         optionRoutes(dependencies)
+        dependencies.files?.let { fileRoutes(it, dependencies.orgResolver) }
     }
 }
 
@@ -95,12 +97,15 @@ private fun Route.inputRoutes(dependencies: CloudConversationRoutesDependencies)
             val principal = call.requirePrincipal()
             val caller = orgResolver.callerOf(principal, CLOUD_WRITE)
             val body = call.receive<SendCloudMessageBody>()
-            if (body.fileIds.isNotEmpty()) {
-                throw CloudConversationRules.invalid("files_unsupported", "This server does not take files yet.")
+            // Never dropped silently: a server that does not take files refuses a message that names some.
+            if (body.fileIds.isNotEmpty() && files == null) {
+                throw CloudConversationRules.invalid("files_unsupported", "This server does not take files.")
             }
             val key = call.clientKey(body.clientMessageId)
-            val digest = digestOf("message", body.text.orEmpty(), body.wake.toString())
-            val request = InputRequest(body.text, body.wake, key, digest, body.expectedLastEventSeq)
+            // The files are part of what a key stands for; a message without files keeps the digest it had.
+            val named = if (body.fileIds.isEmpty()) emptyList() else listOf("files", body.fileIds.joinToString(","))
+            val digest = digestOf(listOf("message", body.text.orEmpty(), body.wake.toString()) + named)
+            val request = InputRequest(body.text, body.wake, key, digest, body.expectedLastEventSeq, body.fileIds)
             call.accepted(conversation.send(caller, principal, sessionId(params.parent.id), request))
         }
     }
@@ -110,7 +115,7 @@ private fun Route.inputRoutes(dependencies: CloudConversationRoutesDependencies)
             val caller = orgResolver.callerOf(principal, CLOUD_WRITE)
             val answer = call.receive<AnswerCloudPermissionBody>().toDomain()
             val text = answerText(answer)
-            val request = InputRequest(text, false, call.clientKey(null), digestOf("permission", text), null)
+            val request = InputRequest(text, false, call.clientKey(null), digestOf(listOf("permission", text)), null)
             call.accepted(conversation.answer(caller, principal, sessionId(params.parent.id), answer, request))
         }
         post<CloudStopTaskApi> { params ->
@@ -173,7 +178,7 @@ private fun badCursor() = CloudConversationRules.invalid("invalid_cursor", "Use 
 private fun cursor(raw: String?): Long? = raw?.let { it.toLongOrNull() ?: throw badCursor() }
 
 /** The idempotency key: the header, or the body's alias, never both (TeamCode's rule). */
-private fun ApplicationCall.clientKey(alias: String?): String? {
+internal fun ApplicationCall.clientKey(alias: String?): String? {
     val header = request.headers[IDEMPOTENCY_KEY]
     if (header != null && alias != null) {
         throw CloudConversationRules.invalid(
@@ -198,7 +203,7 @@ private suspend fun ApplicationCall.accepted(outcome: InputOutcome) {
 }
 
 /** What an idempotency key is bound to: a retry must send the same. */
-private fun digestOf(vararg parts: String): String {
+private fun digestOf(parts: List<String>): String {
     val joined = parts.joinToString("\u0000")
     return HASHER.hashBlocking(joined.encodeToByteArray()).toHexString()
 }
