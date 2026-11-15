@@ -185,7 +185,7 @@ class BillingPostgresTest {
                     }
                 }
             }
-            assertTrue("row-level security" in forged.message.orEmpty(), forged.message)
+            assertEquals("42501", forged.sqlState, "Refused by the policy: ${forged.message}")
             assertEquals(emptyList(), repository.alerts(ORG_A, NOW), "Nothing was forged")
         }
 

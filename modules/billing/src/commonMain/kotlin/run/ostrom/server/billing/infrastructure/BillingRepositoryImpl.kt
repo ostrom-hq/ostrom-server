@@ -25,6 +25,7 @@ import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.core.TextColumnType
 import org.jetbrains.exposed.v1.core.UuidColumnType
 import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.count
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.plus
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
@@ -126,7 +127,8 @@ class BillingRepositoryImpl(private val database: JdbcDatabase) : BillingReposit
 
     override suspend fun countActivePeople(orgId: Uuid, periodStart: Instant): Int = database.withOrganization(orgId) {
         val p = BillingActivePeople
-        p.select(p.userId).where { (p.orgId eq orgId) and (p.periodStart eq periodStart) }.count().toInt()
+        val people = p.userId.count()
+        p.select(people).where { (p.orgId eq orgId) and (p.periodStart eq periodStart) }.single()[people].toInt()
     }
 
     override suspend fun listActivePeople(orgId: Uuid, periodStart: Instant, limit: Int): List<String> =
