@@ -404,6 +404,7 @@ class GovernancePostgresTest {
         val asked = checkNotNull(repository.get(orgA, id))
         val outcome = ConfirmationOutcome(ConfirmationStatus.CONFIRMED, asked.requestedBy, Clock.System.now())
         assertTrue(repository.answer(orgA, id, outcome))
+        assertFalse(repository.answer(orgA, id, outcome), "Of two answers, the second changes nothing")
         // confirmed, the write being made: the CLI that waits must not read it without its result
         assertEquals(false, repository.get(orgA, id)?.settled)
         assertEquals("pending", server.read("ada-token", id).body<ConfirmationDto>().status)
