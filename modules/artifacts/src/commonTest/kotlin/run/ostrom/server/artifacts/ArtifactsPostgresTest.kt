@@ -22,8 +22,8 @@ import run.ostrom.server.artifacts.fakes.activateArtifacts
 import run.ostrom.server.artifacts.fakes.alice
 import run.ostrom.server.artifacts.fakes.bob
 import run.ostrom.server.artifacts.fakes.dave
+import run.ostrom.server.artifacts.fakes.inTenant
 import run.ostrom.server.artifacts.fakes.testIdentities
-import run.ostrom.server.artifacts.infrastructure.inTenant
 import run.ostrom.server.artifacts.presentation.ArtifactMembersResponse
 import run.ostrom.server.artifacts.presentation.ArtifactResponse
 import run.ostrom.server.artifacts.presentation.ArtifactTicketResponse

@@ -5,12 +5,18 @@ import run.ostrom.server.artifacts.domain.ArtifactMaintenanceRepository
 import run.ostrom.server.artifacts.domain.ArtifactsRepository
 import run.ostrom.server.artifacts.fakes.ORG_A
 import run.ostrom.server.artifacts.fakes.ORG_B
-import run.ostrom.server.artifacts.infrastructure.MaintenanceQueries
+import run.ostrom.server.artifacts.infrastructure.artifactDeleted
+import run.ostrom.server.artifacts.infrastructure.artifactsDue
+import run.ostrom.server.artifacts.infrastructure.blobForgotten
+import run.ostrom.server.artifacts.infrastructure.blobsMarked
 import run.ostrom.server.artifacts.infrastructure.dueOrganizationsSql
-import run.ostrom.server.artifacts.infrastructure.fetchInOrg
+import run.ostrom.server.artifacts.infrastructure.foldersDeleted
+import run.ostrom.server.artifacts.infrastructure.publicationsForget
+import run.ostrom.server.artifacts.infrastructure.uploadsExpired
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -172,29 +178,23 @@ class ArtifactMaintenancePostgresTest {
         }
         // As the function runs it: the pending folders are few, read whole.
         val due = dueOrganizationsSql("'$now'", "'$drafts'", "'$publications'", "100", folders = true)
-        val plans = mutableListOf(
+        val plans = listOf(
             due to server.database.superuser.fetchAll("EXPLAIN $due").getOrThrow()
                 .joinToString("\n") { it.get("QUERY PLAN").asString() },
         )
-        val binds = mapOf("now" to now, "drafts" to drafts, "publications" to publications, "limit" to 100)
-        val statements = listOf(
-            MaintenanceQueries.EXPIRED_UPLOADS,
-            MaintenanceQueries.EXPIRED,
-            MaintenanceQueries.DELETE_EXPIRED,
-            MaintenanceQueries.MARKED,
-            MaintenanceQueries.FORGET,
-            MaintenanceQueries.DELETED_FOLDERS,
-            "DELETE FROM artifacts_publications WHERE published_at < :publications",
-        )
-        for (sql in statements) {
-            var statement = Statement.create("EXPLAIN $sql")
-            binds.filterKeys { ":$it" in sql }.forEach { (name, value) -> statement = statement.bind(name, value) }
-            if (":id" in sql) statement = statement.bind("id", Uuid.random())
-            if (":sha" in sql) statement = statement.bind("sha", "x")
-            plans += sql to server.driver.fetchInOrg(ORG_A, statement).getOrThrow()
-                .joinToString("\n") { it.get("QUERY PLAN").asString() }
+        val id = Uuid.random()
+        val queryPlans = server.koin.get<JdbcDatabase>().inOrg(ORG_A) {
+            listOf(
+                plan { uploadsExpired(ORG_A, now, 100) },
+                plan { artifactsDue(ORG_A, now, drafts, 100) },
+                plan { artifactDeleted(ORG_A, id, now, drafts) },
+                plan { blobsMarked(ORG_A, now, 100) },
+                plan { blobForgotten(ORG_A, id, "x") },
+                plan { foldersDeleted(ORG_A, 100) },
+                plan { publicationsForget(ORG_A, publications) },
+            ).map { "the repository's statement" to it }.also { rollback() }
         }
-        for ((sql, plan) in plans) {
+        for ((sql, plan) in plans + queryPlans) {
             for (table in MAINTAINED) {
                 assertFalse("Seq Scan on $table" in plan, "The maintenance scans $table:\n$sql\n$plan")
             }

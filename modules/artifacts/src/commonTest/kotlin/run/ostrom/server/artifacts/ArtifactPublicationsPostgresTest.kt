@@ -8,9 +8,11 @@ import run.ostrom.server.artifacts.fakes.ALICE
 import run.ostrom.server.artifacts.fakes.ORG_A
 import run.ostrom.server.artifacts.fakes.ORG_B
 import run.ostrom.server.artifacts.fakes.activateArtifacts
+import run.ostrom.server.artifacts.fakes.fetchInOrg
 import run.ostrom.server.artifacts.fakes.testIdentities
-import run.ostrom.server.artifacts.infrastructure.PublicationQueries
-import run.ostrom.server.artifacts.infrastructure.fetchInOrg
+import run.ostrom.server.artifacts.infrastructure.publicationsSince
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.request.bearerAuth
@@ -86,10 +88,9 @@ class ArtifactPublicationsPostgresTest {
                 "now() - (i || ' seconds')::interval FROM generate_series(0, 19999) AS i",
         ).getOrThrow()
         fixtures.execute("VACUUM ANALYZE artifacts_publications").getOrThrow()
-        val statement = Statement.create("EXPLAIN (ANALYZE, BUFFERS) ${PublicationQueries.SINCE}")
-            .bind("org_id", ORG_A).bind("member", ALICE.toString()).bind("since", t0).bind("limit", 60)
-        val plan = server.driver.fetchInOrg(ORG_A, statement).getOrThrow()
-            .joinToString("\n") { it.get("QUERY PLAN").asString() }
+        val plan = server.koin.get<JdbcDatabase>().inOrg(ORG_A) {
+            plan { publicationsSince(ORG_A, ALICE.toString(), t0, 60) }.also { rollback() }
+        }
         assertFalse("Seq Scan on artifacts_publications" in plan, "The count scans the publications:\n$plan")
     }
 }

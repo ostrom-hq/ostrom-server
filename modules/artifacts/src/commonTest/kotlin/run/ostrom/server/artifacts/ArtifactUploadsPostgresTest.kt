@@ -14,11 +14,13 @@ import run.ostrom.server.artifacts.fakes.ORG_A
 import run.ostrom.server.artifacts.fakes.ORG_B
 import run.ostrom.server.artifacts.fakes.activateArtifacts
 import run.ostrom.server.artifacts.fakes.alice
+import run.ostrom.server.artifacts.fakes.fetchInOrg
+import run.ostrom.server.artifacts.fakes.inTenant
 import run.ostrom.server.artifacts.fakes.testIdentities
 import run.ostrom.server.artifacts.infrastructure.Sha256ContentDigest
-import run.ostrom.server.artifacts.infrastructure.UploadQueries
-import run.ostrom.server.artifacts.infrastructure.fetchInOrg
-import run.ostrom.server.artifacts.infrastructure.inTenant
+import run.ostrom.server.artifacts.infrastructure.chunksReceived
+import run.ostrom.server.artifacts.infrastructure.drafts
+import run.ostrom.server.artifacts.infrastructure.openUploads
 import run.ostrom.server.artifacts.presentation.ArtifactConflictResponse
 import run.ostrom.server.artifacts.presentation.ArtifactFileRefDto
 import run.ostrom.server.artifacts.presentation.ArtifactUploadChunkResponse
@@ -27,7 +29,9 @@ import run.ostrom.server.artifacts.presentation.ArtifactVersionResponse
 import run.ostrom.server.artifacts.presentation.CreateArtifactUploadRequest
 import run.ostrom.server.artifacts.presentation.FileDto
 import run.ostrom.server.artifacts.presentation.PublishVersionRequest
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.http.ErrorDetail
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
@@ -269,29 +273,18 @@ class ArtifactUploadsPostgresTest {
         for (table in listOf("artifacts_artifacts", "artifacts_uploads", "artifacts_upload_chunks")) {
             fixtures.execute("VACUUM ANALYZE $table").getOrThrow()
         }
-        val driver = server.driver
-        val plans = mapOf(
-            "artifacts_uploads" to driver.explain(UploadQueries.OPEN_UPLOADS) {
-                bind("member", ALICE.toString()).bind("now", t0)
-            },
-            "artifacts_artifacts" to driver.explain(UploadQueries.DRAFTS) { bind("member", ALICE.toString()) },
-            "artifacts_upload_chunks" to driver.explain(UploadQueries.RECEIVED) {
-                bind("id", mine.id).bind("sha", sha)
-            },
-        )
+        val plans = server.koin.get<JdbcDatabase>().inOrg(ORG_A) {
+            mapOf(
+                "artifacts_uploads" to plan { openUploads(ORG_A, ALICE.toString(), t0).query },
+                "artifacts_artifacts" to plan { drafts(ORG_A, ALICE.toString()).query },
+                "artifacts_upload_chunks" to plan { chunksReceived(ORG_A, mine.id, sha).query },
+            ).also { rollback() }
+        }
         for ((table, plan) in plans) {
             assertFalse("Seq Scan on $table" in plan, "The read scans $table:\n$plan")
         }
         assertNotNull(uploads.get(ORG_A, mine.id))
     }
-
-    /** The plan of [sql] in org A, as the tenant role reads it; `:org_id` is bound when it names it. */
-    private suspend fun Driver.explain(sql: String, bind: Statement.() -> Statement): String {
-        val statement = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind()
-        if (":org_id" in sql) statement.bind("org_id", ORG_A)
-        return fetchInOrg(ORG_A, statement).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
-    }
-
 }
 
 private const val ARTIFACT_CONFLICT_MESSAGE =
