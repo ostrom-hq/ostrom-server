@@ -144,7 +144,7 @@ private fun legacySpending(member: Boolean): String {
                 LEFT JOIN (
                     SELECT DISTINCT ON (f.launch_id COLLATE "C") f.launch_id, f.id, f.agent, f.repo
                     FROM sessions_sessions f WHERE f.org_id = :org_id AND f.launch_id IS NOT NULL
-                    ORDER BY f.launch_id COLLATE "C", f.segment
+                    ORDER BY f.launch_id COLLATE "C", f.segment, f.id
                 ) l ON s.id IS NULL AND l.launch_id = c.launch_id
                 LEFT JOIN orgs_members m ON m.org_id = c.org_id AND m.id = c.member_id
                 LEFT JOIN identity_users u ON u.id = m.user_id

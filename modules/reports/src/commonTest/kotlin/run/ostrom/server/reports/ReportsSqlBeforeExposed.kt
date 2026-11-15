@@ -59,7 +59,7 @@ internal object ReportsSqlBeforeExposed {
             launches AS (
                 SELECT DISTINCT ON (f.launch_id COLLATE "C") f.launch_id, f.id, f.agent, f.repo
                 FROM sessions_sessions f WHERE f.org_id = :org_id AND f.launch_id IN (SELECT launch_id FROM calls)
-                ORDER BY f.launch_id COLLATE "C", f.segment
+                ORDER BY f.launch_id COLLATE "C", f.segment, f.id
             ),
             spent AS (
                 SELECT agent, repo, member_id, spent_in, GROUPING(agent, repo, member_id) AS g,
