@@ -215,7 +215,7 @@ class InMemoryAutomations : AutomationsRepository {
     override suspend fun claimDue(
         now: Instant,
         limit: Int,
-        decide: suspend (Automation, Instant) -> CronClaim,
+        decide: (Automation, Instant) -> CronClaim,
     ): List<ClaimedRun> {
         failIf("claimDue")
         val due = automations.values.filter { it.enabled && it.nextRunAt?.let { at -> at <= now } == true }.take(limit)

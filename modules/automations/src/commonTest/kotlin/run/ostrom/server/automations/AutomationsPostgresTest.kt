@@ -15,17 +15,21 @@ import run.ostrom.server.automations.fakes.ORG_B
 import run.ostrom.server.automations.fakes.cronDefinition
 import run.ostrom.server.automations.fakes.webhookDefinition
 import run.ostrom.server.automations.fakes.workflowDefinition
-import run.ostrom.server.automations.infrastructure.AUTOMATION_STARTING_SQL
-import run.ostrom.server.automations.infrastructure.FOLLOWED_SQL
-import run.ostrom.server.automations.infrastructure.STARTED_SESSIONS_SQL
-import run.ostrom.server.automations.infrastructure.inTenant
+import run.ostrom.server.automations.infrastructure.AutomationsAutomations
+import run.ostrom.server.automations.infrastructure.AutomationsRuns
+import run.ostrom.server.automations.infrastructure.automationStartingQuery
+import run.ostrom.server.automations.infrastructure.followedPickQuery
+import run.ostrom.server.automations.infrastructure.startedSessionsQuery
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.workflows.AutomationUsage
 import run.ostrom.server.testing.assertApiCatalogue
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import org.jetbrains.exposed.v1.jdbc.Query
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.selectAll
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -203,11 +207,9 @@ class AutomationsPostgresTest {
         assertEquals(listOf("sess-3"), repository.startedSessions(ORG_A, BOB.toString(), t0, 10))
         assertEquals(emptyList(), repository.startedSessions(ORG_B, owner, t0 - 1.minutes, 10))
         it.database.owner.execute("ANALYZE automations_runs").getOrThrow() // the serving role owns no table
-        val plan = it.driver.inTenant(ORG_A) {
-            execute("SET LOCAL enable_seqscan = off").getOrThrow()
-            val explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $STARTED_SESSIONS_SQL")
-                .bind("org_id", ORG_A).bind("since", t0).bind("owner", owner).bind("limit", 100)
-            fetchAll(explain).getOrThrow().joinToString("\n") { row -> row.get("QUERY PLAN").asString() }
+        val plan = it.koin.get<JdbcDatabase>().inOrg(ORG_A) {
+            exec("SET LOCAL enable_seqscan = off")
+            plan { startedSessionsQuery(ORG_A, owner, t0, 100) }
         }
         println("-- the started runs of an owner (each trigger over the cap's reach)\n$plan")
         assertFalse("Seq Scan on automations_runs" in plan, plan)
@@ -219,24 +221,30 @@ class AutomationsPostgresTest {
         val repository = it.koin.get<AutomationsRepository>()
         val ofA = automation().also { automation -> repository.createWithinLimit(automation, 20) }
         repository.insertRun(run(ofA, "k1"))
-        suspend fun count(org: Uuid, table: String) = it.driver.inTenant(org) {
-            fetchAll(Statement.create("SELECT COUNT(*) AS n FROM $table")).getOrThrow().first().get("n").asLong()
-        }
-        for (table in listOf("automations_automations", "automations_runs")) {
-            assertEquals(1L, count(ORG_A, table), table)
+        val jdbc = it.koin.get<JdbcDatabase>()
+        suspend fun count(org: Uuid, table: org.jetbrains.exposed.v1.core.Table) =
+            jdbc.inOrg(org) { table.selectAll().count() }
+        for (table in listOf(AutomationsAutomations, AutomationsRuns)) {
+            assertEquals(1L, count(ORG_A, table), table.tableName)
             // No WHERE org_id: the policy alone hides organization A's rows.
-            assertEquals(0L, count(ORG_B, table), table)
+            assertEquals(0L, count(ORG_B, table), table.tableName)
         }
         // A write for another organization is refused, and no run of B points at an automation of A.
         assertFailsWith<Exception> {
-            it.driver.inTenant(ORG_B) {
-                execute(
-                    Statement.create(
-                        "INSERT INTO automations_automations (id, org_id, owner, name, trigger_kind, definition, " +
-                            "enabled, version, secret_generation, created_at, updated_at) VALUES (:id, :org, 'a', " +
-                            "'n', 'cron', '{}', false, 1, 1, now(), now())",
-                    ).bind("id", Uuid.random()).bind("org", ORG_A),
-                ).getOrThrow()
+            jdbc.inOrg(ORG_B) {
+                AutomationsAutomations.insert { row ->
+                    row[AutomationsAutomations.id] = Uuid.random()
+                    row[AutomationsAutomations.orgId] = ORG_A
+                    row[AutomationsAutomations.owner] = "a"
+                    row[AutomationsAutomations.name] = "n"
+                    row[AutomationsAutomations.triggerKind] = "cron"
+                    row[AutomationsAutomations.definition] = "{}"
+                    row[AutomationsAutomations.enabled] = false
+                    row[AutomationsAutomations.version] = 1
+                    row[AutomationsAutomations.secretGeneration] = 1
+                    row[AutomationsAutomations.createdAt] = t0
+                    row[AutomationsAutomations.updatedAt] = t0
+                }
             }
         }
         assertFailsWith<Exception> { repository.insertRun(run(ofA, "k2").copy(orgId = ORG_B)) }
@@ -330,17 +338,21 @@ class AutomationsPostgresTest {
         assertTrue(repository.endRun(ended, RunStatus.STARTED))
         val left = repository.followed(t0 + 13.minutes, 10)
         assertEquals(setOf("wfr_2", "wfr_b"), left.map { run -> run.workflowRunId }.toSet())
+        for (run in left) {
+            assertTrue(repository.endRun(run.run.copy(status = RunStatus.SUCCEEDED), RunStatus.STARTED))
+        }
+        assertEquals(emptyList(), repository.followed(t0 + 14.minutes, 10), "Nothing is followed once all ended")
         it.database.owner.execute("ANALYZE automations_automations").getOrThrow()
         it.database.owner.execute("ANALYZE automations_runs").getOrThrow()
-        suspend fun plan(sql: String, bind: (Statement) -> Statement) = it.driver.inTenant(ORG_A) {
-            execute("SET LOCAL enable_seqscan = off").getOrThrow()
-            fetchAll(bind(Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql"))).getOrThrow()
-                .joinToString("\n") { row -> row.get("QUERY PLAN").asString() }
+        val jdbc = it.koin.get<JdbcDatabase>()
+        suspend fun planOf(query: () -> Query) = jdbc.inOrg(ORG_A) {
+            exec("SET LOCAL enable_seqscan = off")
+            plan { query() }
         }
-        val starting = plan(AUTOMATION_STARTING_SQL) { st -> st.bind("org_id", ORG_A).bind("workflow_id", "triage") }
+        val starting = planOf { automationStartingQuery(ORG_A, "triage") }
         println("-- the automation that starts a workflow (DELETE /api/v1/workflows/{id})\n$starting")
         assertTrue("automations_automations_workflow" in starting, starting)
-        val follow = plan(FOLLOWED_SQL) { st -> st.bind("org_id", ORG_A).bind("now", t0).bind("limit", 20) }
+        val follow = planOf { followedPickQuery(ORG_A, 20) }
         println("-- the started runs of workflow actions (the scheduler)\n$follow")
         assertTrue("automations_runs_followed" in follow, follow)
     }

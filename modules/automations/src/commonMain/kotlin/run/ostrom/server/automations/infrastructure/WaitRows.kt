@@ -7,52 +7,55 @@ import run.ostrom.server.automations.domain.WaitResolver
 import run.ostrom.server.automations.domain.WaitSpec
 import run.ostrom.server.automations.domain.WaitStatus
 import run.ostrom.server.automations.domain.WaitTimer
+import run.ostrom.server.kernel.database.present
 import run.ostrom.server.kernel.http.OstromJson
-import io.github.smyrgeorge.sqlx4k.ResultSet
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import kotlinx.serialization.json.jsonObject
+import org.jetbrains.exposed.v1.core.ResultRow
 
 /** The columns of `automations_waits` a wait is read from. */
-internal const val WAIT_COLUMNS = """
-    id, org_id, kind, status, session_id, run_id, assignee, created_by, question, answer_action,
-    answer_values, answered_by, answered_at, created_at, resolved_at, idempotency_key, resolver, due_at,
-    timeout_at, event_source, resume_message, event_secret_hash
-"""
+internal val WAIT_COLUMNS = AutomationsWaits.let { w ->
+    listOf(
+        w.id, w.orgId, w.kind, w.status, w.sessionId, w.runId, w.assignee, w.createdBy, w.question, w.answerAction,
+        w.answerValues, w.answeredBy, w.answeredAt, w.createdAt, w.resolvedAt, w.idempotencyKey, w.resolver, w.dueAt,
+        w.timeoutAt, w.eventSource, w.resumeMessage, w.eventSecretHash,
+    )
+}
 
 /** A wait read from a row of [WAIT_COLUMNS]. */
-internal fun ResultSet.Row.toWait(): Wait = Wait(
-    id = get("id").asUuid(),
-    orgId = get("org_id").asUuid(),
-    kind = get("kind").asString(),
-    status = WaitStatus.valueOf(get("status").asString().uppercase()),
-    sessionId = get("session_id").asStringOrNull(),
-    runId = get("run_id").asStringOrNull(),
-    assignee = get("assignee").asString(),
-    createdBy = get("created_by").asString(),
-    question = OstromJson.decodeFromString(WaitSpec.serializer(), get("question").asString()),
-    answer = get("answer_action").asStringOrNull()?.let { action ->
-        WaitAnswer(
-            action = action,
-            values = OstromJson.parseToJsonElement(get("answer_values").asString()).jsonObject,
-            author = get("answered_by").asString(),
-            answeredAt = get("answered_at").asInstant(),
-        )
-    },
-    createdAt = get("created_at").asInstant(),
-    resolvedAt = get("resolved_at").asInstantOrNull(),
-    idempotencyKey = get("idempotency_key").asStringOrNull(),
-    timer = resolverOf(get("resolver").asString()).takeIf { it != WaitResolver.HUMAN }?.let { resolver ->
-        WaitTimer(
-            resolver = resolver,
-            at = get("due_at").asInstantOrNull() ?: get("timeout_at").asInstant(),
-            source = get("event_source").asStringOrNull(),
-            resumeMessage = get("resume_message").asStringOrNull(),
-            secretHash = get("event_secret_hash").asStringOrNull(),
-        )
-    },
-)
+internal fun ResultRow.toWait(): Wait {
+    val w = AutomationsWaits
+    return Wait(
+        id = this[w.id],
+        orgId = this[w.orgId],
+        kind = this[w.kind],
+        status = WaitStatus.valueOf(this[w.status].uppercase()),
+        sessionId = this[w.sessionId],
+        runId = this[w.runId],
+        assignee = this[w.assignee],
+        createdBy = this[w.createdBy],
+        question = OstromJson.decodeFromString(WaitSpec.serializer(), this[w.question]),
+        answer = this[w.answerAction]?.let { action ->
+            WaitAnswer(
+                action = action,
+                values = OstromJson.parseToJsonElement(present(w.answerValues, w.answerAction)).jsonObject,
+                author = present(w.answeredBy, w.answerAction),
+                answeredAt = present(w.answeredAt, w.answerAction),
+            )
+        },
+        createdAt = this[w.createdAt],
+        resolvedAt = this[w.resolvedAt],
+        idempotencyKey = this[w.idempotencyKey],
+        timer = resolverOf(this[w.resolver]).takeIf { it != WaitResolver.HUMAN }?.let { resolver ->
+            WaitTimer(
+                resolver = resolver,
+                at = this[w.dueAt] ?: present(w.timeoutAt, w.resolver),
+                source = this[w.eventSource],
+                resumeMessage = this[w.resumeMessage],
+                secretHash = this[w.eventSecretHash],
+            )
+        },
+    )
+}
 
 /** The resolver a column holds. */
 internal fun resolverOf(wire: String): WaitResolver = WaitResolver.entries.first { it.wire == wire }

@@ -108,14 +108,15 @@ interface AutomationsRepository {
 
     /**
      * Claims the enabled crons due at [now] (at most [limit], each by one replica): for each, [decide] gives its next
-     * slot and the run to record, both written in the claim's transaction.
+     * slot and the run to record, both written in the claim's transaction. [decide] is plain computation (it runs
+     * inside the transaction).
      *
      * @return The runs recorded, with their automation and slot.
      */
     suspend fun claimDue(
         now: Instant,
         limit: Int,
-        decide: suspend (Automation, Instant) -> CronClaim,
+        decide: (Automation, Instant) -> CronClaim,
     ): List<ClaimedRun>
 
     /** Deletes the runs recorded before [before] (the history keeps 14 days). */

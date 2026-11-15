@@ -6,70 +6,77 @@ import run.ostrom.server.automations.domain.TimedWaitsRepository
 import run.ostrom.server.automations.domain.Wait
 import run.ostrom.server.automations.domain.WaitAnswer
 import run.ostrom.server.automations.domain.WaitEventTarget
+import run.ostrom.server.automations.domain.WaitResolver
+import run.ostrom.server.automations.domain.WaitStatus
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.events.OrgEventType
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import kotlinx.serialization.json.JsonObject
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.coalesce
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.isNotNull
+import org.jetbrains.exposed.v1.core.lessEq
+import org.jetbrains.exposed.v1.core.neq
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.updateReturning
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
  * [TimedWaitsRepository] on PostgreSQL. The clock's scan and an event address read `automations_waits` across
  * organizations only through the functions of [AutomationsMigrations] version 6, owned by `ostrom_router`, which
- * return ids, organizations and a secret's hash; each wait is then resolved confined to its organization ([inTenant]),
+ * return ids, organizations and a secret's hash; each wait is then resolved confined to its organization (`inOrg`),
  * with its `cloud.wait.resolved` event in the same transaction.
  *
- * @param driver The database.
+ * @param database The serving role's pool.
  * @param events The organization's event feed.
  */
 internal class TimedWaitsRepositoryImpl(
-    private val driver: Driver,
+    private val database: JdbcDatabase,
     private val events: OrgEventPublisher,
 ) : TimedWaitsRepository {
-    override suspend fun due(now: Instant, limit: Int): List<DueWait> = driver.fetchAll(
+    override suspend fun due(now: Instant, limit: Int): List<DueWait> = database.query {
         // The serving role alone runs the function; it returns ids and organizations, nothing of a wait's content.
-        Statement.create(
-            """
-            SELECT id, org_id, resolver FROM automations_due_waits(CAST(:now AS TIMESTAMPTZ), CAST(:limit AS INTEGER))
-            """,
-        ).bind("now", now).bind("limit", limit),
-    ).getOrThrow().map { row ->
-        DueWait(row.get("org_id").asUuid(), row.get("id").asUuid(), resolverOf(row.get("resolver").asString()))
+        val d = AutomationsDueWaits
+        d.of(now, limit).select(d.id, d.orgId, d.resolver)
+            .map { DueWait(it[d.orgId], it[d.id], resolverOf(it[d.resolver])) }
     }
 
-    override suspend fun eventTarget(id: Uuid): WaitEventTarget? = driver.fetchAll(
-        Statement.create("""SELECT org_id, secret_hash FROM automations_wait_event(CAST(:id AS UUID))""")
-            .bind("id", id),
-    ).getOrThrow().firstOrNull()?.let { WaitEventTarget(it.get("org_id").asUuid(), it.get("secret_hash").asString()) }
+    override suspend fun eventTarget(id: Uuid): WaitEventTarget? = database.query {
+        val e = AutomationsWaitEvent
+        e.of(id).select(e.orgId, e.secretHash).firstOrNull()?.let { WaitEventTarget(it[e.orgId], it[e.secretHash]) }
+    }
 
-    override suspend fun settle(orgId: Uuid, id: Uuid, answer: WaitAnswer, due: Boolean): Wait? {
-        // The clock resolves a wait once its instant has come; an event, only a wait for an event. Either way the first
-        // update on `status = 'open'` wins, and the answer and its wake are written at once.
-        val condition = if (due) "COALESCE(due_at, timeout_at) <= :at" else "resolver = 'event'"
-        return driver.changeInOrg(orgId, events, { it.event(OrgEventType.WAIT_RESOLVED, answer.action) }) {
-            Statement.create(
-                """
-                UPDATE automations_waits SET status = 'resolved', answer_action = :action, answer_values = :values,
-                answered_by = :author, answered_at = :at, resolved_at = :at, wake_pending = session_id IS NOT NULL
-                WHERE id = :id AND org_id = :org_id AND status = 'open' AND resolver <> 'human' AND $condition
-                RETURNING $WAIT_COLUMNS
-                """,
-            ).bind("action", answer.action)
-                .bind("values", JsonObject(answer.values).toString())
-                .bind("author", answer.author)
-                .bind("at", answer.answeredAt)
-                .bind("id", id)
-                .bind("org_id", orgId)
+    override suspend fun settle(orgId: Uuid, id: Uuid, answer: WaitAnswer, due: Boolean): Wait? =
+        database.changeInOrg(orgId, events, { it.event(OrgEventType.WAIT_RESOLVED, answer.action) }) {
+            // The clock resolves a wait once its instant has come; an event, only a wait for an event. Either way the
+            // first update on `status = 'open'` wins, and the answer and its wake are written at once.
+            val w = AutomationsWaits
+            val reached = if (due) {
+                coalesce(w.dueAt, w.timeoutAt) lessEq answer.answeredAt
+            } else {
+                w.resolver eq WaitResolver.EVENT.wire
+            }
+            w.updateReturning(
+                WAIT_COLUMNS,
+                where = {
+                    (w.id eq id) and (w.orgId eq orgId) and (w.status eq WaitStatus.OPEN.wire) and
+                        (w.resolver neq WaitResolver.HUMAN.wire) and reached
+                },
+            ) {
+                it[w.status] = WaitStatus.RESOLVED.wire
+                it[w.answerAction] = answer.action
+                it[w.answerValues] = JsonObject(answer.values).toString()
+                it[w.answeredBy] = answer.author
+                it[w.answeredAt] = answer.answeredAt
+                it[w.resolvedAt] = answer.answeredAt
+                it[w.wakePending] = w.sessionId.isNotNull()
+            }.map { it.toWait() }
         }.firstOrNull()
-    }
 
-    override suspend fun purgeSecrets(now: Instant, limit: Int): Int = driver.fetchAll(
+    override suspend fun purgeSecrets(now: Instant, limit: Int): Int = database.query {
         // The serving role alone runs the function; it deletes one batch and returns how many, never their content.
-        Statement.create(
-            "SELECT automations_purge_wait_secrets(CAST(:now AS TIMESTAMPTZ), CAST(:limit AS INTEGER)) AS n",
-        ).bind("now", now).bind("limit", limit),
-    ).getOrThrow().first().get("n").asLong().toInt()
+        scalar(purgeWaitSecrets(now, limit)).toInt()
+    }
 }

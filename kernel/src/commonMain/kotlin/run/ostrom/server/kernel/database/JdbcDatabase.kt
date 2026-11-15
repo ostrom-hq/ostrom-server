@@ -9,7 +9,6 @@ import java.net.URLEncoder
 import java.sql.Connection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.jetbrains.exposed.v1.core.TextColumnType
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager
@@ -64,8 +63,8 @@ class JdbcDatabase(config: DatabaseConfig, poolSize: Int) : AutoCloseable {
      * @return What [block] returns, after the commit.
      */
     suspend fun <T> inOrg(orgId: Uuid, block: JdbcTransaction.() -> T): T = query {
-        exec("SET LOCAL ROLE $TENANT_ROLE")
-        exec("SELECT set_config('$TENANT_SETTING', ?, true)", listOf(TextColumnType() to orgId.toString())) {}
+        switchToTenantRole()
+        confineToOrganization(orgId)
         block()
     }
 

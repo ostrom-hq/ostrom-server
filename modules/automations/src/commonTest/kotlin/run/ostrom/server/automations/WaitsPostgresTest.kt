@@ -35,11 +35,13 @@ import run.ostrom.server.automations.fakes.bob
 import run.ostrom.server.automations.fakes.testIdentities
 import run.ostrom.server.automations.infrastructure.NoMemberLogins
 import run.ostrom.server.automations.infrastructure.WaitsRepositoryImpl
-import run.ostrom.server.automations.infrastructure.inTenant
 import run.ostrom.server.automations.presentation.AnswerWaitRequest
 import run.ostrom.server.automations.presentation.CreateWaitRequest
 import run.ostrom.server.automations.presentation.WaitResponse
 import run.ostrom.server.automations.presentation.WaitsResponse
+import run.ostrom.server.automations.infrastructure.AutomationsWaitSecrets
+import run.ostrom.server.automations.infrastructure.AutomationsWaits
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.events.OrgEventType
 import run.ostrom.server.kernel.events.WaitSummaries
@@ -49,8 +51,6 @@ import run.ostrom.server.kernel.sessions.SessionEndListener
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
@@ -62,7 +62,16 @@ import io.ktor.client.statement.HttpResponse
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.update
 import org.koin.dsl.module
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
@@ -420,29 +429,30 @@ class WaitsPostgresTest {
     fun anotherOrganizationsWaitsAreNeitherSeenNorWritten() = serverTest(listOf(AutomationsModule)) { server ->
         val repository = server.koin.get<WaitsRepository>()
         assertEquals(CreateOutcome.CREATED, repository.createWithinLimit(wait(), 10))
-        suspend fun count(org: Uuid) = server.driver.inTenant(org) {
-            fetchAll(Statement.create("SELECT COUNT(*) AS n FROM automations_waits")).getOrThrow().first().get("n")
-                .asLong()
-        }
+        val jdbc = server.koin.get<JdbcDatabase>()
+        val waits = AutomationsWaits
+        suspend fun count(org: Uuid) = jdbc.inOrg(org) { waits.selectAll().count() }
         assertEquals(1L, count(ORG_A))
         // No WHERE org_id: the policy alone hides organization A's waits.
         assertEquals(0L, count(ORG_B))
         // A write for another organization is refused.
         assertFailsWith<Exception> {
-            server.driver.inTenant(ORG_B) {
-                execute(
-                    Statement.create(
-                        "INSERT INTO automations_waits (id, org_id, kind, status, assignee, created_by, question, " +
-                            "created_at) VALUES (:id, :org, 'k', 'open', 'a', 'b', '{}', now())",
-                    ).bind("id", Uuid.random()).bind("org", ORG_A),
-                ).getOrThrow()
+            jdbc.inOrg(ORG_B) {
+                waits.insert {
+                    it[waits.id] = Uuid.random()
+                    it[waits.orgId] = ORG_A
+                    it[waits.kind] = "k"
+                    it[waits.status] = "open"
+                    it[waits.assignee] = "a"
+                    it[waits.createdBy] = "b"
+                    it[waits.question] = "{}"
+                    it[waits.createdAt] = t0
+                }
             }
         }
         // B's update reaches none of A's waits.
-        val touched = server.driver.inTenant(ORG_B) {
-            execute(Statement.create("UPDATE automations_waits SET status = 'cancelled'")).getOrThrow()
-        }
-        assertEquals(0L, touched)
+        val touched = jdbc.inOrg(ORG_B) { waits.update { it[waits.status] = "cancelled" } }
+        assertEquals(0, touched)
     }
 
     @Test
@@ -496,16 +506,15 @@ class WaitsPostgresTest {
             val secrets = listOf(secret("SHOP_PASSWORD", t0, oneTime = true), secret("API_KEY", t0, value = "key-1"))
             assertEquals(answer, repository.resolve(ORG_A, asked.id, answer, secrets)?.answer)
             // At rest: sealed, bound to the session, and invisible to another organization.
-            val stored = server.driver.inTenant(ORG_A) {
-                fetchAll(Statement.create("SELECT value, owner_id FROM automations_wait_secrets ORDER BY env_name"))
-                    .getOrThrow().map { it.get("value").asString() to it.get("owner_id").asString() }.toList()
+            val jdbc = server.koin.get<JdbcDatabase>()
+            val secretRows = AutomationsWaitSecrets
+            val stored = jdbc.inOrg(ORG_A) {
+                secretRows.select(secretRows.value, secretRows.ownerId).orderBy(secretRows.envName to SortOrder.ASC)
+                    .map { it[secretRows.value] to it[secretRows.ownerId] }
             }
             assertEquals(listOf(BOB.toString(), BOB.toString()), stored.map { it.second })
             assertTrue(stored.none { sentinel in it.first || "key-1" in it.first }, stored.toString())
-            assertEquals(0L, server.driver.inTenant(ORG_B) {
-                fetchAll(Statement.create("SELECT COUNT(*) AS n FROM automations_wait_secrets")).getOrThrow()
-                    .first().get("n").asLong()
-            })
+            assertEquals(0L, jdbc.inOrg(ORG_B) { secretRows.selectAll().count() })
             val owner = BOB.toString()
             assertTrue(repository.serveSecrets(ORG_A, "s1", ALICE.toString(), t0).values.isEmpty())
             assertTrue(repository.serveSecrets(ORG_A, "s2", owner, t0).values.isEmpty())
@@ -543,8 +552,96 @@ class WaitsPostgresTest {
                 repository.serveSecrets(ORG_A, "s1", BOB.toString(), t0).values,
             )
             // Another key does not open what this one sealed: nothing is served.
-            val other = WaitsRepositoryImpl(server.driver, server.koin.get(), AesGcmSecretCipher(ByteArray(32) { 1 }))
+            val otherKey = AesGcmSecretCipher(ByteArray(32) { 1 })
+            val other = WaitsRepositoryImpl(server.koin.get(), server.koin.get(), otherKey)
             assertTrue(other.serveSecrets(ORG_A, "s1", BOB.toString(), t0).values.isEmpty())
+        }
+    }
+
+    @Test
+    fun aSecretForNoWaitKeepsNothingAndOneForAWaitWithoutASessionIsRefused() {
+        val cipher = module { single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 9 }) } }
+        serverTest(listOf(AutomationsModule), cipher) { server ->
+            val repository = server.koin.get<WaitsRepository>()
+            val answer = WaitAnswer("done", mapOf("shop_password" to JsonPrimitive("provided")), BOB.toString(), t0)
+            assertNull(repository.resolve(ORG_A, Uuid.random(), answer, listOf(secret("SHOP_PASSWORD", t0))))
+            val sessionless = wait(session = null).copy(question = secretQuestion)
+            assertEquals(CreateOutcome.CREATED, repository.createWithinLimit(sessionless, 5))
+            assertFailsWith<IllegalStateException> {
+                repository.resolve(ORG_A, sessionless.id, answer, listOf(secret("SHOP_PASSWORD", t0)))
+            }
+            assertEquals(WaitStatus.OPEN, repository.get(ORG_A, sessionless.id)?.status)
+            // With a key, an answer without a secret seals nothing.
+            val plain = WaitAnswer("done", mapOf("shop_password" to JsonPrimitive("provided")), BOB.toString(), t0)
+            assertEquals(WaitStatus.RESOLVED, repository.resolve(ORG_A, sessionless.id, plain)?.status)
+        }
+    }
+
+    @Test
+    fun aOneTimeSecretIsServedByTheReplicaThatDeletesItsRowOnly() {
+        val cipher = module {
+            single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 9 }) }
+            single<WaitSecretSessions> { WaitSecretSessions { _, _ -> "claude" } }
+        }
+        serverTest(listOf(AutomationsModule), cipher) { server ->
+            val repository = server.koin.get<WaitsRepository>()
+            val asked = wait().copy(question = secretQuestion)
+            repository.createWithinLimit(asked, 5)
+            val answer = WaitAnswer("done", mapOf("shop_password" to JsonPrimitive("provided")), BOB.toString(), t0)
+            repository.resolve(ORG_A, asked.id, answer, listOf(secret("SHOP_PASSWORD", t0, oneTime = true)))
+            val owner = BOB.toString()
+            val served = (1..4).map { repository.serveSecrets(ORG_A, "s1", owner, t0 + 1.minutes) }
+            assertEquals(1, served.count { it.values.isNotEmpty() }, "Served once, whoever asks first")
+        }
+    }
+
+    @Test
+    fun consumersAtOnceShareNoOneTimeSecretAndEachGetsTheOthers() {
+        val cipher = module {
+            single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 9 }) }
+            single<WaitSecretSessions> { WaitSecretSessions { _, _ -> "claude" } }
+        }
+        serverTest(listOf(AutomationsModule), cipher) { server ->
+            val repository = server.koin.get<WaitsRepository>()
+            val asked = wait().copy(question = secretQuestion)
+            repository.createWithinLimit(asked, 5)
+            val answer = WaitAnswer("done", mapOf("shop_password" to JsonPrimitive("provided")), BOB.toString(), t0)
+            val secrets = listOf(secret("SHOP_PASSWORD", t0, oneTime = true), secret("API_KEY", t0))
+            repository.resolve(ORG_A, asked.id, answer, secrets)
+            val owner = BOB.toString()
+            // Four consumers on four connections at once: the claim's locks make them take turns.
+            val served = coroutineScope {
+                (1..4).map {
+                    async(Dispatchers.IO) { repository.serveSecrets(ORG_A, "s1", owner, t0 + 1.minutes) }
+                }.awaitAll()
+            }
+            val once = served.filter { "OSTROM_WAIT_SHOP_PASSWORD" in it.values }
+            assertEquals(1, once.size, "The one-time secret is served once")
+            assertEquals(setOf("OSTROM_WAIT_SHOP_PASSWORD"), once.single().oneTime)
+            assertTrue(served.all { it.values["OSTROM_WAIT_API_KEY"] == sentinel }, "The kept one, to each")
+        }
+    }
+
+    @Test
+    fun aSessionWithMoreSecretsThanAPageGetsThemAll() {
+        val cipher = module {
+            single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 9 }) }
+            single<WaitSecretSessions> { WaitSecretSessions { _, _ -> "claude" } }
+        }
+        serverTest(listOf(AutomationsModule), cipher) { server ->
+            val repository = WaitsRepositoryImpl(server.koin.get(), server.koin.get(), server.koin.get(), 2)
+            val asked = wait().copy(question = secretQuestion)
+            repository.createWithinLimit(asked, 5)
+            val answer = WaitAnswer("done", mapOf("shop_password" to JsonPrimitive("provided")), BOB.toString(), t0)
+            val secrets = listOf("A", "B", "C", "D", "E").map { secret(it, t0, oneTime = it in setOf("B", "E")) }
+            repository.resolve(ORG_A, asked.id, answer, secrets)
+            val owner = BOB.toString()
+            // Three pages of two: none left out, the one-time ones of every page consumed.
+            val first = repository.serveSecrets(ORG_A, "s1", owner, t0 + 1.minutes)
+            assertEquals(listOf("A", "B", "C", "D", "E").map { "OSTROM_WAIT_$it" }.toSet(), first.values.keys)
+            assertEquals(setOf("OSTROM_WAIT_B", "OSTROM_WAIT_E"), first.oneTime)
+            val second = repository.serveSecrets(ORG_A, "s1", owner, t0 + 1.minutes)
+            assertEquals(setOf("OSTROM_WAIT_A", "OSTROM_WAIT_C", "OSTROM_WAIT_D"), second.values.keys)
         }
     }
 

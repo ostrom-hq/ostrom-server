@@ -11,18 +11,40 @@ import run.ostrom.server.automations.domain.FollowedRun
 import run.ostrom.server.automations.domain.PayloadProblem
 import run.ostrom.server.automations.domain.RunSource
 import run.ostrom.server.automations.domain.RunStatus
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.confineToOrganization
+import run.ostrom.server.kernel.database.lockUntilCommit
+import run.ostrom.server.kernel.database.rowBefore
+import run.ostrom.server.kernel.database.switchToTenantRole
+import run.ostrom.server.kernel.database.present
 import run.ostrom.server.kernel.http.OstromJson
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.QueryExecutor
-import io.github.smyrgeorge.sqlx4k.ResultSet
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
 import kotlinx.serialization.builtins.ListSerializer
+import org.jetbrains.exposed.v1.core.JoinType
+import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.booleanParam
+import org.jetbrains.exposed.v1.core.case
+import org.jetbrains.exposed.v1.core.compoundAnd
+import org.jetbrains.exposed.v1.core.count
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.isNotNull
+import org.jetbrains.exposed.v1.core.isNull
+import org.jetbrains.exposed.v1.core.less
+import org.jetbrains.exposed.v1.core.neq
+import org.jetbrains.exposed.v1.core.statements.UpdateBuilder
+import org.jetbrains.exposed.v1.core.stringParam
+import org.jetbrains.exposed.v1.core.vendors.ForUpdateOption
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import org.jetbrains.exposed.v1.jdbc.Query
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
+import org.jetbrains.exposed.v1.jdbc.updateReturning
+import org.jetbrains.exposed.v1.jdbc.upsertReturning
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -30,195 +52,173 @@ import kotlin.uuid.Uuid
  * The sessions of the started runs of one owner's automations since an instant, newest first: what the cap of running
  * automation sessions counts (one read a trigger over the cap's reach, on `automations_runs_started`).
  */
-internal const val STARTED_SESSIONS_SQL = """
-    SELECT r.session_id FROM automations_runs r JOIN automations_automations a ON a.id = r.automation_id AND a.org_id =
-    r.org_id WHERE r.org_id = :org_id AND r.status = 'started' AND r.created_at > :since AND a.owner = :owner AND
-    r.session_id IS NOT NULL ORDER BY r.created_at DESC, r.id DESC LIMIT :limit
-"""
+internal fun startedSessionsQuery(orgId: Uuid, owner: String, since: Instant, limit: Int): Query {
+    val r = AutomationsRuns
+    val a = AutomationsAutomations
+    return r.join(a, JoinType.INNER, r.automationId, a.id, additionalConstraint = { a.orgId eq r.orgId })
+        .select(r.sessionId)
+        .where {
+            (r.orgId eq orgId) and (r.status eq RunStatus.STARTED.wire) and (r.createdAt greater since) and
+                (a.owner eq owner) and r.sessionId.isNotNull()
+        }
+        .orderBy(r.createdAt to SortOrder.DESC, r.id to SortOrder.DESC)
+        .limit(limit)
+}
 
 /**
  * The name of an automation whose action starts a workflow: what refuses the workflow's deletion
  * (`workflow_in_use`), one lookup on `automations_automations_workflow`.
  */
-internal const val AUTOMATION_STARTING_SQL = """
-    SELECT name FROM automations_automations WHERE org_id = :org_id AND workflow_id = :workflow_id ORDER BY name LIMIT 1
-"""
-
-private const val RUN_SELECT = """
-    id, automation_id, org_id, source, status, version, delivery_key, session_id, reason, problems, slot_at,
-    created_at, updated_at, workflow_run_id
-"""
+internal fun automationStartingQuery(orgId: Uuid, workflowId: String): Query {
+    val a = AutomationsAutomations
+    return a.select(a.name)
+        .where { (a.orgId eq orgId) and (a.workflowId eq workflowId) }
+        .orderBy(a.name to SortOrder.ASC)
+        .limit(1)
+}
 
 /**
- * The started runs of workflow actions of one organization, least recently followed first, marked followed now (on
- * `automations_runs_followed`). A run another replica follows at the same time is skipped, not waited for. The pick is
- * a materialized CTE: a `LIMIT` inside `IN (...)` may be evaluated again per row and pick more than the limit.
+ * The started runs of workflow actions of one organization, least recently followed first, locked and skipping those
+ * another replica follows at the same time (on `automations_runs_followed`): the first of the two statements that
+ * mark them followed now.
  */
-internal const val FOLLOWED_SQL = """
-    WITH picked AS MATERIALIZED (SELECT id AS picked_id FROM automations_runs WHERE org_id = :org_id AND status =
-    'started' AND workflow_run_id IS NOT NULL ORDER BY followed_at NULLS FIRST, id LIMIT :limit FOR UPDATE SKIP LOCKED)
-    UPDATE automations_runs SET followed_at = :now FROM picked WHERE id = picked_id RETURNING $RUN_SELECT
-"""
+internal fun followedPickQuery(orgId: Uuid, limit: Int): Query {
+    val r = AutomationsRuns
+    return r.select(r.id)
+        .where {
+            (r.orgId eq orgId) and (r.status eq RunStatus.STARTED.wire) and r.workflowRunId.isNotNull()
+        }
+        .orderBy(r.followedAt to SortOrder.ASC_NULLS_FIRST, r.id to SortOrder.ASC)
+        .limit(limit)
+        .forUpdate(ForUpdateOption.PostgreSQL.ForUpdate(ForUpdateOption.PostgreSQL.MODE.SKIP_LOCKED))
+}
 
 /**
  * [AutomationsRepository] on PostgreSQL (tables of [AutomationsMigrations]). The definition is JSON; the name and
  * trigger kind are columns for the unique name per owner.
  *
- * Every read and write of an automation or a run runs confined to its organization ([inTenant], S2-01). Only
- * `automations_routes` is read across organizations, through the `SECURITY DEFINER` functions of
- * [AutomationsMigrations] (version 3): a webhook finds its automation's organization there, and the scheduler claims
- * the due crons of every organization there, then reads and writes each in its organization.
+ * Every read and write of an automation or a run runs confined to its organization (`inOrg`, S2-01), every query
+ * filtered on `org_id` too. Only `automations_routes` is read across organizations, through the `SECURITY DEFINER`
+ * functions of [AutomationsMigrations] (version 3): a webhook finds its automation's organization there, and the
+ * scheduler claims the due crons of every organization there, then reads and writes each in its organization.
  *
- * @param driver The database.
+ * @param database The serving role's pool.
  */
 @Suppress("TooManyFunctions") // One implementation of the one port of the feature.
-internal class AutomationsRepositoryImpl(private val driver: Driver) : AutomationsRepository {
+internal class AutomationsRepositoryImpl(private val database: JdbcDatabase) : AutomationsRepository {
     override suspend fun createWithinLimit(automation: Automation, maxPerOwner: Int): Boolean =
-        driver.inTenant(automation.orgId) {
+        database.inOrg(automation.orgId) {
             // Serialize the count and the insert of one owner, so that two concurrent creations never pass the limit.
-            fetchAll(
-                Statement.create("""SELECT pg_advisory_xact_lock(hashtext(:key))""")
-                    .bind("key", "automations:${automation.orgId}:${automation.owner}"),
-            ).getOrThrow()
-            val owned = fetchAll(
-                Statement.create(
-                    """SELECT COUNT(*) AS n FROM automations_automations WHERE org_id = :org_id AND owner = :owner""",
-                ).bind("org_id", automation.orgId).bind("owner", automation.owner),
-            ).getOrThrow().first().get("n").asInt()
-            if (owned >= maxPerOwner) return@inTenant false
-            execute(
-                Statement.create(
-                    """
-                    INSERT INTO automations_automations ($COLUMNS) VALUES (:id, :org_id, :owner, :name,
-                    :trigger_kind, :definition, :enabled, :version, :secret_generation,
-                    :previous_secret_valid_until, :next_run_at, :created_at, :updated_at, :workflow_id)
-                    """,
-                ).bindAutomation(automation).bind("created_at", automation.createdAt),
-            ).getOrThrow()
-            execute(
-                Statement.create(
-                    """
-                    INSERT INTO automations_routes (automation_id, org_id, next_run_at) VALUES (:id, :org_id,
-                    :next_run_at)
-                    """,
-                ).bind("id", automation.id).bind("org_id", automation.orgId).bind("next_run_at", automation.due),
-            ).getOrThrow()
+            lockUntilCommit("automations:${automation.orgId}:${automation.owner}")
+            val a = AutomationsAutomations
+            val count = a.id.count()
+            val owned = a.select(count)
+                .where { (a.orgId eq automation.orgId) and (a.owner eq automation.owner) }
+                .single()[count]
+            if (owned >= maxPerOwner) return@inOrg false
+            a.insert {
+                it[a.id] = automation.id
+                it[a.orgId] = automation.orgId
+                it[a.owner] = automation.owner
+                it[a.createdAt] = automation.createdAt
+                it.setAutomation(automation)
+            }
+            AutomationsRoutes.insert {
+                it[AutomationsRoutes.automationId] = automation.id
+                it[AutomationsRoutes.orgId] = automation.orgId
+                it[AutomationsRoutes.nextRunAt] = automation.due
+            }
             true
         }
 
-    override suspend fun get(orgId: Uuid, id: Uuid): Automation? = driver.inTenant(orgId) { select(id) }
+    override suspend fun get(orgId: Uuid, id: Uuid): Automation? = database.inOrg(orgId) {
+        val a = AutomationsAutomations
+        a.select(AUTOMATION_COLUMNS).where { (a.orgId eq orgId) and (a.id eq id) }.singleOrNull()?.toAutomation()
+    }
 
     override suspend fun getById(id: Uuid): Automation? {
-        val route = driver.fetchAll(
-            Statement.create("""SELECT automations_route_org(CAST(:id AS UUID)) AS org_id""").bind("id", id),
-        ).getOrThrow().first().get("org_id").asUuidOrNull() ?: return null
+        val route = database.query { scalar(routeOrg(id)) } ?: return null
         return get(route, id)
     }
 
-    override suspend fun list(orgId: Uuid, owner: String?, before: Uuid?, limit: Int): List<Automation> {
-        val cursor = if (before == null) {
-            ""
-        } else {
-            """ AND (created_at, id) <
-                (SELECT created_at, id FROM automations_automations WHERE id = :before AND org_id = :org_id)"""
+    override suspend fun list(orgId: Uuid, owner: String?, before: Uuid?, limit: Int): List<Automation> =
+        database.inOrg(orgId) {
+            val a = AutomationsAutomations
+            a.select(AUTOMATION_COLUMNS)
+                .where {
+                    listOfNotNull(
+                        a.orgId eq orgId,
+                        owner?.let { a.owner eq it },
+                        before?.let {
+                            rowBefore(
+                                listOf(a.createdAt, a.id),
+                                a.select(a.createdAt, a.id).where { (a.id eq it) and (a.orgId eq orgId) },
+                            )
+                        },
+                    ).compoundAnd()
+                }
+                .orderBy(a.createdAt to SortOrder.DESC, a.id to SortOrder.DESC)
+                .limit(limit)
+                .map { it.toAutomation() }
         }
-        val statement = Statement.create(
-            """
-            SELECT $COLUMNS FROM automations_automations WHERE org_id = :org_id AND (CAST(:owner AS TEXT) IS NULL OR
-            owner = :owner)$cursor ORDER BY created_at DESC, id DESC LIMIT :limit
-            """,
-        ).bind("org_id", orgId).bind("owner", owner).bind("limit", limit)
-        if (before != null) statement.bind("before", before)
-        return driver.inTenant(orgId) { fetchAll(statement).getOrThrow().map { it.toAutomation() } }
-    }
 
     override suspend fun update(automation: Automation, expected: Automation): Automation? =
-        driver.inTenant(automation.orgId) {
-            val updated = fetchAll(
-                Statement.create(
-                    """
-                    UPDATE automations_automations SET name = :name, trigger_kind = :trigger_kind, definition =
-                    :definition, enabled = :enabled, version = :version, secret_generation = :secret_generation,
-                    previous_secret_valid_until = :previous_secret_valid_until, next_run_at = :next_run_at,
-                    updated_at = :updated_at, workflow_id = :workflow_id WHERE id = :id AND org_id = :org_id AND
-                    owner = :owner AND version = :expected_version AND updated_at = :expected_updated_at
-                    RETURNING $COLUMNS
-                    """,
-                ).bindAutomation(automation)
-                    .bind("expected_version", expected.version)
-                    .bind("expected_updated_at", expected.updatedAt),
-            ).getOrThrow().firstOrNull()?.toAutomation()
-            if (updated != null) schedule(updated.id, updated.due)
+        database.inOrg(automation.orgId) {
+            val a = AutomationsAutomations
+            val updated = a.updateReturning(
+                AUTOMATION_COLUMNS,
+                where = {
+                    (a.id eq automation.id) and (a.orgId eq automation.orgId) and (a.owner eq automation.owner) and
+                        (a.version eq expected.version) and (a.updatedAt eq expected.updatedAt)
+                },
+            ) { it.setAutomation(automation) }.firstOrNull()?.toAutomation()
+            if (updated != null) schedule(updated.orgId, updated.id, updated.due)
             updated
         }
 
-    override suspend fun delete(orgId: Uuid, id: Uuid): Boolean = driver.inTenant(orgId) {
-        fetchAll(
-            Statement.create(
-                """DELETE FROM automations_automations WHERE id = :id AND org_id = :org_id RETURNING id""",
-            ).bind("id", id).bind("org_id", orgId),
-        ).getOrThrow().any()
+    override suspend fun delete(orgId: Uuid, id: Uuid): Boolean = database.inOrg(orgId) {
+        val a = AutomationsAutomations
+        a.deleteWhere { (a.id eq id) and (a.orgId eq orgId) } > 0
     }
 
-    override suspend fun insertRun(run: AutomationRun): AutomationRun = driver.inTenant(run.orgId) { storeRun(run) }
+    override suspend fun insertRun(run: AutomationRun): AutomationRun = database.inOrg(run.orgId) { storeRun(run) }
 
-    override suspend fun updateRun(run: AutomationRun): Boolean = driver.inTenant(run.orgId) {
+    override suspend fun updateRun(run: AutomationRun): Boolean = database.inOrg(run.orgId) {
         // Only a queued run moves on: one cancelled meanwhile stays cancelled. The prompt a waiting run kept goes.
-        fetchAll(
-            Statement.create(
-                """
-                UPDATE automations_runs SET status = :status, session_id = :session_id, workflow_run_id =
-                :workflow_run_id, reason = :reason, updated_at = :updated_at, prompt = NULL WHERE id = :id AND org_id =
-                :org_id AND status = 'queued' RETURNING id
-                """,
-            ).bind("status", run.status.wire)
-                .bind("session_id", run.sessionId)
-                .bind("workflow_run_id", run.workflowRunId)
-                .bind("reason", run.reason)
-                .bind("updated_at", run.updatedAt)
-                .bind("id", run.id)
-                .bind("org_id", run.orgId),
-        ).getOrThrow().any()
+        val r = AutomationsRuns
+        r.update({ (r.id eq run.id) and (r.orgId eq run.orgId) and (r.status eq RunStatus.QUEUED.wire) }) {
+            it[r.status] = run.status.wire
+            it[r.sessionId] = run.sessionId
+            it[r.workflowRunId] = run.workflowRunId
+            it[r.reason] = run.reason
+            it[r.updatedAt] = run.updatedAt
+            it[r.prompt] = null
+        } > 0
     }
 
-    override suspend fun endRun(run: AutomationRun, expected: RunStatus): Boolean = driver.inTenant(run.orgId) {
-        fetchAll(
-            Statement.create(
-                """
-                UPDATE automations_runs SET status = :status, reason = :reason, updated_at = :updated_at, prompt = NULL
-                WHERE id = :id AND org_id = :org_id AND status = :expected RETURNING id
-                """,
-            ).bind("status", run.status.wire)
-                .bind("reason", run.reason)
-                .bind("updated_at", run.updatedAt)
-                .bind("id", run.id)
-                .bind("org_id", run.orgId)
-                .bind("expected", expected.wire),
-        ).getOrThrow().any()
+    override suspend fun endRun(run: AutomationRun, expected: RunStatus): Boolean = database.inOrg(run.orgId) {
+        val r = AutomationsRuns
+        r.update({ (r.id eq run.id) and (r.orgId eq run.orgId) and (r.status eq expected.wire) }) {
+            it[r.status] = run.status.wire
+            it[r.reason] = run.reason
+            it[r.updatedAt] = run.updatedAt
+            it[r.prompt] = null
+        } > 0
     }
 
-    override suspend fun findRun(orgId: Uuid, automationId: Uuid, id: Uuid): AutomationRun? =
-        driver.inTenant(orgId) {
-            fetchAll(
-                Statement.create(
-                    """
-                    SELECT $RUN_COLUMNS FROM automations_runs WHERE id = :id AND automation_id = :automation_id AND
-                    org_id = :org_id
-                    """,
-                ).bind("id", id).bind("automation_id", automationId).bind("org_id", orgId),
-            ).getOrThrow().firstOrNull()?.toRun()
-        }
+    override suspend fun findRun(orgId: Uuid, automationId: Uuid, id: Uuid): AutomationRun? = database.inOrg(orgId) {
+        val r = AutomationsRuns
+        r.select(RUN_COLUMNS)
+            .where { (r.id eq id) and (r.automationId eq automationId) and (r.orgId eq orgId) }
+            .singleOrNull()?.toRun()
+    }
 
     override suspend fun park(orgId: Uuid, runId: Uuid, prompt: String) {
-        driver.inTenant(orgId) {
-            execute(
-                Statement.create(
-                    """
-                    UPDATE automations_runs SET prompt = :prompt WHERE id = :id AND org_id = :org_id AND status =
-                    'queued'
-                    """,
-                ).bind("prompt", prompt).bind("id", runId).bind("org_id", orgId),
-            ).getOrThrow()
+        database.inOrg(orgId) {
+            val r = AutomationsRuns
+            r.update({ (r.id eq runId) and (r.orgId eq orgId) and (r.status eq RunStatus.QUEUED.wire) }) {
+                it[r.prompt] = prompt
+            }
         }
     }
 
@@ -226,104 +226,109 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
         val found = mutableListOf<AutomationRun>()
         for (orgId in organizations()) {
             if (found.size >= limit) break
-            val runs = driver.inTenant(orgId) {
-                fetchAll(
-                    Statement.create(
-                        """
-                        SELECT $RUN_COLUMNS FROM automations_runs WHERE org_id = :org_id AND status = 'queued' AND
-                        prompt IS NOT NULL ORDER BY created_at, id LIMIT :limit
-                        """,
-                    ).bind("org_id", orgId).bind("limit", limit - found.size),
-                ).getOrThrow().map { it.toRun() }
+            val runs = database.inOrg(orgId) {
+                val r = AutomationsRuns
+                r.select(RUN_COLUMNS)
+                    .where {
+                        (r.orgId eq orgId) and (r.status eq RunStatus.QUEUED.wire) and r.prompt.isNotNull()
+                    }
+                    .orderBy(r.createdAt to SortOrder.ASC, r.id to SortOrder.ASC)
+                    .limit(limit - found.size)
+                    .map { it.toRun() }
             }
             found += runs
         }
         return found
     }
 
-    override suspend fun takeParked(orgId: Uuid, runId: Uuid): String? = driver.inTenant(orgId) {
-        // The prompt leaves the row with the update: of two replicas that read the run, one gets it.
-        fetchAll(
-            Statement.create(
-                """
-                UPDATE automations_runs AS r SET prompt = NULL FROM (SELECT id, prompt FROM automations_runs WHERE id =
-                :id AND org_id = :org_id AND status = 'queued' AND prompt IS NOT NULL FOR UPDATE) AS taken WHERE r.id =
-                taken.id RETURNING taken.prompt AS prompt
-                """,
-            ).bind("id", runId).bind("org_id", orgId),
-        ).getOrThrow().firstOrNull()?.let { it.get("prompt").asStringOrNull() }
+    override suspend fun takeParked(orgId: Uuid, runId: Uuid): String? = database.inOrg(orgId) {
+        // The prompt leaves the row with the update: of two replicas that read the run, one gets it, the other waits
+        // on the lock, then finds the prompt gone.
+        val r = AutomationsRuns
+        val taken = r.select(r.prompt)
+            .where {
+                (r.id eq runId) and (r.orgId eq orgId) and (r.status eq RunStatus.QUEUED.wire) and
+                    r.prompt.isNotNull()
+            }
+            .forUpdate()
+            .singleOrNull() ?: return@inOrg null
+        r.update({ (r.id eq runId) and (r.orgId eq orgId) }) { it[r.prompt] = null }
+        taken[r.prompt]
     }
 
     override suspend fun startedSessions(orgId: Uuid, owner: String, since: Instant, limit: Int): List<String> =
-        driver.inTenant(orgId) {
-            fetchAll(
-                Statement.create(STARTED_SESSIONS_SQL)
-                    .bind("org_id", orgId).bind("since", since).bind("owner", owner).bind("limit", limit),
-            ).getOrThrow().map { it.get("session_id").asString() }
+        database.inOrg(orgId) {
+            val r = AutomationsRuns
+            startedSessionsQuery(orgId, owner, since, limit).map { it.present(r.sessionId, r.status) }
         }
 
     override suspend fun followed(now: Instant, limit: Int): List<FollowedRun> = organizations().flatMap { orgId ->
-        driver.inTenant(orgId) {
-            fetchAll(
-                Statement.create(FOLLOWED_SQL).bind("org_id", orgId).bind("now", now).bind("limit", limit),
-            ).getOrThrow().map { FollowedRun(it.toRun(), it.get("workflow_run_id").asString()) }
+        database.inOrg(orgId) {
+            val r = AutomationsRuns
+            val picked = followedPickQuery(orgId, limit).map { it[r.id] }
+            if (picked.isEmpty()) return@inOrg emptyList()
+            r.updateReturning(RUN_COLUMNS, where = {
+                // The pick's rows are locked until the commit; the status is checked again all the same.
+                (r.orgId eq orgId) and (r.id inList picked) and (r.status eq RunStatus.STARTED.wire)
+            }) {
+                it[r.followedAt] = now
+            }.map { FollowedRun(it.toRun(), it.present(r.workflowRunId, r.status)) }
         }
     }
 
     override suspend fun latestWorkflowRun(orgId: Uuid, automationId: Uuid, except: Uuid): String? =
-        driver.inTenant(orgId) {
-            fetchAll(
-                Statement.create(
-                    """
-                    SELECT workflow_run_id FROM automations_runs WHERE automation_id = :automation_id AND status =
-                    'started' AND workflow_run_id IS NOT NULL AND id <> :except ORDER BY created_at DESC, id DESC
-                    LIMIT 1
-                    """,
-                ).bind("automation_id", automationId).bind("except", except),
-            ).getOrThrow().firstOrNull()?.let { it.get("workflow_run_id").asString() }
+        database.inOrg(orgId) {
+            val r = AutomationsRuns
+            r.select(r.workflowRunId)
+                .where {
+                    (r.orgId eq orgId) and (r.automationId eq automationId) and
+                        (r.status eq RunStatus.STARTED.wire) and r.workflowRunId.isNotNull() and (r.id neq except)
+                }
+                .orderBy(r.createdAt to SortOrder.DESC, r.id to SortOrder.DESC)
+                .limit(1)
+                .firstOrNull()?.get(r.workflowRunId)
         }
 
-    override suspend fun automationStarting(orgId: Uuid, workflowId: String): String? = driver.inTenant(orgId) {
-        fetchAll(
-            Statement.create(AUTOMATION_STARTING_SQL).bind("org_id", orgId).bind("workflow_id", workflowId),
-        ).getOrThrow().firstOrNull()?.let { it.get("name").asString() }
+    override suspend fun automationStarting(orgId: Uuid, workflowId: String): String? = database.inOrg(orgId) {
+        automationStartingQuery(orgId, workflowId).firstOrNull()?.get(AutomationsAutomations.name)
     }
 
     override suspend fun findRunByDelivery(orgId: Uuid, automationId: Uuid, deliveryKey: String): AutomationRun? =
-        driver.inTenant(orgId) {
-            fetchAll(
-                Statement.create(
-                    """
-                    SELECT $RUN_COLUMNS FROM automations_runs WHERE automation_id = :automation_id AND delivery_key =
-                    :key
-                    """,
-                ).bind("automation_id", automationId).bind("key", deliveryKey),
-            ).getOrThrow().firstOrNull()?.toRun()
+        database.inOrg(orgId) {
+            val r = AutomationsRuns
+            r.select(RUN_COLUMNS)
+                .where {
+                    (r.orgId eq orgId) and (r.automationId eq automationId) and (r.deliveryKey eq deliveryKey)
+                }
+                .firstOrNull()?.toRun()
         }
 
-    override suspend fun listRuns(orgId: Uuid, automationId: Uuid, before: Uuid?, limit: Int): List<AutomationRun> {
-        val cursor = if (before == null) {
-            ""
-        } else {
-            """ AND (created_at, id) < (SELECT created_at, id FROM automations_runs WHERE id = :before AND
-                automation_id = :automation_id)"""
+    override suspend fun listRuns(orgId: Uuid, automationId: Uuid, before: Uuid?, limit: Int): List<AutomationRun> =
+        database.inOrg(orgId) {
+            val r = AutomationsRuns
+            r.select(RUN_COLUMNS)
+                .where {
+                    listOfNotNull(
+                        (r.automationId eq automationId) and (r.orgId eq orgId),
+                        before?.let {
+                            rowBefore(
+                                listOf(r.createdAt, r.id),
+                                r.select(r.createdAt, r.id)
+                                    .where { (r.id eq it) and (r.automationId eq automationId) and (r.orgId eq orgId) },
+                            )
+                        },
+                    ).compoundAnd()
+                }
+                .orderBy(r.createdAt to SortOrder.DESC, r.id to SortOrder.DESC)
+                .limit(limit)
+                .map { it.toRun() }
         }
-        val statement = Statement.create(
-            """
-            SELECT $RUN_COLUMNS FROM automations_runs WHERE automation_id = :automation_id AND org_id =
-            :org_id$cursor ORDER BY created_at DESC, id DESC LIMIT :limit
-            """,
-        ).bind("automation_id", automationId).bind("org_id", orgId).bind("limit", limit)
-        if (before != null) statement.bind("before", before)
-        return driver.inTenant(orgId) { fetchAll(statement).getOrThrow().map { it.toRun() } }
-    }
 
-    override suspend fun hasRun(orgId: Uuid, automationId: Uuid, id: Uuid): Boolean {
-        val statement = Statement.create(
-            "SELECT 1 AS one FROM automations_runs WHERE id = :id AND automation_id = :automation_id " +
-                "AND org_id = :org_id",
-        ).bind("id", id).bind("automation_id", automationId).bind("org_id", orgId)
-        return driver.inTenant(orgId) { fetchAll(statement).getOrThrow().firstOrNull() != null }
+    override suspend fun hasRun(orgId: Uuid, automationId: Uuid, id: Uuid): Boolean = database.inOrg(orgId) {
+        val r = AutomationsRuns
+        !r.select(r.id)
+            .where { (r.id eq id) and (r.automationId eq automationId) and (r.orgId eq orgId) }
+            .empty()
     }
 
     override suspend fun countRuns(
@@ -332,71 +337,56 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
         since: Instant,
         sources: Set<RunSource>,
         statuses: Set<RunStatus>,
-    ): Int = driver.inTenant(orgId) {
-        fetchAll(
-            Statement.create(
-                """
-                SELECT COUNT(*) AS n FROM automations_runs WHERE automation_id = :automation_id AND created_at > :since
-                AND source = ANY(string_to_array(:sources, ',')) AND status = ANY(string_to_array(:statuses, ','))
-                """,
-            ).bind("automation_id", automationId)
-                .bind("since", since)
-                // Joined, then split in SQL: a bound list is sent as one record, not as a list of values.
-                .bind("sources", sources.joinToString(",") { it.wire })
-                .bind("statuses", statuses.joinToString(",") { it.wire }),
-        ).getOrThrow().first().get("n").asInt()
+    ): Int = database.inOrg(orgId) {
+        val r = AutomationsRuns
+        val runs = r.id.count()
+        r.select(runs)
+            .where {
+                (r.orgId eq orgId) and (r.automationId eq automationId) and (r.createdAt greater since) and
+                    (r.origin inList sources.map { it.wire }) and (r.status inList statuses.map { it.wire })
+            }
+            .single()[runs].toInt()
     }
 
     override suspend fun latestSession(orgId: Uuid, automationId: Uuid, except: Uuid): String? =
-        driver.inTenant(orgId) {
-            fetchAll(
-                Statement.create(
-                    """
-                    SELECT session_id FROM automations_runs WHERE automation_id = :automation_id AND status =
-                    'started' AND session_id IS NOT NULL AND id <> :except ORDER BY created_at DESC, id DESC LIMIT 1
-                    """,
-                ).bind("automation_id", automationId).bind("except", except),
-            ).getOrThrow().firstOrNull()?.let { it.get("session_id").asString() }
+        database.inOrg(orgId) {
+            val r = AutomationsRuns
+            r.select(r.sessionId)
+                .where {
+                    (r.orgId eq orgId) and (r.automationId eq automationId) and
+                        (r.status eq RunStatus.STARTED.wire) and r.sessionId.isNotNull() and (r.id neq except)
+                }
+                .orderBy(r.createdAt to SortOrder.DESC, r.id to SortOrder.DESC)
+                .limit(1)
+                .firstOrNull()?.get(r.sessionId)
         }
 
     override suspend fun claimDue(
         now: Instant,
         limit: Int,
-        decide: suspend (Automation, Instant) -> CronClaim,
-    ): List<ClaimedRun> = driver.transaction {
+        decide: (Automation, Instant) -> CronClaim,
+    ): List<ClaimedRun> = database.query {
         // Each due route is locked by one replica (automations_due_routes, FOR UPDATE SKIP LOCKED); another replica
         // skips it, and the new next slot is written before the lock is released, so a slot is never run twice. The
         // routes are claimed by the serving role, which alone may run the function; then the transaction runs as the
         // tenant role and switches its organization for each automation, whose rows are read and written confined to
         // it.
-        val due = fetchAll(
-            Statement.create(
-                """
-                SELECT automation_id, org_id, next_run_at FROM automations_due_routes(CAST(:now AS TIMESTAMPTZ),
-                CAST(:limit AS INTEGER))
-                """,
-            ).bind("now", now).bind("limit", limit),
-        ).getOrThrow().map { row ->
-            Triple(row.get("automation_id").asUuid(), row.get("org_id").asUuid(), row.get("next_run_at").asInstant())
-        }
-        execute("SET LOCAL ROLE $TENANT_ROLE").getOrThrow()
+        val d = AutomationsDueRoutes
+        val due = d.of(now, limit).select(d.automationId, d.orgId, d.nextRunAt)
+            .map { Triple(it[d.automationId], it[d.orgId], it[d.nextRunAt]) }
+        switchToTenantRole()
         due.flatMap { (id, orgId, slot) ->
-            fetchAll(
-                Statement.create("SELECT set_config('$TENANT_SETTING', :org, true)").bind("org", orgId.toString()),
-            ).getOrThrow()
+            confineToOrganization(orgId)
+            val a = AutomationsAutomations
             // The automation is there: its route is deleted with it.
-            fetchAll(Statement.create("""SELECT $COLUMNS FROM automations_automations WHERE id = :id""").bind("id", id))
-                .getOrThrow().map { it.toAutomation() }.mapNotNull { automation ->
+            a.select(AUTOMATION_COLUMNS).where { (a.id eq id) and (a.orgId eq orgId) }
+                .map { it.toAutomation() }.mapNotNull { automation ->
                     val claim = decide(automation, slot)
-                    execute(
-                        Statement.create(
-                            """
-                            UPDATE automations_automations SET next_run_at = :next,
-                            enabled = enabled AND NOT CAST(:pause AS BOOLEAN) WHERE id = :id
-                            """,
-                        ).bind("next", claim.nextRunAt).bind("pause", claim.pause).bind("id", id),
-                    ).getOrThrow()
-                    schedule(id, claim.nextRunAt)
+                    a.update({ (a.id eq id) and (a.orgId eq orgId) }) {
+                        it[a.nextRunAt] = claim.nextRunAt
+                        it[a.enabled] = a.enabled and booleanParam(!claim.pause)
+                    }
+                    schedule(orgId, id, claim.nextRunAt)
                     claim.run?.let { ClaimedRun(automation, storeRun(it), slot) }
                 }
         }
@@ -404,132 +394,139 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
 
     override suspend fun deleteRunsBefore(before: Instant) {
         for (orgId in organizations()) {
-            driver.inTenant(orgId) {
-                execute(
-                    Statement.create("""DELETE FROM automations_runs WHERE org_id = :org_id AND created_at < :before""")
-                        .bind("org_id", orgId).bind("before", before),
-                ).getOrThrow()
+            database.inOrg(orgId) {
+                val r = AutomationsRuns
+                r.deleteWhere { (r.orgId eq orgId) and (r.createdAt less before) }
             }
         }
     }
 
     override suspend fun failQueuedBefore(before: Instant, now: Instant) {
         for (orgId in organizations()) {
-            driver.inTenant(orgId) {
-                execute(
-                    Statement.create(
-                        """
-                        UPDATE automations_runs SET status = 'failed', updated_at = :now, reason =
-                        CASE WHEN prompt IS NULL THEN 'interrupted' ELSE 'capacity_timeout' END, prompt = NULL
-                        WHERE org_id = :org_id AND status = 'queued' AND created_at < :before
-                        """,
-                    ).bind("now", now).bind("org_id", orgId).bind("before", before),
-                ).getOrThrow()
+            database.inOrg(orgId) {
+                val r = AutomationsRuns
+                r.update({
+                    (r.orgId eq orgId) and (r.status eq RunStatus.QUEUED.wire) and (r.createdAt less before)
+                }) {
+                    it[r.status] = RunStatus.FAILED.wire
+                    it[r.updatedAt] = now
+                    it[r.reason] = case()
+                        .When(r.prompt.isNull(), stringParam("interrupted"))
+                        .Else(stringParam("capacity_timeout"))
+                    it[r.prompt] = null
+                }
             }
         }
     }
 
     /** The organizations that have automations, from the one table read across organizations. */
-    private suspend fun organizations(): List<Uuid> = driver.fetchAll(
-        Statement.create("""SELECT org_id FROM automations_organizations() AS o (org_id)"""),
-    ).getOrThrow().map { it.get("org_id").asUuid() }
-
-    /** Writes the next slot the scheduler looks at. */
-    private suspend fun QueryExecutor.schedule(id: Uuid, nextRunAt: Instant?) {
-        execute(
-            Statement.create("""UPDATE automations_routes SET next_run_at = :next WHERE automation_id = :id""")
-                .bind("next", nextRunAt).bind("id", id),
-        ).getOrThrow()
+    private suspend fun organizations(): List<Uuid> = database.query {
+        val o = AutomationsOrganizations
+        o.all().select(o.orgId).map { it[o.orgId] }
     }
 
-    private suspend fun QueryExecutor.select(id: Uuid): Automation? = fetchAll(
-        Statement.create("""SELECT $COLUMNS FROM automations_automations WHERE id = :id""").bind("id", id),
-    ).getOrThrow().firstOrNull()?.toAutomation()
+    /** Writes the next slot the scheduler looks at. */
+    private fun JdbcTransaction.schedule(orgId: Uuid, id: Uuid, nextRunAt: Instant?) {
+        val route = AutomationsRoutes
+        route.update({ (route.automationId eq id) and (route.orgId eq orgId) }) { it[route.nextRunAt] = nextRunAt }
+    }
 
     /** The slot the scheduler waits for: only an enabled automation has one. */
     private val Automation.due: Instant? get() = nextRunAt.takeIf { enabled }
 
-    private suspend fun QueryExecutor.storeRun(run: AutomationRun): AutomationRun = fetchAll(
+    private fun JdbcTransaction.storeRun(run: AutomationRun): AutomationRun {
         // A conflict on the delivery key returns the earlier run (the no-op update makes RETURNING give its row).
-        Statement.create(
-            """
-            INSERT INTO automations_runs ($RUN_COLUMNS) VALUES (:id, :automation_id, :org_id, :source, :status,
-            :version, :delivery_key, :session_id, :reason, :problems, :slot_at, :created_at, :updated_at,
-            :workflow_run_id) ON CONFLICT
-            (automation_id, delivery_key) DO UPDATE SET delivery_key = EXCLUDED.delivery_key RETURNING $RUN_COLUMNS
-            """,
-        ).bind("id", run.id)
-            .bind("automation_id", run.automationId)
-            .bind("org_id", run.orgId)
-            .bind("source", run.source.wire)
-            .bind("status", run.status.wire)
-            .bind("version", run.version)
-            .bind("delivery_key", run.deliveryKey)
-            .bind("session_id", run.sessionId)
-            .bind("workflow_run_id", run.workflowRunId)
-            .bind("reason", run.reason)
-            .bind("problems", OstromJson.encodeToString(PROBLEMS, run.problems))
-            .bind("slot_at", run.slotAt)
-            .bind("created_at", run.createdAt)
-            .bind("updated_at", run.updatedAt),
-    ).getOrThrow().first().toRun()
-
-    /** Binds every column an insert or update writes (sqlx4k refuses a name the statement does not use). */
-    private fun Statement.bindAutomation(automation: Automation): Statement = bind("id", automation.id)
-        .bind("org_id", automation.orgId)
-        .bind("owner", automation.owner)
-        .bind("name", automation.definition.name)
-        .bind("trigger_kind", automation.definition.trigger.kind.wire)
-        .bind("definition", OstromJson.encodeToString(AutomationDefinition.serializer(), automation.definition))
-        .bind("enabled", automation.enabled)
-        .bind("version", automation.version)
-        .bind("secret_generation", automation.secretGeneration)
-        .bind("previous_secret_valid_until", automation.previousSecretValidUntil)
-        .bind("next_run_at", automation.nextRunAt)
-        .bind("updated_at", automation.updatedAt)
-        .bind("workflow_id", automation.definition.action.workflowId)
-
-    private fun ResultSet.Row.toAutomation(): Automation = Automation(
-        id = get("id").asUuid(),
-        orgId = get("org_id").asUuid(),
-        owner = get("owner").asString(),
-        definition = OstromJson.decodeFromString(AutomationDefinition.serializer(), get("definition").asString()),
-        enabled = get("enabled").asBoolean(),
-        version = get("version").asInt(),
-        secretGeneration = get("secret_generation").asInt(),
-        previousSecretValidUntil = get("previous_secret_valid_until").asInstantOrNull(),
-        nextRunAt = get("next_run_at").asInstantOrNull(),
-        createdAt = get("created_at").asInstant(),
-        updatedAt = get("updated_at").asInstant(),
-    )
-
-    private fun ResultSet.Row.toRun(): AutomationRun = AutomationRun(
-        id = get("id").asUuid(),
-        automationId = get("automation_id").asUuid(),
-        orgId = get("org_id").asUuid(),
-        source = RunSource.valueOf(get("source").asString().uppercase()),
-        status = RunStatus.valueOf(get("status").asString().uppercase()),
-        version = get("version").asInt(),
-        deliveryKey = get("delivery_key").asString(),
-        sessionId = get("session_id").asStringOrNull(),
-        workflowRunId = get("workflow_run_id").asStringOrNull(),
-        reason = get("reason").asStringOrNull(),
-        problems = OstromJson.decodeFromString(PROBLEMS, get("problems").asString()),
-        slotAt = get("slot_at").asInstantOrNull(),
-        createdAt = get("created_at").asInstant(),
-        updatedAt = get("updated_at").asInstant(),
-    )
-
-    private companion object {
-        private val PROBLEMS = ListSerializer(PayloadProblem.serializer())
-
-        const val COLUMNS = """
-            id, org_id, owner, name, trigger_kind, definition, enabled, version, secret_generation,
-            previous_secret_valid_until, next_run_at, created_at, updated_at, workflow_id
-        """
-        const val RUN_COLUMNS = """
-            id, automation_id, org_id, source, status, version, delivery_key, session_id, reason, problems, slot_at,
-            created_at, updated_at, workflow_run_id
-        """
+        val r = AutomationsRuns
+        return r.upsertReturning(
+            r.automationId,
+            r.deliveryKey,
+            returning = RUN_COLUMNS,
+            onUpdate = { it[r.deliveryKey] = insertValue(r.deliveryKey) },
+        ) {
+            it[r.id] = run.id
+            it[r.automationId] = run.automationId
+            it[r.orgId] = run.orgId
+            it[r.origin] = run.source.wire
+            it[r.status] = run.status.wire
+            it[r.version] = run.version
+            it[r.deliveryKey] = run.deliveryKey
+            it[r.sessionId] = run.sessionId
+            it[r.reason] = run.reason
+            it[r.problems] = OstromJson.encodeToString(PROBLEMS, run.problems)
+            it[r.slotAt] = run.slotAt
+            it[r.createdAt] = run.createdAt
+            it[r.updatedAt] = run.updatedAt
+            it[r.workflowRunId] = run.workflowRunId
+        }.first().toRun()
     }
+
+    /** Writes every column an insert or an update of an automation sets (its key, organization and owner aside). */
+    private fun UpdateBuilder<*>.setAutomation(automation: Automation) {
+        val a = AutomationsAutomations
+        this[a.name] = automation.definition.name
+        this[a.triggerKind] = automation.definition.trigger.kind.wire
+        this[a.definition] = OstromJson.encodeToString(AutomationDefinition.serializer(), automation.definition)
+        this[a.enabled] = automation.enabled
+        this[a.version] = automation.version
+        this[a.secretGeneration] = automation.secretGeneration
+        this[a.previousSecretValidUntil] = automation.previousSecretValidUntil
+        this[a.nextRunAt] = automation.nextRunAt
+        this[a.updatedAt] = automation.updatedAt
+        this[a.workflowId] = automation.definition.action.workflowId
+    }
+
+    private fun ResultRow.toAutomation(): Automation {
+        val a = AutomationsAutomations
+        return Automation(
+            id = this[a.id],
+            orgId = this[a.orgId],
+            owner = this[a.owner],
+            definition = OstromJson.decodeFromString(AutomationDefinition.serializer(), this[a.definition]),
+            enabled = this[a.enabled],
+            version = this[a.version],
+            secretGeneration = this[a.secretGeneration],
+            previousSecretValidUntil = this[a.previousSecretValidUntil],
+            nextRunAt = this[a.nextRunAt],
+            createdAt = this[a.createdAt],
+            updatedAt = this[a.updatedAt],
+        )
+    }
+
+    private fun ResultRow.toRun(): AutomationRun {
+        val r = AutomationsRuns
+        return AutomationRun(
+            id = this[r.id],
+            automationId = this[r.automationId],
+            orgId = this[r.orgId],
+            source = RunSource.valueOf(this[r.origin].uppercase()),
+            status = RunStatus.valueOf(this[r.status].uppercase()),
+            version = this[r.version],
+            deliveryKey = this[r.deliveryKey],
+            sessionId = this[r.sessionId],
+            workflowRunId = this[r.workflowRunId],
+            reason = this[r.reason],
+            problems = OstromJson.decodeFromString(PROBLEMS, this[r.problems]),
+            slotAt = this[r.slotAt],
+            createdAt = this[r.createdAt],
+            updatedAt = this[r.updatedAt],
+        )
+    }
+}
+
+private val PROBLEMS = ListSerializer(PayloadProblem.serializer())
+
+/** What an automation's reads return. */
+private val AUTOMATION_COLUMNS = AutomationsAutomations.let { a ->
+    listOf(
+        a.id, a.orgId, a.owner, a.name, a.triggerKind, a.definition, a.enabled, a.version, a.secretGeneration,
+        a.previousSecretValidUntil, a.nextRunAt, a.createdAt, a.updatedAt, a.workflowId,
+    )
+}
+
+/** What a run's reads return: every column but the prompt a waiting run keeps and its follow mark. */
+private val RUN_COLUMNS = AutomationsRuns.let { r ->
+    listOf(
+        r.id, r.automationId, r.orgId, r.origin, r.status, r.version, r.deliveryKey, r.sessionId, r.reason,
+        r.problems, r.slotAt, r.createdAt, r.updatedAt, r.workflowRunId,
+    )
 }

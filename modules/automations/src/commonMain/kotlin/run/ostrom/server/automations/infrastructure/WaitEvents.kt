@@ -8,10 +8,10 @@ import run.ostrom.server.automations.domain.Wait
 import run.ostrom.server.kernel.events.OrgEventDraft
 import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.events.OrgEventType
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
+import run.ostrom.server.kernel.database.JdbcDatabase
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import kotlin.uuid.Uuid
 
 /**
@@ -32,16 +32,16 @@ internal fun Wait.event(type: OrgEventType, action: String? = null): OrgEventDra
 }
 
 /**
- * Runs the update of [statement], which returns the waits it changed, confined to [orgId] ([inTenant]), and publishes
- * the [event] of each in the same transaction: the events commit, or roll back, with the change.
+ * Runs the update of [change], which returns the waits it changed, confined to [orgId] (`inOrg`), and publishes the
+ * [event] of each in the same transaction: the events commit, or roll back, with the change.
  */
-internal suspend fun Driver.changeInOrg(
+internal suspend fun JdbcDatabase.changeInOrg(
     orgId: Uuid,
     events: OrgEventPublisher,
     event: (Wait) -> OrgEventDraft,
-    statement: () -> Statement,
-): List<Wait> = inTenant(orgId) {
-    val changed = fetchAll(statement()).getOrThrow().map { it.toWait() }
+    change: JdbcTransaction.() -> List<Wait>,
+): List<Wait> = inOrg(orgId) {
+    val changed = change()
     events.publishIn(this, orgId, changed.map(event))
     changed
 }
