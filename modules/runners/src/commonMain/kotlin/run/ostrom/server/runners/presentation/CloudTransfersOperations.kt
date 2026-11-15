@@ -97,6 +97,7 @@ private fun ApiCatalog.transferOffer() {
                 "(`session_transferring`).")
             error(HttpStatusCode.UnprocessableEntity, "The recipient cannot own the session " +
                 "(`recipient_ineligible`), or the key was used with another request (`idempotency_conflict`).")
+            error(HttpStatusCode.PayloadTooLarge, TOO_LARGE)
         }
     }
 }
