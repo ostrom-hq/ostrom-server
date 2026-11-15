@@ -87,6 +87,22 @@ class TestDatabaseTest {
         }
     }
 
+    @Test
+    fun aJdbcPoolConnectsAsAFreshRoleThatIsDroppedAfter() = runTest {
+        val database = TestDatabase.create() ?: return@runTest
+        try {
+            val (role, user) = database.withJdbcRole(poolSize = 2) { role, jdbc ->
+                role to jdbc.query {
+                    exec("SELECT CAST(current_user AS text)") { rows -> rows.next(); rows.getString(1) }
+                }
+            }
+            assertEquals(role, user, "The pool is connected as the role")
+            assertEquals("0", database.driver.text(roles, role), "The role is dropped")
+        } finally {
+            database.close()
+        }
+    }
+
     private fun member(role: String, privilege: String = "MEMBER") =
         "SELECT CAST(pg_has_role(current_user, '$role', '$privilege') AS text) AS value"
 
