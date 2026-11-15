@@ -23,12 +23,12 @@ goes through the same short path. This guide takes ten minutes to read and saves
 
 ## Set up your machine
 
-Prerequisites: JDK 21 and Git. Kotlin/Native downloads its own toolchain the first time the session runner
-(`runner/`) is built.
+Prerequisites: JDK 21 and Git. Kotlin/Native downloads its own toolchain the first time the push relay (`push/`) is
+built.
 
 ```sh
 ./gradlew jvmTest koverVerify     # every test, and the 100 % coverage gate
-./gradlew :runner:macosArm64Test  # the runner's tests in native code (:runner:linuxX64Test on Linux)
+./gradlew :push:macosArm64Test    # the push relay's tests in native code (:push:linuxX64Test on Linux)
 ./gradlew check                   # everything CI runs on your platform
 ```
 

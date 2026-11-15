@@ -269,7 +269,7 @@ Every request is already logged once by the kernel (method, route template — n
 ## 8. Before the PR
 
 - CI job `ci` green: `scripts/check-conventions.py`, then
-  `./gradlew detekt jvmTest koverVerify koverXmlReport`, the runner's and the push relay's `:runner:linuxX64Test :push:linuxX64Test`, the image (`./gradlew
+  `./gradlew detekt jvmTest koverVerify koverXmlReport`, the push relay's `:push:linuxX64Test`, the image (`./gradlew
   :image:publishImageToLocalRegistry`, jib) and its smoke test.
 - One PR per module step, small; the PR touches only `modules/<name>/` (and its line in `ServerModules.kt` if needed).
 - `ee/` code: same shape, under `ee/modules/<name>/` (Gradle path `:ee:modules:<name>`, discovered like `modules/`),
@@ -752,8 +752,8 @@ after. The run finds the organizations through `memory_kept_orgs` (docs/tenancy.
 
 ### A cloud agent's session
 
-The agent of a cloud session runs with its launch's agent token (opened by its runner, the CLI's `ostrom cloud runner`) and no
-session id of the `sessions` module. Like TeamCode's execution credential (`tcex_`, confined to the cloud session it was
+The agent of a cloud session runs with its launch's agent token (opened by its runner, the CLI's
+`ostrom cloud runner`) and no session id of the `sessions` module. Like TeamCode's execution credential (`tcex_`, confined to the cloud session it was
 issued for), the token of a cloud session's launch acts on that cloud session whatever a request names, and needs to
 name none: its todo (`/api/v1/todos/session` and the routes under it), its waits (`/api/v1/waits/mcp`, the Stop hook's `/api/v1/waits/wake`),
 its team memory proposals (a `team` entry an agent writes) and its workflow step's delivery (`/api/v1/workflows/mcp`) are the

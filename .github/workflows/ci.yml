@@ -169,7 +169,8 @@ jobs:
           retention-days: 7
 
   # The push relay (push/) is the Kotlin/Native program (docs/decisions/0001; the session runner is the CLI's
-  # `ostrom cloud runner`, ostrom-cli): its tests run natively. The relay's binary is linked, put in its image and checked by scripts/smoke-push-relay.py.
+  # `ostrom cloud runner`, ostrom-cli): its tests run natively. The relay's binary is linked, put in its image and
+  # checked by scripts/smoke-push-relay.py.
   ci-native:
     name: Native tests and push relay image (linuxX64)
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
