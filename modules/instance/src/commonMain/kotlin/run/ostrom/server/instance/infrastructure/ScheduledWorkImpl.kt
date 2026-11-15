@@ -5,6 +5,7 @@ import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.ScheduledWork
 import run.ostrom.server.kernel.database.databaseNow
 import run.ostrom.server.kernel.database.databaseNowPlus
+import run.ostrom.server.kernel.database.write
 import run.ostrom.server.kernel.database.written
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -52,9 +53,18 @@ class ScheduledWorkImpl(private val database: JdbcDatabase) : ScheduledWork {
     }
 
     private suspend fun claim(name: String, owner: Uuid, lease: Duration): Boolean = database.query {
-        val w = InstanceScheduledWork
-        w.insertIgnore { it[w.name] = name }
-        written { scheduledWorkClaim(name, owner, lease) } == 1
+        // Each tick is one update of an existing row; a job's first tick writes its row first (due at once, its
+        // `available_at` defaulting to '-infinity'). `now()` is the start of this transaction: the update is its first
+        // statement, so a lease is never shortened by a wait.
+        when {
+            written { scheduledWorkClaim(name, owner, lease) } == 1 -> true
+            InstanceScheduledWork.insertIgnore { it[this.name] = name }.insertedCount == 0 -> false
+            else -> {
+                // The row this transaction wrote is due: the claim takes it.
+                write { scheduledWorkClaim(name, owner, lease) }
+                true
+            }
+        }
     }
 
     private suspend fun release(name: String, owner: Uuid, interval: Duration) {
