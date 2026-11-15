@@ -203,6 +203,13 @@ class SharingPostgresTest : SharingPostgresHarness() {
             val forbidden = patchAs("member-a", path, UpdateAccountRequest(poolId = "mine"))
             assertEquals(HttpStatusCode.Forbidden, forbidden.status, "Its owner is not an admin")
             assertEquals("account_pool_forbidden", forbidden.body<ApiError>().error.type)
+            val roundTrip = patchAs("member-a", path, UpdateAccountRequest(label = "Mine", poolId = "team-b_2"))
+            assertEquals(HttpStatusCode.OK, roundTrip.status, "Sending back its pool is no change")
+            assertEquals(
+                HttpStatusCode.Forbidden,
+                patchAs("member-a", path, UpdateAccountRequest(poolId = "")).status,
+                "Nor may its owner take it out",
+            )
             val listed = client.get(base) { bearerAuth("member-a") }.body<SharedAccountsResponse>().items.single()
             assertEquals("team-b_2", listed.poolId, "Its owner sees it")
             val other = client.get(base) { bearerAuth("other-a") }.body<SharedAccountsResponse>().items.single()
@@ -214,6 +221,8 @@ class SharingPostgresTest : SharingPostgresHarness() {
             }
             val out = patchAs("admin-a", path, UpdateAccountRequest(poolId = "")).body<SharedAccountResponse>()
             assertNull(out.poolId, "An empty string takes it out of its pool")
+            val stillOut = patchAs("member-a", path, UpdateAccountRequest(poolId = ""))
+            assertEquals(HttpStatusCode.OK, stillOut.status, "Out of a pool already: no change")
         }
     }
 

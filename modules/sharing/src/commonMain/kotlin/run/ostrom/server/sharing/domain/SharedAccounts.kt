@@ -284,7 +284,7 @@ class InvalidPoolException :
 class AccountPoolForbiddenException :
     OstromException(
         ErrorKind.FORBIDDEN,
-        "Only an owner or an admin of the organization puts an account in a pool.",
+        "Only the organization's owners and admins put an account in a pool, not the member who shared it.",
         "account_pool_forbidden",
     )
 

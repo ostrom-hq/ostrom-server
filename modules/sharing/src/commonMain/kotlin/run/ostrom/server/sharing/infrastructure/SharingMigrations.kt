@@ -253,6 +253,7 @@ val SharingMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
         version = 13,
         name = "sharing_account_pool",
-        sql = "ALTER TABLE sharing_accounts ADD COLUMN pool_id TEXT",
+        sql = "ALTER TABLE sharing_accounts ADD COLUMN pool_id TEXT " +
+            "CONSTRAINT sharing_accounts_pool_id CHECK (pool_id ~ '^[A-Za-z0-9_-]{1,36}$')",
     ),
 )
