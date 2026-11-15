@@ -41,10 +41,12 @@ import run.ostrom.server.integrations.discord.infrastructure.PostgresDiscordAppr
 import run.ostrom.server.integrations.discord.infrastructure.PostgresDiscordLinkAttemptsRepository
 import run.ostrom.server.integrations.discord.infrastructure.PostgresDiscordLinksRepository
 import run.ostrom.server.integrations.discord.presentation.DiscordRoutesDependencies
+import run.ostrom.server.integrations.discord.presentation.discordOperations
 import run.ostrom.server.integrations.discord.presentation.discordRoutes
 import run.ostrom.server.identity.domain.UsersRepository
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.module.OrgDeletionListener
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.network.outboundHttpClient
@@ -77,6 +79,8 @@ object DiscordIntegrationModule : ServerModule {
     private val CONSOLE = named("discord-console")
 
     override val name: String = "integrations-discord"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { discordOperations() }
 
     override val koinModule: Module = module {
         single(HTTP) {
