@@ -11,7 +11,6 @@ import run.ostrom.server.orgs.OrgsModule
 import run.ostrom.server.receipts.ReceiptsModule
 import run.ostrom.server.reports.domain.startOf
 import run.ostrom.server.reports.infrastructure.SpendingRanges
-import run.ostrom.server.reports.infrastructure.spendingStatement
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.sessions.SessionsModule
 import run.ostrom.server.testing.TestServer
@@ -70,13 +69,6 @@ class ReportsSpendingQueryPostgresTest {
         )
     }
 
-    private suspend fun TestServer.rows(statement: Statement): List<String> =
-        driver.withOrganization(ORG_A) { tx ->
-            tx.fetchAll(statement).getOrThrow().map { row ->
-                listOf("dim", "group_key", "label", "micros", "sessions").joinToString("|") { row.get(it).asString() }
-            }.sorted()
-        }
-
     @Test
     fun theQueryAnswersWhatTheQueryBeforeItAnswered() = serverTest(modules, reportsOverrides(FixedClock())) { server ->
         server.seedPeople()
@@ -100,9 +92,14 @@ class ReportsSpendingQueryPostgresTest {
         val (from, to) = window
         val legacy = Statement.create(legacySpending(member = member != null)).bind("org_id", ORG_A)
         member?.let { legacy.bind("member_id", it) }
-        val before = rows(SpendingRanges.of(from, to).bindTo(legacy))
-        val after = rows(spendingStatement(ORG_A, member, from, to))
+        val before = driver.withOrganization(ORG_A) { tx ->
+            tx.fetchAll(bindRanges(legacy, SpendingRanges.of(from, to))).getOrThrow().map { row ->
+                listOf("dim", "group_key", "label", "micros", "sessions").joinToString("|") { row.get(it).asString() }
+            }.sorted()
+        }
+        val after = spendingByExposed(ORG_A, member, SpendingRanges.of(from, to))
         assertEquals(before, after, "$name, $member")
+        assertEquals(after, spendingBySql(ORG_A, member, SpendingRanges.of(from, to)), "$name, $member: as the SQL")
         assertTrue(after.none { it.split("|")[3] == "0" }, "$name, $member: no line at zero, before as after")
         when (member) {
             MIA.memberId -> assertTrue(after.isEmpty(), "$name: Mia has a budget and no spending")
@@ -114,6 +111,11 @@ class ReportsSpendingQueryPostgresTest {
         }
     }
 }
+
+private fun bindRanges(statement: Statement, ranges: SpendingRanges): Statement = statement
+    .bind("day_from", ranges.days.first.toString()).bind("day_to", ranges.days.second.toString())
+    .bind("head_from", ranges.head.first).bind("head_to", ranges.head.second)
+    .bind("tail_from", ranges.tail.first).bind("tail_to", ranges.tail.second)
 
 private fun legacySpending(member: Boolean): String {
     val mine = if (member) " AND member_id = :member_id" else ""

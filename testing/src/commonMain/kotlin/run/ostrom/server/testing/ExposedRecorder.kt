@@ -2,6 +2,8 @@
 package run.ostrom.server.testing
 
 import io.github.smyrgeorge.sqlx4k.Statement
+import org.jetbrains.exposed.v1.core.ArrayColumnType
+import org.jetbrains.exposed.v1.core.IColumnType
 import org.jetbrains.exposed.v1.core.Transaction
 import org.jetbrains.exposed.v1.core.statements.GlobalStatementInterceptor
 import org.jetbrains.exposed.v1.core.statements.StatementContext
@@ -39,9 +41,9 @@ internal class ExposedRecorder : GlobalStatementInterceptor {
         fun note(transaction: Transaction, context: StatementContext) {
             if (!driver.isRecording) return
             val id = transactions.computeIfAbsent(transaction.id) { driver.newTransaction() }
-            val sql = context.sql(transaction)
+            val sql = replayableSql(context.sql(transaction), context.args.map { it.first })
             val statement = Statement.create(sql)
-            context.args.forEachIndexed { index, (_, value) -> statement.bind(index, value) }
+            context.args.forEachIndexed { index, (_, value) -> statement.bind(index, replayable(value)) }
             driver.note(sql, statement, id)
         }
 
@@ -51,6 +53,36 @@ internal class ExposedRecorder : GlobalStatementInterceptor {
     }
 
     companion object {
+        /**
+         * [value] as sqlx4k replays it: an array (`= ANY(?)`, a list) in PostgreSQL's text form, cast back to its type
+         * by [replayableSql], since sqlx4k would expand a list into several values.
+         */
+        internal fun replayable(value: Any?): Any? = if (value is List<*>) {
+            value.joinToString(",", "{", "}") { element ->
+                "\"" + element.toString().replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+            }
+        } else {
+            value
+        }
+
+        /** [sql] with each placeholder of an array cast from its text form ([replayable]) to its type. */
+        internal fun replayableSql(sql: String, types: List<IColumnType<*>>): String {
+            if (types.none { it is ArrayColumnType<*, *> }) return sql
+            val replayed = StringBuilder()
+            var index = 0
+            var quoted = false
+            for (char in sql) {
+                if (char == '\'') quoted = !quoted
+                val type = if (char == '?' && !quoted) types.getOrNull(index++) else null
+                if (type is ArrayColumnType<*, *>) {
+                    replayed.append("CAST(? AS ${type.sqlType()})")
+                } else {
+                    replayed.append(char)
+                }
+            }
+            return replayed.toString()
+        }
+
         private val attached: MutableSet<Attached> = ConcurrentHashMap.newKeySet()
 
         /**

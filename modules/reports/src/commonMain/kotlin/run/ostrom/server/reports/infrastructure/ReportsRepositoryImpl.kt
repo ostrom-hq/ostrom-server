@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.reports.infrastructure
 
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.reports.domain.ActivityCursor
 import run.ostrom.server.reports.domain.ActivityItem
@@ -9,78 +10,72 @@ import run.ostrom.server.reports.domain.ReportsRepository
 import run.ostrom.server.reports.domain.SpendingDay
 import run.ostrom.server.reports.domain.SpendingLine
 import run.ostrom.server.reports.domain.SpendingTotals
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.ResultSet
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import kotlinx.datetime.LocalDate
 import kotlin.math.roundToLong
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * [ReportsRepository] on PostgreSQL. Each read is one statement in a transaction scoped to the organization
- * ([withOrganization]): the row level security of the tables it reads applies, on top of their `org_id` filters.
+ * [ReportsRepository] on PostgreSQL. Each read runs in a transaction scoped to the organization ([withOrganization]):
+ * the row level security of the tables it reads applies, on top of their `org_id` filters.
  *
- * @param driver The database.
+ * @param database The database.
  */
-class ReportsRepositoryImpl(private val driver: Driver) : ReportsRepository {
+class ReportsRepositoryImpl(private val database: JdbcDatabase) : ReportsRepository {
     override suspend fun spending(orgId: Uuid, memberId: Uuid?, from: Instant, to: Instant): SpendingTotals {
-        val statement = spendingStatement(orgId, memberId, from, to)
-        val rows = driver.withOrganization(orgId) { it.fetchAll(statement).getOrThrow().map { row -> row } }
-        fun lines(dim: String) = rows.filter { it.get("dim").asString() == dim }.map { it.toLine(dim) }
+        val rows = spendingRows(orgId, memberId, SpendingRanges.of(from, to))
+        fun lines(dim: String) = rows.filter { it.dim == dim }.map { it.toLine() }
         return SpendingTotals(
-            byAgent = lines(AGENT),
-            byRepo = lines(REPO),
-            byPerson = lines(PERSON),
-            byDay = rows.filter { it.get("dim").asString() == DAY }.map {
-                SpendingDay(LocalDate.parse(it.get("group_key").asString()), it.get("micros").asLong())
-            }.sortedBy { it.date },
+            byAgent = lines(SpendingReads.AGENT),
+            byRepo = lines(SpendingReads.REPO),
+            byPerson = lines(SpendingReads.PERSON),
+            byDay = rows.filter { it.dim == SpendingReads.DAY }
+                .map { SpendingDay(LocalDate.parse(it.key), it.micros) }
+                .sortedBy { it.date },
         )
     }
+
+    /**
+     * The lines of the spending report over [ranges], as they are added up.
+     *
+     * @param orgId The organization.
+     * @param memberId One member's spending only, when set.
+     * @param ranges The window.
+     * @return The lines, in no order.
+     */
+    internal suspend fun spendingRows(orgId: Uuid, memberId: Uuid?, ranges: SpendingRanges): List<SpendingRow> =
+        database.withOrganization(orgId) { with(SpendingReads(orgId, memberId, ranges)) { rows() } }
 
     override suspend fun activity(
         orgId: Uuid,
         before: ActivityCursor?,
         repo: String?,
         limit: Int,
-    ): List<ActivityItem> {
-        val statement = Statement.create(ReportsQueries.activity(cursor = before != null, repo = repo != null))
-            .bind("org_id", orgId).bind("limit", limit)
-        before?.let { statement.bind("before_at", it.at).bind("before_id", it.id) }
-        repo?.let { statement.bind("repo", it) }
-        return driver.withOrganization(orgId) { tx -> tx.fetchAll(statement).getOrThrow().map { it.toItem() } }
+    ): List<ActivityItem> = database.withOrganization(orgId) {
+        val reads = ActivityReads(orgId, before, repo, limit)
+        reads.page().map { row ->
+            ActivityItem(
+                id = row[reads.lineId],
+                at = row[reads.lineAt],
+                kind = KINDS.getValue(row[reads.lineKind]),
+                actor = row[reads.lineActor],
+                subject = row[reads.lineSubject],
+                outcome = row[reads.lineOutcome],
+                repo = row[reads.lineRepo],
+                costMicros = row[reads.lineCost]?.let { (it * MICROS_PER_USD).roundToLong() },
+                sessionId = row[reads.lineSession],
+                gateId = row[reads.lineGate],
+            )
+        }
     }
 
     private companion object {
-        const val AGENT = "agent"
-        const val REPO = "repo"
-        const val PERSON = "person"
-        const val DAY = "day"
         const val MICROS_PER_USD = 1_000_000.0
         val KINDS = ActivityKind.entries.associateBy { it.wire }
 
-        fun ResultSet.Row.toLine(dim: String): SpendingLine {
-            val key = get("group_key").asString()
-            val label = get("label").asString().ifEmpty { if (dim == PERSON) "Organization" else "No session" }
-            return SpendingLine(key, label, get("micros").asLong(), get("sessions").asLong())
-        }
-
-        fun ResultSet.Row.toItem(): ActivityItem {
-            val kind = get("kind").asString()
-            return ActivityItem(
-                id = get("item_id").asString(),
-                at = get("at").asInstant(),
-                kind = KINDS.getValue(kind),
-                actor = get("actor").asString(),
-                subject = get("subject").asString(),
-                outcome = get("outcome").asStringOrNull(),
-                repo = get("repo").asStringOrNull(),
-                costMicros = get("cost_usd").asStringOrNull()?.let { (it.toDouble() * MICROS_PER_USD).roundToLong() },
-                sessionId = get("session_id").asStringOrNull(),
-                gateId = get("gate_id").asStringOrNull(),
-            )
+        fun SpendingRow.toLine(): SpendingLine {
+            val shown = label.ifEmpty { if (dim == SpendingReads.PERSON) "Organization" else "No session" }
+            return SpendingLine(key, shown, micros, sessions)
         }
     }
 }

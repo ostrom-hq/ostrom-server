@@ -1,11 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
-package run.ostrom.server.reports.infrastructure
+package run.ostrom.server.reports
+
+import run.ostrom.server.kernel.database.withOrganization
+import run.ostrom.server.reports.domain.ReportsRepository
+import run.ostrom.server.reports.infrastructure.ReportsRepositoryImpl
+import run.ostrom.server.reports.infrastructure.SpendingRanges
+import run.ostrom.server.testing.TestServer
+import io.github.smyrgeorge.sqlx4k.Statement
+import kotlin.uuid.Uuid
 
 /**
- * The SQL of the reports, apart from the repository so that the query-plan test runs the very same text under
- * `EXPLAIN ANALYZE`.
+ * The reports' reads as they were written in SQL before they moved to Exposed (server#310 and after), kept as the
+ * oracle the Exposed reads are compared with: the same rows for the same ledger and feed
+ * (ReportsExposedOraclePostgresTest).
  */
-internal object ReportsQueries {
+internal object ReportsSqlBeforeExposed {
     /**
      * The ledger of a window joined to the session of each event, grouped four ways: `dim` is `agent`, `repo`,
      * `person` or `day`. Parameters `:org_id`, the window's parts ([SpendingRanges]: `:day_from`, `:day_to`,
@@ -159,3 +168,36 @@ internal object ReportsQueries {
     // organization: an id written anywhere else, or of a stranger, is shown as it is (never another org's login).
     private const val UUID_PATTERN = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 }
+
+/**
+ * The spending lines of [ranges] by the SQL before Exposed, as `dim|group_key|label|micros|sessions`, sorted.
+ *
+ * @param orgId The organization.
+ * @param memberId One member's spending only, when set.
+ * @param ranges The window.
+ * @return The lines.
+ */
+internal suspend fun TestServer.spendingBySql(orgId: Uuid, memberId: Uuid?, ranges: SpendingRanges): List<String> {
+    val statement = Statement.create(ReportsSqlBeforeExposed.spending(member = memberId != null)).bind("org_id", orgId)
+        .bind("day_from", ranges.days.first.toString()).bind("day_to", ranges.days.second.toString())
+        .bind("head_from", ranges.head.first).bind("head_to", ranges.head.second)
+        .bind("tail_from", ranges.tail.first).bind("tail_to", ranges.tail.second)
+    memberId?.let { statement.bind("member_id", it) }
+    return driver.withOrganization(orgId) { tx ->
+        tx.fetchAll(statement).getOrThrow().map { row ->
+            listOf("dim", "group_key", "label", "micros", "sessions").joinToString("|") { row.get(it).asString() }
+        }.sorted()
+    }
+}
+
+/**
+ * The spending lines of [ranges] by the Exposed reads, written as [spendingBySql]'s.
+ *
+ * @param orgId The organization.
+ * @param memberId One member's spending only, when set.
+ * @param ranges The window.
+ * @return The lines.
+ */
+internal suspend fun TestServer.spendingByExposed(orgId: Uuid, memberId: Uuid?, ranges: SpendingRanges): List<String> =
+    (koin.get<ReportsRepository>() as ReportsRepositoryImpl).spendingRows(orgId, memberId, ranges)
+        .map { it.toString() }.sorted()
