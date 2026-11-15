@@ -7,6 +7,7 @@ import run.ostrom.server.cloud.domain.CloudClustersRepository
 import run.ostrom.server.cloud.domain.CloudRuntimeSource
 import run.ostrom.server.cloud.domain.WorkspaceStorageClasses
 import run.ostrom.server.kernel.database.scheduledWork
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.runners.domain.CloudClusterObjects
 import run.ostrom.server.runners.domain.CollectCloudGarbageUseCaseImpl
 import run.ostrom.server.runners.infrastructure.CloudGarbageClusters
@@ -176,6 +177,7 @@ import run.ostrom.server.runners.infrastructure.MemberTransferRecipients
 import run.ostrom.server.runners.infrastructure.RuntimeMemberTransferPolicy
 import run.ostrom.server.runners.domain.CloudTransfersUseCaseImpl
 import run.ostrom.server.runners.domain.CompleteCloudTransferUseCase
+import run.ostrom.server.runners.presentation.runnersOperations
 import run.ostrom.server.runners.presentation.runnersRoutes
 import run.ostrom.server.runners.presentation.terminalRoutes
 import run.ostrom.server.secrets.domain.ResolveEnvironmentUseCase
@@ -224,6 +226,8 @@ private val REPLICA_HTTP = named("runners.replica.http")
  */
 object RunnersModule : ServerModule {
     override val name: String = "runners"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { runnersOperations() }
 
     override val koinModule: Module = module {
         // The console's clusters run the Kubernetes sessions where the cloud module is (always on a full server).

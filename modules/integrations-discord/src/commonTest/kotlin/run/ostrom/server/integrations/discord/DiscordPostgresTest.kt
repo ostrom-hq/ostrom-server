@@ -93,6 +93,7 @@ import run.ostrom.server.orgs.domain.Org
 import run.ostrom.server.orgs.domain.OrgsRepository
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
 import kotlin.test.Test
@@ -220,6 +221,11 @@ class DiscordPostgresTest {
 
     private fun click(user: String, customId: String) =
         """{"type":3,"user":{"id":"$user"},"data":{"custom_id":"$customId"},"message":{"content":"**Push**"}}"""
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(modules, overrides) { server ->
+        server.assertApiCatalogue(DiscordIntegrationModule)
+    }
 
     @Test
     fun aRejectFromTheApproversDiscordRefusesTheGateAndUpdatesItsMessage() = serverTest(modules, overrides) { server ->

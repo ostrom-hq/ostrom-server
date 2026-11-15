@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.kernel.auth.MemberDirectory
+import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.runners.domain.AgentKind
 import run.ostrom.server.runners.domain.CloudSession
 import run.ostrom.server.runners.domain.CloudSessionsRepository
@@ -15,6 +17,7 @@ import run.ostrom.server.runners.fakes.session
 import run.ostrom.server.runners.fakes.testIdentities
 import run.ostrom.server.runners.presentation.RunnerInferenceCredentialResponse
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.ktor.client.call.body
@@ -47,6 +50,7 @@ import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
+import kotlin.uuid.Uuid
 
 /**
  * The runner's inference credential against a real PostgreSQL and real HTTP (TeamCode's `CloudInferencePersistenceTest`
@@ -95,6 +99,27 @@ class RunnerInferencePostgresTest {
         val sessions = koin.get<CloudSessionsRepository>()
         val current = assertNotNull(sessions.get(session.orgId, session.id))
         assertNotNull(sessions.compareAndSet(change(current), null))
+    }
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() {
+        // The members' side of the organization, so that the transfers and the preparation are mounted too.
+        val everything = module {
+            includes(overrides)
+            single<MemberDirectory> {
+                object : MemberDirectory {
+                    override suspend fun isActiveMember(orgId: Uuid, memberId: String) = true
+                }
+            }
+            single<MemberLogins> {
+                object : MemberLogins {
+                    override suspend fun idsOf(orgId: Uuid, logins: Collection<String>) = emptyMap<String, Uuid>()
+
+                    override suspend fun loginsOf(orgId: Uuid, memberIds: Collection<Uuid>) = emptyMap<Uuid, String>()
+                }
+            }
+        }
+        serverTest(listOf(RunnersModule), everything) { server -> server.assertApiCatalogue(RunnersModule) }
     }
 
     @Test
