@@ -12,6 +12,7 @@ import run.ostrom.server.kernel.database.ScheduledWork
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.database.repeatDue
 import run.ostrom.server.kernel.database.scheduledWork
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.launches.LaunchSpend
 import run.ostrom.server.kernel.module.ServerModule
@@ -61,6 +62,7 @@ import run.ostrom.server.usage.infrastructure.UsageFeedReadsImpl
 import run.ostrom.server.usage.infrastructure.UsageMigrations
 import run.ostrom.server.usage.infrastructure.UsageReconciliationRepositoryImpl
 import run.ostrom.server.usage.infrastructure.UsageRepositoryImpl
+import run.ostrom.server.usage.presentation.usageOperations
 import run.ostrom.server.usage.presentation.UsageRoutesDependencies
 import run.ostrom.server.usage.presentation.usageRoutes
 import io.ktor.server.routing.Route
@@ -82,6 +84,8 @@ import kotlin.uuid.Uuid
  */
 object UsageModule : ServerModule {
     override val name: String = "usage"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { usageOperations() }
 
     override val koinModule: Module = module {
         // The retention an administrator sets in the console (the admin module collects every bound section).

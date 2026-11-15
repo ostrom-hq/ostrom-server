@@ -34,6 +34,7 @@ import run.ostrom.server.events.infrastructure.OrgEventsRepositoryImpl
 import run.ostrom.server.events.infrastructure.WebhooksConfig
 import run.ostrom.server.events.infrastructure.WebhooksRepositoryImpl
 import run.ostrom.server.events.infrastructure.WebhooksWorker
+import run.ostrom.server.events.presentation.eventsOperations
 import run.ostrom.server.events.presentation.EventsRoutesDependencies
 import run.ostrom.server.events.presentation.WebhooksRoutesDependencies
 import run.ostrom.server.events.presentation.eventsRoutes
@@ -43,6 +44,7 @@ import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.database.scheduledWork
 import run.ostrom.server.kernel.events.OrgEventJournal
 import run.ostrom.server.kernel.events.OrgEventPublisher
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.module.OrgDeletionListener
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.network.outboundHttpClient
@@ -67,6 +69,8 @@ private val REQUEST_TIMEOUT = 10.seconds
  */
 object EventsModule : ServerModule {
     override val name: String = "events"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { eventsOperations() }
 
     override val koinModule: Module = module {
         single<OrgEventsRepository> { OrgEventsRepositoryImpl(get()) }

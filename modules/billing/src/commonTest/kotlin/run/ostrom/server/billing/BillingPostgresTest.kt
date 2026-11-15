@@ -31,6 +31,7 @@ import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.TokenAuthenticator
 import run.ostrom.server.kernel.settings.InstanceSettings
 import run.ostrom.server.kernel.settings.SettingsValues
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.HttpClient
@@ -134,6 +135,11 @@ class BillingPostgresTest {
                 ),
             )
         }
+    }
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(listOf(BillingModule), overrides) { server ->
+        server.assertApiCatalogue(BillingModule)
     }
 
     @Test
