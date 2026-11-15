@@ -163,4 +163,12 @@ val SessionsMigrations: List<SchemaMigration> = listOf(
             ADD COLUMN activity_observed_at TIMESTAMPTZ
         """.trimIndent(),
     ),
+    // The labels of the session's launch (`sessions.labels.v1`), TeamCode's `agent_run_labels`, copied when a segment
+    // opens so that `GET /sessions?label=` reads this table only. A JSON object in text: a filter casts it, bounded by
+    // the page's other conditions.
+    SchemaMigration(
+        8,
+        "sessions_labels",
+        "ALTER TABLE sessions_sessions ADD COLUMN labels TEXT NOT NULL DEFAULT '{}'",
+    ),
 )

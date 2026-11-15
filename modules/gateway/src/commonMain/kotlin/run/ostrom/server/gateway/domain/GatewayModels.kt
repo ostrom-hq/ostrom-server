@@ -185,6 +185,9 @@ object NoModelCallTracer : ModelCallTracer {
  *   same id.
  * @property reserveMicros What the call may cost at most, USD millionths ([BudgetCheck]); 0 when unpriced.
  * @property workflowId The workflow the call's launch plays, or null: that workflow's limits apply too.
+ * @property launchId The launch whose agent token made the call, or null.
+ * @property launchBudgetMicros The lifetime budget an administrator set on that launch, USD millionths, or null for
+ *   none: it applies besides the other limits.
  */
 data class SpendRequest(
     val orgId: Uuid,
@@ -192,6 +195,8 @@ data class SpendRequest(
     val callId: Uuid,
     val reserveMicros: Long,
     val workflowId: String? = null,
+    val launchId: String? = null,
+    val launchBudgetMicros: Long? = null,
 )
 
 /** Whether a member may spend now. */
@@ -214,6 +219,13 @@ sealed interface SpendDecision {
      * @property message Safe for the agent.
      */
     data class Insufficient(val message: String) : SpendDecision
+
+    /**
+     * No: the budget set on the call's launch is spent, or what is left of it does not cover this call.
+     *
+     * @property message Safe for the agent.
+     */
+    data class LaunchBudget(val message: String) : SpendDecision
 }
 
 /** Budgets as the gateway sees them; bound to the budgets module by the budgets wiring. */

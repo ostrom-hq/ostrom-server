@@ -11,6 +11,7 @@ import run.ostrom.server.kernel.auth.requirePrincipal
 import run.ostrom.server.kernel.errors.Pages
 import run.ostrom.server.kernel.http.ReadThrottle
 import run.ostrom.server.kernel.http.throttledReads
+import run.ostrom.server.kernel.launches.LaunchLabelRules
 import run.ostrom.server.sessions.domain.models.ActivityChange
 import run.ostrom.server.sessions.domain.models.EndSession
 import run.ostrom.server.sessions.domain.models.GateAnswer
@@ -47,7 +48,8 @@ fun Route.sessionsRoutes(dependencies: SessionsRoutesDependencies, throttle: Rea
             get<SessionsApi> { params ->
                 val actor = call.actor(actors, SessionScopes.reading)
                 val limit = Pages.size(params.limit, PAGE, SessionQuery.PAGE)
-                val query = SessionQuery(params.repo, params.dev, params.open, params.before, null, limit)
+                val labels = LaunchLabelRules.filter(params.label.orEmpty())
+                val query = SessionQuery(params.repo, params.dev, params.open, params.before, null, limit, labels)
                 val items = list(actor, query)
                 val next = if (items.size == query.limit) items.last().id else null
                 call.respond(SessionsPage(items.map { it.toDto() }, next))
@@ -154,6 +156,7 @@ internal fun Session.toDto(gates: List<String>? = null, gateAnswers: List<Sessio
     // only while the segment is open: after its end it would be a guess (TeamCode's run activity)
     activity = activity?.wire.takeIf { endedAt == null },
     activitySince = activityAt?.toString().takeIf { endedAt == null },
+    labels = labels.takeIf { it.isNotEmpty() },
 )
 
 private fun ActivityChange.toDto() = SessionActivityDto(id, state?.wire, since?.toString(), superseded)

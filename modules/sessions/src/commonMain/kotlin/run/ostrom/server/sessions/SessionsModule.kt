@@ -13,6 +13,7 @@ import run.ostrom.server.kernel.observability.CachedCount
 import run.ostrom.server.kernel.observability.OstromMetrics
 import run.ostrom.server.kernel.sessions.AgentSessions
 import run.ostrom.server.kernel.sessions.CloudAgentSessions
+import run.ostrom.server.kernel.sessions.LaunchLabels
 import run.ostrom.server.kernel.sessions.SessionEndListener
 import run.ostrom.server.receipts.domain.services.ReceiptOwners
 import run.ostrom.server.sessions.domain.repositories.SessionsRepository
@@ -70,7 +71,7 @@ object SessionsModule : ServerModule {
         single<CloseSessionUseCase> {
             CloseSessionUseCaseImpl(get(), get(), get(), get(), sessionCosts(), get())
         }
-        single { SessionSegments(get(), get(), get()) }
+        single { SessionSegments(get(), get(), get(), getOrNull<LaunchLabels>()) }
         single<StartSessionUseCase> { StartSessionUseCaseImpl(get(), get(), getOrNull<CloudAgentSessions>()) }
         single<EndSessionUseCase> { EndSessionUseCaseImpl(get(), get(), getAll<SessionEndListener>()) }
         single<AgentSessions> { SessionsAgentDirectory(get(), getOrNull<CloudAgentSessions>()) }
@@ -92,9 +93,15 @@ object SessionsModule : ServerModule {
         route.sessionsRoutes(koin.get(), koin.get())
     }
 
-    /** Agent sessions, and whether their agent works or waits for a person. */
-    override suspend fun features(koin: Koin): Set<String> =
-        setOf(ServerFeatures.SESSIONS, ServerFeatures.SESSIONS_ACTIVITY)
+    /**
+     * Agent sessions, whether their agent works or waits for a person, and, when the launches module gives the labels
+     * of a launch to copy, the labels of a session.
+     */
+    override suspend fun features(koin: Koin): Set<String> = buildSet {
+        add(ServerFeatures.SESSIONS)
+        add(ServerFeatures.SESSIONS_ACTIVITY)
+        if (koin.getOrNull<LaunchLabels>() != null) add(ServerFeatures.SESSIONS_LABELS)
+    }
 
     /**
      * Closes the lost sessions every 30 s, on one replica at a time (ScheduledWork); a failing run is logged and the

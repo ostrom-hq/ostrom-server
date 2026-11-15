@@ -1,79 +1,100 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.kernel
 
-import io.ktor.client.engine.HttpClientEngineFactory
-import io.ktor.client.engine.cio.CIO
-import io.ktor.client.engine.mock.MockEngine
-import io.ktor.client.engine.mock.MockEngineConfig
-import io.ktor.client.engine.mock.MockRequestHandler
-import io.ktor.client.engine.mock.respond
+import com.sun.net.httpserver.HttpServer
 import io.ktor.client.request.get
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
-import io.ktor.http.headersOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import run.ostrom.server.kernel.network.PinnedDnsRefusal
 import run.ostrom.server.kernel.network.outboundHttpClient
+import java.net.InetAddress
+import java.net.InetSocketAddress
 import kotlin.test.Test
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
-/** The client of a URL someone else supplied (TC-CODE-SEC-1, TC-GWY-17). */
+/** The client of a URL someone else supplied (TC-CODE-SEC-1, TC-GWY-17), against real receivers on the loopback. */
 class OutboundHttpClientTest {
     private fun realTime(block: suspend () -> Unit) = runTest {
         withContext(Dispatchers.Default) { withTimeout(30.seconds) { block() } }
     }
 
-    private fun mock(handler: MockRequestHandler) =
-        object : HttpClientEngineFactory<MockEngineConfig> {
-            override fun create(block: MockEngineConfig.() -> Unit) = MockEngine.create {
-                addHandler(handler)
-                block()
-            }
+    /** A receiver on the loopback; [onRequest] gets the `Host` header of each request. */
+    private fun serve(
+        status: Int = 200,
+        location: String? = null,
+        onRequest: (host: String) -> Unit = {},
+    ): Pair<HttpServer, Int> {
+        val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
+        server.createContext("/") { exchange ->
+            onRequest(exchange.requestHeaders.getFirst("Host").orEmpty())
+            location?.let { exchange.responseHeaders.add("Location", it) }
+            val body = "ok".encodeToByteArray()
+            exchange.sendResponseHeaders(status, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
         }
+        server.start()
+        return server to server.address.port
+    }
+
+    private val loopback = { _: String -> listOf(InetAddress.getLoopbackAddress()) }
 
     @Test
     fun aRedirectIsNotFollowedSoItsTargetIsNeverTried() = realTime {
-        var requests = 0
-        val client = outboundHttpClient(engine = mock {
-            requests++
-            val location = headersOf(HttpHeaders.Location, "https://169.254.169.254/latest/meta-data/")
-            respond("", HttpStatusCode.Found, location)
-        })
+        var hits = 0
+        val (target, targetPort) = serve { hits++ }
+        val (server, port) = serve(302, "http://127.0.0.1:$targetPort/")
+        val client = outboundHttpClient(allowPrivate = true)
         try {
-            val response = client.get("https://public.test/mcp")
+            val response = client.get("http://127.0.0.1:$port/")
             assertEquals(HttpStatusCode.Found, response.status)
-            assertEquals("https://169.254.169.254/latest/meta-data/", response.headers[HttpHeaders.Location])
-            assertEquals(1, requests)
+            assertContains(response.headers[HttpHeaders.Location].orEmpty(), "$targetPort")
+            assertEquals(0, hits)
         } finally {
             client.close()
+            server.stop(0)
+            target.stop(0)
         }
     }
 
     @Test
-    fun everyConnectionGoesThroughTheLocalCheck() = realTime {
-        val client = outboundHttpClient(engine = mock { respond("") })
-        try {
-            // Spelled differently per platform (java.net.Proxy on the JVM); the address is in it either way.
-            assertNotNull(PROXY.find(client.engine.config.proxy.toString()))
-        } finally {
-            client.close()
-        }
-    }
-
-    @Test
-    fun aPublicNameThatResolvesToTheMetadataAddressFailsTheRequestAfterOneLookup() = realTime {
+    fun aPublicNameThatResolvesToALoopbackAddressIsRefusedAtTheConnection() = realTime {
+        val hosts = mutableListOf<String>()
+        val (server, port) = serve { hosts += it }
         var lookups = 0
-        val client = outboundHttpClient(lookup = { lookups++; listOf("169.254.169.254") }, engine = CIO)
+        val client = outboundHttpClient(lookup = { lookups++; loopback(it) })
         try {
-            assertFailsWith<Exception> { client.get("https://metadata.test/latest/meta-data/") }
+            val failure = assertFailsWith<Exception> { client.get("http://rebind.example.test:$port/hook") }
+            assertTrue(generateSequence<Throwable>(failure) { it.cause }.any { it is PinnedDnsRefusal }, "$failure")
+            assertTrue(hosts.isEmpty(), "The refused answer is never dialled")
             assertEquals(1, lookups)
         } finally {
             client.close()
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun theConnectionDialsTheAddressItCheckedWithTheNameKeptInHost() = realTime {
+        val hosts = mutableListOf<String>()
+        val (server, port) = serve { hosts += it }
+        var lookups = 0
+        val client = outboundHttpClient(allowPrivate = true, lookup = { lookups++; loopback(it) })
+        try {
+            assertEquals("ok", client.get("http://receiver.example.test:$port/hook").bodyAsText())
+            assertEquals(listOf("receiver.example.test:$port"), hosts)
+            assertEquals(1, lookups, "One lookup per connection, the one that was checked")
+        } finally {
+            client.close()
+            server.stop(0)
         }
     }
 
@@ -82,11 +103,11 @@ class OutboundHttpClientTest {
         var lookups = 0
         val client = outboundHttpClient(
             allowPrivate = true,
-            lookup = { lookups++; listOf("169.254.169.254") },
-            engine = CIO,
+            lookup = { lookups++; listOf(InetAddress.getByName("169.254.169.254")) },
         )
         try {
-            assertFailsWith<Exception> { client.get("https://metadata.test/") }
+            val failure = assertFailsWith<Exception> { client.get("https://metadata.test/") }
+            assertTrue(generateSequence<Throwable>(failure) { it.cause }.any { it is PinnedDnsRefusal }, "$failure")
             assertEquals(1, lookups)
         } finally {
             client.close()
@@ -94,23 +115,9 @@ class OutboundHttpClientTest {
     }
 
     @Test
-    fun theDefaultEngineOfThePlatformIsConfiguredLikeTheOthers() = realTime {
-        val client = outboundHttpClient()
-        try {
-            assertNotNull(PROXY.find(client.engine.config.proxy.toString()))
-        } finally {
-            client.close()
-        }
-    }
-
-    private companion object {
-        val PROXY = Regex("127\\.0\\.0\\.1:(\\d+)")
-    }
-
-    @Test
     fun theCallerCanAddItsOwnSettingsLast() = realTime {
         var configured = false
-        outboundHttpClient(engine = mock { respond("") }, configure = { configured = true }).close()
+        outboundHttpClient(configure = { configured = true }).close()
         assertEquals(true, configured)
     }
 }

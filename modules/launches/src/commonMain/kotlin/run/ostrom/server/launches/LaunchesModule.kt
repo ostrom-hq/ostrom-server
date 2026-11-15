@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.launches
 
+import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.automations.domain.WaitAgentResolver
 import run.ostrom.server.gates.domain.services.GateActorResolver
 import run.ostrom.server.kernel.auth.AgentMembers
@@ -11,6 +12,7 @@ import run.ostrom.server.kernel.database.repeatDue
 import run.ostrom.server.kernel.database.scheduledWork
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.ServerModule
+import run.ostrom.server.kernel.sessions.LaunchLabels
 import run.ostrom.server.launches.domain.repositories.LaunchesRepository
 import run.ostrom.server.launches.domain.services.AgentTokenService
 import run.ostrom.server.launches.domain.services.CloudExecutions
@@ -23,16 +25,21 @@ import run.ostrom.server.launches.domain.usecases.CreateLaunchUseCase
 import run.ostrom.server.launches.domain.usecases.CreateLaunchUseCaseImpl
 import run.ostrom.server.launches.domain.usecases.EndLaunchUseCase
 import run.ostrom.server.launches.domain.usecases.EndLaunchUseCaseImpl
+import run.ostrom.server.launches.domain.usecases.GetLaunchLimitsUseCase
+import run.ostrom.server.launches.domain.usecases.GetLaunchLimitsUseCaseImpl
 import run.ostrom.server.launches.domain.usecases.LaunchPolicy
 import run.ostrom.server.launches.domain.usecases.OpenRunnerLaunchUseCase
 import run.ostrom.server.launches.domain.usecases.OpenRunnerLaunchUseCaseImpl
 import run.ostrom.server.launches.domain.usecases.ReportHooksMissingUseCase
 import run.ostrom.server.launches.domain.usecases.ReportHooksMissingUseCaseImpl
+import run.ostrom.server.launches.domain.usecases.SetLaunchLimitsUseCase
+import run.ostrom.server.launches.domain.usecases.SetLaunchLimitsUseCaseImpl
 import run.ostrom.server.launches.infrastructure.IdentityAgentTokens
 import run.ostrom.server.launches.infrastructure.LaunchAgentMembers
 import run.ostrom.server.launches.infrastructure.IdentityLauncherResolver
 import run.ostrom.server.launches.infrastructure.LaunchAgents
 import run.ostrom.server.launches.infrastructure.LaunchGateActors
+import run.ostrom.server.launches.infrastructure.LaunchLabelsDirectory
 import run.ostrom.server.launches.infrastructure.LaunchRelayCallers
 import run.ostrom.server.launches.infrastructure.LaunchWaitAgents
 import run.ostrom.server.launches.infrastructure.LaunchesMigrations
@@ -91,7 +98,12 @@ object LaunchesModule : ServerModule {
         single<OpenRunnerLaunchUseCase> { OpenRunnerLaunchUseCaseImpl(get(), get()) }
         single<EndLaunchUseCase> { EndLaunchUseCaseImpl(get()) }
         single<ReportHooksMissingUseCase> { ReportHooksMissingUseCaseImpl(get(), get()) }
-        single { LaunchesRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single<LaunchLabels> { LaunchLabelsDirectory(get()) }
+        single<GetLaunchLimitsUseCase> { GetLaunchLimitsUseCaseImpl(get(), getOrNull()) }
+        single<SetLaunchLimitsUseCase> { SetLaunchLimitsUseCaseImpl(get(), get(), get(), getOrNull()) }
+        single {
+            LaunchesRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
+        }
     }
 
     override val migrations: List<SchemaMigration> = LaunchesMigrations
@@ -132,6 +144,9 @@ object LaunchesModule : ServerModule {
             koin.loadModules(listOf(rules))
         }
     }
+
+    /** The limits of a launch (labels are announced by the sessions module, which filters on them). */
+    override suspend fun features(koin: Koin): Set<String> = setOf(ServerFeatures.LAUNCHES_LIMITS)
 
     override fun routes(route: Route, koin: Koin) {
         route.launchesRoutes(koin.get())

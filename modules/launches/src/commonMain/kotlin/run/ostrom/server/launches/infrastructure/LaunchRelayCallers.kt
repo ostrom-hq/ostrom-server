@@ -35,6 +35,7 @@ class LaunchRelayCallers(orgs: PrincipalOrgResolver, private val agents: LaunchA
                     MemberRole.MEMBER,
                     launchId = it.launch.id,
                     workflowId = it.launch.workflowId,
+                    caps = it.launch.caps.takeIf { caps -> caps.any },
                 )
             }
         } else {

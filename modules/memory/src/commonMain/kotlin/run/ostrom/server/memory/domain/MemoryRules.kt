@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.memory.domain
 
+import run.ostrom.server.kernel.text.TranscriptMask
 import kotlin.time.Instant
 
 /** The bounds of the memory and its write-time checks, TeamCode's `MemoryRules`. */
@@ -57,24 +58,20 @@ object MemoryRules {
     /**
      * Text that looks like a credential is refused at write time: a memory is read back into agents' contexts and, for
      * the organization's, by every member, so a secret stored once would be handed out for good. A filter of the common
-     * shapes (provider and Ostrom token prefixes, private keys, bearer headers, `password=value`), not a guarantee.
+     * shapes, not a guarantee: the shared [TranscriptMask.detect] (provider, GitHub, Ostrom, AWS and Slack tokens,
+     * JWTs, private keys, authorization values, credentials in URLs) plus the two shapes a memory refuses and a
+     * page does not: a bare `Authorization:` header and a `password=value` assignment.
      */
     private val secretShapes = listOf(
-        Regex("-----BEGIN [A-Z ]*PRIVATE KEY-----"),
-        Regex("""\b(sk-ant-|sk-proj-|sk-)[A-Za-z0-9_-]{20,}"""),
-        Regex("""\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}"""),
-        Regex("""\bgithub_pat_[A-Za-z0-9_]{20,}"""),
-        Regex("""\bxox[abprs]-[A-Za-z0-9-]{10,}"""),
-        Regex("""\bAKIA[0-9A-Z]{16}\b"""),
-        // Ostrom's credentials: a prefix of the identity module, then at least 32 random URL-safe characters (a
-        // snake_case name such as `ost_migration_2026` is no credential).
-        Regex("""\b(osa|osb|osc|osg|osm|osp|oss|ost|opk)_[A-Za-z0-9_-]{32,}"""),
         Regex("""(?i)\bauthorization:\s*(bearer|basic)\s+\S{16,}"""),
         Regex(
             """(?i)\b(password|passwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token)""" +
                 """\s*[:=]\s*["']?[^\s"']{12,}""",
         ),
     )
+
+    private fun looksLikeCredential(text: String): Boolean =
+        TranscriptMask.detect(text) != null || secretShapes.any { it.containsMatchIn(text) }
 
     /**
      * Checks an entry's fields.
@@ -111,7 +108,7 @@ object MemoryRules {
             "Use at most $REFS_LIMIT references of 1 to $REF_LENGTH characters."
         }
         valid(expiresAt == null || expiresAt > now) { "An expiry must be in the future." }
-        if ((listOf(title, summary, content) + refs).any { text -> secretShapes.any { it.containsMatchIn(text) } }) {
+        if ((listOf(title, summary, content) + refs).any { looksLikeCredential(it) }) {
             throw MemorySecretException()
         }
     }

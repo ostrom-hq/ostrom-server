@@ -2,6 +2,7 @@
 package run.ostrom.server.gateway.domain
 
 import kotlin.math.roundToLong
+import kotlin.uuid.Uuid
 
 /**
  * A price per million tokens, in USD millionths.
@@ -12,6 +13,8 @@ import kotlin.math.roundToLong
  * @property cacheWrite Input written to the cache.
  * @property cacheRead Input read from the cache.
  * @property output Output.
+ * @property effectiveFromDay The UTC day number (days since 1970-01-01) from which the row applies, until a later row
+ *   of the same model (TeamCode's `api_prices.effective_from_day`); the built-in rows carry the day they were read.
  */
 data class ModelPrice(
     val provider: String,
@@ -20,15 +23,19 @@ data class ModelPrice(
     val cacheWrite: Long,
     val cacheRead: Long,
     val output: Long,
+    val effectiveFromDay: Long = 0,
 )
 
 /**
- * Equivalent API cost of a call. An exact model wins over the longest prefix. Models without a row are unpriced (cost
- * 0, flagged), never guessed.
+ * Equivalent API cost of a call. An exact model wins over the longest prefix, then the latest row. Models without a row
+ * are unpriced (cost 0, flagged), never guessed. As an [OrgPrices] it prices every org the same: the built-in table,
+ * or a fixed one in a test; [DatabaseOrgPrices] reads the org's own.
  *
  * @param prices The rows.
  */
-class PriceTable(private val prices: List<ModelPrice> = ANTHROPIC_LIST_PRICES) {
+class PriceTable(private val prices: List<ModelPrice> = ANTHROPIC_LIST_PRICES) : OrgPrices {
+    override suspend fun of(orgId: Uuid): PriceTable = this
+
     /** The cost in USD millionths, or null when no row prices the model. */
     fun costMicros(provider: InferenceProvider, model: String, usage: TokenUsage): Long? =
         priceOf(provider, model)?.let {
@@ -40,7 +47,7 @@ class PriceTable(private val prices: List<ModelPrice> = ANTHROPIC_LIST_PRICES) {
     fun priceOf(provider: InferenceProvider, model: String): ModelPrice? {
         val served = model.lowercase()
         return prices.filter { it.provider == provider.family && served.startsWith(it.model) }
-            .maxWithOrNull(compareBy<ModelPrice>({ it.model == served }, { it.model.length }))
+            .maxWithOrNull(compareBy<ModelPrice>({ it.model == served }, { it.model.length }, { it.effectiveFromDay }))
     }
 
     private fun cost(count: Long, perMillion: Long): Long = (count.toDouble() * perMillion / PER_MILLION).roundToLong()
@@ -49,8 +56,11 @@ class PriceTable(private val prices: List<ModelPrice> = ANTHROPIC_LIST_PRICES) {
     companion object {
         private const val PER_MILLION = 1_000_000.0
 
+        /** 2026-10-21 as a UTC day number: the day [ANTHROPIC_LIST_PRICES] were read. */
+        const val LIST_PRICES_DAY: Long = 20_747
+
         private fun anthropic(model: String, input: Long, cacheWrite: Long, cacheRead: Long, output: Long) =
-            ModelPrice("anthropic", model, input, cacheWrite, cacheRead, output)
+            ModelPrice("anthropic", model, input, cacheWrite, cacheRead, output, LIST_PRICES_DAY)
 
         /**
          * Anthropic's pay-as-you-go list prices read on 2026-10-21 from

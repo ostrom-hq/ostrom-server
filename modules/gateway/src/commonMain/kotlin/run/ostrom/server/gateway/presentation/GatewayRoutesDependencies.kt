@@ -2,9 +2,12 @@
 package run.ostrom.server.gateway.presentation
 
 import run.ostrom.server.gateway.domain.CancelInferenceRequestUseCase
+import run.ostrom.server.gateway.domain.GetApiPricesUseCase
 import run.ostrom.server.gateway.domain.GetGatewaySettingsUseCase
 import run.ostrom.server.gateway.domain.GetInferenceQueueUseCase
 import run.ostrom.server.gateway.domain.GetModelPolicyUseCase
+import run.ostrom.server.gateway.domain.LoadApiPriceDefaultsUseCase
+import run.ostrom.server.gateway.domain.PutApiPricesUseCase
 import run.ostrom.server.gateway.domain.PutGatewaySettingsUseCase
 import run.ostrom.server.gateway.domain.PutModelPolicyUseCase
 import run.ostrom.server.gateway.domain.RelayInferenceUseCase
@@ -27,6 +30,9 @@ import kotlin.time.Clock
  * @property audit Writes a change of the policy or the settings to the organization's audit log.
  * @property getQueue Reads the admission queue's waiting calls.
  * @property cancel Stops one of the caller's inference calls.
+ * @property getApiPrices Reads the org's price table.
+ * @property putApiPrices Replaces it.
+ * @property loadApiPriceDefaults Adds the built-in prices to it.
  */
 data class GatewayRoutesDependencies(
     val tokens: TokenAuthenticator,
@@ -40,4 +46,7 @@ data class GatewayRoutesDependencies(
     val audit: OrgAuditTrail,
     val getQueue: GetInferenceQueueUseCase,
     val cancel: CancelInferenceRequestUseCase,
+    val getApiPrices: GetApiPricesUseCase,
+    val putApiPrices: PutApiPricesUseCase,
+    val loadApiPriceDefaults: LoadApiPriceDefaultsUseCase,
 )

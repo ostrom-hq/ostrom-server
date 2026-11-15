@@ -3,7 +3,11 @@ package run.ostrom.server.sharing
 
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.kernel.auth.MemberLogins
+import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.database.repeatDue
+import run.ostrom.server.kernel.database.scheduledWork
+import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.settings.InstanceSettings
 import run.ostrom.server.kernel.settings.SettingsSection
@@ -18,6 +22,8 @@ import run.ostrom.server.sharing.domain.AccountTokens
 import run.ostrom.server.sharing.domain.CredentialSecrets
 import run.ostrom.server.sharing.domain.EnrollSharedAccountUseCase
 import run.ostrom.server.sharing.domain.EnrollSharedAccountUseCaseImpl
+import run.ostrom.server.sharing.domain.ForecastService
+import run.ostrom.server.sharing.domain.ForecastServiceImpl
 import run.ostrom.server.sharing.domain.GroupMembersUseCase
 import run.ostrom.server.sharing.domain.GroupMembersUseCaseImpl
 import run.ostrom.server.sharing.domain.GroupRepository
@@ -32,6 +38,7 @@ import run.ostrom.server.sharing.domain.NoAccountSpendReader
 import run.ostrom.server.sharing.domain.NoMemberLogins
 import run.ostrom.server.sharing.domain.OAuthRefresher
 import run.ostrom.server.sharing.domain.QuotaHeaderParser
+import run.ostrom.server.sharing.domain.QuotaHistoryRepository
 import run.ostrom.server.sharing.domain.QuotaWindowRepository
 import run.ostrom.server.sharing.domain.RemoveSharedAccountUseCase
 import run.ostrom.server.sharing.domain.RemoveSharedAccountUseCaseImpl
@@ -49,22 +56,30 @@ import run.ostrom.server.sharing.infrastructure.AccountSlotRepositoryImpl
 import run.ostrom.server.sharing.infrastructure.GroupRepositoryImpl
 import run.ostrom.server.sharing.infrastructure.HttpOAuthRefresher
 import run.ostrom.server.sharing.infrastructure.ProviderQuotaHeaderParser
+import run.ostrom.server.sharing.infrastructure.QuotaHistoryRepositoryImpl
 import run.ostrom.server.sharing.infrastructure.QuotaWindowRepositoryImpl
 import run.ostrom.server.sharing.infrastructure.SecretsCredentialSecrets
 import run.ostrom.server.sharing.infrastructure.SharedAccountRepositoryImpl
 import run.ostrom.server.sharing.infrastructure.SharingMigrations
+import run.ostrom.server.sharing.presentation.ForecastRoutesDependencies
 import run.ostrom.server.sharing.presentation.GroupRoutesDependencies
 import run.ostrom.server.sharing.presentation.SharingRoutesDependencies
+import run.ostrom.server.sharing.presentation.forecastRoutes
 import run.ostrom.server.sharing.presentation.groupRoutes
 import run.ostrom.server.sharing.presentation.sharingRoutes
 import io.ktor.client.HttpClient
 import io.ktor.server.routing.Route
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.core.scope.Scope
 import org.koin.dsl.module
 import org.koin.dsl.onClose
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The sharing module: members pool their personal subscriptions (Claude Pro/Max, ChatGPT for Codex), on by choice of
@@ -85,6 +100,7 @@ object SharingModule : ServerModule {
         } onClose { it?.close() } // Its selector holds a thread of Dispatchers.IO until then (StoppedApplicationsTest).
         single<SharedAccountRepository> { SharedAccountRepositoryImpl(get()) }
         single<QuotaWindowRepository> { QuotaWindowRepositoryImpl(get()) }
+        single<QuotaHistoryRepository> { QuotaHistoryRepositoryImpl(get(), get()) }
         single { AccountTokenCipher(get()) }
         // The token endpoints an administrator sets in the console (the admin module collects every bound section).
         single<SettingsSection>(named(SharingSettings.SECTION.name)) { SharingSettings.SECTION }
@@ -101,7 +117,7 @@ object SharingModule : ServerModule {
         single { AccountTokens(get(), get(), get(), get(), get()) }
         single<AccountGroups> { AccountGroupsImpl(get()) }
         single<AccountSlotRepository> { AccountSlotRepositoryImpl(get()) }
-        single { SharedAccountPool(get(), get(), get(), get(), get(), spend(), get(), get(), get()) }
+        single { SharedAccountPool(get(), get(), get(), get(), get(), spend(), get(), get(), get(), get()) }
         single<ShareAccountUseCase> { ShareAccountUseCaseImpl(get(), get(), get()) }
         single { MemberNames(logins(), get()) }
         single<ListSharedAccountsUseCase> {
@@ -116,6 +132,10 @@ object SharingModule : ServerModule {
         single<GroupRepository> { GroupRepositoryImpl(get()) }
         single<GroupsUseCase> { GroupsUseCaseImpl(get(), get(), logins(), get()) }
         single<GroupMembersUseCase> { GroupMembersUseCaseImpl(get(), logins()) }
+        single<ForecastService> { ForecastServiceImpl(get(), get(), get(), get()) }
+        single {
+            ForecastRoutesDependencies(getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get()), get())
+        }
         single {
             GroupRoutesDependencies(getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get()), get(), get())
         }
@@ -145,9 +165,37 @@ object SharingModule : ServerModule {
     override fun routes(route: Route, koin: Koin) {
         route.sharingRoutes(koin.get())
         route.groupRoutes(koin.get())
+        route.forecastRoutes(koin.get())
     }
 
-    /** Shared accounts, their capacity and the groups they are shared with, and their refresh-ownership handover. */
+    /** The prune of the quota history, each minute, one replica at a time (TeamCode's admission maintenance). */
+    val QUOTA_HISTORY_PRUNE: ScheduledJob = ScheduledJob("sharing/quota-history", 1.minutes, 45.seconds)
+
+    // Each minute, the readings older than seven days are deleted, at most 1,000 a pass (TeamCode's `maintain`). A
+    // failed pass is logged and tried again the next minute; it never stops the server.
+    override fun start(scope: CoroutineScope, koin: Koin) {
+        val history = koin.get<QuotaHistoryRepository>()
+        val clock = koin.get<Clock>()
+        val logger = koin.get<Logger>()
+        val work = koin.scheduledWork()
+        scope.launch {
+            work.repeatDue(QUOTA_HISTORY_PRUNE, logger, "quota history prune failed") {
+                history.prune(
+                    clock.now() - QuotaHistoryRepository.QUOTA_HISTORY_RETENTION,
+                    QuotaHistoryRepository.PRUNE_BATCH,
+                )
+            }
+        }
+    }
+
+    /**
+     * Shared accounts, their capacity and the groups they are shared with, their refresh-ownership handover, and the
+     * quota forecasts.
+     */
     override suspend fun features(koin: Koin): Set<String> =
-        setOf(ServerFeatures.SHARING, ServerFeatures.SHARING_HANDOVER)
+        setOf(
+            ServerFeatures.SHARING,
+            ServerFeatures.SHARING_HANDOVER,
+            ServerFeatures.CAPACITY_FORECASTS,
+        )
 }

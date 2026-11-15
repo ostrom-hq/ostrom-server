@@ -4,7 +4,10 @@ package run.ostrom.server.notifications.presentation
 import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
 
-/** `/api/v1/push-devices` (contract `registerPushDevice`): the caller's phones in their organization. */
+/**
+ * `/api/v1/push-devices` (contract `registerPushDevice`, `listPushDevices`): the caller's phones in their
+ * organization.
+ */
 @Serializable
 @Resource("/api/v1/push-devices")
 class PushDevicesApi {
@@ -54,3 +57,11 @@ data class PushDeviceDto(
     val locale: String? = null,
     val createdAt: String,
 )
+
+/**
+ * The caller's phones (contract `PushDeviceList`).
+ *
+ * @property items The phones, the most recently seen first.
+ */
+@Serializable
+data class PushDeviceListDto(val items: List<PushDeviceDto>)

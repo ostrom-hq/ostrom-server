@@ -42,8 +42,15 @@ class LedgerSpendGuard(
         val month = BudgetPeriod.of(now)
         val day = BudgetPeriod.day(now)
         val answer = when (val decided = guard.check(request.orgId, request.memberId, request.workflowId)) {
-            // No limit that stops applies.
-            BudgetDecision.Allowed(null) -> Admission.Admitted
+            // No limit that stops applies, but the launch's own budget may.
+            BudgetDecision.Allowed(null) -> {
+                val budget = request.launchBudgetMicros
+                if (budget == null) {
+                    Admission.Admitted
+                } else {
+                    admission.admit(hold(request), SpendLimits(null, null, null, null, budget), month.start)
+                }
+            }
             is BudgetDecision.Exhausted ->
                 Admission.Exhausted(
                     decided.scope.toSpendScope(),
@@ -51,8 +58,9 @@ class LedgerSpendGuard(
                     decided.window == BudgetWindow.DAY,
                 )
             else -> admission.admit(
-                SpendHold(request.orgId, request.memberId, request.callId, request.reserveMicros, request.workflowId),
-                repository.limits(request.orgId, request.memberId, request.workflowId).stopping(day.start),
+                hold(request),
+                repository.limits(request.orgId, request.memberId, request.workflowId).stopping(day.start)
+                    .copy(launchMicros = request.launchBudgetMicros),
                 month.start,
             )
         }
@@ -60,6 +68,15 @@ class LedgerSpendGuard(
     }
 
     override suspend fun release(orgId: Uuid, callId: Uuid) = admission.release(orgId, callId)
+
+    private fun hold(request: SpendRequest) = SpendHold(
+        request.orgId,
+        request.memberId,
+        request.callId,
+        request.reserveMicros,
+        request.workflowId,
+        request.launchId,
+    )
 
     /** The limits that stop, for the ledger: those that warn never refuse a call. */
     private fun BudgetLimits.stopping(dayStart: Instant): SpendLimits {
@@ -89,7 +106,9 @@ class LedgerSpendGuard(
     private fun Admission.toDecision(month: BudgetPeriod, day: BudgetPeriod, reserve: Long): SpendDecision =
         when (this) {
             Admission.Admitted -> SpendDecision.Allowed
-            is Admission.Exhausted -> if (daily) {
+            is Admission.Exhausted -> if (scope == SpendScope.LAUNCH) {
+                SpendDecision.LaunchBudget("$LAUNCH_EXHAUSTED: this launch's budget of ${usd(limitMicros)} is spent.")
+            } else if (daily) {
                 SpendDecision.Exhausted(
                     "$EXHAUSTED_TODAY: ${scope.owner()} limit of ${usd(limitMicros)} a day is spent; it resets on " +
                         "${day.end.date()}.",
@@ -102,7 +121,13 @@ class LedgerSpendGuard(
                     month.end,
                 )
             }
-            is Admission.Insufficient -> {
+            is Admission.Insufficient -> if (scope == SpendScope.LAUNCH) {
+                SpendDecision.LaunchBudget(
+                    "$LAUNCH_INSUFFICIENT: ${usd(availableMicros)} is left of this launch's budget of " +
+                        "${usd(limitMicros)} and this call may cost up to ${usd(reserve, up = true)}. Lower its " +
+                        "max_tokens, or ask an administrator to raise the budget.",
+                )
+            } else {
                 val per = if (daily) "daily" else "monthly"
                 SpendDecision.Insufficient(
                     "$INSUFFICIENT: ${usd(availableMicros)} is left of ${scope.owner()} ${usd(limitMicros)} $per " +
@@ -115,7 +140,8 @@ class LedgerSpendGuard(
     private fun SpendScope.owner(): String = when (this) {
         SpendScope.ORG -> "your organization's"
         SpendScope.MEMBER -> "your"
-        SpendScope.WORKFLOW -> "this workflow's"
+        // A launch's budget has its own refusal, which never asks for an owner.
+        else -> "this workflow's"
     }
 
     /**
@@ -146,6 +172,12 @@ class LedgerSpendGuard(
 
         /** A daily limit is spent: nothing more today. */
         const val EXHAUSTED_TODAY: String = "Daily budget reached"
+
+        /** A launch's budget is spent. */
+        const val LAUNCH_EXHAUSTED: String = "Launch budget reached"
+
+        /** What is left of a launch's budget does not cover this call. */
+        const val LAUNCH_INSUFFICIENT: String = "Launch budget left too low for this call"
 
         /** What is left does not cover this call. */
         const val INSUFFICIENT: String = "Budget left too low for this call"

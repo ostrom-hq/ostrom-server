@@ -23,8 +23,13 @@ class LaunchesModuleRegistrationTest {
     @Test
     fun registersUnderItsNameWithDefinitionsThatLoad() {
         assertEquals("launches", LaunchesModule.name)
-        assertEquals(7, LaunchesModule.migrations.size)
+        assertEquals(8, LaunchesModule.migrations.size)
         koinApplication { modules(LaunchesModule.koinModule) }.close()
+    }
+
+    @Test
+    fun itAnnouncesTheLimitsOfALaunch() = runTest {
+        assertEquals(setOf("launches.limits.v1"), LaunchesModule.features(koinApplication { }.koin))
     }
 
     @Test

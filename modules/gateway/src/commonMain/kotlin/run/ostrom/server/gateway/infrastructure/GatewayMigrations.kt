@@ -93,4 +93,33 @@ val GatewayMigrations: List<SchemaMigration> = listOf(
         name = "gateway_unlimited_member_concurrency",
         sql = "UPDATE gateway_settings SET member_concurrency = '{}'",
     ),
+    // A launch's `maxConcurrent` (`launches.limits.v1`): a call names its launch, and the calls it runs are counted.
+    SchemaMigration(
+        version = 6,
+        name = "gateway_admissions_name_the_launch",
+        sql = """
+            ALTER TABLE gateway_admissions ADD COLUMN launch_id TEXT;
+            CREATE INDEX gateway_admissions_launch ON gateway_admissions (org_id, launch_id, running)
+                WHERE launch_id IS NOT NULL
+        """.trimIndent(),
+    ),
+    // The org's API price table (TeamCode's `api_prices`, ADR 0002 step 1): empty means the built-in prices apply. At
+    // most 200 rows an org, read whole by the primary key's prefix.
+    SchemaMigration(
+        version = 7,
+        name = "create_gateway_api_prices",
+        sql = """
+            CREATE TABLE gateway_api_prices (
+                org_id UUID NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                effective_from_day BIGINT NOT NULL,
+                input_micros BIGINT NOT NULL,
+                cache_write_micros BIGINT NOT NULL,
+                cache_read_micros BIGINT NOT NULL,
+                output_micros BIGINT NOT NULL,
+                PRIMARY KEY (org_id, provider, model, effective_from_day)
+            )
+        """.trimIndent() + ";\n" + tenantTableSql("gateway_api_prices"),
+    ),
 )

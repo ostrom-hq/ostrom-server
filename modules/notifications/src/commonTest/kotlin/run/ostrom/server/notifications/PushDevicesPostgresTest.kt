@@ -23,6 +23,7 @@ import run.ostrom.server.kernel.module.OrgDeletionListener
 import run.ostrom.server.notifications.domain.PushDevice
 import run.ostrom.server.notifications.domain.PushDevicesRepository
 import run.ostrom.server.notifications.presentation.PushDeviceDto
+import run.ostrom.server.notifications.presentation.PushDeviceListDto
 import run.ostrom.server.notifications.presentation.PushDeviceRequest
 import run.ostrom.server.orgs.OrgsModule
 import run.ostrom.server.orgs.domain.Member
@@ -35,6 +36,7 @@ import io.github.smyrgeorge.sqlx4k.Transaction
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.delete
+import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -57,9 +59,10 @@ import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * `POST /api/v1/push-devices` and `DELETE /api/v1/push-devices/{id}` on the real identity, orgs and notifications
- * modules and PostgreSQL, as the serving role: the phone app registers its phone and removes it, the push token never
- * comes back, another organization neither sees nor removes it, and only a person's phone or browser may register.
+ * `POST` and `GET /api/v1/push-devices` and `DELETE /api/v1/push-devices/{id}` on the real identity, orgs and
+ * notifications modules and PostgreSQL, as the serving role: the phone app registers its phone, lists its phones and
+ * removes it, the push token never comes back, another organization neither sees nor removes it, and only a
+ * person's phone or browser may register.
  */
 class PushDevicesPostgresTest {
     private val modules = listOf(InstanceModule, IdentityModule, OrgsModule, NotificationsModule)
@@ -113,6 +116,11 @@ class PushDevicesPostgresTest {
             org?.let { header(ORG_HEADER, it.toString()) }
         }
 
+    private suspend fun TestServer.phones(token: String?, org: Uuid? = null): HttpResponse = client.get(base) {
+        token?.let(::bearerAuth)
+        org?.let { header(ORG_HEADER, it.toString()) }
+    }
+
     /** The phones a query of [org]'s transaction sees, or of no organization's. */
     private suspend fun TestServer.phonesSeen(org: Uuid?): Int {
         val count: suspend (Transaction) -> Int = { tx ->
@@ -163,6 +171,29 @@ class PushDevicesPostgresTest {
     }
 
     @Test
+    fun aMemberListsTheirOwnPhonesTheMostRecentlySeenFirstWithoutTokensAndNobodyElses() = serverTest(modules) {
+        val mia = it.person("mia")
+        val tom = it.person("tom")
+        val key = phoneKey()
+        assertEquals(emptyList(), it.phones(mia.phone).body<PushDeviceListDto>().items, "No phone yet")
+        val first = it.register(mia.phone, PushDeviceRequest(FCM_TOKEN, "fcm", "ios", "fr-FR", key))
+            .body<PushDeviceDto>()
+        val second = it.register(mia.phone, PushDeviceRequest("$FCM_TOKEN-2", "fcm", "android", null, key))
+            .body<PushDeviceDto>()
+        it.register(tom.phone, PushDeviceRequest("$FCM_TOKEN-tom", "fcm", "ios", publicKey = key))
+
+        val listed = it.phones(mia.phone)
+        assertEquals(HttpStatusCode.OK, listed.status, listed.bodyAsText())
+        assertEquals(listOf(second, first), listed.body<PushDeviceListDto>().items, "Her two phones, newest first")
+        assertFalse(listed.bodyAsText().contains(FCM_TOKEN), "The push token stays on the server")
+        assertFalse(listed.bodyAsText().contains(key), "The public key stays on the server too")
+        assertEquals(1, it.phones(tom.phone).body<PushDeviceListDto>().items.size, "Tom lists his own only")
+        assertEquals(HttpStatusCode.NoContent, it.remove(mia.phone, first.id).status)
+        assertEquals(listOf(second), it.phones(mia.phone).body<PushDeviceListDto>().items, "A removed phone is gone")
+        assertEquals(HttpStatusCode.NotFound, it.phones(tom.phone, mia.orgId).status, "Not tom's organization")
+    }
+
+    @Test
     fun anotherOrganizationNeitherRemovesNorSeesThePhone() = serverTest(modules) {
         val mia = it.person("mia")
         val tom = it.person("tom")
@@ -184,6 +215,8 @@ class PushDevicesPostgresTest {
 
         assertEquals(HttpStatusCode.Unauthorized, it.register(null, phone).status)
         assertEquals(HttpStatusCode.Unauthorized, it.remove(null, Uuid.random().toString()).status)
+        assertEquals(HttpStatusCode.Unauthorized, it.phones(null).status)
+        assertEquals(HttpStatusCode.Forbidden, it.phones(mia.cli).status, "A CLI token never lists")
         assertEquals(HttpStatusCode.Forbidden, it.register(mia.cli, phone).status, "A CLI token never registers")
         assertEquals(HttpStatusCode.Forbidden, it.remove(mia.cli, Uuid.random().toString()).status)
         assertEquals(HttpStatusCode.BadRequest, it.register(mia.phone, phone.copy(provider = "apns")).status)
@@ -206,6 +239,8 @@ class PushDevicesPostgresTest {
         assertEquals(HttpStatusCode.Conflict, it.register(mia.phone, phone).status, "Which organization?")
         assertEquals(HttpStatusCode.Created, it.register(mia.phone, phone, second.id).status)
         assertEquals(HttpStatusCode.Created, it.register(mia.phone, phone, mia.orgId).status, "One per organization")
+        assertEquals(HttpStatusCode.Conflict, it.phones(mia.phone).status, "Which organization?")
+        assertEquals(1, it.phones(mia.phone, second.id).body<PushDeviceListDto>().items.size)
         it.koin.get<OrgDeletionListener>(named("notifications")).deleted(second.id)
         assertEquals(0 to 1, it.phonesSeen(second.id) to it.phonesSeen(mia.orgId))
     }

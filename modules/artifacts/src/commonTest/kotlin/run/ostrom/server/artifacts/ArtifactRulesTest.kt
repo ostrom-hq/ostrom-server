@@ -61,7 +61,7 @@ class ArtifactRulesTest {
     @Test
     fun secretsAreFoundInTextOnly() {
         listOf(
-            "sk-ant-" + "a".repeat(30),
+            "sk-ant-" + "a1".repeat(15),
             "-----BEGIN RSA PRIVATE KEY-----",
             "AKIA" + "A".repeat(16),
             "ostrom_pat_" + "a".repeat(32),

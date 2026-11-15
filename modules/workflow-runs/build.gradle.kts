@@ -23,6 +23,7 @@ kotlin {
             implementation(project(":testing"))
             implementation(project(":modules:instance"))
             implementation(project(":modules:orgs"))
+            implementation(project(":modules:secrets"))
         }
     }
 }

@@ -127,6 +127,7 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/devices" to Case.Target(),
     "DELETE /api/v1/devices/{id}" to target("id" to DEVICE),
     "POST /api/v1/push-devices" to Case.Own("registers the caller's phone"),
+    "GET /api/v1/push-devices" to Case.Own("lists the caller's own phones"),
     "DELETE /api/v1/push-devices/{id}" to target("id" to PUSH_DEVICE),
     "GET /api/v1/notifications/settings" to Case.Own("reads the caller's own switches"),
     "PUT /api/v1/notifications/settings" to Case.Own("changes the caller's own switches"),
@@ -198,6 +199,11 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "POST /api/v1/accounts/{id}/handover" to target("id" to ACCOUNT),
     "POST /api/v1/accounts/{id}/access-only" to target("id" to ACCOUNT),
     "GET /api/v1/capacity" to Case.Target(),
+    // The quota forecasts of one account (capacity.forecasts.v1): B's account, named in the query, read by A's admin.
+    "GET /api/v1/forecasts" to Case.Target(query = "account={{ACCOUNT}}", admin = true),
+    "GET /api/v1/policy/api-prices" to Case.Target(),
+    "PUT /api/v1/policy/api-prices" to Case.Target(body = """{"prices": []}""", admin = true),
+    "POST /api/v1/policy/api-prices/load-defaults" to Case.Target(admin = true),
     "GET /api/v1/policy/models" to Case.Target(),
     "PUT /api/v1/policy/models" to Case.Target(body = """{"default": ["claude-sonnet-4-5"]}""", admin = true),
     "GET /api/v1/inference/queue" to Case.Target(),
@@ -472,6 +478,9 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/policy/agents" to Case.Target(),
     "POST /api/v1/launches" to Case.Target(body = """{"repo": "acme/api", "agent": "claude-code"}"""),
     "DELETE /api/v1/launches/{launchId}" to target("launchId" to LAUNCH),
+    "GET /api/v1/launches/{launchId}/limits" to target("launchId" to LAUNCH),
+    "PUT /api/v1/launches/{launchId}/limits" to
+        target("launchId" to LAUNCH, body = """{"budgetMicros": 0, "maxConcurrent": 0, "paused": false}"""),
     "POST /api/v1/launches/{launchId}/hooks-missing" to
         target("launchId" to LAUNCH, body = """{"waitedSeconds": 30, "stopped": false}"""),
     "GET /api/v1/sessions" to Case.Target(),

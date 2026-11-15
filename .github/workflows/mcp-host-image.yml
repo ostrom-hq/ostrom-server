@@ -1,7 +1,7 @@
 name: MCP host image
 
 # Builds the MCP stdio host image (mcp-host/Dockerfile, docs/mcp-host.md) for amd64 and arm64, checks its contract
-# (scripts/smoke-mcp-host-image.py: probes, token, protocol, real npx and uvx servers, SIGTERM) and pushes it to GHCR:
+# (scripts/smoke-mcp-host-image.py: probes, token, protocol, real npx and uvx servers, SIGTERM) and pushes it to Docker Hub (docker.io/ostromhq/ostrom-mcp-host):
 # `latest` and the SHA from main, the version from a release tag, the server's, since both are deployed at the same
 # version. Pull requests stay on the one `ci` job (org CI rules), which builds and tests :mcp-host; a branch is
 # checked by a manual run, which never pushes.
@@ -33,7 +33,6 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
-      packages: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -63,14 +62,13 @@ jobs:
       - name: Image for arm64
         run: docker buildx build --platform linux/arm64 mcp-host
 
-      - name: Push to GHCR
+      - name: Push to Docker Hub
         if: github.ref == 'refs/heads/main' || github.ref_type == 'tag'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ACTOR: ${{ github.actor }}
+          DOCKER_HUB_PASSWORD: ${{ secrets.DOCKER_HUB_PASSWORD }}
           SHA: ${{ github.sha }}
-          IMAGE: ghcr.io/ostrom-hq/ostrom-mcp-host
+          IMAGE: docker.io/ostromhq/ostrom-mcp-host
         run: |
-          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          echo "$DOCKER_HUB_PASSWORD" | docker login docker.io -u ostromhq --password-stdin
           if [ "${GITHUB_REF_TYPE}" = tag ]; then set -- --tag "$IMAGE:$HOST_VERSION"; else set -- --tag "$IMAGE:$SHA" --tag "$IMAGE:latest"; fi
           docker buildx build --platform linux/amd64,linux/arm64 "$@" --push mcp-host

@@ -121,6 +121,36 @@ class AdmissionQueuePostgresTest {
     }
 
     @Test
+    fun aLaunchAtItsLimitWaitsOnEitherReplicaWhateverItsMemberRunsElsewhere() = serverTest(modules, overrides) {
+        val (one, two) = it.replicas()
+        fun launched(member: Uuid, launch: String, limit: Int? = 1) = AdmissionRequest(
+            Uuid.random(), Gw.orgA, member, "claude", Workload.INTERACTIVE, null, emptySet(), launch, limit,
+        )
+        val first = launched(ada, "lch_1")
+        assertEquals(AdmissionEntry.Admitted, one.enter(first, first = true))
+        val second = launched(ada, "lch_1")
+        assertEquals(AdmissionEntry.Waiting(blocked = true), two.enter(second, first = true), "The launch is full")
+        assertEquals(
+            AdmissionEntry.Admitted,
+            two.enter(launched(ada, "lch_2"), first = true),
+            "Another launch of the same member is not held back",
+        )
+        val uncapped = launched(ada, "lch_1", limit = null)
+        assertEquals(AdmissionEntry.Admitted, one.enter(uncapped, first = true), "A call without a cap runs")
+        one.release(Gw.orgA, uncapped.id)
+        assertEquals(AdmissionEntry.Waiting(blocked = true), one.enter(second, first = false))
+        one.release(Gw.orgA, first.id)
+        assertEquals(AdmissionEntry.Admitted, two.enter(second, first = false), "The launch's call ended")
+
+        assertEquals(AdmissionEntry.Admitted, one.enter(launched(bob, "lch_3"), first = true))
+        repeat(AdmissionQueueRepository.MEMBER_BOUND) {
+            assertEquals(AdmissionEntry.Waiting(blocked = true), one.enter(launched(bob, "lch_3"), first = true))
+        }
+        val full = assertFailsWith<QueueRefusedException> { two.enter(launched(bob, "lch_3"), first = true) }
+        assertEquals(RefusalKind.QUEUE_FULL, full.kind, "A member whose launch is capped has the member's bound")
+    }
+
+    @Test
     fun withoutALimitAmongTheWaitingCallsEveryArrivalRunsButTheBoundsHold() = serverTest(modules, overrides) { server ->
         // TeamCode #87: with 0 (unlimited) the default, taking turns let one waiting call through per poll.
         val (one, two) = server.replicas()

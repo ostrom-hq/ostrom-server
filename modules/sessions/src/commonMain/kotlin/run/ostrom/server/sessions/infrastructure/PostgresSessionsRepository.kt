@@ -17,6 +17,8 @@ import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import kotlin.reflect.KClass
 import kotlin.time.Instant
@@ -54,6 +56,7 @@ class PostgresSessionsRepository(private val driver: Driver) : SessionsRepositor
             if (query.dev != null) add("dev = :dev")
             if (query.open != null) add(if (query.open) "ended_at IS NULL" else "ended_at IS NOT NULL")
             if (query.launchId != null) add("launch_id = :launch")
+            if (query.labels.isNotEmpty()) add("CAST(labels AS JSONB) @> CAST(:labels AS JSONB)")
             if (query.before != null) {
                 add(
                     "(started_at, id) < (SELECT started_at, id FROM sessions_sessions " +
@@ -68,6 +71,7 @@ class PostgresSessionsRepository(private val driver: Driver) : SessionsRepositor
                 query.repo?.let { bind("repo", it) }
                 query.dev?.let { bind("dev", it) }
                 query.launchId?.let { bind("launch", it) }
+                if (query.labels.isNotEmpty()) bind("labels", json.encodeToString(labelsMap, query.labels))
                 query.before?.let { bind("before", it) }
             },
         )
@@ -136,12 +140,13 @@ class PostgresSessionsRepository(private val driver: Driver) : SessionsRepositor
             "org_id", "id", "root_id", "segment", "resumed_from", "previous_receipt_id", "launch_id", "repo",
             "real_repo", "cwd", "agent", "dev", "harness_version", "package_digest", "model", "source", "started_at",
             "ended_at", "last_seen_at", "receipt_id", "tools", "cost_usd", "exit_code", "seen", "activity",
-            "activity_at", "activity_observed_at",
+            "activity_at", "activity_observed_at", "labels",
         )
         val COLUMNS = COLUMN_NAMES.joinToString(", ")
         val VALUES = COLUMN_NAMES.joinToString(", ") { ":$it" }
         val json = Json { ignoreUnknownKeys = true }
         val seenList = ListSerializer(SeenRecord.serializer())
+        val labelsMap = MapSerializer(String.serializer(), String.serializer())
 
         fun Statement.bindOrNull(name: String, value: Any?, type: KClass<*>): Statement =
             if (value == null) bindNull(name, type) else bind(name, value)
@@ -173,6 +178,7 @@ class PostgresSessionsRepository(private val driver: Driver) : SessionsRepositor
             .bindOrNull("activity", session.activity?.wire, String::class)
             .bindOrNull("activity_at", session.activityAt, Instant::class)
             .bindOrNull("activity_observed_at", session.activityObservedAt, Instant::class)
+            .bind("labels", json.encodeToString(labelsMap, session.labels))
 
         fun SeenItem.toRecord() = SeenRecord(kind, name, via, at.toString())
 
@@ -206,6 +212,7 @@ class PostgresSessionsRepository(private val driver: Driver) : SessionsRepositor
             activity = SessionActivityState.stored(get("activity").asStringOrNull()),
             activityAt = get("activity_at").asInstantOrNull(),
             activityObservedAt = get("activity_observed_at").asInstantOrNull(),
+            labels = json.decodeFromString(labelsMap, get("labels").asString()),
         )
     }
 }

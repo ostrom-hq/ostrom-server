@@ -67,6 +67,7 @@ data class Session(
     val activity: SessionActivityState? = null,
     val activityAt: Instant? = null,
     val activityObservedAt: Instant? = null,
+    val labels: Map<String, String> = emptyMap(),
 ) {
     /** True when Ostrom closed it for lack of a sign of life: its launcher, still there, reopens a segment. */
     val lost: Boolean get() = endedAt != null && source.orEmpty().startsWith(LOST)
@@ -134,6 +135,7 @@ data class GateAnswer(
  * @property open Only the open ones (true) or the ended ones (false).
  * @property before Only those started before this segment (the cursor of the previous page).
  * @property launchId Only this launch's (an agent token reads its own launch only).
+ * @property labels Only the sessions whose launch carries every one of these labels.
  * @property limit At most this many.
  */
 data class SessionQuery(
@@ -143,6 +145,7 @@ data class SessionQuery(
     val before: String? = null,
     val launchId: String? = null,
     val limit: Int = PAGE,
+    val labels: Map<String, String> = emptyMap(),
 ) {
     /** The page size. */
     companion object {

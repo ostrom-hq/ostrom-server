@@ -122,7 +122,7 @@ class CloudRuntimeTest {
         val seeded = repository.stored
         assertEquals(true, seeded?.enabled)
         // The image the runners module used when the variable was unset.
-        assertEquals("ghcr.io/ostrom-hq/ostrom-runner:latest", seeded?.runnerImage)
+        assertEquals("docker.io/ostromhq/ostrom-runner:latest", seeded?.runnerImage)
         assertNull(repository.by)
         assertEquals("cloud.runtime.imported", audit.records.single().event)
         assertTrue("Imported" in logger.events[0].second)

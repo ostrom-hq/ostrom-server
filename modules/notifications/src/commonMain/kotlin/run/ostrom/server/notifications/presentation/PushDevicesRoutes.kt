@@ -16,14 +16,15 @@ import run.ostrom.server.notifications.domain.PushDeviceNotFoundException
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.resources.delete
+import io.ktor.server.resources.get
 import io.ktor.server.resources.post
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import kotlin.uuid.Uuid
 
 /**
- * The phones routes: a person registers and removes their own phones in the organization they act in (`Ostrom-Org`,
- * or their only one), with the phone app's token or a browser session, the credentials that hold
+ * The phones routes: a person registers, lists and removes their own phones in the organization they act in
+ * (`Ostrom-Org`, or their only one), with the phone app's token or a browser session, the credentials that hold
  * `notifications:write`. A personal token never does (an agent must not silence its person's approvals), nor an
  * agent, a device or a service key.
  *
@@ -36,6 +37,10 @@ fun Route.pushDevicesRoutes(dependencies: PushDevicesRoutesDependencies) = with(
             val credential = call.requirePrincipal().pushCredential()
             val device = registerPhone(member.orgId, member.memberId, body.toRegistration(), credential)
             call.respond(HttpStatusCode.Created, device.toDto())
+        }
+        get<PushDevicesApi> {
+            val member = call.phoneOwner(orgs)
+            call.respond(PushDeviceListDto(listPhones(member.orgId, member.memberId).map { it.toDto() }))
         }
         delete<PushDevicesApi.Id> { params ->
             val member = call.phoneOwner(orgs)

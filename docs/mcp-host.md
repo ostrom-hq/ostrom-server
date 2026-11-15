@@ -6,7 +6,7 @@ policy and the journal. The host sits behind it: it starts one process per key, 
 process, and answers the relay over an internal HTTP protocol. Agents never reach it, and nothing runs on a member's
 workstation or in a session pod.
 
-The host is the Gradle module `:mcp-host`. Its image is `ghcr.io/ostrom-hq/ostrom-mcp-host`. It is a port of
+The host is the Gradle module `:mcp-host`. Its image is `docker.io/ostromhq/ostrom-mcp-host`. It is a port of
 TeamCode's `mcp` module (TeamCode `docs/mcp.md`) and speaks the same host protocol, version 1.
 
 ## Status

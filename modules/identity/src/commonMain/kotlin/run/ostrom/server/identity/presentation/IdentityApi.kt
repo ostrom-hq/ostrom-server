@@ -58,7 +58,7 @@ class AuthApi {
     }
 
     /**
-     * `GET /api/v1/auth/sessions`: the person's live browser sessions (browser session only).
+     * `GET /api/v1/auth/sessions`: the person's live browser sessions (a browser session, or the CLI's own sign-in).
      *
      * @property parent The auth resource.
      */
@@ -66,7 +66,7 @@ class AuthApi {
     @Resource("sessions")
     class Sessions(val parent: AuthApi = AuthApi()) {
         /**
-         * `DELETE /api/v1/auth/sessions/{id}`: ends one of them (browser session only).
+         * `DELETE /api/v1/auth/sessions/{id}`: ends one of them (a browser session, or the CLI's own sign-in).
          *
          * @property parent The sessions resource.
          * @property id The session id.

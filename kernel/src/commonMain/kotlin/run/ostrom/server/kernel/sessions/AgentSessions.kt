@@ -43,3 +43,20 @@ fun interface SessionEndListener {
      */
     suspend fun ended(orgId: Uuid, segments: List<String>)
 }
+
+/**
+ * The labels of a launch (`createLaunch.labels`, `sessions.labels.v1`). The launches module binds it; the sessions
+ * module copies them onto each segment it opens, so that listing sessions by label reads its own table only. Unbound,
+ * a session carries none.
+ */
+fun interface LaunchLabels {
+    /**
+     * The labels of a launch.
+     *
+     * @param orgId The organization.
+     * @param launchId The launch.
+     *
+     * @return Its labels, empty for a launch without any or an unknown one.
+     */
+    suspend fun of(orgId: Uuid, launchId: String): Map<String, String>
+}

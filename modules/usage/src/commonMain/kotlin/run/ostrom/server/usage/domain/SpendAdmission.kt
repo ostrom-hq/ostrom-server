@@ -8,8 +8,11 @@ import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
-/** Whose limit: the whole org's, one member's, or one workflow's (the calls of the launches that play it). */
-enum class SpendScope { ORG, MEMBER, WORKFLOW }
+/**
+ * Whose limit: the whole org's, one member's, one workflow's (the calls of the launches that play it), or one launch's
+ * (a lifetime budget an administrator set on it).
+ */
+enum class SpendScope { ORG, MEMBER, WORKFLOW, LAUNCH }
 
 /**
  * What a model call may cost at most, held against the limits until its cost is in the ledger.
@@ -19,6 +22,8 @@ enum class SpendScope { ORG, MEMBER, WORKFLOW }
  * @property callId The call: the id of its ledger event, which settles the hold ([UsageRecorder.settle]).
  * @property micros USD millionths.
  * @property workflowId The workflow the call's launch plays, or null: its hold counts against that workflow's limits.
+ * @property launchId The launch whose agent token made the call, or null: its hold counts against that launch's
+ *   budget, when it has one.
  */
 data class SpendHold(
     val orgId: Uuid,
@@ -26,6 +31,7 @@ data class SpendHold(
     val callId: Uuid,
     val micros: Long,
     val workflowId: String? = null,
+    val launchId: String? = null,
 )
 
 /**
@@ -40,6 +46,8 @@ data class SpendHold(
  * @property workflowSpent The workflow's spend this month.
  * @property workflowHeld What the workflow's calls in flight hold.
  * @property workflowDaySpent The workflow's spend today (UTC), read only for a daily limit.
+ * @property launchSpent The launch's spend over its life, read only for a launch budget.
+ * @property launchHeld What the launch's calls in flight hold.
  */
 data class SpendTotals(
     val orgSpent: Long = 0,
@@ -51,6 +59,8 @@ data class SpendTotals(
     val workflowSpent: Long = 0,
     val workflowHeld: Long = 0,
     val workflowDaySpent: Long = 0,
+    val launchSpent: Long = 0,
+    val launchHeld: Long = 0,
 )
 
 /** The answer to a call asking to spend. */
@@ -105,22 +115,26 @@ data class DailySpendLimits(
  * @property memberMicros The member's monthly limit.
  * @property daily The daily limits, null when there is none.
  * @property workflowMicros The monthly limit of the workflow the call's launch plays.
+ * @property launchMicros The lifetime budget of the call's launch.
  */
 data class SpendLimits(
     val orgMicros: Long?,
     val memberMicros: Long?,
     val daily: DailySpendLimits? = null,
     val workflowMicros: Long? = null,
+    val launchMicros: Long? = null,
 ) {
     /** Whether a limit applies at all. */
-    val any: Boolean get() = orgMicros != null || memberMicros != null || daily != null || workflowMicros != null
+    val any: Boolean
+        get() = orgMicros != null || memberMicros != null || daily != null || workflowMicros != null ||
+            launchMicros != null
 
     /**
      * The rule: a limit is reached when what is spent meets it; a call goes only when what is spent, what the other
      * calls in flight hold and its own reserve stay within every limit. So the calls admitted never hold more than a
      * limit leaves, however many ask at once. A reached limit answers first, the org's before the member's and the
-     * member's before the workflow's, the month's before the day's; the calls in flight count against the day as
-     * against the month.
+     * member's before the workflow's and the workflow's before the launch's, the month's before the day's; the
+     * calls in flight count against the day as against the month.
      *
      * @param totals What is spent and held.
      * @param reserveMicros What the call may cost.
@@ -138,6 +152,7 @@ data class SpendLimits(
                 SpendScope.WORKFLOW, workflowMicros, daily?.workflowMicros,
                 totals.workflowSpent, totals.workflowDaySpent, totals.workflowHeld,
             ),
+            Side(SpendScope.LAUNCH, launchMicros, null, totals.launchSpent, 0, totals.launchHeld),
         )
         return sides.firstNotNullOfOrNull { it.reached() }
             ?: sides.firstNotNullOfOrNull { it.short(reserveMicros) }

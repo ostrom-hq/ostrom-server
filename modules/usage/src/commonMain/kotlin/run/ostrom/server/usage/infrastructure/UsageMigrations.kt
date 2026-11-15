@@ -372,4 +372,15 @@ val UsageMigrations: List<SchemaMigration> = listOf(
             );
         """.trimIndent() + "\n" + tenantTableSql("usage_ingest_minutes"),
     ),
+    // A launch's lifetime budget (`launches.limits.v1`): its calls' holds name it, and its events are read by launch.
+    SchemaMigration(
+        version = 12,
+        name = "usage_names_the_launch_in_holds",
+        sql = """
+            ALTER TABLE usage_holds ADD COLUMN launch_id TEXT;
+            CREATE INDEX usage_events_launch ON usage_events (org_id, launch_id, at) INCLUDE (cost_micros)
+                WHERE launch_id IS NOT NULL;
+            CREATE INDEX usage_holds_launch ON usage_holds (org_id, launch_id) WHERE launch_id IS NOT NULL
+        """.trimIndent(),
+    ),
 )

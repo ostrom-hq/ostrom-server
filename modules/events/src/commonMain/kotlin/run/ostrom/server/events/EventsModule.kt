@@ -45,10 +45,7 @@ import run.ostrom.server.kernel.events.OrgEventJournal
 import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.module.OrgDeletionListener
 import run.ostrom.server.kernel.module.ServerModule
-import run.ostrom.server.kernel.network.isPublicAddress
-import run.ostrom.server.kernel.network.isReachableAddress
 import run.ostrom.server.kernel.network.outboundHttpClient
-import run.ostrom.server.kernel.network.pinnedResolver
 import kotlin.time.Duration.Companion.seconds
 
 /** The webhooks' outbound client. */
@@ -118,11 +115,7 @@ object EventsModule : ServerModule {
                 }
             }
         } onClose { it?.close() }
-        single<WebhookSender> {
-            val targets = get<WebhookTargets>()
-            val allowed: (ByteArray) -> Boolean = if (targets.allowPrivate) ::isReachableAddress else ::isPublicAddress
-            HttpWebhookSender(get<HttpClient>(WEBHOOKS_CLIENT), targets, allowed, pinnedResolver({ true }))
-        }
+        single<WebhookSender> { HttpWebhookSender(get<HttpClient>(WEBHOOKS_CLIENT), get()) }
         single<WebhooksService> { WebhooksServiceImpl(get(), get(), get(), get(), get(), get()) }
         single<DeliverWebhooksUseCase> { DeliverWebhooksUseCaseImpl(get(), get(), get(), get(), get(), ::feedJson) }
         single { WebhooksWorker(get(), get()) }

@@ -20,7 +20,7 @@ import kotlin.uuid.Uuid
  */
 class BudgetCheck(
     private val guard: SpendGuard,
-    private val prices: PriceTable,
+    private val prices: OrgPrices,
     private val defaultMaxOutput: Long = DEFAULT_MAX_OUTPUT,
 ) {
     /**
@@ -34,8 +34,13 @@ class BudgetCheck(
      * @return The decision.
      */
     suspend fun check(caller: Caller, callId: Uuid, protocol: WireProtocol, body: RequestBody): SpendDecision {
-        val reserve = reserveMicros(protocol.keyProvider(body.model), body)
-        return guard.check(SpendRequest(caller.orgId, caller.memberId, callId, reserve, caller.workflowId))
+        val reserve = reserveMicros(caller.orgId, protocol.keyProvider(body.model), body)
+        val launchBudget = caller.caps?.budgetMicros?.takeIf { it > 0 }
+        return guard.check(
+            SpendRequest(
+                caller.orgId, caller.memberId, callId, reserve, caller.workflowId, caller.launchId, launchBudget,
+            ),
+        )
     }
 
     /**
@@ -49,13 +54,14 @@ class BudgetCheck(
     /**
      * The most a call may cost.
      *
+     * @param orgId The org, whose price table prices the model.
      * @param provider Where it goes: only its price family counts.
      * @param body Its body.
      *
      * @return USD millionths; 0 for a model without a price.
      */
-    fun reserveMicros(provider: InferenceProvider, body: RequestBody): Long {
-        val price = prices.priceOf(provider, body.model) ?: return 0
+    suspend fun reserveMicros(orgId: Uuid, provider: InferenceProvider, body: RequestBody): Long {
+        val price = prices.of(orgId).priceOf(provider, body.model) ?: return 0
         val output = (body.maxOutputTokens ?: defaultMaxOutput).coerceAtMost(MAX_OUTPUT)
         val input = body.text.length.toLong() / CHARS_PER_TOKEN + 1
         return ceilMicros(output, price.output) + ceilMicros(input, maxOf(price.input, price.cacheWrite))

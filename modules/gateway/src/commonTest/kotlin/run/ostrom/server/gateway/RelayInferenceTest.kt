@@ -3,6 +3,7 @@ package run.ostrom.server.gateway
 
 import run.ostrom.server.gateway.domain.AdmissionEntry
 import run.ostrom.server.gateway.domain.AdmissionRequest
+import run.ostrom.server.secrets.domain.LaunchCaps
 import run.ostrom.server.gateway.domain.AllowAllSpend
 import run.ostrom.server.gateway.domain.AwaitAdmissionUseCase
 import run.ostrom.server.gateway.domain.AwaitAdmissionUseCaseImpl
@@ -22,6 +23,7 @@ import run.ostrom.server.gateway.domain.ModelCallTracer
 import run.ostrom.server.gateway.domain.ModelUsageSink
 import run.ostrom.server.gateway.domain.NoModelCallObserver
 import run.ostrom.server.gateway.domain.NoModelUsageSink
+import run.ostrom.server.gateway.domain.OrgPrices
 import run.ostrom.server.gateway.domain.PriceTable
 import run.ostrom.server.gateway.domain.RefusalKind
 import run.ostrom.server.gateway.domain.RelayInferenceUseCaseImpl
@@ -300,6 +302,22 @@ class RelayInferenceTest {
     )
 
     @Test
+    fun aPriceTableThatCannotBeReadLeavesTheCallRecordedAndUnpriced() = runTest {
+        val broken = OrgPrices { error("the table is down") }
+        RelayInferenceUseCaseImpl(
+            planner(settings, shared, keys = InstanceProviderKeys(anthropic = "sk-an")),
+            FakeUpstream(eventAnswer()),
+            broken,
+            { sink.record(it) },
+            { observed += it },
+            clock,
+        )(Gw.memberA, call(), RecordingResponder())
+        assertEquals(1, records.size)
+        assertEquals(false, records.single().priced)
+        assertEquals(0, records.single().costMicros)
+    }
+
+    @Test
     fun aCallWithTheClientsIdStopsOnItsMarkerAndOneWithoutIsNeverWatched() = runTest {
         val markers = InMemoryCancellations()
         val id = Uuid.random()
@@ -346,6 +364,16 @@ class RelayInferenceTest {
             AdmissionRequest(records.single().id, Gw.orgA, ada, "claude", Workload.BACKGROUND, 3, setOf("$ada"))
         assertEquals(expected, request)
         assertEquals(listOf(request to false, request to true), admission.waits, "A retry already runs: it waits again")
+
+        val limited = RecordingAdmission()
+        val launched = Gw.memberA.copy(launchId = "lch_1", caps = LaunchCaps(maxConcurrent = 2, budgetMicros = 9))
+        queued(FakeUpstream(eventAnswer()), limited)(launched, call(), RecordingResponder())
+        assertEquals("lch_1" to 2, limited.held.single().launchId to limited.held.single().launchLimit)
+        val unlimited = RecordingAdmission()
+        queued(FakeUpstream(eventAnswer()), unlimited)(
+            launched.copy(caps = LaunchCaps(paused = false)), call(), RecordingResponder(),
+        )
+        assertNull(unlimited.held.single().launchLimit, "maxConcurrent 0 adds no cap")
 
         settings.settings[Gw.orgA] = GatewaySettings(
             useSharedAccounts = false,

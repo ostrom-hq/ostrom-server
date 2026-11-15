@@ -84,13 +84,13 @@ class MemoryRulesTest {
     fun textThatLooksLikeACredentialIsRefused() {
         val secrets = listOf(
             "-----BEGIN RSA PRIVATE KEY-----",
-            "key sk-ant-api03-" + "a".repeat(30),
+            "key sk-ant-api03-" + "a1".repeat(15),
             "ghp_" + "a".repeat(36),
             "github_pat_" + "a".repeat(30),
             "xoxb-1234567890-abc",
             "AKIAABCDEFGHIJKLMNOP",
             "osp_" + "aB3-_".repeat(9),
-            "opk_" + "a".repeat(43),
+            "opk_" + "a1".repeat(22),
             "Authorization: Bearer abcdefghijklmnopqrstuvwxyz",
             "password = hunter2hunter2!",
         )

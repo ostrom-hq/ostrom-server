@@ -6,40 +6,32 @@ import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.request.header
 import io.ktor.client.request.preparePost
 import io.ktor.client.request.setBody
-import io.ktor.http.Url
 import kotlinx.coroutines.CancellationException
 import run.ostrom.server.events.domain.SendResult
 import run.ostrom.server.events.domain.WebhookSender
 import run.ostrom.server.events.domain.WebhookTargets
 import run.ostrom.server.kernel.network.PinnedDnsRefusal
-import run.ostrom.server.kernel.network.PinnedDnsTimeout
-import run.ostrom.server.kernel.network.parseIpAddress
+import java.net.UnknownHostException
 
 /**
  * POSTs one delivery through the kernel's [outboundHttpClient][run.ostrom.server.kernel.network.outboundHttpClient],
- * whose proxy resolves the host once, checks every address and dials one it checked (no DNS rebinding), and which
- * follows no redirect. The answer's body is never read, only its status.
+ * whose [PinnedDns][run.ostrom.server.kernel.network.PinnedDns] resolver resolves the host once, checks every address
+ * and dials one it checked (no DNS rebinding), and which follows no redirect. The answer's body is never read, only its
+ * status.
  *
- * The target is judged twice before that: its URL ([WebhookTargets], also for a webhook created while the operator
- * allowed private targets), then the addresses its name has now ([lookup], with [allowed]), only to say why a
- * delivery cannot go (`dns`, `host_not_allowed`) instead of the client's opaque failure; the connection is still
- * checked on its own. Errors come back as short codes: the network stack's messages may echo the URL.
+ * The target is judged twice, with one setting: its URL before anything ([WebhookTargets], also for a webhook created
+ * while the operator allowed private targets), then the address the connection dials, in the client's own resolver.
+ * Errors come back as short codes: the network stack's messages may echo the URL.
  *
  * @param client The outbound client.
  * @param targets Where a webhook may point.
- * @param allowed Whether an address may be dialled, the policy the client's proxy holds.
- * @param lookup The addresses of a name, as the client's proxy resolves it; refused when it has none.
  */
 class HttpWebhookSender(
     private val client: HttpClient,
     private val targets: WebhookTargets,
-    private val allowed: (ByteArray) -> Boolean,
-    private val lookup: suspend (String) -> List<String>,
 ) : WebhookSender {
-    override suspend fun send(url: String, headers: Map<String, String>, body: String): SendResult {
-        val refused = if (targets.allows(url)) refusal(Url(url).host) else HOST_NOT_ALLOWED
-        return if (refused != null) SendResult(null, refused) else post(url, headers, body)
-    }
+    override suspend fun send(url: String, headers: Map<String, String>, body: String): SendResult =
+        if (targets.allows(url)) post(url, headers, body) else SendResult(null, HOST_NOT_ALLOWED)
 
     private suspend fun post(url: String, headers: Map<String, String>, body: String): SendResult =
         try {
@@ -56,19 +48,12 @@ class HttpWebhookSender(
             SendResult(null, codeOf(error))
         }
 
-    private suspend fun refusal(host: String): String? = try {
-        val answers = lookup(host).map { parseIpAddress(it) }
-        if (answers.any { it == null || !allowed(it) }) HOST_NOT_ALLOWED else null
-    } catch (_: PinnedDnsRefusal) {
-        DNS
-    } catch (_: PinnedDnsTimeout) {
-        DNS
-    }
-
     private fun codeOf(error: Exception): String {
-        val chain = generateSequence<Throwable>(error) { it.cause }.take(MAX_CAUSES)
-            .joinToString(" ") { "${it::class}" }
+        val causes = generateSequence<Throwable>(error) { it.cause }.take(MAX_CAUSES).toList()
+        val chain = causes.joinToString(" ") { "${it::class}" }
         return when {
+            causes.any { it is PinnedDnsRefusal } -> HOST_NOT_ALLOWED
+            causes.any { it is UnknownHostException } -> DNS
             "Timeout" in chain -> TIMEOUT
             TLS_NAMES.containsMatchIn(chain) -> TLS
             else -> CONNECT

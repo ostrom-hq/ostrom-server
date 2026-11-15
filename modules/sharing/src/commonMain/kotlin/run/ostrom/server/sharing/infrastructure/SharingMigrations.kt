@@ -5,6 +5,78 @@ import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.secrets.infrastructure.TENANT_ROLE_SQL
 import run.ostrom.server.secrets.infrastructure.tenantTableSql
 
+/** The prune of every organization's old readings, owned by `ostrom_router`. */
+private const val PURGE_FUNCTION = "sharing_quota_history_purge(TIMESTAMPTZ, INTEGER)"
+
+/**
+ * Version 11: TeamCode's `quota_history`, the readings of the accounts' windows over time, one per minute and window
+ * (`sample_minute`, the newest of the minute kept), confined to its org like the other sharing tables. Its `recent`
+ * index serves the forecast's read (an account's windows over the last hour); its `age` index the prune. The prune
+ * crosses organizations only through `sharing_quota_history_purge`, a `SECURITY DEFINER` function owned by
+ * `ostrom_router` (docs/tenancy.md), which refuses a date it cannot bound and never deletes a reading younger than the
+ * retention (seven days, `QuotaHistoryRepository.QUOTA_HISTORY_RETENTION`), at most 10,000 per call.
+ */
+private val QUOTA_HISTORY_SQL: String =
+    """
+    CREATE TABLE sharing_quota_history (
+        org_id UUID NOT NULL,
+        account_id UUID NOT NULL REFERENCES sharing_accounts (id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        utilization DOUBLE PRECISION NOT NULL,
+        resets_at TIMESTAMPTZ,
+        observed_at TIMESTAMPTZ NOT NULL,
+        sample_minute BIGINT NOT NULL,
+        PRIMARY KEY (account_id, name, sample_minute)
+    );
+    CREATE INDEX sharing_quota_history_recent ON sharing_quota_history (account_id, name, observed_at);
+    CREATE INDEX sharing_quota_history_age ON sharing_quota_history (observed_at);
+    """.trimIndent() + "\n" + tenantTableSql("sharing_quota_history") + "\n" +
+        """
+        DO $$ BEGIN
+            CREATE ROLE ostrom_router NOLOGIN NOSUPERUSER NOBYPASSRLS;
+        EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
+        END $$;
+        DO $$ BEGIN
+            GRANT ostrom_router TO CURRENT_USER;
+        EXCEPTION WHEN unique_violation THEN NULL;
+        END $$;
+        GRANT USAGE ON SCHEMA public TO ostrom_router;
+        CREATE POLICY sharing_quota_history_router_read ON sharing_quota_history FOR SELECT TO ostrom_router
+            USING (current_user = 'ostrom_router');
+        CREATE POLICY sharing_quota_history_router_purge ON sharing_quota_history FOR DELETE TO ostrom_router
+            USING (current_user = 'ostrom_router');
+        GRANT SELECT, DELETE ON sharing_quota_history TO ostrom_router;
+        CREATE FUNCTION sharing_quota_history_purge(p_before TIMESTAMPTZ, p_limit INTEGER) RETURNS BIGINT
+            LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+            DECLARE
+                gone BIGINT;
+            BEGIN
+                IF p_before IS NULL OR NOT isfinite(p_before) OR p_before > now() THEN
+                    RAISE EXCEPTION 'purge date refused: no date, an infinite one or one in the future'
+                        USING ERRCODE = '22023';
+                END IF;
+                IF p_limit IS NULL OR p_limit < 1 OR p_limit > 10000 THEN
+                    RAISE EXCEPTION 'purge limit refused: 1 to 10000' USING ERRCODE = '22023';
+                END IF;
+                DELETE FROM sharing_quota_history WHERE (account_id, name, sample_minute) IN (
+                    SELECT h.account_id, h.name, h.sample_minute FROM sharing_quota_history h
+                    WHERE h.observed_at < LEAST(p_before, now() - INTERVAL '7 days') LIMIT p_limit
+                );
+                GET DIAGNOSTICS gone = ROW_COUNT;
+                RETURN gone;
+            END
+        $$;
+        REVOKE EXECUTE ON FUNCTION $PURGE_FUNCTION FROM PUBLIC;
+        DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+                GRANT EXECUTE ON FUNCTION $PURGE_FUNCTION TO ostrom_app;
+            END IF;
+        END $$;
+        GRANT CREATE ON SCHEMA public TO ostrom_router;
+        ALTER FUNCTION $PURGE_FUNCTION OWNER TO ostrom_router;
+        REVOKE CREATE ON SCHEMA public FROM ostrom_router
+        """.trimIndent()
+
 /** The schema of the sharing module; its tables start with `sharing_`, each confined to its org (S2-01, S2-21). */
 val SharingMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -150,4 +222,5 @@ val SharingMigrations: List<SchemaMigration> = listOf(
         name = "sharing_unlimited_concurrency",
         sql = "UPDATE sharing_accounts SET max_concurrent = 0",
     ),
+    SchemaMigration(version = 11, name = "sharing_quota_history", sql = QUOTA_HISTORY_SQL),
 )

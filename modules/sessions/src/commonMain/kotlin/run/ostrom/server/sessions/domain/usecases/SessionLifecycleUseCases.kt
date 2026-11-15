@@ -53,9 +53,11 @@ class StartSessionUseCaseImpl(
         if (owner != null && !owner.equals(SessionAccess.person(actor), ignoreCase = true)) {
             throw NotYourSessionException()
         }
+        // Before the transaction: a read inside it would wait for a second connection of the pool.
+        val labels = segments.labelsOf(actor.orgId, bounded.launchId)
         return repository.transaction(actor.orgId) {
             lockRoot(bounded.id)
-            segments.open(this, actor.orgId, SessionAccess.person(actor), bounded, Opening.of(actor, null))
+            segments.open(this, actor.orgId, SessionAccess.person(actor), bounded, Opening.of(actor, null), labels)
         }
     }
 }
@@ -173,7 +175,7 @@ class ReopenSessionUseCaseImpl(
             last.endedAt == null -> throw SessionResumedElsewhereException(closed.rootId, last.id)
             else -> {
                 val opening = Opening.of(actor, reasonAfter(last))
-                val opened = segments.open(tx, actor.orgId, closed.dev, nextOf(closed), opening)
+                val opened = segments.open(tx, actor.orgId, closed.dev, nextOf(closed), opening, closed.labels)
                 Reopened(waitingCarried(tx, last, opened), true)
             }
         }

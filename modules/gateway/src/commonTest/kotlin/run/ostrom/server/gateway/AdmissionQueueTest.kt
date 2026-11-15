@@ -103,13 +103,31 @@ class AdmissionQueueTest {
     }
 
     /** [QueueTurns.decide], with no other member limited. */
+    @Suppress("LongParameterList") // One default per fact a test of the queue changes.
     private fun decide(
         call: QueueCandidate,
         others: List<QueueCandidate>,
         running: Int,
         limit: Int?,
         limited: Set<String> = emptySet(),
-    ) = QueueTurns.decide(call, others, running, limit, limited)
+        launchRunning: Int = 0,
+        launchLimit: Int? = null,
+    ) = QueueTurns.decide(call, others, running, limit, limited, launchRunning, launchLimit)
+
+    @Test
+    fun aLaunchAtItsLimitWaitsBlockedAndOneUnderItRunsAsItsMemberDoes() {
+        val ada = Uuid.random()
+        val call = candidate(ada)
+        val full = decide(call, emptyList(), 0, null, launchRunning = 2, launchLimit = 2)
+        assertEquals(AdmissionEntry.Waiting(blocked = true), full)
+        assertEquals(AdmissionEntry.Admitted, decide(call, emptyList(), 0, null, launchRunning = 1, launchLimit = 2))
+        assertEquals(AdmissionEntry.Admitted, decide(call, emptyList(), 0, null, launchRunning = 9, launchLimit = null))
+        assertEquals(
+            AdmissionEntry.Waiting(blocked = true),
+            decide(call, emptyList(), running = 3, limit = 3, launchRunning = 0, launchLimit = 5),
+            "Its member's own limit holds besides",
+        )
+    }
 
     @Test
     fun withoutALimitAmongTheWaitingCallsEveryCallRunsAsItAsks() {

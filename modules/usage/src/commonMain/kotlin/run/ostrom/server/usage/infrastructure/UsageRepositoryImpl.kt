@@ -24,6 +24,7 @@ import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
 import kotlin.reflect.KClass
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -94,7 +95,9 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
                 Statement.create(UsageQueries.DROP_RETIRED_HOLDS).bind("org_id", hold.orgId)
                     .bind("retained_since", window.now - HoldWindow.RETENTION),
             ).getOrThrow()
-            val row = fetchAll(holdTotals(hold, limits, window)).getOrThrow().first()
+            // A call of no launch has no launch budget, whatever the limits say.
+            val applying = if (hold.launchId == null) limits.copy(launchMicros = null) else limits
+            val row = fetchAll(holdTotals(hold, applying, window)).getOrThrow().first()
             val totals = SpendTotals(
                 orgSpent = row.get("org_spent").asLong(),
                 orgHeld = row.get("org_held").asLong(),
@@ -105,12 +108,15 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
                 workflowSpent = row.get("workflow_spent").asLong(),
                 workflowHeld = row.get("workflow_held").asLong(),
                 workflowDaySpent = row.get("workflow_day_spent").asLong(),
+                launchSpent = row.get("launch_spent").asLong(),
+                launchHeld = row.get("launch_held").asLong(),
             )
-            limits.admit(totals, hold.micros).also { admission ->
+            applying.admit(totals, hold.micros).also { admission ->
                 if (admission == Admission.Admitted) {
                     val put = Statement.create(UsageQueries.PUT_HOLD).bind("call_id", hold.callId)
                         .bind("org_id", hold.orgId).bind("member_id", hold.memberId).bind("micros", hold.micros)
                         .bindNullable("workflow_id", hold.workflowId, String::class)
+                        .bindNullable("launch_id", hold.launchId, String::class)
                         .bind("expires_at", window.expiresAt).bind("now", window.now)
                     execute(put).getOrThrow()
                 }
@@ -251,11 +257,17 @@ private fun holdTotals(hold: SpendHold, limits: SpendLimits, window: HoldWindow)
     // A workflow's limits apply only to a call of a launch that plays it; its sums are read only then.
     val workflow = hold.workflowId != null && limits.workflowMicros != null
     val workflowDay = hold.workflowId != null && daily?.workflowMicros != null
-    val sums = Statement.create(UsageQueries.holdTotals(org, member, orgDay, memberDay, workflow, workflowDay))
+    // A launch's budget applies only to a call of that launch; its sums are read only then.
+    val launchId = hold.launchId?.takeIf { limits.launchMicros != null }
+    val launch = launchId != null
+    val sums = Statement.create(UsageQueries.holdTotals(org, member, orgDay, memberDay, workflow, workflowDay, launch))
         .bind("org_id", hold.orgId).bind("call_id", hold.callId).bind("now", window.now)
     if (org || member || workflow) sums.bind("since", window.since)
     if (daily != null) sums.bind("day_since", daily.since)
     if (member || memberDay) sums.bind("member_id", hold.memberId)
     hold.workflowId?.takeIf { workflow || workflowDay }?.let { sums.bind("workflow_id", it) }
+    launchId?.let {
+        sums.bind("launch_id", it).bind("launch_since", window.now - UsageQueries.LAUNCH_LIFE_HOURS.hours)
+    }
     return sums
 }

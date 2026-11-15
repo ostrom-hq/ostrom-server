@@ -161,6 +161,29 @@ class SpendAdmissionTest {
     }
 
     @Test
+    fun aLaunchBudgetCountsTheLaunchsOwnSpendAndCallsInFlightAndComesLast() {
+        val launch = SpendLimits(null, null, launchMicros = 3_000)
+        assertTrue(launch.any)
+        assertEquals(
+            Admission.Admitted,
+            launch.admit(SpendTotals(orgSpent = 9_000, memberSpent = 9_000, launchSpent = 2_000), 1_000),
+        )
+        assertEquals(Admission.Exhausted(SpendScope.LAUNCH, 3_000), launch.admit(SpendTotals(launchSpent = 3_000), 0))
+        assertEquals(
+            Admission.Insufficient(SpendScope.LAUNCH, 3_000, 500),
+            launch.admit(SpendTotals(launchSpent = 2_000, launchHeld = 500, orgHeld = 9_000), 501),
+            "Its own calls in flight count, not the org's",
+        )
+        val all = SpendLimits(10_000, 5_000, workflowMicros = 3_000, launchMicros = 1_000)
+        assertEquals(
+            Admission.Exhausted(SpendScope.WORKFLOW, 3_000),
+            all.admit(SpendTotals(workflowSpent = 3_000, launchSpent = 1_000), 0),
+            "The workflow's before the launch's",
+        )
+        assertEquals(Admission.Exhausted(SpendScope.LAUNCH, 1_000), all.admit(SpendTotals(launchSpent = 1_000), 0))
+    }
+
+    @Test
     fun aDailyLimitCountsTheDaysSpendAndTheCallsInFlightAfterTheMonths() {
         val today = TestCallers.epoch - 12.hours
         val orgDay = SpendLimits(null, null, DailySpendLimits(today, orgMicros = 1_000, memberMicros = null))
