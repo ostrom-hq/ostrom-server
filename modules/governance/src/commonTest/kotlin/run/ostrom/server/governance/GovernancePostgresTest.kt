@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.governance
 
+import run.ostrom.server.governance.domain.ConfirmationError
 import run.ostrom.server.governance.domain.ConfirmationOutcome
+import run.ostrom.server.governance.domain.ConfirmationPerson
 import run.ostrom.server.governance.domain.ConfirmationPeople
 import run.ostrom.server.governance.domain.ConfirmationRules
 import run.ostrom.server.governance.domain.ConfirmationStatus
@@ -9,7 +11,13 @@ import run.ostrom.server.governance.domain.ConfirmationsRepository
 import run.ostrom.server.governance.domain.ExpireConfirmationsUseCase
 import run.ostrom.server.governance.domain.PersonName
 import run.ostrom.server.governance.fakes.FakeChange
-import run.ostrom.server.governance.infrastructure.PostgresConfirmationsRepository
+import run.ostrom.server.governance.infrastructure.GovernanceConfirmations
+import run.ostrom.server.governance.infrastructure.answerUpdate
+import run.ostrom.server.governance.infrastructure.confirmationRead
+import run.ostrom.server.governance.infrastructure.errorUpdate
+import run.ostrom.server.governance.infrastructure.expireOverdue
+import run.ostrom.server.governance.infrastructure.resultUpdate
+import run.ostrom.server.governance.infrastructure.waitingRead
 import run.ostrom.server.governance.presentation.AnswerConfirmationRequest
 import run.ostrom.server.governance.presentation.ConfirmationDto
 import run.ostrom.server.governance.presentation.ConfirmationTokenDto
@@ -33,11 +41,12 @@ import run.ostrom.server.kernel.auth.authenticated
 import run.ostrom.server.kernel.auth.confirmsByConsole
 import run.ostrom.server.kernel.auth.holdForConfirmation
 import run.ostrom.server.kernel.auth.requirePrincipal
-import run.ostrom.server.kernel.database.withOrganization
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.databaseNow
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
@@ -60,6 +69,15 @@ import kotlinx.io.writeString
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.isNull
+import org.jetbrains.exposed.v1.core.lessEq
+import org.jetbrains.exposed.v1.core.statements.Statement
+import org.jetbrains.exposed.v1.core.statements.StatementBuilder
+import org.jetbrains.exposed.v1.jdbc.Query
+import org.jetbrains.exposed.v1.jdbc.batchInsert
+import org.jetbrains.exposed.v1.jdbc.select
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
@@ -346,8 +364,10 @@ class GovernancePostgresTest {
         assertEquals(HttpStatusCode.Unauthorized, server.answer(null, id, "confirm").status)
         val repository = server.koin.get<ConfirmationsRepository>()
         assertNull(repository.get(orgB, id), "Row level security")
-        val unscoped = server.driver.fetchAll("SELECT id FROM governance_confirmations").getOrThrow()
-        assertTrue(unscoped.toList().isEmpty(), "No organization set: no row")
+        val unscoped = server.koin.get<JdbcDatabase>().query {
+            GovernanceConfirmations.select(GovernanceConfirmations.id).toList()
+        }
+        assertTrue(unscoped.isEmpty(), "No organization set: no row")
         assertEquals(JsonPrimitive("sole-approver"), change.current)
     }
 
@@ -384,6 +404,7 @@ class GovernancePostgresTest {
         val asked = checkNotNull(repository.get(orgA, id))
         val outcome = ConfirmationOutcome(ConfirmationStatus.CONFIRMED, asked.requestedBy, Clock.System.now())
         assertTrue(repository.answer(orgA, id, outcome))
+        assertFalse(repository.answer(orgA, id, outcome), "Of two answers, the second changes nothing")
         // confirmed, the write being made: the CLI that waits must not read it without its result
         assertEquals(false, repository.get(orgA, id)?.settled)
         assertEquals("pending", server.read("ada-token", id).body<ConfirmationDto>().status)
@@ -421,76 +442,97 @@ class GovernancePostgresTest {
 
     @Test
     fun theQueriesUseTheirIndexes() = governanceTest { server ->
-        for ((org, count) in listOf(orgB to 6_000, orgA to 60)) {
-            server.driver.withOrganization(org) { tx ->
-                tx.execute(
-                    "INSERT INTO governance_confirmations (org_id, id, kind, scope, method, path, payload, summary, " +
-                        "before_json, after_json, requested_by_user, requested_by_member, credential, status, " +
-                        "result_json, created_at, expires_at) SELECT CAST('$org' AS uuid), " +
-                        "'gcf_' || md5(random() || '' || i), " +
-                        "'gates.policy', 'gates.policy', 'PUT', '/p', '{}', 's', 'null', 'null', 'u' || (i % 50), " +
-                        "gen_random_uuid(), 'admin', CASE WHEN i % 20 = 0 THEN 'pending' ELSE 'confirmed' END, " +
-                        // a confirmed write has its result, but for the rare one whose server stopped (result_lost)
-                        "CASE WHEN i % 20 = 0 OR i % 500 = 1 THEN NULL ELSE 'null' END, " +
-                        "now() - i * INTERVAL '1 minute', now() - i * INTERVAL '1 minute' + INTERVAL '15 minutes' " +
-                        "FROM generate_series(1, $count) AS i",
-                ).getOrThrow()
-            }
-        }
+        val database = server.koin.get<JdbcDatabase>()
+        for ((org, count) in listOf(orgB to 6_000, orgA to 60)) database.seed(org, count)
         server.database.superuser.execute("VACUUM ANALYZE governance_confirmations").getOrThrow()
         val now = Time.now()
-        val plans = linkedMapOf(
-            "one confirmation" to server.explain(PostgresConfirmationsRepository.GET) { bind("id", "gcf_x") },
-            "a person's waiting ones" to server.explain(PostgresConfirmationsRepository.WAITING) {
-                bind("user", "u7").bind("now", now)
-            },
-            "the overdue ones" to server.explain(PostgresConfirmationsRepository.EXPIRE, analyze = false) {
-                bind("now", now).bind("lost_before", now - ConfirmationRules.RESULT_GRACE)
-                    .bind("lost_type", ConfirmationRules.RESULT_LOST).bind("lost_message", "m")
-            },
-            "an answer" to server.explain(PostgresConfirmationsRepository.ANSWER, analyze = false) {
-                bind("id", "gcf_x").bind("status", "confirmed").bind("by_user", "u").bind("by_member", Uuid.random())
-                    .bind("at", now).bindNull("error_type", String::class).bindNull("error_message", String::class)
-            },
-            "a result" to server.explain(PostgresConfirmationsRepository.SETTLE_RESULT, analyze = false) {
-                bind("id", "gcf_x").bind("result", "null")
-            },
-            "a failure" to server.explain(PostgresConfirmationsRepository.SETTLE_ERROR, analyze = false) {
-                bind("id", "gcf_x").bind("error_type", "internal_error").bind("error_message", "m")
-            },
+        val outcome = ConfirmationOutcome(ConfirmationStatus.CONFIRMED, ConfirmationPerson("u", Uuid.random()), now)
+        val error = ConfirmationError("internal_error", "m")
+        // Each statement as the repository sends it, in `inOrg` (the tenant role, org A set), each write rolled back.
+        val statements = linkedMapOf<String, StatementBuilder.() -> Statement<*>>(
+            "one confirmation" to { confirmationRead(orgA, "gcf_x") },
+            "a person's waiting ones" to { waitingRead(orgA, "u7", now) },
+            "the overdue ones" to { expireOverdue(orgA, now) },
+            "an answer" to { answerUpdate(orgA, "gcf_x", outcome) },
+            "a result" to { resultUpdate(orgA, "gcf_x", "null") },
+            "a failure" to { errorUpdate(orgA, "gcf_x", error) },
         )
-        val sweep = server.database.superuser.fetchAll(
-            "EXPLAIN (ANALYZE, BUFFERS) SELECT DISTINCT c.org_id FROM governance_confirmations c " +
-                "WHERE c.status = 'pending' AND c.expires_at <= now() LIMIT 100",
-        ).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
-        plans["the sweep's organizations (the router function's query)"] = sweep
-        val lost = server.database.superuser.fetchAll(
-            "EXPLAIN (ANALYZE, BUFFERS) SELECT DISTINCT c.org_id FROM governance_confirmations c " +
-                "WHERE c.status = 'confirmed' AND c.result_json IS NULL AND c.expires_at <= now() LIMIT 100",
-        ).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
-        plans["the sweep's organizations with a lost result (the router function's query)"] = lost
+        val plans = statements.mapValuesTo(linkedMapOf()) { (_, statement) ->
+            database.inOrg(orgA) { plan(statement).also { rollback() } }
+        }
+        // The sweep's function runs its two reads as `ostrom_router`, the table's reader across organizations.
+        val owner = JdbcDatabase(server.database.ownerConfig, JdbcDatabase.MIN_POOL_SIZE)
+        try {
+            plans["the sweep's organizations (the router function's query)"] = owner.routerPlan {
+                GovernanceConfirmations.select(GovernanceConfirmations.orgId).withDistinct()
+                    .where {
+                        (GovernanceConfirmations.status eq "pending") and
+                            (GovernanceConfirmations.expiresAt lessEq databaseNow())
+                    }
+                    .limit(ExpireConfirmationsUseCase.ORGANIZATIONS_PER_SWEEP)
+            }
+            plans["the sweep's organizations with a lost result (the router function's query)"] = owner.routerPlan {
+                GovernanceConfirmations.select(GovernanceConfirmations.orgId).withDistinct()
+                    .where {
+                        (GovernanceConfirmations.status eq "confirmed") and
+                            GovernanceConfirmations.resultJson.isNull() and
+                            (GovernanceConfirmations.expiresAt lessEq databaseNow())
+                    }
+                    .limit(ExpireConfirmationsUseCase.ORGANIZATIONS_PER_SWEEP)
+            }
+        } finally {
+            owner.close()
+        }
         val report = plans.entries.joinToString("\n\n") { (name, plan) -> "-- $name\n$plan" }
         SystemFileSystem.createDirectories(Path("build/reports/explain"))
         SystemFileSystem.sink(Path("build/reports/explain/governance.txt")).buffered().use { it.writeString(report) }
         for ((name, plan) in plans) {
             assertFalse("Seq Scan on governance_confirmations" in plan, "$name scans the table:\n$plan")
+            val filtered = Regex("Rows Removed by Filter: (\\d+)").findAll(plan).sumOf { it.groupValues[1].toInt() }
+            assertTrue(filtered < MAX_FILTERED, "$name filters $filtered rows:\n$plan")
         }
+        // The function the repository calls answers the same organizations as those reads.
+        val repository = server.koin.get<ConfirmationsRepository>()
+        assertEquals(listOf(orgA, orgB).toSet(), repository.organizationsWithExpired(now, 10).toSet())
     }
 
-    /** The plan of [sql] in org A, scoped like the repository's queries; `:org_id` is bound, [bind] adds the rest. */
-    private suspend fun TestServer.explain(
-        sql: String,
-        analyze: Boolean = true,
-        bind: Statement.() -> Statement,
-    ): String {
-        val options = if (analyze) "(ANALYZE, BUFFERS) " else ""
-        val statement = Statement.create("EXPLAIN $options$sql").bind("org_id", orgA).bind()
-        return driver.withOrganization(orgA) { tx ->
-            tx.fetchAll(statement).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
-        }
+    /** [count] confirmations of [org]: a twentieth pending, a few confirmed ones whose result was lost. */
+    private suspend fun JdbcDatabase.seed(org: Uuid, count: Int) {
+        inOrg(org) {
+            GovernanceConfirmations.batchInsert((1..count).toList(), shouldReturnGeneratedValues = false) { i ->
+                val created = Clock.System.now() - i.minutes
+                this[GovernanceConfirmations.orgId] = org
+                this[GovernanceConfirmations.id] = "gcf_${Uuid.random()}"
+                this[GovernanceConfirmations.kind] = "gates.policy"
+                this[GovernanceConfirmations.scope] = "gates.policy"
+                this[GovernanceConfirmations.method] = "PUT"
+                this[GovernanceConfirmations.path] = "/p"
+                this[GovernanceConfirmations.payload] = "{}"
+                this[GovernanceConfirmations.summary] = "s"
+                this[GovernanceConfirmations.beforeJson] = "null"
+                this[GovernanceConfirmations.afterJson] = "null"
+                this[GovernanceConfirmations.requestedByUser] = "u${i % 50}"
+                this[GovernanceConfirmations.requestedByMember] = Uuid.random()
+                this[GovernanceConfirmations.credential] = "admin"
+                this[GovernanceConfirmations.status] = if (i % 20 == 0) "pending" else "confirmed"
+                // a confirmed write has its result, but for the rare one whose server stopped (result_lost)
+                this[GovernanceConfirmations.resultJson] = if (i % 20 == 0 || i % 500 == 1) null else "null"
+                this[GovernanceConfirmations.createdAt] = created
+                this[GovernanceConfirmations.expiresAt] = created + 15.minutes
+            }
+            }
+    }
+
+    /** The plan of [query] as `ostrom_router`, the role the sweep's function runs as. */
+    private suspend fun JdbcDatabase.routerPlan(query: () -> Query): String = query {
+        exec("SET LOCAL ROLE ostrom_router")
+        plan { query() }
     }
 
     private companion object {
         val MEMBER_IDS: Map<String, Uuid> = listOf("ada", "olga", "mia", "bob").associateWith { Uuid.random() }
+
+        // An index read filters nothing, or the few rows of a recheck: the 6 000 rows of another organization never.
+        const val MAX_FILTERED = 100
     }
 }
