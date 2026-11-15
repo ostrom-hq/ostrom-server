@@ -122,14 +122,14 @@ enum class TokenKind(val prefix: String) {
 
     /**
      * Issued to the CLI by `ostrom login` (device authorization): [CLI_SCOPES], reads included (the capacity figures of
-     * `ostrom status`, the advice of `ostrom agents hint|watch`), never a governance write.
+     * `ostrom status`, the advice of `ostrom agents hint|watch`), no governance scope.
      */
     CLI("osc"),
 
     /**
-     * Issued to the CLI by `ostrom login --admin`: the governance writes of one organization ([ADMIN_SCOPES]) on top of
-     * the CLI's scopes, which already hold the reads those writes make first ([ADMIN_READ_SCOPES]); together
-     * [ADMIN_TOKEN_SCOPES]. Approved in the browser by an owner or an admin of it, for [ADMIN_TOKEN_LIFETIME] at most,
+     * Issued to the CLI by `ostrom login --admin`: the governance writes of one organization ([ADMIN_SCOPES]) on top
+     * of the CLI's scopes and the reads those writes make first ([ADMIN_READ_SCOPES], which the CLI's hold too
+     * today); together [ADMIN_TOKEN_SCOPES]. Approved in the browser by an owner or an admin of it, for [ADMIN_TOKEN_LIFETIME] at most,
      * never rotated.
      */
     ADMIN("osg"),
