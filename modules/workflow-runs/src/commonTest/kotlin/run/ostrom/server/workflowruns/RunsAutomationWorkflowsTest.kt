@@ -78,6 +78,14 @@ class RunsAutomationWorkflowsTest {
             calls += start
             return next(start)
         }
+
+        override suspend fun startKeyed(
+            actor: GateActor,
+            workflowId: String,
+            inputs: Map<String, String>,
+            person: Uuid?,
+            key: String,
+        ): StartedRun = error("An automation starts as a member.")
     }
 
     private class Cancels : CancelWorkflowRunUseCase {
