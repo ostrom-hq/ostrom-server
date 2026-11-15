@@ -7,7 +7,6 @@ import run.ostrom.server.events.domain.OrgEventsRepository
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.withOrganization
 import org.jetbrains.exposed.v1.core.Expression
-import org.jetbrains.exposed.v1.core.ExpressionWithColumnType
 import org.jetbrains.exposed.v1.core.Op
 import org.jetbrains.exposed.v1.core.QueryBuilder
 import org.jetbrains.exposed.v1.core.QueryParameter
@@ -79,14 +78,19 @@ class OrgEventsRepositoryImpl(private val database: JdbcDatabase) : OrgEventsRep
         }
     }
 
-    /** The approver of an approval's event, lowercased: `lower(CAST(data AS JSONB) ->> 'approver')`. */
-    private class ApproverOf(private val data: Expression<String>) : ExpressionWithColumnType<String?>() {
-        override val columnType = TextColumnType().apply { nullable = true }
-
+    /**
+     * Whether an approval's event names [login] as its approver, the JSON read only for an approval's event:
+     * `CASE WHEN type IN (…) THEN lower(CAST(data AS JSONB) ->> 'approver') = login ELSE FALSE END`.
+     */
+    private class ApprovedBy(private val login: Expression<String?>) : Op<Boolean>() {
         override fun toQueryBuilder(queryBuilder: QueryBuilder) = queryBuilder {
-            append("lower(CAST(")
-            append(data)
-            append(" AS JSONB) ->> 'approver')")
+            append("CASE WHEN ")
+            append(EventsJournal.type inList APPROVALS)
+            append(" THEN lower(CAST(")
+            append(EventsJournal.data)
+            append(" AS JSONB) ->> 'approver') = ")
+            append(login)
+            append(" ELSE FALSE END")
         }
     }
 
@@ -105,7 +109,7 @@ class OrgEventsRepositoryImpl(private val database: JdbcDatabase) : OrgEventsRep
             val unnamed = if (audience.wholeOrg) {
                 Op.TRUE
             } else {
-                (j.type inList APPROVALS) and (ApproverOf(j.data) eq login)
+                ApprovedBy(login)
             }
             return (j.memberId eq member) or (j.memberId.isNull() and unnamed)
         }

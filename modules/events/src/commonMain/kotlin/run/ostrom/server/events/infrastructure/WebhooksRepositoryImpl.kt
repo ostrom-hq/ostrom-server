@@ -20,6 +20,7 @@ import org.jetbrains.exposed.v1.core.JoinType
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.count
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greater
 import org.jetbrains.exposed.v1.core.inList
@@ -78,7 +79,9 @@ class WebhooksRepositoryImpl(private val database: JdbcDatabase) : WebhooksRepos
                 it[c.lastSeq] = 0
             }.single()[c.lastSeq]
             val w = EventsWebhooks
-            val count = w.select(w.id).where { w.orgId eq orgId }.count()
+            // Counted under the cursor's lock taken above, so the limit holds against a creation at the same time.
+            val webhooks = w.id.count()
+            val count = w.select(webhooks).where { w.orgId eq orgId }.single()[webhooks]
             if (count >= WebhookRules.MAX_PER_ORG) throw WebhookLimitException()
             w.insertReturning(WEBHOOK_COLUMNS) {
                 it[id] = subscription.id
@@ -230,7 +233,7 @@ class WebhooksRepositoryImpl(private val database: JdbcDatabase) : WebhooksRepos
             }.map { row ->
                 val (url, secret) = targets.getValue(row[d.id])
                 DueDelivery(orgId, row.toDelivery(), url, secret)
-            }
+            }.sortedBy { it.delivery.nextAttemptAt }
         }
 
     override suspend fun record(orgId: Uuid, id: Uuid, outcome: DeliveryOutcome) {
