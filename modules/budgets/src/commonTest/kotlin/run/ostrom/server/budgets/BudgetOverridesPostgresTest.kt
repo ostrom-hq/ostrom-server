@@ -215,8 +215,8 @@ class BudgetOverridesPostgresTest {
         val second = server.history(query = "?before=$next").body<BudgetOverridesPage>()
         assertEquals((51L..55L).toList(), second.items.map { it.micros })
         assertNull(second.next)
-        assertEquals(HttpStatusCode.NotFound, server.history(query = "?before=${Uuid.random()}").status)
-        assertEquals(HttpStatusCode.NotFound, server.history(query = "?before=nope").status)
+        assertEquals(HttpStatusCode.BadRequest, server.history(query = "?before=${Uuid.random()}").status)
+        assertEquals(HttpStatusCode.BadRequest, server.history(query = "?before=nope").status)
 
         val tooMuch = server.grant(micros = -1)
         assertEquals(HttpStatusCode.BadRequest, tooMuch.status)

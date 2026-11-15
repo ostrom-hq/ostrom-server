@@ -191,7 +191,8 @@ class ListBoundsPostgresTest {
         } else {
             setOf(HttpStatusCode.BadRequest)
         }
-        val bobs = path(list.operation.path, bob.orgId, emptyMap()) + required(list)
+        // B's own login for a member's list: the member is found, so it is the cursor that is refused.
+        val bobs = path(list.operation.path, bob.orgId, mapOf(LOGIN to bob.login)) + required(list)
         list.cursors.forEach { name ->
             val replayed = read(bob, bobs, "$name=${cursor.encodeURLParameter()}")
             val text = replayed.bodyAsText()
@@ -252,6 +253,12 @@ class ListBoundsPostgresTest {
                 "foundAt": "2026-11-03T10:00:00Z", "inputs": []}""",
         )
         workflow?.let { write(ada, "/api/v1/workflows/$it/runs", "{}") }
+        // A temporary budget of ada's own (the budget overrides of her login, a page of one to replay).
+        write(
+            ada,
+            "/api/v1/members/${ada.login}/budget-overrides",
+            """{"micros": 1000000, "durationMinutes": 60, "reason": "Lists"}""",
+        )
         // A webhook and its test delivery (the delivery log of the webhook).
         val webhook = write(
             ada,
@@ -323,7 +330,7 @@ class ListBoundsPostgresTest {
         PARAMETER.replace(template) { match ->
             when (match.groupValues[1]) {
                 "org", "orgId" -> "$orgId"
-                // A member named by login (the budget overrides): the walk's own person, whom the route finds.
+                // A member named by login (the budget overrides): the person's own, whom the route finds.
                 "login" -> ids[LOGIN] ?: "${Uuid.random()}"
                 else -> ids[template.substringBefore("/{")] ?: "${Uuid.random()}"
             }
@@ -342,7 +349,7 @@ class ListBoundsPostgresTest {
             """ "files": [{"path": "SKILL.md", "contentBase64": "IyBTa2lsbA=="}]}"""
         val SUCCESS = 200..299
         val PARAMETER = Regex("\\{(\\w+)}")
-        val RESOURCE = Regex("\\{(?!org\\b|orgId\\b)\\w+}")
+        val RESOURCE = Regex("\\{(?!org\\b|orgId\\b|login\\b)\\w+}")
 
         /**
          * The lists whose cursor is a position (`<updatedAt>_<id>` of the memory), not a row of A: B replaying A's is
