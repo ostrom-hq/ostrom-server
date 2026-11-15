@@ -12,7 +12,8 @@ import kotlin.uuid.Uuid
  * daily limit, with the action of the typed one (it stops when none is typed). The members', the workflows' and the
  * monthly limits are kept. Every reader of a call's limits reads through it, so the guard and the ledger's admission
  * both see it; the stored value is read at each call, never cached. Its alerts are sent once per threshold and day,
- * whatever the amount the passes move ([AUTOMATIC_MARK]).
+ * whatever the amount the passes move ([AUTOMATIC_MARK]), and once reached it is listed by [exceeded] at the amount in
+ * force now, in place of the typed daily limit it replaces.
  *
  * @param limits The limits as set.
  * @param store The stored automatic value.
@@ -38,6 +39,33 @@ class AutomaticPoolBudgetsRepository(
 
     override suspend fun unmarkAlerted(alert: BudgetAlert) = limits.unmarkAlerted(marked(alert))
 
+    override suspend fun exceeded(
+        orgId: Uuid,
+        memberId: Uuid?,
+        day: Instant,
+        month: Instant,
+        max: Int,
+    ): List<ExceededBudget> {
+        // The org's daily rows read here may be dropped below (at most the typed limit's and one marked per action).
+        val reached = limits.exceeded(orgId, memberId, day, month, max + ORG_DAILY_ROWS)
+        val orgDaily = { row: ExceededBudget -> row.scope == BudgetScope.ORG && row.limit.window == BudgetWindow.DAY }
+        if (reached.none(orgDaily)) return reached.take(max)
+        val automatic = automatic(orgId)
+        val typed = limits.settings(orgId, 0).org.firstOrNull { it.window == BudgetWindow.DAY }
+        val action = if (typed == null) BudgetAction.BLOCK else typed.action
+        // While the automatic value is in force, the typed daily limit it replaces is not the one that was reached,
+        // and the automatic one is listed at today's amount; out of force, only the typed one is.
+        return reached.mapNotNull { row ->
+            when {
+                !orgDaily(row) -> row
+                automatic == null -> row.takeUnless { it.limit.micros == AUTOMATIC_MARK }
+                row.limit.micros == AUTOMATIC_MARK && row.limit.action == action ->
+                    row.copy(limit = BudgetLimit(automatic.micros, BudgetWindow.DAY, action))
+                else -> null
+            }
+        }.take(max)
+    }
+
     /**
      * An alert of the automatic daily limit, marked under [AUTOMATIC_MARK] instead of its amount: the amount moves at
      * every pass, and an alert keyed on it would be sent again each time (once per threshold and day, as a typed one).
@@ -57,5 +85,7 @@ class AutomaticPoolBudgetsRepository(
     companion object {
         /** The `limit_micros` an alert of the automatic daily limit is marked under (no typed limit is negative). */
         const val AUTOMATIC_MARK: Long = -1
+
+        private const val ORG_DAILY_ROWS = 3
     }
 }
