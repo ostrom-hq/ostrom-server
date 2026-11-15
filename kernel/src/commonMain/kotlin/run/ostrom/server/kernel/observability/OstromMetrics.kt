@@ -101,7 +101,7 @@ class OstromMetrics(private val meter: Meter) {
      * Counts an answer and records how long it took.
      *
      * @param answer `yes` or `no`.
-     * @param channel Where the approver answered (`console`, `mobile`, `slack`, `email`, `unknown`).
+     * @param channel Where the approver answered (`console`, `mobile`, `slack`, `email`, `discord`, `unknown`).
      * @param waited The time between the gate opening and the answer.
      */
     fun gateAnswered(answer: String, channel: String, waited: Duration) {

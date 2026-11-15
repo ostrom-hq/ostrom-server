@@ -4,7 +4,6 @@ package run.ostrom.server.integrations.discord.infrastructure
 import dev.whyoleg.cryptography.CryptographyProvider
 import dev.whyoleg.cryptography.algorithms.EdDSA
 import run.ostrom.server.integrations.discord.domain.DiscordVerifier
-import java.security.GeneralSecurityException
 
 /** `SEQUENCE { SEQUENCE { OID 1.3.101.112 }, BIT STRING (33 bytes) }`, before the 32 key bytes. */
 private val SPKI_PREFIX = byteArrayOf(0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00)
@@ -18,14 +17,18 @@ class Ed25519DiscordVerifier : DiscordVerifier {
         val key = hexOrNull(publicKey)?.takeIf { it.size == KEY_LENGTH }
         val bytes = hexOrNull(signature)?.takeIf { it.size == SIGNATURE_LENGTH }
         if (key == null || bytes == null) return false
-        return try {
-            CryptographyProvider.Default.get(EdDSA).publicKeyDecoder(EdDSA.Curve.Ed25519)
-                .decodeFromByteArray(EdDSA.PublicKey.Format.DER, SPKI_PREFIX + key)
-                .signatureVerifier().tryVerifySignature(data, bytes)
-        } catch (_: GeneralSecurityException) {
-            // 32 bytes that are no point of the curve (the JDK refuses them as a key): nothing verifies with it.
-            false
-        }
+        return verified(key, data, bytes)
+    }
+
+    // Blocking and short (one signature): a key the JDK refuses (32 bytes that are no point of the curve), or any
+    // failure of the provider, verifies nothing, so a public endpoint answers 401, never 500.
+    private fun verified(key: ByteArray, data: ByteArray, signature: ByteArray): Boolean = try {
+        CryptographyProvider.Default.get(EdDSA).publicKeyDecoder(EdDSA.Curve.Ed25519)
+            .decodeFromByteArrayBlocking(EdDSA.PublicKey.Format.DER, SPKI_PREFIX + key)
+            .signatureVerifier().tryVerifySignatureBlocking(data, signature)
+        // not coroutine-reachable: nothing in this block suspends, no cancellation passes through it.
+    } catch (_: Exception) {
+        false
     }
 
     private companion object {

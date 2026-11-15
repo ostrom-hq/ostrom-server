@@ -157,7 +157,7 @@ class CompleteDiscordLinkUseCaseImpl(
             val token = api.exchangeCode(app, code, redirectUri)
             api.currentUser(token)
         }
-        if (!remote { api.inGuild(app, user.id) }) throw DiscordNotInGuildException()
+        if (!inServer(app, user.id)) throw DiscordNotInGuildException()
         val member = people.member(orgId, attempt.memberId) ?: throw DiscordLinkNotFoundException()
         if (links.memberOf(orgId, user.id).let { it != null && it != member.memberId }) {
             throw DiscordUserTakenException()
@@ -175,6 +175,14 @@ class CompleteDiscordLinkUseCaseImpl(
     } catch (failure: DiscordCallException) {
         if (failure.retryable) throw DiscordUnreachableException()
         throw DiscordLinkDeniedException()
+    }
+
+    // A refusal of the membership read (a wrong server id, the bot not in it) is the administrator's to fix.
+    private suspend fun inServer(app: DiscordApp, userId: String): Boolean = try {
+        api.inGuild(app, userId)
+    } catch (failure: DiscordCallException) {
+        if (failure.retryable) throw DiscordUnreachableException()
+        throw DiscordNotConfiguredException()
     }
 
     // Best effort: the link stands even when the message does not go; the channel is kept for the next messages.

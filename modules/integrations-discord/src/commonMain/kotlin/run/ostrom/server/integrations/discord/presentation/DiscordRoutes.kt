@@ -17,6 +17,7 @@ import io.ktor.server.response.respondRedirect
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
 import io.ktor.utils.io.readRemaining
+import kotlinx.coroutines.CancellationException
 import kotlinx.io.readByteArray
 import run.ostrom.core.api.models.DiscordChannels
 import run.ostrom.core.api.models.DiscordLinkStart
@@ -64,12 +65,7 @@ fun Route.discordRoutes(dependencies: DiscordRoutesDependencies) = with(dependen
     authenticate(TOKEN_AUTH, optional = true) {
         get<DiscordLinkPath.Callback> { params ->
             val session = call.principal<AuthenticatedPrincipal>()?.let { sessionOf(it) }
-            val outcome = try {
-                complete(params.state, params.code, params.error, session)
-                DiscordChannels.LINKED
-            } catch (refused: OstromException) {
-                refused.type
-            }
+            val outcome = callbackOutcome { complete(params.state, params.code, params.error, session) }
             val page = "$consoleUrl${DiscordChannels.RETURN_PAGE}"
             call.respondRedirect("$page?${DiscordChannels.RETURN_PARAMETER}=${outcome.encodeURLParameter()}")
         }
@@ -98,6 +94,24 @@ fun Route.discordRoutes(dependencies: DiscordRoutesDependencies) = with(dependen
 private suspend fun ApplicationCall.linkOwner(orgs: PrincipalOrgResolver): OrgPrincipal {
     if (!requirePrincipal().mayWrite(WriteAccess.PERSON)) throw DiscordLinkForbiddenException()
     return requireOrgPrincipal(orgs, null)
+}
+
+/**
+ * The callback's outcome, for the console: `linked`, a refusal's `error.type`, or `discord_unreachable` for any other
+ * failure, so that the browser is always sent back.
+ *
+ * @param complete Finishes the link.
+ * @return The value of `discord=`.
+ */
+internal suspend fun callbackOutcome(complete: suspend () -> Unit): String = try {
+    complete()
+    DiscordChannels.LINKED
+} catch (refused: OstromException) {
+    refused.type
+} catch (error: CancellationException) {
+    throw error
+} catch (_: Exception) {
+    DiscordChannels.UNREACHABLE
 }
 
 /** The browser session a link is bound to: its credential, else its person. */

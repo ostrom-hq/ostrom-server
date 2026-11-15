@@ -146,6 +146,8 @@ class DiscordDomainTest {
         val long = texts.notification(notification.copy(body = "a".repeat(3000))).content
         assertEquals(DiscordTexts.MAX_CONTENT, long.length)
         assertTrue(long.endsWith("…"))
+        val emoji = DiscordTexts.fit("a".repeat(DiscordTexts.MAX_CONTENT - 2) + "\uD83D\uDE00".repeat(10))
+        assertEquals("a".repeat(DiscordTexts.MAX_CONTENT - 2) + "…", emoji, "Never half of a surrogate pair")
     }
 
     @Test
@@ -260,6 +262,10 @@ class DiscordDomainTest {
         api.exchangeFailure = null
         api.guildFailure = DiscordCallException("discord_unavailable", retryable = true)
         assertFailsWith<DiscordUnreachableException> { complete()(started(), "code-$BOB_ID", null, SESSION) }
+        api.guildFailure = DiscordCallException("discord_50001", retryable = false)
+        assertFailsWith<DiscordNotConfiguredException>("A wrong server id is the administrator's") {
+            complete()(started(), "code-$BOB_ID", null, SESSION)
+        }
         api.guildFailure = null
         assertFailsWith<DiscordNotInGuildException> { complete()(started(), "code-$EVE_ID", null, SESSION) }
         val state = started()

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.integrations.discord
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -25,6 +26,7 @@ import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Clock
@@ -46,7 +48,7 @@ class DiscordInteractionsTest {
     }
     private val people = MapDiscordPeople(mapOf(bob to DiscordMember(bob, "bob-s", OrgRole.MEMBER, "Acme")))
     private val gate = sampleDecidedGate(org, Uuid.random(), now).copy(status = GateStatus.PENDING)
-    private var refusal: OstromException? = null
+    private var refusal: Exception? = null
 
     private val interactions = ReceiveDiscordInteractionUseCaseImpl(
         DiscordApps(settings),
@@ -116,6 +118,12 @@ class DiscordInteractionsTest {
             ),
             ephemeral,
         )
+        refusal = IllegalStateException("The database is down")
+        val failed = receive(keys, body).json().toString()
+        assertTrue("Ostrom could not record this answer; try again in a moment." in failed, failed)
+        assertTrue(""""flags":64""" in failed)
+        refusal = CancellationException("Stop")
+        assertFailsWith<CancellationException> { receive(keys, body) }
         refusal = null
         for (other in listOf(
             click("300000000000000009", "ostrom_reject:$org:${Uuid.random()}"),
@@ -180,6 +188,11 @@ class DiscordInteractionsTest {
         assertEquals(unauthorized, receive(keys, ping, ahead))
         val late = (now.epochSeconds + 300).toString()
         assertEquals(Json.parseToJsonElement("""{"type":1}"""), receive(keys, ping, late).json())
+        val reads = settings.reads
+        assertEquals(unauthorized, interactions(bytes, null, stamp))
+        assertEquals(unauthorized, interactions(bytes, signature, null))
+        assertEquals(unauthorized, interactions(bytes, signature, (now.epochSeconds - 600).toString()))
+        assertEquals(reads, settings.reads, "A request without a signature or a fresh timestamp reads no settings")
         settings.publicKey = "ff".repeat(32)
         assertEquals(unauthorized, receive(keys, ping), "A saved key that is no point of the curve")
         settings.configured = false

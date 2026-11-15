@@ -65,7 +65,11 @@ class DiscordKeys private constructor(private val pair: EdDSA.KeyPair, val publi
 
 /** The instance's settings with the Discord application stored, or not while [configured] is false. */
 class DiscordInstanceSettings(var configured: Boolean = true, var publicKey: String = PUBLIC_KEY) : InstanceSettings {
+    /** How many times the `discord` section was read. */
+    var reads = 0
+
     override suspend fun read(section: String): SettingsValues = when {
+        section == DiscordSettings.NAME && reads++ < 0 -> SettingsValues.EMPTY
         section == DiscordSettings.NAME && configured -> SettingsValues(
             mapOf(
                 DiscordSettings.BOT_TOKEN to BOT_TOKEN,

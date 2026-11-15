@@ -135,7 +135,13 @@ class DiscordTexts(private val consoleUrl: String) {
          *
          * @return It, cut to Discord's limit.
          */
-        fun fit(text: String): String = if (text.length <= MAX_CONTENT) text else text.take(MAX_CONTENT - 1) + "…"
+        fun fit(text: String): String {
+            if (text.length <= MAX_CONTENT) return text
+            // Never half of a surrogate pair: an emoji cut in two is not text Discord accepts.
+            val cut = MAX_CONTENT - 1
+            val end = if (text[cut - 1].isHighSurrogate()) cut - 1 else cut
+            return text.take(end) + "…"
+        }
 
         /**
          * @param configured `OSTROM_CONSOLE_URL`, as configured.

@@ -14,5 +14,7 @@ object KnownDrifts {
         // ostrom-core#287 and #289, does not declare that 413 yet: an additive core change declares it.
         "cloudRunnerAgent 413 \$ STATUS" to "the contract does not declare the runner channel's 413 (body limit)",
         "issueRunnerInference 413 \$ STATUS" to "the contract does not declare the runner channel's 413 (body limit)",
+        // An offer's body over its limit, likewise (served since ostrom-core#286).
+        "transferCloudSession 413 \$ STATUS" to "the contract does not declare the transfer offer's 413 (body limit)",
     )
 }

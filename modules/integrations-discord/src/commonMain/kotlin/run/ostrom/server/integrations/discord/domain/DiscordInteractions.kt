@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.integrations.discord.domain
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -74,13 +75,17 @@ class ReceiveDiscordInteractionUseCaseImpl(
     private val answer: AnswerGateUseCase,
     private val clock: Clock,
 ) : ReceiveDiscordInteractionUseCase {
+    @Suppress("ReturnCount") // Each refusal of the signature is the same 401, said as early as it is known.
     override suspend fun invoke(body: ByteArray, signature: String?, timestamp: String?): DiscordInteractionOutcome {
-        val app = apps.current()
-        val seconds = timestamp?.toLongOrNull()
+        // No signature or a stale timestamp is refused before the settings are read.
+        val stamp = timestamp ?: return DiscordInteractionOutcome.Unauthorized
+        val seconds = stamp.toLongOrNull()
         val fresh = seconds != null && abs(clock.now().epochSeconds - seconds) <= MAX_AGE_SECONDS
-        val signed = app != null && signature != null && fresh &&
-            verifier.verify(app.publicKey, timestamp.encodeToByteArray() + body, signature)
-        if (!signed) return DiscordInteractionOutcome.Unauthorized
+        if (signature == null || !fresh) return DiscordInteractionOutcome.Unauthorized
+        val app = apps.current() ?: return DiscordInteractionOutcome.Unauthorized
+        if (!verifier.verify(app.publicKey, stamp.encodeToByteArray() + body, signature)) {
+            return DiscordInteractionOutcome.Unauthorized
+        }
         val root = parse(body.decodeToString())
         return when (root?.number("type")) {
             PING -> respond(PONG)
@@ -97,8 +102,14 @@ class ReceiveDiscordInteractionUseCaseImpl(
             ?.text("id")
         val content = (root["message"] as? JsonObject)?.text("content").orEmpty()
         if (!customId.startsWith(DiscordTexts.REJECT_PREFIX) || userId == null) return respond(DEFERRED_UPDATE)
-        val login = reject(userId, customId.removePrefix(DiscordTexts.REJECT_PREFIX))
-            ?: return ephemeral("This request is not yours to answer, or it is already decided.")
+        val login = try {
+            reject(userId, customId.removePrefix(DiscordTexts.REJECT_PREFIX))
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            // The database or the gates failed: Discord shows the clicker why nothing changed, never a failed call.
+            return ephemeral("Ostrom could not record this answer; try again in a moment.")
+        } ?: return ephemeral("This request is not yours to answer, or it is already decided.")
         val outcome = DiscordTexts.escape("Rejected by $login.")
         return DiscordInteractionOutcome.Respond(
             buildJsonObject {
