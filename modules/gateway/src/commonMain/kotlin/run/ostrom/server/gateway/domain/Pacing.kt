@@ -95,7 +95,9 @@ enum class SlowDownLevel(val minimumAffordableShare: Double, val interval: Durat
 }
 
 /** Tightening first: a higher pace, then a longer interval, then fewer permitted requests (zero is unlimited). */
-val PACING_STRICTNESS: Comparator<PacingAdvice> = compareBy<PacingAdvice> { it.pace.strictness }.thenBy { it.minInterval }.thenByDescending { if (it.maxConcurrent <= 0) Int.MAX_VALUE else it.maxConcurrent }
+val PACING_STRICTNESS: Comparator<PacingAdvice> = compareBy<PacingAdvice> { it.pace.strictness }
+    .thenBy { it.minInterval }
+    .thenByDescending { if (it.maxConcurrent <= 0) Int.MAX_VALUE else it.maxConcurrent }
 
 /** The tightest enabled limit, or 0 (unlimited) when none applies (TeamCode's `concurrencyCeiling`). */
 fun concurrencyCeiling(limits: Iterable<Int>): Int = limits.filter { it > 0 }.minOrNull() ?: 0
