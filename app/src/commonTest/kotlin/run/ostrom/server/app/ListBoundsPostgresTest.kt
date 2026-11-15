@@ -65,7 +65,7 @@ import kotlin.uuid.Uuid
  * and replays A's cursors. Runs only where CI gives the contract (`OSTROM_CONTRACT_OPENAPI`).
  */
 class ListBoundsPostgresTest {
-    private class Person(val orgId: Uuid, val memberId: Uuid, val session: StartedSession)
+    private class Person(val login: String, val orgId: Uuid, val memberId: Uuid, val session: StartedSession)
 
     /** What the walk found: one line per broken rule, the lists it could not reach, the cursors it could not get. */
     private class Findings {
@@ -215,7 +215,7 @@ class ListBoundsPostgresTest {
         val member = Member(Uuid.random(), org.id, user.id, OrgRole.OWNER, now)
         koin.get<OrgsRepository>().create(org, member) { false }
         check(activateArtifacts(org.id, login)) { "The artifacts of $login are not on." }
-        return Person(org.id, member.id, koin.get<StartWebSessionUseCase>()(user.id))
+        return Person(login, org.id, member.id, koin.get<StartWebSessionUseCase>()(user.id))
     }
 
     // Two rules, two artifacts and two memory entries (a page of one has a next), an automation and an MCP server
@@ -275,6 +275,7 @@ class ListBoundsPostgresTest {
             "/api/v1/me/skills" to "mine",
             "/api/v1/hooks" to "lists",
             "/api/v1/members" to "${ada.memberId}",
+            LOGIN to ada.login,
         ).toMap()
     }
 
@@ -322,6 +323,8 @@ class ListBoundsPostgresTest {
         PARAMETER.replace(template) { match ->
             when (match.groupValues[1]) {
                 "org", "orgId" -> "$orgId"
+                // A member named by login (the budget overrides): the walk's own person, whom the route finds.
+                "login" -> ids[LOGIN] ?: "${Uuid.random()}"
                 else -> ids[template.substringBefore("/{")] ?: "${Uuid.random()}"
             }
         }
@@ -331,6 +334,7 @@ class ListBoundsPostgresTest {
         const val HUGE = 100_000
         const val MANY = 1_000
         const val SERVER_ERROR = 500
+        const val LOGIN = "{login}"
         const val GARBAGE = "not a cursor%~/"
 
         // A skill version: its one file, SKILL.md, base64 of "# Skill".
@@ -356,9 +360,6 @@ class ListBoundsPostgresTest {
             "listCloudClusters" to 403,
             "listInstanceAdmins" to 403,
             "listInstanceSettings" to 403,
-            // The member's budget overrides, served since ostrom-core#278 (server#581): the walk's member is not one
-            // the route finds (404). To seed, with the budgets' owner.
-            "listBudgetOverrides" to 404,
         )
 
         /**
