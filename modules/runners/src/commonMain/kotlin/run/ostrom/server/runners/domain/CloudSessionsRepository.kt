@@ -79,15 +79,18 @@ interface CloudSessionsRepository {
      * @param before Only sessions created before this one (a cursor from the previous page), or null.
      * @param limit The page size.
      * @param kinds The kinds listed (`?kind=`).
+     * @param states The states listed (`?status=`); every state when empty.
      *
      * @return The page.
      */
+    @Suppress("LongParameterList") // The page and each filter of the list.
     suspend fun list(
         orgId: Uuid,
         ownerId: String,
         before: Uuid?,
         limit: Int,
         kinds: Set<SessionKind> = setOf(SessionKind.CLOUD),
+        states: Set<SessionState> = emptySet(),
     ): List<CloudSession>
 
     /**

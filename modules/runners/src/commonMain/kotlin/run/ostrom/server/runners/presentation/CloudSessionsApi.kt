@@ -12,6 +12,7 @@ import kotlinx.serialization.Serializable
  * @property limit The page size, 1 to 50.
  * @property kind The kinds listed, repeatable (`cloud`, `remote`); cloud sessions only when absent.
  * @property owner The owner (`runners.cloud.sessions.owner.v1`): the caller's member id, at most once.
+ * @property status The statuses listed, repeatable (TeamCode's `state`); every status when absent.
  */
 @Serializable
 @Resource("/api/v1/cloud/sessions")
@@ -20,6 +21,7 @@ class CloudSessionsApi(
     val limit: Int? = null,
     val kind: List<String> = emptyList(),
     val owner: List<String> = emptyList(),
+    val status: List<String> = emptyList(),
 ) {
     /**
      * `GET`/`DELETE /api/v1/cloud/sessions/{id}`.
@@ -443,7 +445,8 @@ data class SessionLimitsDto(
  * say what a Kubernetes session runs on (`runners.cloud.profiles.v1`). `expiresAt`, on a paused session, says when it
  * is terminated with its workspace, and `terminatedReason`, on a terminated one, why it ended (`deleted`,
  * `expired`). `createdBy` says who created it (`runners.cloud.onbehalf.v1`), absent for an older session. `launchId`
- * names the `ostrom <agent>` launch a local session is attached to (`runners.cloud.local.v1`).
+ * names the `ostrom <agent>` launch a local session is attached to (`runners.cloud.local.v1`). `automationId` names
+ * the automation whose run started it (TeamCode's).
  */
 @Serializable
 data class CloudSessionResponse(
@@ -483,6 +486,7 @@ data class CloudSessionResponse(
     val host: CloudSessionHostDto? = null,
     val createdBy: CloudAttributionDto? = null,
     val launchId: String? = null,
+    val automationId: String? = null,
 )
 
 /**

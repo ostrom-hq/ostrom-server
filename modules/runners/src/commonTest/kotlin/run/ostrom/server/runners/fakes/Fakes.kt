@@ -200,8 +200,11 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
         before: Uuid?,
         limit: Int,
         kinds: Set<SessionKind>,
+        states: Set<SessionState>,
     ): List<CloudSession> {
-        val all = sessions.values.filter { it.orgId == orgId && it.ownerId == ownerId && it.kind in kinds }
+        val all = sessions.values
+            .filter { it.orgId == orgId && it.ownerId == ownerId && it.kind in kinds }
+            .filter { states.isEmpty() || it.state in states }
             .sortedWith(compareByDescending<CloudSession> { it.createdAt }.thenByDescending { it.id.toString() })
         // None after a session it does not hold, as the database.
         val start = before?.let { cursor -> all.indexOfFirst { it.id == cursor } + 1 } ?: 0
@@ -209,7 +212,7 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
     }
 
     override suspend fun executions(orgId: Uuid, ownerId: String, limit: Int): List<CloudSession> =
-        list(orgId, ownerId, null, Int.MAX_VALUE, SessionKind.entries.toSet())
+        list(orgId, ownerId, null, Int.MAX_VALUE, SessionKind.entries.toSet(), emptySet())
             .filter { it.state.holdsExecution }.take(limit)
 
     override suspend fun setDesiredState(

@@ -47,7 +47,9 @@ fun Route.cloudSessionsRoutes(dependencies: CloudSessionsRoutesDependencies) = w
             val caller = orgResolver.callerOf(call.requirePrincipal(), CLOUD_READ)
             val kinds = kinds(params.kind)
             val owner = atMostOnce("owner", params.owner)
-            val sessions = listCloudSessions(caller, params.before?.let { parseId(it) }, params.limit, kinds, owner)
+            val states = states(params.status)
+            val before = params.before?.let { parseId(it) }
+            val sessions = listCloudSessions(caller, before, params.limit, kinds, owner, states)
             val limit = params.limit ?: DEFAULT_LIMIT
             call.respond(
                 CloudSessionsResponse(
@@ -275,6 +277,7 @@ fun CloudSession.toResponse() = CloudSessionResponse(
     kind = kind.wire.takeIf { kind != SessionKind.CLOUD },
     createdBy = createdBy?.let { CloudAttributionDto(it.initiatorId, it.credentialId, it.effectiveMemberId) },
     launchId = launchId,
+    automationId = automationId?.toString(),
 )
 
 internal const val MALFORMED_KEY = "Idempotency-Key: 1 to 128 characters of A-Za-z0-9._:-."

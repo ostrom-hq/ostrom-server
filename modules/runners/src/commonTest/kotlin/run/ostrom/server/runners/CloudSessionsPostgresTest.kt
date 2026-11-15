@@ -14,6 +14,7 @@ import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.ScheduledWork
 import run.ostrom.server.runners.domain.AllowlistedCloudPlanProvider
 import run.ostrom.server.runners.domain.RuntimeDriver
+import run.ostrom.server.runners.domain.SessionKind
 import run.ostrom.server.runners.fakes.FakeClusterRuntime
 import run.ostrom.server.runners.domain.CloudPlan
 import run.ostrom.server.runners.domain.CloudPlanProvider
@@ -49,6 +50,7 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -114,6 +116,7 @@ class CloudSessionsPostgresTest {
         val created = session(createdAt = t0).copy(
             repository = run.ostrom.server.runners.domain.RepositorySpec("https://github.com/acme/api", "main"),
             failure = SessionFailure("idle_timeout", "Paused."),
+            automationId = Uuid.random(),
         )
         assertTrue(repository.createWithinCap(created, 5))
 
@@ -345,11 +348,41 @@ class CloudSessionsPostgresTest {
             session(createdAt = t0 + index.seconds).also { repository.createWithinCap(it, 10) }
         }
         repository.createWithinCap(session(ownerId = "bob", createdAt = t0), 10)
+        val running = session(createdAt = t0 + 5.seconds).copy(state = SessionState.RUNNING)
+        repository.createWithinCap(running, 10)
 
-        assertEquals(sessions.reversed().map { it.id }, repository.list(ORG_A, "alice", null, 10).map { it.id })
+        assertEquals(
+            listOf(running.id) + sessions.reversed().map { it.id },
+            repository.list(ORG_A, "alice", null, 10).map { it.id },
+        )
+        // TeamCode's `state` filter: only the states named.
+        val cloud = setOf(SessionKind.CLOUD)
+        val runningOnly = repository.list(ORG_A, "alice", null, 10, cloud, setOf(SessionState.RUNNING))
+        assertEquals(listOf(running.id), runningOnly.map { it.id })
+        val both = setOf(SessionState.RUNNING, SessionState.PAUSED)
+        assertEquals(listOf(running.id), repository.list(ORG_A, "alice", null, 10, cloud, both).map { it.id })
         assertEquals(listOf(sessions[0].id), repository.list(ORG_A, "alice", sessions[1].id, 10).map { it.id })
         assertEquals(emptyList(), repository.list(ORG_B, "alice", null, 10))
     }
+
+    @Test
+    fun theListFiltersByStatusAsTeamCodesStateAndNamesNoAutomationOfAMembersSession() =
+        serverTest(listOf(RunnersModule), identities) { server ->
+            val session = server.client.post("/api/v1/cloud/sessions") {
+                bearerAuth("alice")
+                contentType(ContentType.Application.Json)
+                setBody(CreateCloudSessionRequest(agent = "codex", name = "Filtered"))
+            }.body<CloudSessionResponse>()
+            assertNull(session.automationId, "A member's own session names no automation")
+            val creating =
+                server.client.get("/api/v1/cloud/sessions?status=creating&status=running") { bearerAuth("alice") }
+            assertEquals(listOf(session.id), creating.body<CloudSessionsResponse>().items.map { it.id })
+            val noneYet = server.client.get("/api/v1/cloud/sessions?status=paused") { bearerAuth("alice") }
+            assertEquals(emptyList(), noneYet.body<CloudSessionsResponse>().items.map { it.id })
+            val unknown = server.client.get("/api/v1/cloud/sessions?status=active") { bearerAuth("alice") }
+            assertEquals(HttpStatusCode.BadRequest, unknown.status)
+            assertTrue("invalid_state" in unknown.bodyAsText())
+        }
 
     @Test
     fun routesCreateListReadPauseResumeAndDelete() = serverTest(listOf(RunnersModule), identities) { server ->

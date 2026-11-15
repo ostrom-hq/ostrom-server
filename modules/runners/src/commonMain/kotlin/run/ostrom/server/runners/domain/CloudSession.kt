@@ -74,6 +74,7 @@ import kotlin.uuid.Uuid
  * @property createdBy Who created it (`runners.cloud.onbehalf.v1`); null for a session created before it was recorded.
  * @property launchId The `ostrom <agent>` launch a local session is attached to (`runners.cloud.local.v1`); null for
  *   every other kind.
+ * @property automationId The automation whose run started it (TeamCode's `automationId`); null for any other session.
  */
 data class CloudSession(
     val id: Uuid,
@@ -123,6 +124,7 @@ data class CloudSession(
     val host: RemoteHost? = null,
     val createdBy: CloudAttribution? = null,
     val launchId: String? = null,
+    val automationId: Uuid? = null,
 ) {
     /** Its workspace's deletion while it is pending or blocked, and so looked at again until it is proven gone. */
     val cleanup: WorkspaceDeletion?
