@@ -23,6 +23,7 @@ import run.ostrom.server.kernel.events.GateSummary
  * @param push The push service.
  * @param mail The mail provider.
  * @param mailing Whether the instance sends e-mails now.
+ * @param channels The other modules' ways to tell an approver ([ApprovalChannel]), Slack's among them.
  */
 @Suppress("LongParameterList") // The sends' collaborators, each a port.
 class ApprovalSender(
@@ -33,6 +34,7 @@ class ApprovalSender(
     private val push: PushSender,
     private val mail: MailSender,
     private val mailing: MailAvailability,
+    private val channels: () -> List<ApprovalChannel> = { emptyList() },
 ) {
     /**
      * @param delivery The delivery.
@@ -43,10 +45,19 @@ class ApprovalSender(
     suspend fun send(delivery: ApprovalDelivery, gate: GateSummary): ChannelResult {
         val approver = approvers.reach(delivery.orgId, setOf(delivery.approver))[delivery.approver]
             ?: return ChannelResult.failed(NOT_A_MEMBER)
+        // Read at each send, like the approver: a module's channel is bound once the server starts.
+        val others = channels()
         return when (delivery.channel) {
             PUSH_CHANNEL -> push(delivery, approver)
             ApprovalRules.EMAIL_CHANNEL -> email(delivery, approver, gate)
-            else -> ChannelResult.failed(CHANNEL_UNAVAILABLE)
+            else -> {
+                val channel = others.firstOrNull { it.id == delivery.channel }
+                if (channel == null) {
+                    ChannelResult.failed(CHANNEL_UNAVAILABLE)
+                } else {
+                    channel.send(delivery, gate, notices.link(delivery.approvalId))
+                }
+            }
         }
     }
 

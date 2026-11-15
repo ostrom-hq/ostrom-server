@@ -20,12 +20,16 @@ import kotlin.uuid.Uuid
  * @param approvers Finds the approvers among the members.
  * @param mailing Whether the instance sends e-mails now.
  * @param sender Sends one delivery.
+ * @param channels The other modules' ways to tell an approver ([ApprovalChannel]), Slack's among them.
+ * @param switches The members' switches: an approver is told on such a channel while their `waiting` switch is on.
  */
 class ApprovalRouter(
     private val gates: GateSummaries,
     private val approvers: Approvers,
     private val mailing: MailAvailability,
     private val sender: ApprovalSender,
+    private val channels: () -> List<ApprovalChannel> = { emptyList() },
+    private val switches: NotificationSettingsRepository? = null,
 ) {
     /**
      * @param orgId The organization of the page.
@@ -51,9 +55,11 @@ class ApprovalRouter(
         val reached = approvers.reach(orgId, asked.map { it.first.approver }.toSet())
         // Read once for the page: the same answer for every approver.
         val mails = mailing.available()
+        val others = otherChannels(orgId, reached.values.map { it.memberId }.toSet())
         return asked.flatMap { (event, gate) ->
             val approver = reached[event.approver] ?: return@flatMap emptyList()
-            ApprovalRules.channels(approver, mails).map { channel ->
+            val more = others.filter { (_, members) -> approver.memberId in members }.map { it.first }
+            (ApprovalRules.channels(approver, mails) + more).map { channel ->
                 ApprovalDelivery(
                     id = newId(),
                     orgId = orgId,
@@ -69,6 +75,18 @@ class ApprovalRouter(
                     createdAt = now,
                 )
             }
+        }
+    }
+
+    // Each bound channel with the approvers it reaches and who left their `waiting` switch on, read once for the page.
+    private suspend fun otherChannels(orgId: Uuid, members: Set<Uuid>): List<Pair<String, Set<Uuid>>> {
+        val bound = channels().distinctBy { it.id }
+        if (bound.isEmpty() || members.isEmpty()) return emptyList()
+        val off = switches?.disabled(orgId, members).orEmpty()
+        return bound.map { channel ->
+            val told = channel.reachable(orgId, members)
+                .filterTo(mutableSetOf()) { SwitchedOff(it, channel.id, NotificationKind.WAITING) !in off }
+            channel.id to told
         }
     }
 
