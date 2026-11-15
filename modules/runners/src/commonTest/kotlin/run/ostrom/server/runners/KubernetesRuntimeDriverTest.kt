@@ -167,6 +167,40 @@ class KubernetesRuntimeDriverTest {
     }
 
     @Test
+    fun messageFilesHaveADiskVolumeTheRunnerWritesAndTheAgentOnlyReads() = runTest {
+        driver.startExecution(spec().copy(mode = SessionMode.CONVERSATION))
+        val spec = body(3)["spec"]!!.jsonObject
+        val volume = spec["volumes"]!!.jsonArray.map { it.jsonObject }
+            .single { it["name"]!!.jsonPrimitive.content == "uploads" }
+        val emptyDir = volume["emptyDir"]!!.jsonObject
+        assertEquals("1Gi", emptyDir["sizeLimit"]!!.jsonPrimitive.content, "Above the runner's 768 MiB per execution")
+        assertNull(emptyDir["medium"], "On disk: up to 100 MiB per file must not count against memory")
+        val runner = spec["containers"]!!.jsonArray.single().jsonObject
+        val agent = spec["initContainers"]!!.jsonArray.map { it.jsonObject }
+            .single { it["name"]!!.jsonPrimitive.content == "agent" }
+        fun JsonObject.uploads() = this["volumeMounts"]!!.jsonArray.map { it.jsonObject }
+            .single { it["name"]!!.jsonPrimitive.content == "uploads" }
+        assertEquals("/var/ostrom/uploads", runner.uploads()["mountPath"]!!.jsonPrimitive.content)
+        assertEquals("/var/ostrom/uploads", agent.uploads()["mountPath"]!!.jsonPrimitive.content, "The path it reads")
+        assertNull(runner.uploads()["readOnly"], "The runner writes the files")
+        assertEquals("true", agent.uploads()["readOnly"]!!.jsonPrimitive.content, "The agent never replaces them")
+        val env = runner["env"]!!.jsonArray.map { it.jsonObject }.filter { "value" in it }
+            .associate { it["name"]!!.jsonPrimitive.content to it["value"]!!.jsonPrimitive.content }
+        assertEquals("/var/ostrom/uploads", env["OSTROM_UPLOADS_DIR"], "The runner announces files only with it")
+        assertFalse("OSTROM_UPLOADS_DIR" in agent.toString())
+        // The pod's ephemeral storage, the sum of its containers' limits, holds the volume: the runner carries it.
+        assertEquals(
+            "1088Mi",
+            runner["resources"]!!.jsonObject["limits"]!!.jsonObject["ephemeral-storage"]!!.jsonPrimitive.content,
+        )
+        // The agent (1001) reads the runner's 0640 files through the pod's group, which no container leaves.
+        assertEquals("1000", spec["securityContext"]!!.jsonObject["fsGroup"]!!.jsonPrimitive.content)
+        for (container in listOf(runner, agent)) {
+            assertEquals("1000", container["securityContext"]!!.jsonObject["runAsGroup"]!!.jsonPrimitive.content)
+        }
+    }
+
+    @Test
     fun theSessionPodIsHardened() = runTest {
         driver.startExecution(spec())
         val spec = body(3)["spec"]!!.jsonObject
@@ -250,16 +284,16 @@ class KubernetesRuntimeDriverTest {
         fun mounts(container: JsonObject) =
             container["volumeMounts"]!!.jsonArray.map { it.jsonObject["name"]!!.jsonPrimitive.content }
         // The agent never mounts the check socket, the check host never the agent socket.
-        assertEquals(listOf("workspace", "tmp", "agent-socket", "ostrom-bin"), mounts(agent))
+        assertEquals(listOf("workspace", "tmp", "agent-socket", "uploads", "ostrom-bin"), mounts(agent))
         assertEquals(listOf("workspace", "check-tmp", "check-socket", "ostrom-bin"), mounts(checks))
-        assertEquals(listOf("agent-socket", "check-socket", "ostrom-bin"), mounts(runner))
+        assertEquals(listOf("agent-socket", "check-socket", "uploads", "ostrom-bin"), mounts(runner))
         assertEquals(listOf("ostrom-bin"), mounts(install))
         // Only the init container writes the binary.
         fun binary(container: JsonObject) = container["volumeMounts"]!!.jsonArray.map { it.jsonObject }
             .single { it["name"]!!.jsonPrimitive.content == "ostrom-bin" }["readOnly"]?.jsonPrimitive?.content
         assertEquals(listOf("true", "true", "true", null), listOf(agent, checks, runner, install).map(::binary))
         assertEquals(
-            listOf("workspace", "tmp", "agent-socket", "check-tmp", "check-socket", "ostrom-bin"),
+            listOf("workspace", "tmp", "agent-socket", "check-tmp", "check-socket", "ostrom-bin", "uploads"),
             spec["volumes"]!!.jsonArray.map { it.jsonObject["name"]!!.jsonPrimitive.content },
         )
         // The agent's gh configuration lives with the sockets, in memory only.

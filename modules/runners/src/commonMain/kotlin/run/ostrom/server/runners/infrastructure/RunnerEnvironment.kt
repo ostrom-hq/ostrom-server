@@ -17,6 +17,20 @@ object RunnerEnvironment {
     /** The variable of the session's mode: `conversation` runs the agent headless, `terminal` relays a PTY. */
     const val MODE = "OSTROM_SESSION_MODE"
 
+    /**
+     * The variable of the pod's `uploads` volume (TeamCode's `TEAMCODE_UPLOADS_DIR`): where a conversation's host writes
+     * the files of a member's message for the agent. Set only where the runtime mounts that volume; without it the
+     * runner announces no file support.
+     */
+    const val UPLOADS_DIR_VARIABLE = "OSTROM_UPLOADS_DIR"
+
+    /**
+     * The files of members' messages, written by the runner (uid 1000, mode 0640) and read by the agent through the
+     * pod's group, on a volume its container mounts read-only. Outside the workspace, so they are never committed and
+     * never outlive the pod.
+     */
+    const val UPLOADS_DIR = "/var/ostrom/uploads"
+
     /** The variable of the first message. */
     const val PROMPT = "OSTROM_AGENT_PROMPT"
 
