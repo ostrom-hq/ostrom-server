@@ -226,6 +226,13 @@ class CloudAdminRoutesPostgresTest {
         assertEquals(2, after.clusters.last().orphanedVolumes)
         assertEquals("2026-11-14T10:00:00Z", after.clusters.last().lastGarbageCollectionAt)
         assertNull(after.clusters.first().orphanedVolumes)
+
+        // Another cluster's name refuses a save, whatever its version: the names stay unique.
+        val clusters = server.koin.get<CloudClustersRepository>()
+        val stored = checkNotNull(clusters.get(Uuid.parse(staging.id)))
+        val renamed = stored.cluster.copy(name = "prod", version = stored.cluster.version + 1)
+        assertFalse(clusters.update(stored.copy(cluster = renamed)))
+        assertEquals("staging", clusters.get(Uuid.parse(staging.id))?.cluster?.name)
     }
 
     @Test
