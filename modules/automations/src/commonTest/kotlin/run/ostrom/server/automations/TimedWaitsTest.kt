@@ -254,9 +254,9 @@ class TimedWaitsTest {
         clock.now += 2.minutes
         val broken = object : TimedWaitsRepository by timedWaits {
             override suspend fun settle(orgId: Uuid, id: Uuid, answer: WaitAnswer, due: Boolean): Wait? =
-                throw IllegalStateException("settle")
+                error("settle")
 
-            override suspend fun purgeSecrets(now: Instant, limit: Int): Int = throw IllegalStateException("purge")
+            override suspend fun purgeSecrets(now: Instant, limit: Int): Int = error("purge")
         }
         val pass = ResolveDueWaitsUseCaseImpl(broken, events, clock)
         assertEquals("settle", assertFailsWith<IllegalStateException> { pass.pass() }.message)
