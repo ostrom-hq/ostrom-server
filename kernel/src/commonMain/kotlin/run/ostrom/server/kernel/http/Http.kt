@@ -11,6 +11,9 @@ import run.ostrom.server.kernel.auth.governanceAuditKey
 import run.ostrom.server.kernel.auth.governanceConfirmationsKey
 import run.ostrom.server.kernel.auth.stepUpClockKey
 import run.ostrom.server.kernel.auth.token
+import run.ostrom.server.kernel.http.docs.ApiDocs
+import run.ostrom.server.kernel.http.docs.apiDocsRoutes
+import run.ostrom.server.kernel.http.docs.kernelOperations
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.network.TrustedProxies
@@ -43,7 +46,8 @@ val OstromJson: Json = Json {
  * Installs the kernel's HTTP layer (the client address behind trusted proxies, request body limit, traces and request
  * metrics when the Koin has a [Telemetry], JSON, type-safe resources, request ids, request logs by route template,
  * uniform errors, token authentication, the ceiling of calls at once ([CallCeiling]), `/health` and `/ready`,
- * `/api/v1/capabilities` from every module's [ServerModule.features]) and the routes of every module.
+ * `/api/v1/capabilities` from every module's [ServerModule.features]), the routes of every module, and the OpenAPI
+ * document generated from them (`/api/openapi.json`, `/api/docs`, [ApiDocs]).
  *
  * @param koin The application's Koin, with the kernel module and every module's definitions loaded.
  * @param modules The functional modules, in order.
@@ -75,15 +79,25 @@ fun Application.configureHttp(koin: Koin, modules: List<ServerModule>) {
         callsInProgressKey,
         koin.getOrNull<CallsInProgress>() ?: CallsInProgress(CallCeilingSettings(), ProcessMemory::limitBytes),
     )
+    // The OpenAPI document, built from the routes each part mounts (ApiDocs): a Koin single, so a test reads it.
+    val docs = koin.getOrNull<ApiDocs>() ?: ApiDocs()
     routing {
         install(CallCeiling)
-        uncountedCalls { healthRoutes(koin.getAll(), SERVER_VERSION, koin.getOrNull<Readiness>() ?: Readiness()) }
-        capabilitiesRoutes(koin, modules, SERVER_VERSION)
-        modules.forEach { it.routes(this, koin) }
+        docs.section(this, KERNEL_SECTION, { kernelOperations() }) {
+            uncountedCalls { healthRoutes(koin.getAll(), SERVER_VERSION, koin.getOrNull<Readiness>() ?: Readiness()) }
+            capabilitiesRoutes(koin, modules, SERVER_VERSION)
+        }
+        modules.forEach { module ->
+            docs.section(this, module.name, module.apiOperations) { module.routes(this, koin) }
+        }
+        uncountedCalls { apiDocsRoutes(docs) }
     }
 }
 
 private const val MAX_REQUEST_ID_LENGTH = 128
+
+/** The kernel's own routes in the OpenAPI document ([ApiDocs.section]). */
+private const val KERNEL_SECTION = "kernel"
 
 /**
  * Whether a client's `X-Request-Id` is kept: 1 to 128 letters, digits, `-` or `_`. Any other value is replaced by

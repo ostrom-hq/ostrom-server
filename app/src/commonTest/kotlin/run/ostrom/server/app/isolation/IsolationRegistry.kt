@@ -65,6 +65,9 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /health" to Case.Target(),
     "GET /ready" to Case.Target(),
     "GET /api/v1/health" to Case.Target(),
+    // The OpenAPI document and its Swagger UI, generated from the routes: nothing of an organization's.
+    "GET /api/openapi.json" to Case.Target(),
+    "GET /api/docs" to Case.Target(),
     "GET /api/v1/instance" to Case.Target(),
     "GET /api/v1/instance/keys" to Case.Target(),
     // What the server speaks and serves: the same answer for every caller, nothing of an organization's.

@@ -15,6 +15,9 @@ import subprocess
 import sys
 
 METHODS = ("get", "post", "put", "patch", "delete")
+# The OpenAPI document the server generates from its routes and its Swagger UI (kernel http/docs/ApiDocs.kt): the
+# contract itself, never an operation of the hand-written one (ostrom-core docs/decisions/0001).
+GENERATED = {"GET /api/openapi.json", "GET /api/docs"}
 
 
 def key(method: str, path: str) -> str:
@@ -46,7 +49,7 @@ def mounted(core: pathlib.Path, root: pathlib.Path) -> set:
 
 
 def compare(routes: set, contract: dict) -> tuple:
-    missing = sorted(r for r in routes if r not in contract)
+    missing = sorted(r for r in routes if r not in contract and r not in GENERATED)
     unmounted = sorted(k for k, status in contract.items() if status == "served" and k not in routes)
     planned = sorted(r for r in routes if contract.get(r) == "planned")
     return missing, unmounted, planned
@@ -57,7 +60,7 @@ def self_test() -> None:
            "    post:\n      x-ostrom-status: planned\n  /api/v1/b:\n    get:\n      x-ostrom-status: served\n"
     contract = declared(text)
     assert contract == {"GET /api/v1/a/{}": "served", "POST /api/v1/a/{}": "planned", "GET /api/v1/b": "served"}, contract
-    result = compare({"GET /api/v1/a/{}", "POST /api/v1/a/{}", "GET /api/v1/c"}, contract)
+    result = compare({"GET /api/v1/a/{}", "POST /api/v1/a/{}", "GET /api/v1/c", "GET /api/openapi.json"}, contract)
     assert result == (["GET /api/v1/c"], ["GET /api/v1/b"], ["POST /api/v1/a/{}"]), result
     print("self-test ok")
 

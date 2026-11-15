@@ -135,6 +135,17 @@ jobs:
         run: ./gradlew --continue detekt jvmTest koverXmlReport koverVerify
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The OpenAPI document generated from the whole server's routes (ApiDocumentPostgresTest, kernel http/docs).
+          OSTROM_OPENAPI_OUT: ${{ runner.temp }}/openapi-generated/openapi.json
+      # The generated document, the contract @ostrom-hq/openapi packs once every module has its catalogue
+      # (ostrom-core docs/decisions/0001, Delivery step 4); until then core's api/openapi.yaml is packed.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: success() || failure()
+        with:
+          name: openapi-generated
+          path: ${{ runner.temp }}/openapi-generated/openapi.json
+          if-no-files-found: warn
+          retention-days: 30
       - name: Gradle's build cache, saved from main only (a pull request restores, never writes)
         if: success() && github.ref == 'refs/heads/main'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

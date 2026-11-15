@@ -2,6 +2,7 @@
 package run.ostrom.server.kernel.module
 
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import io.ktor.server.routing.Route
 import kotlinx.coroutines.CoroutineScope
 import org.koin.core.Koin
@@ -38,6 +39,15 @@ interface ServerModule {
      * @param koin Resolves the routes' dependencies.
      */
     fun routes(route: Route, koin: Koin) = Unit
+
+    /**
+     * The documentation of the module's routes in the OpenAPI document the server generates (`GET /api/openapi.json`,
+     * kernel `http/docs/ApiDocs.kt`, as TeamCode's `presentation/.../docs`): one entry per route [routes] mounts,
+     * with its summary, description, parameters, body and answers typed by their Kotlin models. Once a module has
+     * one, the app's test fails for a route without its entry and for an entry without its route. Null while the
+     * module's routes are not described yet: they appear in the document without a description.
+     */
+    val apiOperations: (ApiCatalog.() -> Unit)? get() = null
 
     /**
      * The features this module serves **and** that are configured on this instance, as keys of ostrom-core's
