@@ -254,7 +254,7 @@ internal class ManageSkillCatalogUseCaseImpl(
         }
     }
 
-    private suspend fun SkillsStore.apply(
+    private fun SkillsStore.apply(
         skill: Skill,
         change: SkillChange,
         now: Instant,
@@ -270,7 +270,7 @@ internal class ManageSkillCatalogUseCaseImpl(
         caller: CatalogCaller,
         name: String,
         ownership: Ownership,
-        change: suspend SkillsStore.(Skill, Instant, MutableList<CatalogEvent>) -> Skill,
+        change: SkillsStore.(Skill, Instant, MutableList<CatalogEvent>) -> Skill,
     ): Skill {
         ArtifactTree.checkName(name, KIND)
         val events = mutableListOf<CatalogEvent>()
