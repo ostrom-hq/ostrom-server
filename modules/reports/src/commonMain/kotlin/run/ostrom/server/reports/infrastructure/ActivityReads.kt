@@ -245,15 +245,13 @@ internal class ActivityReads(
             .orderBy(lineAt to SortOrder.DESC, lineId to SortOrder.DESC)
             .limit(limit)
     }
-
-    private companion object {
-        const val SESSION_STARTED = "session.started"
-        const val SESSION_STARTED_PREFIX = "$SESSION_STARTED:"
-        const val SESSION_ENDED = "session.ended"
-        const val GATE_REQUESTED = "gate.requested"
-        const val GATE_DECIDED = "gate.decided"
-        const val WORKFLOW_CHANGED = "workflow.changed"
-        val DECIDED_BY_A_PERSON = listOf(GATE_DECIDED, WORKFLOW_CHANGED)
-        const val UUID_PATTERN = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-    }
 }
+
+private const val SESSION_STARTED = "session.started"
+private const val SESSION_STARTED_PREFIX = "$SESSION_STARTED:"
+private const val SESSION_ENDED = "session.ended"
+private const val GATE_REQUESTED = "gate.requested"
+private const val GATE_DECIDED = "gate.decided"
+private const val WORKFLOW_CHANGED = "workflow.changed"
+private val DECIDED_BY_A_PERSON = listOf(GATE_DECIDED, WORKFLOW_CHANGED)
+private const val UUID_PATTERN = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"

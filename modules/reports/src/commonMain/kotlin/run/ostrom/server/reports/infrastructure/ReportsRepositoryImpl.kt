@@ -68,14 +68,12 @@ class ReportsRepositoryImpl(private val database: JdbcDatabase) : ReportsReposit
             )
         }
     }
+}
 
-    private companion object {
-        const val MICROS_PER_USD = 1_000_000.0
-        val KINDS = ActivityKind.entries.associateBy { it.wire }
+private const val MICROS_PER_USD = 1_000_000.0
+private val KINDS = ActivityKind.entries.associateBy { it.wire }
 
-        fun SpendingRow.toLine(): SpendingLine {
-            val shown = label.ifEmpty { if (dim == SpendingReads.PERSON) "Organization" else "No session" }
-            return SpendingLine(key, shown, micros, sessions)
-        }
-    }
+private fun SpendingRow.toLine(): SpendingLine {
+    val shown = label.ifEmpty { if (dim == SpendingReads.PERSON) "Organization" else "No session" }
+    return SpendingLine(key, shown, micros, sessions)
 }
