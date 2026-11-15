@@ -379,6 +379,8 @@ class ListBoundsPostgresTest {
             "listCloudEvents" to 404,
             "listCloudInputs" to 404,
             "listCloudSubagents" to 404,
+            // A device's folders, served since ostrom-core#299: a minimal bootstrap registers no device.
+            "listDeviceFolders" to 404,
         )
 
         /**
