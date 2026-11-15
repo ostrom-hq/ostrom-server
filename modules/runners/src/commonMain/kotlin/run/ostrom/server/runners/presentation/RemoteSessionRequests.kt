@@ -41,10 +41,7 @@ internal fun Route.creationRoutes(dependencies: CloudSessionsRoutesDependencies)
                 createRemoteSession(caller, principal, request.toRemoteDraft(), keyed)
             }
             // The launch is the key of a local session: the Idempotency-Key is not read.
-            SessionKind.LOCAL.wire -> {
-                val create = createLocalSession ?: throw invalidKind()
-                create(caller, principal, request.toLocalDraft())
-            }
+            SessionKind.LOCAL.wire -> createLocalSession(caller, principal, request.toLocalDraft())
             else -> throw invalidKind()
         }
         if (created.replayed) call.response.header(Idempotency.REPLAYED_HEADER, "true")

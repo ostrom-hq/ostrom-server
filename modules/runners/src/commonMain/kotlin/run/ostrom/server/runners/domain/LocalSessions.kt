@@ -110,7 +110,7 @@ class CreateLocalSessionUseCaseImpl(
         if (!LocalSessionRules.validLaunchId(draft.launchId)) {
             throw RemoteSessionRules.invalid("invalid_launch", "Send the launchId of your ostrom launch.")
         }
-        val name = draft.name?.trim()?.takeIf(String::isNotEmpty)
+        val name = draft.name.orEmpty().trim().takeIf(String::isNotEmpty)
         ensureValid(name == null || (name.length <= MAX_NAME_LENGTH && name.none { it.isISOControl() })) {
             "The name must be 1 to $MAX_NAME_LENGTH characters, without control characters."
         }
