@@ -205,6 +205,31 @@ class HostedStatesTest {
     }
 
     @Test
+    fun eachMembersProcessNamesItsMemberByLoginAsTeamCodesHostedCommands() = runTest {
+        val repository = InMemoryRelayRepository()
+        val shared = stdio("shared", McpSharing.SHARED)
+        val personal = stdio("personal", McpSharing.PER_MEMBER)
+        repository.servers += listOf(shared, personal)
+        repository.assign(shared, null)
+        repository.assign(personal, null)
+        val members = FakeMembers(listOf(Relay.memberA.memberId.toString(), Relay.otherA.memberId.toString()))
+        // The other member left meanwhile: their process shows their id only.
+        val logins = FakeLogins(mapOf(Relay.memberA.memberId to "ada"))
+        val listed = HostedProcessAdministration(repository, members, FakeHostControl(), logins)(Relay.adminA)
+        val byMember = listed.processes.associate { it.memberId to it.username }
+        assertEquals(
+            mapOf(Relay.memberA.memberId to "ada", Relay.otherA.memberId to null, null to null),
+            byMember,
+        )
+        assertEquals(1, logins.reads, "One read for every member")
+        val unnamed = HostedProcessAdministration(repository, members, FakeHostControl())(Relay.adminA)
+        assertTrue(unnamed.processes.all { it.username == null }, "No login known without the orgs module")
+        repository.assignments.removeAll { it.serverId == personal.id }
+        HostedProcessAdministration(repository, members, FakeHostControl(), logins)(Relay.adminA)
+        assertEquals(1, logins.reads, "No member, no read")
+    }
+
+    @Test
     fun aRestartIsJournaledThenStopsTheProcessTheServerAndMemberName() = runTest {
         val repository = InMemoryRelayRepository()
         val shared = stdio("shared", McpSharing.SHARED)

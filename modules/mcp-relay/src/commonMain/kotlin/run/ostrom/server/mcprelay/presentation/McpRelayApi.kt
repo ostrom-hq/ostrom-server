@@ -370,6 +370,8 @@ data class McpUsageResponse(val byServer: Map<String, Long>, val byTool: Map<Str
  * @property coldStartMs How long its last start took.
  * @property memoryBytes The resident memory of its tree.
  * @property stderr The last 4 KiB of its scrubbed stderr.
+ * @property username That member's login (TeamCode's `username`); absent for a shared server's process or a member
+ *   who left.
  */
 @Serializable
 data class McpHostedProcessDto(
@@ -385,6 +387,7 @@ data class McpHostedProcessDto(
     val coldStartMs: Long? = null,
     val memoryBytes: Long? = null,
     val stderr: String? = null,
+    val username: String? = null,
 )
 
 /**

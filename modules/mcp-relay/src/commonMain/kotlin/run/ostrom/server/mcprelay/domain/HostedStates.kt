@@ -2,6 +2,7 @@
 package run.ostrom.server.mcprelay.domain
 
 import run.ostrom.server.kernel.auth.MemberDirectory
+import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
 import run.ostrom.server.secrets.domain.Caller
@@ -284,6 +285,8 @@ object HostedProcessExpansion {
  * @property state Live from the host, else as recorded.
  * @property failure The last failure not yet followed by a successful start.
  * @property status What the host said, when it answered.
+ * @property username That member's login (TeamCode's `username`); null for a shared server's process, a member who
+ *   left, or when no login is known.
  */
 data class HostedProcess(
     val server: String,
@@ -293,6 +296,7 @@ data class HostedProcess(
     val state: String,
     val failure: String?,
     val status: HostedProcessStatus?,
+    val username: String? = null,
 )
 
 /**
@@ -346,11 +350,13 @@ interface RestartHostedProcessUseCase {
  * @param repository The servers, assignments and recorded states.
  * @param members Who belongs to the org, for a per-member server assigned to everyone.
  * @param host The MCP host, or null when none is configured.
+ * @param logins The members' logins, for the member of each process; none shown when null.
  */
 class HostedProcessAdministration(
     private val repository: McpRelayRepository,
     private val members: MemberDirectory?,
     private val host: McpHostControl?,
+    private val logins: MemberLogins? = null,
 ) : ListHostedProcessesUseCase, RestartHostedProcessUseCase {
     override suspend fun invoke(caller: Caller): HostedProcesses {
         caller.requireAdmin()
@@ -390,7 +396,11 @@ class HostedProcessAdministration(
                 status = live?.copy(stderr = live.stderr.takeLast(MAX_STDERR)),
             )
         }.sortedWith(compareBy({ it.server }, { it.memberId }))
-        return HostedProcesses(status != null, status?.version, items)
+        // Who runs each process, by login, as TeamCode's "Hosted commands" shows it: one read for every member.
+        val memberIds = items.mapNotNullTo(mutableSetOf()) { it.memberId }
+        val names = if (memberIds.isEmpty()) emptyMap() else logins?.loginsOf(caller.orgId, memberIds).orEmpty()
+        val named = items.map { process -> process.copy(username = process.memberId?.let(names::get)) }
+        return HostedProcesses(status != null, status?.version, named)
     }
 
     override suspend fun invoke(caller: Caller, server: String, memberId: Uuid?, journal: suspend () -> Unit) {

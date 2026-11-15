@@ -424,7 +424,8 @@ private fun ApiCatalog.hostedOperations() {
         description = "TeamCode's dashboard \"Hosted commands\": one item per hosted process (a `shared` server " +
             "once, a `perMember` server once per member it is assigned to), read live from the host's " +
             "`/v1/status`. When the host does not answer, `hostReachable` is false and each state is the one the " +
-            "minute sweep last recorded. No secret, argument value or environment is shown. Scope `mcp:read`."
+            "minute sweep last recorded. A `perMember` process names its member by id (`member`) and login " +
+            "(`username`, TeamCode's). No secret, argument value or environment is shown. Scope `mcp:read`."
         parameters { organizationHeader() }
         responses {
             ok<McpHostedProcessesDto>("The processes, by server then member.")

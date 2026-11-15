@@ -135,12 +135,14 @@ class McpRelayMappersTest {
             hostReachable = true,
             hostVersion = "1.2.3",
             processes = listOf(
-                HostedProcess("a", memberId, "npm", "a@1", "ready", null, live),
+                HostedProcess("a", memberId, "npm", "a@1", "ready", null, live, "ada"),
                 HostedProcess("b", null, "pypi", "b==1", "idle", "crashed", null),
             ),
         ).toDto()
         assertEquals(
-            McpHostedProcessDto("a", memberId.toString(), "npm", "a@1", "ready", null, 2, 1, 0, 900, 1024, "boom"),
+            McpHostedProcessDto(
+                "a", memberId.toString(), "npm", "a@1", "ready", null, 2, 1, 0, 900, 1024, "boom", "ada",
+            ),
             dto.items.first(),
         )
         assertEquals(McpHostedProcessDto("b", null, "pypi", "b==1", "idle", "crashed", 0, 0), dto.items.last())

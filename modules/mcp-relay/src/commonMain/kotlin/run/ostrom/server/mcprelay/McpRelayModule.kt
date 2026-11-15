@@ -3,6 +3,7 @@ package run.ostrom.server.mcprelay
 
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.kernel.auth.MemberDirectory
+import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.InvalidConfigException
 import run.ostrom.server.kernel.database.ScheduledJob
@@ -216,7 +217,14 @@ object McpRelayModule : ServerModule {
                 get<HostedRuntime>().host?.let { HostedWarmup(get(), it, get(WARMUP_SCOPE), get()) },
             )
         }
-        single { HostedProcessAdministration(get(), getOrNull<MemberDirectory>(), get<HostedRuntime>().host) }
+        single {
+            HostedProcessAdministration(
+                get(),
+                getOrNull<MemberDirectory>(),
+                get<HostedRuntime>().host,
+                getOrNull<MemberLogins>(),
+            )
+        }
         single<ListHostedProcessesUseCase> { get<HostedProcessAdministration>() }
         single<RestartHostedProcessUseCase> { get<HostedProcessAdministration>() }
         single<PersonalMcpServersUseCase> { PersonalMcpServersUseCaseImpl(get(), get(), get()) }
