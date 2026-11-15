@@ -84,6 +84,8 @@ abstract class GatewayHttpFixture {
         // A browser session of Ada signed in more than five minutes ago (web audit n°2 M3).
         "stale-admin-a" to Gw.adminA,
         "guidance-a" to Gw.memberA,
+        // An administrator's CLI token (`ostrom login`): a person's sign-in on a workstation holding `guidance`.
+        "cli-admin-a" to Gw.adminA,
         // An agent session's token: its subject is its session.
         "session-1" to Gw.memberA,
     )
@@ -130,6 +132,12 @@ abstract class GatewayHttpFixture {
                         token,
                         PrincipalKind.DEVICE,
                         setOf(RelayScopes.ALL_USER),
+                    )
+                    token == "cli-admin-a" -> AuthenticatedPrincipal(
+                        token,
+                        PrincipalKind.USER,
+                        setOf(RelayScopes.GUIDANCE),
+                        signedIn = true,
                     )
                     token in elevated -> AuthenticatedPrincipal(token, PrincipalKind.USER, GovernanceScopes.ALL)
                     token == "session-1" -> AuthenticatedPrincipal(

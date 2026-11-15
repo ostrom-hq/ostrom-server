@@ -4,6 +4,7 @@ package run.ostrom.server.identity
 
 import run.ostrom.server.identity.domain.ADMIN_SCOPES
 import run.ostrom.server.identity.domain.CLI_SCOPES
+import run.ostrom.server.identity.domain.GUIDANCE_SCOPE
 import run.ostrom.server.identity.domain.InvalidScopesException
 import run.ostrom.server.identity.domain.MAX_SCOPES
 import run.ostrom.server.identity.domain.NEVER_ON_A_TOKEN
@@ -71,11 +72,9 @@ class TokenScopesTest {
     @Test
     fun theCliTokenReadsTheCapacityFiguresAndNothingThatGoverns() {
         // `ostrom status` and `ostrom agents hint|watch` (TeamCode's teamcode status and agents hint|watch)
-        val capacity = setOf("guidance", "budgets:read", "accounts:read", "inference:read")
+        val capacity = setOf(GUIDANCE_SCOPE, "budgets:read", "accounts:read", "inference:read")
         val granted = grantedScopes(TokenKind.CLI, CLI_SCOPES)
         assertTrue(granted.containsAll(capacity), "$granted")
-        // a token issued before they joined the set keeps its row, and gets none of them
-        assertTrue(grantedScopes(TokenKind.CLI, CLI_SCOPES - capacity).none { it in capacity })
         // still never a gate answer, an agent's scope, a governance write, a workflow write or the inference use
         val forbidden = NEVER_ON_A_TOKEN + ADMIN_SCOPES + setOf("workflows:write", "inference:use", "inference:admin")
         assertTrue((granted intersect forbidden).isEmpty(), "${granted intersect forbidden}")

@@ -17,8 +17,8 @@ import io.ktor.server.routing.Route
 /**
  * The budgets routes: admins read and set the org's limits, by the day or the month, that stop or warn (a browser
  * session, or a console token with [BudgetScopes.READ] or [BudgetScopes.WRITE]); any member, and an agent session,
- * reads their own budget. Device
- * tokens are refused (SECURITY-AUDIT S2-03). A change of a limit is written to the organization's audit log.
+ * reads their own budget. Device tokens are refused (SECURITY-AUDIT S2-03); the CLI token holds `budgets:read`
+ * for `GET /budgets/me`. A change of a limit is written to the organization's audit log.
  *
  * @param dependencies The use cases.
  */

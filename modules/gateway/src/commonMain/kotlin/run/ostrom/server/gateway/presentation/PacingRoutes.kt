@@ -120,7 +120,14 @@ fun Route.pacingRoutes(dependencies: PacingRoutesDependencies) = with(dependenci
 }
 
 private suspend fun ApplicationCall.putPacingSettings(dependencies: PacingRoutesDependencies) {
-    val caller = reader(dependencies.callers, WriteAccess.PERSON)
+    // `guidance` is not enough to change the settings: the CLI token holds it (it reads the advice) and is a person's
+    // sign-in, which `WriteAccess.PERSON` admits.
+    val caller = requireCaller(
+        dependencies.callers,
+        RelayScopes.INFERENCE_USE,
+        RelayScopes.AGENT_SESSION,
+        writers = WriteAccess.PERSON,
+    )
     requireRecentSignIn("change the capacity controller's settings")
     val principal = requirePrincipal()
     val input = receive<PacingSettingsDto>()

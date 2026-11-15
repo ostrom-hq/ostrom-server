@@ -9,6 +9,7 @@ import run.ostrom.server.identity.domain.AdminApprovalForbiddenException
 import run.ostrom.server.identity.domain.AnswerDeviceAuthorizationUseCaseImpl
 import run.ostrom.server.identity.domain.ApiToken
 import run.ostrom.server.identity.domain.CLI_SCOPES
+import run.ostrom.server.identity.domain.GUIDANCE_SCOPE
 import run.ostrom.server.identity.domain.CLI_TOKEN_LIFETIME
 import run.ostrom.server.identity.domain.DEVICE_CODE_LIFETIME
 import run.ostrom.server.identity.domain.DeviceAuthorizationStatus
@@ -92,7 +93,7 @@ class DeviceUseCasesTest {
         val expected = setOf(
             "profile:read", "orgs:read", "workflows:read", "sessions:write", "receipts:read", "gates:read", "mcp:read",
             "rules:read", "cloud:write", "environment:read", "skills:read", "skills:write", "hooks:read",
-            "guidance", "budgets:read", "accounts:read", "inference:read",
+            GUIDANCE_SCOPE, "budgets:read", "accounts:read", "inference:read",
         )
         assertEquals(expected, approved.token.token.scopes)
         assertEquals("osc_secret2", approved.token.secret)
