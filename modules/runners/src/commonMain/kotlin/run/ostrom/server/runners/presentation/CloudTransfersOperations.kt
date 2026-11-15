@@ -74,7 +74,8 @@ private fun ApiCatalog.transferOffer() {
             "returns the first transfer (`Idempotency-Replayed: true`), the same key with another request " +
             "is 422 `idempotency_conflict`. With `runners.cloud.onbehalf.writes.v1`, `Ostrom-On-Behalf-Of` " +
             "journals the member it names as the effective one, on the caller's own session, while the transfer " +
-            "records the caller as its initiator, as on accept, decline and cancel. The body is at most 1 KiB. $ORG_RESOLUTION"
+            "records the caller as its initiator, as on accept, decline and cancel. The body is at most 1 KiB. " +
+            ORG_RESOLUTION
         parameters {
             onBehalfHeader(writes = true)
             organizationHeader()

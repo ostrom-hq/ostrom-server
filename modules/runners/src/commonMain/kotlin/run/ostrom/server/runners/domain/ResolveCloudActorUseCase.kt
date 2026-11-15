@@ -63,7 +63,11 @@ class ResolveCloudActorUseCaseImpl(private val members: TransferRecipients?) : R
         if (target == caller.memberId) return self
         if (!administers(caller, principal)) throw OnBehalfForbiddenException()
         if (target == null || !members.eligible(caller.orgId, target)) throw InvalidEffectiveMemberException()
-        return self.copy(memberId = target, memberAdmin = members.administers(caller.orgId, target), effectiveMemberId = target)
+        return self.copy(
+            memberId = target,
+            memberAdmin = members.administers(caller.orgId, target),
+            effectiveMemberId = target,
+        )
     }
 
     override suspend fun owner(

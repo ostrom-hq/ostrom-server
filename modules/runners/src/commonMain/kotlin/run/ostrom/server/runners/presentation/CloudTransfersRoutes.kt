@@ -109,8 +109,9 @@ fun Route.cloudTransfersRoutes(dependencies: CloudTransfersRoutesDependencies) =
 
 /**
  * The caller of a transfer write, a person, on their own sessions and transfers, with the member
- * `Ostrom-On-Behalf-Of` names journaled as the effective one, and the credential they presented. Writes of a transfer are a person's: an agent or a service key
- * acts for nobody in person, and is refused before the header is read.
+ * `Ostrom-On-Behalf-Of` names journaled as the effective one, and the credential they presented. Writes of a
+ * transfer are a person's: an agent or a service key acts for nobody in person, and is refused before the header is
+ * read.
  */
 private suspend fun ApplicationCall.transferActor(
     dependencies: CloudTransfersRoutesDependencies,

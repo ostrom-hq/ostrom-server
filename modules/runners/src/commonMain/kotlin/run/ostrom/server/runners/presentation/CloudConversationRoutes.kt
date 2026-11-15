@@ -139,7 +139,8 @@ private fun Route.optionRoutes(dependencies: CloudConversationRoutesDependencies
             call.respond(hosts.response(session))
         }
         put<CloudModelApi> { params ->
-            // `runners.cloud.onbehalf.writes.v1`: the caller's own session; the header only names who it is journaled for.
+            // `runners.cloud.onbehalf.writes.v1`: the caller's own session; the header only names who it is
+            // journaled for.
             val caller = call.cloudActor(orgResolver, resolveActor).ownSessionsOnly()
             val principal = call.requirePrincipal()
             val model = call.receive<SetCloudModelBody>().model
@@ -147,7 +148,8 @@ private fun Route.optionRoutes(dependencies: CloudConversationRoutesDependencies
             call.respond(hosts.response(session))
         }
         put<CloudEffortApi> { params ->
-            // `runners.cloud.onbehalf.writes.v1`: the caller's own session; the header only names who it is journaled for.
+            // `runners.cloud.onbehalf.writes.v1`: the caller's own session; the header only names who it is
+            // journaled for.
             val caller = call.cloudActor(orgResolver, resolveActor).ownSessionsOnly()
             val principal = call.requirePrincipal()
             val effort = call.receive<SetCloudEffortBody>().effort

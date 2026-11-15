@@ -364,10 +364,22 @@ class CloudTransfersRoutesTest {
             assertEquals(TransferState.OFFERED, transfers.transfers.getValue(Uuid.parse(id)).state)
         }
 
+        // Alice's offers to carol: carol decides them as herself, journaled for the member the header names.
+        for ((write, status) in listOf("accept" to HttpStatusCode.Accepted, "decline" to HttpStatusCode.OK)) {
+            val offer = client.send(path(), "alice", "k-to-carol-$write", """{"toMemberId":"carol"}""")
+            val id = idOf(offer.bodyAsText())
+            val decided = client.sendFor("bob", "/api/v1/cloud/transfers/$id/$write", "carol-cli")
+            assertEquals(status, decided.status, decided.bodyAsText())
+            assertEquals(carolId, transfers.transfers.getValue(Uuid.parse(id)).decidedBy)
+        }
+
         val byCarol = audit.filter { it.actor.subjectId == "carol" }
-        assertEquals(listOf("cloud.transfer.requested"), byCarol.map { it.event })
-        assertEquals(aliceId, byCarol.single().details["effective_member_id"])
-        assertEquals("pat-carol", byCarol.single().details["credential_id"])
+        assertEquals(
+            listOf("cloud.transfer.requested", "cloud.transfer.accepted", "cloud.transfer.declined"),
+            byCarol.map { it.event },
+        )
+        assertEquals(listOf(aliceId, bobId, bobId), byCarol.map { it.details["effective_member_id"] })
+        assertTrue(byCarol.all { it.details["credential_id"] == "pat-carol" })
         assertTrue(audit.filter { it.actor.subjectId == "alice" }.all { it.details["effective_member_id"] == aliceId })
     }
 }
