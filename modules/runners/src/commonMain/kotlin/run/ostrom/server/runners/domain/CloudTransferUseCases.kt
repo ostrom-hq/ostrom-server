@@ -5,6 +5,7 @@ import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.audit.OrgAuditTrail
 import run.ostrom.server.kernel.audit.auditDetails
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import run.ostrom.server.kernel.errors.Pages
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -260,10 +261,12 @@ class CloudTransfersUseCaseImpl(
 
     override suspend fun list(caller: Caller, query: TransferListing): List<CloudTransfer> {
         ensureValid(query.limit in 1..MAX_PAGE) { "The limit must be between 1 and $MAX_PAGE." }
-        val page = transfers.list(
+        val read = transfers.list(
             caller.orgId,
             TransferQuery(caller.memberId, query.direction, query.states, query.sessionId, query.before, query.limit),
         )
+        // A `before` that names no transfer of the organization (forged, or another's) is a 400, not an empty page.
+        val page = Pages.checked("before", query.before, read) { transfers.find(caller.orgId, it) != null }
         val now = clock.now()
         return page.map { it.asOf(now) }
     }

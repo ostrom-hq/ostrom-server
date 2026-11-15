@@ -46,6 +46,8 @@ private const val SIGN_IN = "a sign-in flow: it names no organization, its code 
 private const val CALLBACK = "a redirect back from GitHub, bound to the state cookie of the browser that left"
 private const val LINK_CALLBACK = "a redirect back from GitHub: its single-use state names the attempt, which only " +
     "the browser session that started it finishes"
+private const val DISCORD_CALLBACK = "a redirect back from Discord: its single-use state names the attempt, which " +
+    "only the browser session that started it finishes"
 private const val SIGNED = "a webhook signed with the provider's secret: unsigned, it is refused before any lookup"
 /** The content origin's host in the matrix (OSTROM_ARTIFACTS_CONTENT_ORIGIN): the artifact pages are served there. */
 internal const val CONTENT_HOST = "artifacts.test"
@@ -142,6 +144,12 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/slack/link" to Case.Own("reads the caller's own Slack link"),
     "POST /api/v1/slack/link" to Case.Own("links the Slack account of the caller's own proven address"),
     "DELETE /api/v1/slack/link" to Case.Own("removes the caller's own Slack link"),
+    // The caller's own Discord link (discord.v1): proven by Discord's sign-in in the caller's browser, never a sent id.
+    "GET /api/v1/discord/link" to Case.Own("reads the caller's own Discord link"),
+    "POST /api/v1/discord/link" to
+        Case.Own("starts linking the caller's own Discord account, bound to their session"),
+    "DELETE /api/v1/discord/link" to Case.Own("removes the caller's own Discord link"),
+    "GET /api/v1/discord/link/callback" to Case.Exempt(DISCORD_CALLBACK),
 
     // Organizations, members, invitations, billing.
     "GET /api/v1/orgs" to Case.Target(),
@@ -179,6 +187,7 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "POST /api/v1/billing/stripe/webhook" to Case.Exempt(SIGNED),
     "POST /webhooks/stripe" to Case.Exempt(SIGNED),
     "POST /webhooks/slack" to Case.Exempt(SIGNED),
+    "POST /webhooks/discord" to Case.Exempt(SIGNED),
     "GET /api/v1/audit" to Case.Target(),
     "GET /api/v1/service-keys" to Case.Target(),
     "POST /api/v1/service-keys" to

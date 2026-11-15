@@ -16,6 +16,7 @@ import run.ostrom.server.hooks.HooksModule
 import run.ostrom.server.identity.IdentityModule
 import run.ostrom.server.importer.ImportModule
 import run.ostrom.server.instance.InstanceModule
+import run.ostrom.server.integrations.discord.DiscordIntegrationModule
 import run.ostrom.server.integrations.github.GitHubIntegrationModule
 import run.ostrom.server.integrations.slack.SlackIntegrationModule
 import run.ostrom.server.kernel.module.ServerModule
@@ -76,6 +77,7 @@ fun serverModules(): List<ServerModule> = listOf(
     MemoryModule,
     GitHubIntegrationModule,
     SlackIntegrationModule,
+    DiscordIntegrationModule,
     SharingModule,
     ImportModule,
     ReportsModule,

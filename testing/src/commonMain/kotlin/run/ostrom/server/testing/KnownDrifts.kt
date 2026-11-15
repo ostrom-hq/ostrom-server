@@ -8,9 +8,13 @@ package run.ostrom.server.testing
  * `scripts/check-contract-coverage.py`. Found by the first run of the check on every served operation (#246).
  */
 object KnownDrifts {
-    /**
-     * Each drift's key ([Drift.key], such as `listThings 200 $.id MISSING`) to why it waits. Empty: every answer the
-     * tests see follows the ostrom-core contract.
-     */
-    val drifts: Map<String, String> = emptyMap()
+    /** Each drift's key ([Drift.key], such as `listThings 200 $.id MISSING`) to why it waits. */
+    val drifts: Map<String, String> = mapOf(
+        // The runner channel refuses a body over its limit (bodyLimit) before reading it; the contract, served since
+        // ostrom-core#287 and #289, does not declare that 413 yet: an additive core change declares it.
+        "cloudRunnerAgent 413 \$ STATUS" to "the contract does not declare the runner channel's 413 (body limit)",
+        "issueRunnerInference 413 \$ STATUS" to "the contract does not declare the runner channel's 413 (body limit)",
+        // An offer's body over its limit, likewise (served since ostrom-core#286).
+        "transferCloudSession 413 \$ STATUS" to "the contract does not declare the transfer offer's 413 (body limit)",
+    )
 }

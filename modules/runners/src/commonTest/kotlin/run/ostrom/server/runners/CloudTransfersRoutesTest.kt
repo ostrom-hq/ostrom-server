@@ -11,8 +11,12 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.server.application.install
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
+import run.ostrom.server.kernel.config.EnvironmentConfigSource
+import run.ostrom.server.testing.Contract
+import run.ostrom.server.testing.ContractObserver
 import org.koin.dsl.koinApplication
 import org.koin.dsl.module
 import run.ostrom.server.kernel.audit.OrgAuditTrail
@@ -105,8 +109,14 @@ class CloudTransfersRoutesTest {
                 },
             )
         }.koin
-        application { configureHttp(koin, listOf(module)) }
+        // Every answer is checked against the pinned ostrom-core's contract when CI gives it (ContractObserver).
+        val observer = ContractObserver(Contract.from(EnvironmentConfigSource()))
+        application {
+            install(observer.plugin)
+            configureHttp(koin, listOf(module))
+        }
         block()
+        observer.finish()
     }
 
     private suspend fun HttpClient.send(
@@ -236,7 +246,11 @@ class CloudTransfersRoutesTest {
         val bySession = "/api/v1/cloud/transfers?session=${Uuid.random()}"
         assertEquals(HttpStatusCode.OK, client.read(bySession, "alice").status)
 
-        for (bad in listOf("direction=sideways", "state=nope", "session=x", "before=x", "limit=0")) {
+        // A real cursor past the last page is an empty page; one that names no transfer is refused.
+        val past = client.read("/api/v1/cloud/transfers?direction=outgoing&before=$twoId", "bob")
+        assertEquals(HttpStatusCode.OK, past.status)
+        val forged = "before=${Uuid.random()}"
+        for (bad in listOf("direction=sideways", "state=nope", "session=x", "before=x", "limit=0", forged)) {
             assertEquals(HttpStatusCode.BadRequest, client.read("/api/v1/cloud/transfers?$bad", "alice").status, bad)
         }
 

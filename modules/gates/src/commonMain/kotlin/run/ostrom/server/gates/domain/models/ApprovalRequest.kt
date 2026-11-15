@@ -45,7 +45,7 @@ enum class RequestStatus {
 }
 
 /** Where an answer was given. */
-enum class AnswerChannel { CONSOLE, MOBILE, SLACK, EMAIL }
+enum class AnswerChannel { CONSOLE, MOBILE, SLACK, EMAIL, DISCORD }
 
 /** An answer to a request. */
 enum class Answer { YES, NO }
