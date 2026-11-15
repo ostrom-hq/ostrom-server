@@ -7,6 +7,7 @@ import kotlinx.coroutines.CancellationException
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -70,8 +71,14 @@ class ReconcileCloudSessionUseCaseImpl(
     override suspend fun invoke(session: CloudSession): Instant? {
         val now = clock.now()
         if (session.state == SessionState.TERMINATED) {
-            return if (session.phase == CLEANUP_BLOCKED) blockedCleanup(session, now) else null
+            return when {
+                session.phase == CLEANUP_BLOCKED -> blockedCleanup(session, now)
+                else -> session.cleanup?.let { proving(session, it, now) }
+            }
         }
+        // A failed first start's workspace is deleted right away, as a terminated session's.
+        val failed = session.state == SessionState.FAILED && session.desiredState != DesiredState.TERMINATED
+        if (failed) session.cleanup?.let { return proving(session, it, now) }
         // A session of the former variables gets their cluster's profile first, whatever happened at the upgrade.
         if (session.profile == null) {
             profiles.legacy()?.let { return write(session.copy(profile = it, updatedAt = now), now) }
@@ -143,6 +150,11 @@ class ReconcileCloudSessionUseCaseImpl(
         if (!driver.reachable(session)) return now + BLOCKED_RECHECK
         try {
             driver.stopExecutions(session)
+            // Its workspace's deletion is then proven, as any terminated session's.
+            if (proves(session)) {
+                val pending = session.copy(phase = CLEANUP_PENDING, failure = null, updatedAt = now)
+                return write(pending.copy(workspaceDeletion = deletion(session)), now)
+            }
             if (!driver.deleteWorkspace(session)) return now + STEP_DELAY
         } catch (_: RuntimeUnreachableException) {
             return now + BLOCKED_RECHECK
@@ -150,16 +162,134 @@ class ReconcileCloudSessionUseCaseImpl(
         return write(session.copy(phase = "cleaned", failure = null, updatedAt = now), null)
     }
 
+    /**
+     * Stops the executions and terminates the session. On a runtime that [proves][RuntimeDriver.provesDeletion] its
+     * workspace's deletion, the session is terminated first and its workspace deleted by the next steps ([cleanup]),
+     * keeping a failed session's progress; elsewhere, once the workspace is gone.
+     */
     private suspend fun terminate(session: CloudSession, now: Instant): Instant? {
         driver.stopExecutions(session)
-        if (!driver.deleteWorkspace(session)) return now + STEP_DELAY
-        val terminated = session.toTerminated(now).copy(runnerTokenHash = null, phase = "cleaned")
+        val proving = proves(session)
+        if (!proving && !driver.deleteWorkspace(session)) return now + STEP_DELAY
+        val terminated = session.toTerminated(now).copy(runnerTokenHash = null, phase = "cleaned").let {
+            if (!proving) return@let it
+            val deletion = deletion(session)
+            val phase = if (deletion.state == DeletionState.PROVEN) "cleaned" else CLEANUP_PENDING
+            it.copy(workspaceDeletion = deletion, phase = phase)
+        }
+        val next = if (terminated.cleanup != null) now else null
         // A lost write (the runner's last heartbeat, sent while its container stopped) asks for a new look.
-        val next = write(terminated, null)
+        repository.compareAndSet(terminated, next) ?: return clock.now()
         // Once written: a lost write is looked at again, and its listeners told then (they are idempotent).
-        if (next == null) ended.forEach { it.ended(session.orgId, listOf(session.id.toString())) }
+        ended.forEach { it.ended(session.orgId, listOf(session.id.toString())) }
         return next
     }
+
+    /** Whether the session's workspace deletion is proven down to the provider's volume (Kubernetes). */
+    private fun proves(session: CloudSession): Boolean = driver.provesDeletion && session.profile != null
+
+    /** The session's deletion progress, started when it has none. */
+    private fun deletion(session: CloudSession): WorkspaceDeletion =
+        session.workspaceDeletion?.takeIf { it.state != DeletionState.NONE } ?: WorkspaceDeletion(DeletionState.PENDING)
+
+    /** A step of [cleanup]; an unreachable cluster is tried again every [BLOCKED_RECHECK]. */
+    private suspend fun proving(session: CloudSession, deletion: WorkspaceDeletion, now: Instant): Instant? = try {
+        cleanup(session, deletion, now)
+    } catch (_: RuntimeUnreachableException) {
+        now + BLOCKED_RECHECK
+    }
+
+    /**
+     * Deletes the claim, then waits until the bound PersistentVolume, and so the provider's volume behind it, is gone
+     * (TeamCode's cleanup). The volume's name and handle are recorded before the claim is deleted. A volume that its
+     * reclaim policy keeps, failed, or still there [VOLUME_DELETION_TIMEOUT] after its claim blocks the proof, checked
+     * again every [BLOCKED_RECHECK] until an administrator deletes it.
+     */
+    private suspend fun cleanup(session: CloudSession, w: WorkspaceDeletion, now: Instant): Instant? {
+        val claim = driver.workspaceClaim(session) ?: return awaitVolume(session, w, now)
+        return deleteClaim(session, w, claim, now)
+    }
+
+    /** Records the claim's volume and its provider handle, then deletes the claim. */
+    private suspend fun deleteClaim(
+        session: CloudSession,
+        w: WorkspaceDeletion,
+        claim: ClaimObservation,
+        now: Instant,
+    ): Instant? {
+        val volume = claim.volumeName ?: w.volumeName
+        val handle = w.volumeHandle ?: volume?.let { handleOf(session, it) }
+        var current = session
+        if (volume != w.volumeName || handle != w.volumeHandle) {
+            val recorded = session.copy(workspaceDeletion = w.copy(volumeName = volume, volumeHandle = handle))
+            current = repository.compareAndSet(recorded.copy(updatedAt = now), now) ?: return clock.now()
+        }
+        driver.deleteWorkspace(current)
+        return now + STEP_DELAY
+    }
+
+    /** The provider's handle of a volume; none when PersistentVolumes cannot be read, the claim deleted anyway. */
+    private suspend fun handleOf(session: CloudSession, volume: String): String? = try {
+        driver.volume(session, volume)?.volumeHandle
+    } catch (_: ClusterReadForbiddenException) {
+        null
+    }
+
+    /**
+     * The claim is gone: the session proven once its volume is gone too, blocked, or still waiting for it. A claim that
+     * was not bound when it was read may have been bound in the race with its deletion: its volume is then found by its
+     * claim reference and recorded. A cluster that does not let its PersistentVolumes be read blocks the proof
+     * ([WorkspaceDeletion.VOLUME_UNREADABLE]), checked again every [BLOCKED_RECHECK].
+     */
+    private suspend fun awaitVolume(session: CloudSession, w: WorkspaceDeletion, now: Instant): Instant? {
+        val claimDeletedAt = w.claimDeletedAt ?: now
+        val volume = try {
+            if (w.volumeName == null) driver.claimedVolume(session) else driver.volume(session, w.volumeName)
+        } catch (_: ClusterReadForbiddenException) {
+            val unreadable = session.blocking(w.copy(claimDeletedAt = claimDeletedAt), VOLUME_UNREADABLE)
+            return settle(session, unreadable, now + BLOCKED_RECHECK, now)
+        }
+        val deleting = w.copy(
+            claimDeletedAt = claimDeletedAt,
+            volumeName = w.volumeName ?: volume?.name,
+            volumeHandle = w.volumeHandle ?: volume?.volumeHandle,
+        )
+        val (next, nextAt) = when {
+            volume == null -> session.copy(
+                workspaceDeletion = deleting.copy(
+                    state = DeletionState.PROVEN,
+                    volumeDeletedAt = now.takeIf { w.volumeName != null },
+                    problem = null,
+                ),
+                phase = "cleaned",
+            ) to null
+            volume.reclaimPolicy != RECLAIM_DELETE -> session.blocking(
+                deleting,
+                SessionFailure(
+                    WorkspaceDeletion.VOLUME_RETAINED,
+                    "The workspace volume ${volume.name} has reclaimPolicy ${volume.reclaimPolicy}; delete the " +
+                        "provider volume manually.",
+                ),
+            ) to now + BLOCKED_RECHECK
+            volume.phase == "Failed" || now - claimDeletedAt > VOLUME_DELETION_TIMEOUT -> session.blocking(
+                deleting,
+                SessionFailure(
+                    WorkspaceDeletion.VOLUME_DELETION_STALLED,
+                    "The provisioner has not deleted workspace volume ${volume.name}.",
+                    retryable = true,
+                ),
+            ) to now + BLOCKED_RECHECK
+            else -> session.copy(workspaceDeletion = deleting, phase = DELETING_VOLUME) to now + STEP_DELAY
+        }
+        return settle(session, next, nextAt, now)
+    }
+
+    /** Writes a cleanup step when it changes the session. */
+    private suspend fun settle(session: CloudSession, next: CloudSession, nextAt: Instant?, now: Instant): Instant? =
+        if (next == session) nextAt else write(next.copy(updatedAt = now), nextAt)
+
+    private fun CloudSession.blocking(deletion: WorkspaceDeletion, problem: SessionFailure) =
+        copy(workspaceDeletion = deletion.copy(state = DeletionState.BLOCKED, problem = problem))
 
     private suspend fun starting(session: CloudSession, now: Instant): Instant? {
         if (session.desiredState == DesiredState.PAUSED) {
@@ -191,9 +321,21 @@ class ReconcileCloudSessionUseCaseImpl(
             "The session's runner did not start. Try again, or check the image.",
         )
         if (session.state == SessionState.RESUMING) return parked(session.toPaused(now, failure))
-        if (!driver.deleteWorkspace(session)) return now + STEP_DELAY
         val ended = session.moveTo(SessionState.FAILED, now)
             .copy(failure = failure, runnerTokenHash = null, executionStartedAt = null)
+        return failed(session, now, ended)
+    }
+
+    /**
+     * A first execution failed: its workspace never held work, so it is deleted right away; proven on a runtime that
+     * proves it ([cleanup]), before the session fails elsewhere.
+     */
+    private suspend fun failed(session: CloudSession, now: Instant, ended: CloudSession): Instant? {
+        if (proves(session)) {
+            val pending = WorkspaceDeletion(DeletionState.PENDING)
+            return write(ended.copy(phase = CLEANUP_PENDING, workspaceDeletion = pending), now)
+        }
+        if (!driver.deleteWorkspace(session)) return now + STEP_DELAY
         return write(ended, null)
     }
 
@@ -206,14 +348,14 @@ class ReconcileCloudSessionUseCaseImpl(
         if (session.state == SessionState.RESUMING) {
             return parked(session.toPaused(now, session.failure).copy(desiredState = DesiredState.PAUSED))
         }
-        if (!driver.deleteWorkspace(session)) return now + STEP_DELAY
         val ended = session.moveTo(SessionState.FAILED, now)
             .copy(runnerTokenHash = null, executionStartedAt = null)
-        return write(ended, null)
+        return failed(session, now, ended)
     }
 
     private suspend fun startExecution(session: CloudSession, now: Instant): Instant? {
         profiles.startFailure(session)?.let { return blocked(session, now, it) }
+        storageFailure(session)?.let { return blocked(session, now, it) }
         val refused = planFailure(session, now)
         if (refused != null) {
             driver.stopExecutions(session)
@@ -238,6 +380,27 @@ class ReconcileCloudSessionUseCaseImpl(
         val stored = repository.compareAndSet(next, now + STEP_DELAY) ?: return now
         driver.startExecution(stored.executionSpec(token))
         return now + STEP_DELAY
+    }
+
+    /**
+     * Why a first start's workspace claim is not made (TeamCode's check before its claim): its storage class is gone,
+     * or would keep the provider's volume once the claim is deleted. Asked only of a session without its claim yet.
+     */
+    private suspend fun storageFailure(session: CloudSession): SessionFailure? {
+        if (!proves(session) || session.state != SessionState.CREATING) return null
+        if (driver.workspaceClaim(session) != null) return null
+        // A cluster that does not let its storage classes be read is not checked (the profile's publish neither).
+        val storageClass = try {
+            driver.storageClass(session)
+        } catch (_: ClusterReadForbiddenException) {
+            return null
+        } ?: return STORAGE_CLASS_MISSING
+        if (storageClass.reclaimPolicy == RECLAIM_DELETE) return null
+        return SessionFailure(
+            "storage_class_retains_volumes",
+            "The workspace storage class does not delete provider volumes (reclaimPolicy " +
+                "${storageClass.reclaimPolicy}). Use a class with reclaimPolicy Delete.",
+        )
     }
 
     /**
@@ -484,6 +647,29 @@ class ReconcileCloudSessionUseCaseImpl(
 
         /** The delay between two cleanups of a session deleted while its cluster was unreachable. */
         private val BLOCKED_RECHECK: Duration = 10.minutes
+
+        /** How long a PersistentVolume may outlive its claim before its deletion is blocked (TeamCode's 1 h). */
+        private val VOLUME_DELETION_TIMEOUT: Duration = 1.hours
+
+        /** The phase of a session whose workspace claim is being deleted. */
+        const val CLEANUP_PENDING = "cleanup_pending"
+
+        /** The phase of a session whose claim is gone, while its PersistentVolume is awaited. */
+        private const val DELETING_VOLUME = "deleting_volume"
+
+        /** The claim is deleted, but the cluster does not let its PersistentVolume be read. */
+        private val VOLUME_UNREADABLE = SessionFailure(
+            WorkspaceDeletion.VOLUME_UNREADABLE,
+            "The cluster's service account cannot read PersistentVolumes, so the workspace volume's deletion cannot " +
+                "be proven: grant it get and list on persistentvolumes (a ClusterRole).",
+            retryable = true,
+        )
+
+        /** Why a first start makes no claim: its storage class is gone. */
+        private val STORAGE_CLASS_MISSING = SessionFailure(
+            "storage_class_missing",
+            "The workspace storage class does not exist on the cluster.",
+        )
 
         /** The phase of a session deleted while its cluster was unreachable, until its objects are proven gone. */
         const val CLEANUP_BLOCKED = "cleanup_blocked"

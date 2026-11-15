@@ -51,12 +51,16 @@ interface CloudProfilesUseCase {
  * @param repository The stored profiles.
  * @param clusters The instance's clusters a profile names.
  * @param clock The clock.
+ * @param members Who the profile may be assigned to.
+ * @param storage Reads the workspace storage class on the cluster (TeamCode's check at publish); null where sessions
+ *   do not run on Kubernetes.
  */
 class CloudProfilesUseCaseImpl(
     private val repository: CloudProfilesRepository,
     private val clusters: CloudClustersRepository,
     private val clock: Clock,
     private val members: MemberDirectory,
+    private val storage: WorkspaceStorageClasses? = null,
 ) : CloudProfilesUseCase {
     override suspend fun list(caller: Caller): List<CloudProfile> {
         val all = repository.list(caller.orgId)
@@ -92,8 +96,29 @@ class CloudProfilesUseCaseImpl(
 
     private suspend fun check(orgId: Uuid, input: CloudProfileInput, expectedVersion: Int) {
         if (input.version != expectedVersion) throw CloudProfileConflictException()
-        val cluster = Uuid.parseOrNull(input.spec.clusterId)?.let { clusters.get(it)?.cluster }
+        val cluster = cluster(input)
         (profileProblem(input, cluster) ?: membersProblem(orgId, input))?.let { throw InvalidCloudProfileException(it) }
+        checkStorageClass(cluster, input.spec.storageClass ?: cluster.defaultStorageClass)
+    }
+
+    /** The cluster the profile names, checked before the rest of the profile. */
+    private suspend fun cluster(input: CloudProfileInput): CloudCluster =
+        Uuid.parseOrNull(input.spec.clusterId)?.let { clusters.get(it)?.cluster }
+            ?: throw InvalidCloudProfileException("spec.clusterId names no cluster.")
+
+    /**
+     * The workspace storage class must exist and delete the provider's volume with its claim, so that a deleted session
+     * leaves no volume behind (TeamCode's). One that cannot be read now is checked again at each session's first start.
+     */
+    private suspend fun checkStorageClass(cluster: CloudCluster, name: String?) {
+        val reader = storage ?: return
+        when (val found = reader.find(cluster.id, name)) {
+            StorageClassLookup.Missing -> throw StorageClassMissingException()
+            is StorageClassLookup.Found -> if (found.reclaimPolicy != RECLAIM_DELETE) {
+                throw StorageClassRetainsVolumesException(found.name, found.reclaimPolicy)
+            }
+            StorageClassLookup.Unknown -> Unit
+        }
     }
 
     // Only the organization's members: an id of someone else, or of a member who left, never gets the profile.
@@ -103,6 +128,9 @@ class CloudProfilesUseCaseImpl(
     }
 
     private companion object {
+        /** The reclaim policy that deletes the provider's volume with its claim. */
+        const val RECLAIM_DELETE = "Delete"
+
         fun normalize(input: CloudProfileInput) = input.copy(
             name = input.name.trim(),
             spec = input.spec.copy(
