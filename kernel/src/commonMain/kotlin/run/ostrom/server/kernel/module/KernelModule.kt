@@ -14,6 +14,7 @@ import run.ostrom.server.kernel.http.DatabaseHealthCheck
 import run.ostrom.server.kernel.http.HealthCheck
 import run.ostrom.server.kernel.http.ReadThrottle
 import run.ostrom.server.kernel.http.Readiness
+import run.ostrom.server.kernel.http.docs.ApiDocs
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.network.TrustedProxies
 import run.ostrom.server.kernel.observability.OstromMetrics
@@ -72,6 +73,8 @@ fun kernelModule(
     // Validated at start by ServerConfig.from: read again here so that tests set it through the ConfigSource.
     single { TrustedProxies.parse(config["OSTROM_TRUSTED_PROXIES"], config["OSTROM_CLIENT_ADDRESS_HEADER"]) }
     single { Readiness() }
+    // The OpenAPI document the HTTP layer fills as it mounts each module's routes.
+    single { ApiDocs() }
     // AUDIT-SECU-LECTURES M1: one limiter for every costly read route, validated at start like the proxies above.
     single { ReadThrottle(get(), ServerConfig.readLimits(config), ReadThrottle.MAX_SUBJECTS) }
     // P1 memory: the calls this replica runs at once, under a ceiling taken from its container's limit.

@@ -44,6 +44,8 @@ kotlin {
             api(libs.ktor.server.content.negotiation)
             api(libs.ktor.server.status.pages)
             api(libs.ktor.server.resources)
+            // The OpenAPI document generated from the routing tree (http/docs, as TeamCode's presentation/docs).
+            api(libs.ktor.server.routing.openapi)
             api(libs.ktor.server.auth)
             api(libs.ktor.server.call.id)
             api(libs.ktor.serialization.json)
