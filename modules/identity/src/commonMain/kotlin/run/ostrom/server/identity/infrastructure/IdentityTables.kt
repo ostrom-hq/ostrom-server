@@ -78,6 +78,9 @@ internal interface TokenColumns {
     val revokedAt: Column<Instant?>
     val authenticatedAt: Column<Instant?>
 
+    /** The device of a CLI token (`devices.v1`); null where the table does not hold it ([TokenByHash]). */
+    val deviceId: Column<Uuid?>? get() = null
+
     /** What a read of a token selects: built once per table, after its columns ([readOf]). */
     val read: List<Column<*>>
 }
@@ -87,7 +90,7 @@ private fun readOf(t: TokenColumns): List<Column<*>> = with(t) {
     listOf(
         id, userId, orgId, name, kind, scopes, hint, agentSessionId, createdAt, expiresAt, lastUsedAt, revokedAt,
         authenticatedAt,
-    )
+    ) + listOfNotNull(deviceId)
 }
 
 /**
@@ -111,6 +114,7 @@ internal object IdentityApiTokens : Table("identity_api_tokens"), TokenColumns {
     val unlockKeyHash = text("unlock_key_hash").nullable()
     override val authenticatedAt = instant("authenticated_at").nullable()
     val unlockRequestId = text("unlock_request_id").nullable()
+    override val deviceId = uuid("device_id").nullable()
 
     override val primaryKey = PrimaryKey(id)
     override val read = readOf(this)
@@ -172,6 +176,24 @@ internal object IdentityDeviceAuthorizations : Table("identity_device_authorizat
     val scopes = text("scopes")
     val approvingOrgId = uuid("approving_org_id").nullable()
     val requestedFrom = text("requested_from").nullable()
+    val installationId = text("installation_id").nullable()
+    val deviceName = text("device_name").nullable()
+    val platform = text("platform").nullable()
+    val osVersion = text("os_version").nullable()
+
+    override val primaryKey = PrimaryKey(id)
+}
+
+/** The CLI's registered installations (`devices.v1`): an account-level table, one row per person and installation. */
+internal object IdentityDevices : Table("identity_devices") {
+    val id = uuid("id")
+    val userId = uuid("user_id")
+    val installationId = text("installation_id")
+    val name = text("name")
+    val platform = text("platform").nullable()
+    val osVersion = text("os_version").nullable()
+    val createdAt = instant("created_at")
+    val lastLoginAt = instant("last_login_at")
 
     override val primaryKey = PrimaryKey(id)
 }

@@ -29,4 +29,26 @@ interface MemberDirectory {
      * this directory cannot list them.
      */
     suspend fun memberIds(orgId: Uuid, limit: Int): List<String>? = null
+
+    /**
+     * The person behind a member of [orgId], for what an owner or an admin reads or changes of them (their devices).
+     *
+     * @param orgId The organization.
+     * @param memberId The member's id, as [OrgPrincipal.memberId] gives it.
+     *
+     * @return The user id; null for a member of another organization, an unknown member, or a directory that cannot
+     *   tell.
+     */
+    suspend fun userIdOf(orgId: Uuid, memberId: String): Uuid? = null
+
+    /**
+     * Whether [userId] is a member of [orgId].
+     *
+     * @param orgId The organization.
+     * @param userId The person.
+     *
+     * @return True when that organization has a member for this user; false when unknown or when this directory cannot
+     *   tell.
+     */
+    suspend fun hasUser(orgId: Uuid, userId: Uuid): Boolean = false
 }

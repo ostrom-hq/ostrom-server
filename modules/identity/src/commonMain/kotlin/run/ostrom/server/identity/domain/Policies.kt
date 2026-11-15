@@ -354,8 +354,13 @@ class ServiceKeyNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Servic
 class ServiceKeysAdminRequiredException :
     OstromException(ErrorKind.FORBIDDEN, "Only an owner or an admin manages the organization's service keys.")
 
-/** The device is absent, another person's, or already signed out. */
-class DeviceNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Device not found.")
+/**
+ * The device is absent, another person's, or already signed out.
+ *
+ * @param type The `error.type`: `not_found` for a sign-out, `device_not_found` where the contract names it (renaming).
+ */
+class DeviceNotFoundException(type: String = ErrorKind.NOT_FOUND.type) :
+    OstromException(ErrorKind.NOT_FOUND, "Device not found.", type)
 
 /** The token lifetime is not between one day and [MAX_TOKEN_LIFETIME]. */
 class InvalidTokenLifetimeException :

@@ -180,6 +180,8 @@ enum class TokenKind(val prefix: String) {
  * @property revokedAt When it was revoked, if so.
  * @property authenticatedAt For a [TokenKind.MOBILE] token, the last biometric unlock of the phone (S2-54); null
  *   before the first one, and for every other kind.
+ * @property deviceId For a [TokenKind.CLI] token signed in with an installation (`devices.v1`), the device it is a
+ *   sign-in of; null for every other token, and for a CLI token from before devices.
  */
 data class ApiToken(
     val id: Uuid,
@@ -195,6 +197,7 @@ data class ApiToken(
     val lastUsedAt: Instant?,
     val revokedAt: Instant?,
     val authenticatedAt: Instant? = null,
+    val deviceId: Uuid? = null,
 )
 
 /**
@@ -242,6 +245,11 @@ enum class DeviceAuthorizationStatus { PENDING, APPROVED, DENIED, CONSUMED }
  * @property requestedFrom The network the CLI asked from ([approximateNetwork]), shown before the yes so that an
  *   approval of someone else's code shows (web audit 2, W3); null when the address was not an IP address, or for a
  *   request started before the server kept it.
+ * @property installationId The CLI's installation (`devices.v1`), a lowercase UUID the approval registers as a device
+ *   of the approving person; null for a CLI without one, and for `ostrom login --admin`.
+ * @property deviceName The name the CLI asked its device to carry, validated; null falls back to [clientName].
+ * @property platform The system the CLI reported, one of [DEVICE_PLATFORMS]; null when it reported none.
+ * @property osVersion The system's version reported with [platform].
  */
 data class DeviceAuthorization(
     val id: Uuid,
@@ -255,6 +263,10 @@ data class DeviceAuthorization(
     val scopes: Set<String> = emptySet(),
     val approvingOrgId: Uuid? = null,
     val requestedFrom: String? = null,
+    val installationId: String? = null,
+    val deviceName: String? = null,
+    val platform: String? = null,
+    val osVersion: String? = null,
 )
 
 /**

@@ -407,6 +407,31 @@ interface DeviceAuthorizationsRepository {
      * @return True when this call consumed it.
      */
     suspend fun consume(id: Uuid, token: ApiToken, secretHash: String): Boolean
+
+    /**
+     * [consume] for a sign-in on an installation (`devices.v1`): in the same transaction, which no other sign-in of
+     * the person runs through at once, the installation is registered as a device of the token's owner, or found, and
+     * the token is stored as one of its sign-ins ([ApiToken.deviceId] is set here). An existing device keeps its id
+     * and its name; its platform and version change only when [login] reports them, and its latest sign-in is now.
+     *
+     * @param id The authorization.
+     * @param token The CLI token.
+     * @param secretHash The SHA-256 of its secret.
+     * @param login The installation, its name for a new device, and what it reported.
+     * @param now The time of the sign-in.
+     *
+     * @return The device, or null when this call did not consume the authorization.
+     *
+     * @throws DeviceLimitException When the installation is new and its owner holds [MAX_REGISTERED_DEVICES] already;
+     *   nothing is written.
+     */
+    suspend fun consumeOnDevice(
+        id: Uuid,
+        token: ApiToken,
+        secretHash: String,
+        login: DeviceSignInRequest,
+        now: Instant,
+    ): DeviceSignIn?
 }
 
 /** The signed, chained audit log. */

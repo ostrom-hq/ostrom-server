@@ -2,13 +2,13 @@
 package run.ostrom.server.identity.presentation
 
 import run.ostrom.server.identity.domain.ApiToken
+import run.ostrom.server.identity.domain.SignedInDevice
 import run.ostrom.server.identity.domain.IssuedToken
-import run.ostrom.server.identity.domain.TokenKind
 import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
 
 // The routes and bodies of `ostrom-core/api/openapi.yaml` (operations `listServiceKeys`, `createServiceKey`,
-// `deleteServiceKey`, `listDevices` and `deleteDevice`).
+// `deleteServiceKey`, `listDevices`, `renameDevice`, `deleteDevice` and `listMemberDevices`).
 
 /** `GET`/`POST /api/v1/service-keys`: the service keys of the organization the request acts in. */
 @Serializable
@@ -30,7 +30,7 @@ class ServiceKeysApi {
 @Resource("/api/v1/devices")
 class DevicesApi {
     /**
-     * `DELETE /api/v1/devices/{id}`: signs a workstation out.
+     * `PATCH /api/v1/devices/{id}` renames a device, `DELETE /api/v1/devices/{id}` signs a workstation out.
      *
      * @property parent The devices resource.
      * @property id The device id.
@@ -39,6 +39,15 @@ class DevicesApi {
     @Resource("{id}")
     class Id(val parent: DevicesApi = DevicesApi(), val id: String)
 }
+
+/**
+ * `GET /api/v1/members/{memberId}/devices`: a member's devices, for an owner or an admin.
+ *
+ * @property memberId The member.
+ */
+@Serializable
+@Resource("/api/v1/members/{memberId}/devices")
+class MemberDevicesApi(val memberId: String)
 
 /**
  * A service key to create (contract `createServiceKey`).
@@ -81,11 +90,17 @@ data class ServiceKeyResponse(
 data class ServiceKeysResponse(val items: List<ServiceKeyResponse>)
 
 /**
- * A workstation where the CLI is signed in (contract `Device`): one live CLI token, or one live token of
- * `ostrom login --admin` in the organization the request names.
+ * A workstation where the CLI is signed in (contract `Device`): a registered installation (`devices.v1`), one live CLI
+ * token from before devices, or one live token of `ostrom login --admin` in the organization the request names.
  *
- * @property id The id, its token's.
- * @property name What the CLI called itself when it signed in.
+ * @property id The id, the device's, or its token's for a token listed on its own.
+ * @property name What the CLI called itself when it signed in, or what its owner renamed it.
+ * @property platform The system reported at the latest sign-in; absent until one did.
+ * @property osVersion The system's version.
+ * @property createdAt When the installation was registered; absent for a token listed on its own.
+ * @property lastLoginAt Its latest sign-in.
+ * @property activeSessions How many live sign-ins the device holds.
+ * @property current Whether the call came from it.
  * @property lastSeenAt Its last call, precise to five minutes; absent before the first.
  * @property kind `cli`, or `admin` for the token of `ostrom login --admin`.
  * @property orgId The organization an `admin` token is bound to; absent for `cli`.
@@ -101,7 +116,21 @@ data class DeviceResponse(
     val orgId: String? = null,
     val scopes: List<String>? = null,
     val expiresAt: String? = null,
+    val platform: String? = null,
+    val osVersion: String? = null,
+    val createdAt: String? = null,
+    val lastLoginAt: String? = null,
+    val activeSessions: Int? = null,
+    val current: Boolean? = null,
 )
+
+/**
+ * A device's new name (contract `RenameDeviceRequest`).
+ *
+ * @property name 1 to 120 characters, no control character.
+ */
+@Serializable
+data class RenameDeviceRequest(val name: String)
 
 /**
  * The caller's workstations.
@@ -124,15 +153,25 @@ fun ApiToken.toServiceKeyResponse() = ServiceKeyResponse(
 /** Maps a service key just created, with its secret. */
 fun IssuedToken.toCreatedServiceKeyResponse() = token.toServiceKeyResponse().copy(secret = secret)
 
-/** Maps a CLI token, or a token of `ostrom login --admin` with its organization, scopes and expiry, to its device. */
-fun ApiToken.toDeviceResponse(): DeviceResponse {
-    val device = DeviceResponse(id.toString(), name, lastUsedAt?.toString())
-    if (kind != TokenKind.ADMIN) return device
+/** Maps a line of the listing: a registered device, a CLI token on its own, or a token of `ostrom login --admin`. */
+fun SignedInDevice.toDeviceResponse(): DeviceResponse {
+    val device = DeviceResponse(
+        id = id.toString(),
+        name = name,
+        lastSeenAt = lastSeenAt?.toString(),
+        platform = platform,
+        osVersion = osVersion,
+        createdAt = createdAt?.toString(),
+        lastLoginAt = lastLoginAt?.toString(),
+        activeSessions = activeSessions,
+        current = current,
+    )
+    val token = elevated ?: return device
     return device.copy(
         kind = DEVICE_KIND_ADMIN,
-        orgId = orgId?.toString(),
-        scopes = scopes.sorted(),
-        expiresAt = expiresAt?.toString(),
+        orgId = token.orgId?.toString(),
+        scopes = token.scopes.sorted(),
+        expiresAt = token.expiresAt?.toString(),
     )
 }
 
