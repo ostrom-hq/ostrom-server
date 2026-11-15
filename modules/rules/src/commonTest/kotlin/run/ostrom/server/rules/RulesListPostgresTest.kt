@@ -113,7 +113,7 @@ class RulesListPostgresTest {
     }
 
     @Test
-    fun theRepositoryFilterReadsTheOrganizationsRowsByAnIndex() = withRepository { superuser, rules, raw ->
+    fun theRepositoryFilterReadsTheOrganizationsRowsByAnIndex() = withRepository { superuser, rules, _ ->
         seed(rules)
         // Fixtures only: another organization's rows around, then the statistics, which no request writes. No `::`
         // cast and no colon: the driver would read `:x` as a named parameter.

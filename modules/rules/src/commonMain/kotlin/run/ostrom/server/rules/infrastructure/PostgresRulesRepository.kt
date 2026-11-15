@@ -10,6 +10,7 @@ import run.ostrom.server.rules.domain.models.Decision
 import run.ostrom.server.rules.domain.models.DecisionQuery
 import run.ostrom.server.rules.domain.models.Rule
 import run.ostrom.server.rules.domain.models.RuleQuery
+import run.ostrom.server.rules.domain.models.RuleStatus
 import run.ostrom.server.rules.domain.repositories.RulesRepository
 import run.ostrom.server.rules.domain.repositories.RulesTransaction
 import run.ostrom.server.rules.domain.services.RuleDocuments
@@ -112,12 +113,16 @@ class PostgresRulesRepository(private val database: JdbcDatabase) : RulesReposit
         override fun lockRule(id: String): Rule? = tx.selectRule(org, id, lock = true)
 
         override fun insertRule(rule: Rule) {
-            RulesRules.insert { it.rule(org, rule) }
+            RulesRules.insert {
+                it[orgId] = org
+                it[id] = rule.id
+                it.fields(rule)
+            }
         }
 
         override fun updateRule(rule: Rule) {
             val r = RulesRules
-            r.update({ (r.orgId eq org) and (r.id eq rule.id) }) { it.rule(org, rule) }
+            r.update({ (r.orgId eq org) and (r.id eq rule.id) }) { it.fields(rule) }
         }
 
         override fun deleteRule(id: String) {
@@ -222,10 +227,8 @@ class PostgresRulesRepository(private val database: JdbcDatabase) : RulesReposit
          * @return The read.
          */
         fun gatedRulesQuery(orgId: Uuid, after: String?, limit: Int): Query = page(orgId, after, limit) {
-            it and RulesRules.gate.isNotNull() and (RulesRules.status neq REJECTED)
+            it and RulesRules.gate.isNotNull() and (RulesRules.status neq RuleStatus.REJECTED.value)
         }
-
-        private const val REJECTED = "rejected"
 
         private fun page(orgId: Uuid, after: String?, limit: Int, filter: (Op<Boolean>) -> Op<Boolean>): Query {
             val r = RulesRules
@@ -253,10 +256,9 @@ class PostgresRulesRepository(private val database: JdbcDatabase) : RulesReposit
             return row?.let { SelfApprovalValues.of(it[p.selfApproval]) }
         }
 
-        fun UpdateBuilder<*>.rule(orgId: Uuid, rule: Rule) {
+        /** Every column of [rule] but its key, written by an insert and an update alike. */
+        fun UpdateBuilder<*>.fields(rule: Rule) {
             val r = RulesRules
-            this[r.orgId] = orgId
-            this[r.id] = rule.id
             this[r.statement] = rule.statement
             this[r.output] = rule.output
             this[r.group] = rule.group
