@@ -60,8 +60,9 @@ object McpRules {
     private val reservedPrefixes = listOf(
         "LD_", "OSTROM_", "TEAMCODE_", "NPM_CONFIG_", "UV_", "PIP_", "NODE_", "PYTHON", "COREPACK_", "SSL", "CURL_",
         "DYLD_",
-        // `BASH_FUNC_` names an exported shell function.
-        "BASH_FUNC_",
+        // The server's environment variants refuse these too (EnvironmentRules); `BASH_FUNC_` names an exported shell
+        // function.
+        "ANTHROPIC_", "CLAUDE_", "OPENAI_", "CODEX_", "XDG_", "GIT_CONFIG_", "BASH_FUNC_",
     )
     private val reservedNames = setOf(
         "PATH", "HOME", "TMPDIR", "LANG", "SHELL", "USER", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",

@@ -130,7 +130,9 @@ class McpRulesTest {
         for (name in listOf(
             "DOTNET_STARTUP_HOOKS", "CLASSPATH", "SHELLOPTS", "ZDOTDIR", "GIT_ASKPASS", "SSH_ASKPASS",
             "GIT_PROXY_COMMAND", "GIT_DIR", "GH_CONFIG_DIR", "RIPGREP_CONFIG_PATH", "BASH_FUNC_X", "GIT_SSL_NO_VERIFY",
-            "GIT_ALLOW_PROTOCOL", "GCONV_PATH",
+            "GIT_ALLOW_PROTOCOL", "GCONV_PATH", "GIT_CONFIG_COUNT", "XDG_CONFIG_HOME", "ANTHROPIC_BASE_URL",
+            "CLAUDE_CONFIG_DIR",
+            "OPENAI_API_KEY", "CODEX_HOME",
         )) {
             refused(stdio.withStdio { copy(env = mapOf(name to "x")) })
         }

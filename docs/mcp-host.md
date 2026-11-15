@@ -130,7 +130,7 @@ cache.
     the loader or a runtime (`DOTNET_STARTUP_HOOKS`, `CLASSPATH`...), the shell (`SHELLOPTS`, `CDPATH`, `PS4`, `ZDOTDIR`...),
     Git, SSH and `gh` (`GIT_ASKPASS`, `SSH_ASKPASS`, `GIT_DIR`, `GIT_SSL_NO_VERIFY`...) or an agent's tools
     (`RIPGREP_CONFIG_PATH`), at least every name the server reserves for a variable;
-  - prefixes such as `LD_`, `OSTROM_`, `BASH_FUNC_`, `NPM_CONFIG_`, `UV_`, `PIP_`, `NODE_`, `PYTHON`, `COREPACK_`, `SSL`, `CURL_`.
+  - prefixes such as `LD_`, `OSTROM_`, `BASH_FUNC_`, `GIT_CONFIG_`, `XDG_`, `NPM_CONFIG_`, `UV_`, `PIP_`, `NODE_`, `PYTHON`, `COREPACK_`, `SSL`, `CURL_`.
 
   The full lists are in `Launchers.kt`.
 
