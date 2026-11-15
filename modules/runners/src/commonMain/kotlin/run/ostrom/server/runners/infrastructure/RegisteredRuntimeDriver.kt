@@ -14,7 +14,7 @@ import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * [RuntimeDriver] on the organization's registered runners (`ostrom-runner machine`): the server creates nothing
+ * [RuntimeDriver] on the organization's registered runners (`ostrom cloud machine`): the server creates nothing
  * itself. It assigns each execution to an online runner of the session's organization, which takes it at its next
  * heartbeat and creates it on its own Docker Engine from the plan the server computes ([DockerExecutionPlan]); the
  * runner then reports its state at every heartbeat.

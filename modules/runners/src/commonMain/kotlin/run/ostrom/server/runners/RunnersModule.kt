@@ -175,7 +175,7 @@ private val REPLICA_HTTP = named("runners.replica.http")
 /**
  * The runners module: cloud sessions. A member creates a session; the leased reconciler starts one pod per
  * execution (Kubernetes namespace `ostrom`, a local Docker container, or a container on one of the organization's
- * registered runners, `ostrom-runner machine`), with a workspace volume that survives
+ * registered runners, `ostrom cloud machine`), with a workspace volume that survives
  * pauses; the runner in the pod reports through the runner channel; the free plan's guards pause idle, overlong or
  * over-budget sessions. Its cloud sessions are agent sessions to the other modules (the kernel's
  * [CloudAgentSessions]): a cloud agent's todo, waits and proposals are its cloud session's. Their names title the

@@ -6,7 +6,7 @@
 // gradle.properties overrides the repository's:
 //   ostrom-core, ostrom-cli: macosArm64,linuxX64,linuxArm64,mingwX64
 //   ostrom-server:           none (the server runs on the JVM, docs/decisions/0001)
-//   ostrom-server runner/:   linuxX64,linuxArm64,macosArm64 (runner/gradle.properties)
+//   ostrom-server push/:     linuxX64,macosArm64 (push/gradle.properties)
 // The jvm() target always exists: the server's runtime, and the tests and Kover coverage of every project.
 
 import io.gitlab.arturbosch.detekt.Detekt

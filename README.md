@@ -92,7 +92,7 @@ Ostrom is before its first public release.
 | `app/` | The application: `migrate` applies every module's migrations, `serve` wires the kernel and every module and serves HTTP until SIGTERM, then drains, `seed-test-account` creates a QA account, `bootstrap` prints the first owner's setup link |
 | `image/` | The container image: the Ktor Gradle plugin's `ktor { docker { } }` and jib package `app/` on `eclipse-temurin:21-jre`, as TeamCode's; `/usr/local/bin/ostrom-server` runs it |
 | `ee/` | Enterprise modules (commercial license) |
-| `build-logic/` | The `ostrom.kmp` convention plugin of ostrom-core's CONVENTIONS (the `jvm()` target, native targets for `runner/` only, Kover 100 %, detekt), applied as `ostrom.native-module` |
+| `build-logic/` | The `ostrom.kmp` convention plugin of ostrom-core's CONVENTIONS (the `jvm()` target, native targets for `push/` only, Kover 100 %, detekt), applied as `ostrom.native-module` |
 
 Adding a module: [`docs/MODULES.md`](docs/MODULES.md).
 
@@ -103,7 +103,7 @@ Builds run in GitHub Actions (Linux, one job `ci`; none on a draft pull request)
 ```sh
 python3 scripts/check-conventions.py
 ./gradlew detekt jvmTest koverVerify koverXmlReport   # with a PostgreSQL service
-./gradlew :runner:linuxX64Test                          # the session runner, Kotlin/Native
+./gradlew :push:linuxX64Test                            # the push relay, Kotlin/Native
 ./gradlew :image:publishImageToLocalRegistry -PimageTags=ci -PimagePlatforms=amd64   # ostrom-server:ci, smoke-tested
 ```
 
