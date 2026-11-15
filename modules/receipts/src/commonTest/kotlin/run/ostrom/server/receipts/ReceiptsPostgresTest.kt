@@ -19,6 +19,7 @@ import run.ostrom.server.receipts.presentation.ReceiptKeysResponse
 import run.ostrom.server.receipts.presentation.ReceiptsPage
 import run.ostrom.server.receipts.presentation.VerificationResponse
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
 import io.ktor.client.call.body
 import io.ktor.client.request.get
@@ -81,6 +82,11 @@ class ReceiptsPostgresTest {
 
     private suspend fun TestServer.sign(org: Uuid, subjectId: String, kind: String = "gate"): JsonObject =
         koin.get<SignReceiptUseCase>()(org, draft(subjectId, kind))
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(listOf(InstanceModule, ReceiptsModule), overrides) { server ->
+        server.assertApiCatalogue(ReceiptsModule)
+    }
 
     @Test
     fun aSignedReceiptIsServedAsSignedAndVerifies() = receiptsTest { server ->

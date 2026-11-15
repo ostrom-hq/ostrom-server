@@ -17,9 +17,11 @@ import run.ostrom.server.instance.infrastructure.InstanceMigrations
 import run.ostrom.server.instance.infrastructure.InstanceRepositoryImpl
 import run.ostrom.server.instance.infrastructure.ScheduledWorkImpl
 import run.ostrom.server.instance.presentation.InstanceRoutesDependencies
+import run.ostrom.server.instance.presentation.instanceOperations
 import run.ostrom.server.instance.presentation.instanceRoutes
 import run.ostrom.server.kernel.database.ScheduledWork
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.signing.InstanceKeyring
 import io.ktor.server.routing.Route
@@ -33,6 +35,8 @@ import org.koin.dsl.module
  */
 object InstanceModule : ServerModule {
     override val name: String = "instance"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { instanceOperations() }
 
     override val koinModule: Module = module {
         single<InstanceRepository> { InstanceRepositoryImpl(get()) }

@@ -30,6 +30,7 @@ import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import run.ostrom.server.secrets.infrastructure.executeInOrg
 import run.ostrom.server.secrets.infrastructure.fetchInOrg
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.request.post
@@ -46,6 +47,11 @@ import kotlin.uuid.Uuid
 
 /** Real PostgreSQL and real HTTP: the import writes through the real secrets and MCP relay modules. */
 class ImportPostgresTest {
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(modules, importOverrides()) { server ->
+        server.assertApiCatalogue(ImportModule)
+    }
+
     @Test
     fun aDryRunReportsThePlanAndWritesNothing() = serverTest(modules, importOverrides()) { server ->
         with(server) {

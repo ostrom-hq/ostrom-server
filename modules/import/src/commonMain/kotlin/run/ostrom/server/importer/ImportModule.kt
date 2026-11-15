@@ -5,8 +5,8 @@ import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.automations.domain.ImportAutomationsUseCase
 import run.ostrom.server.compiler.domain.usecases.ImportWorkflowsUseCase
 import run.ostrom.server.compiler.domain.usecases.WorkflowSettingsUseCase
-import run.ostrom.server.identity.domain.AuditLog
 import run.ostrom.server.hooks.domain.PublishHookVersionUseCase
+import run.ostrom.server.identity.domain.AuditLog
 import run.ostrom.server.importer.domain.AccountImporter
 import run.ostrom.server.importer.domain.CatalogPorts
 import run.ostrom.server.importer.domain.EnvironmentPorts
@@ -25,10 +25,12 @@ import run.ostrom.server.importer.infrastructure.ImportMigrations
 import run.ostrom.server.importer.infrastructure.ImportProvenanceRepositoryImpl
 import run.ostrom.server.importer.infrastructure.NoMembers
 import run.ostrom.server.importer.presentation.ImportRoutesDependencies
+import run.ostrom.server.importer.presentation.importOperations
 import run.ostrom.server.importer.presentation.importRoutes
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.secrets.domain.CallerResolver
 import run.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
@@ -53,6 +55,8 @@ import org.koin.dsl.module
  */
 object ImportModule : ServerModule {
     override val name: String = "import"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { importOperations() }
 
     override val koinModule: Module = module {
         single { SecretPorts(get(), get(), get(), get()) }

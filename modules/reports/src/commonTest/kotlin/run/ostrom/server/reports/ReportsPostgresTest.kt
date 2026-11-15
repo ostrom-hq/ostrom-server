@@ -18,6 +18,7 @@ import run.ostrom.server.reports.presentation.SpendingLineDto
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.sessions.SessionsModule
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.usage.UsageModule
 import io.ktor.client.call.body
@@ -105,6 +106,11 @@ class ReportsPostgresTest {
 
     private suspend fun TestServer.read(token: String?, path: String): HttpResponse =
         client.get(path) { token?.let { bearerAuth(it) } }
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(modules, reportsOverrides(clock)) { server ->
+        server.assertApiCatalogue(ReportsModule)
+    }
 
     @Test
     fun anOwnerSeesTheWholeOrganizationsMonthAgainstItsBudget() = reportsTest { server ->

@@ -71,3 +71,13 @@ fun Parameters.Builder.headerText(name: String, text: String, required: Boolean 
         schema = jsonSchema<String>()
     }
 }
+
+/** The `Ostrom-Org` header of an operation that acts in one organization, as the contract has always written it. */
+fun Parameters.Builder.organizationHeader() = headerText(
+    "Ostrom-Org",
+    "The id of the organization the request acts in. Required when the signed-in person is a member of several " +
+        "organizations; without it, a person with exactly one active membership acts in that organization. Missing " +
+        "while several memberships are active, 409 `org_required` (`error.type`, the usual `ApiError` body); an " +
+        "organization the person is not a member of, 404, as for anything of another organization. A token bound " +
+        "to one organization (device, agent, runner, service key) acts in its own organization.",
+)

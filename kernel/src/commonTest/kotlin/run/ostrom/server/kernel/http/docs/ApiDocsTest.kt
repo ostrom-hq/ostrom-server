@@ -90,11 +90,12 @@ class ApiDocsTest {
                     queryText("view", "How much to show.")
                     queryNumber("limit", "At most this many notes.")
                     queryFlag("all", "Every note.")
-                    headerText("Ostrom-Org", "The organization.")
+                    organizationHeader()
                 }
                 responses {
                     ok<Item>("The item.")
                     notFound("No such item (`not_found`).")
+                    rateLimited()
                 }
             }
             post("/api/v1/items") {
@@ -211,7 +212,7 @@ class ApiDocsTest {
         )
         val parameters = read["parameters"]!!.jsonArray.map { it.jsonObject["name"]!!.jsonPrimitive.content }.toSet()
         assertEquals(setOf("id", "view", "limit", "all", "Ostrom-Org"), parameters)
-        assertEquals(setOf("200", "404", "401", "403", "500", "default"), read["responses"]!!.jsonObject.keys)
+        assertEquals(setOf("200", "404", "429", "401", "403", "500", "default"), read["responses"]!!.jsonObject.keys)
         assertEquals("No such item (`not_found`).", read.response("404"))
 
         val create = document.operation("/api/v1/items", "post")
