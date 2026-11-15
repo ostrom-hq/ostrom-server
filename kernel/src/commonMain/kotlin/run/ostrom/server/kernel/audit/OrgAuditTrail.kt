@@ -2,7 +2,8 @@
 package run.ostrom.server.kernel.audit
 
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
-import io.github.smyrgeorge.sqlx4k.Transaction
+import run.ostrom.server.kernel.database.JdbcDatabase
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import kotlin.uuid.Uuid
 
 /**
@@ -46,24 +47,42 @@ class DiscardingOrgAuditTrail : OrgAuditTrail {
 }
 
 /**
- * Writes a change of an organization to the same signed audit log as [OrgAuditTrail], inside the sqlx4k transaction
- * that makes it (TeamCode's `CloudWrite`): the entry is kept if and only if the change commits, and an entry that
- * cannot be written fails the change. The identity module binds it on its log; until it is bound,
+ * Writes a change of an organization to the same signed audit log as [OrgAuditTrail], inside the transaction that makes
+ * it (TeamCode's `CloudWrite`): the entry is kept if and only if the change commits, and an entry that cannot be
+ * written fails the change. The identity module binds it on its log; until it is bound,
  * [serverKoin][run.ostrom.server.kernel.module.serverKoin] binds [DiscardingTransactionalOrgAuditTrail].
+ *
+ * A transaction block is not `suspend` and the log's signature is, so the entry is signed before the transaction that
+ * writes it, on the chain's head read in a first one, and appended in the second only if the head is still the one it
+ * was signed on ([recording]).
  */
-fun interface TransactionalOrgAuditTrail {
+interface TransactionalOrgAuditTrail {
     /**
-     * Records a change inside its transaction.
+     * Runs [change] in a transaction confined to the record's organization ([JdbcDatabase.inOrg]) and appends [record]
+     * to the organization's chain in that same transaction.
      *
-     * @param transaction The transaction that makes the change, confined to [OrgAuditRecord.orgId].
-     * @param record The change.
+     * @param database The JDBC pool.
+     * @param record The change, whose entry is kept if and only if the transaction commits.
+     * @param change The change. It calls `append` once, as its last statement, when it changed something, and returns
+     *   right after a false: another writer appended to the chain since the entry was signed, the transaction is rolled
+     *   back and [change] runs again with the entry signed on the new head. It does nothing else after that call.
+     *
+     * @return What [change] returned in the transaction that committed.
      */
-    suspend fun record(transaction: Transaction, record: OrgAuditRecord)
+    suspend fun <T> recording(
+        database: JdbcDatabase,
+        record: OrgAuditRecord,
+        change: JdbcTransaction.(append: () -> Boolean) -> T,
+    ): T
 }
 
 /** Writes nothing: the default for a server built without the identity module (a module's own tests). */
 class DiscardingTransactionalOrgAuditTrail : TransactionalOrgAuditTrail {
-    override suspend fun record(transaction: Transaction, record: OrgAuditRecord) = Unit
+    override suspend fun <T> recording(
+        database: JdbcDatabase,
+        record: OrgAuditRecord,
+        change: JdbcTransaction.(append: () -> Boolean) -> T,
+    ): T = database.inOrg(record.orgId) { change { true } }
 }
 
 /** The longest value a detail keeps: a long list is cut, the log never holds a whole document. */
