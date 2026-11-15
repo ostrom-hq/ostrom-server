@@ -70,6 +70,7 @@ import kotlin.uuid.Uuid
  *   [proves it][RuntimeDriver.provesDeletion] (Kubernetes); null elsewhere, and before it ends.
  * @property kind Where it runs: a pod the server starts, or its owner's own device ([SessionKind.REMOTE]).
  * @property host The device a remote session runs on; null for a cloud session.
+ * @property createdBy Who created it (`runners.cloud.onbehalf.v1`); null for a session created before it was recorded.
  */
 data class CloudSession(
     val id: Uuid,
@@ -117,6 +118,7 @@ data class CloudSession(
     val workspaceDeletion: WorkspaceDeletion? = null,
     val kind: SessionKind = SessionKind.CLOUD,
     val host: RemoteHost? = null,
+    val createdBy: CloudAttribution? = null,
 ) {
     /** Its workspace's deletion while it is pending or blocked, and so looked at again until it is proven gone. */
     val cleanup: WorkspaceDeletion?
@@ -139,6 +141,16 @@ data class CloudSession(
         const val TERMINATED_EXPIRED: String = "expired"
     }
 }
+
+/**
+ * Who created a cloud session (`runners.cloud.onbehalf.v1`, TeamCode's attribution).
+ *
+ * @property initiatorId The member who made the request.
+ * @property credentialId The id of the credential they used, never the token itself; null when the server itself
+ *   created it (a workflow run, an automation).
+ * @property effectiveMemberId The member it was created for, its first owner.
+ */
+data class CloudAttribution(val initiatorId: String, val credentialId: String?, val effectiveMemberId: String)
 
 /**
  * Whose GitHub access a session's Git and `gh` use, through the runner's credential socket (the agent never holds a

@@ -26,8 +26,8 @@ import kotlin.uuid.Uuid
 /** `POST /api/v1/cloud/sessions` and `POST /api/v1/cloud/sessions/{id}/host`, inside the member routes. */
 internal fun Route.creationRoutes(dependencies: CloudSessionsRoutesDependencies) = with(dependencies) {
     post<CloudSessionsApi> {
+        val caller = call.cloudActor(orgResolver, resolveActor)
         val principal = call.requirePrincipal()
-        val caller = orgResolver.callerOf(principal, CLOUD_WRITE)
         val request = call.receive<CreateCloudSessionRequest>()
         val key = call.request.header(Idempotency.KEY_HEADER)?.also {
             if (!Idempotency.isValid(it)) throw InvalidCloudSessionRequestException(MALFORMED_KEY)

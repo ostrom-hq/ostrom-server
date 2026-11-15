@@ -10,6 +10,8 @@ import run.ostrom.server.runners.domain.HostRemoteSessionUseCase
 import run.ostrom.server.runners.domain.GetCloudSessionUseCase
 import run.ostrom.server.runners.domain.ListCloudSessionsUseCase
 import run.ostrom.server.runners.domain.RunnerEnvironmentUseCase
+import run.ostrom.server.runners.domain.ResolveCloudActorUseCase
+import run.ostrom.server.runners.domain.ResolveCloudActorUseCaseImpl
 import run.ostrom.server.runners.domain.RunnerInferenceUseCase
 import run.ostrom.server.runners.domain.RunnerGitHubTokenUseCase
 import run.ostrom.server.runners.domain.RunnerHeartbeatUseCase
@@ -36,6 +38,7 @@ import run.ostrom.server.runners.domain.SetCloudSessionGitHubAccessUseCase
  * @property hosts Shows each remote session's device.
  * @property runnerInference Hands a runner its execution's inference credential; null without the launches module,
  *   whose route is then not served (404: the agent runs with its own provider configuration).
+ * @property resolveActor The member a write acts for (`Ostrom-On-Behalf-Of`); the header is ignored by default.
  */
 data class CloudSessionsRoutesDependencies(
     val createCloudSession: CreateCloudSessionUseCase,
@@ -53,4 +56,5 @@ data class CloudSessionsRoutesDependencies(
     val hostRemoteSession: HostRemoteSessionUseCase,
     val hosts: RemoteHostViews,
     val runnerInference: RunnerInferenceUseCase? = null,
+    val resolveActor: ResolveCloudActorUseCase = ResolveCloudActorUseCaseImpl(null),
 )

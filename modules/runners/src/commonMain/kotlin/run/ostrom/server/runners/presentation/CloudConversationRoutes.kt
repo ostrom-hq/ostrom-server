@@ -4,6 +4,7 @@ package run.ostrom.server.runners.presentation
 import run.ostrom.server.kernel.auth.authenticated
 import run.ostrom.server.kernel.auth.requirePrincipal
 import run.ostrom.server.kernel.http.bodyLimit
+import run.ostrom.server.runners.domain.CloudConversationService
 import run.ostrom.server.runners.domain.CloudConversationRules
 import run.ostrom.server.runners.domain.CloudSessionNotFoundException
 import run.ostrom.server.runners.domain.InputOutcome
@@ -126,8 +127,8 @@ private fun Route.inputRoutes(dependencies: CloudConversationRoutesDependencies)
 private fun Route.optionRoutes(dependencies: CloudConversationRoutesDependencies) = with(dependencies) {
     bodyLimit(OPTION_BODY_LIMIT) {
         put<CloudPermissionBypassApi> { params ->
+            val caller = call.cloudOwner(orgResolver, resolveActor) { CloudConversationService.bypassOwnerOnly() }
             val principal = call.requirePrincipal()
-            val caller = orgResolver.callerOf(principal, CLOUD_WRITE)
             val enabled = call.receive<SetCloudPermissionBypassBody>().enabled
             val session = conversation.setPermissionBypass(caller, principal, sessionId(params.parent.id), enabled)
             call.respond(hosts.response(session))

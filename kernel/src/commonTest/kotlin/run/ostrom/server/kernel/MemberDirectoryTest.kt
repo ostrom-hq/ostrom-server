@@ -17,6 +17,7 @@ class MemberDirectoryTest {
         assertNull(directory.memberIds(Uuid.random(), 10))
         assertNull(directory.roles(Uuid.random(), 10))
         assertNull(directory.userIdOf(Uuid.random(), "m"))
+        assertNull(directory.roleOf(Uuid.random(), "m"))
         assertFalse(directory.hasUser(Uuid.random(), Uuid.random()))
     }
 }

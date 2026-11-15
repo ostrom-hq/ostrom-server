@@ -98,6 +98,8 @@ import run.ostrom.server.runners.domain.NoRunnerGitHubTokens
 import run.ostrom.server.runners.domain.OpenTerminalUseCase
 import run.ostrom.server.runners.domain.OpenTerminalUseCaseImpl
 import run.ostrom.server.runners.domain.ReconcileCloudSessionUseCase
+import run.ostrom.server.runners.domain.ResolveCloudActorUseCase
+import run.ostrom.server.runners.domain.ResolveCloudActorUseCaseImpl
 import run.ostrom.server.runners.domain.ReconcileCloudSessionUseCaseImpl
 import run.ostrom.server.runners.domain.RecordCloudSessionActivityUseCase
 import run.ostrom.server.runners.domain.RecordCloudSessionActivityUseCaseImpl
@@ -276,11 +278,18 @@ object RunnersModule : ServerModule {
             }
         }
         single<CreateCloudSessionUseCase> {
-            MeteredCreateCloudSession(CreateCloudSessionUseCaseImpl(get(), get(), get(), get(), get()), get())
+            MeteredCreateCloudSession(CreateCloudSessionUseCaseImpl(get(), get(), get(), get(), get(), get()), get())
         }
         single<GetCloudSessionUseCase> { GetCloudSessionUseCaseImpl(get(), get()) }
         single<ListCloudSessionsUseCase> { ListCloudSessionsUseCaseImpl(get()) }
-        single<ChangeCloudSessionUseCase> { ChangeCloudSessionUseCaseImpl(get(), get(), get(), get()) }
+        single<ChangeCloudSessionUseCase> { ChangeCloudSessionUseCaseImpl(get(), get(), get(), get(), get()) }
+        // Ostrom-On-Behalf-Of names a member by id or login, which the orgs module knows: without it, it is ignored.
+        single<ResolveCloudActorUseCase> {
+            val members = getOrNull<MemberDirectory>()
+            val logins = getOrNull<MemberLogins>()
+            val recipients = if (members == null || logins == null) null else MemberTransferRecipients(members, logins)
+            ResolveCloudActorUseCaseImpl(recipients)
+        }
         single<WakeCloudSessionUseCase> {
             WakeCloudSessionUseCaseImpl(get(), get(), get(), getOrNull<MemberDirectory>(), get(), get())
         }
@@ -377,7 +386,7 @@ object RunnersModule : ServerModule {
             val inference = get<InferenceWiring>().store?.let { RunnerInferenceUseCaseImpl(get(), it) }
             CloudSessionsRoutesDependencies(
                 get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), environment, get(), get(), get(),
-                inference,
+                inference, get(),
             )
         }
         single<ListRunnersUseCase> { ListRunnersUseCaseImpl(get(), get()) }
@@ -418,7 +427,7 @@ object RunnersModule : ServerModule {
         single { ConversationAnnouncement() }
         single<CloudConversationStore> { CloudConversationStoreImpl(get(), get()) }
         single<CloudConversationService> { CloudConversationServiceImpl(get(), get(), get(), get(), get()) }
-        single { CloudConversationRoutesDependencies(get(), get(), get()) }
+        single { CloudConversationRoutesDependencies(get(), get(), get(), get()) }
         single { CloudConversationMaintenance(get(), get(), getOrNull<CloudRuntimeSource>(), get()) }
         // The runner's side of the conversation: its agent, transcript upload and inputs.
         single<RunnerConversationStore> { RunnerConversationStoreImpl(get(), get()) }
@@ -492,6 +501,8 @@ object RunnersModule : ServerModule {
             ServerFeatures.RUNNERS_CLOUD_INFERENCE.takeIf { koin.getOrNull<InferenceWiring>()?.store != null },
             // Giving a session to another member, once the orgs module names the members.
             ServerFeatures.RUNNERS_CLOUD_TRANSFER.takeIf { koin.getOrNull<TransferWiring>()?.routes != null },
+            // A write on behalf of another member, once the orgs module names the members (as transfers do).
+            ServerFeatures.RUNNERS_CLOUD_ON_BEHALF.takeIf { koin.getOrNull<TransferWiring>()?.routes != null },
             // Sessions on the console's clusters and the organizations' profiles.
             ServerFeatures.RUNNERS_CLOUD_PROFILES.takeIf { koin.get<RunnersConfig>().driver == KUBERNETES },
             // Proven workspace deletion, the storage class check and the garbage collection are Kubernetes's; the

@@ -60,6 +60,10 @@ class OrgAuditApi(val actor: String? = null, val event: String? = null, val befo
  * @property signature The instance's Ed25519 signature of the canonical form (base64).
  * @property keyId The instance key that signed it (`GET /api/v1/instance/keys`).
  * @property integrity What the server found when it read the line: `verified`, `altered` or `unlinked`.
+ * @property effectiveMemberId The member a `cloud.session.*` write was done for (`runners.cloud.onbehalf.v1`): the one
+ *   `Ostrom-On-Behalf-Of` named, otherwise the actor; absent from the other events.
+ * @property credentialId The id of the credential the actor of a `cloud.session.*` write used, never the token;
+ *   absent from the other events.
  */
 @OptIn(ExperimentalSerializationApi::class)
 @KeepGeneratedSerializer
@@ -78,6 +82,8 @@ data class OrgAuditEventResponse(
     val signature: String,
     val keyId: String,
     val integrity: String,
+    val effectiveMemberId: String? = null,
+    val credentialId: String? = null,
 ) {
     /** Writes the fields the contract declares required and nullable as `null` when null. */
     object Answer : NullsKept<OrgAuditEventResponse>(generatedSerializer(), "actorId", "previousHash")
@@ -136,7 +142,13 @@ private fun OrgAuditLine.toResponse() = OrgAuditEventResponse(
     event.signature,
     event.keyId,
     integrity.wireName(),
+    // Written in the details by the runners module's journal of cloud session writes.
+    event.entry.details[EFFECTIVE_MEMBER_DETAIL],
+    event.entry.details[CREDENTIAL_DETAIL],
 )
+
+private const val EFFECTIVE_MEMBER_DETAIL = "effective_member_id"
+private const val CREDENTIAL_DETAIL = "credential_id"
 
 /** The contract's name of an integrity: `verified`, `altered`, `unlinked`. */
 internal fun AuditIntegrity.wireName(): String = name.lowercase()

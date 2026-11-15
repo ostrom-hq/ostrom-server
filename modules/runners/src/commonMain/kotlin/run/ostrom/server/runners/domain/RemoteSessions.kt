@@ -237,6 +237,7 @@ interface CreateRemoteSessionUseCase {
      * @param key The request's `Idempotency-Key` and the digest of its canonical request, if any.
      * @return The session, `creating` in phase [RemoteSessionRules.WAITING_HOST], and whether it replays an earlier
      *   one.
+     * @throws OnBehalfForbiddenException When [caller] acts on behalf of another member (`Ostrom-On-Behalf-Of`).
      * @throws RemoteSessionException `remote_requires_device` (422), `device_target_unsupported` (400) and the
      *   refusals of [RemoteSessionRules.validateRemote].
      */
@@ -268,6 +269,9 @@ class CreateRemoteSessionUseCaseImpl(
         draft: RemoteSessionDraft,
         key: Pair<String, String>?,
     ): KeyedCreation {
+        // A remote session runs on the caller's own device: never on behalf of another member (TeamCode's
+        // createRemote).
+        if (caller.onBehalf) throw OnBehalfForbiddenException()
         val agent = RemoteSessionRules.validateRemote(draft)
         // The daemons of members' devices are not served yet (`runners.cloud.remote.daemon.v1`).
         if (draft.deviceId != null) {
@@ -317,6 +321,7 @@ class CreateRemoteSessionUseCaseImpl(
                 .takeIf { mode == RemoteSessionRules.BYPASS },
             kind = SessionKind.REMOTE,
             host = RemoteHost(device, draft.directoryName, mode),
+            createdBy = caller.attribution,
         )
         return store(session, key, device)
     }

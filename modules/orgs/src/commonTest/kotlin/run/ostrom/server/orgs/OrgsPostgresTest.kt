@@ -540,6 +540,10 @@ class OrgsPostgresTest {
             // Each member's role, for the picker of a session transfer, or null past the limit.
             assertEquals(mapOf(owner.id.toString() to OrgRole.OWNER), directory.roles(acme.id, 10))
             assertNull(directory.roles(acme.id, 0))
+            // One member's role, for the owner of a cloud session created on their behalf.
+            assertEquals(OrgRole.OWNER, directory.roleOf(acme.id, owner.id.toString()))
+            assertNull(directory.roleOf(acme.id, bobsOwner.id.toString()))
+            assertNull(directory.roleOf(acme.id, "not-a-member-id"))
             // Deleting the organization removes its members: none stays active.
             orgs.delete(acme.id, now, orgDeleted(acme.id))
             assertFalse(directory.isActiveMember(acme.id, owner.id.toString()))

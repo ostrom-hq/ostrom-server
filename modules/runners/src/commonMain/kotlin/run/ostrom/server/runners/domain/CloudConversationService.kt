@@ -112,6 +112,16 @@ interface CloudConversationService {
      * @return How many it woke.
      */
     suspend fun wakePending(limit: Int): Int
+
+    /** Constants and readers of the enclosing type. */
+    companion object {
+        /** Only the owner, in person and for themselves, turns Bypass on or off (403 `bypass_owner_only`). */
+        fun bypassOwnerOnly(): CloudConversationException = CloudConversationException(
+            ErrorKind.FORBIDDEN,
+            "bypass_owner_only",
+            "Only the session's owner, in person, turns Bypass on or off.",
+        )
+    }
 }
 
 /**
@@ -309,11 +319,7 @@ class CloudConversationServiceImpl(
         val session = conversation(sessions.ownedBy(caller, id))
         // An agent could approve its own tool uses, a service key acts for nobody in person.
         if (principal.kind != PrincipalKind.USER) {
-            throw CloudConversationException(
-                ErrorKind.FORBIDDEN,
-                "bypass_owner_only",
-                "Only the session's owner, in person, turns Bypass on or off.",
-            )
+            throw CloudConversationService.bypassOwnerOnly()
         }
         ended(session)
         if ((session.permissionBypass != null) == enabled) return session

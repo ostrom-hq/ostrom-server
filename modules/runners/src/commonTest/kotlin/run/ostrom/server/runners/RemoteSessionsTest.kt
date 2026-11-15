@@ -86,6 +86,16 @@ class RemoteSessionsTest {
         assertFailsWith<RemoteSessionException> { block() }
 
     @Test
+    fun aRemoteSessionIsNeverCreatedOnBehalfOfAnotherMemberAndRecordsItsCreator() = runTest {
+        val onBehalf = alice.copy(memberId = "bob", initiatorId = alice.memberId)
+        assertFailsWith<run.ostrom.server.runners.domain.OnBehalfForbiddenException> {
+            create(onBehalf, laptop, draft)
+        }
+        assertTrue(repository.sessions.isEmpty())
+        assertEquals(alice.memberId, created().createdBy?.effectiveMemberId)
+    }
+
+    @Test
     fun aSessionKindIsReadByItsWireName() {
         assertEquals(SessionKind.REMOTE, SessionKind.fromWire("remote"))
         assertEquals(SessionKind.CLOUD, SessionKind.fromWire("cloud"))
