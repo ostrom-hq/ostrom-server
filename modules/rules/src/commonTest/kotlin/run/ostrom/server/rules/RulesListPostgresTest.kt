@@ -14,8 +14,9 @@ import run.ostrom.server.rules.fakes.RulesFixtures.orgB
 import run.ostrom.server.rules.infrastructure.PostgresRulesRepository
 import run.ostrom.server.rules.infrastructure.RulesMigrations
 import run.ostrom.server.testing.TestDatabase
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.testing.plan
 import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -31,13 +32,19 @@ import kotlin.time.Duration.Companion.minutes
  * all on the serving role under row level security, and by an index, never a scan of the whole table.
  */
 class RulesListPostgresTest {
+    // The serving role's JDBC pool of the running test, for the analyses and the plans.
+    private lateinit var jdbc: JdbcDatabase
+
     private fun withRepository(
         block: suspend (superuser: Driver, rules: PostgresRulesRepository, raw: Driver) -> Unit,
     ) = runTest(timeout = 5.minutes) {
         val database = TestDatabase.create() ?: return@runTest
         try {
             database.migrationRunner(RecordingLogger()).migrate("rules", RulesMigrations)
-            block(database.superuser, PostgresRulesRepository(database.driver), database.driver)
+            JdbcDatabase(database.servingConfig, JdbcDatabase.MIN_POOL_SIZE).use {
+                jdbc = it
+                block(database.superuser, PostgresRulesRepository(it), database.driver)
+            }
         } finally {
             database.close()
         }
@@ -118,12 +125,8 @@ class RulesListPostgresTest {
         ).getOrThrow()
         superuser.execute("VACUUM ANALYZE rules_rules").getOrThrow()
 
-        suspend fun plan(query: RuleQuery): String = raw.withOrganization(orgA) { tx ->
-            val statement = Statement.create("EXPLAIN (ANALYZE, BUFFERS) ${PostgresRulesRepository.rulesSql(query)}")
-                .bind("org", orgA).bind("limit", ListRulesUseCase.MAX_RULES + 1)
-                .bind("repo", "acme/web").bind("under", "acme/web/")
-            query.after?.let { statement.bind("after_group", it.group).bind("after_id", it.id) }
-            tx.fetchAll(statement).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
+        suspend fun plan(query: RuleQuery): String = jdbc.withOrganization(orgA) {
+            plan { PostgresRulesRepository.rulesQuery(orgA, query, ListRulesUseCase.MAX_RULES + 1) }
         }
         val filtered = plan(RuleQuery(repo = "acme/web"))
         val paged = plan(RuleQuery(repo = "acme/web", after = RuleCursor("Alpha", "rule_a999")))

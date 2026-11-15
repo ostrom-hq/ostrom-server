@@ -2,6 +2,9 @@
 package run.ostrom.server.rules.infrastructure
 
 import run.ostrom.server.gates.domain.models.SelfApprovalPolicy
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.rowBefore
+import run.ostrom.server.kernel.database.rowLess
 import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.rules.domain.models.Decision
 import run.ostrom.server.rules.domain.models.DecisionQuery
@@ -11,284 +14,267 @@ import run.ostrom.server.rules.domain.repositories.RulesRepository
 import run.ostrom.server.rules.domain.repositories.RulesTransaction
 import run.ostrom.server.rules.domain.services.RuleDocuments
 import run.ostrom.server.rules.domain.services.SelfApprovalValues
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.QueryExecutor
-import io.github.smyrgeorge.sqlx4k.Statement
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
+import org.jetbrains.exposed.v1.core.Op
+import org.jetbrains.exposed.v1.core.QueryBuilder
+import org.jetbrains.exposed.v1.core.QueryParameter
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.TextColumnType
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.isNotNull
+import org.jetbrains.exposed.v1.core.neq
+import org.jetbrains.exposed.v1.core.statements.UpdateBuilder
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import org.jetbrains.exposed.v1.jdbc.Query
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
+import org.jetbrains.exposed.v1.jdbc.upsert
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
  * [RulesRepository] on PostgreSQL (tables of [RulesMigrations]). Every query runs in a transaction confined to one
- * organization (`withOrganization`), which row level security enforces.
+ * organization (the serving role with the organization set, `withOrganization`), which row level security enforces,
+ * and filters on `org_id` too.
  *
- * @param driver The connection pool.
+ * @param database The serving role's pool.
  */
-class PostgresRulesRepository(private val driver: Driver) : RulesRepository {
+class PostgresRulesRepository(private val database: JdbcDatabase) : RulesRepository {
     override suspend fun rules(orgId: Uuid, query: RuleQuery, limit: Int): List<Rule> =
-        driver.withOrganization(orgId) { tx ->
-            tx.fetchAll(rulesStatement(orgId, query, limit)).getOrThrow().map { it.toRule() }
-        }
+        database.withOrganization(orgId) { rulesQuery(orgId, query, limit).map { it.toRule() } }
 
     override suspend fun rulesById(orgId: Uuid, after: String?, limit: Int): List<Rule> =
-        driver.withOrganization(orgId) { tx ->
-            val statement = pageStatement(orgId, rulesByIdSql(after != null), after, limit)
-            tx.fetchAll(statement).getOrThrow().map { it.toRule() }
-        }
+        database.withOrganization(orgId) { rulesByIdQuery(orgId, after, limit).map { it.toRule() } }
 
     override suspend fun gatedRules(orgId: Uuid, after: String?, limit: Int): List<Rule> =
-        driver.withOrganization(orgId) { tx ->
-            val statement = pageStatement(orgId, gatedRulesSql(after != null), after, limit)
-            tx.fetchAll(statement).getOrThrow().map { it.toRule() }
-        }
+        database.withOrganization(orgId) { gatedRulesQuery(orgId, after, limit).map { it.toRule() } }
 
-    override suspend fun lastRuleDecisions(orgId: Uuid): List<Decision> = driver.withOrganization(orgId) { tx ->
-        tx.fetchAll(
-            Statement.create(
-                "SELECT DISTINCT ON (subject_id) $DECISION_COLUMNS FROM rules_decisions " +
-                    "WHERE org_id = :org AND subject_kind = 'rule' ORDER BY subject_id, decided_at DESC, id DESC",
-            ).bind("org", orgId),
-        ).getOrThrow().map { it.toDecision() }
+    override suspend fun lastRuleDecisions(orgId: Uuid): List<Decision> = database.withOrganization(orgId) {
+        val d = RulesDecisions
+        d.select(d.columns)
+            .withDistinctOn(d.subjectId)
+            .where { (d.orgId eq orgId) and (d.subjectKind eq RULE) }
+            .orderBy(d.subjectId to SortOrder.ASC, d.decidedAt to SortOrder.DESC, d.id to SortOrder.DESC)
+            .map { it.toDecision() }
     }
 
-    override suspend fun rule(orgId: Uuid, id: String): Rule? = driver.withOrganization(orgId) { tx ->
-        tx.selectRule(orgId, id, lock = false)
+    override suspend fun rule(orgId: Uuid, id: String): Rule? = database.withOrganization(orgId) {
+        selectRule(orgId, id, lock = false)
     }
 
     override suspend fun decisions(orgId: Uuid, query: DecisionQuery): List<Decision> =
-        driver.withOrganization(orgId) { tx ->
-            val filters = buildString {
-                append("org_id = :org")
-                if (query.subjectKind != null) append(" AND subject_kind = :kind")
-                if (query.subjectId != null) append(" AND subject_id = :subject")
-                if (query.before != null) {
-                    append(
-                        " AND (decided_at, id) < (SELECT decided_at, id FROM rules_decisions " +
-                            "WHERE org_id = :org AND id = :before)",
-                    )
+        database.withOrganization(orgId) {
+            val d = RulesDecisions
+            d.select(d.columns)
+                .where {
+                    var filters: Op<Boolean> = d.orgId eq orgId
+                    query.subjectKind?.let { filters = filters and (d.subjectKind eq it) }
+                    query.subjectId?.let { filters = filters and (d.subjectId eq it) }
+                    query.before?.let { before ->
+                        val cursor = d.select(d.decidedAt, d.id).where { (d.orgId eq orgId) and (d.id eq before) }
+                        filters = filters and rowBefore(listOf(d.decidedAt, d.id), cursor)
+                    }
+                    filters
                 }
-            }
-            val statement = Statement.create(
-                "SELECT $DECISION_COLUMNS FROM rules_decisions WHERE $filters " +
-                    "ORDER BY decided_at DESC, id DESC LIMIT :limit",
-            ).bind("org", orgId).bind("limit", query.limit)
-            query.subjectKind?.let { statement.bind("kind", it) }
-            query.subjectId?.let { statement.bind("subject", it) }
-            query.before?.let { statement.bind("before", it) }
-            tx.fetchAll(statement).getOrThrow().map { it.toDecision() }
+                .orderBy(d.decidedAt to SortOrder.DESC, d.id to SortOrder.DESC)
+                .limit(query.limit)
+                .map { it.toDecision() }
         }
 
-    override suspend fun decision(orgId: Uuid, id: String): Decision? = driver.withOrganization(orgId) { tx ->
-        tx.fetchAll(
-            Statement.create("SELECT $DECISION_COLUMNS FROM rules_decisions WHERE org_id = :org AND id = :id")
-                .bind("org", orgId).bind("id", id),
-        ).getOrThrow().map { it.toDecision() }.firstOrNull()
+    override suspend fun decision(orgId: Uuid, id: String): Decision? = database.withOrganization(orgId) {
+        val d = RulesDecisions
+        d.select(d.columns).where { (d.orgId eq orgId) and (d.id eq id) }.singleOrNull()?.toDecision()
     }
 
     override suspend fun markSigned(orgId: Uuid, ids: List<String>) {
         if (ids.isEmpty()) return
-        driver.withOrganization(orgId) { tx ->
-            val names = ids.indices.joinToString(", ") { ":id$it" }
-            val statement = Statement.create(
-                "UPDATE rules_decisions SET signed = TRUE WHERE org_id = :org AND id IN ($names)",
-            ).bind("org", orgId)
-            ids.forEachIndexed { index, id -> statement.bind("id$index", id) }
-            tx.execute(statement).getOrThrow()
+        database.withOrganization(orgId) {
+            val d = RulesDecisions
+            d.update({ (d.orgId eq orgId) and (d.id inList ids) }) { it[signed] = true }
         }
     }
 
-    override suspend fun selfApproval(orgId: Uuid): SelfApprovalPolicy? = driver.withOrganization(orgId) { tx ->
-        tx.selectSelfApproval(orgId, lock = false)
+    override suspend fun selfApproval(orgId: Uuid): SelfApprovalPolicy? = database.withOrganization(orgId) {
+        selectSelfApproval(orgId, lock = false)
     }
 
-    override suspend fun <T> transaction(orgId: Uuid, block: suspend RulesTransaction.() -> T): T =
-        driver.withOrganization(orgId) { tx -> PostgresRulesTransaction(tx, orgId).block() }
+    override suspend fun <T> transaction(orgId: Uuid, block: RulesTransaction.() -> T): T =
+        database.withOrganization(orgId) { PostgresRulesTransaction(this, orgId).block() }
 
-    private class PostgresRulesTransaction(private val tx: QueryExecutor, private val orgId: Uuid) : RulesTransaction {
-        override suspend fun lockRule(id: String): Rule? = tx.selectRule(orgId, id, lock = true)
+    private class PostgresRulesTransaction(private val tx: JdbcTransaction, private val org: Uuid) :
+        RulesTransaction {
+        override fun lockRule(id: String): Rule? = tx.selectRule(org, id, lock = true)
 
-        override suspend fun insertRule(rule: Rule) {
-            tx.execute(
-                Statement.create(
-                    "INSERT INTO rules_rules ($RULE_COLUMNS) VALUES (:org, :id, :statement, :output, :group, " +
-                        ":scope, :sources, :why, :strength, :confidence, :status, :found_by, :found_at, " +
-                        ":review_by, :decided_by, :decided_at, :origin, :gate, :updated_at)",
-                ).bindRule(rule),
-            ).getOrThrow()
+        override fun insertRule(rule: Rule) {
+            RulesRules.insert { it.rule(org, rule) }
         }
 
-        override suspend fun updateRule(rule: Rule) {
-            tx.execute(
-                Statement.create(
-                    "UPDATE rules_rules SET statement = :statement, output = :output, rule_group = :group, " +
-                        "scope = :scope, sources = :sources, why = :why, strength = :strength, " +
-                        "confidence = :confidence, status = :status, found_by = :found_by, found_at = :found_at, " +
-                        "review_by = :review_by, decided_by = :decided_by, decided_at = :decided_at, " +
-                        "origin = :origin, gate = :gate, updated_at = :updated_at WHERE org_id = :org AND id = :id",
-                ).bindRule(rule),
-            ).getOrThrow()
+        override fun updateRule(rule: Rule) {
+            val r = RulesRules
+            r.update({ (r.orgId eq org) and (r.id eq rule.id) }) { it.rule(org, rule) }
         }
 
-        override suspend fun deleteRule(id: String) {
-            tx.execute(
-                Statement.create("DELETE FROM rules_rules WHERE org_id = :org AND id = :id")
-                    .bind("org", orgId)
-                    .bind("id", id),
-            ).getOrThrow()
+        override fun deleteRule(id: String) {
+            RulesRules.deleteWhere { (RulesRules.orgId eq org) and (RulesRules.id eq id) }
         }
 
-        override suspend fun insertDecision(decision: Decision) {
-            tx.execute(
-                Statement.create(
-                    "INSERT INTO rules_decisions ($DECISION_COLUMNS) VALUES (:org, :id, :at, :by, :kind, " +
-                        ":subject, :label, :action, :before, :after, :digest, :signed)",
-                )
-                    .bind("org", orgId)
-                    .bind("id", decision.id)
-                    .bind("at", decision.at)
-                    .bind("by", decision.by)
-                    .bind("kind", decision.subject.kind)
-                    .bind("subject", decision.subject.id)
-                    .bind("label", decision.subject.label)
-                    .bind("action", decision.action)
-                    .bind("before", decision.before?.toString())
-                    .bind("after", decision.after?.toString())
-                    .bind("digest", decision.ruleDigest)
-                    .bind("signed", decision.signed),
-            ).getOrThrow()
+        override fun insertDecision(decision: Decision) {
+            RulesDecisions.insert {
+                it[this.orgId] = org
+                it[id] = decision.id
+                it[decidedAt] = decision.at
+                it[decidedBy] = decision.by
+                it[subjectKind] = decision.subject.kind
+                it[subjectId] = decision.subject.id
+                it[subjectLabel] = decision.subject.label
+                it[action] = decision.action
+                it[beforeDoc] = decision.before?.toString()
+                it[afterDoc] = decision.after?.toString()
+                it[ruleDigest] = decision.ruleDigest
+                it[signed] = decision.signed
+            }
         }
 
-        override suspend fun lockSelfApproval(): SelfApprovalPolicy? = tx.selectSelfApproval(orgId, lock = true)
+        override fun lockSelfApproval(): SelfApprovalPolicy? = tx.selectSelfApproval(org, lock = true)
 
-        override suspend fun putSelfApproval(policy: SelfApprovalPolicy, at: Instant) {
-            tx.execute(
-                Statement.create(
-                    "INSERT INTO rules_gate_policy (org_id, self_approval, updated_at) VALUES (:org, :policy, :at) " +
-                        "ON CONFLICT (org_id) DO UPDATE SET self_approval = :policy, updated_at = :at",
-                )
-                    .bind("org", orgId)
-                    .bind("policy", SelfApprovalValues.valueOf(policy))
-                    .bind("at", at),
-            ).getOrThrow()
+        override fun putSelfApproval(policy: SelfApprovalPolicy, at: Instant) {
+            RulesGatePolicy.upsert(RulesGatePolicy.orgId) {
+                it[this.orgId] = org
+                it[selfApproval] = SelfApprovalValues.valueOf(policy)
+                it[updatedAt] = at
+            }
         }
+    }
 
-        private fun Statement.bindRule(rule: Rule): Statement = bind("org", orgId)
-            .bind("id", rule.id)
-            .bind("statement", rule.statement)
-            .bind("output", rule.output)
-            .bind("group", rule.group)
-            .bind("scope", texts(rule.scope).toString())
-            .bind("sources", RuleDocuments.full(rule).getValue("sources").toString())
-            .bind("why", rule.why)
-            .bind("strength", rule.strength.value)
-            .bind("confidence", rule.confidence)
-            .bind("status", rule.status.value)
-            .bind("found_by", rule.foundBy)
-            .bind("found_at", rule.foundAt)
-            .bind("review_by", rule.reviewBy)
-            .bind("decided_by", rule.decidedBy)
-            .bind("decided_at", rule.decidedAt)
-            .bind("origin", rule.origin)
-            .bind("gate", rule.gate?.let { RuleDocuments.gate(it).toString() })
-            .bind("updated_at", rule.updatedAt)
+    /**
+     * Whether a rule covers a repository: its scope is empty, names it, or names a path under it, case ignored as
+     * GitHub names repositories; the scope is the JSON array the contract writes.
+     */
+    private class Covers(private val repo: String) : Op<Boolean>() {
+        override fun toQueryBuilder(queryBuilder: QueryBuilder) = queryBuilder {
+            val scope = RulesRules.scope
+            append("(jsonb_array_length(CAST(")
+            append(scope)
+            append(" AS jsonb)) = 0 OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(CAST(")
+            append(scope)
+            append(" AS jsonb)) AS entry(name) ")
+            append("WHERE lower(entry.name) = ")
+            registerArgument(TextColumnType(), repo)
+            append(" OR starts_with(lower(entry.name), ")
+            registerArgument(TextColumnType(), "$repo/")
+            append(")))")
+        }
     }
 
     internal companion object {
+        const val RULE = "rule"
+
         /**
          * The rules of an organization a query lists, in the order of the console (group, then id), after its cursor,
          * at most [limit]. Every filter is in the SQL, before the limit: a repository's rules are never cut by the
-         * others' (audit of the reads, B2). A rule covers a repository when its scope is empty, names it, or names a
-         * path under it, case ignored as GitHub names repositories; the scope is the JSON array the contract writes.
+         * others' (audit of the reads, B2). The repository is compared lowercased ([Covers]).
          *
          * @param orgId The organization.
          * @param query The filters.
          * @param limit The most rules.
-         * @return The statement.
+         * @return The read.
          */
-        fun rulesStatement(orgId: Uuid, query: RuleQuery, limit: Int): Statement {
-            val statement = Statement.create(rulesSql(query)).bind("org", orgId).bind("limit", limit)
-            // A named parameter is bound only when the SQL names it: sqlx4k refuses an unknown one.
-            query.status?.let { statement.bind("status", it.value) }
-            query.group?.let { statement.bind("group", it) }
-            query.repo?.let { repo ->
-                val name = repo.lowercase()
-                statement.bind("repo", name).bind("under", "$name/")
-            }
-            query.after?.let { statement.bind("after_group", it.group).bind("after_id", it.id) }
-            return statement
+        fun rulesQuery(orgId: Uuid, query: RuleQuery, limit: Int): Query {
+            val r = RulesRules
+            return r.select(r.columns)
+                .where {
+                    var filters: Op<Boolean> = r.orgId eq orgId
+                    query.status?.let { filters = filters and (r.status eq it.value) }
+                    query.group?.let { filters = filters and (r.group eq it) }
+                    query.repo?.let { filters = filters and Covers(it.lowercase()) }
+                    // The list's own order, on the index `rules_rules_by_group`.
+                    query.after?.let { after ->
+                        filters = filters and rowLess(listOf(text(after.group), text(after.id)), listOf(r.group, r.id))
+                    }
+                    filters
+                }
+                .orderBy(r.group to SortOrder.ASC, r.id to SortOrder.ASC)
+                .limit(limit)
         }
 
         /**
-         * The SQL of [rulesStatement], its parameters named: `org`, `limit`, and `status`, `group`, `repo` and `under`
-         * (the repository and a path under it, lowercased), `after_group` and `after_id` when the query has them.
+         * A page of every rule, by id, on the primary key.
          *
-         * @param query The filters.
-         * @return The SQL.
+         * @param orgId The organization.
+         * @param after The id the page starts after, if any.
+         * @param limit The most rules.
+         * @return The read.
          */
-        fun rulesSql(query: RuleQuery): String {
-            val filters = buildString {
-                append("org_id = :org")
-                if (query.status != null) append(" AND status = :status")
-                if (query.group != null) append(" AND rule_group = :group")
-                if (query.repo != null) append(" AND $COVERS")
-                // The list's own order, on the index `rules_rules_by_group`.
-                if (query.after != null) append(" AND (rule_group, id) > (:after_group, :after_id)")
-            }
-            return "SELECT $RULE_COLUMNS FROM rules_rules WHERE $filters ORDER BY rule_group, id LIMIT :limit"
-        }
+        fun rulesByIdQuery(orgId: Uuid, after: String?, limit: Int): Query = page(orgId, after, limit) { it }
 
         /**
-         * The SQL of a page of every rule, by id, on the primary key: parameters `org`, `limit`, and `after` when
-         * [after].
+         * A page of the gated rules, by id, on the partial index `rules_rules_gated`.
          *
-         * @param after Whether the page starts after an id.
-         * @return The SQL.
+         * @param orgId The organization.
+         * @param after The id the page starts after, if any.
+         * @param limit The most rules.
+         * @return The read.
          */
-        fun rulesByIdSql(after: Boolean): String = "SELECT $RULE_COLUMNS FROM rules_rules WHERE org_id = :org" +
-            (if (after) " AND id > :after" else "") + " ORDER BY id LIMIT :limit"
-
-        /**
-         * The SQL of a page of the gated rules, by id, on the partial index `rules_rules_gated`: parameters `org`,
-         * `limit`, and `after` when [after].
-         *
-         * @param after Whether the page starts after an id.
-         * @return The SQL.
-         */
-        fun gatedRulesSql(after: Boolean): String = "SELECT $RULE_COLUMNS FROM rules_rules WHERE org_id = :org " +
-            "AND gate IS NOT NULL AND status <> 'rejected'" + (if (after) " AND id > :after" else "") +
-            " ORDER BY id LIMIT :limit"
-
-        private fun pageStatement(orgId: Uuid, sql: String, after: String?, limit: Int): Statement {
-            val statement = Statement.create(sql).bind("org", orgId).bind("limit", limit)
-            // A named parameter is bound only when the SQL names it: sqlx4k refuses an unknown one.
-            after?.let { statement.bind("after", it) }
-            return statement
+        fun gatedRulesQuery(orgId: Uuid, after: String?, limit: Int): Query = page(orgId, after, limit) {
+            it and RulesRules.gate.isNotNull() and (RulesRules.status neq REJECTED)
         }
 
-        // An empty scope covers every repository; otherwise one entry is the repository or a path under it. No `::`
-        // cast: the driver would read `:jsonb` as a named parameter.
-        private const val COVERS = "(jsonb_array_length(CAST(scope AS jsonb)) = 0 OR EXISTS (" +
-            "SELECT 1 FROM jsonb_array_elements_text(CAST(scope AS jsonb)) AS entry(name) " +
-            "WHERE lower(entry.name) = :repo OR starts_with(lower(entry.name), :under)))"
+        private const val REJECTED = "rejected"
 
-        const val RULE_COLUMNS = "org_id, id, statement, output, rule_group, scope, sources, why, strength, " +
-            "confidence, status, found_by, found_at, review_by, decided_by, decided_at, origin, gate, updated_at"
-        const val DECISION_COLUMNS = "org_id, id, decided_at, decided_by, subject_kind, subject_id, subject_label, " +
-            "action, before_doc, after_doc, rule_digest, signed"
+        private fun page(orgId: Uuid, after: String?, limit: Int, filter: (Op<Boolean>) -> Op<Boolean>): Query {
+            val r = RulesRules
+            return r.select(r.columns)
+                .where {
+                    val mine = filter(r.orgId eq orgId)
+                    if (after == null) mine else mine and (r.id greater after)
+                }
+                .orderBy(r.id to SortOrder.ASC)
+                .limit(limit)
+        }
 
-        suspend fun QueryExecutor.selectRule(orgId: Uuid, id: String, lock: Boolean): Rule? = fetchAll(
-            Statement.create(
-                "SELECT $RULE_COLUMNS FROM rules_rules WHERE org_id = :org AND id = :id" +
-                    if (lock) " FOR UPDATE" else "",
-            ).bind("org", orgId).bind("id", id),
-        ).getOrThrow().firstOrNull()?.toRule()
+        private fun text(value: String) = QueryParameter(value, TextColumnType())
 
-        suspend fun QueryExecutor.selectSelfApproval(orgId: Uuid, lock: Boolean): SelfApprovalPolicy? = fetchAll(
-            Statement.create(
-                "SELECT self_approval FROM rules_gate_policy WHERE org_id = :org" + if (lock) " FOR UPDATE" else "",
-            ).bind("org", orgId),
-        ).getOrThrow().firstOrNull()?.let { SelfApprovalValues.of(it.get("self_approval").asString()) }
+        fun JdbcTransaction.selectRule(orgId: Uuid, id: String, lock: Boolean): Rule? {
+            val r = RulesRules
+            val query = r.select(r.columns).where { (r.orgId eq orgId) and (r.id eq id) }
+            return (if (lock) query.forUpdate() else query).singleOrNull()?.toRule()
+        }
+
+        fun JdbcTransaction.selectSelfApproval(orgId: Uuid, lock: Boolean): SelfApprovalPolicy? {
+            val p = RulesGatePolicy
+            val query = p.select(p.selfApproval).where { p.orgId eq orgId }
+            val row = (if (lock) query.forUpdate() else query).singleOrNull()
+            return row?.let { SelfApprovalValues.of(it[p.selfApproval]) }
+        }
+
+        fun UpdateBuilder<*>.rule(orgId: Uuid, rule: Rule) {
+            val r = RulesRules
+            this[r.orgId] = orgId
+            this[r.id] = rule.id
+            this[r.statement] = rule.statement
+            this[r.output] = rule.output
+            this[r.group] = rule.group
+            this[r.scope] = texts(rule.scope).toString()
+            this[r.sources] = RuleDocuments.full(rule).getValue("sources").toString()
+            this[r.why] = rule.why
+            this[r.strength] = rule.strength.value
+            this[r.confidence] = rule.confidence
+            this[r.status] = rule.status.value
+            this[r.foundBy] = rule.foundBy
+            this[r.foundAt] = rule.foundAt
+            this[r.reviewBy] = rule.reviewBy
+            this[r.decidedBy] = rule.decidedBy
+            this[r.decidedAt] = rule.decidedAt
+            this[r.origin] = rule.origin
+            this[r.gate] = rule.gate?.let { RuleDocuments.gate(it).toString() }
+            this[r.updatedAt] = rule.updatedAt
+        }
 
         fun texts(values: List<String>): JsonArray = JsonArray(values.map(::JsonPrimitive))
     }

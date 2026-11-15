@@ -27,12 +27,12 @@ class FakeAnalysisRepository : AnalysisRepository {
 
     override suspend fun run(orgId: Uuid, kind: AnalysisKind): AnalysisRun? = runs[orgId to kind]
 
-    override suspend fun <T> transaction(orgId: Uuid, block: suspend AnalysisTransaction.() -> T): T {
+    override suspend fun <T> transaction(orgId: Uuid, block: AnalysisTransaction.() -> T): T {
         transactions++
         return object : AnalysisTransaction {
-            override suspend fun lock(kind: AnalysisKind): AnalysisRun? = runs[orgId to kind]
+            override fun lock(kind: AnalysisKind): AnalysisRun? = runs[orgId to kind]
 
-            override suspend fun put(run: AnalysisRun) {
+            override fun put(run: AnalysisRun) {
                 runs[orgId to run.kind] = run
             }
         }.block()

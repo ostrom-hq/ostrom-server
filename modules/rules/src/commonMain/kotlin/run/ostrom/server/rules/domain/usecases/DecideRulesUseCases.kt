@@ -249,7 +249,7 @@ class DeleteRuleUseCaseImpl(
  *
  * @return The rule as it is now, and its decision when there is one.
  */
-private suspend fun RulesTransaction.change(
+private fun RulesTransaction.change(
     signer: DecisionSigner,
     decider: Decider,
     now: Instant,

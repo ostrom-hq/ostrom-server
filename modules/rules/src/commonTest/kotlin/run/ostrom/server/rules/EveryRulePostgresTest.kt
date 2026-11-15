@@ -19,9 +19,11 @@ import run.ostrom.server.rules.infrastructure.PostgresRulesRepository
 import run.ostrom.server.rules.infrastructure.RulesCompilerSources
 import run.ostrom.server.rules.infrastructure.RulesMigrations
 import run.ostrom.server.testing.TestDatabase
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.testing.plan
 import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
 import kotlinx.coroutines.test.runTest
+import org.jetbrains.exposed.v1.jdbc.Query
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -35,6 +37,9 @@ import kotlin.uuid.Uuid
  * gate, reaches the rules harness and the gates catalogue; and no page scans the table.
  */
 class EveryRulePostgresTest {
+    // The serving role's JDBC pool of the running test, for the analyses and the plans.
+    private lateinit var jdbc: JdbcDatabase
+
     private val gate = RuleGate(
         actions = listOf(RuleGateAction("push-main", "Push to main", listOf("git push"), listOf("gate-demo"), null)),
         approvers = listOf("mia"),
@@ -55,7 +60,10 @@ class EveryRulePostgresTest {
         val database = TestDatabase.create() ?: return@runTest
         try {
             database.migrationRunner(RecordingLogger()).migrate("rules", RulesMigrations)
-            block(database.superuser, PostgresRulesRepository(database.driver), database.driver)
+            JdbcDatabase(database.servingConfig, JdbcDatabase.MIN_POOL_SIZE).use {
+                jdbc = it
+                block(database.superuser, PostgresRulesRepository(it), database.driver)
+            }
         } finally {
             database.close()
         }
@@ -113,13 +121,9 @@ class EveryRulePostgresTest {
         ).getOrThrow()
         superuser.execute("VACUUM ANALYZE rules_rules").getOrThrow()
 
-        suspend fun plan(sql: String): String = raw.withOrganization(orgA) { tx ->
-            val statement = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql")
-                .bind("org", orgA).bind("limit", EveryRule.PAGE).bind("after", id(EveryRule.PAGE))
-            tx.fetchAll(statement).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
-        }
-        val every = plan(PostgresRulesRepository.rulesByIdSql(after = true))
-        val gated = plan(PostgresRulesRepository.gatedRulesSql(after = true))
+        suspend fun plan(query: Query): String = jdbc.withOrganization(orgA) { plan { query } }
+        val every = plan(PostgresRulesRepository.rulesByIdQuery(orgA, id(EveryRule.PAGE), EveryRule.PAGE))
+        val gated = plan(PostgresRulesRepository.gatedRulesQuery(orgA, id(EveryRule.PAGE), EveryRule.PAGE))
         // Printed for the pull request's EXPLAIN ANALYZE.
         println("EXPLAIN ANALYZE every rule, the page after rule 1 000, 1 500 rules of org A among 21 500:\n$every")
         println("EXPLAIN ANALYZE gated rules, the page after rule 1 000:\n$gated")

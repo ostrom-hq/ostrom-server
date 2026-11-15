@@ -169,36 +169,36 @@ class FakeRulesRepository : RulesRepository {
 
     override suspend fun selfApproval(orgId: Uuid): SelfApprovalPolicy? = policies[orgId]
 
-    override suspend fun <T> transaction(orgId: Uuid, block: suspend RulesTransaction.() -> T): T {
+    override suspend fun <T> transaction(orgId: Uuid, block: RulesTransaction.() -> T): T {
         transactions++
         return Transaction(orgId).block()
     }
 
     private inner class Transaction(private val orgId: Uuid) : RulesTransaction {
-        override suspend fun lockRule(id: String): Rule? = rules[orgId to id]
+        override fun lockRule(id: String): Rule? = rules[orgId to id]
 
-        override suspend fun insertRule(rule: Rule) {
+        override fun insertRule(rule: Rule) {
             check(rule.orgId == orgId)
             rules[orgId to rule.id] = rule
         }
 
-        override suspend fun updateRule(rule: Rule) {
+        override fun updateRule(rule: Rule) {
             check(rule.orgId == orgId)
             rules[orgId to rule.id] = rule
         }
 
-        override suspend fun deleteRule(id: String) {
+        override fun deleteRule(id: String) {
             rules.remove(orgId to id)
         }
 
-        override suspend fun insertDecision(decision: Decision) {
+        override fun insertDecision(decision: Decision) {
             check(decision.orgId == orgId)
             decisions += decision
         }
 
-        override suspend fun lockSelfApproval(): SelfApprovalPolicy? = policies[orgId]
+        override fun lockSelfApproval(): SelfApprovalPolicy? = policies[orgId]
 
-        override suspend fun putSelfApproval(policy: SelfApprovalPolicy, at: Instant) {
+        override fun putSelfApproval(policy: SelfApprovalPolicy, at: Instant) {
             policies[orgId] = policy
         }
     }
