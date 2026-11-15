@@ -168,6 +168,13 @@ class DirectivesTest {
         val limited = directives.rows.getValue(member to "").directive
         assertNotEquals(wide.directive.id, limited.id)
         assertEquals(3, limited.advice.maxConcurrent)
+        // The same advice on an account of another priority is another context too.
+        accounts.update(account.copy(priority = 5))
+        update(Gw.orgA)
+        val reordered = directives.rows.getValue(member to "").directive
+        assertEquals(limited.advice, reordered.advice)
+        assertNotEquals(limited.id, reordered.id)
+        assertEquals(2.minutes, UpdateDirectivesUseCaseImpl.ACTIVE)
     }
 
     @Test
@@ -192,9 +199,18 @@ class DirectivesTest {
         readings[mine.id] = listOf(QuotaWindow("five_hour", .99, clock.now + 1.hours, clock.now))
         readings[open.id] = rising(.3, 0.0, "five_hour", clock.now + 1.hours) +
             rising(.1, 0.0, "seven_day", clock.now + 5.hours)
+        val named = accounts.share(AccountProvider.CODEX, "c", clock)
+        accounts.update(named.copy(limits = AccountLimits(allowedMembers = setOf(member))))
+        readings[named.id] = rising(.3, 0.0, "five_hour", clock.now + 1.hours) +
+            rising(.1, 0.0, "seven_day", clock.now + 5.hours)
         slots.sessions += ActiveSession(member, "s1", mine.id)
         slots.sessions += ActiveSession(member, "s2", open.id)
+        slots.sessions += ActiveSession(member, "s3", named.id)
+        // A session whose account was removed since names no provider.
+        slots.sessions += ActiveSession(member, "s4", Uuid.random())
         update(Gw.orgA)
+        assertEquals(Pace.CAN_INCREASE, directives.rows.getValue(member to "s3").directive.advice.pace)
+        assertEquals(Pace.UNKNOWN, directives.rows.getValue(member to "s4").directive.advice.pace)
         // The exhausted account names another member: it never paces this one's session, which has no capacity known.
         assertEquals(Pace.UNKNOWN, directives.rows.getValue(member to "s1").directive.advice.pace)
         assertEquals(Pace.CAN_INCREASE, directives.rows.getValue(member to "s2").directive.advice.pace)
@@ -224,11 +240,13 @@ class DirectivesTest {
         val seen = mutableListOf<Uuid>()
         val failing = UpdateDirectivesUseCase { org ->
             seen += org
-            if (org == Gw.orgA) error("down")
+            if (org != Gw.orgB) error("down $org")
         }
-        val orgs = SharingOrgs { listOf(Gw.orgA, Gw.orgB) }
-        assertFailsWith<IllegalStateException> { RunPacingControllerUseCase(orgs, failing)() }
-        assertEquals(listOf(Gw.orgA, Gw.orgB), seen)
+        val third = Uuid.random()
+        val orgs = SharingOrgs { listOf(Gw.orgA, Gw.orgB, third) }
+        val first = assertFailsWith<IllegalStateException> { RunPacingControllerUseCase(orgs, failing)() }
+        assertEquals("down ${Gw.orgA}", first.message, "The first failure, not the last")
+        assertEquals(listOf(Gw.orgA, Gw.orgB, third), seen)
         RunPacingControllerUseCase(SharingOrgs { listOf(Gw.orgB) }, failing)()
         val cancelled = UpdateDirectivesUseCase { throw CancellationException("stop") }
         assertFailsWith<CancellationException> { RunPacingControllerUseCase(orgs, cancelled)() }

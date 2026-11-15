@@ -81,7 +81,7 @@ class UpdateDirectivesUseCaseImpl(
                 member = member,
                 maximum = config.memberConcurrency[member.toString()]?.coerceAtLeast(0) ?: 0,
                 allowance = sources.spend.available(orgId, member),
-                accounts = allowed.map { AccountPacing(it, pacings[it.id].orEmpty()) },
+                accounts = allowed.map { AccountPacing(it, pacings.getValue(it.id)) },
             )
             val scopes = mapOf("" to mine) + mine.groupBy { it.sessionHash }
             scopes.map { (scope, scoped) ->
@@ -149,14 +149,10 @@ class UpdateDirectivesUseCaseImpl(
             PacingMemory(it.directive.advice, it.directive.expiresAt, it.recovery)
         }
         val decision = hysteresis.decide(memory, advice, now)
-        val old = previous?.directive?.takeIf { it.advice == decision.advice && previous.contextKey == key }
-        val directive = AgentDirective(
-            id = old?.id ?: Uuid.random().toString(),
-            memberId = context.member.toString(),
-            advice = decision.advice,
-            createdAt = old?.createdAt ?: now,
-            expiresAt = now + DirectiveRepository.EXPIRY,
-        )
+        // The same advice in the same context keeps its id and creation; anything else is a new advice.
+        val kept = previous?.directive?.takeIf { it.advice == decision.advice && previous.contextKey == key }
+            ?: AgentDirective(Uuid.random().toString(), context.member.toString(), decision.advice, now, now)
+        val directive = kept.copy(expiresAt = now + DirectiveRepository.EXPIRY)
         return DirectiveWrite(context.member, scope, directive, key, decision.recovery)
     }
 

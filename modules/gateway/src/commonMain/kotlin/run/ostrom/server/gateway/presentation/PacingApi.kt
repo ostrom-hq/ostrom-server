@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.gateway.presentation
 
+import run.ostrom.server.gateway.domain.AgentDirective
+import run.ostrom.server.gateway.domain.PacingSettings
 import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
 
@@ -72,4 +74,18 @@ data class DirectiveReceiptDto(
     val stage: String,
     val sessionId: String? = null,
     val claimId: String? = null,
+)
+
+/** The settings on the wire. */
+internal fun PacingSettings.toDto() = PacingSettingsDto(observationOnly, autoPoolSize)
+
+/** An advice on the wire: its pace lower case, its interval in milliseconds, its instants ISO. */
+internal fun AgentDirective.toDto() = DirectiveDto(
+    id = id,
+    pace = advice.pace.wire,
+    maxConcurrent = advice.maxConcurrent,
+    minIntervalMillis = advice.minInterval.inWholeMilliseconds,
+    message = advice.message,
+    createdAt = createdAt.toString(),
+    expiresAt = expiresAt.toString(),
 )

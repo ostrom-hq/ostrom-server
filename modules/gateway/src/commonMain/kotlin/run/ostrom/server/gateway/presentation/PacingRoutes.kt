@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.gateway.presentation
 
-import run.ostrom.server.gateway.domain.AgentDirective
 import run.ostrom.server.gateway.domain.DeliveryStage
 import run.ostrom.server.gateway.domain.DirectiveUseCases
 import run.ostrom.server.gateway.domain.GetPacingSettingsUseCase
@@ -163,15 +162,3 @@ private fun ApplicationCall.noStore() = response.header(HttpHeaders.CacheControl
 /** An agent token naming another session than its own: a 403. */
 class OtherSessionException :
     OstromException(ErrorKind.FORBIDDEN, "An agent token reads the capacity advice of its own session only.")
-
-internal fun PacingSettings.toDto() = PacingSettingsDto(observationOnly, autoPoolSize)
-
-internal fun AgentDirective.toDto() = DirectiveDto(
-    id = id,
-    pace = advice.pace.wire,
-    maxConcurrent = advice.maxConcurrent,
-    minIntervalMillis = advice.minInterval.inWholeMilliseconds,
-    message = advice.message,
-    createdAt = createdAt.toString(),
-    expiresAt = expiresAt.toString(),
-)

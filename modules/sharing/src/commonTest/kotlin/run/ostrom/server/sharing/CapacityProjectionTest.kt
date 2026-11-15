@@ -135,6 +135,20 @@ class CapacityProjectionTest {
     }
 
     @Test
+    fun aPastResetOrARateThatIsNotARealBurnIsUnknown() {
+        val project = ProjectCapacityUseCase()
+        val past = project.firstGap(listOf(headroom(.5, (-1).hours)), emptyList(), mapOf("five_hour" to 1.0), now)
+        assertEquals(CapacityGap(now + 27.minutes, now + 7.days), past, "A reset already gone is unknown")
+        for (rate in listOf(Double.NaN, Double.POSITIVE_INFINITY, 0.0, -1.0)) {
+            assertNull(project.firstGap(listOf(headroom(.5, 1.hours)), emptyList(), mapOf("five_hour" to rate), now))
+        }
+        // Two accounts without a known reset: each serves in turn, then the gap lasts to the horizon.
+        val two = listOf(headroom(.5, null), headroom(.5, null))
+        val both = assertNotNull(project.firstGap(two, emptyList(), mapOf("five_hour" to 1.0), now))
+        assertEquals(now + 54.minutes, both.startsAt)
+    }
+
+    @Test
     fun aGapLastsUntilEveryWindowOfAnAccountResetsOrTheHorizon() {
         val project = ProjectCapacityUseCase()
         val empty = AccountHeadroom(

@@ -48,11 +48,12 @@ class DirectiveRepositoryImpl(private val database: JdbcDatabase) : DirectiveRep
             (row[GatewayDirectives.memberId] to row[GatewayDirectives.scopeKey]) to StoredDirective(
                 row.directive(),
                 row[GatewayDirectives.contextKey],
+                // The recovery's three columns are written together (save): set with its pace.
                 row[GatewayDirectives.recoveryPace]?.let {
                     PacingRecovery(
                         Pace.valueOf(it),
-                        row[GatewayDirectives.recoveryStartedAt] ?: row[GatewayDirectives.createdAt],
-                        (row[GatewayDirectives.recoveryMinIntervalMs] ?: 0).milliseconds,
+                        row[GatewayDirectives.recoveryStartedAt]!!,
+                        row[GatewayDirectives.recoveryMinIntervalMs]!!.milliseconds,
                     )
                 },
             )

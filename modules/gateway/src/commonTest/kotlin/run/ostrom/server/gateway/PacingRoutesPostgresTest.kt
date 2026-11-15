@@ -81,6 +81,12 @@ class PacingRoutesPostgresTest : GatewayHttpFixture() {
             val none = client.get("/api/v1/directives/current") { bearerAuth("guidance-a") }
             assertEquals("no-store", none.headers[HttpHeaders.CacheControl])
             assertNull(none.body<DirectiveResponseDto>().directive)
+            // Before any advice: none to preview, to read for a session, nor to claim.
+            assertNull(client.get(PREVIEW) { bearerAuth("member-a") }.body<PacingPreviewDto>().directive)
+            val noSession = postJson(CURRENT, "session-1", """{"sessionId":"session-1"}""")
+            assertNull(noSession.body<DirectiveResponseDto>().directive)
+            val noClaim = postJson(CLAIM, "session-1", """{"sessionId":"session-1","stage":"emitted_to_hook"}""")
+            assertNull(noClaim.body<DirectiveClaimDto>().claimId)
             advise("")
             advise(sessionDigest("session-1"))
             val wide = client.get("/api/v1/directives/current") { bearerAuth("member-a") }.body<DirectiveResponseDto>()

@@ -169,4 +169,34 @@ class PacingTest {
             pacingAuditEvents(PacingSettings(observationOnly = true, autoPoolSize = true), off),
         )
     }
+
+    @Test
+    fun strictnessOrdersEveryPaceThenTheIntervalThenFewerRequests() {
+        val paces = listOf(Pace.CAN_INCREASE, Pace.NORMAL, Pace.UNKNOWN, Pace.SLOW_DOWN, Pace.PAUSE)
+            .map { PacingAdvice(it, 0, Duration.ZERO, "") }
+        assertEquals(paces, paces.reversed().sortedWith(PACING_STRICTNESS))
+        val unlimited = PacingAdvice(Pace.NORMAL, 0, 2.seconds, "")
+        val three = PacingAdvice(Pace.NORMAL, 3, 2.seconds, "")
+        val one = PacingAdvice(Pace.NORMAL, 1, 2.seconds, "")
+        assertEquals(listOf(unlimited, three, one), listOf(one, unlimited, three).sortedWith(PACING_STRICTNESS))
+    }
+
+    @Test
+    fun anAccountWithoutAWindowTheOthersReportIsUnknownAndSpareCapacityNeedsRoomAtTwiceTheRate() {
+        assertEquals(Pace.UNKNOWN, controller.advise(listOf(account(), account(sevenDay = false)), 0, now).pace)
+        // At its rate each five hours fit under the ceiling (0.75 of 0.95); at twice the rate they would not.
+        assertEquals(Pace.NORMAL, controller.advise(listOf(account(utilization = .3, rate = .15)), 0, now).pace)
+    }
+
+    @Test
+    fun aRecoveryOfAnotherIntervalOrNotStartedYetStartsAgain() {
+        val hysteresis = PacingHysteresisUseCase()
+        val slow = PacingAdvice(Pace.SLOW_DOWN, 0, 10.seconds, "")
+        val lighter = PacingAdvice(Pace.SLOW_DOWN, 0, 2.seconds, "")
+        val fresh = PacingRecovery(Pace.SLOW_DOWN, now, 2.seconds)
+        val other = PacingRecovery(Pace.SLOW_DOWN, now - 5.minutes, 5.seconds)
+        assertEquals(fresh, hysteresis.decide(PacingMemory(slow, now + 1.minutes, other), lighter, now).recovery)
+        val later = PacingRecovery(Pace.SLOW_DOWN, now + 1.minutes, 2.seconds)
+        assertEquals(fresh, hysteresis.decide(PacingMemory(slow, now + 1.minutes, later), lighter, now).recovery)
+    }
 }

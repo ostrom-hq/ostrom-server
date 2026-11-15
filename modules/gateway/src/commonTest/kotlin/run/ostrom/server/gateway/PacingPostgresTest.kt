@@ -92,6 +92,9 @@ class PacingPostgresTest {
         assertNull(directives.current(Gw.orgA, ada, "s2"))
         assertNull(directives.current(Gw.orgB, ada, null), "Another org reads nothing")
         assertTrue(DirectiveRepositoryImpl(server.koin.get()).stored(Gw.orgB).isEmpty())
+        // Without a recovery under way, none is read back.
+        directives.save(Gw.orgA, listOf(DirectiveWrite(ada, "", wide.directive, "context", null)))
+        assertNull(directives.stored(Gw.orgA).getValue(ada to "").recovery)
     }
 
     @Test
@@ -107,6 +110,9 @@ class PacingPostgresTest {
         val id = claim.directive.id
         assertFailsWith<ClaimExpiredException> {
             directives.acknowledge(Gw.orgA, ada, id, DeliveryStage.EMITTED_TO_HOOK, "s1", claim.claimId, "other")
+        }
+        assertFailsWith<ClaimExpiredException>("A session's receipt without its claim settles nothing") {
+            directives.acknowledge(Gw.orgA, ada, id, DeliveryStage.EMITTED_TO_HOOK, "s1", null, "tok")
         }
         directives.acknowledge(Gw.orgA, ada, id, DeliveryStage.EMITTED_TO_HOOK, "s1", claim.claimId, "tok")
         directives.acknowledge(Gw.orgA, ada, id, DeliveryStage.EMITTED_TO_HOOK, "s1", claim.claimId, "tok")
@@ -141,6 +147,14 @@ class PacingPostgresTest {
                 "${DirectiveRepository.MAX_MEMBER_DELIVERIES}) AS i WHERE scope_key = ''",
         ).getOrThrow()
         assertNull(directives.claim(Gw.orgA, ada, "s1", DeliveryStage.EMITTED_TO_HOOK, "tok"), "Past the bound")
+        // The org's bound holds across its members.
+        server.database.superuser.execute("DELETE FROM gateway_directive_deliveries").getOrThrow()
+        server.database.superuser.execute(
+            "INSERT INTO gateway_directive_deliveries SELECT org_id, gen_random_uuid(), md5(i::text), " +
+                "'EMITTED_TO_HOOK', 'd', 'c', 't', now(), now(), now() FROM gateway_directives, generate_series(1, " +
+                "${DirectiveRepository.MAX_DELIVERIES}) AS i WHERE scope_key = ''",
+        ).getOrThrow()
+        assertNull(directives.claim(Gw.orgA, ada, "s1", DeliveryStage.EMITTED_TO_HOOK, "tok"), "Past the org's bound")
     }
 
     @Test
@@ -154,6 +168,8 @@ class PacingPostgresTest {
         assertTrue(spaced.retryIn!! in 1.seconds..10.seconds)
         val unspaced = queue.enter(call("s1"), first = true)
         assertEquals(AdmissionEntry.Admitted, unspaced, "Its session's advice spaces nothing")
+        val again = queue.enter(call("s1"), first = true)
+        assertEquals(AdmissionEntry.Admitted, again, "Nor once a call of the session was admitted")
         val unadvised = assertFailsWith<QueueRefusedException>("A session without advice: its member's") {
             queue.enter(call("s2"), first = true)
         }
