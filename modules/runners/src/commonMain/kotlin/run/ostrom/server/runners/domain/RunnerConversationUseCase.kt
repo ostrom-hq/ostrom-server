@@ -239,6 +239,8 @@ class RunnerConversationUseCaseImpl(
 
 /** Why an input of a kind [accepts] does not announce is refused instead of delivered; null when it is taken. */
 private fun unsupported(input: CloudInput, accepts: RunnerAccepts): String? = when (input.kind) {
+    // A runner that does not download files never hands the agent a message without them.
+    CloudInputKind.MESSAGE -> "files_unsupported".takeIf { input.files.isNotEmpty() && !accepts.files }
     CloudInputKind.STOP_TASK -> "task_stop_unsupported".takeUnless { accepts.taskStops }
     CloudInputKind.SET_MODEL -> "model_change_unsupported".takeUnless { accepts.modelChanges }
     CloudInputKind.SET_EFFORT -> "effort_change_unsupported".takeUnless { accepts.effortChanges }

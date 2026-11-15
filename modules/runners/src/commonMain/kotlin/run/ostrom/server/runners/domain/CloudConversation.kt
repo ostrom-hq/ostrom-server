@@ -218,6 +218,7 @@ enum class CloudInputStatus(val wire: String) {
  * @property requestDigest What the key stands for, so the same key with another request is refused.
  * @property attempts Deliveries so far.
  * @property eventSeq The transcript event recording its end.
+ * @property files The files a message carries (`runners.cloud.files.v1`), in the order it named them.
  */
 data class CloudInput(
     val id: Uuid,
@@ -240,6 +241,7 @@ data class CloudInput(
     val finishedAt: Instant? = null,
     val reason: String? = null,
     val eventSeq: Long? = null,
+    val files: List<CloudFileRef> = emptyList(),
 )
 
 /** The session's inputs, newest first; [nextBefore] is the cursor of the following page. */
@@ -251,6 +253,7 @@ data class CloudInputPage(val inputs: List<CloudInput>, val nextBefore: Uuid?)
  * @property clientKey The `Idempotency-Key` header or `clientMessageId`.
  * @property requestDigest What [clientKey] stands for.
  * @property expectedLastEventSeq Refuses the input when the transcript has newer events.
+ * @property fileIds The files a message names (`runners.cloud.files.v1`), as sent.
  */
 data class InputRequest(
     val text: String?,
@@ -258,6 +261,7 @@ data class InputRequest(
     val clientKey: String?,
     val requestDigest: String?,
     val expectedLastEventSeq: Long?,
+    val fileIds: List<String> = emptyList(),
 )
 
 /**
@@ -267,12 +271,16 @@ data class InputRequest(
  * @property permissionRequestId For a permission answer: refused while another answer to this request is pending.
  * @property permissionCheck For a permission answer: the rules it must pass, given the session and its request as they
  *   are under the lock.
+ * @property fileIds The files a message names, bound to it under the lock (`409 file_unavailable` otherwise).
+ * @property fileBytes The most bytes its files may hold together (`413 files_too_large`).
  */
 data class NewInput(
     val input: CloudInput,
     val expectedLastEventSeq: Long?,
     val permissionRequestId: String? = null,
     val permissionCheck: ((AnswerContext) -> Unit)? = null,
+    val fileIds: List<String> = emptyList(),
+    val fileBytes: Long = 0,
 )
 
 /** What a permission answer is checked against, read under the session row lock: [request] is null when none. */

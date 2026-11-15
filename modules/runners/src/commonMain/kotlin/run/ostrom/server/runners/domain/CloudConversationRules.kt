@@ -11,7 +11,7 @@ import run.ostrom.server.kernel.errors.OstromException
  * @param type The `error.type` clients receive.
  * @param message What to fix.
  */
-class CloudConversationException(kind: ErrorKind, type: String, message: String) :
+open class CloudConversationException(kind: ErrorKind, type: String, message: String) :
     OstromException(kind, message, type)
 
 /** Bounds and checks of transcripts and inputs (TeamCode's `CloudConversationRules`, masking aside). */
@@ -127,11 +127,13 @@ object CloudConversationRules {
     }
 
     /** @throws CloudConversationException `invalid_message` for an empty, overlong or control-laden message. */
-    fun validateMessage(text: String) {
-        if (!fits(text, MAX_MESSAGE_CHARS)) {
+    fun validateMessage(text: String, files: Boolean = false) {
+        // A message that carries files may have no text at all, never a blank one.
+        if (!(files && text.isEmpty()) && !fits(text, MAX_MESSAGE_CHARS)) {
             throw invalid(
                 "invalid_message",
-                "Send a message of 1–$MAX_MESSAGE_CHARS characters without control characters.",
+                "Send a message of 1–$MAX_MESSAGE_CHARS characters without control characters (it may be empty " +
+                    "when it carries files).",
             )
         }
     }

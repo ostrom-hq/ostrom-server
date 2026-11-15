@@ -108,13 +108,15 @@ data class RunnerAgentConfig(
 
 /**
  * The input kinds a runner takes besides messages, interrupts and permission answers: a kind it does not announce is
- * refused for it with a reason instead of being delivered. Messages carry no files on this server yet.
+ * refused for it with a reason instead of being delivered.
  *
+ * @property files Messages with files: the runner downloads them (`runners.cloud.files.v1`).
  * @property taskStops Stops of background tasks.
  * @property modelChanges Model changes.
  * @property effortChanges Effort changes.
  */
 data class RunnerAccepts(
+    val files: Boolean = false,
     val taskStops: Boolean = false,
     val modelChanges: Boolean = false,
     val effortChanges: Boolean = false,

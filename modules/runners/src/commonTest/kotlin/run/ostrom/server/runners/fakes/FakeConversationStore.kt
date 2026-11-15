@@ -51,7 +51,11 @@ class FakeConversationStore(private val sessions: InMemoryCloudSessionsRepositor
         return events.lastOrNull()?.seq ?: 0
     }
 
+    /** The last input asked for. */
+    var lastNew: NewInput? = null
+
     override suspend fun insertInput(new: NewInput, pendingLimit: Int): InputOutcome {
+        lastNew = new
         replay?.let { return InputOutcome.Replayed(it) }
         val session = sessions.sessions.getValue(new.input.sessionId)
         new.permissionCheck?.invoke(AnswerContext(request, session.state, session.desiredState, session.epoch))

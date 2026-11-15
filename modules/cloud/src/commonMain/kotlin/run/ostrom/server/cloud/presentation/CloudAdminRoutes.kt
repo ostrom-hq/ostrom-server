@@ -48,9 +48,10 @@ fun Route.cloudAdminRoutes(dependencies: CloudAdminRoutesDependencies) = with(de
             val expected = request.updatedAt?.let {
                 Instant.parseOrNull(it) ?: throw InvalidCloudRuntimeException("updatedAt is a date-time.")
             }
-            // An absent session image keeps the stored one: a console or a script from before it never resets it.
-            val sessionImage = request.sessionImage ?: runtime.get(caller).sessionImage
-            call.respond(runtime.save(caller, request.toRuntime(sessionImage), expected).toResponse(publicUrl))
+            // An absent session image or file limit keeps the stored one: a console or a script from before it never
+            // resets it.
+            val stored = runtime.get(caller)
+            call.respond(runtime.save(caller, request.toRuntime(stored), expected).toResponse(publicUrl))
         }
         get<CloudClustersApi> {
             val list = clusters.list(call.requirePrincipal().cloudAdmin())
@@ -105,11 +106,11 @@ internal fun AuthenticatedPrincipal.cloudAdmin(): CloudAdminCaller = CloudAdminC
     person = mayWrite(WriteAccess.PERSON),
 )
 
-internal fun SaveCloudRuntimeRequest.toRuntime(sessionImage: String) = CloudRuntime(
+internal fun SaveCloudRuntimeRequest.toRuntime(stored: CloudRuntime) = CloudRuntime(
     enabled = enabled,
     runnerImage = runnerImage,
     runnerBinary = runnerBinary,
-    sessionImage = sessionImage,
+    sessionImage = sessionImage ?: stored.sessionImage,
     serverUrl = serverUrl,
     workspaceAccessMode = workspaceAccessMode,
     pausedRetentionDays = pausedRetentionDays,
@@ -118,6 +119,8 @@ internal fun SaveCloudRuntimeRequest.toRuntime(sessionImage: String) = CloudRunt
     maxRetainedSessionsPerMember = maxRetainedSessionsPerMember,
     transcriptRetentionDays = transcriptRetentionDays,
     memberTransfers = memberTransfers,
+    fileMaxMebibytes = fileMaxMebibytes ?: stored.fileMaxMebibytes,
+    messageFileMebibytes = messageFileMebibytes ?: stored.messageFileMebibytes,
 )
 
 internal fun CloudRuntime.toResponse(publicUrl: String) = CloudRuntimeResponse(
@@ -134,6 +137,8 @@ internal fun CloudRuntime.toResponse(publicUrl: String) = CloudRuntimeResponse(
     maxRetainedSessionsPerMember = maxRetainedSessionsPerMember,
     transcriptRetentionDays = transcriptRetentionDays,
     memberTransfers = memberTransfers,
+    fileMaxMebibytes = fileMaxMebibytes,
+    messageFileMebibytes = messageFileMebibytes,
     updatedAt = updatedAt?.toString(),
 )
 

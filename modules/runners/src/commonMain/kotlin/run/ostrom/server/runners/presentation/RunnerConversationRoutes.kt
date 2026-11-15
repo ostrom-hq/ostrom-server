@@ -27,7 +27,7 @@ import kotlin.uuid.Uuid
 /**
  * The agent channel of the runner (`runners.cloud.conversation.v1`): the credential first, the body after (S2-46),
  * then the execution's fence; an unknown credential and another execution are both `409 execution_fenced`.
- * `GET /api/v1/cloud/runner/files/{id}` stays unserved: this server stores no cloud files yet.
+ * `GET /api/v1/cloud/runner/files/{id}` is served once this server takes files (`runners.cloud.files.v1`).
  */
 fun Route.runnerConversationRoutes(dependencies: RunnerConversationRoutesDependencies) = with(dependencies) {
     bodyLimit(SMALL_BODY_LIMIT) {
@@ -42,12 +42,16 @@ fun Route.runnerConversationRoutes(dependencies: RunnerConversationRoutesDepende
             val request = call.receive<RunnerInputsRequest>()
             val fenced = execution(token, request.sessionId, request.epoch)
             val accepts = RunnerAccepts(
+                files = request.acceptsFiles && files != null,
                 taskStops = request.acceptsTaskStops,
                 modelChanges = request.acceptsModelChanges,
                 effortChanges = request.acceptsEffortChanges,
             )
             val polled = runner.poll(fenced, request.waitMillis, request.desiredStatus, accepts)
-            val inputs = polled.inputs.map { RunnerInputDto(it.id.toString(), it.kind.wire, it.text, it.attempts) }
+            val inputs = polled.inputs.map { input ->
+                val carried = input.files.map { it.toDto() }
+                RunnerInputDto(input.id.toString(), input.kind.wire, input.text, input.attempts, carried)
+            }
             call.respond(RunnerInputsResponse(inputs, polled.desiredState.wire))
         }
     }
@@ -69,10 +73,11 @@ fun Route.runnerConversationRoutes(dependencies: RunnerConversationRoutesDepende
             call.respond(HttpStatusCode.NoContent)
         }
     }
+    files?.let { runnerFileRoute(this, it) }
 }
 
 /** The execution a call names, once its credential is the one of that execution. */
-private suspend fun RunnerConversationRoutesDependencies.execution(token: String, sessionId: String, epoch: Long) =
+internal suspend fun RunnerConversationRoutesDependencies.execution(token: String, sessionId: String, epoch: Long) =
     authenticate(token, parseId(sessionId), epoch).let { RunnerExecution(it.orgId, it.id, it.epoch) }
 
 /** The credential of a call, known to a resolver before the body is read. */

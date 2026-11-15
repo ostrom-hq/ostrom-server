@@ -141,7 +141,7 @@ internal class CloudConversationStoreImpl(
             ?: throw CloudSessionNotFoundException()
         // A retry of an input already stored is its first answer, even once the session ended.
         val replayed = replayOf(input)
-        if (replayed != null) return@inOrg InputOutcome.Replayed(replayed)
+        if (replayed != null) return@inOrg InputOutcome.Replayed(withFiles(replayed))
         val state = SessionState.fromWire(session[RunnersSessionsTable.state])
         val desired = DesiredState.fromWire(session[RunnersSessionsTable.desiredState])
         if (state.isFinal || desired == DesiredState.TERMINATED) {
@@ -160,9 +160,10 @@ internal class CloudConversationStoreImpl(
             )
         }
         checkPending(new, pendingLimit)
+        val files = bindFiles(new, input.createdAt)
         val sleeping = desired == DesiredState.PAUSED || state == SessionState.PAUSING || state == SessionState.PAUSED
         insertRow(input, input.kind == CloudInputKind.MESSAGE && input.wake && sleeping)
-        InputOutcome.Accepted(input)
+        InputOutcome.Accepted(input.copy(files = files))
     }
 
     /**
@@ -231,8 +232,12 @@ internal class CloudConversationStoreImpl(
     override suspend fun input(orgId: Uuid, sessionId: Uuid, id: Uuid): CloudInput? = database.inOrg(orgId) {
         val t = RunnersSessionInputs
         t.select(t.columns).where { (t.orgId eq orgId) and (t.sessionId eq sessionId) and (t.id eq id) }
-            .singleOrNull()?.let(::readInput)
+            .singleOrNull()?.let { withFiles(readInput(it)) }
     }
+
+    /** The input with the files it still carries (a received message's files are deleted soon after). */
+    private fun withFiles(input: CloudInput): CloudInput =
+        input.copy(files = filesOf(input.orgId, listOf(input.id))[input.id].orEmpty())
 
     override suspend fun inputs(orgId: Uuid, sessionId: Uuid, beforeId: Uuid?, limit: Int): CloudInputPage =
         database.inOrg(orgId) {
@@ -248,7 +253,9 @@ internal class CloudConversationStoreImpl(
             }
             val rows = t.select(t.columns).where { condition }
                 .orderBy(t.createdAt to SortOrder.DESC, t.id to SortOrder.DESC).limit(limit + 1).toList()
-            val page = rows.take(limit).map(::readInput)
+            val read = rows.take(limit).map(::readInput)
+            val files = filesOf(orgId, read.filter { it.kind == CloudInputKind.MESSAGE }.map { it.id })
+            val page = read.map { it.copy(files = files[it.id].orEmpty()) }
             CloudInputPage(page, if (rows.size > limit) page.last().id else null)
         }
 

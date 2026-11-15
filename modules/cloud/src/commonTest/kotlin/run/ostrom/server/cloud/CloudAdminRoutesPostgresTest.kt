@@ -144,13 +144,15 @@ class CloudAdminRoutesPostgresTest {
             {"enabled":false,"runnerBinary":"/usr/local/bin/ostrom","workspaceAccessMode":"ReadWriteOnce",
             "sessionImage":" registry.acme.dev/session:7 ",
             "failedWorkspaceRetentionDays":7,"maxRunningSessionsPerMember":2,"maxRetainedSessionsPerMember":20,
-            "memberTransfers":"disabled","serverUrl":"https://pods.acme.dev","updatedAt":"${seeded.updatedAt}"}
+            "memberTransfers":"disabled","serverUrl":"https://pods.acme.dev","fileMaxMebibytes":8,
+            "messageFileMebibytes":12,"updatedAt":"${seeded.updatedAt}"}
         """.trimIndent()
         assertEquals(HttpStatusCode.Forbidden, http.send("PUT", "/api/v1/cloud/runtime", "bob", body).status)
         val saved = http.send("PUT", "/api/v1/cloud/runtime", "alice", body).body<CloudRuntimeResponse>()
         assertFalse(saved.enabled)
         assertEquals("https://pods.acme.dev", saved.effectiveServerUrl)
         assertEquals("registry.acme.dev/session:7", saved.sessionImage)
+        assertEquals(8 to 12, saved.fileMaxMebibytes to saved.messageFileMebibytes)
         assertEquals("disabled", server.koin.get<CloudRuntimeSource>().current().memberTransfers)
         val stale = http.send("PUT", "/api/v1/cloud/runtime", "alice", body)
         assertEquals(HttpStatusCode.Conflict, stale.status)
@@ -159,11 +161,14 @@ class CloudAdminRoutesPostgresTest {
         assertEquals(HttpStatusCode.BadRequest, invalid.status)
         val again = http.get("/api/v1/cloud/runtime") { bearerAuth("alice") }.body<CloudRuntimeResponse>()
         assertEquals(saved, again)
-        // A save without the session image (a console from before it) keeps the stored one; a blank one resets it.
+        // A save without the session image and the file limits (a console from before them) keeps the stored ones; a
+        // blank image resets it.
         val without = body.replace(""""sessionImage":" registry.acme.dev/session:7 ",""", "")
+            .replace(""""fileMaxMebibytes":8,""", "").replace(""""messageFileMebibytes":12,""", "")
             .replace(seeded.updatedAt!!, saved.updatedAt!!)
         val kept = http.send("PUT", "/api/v1/cloud/runtime", "alice", without).body<CloudRuntimeResponse>()
         assertEquals("registry.acme.dev/session:7", kept.sessionImage)
+        assertEquals(8 to 12, kept.fileMaxMebibytes to kept.messageFileMebibytes)
         val blank = without.replace("{", """{"sessionImage":" ",""").replace(saved.updatedAt!!, kept.updatedAt!!)
         val reset = http.send("PUT", "/api/v1/cloud/runtime", "alice", blank).body<CloudRuntimeResponse>()
         assertEquals("docker.io/ostromhq/ostrom-session:latest", reset.sessionImage)

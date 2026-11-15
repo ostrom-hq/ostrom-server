@@ -114,7 +114,8 @@ internal class RunnerConversationStoreImpl(
             // hides them: they concern the turn running now, not the queue behind it.
             val urgent = queued(urgent = true, limit)
             val chosen = if (urgent.size >= limit) urgent else urgent + queued(urgent = false, limit - urgent.size)
-            chosen.map { input ->
+            val files = filesOf(orgId, chosen.filter { it.kind == CloudInputKind.MESSAGE }.map { it.id })
+            chosen.map { it.copy(files = files[it.id].orEmpty()) }.map { input ->
                 t.update({ (t.orgId eq orgId) and (t.id eq input.id) }) {
                     it[status] = CloudInputStatus.DELIVERED.wire
                     it[deliveredAt] = now
@@ -169,8 +170,11 @@ internal class RunnerConversationStoreImpl(
             (t.orgId eq orgId) and (t.sessionId eq sessionId) and (t.id inList unique.map { it.id }) and
                 (t.status eq CloudInputStatus.DELIVERED.wire) and (t.deliveredEpoch eq epoch)
         }.map(::readInput).associateBy { it.id }
+        // The files of every acknowledged message in one read: a consumed message's event names them.
+        val files = filesOf(orgId, matched.values.filter { it.kind == CloudInputKind.MESSAGE }.map { it.id })
         val finished = unique.mapNotNull { ack ->
-            matched[ack.id]?.let { input ->
+            matched[ack.id]?.let { found ->
+                val input = found.copy(files = files[ack.id].orEmpty())
                 if (ack.consumed) {
                     finish(input, CloudInputStatus.CONSUMED, null, now)
                 } else {

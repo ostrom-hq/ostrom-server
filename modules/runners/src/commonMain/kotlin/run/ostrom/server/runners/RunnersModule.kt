@@ -30,6 +30,13 @@ import run.ostrom.server.runners.infrastructure.CloudRuntimePausedRetention
 import run.ostrom.server.runners.infrastructure.CloudRuntimeRunnerDelivery
 import run.ostrom.server.runners.infrastructure.SettingsAllowedOrgs
 import run.ostrom.core.api.models.ServerFeatures
+import run.ostrom.server.artifacts.domain.storage.ArtifactObjectStore
+import run.ostrom.server.artifacts.domain.storage.ArtifactStorageRepository
+import run.ostrom.server.runners.domain.CloudFileService
+import run.ostrom.server.runners.domain.CloudFileServiceImpl
+import run.ostrom.server.runners.infrastructure.ArtifactCloudFileStorage
+import run.ostrom.server.runners.infrastructure.CloudFileStoreImpl
+import org.koin.core.scope.Scope
 import run.ostrom.server.automations.domain.AutomationLauncher
 import run.ostrom.server.automations.domain.AutomationLimits
 import run.ostrom.server.automations.domain.WaitSecretSessions
@@ -426,15 +433,21 @@ object RunnersModule : ServerModule {
         // Conversation sessions: their transcript, inputs and options, announced.
         single { ConversationAnnouncement() }
         single<CloudConversationStore> { CloudConversationStoreImpl(get(), get()) }
-        single<CloudConversationService> { CloudConversationServiceImpl(get(), get(), get(), get(), get()) }
-        single { CloudConversationRoutesDependencies(get(), get(), get(), get()) }
-        single { CloudConversationMaintenance(get(), get(), getOrNull<CloudRuntimeSource>(), get()) }
+        single<CloudConversationService> {
+            CloudConversationServiceImpl(get(), get(), get(), get(), get(), getOrNull<CloudRuntimeSource>())
+        }
+        single { FilesWiring(filesService(this)) }
+        single { CloudConversationRoutesDependencies(get(), get(), get(), get(), get<FilesWiring>().service) }
+        single {
+            val files = get<FilesWiring>().service
+            CloudConversationMaintenance(get(), get(), getOrNull<CloudRuntimeSource>(), get(), files)
+        }
         // The runner's side of the conversation: its agent, transcript upload and inputs.
         single<RunnerConversationStore> { RunnerConversationStoreImpl(get(), get()) }
         single<RunnerConversationUseCase> {
             RunnerConversationUseCaseImpl(get(), get(), get(), getOrNull<MemberLogins>() ?: NoMemberLogins, get())
         }
-        single { RunnerConversationRoutesDependencies(get(), get()) }
+        single { RunnerConversationRoutesDependencies(get(), get(), get<FilesWiring>().service) }
         single<AutomationLimits> { CloudSettingsAutomationLimits(getOrNull<CloudSettingsSource>()) }
     }
 
@@ -479,8 +492,10 @@ object RunnersModule : ServerModule {
      */
     override suspend fun features(koin: Koin): Set<String> {
         if (koin.get<RunnersConfig>().driver == RunnersConfig.DriverKind.NONE) return setOf(ServerFeatures.RUNNERS)
-        // The conversation keys, files aside (not served yet), with a runtime driver.
+        // The conversation keys, with a runtime driver.
         val announced = koin.getOrNull<ConversationAnnouncement>()?.announced == true
+        // Files once the artifacts module keeps their bytes; each organization's policy says whether its bucket does.
+        val files = announced && koin.getOrNull<FilesWiring>()?.service != null
         val conversation = if (announced) CONVERSATION_FEATURES else emptySet()
         val github = koin.getOrNull<RunnerGitHubTokens>()?.available() == true
         // The members' values, once the secrets module resolves them.
@@ -511,6 +526,7 @@ object RunnersModule : ServerModule {
             // Remote sessions are conversation sessions on the device of their owner's sign-in: announced with the
             // conversation, once the identity module knows the devices.
             ServerFeatures.RUNNERS_CLOUD_REMOTE.takeIf { announced && koin.getOrNull<SignedInDevices>() != null },
+            ServerFeatures.RUNNERS_CLOUD_FILES.takeIf { files },
         ) + conversation
     }
 
@@ -573,6 +589,24 @@ object RunnersModule : ServerModule {
 
     /** At most this many credentials a pass, as the creations' keys. */
     private const val INFERENCE_PURGE_LIMIT = 500
+}
+
+/**
+ * The files sent to sessions, built once (`runners.cloud.files.v1`): null without the artifacts module, whose bucket
+ * keeps their bytes.
+ *
+ * @property service The files.
+ */
+class FilesWiring(val service: CloudFileService?)
+
+/** The files' service on the artifacts module's bucket, or null without that module. */
+private fun filesService(scope: Scope): CloudFileService? = with(scope) {
+    val objects = getOrNull<ArtifactObjectStore>() ?: return null
+    val storage = ArtifactCloudFileStorage(get<ArtifactStorageRepository>())
+    CloudFileServiceImpl(
+        CloudFileStoreImpl(get(), get(), get()), get(), get(), storage, objects, getOrNull<CloudRuntimeSource>(), get(),
+        get(),
+    )
 }
 
 /**

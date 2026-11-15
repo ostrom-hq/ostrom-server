@@ -2,6 +2,7 @@
 package run.ostrom.server.cloud.presentation
 
 import run.ostrom.server.cloud.domain.CloudProfileSpec
+import run.ostrom.server.cloud.domain.CloudRuntime
 import run.ostrom.server.cloud.domain.CloudSettings
 import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
@@ -70,6 +71,10 @@ data class CloudRuntimeResponse(
     val transcriptRetentionDays: Int? = null,
     /** `offer` or `disabled`. */
     val memberTransfers: String,
+    /** The largest file sent to a session, in MiB (`runners.cloud.files.v1`). */
+    val fileMaxMebibytes: Int = CloudRuntime.DEFAULT_FILE_MEBIBYTES,
+    /** The files of one message together, in MiB. */
+    val messageFileMebibytes: Int = CloudRuntime.DEFAULT_MESSAGE_FILE_MEBIBYTES,
     /** When it was saved last. */
     val updatedAt: String? = null,
 )
@@ -101,6 +106,10 @@ data class SaveCloudRuntimeRequest(
     val transcriptRetentionDays: Int? = null,
     /** `offer` or `disabled`. */
     val memberTransfers: String,
+    /** The largest file sent to a session, in MiB; absent keeps the stored one. */
+    val fileMaxMebibytes: Int? = null,
+    /** The files of one message together, in MiB; absent keeps the stored one. */
+    val messageFileMebibytes: Int? = null,
     /** The `updatedAt` of the runtime edited. */
     val updatedAt: String? = null,
 )

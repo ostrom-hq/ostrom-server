@@ -76,6 +76,10 @@ class CloudRuntimeTest {
         assertTrue("maxRetainedSessionsPerMember" in refused(on.copy(maxRetainedSessionsPerMember = 10_001)))
         assertTrue("transcriptRetentionDays" in refused(on.copy(transcriptRetentionDays = 0)))
         assertTrue("memberTransfers" in refused(on.copy(memberTransfers = "always")))
+        assertTrue("fileMaxMebibytes" in refused(on.copy(fileMaxMebibytes = 0)))
+        assertTrue("fileMaxMebibytes" in refused(on.copy(fileMaxMebibytes = 101)))
+        assertTrue("messageFileMebibytes" in refused(on.copy(messageFileMebibytes = 0)))
+        assertTrue("messageFileMebibytes" in refused(on.copy(messageFileMebibytes = 101)))
         assertTrue("needed to turn" in refused(on.copy(runnerImage = " ")))
         // Optional values unset are accepted, and a blank binary is the default one.
         val saved = runtime.save(

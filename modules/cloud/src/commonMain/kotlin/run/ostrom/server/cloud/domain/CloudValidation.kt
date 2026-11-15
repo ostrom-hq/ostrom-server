@@ -49,6 +49,10 @@ internal fun runtimeProblem(runtime: CloudRuntime): String? = listOfNotNull(
     "maxRetainedSessionsPerMember is 1 to 10000.".takeIf { runtime.maxRetainedSessionsPerMember !in 1..MAX_RETAINED },
     "transcriptRetentionDays is 1 to 3650.".takeIf { runtime.transcriptRetentionDays?.let(::isRetention) == false },
     "memberTransfers is offer or disabled.".takeIf { runtime.memberTransfers !in CloudRuntime.TRANSFERS },
+    "fileMaxMebibytes is 1 to 100.".takeIf { runtime.fileMaxMebibytes !in 1..CloudRuntime.MAX_FILE_MEBIBYTES },
+    "messageFileMebibytes is 1 to 100.".takeIf {
+        runtime.messageFileMebibytes !in 1..CloudRuntime.MAX_FILE_MEBIBYTES
+    },
     "runnerImage is needed to turn cloud sessions on.".takeIf { runtime.enabled && runtime.runnerImage == null },
 ).firstOrNull()
 
