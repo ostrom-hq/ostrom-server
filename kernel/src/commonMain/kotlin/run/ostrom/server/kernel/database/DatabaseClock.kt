@@ -46,8 +46,9 @@ private fun databaseNowPlusSeconds(seconds: Double): Expression<Instant> {
  *
  * @return The expression.
  */
-fun databaseNowPlus(duration: Duration): Expression<Instant> = databaseNowPlusSeconds(
-    duration.inWholeMicroseconds / MICROS_A_SECOND,
-)
+fun databaseNowPlus(duration: Duration): Expression<Instant> {
+    require(duration.isFinite()) { "The database's clock moves by a finite duration." }
+    return databaseNowPlusSeconds(duration.inWholeMicroseconds / MICROS_A_SECOND)
+}
 
 private const val MICROS_A_SECOND = 1_000_000.0

@@ -20,7 +20,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.microseconds
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /** The statements every module on Exposed shares ([ExposedStatements.kt]), on a real PostgreSQL. */
 class ExposedStatementsPostgresTest {
@@ -42,7 +45,9 @@ class ExposedStatementsPostgresTest {
                 JdbcDatabase(database.servingConfig, JdbcDatabase.MIN_POOL_SIZE).use { jdbc ->
                     jdbc.query {
                         // A temporary table of this transaction's connection: the test's own rows, never migrated.
-                        exec("CREATE TEMP TABLE kernel_statement_rows (k BIGINT NOT NULL, v BIGINT NOT NULL, note TEXT)")
+                        exec(
+                            "CREATE TEMP TABLE kernel_statement_rows (k BIGINT NOT NULL, v BIGINT NOT NULL, note TEXT)",
+                        )
                         block()
                         rollback()
                     }
@@ -126,10 +131,13 @@ class ExposedStatementsPostgresTest {
     }
 
     @Test
-    fun theDatabasesClockMovesByADurationToTheMillisecond() = withRows {
+    fun theDatabasesClockMovesByAFiniteDurationToTheMicrosecondEitherWay() = withRows {
         val now = databaseNow()
-        val later = databaseNowPlus(1_500.milliseconds)
-        val row = Table.Dual.select(now, later).single()
-        assertEquals(1_500.milliseconds, row[later] - row[now])
+        val later = databaseNowPlus(1_500.milliseconds + 250.microseconds)
+        val earlier = databaseNowPlus((-2).seconds)
+        val row = Table.Dual.select(now, later, earlier).single()
+        assertEquals(1_500.milliseconds + 250.microseconds, row[later] - row[now])
+        assertEquals((-2).seconds, row[earlier] - row[now])
+        assertFailsWith<IllegalArgumentException> { databaseNowPlus(Duration.INFINITE) }
     }
 }

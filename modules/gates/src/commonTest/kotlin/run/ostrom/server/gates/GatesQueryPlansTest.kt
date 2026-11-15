@@ -146,8 +146,6 @@ class GatesQueryPlansTest {
         return gates
     }
 
-    /** The plan of [statement] as Exposed sends it, under `EXPLAIN (ANALYZE, BUFFERS)`: a write runs (rolled back). */
-
     private fun keyOf(n: Int) = "push-main:acme/api:${n % KEYS}"
 
     private fun sessionOf(n: Int) = "claude-${n % SESSIONS}"

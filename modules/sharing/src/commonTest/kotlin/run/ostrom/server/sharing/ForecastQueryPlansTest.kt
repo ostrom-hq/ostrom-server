@@ -79,5 +79,4 @@ class ForecastQueryPlansTest {
             assertFalse("Seq Scan" in plan, "$what scans a table:\n$plan")
         }
     }
-
 }
