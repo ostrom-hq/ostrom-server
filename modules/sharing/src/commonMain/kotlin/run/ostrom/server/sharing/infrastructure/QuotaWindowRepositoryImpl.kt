@@ -5,6 +5,7 @@ import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.sharing.domain.QuotaWindow
 import run.ostrom.server.sharing.domain.QuotaWindowRepository
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.vendors.ForUpdateOption
 import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.upsert
 import kotlin.uuid.Uuid
@@ -19,7 +20,8 @@ import kotlin.uuid.Uuid
 class QuotaWindowRepositoryImpl(private val database: JdbcDatabase) : QuotaWindowRepository {
     override suspend fun put(orgId: Uuid, id: Uuid, windows: List<QuotaWindow>) {
         database.inOrg(orgId) {
-            if (accountOfOrg(orgId, id).empty()) return@inOrg
+            // The account is held until commit (`FOR KEY SHARE`): a delete meanwhile waits, the windows never dangle.
+            if (accountOfOrg(orgId, id).forUpdate(ForUpdateOption.PostgreSQL.ForKeyShare()).empty()) return@inOrg
             val w = SharingWindows
             windows.forEach { window ->
                 w.upsert(w.accountId, w.name, onUpdateExclude = listOf(w.orgId)) {

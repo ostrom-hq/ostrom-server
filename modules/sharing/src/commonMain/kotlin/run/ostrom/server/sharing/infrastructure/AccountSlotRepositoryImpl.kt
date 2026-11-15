@@ -7,6 +7,7 @@ package run.ostrom.server.sharing.infrastructure
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.databaseNow
 import run.ostrom.server.kernel.database.databaseNowPlus
+import run.ostrom.server.kernel.database.lockKeyUntilCommit
 import run.ostrom.server.kernel.database.write
 import run.ostrom.server.sharing.domain.AccountSlot
 import run.ostrom.server.sharing.domain.AccountSlotRepository
@@ -63,6 +64,8 @@ class AccountSlotRepositoryImpl(private val database: JdbcDatabase) : AccountSlo
         write { slotPurge(orgId) }
         write { slotInsert(orgId, slot) }
         if (hash != null) {
+            // The bounds are counted then written: one lease of the org at a time, as the one statement was atomic.
+            lockKeyUntilCommit("sharing-affinities:$orgId")
             write { affinityPurge(orgId) }
             if (mayRemember(orgId, memberId, hash)) write { affinityRemember(orgId, memberId, hash, account.id) }
         }
