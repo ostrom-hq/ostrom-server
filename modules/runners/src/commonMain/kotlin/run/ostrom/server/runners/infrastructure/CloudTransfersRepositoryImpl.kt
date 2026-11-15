@@ -89,7 +89,7 @@ class CloudTransfersRepositoryImpl(private val database: JdbcDatabase) : CloudTr
 
     override suspend fun update(expected: CloudTransfer, next: CloudTransfer, session: SessionChange?): CloudTransfer? =
         attempt(expected.orgId) {
-            val stored = returned { transferWritten(expected, next) }.firstOrNull()?.let(::toTransfer) ?: throw Lost()
+            val stored = toTransfer(returned { transferWritten(expected, next) }.firstOrNull() ?: throw Lost())
             if (session != null && compareAndSetIn(session.next, session.nextReconcileAt) == null) throw Lost()
             stored
         }

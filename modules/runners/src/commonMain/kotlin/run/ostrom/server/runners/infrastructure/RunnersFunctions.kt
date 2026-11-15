@@ -32,7 +32,7 @@ internal object RunnersSessionByToken : Table("runners_session_by_token") {
     val orgId = uuid("org_id")
 
     /** The function called for the hash of a runner token. */
-    fun of(hash: String): ColumnSet = FunctionCall(tableName, listOf(text(hash)))
+    fun of(hash: String): ColumnSet = FunctionCall(tableName, listOf(textValue(hash)))
 }
 
 /** What `runners_claim_due(owner, until, now, limit)` returns, read as a table: the sessions it claimed. */
@@ -42,7 +42,7 @@ internal object RunnersClaimDue : Table("runners_claim_due") {
 
     /** The function called: [owner] claims at most [limit] sessions due at [now] until [until]. */
     fun of(owner: String, until: Instant, now: Instant, limit: Int): ColumnSet =
-        FunctionCall(tableName, listOf(text(owner), instantValue(until), instantValue(now), int(limit)))
+        FunctionCall(tableName, listOf(textValue(owner), instantValue(until), instantValue(now), intValue(limit)))
 }
 
 /** What `runners_sessions_on_device(device, live)` returns, read as a table: the sessions a device hosts. */
@@ -65,7 +65,7 @@ internal object RunnersSessionsWithoutProfile : Table("runners_sessions_without_
     /** The function called for the page after [after] (the first page when null), at most [limit] sessions. */
     fun of(after: Uuid?, limit: Int): ColumnSet = FunctionCall(
         tableName,
-        listOf(if (after == null) NullUuid else QueryParameter(after, UuidColumnType()), int(limit)),
+        listOf(if (after == null) NullUuid else QueryParameter(after, UuidColumnType()), intValue(limit)),
     )
 }
 
@@ -87,7 +87,7 @@ internal object RunnersClusterLiveObjects : Table("runners_cluster_live_objects"
     val claimDeleted = bool("claim_deleted")
 
     /** The function called for [cluster]. */
-    fun of(cluster: String): ColumnSet = FunctionCall(tableName, listOf(text(cluster)))
+    fun of(cluster: String): ColumnSet = FunctionCall(tableName, listOf(textValue(cluster)))
 }
 
 /** What `runners_stale_inference_credentials(limit)` returns, read as a table: the credentials to revoke. */
@@ -96,7 +96,7 @@ internal object RunnersStaleInferenceCredentials : Table("runners_stale_inferenc
     val tokenId = uuid("token_id")
 
     /** The function called, at most [limit] credentials. */
-    fun of(limit: Int): ColumnSet = FunctionCall(tableName, listOf(int(limit)))
+    fun of(limit: Int): ColumnSet = FunctionCall(tableName, listOf(intValue(limit)))
 }
 
 /** What `runners_files_deleting(limit)` returns, read as a table: the files whose bytes the sweep removes. */
@@ -105,7 +105,7 @@ internal object RunnersFilesDeleting : Table("runners_files_deleting") {
     val id = uuid("id")
 
     /** The function called, at most [limit] files. */
-    fun of(limit: Int): ColumnSet = FunctionCall(tableName, listOf(int(limit)))
+    fun of(limit: Int): ColumnSet = FunctionCall(tableName, listOf(intValue(limit)))
 }
 
 /** What `runners_conversation_wakes(limit)` returns, read as a table: the sessions with a message to wake for. */
@@ -115,7 +115,7 @@ internal object RunnersConversationWakes : Table("runners_conversation_wakes") {
     val inputId = uuid("input_id")
 
     /** The function called, at most [limit] sessions. */
-    fun of(limit: Int): ColumnSet = FunctionCall(tableName, listOf(int(limit)))
+    fun of(limit: Int): ColumnSet = FunctionCall(tableName, listOf(intValue(limit)))
 }
 
 /** What `runners_conversation_ended(limit)` returns, read as a table: the ended sessions with pending inputs. */
@@ -124,7 +124,7 @@ internal object RunnersConversationEnded : Table("runners_conversation_ended") {
     val orgId = uuid("org_id")
 
     /** The function called, at most [limit] sessions. */
-    fun of(limit: Int): ColumnSet = FunctionCall(tableName, listOf(int(limit)))
+    fun of(limit: Int): ColumnSet = FunctionCall(tableName, listOf(intValue(limit)))
 }
 
 /** `runners_session_org(id)`: the organization of a session, null when it has none. */
@@ -142,14 +142,14 @@ internal fun releaseClaim(id: Uuid, owner: String, nextAt: Instant?): CustomFunc
     "runners_release",
     TextColumnType(),
     QueryParameter(id, UuidColumnType()),
-    text(owner),
+    textValue(owner),
     QueryParameter(nextAt != null, BooleanColumnType()),
     instantValue(nextAt ?: EPOCH),
 )
 
 /** `runners_files_expire(now, limit)`: marks a batch of the expired files for deletion and returns how many. */
 internal fun expireFiles(now: Instant, limit: Int): CustomFunction<Long> =
-    CustomFunction("runners_files_expire", LongColumnType(), instantValue(now), int(limit))
+    CustomFunction("runners_files_expire", LongColumnType(), instantValue(now), intValue(limit))
 
 /** `runners_file_usage_purge(day)`: deletes a batch of the counters before [day] and returns how many. */
 internal fun purgeFileUsage(day: Long): CustomFunction<Long> =
@@ -157,7 +157,7 @@ internal fun purgeFileUsage(day: Long): CustomFunction<Long> =
 
 /** `runners_conversation_purge(before, limit)`: deletes a batch of old events and inputs and returns how many. */
 internal fun purgeConversation(before: Instant, limit: Int): CustomFunction<Long> =
-    CustomFunction("runners_conversation_purge", LongColumnType(), instantValue(before), int(limit))
+    CustomFunction("runners_conversation_purge", LongColumnType(), instantValue(before), intValue(limit))
 
 /** The one value of a function [call] that returns a scalar (`SELECT name(args…)`). */
 internal fun <T> JdbcTransaction.scalar(call: CustomFunction<T>): T = Table.Dual.select(call).single()[call]
@@ -178,9 +178,9 @@ private class FunctionCall(name: String, private val arguments: List<Expression<
     }
 }
 
-private fun text(value: String): Expression<String> = QueryParameter(value, TextColumnType())
+private fun textValue(value: String): Expression<String> = QueryParameter(value, TextColumnType())
 
-private fun int(value: Int): Expression<Int> = QueryParameter(value, IntegerColumnType())
+private fun intValue(value: Int): Expression<Int> = QueryParameter(value, IntegerColumnType())
 
 private fun instantValue(value: Instant): Expression<Instant> = QueryParameter(value, InstantColumnType())
 

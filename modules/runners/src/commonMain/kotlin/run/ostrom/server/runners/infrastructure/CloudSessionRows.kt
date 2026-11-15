@@ -122,7 +122,7 @@ internal fun StatementBuilder.sessionRouteInsert(session: CloudSession): InsertS
 /** The columns of the proof that a workspace is gone, written with the session. */
 internal fun UpdateBuilder<*>.deletion(deletion: WorkspaceDeletion?) {
     val s = RunnersSessionsTable
-    this[s.workspaceDeletionState] = deletion?.state?.wire
+    this[s.workspaceDeletionState] = deletion?.let { it.state.wire }
     this[s.workspaceClaimDeletedAt] = deletion?.claimDeletedAt
     this[s.workspaceVolumeDeletedAt] = deletion?.volumeDeletedAt
     this[s.workspaceVolumeName] = deletion?.volumeName
