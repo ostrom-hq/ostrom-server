@@ -4,6 +4,7 @@ package run.ostrom.server.runners
 import run.ostrom.server.runners.domain.CloudSessionsRepository
 import run.ostrom.server.runners.domain.DesiredState
 import run.ostrom.server.runners.domain.RunnerTokens
+import run.ostrom.server.runners.domain.SessionMode
 import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.runners.fakes.ALICE
 import run.ostrom.server.runners.fakes.testIdentities
@@ -205,5 +206,30 @@ class TerminalRoutesTest {
         // A newer execution already holds the relay: this runner is the older one.
         server.koin.get<TerminalRelay>().connectRunner(running.id, 3)
         assertEquals(TerminalCloseCodes.CONFLICT, code("?sessionId=${running.id}&epoch=2", "Bearer $token"))
+    }
+
+    @Test
+    fun aConversationHasNoTerminalForTheMemberNorTheRunner() = serverTest(listOf(RunnersModule), identities) { server ->
+        val repository = server.koin.get<CloudSessionsRepository>()
+        val tokens = server.koin.get<RunnerTokens>()
+        val token = tokens.mint()
+        val conversation = session(ownerId = ALICE.toString(), state = SessionState.RUNNING, createdAt = t0)
+            .copy(epoch = 2, runnerTokenHash = tokens.hash(token), mode = SessionMode.CONVERSATION)
+        repository.createWithinCap(conversation, 5)
+        val ws = createClient { install(WebSockets) }
+
+        suspend fun code(path: String, auth: String): Short? {
+            var code: Short? = null
+            ws.webSocket(path, request = { header(HttpHeaders.Authorization, auth) }) { code = closeCode() }
+            return code
+        }
+        assertEquals(
+            TerminalCloseCodes.CONFLICT,
+            code("/api/v1/cloud/sessions/${conversation.id}/terminal", "Bearer alice"),
+        )
+        assertEquals(
+            TerminalCloseCodes.CONFLICT,
+            code("/api/v1/cloud/runner/terminal?sessionId=${conversation.id}&epoch=2", "Bearer $token"),
+        )
     }
 }

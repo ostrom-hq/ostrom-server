@@ -29,6 +29,7 @@ import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
 class RunnersFeaturesTest {
@@ -42,7 +43,7 @@ class RunnersFeaturesTest {
     }.koin
 
     @Test
-    fun theConversationKeysAreAnnouncedOnlyWhenTurnedOn() = runTest {
+    fun theConversationKeysAreAnnouncedByDefault() = runTest {
         val docker = RunnersConfig.DriverKind.DOCKER
         val config = RunnersConfig.from(MapConfigSource(emptyMap())).copy(driver = docker)
         fun koin(announced: Boolean) = koinApplication {
@@ -53,8 +54,17 @@ class RunnersFeaturesTest {
                 },
             )
         }.koin
-        assertEquals(cloud, RunnersModule.features(koin(false)), "Off: the runner side is not there yet")
+        assertTrue(ConversationAnnouncement().announced, "On: the member routes and the runner channel are served")
         assertEquals(cloud + RunnersModule.CONVERSATION_FEATURES, RunnersModule.features(koin(true)))
+        assertEquals(cloud, RunnersModule.features(koin(false)), "Turned off, none is announced")
+        assertEquals(
+            setOf(
+                "runners.cloud.conversation.v1", "runners.cloud.permissions.v1", "runners.cloud.permissions.bypass.v1",
+                "runners.cloud.tasks.v1", "runners.cloud.transcript.live.v1", "runners.cloud.transcript.feeds.v1",
+                "runners.cloud.model.v1", "runners.cloud.effort.v1",
+            ),
+            RunnersModule.CONVERSATION_FEATURES,
+        )
         assertFalse("runners.cloud.files.v1" in RunnersModule.CONVERSATION_FEATURES, "Files are not served")
     }
 

@@ -2,6 +2,7 @@
 package run.ostrom.server.runners.infrastructure
 
 import run.ostrom.server.runners.domain.ExecutionSpec
+import run.ostrom.server.runners.domain.SessionMode
 
 /**
  * The environment of the runner process, the same for every runtime. It holds identifiers and the server URL; the
@@ -13,6 +14,9 @@ object RunnerEnvironment {
 
     /** The variable of the pod's projected service-account token file, on Kubernetes with pod identity. */
     const val POD_TOKEN_FILE = "OSTROM_POD_TOKEN_FILE"
+
+    /** The variable of the session's mode, set for a conversation only: absent, the runner relays a terminal. */
+    const val MODE = "OSTROM_SESSION_MODE"
 
     /** The variable of the first message. */
     const val PROMPT = "OSTROM_AGENT_PROMPT"
@@ -36,6 +40,7 @@ object RunnerEnvironment {
             repository.ref?.let { add("OSTROM_REPOSITORY_REF" to it) }
         }
         spec.model?.let { add("OSTROM_AGENT_MODEL" to it) }
+        if (spec.mode == SessionMode.CONVERSATION) add(MODE to spec.mode.wire)
         add("OSTROM_AGENT_SOCKET" to AGENT_SOCKET)
         add("OSTROM_RUNNER_CHECKS" to CHECKS_SOCKET)
         add("OSTROM_CHECK_HOST_SOCKET" to CHECK_HOST_SOCKET)
