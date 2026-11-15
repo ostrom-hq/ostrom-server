@@ -168,7 +168,7 @@ class ReopenSessionUseCaseImpl(
     }
 
     // The root, then its segments: the order every start takes its locks in.
-    private suspend fun reopen(tx: SessionsTransaction, actor: GateActor, rootId: String, id: String): Reopened {
+    private fun reopen(tx: SessionsTransaction, actor: GateActor, rootId: String, id: String): Reopened {
         tx.lockRoot(rootId)
         val all = tx.segments(rootId)
         val closed = all.first { it.id == id }
@@ -188,7 +188,7 @@ class ReopenSessionUseCaseImpl(
 
     // A person still has to answer the agent of a segment lost while it waited: the reopened one waits too. A segment
     // its launcher ended carries nothing over.
-    private suspend fun waitingCarried(tx: SessionsTransaction, last: Session, opened: Session): Session {
+    private fun waitingCarried(tx: SessionsTransaction, last: Session, opened: Session): Session {
         if (!last.lost || last.activity != SessionActivityState.WAITING_FOR_HUMAN) return opened
         val carried = opened.copy(
             activity = last.activity,

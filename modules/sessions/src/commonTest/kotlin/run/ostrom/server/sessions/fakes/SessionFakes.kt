@@ -62,7 +62,7 @@ class InMemorySessions : SessionsRepository {
     val locks = mutableListOf<String>()
     var staleCutoff: Instant? = null
 
-    override suspend fun <T> transaction(orgId: Uuid, block: suspend SessionsTransaction.() -> T): T = Tx(orgId).block()
+    override suspend fun <T> transaction(orgId: Uuid, block: SessionsTransaction.() -> T): T = Tx(orgId).block()
 
     override suspend fun get(orgId: Uuid, id: String): Session? = rows[orgId to id]
 
@@ -90,21 +90,21 @@ class InMemorySessions : SessionsRepository {
     }
 
     private inner class Tx(private val orgId: Uuid) : SessionsTransaction {
-        override suspend fun lockRoot(rootId: String) {
+        override fun lockRoot(rootId: String) {
             locks += rootId
         }
 
-        override suspend fun segments(rootId: String): List<Session> =
+        override fun segments(rootId: String): List<Session> =
             rows.values.filter { it.orgId == orgId && it.rootId == rootId }.sortedBy { it.segment }
 
-        override suspend fun lock(id: String): Session? = rows[orgId to id]
+        override fun lock(id: String): Session? = rows[orgId to id]
 
-        override suspend fun insert(session: Session) {
+        override fun insert(session: Session) {
             check((orgId to session.id) !in rows) { "duplicate" }
             rows[orgId to session.id] = session
         }
 
-        override suspend fun update(session: Session) {
+        override fun update(session: Session) {
             rows[orgId to session.id] = session
         }
     }

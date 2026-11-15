@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.sessions.infrastructure
 
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.lockKeyUntilCommit
+import run.ostrom.server.kernel.database.rowBefore
+import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.sessions.domain.models.SeenItem
 import run.ostrom.server.sessions.domain.models.Session
 import run.ostrom.server.sessions.domain.models.SessionActivityState
@@ -8,127 +12,90 @@ import run.ostrom.server.sessions.domain.models.SessionQuery
 import run.ostrom.server.sessions.domain.repositories.SessionsRepository
 import run.ostrom.server.sessions.domain.repositories.SessionsTransaction
 import run.ostrom.server.sessions.domain.repositories.StaleSession
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.QueryExecutor
-import io.github.smyrgeorge.sqlx4k.ResultSet
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
-import kotlin.reflect.KClass
+import org.jetbrains.exposed.v1.core.Op
+import org.jetbrains.exposed.v1.core.QueryBuilder
+import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.TextColumnType
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.andIfNotNull
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.isNotNull
+import org.jetbrains.exposed.v1.core.isNull
+import org.jetbrains.exposed.v1.core.statements.UpdateBuilder
+import org.jetbrains.exposed.v1.core.wrapAsExpression
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import org.jetbrains.exposed.v1.jdbc.Query
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * [SessionsRepository] on PostgreSQL (sqlx4k). Every transaction first sets `ostrom.org_id`, which the row level
- * security policy reads: a query never sees or writes another organization's rows, even if its `WHERE` forgot it.
+ * [SessionsRepository] on `sessions_sessions` (table of [SessionsMigrations]). Every transaction is the serving role's
+ * with `ostrom.org_id` set (`withOrganization`), which the row-level security policy reads: a query never sees or
+ * writes another organization's rows, even if its `WHERE` forgot it; every statement filters on the organization too.
  *
- * @param driver The connection pool.
+ * @param database The serving role's pool.
  */
-class PostgresSessionsRepository(private val driver: Driver) : SessionsRepository {
-    override suspend fun <T> transaction(orgId: Uuid, block: suspend SessionsTransaction.() -> T): T =
-        scoped(orgId, block)
+class PostgresSessionsRepository(private val database: JdbcDatabase) : SessionsRepository {
+    override suspend fun <T> transaction(orgId: Uuid, block: SessionsTransaction.() -> T): T =
+        database.withOrganization(orgId) { Tx(this, orgId).block() }
 
-    private suspend fun <T> scoped(orgId: Uuid, block: suspend Tx.() -> T): T =
-        driver.transaction { Tx(this, orgId).also { it.scope() }.block() }
-
-    override suspend fun get(orgId: Uuid, id: String): Session? = scoped(orgId) {
-        select("id = :id", lock = false) { bind("id", id) }.firstOrNull()
+    override suspend fun get(orgId: Uuid, id: String): Session? = database.withOrganization(orgId) {
+        selectOf(orgId) { s.id eq id }.singleOrNull()?.toSession()
     }
 
     // The primary key finds the named segment, the unique (org_id, root_id, segment) index its session's.
-    override suspend fun segmentsOf(orgId: Uuid, id: String): List<Session> = scoped(orgId) {
-        select(
-            "root_id = (SELECT root_id FROM sessions_sessions WHERE org_id = :org AND id = :id) ORDER BY segment",
-            lock = false,
-        ) { bind("id", id) }
+    override suspend fun segmentsOf(orgId: Uuid, id: String): List<Session> = database.withOrganization(orgId) {
+        val root = s.select(s.rootId).where { (s.orgId eq orgId) and (s.id eq id) }
+        selectOf(orgId) { s.rootId eq wrapAsExpression<String>(root) }
+            .orderBy(s.segment)
+            .map { it.toSession() }
     }
 
-    override suspend fun list(orgId: Uuid, query: SessionQuery): List<Session> = scoped(orgId) {
-        val where = buildList {
-            add("org_id = :org")
-            if (query.repo != null) add("repo = :repo")
-            if (query.dev != null) add("dev = :dev")
-            if (query.open != null) add(if (query.open) "ended_at IS NULL" else "ended_at IS NOT NULL")
-            if (query.launchId != null) add("launch_id = :launch")
-            if (query.labels.isNotEmpty()) add("CAST(labels AS JSONB) @> CAST(:labels AS JSONB)")
-            if (query.before != null) {
-                add(
-                    "(started_at, id) < (SELECT started_at, id FROM sessions_sessions " +
-                        "WHERE org_id = :org AND id = :before)",
-                )
-            }
-        }.joinToString(" AND ")
-        fetch(
-            Statement.create(
-                "SELECT $COLUMNS FROM sessions_sessions WHERE $where ORDER BY started_at DESC, id DESC LIMIT :limit",
-            ).bind("org", orgId).bind("limit", query.limit).apply {
-                query.repo?.let { bind("repo", it) }
-                query.dev?.let { bind("dev", it) }
-                query.launchId?.let { bind("launch", it) }
-                if (query.labels.isNotEmpty()) bind("labels", json.encodeToString(labelsMap, query.labels))
-                query.before?.let { bind("before", it) }
-            },
-        )
+    override suspend fun list(orgId: Uuid, query: SessionQuery): List<Session> = database.withOrganization(orgId) {
+        selectOf(orgId) { filtersOf(orgId, query) }
+            .orderBy(s.startedAt to SortOrder.DESC, s.id to SortOrder.DESC)
+            .limit(query.limit)
+            .map { it.toSession() }
     }
 
     // The one read across organizations, through the function of SessionsMigrations version 2.
-    override suspend fun stale(seenBefore: Instant, limit: Int): List<StaleSession> = driver.fetchAll(
-        Statement.create(
-            "SELECT org_id, id, last_seen_at FROM " +
-                "sessions_stale(CAST(:cutoff AS TIMESTAMPTZ), CAST(:limit AS INTEGER))",
-        ).bind("cutoff", seenBefore).bind("limit", limit),
-    ).getOrThrow().map {
-        StaleSession(it.get("org_id").asUuid(), it.get("id").asString(), it.get("last_seen_at").asInstant())
+    override suspend fun stale(seenBefore: Instant, limit: Int): List<StaleSession> = database.query {
+        val t = SessionsStale
+        t.of(seenBefore, limit).select(t.orgId, t.id, t.lastSeenAt).map {
+            StaleSession(it[t.orgId], it[t.id], it[t.lastSeenAt])
+        }
     }
 
-    private class Tx(private val executor: QueryExecutor, private val orgId: Uuid) : SessionsTransaction {
-        suspend fun scope() {
-            executor.fetchAll(
-                Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", orgId.toString()),
-            ).getOrThrow()
+    private class Tx(private val tx: JdbcTransaction, private val orgId: Uuid) : SessionsTransaction {
+        override fun lockRoot(rootId: String) {
+            tx.lockKeyUntilCommit("sessions:$orgId:$rootId")
         }
 
-        suspend fun fetch(statement: Statement): List<Session> =
-            executor.fetchAll(statement).getOrThrow().map { it.toSession() }
+        override fun segments(rootId: String): List<Session> =
+            selectOf(orgId) { s.rootId eq rootId }.orderBy(s.segment).forUpdate().map { it.toSession() }
 
-        suspend fun select(where: String, lock: Boolean, binds: Statement.() -> Statement): List<Session> = fetch(
-            Statement.create(
-                "SELECT $COLUMNS FROM sessions_sessions WHERE org_id = :org AND $where" +
-                    if (lock) " FOR UPDATE" else "",
-            ).bind("org", orgId).binds(),
-        )
+        override fun lock(id: String): Session? =
+            selectOf(orgId) { s.id eq id }.forUpdate().singleOrNull()?.toSession()
 
-        override suspend fun lockRoot(rootId: String) {
-            executor.fetchAll(
-                Statement.create("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))")
-                    .bind("key", "sessions:$orgId:$rootId"),
-            ).getOrThrow()
+        override fun insert(session: Session) {
+            s.insert {
+                it[s.orgId] = session.orgId
+                it[s.id] = session.id
+                it.values(session)
+            }
         }
 
-        override suspend fun segments(rootId: String): List<Session> =
-            select("root_id = :root ORDER BY segment", lock = true) { bind("root", rootId) }
-
-        override suspend fun lock(id: String): Session? =
-            select("id = :id", lock = true) { bind("id", id) }.firstOrNull()
-
-        override suspend fun insert(session: Session) {
-            executor.execute(
-                Statement.create("INSERT INTO sessions_sessions ($COLUMNS) VALUES ($VALUES)").bindSession(session),
-            ).getOrThrow()
-        }
-
-        override suspend fun update(session: Session) {
-            val sets = COLUMN_NAMES.filter { it != "org_id" && it != "id" }.joinToString(", ") { "$it = :$it" }
-            executor.execute(
-                Statement.create("UPDATE sessions_sessions SET $sets WHERE org_id = :org_id AND id = :id")
-                    .bindSession(session),
-            ).getOrThrow()
+        override fun update(session: Session) {
+            s.update({ (s.orgId eq session.orgId) and (s.id eq session.id) }) { it.values(session) }
         }
     }
 
@@ -136,83 +103,111 @@ class PostgresSessionsRepository(private val driver: Driver) : SessionsRepositor
     private data class SeenRecord(val kind: String, val name: String, val via: String, val at: String)
 
     private companion object {
-        val COLUMN_NAMES = listOf(
-            "org_id", "id", "root_id", "segment", "resumed_from", "previous_receipt_id", "launch_id", "repo",
-            "real_repo", "cwd", "agent", "dev", "harness_version", "package_digest", "model", "source", "started_at",
-            "ended_at", "last_seen_at", "receipt_id", "tools", "cost_usd", "exit_code", "seen", "activity",
-            "activity_at", "activity_observed_at", "labels",
-        )
-        val COLUMNS = COLUMN_NAMES.joinToString(", ")
-        val VALUES = COLUMN_NAMES.joinToString(", ") { ":$it" }
+        val s = SessionsSessions
         val json = Json { ignoreUnknownKeys = true }
         val seenList = ListSerializer(SeenRecord.serializer())
         val labelsMap = MapSerializer(String.serializer(), String.serializer())
 
-        fun Statement.bindOrNull(name: String, value: Any?, type: KClass<*>): Statement =
-            if (value == null) bindNull(name, type) else bind(name, value)
+        val COLUMNS = listOf(
+            s.orgId, s.id, s.rootId, s.segment, s.resumedFrom, s.previousReceiptId, s.launchId, s.repo, s.realRepo,
+            s.cwd, s.agent, s.dev, s.harnessVersion, s.packageDigest, s.model, s.endSource, s.startedAt, s.endedAt,
+            s.lastSeenAt, s.receiptId, s.tools, s.costUsd, s.exitCode, s.seen, s.activity, s.activityAt,
+            s.activityObservedAt, s.labels,
+        )
 
-        fun Statement.bindSession(session: Session): Statement = bind("org_id", session.orgId)
-            .bind("id", session.id)
-            .bind("root_id", session.rootId)
-            .bind("segment", session.segment)
-            .bindOrNull("resumed_from", session.resumedFrom, String::class)
-            .bindOrNull("previous_receipt_id", session.previousReceiptId, String::class)
-            .bindOrNull("launch_id", session.launchId, String::class)
-            .bindOrNull("repo", session.repo, String::class)
-            .bindOrNull("real_repo", session.realRepo, String::class)
-            .bindOrNull("cwd", session.cwd, String::class)
-            .bind("agent", session.agent)
-            .bind("dev", session.dev)
-            .bindOrNull("harness_version", session.harnessVersion, String::class)
-            .bindOrNull("package_digest", session.packageDigest, String::class)
-            .bindOrNull("model", session.model, String::class)
-            .bindOrNull("source", session.source, String::class)
-            .bind("started_at", session.startedAt)
-            .bindOrNull("ended_at", session.endedAt, Instant::class)
-            .bindOrNull("last_seen_at", session.lastSeenAt, Instant::class)
-            .bindOrNull("receipt_id", session.receiptId, String::class)
-            .bindOrNull("tools", session.tools, Int::class)
-            .bindOrNull("cost_usd", session.costUsd, Double::class)
-            .bindOrNull("exit_code", session.exitCode, Int::class)
-            .bind("seen", json.encodeToString(seenList, session.seen.map { it.toRecord() }))
-            .bindOrNull("activity", session.activity?.wire, String::class)
-            .bindOrNull("activity_at", session.activityAt, Instant::class)
-            .bindOrNull("activity_observed_at", session.activityObservedAt, Instant::class)
-            .bind("labels", json.encodeToString(labelsMap, session.labels))
+        // The segments of the organization that [where] keeps, every column read.
+        fun selectOf(orgId: Uuid, where: () -> Op<Boolean>): Query =
+            s.select(COLUMNS).where { (s.orgId eq orgId) and where() }
+
+        fun filtersOf(orgId: Uuid, query: SessionQuery): Op<Boolean> {
+            val open = query.open?.let { if (it) s.endedAt.isNull() else s.endedAt.isNotNull() }
+            val labels = query.labels.takeIf { it.isNotEmpty() }
+                ?.let { LabelsContain(json.encodeToString(labelsMap, it)) }
+            val before = query.before?.let { id ->
+                rowBefore(
+                    listOf(s.startedAt, s.id),
+                    s.select(s.startedAt, s.id).where { (s.orgId eq orgId) and (s.id eq id) },
+                )
+            }
+            return Op.TRUE andIfNotNull query.repo?.let { s.repo eq it } andIfNotNull
+                query.dev?.let { s.dev eq it } andIfNotNull open andIfNotNull
+                query.launchId?.let { s.launchId eq it } andIfNotNull labels andIfNotNull before
+        }
+
+        // Every column but the key, written by an insert and an update alike.
+        fun UpdateBuilder<*>.values(session: Session) {
+            this[s.rootId] = session.rootId
+            this[s.segment] = session.segment
+            this[s.resumedFrom] = session.resumedFrom
+            this[s.previousReceiptId] = session.previousReceiptId
+            this[s.launchId] = session.launchId
+            this[s.repo] = session.repo
+            this[s.realRepo] = session.realRepo
+            this[s.cwd] = session.cwd
+            this[s.agent] = session.agent
+            this[s.dev] = session.dev
+            this[s.harnessVersion] = session.harnessVersion
+            this[s.packageDigest] = session.packageDigest
+            this[s.model] = session.model
+            this[s.endSource] = session.source
+            this[s.startedAt] = session.startedAt
+            this[s.endedAt] = session.endedAt
+            this[s.lastSeenAt] = session.lastSeenAt
+            this[s.receiptId] = session.receiptId
+            this[s.tools] = session.tools
+            this[s.costUsd] = session.costUsd
+            this[s.exitCode] = session.exitCode
+            this[s.seen] = json.encodeToString(seenList, session.seen.map { it.toRecord() })
+            this[s.activity] = session.activity?.wire
+            this[s.activityAt] = session.activityAt
+            this[s.activityObservedAt] = session.activityObservedAt
+            this[s.labels] = json.encodeToString(labelsMap, session.labels)
+        }
 
         fun SeenItem.toRecord() = SeenRecord(kind, name, via, at.toString())
 
         fun SeenRecord.toItem() = SeenItem(kind, name, via, Instant.parse(at))
 
-        fun ResultSet.Row.toSession() = Session(
-            orgId = get("org_id").asUuid(),
-            id = get("id").asString(),
-            rootId = get("root_id").asString(),
-            segment = get("segment").asString().toInt(),
-            resumedFrom = get("resumed_from").asStringOrNull(),
-            previousReceiptId = get("previous_receipt_id").asStringOrNull(),
-            launchId = get("launch_id").asStringOrNull(),
-            repo = get("repo").asStringOrNull(),
-            realRepo = get("real_repo").asStringOrNull(),
-            cwd = get("cwd").asStringOrNull(),
-            agent = get("agent").asString(),
-            dev = get("dev").asString(),
-            harnessVersion = get("harness_version").asStringOrNull(),
-            packageDigest = get("package_digest").asStringOrNull(),
-            model = get("model").asStringOrNull(),
-            source = get("source").asStringOrNull(),
-            startedAt = get("started_at").asInstant(),
-            endedAt = get("ended_at").asInstantOrNull(),
-            lastSeenAt = get("last_seen_at").asInstantOrNull(),
-            receiptId = get("receipt_id").asStringOrNull(),
-            tools = get("tools").asStringOrNull()?.toInt(),
-            costUsd = get("cost_usd").asStringOrNull()?.toDouble(),
-            exitCode = get("exit_code").asStringOrNull()?.toInt(),
-            seen = json.decodeFromString(seenList, get("seen").asString()).map { it.toItem() },
-            activity = SessionActivityState.stored(get("activity").asStringOrNull()),
-            activityAt = get("activity_at").asInstantOrNull(),
-            activityObservedAt = get("activity_observed_at").asInstantOrNull(),
-            labels = json.decodeFromString(labelsMap, get("labels").asString()),
+        fun ResultRow.toSession() = Session(
+            orgId = this[s.orgId],
+            id = this[s.id],
+            rootId = this[s.rootId],
+            segment = this[s.segment],
+            resumedFrom = this[s.resumedFrom],
+            previousReceiptId = this[s.previousReceiptId],
+            launchId = this[s.launchId],
+            repo = this[s.repo],
+            realRepo = this[s.realRepo],
+            cwd = this[s.cwd],
+            agent = this[s.agent],
+            dev = this[s.dev],
+            harnessVersion = this[s.harnessVersion],
+            packageDigest = this[s.packageDigest],
+            model = this[s.model],
+            source = this[s.endSource],
+            startedAt = this[s.startedAt],
+            endedAt = this[s.endedAt],
+            lastSeenAt = this[s.lastSeenAt],
+            receiptId = this[s.receiptId],
+            tools = this[s.tools],
+            costUsd = this[s.costUsd],
+            exitCode = this[s.exitCode],
+            seen = json.decodeFromString(seenList, this[s.seen]).map { it.toItem() },
+            activity = SessionActivityState.stored(this[s.activity]),
+            activityAt = this[s.activityAt],
+            activityObservedAt = this[s.activityObservedAt],
+            labels = json.decodeFromString(labelsMap, this[s.labels]),
         )
+    }
+}
+
+/** `CAST(labels AS JSONB) @> CAST(? AS JSONB)`: the segment holds every label of [labels] (a JSON object). */
+private class LabelsContain(private val labels: String) : Op<Boolean>() {
+    override fun toQueryBuilder(queryBuilder: QueryBuilder) = queryBuilder {
+        append("CAST(")
+        append(SessionsSessions.labels)
+        append(" AS JSONB) @> CAST(")
+        registerArgument(TextColumnType(), labels)
+        append(" AS JSONB)")
     }
 }

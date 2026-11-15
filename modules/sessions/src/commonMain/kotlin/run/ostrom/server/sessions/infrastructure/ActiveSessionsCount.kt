@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.sessions.infrastructure
 
+import run.ostrom.server.kernel.database.InstantColumnType
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.sessions.domain.usecases.SweepStaleSessionsUseCaseImpl
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
-import io.github.smyrgeorge.sqlx4k.Statement
+import org.jetbrains.exposed.v1.core.CustomFunction
+import org.jetbrains.exposed.v1.core.LongColumnType
+import org.jetbrains.exposed.v1.core.QueryParameter
+import org.jetbrains.exposed.v1.core.Table
+import org.jetbrains.exposed.v1.jdbc.select
 import kotlin.time.Clock
 
 /**
@@ -13,13 +17,14 @@ import kotlin.time.Clock
  * followed, a silent launcher is about to be swept). A count through `sessions_active_count` (migration 4), which
  * returns no row of any organization.
  *
- * @param driver The database, as the serving role.
+ * @param database The database, as the serving role.
  * @param clock The time.
  */
-class ActiveSessionsCount(private val driver: Driver, private val clock: Clock) {
+class ActiveSessionsCount(private val database: JdbcDatabase, private val clock: Clock) {
     /** @return The running sessions. */
-    suspend fun read(): Long = driver.fetchAll(
-        Statement.create("SELECT sessions_active_count(:since) AS active")
-            .bind("since", clock.now() - SweepStaleSessionsUseCaseImpl.STALE_AFTER),
-    ).getOrThrow().single().get("active").asLong()
+    suspend fun read(): Long {
+        val since = QueryParameter(clock.now() - SweepStaleSessionsUseCaseImpl.STALE_AFTER, InstantColumnType())
+        val active = CustomFunction("sessions_active_count", LongColumnType(), since)
+        return database.query { Table.Dual.select(active).single()[active] }
+    }
 }

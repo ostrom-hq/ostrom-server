@@ -47,7 +47,7 @@ class SessionSegments(
      * @return The open segment.
      */
     @Suppress("LongParameterList") // The transaction, the caller, what starts and why, read before the transaction.
-    suspend fun open(
+    fun open(
         tx: SessionsTransaction,
         orgId: Uuid,
         dev: String,
@@ -134,7 +134,7 @@ class SessionSegments(
         throw SupersededSegmentException(open, opening.mayReplace)
     }
 
-    private suspend fun found(
+    private fun found(
         tx: SessionsTransaction,
         last: Session,
         start: StartSession,
