@@ -12,6 +12,7 @@ import run.ostrom.server.sessions.domain.models.InvalidSessionRequestException
 import run.ostrom.server.sessions.domain.models.NotYourSessionException
 import run.ostrom.server.sessions.domain.models.Session
 import run.ostrom.server.sessions.domain.models.SessionQuery
+import run.ostrom.server.sessions.domain.models.SessionResumedElsewhereException
 import run.ostrom.server.sessions.domain.models.SessionClosedException
 import run.ostrom.server.sessions.domain.models.StartSession
 import run.ostrom.server.sessions.domain.usecases.CloseSessionUseCase
@@ -195,10 +196,26 @@ class StartSessionTest {
         }
         val segments = SessionSegments(never, bench.clock, OstromMetrics(bench.meter))
         val starts = StartSessionUseCaseImpl(bench.repository, segments)
-        assertFailsWith<IllegalStateException> { starts(user(), start.copy(launchId = "launch-2")) }
+        assertFailsWith<SessionResumedElsewhereException> { starts(user(), start.copy(launchId = "launch-2")) }
         assertEquals(SessionSegments.MAX_SUPERSEDED, never.asked, "Each attempt ended the live segment once")
         assertNull(bench.repository.get(ORG, "s-1")?.endedAt)
         assertEquals(1, bench.repository.rows.size, "No segment opened over a live one")
+    }
+
+    @Test
+    fun aSupersededSegmentWhoseReceiptFailedIsSignedBeforeTheNextOneCitesIt() = runTest {
+        val bench = SessionBench()
+        bench.start(agent("launch-1"), start)
+        bench.sign.failing = 1
+        assertFailsWith<IllegalStateException> { bench.start(user(), start.copy(launchId = "launch-2")) }
+        val unsigned = bench.repository.get(ORG, "s-1") ?: error("kept")
+        assertEquals(Session.SUPERSEDED, unsigned.source, "Ended before its receipt failed")
+        assertNull(unsigned.receiptId)
+
+        val next = bench.start(user(), start.copy(launchId = "launch-2"))
+        assertEquals("s-1~r2", next.id)
+        assertEquals("rcpt_session_s-1", next.previousReceiptId, "The retry signed it first")
+        assertEquals("rcpt_session_s-1", bench.repository.get(ORG, "s-1")?.receiptId)
     }
 
     @Test
