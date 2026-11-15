@@ -2,8 +2,30 @@
 package run.ostrom.server.artifacts.infrastructure
 
 import run.ostrom.server.artifacts.domain.ArtifactLifecycleRepository
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.write
+import org.jetbrains.exposed.v1.core.CustomOperator
+import org.jetbrains.exposed.v1.core.Expression
+import org.jetbrains.exposed.v1.core.IntegerColumnType
+import org.jetbrains.exposed.v1.core.JoinType
+import org.jetbrains.exposed.v1.core.Op
+import org.jetbrains.exposed.v1.core.QueryBuilder
+import org.jetbrains.exposed.v1.core.QueryParameter
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.core.intLiteral
+import org.jetbrains.exposed.v1.core.isNotNull
+import org.jetbrains.exposed.v1.core.isNull
+import org.jetbrains.exposed.v1.core.lessEq
+import org.jetbrains.exposed.v1.core.notExists
+import org.jetbrains.exposed.v1.core.statements.DeleteStatement
+import org.jetbrains.exposed.v1.core.statements.StatementBuilder
+import org.jetbrains.exposed.v1.core.statements.UpdateStatement
+import org.jetbrains.exposed.v1.core.wrapAsExpression
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import org.jetbrains.exposed.v1.jdbc.Query
+import org.jetbrains.exposed.v1.jdbc.select
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -11,45 +33,89 @@ import kotlin.uuid.Uuid
  * [ArtifactLifecycleRepository] in one transaction of the artifact's organization: the versions pruned, the contents
  * no kept version uses marked (`artifacts_blobs.marked_at`), the expiry set.
  *
- * @param driver The database.
+ * @param database The serving role's pool.
  */
-internal class ArtifactLifecycleRepositoryImpl(private val driver: Driver) : ArtifactLifecycleRepository {
+internal class ArtifactLifecycleRepositoryImpl(private val database: JdbcDatabase) : ArtifactLifecycleRepository {
     override suspend fun retain(orgId: Uuid, artifactId: Uuid, versions: Int, expiresAt: Instant?, now: Instant) {
-        driver.inTenant(orgId) {
-            execute(Statement.create(LifecycleQueries.PRUNE).bind("id", artifactId).bind("keep", versions)).getOrThrow()
-            execute(Statement.create(LifecycleQueries.MARK).bind("id", artifactId).bind("now", now)).getOrThrow()
-            execute(expiry(artifactId, expiresAt)).getOrThrow()
+        database.inOrg(orgId) {
+            write { versionsPrune(orgId, artifactId, versions) }
+            markUnused(orgId, artifactId, now)
+            write { expiryUpdate(orgId, artifactId, expiresAt) }
         }
     }
 
     override suspend fun expire(orgId: Uuid, artifactId: Uuid, expiresAt: Instant?) {
-        driver.inTenant(orgId) { execute(expiry(artifactId, expiresAt)).getOrThrow() }
+        database.inOrg(orgId) { write { expiryUpdate(orgId, artifactId, expiresAt) } }
     }
 
-    override suspend fun busy(orgId: Uuid, artifactId: Uuid): Boolean = driver.fetchInOrg(
-        orgId,
-        Statement.create(LifecycleQueries.BUSY).bind("id", artifactId),
-    ).getOrThrow().any()
-
-    private fun expiry(artifactId: Uuid, expiresAt: Instant?) =
-        Statement.create("UPDATE artifacts_artifacts SET expires_at = :expires WHERE id = :id")
-            .bind("id", artifactId).bind("expires", expiresAt)
+    override suspend fun busy(orgId: Uuid, artifactId: Uuid): Boolean =
+        database.inOrg(orgId) { markedBlob(orgId, artifactId).any() }
 }
 
-/** The statements of a publication's retention. */
-internal object LifecycleQueries {
-    /** The versions older than the newest [keep]: the primary key `(artifact_id, number)`. */
-    const val PRUNE = "DELETE FROM artifacts_versions WHERE artifact_id = :id AND number <= " +
-        "(SELECT latest_version FROM artifacts_artifacts WHERE id = :id) - :keep"
+/** Marks the folder's contents no kept version lists and no live upload announced, once (see [blobsMark]). */
+internal fun JdbcTransaction.markUnused(orgId: Uuid, artifactId: Uuid, now: Instant) {
+    write { blobsMark(orgId, artifactId, now) }
+}
 
-    /** A content of the folder marked: the primary key `(artifact_id, sha256)`. */
-    const val BUSY = "SELECT 1 FROM artifacts_blobs WHERE artifact_id = :id AND marked_at IS NOT NULL LIMIT 1"
+/** The versions older than the newest [keep]: the primary key `(artifact_id, number)`. */
+internal fun StatementBuilder.versionsPrune(orgId: Uuid, artifactId: Uuid, keep: Int): DeleteStatement {
+    val v = ArtifactsVersions
+    val a = ArtifactsArtifacts
+    val latest = a.select(a.latestVersion).where { (a.id eq artifactId) and (a.orgId eq orgId) }
+    val kept = QueryParameter(keep, IntegerColumnType())
+    val oldest = CustomOperator("-", IntegerColumnType(), wrapAsExpression<Int>(latest), kept)
+    return v.deleteWhere { (v.artifactId eq artifactId) and (v.orgId eq orgId) and (v.number lessEq oldest) }
+}
 
-    /** The folder's contents no kept version lists and no live upload announced, marked once. */
-    const val MARK = "UPDATE artifacts_blobs b SET marked_at = :now WHERE b.artifact_id = :id AND " +
-        "b.marked_at IS NULL AND NOT EXISTS (SELECT 1 FROM artifacts_versions v, " +
-        "jsonb_array_elements(CAST(v.files AS jsonb)) f WHERE v.artifact_id = b.artifact_id AND " +
-        "f ->> 'sha256' = b.sha256) AND NOT EXISTS (SELECT 1 FROM artifacts_uploads u JOIN " +
-        "artifacts_upload_blobs ub ON ub.upload_id = u.id WHERE u.artifact_id = b.artifact_id AND " +
-        "u.expires_at > :now AND ub.sha256 = b.sha256)"
+/** A content of the folder marked: the primary key `(artifact_id, sha256)`. */
+internal fun markedBlob(orgId: Uuid, artifactId: Uuid): Query {
+    val b = ArtifactsBlobs
+    return b.select(intLiteral(1))
+        .where { (b.artifactId eq artifactId) and (b.orgId eq orgId) and b.markedAt.isNotNull() }
+        .limit(1)
+}
+
+/** The folder's contents no kept version lists and no live upload announced, marked once. */
+internal fun StatementBuilder.blobsMark(orgId: Uuid, artifactId: Uuid, now: Instant): UpdateStatement {
+    val b = ArtifactsBlobs
+    return b.update({
+        (b.artifactId eq artifactId) and (b.orgId eq orgId) and b.markedAt.isNull() and
+            notExists(keptByVersion(b)) and notExists(announced(b, now))
+    }) { it[markedAt] = now }
+}
+
+/** The versions that list the content of [blob]. */
+private fun keptByVersion(blob: ArtifactsBlobs): Query {
+    val v = ArtifactsVersions
+    return v.select(intLiteral(1)).where { (v.artifactId eq blob.artifactId) and ListsFile(v.files, blob.sha256) }
+}
+
+/** The live uploads that announced the content of [blob]. */
+internal fun announced(blob: ArtifactsBlobs, now: Instant): Query {
+    val u = ArtifactsUploads
+    val ub = ArtifactsUploadBlobs
+    return u.join(ub, JoinType.INNER, ub.uploadId, u.id).select(intLiteral(1))
+        .where { (u.artifactId eq blob.artifactId) and (u.expiresAt greater now) and (ub.sha256 eq blob.sha256) }
+}
+
+/** Sets an artifact's expiry (null: it never expires). */
+internal fun StatementBuilder.expiryUpdate(orgId: Uuid, artifactId: Uuid, expiresAt: Instant?): UpdateStatement {
+    val a = ArtifactsArtifacts
+    return a.update({ (a.id eq artifactId) and (a.orgId eq orgId) }) { it[this.expiresAt] = expiresAt }
+}
+
+/**
+ * Whether the JSON list of files [files] holds a file of content [sha256]: PostgreSQL's `files::jsonb @>
+ * jsonb_build_array(jsonb_build_object('sha256', sha256))`, true for any element that has this `sha256` (the sqlx4k
+ * version unnested the list with `jsonb_array_elements`, which Exposed cannot join).
+ */
+private class ListsFile(private val files: Expression<String>, private val sha256: Expression<String>) :
+    Op<Boolean>() {
+    override fun toQueryBuilder(queryBuilder: QueryBuilder) = queryBuilder {
+        append("CAST(")
+        append(files)
+        append(" AS JSONB) @> jsonb_build_array(jsonb_build_object('sha256', ")
+        append(sha256)
+        append("))")
+    }
 }

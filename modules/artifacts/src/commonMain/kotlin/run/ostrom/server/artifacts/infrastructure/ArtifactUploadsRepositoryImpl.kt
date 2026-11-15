@@ -7,31 +7,44 @@ import run.ostrom.server.artifacts.domain.uploads.ArtifactUploadsRepository
 import run.ostrom.server.artifacts.domain.uploads.UploadBlob
 import run.ostrom.server.artifacts.domain.uploads.UploadBlobState
 import run.ostrom.server.artifacts.domain.uploads.UploadLimits
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.QueryExecutor
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.Read
+import run.ostrom.server.kernel.database.lockKeyUntilCommit
+import run.ostrom.server.kernel.database.written
+import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.count
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.core.intLiteral
+import org.jetbrains.exposed.v1.core.notExists
+import org.jetbrains.exposed.v1.core.statements.StatementBuilder
+import org.jetbrains.exposed.v1.core.statements.UpdateStatement
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import org.jetbrains.exposed.v1.jdbc.Query
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.insertIgnore
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
+import org.jetbrains.exposed.v1.jdbc.upsert
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
  * [ArtifactUploadsRepository] on PostgreSQL (version 6 of [ArtifactsMigrations]), every statement confined to the
- * upload's organization ([inTenant]). The limits of a member are counted under an advisory lock on the member, the
+ * upload's organization (`inOrg`). The limits of a member are counted under an advisory lock on the member, the
  * chunks of a file under a row lock on the file, so that replicas agree.
  *
- * @param driver The database.
+ * @param database The serving role's pool.
  */
-internal class ArtifactUploadsRepositoryImpl(private val driver: Driver) : ArtifactUploadsRepository {
+internal class ArtifactUploadsRepositoryImpl(private val database: JdbcDatabase) : ArtifactUploadsRepository {
     override suspend fun open(upload: ArtifactUpload, draft: Artifact?, now: Instant): Boolean =
-        driver.inTenant(upload.orgId) {
-            execute(
-                Statement.create(MEMBER_LOCK).bind("org_id", upload.orgId).bind("member", upload.memberId),
-            ).getOrThrow()
-            val open = Statement.create(UploadQueries.OPEN_UPLOADS).bind("now", now)
-            val busy = count(open, upload) >= UploadLimits.OPEN_UPLOADS ||
-                (draft != null && count(Statement.create(UploadQueries.DRAFTS), upload) >= UploadLimits.DRAFTS)
+        database.inOrg(upload.orgId) {
+            // Serializes one member's openings within this transaction (released at its end).
+            lockKeyUntilCommit("artifacts-uploads:${upload.orgId}:${upload.memberId}")
+            val busy = openUploads(upload.orgId, upload.memberId, now).single() >= UploadLimits.OPEN_UPLOADS ||
+                (draft != null && drafts(upload.orgId, upload.memberId).single() >= UploadLimits.DRAFTS)
             if (!busy) {
                 if (draft != null) insertDraft(draft)
                 insert(upload)
@@ -39,198 +52,170 @@ internal class ArtifactUploadsRepositoryImpl(private val driver: Driver) : Artif
             !busy
         }
 
-    override suspend fun get(orgId: Uuid, id: Uuid): ArtifactUpload? = driver.inTenant(orgId) {
-        val row = fetchAll(
-            Statement.create("SELECT $COLUMNS FROM artifacts_uploads WHERE id = :id AND org_id = :org_id")
-                .bind("id", id).bind("org_id", orgId),
-        ).getOrThrow().firstOrNull()
+    override suspend fun get(orgId: Uuid, id: Uuid): ArtifactUpload? = database.inOrg(orgId) {
+        val u = ArtifactsUploads
+        val row = u.select(u.columns).where { (u.id eq id) and (u.orgId eq orgId) }.firstOrNull()
         row?.let {
-            val files = fetchAll(
-                Statement.create(
-                    "SELECT sha256, size, state FROM artifacts_upload_blobs WHERE upload_id = :id ORDER BY position",
-                ).bind("id", id),
-            ).getOrThrow().map { file ->
-                UploadBlob(
-                    file.get("sha256").asString(),
-                    file.get("size").asLong(),
-                    UploadBlobState.parse(file.get("state").asString()),
-                )
-            }
-            ArtifactUpload(
-                id = it.get("id").asUuid(),
-                orgId = it.get("org_id").asUuid(),
-                artifactId = it.get("artifact_id").asUuid(),
-                memberId = it.get("member_id").asString(),
-                credentialId = it.get("credential_id").asStringOrNull(),
-                files = files,
-                createdAt = it.get("created_at").asInstant(),
-                expiresAt = it.get("expires_at").asInstant(),
-            )
+            val b = ArtifactsUploadBlobs
+            val files = b.select(b.sha256, b.size, b.state)
+                .where { (b.uploadId eq id) and (b.orgId eq orgId) }
+                .orderBy(b.position)
+                .map { file -> UploadBlob(file[b.sha256], file[b.size], UploadBlobState.parse(file[b.state])) }
+            it.toUpload(files)
         }
     }
 
     override suspend fun receive(orgId: Uuid, uploadId: Uuid, sha256: String, index: Int): Int =
-        driver.inTenant(orgId) {
+        database.inOrg(orgId) {
             // The file's row is locked first: the chunks are counted once the others' are committed, so the last
             // chunk to arrive always sees them all, whichever replica it reaches.
-            fetchAll(
-                Statement.create(
-                    "SELECT 1 FROM artifacts_upload_blobs WHERE upload_id = :id AND sha256 = :sha FOR UPDATE",
-                ).bind("id", uploadId).bind("sha", sha256),
-            ).getOrThrow()
-            execute(
-                Statement.create(
-                    """
-                    INSERT INTO artifacts_upload_chunks (upload_id, org_id, sha256, chunk_index)
-                    VALUES (:id, :org_id, :sha, :index) ON CONFLICT DO NOTHING
-                    """,
-                ).bind("id", uploadId).bind("org_id", orgId).bind("sha", sha256).bind("index", index),
-            ).getOrThrow()
-            fetchAll(
-                Statement.create(UploadQueries.RECEIVED).bind("id", uploadId).bind("sha", sha256),
-            ).getOrThrow().single().get("n").asLong().toInt()
+            fileLocked(orgId, uploadId, sha256).toList()
+            // A bare `ON CONFLICT DO NOTHING`, as before: the chunk's key is its only constraint.
+            ArtifactsUploadChunks.insertIgnore {
+                it[this.uploadId] = uploadId
+                it[this.orgId] = orgId
+                it[this.sha256] = sha256
+                it[chunkIndex] = index
+            }
+            chunksReceived(orgId, uploadId, sha256).single().toInt()
         }
 
-    override suspend fun claim(orgId: Uuid, uploadId: Uuid, sha256: String): Boolean = driver.inTenant(orgId) {
-        execute(
-            Statement.create(
-                """
-                UPDATE artifacts_upload_blobs SET state = 'assembling' WHERE upload_id = :id AND sha256 = :sha AND
-                state = 'waiting'
-                """,
-            ).bind("id", uploadId).bind("sha", sha256),
-        ).getOrThrow() > 0
+    override suspend fun claim(orgId: Uuid, uploadId: Uuid, sha256: String): Boolean = database.inOrg(orgId) {
+        written { fileClaimed(orgId, uploadId, sha256) } > 0
     }
 
     override suspend fun stored(orgId: Uuid, upload: ArtifactUpload, sha256: String, size: Long) {
-        driver.inTenant(orgId) {
-            execute(
-                Statement.create(
-                    "UPDATE artifacts_upload_blobs SET state = 'stored' WHERE upload_id = :id AND sha256 = :sha",
-                ).bind("id", upload.id).bind("sha", sha256),
-            ).getOrThrow()
-            execute(
-                Statement.create(
-                    """
-                    INSERT INTO artifacts_blobs (artifact_id, org_id, sha256, size) VALUES (:artifact, :org_id, :sha,
-                    :size) ON CONFLICT (artifact_id, sha256) DO UPDATE SET marked_at = NULL
-                    """,
-                ).bind("artifact", upload.artifactId).bind("org_id", orgId).bind("sha", sha256).bind("size", size),
-            ).getOrThrow()
+        database.inOrg(orgId) {
+            val b = ArtifactsUploadBlobs
+            b.update({ (b.uploadId eq upload.id) and (b.orgId eq orgId) and (b.sha256 eq sha256) }) {
+                it[state] = UploadBlobState.STORED.wire
+            }
+            // The content is kept, and no longer marked for collection.
+            val blobs = ArtifactsBlobs
+            blobs.upsert(blobs.artifactId, blobs.sha256, onUpdate = { it[blobs.markedAt] = null }) {
+                it[artifactId] = upload.artifactId
+                it[this.orgId] = orgId
+                it[this.sha256] = sha256
+                it[this.size] = size
+            }
         }
     }
 
     override suspend fun retry(orgId: Uuid, uploadId: Uuid, sha256: String) {
-        driver.inTenant(orgId) {
-            execute(
-                Statement.create("DELETE FROM artifacts_upload_chunks WHERE upload_id = :id AND sha256 = :sha")
-                    .bind("id", uploadId).bind("sha", sha256),
-            ).getOrThrow()
-            execute(
-                Statement.create(
-                    """
-                    UPDATE artifacts_upload_blobs SET state = 'waiting' WHERE upload_id = :id AND sha256 = :sha AND
-                    state = 'assembling'
-                    """,
-                ).bind("id", uploadId).bind("sha", sha256),
-            ).getOrThrow()
+        database.inOrg(orgId) {
+            val c = ArtifactsUploadChunks
+            c.deleteWhere { (c.uploadId eq uploadId) and (c.orgId eq orgId) and (c.sha256 eq sha256) }
+            val b = ArtifactsUploadBlobs
+            b.update({
+                (b.uploadId eq uploadId) and (b.orgId eq orgId) and (b.sha256 eq sha256) and
+                    (b.state eq UploadBlobState.ASSEMBLING.wire)
+            }) { it[state] = UploadBlobState.WAITING.wire }
         }
     }
 
-    override suspend fun end(orgId: Uuid, upload: ArtifactUpload): Boolean = driver.inTenant(orgId) {
-        execute(
-            Statement.create("DELETE FROM artifacts_uploads WHERE id = :id AND org_id = :org_id")
-                .bind("id", upload.id).bind("org_id", orgId),
-        ).getOrThrow()
-        execute(
-            Statement.create(
-                """
-                DELETE FROM artifacts_artifacts a WHERE a.id = :artifact AND a.org_id = :org_id AND
-                a.latest_version = 0 AND NOT EXISTS (SELECT 1 FROM artifacts_uploads u WHERE u.artifact_id = a.id)
-                """,
-            ).bind("artifact", upload.artifactId).bind("org_id", orgId),
-        ).getOrThrow() > 0
+    override suspend fun end(orgId: Uuid, upload: ArtifactUpload): Boolean = database.inOrg(orgId) {
+        val u = ArtifactsUploads
+        u.deleteWhere { (u.id eq upload.id) and (u.orgId eq orgId) }
+        val a = ArtifactsArtifacts
+        val others = u.select(intLiteral(1)).where { u.artifactId eq a.id }
+        a.deleteWhere {
+            (a.id eq upload.artifactId) and (a.orgId eq orgId) and (a.latestVersion eq 0) and notExists(others)
+        } > 0
     }
 
-    private suspend fun QueryExecutor.count(statement: Statement, upload: ArtifactUpload): Long = fetchAll(
-        statement.bind("org_id", upload.orgId).bind("member", upload.memberId),
-    ).getOrThrow().single().get("n").asLong()
-
-    private suspend fun QueryExecutor.insertDraft(draft: Artifact) {
-        execute(
-            Statement.create(
-                """
-                INSERT INTO artifacts_artifacts (id, org_id, owner_id, title, access, latest_version, link_slug,
-                created_at, updated_at, origin_launch_id, origin_session_id) VALUES (:id, :org_id, :owner_id, :title,
-                :access, 0, NULL, :now, :now, :origin_launch_id, :origin_session_id)
-                """,
-            ).bind("id", draft.id)
-                .bind("org_id", draft.orgId)
-                .bind("owner_id", draft.ownerId)
-                .bind("title", draft.title)
-                .bind("access", draft.access.wire)
-                .bind("now", draft.createdAt)
-                .bind("origin_launch_id", draft.origin?.launchId)
-                .bind("origin_session_id", draft.origin?.cloudSessionId),
-        ).getOrThrow()
-        execute(
-            Statement.create("INSERT INTO artifacts_routes (artifact_id, org_id) VALUES (:id, :org_id)")
-                .bind("id", draft.id).bind("org_id", draft.orgId),
-        ).getOrThrow()
+    private fun JdbcTransaction.insertDraft(draft: Artifact) {
+        val a = ArtifactsArtifacts
+        a.insert {
+            it[id] = draft.id
+            it[orgId] = draft.orgId
+            it[ownerId] = draft.ownerId
+            it[title] = draft.title
+            it[access] = draft.access.wire
+            it[latestVersion] = 0
+            it[linkSlug] = null
+            it[createdAt] = draft.createdAt
+            it[updatedAt] = draft.createdAt
+            it[originLaunchId] = draft.origin?.launchId
+            it[originSessionId] = draft.origin?.cloudSessionId
+        }
+        ArtifactsRoutes.insert {
+            it[artifactId] = draft.id
+            it[orgId] = draft.orgId
+        }
     }
 
-    private suspend fun QueryExecutor.insert(upload: ArtifactUpload) {
-        execute(
-            Statement.create(
-                """
-                INSERT INTO artifacts_uploads ($COLUMNS) VALUES (:id, :org_id, :artifact_id, :member_id,
-                :credential_id, :created_at, :expires_at)
-                """,
-            ).bind("id", upload.id)
-                .bind("org_id", upload.orgId)
-                .bind("artifact_id", upload.artifactId)
-                .bind("member_id", upload.memberId)
-                .bind("credential_id", upload.credentialId)
-                .bind("created_at", upload.createdAt)
-                .bind("expires_at", upload.expiresAt),
-        ).getOrThrow()
+    private fun JdbcTransaction.insert(upload: ArtifactUpload) {
+        ArtifactsUploads.insert {
+            it[id] = upload.id
+            it[orgId] = upload.orgId
+            it[artifactId] = upload.artifactId
+            it[memberId] = upload.memberId
+            it[credentialId] = upload.credentialId
+            it[createdAt] = upload.createdAt
+            it[expiresAt] = upload.expiresAt
+        }
         upload.files.forEachIndexed { position, file ->
-            execute(
-                Statement.create(
-                    """
-                    INSERT INTO artifacts_upload_blobs (upload_id, org_id, sha256, size, state, position)
-                    VALUES (:id, :org_id, :sha, :size, :state, :position)
-                    """,
-                ).bind("id", upload.id)
-                    .bind("org_id", upload.orgId)
-                    .bind("sha", file.sha256)
-                    .bind("size", file.size)
-                    .bind("state", file.state.wire)
-                    .bind("position", position),
-            ).getOrThrow()
+            ArtifactsUploadBlobs.insert {
+                it[uploadId] = upload.id
+                it[orgId] = upload.orgId
+                it[sha256] = file.sha256
+                it[size] = file.size
+                it[state] = file.state.wire
+                it[this.position] = position
+            }
         }
     }
 
-    private companion object {
-        const val COLUMNS = "id, org_id, artifact_id, member_id, credential_id, created_at, expires_at"
-
-        /** Serializes one member's openings within a transaction (released at its end). */
-        const val MEMBER_LOCK = "SELECT pg_advisory_xact_lock(hashtextextended('artifacts-uploads:' || " +
-            "CAST(:org_id AS TEXT) || ':' || :member, 0))"
-
-    }
+    private fun ResultRow.toUpload(files: List<UploadBlob>) = ArtifactUpload(
+        id = this[ArtifactsUploads.id],
+        orgId = this[ArtifactsUploads.orgId],
+        artifactId = this[ArtifactsUploads.artifactId],
+        memberId = this[ArtifactsUploads.memberId],
+        credentialId = this[ArtifactsUploads.credentialId],
+        files = files,
+        createdAt = this[ArtifactsUploads.createdAt],
+        expiresAt = this[ArtifactsUploads.expiresAt],
+    )
 }
 
-/** The request-path reads of uploads, under `EXPLAIN ANALYZE` in their plans test. */
-internal object UploadQueries {
-    /** The uploads a member holds open: `artifacts_uploads_member`. */
-    const val OPEN_UPLOADS = "SELECT COUNT(*) AS n FROM artifacts_uploads WHERE org_id = :org_id AND " +
-        "member_id = :member AND expires_at > :now"
+/** The uploads a member holds open: `artifacts_uploads_member`. */
+internal fun openUploads(orgId: Uuid, memberId: String, now: Instant): Read<Long> {
+    val u = ArtifactsUploads
+    val open = u.id.count()
+    val query = u.select(open)
+        .where { (u.orgId eq orgId) and (u.memberId eq memberId) and (u.expiresAt greater now) }
+    return Read(query) { it[open] }
+}
 
-    /** The drafts a member holds: the partial index `artifacts_artifacts_drafts`. */
-    const val DRAFTS = "SELECT COUNT(*) AS n FROM artifacts_artifacts WHERE org_id = :org_id AND " +
-        "owner_id = :member AND latest_version = 0"
+/** The drafts a member holds: the partial index `artifacts_artifacts_drafts`. */
+internal fun drafts(orgId: Uuid, memberId: String): Read<Long> {
+    val a = ArtifactsArtifacts
+    val held = a.id.count()
+    val query = a.select(held).where { (a.orgId eq orgId) and (a.ownerId eq memberId) and (a.latestVersion eq 0) }
+    return Read(query) { it[held] }
+}
 
-    /** The chunks of a file received: the primary key of `artifacts_upload_chunks`. */
-    const val RECEIVED = "SELECT COUNT(*) AS n FROM artifacts_upload_chunks WHERE upload_id = :id AND sha256 = :sha"
+/** The row of an announced file, locked until the transaction ends. */
+internal fun fileLocked(orgId: Uuid, uploadId: Uuid, sha256: String): Query {
+    val b = ArtifactsUploadBlobs
+    return b.select(intLiteral(1))
+        .where { (b.uploadId eq uploadId) and (b.orgId eq orgId) and (b.sha256 eq sha256) }
+        .forUpdate()
+}
+
+/** The chunks of a file received: the primary key of `artifacts_upload_chunks`. */
+internal fun chunksReceived(orgId: Uuid, uploadId: Uuid, sha256: String): Read<Long> {
+    val c = ArtifactsUploadChunks
+    val received = c.chunkIndex.count()
+    val query = c.select(received).where { (c.uploadId eq uploadId) and (c.orgId eq orgId) and (c.sha256 eq sha256) }
+    return Read(query) { it[received] }
+}
+
+/** A waiting file taken to be assembled: only one caller gets it. */
+internal fun StatementBuilder.fileClaimed(orgId: Uuid, uploadId: Uuid, sha256: String): UpdateStatement {
+    val b = ArtifactsUploadBlobs
+    return b.update({
+        (b.uploadId eq uploadId) and (b.orgId eq orgId) and (b.sha256 eq sha256) and
+            (b.state eq UploadBlobState.WAITING.wire)
+    }) { it[state] = UploadBlobState.ASSEMBLING.wire }
 }

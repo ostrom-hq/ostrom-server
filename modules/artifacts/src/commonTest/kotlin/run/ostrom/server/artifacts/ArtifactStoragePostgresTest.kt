@@ -20,8 +20,8 @@ import run.ostrom.server.artifacts.fakes.InMemoryBucket
 import run.ostrom.server.artifacts.fakes.ORG_A
 import run.ostrom.server.artifacts.fakes.ORG_B
 import run.ostrom.server.artifacts.fakes.TestCipher
+import run.ostrom.server.artifacts.fakes.inTenant
 import run.ostrom.server.artifacts.fakes.testIdentities
-import run.ostrom.server.artifacts.infrastructure.inTenant
 import run.ostrom.server.artifacts.infrastructure.storage.S3ObjectStore
 import run.ostrom.server.artifacts.presentation.ArtifactPolicyResponse
 import run.ostrom.server.artifacts.presentation.ArtifactSettingsResponse

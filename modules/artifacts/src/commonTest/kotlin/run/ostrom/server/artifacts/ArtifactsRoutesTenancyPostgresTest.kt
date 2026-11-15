@@ -9,7 +9,7 @@ import run.ostrom.server.artifacts.domain.ArtifactsRepository
 import run.ostrom.server.artifacts.fakes.ALICE
 import run.ostrom.server.artifacts.fakes.ORG_A
 import run.ostrom.server.artifacts.fakes.ORG_B
-import run.ostrom.server.artifacts.infrastructure.inTenant
+import run.ostrom.server.artifacts.fakes.inTenant
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong

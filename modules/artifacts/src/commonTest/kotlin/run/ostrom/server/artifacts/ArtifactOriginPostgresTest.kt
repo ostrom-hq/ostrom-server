@@ -13,13 +13,13 @@ import run.ostrom.server.artifacts.fakes.activateArtifacts
 import run.ostrom.server.artifacts.fakes.agentIdentities
 import run.ostrom.server.artifacts.infrastructure.Sha256ContentDigest
 import run.ostrom.server.artifacts.presentation.ArtifactConflictResponse
+import run.ostrom.server.artifacts.presentation.ArtifactFileRefDto
 import run.ostrom.server.artifacts.presentation.ArtifactOriginResponse
 import run.ostrom.server.artifacts.presentation.ArtifactResponse
 import run.ostrom.server.artifacts.presentation.ArtifactUploadResponse
 import run.ostrom.server.artifacts.presentation.ArtifactVersionResponse
 import run.ostrom.server.artifacts.presentation.ArtifactVersionsResponse
 import run.ostrom.server.artifacts.presentation.ArtifactsResponse
-import run.ostrom.server.artifacts.presentation.ArtifactFileRefDto
 import run.ostrom.server.artifacts.presentation.CreateArtifactUploadRequest
 import run.ostrom.server.artifacts.presentation.FileDto
 import run.ostrom.server.artifacts.presentation.PublishArtifactRequest

@@ -6,62 +6,88 @@ import run.ostrom.server.artifacts.domain.ArtifactUsageReport
 import run.ostrom.server.artifacts.domain.ArtifactUsageReports
 import run.ostrom.server.artifacts.domain.ArtifactUsageRepository
 import run.ostrom.server.artifacts.domain.MemberArtifactUsage
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.Read
+import run.ostrom.server.kernel.database.asBigint
+import org.jetbrains.exposed.v1.core.Expression
+import org.jetbrains.exposed.v1.core.JoinType
+import org.jetbrains.exposed.v1.core.LongColumnType
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.Sum
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.case
+import org.jetbrains.exposed.v1.core.coalesce
+import org.jetbrains.exposed.v1.core.count
+import org.jetbrains.exposed.v1.core.countDistinct
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.core.longLiteral
+import org.jetbrains.exposed.v1.core.sum
+import org.jetbrains.exposed.v1.jdbc.select
 import kotlin.uuid.Uuid
 
 /**
  * [ArtifactUsageRepository] on the folders' contents (`artifacts_blobs`, one row per distinct content of an artifact)
  * and the published artifacts, under the organization's Row-Level Security.
  *
- * @param driver The database.
+ * @param database The serving role's pool.
  */
-internal class ArtifactUsageRepositoryImpl(private val driver: Driver) : ArtifactUsageRepository, ArtifactUsageReports {
-    override suspend fun usage(orgId: Uuid, ownerId: String): ArtifactUsage = driver.inTenant(orgId) {
-        val bytes = fetchAll(
-            Statement.create(UsageQueries.BYTES).bind("org_id", orgId).bind("owner", ownerId),
-        ).getOrThrow().single()
-        val artifacts = fetchAll(
-            Statement.create(UsageQueries.ARTIFACTS).bind("org_id", orgId).bind("owner", ownerId),
-        ).getOrThrow().single()
-        val owned = artifacts.get("n").asLong().toInt()
-        ArtifactUsage(bytes.get("owner_bytes").asLong(), bytes.get("org_bytes").asLong(), owned)
+internal class ArtifactUsageRepositoryImpl(private val database: JdbcDatabase) :
+    ArtifactUsageRepository,
+    ArtifactUsageReports {
+    override suspend fun usage(orgId: Uuid, ownerId: String): ArtifactUsage = database.inOrg(orgId) {
+        val bytes = usageBytes(orgId, ownerId).single()
+        val owned = ownedArtifacts(orgId, ownerId).single()
+        ArtifactUsage(bytes.owner, bytes.org, owned)
     }
 
-    override suspend fun report(orgId: Uuid, limit: Int): ArtifactUsageReport = driver.inTenant(orgId) {
-        val total = fetchAll(Statement.create(UsageQueries.PUBLISHED_BYTES).bind("org_id", orgId)).getOrThrow()
-            .single().get("bytes").asLong()
-        val owners = fetchAll(Statement.create(UsageQueries.OWNERS).bind("org_id", orgId).bind("limit", limit))
-            .getOrThrow().map { row ->
-                MemberArtifactUsage(
-                    row.get("owner_id").asString(),
-                    row.get("artifacts").asLong().toInt(),
-                    row.get("bytes").asLong(),
-                )
-            }
-        ArtifactUsageReport(total, owners)
+    override suspend fun report(orgId: Uuid, limit: Int): ArtifactUsageReport = database.inOrg(orgId) {
+        ArtifactUsageReport(publishedBytes(orgId).single(), usageOwners(orgId, limit).rows())
     }
 }
 
-/** The request path's reads of the usage, for their plan test. */
-internal object UsageQueries {
-    /** The bytes of the owner's folders and of the organization's: `artifacts_blobs_org`. */
-    const val BYTES = "SELECT CAST(COALESCE(SUM(b.size), 0) AS BIGINT) AS org_bytes, " +
-        "CAST(COALESCE(SUM(b.size) FILTER (WHERE a.owner_id = :owner), 0) AS BIGINT) AS owner_bytes " +
-        "FROM artifacts_blobs b JOIN artifacts_artifacts a ON a.id = b.artifact_id WHERE b.org_id = :org_id"
+/** The bytes of an owner's folders and of the organization's. */
+internal data class UsageBytes(val owner: Long, val org: Long)
 
-    /** The bytes of the organization's published artifacts: `artifacts_blobs_org`, drafts left out. */
-    const val PUBLISHED_BYTES = "SELECT CAST(COALESCE(SUM(b.size), 0) AS BIGINT) AS bytes FROM artifacts_blobs b " +
-        "JOIN artifacts_artifacts a ON a.id = b.artifact_id WHERE b.org_id = :org_id AND a.latest_version > 0"
+/** The bytes of the owner's folders and of the organization's: `artifacts_blobs_org`. */
+internal fun usageBytes(orgId: Uuid, ownerId: String): Read<UsageBytes> {
+    val a = ArtifactsArtifacts
+    val b = ArtifactsBlobs
+    val org = coalesce(b.size.sum(), longLiteral(0)).asBigint()
+    val owner = coalesce(Sum(case().When(a.ownerId eq ownerId, b.size), LongColumnType()), longLiteral(0)).asBigint()
+    val query = b.join(a, JoinType.INNER, a.id, b.artifactId).select(org, owner).where { b.orgId eq orgId }
+    return Read(query) { UsageBytes(it[owner], it[org]) }
+}
 
-    /** The largest owners of published artifacts: `artifacts_artifacts_owner` and the folders' primary key. */
-    const val OWNERS = "SELECT a.owner_id, COUNT(DISTINCT a.id) AS artifacts, " +
-        "CAST(COALESCE(SUM(b.size), 0) AS BIGINT) AS bytes FROM artifacts_artifacts a " +
-        "LEFT JOIN artifacts_blobs b ON b.artifact_id = a.id WHERE a.org_id = :org_id AND a.latest_version > 0 " +
-        "GROUP BY a.owner_id ORDER BY bytes DESC, a.owner_id LIMIT :limit"
+/** The bytes of the organization's published artifacts: `artifacts_blobs_org`, drafts left out. */
+internal fun publishedBytes(orgId: Uuid): Read<Long> {
+    val a = ArtifactsArtifacts
+    val b = ArtifactsBlobs
+    val bytes = coalesce(b.size.sum(), longLiteral(0)).asBigint()
+    val query = b.join(a, JoinType.INNER, a.id, b.artifactId).select(bytes)
+        .where { (b.orgId eq orgId) and (a.latestVersion greater 0) }
+    return Read(query) { it[bytes] }
+}
 
-    /** The owner's published artifacts: `artifacts_artifacts_owner`. */
-    const val ARTIFACTS = "SELECT COUNT(*) AS n FROM artifacts_artifacts WHERE org_id = :org_id AND " +
-        "owner_id = :owner AND latest_version > 0"
+/** The largest owners of published artifacts: `artifacts_artifacts_owner` and the folders' primary key. */
+internal fun usageOwners(orgId: Uuid, limit: Int): Read<MemberArtifactUsage> {
+    val a = ArtifactsArtifacts
+    val b = ArtifactsBlobs
+    val artifacts = a.id.countDistinct()
+    val bytes: Expression<Long> = coalesce(b.size.sum(), longLiteral(0)).asBigint()
+    val query = a.join(b, JoinType.LEFT, b.artifactId, a.id).select(a.ownerId, artifacts, bytes)
+        .where { (a.orgId eq orgId) and (a.latestVersion greater 0) }
+        .groupBy(a.ownerId)
+        .orderBy(bytes to SortOrder.DESC, a.ownerId to SortOrder.ASC)
+        .limit(limit)
+    return Read(query) { MemberArtifactUsage(it[a.ownerId], it[artifacts].toInt(), it[bytes]) }
+}
+
+/** The owner's published artifacts: `artifacts_artifacts_owner`. */
+internal fun ownedArtifacts(orgId: Uuid, ownerId: String): Read<Int> {
+    val a = ArtifactsArtifacts
+    val owned = a.id.count()
+    val query = a.select(owned)
+        .where { (a.orgId eq orgId) and (a.ownerId eq ownerId) and (a.latestVersion greater 0) }
+    return Read(query) { it[owned].toInt() }
 }

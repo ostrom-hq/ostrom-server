@@ -18,9 +18,14 @@ import run.ostrom.server.artifacts.fakes.DAVE
 import run.ostrom.server.artifacts.fakes.ORG_A
 import run.ostrom.server.artifacts.fakes.ORG_B
 import run.ostrom.server.artifacts.fakes.activateArtifacts
+import run.ostrom.server.artifacts.fakes.fetchInOrg
 import run.ostrom.server.artifacts.fakes.testIdentities
-import run.ostrom.server.artifacts.infrastructure.UsageQueries
-import run.ostrom.server.artifacts.infrastructure.fetchInOrg
+import run.ostrom.server.artifacts.infrastructure.ownedArtifacts
+import run.ostrom.server.artifacts.infrastructure.publishedBytes
+import run.ostrom.server.artifacts.infrastructure.usageBytes
+import run.ostrom.server.artifacts.infrastructure.usageOwners
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.request.bearerAuth
@@ -140,14 +145,15 @@ class ArtifactUsagePostgresTest {
         for (table in listOf("artifacts_artifacts", "artifacts_blobs")) {
             fixtures.execute("VACUUM ANALYZE $table").getOrThrow()
         }
-        val queries =
-            listOf(UsageQueries.BYTES, UsageQueries.ARTIFACTS, UsageQueries.PUBLISHED_BYTES, UsageQueries.OWNERS)
-        for (sql in queries) {
-            var statement = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org_id", ORG_A)
-            if (":owner" in sql) statement = statement.bind("owner", ALICE.toString())
-            if (":limit" in sql) statement = statement.bind("limit", 200)
-            val plan = server.driver.fetchInOrg(ORG_A, statement).getOrThrow()
-                .joinToString("\n") { it.get("QUERY PLAN").asString() }
+        val plans = server.koin.get<JdbcDatabase>().inOrg(ORG_A) {
+            listOf(
+                plan { usageBytes(ORG_A, ALICE.toString()).query },
+                plan { ownedArtifacts(ORG_A, ALICE.toString()).query },
+                plan { publishedBytes(ORG_A).query },
+                plan { usageOwners(ORG_A, 200).query },
+            ).also { rollback() }
+        }
+        for (plan in plans) {
             for (table in listOf("artifacts_artifacts", "artifacts_blobs")) {
                 assertFalse("Seq Scan on $table" in plan, "The usage scans $table:\n$plan")
             }

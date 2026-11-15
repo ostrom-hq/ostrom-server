@@ -11,9 +11,13 @@ import run.ostrom.server.artifacts.domain.storage.ArtifactStorageRepository
 import run.ostrom.server.artifacts.fakes.ALICE
 import run.ostrom.server.artifacts.fakes.ORG_A
 import run.ostrom.server.artifacts.fakes.activateArtifacts
+import run.ostrom.server.artifacts.fakes.fetchInOrg
 import run.ostrom.server.artifacts.fakes.testIdentities
-import run.ostrom.server.artifacts.infrastructure.LifecycleQueries
-import run.ostrom.server.artifacts.infrastructure.fetchInOrg
+import run.ostrom.server.artifacts.infrastructure.blobsMark
+import run.ostrom.server.artifacts.infrastructure.markedBlob
+import run.ostrom.server.artifacts.infrastructure.versionsPrune
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
@@ -170,12 +174,15 @@ class ArtifactLifecyclePostgresTest {
             fixtures.execute("VACUUM ANALYZE $table").getOrThrow()
         }
         val id = Uuid.random()
-        for (sql in listOf(LifecycleQueries.PRUNE, LifecycleQueries.MARK, LifecycleQueries.BUSY)) {
-            var statement = Statement.create("EXPLAIN $sql").bind("id", id)
-            if (":keep" in sql) statement = statement.bind("keep", 5)
-            if (":now" in sql) statement = statement.bind("now", t0)
-            val plan = server.driver.fetchInOrg(ORG_A, statement).getOrThrow()
-                .joinToString("\n") { it.get("QUERY PLAN").asString() }
+        val database = server.koin.get<JdbcDatabase>()
+        val plans = database.inOrg(ORG_A) {
+            listOf(
+                plan { versionsPrune(ORG_A, id, 5) },
+                plan { blobsMark(ORG_A, id, t0) },
+                plan { markedBlob(ORG_A, id) },
+            ).also { rollback() }
+        }
+        for (plan in plans) {
             for (table in listOf("artifacts_artifacts", "artifacts_versions", "artifacts_blobs")) {
                 assertFalse("Seq Scan on $table" in plan, "The retention scans $table:\n$plan")
             }
