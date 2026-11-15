@@ -10,11 +10,8 @@ package run.ostrom.server.testing
 object KnownDrifts {
     /** Each drift's key ([Drift.key], such as `listThings 200 $.id MISSING`) to why it waits. */
     val drifts: Map<String, String> = mapOf(
-        // The runner channel refuses a body over its limit (bodyLimit) before reading it; the contract, served since
-        // ostrom-core#287 and #289, does not declare that 413 yet: an additive core change declares it.
-        "cloudRunnerAgent 413 \$ STATUS" to "the contract does not declare the runner channel's 413 (body limit)",
-        "issueRunnerInference 413 \$ STATUS" to "the contract does not declare the runner channel's 413 (body limit)",
-        // An offer's body over its limit, likewise (served since ostrom-core#286).
+        // An offer's body over its limit (bodyLimit, refused before it is read): the contract, served since
+        // ostrom-core#286, does not declare that 413 yet (the runner channel's are, since ostrom-core#293).
         "transferCloudSession 413 \$ STATUS" to "the contract does not declare the transfer offer's 413 (body limit)",
     )
 }
