@@ -18,6 +18,8 @@ import kotlin.uuid.Uuid
  * @property environment The preparation recipe (`runners.cloud.environment.v1`), if any.
  * @property profileId The cloud profile a Kubernetes session runs on; the one the owner may use when absent.
  * @property image The session image instead of the profile's, one of its allowed overrides.
+ * @property mode `terminal` (null) or `conversation` (claude and codex only).
+ * @property effort The agent's effort (reasoning level), if chosen.
  */
 data class CreateCloudSessionPayload(
     val name: String?,
@@ -29,6 +31,8 @@ data class CreateCloudSessionPayload(
     val environment: CloudEnvironmentSpec? = null,
     val profileId: Uuid? = null,
     val image: String? = null,
+    val mode: String? = null,
+    val effort: String? = null,
 )
 
 /** Creates a cloud session for the caller, within their organization's plan. */
@@ -86,6 +90,8 @@ class CreateCloudSessionUseCaseImpl(
         }
         val model = payload.model?.let { it.trim().takeIf(String::isNotEmpty) }
         ensureValid(model == null || MODEL.matches(model)) { "The model is not a valid model name." }
+        val mode = mode(agent, payload.mode)
+        payload.effort?.let(CloudConversationRules::validateEffort)
         val prompt = payload.prompt?.takeIf { it.isNotBlank() }
         ensureValid(prompt == null || prompt.length <= MAX_PROMPT_LENGTH) {
             "The prompt must be at most $MAX_PROMPT_LENGTH characters."
@@ -114,6 +120,8 @@ class CreateCloudSessionUseCaseImpl(
             prompt = prompt,
             environment = payload.environment,
             profile = profile,
+            mode = mode,
+            effort = payload.effort,
         )
         if (!repository.createWithinCap(session, plan.maxRunningSessions)) {
             throw CloudSessionLimitException(plan.maxRunningSessions)
@@ -129,6 +137,18 @@ class CreateCloudSessionUseCaseImpl(
         val existing = payload.id?.let { repository.get(caller.orgId, it) } ?: return null
         ensureValid(existing.ownerId == caller.memberId) { "Another member's session has this id." }
         return existing
+    }
+
+    /** The mode asked for: a terminal by default, a conversation only for an agent that runs headless. */
+    private fun mode(agent: AgentKind, wire: String?): SessionMode {
+        val mode = if (wire == null) SessionMode.TERMINAL else SessionMode.fromWire(wire)
+        if (mode == null || (mode == SessionMode.CONVERSATION && agent !in SessionMode.CONVERSATION_AGENTS)) {
+            throw CloudConversationRules.invalid(
+                "invalid_mode",
+                "Use mode terminal, or conversation with the claude or codex agent.",
+            )
+        }
+        return mode
     }
 
     /** The name of a session asked without one: its repository's, the first of its recipe's, or none. */

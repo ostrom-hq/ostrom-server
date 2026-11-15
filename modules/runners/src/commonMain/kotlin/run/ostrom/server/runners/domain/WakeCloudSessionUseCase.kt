@@ -51,6 +51,18 @@ interface WakeCloudSessionUseCase {
      * @return What it did; never a refusal thrown, the answer stays on the wait whatever happens here.
      */
     suspend operator fun invoke(orgId: Uuid, sessionId: String, waitId: Uuid): CloudSessionWake
+
+    /**
+     * Wakes the session for a message sent to it (`runners.cloud.conversation.v1`, TeamCode's wake on message), with
+     * the same rechecks and audit as [invoke], the input named instead of a wait.
+     *
+     * @param orgId The organization.
+     * @param sessionId The session.
+     * @param inputId The message, for the audit log.
+     *
+     * @return What it did; never a refusal thrown, the message stays queued whatever happens here.
+     */
+    suspend fun forMessage(orgId: Uuid, sessionId: Uuid, inputId: Uuid): CloudSessionWake
 }
 
 /**
@@ -72,14 +84,20 @@ class WakeCloudSessionUseCaseImpl(
     private val audit: OrgAuditTrail,
     private val clock: Clock,
 ) : WakeCloudSessionUseCase {
-    override suspend fun invoke(orgId: Uuid, sessionId: String, waitId: Uuid): CloudSessionWake {
-        val session = Uuid.parseOrNull(sessionId)?.let { repository.get(orgId, it) }
+    override suspend fun invoke(orgId: Uuid, sessionId: String, waitId: Uuid): CloudSessionWake =
+        wake(orgId, Uuid.parseOrNull(sessionId), "waitId" to waitId)
+
+    override suspend fun forMessage(orgId: Uuid, sessionId: Uuid, inputId: Uuid): CloudSessionWake =
+        wake(orgId, sessionId, "inputId" to inputId)
+
+    private suspend fun wake(orgId: Uuid, sessionId: Uuid?, cause: Pair<String, Uuid>): CloudSessionWake {
+        val session = sessionId?.let { repository.get(orgId, it) }
         return when {
             session == null -> CloudSessionWake.NO_SESSION
             session.state.isFinal || session.desiredState == DesiredState.TERMINATED -> CloudSessionWake.ENDED
             session.desiredState == DesiredState.RUNNING -> CloudSessionWake.NOT_PAUSED
             members?.isActiveMember(orgId, session.ownerId) != true -> CloudSessionWake.OWNER_GONE
-            else -> refusal(session.orgId) ?: resume(session, waitId)
+            else -> refusal(session.orgId) ?: resume(session, cause)
         }
     }
 
@@ -93,11 +111,11 @@ class WakeCloudSessionUseCaseImpl(
         CloudSessionWake.NO_HOURS
     }
 
-    private suspend fun resume(session: CloudSession, waitId: Uuid): CloudSessionWake {
+    private suspend fun resume(session: CloudSession, cause: Pair<String, Uuid>): CloudSessionWake {
         val cap = plans.planFor(session.orgId).maxRunningSessions
         return when (repository.resumeWithinCap(session.orgId, session.id, cap, clock.now())) {
             is ResumeOutcome.Resumed -> {
-                val details = auditDetails("owner" to session.ownerId, "waitId" to waitId)
+                val details = auditDetails("owner" to session.ownerId, cause)
                 audit.record(OrgAuditRecord(session.orgId, WAKE_ACTOR, WOKEN, SUBJECT, session.id.toString(), details))
                 CloudSessionWake.RESUMED
             }
