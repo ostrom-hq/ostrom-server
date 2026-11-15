@@ -9,10 +9,14 @@ import run.ostrom.server.budgets.domain.BudgetOverrideRules
 import run.ostrom.server.budgets.domain.BudgetOverridesRepository
 import run.ostrom.server.budgets.domain.GrantOutcome
 import run.ostrom.server.budgets.domain.RevokeOutcome
+import run.ostrom.server.kernel.database.InstantColumnType
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.databaseNow
 import run.ostrom.server.kernel.database.lockUntilCommit
+import org.jetbrains.exposed.v1.core.CustomFunction
+import org.jetbrains.exposed.v1.core.Expression
 import org.jetbrains.exposed.v1.core.Op
+import org.jetbrains.exposed.v1.core.QueryParameter
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.Table
@@ -21,7 +25,6 @@ import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greater
 import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.core.less
-import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.jetbrains.exposed.v1.jdbc.Query
@@ -41,7 +44,7 @@ import kotlin.uuid.Uuid
  */
 class BudgetOverridesRepositoryImpl(private val database: JdbcDatabase) : BudgetOverridesRepository {
     override suspend fun active(orgId: Uuid, memberId: Uuid): ActiveBudgetOverride? =
-        database.inOrg(orgId) { activeRead(orgId, memberId).singleOrNull()?.toOverride()?.summary() }
+        database.inOrg(orgId) { activeRead(orgId, memberId).singleOrNull()?.let { it.toOverride().summary() } }
 
     override suspend fun history(orgId: Uuid, memberId: Uuid, before: Uuid?): BudgetOverridePage? =
         database.inOrg(orgId) {
@@ -57,8 +60,7 @@ class BudgetOverridesRepositoryImpl(private val database: JdbcDatabase) : Budget
             BudgetOverridePage(
                 items = rows.take(BudgetOverrideRules.PAGE_SIZE),
                 activeId = active,
-                next = rows.takeIf { it.size > BudgetOverrideRules.PAGE_SIZE }
-                    ?.get(BudgetOverrideRules.PAGE_SIZE - 1)?.id,
+                next = rows.getOrNull(PAGE)?.let { rows[PAGE - 1].id },
             )
         }
 
@@ -71,8 +73,8 @@ class BudgetOverridesRepositoryImpl(private val database: JdbcDatabase) : Budget
     ): GrantOutcome = database.inOrg(orgId) {
         lockUntilCommit(lockKey(orgId))
         val t = BudgetsOverrides
-        val now = Table.Dual.select(databaseNow()).single()[databaseNow()]
-        val current = activeRead(orgId, memberId).singleOrNull()?.get(t.id)
+        val now = lockedNow()
+        val current = activeRead(orgId, memberId, now).singleOrNull()?.get(t.id)
         when {
             current != grant.replacesId -> GrantOutcome.Stale
             historyFull(orgId, memberId) -> GrantOutcome.HistoryFull
@@ -109,7 +111,7 @@ class BudgetOverridesRepositoryImpl(private val database: JdbcDatabase) : Budget
     override suspend fun revoke(orgId: Uuid, memberId: Uuid, id: Uuid, actor: Uuid, reason: String): RevokeOutcome =
         database.inOrg(orgId) {
             lockUntilCommit(lockKey(orgId))
-            val now = Table.Dual.select(databaseNow()).single()[databaseNow()]
+            val now = lockedNow()
             val found = read(orgId, memberId, id)
             when {
                 found == null -> RevokeOutcome.NotFound
@@ -146,20 +148,31 @@ class BudgetOverridesRepositoryImpl(private val database: JdbcDatabase) : Budget
 
     private fun lockKey(orgId: Uuid) = "budgets_overrides:$orgId"
 
+    /**
+     * The database's time once the org's lock is held (`clock_timestamp()`, not the transaction's start `now()`): a
+     * grant that waited for another one is stamped after it, and sees it in force.
+     */
+    private fun lockedNow(): Instant {
+        val clock = CustomFunction("clock_timestamp", InstantColumnType())
+        return Table.Dual.select(clock).single()[clock]
+    }
+
     /** Who revokes an override, when (the database's time) and why. */
     private data class Revocation(val actor: Uuid, val at: Instant, val reason: String)
 }
 
+private const val PAGE = BudgetOverrideRules.PAGE_SIZE
+
 /**
- * The member's override in force by the database's clock, through the partial index `budgets_overrides_active`: read
- * before each model call of a member with limits that stop.
+ * The member's override in force by the database's clock (the transaction's `now()`, or [at] under the org's lock),
+ * through the partial index `budgets_overrides_active`: read with every read of a call's limits.
  */
-internal fun activeRead(orgId: Uuid, memberId: Uuid): Query {
+internal fun activeRead(orgId: Uuid, memberId: Uuid, at: Instant? = null): Query {
     val t = BudgetsOverrides
+    val now: Expression<Instant> = at?.let { QueryParameter(it, InstantColumnType()) } ?: databaseNow()
     return t.select(t.columns)
         .where {
-            (t.orgId eq orgId) and (t.memberId eq memberId) and t.revokedAt.isNull() and
-                (t.expiresAt greater databaseNow()) and (t.createdAt lessEq databaseNow())
+            (t.orgId eq orgId) and (t.memberId eq memberId) and t.revokedAt.isNull() and (t.expiresAt greater now)
         }
         .orderBy(t.createdAt to SortOrder.DESC)
         .limit(1)
@@ -168,9 +181,11 @@ internal fun activeRead(orgId: Uuid, memberId: Uuid): Query {
 /** A page of the member's overrides after [after] (its creation time and id), one more than a page. */
 internal fun historyRead(orgId: Uuid, memberId: Uuid, after: Pair<Instant, Uuid>?): Query {
     val t = BudgetsOverrides
-    val older: Op<Boolean> = after?.let { (at, id) ->
-        (t.createdAt less at) or ((t.createdAt eq at) and (t.id less id))
-    } ?: Op.TRUE
+    val older: Op<Boolean> = if (after == null) {
+        Op.TRUE
+    } else {
+        (t.createdAt less after.first) or ((t.createdAt eq after.first) and (t.id less after.second))
+    }
     return t.select(t.columns)
         .where { (t.orgId eq orgId) and (t.memberId eq memberId) and older }
         .orderBy(t.createdAt to SortOrder.DESC, t.id to SortOrder.DESC)

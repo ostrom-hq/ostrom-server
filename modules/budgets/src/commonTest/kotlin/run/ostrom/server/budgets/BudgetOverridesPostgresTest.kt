@@ -37,6 +37,9 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -184,8 +187,16 @@ class BudgetOverridesPostgresTest {
         assertEquals("stale_budget_override", errorType(ended))
         val stale = server.grant(replacesId = granted.id)
         assertEquals(HttpStatusCode.Conflict, stale.status, "An ended override authorizes no replacement")
-        assertEquals(HttpStatusCode.Conflict, server.grant(replacesId = "not-an-id").status)
+        assertEquals(HttpStatusCode.BadRequest, server.grant(replacesId = "not-an-id").status)
         assertEquals(HttpStatusCode.Created, server.grant().status)
+    }
+
+    @Test
+    fun twoAdministratorsGrantingAtOnceLeaveOneOverrideInForce() = serverTest(modules, overrides) { server ->
+        val statuses = coroutineScope { List(4) { async { server.grant().status } }.awaitAll() }
+        assertEquals(1, statuses.count { it == HttpStatusCode.Created }, statuses.toString())
+        assertEquals(3, statuses.count { it == HttpStatusCode.Conflict }, statuses.toString())
+        assertEquals(1, server.history().body<BudgetOverridesPage>().items.size)
     }
 
     @Test

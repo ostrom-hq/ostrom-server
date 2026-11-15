@@ -4,7 +4,7 @@ package run.ostrom.server.budgets.presentation
 import run.ostrom.server.budgets.domain.BudgetOverride
 import run.ostrom.server.budgets.domain.BudgetOverrideGrant
 import run.ostrom.server.budgets.domain.NamedBudgetOverrides
-import run.ostrom.server.budgets.domain.StaleBudgetOverrideException
+import run.ostrom.server.budgets.domain.InvalidBudgetOverrideException
 import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.audit.auditDetails
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -43,11 +43,13 @@ fun Route.budgetOverrideRoutes(dependencies: BudgetsRoutesDependencies) = with(d
     }
     post<BudgetOverridesApi> { resource ->
         val caller = call.requirePerson(callers, BudgetScopes.WRITE)
+        // A member is refused before being asked to sign in again.
+        caller.requireAdmin()
         call.requireRecentSignIn("grant a temporary budget")
         val principal = call.requirePrincipal()
         val request = call.receive<GrantBudgetOverrideRequest>()
         val replaces = request.replacesId?.let {
-            Uuid.parseOrNull(it) ?: throw StaleBudgetOverrideException("replacesId is not the override in force.")
+            Uuid.parseOrNull(it) ?: throw InvalidBudgetOverrideException("replacesId is an override's id.")
         }
         val grant = BudgetOverrideGrant(request.micros, request.durationMinutes, request.reason, replaces)
         val granted = grantOverride(caller, resource.login, grant)
@@ -60,6 +62,7 @@ fun Route.budgetOverrideRoutes(dependencies: BudgetsRoutesDependencies) = with(d
     }
     post<BudgetOverridesApi.Revoke> { resource ->
         val caller = call.requirePerson(callers, BudgetScopes.WRITE)
+        caller.requireAdmin()
         call.requireRecentSignIn("revoke a temporary budget")
         val principal = call.requirePrincipal()
         val request = call.receive<RevokeBudgetOverrideRequest>()
