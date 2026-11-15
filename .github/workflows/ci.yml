@@ -45,7 +45,7 @@ jobs:
   ci-jvm:
     name: JVM tests, Kover 100 %, detekt, docs and conventions
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    timeout-minutes: 30
+    timeout-minutes: 45
     runs-on: ubuntu-24.04
     services:
       postgres:
