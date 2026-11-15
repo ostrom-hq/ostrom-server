@@ -55,7 +55,12 @@ class CloudInferenceCredentialStoreImpl(
             if (older == null) withContext(NonCancellable) { tokens.revoke(session.orgId, listOf(minted.id)) }
         }
         return older?.let { kept ->
-            if (kept.isNotEmpty()) tokens.revoke(session.orgId, kept)
+            // Their rows are gone already: a failure is logged and the credential still returned (they expire).
+            if (kept.isNotEmpty()) {
+                guarded(session.orgId, "Revoking an execution's older inference credentials failed.") {
+                    withContext(NonCancellable) { tokens.revoke(session.orgId, kept) }
+                }
+            }
             val lifetime = minted.expiresAt - clock.now()
             InferenceIssuance.Issued(IssuedInferenceCredential(minted.secret, minted.expiresAt, lifetime))
         } ?: InferenceIssuance.Fenced
@@ -144,8 +149,29 @@ class CloudInferenceCredentialStoreImpl(
                 "SELECT org_id, token_id FROM runners_stale_inference_credentials(CAST(:limit AS INTEGER))",
             ).bind("limit", limit),
         ).getOrThrow().map { it.get("org_id").asUuid() to it.get("token_id").asUuid() }
-        stale.groupBy({ it.first }, { it.second }).forEach { (orgId, ids) -> revokeAndDelete(orgId, ids) }
-        return stale.size
+        // One organization's failure never holds back the others: it is logged and tried again the next minute.
+        return stale.groupBy({ it.first }, { it.second }).entries.sumOf { (orgId, ids) ->
+            val done = guarded(orgId, "Purging an organization's stale inference credentials failed.") {
+                revokeAndDelete(orgId, ids)
+            }
+            if (done) ids.size else 0
+        }
+    }
+
+    /**
+     * Runs [block], logging a failure (the organization and the error's class only) instead of throwing it; a
+     * cancellation is rethrown.
+     *
+     * @return Whether [block] completed.
+     */
+    private suspend fun guarded(orgId: Uuid, message: String, block: suspend () -> Unit): Boolean = try {
+        block()
+        true
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: Exception) {
+        logger.warn(message, mapOf("orgId" to orgId.toString(), "error" to failure::class.simpleName))
+        false
     }
 
     /** The tokens first, then their rows: a row outlives its token's revocation only if that revocation failed. */

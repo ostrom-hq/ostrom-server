@@ -10,6 +10,7 @@ import run.ostrom.server.runners.domain.InferenceToken
 import run.ostrom.server.runners.domain.RunnerInferenceTokens
 import kotlin.time.Clock
 import kotlin.time.Duration
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
@@ -31,8 +32,10 @@ class LaunchInferenceTokens(
     private val clock: Clock,
 ) : RunnerInferenceTokens {
     override suspend fun issue(session: CloudSession, lifetime: Duration): InferenceToken? {
-        val launch = openLaunch(session) ?: return null
-        val life = minOf(lifetime, launch.expiresAt - clock.now())
+        val now = clock.now()
+        val launch = openLaunch(session, now) ?: return null
+        // The launch expires after `now` (openLaunch), so the lifetime is always positive.
+        val life = minOf(lifetime, launch.expiresAt - now)
         return renew(launch.userId, launch.orgId, launch.id, life)?.let { issued ->
             InferenceToken(issued.token.id, issued.secret, issued.token.createdAt + life)
         }
@@ -40,10 +43,9 @@ class LaunchInferenceTokens(
 
     // The session's newest launch, if opened since its current execution started and not expired: a launch of an
     // earlier execution acts no more (RunnerCloudExecutions), this execution opens its own.
-    private suspend fun openLaunch(session: CloudSession): Launch? {
+    private suspend fun openLaunch(session: CloudSession, now: Instant): Launch? {
         val started = session.executionStartedAt ?: return null
         val id = launches.ofCloudSession(session.orgId, session.id, 1).firstOrNull()
-        val now = clock.now()
         return id?.let { launches.find(session.orgId, it) }?.takeIf { it.createdAt >= started && it.expiresAt > now }
     }
 

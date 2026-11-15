@@ -244,4 +244,28 @@ class RunnerInferencePostgresTest {
         job.cancelAndJoin()
         assertEquals(emptyList(), launches.live())
     }
+
+    @Test
+    fun aFailedRevocationOfTheOlderCredentialStillHandsTheNewOneAndThePurgeCarriesOn() = inferenceTest { server ->
+        val store = assertNotNull(server.koin.get<InferenceWiring>().store)
+        val (running, token) = server.running()
+        repeat(2) { assertEquals(HttpStatusCode.OK, server.ask("Bearer $token", claim(running)).status) }
+        launches.failure = IllegalStateException("identity is down")
+        val renewed = server.ask("Bearer $token", claim(running))
+        assertEquals(HttpStatusCode.OK, renewed.status, "The older one expires on its own")
+        assertEquals("osa_3", renewed.body<RunnerInferenceCredentialResponse>().token)
+        assertEquals(2, server.rows())
+        launches.failure = CancellationException("stopping")
+        assertFailsWith<CancellationException> { store.issue(running, 1.hours, 2) }
+
+        // The purge skips an organization it cannot revoke in, and counts only what it deleted.
+        launches.failure = IllegalStateException("identity is down")
+        server.becomes(running) { it.copy(state = SessionState.PAUSED, runnerTokenHash = null) }
+        assertEquals(0, store.purge(100))
+        launches.failure = CancellationException("stopping")
+        assertFailsWith<CancellationException> { store.purge(100) }
+        launches.failure = null
+        assertEquals(2, store.purge(100))
+        assertEquals(0, server.rows())
+    }
 }
