@@ -430,7 +430,7 @@ object RunnersModule : ServerModule {
      */
     override suspend fun features(koin: Koin): Set<String> {
         if (koin.get<RunnersConfig>().driver == RunnersConfig.DriverKind.NONE) return setOf(ServerFeatures.RUNNERS)
-        // The conversation keys, files aside (not served yet), with any runtime.
+        // The conversation keys, files aside (not served yet), with a runtime driver.
         val announced = koin.getOrNull<ConversationAnnouncement>()?.announced == true
         val conversation = if (announced) CONVERSATION_FEATURES else emptySet()
         val github = koin.getOrNull<RunnerGitHubTokens>()?.available() == true

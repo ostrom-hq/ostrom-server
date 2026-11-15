@@ -295,14 +295,14 @@ class DockerRuntimeDriverTest {
     }
 
     @Test
-    fun aConversationsRunnerIsToldItsModeAndATerminalsIsNot() = runTest {
+    fun theRunnerIsToldItsSessionsMode() = runTest {
         // The plan a registered runner is handed, as this server's Docker creates it.
         val plan = DockerExecutionPlan("ostrom", "http://host.docker.internal:8080", RELEASE)
         val delivery = RELEASE.current()
         fun env(spec: ExecutionSpec, container: Int) =
             plan.containers(spec, delivery)[container].body["Env"]!!.jsonArray.map { it.jsonPrimitive.content }
         // The runner is the last container; the agent's (second) never reads the mode: it only runs the supervisor.
-        assertFalse(env(spec, 3).any { it.startsWith("OSTROM_SESSION_MODE") })
+        assertTrue("OSTROM_SESSION_MODE=terminal" in env(spec, 3))
         val conversation = spec.copy(agent = AgentKind.CLAUDE, mode = SessionMode.CONVERSATION)
         assertTrue("OSTROM_SESSION_MODE=conversation" in env(conversation, 3))
         assertFalse(env(conversation, 1).any { it.startsWith("OSTROM_SESSION_MODE") })

@@ -151,7 +151,7 @@ class KubernetesRuntimeDriverTest {
         assertEquals("claude", env["OSTROM_AGENT_COMMAND"])
         assertEquals("4", env["OSTROM_EPOCH"])
         assertEquals("claude-opus-5-5", env["OSTROM_AGENT_MODEL"])
-        assertNull(env["OSTROM_SESSION_MODE"])
+        assertEquals("terminal", env["OSTROM_SESSION_MODE"])
         assertEquals("http://ostrom-server.ostrom.svc:8080", env["OSTROM_SERVER_URL"])
         assertFalse("Fix the tests" in pod.toString())
         assertFalse("ostrom_runner_abc" in pod.toString())

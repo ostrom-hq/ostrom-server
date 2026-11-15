@@ -184,7 +184,7 @@ data class ExecutionSpec(
 fun CloudSession.executionSpec(runnerToken: String): ExecutionSpec =
     ExecutionSpec(
         id, orgId, epoch, agent, repository, runnerToken, limits, model, prompt.takeIf { epoch == 1L }, profile,
-        mode,
+        mode = mode,
     )
 
 /** The state of an execution as the runtime sees it. */
