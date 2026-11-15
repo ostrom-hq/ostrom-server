@@ -60,7 +60,8 @@ fun Route.keysAndDevicesRoutes(dependencies: KeysAndDevicesRoutesDependencies) =
         patch<DevicesApi.Id, RenameDeviceRequest> { params, request ->
             val principal = call.requireInteractiveLogin()
             val id = Uuid.parseOrNull(params.id) ?: throw DeviceNotFoundException(DEVICE_NOT_FOUND)
-            val renamed = renameDevice(principal.userId(), id, request.name, call.namedMember(orgs), principal.cliToken())
+            val member = call.namedMember(orgs)
+            val renamed = renameDevice(principal.userId(), id, request.name, member, principal.cliToken())
             call.respond(renamed.toDeviceResponse())
         }
         delete<DevicesApi.Id> { params ->
@@ -83,7 +84,7 @@ private const val DEVICE_NOT_FOUND = "device_not_found"
 
 /** The CLI token a call is made with, for `current`; null for a browser session. */
 private fun AuthenticatedPrincipal.cliToken(): Uuid? =
-    credentialId?.let(Uuid::parseOrNull)?.takeIf { workstation != null }
+    Uuid.parseOrNull(credentialId.orEmpty()).takeIf { workstation != null }
 
 /**
  * The caller in the organization the request names in its `Ostrom-Org` header, where the tokens of

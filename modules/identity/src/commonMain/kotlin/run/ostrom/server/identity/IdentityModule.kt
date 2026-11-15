@@ -291,7 +291,8 @@ object IdentityModule : ServerModule {
         // device of another person.
         single<ListDevicesUseCase> { ListDevicesUseCaseImpl(get(), get(), get(), get()) }
         single<SignOutDeviceUseCase> {
-            SignOutDeviceUseCaseImpl(get(), get(), get(), getOrNull<MemberDirectory>() ?: NoMemberDirectory, get(), get())
+            val members = getOrNull<MemberDirectory>() ?: NoMemberDirectory
+            SignOutDeviceUseCaseImpl(get(), get(), get(), members, get(), get())
         }
         single<RenameDeviceUseCase> {
             RenameDeviceUseCaseImpl(get(), getOrNull<MemberDirectory>() ?: NoMemberDirectory, get(), get())
@@ -304,7 +305,9 @@ object IdentityModule : ServerModule {
             StartDeviceAuthorizationUseCaseImpl(get(), get(), get(), get(), get())
         }
         single<GetDeviceAuthorizationUseCase> { GetDeviceAuthorizationUseCaseImpl(get(), get(), get()) }
-        single<AnswerDeviceAuthorizationUseCase> { AnswerDeviceAuthorizationUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<AnswerDeviceAuthorizationUseCase> {
+            AnswerDeviceAuthorizationUseCaseImpl(get(), get(), get(), get(), get())
+        }
         single<PollDeviceAuthorizationUseCase> {
             PollDeviceAuthorizationUseCaseImpl(get(), get(), get(), get(), get(), get())
         }

@@ -108,10 +108,16 @@ class DeviceIdentityTest {
         val first = login(ada)
         val device = devices.devices.values.single()
         assertEquals(device.id, first.deviceId, "The token is a sign-in of the device")
-        assertEquals(listOf("Work laptop", "macos", "15.1", ada), listOf(device.name, device.platform, device.osVersion, device.userId))
+        assertEquals(
+            listOf("Work laptop", "macos", "15.1", ada),
+            listOf(device.name, device.platform, device.osVersion, device.userId),
+        )
         assertEquals(installation, device.installationId)
         val registered = audit.entries.single { it.action == "device.registered" }
-        assertEquals(listOf(null, ada, "device", device.id.toString()), listOf(registered.orgId, registered.actorId, registered.targetType, registered.targetId))
+        assertEquals(
+            listOf(null, ada, "device", device.id.toString()),
+            listOf(registered.orgId, registered.actorId, registered.targetType, registered.targetId),
+        )
         assertEquals(mapOf("platform" to "macos"), registered.details, "Metadata only")
 
         clock.now += 1.hours
@@ -120,14 +126,22 @@ class DeviceIdentityTest {
         assertEquals(device.id, again.deviceId)
         assertNotEquals(first.id, again.id, "Independent sessions of one device")
         assertEquals("Work laptop", reused.name, "The name is kept")
-        assertEquals(listOf("linux", null), listOf(reused.platform, reused.osVersion), "What it reports replaces what was")
+        assertEquals(
+            listOf("linux", null),
+            listOf(reused.platform, reused.osVersion),
+            "What it reports replaces what was",
+        )
         assertEquals(clock.now, reused.lastLoginAt)
         assertEquals(device.createdAt, reused.createdAt)
         assertEquals(1, audit.entries.count { it.action == "device.registered" }, "Registered once")
 
         val quiet = login(ada, platform = null, osVersion = null)
         assertEquals(device.id, quiet.deviceId)
-        assertEquals(listOf("linux", null), devices.devices.values.single().let { listOf(it.platform, it.osVersion) }, "An older client keeps what was")
+        assertEquals(
+            listOf("linux", null),
+            devices.devices.values.single().let { listOf(it.platform, it.osVersion) },
+            "An older client keeps what was",
+        )
     }
 
     @Test
@@ -160,7 +174,10 @@ class DeviceIdentityTest {
     fun theStartKeepsWhatTheCliSaidOfItsInstallation() = runTest {
         val started = start("host", "ip", null, DeviceLoginIdentity(installation, "  Desk  ", "ios", "18.0 beta"))
         val kept = started.authorization
-        assertEquals(listOf(installation, "Desk", "ios", "18.0 beta"), listOf(kept.installationId, kept.deviceName, kept.platform, kept.osVersion))
+        assertEquals(
+            listOf(installation, "Desk", "ios", "18.0 beta"),
+            listOf(kept.installationId, kept.deviceName, kept.platform, kept.osVersion),
+        )
         // Without a name, the client's name is the device's.
         val unnamed = login(ada, name = null)
         assertEquals("host", devices.devices[unnamed.deviceId]?.name)
@@ -168,13 +185,25 @@ class DeviceIdentityTest {
 
     @Test
     fun whatTheCliSaysIsCheckedBeforeAnythingIsStored() = runTest {
-        assertFailsWith<InvalidInstallationException> { start("h", "ip", null, DeviceLoginIdentity("6F1C0C3E-9A40-4A39-8E0E-2B1F3F8A1A11")) }
+        assertFailsWith<InvalidInstallationException> { start(
+            "h",
+            "ip",
+            null,
+            DeviceLoginIdentity("6F1C0C3E-9A40-4A39-8E0E-2B1F3F8A1A11"),
+        ) }
         assertFailsWith<InvalidInstallationException> { start("h", "ip", null, DeviceLoginIdentity("not-a-uuid")) }
         for (name in listOf("", "   ", "a".repeat(121), "line\nbreak", "tab\u0007")) {
-            assertFailsWith<InvalidDeviceNameException>(name) { start("h", "ip", null, DeviceLoginIdentity(installation, name)) }
+            assertFailsWith<InvalidDeviceNameException>(
+                name,
+            ) { start("h", "ip", null, DeviceLoginIdentity(installation, name)) }
         }
-        assertFailsWith<InvalidPlatformException> { start("h", "ip", null, DeviceLoginIdentity(installation, platform = "beos")) }
-        for (version in listOf("", " ", "x".repeat(65), "a\tb", "a\nb")) {
+        assertFailsWith<InvalidPlatformException> { start(
+            "h",
+            "ip",
+            null,
+            DeviceLoginIdentity(installation, platform = "beos"),
+        ) }
+        for (version in listOf("", " ", "x".repeat(65), "a\tb", "a\nb", "a\u00a0b")) {
             assertFailsWith<InvalidOsVersionException>(version) {
                 start("h", "ip", null, DeviceLoginIdentity(installation, platform = "linux", osVersion = version))
             }
@@ -214,7 +243,11 @@ class DeviceIdentityTest {
         val started = start("host", "ip", null, DeviceLoginIdentity(other))
         answer(ada, started.authorization.userCode, approve = true)
         repeat(MAX_REGISTERED_DEVICES) { index ->
-            devices.signIn(ada, DeviceSignInRequest("00000000-0000-4000-8000-%012d".format(index), "d", null, null), clock.now)
+            devices.signIn(
+                ada,
+                DeviceSignInRequest("00000000-0000-4000-8000-%012d".format(index), "d", null, null),
+                clock.now,
+            )
         }
         clock.now += 6.seconds
         assertFailsWith<DeviceLimitException> { poll(started.deviceCode) }
@@ -234,7 +267,11 @@ class DeviceIdentityTest {
         tokens.revoke(ada, desk.id, clock.now)
 
         val shown = list(ada, member, laptopAgain.id)
-        assertEquals(listOf(desk.deviceId, laptop.deviceId, legacy.id, adas.id), shown.map { it.id }, "Latest sign-in first")
+        assertEquals(
+            listOf(desk.deviceId, laptop.deviceId, legacy.id, adas.id),
+            shown.map { it.id },
+            "Latest sign-in first",
+        )
         val first = shown[1]
         assertEquals(2, first.activeSessions)
         assertEquals(true, first.current)
@@ -247,8 +284,16 @@ class DeviceIdentityTest {
         assertNull(shown[2].activeSessions)
         assertNull(shown[2].current)
         assertEquals("admin", shown[3].toDeviceResponse().kind)
-        assertEquals(listOf(desk.deviceId, laptop.deviceId, legacy.id), list(ada).map { it.id }, "No elevated token without an organization")
-        assertEquals(true, list(ada, null, legacy.id).first { it.id == legacy.id }.current, "A token listed on its own can be the current one")
+        assertEquals(
+            listOf(desk.deviceId, laptop.deviceId, legacy.id),
+            list(ada).map { it.id },
+            "No elevated token without an organization",
+        )
+        assertEquals(
+            true,
+            list(ada, null, legacy.id).first { it.id == legacy.id }.current,
+            "A token listed on its own can be the current one",
+        )
         assertEquals(false, list(ada, null, null).first().current)
         assertTrue(list(ada).first().toDeviceResponse().kind == "cli")
     }
@@ -263,11 +308,17 @@ class DeviceIdentityTest {
         assertEquals(listOf(laptop.deviceId, adas.id), listMember(admin, adaMemberId.toString()).map { it.id })
         assertFailsWith<DevicesAdminRequiredException> { listMember(member, adaMemberId.toString()) }
         for (role in listOf(OrgRole.APPROVER, OrgRole.BILLING)) {
-            assertFailsWith<DevicesAdminRequiredException> { listMember(owner.copy(role = role), adaMemberId.toString()) }
+            assertFailsWith<DevicesAdminRequiredException> { listMember(
+                owner.copy(role = role),
+                adaMemberId.toString(),
+            ) }
         }
         assertFailsWith<DeviceMemberNotFoundException> { listMember(owner, Uuid.random().toString()) }
         assertFailsWith<DeviceMemberNotFoundException> { listMember(owner, "nope") }
-        assertFailsWith<DeviceMemberNotFoundException> { listMember(owner.copy(orgId = Uuid.random()), adaMemberId.toString()) }
+        assertFailsWith<DeviceMemberNotFoundException> { listMember(
+            owner.copy(orgId = Uuid.random()),
+            adaMemberId.toString(),
+        ) }
     }
 
     @Test
@@ -278,7 +329,10 @@ class DeviceIdentityTest {
         assertEquals("Support laptop", renamed.name)
         assertEquals(true, renamed.current)
         val own = audit.entries.last()
-        assertEquals(listOf(null, ada, "device.renamed", id.toString()), listOf(own.orgId, own.actorId, own.action, own.targetId))
+        assertEquals(
+            listOf(null, ada, "device.renamed", id.toString()),
+            listOf(own.orgId, own.actorId, own.action, own.targetId),
+        )
         assertTrue(own.details.isEmpty(), "Metadata only: never the name")
 
         val byOwner = rename(bea, id, "Ada's", owner, laptop.id)
@@ -289,6 +343,7 @@ class DeviceIdentityTest {
         assertEquals(ada.toString(), audited.details["owner"])
         rename(Uuid.random(), id, "By an admin", admin)
         assertEquals("By an admin", devices.devices.getValue(id).name)
+        assertEquals("Plain", rename(ada, id, "Plain").name, "Neither an organization nor a token named")
     }
 
     @Test
@@ -327,7 +382,10 @@ class DeviceIdentityTest {
         }
         assertNull(tokens.get(ada, kept.id)?.revokedAt)
         val removed = audit.entries.last()
-        assertEquals(listOf("device.removed", "device", id.toString(), ada), listOf(removed.action, removed.targetType, removed.targetId, removed.actorId))
+        assertEquals(
+            listOf("device.removed", "device", id.toString(), ada),
+            listOf(removed.action, removed.targetType, removed.targetId, removed.actorId),
+        )
         assertTrue(removed.details.isEmpty())
         assertFailsWith<DeviceNotFoundException> { signOut(ada, id) }
         // Its next login registers the installation again, under a new id.
@@ -349,6 +407,16 @@ class DeviceIdentityTest {
         val another = checkNotNull(login(ada).deviceId)
         devices.refuseRemove = true
         assertFailsWith<DeviceNotFoundException> { signOut(ada, another) }
+    }
+
+    @Test
+    fun aLoginLostToAConcurrentPollOnADeviceGivesNoTokenAndNoDevice() = runTest {
+        val started = start("host", "ip", null, DeviceLoginIdentity(installation))
+        answer(ada, started.authorization.userCode, approve = true)
+        authorizations.refuseConsume = true
+        assertEquals(DevicePollResult.Expired, poll(started.deviceCode))
+        assertTrue(devices.devices.isEmpty())
+        assertTrue(audit.entries.none { it.action == "device.registered" })
     }
 
     @Test

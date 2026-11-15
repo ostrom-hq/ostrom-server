@@ -234,12 +234,7 @@ class AnswerDeviceAuthorizationUseCaseImpl(
         } else {
             null
         }
-        val installation = pending.installationId
-        if (approve && installation != null && devices.find(userId, installation) == null &&
-            devices.count(userId) >= MAX_REGISTERED_DEVICES
-        ) {
-            throw DeviceLimitException()
-        }
+        if (approve) pending.installationId?.let { requireRoomFor(userId, it) }
         if (!authorizations.answer(pending.id, userId, approve, now, orgId)) throw DeviceCodeNotFoundException()
         val details = buildMap {
             put("client", pending.clientName)
@@ -247,6 +242,12 @@ class AnswerDeviceAuthorizationUseCaseImpl(
         }
         val action = if (approve) "device.approved" else "device.denied"
         audit.record(AuditEntry(orgId, userId, action, "device", pending.id.toString(), details))
+    }
+
+    /** A new installation needs a free place among the person's devices; one already registered always signs in. */
+    private suspend fun requireRoomFor(userId: Uuid, installationId: String) {
+        val known = devices.find(userId, installationId) != null
+        if (!known && devices.count(userId) >= MAX_REGISTERED_DEVICES) throw DeviceLimitException()
     }
 }
 
@@ -335,28 +336,43 @@ class PollDeviceAuthorizationUseCaseImpl(
         }
         // An admin token lasts a working day and is approved each time from the console: it takes no workstation.
         if (!admin) makeRoomForDevice(tokens, audit, userId, now)
-        val installation = authorization.installationId.takeIf { !admin }
-        if (installation == null) {
-            if (!authorizations.consume(authorization.id, issued.token, hasher.hash(issued.secret))) {
-                return DevicePollResult.Expired
-            }
-        } else {
-            val login = DeviceSignInRequest(
-                installation, authorization.deviceName ?: authorization.clientName, authorization.platform,
-                authorization.osVersion,
-            )
-            val signIn = authorizations.consumeOnDevice(
-                authorization.id, issued.token, hasher.hash(issued.secret), login, now,
-            ) ?: return DevicePollResult.Expired
-            if (signIn.registered) {
-                val details = listOfNotNull(authorization.platform?.let { "platform" to it }).toMap()
-                audit.record(AuditEntry(null, userId, "device.registered", "device", signIn.device.id.toString(), details))
-            }
-        }
+        if (!consume(authorization, issued, now)) return DevicePollResult.Expired
         val tokenId = issued.token.id.toString()
         val details = mapOf("kind" to kind.name.lowercase())
         audit.record(AuditEntry(orgId, userId, "token.created", "token", tokenId, details))
         return DevicePollResult.Approved(issued)
+    }
+
+    /** Stores the token; the one of an installation is stored as a sign-in of its device, registered by it if new. */
+    private suspend fun consume(
+        authorization: DeviceAuthorization,
+        issued: IssuedToken,
+        now: kotlin.time.Instant,
+    ): Boolean {
+        val installation = authorization.installationId.takeIf { issued.token.kind != TokenKind.ADMIN }
+        return if (installation == null) {
+            authorizations.consume(authorization.id, issued.token, hasher.hash(issued.secret))
+        } else {
+            signIn(authorization, installation, issued, now)
+        }
+    }
+
+    private suspend fun signIn(
+        authorization: DeviceAuthorization,
+        installation: String,
+        issued: IssuedToken,
+        now: kotlin.time.Instant,
+    ): Boolean {
+        val name = authorization.deviceName ?: authorization.clientName
+        val login = DeviceSignInRequest(installation, name, authorization.platform, authorization.osVersion)
+        val hash = hasher.hash(issued.secret)
+        val signIn = authorizations.consumeOnDevice(authorization.id, issued.token, hash, login, now) ?: return false
+        if (signIn.registered) {
+            val details = listOfNotNull(authorization.platform?.let { "platform" to it }).toMap()
+            val deviceId = signIn.device.id.toString()
+            audit.record(AuditEntry(null, issued.token.userId, "device.registered", "device", deviceId, details))
+        }
+        return true
     }
 
     private companion object {

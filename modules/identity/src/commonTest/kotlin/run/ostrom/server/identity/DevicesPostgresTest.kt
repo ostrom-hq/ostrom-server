@@ -8,7 +8,9 @@ import run.ostrom.server.identity.domain.DeviceAuthorization
 import run.ostrom.server.identity.domain.DeviceAuthorizationStatus
 import run.ostrom.server.identity.domain.DeviceAuthorizationsRepository
 import run.ostrom.server.identity.domain.DeviceLimitException
+import run.ostrom.server.identity.domain.DeviceSignIn
 import run.ostrom.server.identity.domain.DeviceSignInRequest
+import run.ostrom.server.identity.domain.DevicesRepository
 import run.ostrom.server.identity.domain.MAX_REGISTERED_DEVICES
 import run.ostrom.server.identity.domain.TokenKind
 import run.ostrom.server.identity.domain.CreatePersonalTokenUseCase
@@ -50,6 +52,7 @@ import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -72,7 +75,9 @@ class DevicesPostgresTest {
         single<PrincipalOrgResolver> {
             object : PrincipalOrgResolver {
                 override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): OrgPrincipal? =
-                    roles[principal.subjectId]?.let { (o, role) -> OrgPrincipal(o, memberIds.getValue(principal.subjectId), role) }
+                    roles[principal.subjectId]?.let { (member, role) ->
+                        OrgPrincipal(member, memberIds.getValue(principal.subjectId), role)
+                    }
             }
         }
         single<MemberDirectory> {
@@ -87,6 +92,14 @@ class DevicesPostgresTest {
             }
         }
     }
+
+    private class Refusal(
+        val id: String,
+        val name: String,
+        val platform: String,
+        val version: String?,
+        val type: String,
+    )
 
     private class Person(val user: User, val session: StartedSession, val memberId: Uuid)
 
@@ -125,8 +138,11 @@ class DevicesPostgresTest {
             signedIn(person)
             json(AnswerDeviceRequest(started.userCode, true))
         }
-        if (answered.status != HttpStatusCode.NoContent) return answered
-        return client.post("/api/v1/auth/device/token") { json(DeviceTokenRequest(started.deviceCode)) }
+        return if (answered.status == HttpStatusCode.NoContent) {
+            client.post("/api/v1/auth/device/token") { json(DeviceTokenRequest(started.deviceCode)) }
+        } else {
+            answered
+        }
     }
 
     private suspend fun TestServer.cliToken(person: Person, installation: String?, name: String? = "Work laptop") =
@@ -136,7 +152,8 @@ class DevicesPostgresTest {
         client.get(DEVICES) { bearerAuth(secret) }.body<DevicesResponse>().items
 
     @Test
-    fun theLoginRegistersTheInstallationAndTheCliAndTheBrowserListIt() = serverTest(listOf(IdentityModule), overrides) { server ->
+    fun theLoginRegistersTheInstallationAndTheCliAndTheBrowserListIt() =
+        serverTest(listOf(IdentityModule), overrides) { server ->
         val ada = server.person("ada", OrgRole.MEMBER)
         val first = server.cliToken(ada, INSTALLATION)
         val second = server.cliToken(ada, INSTALLATION, name = "Another name")
@@ -144,7 +161,10 @@ class DevicesPostgresTest {
 
         val shown = server.byCli(second)
         val device = shown.first()
-        assertEquals(listOf("Work laptop", "macos", "15.1", 2, true), listOf(device.name, device.platform, device.osVersion, device.activeSessions, device.current))
+        assertEquals(
+            listOf("Work laptop", "macos", "15.1", 2, true),
+            listOf(device.name, device.platform, device.osVersion, device.activeSessions, device.current),
+        )
         assertNotNull(device.createdAt)
         assertNotNull(device.lastLoginAt)
         assertEquals(2, shown.size, "A registered device, then the CLI token from before devices")
@@ -160,17 +180,19 @@ class DevicesPostgresTest {
     }
 
     @Test
-    fun theLoginIsValidatedAndTheDeviceCapIsRefusedAtTheApproval() = serverTest(listOf(IdentityModule), overrides) { server ->
+    fun theLoginIsValidatedAndTheDeviceCapIsRefusedAtTheApproval() =
+        serverTest(listOf(IdentityModule), overrides) { server ->
         val ada = server.person("ada", OrgRole.MEMBER)
-        for ((id, name, platform, version, type) in listOf(
-            listOf("NOT-A-UUID", "n", "macos", null, "invalid_installation"),
-            listOf(INSTALLATION, " ", "macos", null, "invalid_device_name"),
-            listOf(INSTALLATION, "n", "beos", null, "invalid_platform"),
-            listOf(INSTALLATION, "n", "macos", "a\tb", "invalid_os_version"),
-        )) {
-            val refused = server.login(ada, id, name, platform, version)
+        val refusals = listOf(
+            Refusal("NOT-A-UUID", "n", "macos", null, "invalid_installation"),
+            Refusal(INSTALLATION, " ", "macos", null, "invalid_device_name"),
+            Refusal(INSTALLATION, "n", "beos", null, "invalid_platform"),
+            Refusal(INSTALLATION, "n", "macos", "a\tb", "invalid_os_version"),
+        )
+        for (refusal in refusals) {
+            val refused = server.login(ada, refusal.id, refusal.name, refusal.platform, refusal.version)
             assertEquals(HttpStatusCode.BadRequest, refused.status)
-            assertTrue(refused.body<String>().contains(checkNotNull(type)), type)
+            assertTrue(refused.body<String>().contains(refusal.type), refusal.type)
         }
         // Fifty registered installations, without fifty rate-limited logins.
         val repository = server.koin.get<DeviceAuthorizationsRepository>()
@@ -185,7 +207,9 @@ class DevicesPostgresTest {
                 Clock.System.now(), Clock.System.now() + 1.days, null, null,
             )
             val login = DeviceSignInRequest("00000000-0000-4000-8000-%012d".format(index), "d$index", null, null)
-            assertNotNull(repository.consumeOnDevice(authorization.id, token, "secret-$index", login, Clock.System.now()))
+            assertNotNull(
+                repository.consumeOnDevice(authorization.id, token, "secret-$index", login, Clock.System.now()),
+            )
         }
         val full = server.login(ada, INSTALLATION)
         assertEquals(HttpStatusCode.Conflict, full.status)
@@ -203,13 +227,20 @@ class DevicesPostgresTest {
             Clock.System.now(), Clock.System.now() + 1.days, null, null,
         )
         assertFailsWith<DeviceLimitException> {
-            repository.consumeOnDevice(lost.id, token, "secret-lost", DeviceSignInRequest(INSTALLATION, "n", null, null), Clock.System.now())
+            repository.consumeOnDevice(
+                lost.id,
+                token,
+                "secret-lost",
+                DeviceSignInRequest(INSTALLATION, "n", null, null),
+                Clock.System.now(),
+            )
         }
         assertEquals(50, server.client.get(DEVICES) { signedIn(ada) }.body<DevicesResponse>().items.size)
     }
 
     @Test
-    fun aDeviceIsRenamedAndRemovedWithItsSessionsAndOnlyByWhoMayDo() = serverTest(listOf(IdentityModule), overrides) { server ->
+    fun aDeviceIsRenamedAndRemovedWithItsSessionsAndOnlyByWhoMayDo() =
+        serverTest(listOf(IdentityModule), overrides) { server ->
         val ada = server.person("ada", OrgRole.MEMBER)
         val bea = server.person("bea", OrgRole.OWNER)
         val max = server.person("max", OrgRole.MEMBER)
@@ -217,31 +248,52 @@ class DevicesPostgresTest {
         val two = server.cliToken(ada, INSTALLATION)
         val id = server.byCli(one).first().id
 
-        val renamed = server.client.patch("$DEVICES/$id") { bearerAuth(one); json(RenameDeviceRequest("Support laptop")) }
+        val renamed = server.client.patch(
+            "$DEVICES/$id",
+        ) { bearerAuth(one); json(RenameDeviceRequest("Support laptop")) }
         assertEquals(HttpStatusCode.OK, renamed.status)
         assertEquals("Support laptop", renamed.body<DeviceResponse>().name)
-        assertEquals(HttpStatusCode.BadRequest, server.client.patch("$DEVICES/$id") { signedIn(ada); json(RenameDeviceRequest("")) }.status)
+        assertEquals(
+            HttpStatusCode.BadRequest,
+            server.client.patch("$DEVICES/$id") { signedIn(ada); json(RenameDeviceRequest("")) }.status,
+        )
         for (stranger in listOf(max, bea)) {
             val refused = server.client.patch("$DEVICES/$id") {
                 signedIn(stranger); header("Ostrom-Org", org.toString()); json(RenameDeviceRequest("x"))
             }
             // The owner of the organization the device's owner is in may; a plain member may not.
-            if (stranger === bea) assertEquals(HttpStatusCode.OK, refused.status) else assertEquals(HttpStatusCode.NotFound, refused.status)
+            val expected = if (stranger === bea) HttpStatusCode.OK else HttpStatusCode.NotFound
+            assertEquals(expected, refused.status)
         }
-        assertEquals(HttpStatusCode.NotFound, server.client.patch("$DEVICES/${Uuid.random()}") { signedIn(ada); json(RenameDeviceRequest("x")) }.status)
+        val garbage = server.client.patch("$DEVICES/not-a-uuid") { signedIn(ada); json(RenameDeviceRequest("x")) }
+        assertEquals(HttpStatusCode.NotFound, garbage.status)
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.client.patch("$DEVICES/${Uuid.random()}") { signedIn(ada); json(RenameDeviceRequest("x")) }.status,
+        )
 
         val members = server.client.get("/api/v1/members/${ada.memberId}/devices") { signedIn(bea) }
         assertEquals(HttpStatusCode.OK, members.status)
         assertEquals(listOf(id), members.body<DevicesResponse>().items.map { it.id })
-        assertEquals(HttpStatusCode.Forbidden, server.client.get("/api/v1/members/${ada.memberId}/devices") { signedIn(max) }.status)
-        assertEquals(HttpStatusCode.NotFound, server.client.get("/api/v1/members/${Uuid.random()}/devices") { signedIn(bea) }.status)
+        assertEquals(
+            HttpStatusCode.Forbidden,
+            server.client.get("/api/v1/members/${ada.memberId}/devices") { signedIn(max) }.status,
+        )
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.client.get("/api/v1/members/${Uuid.random()}/devices") { signedIn(bea) }.status,
+        )
 
         assertEquals(HttpStatusCode.NotFound, server.client.delete("$DEVICES/$id") {
             signedIn(max); header("Ostrom-Org", org.toString())
         }.status)
         assertEquals(HttpStatusCode.NoContent, server.client.delete("$DEVICES/$id") { bearerAuth(one) }.status)
         for (secret in listOf(one, two)) {
-            assertEquals(HttpStatusCode.Unauthorized, server.client.get(DEVICES) { bearerAuth(secret) }.status, "Signed out with the device")
+            assertEquals(
+                HttpStatusCode.Unauthorized,
+                server.client.get(DEVICES) { bearerAuth(secret) }.status,
+                "Signed out with the device",
+            )
         }
         assertTrue(server.client.get(DEVICES) { signedIn(ada) }.body<DevicesResponse>().items.isEmpty())
         val again = server.cliToken(ada, INSTALLATION)
@@ -249,20 +301,77 @@ class DevicesPostgresTest {
     }
 
     @Test
-    fun anAgentOrAServiceOrAPersonalTokenNeverReachesTheDevices() = serverTest(listOf(IdentityModule), overrides) { server ->
+    fun anAgentOrAServiceOrAPersonalTokenNeverReachesTheDevices() =
+        serverTest(listOf(IdentityModule), overrides) { server ->
         val ada = server.person("ada", OrgRole.OWNER)
-        val personal = server.koin.get<CreatePersonalTokenUseCase>()(ada.user.id, "script", listOf("orgs:read"), 1.days).secret
+        val createToken = server.koin.get<CreatePersonalTokenUseCase>()
+        val personal = createToken(ada.user.id, "script", listOf("orgs:read"), 1.days).secret
         assertEquals(HttpStatusCode.Forbidden, server.client.get(DEVICES) { bearerAuth(personal) }.status)
-        assertEquals(HttpStatusCode.Forbidden, server.client.patch("$DEVICES/${Uuid.random()}") { bearerAuth(personal); json(RenameDeviceRequest("x")) }.status)
-        assertEquals(HttpStatusCode.Forbidden, server.client.delete("$DEVICES/${Uuid.random()}") { bearerAuth(personal) }.status)
-        assertEquals(HttpStatusCode.Forbidden, server.client.get("/api/v1/members/${ada.memberId}/devices") { bearerAuth(personal) }.status)
+        assertEquals(
+            HttpStatusCode.Forbidden,
+            server.client.patch("$DEVICES/${Uuid.random()}") {
+                bearerAuth(personal)
+                json(RenameDeviceRequest("x"))
+            }.status,
+        )
+        assertEquals(
+            HttpStatusCode.Forbidden,
+            server.client.delete("$DEVICES/${Uuid.random()}") { bearerAuth(personal) }.status,
+        )
+        assertEquals(
+            HttpStatusCode.Forbidden,
+            server.client.get("/api/v1/members/${ada.memberId}/devices") { bearerAuth(personal) }.status,
+        )
         assertEquals(HttpStatusCode.Unauthorized, server.client.get(DEVICES).status)
         assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/members/${ada.memberId}/devices").status)
-        assertEquals(HttpStatusCode.Unauthorized, server.client.patch("$DEVICES/x") { json(RenameDeviceRequest("x")) }.status)
+        assertEquals(
+            HttpStatusCode.Unauthorized,
+            server.client.patch("$DEVICES/x") { json(RenameDeviceRequest("x")) }.status,
+        )
         assertEquals(HttpStatusCode.NotFound, server.client.get("/api/v1/members/${ada.memberId}/devices") {
             signedIn(server.person("nobody", null)); header("Ostrom-Org", org.toString())
         }.status)
     }
+
+    @Test
+    fun aDeviceKeepsWhatIsKnownOfItAndTheRepositoriesSayWhenItIsGone() =
+        serverTest(listOf(IdentityModule), overrides) { server ->
+            val ada = server.person("ada", OrgRole.MEMBER)
+            val devices = server.koin.get<DevicesRepository>()
+            val authorizations = server.koin.get<DeviceAuthorizationsRepository>()
+            val now = Clock.System.now()
+            assertFalse(devices.rename(Uuid.random(), "x"))
+            assertFalse(devices.remove(ada.user.id, Uuid.random(), now))
+
+            suspend fun signIn(index: Int, platform: String?, osVersion: String?): DeviceSignIn? {
+                val authorization = DeviceAuthorization(
+                    Uuid.random(), "CODE-$index", "host", DeviceAuthorizationStatus.APPROVED, ada.user.id,
+                    now, now + 1.days, null,
+                )
+                authorizations.create(authorization, "hash-$index")
+                val token = ApiToken(
+                    Uuid.random(), ada.user.id, null, "host", TokenKind.CLI, setOf("profile:read"), "osc_hint", null,
+                    now, now + 1.days, null, null,
+                )
+                val login = DeviceSignInRequest(INSTALLATION, "d", platform, osVersion)
+                val first = authorizations.consumeOnDevice(authorization.id, token, "secret-$index", login, now)
+                // The authorization gives one token: a second poll consumes nothing and stores nothing.
+                assertNull(authorizations.consumeOnDevice(authorization.id, token, "again-$index", login, now))
+                return first
+            }
+
+            val registered = assertNotNull(signIn(1, "linux", "6.1"))
+            assertTrue(registered.registered)
+            val quiet = assertNotNull(signIn(2, null, null))
+            assertEquals(registered.device.id, quiet.device.id)
+            assertFalse(quiet.registered)
+            assertEquals(listOf("linux", "6.1"), listOf(quiet.device.platform, quiet.device.osVersion))
+            val updated = assertNotNull(signIn(3, "macos", null))
+            assertEquals(listOf("macos", null), listOf(updated.device.platform, updated.device.osVersion))
+            val stored = assertNotNull(devices.find(ada.user.id, INSTALLATION))
+            assertEquals(listOf("d", "macos", null), listOf(stored.name, stored.platform, stored.osVersion))
+            assertEquals(1, devices.count(ada.user.id))
+        }
 
     private companion object {
         const val DEVICES = "/api/v1/devices"

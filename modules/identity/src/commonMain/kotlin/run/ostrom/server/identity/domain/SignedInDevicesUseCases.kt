@@ -101,7 +101,8 @@ class ListDevicesUseCaseImpl(
             )
         }
         val alone = live.filter { it.deviceId == null }.map {
-            SignedInDevice(it.id, it.name, lastSeenAt = it.lastUsedAt, current = (it.id == callerToken).takeIf { c -> c })
+            val current = (it.id == callerToken).takeIf { itself -> itself }
+            SignedInDevice(it.id, it.name, lastSeenAt = it.lastUsedAt, current = current)
         }
         if (member == null) return registered + alone
         val owner = userId.takeIf { member.role !in DEVICES_MANAGERS }
@@ -198,7 +199,8 @@ class RenameDeviceUseCaseImpl(
         val device = devices.get(deviceId) ?: throw missing()
         val orgId = managedIn(device, userId, member, members, missing)
         if (!devices.rename(deviceId, label)) throw missing()
-        audit.record(AuditEntry(orgId, userId, "device.renamed", "device", deviceId.toString(), ownerDetails(device, userId)))
+        val details = ownerDetails(device, userId)
+        audit.record(AuditEntry(orgId, userId, "device.renamed", "device", deviceId.toString(), details))
         val own = device.userId == userId
         return list(device.userId, null, callerToken.takeIf { own }).first { it.id == deviceId }
     }
@@ -280,7 +282,8 @@ class SignOutDeviceUseCaseImpl(
         if (device != null) {
             val orgId = managedIn(device, userId, member, members) { DeviceNotFoundException() }
             if (!devices.remove(device.userId, deviceId, clock.nowMillis())) throw DeviceNotFoundException()
-            audit.record(AuditEntry(orgId, userId, "device.removed", "device", deviceId.toString(), ownerDetails(device, userId)))
+            val details = ownerDetails(device, userId)
+            audit.record(AuditEntry(orgId, userId, "device.removed", "device", deviceId.toString(), details))
             return
         }
         if (member == null) throw DeviceNotFoundException()

@@ -105,7 +105,7 @@ class DeviceAuthorizationsRepositoryImpl(private val database: JdbcDatabase) : D
     }
 
     // The sign-in of an installation: the person's row is locked, so that their sign-ins and removals of a device run
-    // one after the other, as TeamCode's registration serializes on the member row; the limit is counted under the lock.
+    // one after the other, as TeamCode's registration serializes on the member row; the limit is counted under it.
     override suspend fun consumeOnDevice(
         id: Uuid,
         token: ApiToken,
@@ -130,24 +130,20 @@ class DeviceAuthorizationsRepositoryImpl(private val database: JdbcDatabase) : D
             .singleOrNull()?.toDevice()
         if (existing != null) {
             // A client that reports nothing keeps what a newer one reported.
-            d.update({ d.id eq existing.id }) {
-                it[lastLoginAt] = now
-                if (login.platform != null) {
-                    it[platform] = login.platform
-                    it[osVersion] = login.osVersion
-                }
-            }
-            val reported = login.platform != null
             val device = existing.copy(
                 lastLoginAt = now,
-                platform = if (reported) login.platform else existing.platform,
-                osVersion = if (reported) login.osVersion else existing.osVersion,
+                platform = login.platform ?: existing.platform,
+                osVersion = if (login.platform != null) login.osVersion else existing.osVersion,
             )
+            d.update({ d.id eq existing.id }) {
+                it[lastLoginAt] = device.lastLoginAt
+                it[platform] = device.platform
+                it[osVersion] = device.osVersion
+            }
             return DeviceSignIn(device, registered = false)
         }
-        if (d.select(d.id).where { d.userId eq userId }.limit(MAX_REGISTERED_DEVICES).count() >= MAX_REGISTERED_DEVICES) {
-            throw DeviceLimitException()
-        }
+        val held = d.select(d.id).where { d.userId eq userId }.limit(MAX_REGISTERED_DEVICES).count()
+        if (held >= MAX_REGISTERED_DEVICES) throw DeviceLimitException()
         val device = RegisteredDevice(
             Uuid.random(), userId, login.installationId, login.name, login.platform, login.osVersion, now, now,
         )

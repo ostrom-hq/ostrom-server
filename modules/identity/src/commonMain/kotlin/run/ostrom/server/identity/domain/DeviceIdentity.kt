@@ -97,16 +97,16 @@ fun validatedInstallation(identity: DeviceLoginIdentity?): DeviceLoginIdentity? 
     val installation = identity?.installationId ?: return null
     if (!INSTALLATION_ID.matches(installation)) throw InvalidInstallationException()
     val name = identity.deviceName?.let(::validatedDeviceName)
-    val platform = identity.platform
-    if (platform != null && platform !in DEVICE_PLATFORMS) throw InvalidPlatformException()
-    val version = identity.osVersion
-    if (version != null) {
-        val printable = version.none { it.isISOControl() || it.isWhitespace() && it != ' ' }
-        if (platform == null || version.isBlank() || version.length > MAX_OS_VERSION || !printable) {
-            throw InvalidOsVersionException()
-        }
-    }
+    val platform = identity.platform?.also { if (it !in DEVICE_PLATFORMS) throw InvalidPlatformException() }
+    val version = identity.osVersion?.also { checkOsVersion(platform, it) }
     return DeviceLoginIdentity(installation, name, platform, version)
+}
+
+/** A system version is 1 to [MAX_OS_VERSION] printable characters, sent with its platform. */
+private fun checkOsVersion(platform: String?, version: String) {
+    val printable = version.none { it.isISOControl() || it.isWhitespace() && it != ' ' }
+    val valid = platform != null && version.isNotBlank() && version.length <= MAX_OS_VERSION && printable
+    if (!valid) throw InvalidOsVersionException()
 }
 
 /**

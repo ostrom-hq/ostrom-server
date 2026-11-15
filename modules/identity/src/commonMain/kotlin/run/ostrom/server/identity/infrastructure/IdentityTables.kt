@@ -184,7 +184,7 @@ internal object IdentityDeviceAuthorizations : Table("identity_device_authorizat
     override val primaryKey = PrimaryKey(id)
 }
 
-/** The registered installations of the CLI (`devices.v1`): an account-level table, one row per person and installation. */
+/** The CLI's registered installations (`devices.v1`): an account-level table, one row per person and installation. */
 internal object IdentityDevices : Table("identity_devices") {
     val id = uuid("id")
     val userId = uuid("user_id")

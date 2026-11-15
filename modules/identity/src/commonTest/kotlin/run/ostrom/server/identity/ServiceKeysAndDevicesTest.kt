@@ -294,7 +294,12 @@ class ServiceKeysAndDevicesTest {
 
     /** A token as the listing shows it: a CLI token on its own, or the elevated one. */
     private fun ApiToken.toDeviceResponse() =
-        SignedInDevice(id, name, lastSeenAt = lastUsedAt, elevated = takeIf { kind == TokenKind.ADMIN }).toDeviceResponse()
+        SignedInDevice(
+            id,
+            name,
+            lastSeenAt = lastUsedAt,
+            elevated = takeIf { kind == TokenKind.ADMIN },
+        ).toDeviceResponse()
 
     private suspend fun token(userId: Uuid, kind: TokenKind, name: String, orgId: Uuid? = null): ApiToken {
         val token = ApiToken(

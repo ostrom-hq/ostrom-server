@@ -52,7 +52,13 @@ class DeviceUseCasesTest {
     private val clock = SettableClock()
     private val start = StartDeviceAuthorizationUseCaseImpl(authorizations, secrets, hasher, limiter, clock)
     private val get = GetDeviceAuthorizationUseCaseImpl(authorizations, limiter, clock)
-    private val answer = AnswerDeviceAuthorizationUseCaseImpl(authorizations, authorizations.devices, limiter, audit, clock)
+    private val answer = AnswerDeviceAuthorizationUseCaseImpl(
+        authorizations,
+        authorizations.devices,
+        limiter,
+        audit,
+        clock,
+    )
     private val poll = PollDeviceAuthorizationUseCaseImpl(authorizations, tokens, secrets, hasher, audit, clock)
     private val userId = Uuid.random()
 
