@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.runners.domain.RunnerCredentialsImpl
 import run.ostrom.server.runners.domain.BackgroundWork
 import run.ostrom.server.runners.domain.Caller
 import run.ostrom.server.runners.domain.CloudEnvironmentSpec
@@ -48,7 +49,8 @@ class PreparationLifecycleTest {
         ReconcileCloudSessionUseCaseImpl(repository, driver, FakeRunnerTokens(), plans, meter, clock) {
             BackgroundWork.DEFAULT_MAX_MINUTES
         }
-    private val heartbeat = RunnerHeartbeatUseCaseImpl(repository, FakeRunnerTokens(), meter, clock)
+    private val heartbeat =
+        RunnerHeartbeatUseCaseImpl(repository, RunnerCredentialsImpl(repository, FakeRunnerTokens()), meter, clock)
     private val alice = Caller(ORG_A, "alice")
     private val api = CloudRepository("https://github.com/acme/api.git", "api")
     private val failure = SessionFailure("preparation_failed", "Setup command 1 (start) failed.", retryable = false)

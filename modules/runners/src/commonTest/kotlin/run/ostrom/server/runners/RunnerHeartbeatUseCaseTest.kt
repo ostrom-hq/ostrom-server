@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.runners.domain.RunnerCredentialsImpl
 import run.ostrom.server.runners.domain.CheckRunnerTokenUseCaseImpl
 import run.ostrom.server.runners.domain.CloudUsageMeter
 import run.ostrom.server.runners.domain.DesiredState
@@ -31,7 +32,8 @@ class RunnerHeartbeatUseCaseTest {
     private val repository = InMemoryCloudSessionsRepository()
     private val clock = SettableClock()
     private val meter = RepositoryCloudUsageMeter(repository)
-    private val heartbeat = RunnerHeartbeatUseCaseImpl(repository, FakeRunnerTokens(), meter, clock)
+    private val heartbeat =
+        RunnerHeartbeatUseCaseImpl(repository, RunnerCredentialsImpl(repository, FakeRunnerTokens()), meter, clock)
     private val startedAt = clock.now
 
     private fun running(state: SessionState = SessionState.CREATING, desired: DesiredState = DesiredState.RUNNING) =
@@ -55,7 +57,7 @@ class RunnerHeartbeatUseCaseTest {
     @Test
     fun aRunnerIsAuthenticatedByTheTokenOfACurrentExecution() = runTest {
         running()
-        val check = CheckRunnerTokenUseCaseImpl(repository, FakeRunnerTokens())
+        val check = CheckRunnerTokenUseCaseImpl(RunnerCredentialsImpl(repository, FakeRunnerTokens()))
         check("tok")
         assertFailsWith<RunnerUnauthenticatedException> { check("forged") }
     }
@@ -127,7 +129,8 @@ class RunnerHeartbeatUseCaseTest {
                 recorded += Triple(orgId, seconds, newExecution)
             }
         }
-        val counting = RunnerHeartbeatUseCaseImpl(repository, FakeRunnerTokens(), meter, clock)
+        val counting =
+            RunnerHeartbeatUseCaseImpl(repository, RunnerCredentialsImpl(repository, FakeRunnerTokens()), meter, clock)
         val session = running()
         counting("tok", beat(session.id))
         counting("tok", beat(session.id))

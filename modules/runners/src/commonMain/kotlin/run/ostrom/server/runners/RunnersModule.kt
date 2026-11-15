@@ -49,6 +49,8 @@ import run.ostrom.server.runners.domain.AuthenticateRunnerUseCase
 import run.ostrom.server.runners.domain.AuthenticateRunnerUseCaseImpl
 import run.ostrom.server.runners.domain.RunnerPrincipalResolver
 import run.ostrom.server.runners.domain.RunnerTokenPrincipalResolver
+import run.ostrom.server.runners.domain.RunnerCredentials
+import run.ostrom.server.runners.domain.RunnerCredentialsImpl
 import run.ostrom.server.runners.domain.ChangeCloudSessionUseCase
 import run.ostrom.server.runners.domain.ChangeCloudSessionUseCaseImpl
 import run.ostrom.server.runners.domain.NoPendingWaitAnswers
@@ -250,7 +252,12 @@ object RunnersModule : ServerModule {
         }
         // An answer to a wait of a paused cloud session resumes it (automations calls it once the answer is stored).
         single<CloudSessionWakes> { RunnersCloudSessionWakes(get(), get()) }
-        single<CheckRunnerTokenUseCase> { CheckRunnerTokenUseCaseImpl(get(), get()) }
+        // A runner's token, or its pod's projected token where OSTROM_RUNNERS_KUBERNETES_POD_IDENTITY lets the
+        // clusters review it.
+        single<RunnerCredentials> {
+            RunnerCredentialsImpl(get(), get(), get<RunnersConfig>().podTokenReviews(get()), get(), get<Logger>())
+        }
+        single<CheckRunnerTokenUseCase> { CheckRunnerTokenUseCaseImpl(get()) }
         single<RunnerHeartbeatUseCase> { RunnerHeartbeatUseCaseImpl(get(), get(), get(), get()) }
         single<RecordCloudSessionActivityUseCase> { RecordCloudSessionActivityUseCaseImpl(get(), get()) }
         single<ReconcileCloudSessionUseCase> {
@@ -269,11 +276,11 @@ object RunnersModule : ServerModule {
         // The members' GitHub access when the GitHub integration is there (always on a full server).
         single<SetCloudSessionGitHubAccessUseCase> { SetCloudSessionGitHubAccessUseCaseImpl(get(), get(), get()) }
         single<RunnerGitHubTokenUseCase> {
-            RunnerGitHubTokenUseCaseImpl(get(), get(), getOrNull<RunnerGitHubTokens>() ?: NoRunnerGitHubTokens)
+            RunnerGitHubTokenUseCaseImpl(get(), getOrNull<RunnerGitHubTokens>() ?: NoRunnerGitHubTokens)
         }
         single<RunnerVariables> { runnerVariables(getOrNull<ResolveEnvironmentUseCase>()) }
         single<RunnerVariablesUseCase> {
-            RunnerVariablesUseCaseImpl(get(), get(), get(), getOrNull<WaitSecretSource>(), getOrNull<MemberDirectory>())
+            RunnerVariablesUseCaseImpl(get(), get(), getOrNull<WaitSecretSource>(), getOrNull<MemberDirectory>())
         }
         // The agent of a cloud session, for the secret fields of its waits (waits.secrets.v1).
         single<WaitSecretSessions> { CloudSessionWaitSecretSessions(get()) }
@@ -311,7 +318,7 @@ object RunnersModule : ServerModule {
         single { TerminalRelay() }
         single<TerminalTickets> { TerminalTicketsImpl(get(), get()) }
         // Who a runner call's credential names; the remote sessions add a device owner's resolver to this list.
-        single<List<RunnerPrincipalResolver>> { listOf(RunnerTokenPrincipalResolver(get(), get())) }
+        single<List<RunnerPrincipalResolver>> { listOf(RunnerTokenPrincipalResolver(get())) }
         single<AuthenticateRunnerUseCase> { AuthenticateRunnerUseCaseImpl(get(), get()) }
         single<OpenTerminalUseCase> { OpenTerminalUseCaseImpl(get()) }
         single<IssueTerminalTicketUseCase> { IssueTerminalTicketUseCaseImpl(get(), get()) }

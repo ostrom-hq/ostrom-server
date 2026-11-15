@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.runners.domain.RunnerCredentialsImpl
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.runners.domain.CloudEnvironmentSpec
@@ -72,7 +73,7 @@ class RunnerEnvironmentUseCaseTest {
     }
     private val use = RunnerEnvironmentUseCaseImpl(
         repository,
-        FakeRunnerTokens(),
+        RunnerCredentialsImpl(repository, FakeRunnerTokens()),
         { _, _ -> values },
         github,
         members,

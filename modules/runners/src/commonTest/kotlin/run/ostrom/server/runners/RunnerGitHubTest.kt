@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.runners.domain.RunnerCredentialsImpl
 import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.audit.OrgAuditTrail
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -65,7 +66,7 @@ class RunnerGitHubTest {
             }
         }
     }
-    private val runner = RunnerGitHubTokenUseCaseImpl(repository, tokens, links)
+    private val runner = RunnerGitHubTokenUseCaseImpl(RunnerCredentialsImpl(repository, tokens), links)
     private val access = SetCloudSessionGitHubAccessUseCaseImpl(repository, audit, clock)
     private val alice = Caller(ORG_A, "alice")
     private val principal = AuthenticatedPrincipal("alice", PrincipalKind.USER, setOf("user:*"))

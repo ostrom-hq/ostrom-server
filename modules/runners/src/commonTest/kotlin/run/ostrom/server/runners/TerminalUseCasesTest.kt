@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.runners.domain.RunnerCredentialsImpl
 import run.ostrom.server.runners.domain.AuthenticateRunnerUseCaseImpl
 import run.ostrom.server.runners.domain.RunnerExecution
 import run.ostrom.server.runners.domain.RunnerPrincipalResolver
@@ -46,7 +47,7 @@ class TerminalUseCasesTest {
         val other = RunnerPrincipalResolver { credential ->
             RunnerExecution(ORG_B, Uuid.random(), 1).takeIf { credential == "device" }
         }
-        val runnerToken = RunnerTokenPrincipalResolver(repository, tokens)
+        val runnerToken = RunnerTokenPrincipalResolver(RunnerCredentialsImpl(repository, tokens))
         val authenticate = AuthenticateRunnerUseCaseImpl(listOf(runnerToken, other), repository)
 
         val execution = RunnerExecution(running.orgId, running.id, 3)

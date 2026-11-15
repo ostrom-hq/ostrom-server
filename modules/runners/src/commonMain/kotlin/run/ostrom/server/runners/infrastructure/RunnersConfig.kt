@@ -3,6 +3,8 @@ package run.ostrom.server.runners.infrastructure
 
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.InvalidConfigException
+import run.ostrom.server.runners.domain.PodTokenReviews
+import run.ostrom.server.runners.domain.RuntimeDriver
 
 /**
  * The runners module's configuration (keys `OSTROM_RUNNERS_…`, docs/MODULES.md). It chooses infrastructure (which
@@ -36,6 +38,16 @@ data class RunnersConfig(
     /** The runtime's name runners are labelled with (`kubernetes`, `docker`), null when cloud sessions are off. */
     val runtimeLabel: String? get() = if (driver == DriverKind.NONE) null else driver.name.lowercase()
 
+    /**
+     * What reviews the pods' projected tokens.
+     *
+     * @param runtime The runtime driver.
+     *
+     * @return The Kubernetes driver with [KubernetesSettings.podIdentity], else null: pod tokens are refused.
+     */
+    fun podTokenReviews(runtime: RuntimeDriver): PodTokenReviews? =
+        (runtime as? PodTokenReviews)?.takeIf { kubernetes.podIdentity }
+
     /** Constants and readers of the enclosing type. */
     companion object {
         /** The runner image published by ostrom-cli's CI. */
@@ -67,6 +79,7 @@ data class RunnersConfig(
                 kubernetes = KubernetesSettings(
                     priorityClass = source["OSTROM_RUNNERS_KUBERNETES_PRIORITY_CLASS"],
                     serverSelector = serverSelector(source["OSTROM_RUNNERS_KUBERNETES_SERVER_SELECTOR"]),
+                    podIdentity = source["OSTROM_RUNNERS_KUBERNETES_POD_IDENTITY"] == "true",
                 ),
                 docker = DockerSettings(
                     apiUrl = source["OSTROM_RUNNERS_DOCKER_API_URL"] ?: "http://127.0.0.1:2375",
@@ -119,10 +132,14 @@ data class RunnersConfig(
  * @property priorityClass The session pods' priority class, an existing low one so they never preempt the cluster's
  *   other pods; none when null (priority 0, which preempts nothing either).
  * @property serverSelector The labels of the server's pods, the only pods sessions may reach.
+ * @property podIdentity Whether a runner may prove its pod with a projected service-account token, which the session's
+ *   cluster reviews (`OSTROM_RUNNERS_KUBERNETES_POD_IDENTITY=true`, set by the chart with its `system:auth-delegator`
+ *   binding): the runner container then mounts one, beside its runner token.
  */
 data class KubernetesSettings(
     val priorityClass: String? = null,
     val serverSelector: Map<String, String> = DEFAULT_SERVER_SELECTOR,
+    val podIdentity: Boolean = false,
 ) {
     /** Constants of the enclosing type. */
     companion object {
