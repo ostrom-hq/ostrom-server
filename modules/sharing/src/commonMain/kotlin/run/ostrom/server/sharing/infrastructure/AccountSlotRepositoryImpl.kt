@@ -6,6 +6,7 @@ import run.ostrom.server.secrets.infrastructure.fetchInOrg
 import run.ostrom.server.secrets.infrastructure.inTenant
 import run.ostrom.server.sharing.domain.AccountSlot
 import run.ostrom.server.sharing.domain.AccountSlotRepository
+import run.ostrom.server.sharing.domain.ActiveSession
 import run.ostrom.server.sharing.domain.SharedAccount
 import run.ostrom.server.sharing.domain.SlotView
 import io.github.smyrgeorge.sqlx4k.Driver
@@ -13,6 +14,7 @@ import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
+import kotlin.time.Duration
 import kotlin.uuid.Uuid
 
 /**
@@ -76,6 +78,15 @@ class AccountSlotRepositoryImpl(private val driver: Driver) : AccountSlotReposit
         Statement.create(SLOT_ACTIVE_SQL).bind("org_id", orgId),
     ).getOrThrow().counts()
 
+    override suspend fun activeSessions(orgId: Uuid, within: Duration): List<ActiveSession> = driver.fetchInOrg(
+        orgId,
+        Statement.create(AFFINITY_ACTIVE_SQL)
+            .bind("org_id", orgId)
+            .bind("seconds", (AccountSlotRepository.AFFINITY - within).inWholeSeconds),
+    ).getOrThrow().map {
+        ActiveSession(it.get("member_id").asUuid(), it.get("session_hash").asString(), it.get("account_id").asUuid())
+    }
+
     private fun ResultSet.counts(): Map<Uuid, Int> =
         associate { it.get("account_id").asUuid() to it.get("active").asLong().toInt() }
 }
@@ -107,6 +118,14 @@ internal const val SLOT_PURGE_SQL = "DELETE FROM sharing_slots WHERE org_id = :o
 internal val SLOT_INSERT_SQL =
     "INSERT INTO sharing_slots (id, org_id, account_id, expires_at) " +
         "VALUES (:id, :org_id, :account_id, now() + INTERVAL '$SLOT_SECONDS seconds')"
+
+/**
+ * The sessions leased within a span: their affinity, renewed for [AccountSlotRepository.AFFINITY] at each lease, ends
+ * more than `:seconds` (the affinity minus the span) from now. By the expiry index, at most the org's bound.
+ */
+internal val AFFINITY_ACTIVE_SQL =
+    "SELECT member_id, session_hash, account_id FROM sharing_affinities WHERE org_id = :org_id " +
+        "AND expires_at > now() + :seconds * INTERVAL '1 second' LIMIT ${AccountSlotRepository.MAX_ORG_AFFINITIES}"
 
 /** The unexpired slots of the org. */
 internal const val SLOT_ACTIVE_SQL =

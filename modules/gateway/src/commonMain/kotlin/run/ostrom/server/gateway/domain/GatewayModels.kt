@@ -235,6 +235,12 @@ fun interface SpendGuard {
 
     /** Drops the hold of a call that waits in the admission queue; nothing when it holds none. */
     suspend fun release(orgId: Uuid, callId: Uuid) = Unit
+
+    /**
+     * Whether the member's budgets still let a call through now, holding nothing (the capacity controller's
+     * `allowanceAvailable`): true unless a budget binds it.
+     */
+    suspend fun available(orgId: Uuid, memberId: Uuid): Boolean = true
 }
 
 /** Allows every call: the default until the budgets module binds its [SpendGuard]. */

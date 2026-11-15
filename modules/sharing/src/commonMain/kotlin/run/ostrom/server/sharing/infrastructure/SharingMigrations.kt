@@ -77,6 +77,29 @@ private val QUOTA_HISTORY_SQL: String =
         REVOKE CREATE ON SCHEMA public FROM ostrom_router
         """.trimIndent()
 
+private const val ORGS_FUNCTION = "sharing_orgs_with_accounts()"
+
+private val PACING_READS_SQL: String =
+    """
+    CREATE INDEX sharing_quota_history_org ON sharing_quota_history (org_id, observed_at);
+    CREATE POLICY sharing_accounts_router_orgs ON sharing_accounts FOR SELECT TO ostrom_router
+        USING (current_user = 'ostrom_router');
+    GRANT SELECT (org_id) ON sharing_accounts TO ostrom_router;
+    CREATE FUNCTION $ORGS_FUNCTION RETURNS SETOF UUID
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        SELECT DISTINCT org_id FROM sharing_accounts ORDER BY org_id LIMIT 100000
+    $$;
+    REVOKE EXECUTE ON FUNCTION $ORGS_FUNCTION FROM PUBLIC;
+    DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+            GRANT EXECUTE ON FUNCTION $ORGS_FUNCTION TO ostrom_app;
+        END IF;
+    END $$;
+    GRANT CREATE ON SCHEMA public TO ostrom_router;
+    ALTER FUNCTION $ORGS_FUNCTION OWNER TO ostrom_router;
+    REVOKE CREATE ON SCHEMA public FROM ostrom_router
+    """.trimIndent()
+
 /** The schema of the sharing module; its tables start with `sharing_`, each confined to its org (S2-01, S2-21). */
 val SharingMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -223,4 +246,7 @@ val SharingMigrations: List<SchemaMigration> = listOf(
         sql = "UPDATE sharing_accounts SET max_concurrent = 0",
     ),
     SchemaMigration(version = 11, name = "sharing_quota_history", sql = QUOTA_HISTORY_SQL),
+    // The capacity controller's reads: an org's readings of the last hour by time, and the orgs that share accounts,
+    // listed across organizations by a function that sees only `org_id` (TeamCode's single team needs neither).
+    SchemaMigration(version = 12, name = "sharing_pacing_reads", sql = PACING_READS_SQL),
 )

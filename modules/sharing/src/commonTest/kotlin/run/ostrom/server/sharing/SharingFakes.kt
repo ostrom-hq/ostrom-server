@@ -12,6 +12,7 @@ import run.ostrom.server.sharing.domain.AccountProvider
 import run.ostrom.server.sharing.domain.AccountRefreshRepository
 import run.ostrom.server.sharing.domain.AccountSlot
 import run.ostrom.server.sharing.domain.AccountSlotRepository
+import run.ostrom.server.sharing.domain.ActiveSession
 import run.ostrom.server.sharing.domain.AccountSpendReader
 import run.ostrom.server.sharing.domain.AccountStatus
 import run.ostrom.server.sharing.domain.AccountTokenCipher
@@ -272,6 +273,10 @@ class InMemorySlots(private val clock: Clock, private val accounts: InMemoryAcco
         .filter { it.orgId == orgId && it.expiresAt > clock.now() }
         .groupingBy { it.slot.accountId }
         .eachCount()
+
+    override suspend fun activeSessions(orgId: Uuid, within: Duration): List<ActiveSession> = affinities
+        .filter { (k, v) -> k.first == orgId && v.expiresAt > clock.now() + AccountSlotRepository.AFFINITY - within }
+        .map { (k, v) -> ActiveSession(k.second, k.third, v.accountId) }
 }
 
 /** The pool and its collaborators over [InMemoryAccounts], as the module wires them. */

@@ -129,7 +129,7 @@ class AwaitAdmissionUseCaseImpl(
         blocked = (entry as? AdmissionEntry.Waiting)?.blocked == true
         if (entry == AdmissionEntry.Admitted) started(start()) else null
     } catch (refused: QueueRefusedException) {
-        refusal(refused.kind, queueMessage(refused.kind), model)
+        refusal(refused.kind, queueMessage(refused.kind), model, refused.retryIn)
     }
 
     /** A busy plan puts the call back to wait, at its place. */
@@ -161,13 +161,17 @@ class AwaitAdmissionUseCaseImpl(
         }
     }
 
-    private fun refusal(kind: RefusalKind, message: String, model: String) =
-        InferencePlan.Refused(InferenceRefusal(kind, message, clock.now() + AwaitAdmissionUseCase.RETRY), model)
+    private fun refusal(kind: RefusalKind, message: String, model: String, retryIn: Duration? = null) =
+        InferencePlan.Refused(
+            InferenceRefusal(kind, message, clock.now() + (retryIn ?: AwaitAdmissionUseCase.RETRY)),
+            model,
+        )
 
-    private fun queueMessage(kind: RefusalKind): String = if (kind == RefusalKind.QUEUE_FULL) {
-        "Ostrom's admission queue is full for you or your organization. Retry shortly."
-    } else {
-        "Your place in Ostrom's admission queue expired. Send the request again."
+    private fun queueMessage(kind: RefusalKind): String = when (kind) {
+        RefusalKind.QUEUE_FULL -> "Ostrom's admission queue is full for you or your organization. Retry shortly."
+        RefusalKind.PACING_DELAY -> "Ostrom is spacing out your requests because the shared accounts' subscription " +
+            "quota is burning fast. Retry in a few seconds."
+        else -> "Your place in Ostrom's admission queue expired. Send the request again."
     }
 
     private fun timeoutMessage(blocked: Boolean, request: AdmissionRequest): String {

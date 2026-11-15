@@ -52,6 +52,13 @@ class InMemoryQuotaHistory : QuotaHistoryRepository {
         }.map { it.third }.sortedByDescending { it.observedAt }.take(limit)
     }
 
+    override suspend fun recentOfOrg(
+        orgId: Uuid,
+        observed: ClosedRange<Instant>,
+        limit: Int,
+    ): Map<Uuid, List<QuotaWindow>> = readings.filter { (org, _, it) -> org == orgId && it.observedAt in observed }
+        .sortedByDescending { it.third.observedAt }.take(limit).groupBy({ it.second }, { it.third })
+
     override suspend fun prune(before: Instant, limit: Int): Long = 0
 }
 

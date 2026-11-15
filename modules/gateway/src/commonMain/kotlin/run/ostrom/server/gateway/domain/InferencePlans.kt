@@ -141,6 +141,12 @@ enum class RefusalKind(
     /** The call waited in the admission queue as long as it may without its turn. */
     QUEUE_TIMEOUT(SERVICE_UNAVAILABLE, "api_error", "server_error"),
 
+    /**
+     * The capacity controller spaces the admissions of the call's session or member while the shared accounts' quota
+     * burns fast (TeamCode's `pacing_delay`).
+     */
+    PACING_DELAY(TOO_MANY_REQUESTS, "rate_limit_error", "rate_limit_exceeded"),
+
     /** The call's place in the admission queue expired (its lease was not renewed). */
     QUEUE_EXPIRED(SERVICE_UNAVAILABLE, "api_error", "server_error"),
 

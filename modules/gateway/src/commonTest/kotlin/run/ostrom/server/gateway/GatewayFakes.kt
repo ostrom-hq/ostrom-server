@@ -36,6 +36,7 @@ import run.ostrom.server.sharing.domain.AccountProvider
 import run.ostrom.server.sharing.domain.AccountRefreshRepository
 import run.ostrom.server.sharing.domain.AccountSlot
 import run.ostrom.server.sharing.domain.AccountSlotRepository
+import run.ostrom.server.sharing.domain.ActiveSession
 import run.ostrom.server.sharing.domain.AccountStatus
 import run.ostrom.server.sharing.domain.AccountTokenCipher
 import run.ostrom.server.sharing.domain.AccountTokens
@@ -239,6 +240,11 @@ class InMemorySlots : AccountSlotRepository {
     override suspend fun renew(orgId: Uuid, slot: AccountSlot) = Unit
 
     override suspend fun active(orgId: Uuid): Map<Uuid, Int> = slots.groupingBy { it.accountId }.eachCount()
+
+    /** The sessions [activeSessions] answers, as a test sets them. */
+    val sessions = mutableListOf<ActiveSession>()
+
+    override suspend fun activeSessions(orgId: Uuid, within: Duration): List<ActiveSession> = sessions.toList()
 }
 
 /** The pool over [accounts]. */
