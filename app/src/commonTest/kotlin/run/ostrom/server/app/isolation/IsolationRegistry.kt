@@ -660,6 +660,9 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
         mapOf("id" to of(CLOUD_SESSION), "input" to Param.Fixed("3d0f6c7a-5b1e-4f2a-9c8d-7e6b5a4f3c21")),
     ),
     "POST /api/v1/cloud/sessions/{id}/interrupt" to target("id" to CLOUD_SESSION),
+    // Files sent to sessions (runners.cloud.files.v1): the organization's policy, a file's bytes for a session.
+    "GET /api/v1/cloud/files/policy" to Case.Target(),
+    "POST /api/v1/cloud/sessions/{id}/files" to target("id" to CLOUD_SESSION, body = """"bytes""""),
     "POST /api/v1/cloud/sessions/{id}/permissions" to
         target("id" to CLOUD_SESSION, body = """{"requestId": "r1", "behavior": "deny"}"""),
     "POST /api/v1/cloud/sessions/{id}/tasks/stop" to target("id" to CLOUD_SESSION, body = """{"taskId": "b1"}"""),
@@ -686,6 +689,10 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "POST /api/v1/cloud/runner/inputs" to Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1}"""),
     "POST /api/v1/cloud/runner/inputs/ack" to
         Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1, "acks": []}"""),
+    "GET /api/v1/cloud/runner/files/{id}" to Case.Target(
+        mapOf("id" to Param.Fixed("8e4b2d6f-1a3c-4e7b-9d5f-0c2a6b8e4f13")),
+        query = "sessionId={{CLOUD_SESSION}}&epoch=1",
+    ),
     "GET /api/v1/cloud/runner/terminal" to Case.Exempt(WEBSOCKET),
 
     // GitHub App.
