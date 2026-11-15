@@ -53,16 +53,16 @@ private fun ApiCatalog.cloudFileUploadOperations() {
             organizationHeader()
             pathId("id", SESSION_ID)
             queryText("name", "The file's name, a label only: cleaned by the server. Sent once.")
-            headerText("Idempotency-Key", "1 to 128 characters of `A-Za-z0-9._:-`; the same key returns the first " +
-                "file.")
+            headerText("Idempotency-Key", "1 to 200 visible ASCII characters; the same key returns the first file.")
         }
         responses {
             ok<CloudFileDto>("The file, stored until it is sent or expires.", HttpStatusCode.Created)
             ok<CloudFileDto>("The first file of this `Idempotency-Key`.")
             badRequest("An empty file (`empty_file`), a name sent twice or unusable (`invalid_file_name`), or a " +
-                "malformed `Idempotency-Key`.")
+                "malformed `Idempotency-Key` (`invalid_idempotency_key`).")
             notFound(NO_SESSION)
-            conflict("No tested artifact bucket for the organization (`file_storage_not_configured`).")
+            conflict("No tested artifact bucket for the organization (`file_storage_not_configured`), or the " +
+                "first upload of this `Idempotency-Key` is still running (`file_upload_in_progress`): retry later.")
             error(HttpStatusCode.PayloadTooLarge, "Above the organization's file limit (`file_too_large`).")
             error(HttpStatusCode.UnsupportedMediaType, "A type that is not allowed (`file_type_not_allowed`).")
             error(HttpStatusCode.UnprocessableEntity, "The key was used with another name or other bytes " +
@@ -91,7 +91,9 @@ private fun ApiCatalog.runnerFileOperations() {
             empty("The file's bytes (`application/octet-stream`).", HttpStatusCode.OK)
             error(HttpStatusCode.Unauthorized, RUNNER_UNKNOWN)
             notFound("Any file a message delivered to this execution does not carry (`not_found`).")
-            conflict(FENCED)
+            conflict("$FENCED Or the file's bytes are not all stored (`file_unavailable`).")
+            error(HttpStatusCode.Gone, "The file expired (`file_expired`).")
+            error(HttpStatusCode.ServiceUnavailable, "The bucket cannot be reached (`file_storage_unavailable`).")
         }
     }
 }

@@ -98,7 +98,9 @@ private fun ApiCatalog.cloudSessionCreation() {
                 "`namespace_not_allowed`).")
             error(HttpStatusCode.UnprocessableEntity, "The `Idempotency-Key` was used with another request " +
                 "(`idempotency_conflict`), no profile was named while the owner may use several or none " +
-                "(`profile_required`), or a remote session without a device (`remote_requires_device`).")
+                "(`profile_required`), a remote session without a device (`remote_requires_device`), or a session " +
+                "created for another member with an environment that needs GitHub, which its owner has not " +
+                "allowed yet (`github_owner_consent`).")
         }
     }
 }
@@ -221,7 +223,7 @@ private fun ApiCatalog.cloudSessionGitHubAccess() {
             "keeps a token it already received until it expires; turning it on or sharing applies from the " +
             "runner's next token renewal. The body is at most 1 KiB. $ORG_RESOLUTION"
         parameters {
-            onBehalfHeader()
+            onBehalfHeader(ownerOnly = true)
             organizationHeader()
             pathId("id", SESSION_ID)
         }

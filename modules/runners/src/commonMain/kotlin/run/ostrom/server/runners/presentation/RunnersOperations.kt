@@ -45,16 +45,24 @@ internal const val SESSION_ID = "The cloud session's id."
 /**
  * `Ostrom-On-Behalf-Of` of a cloud session write (`runners.cloud.onbehalf.v1`, TeamCode's `TeamCode-On-Behalf-Of`).
  */
-internal fun Parameters.Builder.onBehalfHeader() = headerText(
+internal fun Parameters.Builder.onBehalfHeader(ownerOnly: Boolean = false) = headerText(
     "Ostrom-On-Behalf-Of",
+    if (ownerOnly) {
+        "`runners.cloud.onbehalf.v1`: on this owner-only write, absent or naming the caller; any other member, " +
+            "even for an administrator, is the route's owner-only 403."
+    } else {
+        ON_BEHALF
+    },
+)
+
+private const val ON_BEHALF =
     "`runners.cloud.onbehalf.v1`: the member the write acts for, by member id or login (an id wins over a " +
         "login that spells it), 1 to 64 characters of `A-Za-z0-9._-`. Only an owner or an admin signed in, or " +
         "an administrator's service key with `cloud:admin`, may name another member; on any other credential it " +
         "must be absent or name the caller (403 `on_behalf_forbidden`). The member must be an active member of " +
         "the organization (422 `invalid_effective_member`); several values or a malformed one are 400 " +
         "`invalid_on_behalf`. It grants no right of its own: the call acts on that member's sessions with the " +
-        "caller's rights.",
-)
+        "caller's rights."
 
 /**
  * The runners module's operations: the cloud agent sessions and their conversation, the ownership transfers, the
