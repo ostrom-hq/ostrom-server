@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners.domain
 
+import run.ostrom.server.automations.domain.ServedSecrets
 import run.ostrom.server.automations.domain.WaitSecretSource
 import run.ostrom.server.kernel.auth.MemberDirectory
 import kotlin.uuid.Uuid
@@ -98,9 +99,15 @@ class RunnerVariablesUseCaseImpl(
             throw VariablesUnavailableException()
         }
         val owned = variables.of(session.orgId, session.ownerId)
-        val served = secrets?.takeIf { members?.isActiveMember(session.orgId, session.ownerId) != false }
-            ?.serve(session.orgId, session.id.toString(), session.ownerId) ?: return owned
+        val served = waitSecrets(session) ?: return owned
         // A one-time secret is deleted by being served: this answer is the only one that carries it.
         return RunnerVariableValues(owned.variables, owned.unavailable, served.values, served.oneTime.sorted())
+    }
+
+    /** The session's wait secrets, only while its owner is still an active member (no directory: the owner stands). */
+    private suspend fun waitSecrets(session: CloudSession): ServedSecrets? {
+        val source = secrets ?: return null
+        val active = members == null || members.isActiveMember(session.orgId, session.ownerId)
+        return if (active) source.serve(session.orgId, session.id.toString(), session.ownerId) else null
     }
 }

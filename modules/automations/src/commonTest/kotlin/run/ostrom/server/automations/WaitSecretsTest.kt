@@ -120,6 +120,9 @@ class WaitSecretsTest {
         assertFailsWith<InvalidWaitAnswerException> {
             WaitRules.answer(wait.question, "done", mapOf("shop_password" to JsonPrimitive(1)))
         }
+        assertFailsWith<InvalidWaitAnswerException> {
+            WaitRules.answer(wait.question, "done", values("shop_password" to "x") + ("report" to JsonPrimitive(1)))
+        }
         WaitRules.answer(wait.question, "done", values("shop_password" to "é".repeat(WaitRules.MAX_SECRET_BYTES / 2)))
         WaitRules.answer(wait.question, "done", values("shop_password" to "x", "report" to "report.pdf"))
     }
@@ -184,6 +187,9 @@ class WaitSecretsTest {
         val wait = asked(spec)
         val answered = answers.answer(bob, wait.id, "done", values("shop_password" to sentinel))
         val message = WaitMessages.answered(answered, "bob")
+        val plain = asked(WaitSpec("Access", fields = listOf(WaitField("backup", WaitFieldType.SECRET, "Backup"))))
+        val shown = WaitMessages.answered(answers.answer(bob, plain.id, "done", values("backup" to "b")), "bob")
+        assertTrue("Backup: secret provided: OSTROM_WAIT_BACKUP (available in your shell environment)" in shown, shown)
         assertTrue(
             "Shop password: secret provided: OSTROM_WAIT_SHOP_PASSWORD (available in your shell environment, " +
                 "for this turn only)" in message,

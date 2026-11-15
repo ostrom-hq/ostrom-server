@@ -19,6 +19,7 @@ import run.ostrom.server.automations.domain.WaitField
 import run.ostrom.server.automations.domain.WaitFieldType
 import run.ostrom.server.automations.domain.WaitFilter
 import run.ostrom.server.automations.domain.WaitSecret
+import run.ostrom.server.automations.domain.WaitSecretSessions
 import run.ostrom.server.automations.domain.WaitSessionNotFoundException
 import run.ostrom.server.automations.domain.WaitSpec
 import run.ostrom.server.automations.domain.WaitStatus
@@ -482,7 +483,10 @@ class WaitsPostgresTest {
 
     @Test
     fun aSecretIsSealedAtRestServedToItsOwnerOnceAndPurged() {
-        val cipher = module { single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 9 }) } }
+        val cipher = module {
+            single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 9 }) }
+            single<WaitSecretSessions> { WaitSecretSessions { _, _ -> "claude" } }
+        }
         serverTest(listOf(AutomationsModule), cipher) { server ->
             val repository = server.koin.get<WaitsRepository>()
             val timed = server.koin.get<TimedWaitsRepository>()
@@ -520,7 +524,10 @@ class WaitsPostgresTest {
 
     @Test
     fun aSecretOfTheSameNameReplacesTheEarlierOneAndAnAnotherKeyOpensNone() {
-        val cipher = module { single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 9 }) } }
+        val cipher = module {
+            single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 9 }) }
+            single<WaitSecretSessions> { WaitSecretSessions { _, _ -> "claude" } }
+        }
         serverTest(listOf(AutomationsModule), cipher) { server ->
             val repository = server.koin.get<WaitsRepository>()
             suspend fun answered(value: String, at: Instant) {

@@ -51,6 +51,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** The waits that resolve by themselves (TeamCode's `docs/waits.md`, « Waits that resolve by themselves »). */
@@ -230,6 +231,21 @@ class TimedWaitsTest {
         failure = CancellationException("stop")
         assertFailsWith<CancellationException> { pass.pass() }
         assertEquals(WaitStatus.OPEN, repository.waits.getValue(second.id).status, "A cancelled pass stops")
+    }
+
+    @Test
+    fun aPurgeThatFailsIsThrownAfterThePassAndACancelledOneStopsIt() = runTest {
+        val wait = timeWait()
+        clock.now += 2.minutes
+        var failure: Exception = IllegalStateException("purge")
+        val flaky = object : TimedWaitsRepository by timedWaits {
+            override suspend fun purgeSecrets(now: Instant, limit: Int): Int = throw failure
+        }
+        val pass = ResolveDueWaitsUseCaseImpl(flaky, events, clock)
+        assertEquals("purge", assertFailsWith<IllegalStateException> { pass.pass() }.message)
+        assertEquals(WaitStatus.RESOLVED, repository.waits.getValue(wait.id).status, "The waits are settled first")
+        failure = CancellationException("stop")
+        assertFailsWith<CancellationException> { pass.pass() }
     }
 
     @Test

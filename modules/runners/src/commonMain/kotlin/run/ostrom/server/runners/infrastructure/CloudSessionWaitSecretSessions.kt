@@ -14,7 +14,7 @@ import kotlin.uuid.Uuid
 internal class CloudSessionWaitSecretSessions(private val repository: CloudSessionsRepository) :
     WaitSecretSessions {
     override suspend fun agentOf(orgId: Uuid, sessionId: String): String? {
-        val id = Uuid.parseOrNull(sessionId) ?: return null
-        return repository.get(orgId, id)?.takeIf { it.state.holdsExecution }?.agent?.wire
+        val session = Uuid.parseOrNull(sessionId)?.let { repository.get(orgId, it) }
+        return session?.takeIf { it.state.holdsExecution }?.let { it.agent.wire }
     }
 }

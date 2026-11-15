@@ -177,20 +177,20 @@ internal class WaitsRepositoryImpl(
             ).getOrThrow().map { it.toWait() }
             events.publishIn(this, orgId, resolved.map { it.event(OrgEventType.WAIT_RESOLVED, answer.action) })
             // Sealed with the answer, so that an answer is never stored without the secret it says was provided.
-            resolved.firstOrNull()?.also { keep(it, secrets, answer.answeredAt) }
+            resolved.firstOrNull()?.also { wait -> cipher?.let { keep(it, wait, secrets, answer.answeredAt) } }
         }
     }
 
     /**
      * Seals [secrets] for the wait's session. The context binds each to its organization, session and name, so a value
      * copied to another row does not open; a later answer with the same name replaces the row. The member the session
-     * runs for is the wait's asker: an agent asks for its person only.
+     * runs for is the wait's asker: an agent asks for its person only. A wait with a secret field always has a session
+     * (the ask refuses it otherwise), and the table refuses a row without one.
      */
-    private suspend fun Transaction.keep(wait: Wait, secrets: List<WaitSecret>, at: Instant) {
-        val session = wait.sessionId ?: return
+    private suspend fun Transaction.keep(sealing: SecretCipher, wait: Wait, secrets: List<WaitSecret>, at: Instant) {
         for (secret in secrets) {
-            val context = secretContext(wait.orgId, session, secret.envName)
-            val sealed = checkNotNull(cipher).seal(secret.value.encodeToByteArray(), context)
+            val context = secretContext(wait.orgId, wait.sessionId, secret.envName)
+            val sealed = sealing.seal(secret.value.encodeToByteArray(), context)
             execute(
                 Statement.create(
                     """
@@ -202,7 +202,7 @@ internal class WaitsRepositoryImpl(
                     value = EXCLUDED.value, created_at = EXCLUDED.created_at, expires_at = EXCLUDED.expires_at
                     """,
                 ).bind("org_id", wait.orgId)
-                    .bind("session_id", session)
+                    .bind("session_id", wait.sessionId)
                     .bind("env_name", secret.envName)
                     .bind("wait_id", wait.id)
                     .bind("field_id", secret.fieldId)
@@ -298,4 +298,4 @@ internal class WaitsRepositoryImpl(
 }
 
 /** What a secret is sealed with: its organization, session and variable, so that a copied value does not open. */
-private fun secretContext(orgId: Uuid, sessionId: String, envName: String) = "wait-secret:$orgId:$sessionId:$envName"
+private fun secretContext(orgId: Uuid, sessionId: String?, envName: String) = "wait-secret:$orgId:$sessionId:$envName"
