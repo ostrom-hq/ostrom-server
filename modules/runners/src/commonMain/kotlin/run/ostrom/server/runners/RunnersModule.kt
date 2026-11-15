@@ -44,6 +44,15 @@ import run.ostrom.server.runners.domain.CheckRunnerTokenUseCase
 import run.ostrom.server.runners.domain.CheckRunnerTokenUseCaseImpl
 import run.ostrom.server.runners.domain.CloudPlanProvider
 import run.ostrom.server.runners.domain.CloudSessionsRepository
+import run.ostrom.server.runners.domain.CloudConversationService
+import run.ostrom.server.runners.domain.CloudConversationServiceImpl
+import run.ostrom.server.runners.domain.CloudConversationStore
+import run.ostrom.server.runners.domain.ConversationAnnouncement
+import run.ostrom.server.runners.infrastructure.CloudConversationMaintenance
+import run.ostrom.server.runners.infrastructure.CloudConversationStoreImpl
+import run.ostrom.server.runners.presentation.CloudConversationRoutesDependencies
+import run.ostrom.server.runners.presentation.cloudConversationRoutes
+import run.ostrom.server.kernel.database.scheduledWork
 import run.ostrom.server.runners.domain.CloudUsageMeter
 import run.ostrom.server.runners.domain.CreateCloudSessionUseCase
 import run.ostrom.server.runners.domain.CreateCloudSessionUseCaseImpl
@@ -293,6 +302,12 @@ object RunnersModule : ServerModule {
             TerminalRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), replica)
         }
         single<AutomationLauncher> { CloudSessionAutomationLauncher(get(), get(), get()) }
+        // Conversation sessions: their transcript, inputs and options, served but not announced yet.
+        single { ConversationAnnouncement() }
+        single<CloudConversationStore> { CloudConversationStoreImpl(get(), get()) }
+        single<CloudConversationService> { CloudConversationServiceImpl(get(), get(), get(), get(), get()) }
+        single { CloudConversationRoutesDependencies(get(), get()) }
+        single { CloudConversationMaintenance(get(), get(), getOrNull<CloudRuntimeSource>(), get()) }
         single<AutomationLimits> { CloudSettingsAutomationLimits(getOrNull<CloudSettingsSource>()) }
     }
 
@@ -325,6 +340,7 @@ object RunnersModule : ServerModule {
         route.cloudSessionsRoutes(koin.get())
         route.runnersRoutes(koin.get())
         route.terminalRoutes(koin.get())
+        route.cloudConversationRoutes(koin.get())
     }
 
     /**
@@ -334,6 +350,9 @@ object RunnersModule : ServerModule {
      */
     override suspend fun features(koin: Koin): Set<String> {
         if (koin.get<RunnersConfig>().driver == RunnersConfig.DriverKind.NONE) return setOf(ServerFeatures.RUNNERS)
+        // The conversation keys, files aside (not served yet), once announced.
+        val announced = koin.getOrNull<ConversationAnnouncement>()?.announced == true
+        val conversation = if (announced) CONVERSATION_FEATURES else emptySet()
         val github = koin.getOrNull<RunnerGitHubTokens>()?.available() == true
         // The members' values, once the secrets module resolves them.
         val variables = koin.getOrNull<ResolveEnvironmentUseCase>() != null
@@ -349,8 +368,20 @@ object RunnersModule : ServerModule {
             ServerFeatures.RUNNERS_CLOUD_VARIABLES.takeIf { variables },
             // Sessions on the console's clusters and the organizations' profiles.
             ServerFeatures.RUNNERS_CLOUD_PROFILES.takeIf { koin.get<RunnersConfig>().driver == KUBERNETES },
-        )
+        ) + conversation
     }
+
+    /** What conversation sessions announce, once [ConversationAnnouncement.announced]: every key but files. */
+    val CONVERSATION_FEATURES: Set<String> = setOf(
+        ServerFeatures.RUNNERS_CLOUD_CONVERSATION,
+        ServerFeatures.RUNNERS_CLOUD_PERMISSIONS,
+        ServerFeatures.RUNNERS_CLOUD_PERMISSIONS_BYPASS,
+        ServerFeatures.RUNNERS_CLOUD_TASKS,
+        ServerFeatures.RUNNERS_CLOUD_TRANSCRIPT_LIVE,
+        ServerFeatures.RUNNERS_CLOUD_TRANSCRIPT_FEEDS,
+        ServerFeatures.RUNNERS_CLOUD_MODEL,
+        ServerFeatures.RUNNERS_CLOUD_EFFORT,
+    )
 
     override fun start(scope: CoroutineScope, koin: Koin) {
         val worker = koin.get<ReconcilerWorker>()
@@ -358,5 +389,7 @@ object RunnersModule : ServerModule {
         scope.launch(start = CoroutineStart.UNDISPATCHED) { worker.run() }
         val signals = koin.get<RunnerWorkSignals>()
         scope.launch { signals.watch() }
+        val maintenance = koin.get<CloudConversationMaintenance>()
+        scope.launch { maintenance.repeat(koin.scheduledWork(), koin.get()) }
     }
 }

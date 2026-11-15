@@ -282,6 +282,8 @@ data class CreateCloudSessionRequest(
     val environment: CloudEnvironmentDto? = null,
     val profileId: String? = null,
     val image: String? = null,
+    val mode: String? = null,
+    val effort: String? = null,
 )
 
 /**
@@ -360,6 +362,10 @@ data class CloudSessionResponse(
     val environment: CloudEnvironmentDto? = null,
     val profile: CloudSessionProfileDto? = null,
     val image: String? = null,
+    val mode: String? = null,
+    val effort: String? = null,
+    val permissionBypass: Boolean? = null,
+    val waiting: CloudSessionWaitingDto? = null,
 )
 
 /**

@@ -65,6 +65,12 @@ class OpenTerminalUseCaseImpl(private val repository: CloudSessionsRepository) :
         if (session.state.isFinal || session.desiredState == DesiredState.TERMINATED) {
             throw CloudSessionStateException("This cloud session is over: its terminal is closed.")
         }
+        if (session.mode == SessionMode.CONVERSATION) {
+            throw CloudConversationRules.conflict(
+                "conversation_session",
+                "This session's agent runs headless and has no terminal: read its transcript and send it messages.",
+            )
+        }
         return session
     }
 }
