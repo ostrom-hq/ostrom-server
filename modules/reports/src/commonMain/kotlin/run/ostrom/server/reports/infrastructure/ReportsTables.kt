@@ -94,7 +94,8 @@ internal class DateColumnType : ColumnType<LocalDate>() {
     // pgjdbc reads a `DATE` as a `java.sql.Date`, written `yyyy-mm-dd`.
     override fun valueFromDB(value: Any): LocalDate = LocalDate.parse(value.toString())
 
-    override fun notNullValueToDB(value: LocalDate): Any = java.sql.Date.valueOf(value.toString())
+    // A `java.time.LocalDate`, which pgjdbc sends as the date itself, whatever the JVM's zone.
+    override fun notNullValueToDB(value: LocalDate): Any = java.time.LocalDate.parse(value.toString())
 }
 
 /** The UTC day of [at]: `CAST(timezone('UTC', at) AS DATE)`, as `CAST(at AT TIME ZONE 'UTC' AS DATE)`. */
