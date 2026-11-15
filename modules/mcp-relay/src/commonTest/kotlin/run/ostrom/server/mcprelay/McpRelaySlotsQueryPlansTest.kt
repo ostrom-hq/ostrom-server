@@ -1,21 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.mcprelay
 
-import run.ostrom.server.mcprelay.infrastructure.MCP_MINUTE_COUNT_SQL
-import run.ostrom.server.mcprelay.infrastructure.MCP_ORG_HOSTED_SQL
-import run.ostrom.server.mcprelay.infrastructure.memberStatesSql
-import run.ostrom.server.mcprelay.infrastructure.MCP_MINUTE_PURGE_SQL
-import run.ostrom.server.mcprelay.infrastructure.MCP_SLOT_INSERT_SQL
-import run.ostrom.server.mcprelay.infrastructure.MCP_SLOT_LOCK_SQL
-import run.ostrom.server.mcprelay.infrastructure.MCP_SLOT_PURGE_SQL
-import run.ostrom.server.mcprelay.infrastructure.MCP_SLOT_RELEASE_SQL
-import run.ostrom.server.mcprelay.infrastructure.MCP_SLOT_RENEW_SQL
-import run.ostrom.server.mcprelay.infrastructure.MCP_USAGE_SQL
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.mcprelay.infrastructure.countMinute
+import run.ostrom.server.mcprelay.infrastructure.lockedServer
+import run.ostrom.server.mcprelay.infrastructure.memberStatesQuery
+import run.ostrom.server.mcprelay.infrastructure.minuteCalls
+import run.ostrom.server.mcprelay.infrastructure.orgHostedAssignmentsQuery
+import run.ostrom.server.mcprelay.infrastructure.purgeMinutes
+import run.ostrom.server.mcprelay.infrastructure.purgeSlots
+import run.ostrom.server.mcprelay.infrastructure.releaseSlot
+import run.ostrom.server.mcprelay.infrastructure.renewSlot
+import run.ostrom.server.mcprelay.infrastructure.runningSlots
+import run.ostrom.server.mcprelay.infrastructure.takeSlot
 import run.ostrom.server.secrets.SecretsModule
-import run.ostrom.server.secrets.infrastructure.inTenant
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
+import org.jetbrains.exposed.v1.core.statements.Statement
+import org.jetbrains.exposed.v1.core.statements.StatementBuilder
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.uuid.Uuid
@@ -58,19 +60,20 @@ class McpRelaySlotsQueryPlansTest : RelayPostgresHarness() {
             fixtures.execute("VACUUM ANALYZE $it").getOrThrow()
         }
 
-        mapOf(
-            "the server locked" to MCP_SLOT_LOCK_SQL,
-            "the expired slots dropped" to MCP_SLOT_PURGE_SQL,
-            "the past minutes dropped" to MCP_MINUTE_PURGE_SQL,
-            "the usage read" to MCP_USAGE_SQL,
-            "the slot taken" to MCP_SLOT_INSERT_SQL,
-            "the minute counted" to MCP_MINUTE_COUNT_SQL,
-            "the slot renewed" to MCP_SLOT_RENEW_SQL,
-            "the slot given back" to MCP_SLOT_RELEASE_SQL,
-        ).forEach { (what, sql) ->
-            val plan = plan(server.driver, sql)
-            assertFalse("Seq Scan" in plan, "$what scans a table:\n$plan")
-        }
+        val member = Relay.memberA.memberId
+        val statements: Map<String, StatementBuilder.() -> Statement<*>> = mapOf(
+            "the server locked" to { lockedServer(Relay.orgA, serverA) },
+            "the expired slots dropped" to { purgeSlots(Relay.orgA, serverA) },
+            "the past minutes dropped" to { purgeMinutes(Relay.orgA, serverA) },
+            "the running read" to { runningSlots(Relay.orgA, serverA, member).query },
+            "the member's minute read" to { minuteCalls(Relay.orgA, serverA, member).query },
+            "the server's minute read" to { minuteCalls(Relay.orgA, serverA, null).query },
+            "the slot taken" to { takeSlot(Relay.orgA, serverA, member, Uuid.random()) },
+            "the minute counted" to { countMinute(Relay.orgA, serverA, member) },
+            "the slot renewed" to { renewSlot(Relay.orgA, Uuid.random()) },
+            "the slot given back" to { releaseSlot(Relay.orgA, Uuid.random()) },
+        )
+        assertNoScan(server.koin.get<JdbcDatabase>(), statements)
     }
 
     @Test
@@ -95,22 +98,20 @@ class McpRelaySlotsQueryPlansTest : RelayPostgresHarness() {
             listOf("mcp_relay_servers", "mcp_relay_assignments", "mcp_relay_stdio_states").forEach {
                 fixtures.execute("VACUUM ANALYZE $it").getOrThrow()
             }
-            mapOf(
-                "a member's states" to memberStatesSql(":server_id"),
-                "the org's hosted assignments" to MCP_ORG_HOSTED_SQL.replace(":limit", "10001"),
-            ).forEach { (what, sql) ->
-                val plan = plan(server.driver, sql)
-                assertFalse("Seq Scan" in plan, "$what scans a table:\n$plan")
-            }
+            val statements: Map<String, StatementBuilder.() -> Statement<*>> = mapOf(
+                "a member's states" to { memberStatesQuery(Relay.orgA, listOf(serverA), Relay.memberA.memberId) },
+                "the org's hosted assignments" to { orgHostedAssignmentsQuery(Relay.orgA, 10_001) },
+            )
+            assertNoScan(server.koin.get<JdbcDatabase>(), statements)
         }
 
-    private suspend fun plan(driver: Driver, sql: String): String {
-        val statement = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org_id", Relay.orgA)
-            .let { if (":server_id" in sql) it.bind("server_id", serverA) else it }
-            .let { if (":member_id" in sql) it.bind("member_id", Relay.memberA.memberId) else it }
-            .let { if (":id" in sql) it.bind("id", Uuid.random()) else it }
-        return driver.inTenant(Relay.orgA) {
-            fetchAll(statement).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
+    private suspend fun assertNoScan(
+        database: JdbcDatabase,
+        statements: Map<String, StatementBuilder.() -> Statement<*>>,
+    ) {
+        statements.forEach { (what, statement) ->
+            val plan = database.inOrg(Relay.orgA) { plan(statement).also { rollback() } }
+            assertFalse("Seq Scan" in plan, "$what scans a table:\n$plan")
         }
     }
 }
