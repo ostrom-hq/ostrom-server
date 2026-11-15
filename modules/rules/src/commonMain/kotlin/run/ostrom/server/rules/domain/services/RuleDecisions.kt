@@ -59,7 +59,7 @@ object RuleDecisions {
      * @param after The rule after, or null once deleted.
      * @return The decision, not signed yet, or null when nothing a decision covers changed.
      */
-    suspend fun RulesTransaction.record(
+    fun RulesTransaction.record(
         signer: DecisionSigner,
         decider: Decider,
         at: Instant,

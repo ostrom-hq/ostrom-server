@@ -1,105 +1,101 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.rules.infrastructure
 
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.databaseNow
+import run.ostrom.server.kernel.database.present
 import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.rules.domain.models.AnalysisFailure
 import run.ostrom.server.rules.domain.models.AnalysisKind
 import run.ostrom.server.rules.domain.models.AnalysisRun
 import run.ostrom.server.rules.domain.repositories.AnalysisRepository
 import run.ostrom.server.rules.domain.repositories.AnalysisTransaction
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.QueryExecutor
-import io.github.smyrgeorge.sqlx4k.ResultSet
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asDouble
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import org.jetbrains.exposed.v1.jdbc.insertIgnore
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
 import kotlin.uuid.Uuid
 
 /**
- * [AnalysisRepository] on PostgreSQL (`rules_analyses`, one row per organization and kind), under row level security.
+ * [AnalysisRepository] on PostgreSQL (`rules_analyses`, one row per organization and kind), under row level security:
+ * the serving role with the organization set (`withOrganization`), each query filtered on `org_id` too.
  *
- * @param driver The connection pool.
+ * @param database The serving role's pool.
  */
-class PostgresAnalysisRepository(private val driver: Driver) : AnalysisRepository {
-    override suspend fun run(orgId: Uuid, kind: AnalysisKind): AnalysisRun? = driver.withOrganization(orgId) { tx ->
-        tx.select(orgId, kind, lock = false)
+class PostgresAnalysisRepository(private val database: JdbcDatabase) : AnalysisRepository {
+    override suspend fun run(orgId: Uuid, kind: AnalysisKind): AnalysisRun? = database.withOrganization(orgId) {
+        select(orgId, kind, lock = false)
     }
 
-    override suspend fun <T> transaction(orgId: Uuid, block: suspend AnalysisTransaction.() -> T): T =
-        driver.withOrganization(orgId) { tx -> PostgresAnalysisTransaction(tx, orgId).block() }
+    override suspend fun <T> transaction(orgId: Uuid, block: AnalysisTransaction.() -> T): T =
+        database.withOrganization(orgId) { PostgresAnalysisTransaction(this, orgId).block() }
 
-    private class PostgresAnalysisTransaction(private val tx: QueryExecutor, private val orgId: Uuid) :
+    private class PostgresAnalysisTransaction(private val tx: JdbcTransaction, private val org: Uuid) :
         AnalysisTransaction {
-        override suspend fun lock(kind: AnalysisKind): AnalysisRun? {
+        override fun lock(kind: AnalysisKind): AnalysisRun? {
             // An empty row first, so two first starts queue on the same lock instead of racing on the insert.
-            tx.execute(
-                Statement.create(
-                    "INSERT INTO rules_analyses (org_id, kind, phase, progress, items, updated_at) " +
-                        "VALUES (:org, :kind, 'idle', 0, '[]', now()) ON CONFLICT (org_id, kind) DO NOTHING",
-                ).bind("org", orgId).bind("kind", kind.value),
-            ).getOrThrow()
-            return tx.select(orgId, kind, lock = true)
+            RulesAnalyses.insertIgnore {
+                it[orgId] = org
+                it[this.kind] = kind.value
+                it[phase] = "idle"
+                it[progress] = 0.0
+                it[items] = "[]"
+                it[updatedAt] = databaseNow()
+            }
+            return tx.select(org, kind, lock = true)
         }
 
-        override suspend fun put(run: AnalysisRun) {
+        override fun put(run: AnalysisRun) {
             val failure = run.failure
-            tx.execute(
-                Statement.create(
-                    "UPDATE rules_analyses SET run_id = :run, phase = :phase, progress = :progress, " +
-                        "failure_stage = :stage, failure_reason = :reason, failed_at = :failed, items = :items, " +
-                        "started_by = :by, started_at = :started, updated_at = :updated " +
-                        "WHERE org_id = :org AND kind = :kind",
-                )
-                    .bind("org", orgId)
-                    .bind("kind", run.kind.value)
-                    .bind("run", run.id)
-                    .bind("phase", run.phase)
-                    .bind("progress", run.progress)
-                    .bind("stage", failure?.stage)
-                    .bind("reason", failure?.reason)
-                    .bind("failed", failure?.at)
-                    // One writer for the whole array: `toString` of a JSON tree copies each level into its parent.
-                    .bind("items", Json.encodeToString(JsonArray.serializer(), JsonArray(run.items)))
-                    .bind("by", run.startedBy)
-                    .bind("started", run.startedAt)
-                    .bind("updated", run.updatedAt),
-            ).getOrThrow()
+            val a = RulesAnalyses
+            a.update({ (a.orgId eq org) and (a.kind eq run.kind.value) }) {
+                it[runId] = run.id
+                it[phase] = run.phase
+                it[progress] = run.progress
+                it[failureStage] = failure?.stage
+                it[failureReason] = failure?.reason
+                it[failedAt] = failure?.at
+                // One writer for the whole array: `toString` of a JSON tree copies each level into its parent.
+                it[items] = Json.encodeToString(JsonArray.serializer(), JsonArray(run.items))
+                it[startedBy] = run.startedBy
+                it[startedAt] = run.startedAt
+                it[updatedAt] = run.updatedAt
+            }
         }
     }
 
     private companion object {
-        const val COLUMNS = "org_id, run_id, phase, progress, failure_stage, failure_reason, failed_at, items, " +
-            "started_by, started_at, updated_at"
-
-        suspend fun QueryExecutor.select(orgId: Uuid, kind: AnalysisKind, lock: Boolean): AnalysisRun? = fetchAll(
-            Statement.create(
-                "SELECT $COLUMNS FROM rules_analyses WHERE org_id = :org AND kind = :kind" +
-                    if (lock) " FOR UPDATE" else "",
-            ).bind("org", orgId).bind("kind", kind.value),
-        ).getOrThrow().firstOrNull()?.toRun(kind)
+        fun JdbcTransaction.select(orgId: Uuid, kind: AnalysisKind, lock: Boolean): AnalysisRun? {
+            val a = RulesAnalyses
+            val query = a.select(a.columns).where { (a.orgId eq orgId) and (a.kind eq kind.value) }
+            return (if (lock) query.forUpdate() else query).singleOrNull()?.toRun(kind)
+        }
 
         // The empty row of a kind never started reads as no run.
-        fun ResultSet.Row.toRun(kind: AnalysisKind): AnalysisRun? {
-            val id = get("run_id").asStringOrNull() ?: return null
+        fun ResultRow.toRun(kind: AnalysisKind): AnalysisRun? {
+            val a = RulesAnalyses
+            val id = this[a.runId] ?: return null
             return AnalysisRun(
-                orgId = get("org_id").asUuid(),
+                orgId = this[a.orgId],
                 kind = kind,
                 id = id,
-                phase = get("phase").asString(),
-                progress = get("progress").asDouble(),
-                failure = get("failure_stage").asStringOrNull()?.let { stage ->
-                    val reason = get("failure_reason").asString()
-                    AnalysisFailure(stage, reason, get("failed_at").asInstant(), kind.retryPath)
+                phase = this[a.phase],
+                progress = this[a.progress],
+                failure = this[a.failureStage]?.let { stage ->
+                    val reason = present(a.failureReason, a.failureStage)
+                    AnalysisFailure(stage, reason, present(a.failedAt, a.failureStage), kind.retryPath)
                 },
-                startedBy = get("started_by").asString(),
-                startedAt = get("started_at").asInstant(),
-                updatedAt = get("updated_at").asInstant(),
-                items = Json.parseToJsonElement(get("items").asString()).jsonArray.map { it.jsonObject },
+                startedBy = present(a.startedBy, a.runId),
+                startedAt = present(a.startedAt, a.runId),
+                updatedAt = this[a.updatedAt],
+                items = Json.parseToJsonElement(this[a.items]).jsonArray.map { it.jsonObject },
             )
         }
     }

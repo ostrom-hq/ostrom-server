@@ -647,10 +647,10 @@ class GitHubDirectoryPostgresTest {
     @Test
     fun theEngineProposesRulesFromGitHubForItsOrganizationOnly() = gitHubTest { server ->
         server.installBoth()
-        // The rules tables, migrated by their owner as `ostrom-server migrate` does; the driver serves them.
+        // The rules tables, migrated by their owner as `ostrom-server migrate` does; the JDBC pool serves them.
         server.database.migrationRunner(RecordingLogger()).migrate("rules", RulesMigrations)
-        val runs = PostgresAnalysisRepository(server.driver)
-        val rules = PostgresRulesRepository(server.driver)
+        val runs = PostgresAnalysisRepository(server.koin.get())
+        val rules = PostgresRulesRepository(server.koin.get())
         val reader = server.koin.get<RepositoryReader>()
         val acme = assertIs<RepositoryListing.Connected>(reader.repositories(ORG)).repos
         val run = AnalysisRun(ORG, AnalysisKind.ANALYSIS, "run_1", AnalysisRun.CONNECT, 0.0, null, "lyes", NOW, NOW)

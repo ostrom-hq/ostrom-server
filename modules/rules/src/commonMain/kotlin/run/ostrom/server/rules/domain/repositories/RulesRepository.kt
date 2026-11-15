@@ -98,10 +98,10 @@ interface RulesRepository {
      * Runs [block] in one transaction of [orgId]: what it writes commits together, or not at all.
      *
      * @param orgId The organization.
-     * @param block The work.
+     * @param block The work, not `suspend`: no call outside the database runs inside the transaction.
      * @return What [block] returns.
      */
-    suspend fun <T> transaction(orgId: Uuid, block: suspend RulesTransaction.() -> T): T
+    suspend fun <T> transaction(orgId: Uuid, block: RulesTransaction.() -> T): T
 }
 
 /** The writes of one transaction of one organization. */
@@ -112,42 +112,42 @@ interface RulesTransaction {
      * @param id The rule id.
      * @return The rule, or null.
      */
-    suspend fun lockRule(id: String): Rule?
+    fun lockRule(id: String): Rule?
 
     /**
      * Inserts a rule.
      *
      * @param rule The rule.
      */
-    suspend fun insertRule(rule: Rule)
+    fun insertRule(rule: Rule)
 
     /**
      * Replaces a rule's fields.
      *
      * @param rule The rule as it is now.
      */
-    suspend fun updateRule(rule: Rule)
+    fun updateRule(rule: Rule)
 
     /**
      * Deletes a rule.
      *
      * @param id The rule id.
      */
-    suspend fun deleteRule(id: String)
+    fun deleteRule(id: String)
 
     /**
      * Records a decision.
      *
      * @param decision The decision, its receipt not signed yet.
      */
-    suspend fun insertDecision(decision: Decision)
+    fun insertDecision(decision: Decision)
 
     /**
      * Reads the self-approval setting and locks it until the transaction ends.
      *
      * @return The setting, or null when the organization never chose.
      */
-    suspend fun lockSelfApproval(): SelfApprovalPolicy?
+    fun lockSelfApproval(): SelfApprovalPolicy?
 
     /**
      * Sets the self-approval setting.
@@ -155,5 +155,5 @@ interface RulesTransaction {
      * @param policy The setting.
      * @param at When.
      */
-    suspend fun putSelfApproval(policy: SelfApprovalPolicy, at: Instant)
+    fun putSelfApproval(policy: SelfApprovalPolicy, at: Instant)
 }

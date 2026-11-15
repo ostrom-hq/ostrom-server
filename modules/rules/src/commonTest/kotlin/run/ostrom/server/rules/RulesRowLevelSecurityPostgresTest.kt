@@ -23,6 +23,7 @@ import run.ostrom.server.rules.infrastructure.PostgresAnalysisRepository
 import run.ostrom.server.rules.infrastructure.PostgresRulesRepository
 import run.ostrom.server.rules.infrastructure.RulesMigrations
 import run.ostrom.server.testing.TestDatabase
+import run.ostrom.server.kernel.database.JdbcDatabase
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.SQLError
 import io.github.smyrgeorge.sqlx4k.Statement
@@ -42,6 +43,9 @@ import kotlin.time.Duration.Companion.minutes
  * nothing): each organization reads and writes only its own rows, and without an organization no row at all.
  */
 class RulesRowLevelSecurityPostgresTest {
+    // The serving role's JDBC pool of the running test, for the analyses and the plans.
+    private lateinit var jdbc: JdbcDatabase
+
     private val tables = listOf("rules_rules", "rules_decisions", "rules_gate_policy", "rules_analyses")
 
     private fun asServingRole(
@@ -51,7 +55,10 @@ class RulesRowLevelSecurityPostgresTest {
         try {
             // The owner migrates, as `ostrom-server migrate` does; the test database's driver is the serving role.
             database.migrationRunner(RecordingLogger()).migrate("rules", RulesMigrations)
-            block(database.superuser, PostgresRulesRepository(database.driver), database.driver)
+            JdbcDatabase(database.servingConfig, JdbcDatabase.MIN_POOL_SIZE).use {
+                jdbc = it
+                block(database.superuser, PostgresRulesRepository(it), database.driver)
+            }
         } finally {
             database.close()
         }
@@ -162,8 +169,8 @@ class RulesRowLevelSecurityPostgresTest {
     }
 
     @Test
-    fun eachOrganizationReadsAndLocksOnlyItsOwnRuns() = asServingRole { _, _, raw ->
-        val runs = PostgresAnalysisRepository(raw)
+    fun eachOrganizationReadsAndLocksOnlyItsOwnRuns() = asServingRole { _, _, _ ->
+        val runs = PostgresAnalysisRepository(jdbc)
         val failed = AnalysisRun(
             orgId = orgA,
             kind = AnalysisKind.ANALYSIS,

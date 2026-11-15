@@ -20,10 +20,10 @@ interface AnalysisRepository {
      * Runs a block in one transaction of the organization.
      *
      * @param orgId The organization.
-     * @param block What to do.
+     * @param block What to do, not `suspend`: no call outside the database runs inside the transaction.
      * @return What the block returns.
      */
-    suspend fun <T> transaction(orgId: Uuid, block: suspend AnalysisTransaction.() -> T): T
+    suspend fun <T> transaction(orgId: Uuid, block: AnalysisTransaction.() -> T): T
 }
 
 /** The writes of one transaction, confined to its organization. */
@@ -34,12 +34,12 @@ interface AnalysisTransaction {
      * @param kind Analysis or replay.
      * @return The run, or null when none was ever started.
      */
-    suspend fun lock(kind: AnalysisKind): AnalysisRun?
+    fun lock(kind: AnalysisKind): AnalysisRun?
 
     /**
      * Writes the run of its kind, replacing the last one.
      *
      * @param run The run.
      */
-    suspend fun put(run: AnalysisRun)
+    fun put(run: AnalysisRun)
 }

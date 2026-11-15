@@ -40,6 +40,7 @@ import run.ostrom.server.rules.presentation.RulesPage
 import run.ostrom.server.testing.TestDatabase
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
+import run.ostrom.server.kernel.database.JdbcDatabase
 import io.ktor.client.call.body
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
@@ -187,11 +188,13 @@ class AnalysisEnginePostgresTest {
     @Test
     fun theEngineWritesUnderTheServingRoleOnlyForItsOrganization() = runTest {
         val database = TestDatabase.create() ?: return@runTest
+        var pool: JdbcDatabase? = null
         try {
             // The owner migrates, as `ostrom-server migrate` does; the test database's driver is the serving role.
             database.migrationRunner(RecordingLogger()).migrate("rules", RulesMigrations)
-            val runs = PostgresAnalysisRepository(database.driver)
-            val rules = PostgresRulesRepository(database.driver)
+            val jdbc = JdbcDatabase(database.servingConfig, JdbcDatabase.MIN_POOL_SIZE).also { pool = it }
+            val runs = PostgresAnalysisRepository(jdbc)
+            val rules = PostgresRulesRepository(jdbc)
             val reader = FakeRepositoryReader().apply { connect(orgA, RepositoryFixtures.docs) }
             val analyze = AnalyzeOrganizationUseCaseImpl(
                 runs, rules, reader, FakeWorkflowProposals(), RecordingLogger(), TestClock(),
@@ -215,6 +218,7 @@ class AnalysisEnginePostgresTest {
             assertEquals(emptyList(), rules.rules(orgB, RuleQuery(), 10), "Org B reads none of A's proposals")
             assertEquals(null, runs.run(orgB, AnalysisKind.ANALYSIS))
         } finally {
+            pool?.close()
             database.close()
         }
     }

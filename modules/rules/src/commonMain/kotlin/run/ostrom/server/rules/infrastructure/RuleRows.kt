@@ -10,12 +10,6 @@ import run.ostrom.server.rules.domain.models.RuleGateCheck
 import run.ostrom.server.rules.domain.models.RuleSource
 import run.ostrom.server.rules.domain.models.RuleStatus
 import run.ostrom.server.rules.domain.models.RuleStrength
-import io.github.smyrgeorge.sqlx4k.ResultSet
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asDouble
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -23,6 +17,7 @@ import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.jetbrains.exposed.v1.core.ResultRow
 
 // The rows of the rules tables, read back into the domain: lists are the JSON the contract writes.
 
@@ -31,30 +26,33 @@ import kotlinx.serialization.json.jsonPrimitive
  *
  * @return The rule.
  */
-internal fun ResultSet.Row.toRule(): Rule = Rule(
-    orgId = get("org_id").asUuid(),
-    id = get("id").asString(),
-    statement = get("statement").asString(),
-    output = get("output").asString(),
-    group = get("rule_group").asString(),
-    scope = strings(Json.parseToJsonElement(get("scope").asString())),
-    sources = Json.parseToJsonElement(get("sources").asString()).jsonArray.map { source ->
-        val fields = source.jsonObject
-        RuleSource(text(fields, "kind"), text(fields, "ref"), optional(fields, "url"))
-    },
-    why = get("why").asStringOrNull(),
-    strength = RuleStrength.valueOf(enumName(get("strength").asString())),
-    confidence = get("confidence").asDouble(),
-    status = RuleStatus.valueOf(enumName(get("status").asString())),
-    foundBy = get("found_by").asString(),
-    foundAt = get("found_at").asInstant(),
-    reviewBy = get("review_by").asStringOrNull(),
-    decidedBy = get("decided_by").asStringOrNull(),
-    decidedAt = get("decided_at").asInstantOrNull(),
-    origin = get("origin").asStringOrNull(),
-    gate = get("gate").asStringOrNull()?.let { gateOf(Json.parseToJsonElement(it).jsonObject) },
-    updatedAt = get("updated_at").asInstant(),
-)
+internal fun ResultRow.toRule(): Rule {
+    val r = RulesRules
+    return Rule(
+        orgId = this[r.orgId],
+        id = this[r.id],
+        statement = this[r.statement],
+        output = this[r.output],
+        group = this[r.group],
+        scope = strings(Json.parseToJsonElement(this[r.scope])),
+        sources = Json.parseToJsonElement(this[r.sources]).jsonArray.map { source ->
+            val fields = source.jsonObject
+            RuleSource(text(fields, "kind"), text(fields, "ref"), optional(fields, "url"))
+        },
+        why = this[r.why],
+        strength = RuleStrength.valueOf(enumName(this[r.strength])),
+        confidence = this[r.confidence],
+        status = RuleStatus.valueOf(enumName(this[r.status])),
+        foundBy = this[r.foundBy],
+        foundAt = this[r.foundAt],
+        reviewBy = this[r.reviewBy],
+        decidedBy = this[r.decidedBy],
+        decidedAt = this[r.decidedAt],
+        origin = this[r.origin],
+        gate = this[r.gate]?.let { gateOf(Json.parseToJsonElement(it).jsonObject) },
+        updatedAt = this[r.updatedAt],
+    )
+}
 
 private fun gateOf(json: JsonObject) = RuleGate(
     actions = json.getValue("actions").jsonArray.map { element ->
@@ -80,22 +78,21 @@ private fun gateOf(json: JsonObject) = RuleGate(
  *
  * @return The decision.
  */
-internal fun ResultSet.Row.toDecision(): Decision = Decision(
-    orgId = get("org_id").asUuid(),
-    id = get("id").asString(),
-    at = get("decided_at").asInstant(),
-    by = get("decided_by").asString(),
-    subject = DecisionSubject(
-        get("subject_kind").asString(),
-        get("subject_id").asString(),
-        get("subject_label").asStringOrNull(),
-    ),
-    action = get("action").asString(),
-    before = get("before_doc").asStringOrNull()?.let { Json.parseToJsonElement(it).jsonObject },
-    after = get("after_doc").asStringOrNull()?.let { Json.parseToJsonElement(it).jsonObject },
-    ruleDigest = get("rule_digest").asStringOrNull(),
-    signed = get("signed").asBoolean(),
-)
+internal fun ResultRow.toDecision(): Decision {
+    val d = RulesDecisions
+    return Decision(
+        orgId = this[d.orgId],
+        id = this[d.id],
+        at = this[d.decidedAt],
+        by = this[d.decidedBy],
+        subject = DecisionSubject(this[d.subjectKind], this[d.subjectId], this[d.subjectLabel]),
+        action = this[d.action],
+        before = this[d.beforeDoc]?.let { Json.parseToJsonElement(it).jsonObject },
+        after = this[d.afterDoc]?.let { Json.parseToJsonElement(it).jsonObject },
+        ruleDigest = this[d.ruleDigest],
+        signed = this[d.signed],
+    )
+}
 
 // The stored values are the contract's (`sole-approver`, `required`): the enum names are their upper case.
 private fun enumName(value: String): String = value.uppercase().replace('-', '_')
