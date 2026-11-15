@@ -188,12 +188,15 @@ jobs:
           grep -q OSTROM_E2E_SESSION_IMAGE web/e2e-real/machines.ts \
             || { echo "::error::ostrom-web $WEB_REF predates OSTROM_E2E_SESSION_IMAGE (ostrom-web#191)"; exit 1; }
           runner=$(docker inspect -f '{{index .RepoDigests 0}}' "$RUNNER_IMAGE")
-          echo "image=$image" >> "$GITHUB_OUTPUT"
-          echo "runner=$runner" >> "$GITHUB_OUTPUT"
+          # A server from before its cloud runtime's `sessionImage` (server#573) runs OSTROM_RUNNERS_IMAGE as the
+          # session image too: its machines then pin the runner image for both, as the plan names it.
+          session=$SESSION_IMAGE
+          git -C server grep -q DEFAULT_SESSION_IMAGE "$revision" -- modules/cloud/src/commonMain || session=$runner
+          { echo "image=$image"; echo "runner=$runner"; echo "session=$session"; } >> "$GITHUB_OUTPUT"
           {
             echo "### Images"
             echo "- server: \`$image\` (ostrom-server@${revision:0:7}; main is at ${main:0:7})"
-            echo "- cloud session: runner \`$runner\`, session \`$SESSION_IMAGE\`, on this runner's Docker"
+            echo "- cloud session: runner \`$runner\`, session \`$session\`, on this runner's Docker"
             echo "- console: ostrom-web $(git -C web rev-parse --short HEAD) ($WEB_REF), built here without mocks"
           } >> "$GITHUB_STEP_SUMMARY"
       # Stripe's TEST mode (line 6.5, the test card 4242 paid on Stripe's hosted Checkout). The Stripe CLI, pinned by
@@ -352,7 +355,7 @@ jobs:
           # The machines the journeys start run the runner image and deliver `ostrom` from it; the sessions'
           # containers run the session image (machines.ts).
           OSTROM_E2E_MACHINE_IMAGE: ${{ steps.server.outputs.runner }}
-          OSTROM_E2E_SESSION_IMAGE: ${{ env.SESSION_IMAGE }}
+          OSTROM_E2E_SESSION_IMAGE: ${{ steps.server.outputs.session }}
           OSTROM_E2E_MACHINE_SERVER_URL: http://127.0.0.1:4600
           OSTROM_E2E_MACHINE_DOCKER_API: http://127.0.0.1:2375
         # SPECS is split on spaces on purpose, each word one Playwright file filter, and never expanded as a path.

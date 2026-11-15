@@ -227,6 +227,11 @@ jobs:
           fi
           # The database roles of the image's own commit, not of a main that may have moved past it.
           git -C server show "${revision}:ci/database-roles.sql" > "$RUNNER_TEMP/database-roles.sql"
+          # A server from before its cloud runtime's `sessionImage` (server#573) runs OSTROM_RUNNERS_IMAGE as the
+          # session image too, which the registered leg's machine must then pin.
+          setting=true
+          git -C server grep -q DEFAULT_SESSION_IMAGE "$revision" -- modules/cloud/src/commonMain || setting=false
+          echo "session-setting=$setting" >> "$GITHUB_OUTPUT"
           echo "image=$image" >> "$GITHUB_OUTPUT"
           {
             echo "### Images"
@@ -245,9 +250,14 @@ jobs:
           DRIVER: ${{ matrix.driver }}
           DELIVERY_IMAGE: ostrom-cloud-runner:journey
           SESSION_IMAGE: docker.io/ostromhq/ostrom-session:latest
+          SESSION_SETTING: ${{ steps.server.outputs.session-setting }}
         run: |
           docker pull --quiet "$RUNNER_IMAGE" || { echo "::error::$RUNNER_IMAGE cannot be pulled"; exit 1; }
-          docker pull --quiet "$SESSION_IMAGE" || { echo "::error::$SESSION_IMAGE cannot be pulled"; exit 1; }
+          if [ "$SESSION_SETTING" = true ]; then
+            docker pull --quiet "$SESSION_IMAGE" || { echo "::error::$SESSION_IMAGE cannot be pulled"; exit 1; }
+          else
+            SESSION_IMAGE=$DELIVERY_IMAGE
+          fi
           base_image=$(docker inspect -f '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' "$RUNNER_IMAGE")
           [ -n "$base_image" ] || { echo "::error::$RUNNER_IMAGE has no registry digest"; exit 1; }
           docker run -d --name docker-api -p 127.0.0.1:2375:2375 -v /var/run/docker.sock:/var/run/docker.sock:ro \
@@ -264,7 +274,8 @@ jobs:
           } > "$RUNNER_TEMP/runners.env"
           { echo "DELIVERY_IMAGE=$DELIVERY_IMAGE"; echo "SESSION_IMAGE=$SESSION_IMAGE"; echo "BASE_IMAGE=$base_image"; } \
             >> "$GITHUB_ENV"
-          session=$(docker inspect -f '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' "$SESSION_IMAGE")
+          session=$(docker inspect -f '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' "$SESSION_IMAGE" 2>/dev/null) \
+            || session=
           session=${session:-$SESSION_IMAGE}
           echo "- cloud session: runner \`$base_image\` with the CLI built here, session \`$session\`," \
             "driver \`$DRIVER\`, this runner's Docker" >> "$GITHUB_STEP_SUMMARY"
