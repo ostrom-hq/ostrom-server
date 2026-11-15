@@ -11,7 +11,7 @@ import run.ostrom.server.kernel.http.docs.notFound
 import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
 import run.ostrom.server.kernel.http.docs.pathId
-import run.ostrom.server.kernel.http.docs.queryNumber
+import run.ostrom.server.kernel.http.docs.queryLimit
 import run.ostrom.server.kernel.http.docs.queryText
 
 private const val GATES_TAG = "gates"
@@ -140,7 +140,7 @@ private fun ApiCatalog.packageAuditOperations() {
         summary = "Audit of compilations, pins and revocations."
         parameters {
             organizationHeader()
-            queryNumber("limit", "The number of lines, 1 to 200 (200 by default); a larger one is brought down to 200.")
+            queryLimit("The number of lines, 1 to 200 (200 by default); a larger one is brought down to 200.", 200)
         }
         responses {
             ok<AuditPage>("The lines, newest first.")

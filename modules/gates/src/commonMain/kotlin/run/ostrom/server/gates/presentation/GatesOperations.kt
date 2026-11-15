@@ -12,6 +12,7 @@ import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
 import run.ostrom.server.kernel.http.docs.pathId
 import run.ostrom.server.kernel.http.docs.queryFlag
+import run.ostrom.server.kernel.http.docs.queryLimit
 import run.ostrom.server.kernel.http.docs.queryNumber
 import run.ostrom.server.kernel.http.docs.queryText
 import run.ostrom.server.kernel.http.docs.rateLimited
@@ -182,7 +183,7 @@ private fun ApiCatalog.approvalOperations() {
                 "every status when absent.")
             queryFlag("mine", "Only the approvals waiting for the caller.")
             queryText("before", "The `next` of the previous page.")
-            queryNumber("limit", "The page size (50 by default).")
+            queryLimit("The page size (50 by default).", 100)
         }
         responses {
             ok<ApprovalsPage>("A page of approvals, `next` set when another may follow.")

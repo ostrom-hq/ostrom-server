@@ -12,7 +12,7 @@ import run.ostrom.server.kernel.http.docs.notFound
 import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
 import run.ostrom.server.kernel.http.docs.pathId
-import run.ostrom.server.kernel.http.docs.queryNumber
+import run.ostrom.server.kernel.http.docs.queryLimit
 import run.ostrom.server.kernel.http.docs.queryText
 
 private const val TRANSFER_ID = "The transfer's id."
@@ -120,7 +120,7 @@ private fun ApiCatalog.transferListing() {
             queryText("state", "Only the transfers in this state; repeat it for several.")
             queryText("session", "Only the transfers of this session.")
             queryText("before", "The `next` of the previous page.")
-            queryNumber("limit", "How many transfers a page holds.")
+            queryLimit("How many transfers a page holds.", 50)
         }
         responses {
             ok<CloudTransferPageResponse>("A page of transfers, newest first, with the cursor of the next.")

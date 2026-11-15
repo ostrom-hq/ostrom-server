@@ -2,6 +2,7 @@
 package run.ostrom.server.kernel.http.docs
 
 import run.ostrom.server.kernel.http.ApiError
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.openapi.Operation
@@ -267,10 +268,16 @@ fun Responses.Builder.notFound(text: String) = error(HttpStatusCode.NotFound, te
  */
 fun Responses.Builder.conflict(text: String) = error(HttpStatusCode.Conflict, text)
 
-/** The 429 of a costly read, bounded per caller. */
-fun Responses.Builder.rateLimited() = error(
-    HttpStatusCode.TooManyRequests,
-    "Too many reads lately (`rate_limited`): nothing was read. A costly read is bounded per caller (a person, a " +
-        "device, an agent or a service): calls per minute, reads and waits together, and calls at once, the waits " +
-        "of `getGate` counted apart from the reads.",
-)
+/** The 429 of a costly read, bounded per caller, with the `Retry-After` the throttle sends (audit F5). */
+fun Responses.Builder.rateLimited() = HttpStatusCode.TooManyRequests {
+    description = "Too many reads lately (`rate_limited`): nothing was read. A costly read is bounded per caller (a " +
+        "person, a device, an agent or a service): calls per minute, reads and waits together, and calls at once, " +
+        "the waits of `getGate` counted apart from the reads."
+    schema = jsonSchema<ApiError>()
+    headers {
+        header(HttpHeaders.RetryAfter) {
+            description = "The seconds to wait before calling again."
+            schema = jsonSchema<Long>()
+        }
+    }
+}

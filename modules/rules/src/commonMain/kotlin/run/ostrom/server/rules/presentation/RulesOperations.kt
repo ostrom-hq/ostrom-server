@@ -12,7 +12,7 @@ import run.ostrom.server.kernel.http.docs.notFound
 import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
 import run.ostrom.server.kernel.http.docs.pathId
-import run.ostrom.server.kernel.http.docs.queryNumber
+import run.ostrom.server.kernel.http.docs.queryLimit
 import run.ostrom.server.kernel.http.docs.queryText
 import io.ktor.http.HttpStatusCode
 import kotlinx.serialization.json.JsonObject
@@ -80,8 +80,8 @@ private fun ApiCatalog.ruleOperations() {
             queryText("status", "Only the rules of this status.")
             queryText("group", "Only the rules of this group.")
             queryText("after", "The `next` of the previous page (opaque); 400 when no page gave it.")
-            queryNumber("limit", "The page size, 1 to 1000 (1000 by default); a value outside is brought " +
-                "into it.")
+            queryLimit("The page size, 1 to 1000 (1000 by default); a value outside is brought " +
+                "into it.", 1000)
         }
         responses {
             ok<RulesPage>("A page of rules, `next` set when another follows.")

@@ -15,7 +15,7 @@ import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
 import run.ostrom.server.kernel.http.docs.pathId
 import run.ostrom.server.kernel.http.docs.queryFlag
-import run.ostrom.server.kernel.http.docs.queryNumber
+import run.ostrom.server.kernel.http.docs.queryLimit
 import run.ostrom.server.kernel.http.docs.queryText
 
 private const val TAG = "waits"
@@ -52,7 +52,7 @@ private fun ApiCatalog.waitReadOperations() {
                 "(404 otherwise, an administrator included).")
             queryText("runId", "Only the waits of that workflow run.")
             queryText("before", "The `next` of the previous page: the id of its last wait.")
-            queryNumber("limit", "The page size, 1 to 100 (50 by default); 400 outside.")
+            queryLimit("The page size, 1 to 100 (50 by default); 400 outside.", 100)
         }
         responses {
             ok<WaitsResponse>("A page of waits, `next` set when another may follow.")

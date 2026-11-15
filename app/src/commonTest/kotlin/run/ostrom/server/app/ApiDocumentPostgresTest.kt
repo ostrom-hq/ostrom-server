@@ -20,7 +20,8 @@ import kotlin.test.assertEquals
  * docs/decisions/0001). As TeamCode's ApiDocsTest, it fails for any API route (`/api/v1` and the incoming webhooks)
  * without its catalogue entry, for an entry without its route, and for a document a generator would refuse
  * ([OpenApiStructure]: no dangling `$ref`, every path parameter declared). CI writes it where `OSTROM_OPENAPI_OUT`
- * says and keeps it as the `openapi-generated` artifact, which the `api-package` job packs.
+ * says and keeps it as the `openapi-generated` artifact, which the `api-package` job packs. [ApiLimits] checks that it
+ * shows every limit the server enforces.
  */
 class ApiDocumentPostgresTest {
     @Test
@@ -36,5 +37,7 @@ class ApiDocumentPostgresTest {
         assertEquals(emptyList(), coverage.duplicated, "Each route has one entry")
         val problems = OpenApiStructure.problems(Json.parseToJsonElement(text).jsonObject)
         assertEquals(emptyList(), problems, problems.joinToString("\n"))
+        val limits = ApiLimits.problems(Json.parseToJsonElement(text).jsonObject)
+        assertEquals(emptyList(), limits, "The document hides limits:\n" + limits.joinToString("\n"))
     }
 }

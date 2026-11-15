@@ -12,7 +12,7 @@ import run.ostrom.server.kernel.http.docs.notFound
 import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
 import run.ostrom.server.kernel.http.docs.pathId
-import run.ostrom.server.kernel.http.docs.queryNumber
+import run.ostrom.server.kernel.http.docs.queryLimit
 import run.ostrom.server.kernel.http.docs.queryText
 import io.ktor.http.HttpStatusCode
 
@@ -257,7 +257,7 @@ private fun ApiCatalog.directoryOperations() {
         parameters {
             organizationHeader()
             queryText("after", "The `next` of the previous page.")
-            queryNumber("limit", "The page size, 1 to 100 (100 by default).")
+            queryLimit("The page size, 1 to 100 (100 by default).", 100)
         }
         responses {
             ok<ReposResponse>("A page of repositories; `next` is set when another follows.")
@@ -276,7 +276,7 @@ private fun ApiCatalog.directoryOperations() {
         parameters {
             pathId("org", "The organization's id or short name.")
             queryText("after", "The `next` of the previous page.")
-            queryNumber("limit", "The page size, 1 to 100 (100 by default).")
+            queryLimit("The page size, 1 to 100 (100 by default).", 100)
         }
         responses {
             ok<TeamsResponse>("A page of teams; `next` is set when another follows.")

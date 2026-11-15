@@ -49,6 +49,20 @@ fun Parameters.Builder.queryNumber(name: String, text: String) {
 }
 
 /**
+ * The optional `limit` of a list: an integer from 1 to [maximum], bounds the schema declares (second security audit of
+ * the contract, F4: a client sees the page size the server enforces).
+ *
+ * @param text The page size, its default and what happens outside the bounds.
+ * @param maximum The largest page the route serves.
+ */
+fun Parameters.Builder.queryLimit(text: String, maximum: Int) {
+    query("limit") {
+        description = text
+        schema = jsonSchema<Long>().copy(minimum = 1.0, maximum = maximum.toDouble())
+    }
+}
+
+/**
  * An optional boolean query parameter.
  *
  * @param name The parameter.

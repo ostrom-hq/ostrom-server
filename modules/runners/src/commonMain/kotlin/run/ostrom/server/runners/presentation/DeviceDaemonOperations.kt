@@ -12,7 +12,7 @@ import run.ostrom.server.kernel.http.docs.notFound
 import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
 import run.ostrom.server.kernel.http.docs.pathId
-import run.ostrom.server.kernel.http.docs.queryNumber
+import run.ostrom.server.kernel.http.docs.queryLimit
 import run.ostrom.server.kernel.http.docs.queryText
 
 private const val DAEMON = "With `runners.cloud.remote.daemon.v1`. The CLI's sign-in, bound to a device (422 " +
@@ -145,7 +145,7 @@ private fun ApiCatalog.deviceFolderOperations() {
             organizationHeader()
             pathId("id", "The device's id.")
             pathId("folderId", "One of the folders the device's daemon published.")
-            queryNumber("limit", "How many, 1 to 50 (20 by default).")
+            queryLimit("How many, 1 to 50 (20 by default).", 50)
             queryText("before", "The `next` of the previous page.")
         }
         responses {

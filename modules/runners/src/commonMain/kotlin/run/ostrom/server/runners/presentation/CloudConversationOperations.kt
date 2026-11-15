@@ -13,6 +13,7 @@ import run.ostrom.server.kernel.http.docs.notFound
 import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
 import run.ostrom.server.kernel.http.docs.pathId
+import run.ostrom.server.kernel.http.docs.queryLimit
 import run.ostrom.server.kernel.http.docs.queryNumber
 import run.ostrom.server.kernel.http.docs.queryText
 
@@ -52,7 +53,7 @@ private fun ApiCatalog.transcriptPages() {
             pathId("id", SESSION_ID)
             queryNumber("after", "Only the events after this sequence number.")
             queryNumber("before", "Only the events before this sequence number.")
-            queryNumber("limit", "How many events a page holds (100 by default).")
+            queryLimit("How many events a page holds (100 by default).", 200)
             queryText("feed", "`main`, or the id of the `tool.call` that started a subagent.")
         }
         responses {
@@ -118,7 +119,7 @@ private fun ApiCatalog.inputReadOperations() {
             organizationHeader()
             pathId("id", SESSION_ID)
             queryText("before", "The `nextBefore` of the previous page.")
-            queryNumber("limit", "How many inputs a page holds.")
+            queryLimit("How many inputs a page holds.", 100)
         }
         responses {
             ok<CloudInputPageDto>("A page of inputs, newest first.")

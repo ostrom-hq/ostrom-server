@@ -13,6 +13,7 @@ import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
 import run.ostrom.server.kernel.http.docs.pathId
 import run.ostrom.server.kernel.http.docs.queryFlag
+import run.ostrom.server.kernel.http.docs.queryLimit
 import run.ostrom.server.kernel.http.docs.queryNumber
 import run.ostrom.server.kernel.http.docs.queryText
 import io.ktor.http.HttpStatusCode
@@ -391,7 +392,7 @@ private fun ApiCatalog.journalOperations() {
             queryText("server", "Only the calls of this server.")
             queryText("dev", "Only the calls of this member (an id).")
             queryText("before", "An ISO 8601 instant, or the `next` of the previous page.")
-            queryNumber("limit", "The page size, 1 to 200 (50 by default); a larger one is brought down to 200.")
+            queryLimit("The page size, 1 to 200 (50 by default); a larger one is brought down to 200.", 200)
         }
         responses {
             ok<McpCallsPage>("A page of calls, and the cursor of the next one when there is one.")
