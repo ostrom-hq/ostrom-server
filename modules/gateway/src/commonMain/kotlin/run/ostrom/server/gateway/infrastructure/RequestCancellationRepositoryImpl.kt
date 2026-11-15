@@ -4,8 +4,12 @@ package run.ostrom.server.gateway.infrastructure
 import run.ostrom.server.gateway.domain.CancellationLimitException
 import run.ostrom.server.gateway.domain.RequestCancellationRepository
 import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.Read
+import run.ostrom.server.kernel.database.countWhere
 import run.ostrom.server.kernel.database.databaseNow
 import run.ostrom.server.kernel.database.databaseNowPlus
+import run.ostrom.server.kernel.database.lockKeyUntilCommit
+import run.ostrom.server.kernel.database.write
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.count
 import org.jetbrains.exposed.v1.core.eq
@@ -27,7 +31,7 @@ import kotlin.uuid.Uuid
  */
 class RequestCancellationRepositoryImpl(private val database: JdbcDatabase) : RequestCancellationRepository {
     override suspend fun cancel(orgId: Uuid, memberId: Uuid, requestId: Uuid) = database.inOrg(orgId) {
-        lockUntilCommit(cancellationLockKey(orgId))
+        lockKeyUntilCommit(cancellationLockKey(orgId))
         write { cancellationPurge(orgId) }
         val markers = cancellationCounts(orgId, memberId, requestId).single()
         // Idempotent: a marker already there is neither extended nor counted again.

@@ -184,8 +184,13 @@ override suspend fun rename(orgId: Uuid, id: Uuid, name: String): Boolean = data
 - A time shared by every replica (a lease, a window, an expiry) is the database's clock: the kernel's `databaseNow()`
   (`now()`) and `databaseNowPlus(seconds)` (`now()` plus bound seconds), never a replica's `Clock`. A statement the
   plan tests explain is an `internal` function of the module (a `Query`, or a `StatementBuilder.()` write run with
-  `buildStatement { … }.toExecutable().execute(this)`), so the test explains what the repository sends
-  (`AdmissionReads.kt` in the gateway).
+  the kernel's `write { … }`), so the test explains what the repository sends (`AdmissionReads.kt` in the gateway).
+- The kernel's `ExposedStatements.kt` holds what every module shares: `Read(query) { row -> … }` (a read and its
+  mapping, the query alone for a plan), `write { … }`, `lockKeyUntilCommit(key)` (the sqlx4k repositories'
+  `pg_advisory_xact_lock(hashtextextended(key, 0))`, kept so that both versions take turns during a rollout;
+  `advisoryLock(key)` is its read, for a plan), `countWhere`, `maxWhere`, `maxOrZero`, `asBigint`, `sumOrZero`, and
+  the keyset conditions `rowLess(columns, bounds)` and `rowBefore(columns, subquery)`. A helper a second module needs
+  moves there, not into a copy.
 - JSON columns are `text` written and read by the module's own serializer (`TodoJson`); Exposed's `json` columns are
   not used yet.
 - The domain never sees Exposed types: rows become domain models in the repository (`ResultRow.toX()`).

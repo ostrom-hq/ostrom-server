@@ -3,6 +3,7 @@ package run.ostrom.server.usage.infrastructure
 
 import run.ostrom.server.kernel.database.InstantColumnType
 import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.lockKeyUntilCommit
 import run.ostrom.server.usage.domain.HoldWindow
 import run.ostrom.server.usage.domain.PendingUsage
 import run.ostrom.server.usage.domain.ReconcileOutcome
@@ -61,7 +62,7 @@ class UsageReconciliationRepositoryImpl(private val database: JdbcDatabase) : Us
         change: UsageReconciliationChange,
     ): ReconcileOutcome = database.inOrg(orgId) {
         // The admissions' lock: no call of the org is admitted while its charge changes, on any replica.
-        lockUntilCommit(holdsLockKey(orgId))
+        lockKeyUntilCommit(holdsLockKey(orgId))
         val now = lockedNow()
         val stored = reconciliationRead(orgId, id).rows().singleOrNull()
         val h = UsageHolds

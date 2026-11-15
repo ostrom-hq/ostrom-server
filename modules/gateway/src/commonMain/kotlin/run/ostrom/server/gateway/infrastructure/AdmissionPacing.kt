@@ -3,6 +3,7 @@ package run.ostrom.server.gateway.infrastructure
 
 import run.ostrom.server.gateway.domain.AdmissionRequest
 import run.ostrom.server.kernel.database.databaseNow
+import run.ostrom.server.kernel.database.write
 import org.jetbrains.exposed.v1.core.Expression
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder

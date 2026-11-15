@@ -4,6 +4,7 @@ package run.ostrom.server.gateway.infrastructure
 import run.ostrom.server.gateway.domain.PacingSettings
 import run.ostrom.server.gateway.domain.PacingSettingsRepository
 import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.lockKeyUntilCommit
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.jetbrains.exposed.v1.jdbc.selectAll
@@ -25,7 +26,7 @@ class PacingSettingsRepositoryImpl(private val database: JdbcDatabase) : PacingS
         observationOnly: Boolean?,
         autoPoolSize: Boolean?,
     ): Pair<PacingSettings, PacingSettings> = database.inOrg(orgId) {
-        lockUntilCommit(admissionLockKey(orgId))
+        lockKeyUntilCommit(admissionLockKey(orgId))
         val before = readPacingSettings(orgId)
         val after = PacingSettings(observationOnly ?: before.observationOnly, autoPoolSize ?: before.autoPoolSize)
         GatewayPacingSettings.upsert(GatewayPacingSettings.orgId) {

@@ -5,13 +5,13 @@ import run.ostrom.server.gateway.domain.CancellationLimitException
 import run.ostrom.server.gateway.domain.RequestCancellationRepository
 import run.ostrom.server.gateway.infrastructure.GatewayCancellations
 import run.ostrom.server.gateway.infrastructure.RequestCancellationRepositoryImpl
-import run.ostrom.server.gateway.infrastructure.advisoryLock
 import run.ostrom.server.gateway.infrastructure.cancellationCounts
 import run.ostrom.server.gateway.infrastructure.cancellationInsert
 import run.ostrom.server.gateway.infrastructure.cancellationLockKey
 import run.ostrom.server.gateway.infrastructure.cancellationPurge
 import run.ostrom.server.gateway.infrastructure.cancellationRead
 import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.advisoryLock
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher

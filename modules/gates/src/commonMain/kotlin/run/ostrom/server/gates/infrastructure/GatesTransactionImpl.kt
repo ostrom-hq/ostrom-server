@@ -6,6 +6,8 @@ import run.ostrom.server.gates.domain.models.Gate
 import run.ostrom.server.gates.domain.repositories.GateAnnouncements
 import run.ostrom.server.gates.domain.repositories.GateSessionEnds
 import run.ostrom.server.gates.domain.repositories.GatesTransaction
+import run.ostrom.server.kernel.database.lockKeyUntilCommit
+import run.ostrom.server.kernel.database.write
 import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.events.OrgEventType
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
