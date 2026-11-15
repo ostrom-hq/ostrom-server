@@ -129,7 +129,7 @@ private fun parseId(raw: String): Uuid =
 /** An agent or inputs call is a few fields. */
 private const val SMALL_BODY_LIMIT = 4L * 1024
 
-/** A batch of events: at most 200 of 60 KB each, in 2 MB. */
+/** A batch of events, bounded as in TeamCode and the contract: 2 MB whatever the count (each is cut to 60 KB). */
 private const val EVENTS_BODY_LIMIT = 2L * 1024 * 1024
 
 /** At most 100 acknowledgements. */
