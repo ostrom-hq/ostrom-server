@@ -163,6 +163,7 @@ class DeviceIdentityTest {
 
         val admin = start("host", "ip", ADMIN_SCOPES.toList(), DeviceLoginIdentity(installation, "x", "macos", null))
         assertNull(admin.authorization.installationId, "An admin login never registers a device")
+        start("host", "ip", ADMIN_SCOPES.toList(), DeviceLoginIdentity("NOT-A-UUID", "x", "macos", null))
         answer(ada, admin.authorization.userCode, approve = true) { orgA }
         clock.now += 6.seconds
         assertIs<DevicePollResult.Approved>(poll(admin.deviceCode))

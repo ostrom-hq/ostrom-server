@@ -112,7 +112,7 @@ class StartDeviceAuthorizationUseCaseImpl(
         val asked = scopes.orEmpty().toSet()
         if (asked.isNotEmpty() && asked != ADMIN_SCOPES) throw InvalidScopesException()
         // An admin login lasts a working day and takes no workstation: whatever it says of an installation is ignored.
-        val installation = validatedInstallation(device).takeIf { asked.isEmpty() }
+        val installation = validatedInstallation(device.takeIf { asked.isEmpty() })
         val key = "device-start:${rateLimitSource(source)}"
         val allowed = limiter.tryAcquire(key, DEVICE_STARTS_PER_WINDOW, DEVICE_RATE_WINDOW)
         if (!allowed) throw RateLimitedException()
