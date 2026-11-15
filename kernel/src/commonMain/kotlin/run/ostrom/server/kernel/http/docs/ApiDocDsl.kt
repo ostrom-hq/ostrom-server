@@ -23,8 +23,8 @@ import io.ktor.openapi.jsonSchema
 class ApiOperation(
     val method: HttpMethod,
     val path: String,
-    val describe: Operation.Builder.() -> Unit,
     val conditional: Boolean = false,
+    val describe: Operation.Builder.() -> Unit,
 ) {
     /** `METHOD /path`, as the routing tree names the route. */
     val key: String get() = "${method.value} $path"
@@ -60,11 +60,12 @@ class ApiCatalog {
      * @param entries The entries.
      */
     fun conditionally(entries: ApiCatalog.() -> Unit) {
+        val outer = conditional
         conditional = true
         try {
             entries()
         } finally {
-            conditional = false
+            conditional = outer
         }
     }
 
@@ -75,7 +76,7 @@ class ApiCatalog {
      * @param describe The operation.
      */
     fun get(path: String, describe: Operation.Builder.() -> Unit) {
-        operations += ApiOperation(HttpMethod.Get, path, describe, conditional)
+        operations += ApiOperation(HttpMethod.Get, path, conditional, describe)
     }
 
     /**
@@ -85,7 +86,7 @@ class ApiCatalog {
      * @param describe The operation.
      */
     fun post(path: String, describe: Operation.Builder.() -> Unit) {
-        operations += ApiOperation(HttpMethod.Post, path, describe, conditional)
+        operations += ApiOperation(HttpMethod.Post, path, conditional, describe)
     }
 
     /**
@@ -95,7 +96,7 @@ class ApiCatalog {
      * @param describe The operation.
      */
     fun put(path: String, describe: Operation.Builder.() -> Unit) {
-        operations += ApiOperation(HttpMethod.Put, path, describe, conditional)
+        operations += ApiOperation(HttpMethod.Put, path, conditional, describe)
     }
 
     /**
@@ -105,7 +106,7 @@ class ApiCatalog {
      * @param describe The operation.
      */
     fun patch(path: String, describe: Operation.Builder.() -> Unit) {
-        operations += ApiOperation(HttpMethod.Patch, path, describe, conditional)
+        operations += ApiOperation(HttpMethod.Patch, path, conditional, describe)
     }
 
     /**
@@ -115,7 +116,7 @@ class ApiCatalog {
      * @param describe The operation.
      */
     fun delete(path: String, describe: Operation.Builder.() -> Unit) {
-        operations += ApiOperation(HttpMethod.Delete, path, describe, conditional)
+        operations += ApiOperation(HttpMethod.Delete, path, conditional, describe)
     }
 }
 
