@@ -5,69 +5,80 @@ import run.ostrom.server.instance.domain.Instance
 import run.ostrom.server.instance.domain.InstanceRepository
 import run.ostrom.server.instance.domain.KeyRotation
 import run.ostrom.server.instance.domain.SigningKey
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.ResultSet
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.present
+import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.isNull
+import org.jetbrains.exposed.v1.core.statements.insertValue
+import org.jetbrains.exposed.v1.jdbc.insertIgnore
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.upsert
 
 /**
  * [InstanceRepository] on PostgreSQL (tables of [InstanceMigrations]).
  *
- * @param driver The database.
+ * @param database The serving role's pool.
  */
-class InstanceRepositoryImpl(private val driver: Driver) : InstanceRepository {
-    override suspend fun get(): Instance? =
-        driver.fetchAll("SELECT id, created_at FROM instance_info").getOrThrow().firstOrNull()?.toInstance()
+class InstanceRepositoryImpl(private val database: JdbcDatabase) : InstanceRepository {
+    override suspend fun get(): Instance? = database.query { instance().singleOrNull()?.toInstance() }
 
-    override suspend fun createIfAbsent(instance: Instance): Instance {
-        driver.execute(
-            Statement.create(
-                "INSERT INTO instance_info (singleton, id, created_at) VALUES (TRUE, :id, :created_at) " +
-                    "ON CONFLICT (singleton) DO NOTHING",
-            )
-                .bind("id", instance.id)
-                .bind("created_at", instance.createdAt),
-        ).getOrThrow()
+    override suspend fun createIfAbsent(instance: Instance): Instance = database.query {
+        InstanceInfo.insertIgnore {
+            it[singleton] = true
+            it[id] = instance.id
+            it[createdAt] = instance.createdAt
+        }
         // The row exists now, ours or the one another replica wrote first.
-        return driver.fetchAll("SELECT id, created_at FROM instance_info").getOrThrow().single().toInstance()
+        instance().single().toInstance()
     }
 
     override suspend fun registerKey(key: SigningKey) {
-        driver.execute(
-            Statement.create(
-                "INSERT INTO instance_signing_keys " +
-                    "(key_id, algorithm, public_key_pem, first_seen_at, rotation_key_id, rotation_signature) " +
-                    "VALUES (:key_id, :algorithm, :public_key_pem, :first_seen_at, :rotation_key_id, " +
-                    ":rotation_signature) ON CONFLICT (key_id) DO UPDATE SET " +
-                    "rotation_key_id = EXCLUDED.rotation_key_id, rotation_signature = EXCLUDED.rotation_signature " +
-                    "WHERE instance_signing_keys.rotation_key_id IS NULL",
-            )
-                .bind("key_id", key.keyId)
-                .bind("algorithm", key.algorithm)
-                .bind("public_key_pem", key.publicKeyPem)
-                .bind("first_seen_at", key.firstSeenAt)
-                .bind("rotation_key_id", key.rotation?.keyId)
-                .bind("rotation_signature", key.rotation?.signature),
-        ).getOrThrow()
+        database.query {
+            val k = InstanceSigningKeys
+            // A key's first rotation is kept: a later one never replaces it.
+            k.upsert(
+                k.keyId,
+                onUpdate = {
+                    it[k.rotationKeyId] = insertValue(k.rotationKeyId)
+                    it[k.rotationSignature] = insertValue(k.rotationSignature)
+                },
+                where = { k.rotationKeyId.isNull() },
+            ) {
+                it[keyId] = key.keyId
+                it[algorithm] = key.algorithm
+                it[publicKeyPem] = key.publicKeyPem
+                it[firstSeenAt] = key.firstSeenAt
+                it[rotationKeyId] = key.rotation?.keyId
+                it[rotationSignature] = key.rotation?.signature
+            }
+        }
     }
 
-    override suspend fun listKeys(): List<SigningKey> = driver.fetchAll(
-        "SELECT key_id, algorithm, public_key_pem, first_seen_at, rotation_key_id, rotation_signature " +
-            "FROM instance_signing_keys ORDER BY first_seen_at, key_id",
-    ).getOrThrow().map { it.toSigningKey() }
+    override suspend fun listKeys(): List<SigningKey> = database.query {
+        val k = InstanceSigningKeys
+        k.select(k.columns)
+            .orderBy(k.firstSeenAt to SortOrder.ASC, k.keyId to SortOrder.ASC)
+            .limit(MAX_KEYS)
+            .map { it.toSigningKey() }
+    }
 
-    private fun ResultSet.Row.toInstance() = Instance(
-        id = get("id").asUuid(),
-        createdAt = get("created_at").asInstant(),
+    private fun instance() = InstanceInfo.select(InstanceInfo.id, InstanceInfo.createdAt)
+
+    private fun ResultRow.toInstance() = Instance(id = this[InstanceInfo.id], createdAt = this[InstanceInfo.createdAt])
+
+    private fun ResultRow.toSigningKey() = SigningKey(
+        keyId = this[InstanceSigningKeys.keyId],
+        algorithm = this[InstanceSigningKeys.algorithm],
+        publicKeyPem = this[InstanceSigningKeys.publicKeyPem],
+        firstSeenAt = this[InstanceSigningKeys.firstSeenAt],
+        rotation = this[InstanceSigningKeys.rotationKeyId]?.let {
+            KeyRotation(it, present(InstanceSigningKeys.rotationSignature, InstanceSigningKeys.rotationKeyId))
+        },
     )
 
-    private fun ResultSet.Row.toSigningKey() = SigningKey(
-        keyId = get("key_id").asString(),
-        algorithm = get("algorithm").asString(),
-        publicKeyPem = get("public_key_pem").asString(),
-        firstSeenAt = get("first_seen_at").asInstant(),
-        rotation = get("rotation_key_id").asStringOrNull()
-            ?.let { KeyRotation(it, get("rotation_signature").asString()) },
-    )
+    private companion object {
+        /** A key is added at each rotation of the signing key, a few a year: the bound of the list, far above. */
+        const val MAX_KEYS = 1_000
+    }
 }

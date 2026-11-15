@@ -1,12 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.instance.infrastructure
 
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.ScheduledWork
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
+import run.ostrom.server.kernel.database.databaseNow
+import run.ostrom.server.kernel.database.databaseNowPlus
+import run.ostrom.server.kernel.database.written
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.lessEq
+import org.jetbrains.exposed.v1.core.statements.StatementBuilder
+import org.jetbrains.exposed.v1.core.statements.UpdateStatement
+import org.jetbrains.exposed.v1.jdbc.insertIgnore
+import org.jetbrains.exposed.v1.jdbc.update
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -15,11 +24,12 @@ import kotlin.uuid.Uuid
 /**
  * [ScheduledWork] on PostgreSQL (`instance_scheduled_work`, [InstanceMigrations]), TeamCode's `SqlScheduledWork`: one
  * row per job, claimed by a single conditional `UPDATE` on the database's clock (two replicas racing for the same row
- * are serialized by its lock, and the second finds it no longer due), released by its owner only.
+ * are serialized by its lock, and the second finds it no longer due), released by its owner only. Each claim and each
+ * release is one short transaction, so `now()` is the time of the statement.
  *
- * @param driver The database.
+ * @param database The serving role's pool.
  */
-class ScheduledWorkImpl(private val driver: Driver) : ScheduledWork {
+class ScheduledWorkImpl(private val database: JdbcDatabase) : ScheduledWork {
     override suspend fun runDue(
         name: String,
         interval: Duration,
@@ -41,33 +51,20 @@ class ScheduledWorkImpl(private val driver: Driver) : ScheduledWork {
         return true
     }
 
-    private suspend fun claim(name: String, owner: Uuid, lease: Duration): Boolean {
-        driver.execute(
-            Statement.create("INSERT INTO instance_scheduled_work (name) VALUES (:name) ON CONFLICT (name) DO NOTHING")
-                .bind("name", name),
-        ).getOrThrow()
-        return driver.execute(
-            Statement.create(
-                """
-                UPDATE instance_scheduled_work SET owner = :owner,
-                available_at = clock_timestamp() + CAST(:lease AS BIGINT) * INTERVAL '1 millisecond',
-                last_started_at = clock_timestamp()
-                WHERE name = :name AND available_at <= clock_timestamp()
-                """,
-            ).bind("owner", owner).bind("lease", lease.inWholeMilliseconds).bind("name", name),
-        ).getOrThrow() == 1L
+    private suspend fun claim(name: String, owner: Uuid, lease: Duration): Boolean = database.query {
+        val w = InstanceScheduledWork
+        w.insertIgnore { it[w.name] = name }
+        written { scheduledWorkClaim(name, owner, lease) } == 1
     }
 
     private suspend fun release(name: String, owner: Uuid, interval: Duration) {
-        driver.execute(
-            Statement.create(
-                """
-                UPDATE instance_scheduled_work SET owner = NULL,
-                available_at = clock_timestamp() + CAST(:interval AS BIGINT) * INTERVAL '1 millisecond'
-                WHERE name = :name AND owner = :owner
-                """,
-            ).bind("interval", interval.inWholeMilliseconds).bind("name", name).bind("owner", owner),
-        ).getOrThrow()
+        database.query {
+            val w = InstanceScheduledWork
+            w.update({ (w.name eq name) and (w.owner eq owner) }) {
+                it[w.owner] = null
+                it[w.availableAt] = databaseNowPlus(interval)
+            }
+        }
     }
 
     private companion object {
@@ -76,5 +73,18 @@ class ScheduledWorkImpl(private val driver: Driver) : ScheduledWork {
 
         /** A claimed lease outlives the run's timeout by this much, so a slow release never lets a second run in. */
         private val MARGIN: Duration = 15.seconds
+    }
+}
+
+/**
+ * The claim of [name]'s lease by [owner] for [lease], if it is due: one conditional update by the primary key. Two
+ * replicas racing for the row are serialized by its lock, and the second finds it no longer due.
+ */
+internal fun StatementBuilder.scheduledWorkClaim(name: String, owner: Uuid, lease: Duration): UpdateStatement {
+    val w = InstanceScheduledWork
+    return w.update({ (w.name eq name) and (w.availableAt lessEq databaseNow()) }) {
+        it[w.owner] = owner
+        it[w.availableAt] = databaseNowPlus(lease)
+        it[w.lastStartedAt] = databaseNow()
     }
 }
