@@ -79,7 +79,8 @@ class GatewayModuleRegistrationTest {
             it.close()
         }
         val spend = SpendGuard { SpendDecision.Allowed }
-        assertTrue(spend.available(Gw.orgA, Gw.memberA.memberId), "A guard that only checks calls never pauses a member")
+        val member = Gw.memberA.memberId
+        assertTrue(spend.available(Gw.orgA, member), "A guard that only checks calls never pauses a member")
         val app = koinApplication { modules(GatewayModule.koinModule, required, optional) }
         assertIs<UpdateDirectivesUseCase>(app.koin.get<UpdateDirectivesUseCase>())
         GatewayModule.start(backgroundScope, app.koin)
