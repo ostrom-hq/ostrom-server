@@ -21,6 +21,7 @@ import run.ostrom.server.secrets.domain.RelayScopes
 import run.ostrom.server.secrets.infrastructure.executeInOrg
 import run.ostrom.server.secrets.infrastructure.fetchInOrg
 import run.ostrom.server.secrets.presentation.SecretWriteRequest
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.call.body
@@ -65,6 +66,11 @@ import kotlin.time.Duration.Companion.seconds
  * accounts and org keys, usage measured, scopes per route, errors in the provider's shape, orgs kept apart.
  */
 class GatewayPostgresTest : GatewayHttpFixture() {
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(modules, overrides) { server ->
+        server.assertApiCatalogue(GatewayModule)
+    }
+
     @Test
     fun aStreamIsRelayedThroughASharedAccountAndMetered() = serverTest(modules, overrides) { server ->
         with(server) {

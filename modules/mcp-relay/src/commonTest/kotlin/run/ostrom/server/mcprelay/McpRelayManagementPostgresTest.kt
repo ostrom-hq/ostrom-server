@@ -22,6 +22,7 @@ import run.ostrom.server.mcprelay.presentation.McpSettingsDto
 import run.ostrom.server.mcprelay.presentation.McpUsageResponse
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.presentation.SecretWriteRequest
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
@@ -43,6 +44,11 @@ private const val SENTRY = "https://sentry.example.com/mcp"
 
 /** Assignments, policies, settings and the journal managed over HTTP, and the repository on its own. */
 class McpRelayManagementPostgresTest : RelayPostgresHarness() {
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
+        server.assertApiCatalogue(McpRelayModule)
+    }
+
     @Test
     fun changingAnMcpServerFromTheConsoleNeedsASignInOfLessThanFiveMinutes() =
         serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->

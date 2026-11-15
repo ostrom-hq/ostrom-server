@@ -3,6 +3,7 @@ package run.ostrom.server.skills
 
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.runners.infrastructure.RunnersConfig
 import run.ostrom.server.skills.domain.ManageSkillCatalogUseCase
@@ -19,6 +20,7 @@ import run.ostrom.server.skills.infrastructure.RunnersRunnerSessions
 import run.ostrom.server.skills.infrastructure.SkillsMigrations
 import run.ostrom.server.skills.infrastructure.SkillsRepositoryImpl
 import run.ostrom.server.skills.presentation.SkillsRoutesDependencies
+import run.ostrom.server.skills.presentation.skillsOperations
 import run.ostrom.server.skills.presentation.skillsRoutes
 import io.ktor.server.routing.Route
 import org.koin.core.Koin
@@ -33,6 +35,8 @@ import org.koin.dsl.module
  */
 object SkillsModule : ServerModule {
     override val name: String = "skills"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { skillsOperations() }
 
     override val koinModule: Module = module {
         single<SkillsRepository> { SkillsRepositoryImpl(get()) }

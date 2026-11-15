@@ -9,6 +9,7 @@ import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.database.repeatDue
 import run.ostrom.server.kernel.database.scheduledWork
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.network.outboundHttpClient
@@ -73,6 +74,7 @@ import run.ostrom.server.mcprelay.infrastructure.McpRelayRepositoryImpl
 import run.ostrom.server.mcprelay.infrastructure.TransportMcpUpstream
 import run.ostrom.server.mcprelay.infrastructure.UpstreamAddressGuard
 import run.ostrom.server.mcprelay.presentation.McpRelayRoutesDependencies
+import run.ostrom.server.mcprelay.presentation.mcpRelayOperations
 import run.ostrom.server.mcprelay.presentation.mcpRelayRoutes
 import run.ostrom.server.secrets.domain.CallerResolver
 import run.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
@@ -142,6 +144,8 @@ data class McpRelayConfig(val host: McpHostConfig?, val allowPrivateUpstreams: B
 /** The MCP relay module. */
 object McpRelayModule : ServerModule {
     override val name: String = "mcp-relay"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { mcpRelayOperations() }
 
     /** The Koin name of the relay's HTTP client (redirects off), replaced by tests. */
     val HTTP_CLIENT = named("mcpRelayHttpClient")
