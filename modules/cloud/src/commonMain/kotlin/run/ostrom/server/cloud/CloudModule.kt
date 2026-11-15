@@ -3,6 +3,7 @@ package run.ostrom.server.cloud
 
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.cloud.domain.CloudAdminGate
+import run.ostrom.server.cloud.domain.WorkspaceStorageClasses
 import run.ostrom.server.cloud.domain.CloudClusterAccess
 import run.ostrom.server.cloud.domain.CloudClustersRepository
 import run.ostrom.server.cloud.domain.CloudClustersUseCase
@@ -61,7 +62,9 @@ object CloudModule : ServerModule {
         } binds
             arrayOf(CloudClustersUseCase::class, CloudClusterAccess::class)
         single<CloudProfilesUseCase> {
-            CloudProfilesUseCaseImpl(get(), get(), get(), getOrNull<MemberDirectory>() ?: NoMembers)
+            // The storage classes where sessions run on Kubernetes (the runners module's).
+            val storage = getOrNull<WorkspaceStorageClasses>()
+            CloudProfilesUseCaseImpl(get(), get(), get(), getOrNull<MemberDirectory>() ?: NoMembers, storage)
         }
         single<CloudSettingsRepository> { CloudSettingsRepositoryImpl(get()) }
         single { CloudSettingsUseCaseImpl(get(), get()) } binds

@@ -7,6 +7,8 @@ import run.ostrom.server.runners.domain.PermissionBypass
 import run.ostrom.server.runners.domain.SessionMode
 import run.ostrom.server.runners.domain.CloudEnvironmentSpec
 import run.ostrom.server.runners.domain.CloudSession
+import run.ostrom.server.runners.domain.DeletionState
+import run.ostrom.server.runners.domain.WorkspaceDeletion
 import run.ostrom.server.runners.domain.CloudSessionsRepository
 import run.ostrom.server.runners.domain.DesiredState
 import run.ostrom.server.runners.domain.GitHubAccessMode
@@ -169,7 +171,13 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
                     runner_stopped_at = :runner_stopped_at, runner_token_hash = :runner_token_hash,
                     background_since = :background_since, background_seen_at = :background_seen_at, profile =
                     :profile, cluster_unreachable_since = :cluster_unreachable_since, expires_at = :expires_at,
-                    terminated_reason = :terminated_reason, expiry_backfill = :expiry_backfill
+                    terminated_reason = :terminated_reason, expiry_backfill = :expiry_backfill,
+                    workspace_deletion_state = :workspace_deletion_state,
+                    workspace_claim_deleted_at = :workspace_claim_deleted_at, workspace_volume_deleted_at =
+                    :workspace_volume_deleted_at, workspace_volume_name = :workspace_volume_name,
+                    workspace_volume_handle = :workspace_volume_handle, workspace_problem_code =
+                    :workspace_problem_code, workspace_problem_message = :workspace_problem_message,
+                    workspace_problem_retryable = :workspace_problem_retryable
                     WHERE id = :id AND generation = :generation RETURNING
                     $COLUMNS
                     """,
@@ -353,6 +361,17 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         .bind("expires_at", session.expiresAt)
         .bind("expiry_backfill", session.expiryBackfill)
         .bind("terminated_reason", session.terminatedReason)
+        .bindDeletion(session.workspaceDeletion)
+
+    private fun Statement.bindDeletion(deletion: WorkspaceDeletion?): Statement =
+        bind("workspace_deletion_state", deletion?.let { it.state.wire })
+            .bind("workspace_claim_deleted_at", deletion?.claimDeletedAt)
+            .bind("workspace_volume_deleted_at", deletion?.volumeDeletedAt)
+            .bind("workspace_volume_name", deletion?.volumeName)
+            .bind("workspace_volume_handle", deletion?.volumeHandle)
+            .bind("workspace_problem_code", deletion?.problem?.code)
+            .bind("workspace_problem_message", deletion?.problem?.message)
+            .bind("workspace_problem_retryable", deletion?.problem?.retryable ?: false)
 
     private fun ResultSet.Row.toSession(): CloudSession {
         val url = get("repository_url").asStringOrNull()
@@ -407,6 +426,7 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             effort = get("effort").asStringOrNull(),
             permissionBypass = bypass(),
             waiting = waiting(),
+            workspaceDeletion = toDeletion(),
         )
     }
 
@@ -424,6 +444,25 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         )
     }
 
+    private fun ResultSet.Row.toDeletion(): WorkspaceDeletion? {
+        val state = get("workspace_deletion_state").asStringOrNull() ?: return null
+        val problem = get("workspace_problem_code").asStringOrNull()?.let {
+            SessionFailure(
+                it,
+                get("workspace_problem_message").asString(),
+                get("workspace_problem_retryable").asBoolean(),
+            )
+        }
+        return WorkspaceDeletion(
+            state = DeletionState.fromWire(state),
+            claimDeletedAt = get("workspace_claim_deleted_at").asInstantOrNull(),
+            volumeDeletedAt = get("workspace_volume_deleted_at").asInstantOrNull(),
+            volumeName = get("workspace_volume_name").asStringOrNull(),
+            volumeHandle = get("workspace_volume_handle").asStringOrNull(),
+            problem = problem,
+        )
+    }
+
     private companion object {
         /** A placeholder for an unused timestamp parameter (PostgreSQL cannot read Instant.DISTANT_PAST). */
         private val EPOCH: Instant = Instant.fromEpochSeconds(0)
@@ -438,7 +477,9 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             restricted_egress, created_at, updated_at, execution_started_at, ready_at, last_heartbeat_at,
             last_activity_at, paused_at, terminated_at, pausing_since, runner_stopped_at, runner_token_hash,
             github_access, background_since, background_seen_at, environment, failure_retryable, profile,
-            cluster_unreachable_since, expires_at, terminated_reason, expiry_backfill, mode, effort
+            cluster_unreachable_since, expires_at, terminated_reason, expiry_backfill, workspace_deletion_state,
+            workspace_claim_deleted_at, workspace_volume_deleted_at, workspace_volume_name, workspace_volume_handle,
+            workspace_problem_code, workspace_problem_message, workspace_problem_retryable, mode, effort
         """
 
         /** What a read returns: also the Bypass and the wait, which only the conversation's store writes. */
@@ -451,7 +492,9 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             :last_heartbeat_at, :last_activity_at, :paused_at, :terminated_at, :pausing_since, :runner_stopped_at,
             :runner_token_hash, :github_access, :background_since, :background_seen_at, :environment,
             :failure_retryable, :profile, :cluster_unreachable_since, :expires_at, :terminated_reason,
-            :expiry_backfill, :mode, :effort
+            :expiry_backfill, :workspace_deletion_state, :workspace_claim_deleted_at, :workspace_volume_deleted_at,
+            :workspace_volume_name, :workspace_volume_handle, :workspace_problem_code, :workspace_problem_message,
+            :workspace_problem_retryable, :mode, :effort
         """
     }
 }

@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners.infrastructure
 
+import run.ostrom.server.runners.domain.ClaimObservation
+import run.ostrom.server.runners.domain.ClusterReadForbiddenException
+import run.ostrom.server.runners.domain.CloudClusterObjects
 import run.ostrom.server.runners.domain.CloudSession
+import run.ostrom.server.runners.domain.ManagedObjects
+import run.ostrom.server.runners.domain.StorageClassObservation
+import run.ostrom.server.runners.domain.VolumeObservation
 import run.ostrom.server.runners.domain.ExecutionSpec
 import run.ostrom.server.runners.domain.ExecutionStatus
 import run.ostrom.server.runners.domain.RuntimeDriver
@@ -72,20 +78,22 @@ interface KubernetesClusters {
  *
  * Each session lives on the cluster and in the namespace of its profile ([CloudSession.profile], the console's
  * clusters, `runners.cloud.profiles.v1`): a workspace PersistentVolumeClaim per session, a Secret and a bare Pod
- * (`restartPolicy: Never`) per execution, and two NetworkPolicies shared by the session pods of a namespace. The
- * cluster's service account needs a namespaced Role only (`deploy/runners-rbac.yaml`); no cluster-wide object (CRD,
- * ClusterRole, PersistentVolume) is used.
+ * (`restartPolicy: Never`) per execution, and two NetworkPolicies shared by the session pods of a namespace, each
+ * labelled with the session's cluster ([CLUSTER_LABEL]) for the garbage collection. A workspace's deletion is proven
+ * down to the provider's volume, and a profile's storage class is checked, as in TeamCode: besides its namespaced Role
+ * (pods, secrets, claims, NetworkPolicies), the cluster's service account needs `get` and `list` on the cluster-wide
+ * `persistentvolumes` and `storageclasses` (a ClusterRole; docs/MODULES.md lists the rules).
  *
  * @param clusters Reaches a session's cluster.
  * @param settings The pods' priority class and the server pods' labels.
  * @param delivery The runner image, its binary and the URL the runner reaches the server at.
  */
-@Suppress("TooManyFunctions") // The port's operations plus one builder per Kubernetes object.
+@Suppress("TooManyFunctions") // The ports' operations plus one builder per Kubernetes object.
 class KubernetesRuntimeDriver(
     private val clusters: KubernetesClusters,
     private val settings: KubernetesSettings,
     private val delivery: RunnerDeliverySource,
-) : RuntimeDriver {
+) : RuntimeDriver, CloudClusterObjects {
     /**
      * The cluster, at its version, and namespace whose NetworkPolicies are in place, so that later starts skip them;
      * a cluster saved again (a new API server, say) gets them again.
@@ -114,15 +122,16 @@ class KubernetesRuntimeDriver(
     }
 
     private suspend fun ensureWorkspace(scope: Scope, session: CloudSession) {
+        val accessMode = delivery.current().workspaceAccessMode
         val claim = buildJsonObject {
             put("apiVersion", "v1")
             put("kind", "PersistentVolumeClaim")
             putJsonObject("metadata") {
                 put("name", RuntimeNames.workspace(session.id))
-                put("labels", labels(session.id, null))
+                put("labels", labels(session.id, null, scope.profile.clusterId))
             }
             putJsonObject("spec") {
-                putJsonArray("accessModes") { add(JsonPrimitive("ReadWriteOnce")) }
+                putJsonArray("accessModes") { add(JsonPrimitive(accessMode)) }
                 scope.profile.storageClass?.let { put("storageClassName", it) }
                 putJsonObject("resources") {
                     putJsonObject("requests") { put("storage", "${scope.profile.workspaceGibibytes}Gi") }
@@ -144,7 +153,7 @@ class KubernetesRuntimeDriver(
             put("kind", "Secret")
             putJsonObject("metadata") {
                 put("name", name)
-                put("labels", labels(spec.sessionId, spec.epoch))
+                put("labels", labels(spec.sessionId, spec.epoch, scope.profile.clusterId))
             }
             put("type", "Opaque")
             putJsonObject("stringData") {
@@ -192,10 +201,141 @@ class KubernetesRuntimeDriver(
             val path = scope.claim(session)
             val deleted = scope.call(HttpMethod.Delete, path)
             if (deleted.status != HttpStatusCode.NotFound) deleted.requireSuccess("delete workspace")
-            // The claim is gone once the API no longer lists it; with the storage class's Delete policy, the
-            // provisioner then deletes the volume (reading PersistentVolumes would need a cluster-wide role).
+            // The claim is gone once the API no longer lists it; the reconciler then waits for its PersistentVolume
+            // ([volume]): with the storage class's Delete policy, the provisioner deletes it with the provider's
+            // volume.
             scope.call(HttpMethod.Get, path).status == HttpStatusCode.NotFound
         }
+    }
+
+    override val provesDeletion: Boolean get() = true
+
+    override suspend fun storageClass(session: CloudSession): StorageClassObservation? {
+        val profile = session.profile ?: return null
+        return storageClass(profile.clusterId, profile.storageClass)
+    }
+
+    override suspend fun workspaceClaim(session: CloudSession): ClaimObservation? {
+        val profile = session.profile ?: return null
+        return on(profile) { scope ->
+            scope.target.read(scope.claim(session), "read workspace")?.let { claim ->
+                ClaimObservation(claim.textAt("spec", "volumeName"))
+            }
+        }
+    }
+
+    override suspend fun volume(session: CloudSession, name: String): VolumeObservation? {
+        val profile = session.profile ?: return null
+        return on(profile) { scope ->
+            scope.target.read("${scope.base}/api/v1/persistentvolumes/$name", "read volume", clusterScoped = true)
+        }?.let { volume(it) }
+    }
+
+    override suspend fun claimedVolume(session: CloudSession): VolumeObservation? {
+        val profile = session.profile ?: return null
+        val claim = RuntimeNames.workspace(session.id)
+        return clusters.use(profile.clusterId) { target ->
+            // Filtered here, the claim reference carrying no label: a listing cut before its end proves nothing.
+            target.list(
+                "${target.apiUrl.trimEnd('/')}/api/v1/persistentvolumes",
+                null,
+                MAX_VOLUME_PAGES,
+                clusterScoped = true,
+                whole = true,
+            ).map { volume(it) }
+                .firstOrNull { it.claimNamespace == profile.namespace && it.claimName == claim }
+        }
+    }
+
+    override suspend fun storageClass(clusterId: String, name: String?): StorageClassObservation? =
+        clusters.use(clusterId) { target ->
+            val path = "${target.apiUrl.trimEnd('/')}/apis/storage.k8s.io/v1/storageclasses"
+            if (name != null) {
+                val named = target.read("$path/$name", "read storage class", clusterScoped = true)
+                return@use named?.let { storageClass(it) }
+            }
+            // No class named: the cluster's default, as the API server picks it for the claim; either annotation
+            // marks it.
+            target.list(path, null, clusterScoped = true).firstOrNull { json ->
+                DEFAULT_CLASS_ANNOTATIONS.any { json.textAt("metadata", "annotations", it) == "true" }
+            }?.let { storageClass(it) }
+        }
+
+    override suspend fun managed(clusterId: String, namespace: String): ManagedObjects =
+        clusters.use(clusterId) { target -> managed(target, clusterId, namespace) }
+
+    private suspend fun managed(target: KubernetesTarget, clusterId: String, namespace: String): ManagedObjects {
+        val selector = "$MANAGED_BY_LABEL=$MANAGED_BY,$CLUSTER_LABEL=$clusterId"
+        val base = "${target.apiUrl.trimEnd('/')}/api/v1/namespaces/$namespace"
+        return ManagedObjects(
+            target.list("$base/pods", selector).mapNotNull { it.textAt("metadata", "name") },
+            target.list("$base/persistentvolumeclaims", selector).mapNotNull { it.textAt("metadata", "name") },
+        )
+    }
+
+    // PersistentVolumes are cluster-wide and carry no label of ours: read them all, those of a workspace claim kept.
+    override suspend fun orphanedVolumes(clusterId: String): List<VolumeObservation> =
+        clusters.use(clusterId) { target -> orphanedVolumes(target) }
+
+    private suspend fun orphanedVolumes(target: KubernetesTarget): List<VolumeObservation> =
+        target.list(
+            "${target.apiUrl.trimEnd('/')}/api/v1/persistentvolumes",
+            null,
+            MAX_VOLUME_PAGES,
+            clusterScoped = true,
+        ).map { volume(it) }
+            .filter { it.claimName?.startsWith(RuntimeNames.WORKSPACE_PREFIX) == true }
+            .filter { it.phase == "Released" || it.phase == "Failed" }
+
+    override suspend fun deletePod(clusterId: String, namespace: String, name: String) = clusters.use(clusterId) {
+        val path = "${it.apiUrl.trimEnd('/')}/api/v1/namespaces/$namespace/pods/$name"
+        it.delete(path, mapOf("gracePeriodSeconds" to "0"), "delete pod")
+    }
+
+    override suspend fun deleteClaim(clusterId: String, namespace: String, name: String) = clusters.use(clusterId) {
+        val path = "${it.apiUrl.trimEnd('/')}/api/v1/namespaces/$namespace/persistentvolumeclaims/$name"
+        it.delete(path, emptyMap(), "delete claim")
+    }
+
+    /** Reads an object; null once it is gone. */
+    private suspend fun KubernetesTarget.read(url: String, step: String, clusterScoped: Boolean = false): JsonObject? {
+        val response = send(HttpMethod.Get, url)
+        if (response.status == HttpStatusCode.NotFound) return null
+        response.requireReadable(step, clusterScoped)
+        return Json.parseToJsonElement(response.bodyAsText()).jsonObject
+    }
+
+    /** Deletes an object; one already gone is a success. */
+    private suspend fun KubernetesTarget.delete(url: String, parameters: Map<String, String>, step: String) {
+        val response = send(HttpMethod.Delete, url, parameters = parameters)
+        if (response.status != HttpStatusCode.NotFound) response.requireSuccess(step)
+    }
+
+    /** Lists a collection, page by page (at most [maxPages] of [PAGE_SIZE]). */
+    private suspend fun KubernetesTarget.list(
+        url: String,
+        selector: String?,
+        maxPages: Int = MAX_PAGES,
+        clusterScoped: Boolean = false,
+        whole: Boolean = false,
+    ): List<JsonObject> {
+        val items = mutableListOf<JsonObject>()
+        var next: String? = null
+        repeat(maxPages) {
+            val parameters = buildMap {
+                put("limit", PAGE_SIZE.toString())
+                selector?.let { put("labelSelector", it) }
+                next?.let { put("continue", it) }
+            }
+            val response = send(HttpMethod.Get, url, parameters = parameters)
+            response.requireReadable("list", clusterScoped)
+            val page = Json.parseToJsonElement(response.bodyAsText()).jsonObject
+            (page["items"] as? JsonArray)?.forEach { item -> (item as? JsonObject)?.let(items::add) }
+            next = page.textAt("metadata", "continue")?.takeIf { it.isNotEmpty() } ?: return items
+        }
+        // Cut at maxPages: a listing that must be whole (a lookup filtered here) cannot be read, not empty.
+        if (whole) throw ClusterReadForbiddenException("list every PersistentVolume within $maxPages pages")
+        return items
     }
 
     // Its workspace claim is read: whatever the API answers but a refused token, the cluster opens.
@@ -249,7 +389,7 @@ class KubernetesRuntimeDriver(
         putJsonObject("metadata") {
             put("name", name)
             val egressLabel = EGRESS_LABEL to JsonPrimitive(egress(spec))
-            put("labels", JsonObject(labels(spec.sessionId, spec.epoch) + egressLabel))
+            put("labels", JsonObject(labels(spec.sessionId, spec.epoch, profile.clusterId) + egressLabel))
             if (spec.limits.restrictedEgress) {
                 putJsonObject("annotations") { put("kubernetes.io/egress-bandwidth", RESTRICTED_BANDWIDTH) }
             }
@@ -471,11 +611,18 @@ class KubernetesRuntimeDriver(
         url: String,
         body: JsonObject? = null,
         parameters: Map<String, String> = emptyMap(),
+    ): HttpResponse = target.send(method, url, body, parameters)
+
+    private suspend fun KubernetesTarget.send(
+        method: HttpMethod,
+        url: String,
+        body: JsonObject? = null,
+        parameters: Map<String, String> = emptyMap(),
     ): HttpResponse {
         val response = try {
-            target.client.request(url) {
+            client.request(url) {
                 this.method = method
-                bearerAuth(target.token)
+                bearerAuth(token)
                 parameters.forEach { (key, value) -> parameter(key, value) }
                 if (body != null) {
                     contentType(ContentType.Application.Json)
@@ -493,10 +640,11 @@ class KubernetesRuntimeDriver(
         return response
     }
 
-    private fun labels(sessionId: Uuid, epoch: Long?): JsonObject = buildJsonObject {
+    private fun labels(sessionId: Uuid, epoch: Long?, clusterId: String): JsonObject = buildJsonObject {
         put(MANAGED_BY_LABEL, MANAGED_BY)
         put(SESSION_LABEL, sessionId.toHexString())
         epoch?.let { put(EPOCH_LABEL, it.toString()) }
+        put(CLUSTER_LABEL, clusterId)
     }
 
     /** Constants and readers of the enclosing type. */
@@ -507,6 +655,9 @@ class KubernetesRuntimeDriver(
         const val SESSION_LABEL = "ostrom.run/session"
         const val EPOCH_LABEL = "ostrom.run/epoch"
         const val EGRESS_LABEL = "ostrom.run/egress"
+
+        /** The cluster a session object was made on (TeamCode's `CLUSTER_LABEL`): the garbage collection's selector. */
+        const val CLUSTER_LABEL = "ostrom.run/cluster"
         const val RESTRICTED_POLICY = "ostrom-sessions-restricted"
         const val OPEN_POLICY = "ostrom-sessions-open"
 
@@ -532,6 +683,35 @@ class KubernetesRuntimeDriver(
         const val SHARED_GID = 1000
         const val GRACE_SECONDS = 20
         private const val EPHEMERAL_REQUEST = "64Mi"
+
+        /** Either annotation marks a cluster's default storage class. */
+        private val DEFAULT_CLASS_ANNOTATIONS = listOf(
+            "storageclass.kubernetes.io/is-default-class",
+            "storageclass.beta.kubernetes.io/is-default-class",
+        )
+
+        /** Items asked per page of a list. */
+        private const val PAGE_SIZE = 500
+
+        /** Pages read of a namespaced list. */
+        private const val MAX_PAGES = 20
+
+        /** Pages read of the cluster's PersistentVolumes, which carry no label of ours (TeamCode's 200). */
+        private const val MAX_VOLUME_PAGES = 200
+
+        /** A storage class as the API returns it; no policy means `Delete`, the API's default. */
+        fun storageClass(json: JsonObject): StorageClassObservation =
+            StorageClassObservation(json.textAt("metadata", "name").orEmpty(), json.textAt("reclaimPolicy") ?: "Delete")
+
+        /** A PersistentVolume as the API returns it; no policy is read as `Retain`, which keeps the provider's. */
+        fun volume(json: JsonObject): VolumeObservation = VolumeObservation(
+            name = json.textAt("metadata", "name").orEmpty(),
+            phase = json.textAt("status", "phase") ?: "Pending",
+            reclaimPolicy = json.textAt("spec", "persistentVolumeReclaimPolicy") ?: "Retain",
+            volumeHandle = json.textAt("spec", "csi", "volumeHandle"),
+            claimNamespace = json.textAt("spec", "claimRef", "namespace"),
+            claimName = json.textAt("spec", "claimRef", "name"),
+        )
 
         /** The egress label value of an execution. */
         fun egress(spec: ExecutionSpec): String = if (spec.limits.restrictedEgress) "restricted" else "open"
@@ -572,4 +752,11 @@ class KubernetesApiException(step: String, status: HttpStatusCode) :
 
 private fun HttpResponse.requireSuccess(step: String) {
     if (!status.isSuccess()) throw KubernetesApiException(step, status)
+}
+
+// A cluster-scoped read the service account's role does not allow: PersistentVolumes and storage classes need a
+// ClusterRole, which the chart grants only when asked. A namespaced read refused stays a KubernetesApiException.
+private fun HttpResponse.requireReadable(step: String, clusterScoped: Boolean) {
+    if (clusterScoped && status == HttpStatusCode.Forbidden) throw ClusterReadForbiddenException(step)
+    requireSuccess(step)
 }

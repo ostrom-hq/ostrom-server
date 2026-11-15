@@ -9,7 +9,11 @@ import run.ostrom.server.cloud.domain.CloudProfileSpec
 import run.ostrom.server.cloud.domain.CloudProfilesUseCaseImpl
 import run.ostrom.server.cloud.domain.CloudResources
 import run.ostrom.server.cloud.domain.InvalidCloudProfileException
+import run.ostrom.server.cloud.domain.StorageClassLookup
+import run.ostrom.server.cloud.domain.StorageClassMissingException
+import run.ostrom.server.cloud.domain.StorageClassRetainsVolumesException
 import run.ostrom.server.cloud.domain.StoredCloudCluster
+import run.ostrom.server.cloud.domain.WorkspaceStorageClasses
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.secrets.domain.AdminRequiredException
 import run.ostrom.server.secrets.domain.Caller
@@ -150,6 +154,36 @@ class CloudProfilesTest {
             checked.create(admin, base.copy(assignedMemberIds = setOf(BOB.toString(), "someone-else")))
         }
         assertTrue("not a member" in refused.message.orEmpty())
+    }
+
+    @Test
+    fun aStorageClassThatIsGoneOrKeepsVolumesIsRefusedOnPublish() = runTest {
+        connect()
+        val asked = mutableListOf<String?>()
+        var answer: StorageClassLookup = StorageClassLookup.Found("fast", "Delete")
+        val storage = WorkspaceStorageClasses { clusterId, name ->
+            assertEquals(cluster.id, clusterId)
+            asked += name
+            answer
+        }
+        val checked = CloudProfilesUseCaseImpl(repository, clusters, clock, EveryoneIsAMember, storage)
+        val named = input.copy(spec = input.spec.copy(storageClass = "fast"))
+
+        val created = checked.create(admin, named)
+        answer = StorageClassLookup.Missing
+        assertEquals(
+            "storage_class_missing",
+            assertFailsWith<StorageClassMissingException> {
+                checked.update(admin, created.id, named.copy(version = 1))
+            }.type,
+        )
+        answer = StorageClassLookup.Found("fast", "Retain")
+        val retains = assertFailsWith<StorageClassRetainsVolumesException> { checked.create(admin, input) }
+        assertEquals("storage_class_retains_volumes", retains.type)
+        assertTrue("reclaimPolicy Retain" in retains.message.orEmpty())
+        answer = StorageClassLookup.Unknown
+        checked.create(admin, input.copy(name = "Unread"))
+        assertEquals(listOf("fast", "fast", null, null), asked, "The profile's class, else the cluster's default")
     }
 
     @Test

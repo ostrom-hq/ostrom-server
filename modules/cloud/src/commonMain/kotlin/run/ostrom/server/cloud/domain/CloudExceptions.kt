@@ -53,6 +53,27 @@ class CloudClusterConflictException : OstromException(
 class InvalidCloudProfileException(message: String) :
     OstromException(ErrorKind.INVALID_REQUEST, message, "invalid_cloud_profile")
 
+/** A profile's workspace storage class does not exist on its cluster (`runners.cloud.retention.v1`). */
+class StorageClassMissingException : OstromException(
+    ErrorKind.UNPROCESSABLE,
+    "The workspace storage class does not exist on the cluster.",
+    "storage_class_missing",
+)
+
+/**
+ * A profile's workspace storage class keeps the provider's volumes once their claim is deleted: a deleted session would
+ * leave its volume behind (`runners.cloud.retention.v1`).
+ *
+ * @param name The class.
+ * @param reclaimPolicy Its reclaim policy.
+ */
+class StorageClassRetainsVolumesException(name: String, reclaimPolicy: String) : OstromException(
+    ErrorKind.UNPROCESSABLE,
+    "Storage class $name has reclaimPolicy $reclaimPolicy; workspaces require reclaimPolicy Delete so deleted " +
+        "sessions leave no provider volume.",
+    "storage_class_retains_volumes",
+)
+
 /** No such profile in the caller's organization. */
 class CloudProfileNotFoundException :
     OstromException(ErrorKind.NOT_FOUND, "No such cloud profile.", "cloud_profile_not_found")

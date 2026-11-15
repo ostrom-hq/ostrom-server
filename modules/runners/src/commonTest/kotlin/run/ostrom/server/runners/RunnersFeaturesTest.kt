@@ -50,7 +50,7 @@ class RunnersFeaturesTest {
         assertEquals(setOf("runners.v1"), RunnersModule.features(koin(RunnersConfig.DriverKind.NONE)))
         assertEquals(cloud, RunnersModule.features(koin(RunnersConfig.DriverKind.DOCKER)))
         assertEquals(
-            cloud + "runners.cloud.profiles.v1",
+            cloud + "runners.cloud.profiles.v1" + "runners.cloud.retention.v1",
             RunnersModule.features(koin(RunnersConfig.DriverKind.KUBERNETES)),
             "Sessions on the console's clusters run on the organizations' profiles",
         )

@@ -7,6 +7,7 @@ import kotlin.uuid.Uuid
  * Where executions run: a Kubernetes namespace (production) or the local Docker engine (tests, self-hosting).
  * Every call is idempotent, so the reconciler can repeat any step after a crash or a lost race.
  */
+@Suppress("TooManyFunctions") // The runtime's one port: executions, workspaces and the proof of their deletion.
 interface RuntimeDriver {
     /**
      * Whether a lost execution starts again elsewhere rather than pausing its session: true where executions run on
@@ -73,7 +74,62 @@ interface RuntimeDriver {
      * @return True when it opens.
      */
     suspend fun reachable(session: CloudSession): Boolean = true
+
+    /**
+     * Whether a session's workspace deletion is proven down to the provider's volume ([WorkspaceDeletion], TeamCode's
+     * proven deletion): true on Kubernetes, where [workspaceClaim], [volume] and [storageClass] read the cluster.
+     * Elsewhere [deleteWorkspace] alone deletes it.
+     */
+    val provesDeletion: Boolean get() = false
+
+    /**
+     * The storage class a new workspace claim of the session gets: its profile's, else the cluster's default.
+     *
+     * @param session The session.
+     *
+     * @return It, or null when the class does not exist (or the cluster has no default).
+     */
+    suspend fun storageClass(session: CloudSession): StorageClassObservation? = null
+
+    /**
+     * The session's workspace claim.
+     *
+     * @param session The session.
+     *
+     * @return It, or null once it is gone.
+     */
+    suspend fun workspaceClaim(session: CloudSession): ClaimObservation? = null
+
+    /**
+     * A PersistentVolume of the session's cluster.
+     *
+     * @param session The session.
+     * @param name The volume.
+     *
+     * @return It, or null once it is gone.
+     */
+    suspend fun volume(session: CloudSession, name: String): VolumeObservation? = null
+
+    /**
+     * The PersistentVolume whose claim reference names the session's workspace claim: the volume of a claim that was
+     * not bound yet when it was read, bound in the race with its deletion (TeamCode's `claimRef` lookup).
+     *
+     * @param session The session.
+     *
+     * @return It, or null when there is none.
+     */
+    suspend fun claimedVolume(session: CloudSession): VolumeObservation? = null
 }
+
+/**
+ * A cluster-wide read that cannot be made: the service account's role refuses it (PersistentVolumes and storage classes
+ * need a ClusterRole, which the chart grants only when asked, `cloudSessions.rbac.volumeReader`), or a listing that
+ * must be whole is longer than the driver reads. A first start then does not check its storage class, and a deletion is
+ * blocked as [WorkspaceDeletion.VOLUME_UNREADABLE].
+ *
+ * @param step What was read.
+ */
+class ClusterReadForbiddenException(step: String) : Exception("The cluster-wide read cannot be made: $step.")
 
 /**
  * The session's runtime does not open: its cluster is gone, its credentials or its CA no longer open, or its API
@@ -157,6 +213,9 @@ enum class ExecutionStatus {
 
 /** The names a driver gives to a session's objects, the same in every runtime. */
 object RuntimeNames {
+    /** The start of every workspace's name. */
+    const val WORKSPACE_PREFIX: String = "ostrom-ws-"
+
     /**
      * The workspace volume of a session.
      *
@@ -164,7 +223,7 @@ object RuntimeNames {
      *
      * @return `ostrom-ws-<32 hex>`.
      */
-    fun workspace(sessionId: Uuid): String = "ostrom-ws-" + sessionId.toHexString()
+    fun workspace(sessionId: Uuid): String = WORKSPACE_PREFIX + sessionId.toHexString()
 
     /**
      * The pod or container of an execution: deterministic, so creating it twice is harmless.

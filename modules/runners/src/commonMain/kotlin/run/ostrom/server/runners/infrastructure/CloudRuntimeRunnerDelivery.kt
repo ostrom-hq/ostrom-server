@@ -14,7 +14,8 @@ import run.ostrom.server.runners.domain.RunnerDeliverySource
  * containers run [fallbackImage] (`OSTROM_RUNNERS_IMAGE`), the instance's session image, whatever runner image the
  * runtime names. The runner image only delivers the binary: the CLI's slim `ostrom-runner` has no agent, git nor the
  * session's accounts. While the runtime names none, [fallbackImage] is both, as TeamCode's template image is
- * (docker/cloud-session-image of ostrom-cli, with `ostrom` at /usr/local/bin).
+ * (docker/cloud-session-image of ostrom-cli, with `ostrom` at /usr/local/bin). A Kubernetes workspace claim gets the
+ * runtime's access mode.
  *
  * @param runtime The cloud runtime; null on a server without the cloud module, which then uses [fallbackImage].
  * @param fallbackImage The session image of Docker and registered sessions, and the runner image while the runtime
@@ -31,6 +32,6 @@ class CloudRuntimeRunnerDelivery(
         val current = if (runtime == null) CloudRuntime() else runtime.current()
         val image = current.runnerImage?.takeIf { it.isNotBlank() } ?: fallbackImage
         val serverUrl = current.serverUrl?.takeIf { it.isNotBlank() } ?: publicUrl.trimEnd('/')
-        return RunnerDelivery(image, current.runnerBinary, fallbackImage, serverUrl)
+        return RunnerDelivery(image, current.runnerBinary, fallbackImage, serverUrl, current.workspaceAccessMode)
     }
 }

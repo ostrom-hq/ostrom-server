@@ -157,6 +157,8 @@ internal fun CloudCluster.toResponse() = CloudClusterResponse(
     createdAt = createdAt.toString(),
     updatedAt = updatedAt.toString(),
     inCluster = inCluster,
+    orphanedVolumes = orphanedVolumes,
+    lastGarbageCollectionAt = lastGarbageCollectionAt?.toString(),
 )
 
 internal fun SaveCloudProfileRequest.toInput() = CloudProfileInput(name, version, spec, assignedMemberIds.toSet())

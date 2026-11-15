@@ -85,6 +85,9 @@ data class CloudRuntime(
  *   it into a stored cluster.
  * @property imported Whether it is the cluster imported from the former variables, the one the sessions created before
  *   cloud profiles run on (never shown: an administrator may rename it).
+ * @property orphanedVolumes The session workspace volumes whose claim is gone and that their provisioner will not
+ *   delete, counted by the last garbage collection; null before the first (`runners.cloud.retention.v1`).
+ * @property lastGarbageCollectionAt When the last garbage collection of the cluster ran; null before the first.
  */
 data class CloudCluster(
     val id: Uuid,
@@ -100,6 +103,8 @@ data class CloudCluster(
     val updatedAt: Instant,
     val inCluster: Boolean = false,
     val imported: Boolean = false,
+    val orphanedVolumes: Int? = null,
+    val lastGarbageCollectionAt: Instant? = null,
 )
 
 /**

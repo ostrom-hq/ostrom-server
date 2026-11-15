@@ -11,18 +11,22 @@ import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asIntOrNull
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** [CloudClustersRepository] on PostgreSQL (`cloud_clusters`, the instance's, no organization). */
 class CloudClustersRepositoryImpl(private val driver: Driver) : CloudClustersRepository {
     override suspend fun list(): List<CloudCluster> =
-        driver.fetchAll("SELECT $COLUMNS FROM cloud_clusters ORDER BY name").getOrThrow().map { it.toStored().cluster }
+        driver.fetchAll("SELECT $COLUMNS, $REPORT FROM cloud_clusters ORDER BY name").getOrThrow()
+            .map { it.toStored().cluster }
 
     override suspend fun get(id: Uuid): StoredCloudCluster? = driver.fetchAll(
-        Statement.create("SELECT $COLUMNS FROM cloud_clusters WHERE id = :id").bind("id", id),
+        Statement.create("SELECT $COLUMNS, $REPORT FROM cloud_clusters WHERE id = :id").bind("id", id),
     ).getOrThrow().firstOrNull()?.toStored()
 
     override suspend fun version(id: Uuid): Int? = driver.fetchAll(
@@ -55,6 +59,15 @@ class CloudClustersRepositoryImpl(private val driver: Driver) : CloudClustersRep
         ).bind("previous", stored.cluster.version - 1),
     ).getOrThrow() == 1L
 
+    override suspend fun recordGarbageCollection(id: Uuid, orphanedVolumes: Int?, at: Instant) {
+        driver.execute(
+            Statement.create(
+                "UPDATE cloud_clusters SET orphaned_volumes = :orphaned, last_garbage_collection_at = :at " +
+                    "WHERE id = :id",
+            ).bind("orphaned", orphanedVolumes).bind("at", at).bind("id", id),
+        ).getOrThrow()
+    }
+
     private fun bind(statement: Statement, stored: StoredCloudCluster): Statement = with(stored.cluster) {
         statement.bind("id", id).bind("name", name).bind("api_url", apiUrl)
             .bind("ca", stored.sealedCaCertificate).bind("token", stored.sealedServiceAccountToken)
@@ -82,6 +95,8 @@ class CloudClustersRepositoryImpl(private val driver: Driver) : CloudClustersRep
             updatedAt = get("updated_at").asInstant(),
             inCluster = get("in_cluster").asBoolean(),
             imported = get("imported").asBoolean(),
+            orphanedVolumes = get("orphaned_volumes").asIntOrNull(),
+            lastGarbageCollectionAt = get("last_garbage_collection_at").asInstantOrNull(),
         )
         return StoredCloudCluster(cluster, ca, token)
     }
@@ -89,4 +104,7 @@ class CloudClustersRepositoryImpl(private val driver: Driver) : CloudClustersRep
 
 private const val COLUMNS = "id, name, api_url, sealed_ca, sealed_token, allowed_namespaces, max_running_pods, " +
     "default_storage_class, version, created_at, updated_at, in_cluster, imported"
+
+/** The garbage collection's report, read but never written by an administrator's save. */
+private const val REPORT = "orphaned_volumes, last_garbage_collection_at"
 private val NAMES = ListSerializer(String.serializer())
