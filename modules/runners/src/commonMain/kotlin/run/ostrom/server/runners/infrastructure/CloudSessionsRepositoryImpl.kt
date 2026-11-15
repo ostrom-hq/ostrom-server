@@ -301,6 +301,19 @@ class CloudSessionsRepositoryImpl(
         ).bind("device", deviceId).bind("live", live),
     ).getOrThrow().map { SessionRef(it.get("org_id").asUuid(), it.get("session_id").asUuid()) }
 
+    // Read every second by each waiting daemon: the partial index of version 23 holds only the waiting sessions.
+    override suspend fun daemonOrders(orgId: Uuid, deviceId: Uuid, limit: Int): List<CloudSession> {
+        val statement = Statement.create(
+            """
+            SELECT $COLUMNS FROM runners_sessions WHERE org_id = :org_id AND host_device_id = :device AND
+            phase = :phase AND desired_state = 'running' AND host_folder_id IS NOT NULL
+            ORDER BY updated_at, id LIMIT :limit
+            """,
+        ).bind("org_id", orgId).bind("device", deviceId).bind("phase", RemoteSessionRules.WAITING_HOST)
+            .bind("limit", limit)
+        return driver.inTenant(orgId) { fetchAll(statement).getOrThrow().map { it.toSession() } }
+    }
+
     override suspend fun endOnRemovedDevice(ref: SessionRef, deviceId: Uuid, now: Instant): Boolean =
         driver.inTenant(ref.orgId) {
             // Its remote sessions end with the device: they could only ever run there. The reconciler finishes the

@@ -268,6 +268,14 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
         sessions.values.filter { it.host?.deviceId == deviceId && !(live && it.state.isFinal) }
             .map { SessionRef(it.orgId, it.id) }
 
+    override suspend fun daemonOrders(orgId: Uuid, deviceId: Uuid, limit: Int): List<CloudSession> = sessions.values
+        .filter {
+            it.orgId == orgId && it.host?.deviceId == deviceId && it.host.folderId != null &&
+                it.phase == RemoteSessionRules.WAITING_HOST && it.desiredState == DesiredState.RUNNING
+        }
+        .sortedBy { it.updatedAt }
+        .take(limit)
+
     override suspend fun endOnRemovedDevice(ref: SessionRef, deviceId: Uuid, now: Instant): Boolean {
         val current = get(ref.orgId, ref.id)?.takeIf { it.host?.deviceId == deviceId } ?: return false
         val live = !current.state.isFinal && current.desiredState != DesiredState.TERMINATED

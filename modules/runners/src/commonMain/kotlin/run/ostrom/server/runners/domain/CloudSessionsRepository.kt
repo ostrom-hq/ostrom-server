@@ -168,6 +168,18 @@ interface CloudSessionsRepository {
     suspend fun hostedOn(deviceId: Uuid, live: Boolean = false): List<SessionRef>
 
     /**
+     * A device daemon's queue (TeamCode's `DeviceDaemonStore.orders`): the organization's sessions started through the
+     * device's daemon (a folder) that wait for their host and should run, oldest request first.
+     *
+     * @param orgId The organization the daemon polls in.
+     * @param deviceId The device.
+     * @param limit The most sessions.
+     *
+     * @return The sessions.
+     */
+    suspend fun daemonOrders(orgId: Uuid, deviceId: Uuid, limit: Int): List<CloudSession>
+
+    /**
      * Ends a session on a removed device: asked to terminate with [RemoteSessionRules.DEVICE_REMOVED] unless it is over
      * or ending already, and its host forgotten either way, in one transaction of its organization.
      *

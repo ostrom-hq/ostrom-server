@@ -34,6 +34,7 @@ val ErrorKind.httpStatus: HttpStatusCode
         ErrorKind.RATE_LIMITED -> HttpStatusCode.TooManyRequests
         ErrorKind.GONE -> HttpStatusCode.Gone
         ErrorKind.UNAVAILABLE -> HttpStatusCode.ServiceUnavailable
+        ErrorKind.GATEWAY_TIMEOUT -> HttpStatusCode.GatewayTimeout
         ErrorKind.INTERNAL -> HttpStatusCode.InternalServerError
     }
 

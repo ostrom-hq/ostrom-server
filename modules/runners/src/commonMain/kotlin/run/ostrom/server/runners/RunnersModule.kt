@@ -195,6 +195,13 @@ import run.ostrom.server.runners.domain.OwnerLoginPrincipalResolver
 import run.ostrom.server.runners.domain.RemoteIdleTimeout
 import run.ostrom.server.runners.infrastructure.CloudSettingsRemoteIdleTimeout
 import run.ostrom.server.runners.presentation.RemoteHostViews
+import run.ostrom.server.runners.presentation.DeviceDaemonRoutesDependencies
+import run.ostrom.server.runners.presentation.deviceDaemonRoutes
+import run.ostrom.server.runners.domain.DeviceDaemonUseCaseImpl
+import run.ostrom.server.runners.domain.RefuseRemoteHostUseCase
+import run.ostrom.server.runners.domain.RefuseRemoteHostUseCaseImpl
+import run.ostrom.server.kernel.auth.DeviceDaemons
+import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.sessions.CloudAgentSessions
 import run.ostrom.server.kernel.sessions.CloudSessionWakes
@@ -312,7 +319,18 @@ object RunnersModule : ServerModule {
         // Remote sessions: on the device of their owner's sign-in, which the identity module knows.
         single<RemoteIdleTimeout> { CloudSettingsRemoteIdleTimeout(getOrNull<CloudSettingsSource>()) }
         single<CreateRemoteSessionUseCase> {
-            CreateRemoteSessionUseCaseImpl(get(), getOrNull<SignedInDevices>(), get(), get())
+            val devices = getOrNull<SignedInDevices>()
+            CreateRemoteSessionUseCaseImpl(get(), devices, get(), get(), getOrNull<DeviceDaemons>())
+        }
+        // The daemons of members' devices (runners.cloud.remote.daemon.v1): their presence, folders and listings are
+        // the identity module's, a listing's answer is sealed with the secrets key. Without either, none is served.
+        single<RefuseRemoteHostUseCase> { RefuseRemoteHostUseCaseImpl(get(), get()) }
+        single {
+            val routes = getKoin().daemonParts()?.let { (devices, daemons, cipher) ->
+                val daemon = DeviceDaemonUseCaseImpl(devices, daemons, get(), cipher, get())
+                DeviceDaemonRoutesDependencies(daemon, get(), get(), get())
+            }
+            DaemonWiring(routes)
         }
         single<HostRemoteSessionUseCase> { HostRemoteSessionUseCaseImpl(get(), getOrNull<SignedInDevices>(), get()) }
         single { RemoteHostViews(getOrNull<SignedInDevices>(), get()) }
@@ -478,6 +496,7 @@ object RunnersModule : ServerModule {
     override fun routes(route: Route, koin: Koin) {
         route.cloudSessionsRoutes(koin.get())
         koin.get<TransferWiring>().routes?.let { route.cloudTransfersRoutes(it) }
+        koin.get<DaemonWiring>().routes?.let { route.deviceDaemonRoutes(it) }
         route.runnersRoutes(koin.get())
         route.terminalRoutes(koin.get())
         route.cloudConversationRoutes(koin.get())
@@ -526,6 +545,9 @@ object RunnersModule : ServerModule {
             // conversation, once the identity module knows the devices.
             ServerFeatures.RUNNERS_CLOUD_REMOTE.takeIf { announced && koin.getOrNull<SignedInDevices>() != null },
             ServerFeatures.RUNNERS_CLOUD_FILES.takeIf { files },
+            // Sessions started by a device's daemon: remote sessions, once the identity module keeps the daemons and
+            // the secrets module seals their listings.
+            ServerFeatures.RUNNERS_CLOUD_REMOTE_DAEMON.takeIf { announced && koin.daemonParts() != null },
         ) + conversation
     }
 
@@ -616,6 +638,32 @@ private fun filesService(scope: Scope): CloudFileService? = with(scope) {
  * @property complete The owner change at the paused boundary.
  */
 class TransferWiring(val routes: CloudTransfersRoutesDependencies?, val complete: CompleteCloudTransferUseCase?)
+
+/**
+ * What the device daemons need, built once (`runners.cloud.remote.daemon.v1`): null without the identity module's
+ * daemons or the secrets module's cipher.
+ *
+ * @property routes The routes' dependencies.
+ */
+class DaemonWiring(val routes: DeviceDaemonRoutesDependencies?)
+
+/**
+ * What the daemon channel needs from the other modules: the devices of sign-ins, the daemons (identity) and the cipher
+ * that seals the listings (secrets).
+ *
+ * @property devices The devices of sign-ins.
+ * @property daemons The daemons' presence, folders and listings.
+ * @property cipher The cipher.
+ */
+internal data class DaemonParts(val devices: SignedInDevices, val daemons: DeviceDaemons, val cipher: SecretCipher)
+
+/** @return The daemon channel's parts, null when a module that provides one is missing. */
+internal fun Koin.daemonParts(): DaemonParts? {
+    val devices = getOrNull<SignedInDevices>()
+    val daemons = getOrNull<DeviceDaemons>()
+    val cipher = getOrNull<SecretCipher>()
+    return if (devices != null && daemons != null && cipher != null) DaemonParts(devices, daemons, cipher) else null
+}
 
 /**
  * The execution's inference credentials, built once (`runners.cloud.inference.v1`): null without the launches module,

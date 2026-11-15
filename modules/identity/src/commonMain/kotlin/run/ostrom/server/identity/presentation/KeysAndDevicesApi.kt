@@ -106,6 +106,8 @@ data class ServiceKeysResponse(val items: List<ServiceKeyResponse>)
  * @property orgId The organization an `admin` token is bound to; absent for `cli`.
  * @property scopes What an `admin` token may do, sorted; absent for `cli`.
  * @property expiresAt When an `admin` token stops working; absent for `cli`.
+ * @property daemon The device's daemon (`runners.cloud.remote.daemon.v1`); absent when it never polled or said it
+ *   stopped.
  */
 @Serializable
 data class DeviceResponse(
@@ -122,6 +124,23 @@ data class DeviceResponse(
     val lastLoginAt: String? = null,
     val activeSessions: Int? = null,
     val current: Boolean? = null,
+    val daemon: DaemonPresenceResponse? = null,
+)
+
+/**
+ * A device's daemon as the server last saw it (contract `DaemonPresence`).
+ *
+ * @property online It polled less than a minute ago.
+ * @property lastSeenAt Its latest recorded poll.
+ * @property version The CLI's version it announced.
+ * @property features What it announced at that poll.
+ */
+@Serializable
+data class DaemonPresenceResponse(
+    val online: Boolean,
+    val lastSeenAt: String,
+    val version: String? = null,
+    val features: List<String> = emptyList(),
 )
 
 /**
@@ -165,6 +184,7 @@ fun SignedInDevice.toDeviceResponse(): DeviceResponse {
         lastLoginAt = lastLoginAt?.toString(),
         activeSessions = activeSessions,
         current = current,
+        daemon = daemon?.let { DaemonPresenceResponse(it.online, it.lastSeenAt.toString(), it.version, it.features) },
     )
     val token = elevated ?: return device
     return device.copy(

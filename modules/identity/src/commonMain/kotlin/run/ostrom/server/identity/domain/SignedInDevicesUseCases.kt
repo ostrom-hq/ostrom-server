@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.identity.domain
 
+import run.ostrom.server.kernel.auth.DaemonPresence
 import run.ostrom.server.kernel.auth.DeviceRemovalListener
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.auth.OrgPrincipal
@@ -35,6 +36,8 @@ private val DEVICES_MANAGERS: Set<OrgRole> = setOf(OrgRole.OWNER, OrgRole.ADMIN)
  * @property activeSessions How many live CLI tokens a registered device holds; null on a line of a token.
  * @property current Whether the call came from it; null where the caller is no CLI sign-in nor a registered device's.
  * @property elevated The token of `ostrom login --admin` this line is, which has no device; null on any other line.
+ * @property daemon A registered device's daemon (`runners.cloud.remote.daemon.v1`); null when it never polled or said
+ *   it stopped, and on a line of a token.
  */
 data class SignedInDevice(
     val id: Uuid,
@@ -47,6 +50,7 @@ data class SignedInDevice(
     val activeSessions: Int? = null,
     val current: Boolean? = null,
     val elevated: ApiToken? = null,
+    val daemon: DaemonPresence? = null,
 )
 
 /** Lists the workstations where the person is signed in. */
@@ -99,6 +103,7 @@ class ListDevicesUseCaseImpl(
                 lastSeenAt = own.firstOrNull()?.lastUsedAt,
                 activeSessions = own.size,
                 current = device.id == currentDevice,
+                daemon = DaemonPresence.of(device.daemonSeenAt, device.daemonVersion, now, device.daemonFeatures),
             )
         }
         val alone = live.filter { it.deviceId == null }.map {

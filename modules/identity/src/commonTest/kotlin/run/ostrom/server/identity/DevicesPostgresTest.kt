@@ -29,6 +29,9 @@ import run.ostrom.server.identity.presentation.DeviceTokenRequest
 import run.ostrom.server.identity.presentation.DevicesResponse
 import run.ostrom.server.identity.presentation.RenameDeviceRequest
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import run.ostrom.server.kernel.auth.DaemonFolder
+import run.ostrom.server.kernel.auth.DaemonListingRequest
+import run.ostrom.server.kernel.auth.DeviceDaemons
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.auth.OrgPrincipal
 import run.ostrom.server.kernel.auth.OrgRole
@@ -59,6 +62,8 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
@@ -177,6 +182,58 @@ class DevicesPostgresTest {
 
         val actions = server.koin.get<AuditRepository>().list(null, ada.user.id, null, 50).map { it.entry.action }
         assertEquals(1, actions.count { it == "device.registered" }, actions.toString())
+    }
+
+    @Test
+    fun theDaemonsPresenceFoldersAndListingsLiveWithTheDevice() =
+        serverTest(listOf(IdentityModule), overrides) { server ->
+        val ada = server.person("ada", OrgRole.MEMBER)
+        val bea = server.person("bea", OrgRole.OWNER)
+        val token = server.cliToken(ada, INSTALLATION)
+        val device = Uuid.parse(server.byCli(token).first().id)
+        val daemons = server.koin.get<DeviceDaemons>()
+        // Whole milliseconds: PostgreSQL rounds a time to the microsecond, which would move the 60 s boundary.
+        val t0 = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
+        assertNull(daemons.owned(ada.user.id, device, t0)?.daemon, "A daemon that never polled has no presence")
+
+        daemons.touch(device, "1.0.0", listOf("resume.v1"), t0)
+        daemons.touch(device, "2.0.0", emptyList(), t0 + 4.seconds)
+        val seen = assertNotNull(daemons.owned(ada.user.id, device, t0 + 59.seconds)?.daemon)
+        assertEquals(listOf(true, "1.0.0", listOf("resume.v1")), listOf(seen.online, seen.version, seen.features))
+        assertEquals(false, daemons.owned(ada.user.id, device, t0 + 60.seconds)?.daemon?.online)
+        assertEquals(listOf("resume.v1"), server.byCli(token).first().daemon?.features, "The devices list shows it")
+        daemons.touch(device, "2.0.0", emptyList(), t0 + 6.seconds)
+        val listed = server.byCli(token).first().daemon
+        assertEquals(listOf("2.0.0", emptyList<String>()), listOf(listed?.version, listed?.features))
+        assertNull(daemons.owned(bea.user.id, device, t0), "Another person's device is not found")
+
+        val folders = listOf(DaemonFolder("b", "beta", "~/git/beta"), DaemonFolder("a", "alpha"))
+        daemons.publish(device, folders)
+        assertEquals(folders, daemons.owned(ada.user.id, device, t0)?.folders)
+        daemons.publish(device, folders.take(1))
+        assertEquals(folders.take(1), daemons.owned(ada.user.id, device, t0)?.folders)
+        daemons.publish(Uuid.random(), folders)
+        daemons.offline(device)
+        assertNull(daemons.owned(ada.user.id, device, t0)?.daemon)
+        assertNull(server.byCli(token).first().daemon)
+
+        val stale = daemons.askListing(device, "b", 20, null, t0, t0 + 30.seconds)
+        val open = daemons.askListing(device, "b", 5, "2026-10-30T08:00:00Z", t0 + 31.seconds, t0 + 61.seconds)
+        assertEquals(
+            listOf(DaemonListingRequest(open, "b", 5, "2026-10-30T08:00:00Z")),
+            daemons.listings(device, t0 + 31.seconds, 4),
+            "An expired request is removed at the device's next one",
+        )
+        assertFalse(daemons.answerListing(device, stale, "sealed", t0 + 31.seconds))
+        assertFalse(daemons.answerListing(Uuid.random(), open, "sealed", t0 + 31.seconds))
+        assertFalse(daemons.answerListing(device, open, "sealed", t0 + 61.seconds), "Nobody waits any more")
+        assertNull(daemons.listingAnswer(open))
+        assertTrue(daemons.answerListing(device, open, "sealed", t0 + 32.seconds))
+        assertFalse(daemons.answerListing(device, open, "again", t0 + 33.seconds), "Answered once")
+        assertEquals("sealed", daemons.listingAnswer(open))
+        assertTrue(daemons.listings(device, t0 + 33.seconds, 4).isEmpty())
+        daemons.dropListing(open)
+        assertNull(daemons.listingAnswer(open))
     }
 
     @Test

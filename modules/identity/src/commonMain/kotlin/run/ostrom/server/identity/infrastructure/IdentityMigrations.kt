@@ -530,4 +530,36 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
             CREATE INDEX identity_api_tokens_device ON identity_api_tokens (device_id) WHERE device_id IS NOT NULL
         """.trimIndent(),
     ),
+    // runners.cloud.remote.daemon.v1 (TeamCode's device daemon): the daemon's presence on the device row, the folders
+    // it publishes (replaced as a whole, read in order by the primary key) and the listings members wait for, for
+    // seconds, their answer sealed. Account-level tables, as the devices: no organization owns them.
+    SchemaMigration(
+        version = 21,
+        name = "device_daemon",
+        sql = """
+            ALTER TABLE identity_devices
+                ADD COLUMN daemon_seen_at TIMESTAMPTZ, ADD COLUMN daemon_version TEXT, ADD COLUMN daemon_features TEXT;
+            CREATE TABLE identity_device_folders (
+                device_id UUID NOT NULL REFERENCES identity_devices (id) ON DELETE CASCADE,
+                position INTEGER NOT NULL,
+                folder_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                label TEXT,
+                PRIMARY KEY (device_id, position),
+                CONSTRAINT identity_device_folders_id UNIQUE (device_id, folder_id)
+            );
+            CREATE TABLE identity_device_daemon_listings (
+                id UUID PRIMARY KEY,
+                device_id UUID NOT NULL REFERENCES identity_devices (id) ON DELETE CASCADE,
+                folder_id TEXT NOT NULL,
+                max_results INTEGER NOT NULL,
+                before_cursor TEXT,
+                expires_at TIMESTAMPTZ NOT NULL,
+                answered_at TIMESTAMPTZ,
+                answer_envelope TEXT
+            );
+            CREATE INDEX identity_device_daemon_listings_open
+                ON identity_device_daemon_listings (device_id, answered_at, expires_at)
+        """.trimIndent(),
+    ),
 )

@@ -137,6 +137,10 @@ fun validatedDeviceName(name: String): String {
  * @property osVersion The system's version reported with [platform].
  * @property createdAt When it was registered.
  * @property lastLoginAt Its latest sign-in.
+ * @property daemonSeenAt Its daemon's latest recorded poll (`runners.cloud.remote.daemon.v1`); null when it never
+ *   connected or said it stopped.
+ * @property daemonVersion The CLI's version its daemon announced.
+ * @property daemonFeatures What its daemon announced at that poll.
  */
 data class RegisteredDevice(
     val id: Uuid,
@@ -147,6 +151,9 @@ data class RegisteredDevice(
     val osVersion: String?,
     val createdAt: Instant,
     val lastLoginAt: Instant,
+    val daemonSeenAt: Instant? = null,
+    val daemonVersion: String? = null,
+    val daemonFeatures: List<String> = emptyList(),
 )
 
 /**

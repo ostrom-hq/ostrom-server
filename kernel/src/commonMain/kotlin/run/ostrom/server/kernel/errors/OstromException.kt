@@ -21,6 +21,9 @@ enum class ErrorKind(val type: String) {
     RATE_LIMITED("rate_limited"),
     GONE("gone"),
     UNAVAILABLE("unavailable"),
+
+    /** Another party the server waits for did not answer in time (a device's daemon, `device_no_answer`). */
+    GATEWAY_TIMEOUT("gateway_timeout"),
     INTERNAL("internal_error"),
 }
 

@@ -18,6 +18,10 @@ import run.ostrom.server.runners.domain.RunnerGitHubToken
 import run.ostrom.server.runners.domain.RunnerGitHubTokens
 import run.ostrom.server.runners.fakes.FakeInferenceStore
 import run.ostrom.server.kernel.auth.SignedInDevices
+import run.ostrom.server.kernel.auth.DeviceDaemons
+import run.ostrom.server.runners.fakes.ContextCipher
+import run.ostrom.server.runners.fakes.FakeDeviceDaemons
+import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.runners.fakes.FakeSignedInDevices
 import run.ostrom.server.runners.fakes.FakeTransferRecipients
 import run.ostrom.server.runners.fakes.session
@@ -82,6 +86,34 @@ class RunnersFeaturesTest {
             cloud + RunnersModule.CONVERSATION_FEATURES + "runners.cloud.remote.v1",
             RunnersModule.features(withDevices),
         )
+        // Sessions started by a device's daemon: once the identity module keeps the daemons and a cipher seals the
+        // listings.
+        val withDaemons = koin(true).also {
+            it.loadModules(
+                listOf(
+                    module {
+                        single<SignedInDevices> { FakeSignedInDevices() }
+                        single<DeviceDaemons> { FakeDeviceDaemons() }
+                        single<SecretCipher> { ContextCipher }
+                    },
+                ),
+            )
+        }
+        assertEquals(
+            cloud + RunnersModule.CONVERSATION_FEATURES + "runners.cloud.remote.v1" + "runners.cloud.remote.daemon.v1",
+            RunnersModule.features(withDaemons),
+        )
+        val cipherless = koin(true).also {
+            it.loadModules(
+                listOf(
+                    module {
+                        single<SignedInDevices> { FakeSignedInDevices() }
+                        single<DeviceDaemons> { FakeDeviceDaemons() }
+                    },
+                ),
+            )
+        }
+        assertFalse("runners.cloud.remote.daemon.v1" in RunnersModule.features(cipherless))
     }
 
     @Test

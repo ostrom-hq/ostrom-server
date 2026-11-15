@@ -250,6 +250,8 @@ class SchemaTenancyPostgresTest {
             "github_manifest_states" to "serving role: the state of an instance admin's GitHub App creation, by hash",
             "github_webhook_deliveries" to "serving role, GitHub webhook: the deliveries already received, by id",
             "identity_device_authorizations" to "serving role, device sign-in: a person's pending CLI sign-in",
+            "identity_device_daemon_listings" to "serving role: a daemon's pending listings, its answers sealed",
+            "identity_device_folders" to "serving role: the folders a person's device daemon publishes",
             "identity_devices" to "serving role: the CLI's registered installations, one per person and installation",
             "identity_identities" to "serving role, sign-in: a person's external accounts",
             "identity_magic_links" to "serving role, sign-in: e-mail links, by hash",

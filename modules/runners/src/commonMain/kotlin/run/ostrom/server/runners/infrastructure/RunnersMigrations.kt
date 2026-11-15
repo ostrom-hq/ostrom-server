@@ -876,4 +876,14 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
     ),
     // runners.cloud.files.v1: the files members send to sessions, and their daily counters.
     SchemaMigration(version = 24, name = "session_files", sql = SESSION_FILES_SQL),
+    // runners.cloud.remote.daemon.v1: a device daemon's queue, read every second by each waiting daemon (TeamCode's
+    // cloud_session_host_waiting): only the sessions started through a daemon that wait for their host.
+    SchemaMigration(
+        version = 25,
+        name = "daemon_orders",
+        sql = """
+            CREATE INDEX runners_sessions_host_waiting ON runners_sessions (host_device_id, org_id, updated_at, id)
+                WHERE phase = 'waiting_host' AND desired_state = 'running' AND host_folder_id IS NOT NULL
+        """.trimIndent(),
+    ),
 )
