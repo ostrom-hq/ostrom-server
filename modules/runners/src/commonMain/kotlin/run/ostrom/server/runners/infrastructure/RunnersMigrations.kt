@@ -886,4 +886,11 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
                 WHERE phase = 'waiting_host' AND desired_state = 'running' AND host_folder_id IS NOT NULL
         """.trimIndent(),
     ),
+    // runners.cloud.remote.resume.v1: the device's Claude Code conversation a daemon session continues (TeamCode's
+    // host_resume_session_id), a lowercase UUID the daemon listed; null for a new conversation.
+    SchemaMigration(
+        version = 26,
+        name = "host_resume_session",
+        sql = "ALTER TABLE runners_sessions ADD COLUMN host_resume_session_id TEXT",
+    ),
 )

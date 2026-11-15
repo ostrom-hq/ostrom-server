@@ -552,6 +552,8 @@ object RunnersModule : ServerModule {
             // Sessions started by a device's daemon: remote sessions, once the identity module keeps the daemons and
             // the secrets module seals their listings.
             ServerFeatures.RUNNERS_CLOUD_REMOTE_DAEMON.takeIf { announced && koin.daemonParts() != null },
+            // Continuing a device's Claude Code conversation: the daemon lists them, the listing sealed as above.
+            ServerFeatures.RUNNERS_CLOUD_REMOTE_RESUME.takeIf { announced && koin.daemonParts() != null },
         ) + conversation
     }
 

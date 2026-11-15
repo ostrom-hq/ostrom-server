@@ -137,6 +137,8 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     // A device's daemon (runners.cloud.remote.daemon.v1): the caller's own device only, B's device is not found; the
     // daemon's routes act on the device of the caller's own sign-in, and B's session is not refused.
     "GET /api/v1/devices/{id}/folders" to target("id" to DEVICE),
+    "GET /api/v1/devices/{id}/folders/{folderId}/resumable" to
+        Case.Target(mapOf("id" to of(DEVICE), "folderId" to Param.Fixed("f1"))),
     "POST /api/v1/devices/current/daemon/poll" to Case.Own("polls for the sessions of the caller's own device"),
     "DELETE /api/v1/devices/current/daemon" to Case.Own("marks the caller's own device offline"),
     "PUT /api/v1/devices/current/folders" to Case.Own("publishes the caller's own device's folders"),

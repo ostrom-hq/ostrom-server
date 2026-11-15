@@ -100,7 +100,8 @@ class RunnersFeaturesTest {
             )
         }
         assertEquals(
-            cloud + RunnersModule.CONVERSATION_FEATURES + "runners.cloud.remote.v1" + "runners.cloud.remote.daemon.v1",
+            cloud + RunnersModule.CONVERSATION_FEATURES + "runners.cloud.remote.v1" + "runners.cloud.remote.daemon.v1" +
+                "runners.cloud.remote.resume.v1",
             RunnersModule.features(withDaemons),
         )
         val cipherless = koin(true).also {
@@ -114,6 +115,7 @@ class RunnersFeaturesTest {
             )
         }
         assertFalse("runners.cloud.remote.daemon.v1" in RunnersModule.features(cipherless))
+        assertFalse("runners.cloud.remote.resume.v1" in RunnersModule.features(cipherless))
     }
 
     @Test

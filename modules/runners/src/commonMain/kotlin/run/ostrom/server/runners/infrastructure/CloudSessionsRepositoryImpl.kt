@@ -487,6 +487,7 @@ class CloudSessionsRepositoryImpl(
         .bind("host_directory_name", session.host?.directoryName)
         .bind("host_permission_mode", session.host?.permissionMode)
         .bind("host_folder_id", session.host?.folderId)
+        .bind("host_resume_session_id", session.host?.resumeSessionId)
         .bind("created_by_initiator_id", session.createdBy?.initiatorId)
         .bind("created_by_credential_id", session.createdBy?.credentialId)
         .bind("created_by_effective_member_id", session.createdBy?.effectiveMemberId)
@@ -614,6 +615,7 @@ class CloudSessionsRepositoryImpl(
             directoryName = get("host_directory_name").asStringOrNull(),
             permissionMode = it,
             folderId = get("host_folder_id").asStringOrNull(),
+            resumeSessionId = get("host_resume_session_id").asStringOrNull(),
         )
     }
 
@@ -669,7 +671,7 @@ class CloudSessionsRepositoryImpl(
             workspace_volume_name, workspace_volume_handle, workspace_problem_code, workspace_problem_message,
             workspace_problem_retryable, mode, effort, kind, host_device_id, host_directory_name,
             host_permission_mode, host_folder_id, created_by_initiator_id, created_by_credential_id,
-            created_by_effective_member_id
+            created_by_effective_member_id, host_resume_session_id
         """
 
         /** What a read returns: also the Bypass and the wait, which only the conversation's store writes. */
@@ -687,7 +689,7 @@ class CloudSessionsRepositoryImpl(
             :workspace_volume_handle, :workspace_problem_code, :workspace_problem_message,
             :workspace_problem_retryable, :mode, :effort, :kind, :host_device_id, :host_directory_name,
             :host_permission_mode, :host_folder_id, :created_by_initiator_id, :created_by_credential_id,
-            :created_by_effective_member_id
+            :created_by_effective_member_id, :host_resume_session_id
         """
     }
 }

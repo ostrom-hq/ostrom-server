@@ -9,6 +9,7 @@ import run.ostrom.server.runners.domain.Caller
 import run.ostrom.server.runners.domain.CloudSessionNotFoundException
 import run.ostrom.server.runners.domain.CreateRemoteSessionUseCaseImpl
 import run.ostrom.server.runners.domain.DesiredState
+import run.ostrom.server.runners.domain.DeviceDaemonRules
 import run.ostrom.server.runners.domain.RefuseRemoteHostUseCaseImpl
 import run.ostrom.server.runners.domain.RemoteSessionDraft
 import run.ostrom.server.runners.domain.RemoteSessionException
@@ -95,9 +96,28 @@ class DaemonTargetTest {
         refusal("remote_requires_login") { create(alice, browser.copy(subjectId = "not-a-uuid"), draft) }
         refusal("invalid_folder") { create(alice, browser, draft.copy(folderId = null)) }
         refusal("invalid_folder") { create(alice, browser, draft.copy(folderId = "a/b")) }
-        refusal("resume_unsupported") {
-            create(alice, browser, draft.copy(resumeSessionId = "0f3c2b1a-9d8e-4c7b-a6f5-e4d3c2b1a090"))
+    }
+
+    @Test
+    fun aConversationIsContinuedOnlyByAClaudeSessionThroughADaemonThatListsThem() = runTest {
+        val resume = draft.copy(resumeSessionId = CONVERSATION)
+        refusal("invalid_resume") {
+            create(alice, browser, resume.copy(deviceId = null, folderId = null, directoryName = "ostrom"))
         }
+        refusal("invalid_resume") { create(alice, browser, resume.copy(resumeSessionId = "NOT-A-UUID")) }
+        refusal("resume_unsupported") { create(alice, browser, resume.copy(agent = "codex")) }
+        online()
+        assertEquals(
+            ErrorKind.CONFLICT,
+            refusal("daemon_resume_unsupported") { create(alice, browser, resume) }.kind,
+        )
+        daemons.touch(LAPTOP, "1.0.0", listOf(DeviceDaemonRules.RESUME_FEATURE), clock.now())
+
+        val created = create(alice, browser, resume).session
+
+        assertEquals(CONVERSATION, created.host?.resumeSessionId)
+        assertEquals(CONVERSATION, repository.get(ORG_A, created.id)?.host?.resumeSessionId)
+        assertEquals(null, create(alice, browser, draft).session.host?.resumeSessionId)
     }
 
     @Test
@@ -180,5 +200,6 @@ class DaemonTargetTest {
 
     private companion object {
         val DaemonPresenceTtl = run.ostrom.server.kernel.auth.DaemonPresence.ONLINE_TTL
+        const val CONVERSATION = "0f3c2b1a-9d8e-4c7b-a6f5-e4d3c2b1a090"
     }
 }
