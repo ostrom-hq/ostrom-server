@@ -129,8 +129,8 @@ enum class TokenKind(val prefix: String) {
     /**
      * Issued to the CLI by `ostrom login --admin`: the governance writes of one organization ([ADMIN_SCOPES]) on top
      * of the CLI's scopes and the reads those writes make first ([ADMIN_READ_SCOPES], which the CLI's hold too
-     * today); together [ADMIN_TOKEN_SCOPES]. Approved in the browser by an owner or an admin of it, for [ADMIN_TOKEN_LIFETIME] at most,
-     * never rotated.
+     * today); together [ADMIN_TOKEN_SCOPES]. Approved in the browser by an owner or an admin of it, for
+     * [ADMIN_TOKEN_LIFETIME] at most, never rotated.
      */
     ADMIN("osg"),
 
