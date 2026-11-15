@@ -220,15 +220,20 @@ class DeliverNotificationsUseCaseImpl(
     /**
      * Of an organization's claimed answers, those whose request is not still to be told on the same channel: an answer
      * that ran with its request (the same pass, or a slower attempt) would find no message to close and end, the
-     * message then posted with its buttons. The others wait for the next attempt, which counts like any retry.
+     * message then posted with its buttons. The others wait for their request: put back for a few seconds without
+     * using one of their attempts (the upkeep gives up a delivery pending for too long, the request's included).
      */
     private suspend fun unlessRequestPending(orgId: Uuid, answers: List<ApprovalDelivery>): List<ApprovalDelivery> {
         if (answers.isEmpty()) return answers
-        val pending = deliveries.pendingRequests(orgId, answers.map { it.approvalId }.toSet())
+        // Unknown: none is sent, the claim's leases end and they are claimed again.
+        val pending = guarded(PENDING_READ_FAILED, null) {
+            deliveries.pendingRequests(orgId, answers.map { it.approvalId }.toSet())
+        } ?: return emptyList()
         val (waiting, ready) = answers.partition { it.approvalId to it.channel in pending }
+        val retryAt = clock.now() + DeliveryRules.REQUEST_WAIT
         for (delivery in waiting) {
-            val outcome = DeliveryRules.outcome(delivery.attempts, ChannelResult.retry(REQUEST_PENDING), clock.now())
-            record(delivery, outcome)
+            val outcome = DeliveryOutcome(DeliveryState.PENDING, delivery.attempts, retryAt, REQUEST_PENDING)
+            guarded(RECORD_FAILED, Unit) { record(delivery, outcome) }
         }
         return ready
     }
@@ -282,6 +287,7 @@ class DeliverNotificationsUseCaseImpl(
         const val FANOUT_FAILED = "notification fan-out failed"
         const val NAMES_FAILED = "notification session names read failed"
         const val CLAIM_FAILED = "notification claim failed"
+        const val PENDING_READ_FAILED = "notification pending requests read failed"
         const val RECORD_FAILED = "notification record failed"
         const val APPROVAL_NOT_SENT = "approval notification not sent"
         val LEASE = DeliveryRules.LEASE

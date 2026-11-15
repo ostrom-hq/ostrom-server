@@ -573,12 +573,28 @@ class DeliverNotificationsUseCaseTest {
             val waiting = deliveries.recorded.getValue(answer.id)
             assertEquals(DeliveryState.PENDING, waiting.state)
             assertEquals("request_pending", waiting.error)
-            assertEquals(1, waiting.attempts)
+            assertEquals(0, waiting.attempts, "Waiting for a request is no attempt")
+            assertEquals(DeliveryRules.REQUEST_WAIT, waiting.nextAttemptAt - clock.now)
 
             val other = answer.copy(id = Uuid.random(), channel = "other")
             deliveries.due[orgA] = mutableListOf(other)
             useCase(FakeJournal(), CountingWaits(emptyList()), deliveries, emptyList())()
             assertEquals("channel_unavailable", deliveries.recorded.getValue(other.id).error, "Not its channel")
+
+            // A failed read tells nothing: nothing is sent, the claim's lease ends; a failed record loses no other.
+            val unread = answer.copy(id = Uuid.random())
+            deliveries.due[orgA] = mutableListOf(unread)
+            deliveries.failingPendingReads = true
+            assertEquals(0, useCase(FakeJournal(), CountingWaits(emptyList()), deliveries, emptyList())() - 1)
+            assertEquals(emptyList(), answers)
+            assertEquals(null, deliveries.recorded[unread.id])
+            deliveries.failingPendingReads = false
+            val lost = answer.copy(id = Uuid.random())
+            deliveries.due[orgA] = mutableListOf(lost)
+            deliveries.failingRecords = setOf(lost.id)
+            useCase(FakeJournal(), CountingWaits(emptyList()), deliveries, emptyList())()
+            assertEquals(null, deliveries.recorded[lost.id], "Its record failed, nothing else did")
+            deliveries.failingRecords = emptySet()
 
             deliveries.pending = emptySet()
             val again = answer.copy(id = Uuid.random())

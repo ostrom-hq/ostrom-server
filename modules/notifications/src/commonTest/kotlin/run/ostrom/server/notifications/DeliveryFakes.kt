@@ -125,8 +125,13 @@ class MemoryDeliveries : NotificationDeliveriesRepository {
     /** The requests still to be told, as the queue reports them. */
     var pending: Set<Pair<Uuid, String>> = emptySet()
 
-    override suspend fun pendingRequests(orgId: Uuid, approvalIds: Set<Uuid>): Set<Pair<Uuid, String>> =
-        pending.filterTo(mutableSetOf()) { it.first in approvalIds }
+    /** Whether the read of the pending requests fails. */
+    var failingPendingReads = false
+
+    override suspend fun pendingRequests(orgId: Uuid, approvalIds: Set<Uuid>): Set<Pair<Uuid, String>> {
+        check(!failingPendingReads) { "The database is down" }
+        return pending.filterTo(mutableSetOf()) { it.first in approvalIds }
+    }
 
     override suspend fun record(orgId: Uuid, id: Uuid, outcome: DeliveryOutcome, now: Instant) {
         check(id !in failingRecords) { "The database is down" }
