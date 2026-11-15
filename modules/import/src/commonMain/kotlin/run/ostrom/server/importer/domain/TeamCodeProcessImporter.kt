@@ -7,6 +7,7 @@ import run.ostrom.server.compiler.domain.usecases.ImportWorkflowsUseCase
 import run.ostrom.server.compiler.domain.usecases.WorkflowImport
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.MemberLogins
+import run.ostrom.server.kernel.sessions.CloudProfileDirectory
 import run.ostrom.server.secrets.domain.Caller
 import kotlin.uuid.Uuid
 
@@ -64,12 +65,14 @@ data class TeamCodeProcesses(
  * @param automations The automations' import, or null when this server runs none.
  * @param editors The editing rights, or null when the compiler module is not installed.
  * @param logins The members' logins (approvers, authors and the importer), or null without a member directory.
+ * @param cloudProfiles The organization's cloud profiles TeamCode's are matched to, or null where sessions run on none.
  */
 class TeamCodeProcessImporter(
     private val workflows: ImportWorkflowsUseCase?,
     private val automations: ImportAutomationsUseCase?,
     private val editors: WorkflowEditorsImporter?,
     private val logins: MemberLogins?,
+    private val cloudProfiles: CloudProfileDirectory? = null,
 ) {
     /**
      * Imports them, appending one line per item to [items].
@@ -94,6 +97,7 @@ class TeamCodeProcessImporter(
         val mapping = TeamCodeMapping(
             memberMap.mapNotNull { (teamCode, ostrom) -> loginsById[ostrom]?.let { teamCode to it } }.toMap(),
             processes.profiles.associateBy { it.id },
+            cloudProfiles?.let { matchCloudProfiles(processes.profiles, it.profiles(caller.orgId)) },
         )
         val by = loginsById[caller.memberId] ?: caller.memberId.toString()
         for (mapped in ordered(processes.workflows.map { TeamCodeWorkflowMapper.map(it, mapping) })) {
@@ -108,6 +112,7 @@ class TeamCodeProcessImporter(
                 memberMap[automation.ownerId],
                 mapping.profiles,
                 mode.cutover,
+                mapping.cloudProfiles,
             )
             importAutomation(caller, name, mapped, mode.dryRun, items)
         }

@@ -32,6 +32,7 @@ import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.module.ServerModule
+import run.ostrom.server.kernel.sessions.CloudProfileDirectory
 import run.ostrom.server.secrets.domain.CallerResolver
 import run.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
 import run.ostrom.server.sharing.domain.ShareAccountUseCase
@@ -74,6 +75,7 @@ object ImportModule : ServerModule {
                 getOrNull<ImportAutomationsUseCase>(),
                 workflowEditorsOf(getOrNull<WorkflowSettingsUseCase>()),
                 getOrNull<MemberLogins>(),
+                getOrNull<CloudProfileDirectory>(),
             )
             val catalog = CatalogPorts(
                 environment = EnvironmentPorts(get(), get(), get(), get()),

@@ -260,7 +260,10 @@ tables (the automation's webhook secret stays in TeamCode).
   says to rotate its secret in Ostrom (shown once) and change the sender.
 - **Profiles.** A profile becomes the node's or the action's `repository` (the first repository of the profile's
   recipe); its image, resources and setup commands are the organization's runner settings and environment preparation
-  in Ostrom. A profile with several repositories or setup commands is reported, not silently cut.
+  in Ostrom. A profile with several repositories or setup commands is reported, not silently cut. It also becomes the
+  node's or the action's `profileId` when an Ostrom cloud profile matches it: the one with its id, else the only one
+  with its name (any case). One without a match is left out and reported in the item (it then runs on its owner's
+  only usable profile); a server whose sessions run on no profile names none and reports nothing.
 - **Dry run.** The plan lists every workflow and automation as `create`, `update`, `unchanged` or `skipped` with the
   reason (an unmapped owner, a definition Ostrom refuses with the node named, an overlap `queue` before TC-AUT-4,
   a feature named above as "after …"); nothing is written. The report never repeats a prompt, an instruction or a
