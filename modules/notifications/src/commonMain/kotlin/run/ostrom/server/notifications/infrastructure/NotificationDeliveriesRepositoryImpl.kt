@@ -7,6 +7,7 @@ import run.ostrom.server.kernel.database.InstantColumnType
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.events.JournalPosition
 import run.ostrom.server.kernel.events.OrgEventJournal
+import run.ostrom.server.notifications.domain.ApprovalRules
 import run.ostrom.server.notifications.domain.DeliveryOutcome
 import run.ostrom.server.notifications.domain.DeliveryRules
 import run.ostrom.server.notifications.domain.DeliveryState
@@ -100,6 +101,21 @@ class NotificationDeliveriesRepositoryImpl(
         }
         known.map { it.second }
     }
+
+    override suspend fun pendingRequests(orgId: Uuid, approvalIds: Set<Uuid>): Set<Pair<Uuid, String>> =
+        database.inOrg(orgId) {
+            val approvalId = NotificationDeliveries.approvalId
+            NotificationDeliveries.select(approvalId, NotificationDeliveries.channel)
+                .where {
+                    (NotificationDeliveries.orgId eq orgId) and
+                        (NotificationDeliveries.kind eq ApprovalRules.KIND) and
+                        (NotificationDeliveries.state eq DeliveryState.PENDING.wire) and
+                        (approvalId inList approvalIds)
+                }
+                .mapNotNullTo(mutableSetOf()) { row ->
+                    row[approvalId]?.let { it to row[NotificationDeliveries.channel] }
+                }
+        }
 
     override suspend fun record(orgId: Uuid, id: Uuid, outcome: DeliveryOutcome, now: Instant) {
         database.inOrg(orgId) {

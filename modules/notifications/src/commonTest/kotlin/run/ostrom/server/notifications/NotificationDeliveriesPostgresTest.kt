@@ -198,6 +198,16 @@ class NotificationDeliveriesPostgresTest {
             assertEquals(listOf(5L), claimed.filterIsInstance<NotificationDelivery>().map { it.notification.eventSeq })
             assertEquals(3, server.count("state = 'failed' AND last_error = 'unknown_kind'"))
 
+            // The requests still to be told: the answer of the same request is no request, a finished row is told.
+            val asked = setOf(approval.approvalId, Uuid.random())
+            assertEquals(
+                setOf(approval.approvalId to "push", approval.approvalId to "email"),
+                repository.pendingRequests(orgA, asked),
+            )
+            assertEquals(emptySet(), repository.pendingRequests(orgB, asked), "Another organization's")
+            repository.record(orgA, approval.id, DeliveryOutcome(DeliveryState.DELIVERED, 1, t0, null), t0)
+            assertEquals(setOf(approval.approvalId to "email"), repository.pendingRequests(orgA, asked))
+
             // An approval is no kind of the members' switches: their settings are the same with one queued.
             val settings = server.koin.get<NotificationSettingsService>().settings(orgA, mia)
             assertEquals(listOf("fake", "push"), settings.channels)

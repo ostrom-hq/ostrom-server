@@ -48,6 +48,9 @@ object ApprovalRules {
      */
     const val DECIDED_KIND: String = "approval_decided"
 
+    /** The member of an answer's row whose approver is no longer a member: no membership has the nil id. */
+    val LEFT_MEMBER: Uuid = Uuid.NIL
+
     /** The kind of an approval's rows in the deliveries queue: never a [NotificationKind], never a member switch. */
     const val KIND: String = "approval"
 

@@ -115,7 +115,9 @@ class SlackApprovalChannel(
     }
 
     // The message is sent: a retry would send a second one while this one can never be closed. It is taken back when
-    // Slack lets us (the retry then sends the only one); else it stays and the request counts as told.
+    // Slack lets us (the retry then sends the only one). Slack failing or asking to slow down is retried too: the
+    // message may still be there, and the request is not told while it cannot be closed. Only a refusal for good (the
+    // bot may not delete it) leaves it: it stays and the request counts as told.
     private suspend fun keep(app: SlackApp, delivery: ApprovalDelivery, posted: SlackPosted): ChannelResult = try {
         messages.save(delivery.orgId, SlackApprovalMessage(delivery.approvalId, delivery.gateId, posted))
         ChannelResult.DELIVERED
@@ -125,8 +127,13 @@ class SlackApprovalChannel(
         try {
             api.deleteMessage(app.botToken, posted)
             ChannelResult.retry(NOT_KEPT)
-        } catch (_: SlackCallException) {
-            ChannelResult.DELIVERED
+        } catch (failure: SlackCallException) {
+            when {
+                // Already gone: the retry sends the only one.
+                failure.code == GONE -> ChannelResult.retry(NOT_KEPT)
+                failure.retryable -> ChannelResult.retry(NOT_TAKEN_BACK)
+                else -> ChannelResult.DELIVERED
+            }
         }
     }
 
@@ -157,6 +164,8 @@ class SlackApprovalChannel(
 
     private companion object {
         const val NOT_KEPT = "slack_not_kept"
+        const val GONE = "message_not_found"
+        const val NOT_TAKEN_BACK = "slack_not_taken_back"
         const val APPROVED = "approved"
         const val REJECTED = "rejected"
     }

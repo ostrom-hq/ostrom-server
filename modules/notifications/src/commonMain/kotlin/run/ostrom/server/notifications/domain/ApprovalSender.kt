@@ -43,15 +43,16 @@ class ApprovalSender(
      * @return What the attempt produced; never throws but for cancellation and a failed read.
      */
     suspend fun send(delivery: ApprovalDelivery, gate: GateSummary?): ChannelResult {
+        // Read at each send, like the approver: a module's channel is bound once the server starts.
+        val channel = channels().firstOrNull { it.id == delivery.channel }
+        // An answer only goes to a module's channel, which updates what it posted: whether the approver is still a
+        // member does not matter, their message must close.
+        if (delivery.decision != null) {
+            return if (channel == null) ChannelResult.failed(CHANNEL_UNAVAILABLE) else channel.decided(delivery)
+        }
         val approver = approvers.reach(delivery.orgId, setOf(delivery.approver))[delivery.approver]
             ?: return ChannelResult.failed(NOT_A_MEMBER)
-        // Read at each send, like the approver: a module's channel is bound once the server starts.
-        val others = channels()
-        val channel = others.firstOrNull { it.id == delivery.channel }
         return when {
-            // An answer only goes to a module's channel, which updates what it posted.
-            delivery.decision != null ->
-                if (channel == null) ChannelResult.failed(CHANNEL_UNAVAILABLE) else channel.decided(delivery)
             gate == null -> ChannelResult.failed(CHANNEL_UNAVAILABLE)
             delivery.channel == PUSH_CHANNEL -> push(delivery, approver)
             delivery.channel == ApprovalRules.EMAIL_CHANNEL -> email(delivery, approver, gate)

@@ -71,7 +71,7 @@ class DeliverNotificationsUseCaseImpl(
             // An answer is sent whatever its gate: the message it updates was told while the gate was open.
             val (answers, requests) = claimed.filterIsInstance<ApprovalDelivery>().partition { it.decision != null }
             asks += stillAsked(org, requests)
-            asks += answers.map { it to null }
+            asks += unlessRequestPending(org, answers).map { it to null }
             claimed.size >= limit
         }
         val orgs = deliveries.workingOrgs(now, DeliveryRules.ORGS_PER_PASS)
@@ -217,6 +217,22 @@ class DeliverNotificationsUseCaseImpl(
         }
     }
 
+    /**
+     * Of an organization's claimed answers, those whose request is not still to be told on the same channel: an answer
+     * that ran with its request (the same pass, or a slower attempt) would find no message to close and end, the
+     * message then posted with its buttons. The others wait for the next attempt, which counts like any retry.
+     */
+    private suspend fun unlessRequestPending(orgId: Uuid, answers: List<ApprovalDelivery>): List<ApprovalDelivery> {
+        if (answers.isEmpty()) return answers
+        val pending = deliveries.pendingRequests(orgId, answers.map { it.approvalId }.toSet())
+        val (waiting, ready) = answers.partition { it.approvalId to it.channel in pending }
+        for (delivery in waiting) {
+            val outcome = DeliveryRules.outcome(delivery.attempts, ChannelResult.retry(REQUEST_PENDING), clock.now())
+            record(delivery, outcome)
+        }
+        return ready
+    }
+
     /** Sends one organization's batch on one channel; never throws but for cancellation. */
     private suspend fun attempt(
         channel: NotificationChannel?,
@@ -262,6 +278,7 @@ class DeliverNotificationsUseCaseImpl(
         const val NO_RESULT = "no_result"
         const val WAIT_CLOSED = "wait_closed"
         const val GATE_DECIDED = "gate_decided"
+        const val REQUEST_PENDING = "request_pending"
         const val FANOUT_FAILED = "notification fan-out failed"
         const val NAMES_FAILED = "notification session names read failed"
         const val CLAIM_FAILED = "notification claim failed"

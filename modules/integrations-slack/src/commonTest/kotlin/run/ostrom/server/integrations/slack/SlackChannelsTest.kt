@@ -128,19 +128,25 @@ class SlackChannelsTest {
     }
 
     @Test
-    fun aMessageThatCannotBeKeptNorTakenBackCountsAsToldRatherThanSentTwice() = runTest {
+    fun aMessageThatCannotBeKeptNorTakenBackForGoodCountsAsToldRatherThanSentTwice() = runTest {
         val channel = SlackApprovalChannel(apps, api, links, messages, texts)
         messages.failingSaves = 1
         api.deleteFailure = SlackCallException("cant_delete_message", retryable = false)
 
         assertEquals(ChannelResult.DELIVERED, channel.send(delivery, gate, "https://c"))
         assertEquals(1, api.posted.size)
+    }
+
+    @Test
+    fun aMessageThatCannotBeTakenBackNowIsRetriedAndOneAlreadyGoneIsSentAgain() = runTest {
+        val channel = SlackApprovalChannel(apps, api, links, messages, texts)
+        messages.failingSaves = 1
+        api.deleteFailure = SlackCallException("ratelimited", retryable = true)
+        assertEquals(ChannelResult.retry("slack_not_taken_back"), channel.send(delivery, gate, "https://c"))
 
         messages.failingSaves = 1
-        val another = delivery.copy(approvalId = Uuid.random())
-        api.deleteFailure = SlackCallException("ratelimited", retryable = true)
-        assertEquals(ChannelResult.DELIVERED, channel.send(another, gate, "https://c"))
-        assertEquals(2, api.posted.size)
+        api.deleteFailure = SlackCallException("message_not_found", retryable = false)
+        assertEquals(ChannelResult.retry("slack_not_kept"), channel.send(delivery, gate, "https://c"))
     }
 
     @Test
