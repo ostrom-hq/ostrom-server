@@ -197,8 +197,8 @@ class RunnerEnvironmentPostgresTest {
         assertEquals("cloning_repositories", server.read(id).phase)
 
         for (bad in listOf(
-            report("securing_workspace"),
-            report("running_setup", """{"step":"workspace"}"""),
+            report("unknown_phase"),
+            report("running_setup", """{"step":"workspace","index":5}"""),
             report("running_setup", """{"step":"setup_start","index":3}"""),
         )) {
             val refused = server.runner("preparation", "Bearer $token", bad)

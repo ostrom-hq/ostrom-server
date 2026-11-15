@@ -168,6 +168,8 @@ class CloudEnvironmentRulesTest {
             PreparationFailure(PreparationStep.SETUP_CREATE, 0, 255),
             PreparationFailure(PreparationStep.SETUP_START, 1, 1),
             PreparationFailure(PreparationStep.GIT_IDENTITY),
+            PreparationFailure(PreparationStep.WORKSPACE, 0, 1),
+            PreparationFailure(PreparationStep.WORKSPACE),
         )
         valid.forEach { PreparationFailures.validate(it, spec) }
         val invalid = listOf(
@@ -175,6 +177,7 @@ class CloudEnvironmentRulesTest {
             PreparationFailure(PreparationStep.SETUP_CREATE, 1),
             PreparationFailure(PreparationStep.SETUP_START, -1),
             PreparationFailure(PreparationStep.RUNNER, 0),
+            PreparationFailure(PreparationStep.WORKSPACE, 1),
             PreparationFailure(PreparationStep.CLONE, 0, 256),
             PreparationFailure(PreparationStep.CLONE, 0, -1),
         )
@@ -250,14 +253,21 @@ class CloudEnvironmentRulesTest {
         assertEquals("Setup command 1 (start) failed.$log", message(PreparationStep.SETUP_START))
         assertEquals("Setup command 1 (create) failed.$log", message(PreparationStep.SETUP_CREATE))
         assertEquals("The runner could not prepare the environment.", message(PreparationStep.RUNNER))
+        assertEquals(
+            "Resetting the agent's home and the Git configuration of the workspace after a transfer failed " +
+                "(exit code 3). A repository whose .git is not a plain directory is refused.$log",
+            message(PreparationStep.WORKSPACE, null, 3),
+        )
     }
 
     @Test
     fun wireNamesAreReadBackAndUnknownOnesAreNot() {
         PreparationPhase.entries.forEach { assertEquals(it, PreparationPhase.fromWire(it.wire)) }
         PreparationStep.entries.forEach { assertEquals(it, PreparationStep.fromWire(it.wire)) }
-        assertNull(PreparationPhase.fromWire("securing_workspace"))
-        assertNull(PreparationStep.fromWire("workspace"))
+        assertEquals(PreparationPhase.SECURING_WORKSPACE, PreparationPhase.fromWire("securing_workspace"))
+        assertEquals(PreparationStep.WORKSPACE, PreparationStep.fromWire("workspace"))
+        assertNull(PreparationPhase.fromWire("unknown_phase"))
+        assertNull(PreparationStep.fromWire("unknown_step"))
     }
 
     @Test
