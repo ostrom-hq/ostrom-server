@@ -14,6 +14,7 @@ import run.ostrom.server.kernel.http.docs.pathId
 import io.ktor.http.HttpStatusCode
 
 private const val TAG = "delivery"
+/** Declared by the runners module, whose catalogue owns the runner's calls. */
 private const val RUNNERS_TAG = "runners"
 
 internal const val ADMIN = "An owner or an admin of the organization, from the console (a browser session); every " +
@@ -54,11 +55,6 @@ internal const val INTEGRITY = "The stored files no longer match the published d
  * installs for its owner. The answers are the module's own types.
  */
 internal fun ApiCatalog.skillsOperations() {
-    tag(
-        RUNNERS_TAG,
-        "The calls a cloud session's runner makes, with the execution's runner token, to fetch what its owner " +
-            "receives.",
-    )
     catalogOperations()
     versionOperations()
     versionRetirementOperations()
