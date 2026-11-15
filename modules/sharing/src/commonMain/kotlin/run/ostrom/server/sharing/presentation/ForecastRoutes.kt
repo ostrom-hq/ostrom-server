@@ -25,8 +25,9 @@ import io.ktor.server.routing.Route
 
 /**
  * TeamCode's Forecasts page as JSON (`getForecasts`): owners and admins of the org only, and only a person signed in (a
- * browser session, the unlocked app or `ostrom login`, as the instance's administration); a key, an agent's or a
- * device's credential is refused before anything is read, and a member by the service. Never cached.
+ * browser session, the unlocked app or the token of `ostrom login`, which holds `accounts:read` for `ostrom status`);
+ * a key, an agent's or a device's credential is refused before anything is read, and a member by the service. Never
+ * cached.
  *
  * @param dependencies The forecasts and who calls.
  */
