@@ -13,7 +13,7 @@ import run.ostrom.server.compiler.domain.models.StoredPackage
 import run.ostrom.server.compiler.domain.models.StoredWorkflow
 import run.ostrom.server.compiler.domain.repositories.CompilerRepository
 import run.ostrom.server.compiler.domain.repositories.CompilerSettingsRepository
-import run.ostrom.server.compiler.domain.repositories.WorkflowsRepository
+import run.ostrom.server.compiler.domain.repositories.LockedWorkflows
 import run.ostrom.server.compiler.domain.services.CompilerDocs
 import run.ostrom.server.compiler.domain.services.CompilerSources
 import run.ostrom.server.compiler.domain.services.HarnessReceiptSigner
@@ -38,10 +38,35 @@ internal class MemoryCompilerRepository : CompilerRepository {
     val pins = mutableMapOf<Pair<Uuid, String?>, PackagePin>()
     val audits = mutableMapOf<Uuid, MutableList<PackageAudit>>()
 
-    override suspend fun workflows(orgId: Uuid): List<StoredWorkflow> =
-        workflows.filterKeys { it.first == orgId }.values.toList()
+    /** The statements of the workflow lock, on the same maps. */
+    private val locked = object : LockedWorkflows {
+        override fun workflows(orgId: Uuid): List<StoredWorkflow> =
+            workflows.filterKeys { it.first == orgId }.values.toList()
 
-    override suspend fun workflow(orgId: Uuid, id: String): StoredWorkflow? = workflows[orgId to id]
+        override fun workflow(orgId: Uuid, id: String): StoredWorkflow? = workflows[orgId to id]
+
+        override fun saveWorkflow(
+            orgId: Uuid,
+            id: String,
+            raw: JsonObject,
+            expectedVersion: Int?,
+            author: Authorship,
+        ): StoredWorkflow? {
+            val current = workflows[orgId to id]
+            if (current?.version != expectedVersion) return null
+            val saved = StoredWorkflow(CompilerDocs.workflow(raw), (current?.version ?: 0) + 1, author.by, author.at)
+            workflows[orgId to id] = saved
+            return saved
+        }
+
+        override fun deleteWorkflow(orgId: Uuid, id: String): Boolean = workflows.remove(orgId to id) != null
+
+        override fun workflowCount(orgId: Uuid): Int = workflows.keys.count { it.first == orgId }
+    }
+
+    override suspend fun workflows(orgId: Uuid): List<StoredWorkflow> = locked.workflows(orgId)
+
+    override suspend fun workflow(orgId: Uuid, id: String): StoredWorkflow? = locked.workflow(orgId, id)
 
     override suspend fun saveWorkflow(
         orgId: Uuid,
@@ -49,25 +74,19 @@ internal class MemoryCompilerRepository : CompilerRepository {
         raw: JsonObject,
         expectedVersion: Int?,
         author: Authorship,
-    ): StoredWorkflow? {
-        val current = workflows[orgId to id]
-        if (current?.version != expectedVersion) return null
-        val saved = StoredWorkflow(CompilerDocs.workflow(raw), (current?.version ?: 0) + 1, author.by, author.at)
-        workflows[orgId to id] = saved
-        return saved
-    }
+    ): StoredWorkflow? = locked.saveWorkflow(orgId, id, raw, expectedVersion, author)
 
     /** How many times the lock was taken. */
     var locks = 0
 
-    override suspend fun <T> underWorkflowLock(orgId: Uuid, block: suspend (WorkflowsRepository) -> T): T {
+    override suspend fun <T> underWorkflowLock(orgId: Uuid, block: (LockedWorkflows) -> T): T {
         locks++
-        return block(this)
+        return block(locked)
     }
 
-    override suspend fun deleteWorkflow(orgId: Uuid, id: String): Boolean = workflows.remove(orgId to id) != null
+    override suspend fun deleteWorkflow(orgId: Uuid, id: String): Boolean = locked.deleteWorkflow(orgId, id)
 
-    override suspend fun workflowCount(orgId: Uuid): Int = workflows.keys.count { it.first == orgId }
+    override suspend fun workflowCount(orgId: Uuid): Int = locked.workflowCount(orgId)
 
     override suspend fun lastDecisions(orgId: Uuid): List<DecisionDoc> = decisions[orgId].orEmpty()
         .filter { (orgId to it.subjectId) in workflows }

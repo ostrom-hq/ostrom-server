@@ -3,44 +3,44 @@ package run.ostrom.server.compiler.infrastructure
 
 import run.ostrom.core.api.models.WorkflowEditors
 import run.ostrom.server.compiler.domain.repositories.WorkflowSettingsRepository
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.withOrganization
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.upsert
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * [WorkflowSettingsRepository] on PostgreSQL (sqlx4k): one row per organization, under its row level security.
+ * [WorkflowSettingsRepository] on PostgreSQL through Exposed: one row per organization, under its row level security
+ * (`withOrganization`), read through the primary key.
  *
- * @param driver The connection pool.
+ * @param database The serving role's pool.
  */
-class PostgresWorkflowSettingsRepository(private val driver: Driver) : WorkflowSettingsRepository {
-    override suspend fun editors(orgId: Uuid): WorkflowEditors? = driver.inOrg(orgId) {
-        fetch(
-            Statement.create("SELECT mode, member_ids FROM compiler_workflow_settings WHERE org_id = :org")
-                .bind("org", orgId),
-        ).firstOrNull()?.let { row ->
-            WorkflowEditors(row.get("mode").asString(), Json.decodeFromString(IDS, row.get("member_ids").asString()))
-        }
+class PostgresWorkflowSettingsRepository(private val database: JdbcDatabase) : WorkflowSettingsRepository {
+    override suspend fun editors(orgId: Uuid): WorkflowEditors? = database.withOrganization(orgId) {
+        val s = CompilerWorkflowSettings
+        val row = s.select(s.mode, s.memberIds).where { s.orgId eq orgId }.firstOrNull()
+        if (row == null) null else WorkflowEditors(row[s.mode], Json.decodeFromString(IDS, row[s.memberIds]))
     }
 
     override suspend fun saveEditors(orgId: Uuid, editors: WorkflowEditors, by: String, at: Instant) {
-        driver.inOrg(orgId) {
-            execute(
-                Statement.create(
-                    "INSERT INTO compiler_workflow_settings (org_id, mode, member_ids, updated_by, updated_at) " +
-                        "VALUES (:org, :mode, :ids, :by, :at) ON CONFLICT (org_id) DO UPDATE SET " +
-                        "mode = EXCLUDED.mode, member_ids = EXCLUDED.member_ids, " +
-                        "updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at",
-                ).bind("org", orgId).bind("mode", editors.mode)
-                    .bind("ids", Json.encodeToString(IDS, editors.memberIds.orEmpty()))
-                    .bind("by", by).bind("at", at),
-            )
+        database.withOrganization(orgId) {
+            val s = CompilerWorkflowSettings
+            // On conflict, every column but the key takes the new value (Exposed's default update).
+            s.upsert(s.orgId) {
+                it[s.orgId] = orgId
+                it[s.mode] = editors.mode
+                it[s.memberIds] = Json.encodeToString(IDS, editors.memberIds.orEmpty())
+                it[s.updatedBy] = by
+                it[s.updatedAt] = at
+            }
         }
     }
 }
 
-// Top-level, not in a private companion: a companion property has a getter nothing calls, which Kover counts.
+// Top-level, not in a companion: a companion property has a getter nothing calls, which Kover counts.
 private val IDS = ListSerializer(String.serializer())
