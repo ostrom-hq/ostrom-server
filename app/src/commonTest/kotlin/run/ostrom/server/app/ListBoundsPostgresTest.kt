@@ -172,7 +172,7 @@ class ListBoundsPostgresTest {
             listOf(GARBAGE, "${Uuid.random()}").forEach { cursor ->
                 val status = read(ada, path, "$name=${cursor.encodeURLParameter()}").status
                 val declared = name in list.cursors
-                if (declared && status != HttpStatusCode.BadRequest) f.broken += "$id $name=$cursor: $status, not 400"
+                if (declared && !refusesAsExpected(id, status)) f.broken += "$id $name=$cursor: $status, not 400"
                 if (status.value >= SERVER_ERROR) f.broken += "$id $name=$cursor: $status"
             }
         }
@@ -185,12 +185,7 @@ class ListBoundsPostgresTest {
             f.withoutForeignCursor += id
             return
         }
-        // Under one of A's resources (an automation's runs), B is told it does not exist, as for any id.
-        val refused = if (RESOURCE.containsMatchIn(list.operation.path)) {
-            setOf(HttpStatusCode.BadRequest, HttpStatusCode.NotFound)
-        } else {
-            setOf(HttpStatusCode.BadRequest)
-        }
+        val refused = refusedForeign(list)
         // B's own login for a member's list: the member is found, so it is the cursor that is refused.
         val bobs = path(list.operation.path, bob.orgId, mapOf(LOGIN to bob.login)) + required(list)
         list.cursors.forEach { name ->
@@ -202,6 +197,18 @@ class ListBoundsPostgresTest {
             if (seen.any { it in text }) f.broken += "$id $name=<A's>: B was answered A's rows"
         }
     }
+
+    // Under one of A's resources (an automation's runs), B is told it does not exist, as for any id; so for a hold.
+    private fun refusedForeign(list: ListOperation): Set<HttpStatusCode> =
+        if (RESOURCE.containsMatchIn(list.operation.path) || list.operation.id in NOT_FOUND_CURSORS) {
+            setOf(HttpStatusCode.BadRequest, HttpStatusCode.NotFound)
+        } else {
+            setOf(HttpStatusCode.BadRequest)
+        }
+
+    // A cursor nobody gave is a 400, or a 404 where it names a hold asked for by its id ([NOT_FOUND_CURSORS]).
+    private fun refusesAsExpected(id: String, status: HttpStatusCode): Boolean =
+        status == HttpStatusCode.BadRequest || (id in NOT_FOUND_CURSORS && status == HttpStatusCode.NotFound)
 
     // A replayed cursor of A is refused, or answered B's own page for a position cursor ([POSITION_CURSORS]).
     private fun refusedOrPosition(id: String, status: HttpStatusCode, refused: Set<HttpStatusCode>): Boolean =
@@ -382,11 +389,19 @@ class ListBoundsPostgresTest {
             "listCloudSessions",
             "listMcpCalls",
             "listNotifications",
+            "listPendingUsage",
             "listRepos",
             "listSessions",
             "listTeams",
             "listUsageEvents",
+            "listUsageReconciliations",
             "listWaits",
         )
+
+        /**
+         * The lists whose `before` is the id of a hold under review (TeamCode's Usage review): one that names none of
+         * the organization's (forged, or another's) is a 404, as a hold asked for by its id, never a page of another's.
+         */
+        val NOT_FOUND_CURSORS = setOf("listPendingUsage", "listUsageReconciliations")
     }
 }

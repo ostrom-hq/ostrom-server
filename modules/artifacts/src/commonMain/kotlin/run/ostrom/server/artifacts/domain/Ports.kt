@@ -65,10 +65,16 @@ interface ArtifactsRepository {
      * @param caller The member.
      * @param before The last artifact of the previous page, or null.
      * @param limit The page size.
+     * @param filter What the page narrows to: the scope, the origin, the access, the session and the launch.
      *
      * @return The page.
      */
-    suspend fun listReadable(caller: ArtifactCaller, before: Uuid?, limit: Int): List<Artifact>
+    suspend fun listReadable(
+        caller: ArtifactCaller,
+        before: Uuid?,
+        limit: Int,
+        filter: ArtifactFilter = ArtifactFilter(),
+    ): List<Artifact>
 
     /**
      * Lists an artifact's versions, newest first.
