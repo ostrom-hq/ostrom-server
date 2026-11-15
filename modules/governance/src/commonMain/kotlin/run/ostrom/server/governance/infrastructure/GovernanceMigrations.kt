@@ -2,14 +2,16 @@
 package run.ostrom.server.governance.infrastructure
 
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.database.TENANT_ROLE
 import run.ostrom.server.kernel.database.TENANT_SETTING
+import run.ostrom.server.secrets.infrastructure.TENANT_ROLE_SQL
 
 /** The sweep's read across organizations, a function owned by `ostrom_router` (docs/tenancy.md). */
 private const val ROUTER_FUNCTION = "governance_expired_organizations(TIMESTAMPTZ, INTEGER)"
 
 /**
  * The governance schema. Rows are isolated by organization in the database itself: row level security is forced (the
- * owner included) and every query runs in a transaction that first sets `ostrom.org_id` (`withOrganization`). The
+ * owner included) and every query runs in a transaction that first sets `ostrom.org_id` (`inOrg`). The
  * sweep of expired confirmations only learns which organizations have some, through a function owned by
  * `ostrom_router`, then expires them within each organization.
  */
@@ -108,5 +110,14 @@ val GovernanceMigrations: List<SchemaMigration> = listOf(
             LIMIT p_limit;
         $$
         """.trimIndent(),
+    ),
+    // The confirmations move to Exposed: every query runs in `JdbcDatabase.inOrg`, as the tenant role, which was
+    // granted nothing here while they ran as the serving role. The confirmations are never deleted by the server. The
+    // role is created here too for a database that has no identity module (each module's tests), as gates' 10.
+    SchemaMigration(
+        version = 4,
+        name = "governance_on_the_tenant_role",
+        sql = TENANT_ROLE_SQL + "\n" +
+            "GRANT SELECT, INSERT, UPDATE ON governance_confirmations TO $TENANT_ROLE",
     ),
 )

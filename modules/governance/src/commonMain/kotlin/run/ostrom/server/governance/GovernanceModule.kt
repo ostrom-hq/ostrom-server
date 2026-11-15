@@ -19,11 +19,11 @@ import run.ostrom.server.governance.domain.OpenConfirmationUseCase
 import run.ostrom.server.governance.domain.OpenConfirmationUseCaseImpl
 import run.ostrom.server.governance.infrastructure.AuditLogConfirmationAudit
 import run.ostrom.server.governance.infrastructure.ConfirmationSweeper
+import run.ostrom.server.governance.infrastructure.ConfirmationsRepositoryImpl
 import run.ostrom.server.governance.infrastructure.GovernanceConfirmationsImpl
 import run.ostrom.server.governance.infrastructure.GovernanceMigrations
 import run.ostrom.server.governance.infrastructure.IdentityConfirmationPeople
 import run.ostrom.server.governance.infrastructure.LocalConfirmationWaits
-import run.ostrom.server.governance.infrastructure.PostgresConfirmationsRepository
 import run.ostrom.server.governance.presentation.ConfirmationsRoutesDependencies
 import run.ostrom.server.governance.presentation.confirmationsRoutes
 import run.ostrom.server.identity.presentation.IdentityConfig
@@ -48,7 +48,7 @@ object GovernanceModule : ServerModule {
     override val name: String = "governance"
 
     override val koinModule: Module = module {
-        single<ConfirmationsRepository> { PostgresConfirmationsRepository(get()) }
+        single<ConfirmationsRepository> { ConfirmationsRepositoryImpl(get()) }
         single<ConfirmationAudit> { AuditLogConfirmationAudit(get()) }
         single<ConfirmationPeople> { IdentityConfirmationPeople(get()) }
         single<ConfirmationWaits> { LocalConfirmationWaits() }

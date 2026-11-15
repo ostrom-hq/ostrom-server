@@ -11,6 +11,8 @@ kotlin {
             implementation(project(":kernel"))
             // The signed audit log (each step of a confirmation) and the people's names.
             implementation(project(":modules:identity"))
+            // TENANT_ROLE_SQL: the tenant role its queries run as (migration 4), shared with every module.
+            implementation(project(":modules:secrets"))
         }
         commonTest.dependencies {
             implementation(project(":testing"))
