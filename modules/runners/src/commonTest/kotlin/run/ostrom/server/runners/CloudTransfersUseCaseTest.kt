@@ -511,6 +511,12 @@ class CloudTransfersUseCaseTest {
             CloudTransfersUseCaseImpl.transferable(moving.copy(kind = kind))
         }
         assertEquals("remote_not_transferable", remote.type)
+        // A local session lives as long as its owner's launch.
+        val local = assertFailsWith<run.ostrom.server.runners.domain.RemoteSessionException> {
+            val kind = run.ostrom.server.runners.domain.SessionKind.LOCAL
+            CloudTransfersUseCaseImpl.transferable(moving.copy(kind = kind))
+        }
+        assertEquals("local_not_transferable", local.type)
         val id = Uuid.random()
         CloudTransfersUseCaseImpl.transferable(moving.copy(transferId = id), allowing = id)
         assertFailsWith<TransferPendingException> {

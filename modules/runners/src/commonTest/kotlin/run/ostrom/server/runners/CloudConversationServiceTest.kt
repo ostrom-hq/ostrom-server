@@ -206,6 +206,12 @@ class CloudConversationServiceTest {
         assertEquals("github_owner_only", code { service.send(dana, person, owned.id, request()) })
         val shared = conversation().copy(githubAccess = GitHubAccessMode.NONE).also(sessions::put)
         service.send(dana, person, shared.id, request())
+        // The agent of a local session reads its terminal: a person answers its waits instead (TeamCode's refusal).
+        val local = conversation().copy(kind = run.ostrom.server.runners.domain.SessionKind.LOCAL).also(sessions::put)
+        val refused = assertFailsWith<run.ostrom.server.runners.domain.RemoteSessionException> {
+            service.send(alice, person, local.id, request())
+        }
+        assertEquals("local_session", refused.type)
     }
 
     @Test

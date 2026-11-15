@@ -18,6 +18,7 @@ import run.ostrom.server.runners.domain.RunnerGitHubToken
 import run.ostrom.server.runners.domain.RunnerGitHubTokens
 import run.ostrom.server.runners.fakes.FakeInferenceStore
 import run.ostrom.server.kernel.auth.SignedInDevices
+import run.ostrom.server.runners.domain.LocalLaunches
 import run.ostrom.server.kernel.auth.DeviceDaemons
 import run.ostrom.server.runners.fakes.ContextCipher
 import run.ostrom.server.runners.fakes.FakeDeviceDaemons
@@ -54,6 +55,28 @@ class RunnersFeaturesTest {
     private fun koin(driver: RunnersConfig.DriverKind) = koinApplication {
         modules(module { single { RunnersConfig.from(MapConfigSource(emptyMap())).copy(driver = driver) } })
     }.koin
+
+    @Test
+    fun localSessionsAreAnnouncedWithRemoteOnesOnceTheLaunchesAreKept() = runTest {
+        val config = RunnersConfig.from(MapConfigSource(emptyMap())).copy(driver = RunnersConfig.DriverKind.DOCKER)
+        fun koin(vararg extra: org.koin.core.module.Module, announced: Boolean = true) = koinApplication {
+            val base = module {
+                single { config }
+                single { ConversationAnnouncement(announced) }
+            }
+            modules(listOf(base) + extra)
+        }.koin
+        val devices = module { single<SignedInDevices> { FakeSignedInDevices() } }
+        val launches = module { single<LocalLaunches> { LocalLaunches { _, _, _ -> true } } }
+        assertEquals(
+            cloud + RunnersModule.CONVERSATION_FEATURES + "runners.cloud.remote.v1" + "runners.cloud.local.v1",
+            RunnersModule.features(koin(devices, launches)),
+        )
+        val local = "runners.cloud.local.v1"
+        assertFalse(local in RunnersModule.features(koin(launches)), "No devices, no host")
+        assertFalse(local in RunnersModule.features(koin(devices)), "No launches")
+        assertFalse(local in RunnersModule.features(koin(devices, launches, announced = false)), "Turned off")
+    }
 
     @Test
     fun theConversationKeysAreAnnouncedByDefault() = runTest {

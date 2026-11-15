@@ -238,6 +238,12 @@ class InMemoryApiTokensRepository : ApiTokensRepository {
         return live
     }
 
+    override suspend fun agentSessionLive(orgId: Uuid, agentSessionId: String, now: Instant): Boolean =
+        tokens.values.any {
+            it.kind == TokenKind.AGENT && it.agentSessionId == agentSessionId && it.orgId == orgId &&
+                it.revokedAt == null && it.expiresAt?.let { at -> at > now } == true
+        }
+
     override suspend fun revokeAgentToken(orgId: Uuid, id: Uuid, at: Instant): Boolean {
         val token = tokens.values.firstOrNull {
             it.id == id && it.orgId == orgId && it.kind == TokenKind.AGENT && it.revokedAt == null

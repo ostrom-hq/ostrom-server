@@ -79,7 +79,7 @@ class ReconcileCloudSessionUseCaseImpl(
     override suspend fun invoke(session: CloudSession): Instant? {
         val now = clock.now()
         // No pod, workspace, cluster nor plan: only the server's side of its lifecycle moves.
-        if (session.kind == SessionKind.REMOTE) return remoteOrRemoved(session, now)
+        if (session.kind != SessionKind.CLOUD) return hosted(session, now)
         if (session.state == SessionState.TERMINATED) {
             return when {
                 session.phase == CLEANUP_BLOCKED -> blockedCleanup(session, now)
@@ -680,6 +680,10 @@ class ReconcileCloudSessionUseCaseImpl(
         return host.takeIf { it !in devices.devices(setOf(it)) }
     }
 
+    /** A session its owner hosts: a remote one on its device, a local one by its launch. */
+    private suspend fun hosted(s: CloudSession, now: Instant): Instant? =
+        if (s.kind == SessionKind.REMOTE) remoteOrRemoved(s, now) else local(s, now)
+
     /** A remote session whose device is gone ends with `device_removed`; [remote] decides the rest. */
     private suspend fun remoteOrRemoved(s: CloudSession, now: Instant): Instant? {
         val removed = removedHost(s) ?: return remote(s, now)
@@ -717,6 +721,41 @@ class ReconcileCloudSessionUseCaseImpl(
         return write(waiting, null)
     }
 
+    /**
+     * A local session (TeamCode's `local`): the `ostrom <agent>` launch it is attached to is its host, with no pod,
+     * workspace or cap. It ends when the launch deletes it, and when the launch never took its execution within
+     * [HOST_START] ([LocalSessionRules.RUN_LOST]). An execution silent for [HEARTBEAT_LOSS] (or never reporting within
+     * [HOST_START]) pauses it as [RemoteSessionRules.HOST_OFFLINE], like a remote one; the launch, if alive, takes the
+     * next epoch itself when its heartbeat is back, however late. Only the paused retention ends one whose launch never
+     * comes back.
+     */
+    private suspend fun local(s: CloudSession, now: Instant): Instant? {
+        val live = s.executionStartedAt != null
+        val seen = s.lastHeartbeatAt ?: s.executionStartedAt ?: s.createdAt
+        val silent = now - seen > (if (s.lastHeartbeatAt == null) HOST_START else HEARTBEAT_LOSS)
+        return when {
+            s.state == SessionState.TERMINATED || s.state == SessionState.FAILED -> null
+            s.desiredState == DesiredState.TERMINATED -> remoteTerminated(s, now)
+            // Offline, waiting for its launch: only the paused retention ends it.
+            s.state == SessionState.PAUSED -> localPaused(s, now)
+            // The launch never took an execution: nothing to wait for.
+            silent && !live -> write(s.endingWith(LocalSessionRules.RUN_LOST, now), now)
+            silent -> parked(s.toPaused(now, HOST_OFFLINE_FAILURE).copy(desiredState = DesiredState.PAUSED))
+            else -> now + WATCH_DELAY
+        }
+    }
+
+    /** Past its expiry a paused local session ends; until then it waits for its launch to host it again. */
+    private suspend fun localPaused(s: CloudSession, now: Instant): Instant? {
+        val expiresAt = s.expiresAt
+        if (expiresAt == null || expiresAt > now) return expiresAt
+        return write(s.endingWith(CloudSession.TERMINATED_EXPIRED, now), now)
+    }
+
+    /** Asked to end, with [reason]: the next step terminates it. */
+    private fun CloudSession.endingWith(reason: String, now: Instant): CloudSession =
+        copy(desiredState = DesiredState.TERMINATED, terminatedReason = reason, updatedAt = now)
+
     /** Pauses an idle remote session after the organization's `remoteIdleTimeoutMinutes`; 0 never does. */
     private suspend fun remoteIdle(s: CloudSession, now: Instant): Instant? {
         val minutes = s.limits.idleTimeoutMinutes
@@ -748,7 +787,10 @@ class ReconcileCloudSessionUseCaseImpl(
 
     /** Constants and readers of the enclosing type. */
     companion object {
-        /** How long a remote host may hold a new epoch without reporting (TeamCode's `HOST_START_MILLIS`). */
+        /**
+         * How long a remote host may hold a new epoch without reporting (TeamCode's `HOST_START_MILLIS`), and a local
+         * session may wait for its launch's first execution.
+         */
         private val HOST_START: Duration = 120.seconds
 
         /** A remote host drains its turn and checkpoints for at most this long (TeamCode's pausing deadline). */

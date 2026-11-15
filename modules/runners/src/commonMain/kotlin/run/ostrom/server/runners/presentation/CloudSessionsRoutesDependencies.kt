@@ -5,6 +5,7 @@ import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.runners.domain.CheckRunnerTokenUseCase
 import run.ostrom.server.runners.domain.ChangeCloudSessionUseCase
 import run.ostrom.server.runners.domain.CreateCloudSessionUseCase
+import run.ostrom.server.runners.domain.CreateLocalSessionUseCase
 import run.ostrom.server.runners.domain.CreateRemoteSessionUseCase
 import run.ostrom.server.runners.domain.HostRemoteSessionUseCase
 import run.ostrom.server.runners.domain.GetCloudSessionUseCase
@@ -39,6 +40,7 @@ import run.ostrom.server.runners.domain.SetCloudSessionGitHubAccessUseCase
  * @property runnerInference Hands a runner its execution's inference credential; null without the launches module,
  *   whose route is then not served (404: the agent runs with its own provider configuration).
  * @property resolveActor The member a write acts for (`Ostrom-On-Behalf-Of`); the header is ignored by default.
+ * @property createLocalSession Opens the local session of the caller's launch (kind `local`).
  */
 data class CloudSessionsRoutesDependencies(
     val createCloudSession: CreateCloudSessionUseCase,
@@ -57,4 +59,5 @@ data class CloudSessionsRoutesDependencies(
     val hosts: RemoteHostViews,
     val runnerInference: RunnerInferenceUseCase? = null,
     val resolveActor: ResolveCloudActorUseCase = ResolveCloudActorUseCaseImpl(null),
+    val createLocalSession: CreateLocalSessionUseCase,
 )

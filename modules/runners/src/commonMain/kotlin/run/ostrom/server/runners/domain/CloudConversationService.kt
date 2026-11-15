@@ -257,6 +257,8 @@ class CloudConversationServiceImpl(
 
     override suspend fun authorizeMessage(caller: Caller, id: Uuid): CloudSession {
         val session = writable(caller, id)
+        // The agent of a local session reads its terminal, not a queue (TeamCode's MESSAGE refusal).
+        if (session.kind == SessionKind.LOCAL) throw LocalSessionRules.localSession()
         requireInstructor(caller, session)
         return session
     }

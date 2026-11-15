@@ -283,6 +283,17 @@ interface ApiTokensRepository {
     suspend fun createForLiveAgentSession(token: ApiToken, secretHash: String, now: Instant): Boolean
 
     /**
+     * Whether one of an agent session's agent tokens is still live (not revoked, not expired) in an organization.
+     *
+     * @param orgId The organization.
+     * @param agentSessionId The agent session.
+     * @param now The time that decides which tokens are live.
+     *
+     * @return True while the agent session runs.
+     */
+    suspend fun agentSessionLive(orgId: Uuid, agentSessionId: String, now: Instant): Boolean
+
+    /**
      * Revokes one agent token of an organization.
      *
      * @param orgId The organization the token is bound to.

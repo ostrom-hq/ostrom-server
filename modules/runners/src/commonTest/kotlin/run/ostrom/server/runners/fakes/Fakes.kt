@@ -157,6 +157,11 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
 
     override suspend fun createWithinCap(session: CloudSession, maxRunning: Int, journal: OrgAuditRecord?): Boolean {
         if (holding(session.orgId, null) >= maxRunning) return false
+        // The unique index of a launch's local session, as the database's.
+        val launch = session.launchId
+        check(launch == null || sessions.values.none { it.orgId == session.orgId && it.launchId == launch }) {
+            "duplicate key value violates unique constraint \"runners_sessions_launch\""
+        }
         sessions[session.id] = session
         next[session.id] = session.createdAt
         journal?.let(this.journal::add)
@@ -286,6 +291,9 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
     override suspend fun hostedOn(deviceId: Uuid, live: Boolean): List<SessionRef> =
         sessions.values.filter { it.host?.deviceId == deviceId && !(live && it.state.isFinal) }
             .map { SessionRef(it.orgId, it.id) }
+
+    override suspend fun findLocal(orgId: Uuid, launchId: String): CloudSession? =
+        sessions.values.firstOrNull { it.orgId == orgId && it.launchId == launchId }
 
     override suspend fun daemonOrders(orgId: Uuid, deviceId: Uuid, limit: Int): List<CloudSession> = sessions.values
         .filter {

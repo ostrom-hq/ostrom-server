@@ -191,6 +191,15 @@ class ApiTokensRepositoryImpl(
         }
     }
 
+    // Inside the organization, on the partial index of the agent sessions' live tokens.
+    override suspend fun agentSessionLive(orgId: Uuid, agentSessionId: String, now: Instant): Boolean =
+        database.withOrganization(orgId) {
+            t.select(t.id).where {
+                (t.agentSessionId eq agentSessionId) and (t.orgId eq orgId) and (t.kind eq AGENT) and
+                    t.revokedAt.isNull() and (t.expiresAt greater now)
+            }.limit(1).any()
+        }
+
     override suspend fun revokeAgentToken(orgId: Uuid, id: Uuid, at: Instant): Boolean =
         database.withOrganization(orgId) {
             t.update({ (t.id eq id) and (t.orgId eq orgId) and (t.kind eq AGENT) and t.revokedAt.isNull() }) {

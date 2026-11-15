@@ -175,11 +175,15 @@ class RemoteSessionsPostgresTest {
                 .assertRefused(HttpStatusCode.BadRequest, "invalid_mode")
             http.create("alice-laptop", draft.copy(mode = "conversation", directoryName = "../etc"))
                 .assertRefused(HttpStatusCode.BadRequest, "invalid_directory_name")
-            http.create("alice-laptop", draft.copy(kind = "local"))
+            http.create("alice-laptop", draft.copy(kind = "pod"))
                 .assertRefused(HttpStatusCode.BadRequest, "invalid_kind")
+            http.create("alice-laptop", draft.copy(launchId = "lch_0123456789abcdef0123456789abcdef"))
+                .assertRefused(HttpStatusCode.BadRequest, "invalid_session")
             http.create("alice", CreateCloudSessionRequest(agent = "claude", directoryName = "x"))
                 .assertRefused(HttpStatusCode.BadRequest, "invalid_session")
             http.create("alice", CreateCloudSessionRequest(agent = "claude", resumeSessionId = "r"))
+                .assertRefused(HttpStatusCode.BadRequest, "invalid_session")
+            http.create("alice", CreateCloudSessionRequest(agent = "claude", launchId = "l"))
                 .assertRefused(HttpStatusCode.BadRequest, "invalid_session")
             // A cloud session is not hosted.
             val cloud = http.create("alice", CreateCloudSessionRequest(agent = "claude", kind = "cloud"))
@@ -213,7 +217,7 @@ class RemoteSessionsPostgresTest {
             setOf(remoteId, cloudId),
             list("?kind=remote&kind=cloud").body<CloudSessionsResponse>().items.map { it.id }.toSet(),
         )
-        list("?kind=local").assertRefused(HttpStatusCode.BadRequest, "invalid_kind")
+        list("?kind=pod").assertRefused(HttpStatusCode.BadRequest, "invalid_kind")
     }
 
     @Test
@@ -272,7 +276,7 @@ class RemoteSessionsPostgresTest {
             // A kind this version does not know is read as a cloud session's.
             server.driver.inTenant(ORG_A) {
                 execute(
-                    Statement.create("UPDATE runners_sessions SET kind = 'local' WHERE id = :id").bind("id", paused.id),
+                    Statement.create("UPDATE runners_sessions SET kind = 'pod' WHERE id = :id").bind("id", paused.id),
                 ).getOrThrow()
             }
             assertEquals(SessionKind.CLOUD, repository.get(ORG_A, paused.id)?.kind)

@@ -15,7 +15,7 @@ enum class CloudSessionWake {
     /** It was paused (or pausing) and its desired state is now running: its next execution starts. */
     RESUMED,
 
-    /** Nothing to do: it already runs, or is resuming. */
+    /** Nothing to do: it already runs, or is resuming, or it is a local session, which only its launch resumes. */
     NOT_PAUSED,
 
     /** No cloud session of the organization has this id (a session of a local launch, say). */
@@ -95,6 +95,8 @@ class WakeCloudSessionUseCaseImpl(
         return when {
             session == null -> CloudSessionWake.NO_SESSION
             session.state.isFinal || session.desiredState == DesiredState.TERMINATED -> CloudSessionWake.ENDED
+            // Only its own launch resumes a local session (TeamCode's wake).
+            session.kind == SessionKind.LOCAL -> CloudSessionWake.NOT_PAUSED
             // An accepted transfer pauses the session; only the transfer resumes it, for the recipient.
             session.desiredState == DesiredState.RUNNING || session.transferId != null -> CloudSessionWake.NOT_PAUSED
             members?.isActiveMember(orgId, session.ownerId) != true -> CloudSessionWake.OWNER_GONE

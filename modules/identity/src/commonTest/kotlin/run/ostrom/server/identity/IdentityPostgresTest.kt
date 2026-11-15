@@ -205,6 +205,10 @@ class IdentityPostgresTest {
         assertTrue(!tokens.createForLiveAgentSession(another("run-2"), "hash-other", now), "No such agent session")
         assertTrue(!tokens.createForLiveAgentSession(another(orgId = Uuid.random()), "hash-org", now), "Another org's")
         assertTrue(!tokens.createForLiveAgentSession(another(), "hash-late", now + 2.days), "Every token expired")
+        assertTrue(tokens.agentSessionLive(org, "run-1", now), "A launch runs while one of its tokens lives")
+        assertTrue(!tokens.agentSessionLive(org, "run-2", now), "No such agent session")
+        assertTrue(!tokens.agentSessionLive(Uuid.random(), "run-1", now), "Another org's")
+        assertTrue(!tokens.agentSessionLive(org, "run-1", now + 2.days), "Every token expired")
         assertNull(tokens.findBySecretHash("hash-late"))
 
         assertTrue(!tokens.revokeAgentToken(Uuid.random(), renewed.id, now), "Only in the token's organization")
@@ -213,6 +217,7 @@ class IdentityPostgresTest {
         assertNull(tokens.findBySecretHash("hash-launch")?.revokedAt, "The launch's own token is left alone")
         assertEquals(1, tokens.revokeOfAgentSession("run-1", now))
         assertTrue(!tokens.createForLiveAgentSession(another(), "hash-ended", now), "An ended agent session")
+        assertTrue(!tokens.agentSessionLive(org, "run-1", now), "An ended agent session")
         assertFailsWith<IllegalArgumentException> { tokens.createForLiveAgentSession(token(ada.id), "hash-x", now) }
         val sessionless = another().copy(agentSessionId = null)
         assertFailsWith<IllegalArgumentException> { tokens.createForLiveAgentSession(sessionless, "hash-y", now) }
