@@ -51,7 +51,8 @@ private fun ApiCatalog.cloudRuntimeOperations() {
         summary = "Save how cloud sessions run on this instance."
         description = "A person who administers the instance. A `PUT` replaces the whole runtime; `updatedAt` is " +
             "the one of the runtime edited (absent while nothing is stored). Turning it off refuses only new " +
-            "work: running sessions go on until they end. Every replica uses the new runtime within 30 seconds."
+            "work: running sessions go on until they end. Every replica uses the new runtime within 30 seconds. An " +
+            "absent session image or file limit keeps the stored one."
         body<SaveCloudRuntimeRequest>("The whole runtime, and the `updatedAt` of the one it replaces.")
         responses {
             ok<CloudRuntimeResponse>("The runtime saved.")
