@@ -45,6 +45,7 @@ import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.databaseNow
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
@@ -74,10 +75,8 @@ import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.core.statements.Statement
 import org.jetbrains.exposed.v1.core.statements.StatementBuilder
-import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.jetbrains.exposed.v1.jdbc.Query
 import org.jetbrains.exposed.v1.jdbc.batchInsert
-import org.jetbrains.exposed.v1.jdbc.explain
 import org.jetbrains.exposed.v1.jdbc.select
 import org.koin.core.Koin
 import org.koin.core.module.Module
@@ -522,12 +521,6 @@ class GovernancePostgresTest {
             }
             }
     }
-
-    /** The plan of [statement] as Exposed sends it, under `EXPLAIN (ANALYZE, BUFFERS)`: a write runs. */
-    private fun JdbcTransaction.plan(statement: StatementBuilder.() -> Statement<*>): String =
-        explain(analyze = true, options = "BUFFERS", body = statement).joinToString("\n") {
-            it.toString().removePrefix("QUERY PLAN=")
-        }
 
     /** The plan of [query] as `ostrom_router`, the role the sweep's function runs as. */
     private suspend fun JdbcDatabase.routerPlan(query: () -> Query): String = query {

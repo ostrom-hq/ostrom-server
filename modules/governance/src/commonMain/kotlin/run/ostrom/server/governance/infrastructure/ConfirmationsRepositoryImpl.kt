@@ -10,6 +10,7 @@ import run.ostrom.server.governance.domain.ConfirmationStatus
 import run.ostrom.server.governance.domain.ConfirmationsRepository
 import run.ostrom.server.kernel.auth.GovernanceWrite
 import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.present
 import run.ostrom.server.kernel.database.write
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -34,30 +35,7 @@ internal class ConfirmationsRepositoryImpl(private val database: JdbcDatabase) :
     private val c = GovernanceConfirmations
 
     override suspend fun insert(confirmation: Confirmation) {
-        database.inOrg(confirmation.orgId) {
-            write {
-                insert(c) {
-                    it[orgId] = confirmation.orgId
-                    it[id] = confirmation.id
-                    it[kind] = confirmation.write.kind
-                    it[scope] = confirmation.scope
-                    it[method] = confirmation.method
-                    it[path] = confirmation.path
-                    it[payload] = Json.encodeToString(JsonElement.serializer(), confirmation.write.payload)
-                    it[summary] = confirmation.summary
-                    it[beforeJson] = confirmation.before.encoded()
-                    it[afterJson] = confirmation.after.encoded()
-                    it[requestedByUser] = confirmation.requestedBy.userId
-                    it[requestedByMember] = confirmation.requestedBy.memberId
-                    it[credential] = confirmation.credential.wire
-                    it[tokenId] = confirmation.tokenId
-                    it[tokenName] = confirmation.tokenName
-                    it[status] = confirmation.status.wire
-                    it[createdAt] = confirmation.createdAt
-                    it[expiresAt] = confirmation.expiresAt
-                }
-            }
-        }
+        database.inOrg(confirmation.orgId) { write { confirmationInsert(confirmation) } }
     }
 
     override suspend fun get(orgId: Uuid, id: String): Confirmation? =
@@ -72,7 +50,7 @@ internal class ConfirmationsRepositoryImpl(private val database: JdbcDatabase) :
 
     override suspend fun answer(orgId: Uuid, id: String, outcome: ConfirmationOutcome): Boolean =
         database.inOrg(orgId) {
-            buildStatement { answerUpdate(orgId, id, outcome) }.toExecutable().execute(this) == 1
+            write { answerUpdate(orgId, id, outcome) } == 1
         }
 
     override suspend fun settle(orgId: Uuid, id: String, result: JsonElement?, error: ConfirmationError?) {
@@ -94,11 +72,10 @@ internal class ConfirmationsRepositoryImpl(private val database: JdbcDatabase) :
     }
 
     private fun ResultRow.toConfirmation(): Confirmation {
-        val answeredMember = this[c.answeredByMember]
-        val answeredBy = answeredMember?.let { member ->
-            ConfirmationPerson(checkNotNull(this[c.answeredByUser]), member)
+        val answeredBy = this[c.answeredByMember]?.let {
+            ConfirmationPerson(present(c.answeredByUser, c.answeredByMember), it)
         }
-        val error = this[c.errorType]?.let { ConfirmationError(it, checkNotNull(this[c.errorMessage])) }
+        val error = this[c.errorType]?.let { ConfirmationError(it, present(c.errorMessage, c.errorType)) }
         val status = this[c.status]
         return Confirmation(
             id = this[c.id],
@@ -126,5 +103,3 @@ internal class ConfirmationsRepositoryImpl(private val database: JdbcDatabase) :
         )
     }
 }
-
-private fun JsonElement?.encoded(): String = Json.encodeToString(JsonElement.serializer(), this ?: JsonNull)

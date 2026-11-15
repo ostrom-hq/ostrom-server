@@ -3,8 +3,8 @@ package run.ostrom.server.governance.infrastructure
 
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.database.TENANT_ROLE
+import run.ostrom.server.kernel.database.TENANT_ROLE_SQL
 import run.ostrom.server.kernel.database.TENANT_SETTING
-import run.ostrom.server.secrets.infrastructure.TENANT_ROLE_SQL
 
 /** The sweep's read across organizations, a function owned by `ostrom_router` (docs/tenancy.md). */
 private const val ROUTER_FUNCTION = "governance_expired_organizations(TIMESTAMPTZ, INTEGER)"

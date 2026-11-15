@@ -4,13 +4,14 @@ package run.ostrom.server.governance.infrastructure
 import run.ostrom.server.governance.domain.ConfirmationError
 import run.ostrom.server.governance.domain.ConfirmationOutcome
 import run.ostrom.server.governance.domain.ConfirmationRules
+import run.ostrom.server.governance.domain.Confirmation
 import run.ostrom.server.kernel.database.InstantColumnType
 import org.jetbrains.exposed.v1.core.CustomFunction
 import org.jetbrains.exposed.v1.core.IntegerColumnType
 import org.jetbrains.exposed.v1.core.QueryParameter
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.Table
-import org.jetbrains.exposed.v1.core.UUIDColumnType
+import org.jetbrains.exposed.v1.core.UuidColumnType
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.case
 import org.jetbrains.exposed.v1.core.eq
@@ -18,12 +19,19 @@ import org.jetbrains.exposed.v1.core.greater
 import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.core.or
+import org.jetbrains.exposed.v1.core.statements.InsertStatement
 import org.jetbrains.exposed.v1.core.statements.ReturningStatement
 import org.jetbrains.exposed.v1.core.statements.StatementBuilder
 import org.jetbrains.exposed.v1.core.statements.UpdateStatement
 import org.jetbrains.exposed.v1.core.stringParam
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.update
+import org.jetbrains.exposed.v1.jdbc.updateReturning
 import org.jetbrains.exposed.v1.jdbc.Query
 import org.jetbrains.exposed.v1.jdbc.select
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -38,6 +46,32 @@ private const val PENDING = "pending"
 
 /** The wire value of a confirmed one. */
 private const val CONFIRMED = "confirmed"
+
+/** Stores a new confirmation. */
+internal fun StatementBuilder.confirmationInsert(confirmation: Confirmation): InsertStatement<Number> =
+    C.insert {
+        it[orgId] = confirmation.orgId
+        it[id] = confirmation.id
+        it[kind] = confirmation.write.kind
+        it[scope] = confirmation.scope
+        it[method] = confirmation.method
+        it[path] = confirmation.path
+        it[payload] = Json.encodeToString(JsonElement.serializer(), confirmation.write.payload)
+        it[summary] = confirmation.summary
+        it[beforeJson] = confirmation.before.encoded()
+        it[afterJson] = confirmation.after.encoded()
+        it[requestedByUser] = confirmation.requestedBy.userId
+        it[requestedByMember] = confirmation.requestedBy.memberId
+        it[credential] = confirmation.credential.wire
+        it[tokenId] = confirmation.tokenId
+        it[tokenName] = confirmation.tokenName
+        it[status] = confirmation.status.wire
+        it[createdAt] = confirmation.createdAt
+        it[expiresAt] = confirmation.expiresAt
+    }
+
+/** A JSON column's text: `null` for none. */
+internal fun JsonElement?.encoded(): String = Json.encodeToString(JsonElement.serializer(), this ?: JsonNull)
 
 /** One confirmation, by its key. */
 internal fun confirmationRead(orgId: Uuid, id: String): Query =
@@ -64,7 +98,7 @@ internal fun StatementBuilder.expireOverdue(orgId: Uuid, now: Instant): Returnin
     val overdue = (pending and (C.expiresAt lessEq now)) or
         ((C.status eq CONFIRMED) and C.resultJson.isNull() and
             (C.expiresAt lessEq now - ConfirmationRules.RESULT_GRACE))
-    return updateReturning(C, listOf(C), where = { (C.orgId eq orgId) and overdue }) {
+    return C.updateReturning(C.columns, where = { (C.orgId eq orgId) and overdue }) {
         it[status] = case().When(pending, stringParam("expired")).Else(stringParam("failed"))
         it[errorType] = case().When(pending, errorType).Else(stringParam(ConfirmationRules.RESULT_LOST))
         it[errorMessage] = case().When(pending, errorMessage).Else(stringParam(ConfirmationRules.RESULT_LOST_MESSAGE))
@@ -73,12 +107,7 @@ internal fun StatementBuilder.expireOverdue(orgId: Uuid, now: Instant): Returnin
 
 /** Answers a pending, unexpired confirmation: of two answers, the second changes nothing. */
 internal fun StatementBuilder.answerUpdate(orgId: Uuid, id: String, outcome: ConfirmationOutcome): UpdateStatement =
-    update(
-        C,
-        where = {
-            (C.orgId eq orgId) and (C.id eq id) and (C.status eq PENDING) and (C.expiresAt greater outcome.at)
-        },
-    ) {
+    C.update({ (C.orgId eq orgId) and (C.id eq id) and (C.status eq PENDING) and (C.expiresAt greater outcome.at) }) {
         it[status] = outcome.status.wire
         it[answeredByUser] = outcome.by.userId
         it[answeredByMember] = outcome.by.memberId
@@ -89,13 +118,13 @@ internal fun StatementBuilder.answerUpdate(orgId: Uuid, id: String, outcome: Con
 
 /** Keeps what a confirmed write returned, by its key; never on one the sweep already failed (result lost). */
 internal fun StatementBuilder.resultUpdate(orgId: Uuid, id: String, result: String): UpdateStatement =
-    update(C, where = { (C.orgId eq orgId) and (C.id eq id) and (C.status eq CONFIRMED) }) {
+    C.update({ (C.orgId eq orgId) and (C.id eq id) and (C.status eq CONFIRMED) }) {
         it[resultJson] = result
     }
 
 /** Marks a confirmed write that failed, by its key; never one the sweep already failed (result lost). */
 internal fun StatementBuilder.errorUpdate(orgId: Uuid, id: String, error: ConfirmationError): UpdateStatement =
-    update(C, where = { (C.orgId eq orgId) and (C.id eq id) and (C.status eq CONFIRMED) }) {
+    C.update({ (C.orgId eq orgId) and (C.id eq id) and (C.status eq CONFIRMED) }) {
         it[status] = "failed"
         it[errorType] = error.type
         it[errorMessage] = error.message
@@ -104,7 +133,7 @@ internal fun StatementBuilder.errorUpdate(orgId: Uuid, id: String, error: Confir
 /** The function the sweep reads across organizations (owned by `ostrom_router`, migration 3). */
 internal fun expiredOrganizations(now: Instant, limit: Int): CustomFunction<Uuid> = CustomFunction(
     "governance_expired_organizations",
-    UUIDColumnType(),
+    UuidColumnType(),
     QueryParameter(now, InstantColumnType()),
     QueryParameter(limit, IntegerColumnType()),
 )
