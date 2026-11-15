@@ -12,6 +12,8 @@ import run.ostrom.server.kernel.http.docs.notFound
 import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
 import run.ostrom.server.kernel.http.docs.pathId
+import run.ostrom.server.kernel.http.docs.queryNumber
+import run.ostrom.server.kernel.http.docs.queryText
 
 private const val DAEMON = "With `runners.cloud.remote.daemon.v1`. The CLI's sign-in, bound to a device (422 " +
     "`daemon_requires_device` otherwise)."
@@ -131,6 +133,30 @@ private fun ApiCatalog.deviceFolderOperations() {
         responses {
             ok<DeviceFoldersResponse>("The device's daemon, absent when it never polled, and its folders.")
             notFound("Not one of the caller's devices (`device_not_found`).")
+        }
+    }
+    get("/api/v1/devices/{id}/folders/{folderId}/resumable") {
+        operationId = "listResumableSessions"
+        tag(TAG)
+        summary = "The Claude Code conversations of a device's folder a session can continue."
+        description = "With `runners.cloud.remote.resume.v1`. The caller's own device; the server asks its daemon " +
+            "and waits up to 10 s. The most recent first."
+        parameters {
+            organizationHeader()
+            pathId("id", "The device's id.")
+            pathId("folderId", "One of the folders the device's daemon published.")
+            queryNumber("limit", "How many, 1 to 50 (20 by default).")
+            queryText("before", "The `next` of the previous page.")
+        }
+        responses {
+            ok<ResumableSessionPageResponse>("A page of the folder's conversations.")
+            badRequest("A limit out of 1 to 50 (`invalid_limit`) or a cursor that is not a time (`invalid_cursor`).")
+            notFound("Not one of the caller's devices (`device_not_found`).")
+            conflict("The daemon is offline (`device_offline`) or cannot list conversations " +
+                "(`daemon_resume_unsupported`).")
+            error(HttpStatusCode.UnprocessableEntity, "A folder the device does not offer (`folder_not_published`), " +
+                "or the daemon's own refusal code.")
+            error(HttpStatusCode.GatewayTimeout, "The daemon did not answer in time (`device_no_answer`).")
         }
     }
 }

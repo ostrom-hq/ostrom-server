@@ -51,6 +51,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -257,14 +258,12 @@ class DeviceDaemonRoutesPostgresTest {
             listOf(ResumableSessionDto(CONVERSATION, "Fix the tests", "2026-10-30T09:00:00.000Z", 2)),
             next = "2026-10-30T09:00:00Z",
         )
-        val daemonSide = launch {
-            withTimeout(15.seconds) {
-                daemonAnswers(http, page)
-            }
+        val listed = coroutineScope {
+            val daemonSide = launch { withTimeout(15.seconds) { daemonAnswers(http, page) } }
+            http.get("/api/v1/devices/$LAPTOP/folders/f1/resumable?limit=5") { bearerAuth("alice") }
+                .also { daemonSide.join() }
         }
-        val listed = http.get("/api/v1/devices/$LAPTOP/folders/f1/resumable?limit=5") { bearerAuth("alice") }
         assertEquals(HttpStatusCode.OK, listed.status, listed.bodyAsText())
-        daemonSide.join()
         val body = listed.body<ResumableSessionPageResponse>()
         val item = body.items.single()
         assertEquals(listOf(CONVERSATION, "Fix the tests", 2), listOf(item.id, item.title, item.turns))
