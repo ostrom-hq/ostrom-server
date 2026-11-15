@@ -25,6 +25,8 @@ import kotlin.uuid.Uuid
  * @property permissionMode `ask` or `bypass`.
  * @property status Its state: `creating` for a new session, `resuming` for a woken one.
  * @property requestedAt When it started waiting.
+ * @property resumeSessionId The device's Claude Code conversation it continues, forked by the daemon; null for a
+ *   new one.
  */
 data class DaemonOrder(
     val sessionId: Uuid,
@@ -34,6 +36,7 @@ data class DaemonOrder(
     val permissionMode: String,
     val status: String,
     val requestedAt: Instant,
+    val resumeSessionId: String? = null,
 )
 
 /**

@@ -168,6 +168,7 @@ class DeviceDaemonUseCaseImpl(
             permissionMode = host.permissionMode,
             status = session.state.wire,
             requestedAt = session.updatedAt,
+            resumeSessionId = host.resumeSessionId,
         )
     }
 

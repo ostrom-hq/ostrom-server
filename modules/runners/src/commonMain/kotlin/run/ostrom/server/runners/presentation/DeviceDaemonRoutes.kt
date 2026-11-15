@@ -116,7 +116,27 @@ private fun Route.ownerRoutes(dependencies: DeviceDaemonRoutesDependencies) = wi
         val device = daemon.owned(principal, id)
         call.respond(device.toDto())
     }
+    get<DeviceDaemonApi.DeviceFolders.Resumable> { params ->
+        val principal = call.requirePrincipal()
+        orgResolver.callerOf(principal, CLOUD_READ)
+        val id = Uuid.parseOrNull(params.parent.id) ?: throw DeviceDaemonRules.deviceNotFound()
+        val folderId = params.folderId.takeIf(DeviceDaemonRules::validFolderId)
+            ?: throw DeviceDaemonRules.folderNotPublished("This device")
+        val limit = params.limit?.let {
+            it.toIntOrNull()
+                ?: throw RemoteSessionRules.invalid("invalid_limit", "Use a limit from 1 to $MAX_LISTING_LIMIT.")
+        } ?: DeviceDaemonRules.DEFAULT_LISTING_LIMIT
+        val answer = daemon.resumable(principal, id, folderId, limit, params.before)
+        call.respond(
+            ResumableSessionPageResponse(
+                answer.sessions.map { ResumableSessionDto(it.id, it.title, it.lastActiveAt.toString(), it.turns) },
+                answer.next,
+            ),
+        )
+    }
 }
+
+private const val MAX_LISTING_LIMIT = DeviceDaemonRules.MAX_LISTING_LIMIT
 
 private fun DaemonOrder.toDto() = DaemonOrderDto(
     sessionId = sessionId.toString(),
@@ -126,6 +146,7 @@ private fun DaemonOrder.toDto() = DaemonOrderDto(
     permissionMode = permissionMode,
     status = status,
     requestedAt = requestedAt.toString(),
+    resumeSessionId = resumeSessionId,
 )
 
 private fun DaemonFolder.toDto() = DeviceFolderDto(id, name, label)

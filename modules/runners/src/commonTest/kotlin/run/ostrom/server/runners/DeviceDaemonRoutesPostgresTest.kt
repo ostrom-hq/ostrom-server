@@ -34,6 +34,7 @@ import run.ostrom.server.runners.presentation.DeviceFoldersResponse
 import run.ostrom.server.runners.presentation.PublishDeviceFoldersRequest
 import run.ostrom.server.runners.presentation.RefuseDaemonOrderRequest
 import run.ostrom.server.runners.presentation.ResumableSessionDto
+import run.ostrom.server.runners.presentation.ResumableSessionPageResponse
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.testing.TestInstanceSettings
 import run.ostrom.server.testing.serverTest
@@ -59,6 +60,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * The device daemon's routes against a real PostgreSQL (TeamCode's daemon route tests): the daemon of the caller's
@@ -232,6 +235,51 @@ class DeviceDaemonRoutesPostgresTest {
     }
 
     @Test
+    fun theOwnerListsAFoldersConversationsAndContinuesOne() = serverTest(listOf(RunnersModule), daemon) { server ->
+        val http = server.client
+        http.publish("alice-laptop", listOf(folder))
+        http.poll("alice-laptop")
+        val page = DaemonListingAnswerRequest(
+            listOf(ResumableSessionDto(CONVERSATION, "Fix the tests", "2026-10-30T09:00:00.000Z", 2)),
+            next = "2026-10-30T09:00:00Z",
+        )
+        val daemonSide = launch {
+            while (true) {
+                val listing = http.poll("alice-laptop").body<DaemonPollResponse>().listings.firstOrNull()
+                if (listing != null) {
+                    assertEquals(listOf("f1", 5), listOf(listing.folderId, listing.limit))
+                    http.answer("alice-laptop", listing.requestId, page)
+                    break
+                }
+                delay(50)
+            }
+        }
+        val listed = http.get("/api/v1/devices/$LAPTOP/folders/f1/resumable?limit=5") { bearerAuth("alice") }
+        assertEquals(HttpStatusCode.OK, listed.status, listed.bodyAsText())
+        daemonSide.join()
+        val body = listed.body<ResumableSessionPageResponse>()
+        val item = body.items.single()
+        assertEquals(listOf(CONVERSATION, "Fix the tests", 2), listOf(item.id, item.title, item.turns))
+        assertEquals("2026-10-30T09:00:00Z", body.next)
+        http.get("/api/v1/devices/$LAPTOP/folders/f1/resumable?limit=many") { bearerAuth("alice") }
+            .assertRefused(HttpStatusCode.BadRequest, "invalid_limit")
+        http.get("/api/v1/devices/$LAPTOP/folders/a.b/resumable") { bearerAuth("alice") }
+            .assertRefused(HttpStatusCode.UnprocessableEntity, "folder_not_published")
+        http.get("/api/v1/devices/laptop/folders/f1/resumable") { bearerAuth("alice") }
+            .assertRefused(HttpStatusCode.NotFound, "device_not_found")
+
+        val created = http.post("/api/v1/cloud/sessions") {
+            bearerAuth("alice")
+            contentType(ContentType.Application.Json)
+            setBody(start.copy(resumeSessionId = CONVERSATION))
+        }
+        assertEquals(HttpStatusCode.Created, created.status, created.bodyAsText())
+        val order = http.poll("alice-laptop").body<DaemonPollResponse>().orders.single()
+        val id = created.body<CloudSessionResponse>().id
+        assertEquals(listOf(id, CONVERSATION), listOf(order.sessionId, order.resumeSessionId))
+    }
+
+    @Test
     fun nobodyElseReadsADevicesFoldersOrUsesItsDaemon() = serverTest(listOf(RunnersModule), daemon) { server ->
         val http = server.client
         http.get("/api/v1/devices/$BOB_LAPTOP/folders") { bearerAuth("alice") }
@@ -247,5 +295,9 @@ class DeviceDaemonRoutesPostgresTest {
         http.publish("alice-laptop", listOf(folder, folder)).assertRefused(HttpStatusCode.BadRequest, "invalid_folders")
         assertEquals(HttpStatusCode.Unauthorized, http.answer("nobody", "x", DaemonListingAnswerRequest()).status)
         assertEquals(HttpStatusCode.Unauthorized, http.delete("/api/v1/devices/current/daemon").status)
+    }
+
+    private companion object {
+        const val CONVERSATION = "0f3c2b1a-9d8e-4c7b-a6f5-e4d3c2b1a090"
     }
 }

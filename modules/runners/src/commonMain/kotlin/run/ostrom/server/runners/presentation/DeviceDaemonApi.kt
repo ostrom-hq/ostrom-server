@@ -75,7 +75,24 @@ class DeviceDaemonApi {
      */
     @Serializable
     @Resource("{id}/folders")
-    class DeviceFolders(val parent: DeviceDaemonApi = DeviceDaemonApi(), val id: String)
+    class DeviceFolders(val parent: DeviceDaemonApi = DeviceDaemonApi(), val id: String) {
+        /**
+         * `GET /api/v1/devices/{id}/folders/{folderId}/resumable` (`listResumableSessions`).
+         *
+         * @property parent The device's folders.
+         * @property folderId The folder.
+         * @property limit The page size, 1 to 50 (20 by default).
+         * @property before The `next` of the previous page.
+         */
+        @Serializable
+        @Resource("{folderId}/resumable")
+        class Resumable(
+            val parent: DeviceFolders,
+            val folderId: String,
+            val limit: String? = null,
+            val before: String? = null,
+        )
+    }
 }
 
 /**
@@ -102,6 +119,7 @@ data class DaemonPollRequest(
  * @property permissionMode `ask` or `bypass`.
  * @property status `creating` or `resuming`.
  * @property requestedAt When it started waiting.
+ * @property resumeSessionId The device's conversation the session continues (`runners.cloud.remote.resume.v1`).
  */
 @Serializable
 data class DaemonOrderDto(
@@ -112,6 +130,7 @@ data class DaemonOrderDto(
     val permissionMode: String,
     val status: String,
     val requestedAt: String,
+    val resumeSessionId: String? = null,
 )
 
 /**
@@ -207,6 +226,15 @@ data class RefuseDaemonOrderRequest(val reason: String)
  */
 @Serializable
 data class ResumableSessionDto(val id: String, val title: String, val lastActiveAt: String, val turns: Int)
+
+/**
+ * A page of a device's conversations (contract `ResumableSessionPage`).
+ *
+ * @property items The conversations, the most recent first.
+ * @property next The cursor of the following page.
+ */
+@Serializable
+data class ResumableSessionPageResponse(val items: List<ResumableSessionDto>, val next: String? = null)
 
 /**
  * The daemon's answer to a listing (contract `DaemonListingAnswer`).

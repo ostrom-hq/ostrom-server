@@ -51,12 +51,15 @@ enum class SessionKind(val wire: String) {
  * @property directoryName The last segment of the directory the agent works in, never its path.
  * @property permissionMode `ask` or `bypass` ([RemoteSessionRules.PERMISSION_MODES]).
  * @property folderId The published folder a device's daemon started it in; null for one started on the device itself.
+ * @property resumeSessionId The device's Claude Code conversation it continues (`runners.cloud.remote.resume.v1`),
+ *   forked by the daemon; null for a new conversation.
  */
 data class RemoteHost(
     val deviceId: Uuid?,
     val directoryName: String?,
     val permissionMode: String,
     val folderId: String? = null,
+    val resumeSessionId: String? = null,
 )
 
 /**
@@ -157,13 +160,12 @@ object RemoteSessionRules {
     fun validateRemote(draft: RemoteSessionDraft): AgentKind {
         val agent = AgentKind.fromWire(draft.agent)?.takeIf { it in REMOTE_AGENTS }
         val directory = draft.directoryName
+        val resume = resumeProblem(draft, agent)
         val problem = when {
             agent == null -> "invalid_agent" to "Use the agent claude or codex."
             draft.deviceId == null && draft.folderId != null ->
                 "invalid_folder" to "A folderId needs the deviceId whose daemon published it."
-            draft.resumeSessionId != null && draft.deviceId == null ->
-                "invalid_resume" to
-                    "A resumeSessionId needs the deviceId and folderId of the conversation it continues."
+            resume != null -> resume
             // A daemon's folder names its directory; otherwise the draft names it, a last segment only.
             directory?.let { !validDirectoryName(it) } ?: (draft.deviceId == null) -> "invalid_directory_name" to
                 "Send the directory's name (its last segment, 1-$MAX_DIRECTORY_NAME characters), never its path."
@@ -172,6 +174,20 @@ object RemoteSessionRules {
             else -> return agent
         }
         throw invalid(problem.first, problem.second)
+    }
+
+    // TeamCode's resumeSessionId checks: the device's conversation, by its id, continued by Claude Code only.
+    private fun resumeProblem(draft: RemoteSessionDraft, agent: AgentKind?): Pair<String, String>? {
+        val resume = draft.resumeSessionId ?: return null
+        return when {
+            draft.deviceId == null -> "invalid_resume" to
+                "A resumeSessionId needs the deviceId and folderId of the conversation it continues."
+            !DeviceDaemonRules.validConversationId(resume) ->
+                "invalid_resume" to "Send the id of a conversation the device listed (a lowercase UUID)."
+            agent != AgentKind.CLAUDE ->
+                "resume_unsupported" to "Only a Claude Code session continues a conversation of the device."
+            else -> null
+        }
     }
 
     /**
@@ -327,7 +343,7 @@ class CreateRemoteSessionUseCaseImpl(
             permissionBypass = PermissionBypass(caller.memberId, principal.credentialId, now)
                 .takeIf { mode == RemoteSessionRules.BYPASS },
             kind = SessionKind.REMOTE,
-            host = RemoteHost(device, directory, mode, target.folderId),
+            host = RemoteHost(device, directory, mode, target.folderId, target.resumeSessionId),
             createdBy = caller.attribution,
         )
         return store(session, key, device)
@@ -362,16 +378,11 @@ class CreateRemoteSessionUseCaseImpl(
                 "invalid_folder",
                 "Send the folderId of one of the device's published folders.",
             )
-        // Continuing a device's conversation is runners.cloud.remote.resume.v1, not served yet.
-        if (draft.resumeSessionId != null) {
-            throw RemoteSessionRules.invalid(
-                "resume_unsupported",
-                "This server does not continue a conversation of the device yet.",
-            )
-        }
         val deviceId = Uuid.parseOrNull(target) ?: throw DeviceDaemonRules.deviceNotFound()
         val device = daemons.owned(userId, deviceId, clock.now()) ?: throw DeviceDaemonRules.deviceNotFound()
         if (device.daemon?.online != true) throw DeviceDaemonRules.deviceOffline(device.name)
+        // Only a daemon that lists conversations checks and forks one; an older one would start a new conversation.
+        if (draft.resumeSessionId != null) DeviceDaemonUseCaseImpl.requireResume(device)
         val folder = device.folders.find { it.id == folderId }
             ?: throw DeviceDaemonRules.folderNotPublished(device.name)
         if (draft.directoryName != null && draft.directoryName != folder.name) {
@@ -380,11 +391,16 @@ class CreateRemoteSessionUseCaseImpl(
                 "The directory of a session started on a device is its folder's name; omit directoryName.",
             )
         }
-        return HostTarget(device.id, folder.name, folder.id)
+        return HostTarget(device.id, folder.name, folder.id, draft.resumeSessionId)
     }
 
     // Where a remote session runs: the caller's own device, or another of their devices through its daemon's folder.
-    private data class HostTarget(val device: Uuid, val directory: String?, val folderId: String?)
+    private data class HostTarget(
+        val device: Uuid,
+        val directory: String?,
+        val folderId: String?,
+        val resumeSessionId: String? = null,
+    )
 
     /**
      * Stores [session], once per [key]: no cap holds a remote session. The key's request is the one sent from
