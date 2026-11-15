@@ -22,6 +22,9 @@ class InMemoryCloudTransfersRepository(
 ) : CloudTransfersRepository {
     val transfers = linkedMapOf<Uuid, CloudTransfer>()
 
+    /** Makes the next writes of a transfer lose their race, as if another writer came first. */
+    var loseNextUpdates = 0
+
     override suspend fun find(orgId: Uuid, id: Uuid): CloudTransfer? = transfers[id]?.takeIf { it.orgId == orgId }
 
     override suspend fun list(orgId: Uuid, query: TransferQuery): List<CloudTransfer> = transfers.values
@@ -69,6 +72,10 @@ class InMemoryCloudTransfersRepository(
 
     @Suppress("ReturnCount") // A fake mirrors the guards of the SQL one by one.
     override suspend fun update(expected: CloudTransfer, next: CloudTransfer, session: SessionChange?): CloudTransfer? {
+        if (loseNextUpdates > 0) {
+            loseNextUpdates--
+            return null
+        }
         val current = transfers[expected.id] ?: return null
         if (current.version != expected.version) return null
         if (session != null && sessions.compareAndSet(session.next, session.nextReconcileAt) == null) return null

@@ -8,8 +8,10 @@ import run.ostrom.server.runners.fakes.session
 import run.ostrom.server.runners.presentation.toResponse
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
+import kotlin.uuid.Uuid
 
 class CloudSessionResponseTest {
     @Test
@@ -30,5 +32,13 @@ class CloudSessionResponseTest {
         assertEquals("2026-10-30T10:03:00Z", response.pausedAt)
         assertEquals("2026-10-30T10:04:00Z", response.endedAt)
         assertEquals("terminated", response.status)
+    }
+
+    @Test
+    fun aSessionBeingTransferredNamesItsTransfer() {
+        val id = Uuid.random()
+        val moving = session(state = SessionState.PAUSED, desired = DesiredState.PAUSED)
+        assertEquals(id.toString(), moving.copy(transferId = id).toResponse().transferId)
+        assertNull(moving.toResponse().transferId)
     }
 }

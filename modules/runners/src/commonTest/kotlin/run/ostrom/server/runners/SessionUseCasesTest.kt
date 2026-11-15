@@ -16,6 +16,7 @@ import run.ostrom.server.runners.domain.CreateCloudSessionUseCaseImpl
 import run.ostrom.server.runners.domain.DesiredState
 import run.ostrom.server.runners.domain.FreeCloudPlanProvider
 import run.ostrom.server.runners.domain.GetCloudSessionUseCaseImpl
+import run.ostrom.server.runners.domain.SessionTransferringException
 import run.ostrom.server.runners.domain.InvalidCloudSessionRequestException
 import run.ostrom.server.runners.domain.ListCloudSessionsUseCaseImpl
 import run.ostrom.server.runners.domain.RepositoryCloudUsageMeter
@@ -220,7 +221,10 @@ class SessionUseCasesTest {
         assertEquals(machine, read.runnerId)
         assertEquals(machine.toString(), read.toResponse().runnerId)
         assertNull(GetCloudSessionUseCaseImpl(repository, FakeRuntimeDriver())(alice, created.id).runnerId)
-        for (state in listOf(SessionState.PAUSED, SessionState.TERMINATED, SessionState.FAILED)) {
+        val nowhereStates = listOf(
+            SessionState.PAUSED, SessionState.TRANSFERRING, SessionState.TERMINATED, SessionState.FAILED,
+        )
+        for (state in nowhereStates) {
             repository.sessions[created.id] = repository.sessions.getValue(created.id).copy(state = state)
             val nowhere = GetCloudSessionUseCaseImpl(repository, driver)(alice, created.id)
             assertNull(nowhere.runnerId, "$state runs nowhere")
@@ -267,6 +271,17 @@ class SessionUseCasesTest {
         val deleting = session(state = SessionState.RUNNING, desired = DesiredState.TERMINATED)
         repository.put(deleting)
         assertFailsWith<CloudSessionStateException> { change.resume(alice, deleting.id) }
+    }
+
+    @Test
+    fun aSessionBeingTransferredIsResumedOnlyByTheTransfer() = runTest {
+        val accepted = session(state = SessionState.PAUSED, desired = DesiredState.PAUSED)
+            .copy(transferId = Uuid.random())
+        repository.put(accepted)
+        assertFailsWith<SessionTransferringException> { change.resume(alice, accepted.id) }
+        val moving = session(state = SessionState.TRANSFERRING, desired = DesiredState.PAUSED)
+        repository.put(moving)
+        assertFailsWith<SessionTransferringException> { change.resume(alice, moving.id) }
     }
 
     @Test

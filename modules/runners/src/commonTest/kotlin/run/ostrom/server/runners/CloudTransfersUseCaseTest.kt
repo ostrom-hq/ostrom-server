@@ -5,7 +5,10 @@ import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.audit.OrgAuditTrail
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.PrincipalKind
+import run.ostrom.server.runners.domain.AlwaysOfferTransfers
 import run.ostrom.server.runners.domain.Caller
+import run.ostrom.server.runners.domain.CloudSession
+import run.ostrom.server.runners.domain.CloudSessionStateException
 import run.ostrom.server.runners.domain.CloudSessionNotFoundException
 import run.ostrom.server.runners.domain.CloudTransfer
 import run.ostrom.server.runners.domain.CloudTransfersUseCase
@@ -14,6 +17,9 @@ import run.ostrom.server.runners.domain.DesiredState
 import run.ostrom.server.runners.domain.IdempotencyConflictException
 import run.ostrom.server.runners.domain.InvalidTransferException
 import run.ostrom.server.runners.domain.RecipientIneligibleException
+import run.ostrom.server.runners.domain.InvalidCloudSessionRequestException
+import run.ostrom.server.runners.domain.SessionBusyException
+import run.ostrom.server.runners.domain.SessionChange
 import run.ostrom.server.runners.domain.SessionNotRunningException
 import run.ostrom.server.runners.domain.SessionPreparingException
 import run.ostrom.server.runners.domain.SessionState
@@ -373,5 +379,147 @@ class CloudTransfersUseCaseTest {
             use.list(bob, TransferListing(TransferDirection.BOTH, emptySet(), null, null, 5)).single().state,
         )
         assertEquals(TransferState.OFFERED, transfers.transfers.getValue(offered.id).state)
+    }
+
+    private suspend fun accepted(name: String): Pair<CloudSession, CloudTransfer> {
+        val own = running("carol")
+        val transfer = use.request(carol, principal, own.id, TransferRequest("bob", false), key.copy(key = name))
+            .transfer
+        return own to transfer
+    }
+
+    @Test
+    fun aSessionChangedByAnotherWriterWhileAnAdministratorTransfersItAnswersBusy() = runTest {
+        sessions.loseNextRaces = 1
+        assertFailsWith<SessionBusyException> {
+            use.request(carol, principal, running("carol").id, TransferRequest("bob", false), key)
+        }
+    }
+
+    @Test
+    fun aMemberListsTheRecipientsWhileMembersMayOffer() = runTest {
+        assertEquals(3, use.recipients(alice).size)
+    }
+
+    @Test
+    fun anAcceptedOrCompletedTransferIsAcceptedAgainAsItIs() = runTest {
+        val offered = offer()
+        val done = offered.copy(state = TransferState.COMPLETED)
+        transfers.transfers[offered.id] = done
+        assertEquals(done, use.accept(bob, principal, offered.id, true))
+    }
+
+    @Test
+    fun anAdministratorAcceptsAnOfferWhileMembersMayNoLongerOffer() = runTest {
+        val running = running()
+        val offered = use.request(alice, principal, running.id, TransferRequest("carol", false), key).transfer
+        policy.membersOffer = false
+        assertEquals(TransferState.ACCEPTED, use.accept(carol, principal, offered.id, null).state)
+    }
+
+    @Test
+    fun anOfferWhoseSessionVanishedOrIsBeingDeletedCannotBeAccepted() = runTest {
+        val gone = running()
+        val offered = offer(gone)
+        sessions.sessions.remove(gone.id)
+        assertFailsWith<SessionNotRunningException> { use.accept(bob, principal, offered.id, null) }
+
+        val deleting = running()
+        val second = use.request(
+            alice, principal, deleting.id, TransferRequest("bob", false), key.copy(key = "k-2"),
+        ).transfer
+        sessions.put(deleting.copy(desiredState = DesiredState.TERMINATED))
+        assertFailsWith<CloudSessionStateException> { use.accept(bob, principal, second.id, null) }
+        assertEquals("session_not_running", transfers.transfers.getValue(second.id).failure?.code)
+    }
+
+    @Test
+    fun aWriteThatLosesItsRaceIsRetriedThenAnswersBusy() = runTest {
+        suspend fun offered(name: String) = use.request(
+            alice, principal, running().id, TransferRequest("bob", false), key.copy(key = name),
+        ).transfer
+
+        val toAccept = offered("k-a")
+        transfers.loseNextUpdates = 1
+        assertEquals(TransferState.ACCEPTED, use.accept(bob, principal, toAccept.id, null).state)
+
+        val toDecline = offered("k-b")
+        transfers.loseNextUpdates = 1
+        assertEquals(TransferState.DECLINED, use.decline(bob, principal, toDecline.id).state)
+
+        val toCancel = offered("k-c")
+        transfers.loseNextUpdates = 1
+        assertEquals(TransferState.CANCELLED, use.cancel(alice, principal, toCancel.id).state)
+
+        val busy = offered("k-d")
+        transfers.loseNextUpdates = 100
+        assertFailsWith<SessionBusyException> { use.accept(bob, principal, busy.id, null) }
+        assertFailsWith<SessionBusyException> { use.decline(bob, principal, busy.id) }
+        assertFailsWith<SessionBusyException> { use.cancel(alice, principal, busy.id) }
+    }
+
+    @Test
+    fun anOfferWithoutAnExpiryNeverExpires() = runTest {
+        val offered = offer()
+        transfers.transfers[offered.id] = offered.copy(expiresAt = null)
+        clock.now += CloudTransfer.OFFER_VALIDITY + 1.days
+        assertEquals(TransferState.OFFERED, use.get(alice, offered.id).state)
+        assertEquals(TransferState.DECLINED, use.decline(bob, principal, offered.id).state)
+    }
+
+    @Test
+    fun aDecidedTransferCannotBeCancelled() = runTest {
+        val offered = offer()
+        use.decline(bob, principal, offered.id)
+        assertFailsWith<TransferNotOpenException> { use.cancel(alice, principal, offered.id) }
+    }
+
+    @Test
+    fun cancellingAnAcceptedTransferWhoseSessionLeftItLeavesTheSessionAlone() = runTest {
+        val (vanished, first) = accepted("k-a")
+        sessions.sessions.remove(vanished.id)
+        assertEquals(TransferState.CANCELLED, use.cancel(carol, principal, first.id).state)
+
+        val (other, second) = accepted("k-b")
+        sessions.put(sessions.sessions.getValue(other.id).copy(transferId = Uuid.random()))
+        assertEquals(TransferState.CANCELLED, use.cancel(carol, principal, second.id).state)
+        assertTrue(sessions.sessions.getValue(other.id).transferId != null)
+    }
+
+    @Test
+    fun aPageHoldsAtLeastOneTransfer() = runTest {
+        assertFailsWith<InvalidCloudSessionRequestException> {
+            use.list(alice, TransferListing(TransferDirection.BOTH, emptySet(), null, null, 0))
+        }
+    }
+
+    @Test
+    fun aSessionStartsATransferUnlessItIsOverPreparingOrMovingAlready() {
+        val moving = session(state = SessionState.RUNNING)
+        CloudTransfersUseCaseImpl.transferable(moving)
+        val id = Uuid.random()
+        CloudTransfersUseCaseImpl.transferable(moving.copy(transferId = id), allowing = id)
+        assertFailsWith<TransferPendingException> {
+            CloudTransfersUseCaseImpl.transferable(moving.copy(transferId = Uuid.random()), allowing = id)
+        }
+        assertFailsWith<TransferPendingException> {
+            CloudTransfersUseCaseImpl.transferable(moving.copy(state = SessionState.TRANSFERRING))
+        }
+    }
+
+    @Test
+    fun aChangeMustDeriveFromTheRowItReplaces() {
+        val base = session(state = SessionState.PAUSED)
+        assertFailsWith<IllegalArgumentException> {
+            SessionChange(base, base.copy(id = Uuid.random()), clock.now)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            SessionChange(base, base.copy(generation = base.generation + 1), clock.now)
+        }
+    }
+
+    @Test
+    fun withoutASettingMembersAlwaysOffer() = runTest {
+        assertTrue(AlwaysOfferTransfers.membersMayOffer())
     }
 }

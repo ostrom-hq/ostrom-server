@@ -272,4 +272,95 @@ class CompleteCloudTransferUseCaseTest {
         assertNull(stored(transferring).transferId)
         assertEquals("alice", stored(transferring).ownerId)
     }
+
+    private val bare = ReconcileCloudSessionUseCaseImpl(
+        repository,
+        driver,
+        FakeRunnerTokens(),
+        FixedPlans(),
+        RepositoryCloudUsageMeter(repository),
+        clock,
+    ) { BackgroundWork.DEFAULT_MAX_MINUTES }
+
+    @Test
+    fun aGitHubAccessThatWasNotSharedStaysWhatItWas() = runTest {
+        val base = session(state = SessionState.PAUSED, desired = DesiredState.PAUSED)
+            .copy(githubAccess = GitHubAccessMode.OWNER)
+        val transfer = transfer(base)
+        val paused = base.copy(transferId = transfer.id).also(repository::put)
+        reconcile(paused)
+
+        reconcile(stored(paused))
+
+        assertEquals("bob", stored(paused).ownerId)
+        assertEquals(GitHubAccessMode.OWNER, stored(paused).githubAccess)
+    }
+
+    @Test
+    fun aSessionThatChangedMeanwhileDoesNotCompleteTheTransferNorLeaveAnAuditLine() = runTest {
+        val (paused, transfer) = moving()
+        reconcile(paused)
+        repository.loseNextRaces = 1
+
+        reconcile(stored(paused))
+
+        assertEquals("alice", stored(paused).ownerId)
+        assertEquals(TransferState.ACCEPTED, transfers.transfers.getValue(transfer.id).state)
+        assertTrue(audit.isEmpty())
+    }
+
+    @Test
+    fun abandoningASessionWithoutATransferOrWithADecidedOneJustReleasesIt() = runTest {
+        val plain = session(state = SessionState.PAUSED, desired = DesiredState.TERMINATED).also(repository::put)
+        complete.abandon(plain)
+        assertNull(stored(plain).transferId)
+
+        val (paused, transfer) = moving()
+        transfers.transfers[transfer.id] = transfer.copy(state = TransferState.COMPLETED)
+        complete.abandon(paused)
+        assertNull(stored(paused).transferId)
+        assertEquals(TransferState.COMPLETED, transfers.transfers.getValue(transfer.id).state)
+    }
+
+    @Test
+    fun aTransferOfAnotherSessionIsNotThisSessionsTransfer() = runTest {
+        val other = session(state = SessionState.PAUSED, desired = DesiredState.PAUSED)
+        val foreign = transfer(other)
+        val paused = session(state = SessionState.PAUSED, desired = DesiredState.PAUSED)
+            .copy(transferId = foreign.id).also(repository::put)
+
+        reconcile(paused)
+
+        assertNull(stored(paused).transferId)
+        assertEquals(TransferState.ACCEPTED, transfers.transfers.getValue(foreign.id).state)
+    }
+
+    @Test
+    fun aServerWithoutTransfersDeletesAStrandedSessionAndReturnsAPausedOneToItsOwner() = runTest {
+        val (paused, _) = moving()
+        bare(paused)
+        assertNull(stored(paused).transferId)
+        assertEquals(SessionState.PAUSED, stored(paused).state)
+
+        val (deleted, transfer) = moving()
+        repository.put(deleted.copy(desiredState = DesiredState.TERMINATED))
+        bare(stored(deleted))
+        // Nothing here abandons the transfer: the session is simply deleted.
+        assertEquals(TransferState.ACCEPTED, transfers.transfers.getValue(transfer.id).state)
+    }
+
+    @Test
+    fun aFirstStartThatFailsKeepsTheTransferNamedByTheSessionUntilItIsReleased() = runTest {
+        val start = session().copy(
+            epoch = 1,
+            executionStartedAt = t0,
+            runnerTokenHash = "hash(token-1)",
+            transferId = Uuid.random(),
+        )
+        repository.put(start)
+        driver.status = ExecutionStatus.FAILED
+
+        assertNull(reconcile(start))
+        assertEquals(SessionState.FAILED, stored(start).state)
+    }
 }
