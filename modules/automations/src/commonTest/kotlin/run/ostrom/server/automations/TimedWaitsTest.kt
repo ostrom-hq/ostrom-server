@@ -249,6 +249,21 @@ class TimedWaitsTest {
     }
 
     @Test
+    fun theFirstFailureOfThePassIsTheOneThrownEvenWhenThePurgeFailsToo() = runTest {
+        val wait = timeWait()
+        clock.now += 2.minutes
+        val broken = object : TimedWaitsRepository by timedWaits {
+            override suspend fun settle(orgId: Uuid, id: Uuid, answer: WaitAnswer, due: Boolean): Wait? =
+                throw IllegalStateException("settle")
+
+            override suspend fun purgeSecrets(now: Instant, limit: Int): Int = throw IllegalStateException("purge")
+        }
+        val pass = ResolveDueWaitsUseCaseImpl(broken, events, clock)
+        assertEquals("settle", assertFailsWith<IllegalStateException> { pass.pass() }.message)
+        assertEquals(WaitStatus.OPEN, repository.waits.getValue(wait.id).status)
+    }
+
+    @Test
     fun anEventResolvesItsWaitWithWhatItsCallerSent() = runTest {
         val asked = timed("event", WaitSchedule(resumeMessage = "Merge if green"))
         val id = asked.wait.id.toString()

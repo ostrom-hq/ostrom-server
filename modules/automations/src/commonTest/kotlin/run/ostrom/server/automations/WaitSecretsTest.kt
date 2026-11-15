@@ -87,6 +87,17 @@ class WaitSecretsTest {
     }
 
     @Test
+    fun withoutASessionsDirectoryNoSessionTakesASecret() = runTest {
+        val bare = AskWaitUseCaseImpl(
+            repository, TestMembers, RecordingEvents(), clock, testWaitSessions, CountingSecrets(),
+        )
+        val refused = assertFailsWith<SecretUnsupportedSessionException> {
+            bare.ask(bob, AskWait(question, "session-1"), null)
+        }
+        assertTrue("cloud session" in refused.message, refused.message)
+    }
+
+    @Test
     fun aSecretIsNeverAskedByAWorkflowRunOrOutsideASession() = runTest {
         val noSession = assertFailsWith<InvalidWaitException> { asked(session = null) }
         assertTrue("session" in noSession.message)
