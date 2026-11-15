@@ -8,9 +8,9 @@ import run.ostrom.server.secrets.domain.SecretCursor
 import run.ostrom.server.secrets.domain.SecretsRepository
 import run.ostrom.server.secrets.domain.StoredSecret
 import org.jetbrains.exposed.v1.core.Op
+import org.jetbrains.exposed.v1.core.QueryParameter
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
-import org.jetbrains.exposed.v1.core.QueryParameter
 import org.jetbrains.exposed.v1.core.TextColumnType
 import org.jetbrains.exposed.v1.core.UuidColumnType
 import org.jetbrains.exposed.v1.core.and
@@ -114,7 +114,7 @@ private val s = SecretsEntries
 /** Every column but the envelope, which only the reads that reveal or check a value take. */
 private val COLUMNS = listOf(s.id, s.orgId, s.name, s.ownerMemberId, s.version, s.createdAt, s.updatedAt, s.updatedBy)
 
-// `(name, id) > (cursor)`: the page after the cursor's secret, on the order of the list.
+// `(cursor) < (name, id)`, that is `(name, id) > (cursor)`: the page after the cursor's secret, in the list's order.
 private fun afterCursor(cursor: SecretCursor): Op<Boolean> = rowLess(
     listOf(QueryParameter(cursor.name, TextColumnType()), QueryParameter(cursor.id, UuidColumnType())),
     listOf(s.name, s.id),

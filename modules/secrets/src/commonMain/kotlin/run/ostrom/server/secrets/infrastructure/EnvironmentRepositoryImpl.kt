@@ -3,6 +3,7 @@ package run.ostrom.server.secrets.infrastructure
 
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.lockKeyUntilCommit
+import run.ostrom.server.kernel.database.sumOrZero
 import run.ostrom.server.secrets.domain.AssignedEnvironmentValue
 import run.ostrom.server.secrets.domain.AssignmentSource
 import run.ostrom.server.secrets.domain.BulkAssignment
@@ -22,9 +23,11 @@ import org.jetbrains.exposed.v1.core.JoinType
 import org.jetbrains.exposed.v1.core.Op
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.andIfNotNull
 import org.jetbrains.exposed.v1.core.case
+import org.jetbrains.exposed.v1.core.count
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.isNotNull
@@ -35,6 +38,7 @@ import org.jetbrains.exposed.v1.core.plus
 import org.jetbrains.exposed.v1.core.statements.insertValue
 import org.jetbrains.exposed.v1.core.stringParam
 import org.jetbrains.exposed.v1.core.vendors.ForUpdateOption
+import org.jetbrains.exposed.v1.jdbc.Query
 import org.jetbrains.exposed.v1.jdbc.deleteReturning
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.insertIgnore
@@ -102,11 +106,21 @@ class EnvironmentRepositoryImpl(private val database: JdbcDatabase) : Environmen
         return database.inOrg(orgId) {
             lockKeyUntilCommit(variableKey(orgId, variant.variable))
             lockKeyUntilCommit(nameKey(orgId, variant.variable, owner))
+            // One read of the three counts, as the sqlx4k repository's: the locks are held while it runs.
+            val excluded = sumOrZero(
+                x.select(x.memberId.count())
+                    .where { (x.orgId eq orgId) and (x.memberId eq owner) and (x.variable eq variant.variable) },
+            )
+            val taken = sumOrZero(
+                a.select(a.memberId.count())
+                    .where { (a.orgId eq orgId) and (a.memberId eq owner) and (a.variable eq variant.variable) },
+            )
+            val owned = sumOrZero(v.select(v.id.count()).where { (v.orgId eq orgId) and (v.ownerMemberId eq owner) })
+            val counts = Table.Dual.select(excluded, taken, owned).single()
             when {
-                excluded(orgId, owner, variant.variable) -> CreateVariantOutcome.EXCLUDED
-                assigned(orgId, owner, variant.variable) -> CreateVariantOutcome.SLOT_TAKEN
-                v.select(v.id).where { (v.orgId eq orgId) and (v.ownerMemberId eq owner) }.count() >= limit ->
-                    CreateVariantOutcome.LIMIT
+                counts[excluded] > 0 -> CreateVariantOutcome.EXCLUDED
+                counts[taken] > 0 -> CreateVariantOutcome.SLOT_TAKEN
+                counts[owned] >= limit -> CreateVariantOutcome.LIMIT
                 !insert(stored) -> CreateVariantOutcome.NAME_TAKEN
                 else -> {
                     upsertAssignment(orgId, owner, variant, AssignmentSource.DIRECT, null, variant.createdAt)
@@ -331,13 +345,7 @@ class EnvironmentRepositoryImpl(private val database: JdbcDatabase) : Environmen
 
     private fun excluded(orgId: Uuid, memberId: Uuid, variable: String): Boolean = x.select(x.memberId)
         .where { (x.orgId eq orgId) and (x.memberId eq memberId) and (x.variable eq variable) }
-        .empty()
-        .not()
-
-    private fun assigned(orgId: Uuid, memberId: Uuid, variable: String): Boolean = a.select(a.memberId)
-        .where { (a.orgId eq orgId) and (a.memberId eq memberId) and (a.variable eq variable) }
-        .empty()
-        .not()
+        .found()
 
     // ON CONFLICT DO NOTHING: a name taken (case-insensitively, by the same owner) is the use case's refusal.
     private fun insert(stored: StoredEnvironmentVariant): Boolean {
@@ -394,8 +402,10 @@ class EnvironmentRepositoryImpl(private val database: JdbcDatabase) : Environmen
                     (v.name.lowerCase() eq stringParam(name).lowerCase()) and ownedBy(ownerMemberId) and
                     (v.id neq except)
             }
-            .empty()
-            .not()
+            .found()
+
+    // Whether the read finds a row.
+    private fun Query.found(): Boolean = !empty()
 
     private fun ownedBy(ownerMemberId: Uuid?): Op<Boolean> =
         if (ownerMemberId == null) v.ownerMemberId.isNull() else v.ownerMemberId eq ownerMemberId
