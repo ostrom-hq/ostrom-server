@@ -71,9 +71,9 @@ class TransactionalAuditLog(private val log: AuditLog) {
     }
 
     /**
-     * Appends [events], signed on [head], to the chain of [orgId] inside [transaction], under the chain's advisory lock:
-     * kept if and only if the transaction commits. Nothing is written when another writer appended since [head] was
-     * read; the caller then rolls its transaction back and signs again on the new head.
+     * Appends [events], signed on [head], to the chain of [orgId] inside [transaction], under the chain's advisory
+     * lock: kept if and only if the transaction commits. Nothing is written when another writer appended since [head]
+     * was read; the caller then rolls its transaction back and signs again on the new head.
      *
      * @param transaction The caller's transaction, opened for [orgId].
      * @param orgId The organization.

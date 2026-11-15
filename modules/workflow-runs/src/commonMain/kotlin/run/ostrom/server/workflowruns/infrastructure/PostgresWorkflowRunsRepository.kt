@@ -66,8 +66,12 @@ class PostgresWorkflowRunsRepository(private val database: JdbcDatabase) : Workf
             }
             val first = session
                 ?.let { firstNotification(orgId, it, notification.notifyId, actionKey).firstOrNull() }
-            if (first == null) write { insertNotification(orgId, notification, actionKey) }
-            first?.let { decodeNotification(it) } ?: notification
+            if (first == null) {
+                write { insertNotification(orgId, notification, actionKey) }
+                notification
+            } else {
+                decodeNotification(first)
+            }
         }
 
     override suspend fun updateNotification(orgId: Uuid, notification: Notification) {
@@ -186,7 +190,8 @@ internal fun holds(table: RunRows, orgId: Uuid, id: String, audience: RunAudienc
 // Who reads a row (TeamCode #238): its person, and the approvers of its session's gates.
 private fun readBy(table: RunRows, audience: RunAudience): Op<Boolean> {
     val approved = table.sessionId eq anyFrom(audience.sessions, TextColumnType())
-    return audience.dev?.let { (table.dev eq it) or approved } ?: approved
+    val dev = audience.dev
+    return if (dev == null) approved else (table.dev eq dev) or approved
 }
 
 // A member's page is the newest of two, each through its own index: their own (`dev`), and those of the sessions

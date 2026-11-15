@@ -595,6 +595,9 @@ class WorkflowRunsPostgresTest {
             assertEquals(setOf("ntf_a", "ntf_c", "ntf_d"), page.map { it.id }.toSet())
             val older = repository.notifications(ada.org.id, RunQuery(before = "ntf_d"))
             assertEquals(listOf("ntf_c", "ntf_a"), older.map { it.id }, "Older than the cursor, newest first")
+            // One not sent is kept aside: the action's next pass may still send it.
+            val unsent = notification("ntf_e").copy(status = NotificationStatus.NOT_SENT)
+            assertEquals(unsent, repository.addNotification(ada.org.id, unsent, "key"))
             // Held by key, in the organization only: what refuses a cursor no page gave.
             assertTrue(repository.hasNotification(ada.org.id, "ntf_a"))
             assertTrue(repository.hasCheck(ada.org.id, ids.first()))

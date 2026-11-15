@@ -2,10 +2,10 @@
 package run.ostrom.server.workflowruns.infrastructure
 
 import run.ostrom.server.kernel.database.instant
+import org.jetbrains.exposed.v1.core.Cast
 import org.jetbrains.exposed.v1.core.Column
 import org.jetbrains.exposed.v1.core.ColumnType
 import org.jetbrains.exposed.v1.core.Expression
-import org.jetbrains.exposed.v1.core.QueryBuilder
 import org.jetbrains.exposed.v1.core.QueryParameter
 import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.core.TextColumnType
@@ -26,15 +26,6 @@ private class JsonbColumnType : ColumnType<String>() {
 
 private fun Table.jsonb(name: String): Column<String> = registerColumn(name, JsonbColumnType())
 
-/** `CAST(? AS JSONB)`: [json] bound as text and cast, as a `JSONB` column takes it. */
-internal class JsonbValue(private val json: String) : Expression<String>() {
-    override fun toQueryBuilder(queryBuilder: QueryBuilder) = queryBuilder {
-        append("CAST(")
-        append(QueryParameter(json, TextColumnType()))
-        append(" AS JSONB)")
-    }
-}
-
 /**
  * The value of a `JSONB` column holding [json].
  *
@@ -42,7 +33,8 @@ internal class JsonbValue(private val json: String) : Expression<String>() {
  *
  * @return The expression to assign.
  */
-internal fun jsonbOf(json: String): Expression<String> = JsonbValue(json)
+internal fun jsonbOf(json: String): Expression<String> =
+    Cast(QueryParameter(json, TextColumnType()), JsonbColumnType())
 
 /** The runs of workflows, with what the engine needs to play them: the graph, the next look, the lease. */
 internal object WorkflowRunsStarted : Table("workflow_runs_started") {

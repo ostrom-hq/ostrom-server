@@ -278,8 +278,8 @@ class IdentityTenancyPostgresTest {
         assertEquals(List(3) { AuditIntegrity.VERIFIED }, lines.map { verifier.integrity(it) })
     }
 
-    // A module on Exposed signs between two transactions, then appends the signed lines in its own, on the head it read:
-    // another writer's append in between makes the append refuse, for the caller to sign again.
+    // A module on Exposed signs between two transactions, then appends the signed lines in its own, on the head it
+    // read: another writer's append in between makes the append refuse, for the caller to sign again.
     @Test
     fun linesSignedBeforeATransactionAreAppendedOnlyOnTheirHead() = serverTest(listOf(IdentityModule)) { s ->
         val log = s.koin.get<AuditLog>()
