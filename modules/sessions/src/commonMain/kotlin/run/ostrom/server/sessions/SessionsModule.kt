@@ -7,6 +7,7 @@ import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.database.repeatDue
 import run.ostrom.server.kernel.database.scheduledWork
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.observability.CachedCount
@@ -47,6 +48,7 @@ import run.ostrom.server.sessions.infrastructure.SessionsGateGuard
 import run.ostrom.server.sessions.infrastructure.SessionsMigrations
 import run.ostrom.server.sessions.infrastructure.SessionsReceiptOwners
 import run.ostrom.server.sessions.presentation.SessionsRoutesDependencies
+import run.ostrom.server.sessions.presentation.sessionsOperations
 import run.ostrom.server.sessions.presentation.sessionsRoutes
 import io.ktor.server.routing.Route
 import kotlinx.coroutines.CoroutineScope
@@ -64,6 +66,8 @@ import org.koin.dsl.module
  */
 object SessionsModule : ServerModule {
     override val name: String = "sessions"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { sessionsOperations() }
 
     override val koinModule: Module = module {
         single<SessionsRepository> { PostgresSessionsRepository(get()) }
