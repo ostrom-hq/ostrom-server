@@ -13,6 +13,8 @@ import run.ostrom.server.budgets.domain.BudgetTarget
 import run.ostrom.server.budgets.domain.BudgetWindow
 import run.ostrom.server.budgets.domain.BudgetsRepository
 import run.ostrom.server.budgets.domain.ExceededBudget
+import run.ostrom.server.budgets.infrastructure.BudgetsAlerts
+import run.ostrom.server.budgets.infrastructure.BudgetsLimits
 import run.ostrom.server.budgets.presentation.BudgetDto
 import run.ostrom.server.budgets.presentation.BudgetsPage
 import run.ostrom.server.budgets.presentation.MyBudgetResponse
@@ -21,21 +23,18 @@ import run.ostrom.server.gateway.domain.SpendGuard
 import run.ostrom.server.gateway.domain.SpendRequest
 import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.audit.OrgAuditTrail
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.workflows.WorkflowDirectory
 import run.ostrom.server.kernel.workflows.WorkflowRemovals
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
-import run.ostrom.server.secrets.infrastructure.executeInOrg
-import run.ostrom.server.secrets.infrastructure.fetchInOrg
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.usage.UsageModule
 import run.ostrom.server.usage.domain.UsageEvent
 import run.ostrom.server.usage.domain.UsageKind
 import run.ostrom.server.usage.domain.UsageRecorder
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
@@ -49,11 +48,16 @@ import io.ktor.http.contentType
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import org.jetbrains.exposed.v1.core.isNotNull
+import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
+import org.jetbrains.exposed.v1.jdbc.deleteAll
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.koin.core.module.Module
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFails
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.days
@@ -438,8 +442,10 @@ class BudgetsPostgresTest {
         server.koin.get<WorkflowRemovals>().removed(orgA, "nightly")
         assertEquals(emptyList(), server.budgets().items)
         assertEquals(BudgetDecision.Allowed(null), guard.check(orgA, member, "nightly"), "Its decision too")
-        val alertsLeft = Statement.create("SELECT COUNT(*) AS n FROM budgets_alerts WHERE workflow_id IS NOT NULL")
-        assertEquals(0L, server.driver.fetchInOrg(orgA, alertsLeft).getOrThrow().first().get("n").asLong())
+        val alertsLeft = server.koin.get<JdbcDatabase>().inOrg(orgA) {
+            BudgetsAlerts.selectAll().where { BudgetsAlerts.workflowId.isNotNull() }.count()
+        }
+        assertEquals(0L, alertsLeft)
         server.koin.get<WorkflowRemovals>().removed(orgA, "review")
         assertEquals(listOf(BudgetDto("workflow", "review", 5.0)), server.budgets("admin-b").items, "Org B's stays")
     }
@@ -584,25 +590,29 @@ class BudgetsPostgresTest {
         repository.replaceLimits(TestCallers.orgA, BudgetTarget.Member(member), own, TestCallers.epoch)
         val alert = BudgetAlert(TestCallers.orgA, null, BudgetScope.ORG, 80, 1_000, 900, TestCallers.monthStart)
         repository.markAlerted(alert, TestCallers.epoch)
-        for (table in listOf("budgets_limits", "budgets_alerts")) {
-            val count = Statement.create("SELECT COUNT(*) AS n FROM $table")
-            suspend fun visibleTo(org: Uuid) =
-                server.driver.fetchInOrg(org, count).getOrThrow().first().get("n").asLong()
-            assertEquals(0L, visibleTo(TestCallers.orgB), "$table: a query without an org filter sees only its org")
-            assertEquals(
-                0L,
-                server.driver.executeInOrg(TestCallers.orgB, Statement.create("DELETE FROM $table")).getOrThrow(),
-                "$table: nor deleted by another org",
-            )
-            assertTrue(visibleTo(TestCallers.orgA) > 0, table)
+        val database = server.koin.get<JdbcDatabase>()
+        for (table in listOf(BudgetsLimits, BudgetsAlerts)) {
+            suspend fun visibleTo(org: Uuid) = database.inOrg(org) { table.selectAll().count() }
+            val name = table.tableName
+            assertEquals(0L, visibleTo(TestCallers.orgB), "$name: a query without an org filter sees only its org")
+            val deleted = database.inOrg(TestCallers.orgB) { table.deleteAll() }
+            assertEquals(0, deleted, "$name: nor deleted by another org")
+            assertTrue(visibleTo(TestCallers.orgA) > 0, name)
         }
-        val foreign = Statement.create(
-            "INSERT INTO budgets_limits (org_id, member_id, scope, limit_micros, updated_at) " +
-                "VALUES (:org, :member, 'MEMBER', 1, now())",
-        ).bind("org", TestCallers.orgA).bind("member", Uuid.random())
-        assertFails("A row of another org is refused") {
-            server.driver.executeInOrg(TestCallers.orgB, foreign).getOrThrow()
+        val refused = assertFailsWith<ExposedSQLException>("A row of another org is refused") {
+            database.inOrg(TestCallers.orgB) {
+                BudgetsLimits.insert {
+                    it[orgId] = TestCallers.orgA
+                    it[memberId] = Uuid.random()
+                    it[scope] = "MEMBER"
+                    it[period] = "MONTH"
+                    it[action] = "BLOCK"
+                    it[limitMicros] = 1
+                    it[updatedAt] = TestCallers.epoch
+                }
+            }
         }
+        assertTrue("row-level security" in refused.message.orEmpty(), "Refused by the policy: ${refused.message}")
     }
 }
 

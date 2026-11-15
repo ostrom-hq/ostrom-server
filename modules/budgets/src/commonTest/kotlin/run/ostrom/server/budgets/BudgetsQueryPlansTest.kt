@@ -6,15 +6,16 @@ import run.ostrom.server.budgets.domain.BudgetRules
 import run.ostrom.server.budgets.domain.BudgetTarget
 import run.ostrom.server.budgets.domain.BudgetWindow
 import run.ostrom.server.budgets.domain.BudgetsRepository
-import run.ostrom.server.budgets.infrastructure.BudgetsQueries
+import run.ostrom.server.budgets.infrastructure.limitsRead
+import run.ostrom.server.budgets.infrastructure.workflowLimitsRead
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
-import run.ostrom.server.secrets.infrastructure.fetchInOrg
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.usage.UsageModule
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
+import org.jetbrains.exposed.v1.jdbc.Query
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
@@ -64,17 +65,14 @@ class BudgetsQueryPlansTest {
             repository.replaceLimits(TestCallers.orgA, BudgetTarget.Workflow("w$n"), limits, now)
         }
         fixtures.execute("VACUUM ANALYZE budgets_limits").getOrThrow()
-        val driver = server.driver
+        val database = server.koin.get<JdbcDatabase>()
+        val org = TestCallers.orgA
         val plans = linkedMapOf(
-            "limits of a call that plays a workflow (guard, gateway)" to driver.explain(BudgetsQueries.LIMITS) {
-                bind("member_id", member).bind("workflow_id", "w7")
-            },
-            "limits of a call that plays none" to driver.explain(BudgetsQueries.LIMITS) {
-                bind("member_id", member).bindNull("workflow_id", String::class)
-            },
-            "workflow budgets of the budgets page" to driver.explain(BudgetsQueries.WORKFLOW_LIMITS) {
-                bind("limit", BudgetRules.MAX_WORKFLOW_BUDGETS)
-            },
+            "limits of a call that plays a workflow (guard, gateway)" to
+                database.explain(limitsRead(org, member, "w7")),
+            "limits of a call that plays none" to database.explain(limitsRead(org, member, null)),
+            "workflow budgets of the budgets page" to
+                database.explain(workflowLimitsRead(org, BudgetRules.MAX_WORKFLOW_BUDGETS)),
         )
         val report = plans.entries.joinToString("\n\n") { (name, plan) -> "-- $name\n$plan" }
         SystemFileSystem.createDirectories(Path("build/reports/explain"))
@@ -88,11 +86,6 @@ class BudgetsQueryPlansTest {
         assertEquals(40, repository.settings(TestCallers.orgA, 0).workflows.size, "Every window of every workflow")
     }
 
-    /** The plan of [sql] in org A, as the tenant role reads it; `:org_id` is bound, [bind] adds the rest. */
-    private suspend fun Driver.explain(sql: String, bind: Statement.() -> Statement): String {
-        val statement = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org_id", TestCallers.orgA).bind()
-        return fetchInOrg(TestCallers.orgA, statement).getOrThrow().joinToString("\n") {
-            it.get("QUERY PLAN").asString()
-        }
-    }
+    /** The plan of [query] in org A, as the tenant role reads it (inOrg). */
+    private suspend fun JdbcDatabase.explain(query: Query): String = inOrg(TestCallers.orgA) { plan { query } }
 }
