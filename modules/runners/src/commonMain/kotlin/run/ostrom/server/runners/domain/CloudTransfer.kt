@@ -241,6 +241,12 @@ interface TransferRecipients {
      * Whether [memberId] can still own a session of [orgId] (an active member).
      */
     suspend fun eligible(orgId: Uuid, memberId: String): Boolean
+
+    /**
+     * Whether [memberId] is an owner or an admin of [orgId], such as the owner of a session created on their behalf
+     * (`runners.cloud.onbehalf.v1`), whose profile assignment resolves for them.
+     */
+    suspend fun administers(orgId: Uuid, memberId: String): Boolean
 }
 
 /** Whether members may offer their sessions, from the instance's cloud runtime (`memberTransfers`). */

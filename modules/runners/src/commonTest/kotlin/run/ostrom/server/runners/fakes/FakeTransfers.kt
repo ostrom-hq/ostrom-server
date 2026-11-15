@@ -107,6 +107,9 @@ class FakeTransferRecipients(vararg members: TransferRecipient) : TransferRecipi
         members.firstOrNull { it.id == reference || it.login == reference }?.id
 
     override suspend fun eligible(orgId: Uuid, memberId: String): Boolean = members.any { it.id == memberId }
+
+    override suspend fun administers(orgId: Uuid, memberId: String): Boolean =
+        members.any { it.id == memberId && it.administrator }
 }
 
 /** A policy the test flips. */

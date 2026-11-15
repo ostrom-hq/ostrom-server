@@ -433,7 +433,7 @@ data class SessionLimitsDto(
  * `githubAccess` says whose GitHub access its Git and `gh` use (`owner`, `shared`, `none`). `profile` and `image`
  * say what a Kubernetes session runs on (`runners.cloud.profiles.v1`). `expiresAt`, on a paused session, says when it
  * is terminated with its workspace, and `terminatedReason`, on a terminated one, why it ended (`deleted`,
- * `expired`).
+ * `expired`). `createdBy` says who created it (`runners.cloud.onbehalf.v1`), absent for an older session.
  */
 @Serializable
 data class CloudSessionResponse(
@@ -471,7 +471,18 @@ data class CloudSessionResponse(
     val transferId: String? = null,
     val kind: String? = null,
     val host: CloudSessionHostDto? = null,
+    val createdBy: CloudAttributionDto? = null,
 )
+
+/**
+ * Who created a session (`runners.cloud.onbehalf.v1`).
+ *
+ * @property initiatorId The member who made the request.
+ * @property credentialId The id of the credential they used, never the token; null when the server knows none.
+ * @property effectiveMemberId The member it was created for, its first owner.
+ */
+@Serializable
+data class CloudAttributionDto(val initiatorId: String, val credentialId: String?, val effectiveMemberId: String)
 
 /**
  * A page of sessions.

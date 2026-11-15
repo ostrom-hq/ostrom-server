@@ -40,6 +40,9 @@ class MemberTransferRecipients(
     }
 
     override suspend fun eligible(orgId: Uuid, memberId: String): Boolean = members.isActiveMember(orgId, memberId)
+
+    override suspend fun administers(orgId: Uuid, memberId: String): Boolean =
+        members.roleOf(orgId, memberId) in administrators
 }
 
 /**

@@ -768,4 +768,15 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
     // runners.cloud.inference.v1: an execution's inference credentials, an agent token of its launch each.
     SchemaMigration(version = 21, name = "inference_credentials", sql = INFERENCE_CREDENTIALS_SQL),
     SchemaMigration(version = 22, name = "remote_sessions", sql = REMOTE_SESSIONS_SQL),
+    // runners.cloud.onbehalf.v1: who created a session (TeamCode's `createdBy`), the member who sent the request, the
+    // id of their credential (never a token) and the member it was created for. Nullable: an older session has none.
+    // The table is already a tenant table (RLS on org_id).
+    SchemaMigration(
+        version = 23,
+        name = "session_created_by",
+        sql = """
+            ALTER TABLE runners_sessions ADD COLUMN created_by_initiator_id TEXT,
+                ADD COLUMN created_by_credential_id TEXT, ADD COLUMN created_by_effective_member_id TEXT;
+        """.trimIndent(),
+    ),
 )

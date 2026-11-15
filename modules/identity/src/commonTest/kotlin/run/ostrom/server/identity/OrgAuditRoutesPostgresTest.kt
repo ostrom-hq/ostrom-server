@@ -124,6 +124,27 @@ class OrgAuditRoutesPostgresTest {
     }
 
     @Test
+    fun aCloudWriteShowsItsEffectiveMemberAndCredential() = serverTest(listOf(IdentityModule), overrides) { server ->
+        with(server) {
+            val (ada, session) = signIn("ada", acme)
+            val person = AuthenticatedPrincipal("${ada.id}", PrincipalKind.USER, emptySet(), credentialId = "cs-1")
+            val details = mapOf("effective_member_id" to "m-bob", "credential_id" to "cs-1", "owner" to "m-bob")
+            val trail = koin.get<OrgAuditTrail>()
+            trail.record(OrgAuditRecord(acme, person, "cloud.session.paused", "cloud_session", "s1", details))
+            trail.record(OrgAuditRecord(acme, person, "org.renamed", "org", "$acme"))
+
+            val response = audit(session)
+            val (renamed, paused) = response.body<OrgAuditPageResponse>().items
+            assertEquals("m-bob", paused.effectiveMemberId)
+            assertEquals("cs-1", paused.credentialId)
+            assertNull(renamed.effectiveMemberId)
+            assertNull(renamed.credentialId)
+            // Absent, not null, from the other events.
+            assertEquals(1, Regex("effectiveMemberId").findAll(response.bodyAsText()).count())
+        }
+    }
+
+    @Test
     fun onlyAnOwnerOrAnAdminReadsAndOnlyWithTheScope() = serverTest(listOf(IdentityModule), overrides) { server ->
         with(server) {
             val (_, owner) = signIn("ada", acme)

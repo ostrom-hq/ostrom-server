@@ -262,8 +262,14 @@ sealed interface ResumeOutcome {
  * @property key The key, scoped to the organization and the initiating member.
  * @property requestDigest The SHA-256 (hex) of the canonical request.
  * @property expiresAt When the record stops replaying, 24 hours after the creation.
+ * @property memberId The initiating member it is kept for; the session's owner when null.
  */
-data class CreateKey(val key: String, val requestDigest: String, val expiresAt: Instant)
+data class CreateKey(
+    val key: String,
+    val requestDigest: String,
+    val expiresAt: Instant,
+    val memberId: String? = null,
+)
 
 /** What [CloudSessionsRepository.createKeyed] did. */
 sealed interface KeyedCreateOutcome {

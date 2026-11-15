@@ -10,6 +10,7 @@ import run.ostrom.server.runners.domain.SessionKind
 import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.runners.domain.WorkspaceDeletion
 import run.ostrom.server.runners.domain.CloudSessionNotFoundException
+import run.ostrom.server.runners.domain.GitHubOwnerOnlyException
 import run.ostrom.server.runners.domain.CreateCloudSessionPayload
 import run.ostrom.server.runners.domain.InvalidCloudSessionRequestException
 import run.ostrom.server.runners.domain.RepositorySpec
@@ -60,26 +61,26 @@ fun Route.cloudSessionsRoutes(dependencies: CloudSessionsRoutesDependencies) = w
             call.respond(hosts.response(getCloudSession(caller, sessionId(params.id))))
         }
         delete<CloudSessionsApi.Id> { params ->
-            val caller = orgResolver.callerOf(call.requirePrincipal(), CLOUD_WRITE)
+            val caller = call.cloudActor(orgResolver, resolveActor)
             val deleted = changeCloudSession.delete(caller, sessionId(params.id))
             call.respond(HttpStatusCode.Accepted, hosts.response(deleted))
         }
         post<CloudSessionsApi.Id.Pause> { params ->
-            val caller = orgResolver.callerOf(call.requirePrincipal(), CLOUD_WRITE)
+            val caller = call.cloudActor(orgResolver, resolveActor)
             val paused = changeCloudSession.pause(caller, sessionId(params.parent.id))
             call.respond(HttpStatusCode.Accepted, hosts.response(paused))
         }
         post<CloudSessionsApi.Id.Resume> { params ->
-            val caller = orgResolver.callerOf(call.requirePrincipal(), CLOUD_WRITE)
+            val caller = call.cloudActor(orgResolver, resolveActor)
             val resumed = changeCloudSession.resume(caller, sessionId(params.parent.id))
             call.respond(HttpStatusCode.Accepted, hosts.response(resumed))
         }
         bodyLimit(ACCESS_BODY_LIMIT) {
             put<CloudSessionsApi.Id.GitHub> { params ->
-                val principal = call.requirePrincipal()
-                val caller = orgResolver.callerOf(principal, CLOUD_WRITE)
+                val caller = call.cloudOwner(orgResolver, resolveActor) { GitHubOwnerOnlyException() }
                 val request = call.receive<SetCloudSessionGitHubAccessRequest>()
-                val session = setGitHubAccess(caller, principal, sessionId(params.parent.id), request.access)
+                val id = sessionId(params.parent.id)
+                val session = setGitHubAccess(caller, call.requirePrincipal(), id, request.access)
                 call.respond(hosts.response(session))
             }
         }
@@ -271,6 +272,7 @@ fun CloudSession.toResponse() = CloudSessionResponse(
     transferId = transferId?.toString(),
     // Absent for a cloud session: a client from before remote sessions reads it as before.
     kind = kind.wire.takeIf { kind != SessionKind.CLOUD },
+    createdBy = createdBy?.let { CloudAttributionDto(it.initiatorId, it.credentialId, it.effectiveMemberId) },
 )
 
 internal const val MALFORMED_KEY = "Idempotency-Key: 1 to 128 characters of A-Za-z0-9._:-."

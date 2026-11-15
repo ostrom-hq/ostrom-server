@@ -162,7 +162,7 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
     val createKeys = mutableMapOf<Triple<Uuid, String, String>, Pair<CreateKey, Uuid>>()
 
     override suspend fun createKeyed(session: CloudSession, maxRunning: Int, key: CreateKey): KeyedCreateOutcome {
-        val scope = Triple(session.orgId, session.ownerId, key.key)
+        val scope = Triple(session.orgId, key.memberId ?: session.ownerId, key.key)
         val existing = createKeys[scope]
         if (existing != null && existing.first.expiresAt > session.createdAt) {
             if (existing.first.requestDigest != key.requestDigest) return KeyedCreateOutcome.Conflict

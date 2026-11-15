@@ -33,6 +33,8 @@ class MemberTransferRecipientsTest {
         override suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean = memberId in active
 
         override suspend fun roles(orgId: Uuid, limit: Int): Map<String, OrgRole>? = roles
+
+        override suspend fun roleOf(orgId: Uuid, memberId: String): OrgRole? = roles?.get(memberId)
     }
     private val logins = object : MemberLogins {
         private val names = mapOf(ada to "Ada", bob to "bob")
@@ -44,6 +46,14 @@ class MemberTransferRecipientsTest {
             names.filterKeys { it in memberIds }
     }
     private val recipients = MemberTransferRecipients(directory, logins)
+
+    @Test
+    fun anOwnerOrAnAdminAdministersAndAMemberOrAStrangerDoesNot() = runTest {
+        assertTrue(recipients.administers(ORG_A, ada.toString()))
+        assertTrue(recipients.administers(ORG_A, noLogin.toString()))
+        assertFalse(recipients.administers(ORG_A, bob.toString()))
+        assertFalse(recipients.administers(ORG_A, Uuid.random().toString()))
+    }
 
     @Test
     fun thePickerListsEveryMemberWithALoginByLoginAndMarksTheAdministrators() = runTest {

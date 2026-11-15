@@ -189,7 +189,7 @@ class RunnersFeaturesTest {
     }
 
     @Test
-    fun ownershipTransfersAreListedOnlyWhenTheirRoutesAreServed() = runTest {
+    fun ownershipTransfersAndWritesOnBehalfAreListedOnlyWhenTheMembersAreKnown() = runTest {
         val sessions = InMemoryCloudSessionsRepository()
         val use = CloudTransfersUseCaseImpl(
             sessions,
@@ -215,7 +215,11 @@ class RunnersFeaturesTest {
                     },
                 )
             }.koin
-            val listed = setOfNotNull("runners.cloud.transfer.v1".takeIf { wiring.routes != null })
+            // A write on behalf of another member needs the same members as a transfer.
+            val listed = if (wiring.routes == null) emptySet() else setOf(
+                "runners.cloud.transfer.v1",
+                "runners.cloud.onbehalf.v1",
+            )
             assertEquals(cloud + listed, RunnersModule.features(koin))
         }
     }

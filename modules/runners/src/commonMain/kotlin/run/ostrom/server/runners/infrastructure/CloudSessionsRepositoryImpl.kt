@@ -2,6 +2,7 @@
 package run.ostrom.server.runners.infrastructure
 
 import run.ostrom.server.runners.domain.AgentKind
+import run.ostrom.server.runners.domain.CloudAttribution
 import run.ostrom.server.runners.domain.CloudHumanWait
 import run.ostrom.server.runners.domain.PermissionBypass
 import run.ostrom.server.runners.domain.SessionMode
@@ -435,7 +436,7 @@ class CloudSessionsRepositoryImpl(
     }
 
     private fun Statement.bindKey(session: CloudSession, key: CreateKey): Statement =
-        bind("org_id", session.orgId).bind("member_id", session.ownerId).bind("key", key.key)
+        bind("org_id", session.orgId).bind("member_id", key.memberId ?: session.ownerId).bind("key", key.key)
 
     private suspend fun QueryExecutor.lockOrg(orgId: Uuid) {
         fetchAll(
@@ -473,6 +474,9 @@ class CloudSessionsRepositoryImpl(
         .bind("host_directory_name", session.host?.directoryName)
         .bind("host_permission_mode", session.host?.permissionMode)
         .bind("host_folder_id", session.host?.folderId)
+        .bind("created_by_initiator_id", session.createdBy?.initiatorId)
+        .bind("created_by_credential_id", session.createdBy?.credentialId)
+        .bind("created_by_effective_member_id", session.createdBy?.effectiveMemberId)
         .bind(
             "environment",
             session.environment?.let { RECIPE_JSON.encodeToString(CloudEnvironmentSpec.serializer(), it) },
@@ -579,7 +583,16 @@ class CloudSessionsRepositoryImpl(
             // A kind this version does not know is a cloud session's: it never hosts it on a device.
             kind = SessionKind.fromWire(get("kind").asString()) ?: SessionKind.CLOUD,
             host = host(),
+            createdBy = createdBy(),
         )
+    }
+
+    // Recorded since runners.cloud.onbehalf.v1: an older session has none, nor a row missing either member.
+    private fun ResultSet.Row.createdBy(): CloudAttribution? {
+        val initiator = get("created_by_initiator_id").asStringOrNull()
+        val effective = get("created_by_effective_member_id").asStringOrNull()
+        if (initiator == null || effective == null) return null
+        return CloudAttribution(initiator, get("created_by_credential_id").asStringOrNull(), effective)
     }
 
     private fun ResultSet.Row.host(): RemoteHost? = get("host_permission_mode").asStringOrNull()?.let {
@@ -642,7 +655,8 @@ class CloudSessionsRepositoryImpl(
             expiry_backfill, workspace_deletion_state, workspace_claim_deleted_at, workspace_volume_deleted_at,
             workspace_volume_name, workspace_volume_handle, workspace_problem_code, workspace_problem_message,
             workspace_problem_retryable, mode, effort, kind, host_device_id, host_directory_name,
-            host_permission_mode, host_folder_id
+            host_permission_mode, host_folder_id, created_by_initiator_id, created_by_credential_id,
+            created_by_effective_member_id
         """
 
         /** What a read returns: also the Bypass and the wait, which only the conversation's store writes. */
@@ -659,7 +673,8 @@ class CloudSessionsRepositoryImpl(
             :workspace_claim_deleted_at, :workspace_volume_deleted_at, :workspace_volume_name,
             :workspace_volume_handle, :workspace_problem_code, :workspace_problem_message,
             :workspace_problem_retryable, :mode, :effort, :kind, :host_device_id, :host_directory_name,
-            :host_permission_mode, :host_folder_id
+            :host_permission_mode, :host_folder_id, :created_by_initiator_id, :created_by_credential_id,
+            :created_by_effective_member_id
         """
     }
 }

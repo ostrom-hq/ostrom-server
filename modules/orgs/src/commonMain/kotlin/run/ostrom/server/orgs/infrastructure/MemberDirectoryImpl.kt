@@ -23,6 +23,11 @@ class MemberDirectoryImpl(private val members: MembersRepository) : MemberDirect
         return members.findById(orgId, id)?.userId
     }
 
+    override suspend fun roleOf(orgId: Uuid, memberId: String): OrgRole? {
+        val id = Uuid.parseOrNull(memberId) ?: return null
+        return members.findById(orgId, id)?.role
+    }
+
     override suspend fun hasUser(orgId: Uuid, userId: Uuid): Boolean = members.findByUser(orgId, userId) != null
 
     override suspend fun memberIds(orgId: Uuid, limit: Int): List<String>? =

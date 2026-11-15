@@ -42,6 +42,16 @@ interface MemberDirectory {
     suspend fun roles(orgId: Uuid, limit: Int): Map<String, OrgRole>? = null
 
     /**
+     * The role of one member of [orgId], such as the owner of a cloud session created on their behalf needs.
+     *
+     * @param orgId The organization.
+     * @param memberId The member's id, as [OrgPrincipal.memberId] gives it.
+     *
+     * @return The role; null for a member of another organization, an unknown member, or a directory that cannot tell.
+     */
+    suspend fun roleOf(orgId: Uuid, memberId: String): OrgRole? = null
+
+    /**
      * The person behind a member of [orgId], for what an owner or an admin reads or changes of them (their devices).
      *
      * @param orgId The organization.

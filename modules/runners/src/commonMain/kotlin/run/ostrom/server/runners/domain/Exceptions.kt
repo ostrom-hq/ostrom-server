@@ -2,6 +2,7 @@
 package run.ostrom.server.runners.domain
 
 import run.ostrom.core.api.Idempotency
+import run.ostrom.core.api.OnBehalfOf
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
 
@@ -305,4 +306,36 @@ class SessionBusyException : OstromException(
     ErrorKind.CONFLICT,
     "The cloud session changed concurrently. Retry the request.",
     "session_busy",
+)
+
+/** `Ostrom-On-Behalf-Of` was sent several times, or names no member id or login (400 `invalid_on_behalf`). */
+class InvalidOnBehalfException : OstromException(
+    ErrorKind.INVALID_REQUEST,
+    "Send one member id or login in ${OnBehalfOf.HEADER}.",
+    OnBehalfOf.INVALID,
+)
+
+/** Only an administrator acts on behalf of another member (403 `on_behalf_forbidden`). */
+class OnBehalfForbiddenException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "Only an administrator can act on behalf of another member.",
+    OnBehalfOf.FORBIDDEN,
+)
+
+/** The member `Ostrom-On-Behalf-Of` names is not an active member of the organization (422). */
+class InvalidEffectiveMemberException : OstromException(
+    ErrorKind.UNPROCESSABLE,
+    "The effective member must be an active member of the organization, named by id or login.",
+    OnBehalfOf.INVALID_MEMBER,
+)
+
+/**
+ * A session created on someone's behalf has no GitHub access until its owner allows it, so one whose environment
+ * requires GitHub cannot be (422 `github_owner_consent`).
+ */
+class GitHubOwnerConsentException : OstromException(
+    ErrorKind.UNPROCESSABLE,
+    "This session requires GitHub, and a session created on someone's behalf has no GitHub access until its owner " +
+        "allows it. Ask the owner to create the session.",
+    OnBehalfOf.GITHUB_OWNER_CONSENT,
 )

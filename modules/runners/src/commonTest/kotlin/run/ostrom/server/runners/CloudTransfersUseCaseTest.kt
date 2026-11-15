@@ -367,6 +367,14 @@ class CloudTransfersUseCaseTest {
         assertFailsWith<run.ostrom.server.runners.domain.InvalidCloudSessionRequestException> {
             use.list(alice, listing(TransferDirection.BOTH, limit = 51))
         }
+        // Past the last one, an empty page; a cursor that names no transfer of the organization is refused.
+        assertEquals(
+            emptyList(),
+            use.list(alice, TransferListing(TransferDirection.BOTH, emptySet(), null, first.id, 5)),
+        )
+        assertFailsWith<run.ostrom.server.kernel.errors.InvalidPageException> {
+            use.list(alice, TransferListing(TransferDirection.BOTH, emptySet(), null, Uuid.random(), 5))
+        }
     }
 
     @Test
