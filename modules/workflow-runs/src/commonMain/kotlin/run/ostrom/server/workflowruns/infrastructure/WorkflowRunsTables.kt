@@ -61,6 +61,8 @@ internal object WorkflowRunsStarted : Table("workflow_runs_started") {
 
     // Generated from the body (`body ->> 'startedBy'`): read, never written.
     val startedBy = text("started_by").nullable()
+
+    // Written by a keyed start, null otherwise.
     val idempotencyKey = text("idempotency_key").nullable()
 
     override val primaryKey = PrimaryKey(orgId, id)

@@ -35,7 +35,7 @@ internal suspend fun <T> JdbcDatabase.withOrganizationRecording(
     block: JdbcTransaction.(record: () -> Boolean) -> T,
 ): T {
     if (lines.isEmpty()) return withOrganization(orgId) { block { true } }
-    while (true) {
+    repeat(AUDIT_ATTEMPTS) {
         val head = withOrganization(orgId) { audit.head(this, orgId) }
         val events = audit.sign(head, lines.map { it.entry(orgId, runId) })
         var chained = true
@@ -51,7 +51,11 @@ internal suspend fun <T> JdbcDatabase.withOrganizationRecording(
         }
         if (chained) return result
     }
+    error("The organization's audit chain kept moving while the run's lines were signed.")
 }
 
 private fun RunAudit.entry(orgId: Uuid, runId: String) =
     AuditEntry(orgId, actor, "workflow_run.$event", "workflow_run", runId, details)
+
+// The signatures of one change on a head another write moved meanwhile, before the change fails loudly.
+private const val AUDIT_ATTEMPTS = 8

@@ -22,6 +22,7 @@ import org.jetbrains.exposed.v1.core.Expression
 import org.jetbrains.exposed.v1.core.Op
 import org.jetbrains.exposed.v1.core.statements.StatementBuilder
 import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.TextColumnType
 import org.jetbrains.exposed.v1.core.alias
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.anyFrom
@@ -184,7 +185,7 @@ internal fun holds(table: RunRows, orgId: Uuid, id: String, audience: RunAudienc
 
 // Who reads a row (TeamCode #238): its person, and the approvers of its session's gates.
 private fun readBy(table: RunRows, audience: RunAudience): Op<Boolean> {
-    val approved = table.sessionId eq anyFrom(audience.sessions)
+    val approved = table.sessionId eq anyFrom(audience.sessions, TextColumnType())
     return audience.dev?.let { (table.dev eq it) or approved } ?: approved
 }
 
@@ -202,7 +203,7 @@ private fun page(table: RunRows, orgId: Uuid, query: RunQuery, filters: List<Op<
     val audience = query.audience
         ?: return Read(branch(table, where, query.limit, listOf(table.body))) { it[table.body] }
     val dev = audience.dev
-    val approved = table.sessionId eq anyFrom(audience.sessions)
+    val approved = table.sessionId eq anyFrom(audience.sessions, TextColumnType())
     val branches = listOfNotNull(
         dev?.let { table.dev eq it },
         if (dev != null) approved and (table.dev.isNull() or (table.dev neq dev)) else approved,

@@ -505,6 +505,13 @@ class StartRunPostgresTest {
                 .sorted(),
         )
         assertEquals(4, lines.count { it.event.entry.action == "meanwhile" })
+
+        // A chain that moves at every signature: the change fails loudly, nothing of it written.
+        races = 100
+        val never = run.copy(id = "wfr_never")
+        assertFailsWith<IllegalStateException> { runs.add(orgA, never, now, RunGraph(), RunAudit("x")) }
+        assertEquals(92, races)
+        assertEquals(null, runs.find(orgA, never.id))
         val verifier = server.koin.get<AuditVerifier>()
         assertTrue(lines.all { verifier.integrity(it) == AuditIntegrity.VERIFIED })
     }
