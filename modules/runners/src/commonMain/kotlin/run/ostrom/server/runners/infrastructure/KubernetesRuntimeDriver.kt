@@ -750,11 +750,11 @@ class KubernetesRuntimeDriver(
         private const val UPLOADS_MEBIBYTES = 1024
         const val UPLOADS_SIZE_LIMIT = "${UPLOADS_MEBIBYTES}Mi"
 
-        /** The runner's ephemeral storage: its own 64 MiB and the uploads volume's [UPLOADS_SIZE_LIMIT]. */
-        const val RUNNER_DISK_LIMIT = "${RUNNER_OWN_DISK_MEBIBYTES + UPLOADS_MEBIBYTES}Mi"
-
         /** What the runner itself may write (logs), before the uploads volume. */
         private const val RUNNER_OWN_DISK_MEBIBYTES = 64
+
+        /** The runner's ephemeral storage: its own 64 MiB and the uploads volume's [UPLOADS_SIZE_LIMIT]. */
+        const val RUNNER_DISK_LIMIT = "${RUNNER_OWN_DISK_MEBIBYTES + UPLOADS_MEBIBYTES}Mi"
 
         /** The volume the init container copies `ostrom` into. */
         const val BINARY_VOLUME = "ostrom-bin"
