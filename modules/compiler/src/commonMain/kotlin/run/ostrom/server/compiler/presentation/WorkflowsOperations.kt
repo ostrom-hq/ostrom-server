@@ -16,6 +16,7 @@ import run.ostrom.server.kernel.http.docs.notFound
 import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
 import run.ostrom.server.kernel.http.docs.pathId
+import run.ostrom.server.kernel.http.docs.queryNumber
 import run.ostrom.server.kernel.http.docs.queryText
 
 private const val TAG = "workflows"
@@ -43,10 +44,16 @@ internal fun ApiCatalog.workflowOperations() {
             queryText("repo", "Only the workflows of this repository.")
             queryText("status", "Only the workflows in this status (`proposed`, `accepted` or `rejected`); 400 " +
                 "otherwise.")
+            queryText("after", "The `next` of the previous page: the id of its last workflow.")
+            queryNumber("limit", "The page size, 1 to 100 (50 by default); 400 below.")
         }
         responses {
-            ok<WorkflowsPage>("The workflows, each with its version, author and date of last change.")
-            badRequest("An unknown status (`invalid_request`).")
+            ok<WorkflowsPage>(
+                "The workflows, oldest first, each with its version, author and date of last change; `next` set " +
+                    "when another page may follow.",
+            )
+            badRequest("An unknown status, a limit below 1 or an `after` the organization has no workflow of " +
+                "(`invalid_request`).")
         }
     }
     post("/api/v1/workflows") {
