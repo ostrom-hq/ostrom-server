@@ -42,6 +42,8 @@ class RulesMappersTest {
         listOf(RuleGateCheck("tests", attested = true)),
     )
 
+    private val withoutNulls = Json { explicitNulls = false }
+
     private fun patch(json: String) = Json.parseToJsonElement(json).jsonObject.toRulePatch()
 
     @Test
@@ -56,7 +58,7 @@ class RulesMappersTest {
     }
 
     private fun RulePatchRequest.sent() =
-        Json { explicitNulls = false }.encodeToJsonElement(RulePatchRequest.serializer(), this).jsonObject.toRulePatch()
+        withoutNulls.encodeToJsonElement(RulePatchRequest.serializer(), this).jsonObject.toRulePatch()
 
     @Test
     fun aRuleIsServedWithTheContractsValues() {
