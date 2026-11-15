@@ -83,7 +83,7 @@ internal sealed interface Ownership {
 internal object SkillRules {
     /** The skill [name] as [ownership] sees it. */
     @Suppress("ThrowsCount") // Not found, or not the team's: each its own refusal.
-    suspend fun SkillsStore.owned(name: String, ownership: Ownership): Skill {
+    fun SkillsStore.owned(name: String, ownership: Ownership): Skill {
         val skill = skill(name) ?: throw CatalogNotFoundException()
         when (ownership) {
             Ownership.Team -> if (skill.ownerId != null) {
@@ -98,11 +98,11 @@ internal object SkillRules {
     }
 
     /** A version of [skill] by its label. */
-    suspend fun SkillsStore.versionOf(skill: Skill, label: String): SkillVersion =
+    fun SkillsStore.versionOf(skill: Skill, label: String): SkillVersion =
         version(skill.id, label) ?: throw CatalogNotFoundException("Skill version not found.")
 
     /** Points [skill] at [version] unless it already is. */
-    suspend fun SkillsStore.pin(
+    fun SkillsStore.pin(
         skill: Skill,
         version: SkillVersion,
         now: Instant,
@@ -122,7 +122,7 @@ internal object SkillRules {
     }
 
     /** Sets [skill]'s audience unless it already is. */
-    suspend fun SkillsStore.audience(
+    fun SkillsStore.audience(
         skill: Skill,
         allMembers: Boolean,
         now: Instant,
@@ -137,7 +137,7 @@ internal object SkillRules {
     }
 
     /** Stops delivering [skill]. */
-    suspend fun SkillsStore.unpin(skill: Skill, now: Instant, events: MutableList<CatalogEvent>): Skill {
+    fun SkillsStore.unpin(skill: Skill, now: Instant, events: MutableList<CatalogEvent>): Skill {
         if (skill.pinnedVersionId == null) return skill
         val changed = skill.copy(pinnedVersionId = null, pinnedVersion = null, updatedAt = now)
         updateSkill(changed)
@@ -146,7 +146,7 @@ internal object SkillRules {
     }
 
     /** Removes [skill] from the catalog: unpinned, closed to publication. */
-    suspend fun SkillsStore.retire(skill: Skill, now: Instant, events: MutableList<CatalogEvent>): Skill {
+    fun SkillsStore.retire(skill: Skill, now: Instant, events: MutableList<CatalogEvent>): Skill {
         if (skill.retired) return skill
         val changed = skill.copy(retiredAt = now, pinnedVersionId = null, pinnedVersion = null, updatedAt = now)
         updateSkill(changed)
@@ -155,7 +155,7 @@ internal object SkillRules {
     }
 
     /** Reopens [skill] to publication, nothing pinned. */
-    suspend fun SkillsStore.restore(skill: Skill, now: Instant, events: MutableList<CatalogEvent>): Skill {
+    fun SkillsStore.restore(skill: Skill, now: Instant, events: MutableList<CatalogEvent>): Skill {
         if (!skill.retired) return skill
         val changed = skill.copy(retiredAt = null, updatedAt = now)
         updateSkill(changed)
@@ -171,7 +171,7 @@ internal object SkillRules {
      * @param personalOwner The owner for a personal publication, null for the team's.
      */
     @Suppress("LongParameterList", "CyclomaticComplexMethod", "ThrowsCount") // The rules of one publication, in order.
-    suspend fun SkillsStore.publish(
+    fun SkillsStore.publish(
         caller: CatalogCaller,
         orgId: Uuid,
         name: String,
@@ -232,7 +232,7 @@ internal object SkillRules {
         return Publication(after, version, created = true)
     }
 
-    private suspend fun SkillsStore.create(
+    private fun SkillsStore.create(
         orgId: Uuid,
         name: String,
         owner: String?,

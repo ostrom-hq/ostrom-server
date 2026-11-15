@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.skills
 
-import run.ostrom.server.kernel.database.inOrg
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.skills.fakes.ADA
 import run.ostrom.server.skills.fakes.BEN
 import run.ostrom.server.skills.fakes.ORG_A
@@ -11,10 +11,16 @@ import run.ostrom.server.skills.fakes.call
 import run.ostrom.server.skills.fakes.field
 import run.ostrom.server.skills.fakes.publication
 import run.ostrom.server.skills.fakes.testIdentities
+import run.ostrom.server.skills.infrastructure.SkillsAssignments
+import run.ostrom.server.skills.infrastructure.SkillsFiles
+import run.ostrom.server.skills.infrastructure.SkillsInstallations
+import run.ostrom.server.skills.infrastructure.SkillsSkills
+import run.ostrom.server.skills.infrastructure.SkillsVersions
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.ktor.http.HttpMethod
+import org.jetbrains.exposed.v1.core.Table
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.update
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -87,9 +93,8 @@ class SkillsDeliveryPostgresTest {
         serverTest(listOf(SkillsModule), testIdentities()) { server ->
             val client = server.client
             client.call(post, "owner", "$TEAM/review/versions", publication("1.0.0", pin = true, allMembers = true))
-            server.driver.inOrg(ORG_A) {
-                val corrupt = Statement.create("UPDATE skills_files SET content = CAST(:c AS BYTEA)")
-                execute(corrupt.bind("c", byteArrayOf(1))).getOrThrow()
+            server.koin.get<JdbcDatabase>().inOrg(ORG_A) {
+                SkillsFiles.update { it[content] = byteArrayOf(1) }
             }
             val answer = client.call(get, "ada", "/api/v1/skill-delivery/review/1.0.0")
             assertEquals(500 to "skill_integrity", answer.status to answer.error)
@@ -101,15 +106,13 @@ class SkillsDeliveryPostgresTest {
         client.call(post, "owner", "$TEAM/review/versions", publication("1.0.0", pin = true, allMembers = true))
         client.call(put, "owner", "$TEAM/review/assignments/$ADA", """{"decision": "deny"}""")
         client.call(put, "ben-cli", INSTALLATIONS, reports(row("review", version = "1.0.0")))
-        suspend fun count(org: kotlin.uuid.Uuid, table: String) = server.driver.inOrg(org) {
-            fetchAll(Statement.create("SELECT COUNT(*) AS n FROM $table")).getOrThrow().first().get("n").asLong()
-        }
-        val tables =
-            listOf("skills_skills", "skills_versions", "skills_files", "skills_assignments", "skills_installations")
+        val database = server.koin.get<JdbcDatabase>()
+        suspend fun count(org: kotlin.uuid.Uuid, table: Table) = database.inOrg(org) { table.selectAll().count() }
+        val tables = listOf(SkillsSkills, SkillsVersions, SkillsFiles, SkillsAssignments, SkillsInstallations)
         for (table in tables) {
-            assertEquals(1L, count(ORG_A, table), table)
+            assertEquals(1L, count(ORG_A, table), table.tableName)
             // No WHERE org_id: the policy alone hides organization A's rows.
-            assertEquals(0L, count(ORG_B, table), table)
+            assertEquals(0L, count(ORG_B, table), table.tableName)
         }
         // Organization B's owner sees nothing of A's catalog, under A's names.
         assertEquals(emptyList(), client.call(get, "zoe", TEAM).list())
