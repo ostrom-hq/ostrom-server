@@ -443,8 +443,8 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/artifacts/{id}/versions/{number}/file" to
         Case.Target(mapOf("id" to of(ARTIFACT), "number" to Param.Fixed("1")), query = "path=index.html"),
     "GET /api/v1/artifacts/{id}/members" to target("id" to ARTIFACT),
-    "PUT /api/v1/artifacts/{id}/members/{login}" to target("id" to ARTIFACT, "login" to MEMBER_ID),
-    "DELETE /api/v1/artifacts/{id}/members/{login}" to target("id" to ARTIFACT, "login" to MEMBER_ID),
+    "PUT /api/v1/artifacts/{id}/members/{memberId}" to target("id" to ARTIFACT, "memberId" to MEMBER_ID),
+    "DELETE /api/v1/artifacts/{id}/members/{memberId}" to target("id" to ARTIFACT, "memberId" to MEMBER_ID),
     "POST /api/v1/artifacts/{id}/tickets" to target("id" to ARTIFACT, body = "{}"),
     "GET /a/{id}/{ticket}/{...}" to Case.Target(
         mapOf("id" to of(ARTIFACT), "ticket" to Param.Fresh, "..." to Param.Fixed("index.html")),
