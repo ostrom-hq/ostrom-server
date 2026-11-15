@@ -62,8 +62,8 @@ class SessionSegments(
             return found(tx, open, start, labels)
         }
         if (open != null) supersede(open, opening)
-        // A superseded segment whose end failed before its receipt (closeLocked signed it in the start's transaction):
-        // signed first, so that the next segment cites it.
+        // A superseded segment whose end in [replacing] failed before its receipt (the signature threw): signed first,
+        // so that the next segment cites it, as when the end and the start were one transaction.
         if (last != null && last.receiptId == null && last.source == Session.SUPERSEDED) {
             throw SupersededSegmentException(last, mayReplace = true)
         }
