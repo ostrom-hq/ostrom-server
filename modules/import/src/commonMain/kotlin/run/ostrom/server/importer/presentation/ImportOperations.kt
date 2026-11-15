@@ -19,8 +19,9 @@ internal fun ApiCatalog.importOperations() {
     post("/api/v1/import/teamcode") {
         operationId = "importTeamCode"
         tag(TAG)
-        summary = "Import a TeamCode team read by `ostrom import teamcode` (owners and admins; scope import:write); " +
-            "idempotent."
+        summary = "Import a TeamCode team read by `ostrom import teamcode`."
+        description = "Owners and administrators, with the scope `import:write`. Idempotent: a second run with the " +
+            "same team changes nothing, a run after a change in TeamCode carries only that change."
         parameters {
             organizationHeader()
             queryFlag("dryRun", "Report the plan without writing anything.")
@@ -56,7 +57,10 @@ internal fun ApiCatalog.importOperations() {
                     "an item this server refuses (`invalid_request`); nothing was imported.",
             )
             error(HttpStatusCode.Forbidden, "The cutover run by anyone but an owner (`cutover_owner_required`).")
-            conflict("The provider refuses TeamCode's tokens of a waiting account, or they are another account's.")
+            conflict(
+                "The provider refuses TeamCode's tokens of a waiting account, or they are another account's " +
+                    "(`conflict`).",
+            )
             error(
                 HttpStatusCode.ServiceUnavailable,
                 "A cutover on a server without an audit log (`cutover_audit_unavailable`) or without shared " +

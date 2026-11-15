@@ -34,6 +34,10 @@ internal fun ApiCatalog.receiptsOperations() {
             "the key before it, so anyone verifies a receipt offline."
         responses { ok<ReceiptKeysResponse>("The keys.") }
     }
+    receiptReadOperations()
+}
+
+private fun ApiCatalog.receiptReadOperations() {
     get("/api/v1/receipts") {
         operationId = "listReceipts"
         tag(TAG)

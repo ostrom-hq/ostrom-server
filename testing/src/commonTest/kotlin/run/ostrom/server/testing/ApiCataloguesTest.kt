@@ -15,18 +15,35 @@ import kotlin.test.assertFailsWith
 
 class ApiCataloguesTest {
     @Test
-    fun aCatalogueDescribingEachRouteOncePasses() = serverTest(listOf(probe(listOf("/api/v1/probe")))) { server ->
-        server.assertApiCatalogue(probe(listOf("/api/v1/probe")))
+    fun aCatalogueDescribingEachRouteOncePasses() = probe(listOf(PROBE)).let { probe ->
+        serverTest(listOf(probe)) { server -> server.assertApiCatalogue(probe) }
     }
 
     @Test
-    fun anUndescribedRouteFails() = serverTest(listOf(probe(listOf("/api/v1/probe"), "/api/v1/other"))) { server ->
-        assertFailsWith<AssertionError> { server.assertApiCatalogue(probe(listOf("/api/v1/probe"))) }
+    fun anUndescribedRouteFails() = probe(listOf(PROBE), extra = "/api/v1/other").let { probe ->
+        serverTest(listOf(probe)) { server -> assertFailsWith<AssertionError> { server.assertApiCatalogue(probe) } }
     }
 
     @Test
-    fun aModuleWithoutCatalogueFails() = serverTest(listOf(probe(null))) { server ->
-        assertFailsWith<AssertionError> { server.assertApiCatalogue(probe(null)) }
+    fun anEntryWithoutItsRouteFails() = probe(listOf(PROBE, "/api/v1/gone")).let { probe ->
+        serverTest(listOf(probe)) { server -> assertFailsWith<AssertionError> { server.assertApiCatalogue(probe) } }
+    }
+
+    @Test
+    fun aRouteDescribedTwiceFails() = probe(listOf(PROBE, PROBE)).let { probe ->
+        serverTest(listOf(probe)) { server -> assertFailsWith<AssertionError> { server.assertApiCatalogue(probe) } }
+    }
+
+    @Test
+    fun aModuleWithoutCatalogueFails() = probe(null).let { probe ->
+        serverTest(listOf(probe)) { server -> assertFailsWith<AssertionError> { server.assertApiCatalogue(probe) } }
+    }
+
+    @Test
+    fun aCatalogueTheServerDidNotMountFails() = probe(null).let { mounted ->
+        serverTest(listOf(mounted)) { server ->
+            assertFailsWith<AssertionError> { server.assertApiCatalogue(probe(listOf(PROBE))) }
+        }
     }
 
     /** A module mounting `GET /api/v1/probe` and [extra], documenting [documented] (no catalogue when null). */
@@ -45,8 +62,12 @@ class ApiCataloguesTest {
         }
 
         override fun routes(route: Route, koin: Koin) {
-            route.get("/api/v1/probe") { call.respondText("ok") }
+            route.get(PROBE) { call.respondText("ok") }
             extra?.let { path -> route.get(path) { call.respondText("ok") } }
         }
+    }
+
+    private companion object {
+        const val PROBE = "/api/v1/probe"
     }
 }
