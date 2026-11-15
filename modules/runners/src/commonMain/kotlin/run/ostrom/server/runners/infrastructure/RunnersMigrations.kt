@@ -378,4 +378,21 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
         """.trimIndent(),
     ),
     SchemaMigration(version = 15, name = "sessions_without_profile", sql = SESSIONS_WITHOUT_PROFILE_SQL),
+    // runners.cloud.retention.v1 (TeamCode's `expiresAt` and `terminatedReason`): when a paused session is terminated
+    // with its workspace, from the paused retention in force when it paused, and why a terminated session ended
+    // (`deleted` or `expired`). The sessions paused before the upgrade are marked (`expiry_backfill`) and get one
+    // step, which gives them their expiry once (ReconcileCloudSessionUseCaseImpl's paused step); a session paused
+    // afterwards under a retention left unset is kept, whatever the setting becomes.
+    SchemaMigration(
+        version = 16,
+        name = "session_expiry",
+        sql = """
+            ALTER TABLE runners_sessions ADD COLUMN expires_at TIMESTAMPTZ, ADD COLUMN terminated_reason TEXT,
+                ADD COLUMN expiry_backfill BOOLEAN NOT NULL DEFAULT false;
+            UPDATE runners_sessions SET expiry_backfill = true WHERE state = 'paused';
+            UPDATE runners_session_routes r
+                SET next_reconcile_at = LEAST(COALESCE(r.next_reconcile_at, now()), now())
+                FROM runners_sessions s WHERE s.id = r.session_id AND s.expiry_backfill;
+        """.trimIndent(),
+    ),
 )

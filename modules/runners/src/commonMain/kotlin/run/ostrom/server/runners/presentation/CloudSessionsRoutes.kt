@@ -6,6 +6,7 @@ import run.ostrom.server.kernel.auth.requirePrincipal
 import run.ostrom.server.kernel.http.bodyLimit
 import run.ostrom.server.runners.domain.CloudEnvironmentRules
 import run.ostrom.server.runners.domain.CloudSession
+import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.runners.domain.CloudSessionNotFoundException
 import run.ostrom.server.runners.domain.CreateCloudSessionPayload
 import run.ostrom.server.runners.domain.InvalidCloudSessionRequestException
@@ -240,6 +241,8 @@ fun CloudSession.toResponse() = CloudSessionResponse(
     readyAt = readyAt?.toString(),
     lastActivityAt = lastActivityAt?.toString(),
     pausedAt = pausedAt?.toString(),
+    expiresAt = expiresAt?.takeIf { state == SessionState.PAUSED }?.toString(),
+    terminatedReason = terminatedReason?.takeIf { state == SessionState.TERMINATED },
     endedAt = terminatedAt?.toString(),
     runnerId = runnerId?.toString(),
     githubAccess = githubAccess.wire,

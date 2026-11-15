@@ -7,6 +7,7 @@ import run.ostrom.server.cloud.domain.CloudRuntimeSource
 import run.ostrom.server.runners.domain.BackfillSessionProfilesUseCase
 import run.ostrom.server.runners.domain.BackfillSessionProfilesUseCaseImpl
 import run.ostrom.server.runners.domain.CatalogSessionProfiles
+import run.ostrom.server.runners.domain.KeepPausedSessions
 import run.ostrom.server.runners.domain.NoSessionProfiles
 import run.ostrom.server.runners.domain.SessionProfiles
 import run.ostrom.server.runners.infrastructure.CloudKubernetesClusters
@@ -15,6 +16,7 @@ import run.ostrom.server.runners.infrastructure.LegacyKubernetesImport
 import run.ostrom.server.runners.infrastructure.RunnersConfig.DriverKind.KUBERNETES
 import run.ostrom.server.runners.domain.RunnerDeliverySource
 import run.ostrom.server.runners.infrastructure.CLOUD_ACCESS_SETTINGS
+import run.ostrom.server.runners.infrastructure.CloudRuntimePausedRetention
 import run.ostrom.server.runners.infrastructure.CloudRuntimeRunnerDelivery
 import run.ostrom.server.runners.infrastructure.SettingsAllowedOrgs
 import run.ostrom.core.api.models.ServerFeatures
@@ -223,7 +225,12 @@ object RunnersModule : ServerModule {
             val limit = CloudSettingsBackgroundWorkLimit(getOrNull<CloudSettingsSource>())
             val ended = getAll<SessionEndListener>()
             val answers = getOrNull<PendingWaitAnswers>() ?: NoPendingWaitAnswers
-            ReconcileCloudSessionUseCaseImpl(get(), get(), get(), get(), get(), get(), ended, get(), answers, limit)
+            // The console's paused retention, for every runtime; paused sessions are kept without the cloud module.
+            val retention = getOrNull<CloudRuntimeSource>()
+                ?.let { CloudRuntimePausedRetention(it, get<Logger>()) } ?: KeepPausedSessions
+            ReconcileCloudSessionUseCaseImpl(
+                get(), get(), get(), get(), get(), get(), ended, get(), answers, retention, limit,
+            )
         }
         single { ReconcilerWorker(get(), get(), get(), get()) }
         // The members' GitHub access when the GitHub integration is there (always on a full server).
