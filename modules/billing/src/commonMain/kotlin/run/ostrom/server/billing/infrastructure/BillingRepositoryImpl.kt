@@ -11,193 +11,189 @@ import run.ostrom.server.billing.domain.PaymentIssueKind
 import run.ostrom.server.billing.domain.Plan
 import run.ostrom.server.billing.domain.SubscriptionStatus
 import run.ostrom.server.billing.domain.Usage
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.QueryExecutor
-import io.github.smyrgeorge.sqlx4k.ResultSet
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
+import run.ostrom.server.kernel.database.InstantColumnType
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.present
+import run.ostrom.server.kernel.database.withOrganization
+import org.jetbrains.exposed.v1.core.CustomFunction
+import org.jetbrains.exposed.v1.core.Expression
+import org.jetbrains.exposed.v1.core.IntegerColumnType
+import org.jetbrains.exposed.v1.core.QueryParameter
+import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.Table
+import org.jetbrains.exposed.v1.core.TextColumnType
+import org.jetbrains.exposed.v1.core.UuidColumnType
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.plus
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import org.jetbrains.exposed.v1.jdbc.insertIgnore
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
+import org.jetbrains.exposed.v1.jdbc.upsert
+import org.jetbrains.exposed.v1.jdbc.upsertReturning
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
-private const val ACCOUNT_COLUMNS = "org_id, stripe_customer_id, stripe_subscription_id, subscription_item_id, plan, " +
-    "billing_interval, status, current_period_start, current_period_end, cancel_at_period_end, committed_people, " +
-    "payment_issue_kind, payment_issue_url, payment_issue_at, updated_at"
-
 /**
- * [BillingRepository] on PostgreSQL (tables of [BillingMigrations]). Every query reads by primary key or by a unique
- * or partial index, and every list is bounded.
+ * [BillingRepository] on PostgreSQL (tables of [BillingMigrations]). Every query reads by primary
+ * key or by a unique or partial index, and every list is bounded. An organization's rows are read and written by the
+ * serving role with the organization set (`withOrganization`, the forced row-level policies of [BillingMigrations]
+ * showing and accepting only its rows, S2-01), each query filtered on `org_id` too; what crosses organizations goes
+ * through the functions of `ostrom_router`.
  *
- * @param driver The database.
+ * @param database The serving role's pool.
  */
 @Suppress("TooManyFunctions") // implements BillingRepository, one function per query
-class BillingRepositoryImpl(private val driver: Driver) : BillingRepository {
-    override suspend fun get(orgId: Uuid): OrgBilling? = scoped(orgId) {
-        fetchAll(
-            Statement.create("SELECT $ACCOUNT_COLUMNS FROM billing_accounts WHERE org_id = :org_id")
-                .bind("org_id", orgId),
-        ).getOrThrow().firstOrNull()?.toBilling()
+class BillingRepositoryImpl(private val database: JdbcDatabase) : BillingRepository {
+    override suspend fun get(orgId: Uuid): OrgBilling? = database.withOrganization(orgId) {
+        val a = BillingAccounts
+        a.select(a.columns).where { a.orgId eq orgId }.singleOrNull()?.toBilling()
     }
 
-    override suspend fun findByCustomer(customerId: String): OrgBilling? = driver.fetchAll(
-        Statement.create("SELECT billing_customer_org(CAST(:customer AS TEXT)) AS org_id").bind("customer", customerId),
-    ).getOrThrow().first().get("org_id").asUuidOrNull()?.let { get(it) }
+    override suspend fun findByCustomer(customerId: String): OrgBilling? = database.query {
+        val org = CustomFunction(
+            "billing_customer_org",
+            UuidColumnType().apply { nullable = true },
+            QueryParameter(customerId, TextColumnType()),
+        )
+        Table.Dual.select(org).single()[org]
+    }?.let { get(it) }
 
-    override suspend fun save(billing: OrgBilling): Unit = scoped(billing.orgId) {
+    override suspend fun save(billing: OrgBilling): Unit = database.withOrganization(billing.orgId) {
         billing.stripeCustomerId?.let { customerId ->
-            execute(
-                Statement.create(
-                    "INSERT INTO billing_customers (stripe_customer_id, org_id) VALUES (:customer, :org_id) " +
-                        "ON CONFLICT (stripe_customer_id) DO NOTHING",
-                ).bind("customer", customerId).bind("org_id", billing.orgId),
-            ).getOrThrow()
+            // ON CONFLICT DO NOTHING: the customer's one key is its primary key.
+            BillingCustomers.insertIgnore {
+                it[stripeCustomerId] = customerId
+                it[orgId] = billing.orgId
+            }
         }
-        execute(
-            Statement.create(
-                "INSERT INTO billing_accounts ($ACCOUNT_COLUMNS) VALUES (:org_id, :customer, :subscription, :item, " +
-                    ":plan, :interval, :status, :period_start, :period_end, :cancel, :committed, :issue_kind, " +
-                    ":issue_url, :issue_at, :updated_at) ON CONFLICT (org_id) DO UPDATE SET " +
-                    "stripe_customer_id = EXCLUDED.stripe_customer_id, " +
-                    "stripe_subscription_id = EXCLUDED.stripe_subscription_id, " +
-                    "subscription_item_id = EXCLUDED.subscription_item_id, plan = EXCLUDED.plan, " +
-                    "billing_interval = EXCLUDED.billing_interval, status = EXCLUDED.status, " +
-                    "current_period_start = EXCLUDED.current_period_start, " +
-                    "current_period_end = EXCLUDED.current_period_end, " +
-                    "cancel_at_period_end = EXCLUDED.cancel_at_period_end, " +
-                    "committed_people = EXCLUDED.committed_people, payment_issue_kind = EXCLUDED.payment_issue_kind, " +
-                    "payment_issue_url = EXCLUDED.payment_issue_url, payment_issue_at = EXCLUDED.payment_issue_at, " +
-                    "updated_at = EXCLUDED.updated_at",
-            )
-                .bind("org_id", billing.orgId)
-                .bind("customer", billing.stripeCustomerId)
-                .bind("subscription", billing.stripeSubscriptionId)
-                .bind("item", billing.subscriptionItemId)
-                .bind("plan", billing.plan.key)
-                .bind("interval", billing.interval?.key)
-                .bind("status", billing.status?.stripe)
-                .bind("period_start", billing.currentPeriodStart)
-                .bind("period_end", billing.currentPeriodEnd)
-                .bind("cancel", billing.cancelAtPeriodEnd)
-                .bind("committed", billing.committedPeople)
-                .bind("issue_kind", billing.paymentIssue?.let { it.kind.key })
-                .bind("issue_url", billing.paymentIssue?.hostedInvoiceUrl)
-                .bind("issue_at", billing.paymentIssue?.at)
-                .bind("updated_at", billing.updatedAt),
-        ).getOrThrow()
+        val a = BillingAccounts
+        a.upsert(a.orgId) {
+            it[orgId] = billing.orgId
+            it[stripeCustomerId] = billing.stripeCustomerId
+            it[stripeSubscriptionId] = billing.stripeSubscriptionId
+            it[subscriptionItemId] = billing.subscriptionItemId
+            it[plan] = billing.plan.key
+            it[billingInterval] = billing.interval?.key
+            it[status] = billing.status?.stripe
+            it[currentPeriodStart] = billing.currentPeriodStart
+            it[currentPeriodEnd] = billing.currentPeriodEnd
+            it[cancelAtPeriodEnd] = billing.cancelAtPeriodEnd
+            it[committedPeople] = billing.committedPeople
+            it[paymentIssueKind] = billing.paymentIssue?.let { issue -> issue.kind.key }
+            it[paymentIssueUrl] = billing.paymentIssue?.hostedInvoiceUrl
+            it[paymentIssueAt] = billing.paymentIssue?.at
+            it[updatedAt] = billing.updatedAt
+        }
     }
 
-    override suspend fun raiseCommittedPeople(orgId: Uuid, people: Int, at: Instant): Unit = scoped(orgId) {
-        execute(
-            Statement.create(
-                "UPDATE billing_accounts SET committed_people = GREATEST(committed_people, :people), " +
-                    "updated_at = :at WHERE org_id = :org_id",
-            ).bind("people", people).bind("at", at).bind("org_id", orgId),
-        ).getOrThrow()
-    }
+    override suspend fun raiseCommittedPeople(orgId: Uuid, people: Int, at: Instant): Unit =
+        database.withOrganization(orgId) {
+            val a = BillingAccounts
+            a.update({ a.orgId eq orgId }) {
+                it[committedPeople] =
+                    CustomFunction("GREATEST", IntegerColumnType(), a.committedPeople, intParam(people))
+                it[updatedAt] = at
+            }
+        }
 
-    override suspend fun isEventProcessed(eventId: String): Boolean = driver.fetchAll(
-        Statement.create("SELECT 1 AS found FROM billing_stripe_events WHERE event_id = :id").bind("id", eventId),
-    ).getOrThrow().rows.isNotEmpty()
+    override suspend fun isEventProcessed(eventId: String): Boolean = database.query {
+        val e = BillingStripeEvents
+        e.select(e.eventId).where { e.eventId eq eventId }.limit(1).any()
+    }
 
     override suspend fun markEventProcessed(eventId: String, type: String, at: Instant) {
-        driver.execute(
-            Statement.create(
-                "INSERT INTO billing_stripe_events (event_id, type, processed_at) VALUES (:id, :type, :at) " +
-                    "ON CONFLICT (event_id) DO NOTHING",
-            ).bind("id", eventId).bind("type", type).bind("at", at),
-        ).getOrThrow()
+        database.query {
+            BillingStripeEvents.insertIgnore {
+                it[this.eventId] = eventId
+                it[this.type] = type
+                it[processedAt] = at
+            }
+        }
     }
 
     override suspend fun recordActivePerson(orgId: Uuid, periodStart: Instant, userId: String, at: Instant): Boolean =
-        scoped(orgId) {
-            execute(
-                Statement.create(
-                    "INSERT INTO billing_active_people (org_id, period_start, user_id, first_active_at) " +
-                        "VALUES (:org_id, :period, :user_id, :at) ON CONFLICT DO NOTHING",
-                ).bind("org_id", orgId).bind("period", periodStart).bind("user_id", userId).bind("at", at),
-            ).getOrThrow() > 0
+        database.withOrganization(orgId) {
+            BillingActivePeople.insertIgnore {
+                it[this.orgId] = orgId
+                it[this.periodStart] = periodStart
+                it[this.userId] = userId
+                it[firstActiveAt] = at
+            }.insertedCount > 0
         }
 
-    override suspend fun countActivePeople(orgId: Uuid, periodStart: Instant): Int = scoped(orgId) {
-        fetchAll(
-            Statement.create(
-                "SELECT COUNT(*) AS people FROM billing_active_people " +
-                    "WHERE org_id = :org_id AND period_start = :period",
-            ).bind("org_id", orgId).bind("period", periodStart),
-        ).getOrThrow().first().get("people").asInt()
+    override suspend fun countActivePeople(orgId: Uuid, periodStart: Instant): Int = database.withOrganization(orgId) {
+        val p = BillingActivePeople
+        p.select(p.userId).where { (p.orgId eq orgId) and (p.periodStart eq periodStart) }.count().toInt()
     }
 
-    override suspend fun listActivePeople(orgId: Uuid, periodStart: Instant, limit: Int): List<String> = scoped(orgId) {
-        fetchAll(
-            Statement.create(
-                "SELECT user_id FROM billing_active_people WHERE org_id = :org_id AND period_start = :period " +
-                    "ORDER BY first_active_at, user_id LIMIT :limit",
-            ).bind("org_id", orgId).bind("period", periodStart).bind("limit", limit),
-        ).getOrThrow().map { it.get("user_id").asString() }
-    }
+    override suspend fun listActivePeople(orgId: Uuid, periodStart: Instant, limit: Int): List<String> =
+        database.withOrganization(orgId) {
+            val p = BillingActivePeople
+            p.select(p.userId)
+                .where { (p.orgId eq orgId) and (p.periodStart eq periodStart) }
+                .orderBy(p.firstActiveAt to SortOrder.ASC, p.userId to SortOrder.ASC)
+                .limit(limit)
+                .map { it[p.userId] }
+        }
 
     override suspend fun addUsage(orgId: Uuid, periodStart: Instant, agentSeconds: Long, sessions: Long): Usage =
-        scoped(orgId) {
-            fetchAll(
-                Statement.create(
-                    "INSERT INTO billing_usage (org_id, period_start, agent_seconds, sessions) " +
-                        "VALUES (:org_id, :period, :seconds, :sessions) " +
-                        "ON CONFLICT (org_id, period_start) DO UPDATE SET " +
-                        "agent_seconds = billing_usage.agent_seconds + EXCLUDED.agent_seconds, " +
-                        "sessions = billing_usage.sessions + EXCLUDED.sessions RETURNING agent_seconds, sessions",
-                ).bind("org_id", orgId).bind("period", periodStart)
-                    .bind("seconds", agentSeconds).bind("sessions", sessions),
-            ).getOrThrow().first().toUsage(periodStart)
+        database.withOrganization(orgId) {
+            val u = BillingUsage
+            u.upsertReturning(
+                u.orgId, u.periodStart,
+                returning = listOf(u.agentSeconds, u.sessions),
+                onUpdate = {
+                    it[u.agentSeconds] = u.agentSeconds + insertValue(u.agentSeconds)
+                    it[u.sessions] = u.sessions + insertValue(u.sessions)
+                },
+            ) {
+                it[this.orgId] = orgId
+                it[this.periodStart] = periodStart
+                it[this.agentSeconds] = agentSeconds
+                it[this.sessions] = sessions
+            }.single().toUsage(periodStart)
         }
 
-    override suspend fun usage(orgId: Uuid, periodStart: Instant): Usage = scoped(orgId) {
-        fetchAll(
-            Statement.create(
-                "SELECT agent_seconds, sessions FROM billing_usage WHERE org_id = :org_id AND period_start = :period",
-            ).bind("org_id", orgId).bind("period", periodStart),
-        ).getOrThrow().firstOrNull().let { row ->
-            if (row == null) Usage(periodStart, 0, 0) else row.toUsage(periodStart)
-        }
+    override suspend fun usage(orgId: Uuid, periodStart: Instant): Usage = database.withOrganization(orgId) {
+        val u = BillingUsage
+        u.select(u.agentSeconds, u.sessions)
+            .where { (u.orgId eq orgId) and (u.periodStart eq periodStart) }
+            .singleOrNull()
+            .let { row -> if (row == null) Usage(periodStart, 0, 0) else row.toUsage(periodStart) }
     }
 
     override suspend fun recordAlert(orgId: Uuid, periodStart: Instant, percent: Int, at: Instant): Boolean =
-        scoped(orgId) {
-            execute(
-                Statement.create(
-                    "INSERT INTO billing_alerts (org_id, period_start, percent, raised_at) " +
-                        "VALUES (:org_id, :period, :percent, :at) ON CONFLICT DO NOTHING",
-                ).bind("org_id", orgId).bind("period", periodStart).bind("percent", percent).bind("at", at),
-            ).getOrThrow() > 0
+        database.withOrganization(orgId) {
+            BillingAlerts.insertIgnore {
+                it[this.orgId] = orgId
+                it[this.periodStart] = periodStart
+                it[this.percent] = percent
+                it[raisedAt] = at
+            }.insertedCount > 0
         }
 
-    override suspend fun alerts(orgId: Uuid, periodStart: Instant): List<Int> = scoped(orgId) {
-        fetchAll(
-            Statement.create(
-                "SELECT percent FROM billing_alerts WHERE org_id = :org_id AND period_start = :period " +
-                    "ORDER BY percent",
-            ).bind("org_id", orgId).bind("period", periodStart),
-        ).getOrThrow().map { it.get("percent").asInt() }
+    override suspend fun alerts(orgId: Uuid, periodStart: Instant): List<Int> = database.withOrganization(orgId) {
+        val a = BillingAlerts
+        a.select(a.percent)
+            .where { (a.orgId eq orgId) and (a.periodStart eq periodStart) }
+            .orderBy(a.percent to SortOrder.ASC)
+            .map { it[a.percent] }
     }
 
-    override suspend fun enqueue(task: OutboxTask): Unit = scoped(task.orgId) {
-        execute(
-            Statement.create(
-                "INSERT INTO billing_outbox (id, org_id, kind, identifier, happened_at, attempts, next_attempt_at) " +
-                    "VALUES (:id, :org_id, :kind, :identifier, :at, :attempts, :at) " +
-                    "ON CONFLICT (identifier) DO NOTHING",
-            )
-                .bind("id", task.id)
-                .bind("org_id", task.orgId)
-                .bind("kind", task.kind.key)
-                .bind("identifier", task.identifier)
-                .bind("at", task.at)
-                .bind("attempts", task.attempts),
-        ).getOrThrow()
+    override suspend fun enqueue(task: OutboxTask): Unit = database.withOrganization(task.orgId) {
+        // ON CONFLICT DO NOTHING: a task's identifier is enqueued once (its id is a new random one).
+        BillingOutbox.insertIgnore {
+            it[id] = task.id
+            it[orgId] = task.orgId
+            it[kind] = task.kind.key
+            it[identifier] = task.identifier
+            it[happenedAt] = task.at
+            it[attempts] = task.attempts
+            it[nextAttemptAt] = task.at
+        }
     }
 
     // SKIP LOCKED lets two replicas claim at the same time without waiting for, or taking, each other's rows. The
@@ -206,68 +202,63 @@ class BillingRepositoryImpl(private val driver: Driver) : BillingRepository {
         now: Instant,
         leaseUntil: Instant,
         limit: Int,
-    ): List<OutboxTask> = driver.fetchAll(
-        Statement.create(
-            "SELECT id, org_id, kind, identifier, happened_at, attempts FROM billing_claim_due_tasks(" +
-                "CAST(:now AS TIMESTAMPTZ), CAST(:lease AS TIMESTAMPTZ), CAST(:limit AS INTEGER))",
-        ).bind("now", now).bind("lease", leaseUntil).bind("limit", limit),
-    ).getOrThrow().sortedBy { it.get("happened_at").asInstant() }.map {
-        OutboxTask(
-            id = it.get("id").asUuid(),
-            orgId = it.get("org_id").asUuid(),
-            kind = OutboxKind.fromKey(it.get("kind").asString()),
-            identifier = it.get("identifier").asString(),
-            at = it.get("happened_at").asInstant(),
-            attempts = it.get("attempts").asInt(),
-        )
-    }
+    ): List<OutboxTask> = database.query {
+        val d = BillingDueTasks
+        d.of(now, leaseUntil, limit)
+            .select(d.id, d.orgId, d.kind, d.identifier, d.happenedAt, d.attempts)
+            .map {
+                OutboxTask(
+                    id = it[d.id],
+                    orgId = it[d.orgId],
+                    kind = OutboxKind.fromKey(it[d.kind]),
+                    identifier = it[d.identifier],
+                    at = it[d.happenedAt],
+                    attempts = it[d.attempts],
+                )
+            }
+    }.sortedBy { it.at }
 
     override suspend fun completeTask(id: Uuid, at: Instant) {
-        driver.fetchAll(
-            Statement.create("SELECT billing_complete_task(CAST(:id AS UUID), CAST(:at AS TIMESTAMPTZ))")
-                .bind("id", id).bind("at", at),
-        ).getOrThrow()
+        database.query { call("billing_complete_task", uuidParam(id), instantParam(at)) }
     }
 
     override suspend fun failTask(id: Uuid, retryAt: Instant) {
-        driver.fetchAll(
-            Statement.create("SELECT billing_fail_task(CAST(:id AS UUID), CAST(:retry AS TIMESTAMPTZ))")
-                .bind("id", id).bind("retry", retryAt),
-        ).getOrThrow()
+        database.query { call("billing_fail_task", uuidParam(id), instantParam(retryAt)) }
     }
 
-    /**
-     * Runs [block] in a transaction whose `ostrom.org_id` is [orgId]: the row-level policies of [BillingMigrations]
-     * show and accept only that organization's rows (S2-01).
-     */
-    private suspend fun <T> scoped(orgId: Uuid, block: suspend QueryExecutor.() -> T): T = driver.transaction {
-        fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", orgId.toString()))
-            .getOrThrow()
-        block()
-    }
-
-    private fun ResultSet.Row.toBilling(): OrgBilling {
-        val issueKind = get("payment_issue_kind").asStringOrNull()
-            ?.let { key -> PaymentIssueKind.entries.first { it.key == key } }
+    private fun ResultRow.toBilling(): OrgBilling {
+        val a = BillingAccounts
+        val issueKind = this[a.paymentIssueKind]?.let { key -> PaymentIssueKind.entries.first { it.key == key } }
         return OrgBilling(
-            orgId = get("org_id").asUuid(),
-            stripeCustomerId = get("stripe_customer_id").asStringOrNull(),
-            stripeSubscriptionId = get("stripe_subscription_id").asStringOrNull(),
-            subscriptionItemId = get("subscription_item_id").asStringOrNull(),
-            plan = Plan.entries.first { it.key == get("plan").asString() },
-            interval = get("billing_interval").asStringOrNull()?.let(BillingInterval::fromKey),
-            status = get("status").asStringOrNull()?.let(SubscriptionStatus::fromStripe),
-            currentPeriodStart = get("current_period_start").asInstantOrNull(),
-            currentPeriodEnd = get("current_period_end").asInstantOrNull(),
-            cancelAtPeriodEnd = get("cancel_at_period_end").asBoolean(),
-            committedPeople = get("committed_people").asInt(),
+            orgId = this[a.orgId],
+            stripeCustomerId = this[a.stripeCustomerId],
+            stripeSubscriptionId = this[a.stripeSubscriptionId],
+            subscriptionItemId = this[a.subscriptionItemId],
+            plan = Plan.entries.first { it.key == this[a.plan] },
+            interval = this[a.billingInterval]?.let(BillingInterval::fromKey),
+            status = this[a.status]?.let(SubscriptionStatus::fromStripe),
+            currentPeriodStart = this[a.currentPeriodStart],
+            currentPeriodEnd = this[a.currentPeriodEnd],
+            cancelAtPeriodEnd = this[a.cancelAtPeriodEnd],
+            committedPeople = this[a.committedPeople],
             paymentIssue = issueKind?.let {
-                PaymentIssue(it, get("payment_issue_url").asStringOrNull(), get("payment_issue_at").asInstant())
+                PaymentIssue(it, this[a.paymentIssueUrl], present(a.paymentIssueAt, a.paymentIssueKind))
             },
-            updatedAt = get("updated_at").asInstant(),
+            updatedAt = this[a.updatedAt],
         )
     }
 
-    private fun ResultSet.Row.toUsage(periodStart: Instant) =
-        Usage(periodStart, get("agent_seconds").asLong(), get("sessions").asLong())
+    private fun ResultRow.toUsage(periodStart: Instant) =
+        Usage(periodStart, this[BillingUsage.agentSeconds], this[BillingUsage.sessions])
+}
+
+private fun intParam(value: Int): Expression<Int> = QueryParameter(value, IntegerColumnType())
+
+private fun uuidParam(value: Uuid): Expression<Uuid> = QueryParameter(value, UuidColumnType())
+
+private fun instantParam(value: Instant): Expression<Instant> = QueryParameter(value, InstantColumnType())
+
+/** Calls a function of `ostrom_router` that returns nothing (`SELECT name(args…)`). */
+private fun JdbcTransaction.call(name: String, vararg arguments: Expression<*>) {
+    Table.Dual.select(CustomFunction(name, TextColumnType(), *arguments)).toList()
 }

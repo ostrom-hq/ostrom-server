@@ -18,6 +18,11 @@ import run.ostrom.server.billing.fakes.FakeStripeGateway
 import run.ostrom.server.billing.fakes.FixedClock
 import run.ostrom.server.billing.fakes.NOW
 import run.ostrom.server.billing.fakes.stripeSubscription
+import run.ostrom.server.billing.infrastructure.BillingAccounts
+import run.ostrom.server.billing.infrastructure.BillingActivePeople
+import run.ostrom.server.billing.infrastructure.BillingAlerts
+import run.ostrom.server.billing.infrastructure.BillingCustomers
+import run.ostrom.server.billing.infrastructure.BillingOutbox
 import run.ostrom.server.billing.infrastructure.hmacSha256Hex
 import run.ostrom.server.billing.presentation.BillingOverviewResponse
 import run.ostrom.server.billing.presentation.InvoicesResponse
@@ -29,11 +34,12 @@ import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.TokenAuthenticator
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.kernel.settings.InstanceSettings
 import run.ostrom.server.kernel.settings.SettingsValues
 import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
@@ -46,9 +52,16 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -153,32 +166,27 @@ class BillingPostgresTest {
             assertEquals(0, repository.usage(ORG_A, NOW).agentSeconds)
             repository.addUsage(ORG_A, NOW, 90, 1)
             assertEquals(90, repository.usage(ORG_A, NOW).agentSeconds)
-            // The test server's driver is the serving role, as in production: row level security applies to it.
-            val counts = server.driver.transaction {
-                val seen = mutableListOf<String>()
-                for (org in listOf(null, ORG_B, ORG_A)) {
-                    org?.let {
-                        fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", "$it"))
-                            .getOrThrow()
-                    }
-                    val accounts = fetchAll("SELECT COUNT(*) AS n FROM billing_accounts").getOrThrow()
-                    val people = fetchAll("SELECT COUNT(*) AS n FROM billing_active_people").getOrThrow()
-                    seen += "${accounts.first().get("n").asString()}/${people.first().get("n").asString()}"
+            // The test server's pool is the serving role, as in production: row level security applies to it.
+            val database = server.koin.get<JdbcDatabase>()
+            val counts = listOf(null, ORG_B, ORG_A).map { org ->
+                database.scopedTo(org) {
+                    "${BillingAccounts.select(BillingAccounts.orgId).count()}/" +
+                        "${BillingActivePeople.select(BillingActivePeople.orgId).count()}"
                 }
-                seen
             }
             assertEquals(listOf("0/0", "0/0", "1/1"), counts, "No org set: nothing; org B: nothing; org A: its rows")
-            val forged = server.driver.transaction {
-                fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", "$ORG_B"))
-                    .getOrThrow()
-                execute(
-                    Statement.create(
-                        "INSERT INTO billing_alerts (org_id, period_start, percent, raised_at) " +
-                            "SELECT org_id, NOW(), 80, NOW() FROM billing_accounts LIMIT 1",
-                    ),
-                )
+            val forged = assertFailsWith<ExposedSQLException>("Org B can't write org A's rows") {
+                database.withOrganization(ORG_B) {
+                    BillingAlerts.insert {
+                        it[orgId] = ORG_A
+                        it[periodStart] = NOW
+                        it[percent] = 80
+                        it[raisedAt] = NOW
+                    }
+                }
             }
-            assertEquals(0L, forged.getOrThrow(), "Org B can neither see nor write org A's rows")
+            assertTrue("row-level security" in forged.message.orEmpty(), forged.message)
+            assertEquals(emptyList(), repository.alerts(ORG_A, NOW), "Nothing was forged")
         }
 
     @Test
@@ -188,28 +196,20 @@ class BillingPostgresTest {
             repository.save(OrgBilling(orgId = ORG_A, stripeCustomerId = "cus_a", updatedAt = NOW))
             val task = OutboxTask(Uuid.random(), ORG_A, OutboxKind.ACTIVE_PERSON, "ostrom-a-1-bob", NOW, 0)
             repository.enqueue(task)
-            // The test server's driver is the serving role: no organization, or another one, sees no row of A's.
-            val counts = server.driver.transaction {
-                val seen = mutableListOf<String>()
-                for (org in listOf(null, ORG_B, ORG_A)) {
-                    org?.let {
-                        fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", "$it"))
-                            .getOrThrow()
-                    }
-                    val customers = fetchAll("SELECT COUNT(*) AS n FROM billing_customers").getOrThrow()
-                    val tasks = fetchAll("SELECT COUNT(*) AS n FROM billing_outbox").getOrThrow()
-                    seen += "${customers.first().get("n").asString()}/${tasks.first().get("n").asString()}"
+            // The test server's pool is the serving role: no organization, or another one, sees no row of A's.
+            val database = server.koin.get<JdbcDatabase>()
+            val counts = listOf(null, ORG_B, ORG_A).map { org ->
+                database.scopedTo(org) {
+                    "${BillingCustomers.select(BillingCustomers.orgId).count()}/" +
+                        "${BillingOutbox.select(BillingOutbox.id).count()}"
                 }
-                seen
             }
             assertEquals(listOf("0/0", "0/0", "1/1"), counts, "No org set: nothing; org B: nothing; org A: its rows")
-            val rewritten = server.driver.transaction {
-                fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", "$ORG_B"))
-                    .getOrThrow()
-                execute("UPDATE billing_customers SET org_id = '$ORG_B' WHERE stripe_customer_id = 'cus_a'")
-                    .getOrThrow() + execute("UPDATE billing_outbox SET done_at = NOW()").getOrThrow()
+            val rewritten = database.withOrganization(ORG_B) {
+                BillingCustomers.update({ BillingCustomers.stripeCustomerId eq "cus_a" }) { it[orgId] = ORG_B } +
+                    BillingOutbox.update { it[doneAt] = NOW }
             }
-            assertEquals(0L, rewritten, "Org B can neither take A's customer nor finish A's task")
+            assertEquals(0, rewritten, "Org B can neither take A's customer nor finish A's task")
             // The webhook and the worker still reach them.
             assertEquals(ORG_A, repository.findByCustomer("cus_a")?.orgId)
             assertEquals(listOf(task), repository.claimDueTasks(NOW, NOW + 10.minutes, 10))
@@ -453,3 +453,7 @@ class BillingPostgresTest {
         assertEquals("team", pastDue.effectivePlan)
     }
 }
+
+/** Runs [block] as the serving role, in [org] when there is one, with no organization set otherwise. */
+private suspend fun <T> JdbcDatabase.scopedTo(org: Uuid?, block: JdbcTransaction.() -> T): T =
+    if (org == null) query(block) else withOrganization(org, block)
