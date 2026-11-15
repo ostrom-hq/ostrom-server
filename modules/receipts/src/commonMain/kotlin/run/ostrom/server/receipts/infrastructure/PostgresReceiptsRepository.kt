@@ -28,7 +28,6 @@ import org.jetbrains.exposed.v1.core.statements.InsertStatement
 import org.jetbrains.exposed.v1.core.statements.StatementBuilder
 import org.jetbrains.exposed.v1.jdbc.Query
 import org.jetbrains.exposed.v1.jdbc.select
-import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.unionAll
 import kotlin.uuid.Uuid
 
@@ -71,7 +70,7 @@ internal fun StatementBuilder.receiptInsert(receipt: StoredReceipt): InsertState
 
 /** The receipt [id] of [orgId], by the primary key. */
 internal fun receipt(orgId: Uuid, id: String): Read<StoredReceipt> =
-    Read(R.selectAll().where { (R.orgId eq orgId) and (R.id eq id) }) { it.toReceipt(null) }
+    Read(R.select(R.columns).where { (R.orgId eq orgId) and (R.id eq id) }) { it.toReceipt(null) }
 
 /**
  * A page of receipts, newest first, at most [ReceiptQuery.limit]. For a partial reader ([ReceiptQuery.audience],
@@ -105,13 +104,13 @@ internal fun receiptsPage(orgId: Uuid, query: ReceiptQuery): Read<StoredReceipt>
     ).map { page(filters + it, query.limit) }
     val union = branches.drop(1).fold<Query, AbstractQuery<*>>(branches.first()) { all, next -> all.unionAll(next) }
     val readable = union.alias("readable")
-    val newest = readable.selectAll()
+    val newest = readable.select(readable.columns)
         .orderBy(readable[R.createdAt] to SortOrder.DESC, readable[R.id] to SortOrder.DESC)
         .limit(query.limit)
     return Read(newest) { it.toReceipt(readable) }
 }
 
-private fun page(filters: List<Op<Boolean>>, limit: Int): Query = R.selectAll()
+private fun page(filters: List<Op<Boolean>>, limit: Int): Query = R.select(R.columns)
     .where { filters.reduce { all, next -> all and next } }
     .orderBy(R.createdAt to SortOrder.DESC, R.id to SortOrder.DESC)
     .limit(limit)
