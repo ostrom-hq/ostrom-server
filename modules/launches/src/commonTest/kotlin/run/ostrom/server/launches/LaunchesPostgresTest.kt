@@ -20,12 +20,17 @@ import run.ostrom.server.identity.domain.TokenKind
 import run.ostrom.server.identity.domain.User
 import run.ostrom.server.identity.domain.VerifiedIdentity
 import run.ostrom.server.kernel.auth.OrgRole
-import run.ostrom.server.kernel.database.withOrganization
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.TENANT_ROLE
 import run.ostrom.server.launches.domain.models.Launch
 import run.ostrom.server.launches.domain.models.LaunchLimit
 import run.ostrom.server.launches.domain.repositories.LaunchesRepository
 import run.ostrom.server.launches.domain.usecases.LaunchPolicy
-import run.ostrom.server.launches.infrastructure.PostgresLaunchesRepository
+import run.ostrom.server.launches.infrastructure.LaunchesLaunches
+import run.ostrom.server.launches.infrastructure.launchRead
+import run.ostrom.server.launches.infrastructure.ofCloudSessionRead
+import run.ostrom.server.launches.infrastructure.orgWindow
+import run.ostrom.server.launches.infrastructure.personWindow
 import run.ostrom.server.launches.presentation.AgentPolicyResponse
 import run.ostrom.server.launches.presentation.LaunchResponse
 import run.ostrom.server.orgs.domain.Invitation
@@ -45,8 +50,12 @@ import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.sessions.presentation.SessionDto
 import run.ostrom.server.sessions.presentation.SessionResponse
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.Query
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.update
 import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -280,13 +289,13 @@ class LaunchesPostgresTest {
 
             // The database itself: without its organization set, a transaction reads no launch and writes none. The
             // test server's driver is the serving role, as in production: row level security applies to it.
-            val seen = server.driver.transaction {
-                val none = fetchAll("SELECT COUNT(*) AS n FROM launches_launches").getOrThrow()
-                    .first().get("n").asString()
-                val written = execute("UPDATE launches_launches SET dev = 'mallory'").getOrThrow()
+            val seen = server.koin.get<JdbcDatabase>().query {
+                exec("SET LOCAL ROLE $TENANT_ROLE")
+                val none = LaunchesLaunches.selectAll().count()
+                val written = LaunchesLaunches.update { it[dev] = "mallory" }
                 none to written
             }
-            assertEquals("0" to 0L, seen)
+            assertEquals(0L to 0, seen)
             assertEquals(1, server.launchesSeenBy(ada.org.id))
             assertEquals("ada", launches.find(ada.org.id, adas.launchId)?.dev)
         }
@@ -306,14 +315,16 @@ class LaunchesPostgresTest {
                 assertNull(launches.create(stored(ada.org.id, Uuid.random(), now - 3.hours), roomy))
             }
             server.database.owner.execute("ANALYZE launches_launches").getOrThrow() // the serving role owns no table
-            val plan = server.driver.withOrganization(ada.org.id) { tx ->
-                val explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) ${PostgresLaunchesRepository.FIND}")
-                    .bind("org_id", ada.org.id).bind("id", "lch_absent")
-                tx.execute("SET LOCAL enable_seqscan = off").getOrThrow()
-                tx.fetchAll(explain).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
-            }
+            val plan = server.planInOrg(ada.org.id) { launchRead(ada.org.id, "lch_absent").query }
             println("-- a launch by its id (each agent request)\n$plan")
             assertTrue("launches_launches_pkey" in plan, plan)
+        }
+
+    // The plan of a repository's read in [orgId], as the tenant role, with sequential scans off: the index it can use.
+    private suspend fun TestServer.planInOrg(orgId: Uuid, read: () -> Query): String =
+        koin.get<JdbcDatabase>().inOrg(orgId) {
+            exec("SET LOCAL enable_seqscan = off")
+            plan { read() }
         }
 
     /** A cloud session of [owner]'s, its execution 2 running, and the runner token of that execution. */
@@ -500,17 +511,12 @@ class LaunchesPostgresTest {
                 assertNull(launches.create(stored(ada.org.id, Uuid.random(), now - 3.hours), roomy))
             }
             server.database.owner.execute("ANALYZE launches_launches").getOrThrow()
+            val since = now - 1.hours
             listOf(
-                PostgresLaunchesRepository.PERSON_WINDOW to "launches_launches_person",
-                PostgresLaunchesRepository.ORG_WINDOW to "launches_launches_created",
-            ).forEach { (sql, index) ->
-                val plan = server.driver.withOrganization(ada.org.id) { tx ->
-                    tx.execute("SET LOCAL enable_seqscan = off").getOrThrow()
-                    var explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org_id", ada.org.id)
-                        .bind("since", now - 1.hours)
-                    if (":user_id" in sql) explain = explain.bind("user_id", ada.user.id)
-                    tx.fetchAll(explain).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
-                }
+                personWindow(ada.org.id, ada.user.id, since) to "launches_launches_person",
+                orgWindow(ada.org.id, since) to "launches_launches_created",
+            ).forEach { (read, index) ->
+                val plan = server.planInOrg(ada.org.id) { read.query }
                 println("-- the launches of a window (each launch)\n$plan")
                 assertTrue(index in plan, plan)
             }
@@ -539,13 +545,7 @@ class LaunchesPostgresTest {
             assertEquals(emptyList(), launches.ofCloudSession(eve.org.id, cloud, 10), "Another organization's")
 
             server.database.owner.execute("ANALYZE launches_launches").getOrThrow()
-            val plan = server.driver.withOrganization(ada.org.id) { tx ->
-                tx.execute("SET LOCAL enable_seqscan = off").getOrThrow()
-                val sql = PostgresLaunchesRepository.OF_CLOUD_SESSION
-                val explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql")
-                    .bind("org_id", ada.org.id).bind("cloud_session_id", cloud).bind("limit", 10)
-                tx.fetchAll(explain).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
-            }
+            val plan = server.planInOrg(ada.org.id) { ofCloudSessionRead(ada.org.id, cloud, 10) }
             println("-- the launches of a cloud session (a workflow step's pending delivery)\n$plan")
             assertTrue("launches_launches_cloud_session" in plan, plan)
         }
@@ -594,10 +594,8 @@ class LaunchesPostgresTest {
             assertEquals(0, server.launchesSeenBy(ada.org.id))
         }
 
-    private suspend fun TestServer.launchesSeenBy(orgId: Uuid): Int = driver.withOrganization(orgId) { tx ->
-        val count = Statement.create("SELECT COUNT(*) AS n FROM launches_launches WHERE org_id = :org_id")
-            .bind("org_id", orgId)
-        tx.fetchAll(count).getOrThrow().first().get("n").asString().toInt()
+    private suspend fun TestServer.launchesSeenBy(orgId: Uuid): Int = koin.get<JdbcDatabase>().inOrg(orgId) {
+        LaunchesLaunches.selectAll().where { LaunchesLaunches.orgId eq orgId }.count().toInt()
     }
 
     private companion object {

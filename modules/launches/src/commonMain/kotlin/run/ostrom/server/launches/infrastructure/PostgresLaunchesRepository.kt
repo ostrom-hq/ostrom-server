@@ -1,178 +1,171 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.launches.infrastructure
 
+import run.ostrom.server.kernel.database.InstantColumnType
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.PurgeDates
-import run.ostrom.server.kernel.database.withOrganization
+import run.ostrom.server.kernel.database.Read
+import run.ostrom.server.kernel.database.lockKeyUntilCommit
 import run.ostrom.server.launches.domain.models.Launch
 import run.ostrom.server.launches.domain.models.LaunchLimit
 import run.ostrom.server.launches.domain.repositories.LaunchesRepository
 import run.ostrom.server.secrets.domain.LaunchCaps
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.ResultSet
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.Transaction
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
-import kotlin.time.Duration
+import org.jetbrains.exposed.v1.core.Cast
+import org.jetbrains.exposed.v1.core.CustomFunction
+import org.jetbrains.exposed.v1.core.LongColumnType
+import org.jetbrains.exposed.v1.core.Op
+import org.jetbrains.exposed.v1.core.QueryParameter
+import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.Table
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.count
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.core.min
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import org.jetbrains.exposed.v1.jdbc.Query
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
 import kotlin.time.Clock
+import kotlin.time.Duration
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * [LaunchesRepository] on PostgreSQL (the table of [LaunchesMigrations]), every query in a transaction scoped to one
- * organization by `ostrom.org_id`, which row level security enforces.
+ * [LaunchesRepository] on `launches_launches` (the table of [LaunchesMigrations]): every statement filters on its
+ * organization and runs in it (`inOrg`), under row-level security; migration 9 grants the tenant role the table.
  *
- * @param driver The connection pool.
+ * @param database The serving role's pool.
  */
-@Suppress("TooManyFunctions") // One function per statement of the launches table.
 class PostgresLaunchesRepository(
-    private val driver: Driver,
+    private val database: JdbcDatabase,
     private val clock: Clock = Clock.System,
 ) : LaunchesRepository {
     override suspend fun create(launch: Launch, limit: LaunchLimit): Duration? =
-        driver.withOrganization(launch.orgId) { tx -> limited(tx, launch, limit) }
+        database.inOrg(launch.orgId) { limited(launch, limit) }
 
     // The one deletion across organizations, through the function of LaunchesMigrations versions 4 and 5, which
     // bounds the date to the retention itself.
     override suspend fun purge(before: Instant): Long {
         PurgeDates.check(before, clock.now())
-        return driver.fetchAll(
-            Statement.create("SELECT launches_purge(CAST(:before AS TIMESTAMPTZ)) AS n").bind("before", before),
-        ).getOrThrow().first().get("n").asLong()
+        return database.query { purgeRead(before).single() }
     }
 
-    private suspend fun limited(tx: Transaction, launch: Launch, limit: LaunchLimit): Duration? {
+    private fun JdbcTransaction.limited(launch: Launch, limit: LaunchLimit): Duration? {
         // One launch of the organization at a time: the count below then holds until the insert commits.
-        tx.fetchAll(Statement.create(LOCK).bind("org_id", launch.orgId)).getOrThrow()
+        lockKeyUntilCommit(launchesKey(launch.orgId))
         val since = launch.createdAt - limit.window
-        val person = tx.window(Statement.create(PERSON_WINDOW).bind("user_id", launch.userId), launch.orgId, since)
-        val org = tx.window(Statement.create(ORG_WINDOW), launch.orgId, since)
+        val person = personWindow(launch.orgId, launch.userId, since).single()
+        val org = orgWindow(launch.orgId, since).single()
         // A place frees up when the oldest launch counted in each full window has left it.
         val freesAt = listOfNotNull(
             person.oldest.takeIf { person.count >= limit.perPerson },
             org.oldest.takeIf { org.count >= limit.perOrg },
         ).maxOrNull()
         if (freesAt != null) return freesAt + limit.window - launch.createdAt
-        insert(tx, launch)
+        insert(launch)
         return null
     }
 
-    private suspend fun insert(tx: Transaction, launch: Launch) {
-        tx.execute(
-            Statement.create("INSERT INTO launches_launches ($COLUMNS) VALUES ($VALUES)")
-                .bind("org_id", launch.orgId)
-                .bind("id", launch.id)
-                .bind("user_id", launch.userId)
-                .bind("dev", launch.dev)
-                .nullable("repo", launch.repo)
-                .bind("agent", launch.agent)
-                .nullable("model", launch.model)
-                .bind("created_at", launch.createdAt)
-                .bind("expires_at", launch.expiresAt)
-                .cloud(launch.cloudSessionId)
-                .nullable("workflow_id", launch.workflowId)
-                .bind("labels", json.encodeToString(labelsSerializer, launch.labels)),
-        ).getOrThrow()
-    }
-
-    /** The launches counted in a window, and the oldest of them (the window's start when none). */
-    private class Window(val count: Int, val oldest: Instant)
-
-    private suspend fun Transaction.window(statement: Statement, orgId: Uuid, since: Instant): Window {
-        val row = fetchAll(statement.bind("org_id", orgId).bind("since", since)).getOrThrow().first()
-        val count = row.get("n").asString().toInt()
-        return Window(count, if (count == 0) since else row.get("oldest").asInstant())
-    }
-
-    override suspend fun find(orgId: Uuid, id: String): Launch? = driver.withOrganization(orgId) { tx ->
-        tx.fetchAll(Statement.create(FIND).bind("org_id", orgId).bind("id", id)).getOrThrow()
-            .firstOrNull()?.toLaunch()
-    }
-
-    override suspend fun setCaps(orgId: Uuid, id: String, caps: LaunchCaps): Boolean =
-        driver.withOrganization(orgId) { tx ->
-            tx.fetchAll(
-                Statement.create(SET_CAPS).bind("org_id", orgId).bind("id", id)
-                    .bind("budget_micros", caps.budgetMicros).bind("max_concurrent", caps.maxConcurrent)
-                    .bind("paused", caps.paused),
-            ).getOrThrow().firstOrNull() != null
+    private fun insert(launch: Launch) {
+        LaunchesLaunches.insert {
+            it[orgId] = launch.orgId
+            it[id] = launch.id
+            it[userId] = launch.userId
+            it[dev] = launch.dev
+            it[repo] = launch.repo
+            it[agent] = launch.agent
+            it[model] = launch.model
+            it[createdAt] = launch.createdAt
+            it[expiresAt] = launch.expiresAt
+            it[cloudSessionId] = launch.cloudSessionId
+            it[workflowId] = launch.workflowId
+            it[labels] = json.encodeToString(labelsSerializer, launch.labels)
         }
+    }
+
+    override suspend fun find(orgId: Uuid, id: String): Launch? = database.inOrg(orgId) {
+        launchRead(orgId, id).singleOrNull()
+    }
+
+    override suspend fun setCaps(orgId: Uuid, id: String, caps: LaunchCaps): Boolean = database.inOrg(orgId) {
+        val l = LaunchesLaunches
+        l.update({ (l.orgId eq orgId) and (l.id eq id) }) {
+            it[budgetMicros] = caps.budgetMicros
+            it[maxConcurrent] = caps.maxConcurrent
+            it[paused] = caps.paused
+        } > 0
+    }
 
     override suspend fun labelsOf(orgId: Uuid, id: String): Map<String, String> = find(orgId, id)?.labels.orEmpty()
 
     override suspend fun ofCloudSession(orgId: Uuid, cloudSessionId: Uuid, limit: Int): List<String> =
-        driver.withOrganization(orgId) { tx ->
-            val statement = Statement.create(OF_CLOUD_SESSION).bind("org_id", orgId)
-                .bind("cloud_session_id", cloudSessionId).bind("limit", limit)
-            tx.fetchAll(statement).getOrThrow().map { it.get("id").asString() }
-        }
+        database.inOrg(orgId) { ofCloudSessionRead(orgId, cloudSessionId, limit).map { it[LaunchesLaunches.id] } }
+}
 
-    private fun Statement.nullable(name: String, value: String?): Statement =
-        if (value == null) bindNull(name, String::class) else bind(name, value)
+private val L = LaunchesLaunches
+private val json = Json
+private val labelsSerializer = MapSerializer(String.serializer(), String.serializer())
 
-    private fun Statement.cloud(value: Uuid?): Statement =
-        if (value == null) bindNull("cloud_session_id", Uuid::class) else bind("cloud_session_id", value)
+/** The key of the advisory lock that serializes one organization's launches, as the sqlx4k repository took it. */
+internal fun launchesKey(orgId: Uuid): String = "launches:$orgId"
 
-    private fun ResultSet.Row.toLaunch() = Launch(
-        id = get("id").asString(),
-        orgId = get("org_id").asUuid(),
-        userId = get("user_id").asUuid(),
-        dev = get("dev").asString(),
-        repo = get("repo").asStringOrNull(),
-        agent = get("agent").asString(),
-        model = get("model").asStringOrNull(),
-        createdAt = get("created_at").asInstant(),
-        expiresAt = get("expires_at").asInstant(),
-        cloudSessionId = get("cloud_session_id").asUuidOrNull(),
-        workflowId = get("workflow_id").asStringOrNull(),
-        labels = json.decodeFromString(labelsSerializer, get("labels").asString()),
-        caps = LaunchCaps(
-            get("budget_micros").asLong(),
-            get("max_concurrent").asString().toInt(),
-            get("paused").asBoolean(),
-        ),
-    )
+/** The launches counted in a window, and the oldest of them (the window's start when none). */
+internal class LaunchWindow(val count: Int, val oldest: Instant)
 
-    /** The SQL of the repository, also read by the query plans test. */
-    companion object {
-        private val COLUMN_NAMES = listOf(
-            "org_id", "id", "user_id", "dev", "repo", "agent", "model", "created_at", "expires_at",
-            "cloud_session_id", "workflow_id", "labels",
-        )
-        private val COLUMNS = COLUMN_NAMES.joinToString(", ")
-        private val VALUES = COLUMN_NAMES.joinToString(", ") { ":$it" }
-
-        /** Serializes the launches of one organization within a transaction (released at its end). */
-        const val LOCK: String =
-            "SELECT pg_advisory_xact_lock(hashtextextended('launches:' || CAST(:org_id AS TEXT), 0))"
-
-        /** The launches of one person in one organization since an instant: the index on its creations. */
-        const val PERSON_WINDOW: String = "SELECT COUNT(*) AS n, MIN(created_at) AS oldest FROM launches_launches " +
-            "WHERE org_id = :org_id AND user_id = :user_id AND created_at > :since"
-
-        /** The launches of one organization since an instant. */
-        const val ORG_WINDOW: String = "SELECT COUNT(*) AS n, MIN(created_at) AS oldest FROM launches_launches " +
-            "WHERE org_id = :org_id AND created_at > :since"
-
-        /** A launch by its primary key. */
-        val FIND: String = "SELECT $COLUMNS, budget_micros, max_concurrent, paused FROM launches_launches " +
-            "WHERE org_id = :org_id AND id = :id"
-
-        /** The limits of a launch; a row when the launch exists. */
-        const val SET_CAPS: String = "UPDATE launches_launches SET budget_micros = :budget_micros, " +
-            "max_concurrent = :max_concurrent, paused = :paused WHERE org_id = :org_id AND id = :id RETURNING id"
-
-        private val json = Json
-        private val labelsSerializer = MapSerializer(String.serializer(), String.serializer())
-
-        /** The launches of a cloud session, newest first: the index on the cloud session. */
-        const val OF_CLOUD_SESSION: String = "SELECT id FROM launches_launches WHERE org_id = :org_id " +
-            "AND cloud_session_id = :cloud_session_id ORDER BY created_at DESC LIMIT :limit"
+private fun window(condition: Op<Boolean>, since: Instant): Read<LaunchWindow> {
+    val count = L.createdAt.count()
+    val oldest = L.createdAt.min()
+    return Read(L.select(count, oldest).where { condition and (L.createdAt greater since) }) { row ->
+        val n = row[count].toInt()
+        LaunchWindow(n, row[oldest] ?: since)
     }
 }
+
+/** The launches of one person in one organization since an instant: the index on its creations. */
+internal fun personWindow(orgId: Uuid, userId: Uuid, since: Instant): Read<LaunchWindow> =
+    window((L.orgId eq orgId) and (L.userId eq userId), since)
+
+/** The launches of one organization since an instant. */
+internal fun orgWindow(orgId: Uuid, since: Instant): Read<LaunchWindow> = window(L.orgId eq orgId, since)
+
+/** A launch by its primary key. */
+internal fun launchRead(orgId: Uuid, id: String): Read<Launch> =
+    Read(L.select(L.columns).where { (L.orgId eq orgId) and (L.id eq id) }) { it.toLaunch() }
+
+/** The launches of a cloud session, newest first: the index on the cloud session. */
+internal fun ofCloudSessionRead(orgId: Uuid, cloudSessionId: Uuid, limit: Int): Query = L.select(L.id)
+    .where { (L.orgId eq orgId) and (L.cloudSessionId eq cloudSessionId) }
+    .orderBy(L.createdAt to SortOrder.DESC)
+    .limit(limit)
+
+/** The purge function's call: `SELECT launches_purge(CAST(? AS TIMESTAMPTZ))`, the launches it deleted. */
+internal fun purgeRead(before: Instant): Read<Long> {
+    val purged = CustomFunction(
+        "launches_purge",
+        LongColumnType(),
+        Cast(QueryParameter(before, InstantColumnType()), InstantColumnType()),
+    )
+    return Read(Table.Dual.select(purged)) { it[purged] }
+}
+
+private fun ResultRow.toLaunch() = Launch(
+    id = this[L.id],
+    orgId = this[L.orgId],
+    userId = this[L.userId],
+    dev = this[L.dev],
+    repo = this[L.repo],
+    agent = this[L.agent],
+    model = this[L.model],
+    createdAt = this[L.createdAt],
+    expiresAt = this[L.expiresAt],
+    cloudSessionId = this[L.cloudSessionId],
+    workflowId = this[L.workflowId],
+    labels = json.decodeFromString(labelsSerializer, this[L.labels]),
+    caps = LaunchCaps(this[L.budgetMicros], this[L.maxConcurrent], this[L.paused]),
+)

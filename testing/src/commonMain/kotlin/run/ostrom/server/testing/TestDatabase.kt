@@ -4,6 +4,7 @@ package run.ostrom.server.testing
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.DatabaseConfig
 import run.ostrom.server.kernel.config.EnvironmentConfigSource
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.MigrationRunner
 import run.ostrom.server.kernel.database.TENANT_ROLE
 import run.ostrom.server.kernel.database.connectPostgres
@@ -112,6 +113,22 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
     }
 
     /**
+     * [withRole] with a JDBC pool connected as the role ([JdbcDatabase]), for a module on Exposed: the same fresh
+     * login role, always [exclusively] (its one user is the launch path's contended pool, [LARGEST_POOL]).
+     *
+     * @param poolSize The connections of the role's pool, at most [LARGEST_POOL].
+     * @param block The test, given the role's name and a JDBC pool connected as the role.
+     *
+     * @return What [block] returns.
+     */
+    suspend fun <T> withJdbcRole(poolSize: Int, block: suspend (role: String, database: JdbcDatabase) -> T): T =
+        exclusively {
+            asRole(bypassRowLevelSecurity = false, poolSize.coerceAtMost(LARGEST_POOL)) { role, config ->
+                JdbcDatabase(config, config.maxConnections).use { block(role, it) }
+            }
+        }
+
+    /**
      * Runs [block] alone among the test processes that share this PostgreSQL server: it holds the server's lock of the
      * timed and large phases, an advisory lock taken in the configured database (the same for every test database) on
      * a connection of its own, released afterwards, on failure and cancellation too, and by PostgreSQL if the process
@@ -170,6 +187,19 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
         bypassRowLevelSecurity: Boolean,
         poolSize: Int,
         block: suspend (role: String, driver: Driver) -> T,
+    ): T = asRole(bypassRowLevelSecurity, poolSize) { role, config ->
+        val connected = connectPostgres(config)
+        try {
+            block(role, connected)
+        } finally {
+            connected.close()
+        }
+    }
+
+    private suspend fun <T> asRole(
+        bypassRowLevelSecurity: Boolean,
+        poolSize: Int,
+        block: suspend (role: String, config: DatabaseConfig) -> T,
     ): T {
         val role = "ostrom_test_role_" + Uuid.random().toHexString()
         val password = Uuid.random().toHexString()
@@ -179,12 +209,7 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
         ).getOrThrow()
         try {
             superuser.execute("GRANT USAGE ON SCHEMA public TO $role").getOrThrow()
-            val connected = connectPostgres(DatabaseConfig(url, role, password, poolSize))
-            try {
-                return block(role, connected)
-            } finally {
-                connected.close()
-            }
+            return block(role, DatabaseConfig(url, role, password, poolSize))
         } finally {
             superuser.execute("DROP OWNED BY $role").getOrThrow()
             superuser.execute("DROP ROLE $role").getOrThrow()

@@ -293,7 +293,7 @@ class LaunchPathLoadPostgresTest {
     // The launch's transaction alone, as 100 people of one organization launch at once: the repository on a pool of 20
     // connections of a role granted the serving role, so that the organization's advisory lock is really waited on.
     private suspend fun TestServer.contendedLaunches(team: Team): List<Duration> =
-        database.withRole(poolSize = CONTENDED_POOL) { role, pool ->
+        database.withJdbcRole(poolSize = CONTENDED_POOL) { role, pool ->
             database.superuser.execute("GRANT ${database.servingRole} TO $role").getOrThrow()
             val launches = PostgresLaunchesRepository(pool)
             coroutineScope {

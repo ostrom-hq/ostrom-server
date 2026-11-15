@@ -2,6 +2,8 @@
 package run.ostrom.server.launches.infrastructure
 
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.database.TENANT_ROLE
+import run.ostrom.server.kernel.database.TENANT_ROLE_SQL
 
 /** The purge of the launches long expired, the module's one operation across organizations (version 4). */
 private const val PURGE_FUNCTION = "launches_purge(TIMESTAMPTZ)"
@@ -138,5 +140,12 @@ val LaunchesMigrations: List<SchemaMigration> = listOf(
             ADD COLUMN max_concurrent INTEGER NOT NULL DEFAULT 0,
             ADD COLUMN paused BOOLEAN NOT NULL DEFAULT FALSE
         """.trimIndent(),
+    ),
+    // On Exposed, every statement runs in `inOrg`, as the tenant role: it reads, inserts and sets the limits of a
+    // launch, and never deletes one (the purge function of versions 4 and 5 does, as `ostrom_router`).
+    SchemaMigration(
+        9,
+        "grant_launches_to_tenant",
+        TENANT_ROLE_SQL + "\n" + "GRANT SELECT, INSERT, UPDATE ON launches_launches TO $TENANT_ROLE",
     ),
 )

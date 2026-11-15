@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.launches
 
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.PurgeDateRefusedException
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.logging.LogLevel
@@ -11,8 +12,7 @@ import run.ostrom.server.launches.domain.repositories.LaunchesRepository
 import run.ostrom.server.launches.fakes.FixedClock
 import run.ostrom.server.launches.fakes.InMemoryLaunches
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.SQLError
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -70,11 +70,14 @@ class LaunchPurgeTest {
         listOf(old, kept).forEach { assertNull(launches.create(it, roomy)) }
 
         // Straight to the function, as the serving role: today deletes only what is past the 30 days.
-        val direct = s.driver.fetchAll("SELECT launches_purge(now()) AS n").getOrThrow()
-        assertEquals(1L, direct.first().get("n").asLong(), "Only the launch expired 31 days ago")
+        val database = s.koin.get<JdbcDatabase>()
+        suspend fun purgeDirectly(date: String): Long? = database.query {
+            exec("SELECT launches_purge($date) AS n") { rs -> rs.next(); rs.getLong("n") }
+        }
+        assertEquals(1L, purgeDirectly("now()"), "Only the launch expired 31 days ago")
         assertEquals(kept, launches.find(org, kept.id))
         for (date in listOf("now() + INTERVAL '1 day'", "'infinity'", "NULL")) {
-            assertFailsWith<SQLError>(date) { s.driver.fetchAll("SELECT launches_purge($date) AS n").getOrThrow() }
+            assertFailsWith<ExposedSQLException>(date) { purgeDirectly(date) }
         }
         for (date in listOf(now + 1.days, Instant.DISTANT_FUTURE, Instant.DISTANT_PAST)) {
             val refused = assertFailsWith<PurgeDateRefusedException>("$date") { launches.purge(date) }
