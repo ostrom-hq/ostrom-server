@@ -1,147 +1,161 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.notifications.infrastructure
 
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.present
 import run.ostrom.server.kernel.database.withOrganization
+import run.ostrom.server.kernel.database.write
+import run.ostrom.server.kernel.database.written
 import run.ostrom.server.notifications.domain.PushCredential
 import run.ostrom.server.notifications.domain.PushDevice
 import run.ostrom.server.notifications.domain.PushDevicesRepository
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.ResultSet
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
+import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.case
+import org.jetbrains.exposed.v1.core.coalesce
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.isNull
+import org.jetbrains.exposed.v1.core.notInSubQuery
+import org.jetbrains.exposed.v1.core.statements.DeleteStatement
+import org.jetbrains.exposed.v1.core.statements.StatementBuilder
+import org.jetbrains.exposed.v1.core.statements.insertValue
+import org.jetbrains.exposed.v1.jdbc.Query
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.upsertReturning
 import kotlin.uuid.Uuid
 
 /**
- * [PushDevicesRepository] on PostgreSQL (the table of [NotificationsMigrations]), every query in a transaction scoped
- * to one organization by `ostrom.org_id`, which row level security enforces.
+ * [PushDevicesRepository] on PostgreSQL through Exposed (the table of [NotificationsMigrations]), every statement in a
+ * transaction scoped to one organization by `ostrom.org_id` (`withOrganization`), which row level security enforces,
+ * with its own `org_id` filter.
  *
- * @param driver The connection pool.
+ * @param database The serving role's pool.
  */
-class PushDevicesRepositoryImpl(private val driver: Driver) : PushDevicesRepository {
-    override suspend fun save(device: PushDevice, keep: Int): PushDevice = driver.withOrganization(device.orgId) { tx ->
+class PushDevicesRepositoryImpl(private val database: JdbcDatabase) : PushDevicesRepository {
+    override suspend fun save(device: PushDevice, keep: Int): PushDevice = database.withOrganization(device.orgId) {
+        val d = NotificationsPushDevices
         val credential = device.credential
-        val upsert = Statement.create(UPSERT).let {
-            if (device.locale == null) it.bindNull("locale", String::class) else it.bind("locale", device.locale)
-        }.let {
-            val key = device.publicKey
-            if (key == null) it.bindNull("public_key", String::class) else it.bind("public_key", key)
-        }.let {
-            if (credential == null) {
-                it.bindNull("user_id", Uuid::class).bindNull("credential_id", Uuid::class)
-            } else {
-                it.bind("user_id", credential.userId).bind("credential_id", credential.credentialId)
-            }
-        }.bind("browser", credential?.browser == true)
-        val saved = tx.fetchAll(
-            upsert.bind("org_id", device.orgId).bind("id", device.id).bind("member_id", device.memberId)
-                .bind("push_token", device.pushToken).bind("provider", device.provider)
-                .bind("platform", device.platform).bind("created_at", device.createdAt)
-                .bind("seen_at", device.seenAt),
-        ).getOrThrow().first().toDevice()
-        tx.execute(
-            Statement.create(KEEP_LATEST_SQL).bind("org_id", device.orgId).bind("member_id", device.memberId)
-                .bind("keep", keep),
-        ).getOrThrow()
+        // A token registered again (a new language, a reinstall, another member signing in on the phone) keeps its
+        // row, its id and its creation date.
+        val saved = d.upsertReturning(
+            d.orgId, d.pushToken,
+            onUpdate = {
+                it[d.memberId] = insertValue(d.memberId)
+                it[d.provider] = insertValue(d.provider)
+                it[d.platform] = insertValue(d.platform)
+                it[d.locale] = insertValue(d.locale)
+                it[d.seenAt] = insertValue(d.seenAt)
+                it[d.publicKey] = insertValue(d.publicKey)
+                // A registration without a credential (an older app, another kind of caller) keeps the one the phone
+                // had.
+                it[d.userId] = coalesce(insertValue(d.userId), d.userId)
+                it[d.credentialId] = coalesce(insertValue(d.credentialId), d.credentialId)
+                it[d.browser] = case()
+                    .When(insertValue(d.credentialId).isNull(), d.browser)
+                    .Else(insertValue(d.browser))
+            },
+        ) {
+            it[d.orgId] = device.orgId
+            it[d.id] = device.id
+            it[d.memberId] = device.memberId
+            it[d.pushToken] = device.pushToken
+            it[d.provider] = device.provider
+            it[d.platform] = device.platform
+            it[d.locale] = device.locale
+            it[d.createdAt] = device.createdAt
+            it[d.seenAt] = device.seenAt
+            it[d.userId] = credential?.userId
+            it[d.credentialId] = credential?.credentialId
+            it[d.browser] = credential?.browser == true
+            it[d.publicKey] = device.publicKey
+        }.single().toDevice()
+        write { keepLatest(device.orgId, device.memberId, keep) }
         saved
     }
 
-    override suspend fun delete(orgId: Uuid, memberId: Uuid, id: Uuid): Boolean = driver.withOrganization(orgId) { tx ->
-        tx.execute(Statement.create(DELETE_SQL).bind("org_id", orgId).bind("member_id", memberId).bind("id", id))
-            .getOrThrow() > 0
+    override suspend fun delete(orgId: Uuid, memberId: Uuid, id: Uuid): Boolean = database.withOrganization(orgId) {
+        written { deleteDevice(orgId, memberId, id) } > 0
     }
 
     override suspend fun ofMember(orgId: Uuid, memberId: Uuid): List<PushDevice> =
-        driver.withOrganization(orgId) { tx ->
-            tx.fetchAll(Statement.create(OF_MEMBER_SQL).bind("org_id", orgId).bind("member_id", memberId))
-                .getOrThrow().map { it.toDevice() }
-        }
+        database.withOrganization(orgId) { devicesOfMember(orgId, memberId).map { it.toDevice() } }
 
     override suspend fun forget(orgId: Uuid, userId: Uuid, credentialId: Uuid?) {
-        driver.withOrganization(orgId) { tx ->
-            val statement = if (credentialId == null) {
-                Statement.create(FORGET_BROWSERS_SQL)
-            } else {
-                Statement.create(FORGET_CREDENTIAL_SQL).bind("credential_id", credentialId)
-            }
-            tx.execute(statement.bind("org_id", orgId).bind("user_id", userId)).getOrThrow()
-        }
+        database.withOrganization(orgId) { write { forgetCredentialDevices(orgId, userId, credentialId) } }
     }
 
     override suspend fun forgetToken(orgId: Uuid, id: Uuid, pushToken: String) {
-        driver.withOrganization(orgId) { tx ->
-            tx.execute(
-                Statement.create(FORGET_TOKEN_SQL).bind("org_id", orgId).bind("id", id).bind("push_token", pushToken),
-            ).getOrThrow()
-        }
+        database.withOrganization(orgId) { write { forgetTokenDevice(orgId, id, pushToken) } }
     }
 
     override suspend fun deleteAll(orgId: Uuid) {
-        driver.withOrganization(orgId) { tx ->
-            tx.execute(Statement.create(DELETE_ALL_SQL).bind("org_id", orgId)).getOrThrow()
+        database.withOrganization(orgId) {
+            NotificationsPushDevices.deleteWhere { NotificationsPushDevices.orgId eq orgId }
         }
-    }
-
-    private companion object {
-        fun ResultSet.Row.toDevice() = PushDevice(
-            id = get("id").asUuid(),
-            orgId = get("org_id").asUuid(),
-            memberId = get("member_id").asUuid(),
-            pushToken = get("push_token").asString(),
-            provider = get("provider").asString(),
-            platform = get("platform").asString(),
-            locale = get("locale").asStringOrNull(),
-            createdAt = get("created_at").asInstant(),
-            seenAt = get("seen_at").asInstant(),
-            credential = get("credential_id").asStringOrNull()?.let { credentialId ->
-                PushCredential(get("user_id").asUuid(), Uuid.parse(credentialId), get("browser").asBoolean())
-            },
-            publicKey = get("public_key").asStringOrNull(),
-        )
     }
 }
 
-private const val COLUMNS = "org_id, id, member_id, push_token, provider, platform, locale, created_at, seen_at, " +
-    "user_id, credential_id, browser, public_key"
+/** Keeps a member's [keep] most recently seen phones of the organization. */
+internal fun StatementBuilder.keepLatest(orgId: Uuid, memberId: Uuid, keep: Int): DeleteStatement {
+    val d = NotificationsPushDevices
+    val kept = d.select(d.id)
+        .where { (d.orgId eq orgId) and (d.memberId eq memberId) }
+        .orderBy(d.seenAt to SortOrder.DESC, d.id to SortOrder.DESC)
+        .limit(keep)
+    return d.deleteWhere { (d.orgId eq orgId) and (d.memberId eq memberId) and (d.id notInSubQuery kept) }
+}
 
-// A token registered again (a new language, a reinstall, another member signing in on the phone) keeps its row, its id
-// and its creation date.
-private const val UPSERT = "INSERT INTO notifications_push_devices ($COLUMNS) VALUES (:org_id, :id, :member_id, " +
-    ":push_token, :provider, :platform, :locale, :created_at, :seen_at, :user_id, :credential_id, :browser, " +
-    ":public_key) " +
-    "ON CONFLICT (org_id, push_token) DO UPDATE SET member_id = EXCLUDED.member_id, provider = EXCLUDED.provider, " +
-    "platform = EXCLUDED.platform, locale = EXCLUDED.locale, seen_at = EXCLUDED.seen_at, " +
-    "public_key = EXCLUDED.public_key, " +
-    // A registration without a credential (an older app, another kind of caller) keeps the one the phone had.
-    "user_id = COALESCE(EXCLUDED.user_id, notifications_push_devices.user_id), " +
-    "credential_id = COALESCE(EXCLUDED.credential_id, notifications_push_devices.credential_id), " +
-    "browser = CASE WHEN EXCLUDED.credential_id IS NULL THEN notifications_push_devices.browser " +
-    "ELSE EXCLUDED.browser END RETURNING $COLUMNS"
+/** Removes one of a member's phones. */
+internal fun StatementBuilder.deleteDevice(orgId: Uuid, memberId: Uuid, id: Uuid): DeleteStatement {
+    val d = NotificationsPushDevices
+    return d.deleteWhere { (d.orgId eq orgId) and (d.memberId eq memberId) and (d.id eq id) }
+}
 
-/** Keeps a member's `:keep` most recently seen phones of the organization (`:org_id`, `:member_id`). */
-internal const val KEEP_LATEST_SQL = "DELETE FROM notifications_push_devices WHERE org_id = :org_id " +
-    "AND member_id = :member_id AND id NOT IN (SELECT id FROM notifications_push_devices " +
-    "WHERE org_id = :org_id AND member_id = :member_id ORDER BY seen_at DESC, id DESC LIMIT :keep)"
+/** A member's phones, the most recently seen first. */
+internal fun devicesOfMember(orgId: Uuid, memberId: Uuid): Query {
+    val d = NotificationsPushDevices
+    return d.select(d.columns)
+        .where { (d.orgId eq orgId) and (d.memberId eq memberId) }
+        .orderBy(d.seenAt to SortOrder.DESC, d.id to SortOrder.DESC)
+}
 
-/** Removes one of a member's phones (`:org_id`, `:member_id`, `:id`). */
-internal const val DELETE_SQL = "DELETE FROM notifications_push_devices WHERE org_id = :org_id " +
-    "AND member_id = :member_id AND id = :id"
+/**
+ * The phones a person registered with one credential ([credentialId]), or with a browser session when it is null.
+ */
+internal fun StatementBuilder.forgetCredentialDevices(orgId: Uuid, userId: Uuid, credentialId: Uuid?): DeleteStatement {
+    val d = NotificationsPushDevices
+    return d.deleteWhere {
+        val ofCredential = if (credentialId == null) d.browser eq true else d.credentialId eq credentialId
+        (d.orgId eq orgId) and (d.userId eq userId) and ofCredential
+    }
+}
 
-/** A member's phones (`:org_id`, `:member_id`), the most recently seen first. */
-internal const val OF_MEMBER_SQL = "SELECT $COLUMNS FROM notifications_push_devices WHERE org_id = :org_id " +
-    "AND member_id = :member_id ORDER BY seen_at DESC, id DESC"
+/** A phone whose token the provider no longer knows, while it still has it. */
+internal fun StatementBuilder.forgetTokenDevice(orgId: Uuid, id: Uuid, pushToken: String): DeleteStatement {
+    val d = NotificationsPushDevices
+    return d.deleteWhere { (d.orgId eq orgId) and (d.id eq id) and (d.pushToken eq pushToken) }
+}
 
-/** The phones a person registered with one credential (`:org_id`, `:user_id`, `:credential_id`). */
-internal const val FORGET_CREDENTIAL_SQL = "DELETE FROM notifications_push_devices WHERE org_id = :org_id " +
-    "AND user_id = :user_id AND credential_id = :credential_id"
-
-/** The phones a person registered with a browser session (`:org_id`, `:user_id`). */
-internal const val FORGET_BROWSERS_SQL = "DELETE FROM notifications_push_devices WHERE org_id = :org_id " +
-    "AND user_id = :user_id AND browser"
-
-/** A phone whose token the provider no longer knows, while it still has it (`:org_id`, `:id`, `:push_token`). */
-internal const val FORGET_TOKEN_SQL = "DELETE FROM notifications_push_devices WHERE org_id = :org_id " +
-    "AND id = :id AND push_token = :push_token"
-
-private const val DELETE_ALL_SQL = "DELETE FROM notifications_push_devices WHERE org_id = :org_id"
+private fun ResultRow.toDevice(): PushDevice {
+    val d = NotificationsPushDevices
+    val credentialId = this[d.credentialId]
+    return PushDevice(
+        id = this[d.id],
+        orgId = this[d.orgId],
+        memberId = this[d.memberId],
+        pushToken = this[d.pushToken],
+        provider = this[d.provider],
+        platform = this[d.platform],
+        locale = this[d.locale],
+        createdAt = this[d.createdAt],
+        seenAt = this[d.seenAt],
+        credential = if (credentialId == null) {
+            null
+        } else {
+            PushCredential(present(d.userId, d.credentialId), credentialId, this[d.browser])
+        },
+        publicKey = this[d.publicKey],
+    )
+}
