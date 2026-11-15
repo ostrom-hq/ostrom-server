@@ -485,6 +485,16 @@ class GitHubLinkPostgresTest {
         cipher.onOpen = { store.saveLink(ORG, DEV, octocat, CLIENT_ID, GitHubTokens("ghu_new", null, null, null), now) }
         assertEquals("ghu_new", assertIs<GitHubTokenClaim.Ready>(claim()).accessToken)
 
+        // Rewritten at every attempt: the claim stops reading and waits.
+        var round = 0
+        cipher.always = {
+            round++
+            store.saveLink(ORG, DEV, octocat, CLIENT_ID, GitHubTokens("ghu_$round", null, null, null), now)
+        }
+        assertEquals(GitHubTokenClaim.Wait, claim())
+        assertEquals(3, round)
+        cipher.always = null
+
         // Or removed: nothing to claim.
         cipher.onOpen = { store.removeLink(ORG, DEV) }
         assertEquals(GitHubTokenClaim.NotLinked, claim())
@@ -595,12 +605,25 @@ private suspend fun <T> Driver.asTenant(org: Uuid?, block: suspend QueryExecutor
 private class HookedCipher(private val inner: SecretCipher) : SecretCipher {
     var onOpen: (suspend () -> Unit)? = null
 
+    /** Run before every open while set, but not before the opens it makes itself (a save opens the old tokens). */
+    var always: (suspend () -> Unit)? = null
+    private var inHook = false
+
     override suspend fun seal(plaintext: ByteArray, context: String): String = inner.seal(plaintext, context)
 
     override suspend fun open(envelope: String, context: String): ByteArray? {
         val hook = onOpen
         onOpen = null
         hook?.invoke()
+        val each = always
+        if (each != null && !inHook) {
+            inHook = true
+            try {
+                each()
+            } finally {
+                inHook = false
+            }
+        }
         return inner.open(envelope, context)
     }
 }

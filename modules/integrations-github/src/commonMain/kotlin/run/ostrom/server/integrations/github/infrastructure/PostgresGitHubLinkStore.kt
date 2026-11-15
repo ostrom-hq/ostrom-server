@@ -216,7 +216,7 @@ class PostgresGitHubLinkStore(private val database: JdbcDatabase, private val ci
         staleAfter: Duration,
     ): GitHubTokenClaim {
         val l = GitHubLinks
-        while (true) {
+        repeat(CLAIM_ATTEMPTS) {
             // Opened outside the transaction (a suspend call); the locked row decides only if it still holds this
             // envelope, else the tokens may have changed since and are read again.
             val envelope = database.withOrganization(orgId) {
@@ -233,6 +233,8 @@ class PostgresGitHubLinkStore(private val database: JdbcDatabase, private val ci
             }
             if (claim != null) return claim
         }
+        // Tokens rewritten at every attempt: the caller waits and asks again, as for a refresh in flight.
+        return GitHubTokenClaim.Wait
     }
 
     /** What a claim is asked for: the member's link and the times it decides by. */
@@ -436,3 +438,6 @@ internal fun linksOf(orgId: Uuid, limit: Int): Query {
 
 /** Within this time of its expiry, a token that cannot be refreshed is no longer handed out. */
 private val LAST_MINUTE = 1.minutes
+
+// The reads of a claim whose tokens another write keeps replacing, before it waits like a refresh in flight.
+private const val CLAIM_ATTEMPTS = 3
