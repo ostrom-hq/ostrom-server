@@ -4,107 +4,115 @@ package run.ostrom.server.cloud.infrastructure
 import run.ostrom.server.cloud.domain.CloudCluster
 import run.ostrom.server.cloud.domain.CloudClustersRepository
 import run.ostrom.server.cloud.domain.StoredCloudCluster
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.http.OstromJson
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.ResultSet
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asIntOrNull
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
+import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.alias
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.neq
+import org.jetbrains.exposed.v1.core.notExists
+import org.jetbrains.exposed.v1.core.statements.UpdateBuilder
+import org.jetbrains.exposed.v1.jdbc.insertIgnore
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.update
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
-/** [CloudClustersRepository] on PostgreSQL (`cloud_clusters`, the instance's, no organization). */
-class CloudClustersRepositoryImpl(private val driver: Driver) : CloudClustersRepository {
-    override suspend fun list(): List<CloudCluster> =
-        driver.fetchAll("SELECT $COLUMNS, $REPORT FROM cloud_clusters ORDER BY name").getOrThrow()
-            .map { it.toStored().cluster }
+/**
+ * [CloudClustersRepository] on PostgreSQL through Exposed (`cloud_clusters`, the instance's, no organization).
+ *
+ * @param database The serving role's pool.
+ */
+class CloudClustersRepositoryImpl(private val database: JdbcDatabase) : CloudClustersRepository {
+    override suspend fun list(): List<CloudCluster> = database.query {
+        CloudClusters.selectAll().orderBy(CloudClusters.name to SortOrder.ASC).map { it.toStored().cluster }
+    }
 
-    override suspend fun get(id: Uuid): StoredCloudCluster? = driver.fetchAll(
-        Statement.create("SELECT $COLUMNS, $REPORT FROM cloud_clusters WHERE id = :id").bind("id", id),
-    ).getOrThrow().firstOrNull()?.toStored()
+    override suspend fun get(id: Uuid): StoredCloudCluster? = database.query {
+        CloudClusters.selectAll().where { CloudClusters.id eq id }.firstOrNull()?.toStored()
+    }
 
-    override suspend fun version(id: Uuid): Int? = driver.fetchAll(
-        Statement.create("SELECT version FROM cloud_clusters WHERE id = :id").bind("id", id),
-    ).getOrThrow().map { it.get("version").asInt() }.firstOrNull()
+    override suspend fun version(id: Uuid): Int? = database.query {
+        CloudClusters.select(CloudClusters.version).where { CloudClusters.id eq id }
+            .firstOrNull()?.get(CloudClusters.version)
+    }
 
     // A name taken is no row inserted, as a lost race is: the use case answers a conflict for both.
-    override suspend fun insert(stored: StoredCloudCluster): Boolean = driver.execute(
-        bind(
-            Statement.create(
-                "INSERT INTO cloud_clusters ($COLUMNS) VALUES (:id, :name, :api_url, :ca, :token, :namespaces, " +
-                    ":pods, :storage, :version, :created_at, :updated_at, :in_cluster, :imported) " +
-                    "ON CONFLICT DO NOTHING",
-            ),
-            stored,
-        ).bind("created_at", stored.cluster.createdAt).bind("imported", stored.cluster.imported),
-    ).getOrThrow() == 1L
+    override suspend fun insert(stored: StoredCloudCluster): Boolean = database.query {
+        CloudClusters.insertIgnore {
+            it[id] = stored.cluster.id
+            saved(it, stored)
+            it[createdAt] = stored.cluster.createdAt
+            it[imported] = stored.cluster.imported
+        }.insertedCount == 1
+    }
 
-    // Only the names the statement has: the driver refuses a value bound to none.
-    override suspend fun update(stored: StoredCloudCluster): Boolean = driver.execute(
-        bind(
-            Statement.create(
-                "UPDATE cloud_clusters SET name = :name, api_url = :api_url, sealed_ca = :ca, sealed_token = :token, " +
-                    "allowed_namespaces = :namespaces, max_running_pods = :pods, default_storage_class = :storage, " +
-                    "version = :version, updated_at = :updated_at, in_cluster = :in_cluster " +
-                    "WHERE id = :id AND version = :previous " +
-                    "AND NOT EXISTS (SELECT 1 FROM cloud_clusters o WHERE o.name = :name AND o.id <> :id)",
-            ),
-            stored,
-        ).bind("previous", stored.cluster.version - 1),
-    ).getOrThrow() == 1L
+    // The garbage collection's report and the creation are left as they are; another cluster's name refuses the save.
+    override suspend fun update(stored: StoredCloudCluster): Boolean = database.query {
+        val c = CloudClusters
+        val other = c.alias("o")
+        val nameFree = notExists(
+            other.select(other[c.id]).where { (other[c.name] eq stored.cluster.name) and (other[c.id] neq stored.cluster.id) },
+        )
+        c.update({ (c.id eq stored.cluster.id) and (c.version eq stored.cluster.version - 1) and nameFree }) {
+            saved(it, stored)
+        } == 1
+    }
 
     override suspend fun recordGarbageCollection(id: Uuid, orphanedVolumes: Int?, at: Instant) {
-        driver.execute(
-            Statement.create(
-                "UPDATE cloud_clusters SET orphaned_volumes = :orphaned, last_garbage_collection_at = :at " +
-                    "WHERE id = :id",
-            ).bind("orphaned", orphanedVolumes).bind("at", at).bind("id", id),
-        ).getOrThrow()
-    }
-
-    private fun bind(statement: Statement, stored: StoredCloudCluster): Statement = with(stored.cluster) {
-        statement.bind("id", id).bind("name", name).bind("api_url", apiUrl)
-            .bind("ca", stored.sealedCaCertificate).bind("token", stored.sealedServiceAccountToken)
-            .bind("namespaces", OstromJson.encodeToString(NAMES, allowedNamespaces))
-            .bind("pods", maxRunningPods).bind("storage", defaultStorageClass).bind("version", version)
-            .bind("updated_at", updatedAt).bind("in_cluster", inCluster)
-    }
-
-    private fun ResultSet.Row.toStored(): StoredCloudCluster {
-        val ca = get("sealed_ca").asString()
-        val token = get("sealed_token").asString()
-        val cluster = CloudCluster(
-            id = get("id").asUuid(),
-            name = get("name").asString(),
-            apiUrl = get("api_url").asString(),
-            allowedNamespaces = OstromJson.decodeFromString(NAMES, get("allowed_namespaces").asString()),
-            maxRunningPods = get("max_running_pods").asInt(),
-            defaultStorageClass = get("default_storage_class").asStringOrNull(),
-            version = get("version").asInt(),
-            // An administrator's cluster always has both (a new one, or a new apiUrl, brings them); the imported one
-            // may have none: in-cluster, or its files unreadable at the import.
-            hasCaCertificate = ca.isNotEmpty(),
-            hasServiceAccountToken = token.isNotEmpty(),
-            createdAt = get("created_at").asInstant(),
-            updatedAt = get("updated_at").asInstant(),
-            inCluster = get("in_cluster").asBoolean(),
-            imported = get("imported").asBoolean(),
-            orphanedVolumes = get("orphaned_volumes").asIntOrNull(),
-            lastGarbageCollectionAt = get("last_garbage_collection_at").asInstantOrNull(),
-        )
-        return StoredCloudCluster(cluster, ca, token)
+        database.query {
+            CloudClusters.update({ CloudClusters.id eq id }) {
+                it[CloudClusters.orphanedVolumes] = orphanedVolumes
+                it[lastGarbageCollectionAt] = at
+            }
+        }
     }
 }
 
-private const val COLUMNS = "id, name, api_url, sealed_ca, sealed_token, allowed_namespaces, max_running_pods, " +
-    "default_storage_class, version, created_at, updated_at, in_cluster, imported"
+// The columns an administrator's save writes, on an insert as on an update.
+private fun saved(row: UpdateBuilder<*>, stored: StoredCloudCluster) = with(stored.cluster) {
+    val c = CloudClusters
+    row[c.name] = name
+    row[c.apiUrl] = apiUrl
+    row[c.sealedCa] = stored.sealedCaCertificate
+    row[c.sealedToken] = stored.sealedServiceAccountToken
+    row[c.allowedNamespaces] = OstromJson.encodeToString(NAMES, allowedNamespaces)
+    row[c.maxRunningPods] = maxRunningPods
+    row[c.defaultStorageClass] = defaultStorageClass
+    row[c.version] = version
+    row[c.updatedAt] = updatedAt
+    row[c.inCluster] = inCluster
+}
 
-/** The garbage collection's report, read but never written by an administrator's save. */
-private const val REPORT = "orphaned_volumes, last_garbage_collection_at"
+private fun ResultRow.toStored(): StoredCloudCluster {
+    val c = CloudClusters
+    val ca = this[c.sealedCa]
+    val token = this[c.sealedToken]
+    val cluster = CloudCluster(
+        id = this[c.id],
+        name = this[c.name],
+        apiUrl = this[c.apiUrl],
+        allowedNamespaces = OstromJson.decodeFromString(NAMES, this[c.allowedNamespaces]),
+        maxRunningPods = this[c.maxRunningPods],
+        defaultStorageClass = this[c.defaultStorageClass],
+        version = this[c.version],
+        // An administrator's cluster always has both (a new one, or a new apiUrl, brings them); the imported one
+        // may have none: in-cluster, or its files unreadable at the import.
+        hasCaCertificate = ca.isNotEmpty(),
+        hasServiceAccountToken = token.isNotEmpty(),
+        createdAt = this[c.createdAt],
+        updatedAt = this[c.updatedAt],
+        inCluster = this[c.inCluster],
+        imported = this[c.imported],
+        orphanedVolumes = this[c.orphanedVolumes],
+        lastGarbageCollectionAt = this[c.lastGarbageCollectionAt],
+    )
+    return StoredCloudCluster(cluster, ca, token)
+}
+
 private val NAMES = ListSerializer(String.serializer())
