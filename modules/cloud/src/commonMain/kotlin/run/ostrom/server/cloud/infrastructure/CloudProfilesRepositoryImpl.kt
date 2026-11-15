@@ -43,7 +43,7 @@ class CloudProfilesRepositoryImpl(private val database: JdbcDatabase) : CloudPro
         val spec = OstromJson.encodeToString(CloudProfileSpec.serializer(), profile.spec)
         val p = CloudProfiles
         return database.inOrg(profile.orgId) {
-            val moved = if (profile.version == 1) {
+            val changed = if (profile.version == 1) {
                 p.insertIgnore {
                     it[id] = profile.id
                     it[orgId] = profile.orgId
@@ -52,7 +52,7 @@ class CloudProfilesRepositoryImpl(private val database: JdbcDatabase) : CloudPro
                     it[assignedMemberIds] = members
                     it[createdAt] = profile.createdAt
                     it[updatedAt] = profile.updatedAt
-                }.insertedCount == 1
+                }.insertedCount
             } else {
                 val previous = (p.id eq profile.id) and (p.orgId eq profile.orgId) and
                     (p.version eq profile.version - 1)
@@ -61,8 +61,9 @@ class CloudProfilesRepositoryImpl(private val database: JdbcDatabase) : CloudPro
                     it[version] = profile.version
                     it[assignedMemberIds] = members
                     it[updatedAt] = profile.updatedAt
-                } == 1
+                }
             }
+            val moved = changed == 1
             if (moved) {
                 CloudProfileVersions.insert {
                     it[profileId] = profile.id

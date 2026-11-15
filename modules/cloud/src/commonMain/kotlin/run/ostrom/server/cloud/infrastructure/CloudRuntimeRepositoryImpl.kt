@@ -32,21 +32,22 @@ class CloudRuntimeRepositoryImpl(private val database: JdbcDatabase) : CloudRunt
         val at = runtime.updatedAt
         val r = CloudRuntimeRows
         return database.query {
-            if (expectedUpdatedAt == null) {
+            val changed = if (expectedUpdatedAt == null) {
                 // The first save: one taken meanwhile is no row inserted.
                 r.insertIgnore {
                     it[id] = RUNTIME_ROW
                     it[r.body] = body
                     it[updatedAt] = at
                     it[updatedBy] = by
-                }.insertedCount == 1
+                }.insertedCount
             } else {
                 r.update({ (r.id eq RUNTIME_ROW) and (r.updatedAt eq expectedUpdatedAt) }) {
                     it[r.body] = body
                     it[updatedAt] = at
                     it[updatedBy] = by
-                } == 1
+                }
             }
+            changed == 1
         }
     }
 }

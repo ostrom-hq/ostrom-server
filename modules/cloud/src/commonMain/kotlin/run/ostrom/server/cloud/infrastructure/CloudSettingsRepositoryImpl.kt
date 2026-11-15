@@ -33,21 +33,22 @@ class CloudSettingsRepositoryImpl(private val database: JdbcDatabase) : CloudSet
         val body = BODY.encodeToString(CloudSettings.serializer(), settings)
         val s = CloudOrgSettings
         return database.inOrg(orgId) {
-            if (expectedUpdatedAt == null) {
+            val changed = if (expectedUpdatedAt == null) {
                 // The first save: one taken meanwhile is no row inserted.
                 s.insertIgnore {
                     it[s.orgId] = orgId
                     it[s.body] = body
                     it[updatedAt] = settings.updatedAt
                     it[updatedBy] = settings.updatedBy
-                }.insertedCount == 1
+                }.insertedCount
             } else {
                 s.update({ (s.orgId eq orgId) and (s.updatedAt eq expectedUpdatedAt) }) {
                     it[s.body] = body
                     it[updatedAt] = settings.updatedAt
                     it[updatedBy] = settings.updatedBy
-                } == 1
+                }
             }
+            changed == 1
         }
     }
 }

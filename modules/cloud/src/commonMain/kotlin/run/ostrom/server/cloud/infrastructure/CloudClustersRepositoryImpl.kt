@@ -39,7 +39,7 @@ class CloudClustersRepositoryImpl(private val database: JdbcDatabase) : CloudClu
 
     override suspend fun version(id: Uuid): Int? = database.query {
         CloudClusters.select(CloudClusters.version).where { CloudClusters.id eq id }
-            .firstOrNull()?.get(CloudClusters.version)
+            .map { it[CloudClusters.version] }.firstOrNull()
     }
 
     // A name taken is no row inserted, as a lost race is: the use case answers a conflict for both.
@@ -57,7 +57,8 @@ class CloudClustersRepositoryImpl(private val database: JdbcDatabase) : CloudClu
         val c = CloudClusters
         val other = c.alias("o")
         val nameFree = notExists(
-            other.select(other[c.id]).where { (other[c.name] eq stored.cluster.name) and (other[c.id] neq stored.cluster.id) },
+            other.select(other[c.id])
+                .where { (other[c.name] eq stored.cluster.name) and (other[c.id] neq stored.cluster.id) },
         )
         c.update({ (c.id eq stored.cluster.id) and (c.version eq stored.cluster.version - 1) and nameFree }) {
             saved(it, stored)
