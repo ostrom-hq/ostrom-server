@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners.domain
 
+import run.ostrom.server.kernel.auth.SignedInDevices
 import run.ostrom.server.kernel.sessions.PendingWaitAnswers
 import run.ostrom.server.kernel.sessions.SessionEndListener
 import kotlinx.coroutines.CancellationException
@@ -52,6 +53,9 @@ interface ReconcileCloudSessionUseCase {
  *   holds one).
  * @param retention How long a paused session keeps its workspace, read when it pauses ([CloudSession.expiresAt]).
  * @param backgroundWork How long the agent's background work holds off the idle pause, per organization.
+ * @param devices Whether a remote session's host device still exists: one removed while the removal could not end
+ *   its sessions ([EndRemovedDeviceSessions]) ends them here, with [RemoteSessionRules.DEVICE_REMOVED]; null where
+ *   the server has no signed-in devices (no remote session is ever created there).
  */
 // Each step is a decision table read top to bottom: an early return per outcome reads better than nested branches,
 // and one small function per state and per check keeps each table short.
@@ -69,10 +73,13 @@ class ReconcileCloudSessionUseCaseImpl(
     private val answers: PendingWaitAnswers = NoPendingWaitAnswers,
     private val transfers: CompleteCloudTransferUseCase? = null,
     private val retention: PausedRetention = KeepPausedSessions,
+    private val devices: SignedInDevices? = null,
     private val backgroundWork: BackgroundWorkLimit,
 ) : ReconcileCloudSessionUseCase {
     override suspend fun invoke(session: CloudSession): Instant? {
         val now = clock.now()
+        // No pod, workspace, cluster nor plan: only the server's side of its lifecycle moves.
+        if (session.kind == SessionKind.REMOTE) return remoteOrRemoved(session, now)
         if (session.state == SessionState.TERMINATED) {
             return when {
                 session.phase == CLEANUP_BLOCKED -> blockedCleanup(session, now)
@@ -622,8 +629,138 @@ class ReconcileCloudSessionUseCaseImpl(
             expiresAt = null,
         )
 
+    /**
+     * A remote session (TeamCode's `remote`): its host (`ostrom remote`) starts each execution itself, on its device
+     * ([HostRemoteSessionUseCase]). A host that took an epoch and never reported within [HOST_START], or went silent
+     * for [HEARTBEAT_LOSS] before it was ready, gives the epoch back and the session waits for its host again; a ready
+     * host silent for [HEARTBEAT_LOSS] pauses the session with [RemoteSessionRules.HOST_OFFLINE]; a pause completes
+     * once the host stopped, went silent or past [REMOTE_PAUSE_DEADLINE]; deletion and expiry end the session without
+     * touching the member's directory, which the server never sees.
+     */
+    @Suppress("CyclomaticComplexMethod") // A flat decision table over the session's state, as TeamCode's.
+    private suspend fun remote(s: CloudSession, now: Instant): Instant? {
+        val live = s.executionStartedAt != null
+        val seen = s.lastHeartbeatAt ?: s.executionStartedAt ?: now
+        val silent = live && now - seen > (if (s.lastHeartbeatAt == null) HOST_START else HEARTBEAT_LOSS)
+        return when {
+            s.state == SessionState.TERMINATED || s.state == SessionState.FAILED -> null
+            s.desiredState == DesiredState.TERMINATED -> remoteTerminated(s, now)
+            s.state == SessionState.PAUSED -> remotePaused(s, now)
+            s.state == SessionState.CREATING || s.state == SessionState.RESUMING -> when {
+                s.desiredState == DesiredState.PAUSED -> parked(s.toPaused(now, s.failure))
+                // A host that took an epoch but never reported (or went silent while starting) gives it back.
+                silent -> write(
+                    s.copy(phase = RemoteSessionRules.WAITING_HOST, executionStartedAt = null, updatedAt = now),
+                    null,
+                )
+                live -> now + WATCH_DELAY
+                // Nothing to do until a host starts an execution, which writes the session and asks for a look.
+                else -> null
+            }
+            s.state == SessionState.RUNNING -> when {
+                !live || silent -> parked(
+                    s.toPaused(now, HOST_OFFLINE_FAILURE).copy(desiredState = DesiredState.PAUSED),
+                )
+                s.desiredState != DesiredState.RUNNING -> write(s.toPausing(now, s.failure), now + STEP_DELAY)
+                else -> remoteIdle(s, now) ?: (now + WATCH_DELAY)
+            }
+            else -> remotePausing(s, now, live, silent)
+        }
+    }
+
+    /**
+     * The host device of a live remote session when it no longer exists (removed while its sessions could not be
+     * ended then, TeamCode ending them in the removal's own transaction); null when it exists or nothing is to end.
+     */
+    private suspend fun removedHost(s: CloudSession): Uuid? {
+        val devices = devices ?: return null
+        val host = s.host?.deviceId ?: return null
+        val ending = s.desiredState == DesiredState.TERMINATED || s.state == SessionState.TERMINATED
+        if (ending || s.state == SessionState.FAILED) return null
+        return host.takeIf { it !in devices.devices(setOf(it)) }
+    }
+
+    /** A remote session whose device is gone ends with `device_removed`; [remote] decides the rest. */
+    private suspend fun remoteOrRemoved(s: CloudSession, now: Instant): Instant? {
+        val removed = removedHost(s) ?: return remote(s, now)
+        repository.endOnRemovedDevice(SessionRef(s.orgId, s.id), removed, now)
+        return now
+    }
+
+    /** Terminated without anything to delete: its directory is the member's. */
+    private suspend fun remoteTerminated(s: CloudSession, now: Instant): Instant? {
+        val terminated = s.toTerminated(now).copy(executionStartedAt = null, runnerTokenHash = null, phase = null)
+        repository.compareAndSet(terminated, null) ?: return clock.now()
+        ended.forEach { it.ended(s.orgId, listOf(s.id.toString())) }
+        return null
+    }
+
+    /** Past its expiry it ends; woken, it waits for its host to start the next execution. */
+    private suspend fun remotePaused(s: CloudSession, now: Instant): Instant? {
+        val expiresAt = s.expiresAt
+        if (expiresAt != null && expiresAt <= now) {
+            val expired = s.copy(
+                desiredState = DesiredState.TERMINATED,
+                terminatedReason = CloudSession.TERMINATED_EXPIRED,
+                updatedAt = now,
+            )
+            return write(expired, now)
+        }
+        if (s.desiredState != DesiredState.RUNNING) return expiresAt
+        val waiting = s.moveTo(SessionState.RESUMING, now).copy(
+            phase = RemoteSessionRules.WAITING_HOST,
+            executionStartedAt = null,
+            pausedAt = null,
+            expiresAt = null,
+            failure = null,
+        )
+        return write(waiting, null)
+    }
+
+    /** Pauses an idle remote session after the organization's `remoteIdleTimeoutMinutes`; 0 never does. */
+    private suspend fun remoteIdle(s: CloudSession, now: Instant): Instant? {
+        val minutes = s.limits.idleTimeoutMinutes
+        if (minutes <= 0) return null
+        val timeout = minutes.minutes
+        val idleSince = s.lastActivityAt ?: s.readyAt ?: now
+        if (now - idleSince < timeout || backgroundHolds(s, now, timeout)) return null
+        val reason = SessionFailure(IDLE_TIMEOUT, "Paused after $minutes minutes without activity.")
+        return write(s.toPausing(now, reason).copy(desiredState = DesiredState.PAUSED), now + STEP_DELAY)
+    }
+
+    /**
+     * A resume before the host stopped cancels the pause: the host is alive, it stops draining and takes messages
+     * again. Otherwise the pause completes once the host stopped, went silent, or past [REMOTE_PAUSE_DEADLINE].
+     */
+    private suspend fun remotePausing(s: CloudSession, now: Instant, live: Boolean, silent: Boolean): Instant? {
+        val since = s.pausingSince ?: now
+        val hostAlive = live && !silent && s.runnerStoppedAt == null
+        if (hostAlive && s.desiredState == DesiredState.RUNNING) {
+            val running = s.moveTo(SessionState.RUNNING, now)
+                .copy(phase = null, pausingSince = null, failure = null, lastActivityAt = now)
+            return write(running, now)
+        }
+        val done = !live || silent || s.runnerStoppedAt != null || now - since > REMOTE_PAUSE_DEADLINE
+        if (!done) return now + STEP_DELAY
+        val paused = s.toPaused(now, s.failure).copy(desiredState = s.desiredState)
+        return write(paused, if (paused.desiredState == DesiredState.RUNNING) now else paused.expiresAt)
+    }
+
     /** Constants and readers of the enclosing type. */
     companion object {
+        /** How long a remote host may hold a new epoch without reporting (TeamCode's `HOST_START_MILLIS`). */
+        private val HOST_START: Duration = 120.seconds
+
+        /** A remote host drains its turn and checkpoints for at most this long (TeamCode's pausing deadline). */
+        private val REMOTE_PAUSE_DEADLINE: Duration = 15.minutes
+
+        /** Why a remote session whose host went silent paused. */
+        private val HOST_OFFLINE_FAILURE = SessionFailure(
+            RemoteSessionRules.HOST_OFFLINE,
+            "The host device stopped responding; the session resumes when its host starts again.",
+            retryable = true,
+        )
+
         /** A start must report ready within this time, image pull and repository clone included. */
         private val START_TIMEOUT: Duration = 15.minutes
 

@@ -317,6 +317,8 @@ class CloudAdminRoutesPostgresTest {
         val kept = http.send("PUT", path, "alice", without)
         assertEquals(5, kept.body<CloudSettingsResponse>().maxRunningAutomationsPerMember)
         assertEquals(5, server.koin.get<CloudSettingsSource>().current(ORG_A).maxRunningAutomationsPerMember)
+        // The idle timeout of remote sessions is not on the routes yet: a save keeps it.
+        assertEquals(60, server.koin.get<CloudSettingsSource>().current(ORG_A).remoteIdleTimeoutMinutes)
 
         // Organization B sees its own defaults and its save never touches A's.
         val carols = http.get(path) { bearerAuth("carol") }.body<CloudSettingsResponse>()

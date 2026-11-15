@@ -5,15 +5,16 @@ import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
 
 /**
- * `GET /api/v1/cloud/sessions` (the caller's sessions, `?before=<id>&limit=`) and `POST` (create), as in
+ * `GET /api/v1/cloud/sessions` (the caller's sessions, `?before=<id>&limit=&kind=`) and `POST` (create), as in
  * ostrom-core's `api/openapi.yaml` (operations `listCloudSessions`, `createCloudSession`).
  *
  * @property before The cursor of the previous page.
  * @property limit The page size, 1 to 50.
+ * @property kind The kinds listed, repeatable (`cloud`, `remote`); cloud sessions only when absent.
  */
 @Serializable
 @Resource("/api/v1/cloud/sessions")
-class CloudSessionsApi(val before: String? = null, val limit: Int? = null) {
+class CloudSessionsApi(val before: String? = null, val limit: Int? = null, val kind: List<String> = emptyList()) {
     /**
      * `GET`/`DELETE /api/v1/cloud/sessions/{id}`.
      *
@@ -40,6 +41,15 @@ class CloudSessionsApi(val before: String? = null, val limit: Int? = null) {
         @Serializable
         @Resource("resume")
         class Resume(val parent: Id)
+
+        /**
+         * `POST /api/v1/cloud/sessions/{id}/host` (`hostCloudSession`, `runners.cloud.remote.v1`).
+         *
+         * @property parent The session.
+         */
+        @Serializable
+        @Resource("host")
+        class Host(val parent: Id)
 
         /**
          * `PUT /api/v1/cloud/sessions/{id}/github` (`setCloudSessionGithubAccess`).
@@ -292,6 +302,14 @@ data class RunnerGitHubTokenResponse(
  * @property profileId The cloud profile a Kubernetes session runs on (`runners.cloud.profiles.v1`); the one the owner
  *   may use when absent.
  * @property image The session image instead of the profile's: one of its allowed overrides.
+ * @property mode `terminal` or `conversation`.
+ * @property effort The agent's effort.
+ * @property kind `cloud` (absent) or `remote` (`runners.cloud.remote.v1`): on the caller's own device.
+ * @property directoryName With [kind] `remote`: the last segment of the directory the agent works in.
+ * @property permissionMode With [kind] `remote`: `ask` (absent) or `bypass`.
+ * @property deviceId With [kind] `remote`: another device of the caller's (`runners.cloud.remote.daemon.v1`).
+ * @property folderId With [deviceId]: one of its published folders.
+ * @property resumeSessionId With [deviceId] and [folderId]: the device's conversation it continues.
  */
 @Serializable
 data class CreateCloudSessionRequest(
@@ -306,7 +324,49 @@ data class CreateCloudSessionRequest(
     val image: String? = null,
     val mode: String? = null,
     val effort: String? = null,
+    val kind: String? = null,
+    val directoryName: String? = null,
+    val permissionMode: String? = null,
+    val deviceId: String? = null,
+    val folderId: String? = null,
+    val resumeSessionId: String? = null,
 )
+
+/**
+ * The device a remote session runs on (`CloudSessionHost`).
+ *
+ * @property deviceId The device; absent once it was removed.
+ * @property deviceName Its name as it is now.
+ * @property platform Its system as it is now.
+ * @property osVersion The system's version.
+ * @property directoryName The last segment of the session's directory.
+ * @property online Whether an execution of its host reported within the last 90 s.
+ * @property lastHeartbeatAt The host's latest heartbeat.
+ * @property permissionMode `ask` or `bypass`.
+ * @property folderId The daemon's published folder it was started in.
+ */
+@Serializable
+data class CloudSessionHostDto(
+    val deviceId: String? = null,
+    val deviceName: String? = null,
+    val platform: String? = null,
+    val osVersion: String? = null,
+    val directoryName: String? = null,
+    val online: Boolean = false,
+    val lastHeartbeatAt: String? = null,
+    val permissionMode: String? = null,
+    val folderId: String? = null,
+)
+
+/**
+ * The execution a remote session's host just opened (`CloudHost`).
+ *
+ * @property orgId The session's organization.
+ * @property epoch The new execution.
+ * @property session The session at that execution.
+ */
+@Serializable
+data class CloudHostResponse(val orgId: String, val epoch: Long, val session: CloudSessionResponse)
 
 /**
  * The cloud profile a session runs on, at the version it was created with (`CloudSessionProfile`).
@@ -409,6 +469,8 @@ data class CloudSessionResponse(
     val permissionBypass: Boolean? = null,
     val waiting: CloudSessionWaitingDto? = null,
     val transferId: String? = null,
+    val kind: String? = null,
+    val host: CloudSessionHostDto? = null,
 )
 
 /**

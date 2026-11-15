@@ -37,7 +37,12 @@ import run.ostrom.server.identity.fakes.RecordingAuditLog
 import run.ostrom.server.identity.fakes.ScriptedRateLimiter
 import run.ostrom.server.identity.fakes.SettableClock
 import run.ostrom.server.identity.presentation.toDeviceResponse
+import run.ostrom.server.identity.domain.SignedInDevicesImpl
+import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import run.ostrom.server.kernel.auth.DeviceRemovalListener
 import run.ostrom.server.kernel.auth.OrgPrincipal
+import run.ostrom.server.kernel.auth.PrincipalKind
+import run.ostrom.server.kernel.auth.SignedInDevice
 import run.ostrom.server.kernel.auth.OrgRole
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -70,7 +75,16 @@ class DeviceIdentityTest {
     private val list = ListDevicesUseCaseImpl(tokens, elevated, devices, clock)
     private val listMember = ListMemberDevicesUseCaseImpl(directory, list)
     private val rename = RenameDeviceUseCaseImpl(devices, directory, list, audit)
-    private val signOut = SignOutDeviceUseCaseImpl(tokens, elevated, devices, directory, audit, clock)
+    private val removals = mutableListOf<Pair<Uuid, Uuid>>()
+    private val signOut = SignOutDeviceUseCaseImpl(
+        tokens,
+        elevated,
+        devices,
+        directory,
+        audit,
+        clock,
+        listOf(DeviceRemovalListener { user, device -> removals += user to device }),
+    )
     private val ada = Uuid.random()
     private val bea = Uuid.random()
     private val orgA = Uuid.random()
@@ -388,6 +402,8 @@ class DeviceIdentityTest {
             listOf(removed.action, removed.targetType, removed.targetId, removed.actorId),
         )
         assertTrue(removed.details.isEmpty())
+        // Its remote sessions end with it (runners.cloud.remote.v1).
+        assertEquals(listOf(ada to id), removals)
         assertFailsWith<DeviceNotFoundException> { signOut(ada, id) }
         // Its next login registers the installation again, under a new id.
         assertNotEquals(id, login(ada).deviceId)
@@ -444,5 +460,40 @@ class DeviceIdentityTest {
         )
         tokens.create(token, "h(${token.id})")
         return token
+    }
+
+    @Test
+    fun aSignInsDeviceIsTheOneItsCliTokenWasIssuedFor() = runTest {
+        val signedIn = SignedInDevicesImpl(tokens, devices)
+        val token = login(ada)
+        val device = checkNotNull(token.deviceId)
+        val principal = AuthenticatedPrincipal(
+            ada.toString(),
+            PrincipalKind.USER,
+            setOf("user:*"),
+            credentialId = token.id.toString(),
+            signedIn = true,
+        )
+        assertEquals(device, signedIn.deviceOf(principal))
+        for (other in listOf(
+            principal.copy(kind = PrincipalKind.SERVICE),
+            principal.copy(signedIn = false),
+            principal.copy(subjectId = "ada"),
+            principal.copy(credentialId = null),
+            principal.copy(credentialId = "not-an-id"),
+            principal.copy(credentialId = Uuid.random().toString()),
+        )) {
+            assertNull(signedIn.deviceOf(other))
+        }
+        val stored = tokens.tokens.entries.single { it.value.id == token.id }
+        tokens.tokens[stored.key] = token.copy(kind = TokenKind.PERSONAL)
+        assertNull(signedIn.deviceOf(principal))
+        tokens.tokens[stored.key] = token.copy(revokedAt = clock.now)
+        assertNull(signedIn.deviceOf(principal))
+
+        assertEquals(
+            mapOf(device to SignedInDevice(device, ada, "Work laptop", "macos", "15.1")),
+            signedIn.devices(listOf(device, Uuid.random())),
+        )
     }
 }

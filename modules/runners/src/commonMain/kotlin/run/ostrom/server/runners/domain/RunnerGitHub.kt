@@ -158,6 +158,12 @@ class SetCloudSessionGitHubAccessUseCaseImpl(
             ?: throw InvalidCloudSessionRequestException("The access must be owner, shared or none.")
         val session = repository.ownedBy(caller, id)
         if (session.state.isFinal) throw CloudSessionStateException("This session is over.")
+        if (session.kind == SessionKind.REMOTE) {
+            throw RemoteSessionRules.conflict(
+                "github_access_unsupported",
+                "A remote session uses the GitHub access of the device it runs on.",
+            )
+        }
         if (session.githubAccess == mode) return session
         // A running execution's `gh` keeps the token it was handed until it expires: revoke the access paused.
         if (mode == GitHubAccessMode.NONE && session.state != SessionState.PAUSED) throw SessionNotPausedException()

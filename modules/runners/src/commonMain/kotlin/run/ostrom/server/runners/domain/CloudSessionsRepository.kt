@@ -66,10 +66,17 @@ interface CloudSessionsRepository {
      * @param ownerId The owner.
      * @param before Only sessions created before this one (a cursor from the previous page), or null.
      * @param limit The page size.
+     * @param kinds The kinds listed (`?kind=`).
      *
      * @return The page.
      */
-    suspend fun list(orgId: Uuid, ownerId: String, before: Uuid?, limit: Int): List<CloudSession>
+    suspend fun list(
+        orgId: Uuid,
+        ownerId: String,
+        before: Uuid?,
+        limit: Int,
+        kinds: Set<SessionKind> = setOf(SessionKind.CLOUD),
+    ): List<CloudSession>
 
     /**
      * Lists the sessions of a member that hold an execution (creating, running, pausing, resuming): the runners at
@@ -149,6 +156,28 @@ interface CloudSessionsRepository {
      * @return The session, or null.
      */
     suspend fun findByRunnerTokenHash(tokenHash: String): CloudSession?
+
+    /**
+     * The sessions a device hosts or hosted, every organization's (a device is a person's, not an organization's).
+     *
+     * @param deviceId The device.
+     * @param live Only the ones not over (neither terminated nor failed).
+     *
+     * @return Their ids and organizations.
+     */
+    suspend fun hostedOn(deviceId: Uuid, live: Boolean = false): List<SessionRef>
+
+    /**
+     * Ends a session on a removed device: asked to terminate with [RemoteSessionRules.DEVICE_REMOVED] unless it is over
+     * or ending already, and its host forgotten either way, in one transaction of its organization.
+     *
+     * @param ref The session.
+     * @param deviceId The device removed.
+     * @param now When.
+     *
+     * @return True when it was asked to terminate.
+     */
+    suspend fun endOnRemovedDevice(ref: SessionRef, deviceId: Uuid, now: Instant): Boolean
 
     /**
      * Claims sessions due for reconciliation with a lease, so that one replica works on a session at a time.

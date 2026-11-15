@@ -68,6 +68,8 @@ import kotlin.uuid.Uuid
  * @property waiting Why the agent waits for a person, while it does.
  * @property workspaceDeletion The proof its workspace is gone, provider volume included, on a runtime that
  *   [proves it][RuntimeDriver.provesDeletion] (Kubernetes); null elsewhere, and before it ends.
+ * @property kind Where it runs: a pod the server starts, or its owner's own device ([SessionKind.REMOTE]).
+ * @property host The device a remote session runs on; null for a cloud session.
  */
 data class CloudSession(
     val id: Uuid,
@@ -113,6 +115,8 @@ data class CloudSession(
     val permissionBypass: PermissionBypass? = null,
     val waiting: CloudHumanWait? = null,
     val workspaceDeletion: WorkspaceDeletion? = null,
+    val kind: SessionKind = SessionKind.CLOUD,
+    val host: RemoteHost? = null,
 ) {
     /** Its workspace's deletion while it is pending or blocked, and so looked at again until it is proven gone. */
     val cleanup: WorkspaceDeletion?

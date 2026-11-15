@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.identity.domain
 
+import run.ostrom.server.kernel.auth.DeviceRemovalListener
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.auth.OrgPrincipal
 import run.ostrom.server.kernel.auth.OrgRole
@@ -261,7 +262,10 @@ interface SignOutDeviceUseCase {
  * @param members Whether a device's owner is a member of the organization.
  * @param audit The audit log.
  * @param clock The clock.
+ * @param removals Told once a registered device is removed (the runners module ends its remote sessions).
  */
+// Its collaborators are the stores of the three kinds of workstation, the audit and who is told of a removal.
+@Suppress("LongParameterList")
 class SignOutDeviceUseCaseImpl(
     private val tokens: ApiTokensRepository,
     private val elevated: ElevatedTokensRepository,
@@ -269,6 +273,7 @@ class SignOutDeviceUseCaseImpl(
     private val members: MemberDirectory,
     private val audit: AuditLog,
     private val clock: Clock,
+    private val removals: List<DeviceRemovalListener> = emptyList(),
 ) : SignOutDeviceUseCase {
     override suspend fun invoke(userId: Uuid, deviceId: Uuid, member: OrgPrincipal?) {
         // `revoke` refuses a token already revoked; the kind is checked first, so no other token is signed out here.
@@ -284,6 +289,7 @@ class SignOutDeviceUseCaseImpl(
             if (!devices.remove(device.userId, deviceId, clock.nowMillis())) throw DeviceNotFoundException()
             val details = ownerDetails(device, userId)
             audit.record(AuditEntry(orgId, userId, "device.removed", "device", deviceId.toString(), details))
+            removals.forEach { it.removed(device.userId, deviceId) }
             return
         }
         if (member == null) throw DeviceNotFoundException()

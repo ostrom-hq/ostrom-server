@@ -362,12 +362,18 @@ class CloudTransfersUseCaseImpl(
          * What a transfer may start from: anything but creation and the end of the session. A session that is
          * transferring or whose transfer is accepted takes no other, except [allowing] (the one being accepted).
          *
+         * @throws RemoteSessionException `remote_not_transferable` for a remote session.
          * @throws SessionNotRunningException When the session is over.
          * @throws SessionPreparingException When it is being created.
          * @throws TransferPendingException When it already has an accepted transfer.
          */
         fun transferable(session: CloudSession, allowing: Uuid? = null) {
             when {
+                // It runs on its owner's device, in a directory of theirs: nobody else could resume it.
+                session.kind == SessionKind.REMOTE -> throw RemoteSessionRules.conflict(
+                    "remote_not_transferable",
+                    "A remote session runs on its owner's device and cannot be transferred.",
+                )
                 session.state.isFinal || session.desiredState == DesiredState.TERMINATED ->
                     throw SessionNotRunningException()
                 session.state == SessionState.CREATING -> throw SessionPreparingException()

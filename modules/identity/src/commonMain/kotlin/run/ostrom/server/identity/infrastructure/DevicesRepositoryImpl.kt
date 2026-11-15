@@ -9,6 +9,7 @@ import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.select
@@ -39,6 +40,11 @@ class DevicesRepositoryImpl(private val database: JdbcDatabase) : DevicesReposit
     override suspend fun get(id: Uuid): RegisteredDevice? = database.query {
         t.select(t.columns).where { t.id eq id }.singleOrNull()?.toDevice()
     }
+
+    override suspend fun getAll(ids: Collection<Uuid>): List<RegisteredDevice> =
+        if (ids.isEmpty()) emptyList() else database.query {
+            t.select(t.columns).where { t.id inList ids.distinct() }.map { it.toDevice() }
+        }
 
     override suspend fun list(userId: Uuid): List<RegisteredDevice> = database.query {
         t.select(t.columns)

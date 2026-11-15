@@ -497,6 +497,12 @@ class CloudTransfersUseCaseTest {
     fun aSessionStartsATransferUnlessItIsOverPreparingOrMovingAlready() {
         val moving = session(state = SessionState.RUNNING)
         CloudTransfersUseCaseImpl.transferable(moving)
+        // A remote session runs on its owner's device: nobody else could resume it.
+        val remote = assertFailsWith<run.ostrom.server.runners.domain.RemoteSessionException> {
+            val kind = run.ostrom.server.runners.domain.SessionKind.REMOTE
+            CloudTransfersUseCaseImpl.transferable(moving.copy(kind = kind))
+        }
+        assertEquals("remote_not_transferable", remote.type)
         val id = Uuid.random()
         CloudTransfersUseCaseImpl.transferable(moving.copy(transferId = id), allowing = id)
         assertFailsWith<TransferPendingException> {

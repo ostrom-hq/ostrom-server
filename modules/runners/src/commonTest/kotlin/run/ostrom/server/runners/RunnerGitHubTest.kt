@@ -140,6 +140,13 @@ class RunnerGitHubTest {
         assertEquals(mapOf("from" to "owner", "to" to "shared"), record.details)
         assertEquals(shared, access(alice, principal, session.id, "shared"), "Unchanged: nothing to audit")
         assertEquals(1, audit.records.size)
+        // A remote session uses the GitHub access of its device.
+        val remote = execution().copy(kind = run.ostrom.server.runners.domain.SessionKind.REMOTE).also(repository::put)
+        val refused = assertFailsWith<run.ostrom.server.runners.domain.RemoteSessionException> {
+            access(alice, principal, remote.id, "shared")
+        }
+        assertEquals("github_access_unsupported", refused.type)
+        repository.sessions.remove(remote.id)
 
         assertFailsWith<SessionNotPausedException> { access(alice, principal, session.id, "none") }
         repository.put(repository.sessions.getValue(session.id).copy(state = SessionState.PAUSED))

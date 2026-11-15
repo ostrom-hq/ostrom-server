@@ -315,12 +315,19 @@ interface ListCloudSessionsUseCase {
      * @param caller The member.
      * @param before The cursor of the previous page (its last session's id), or null for the first page.
      * @param limit The page size, 1 to 50; 20 when null.
+     * @param kinds The kinds listed: cloud sessions only by default, so that a client from before remote sessions
+     *   never lists one it cannot show.
      *
      * @return The sessions, newest first.
      *
      * @throws InvalidCloudSessionRequestException When the limit is out of bounds.
      */
-    suspend operator fun invoke(caller: Caller, before: Uuid?, limit: Int?): List<CloudSession>
+    suspend operator fun invoke(
+        caller: Caller,
+        before: Uuid?,
+        limit: Int?,
+        kinds: Set<SessionKind> = setOf(SessionKind.CLOUD),
+    ): List<CloudSession>
 }
 
 /**
@@ -329,11 +336,16 @@ interface ListCloudSessionsUseCase {
  * @param repository The sessions.
  */
 class ListCloudSessionsUseCaseImpl(private val repository: CloudSessionsRepository) : ListCloudSessionsUseCase {
-    override suspend fun invoke(caller: Caller, before: Uuid?, limit: Int?): List<CloudSession> {
+    override suspend fun invoke(
+        caller: Caller,
+        before: Uuid?,
+        limit: Int?,
+        kinds: Set<SessionKind>,
+    ): List<CloudSession> {
         val size = limit ?: DEFAULT_PAGE
         ensureValid(size in 1..MAX_PAGE) { "The limit must be between 1 and $MAX_PAGE." }
         // A `before` that names no session of the organization (forged, or another's) is a 400, not an empty page.
-        return Pages.checked("before", before, repository.list(caller.orgId, caller.memberId, before, size)) {
+        return Pages.checked("before", before, repository.list(caller.orgId, caller.memberId, before, size, kinds)) {
             repository.get(caller.orgId, it) != null
         }
     }
@@ -421,7 +433,8 @@ class ChangeCloudSessionUseCaseImpl(
         if (session.desiredState == DesiredState.RUNNING) return session
         val plan = plans.planFor(caller.orgId)
         val now = clock.now()
-        requireHoursLeft(usage, plan, caller.orgId, now)
+        // A remote session runs on its owner's device: no hour of the plan is used.
+        if (session.kind == SessionKind.CLOUD) requireHoursLeft(usage, plan, caller.orgId, now)
         val outcome = repository.resumeWithinCap(caller.orgId, id, plan.maxRunningSessions, now)
         if (outcome is ResumeOutcome.Resumed) return outcome.session
         throw if (outcome == ResumeOutcome.AtCap) {

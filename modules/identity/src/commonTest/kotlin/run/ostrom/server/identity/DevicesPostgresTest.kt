@@ -371,6 +371,9 @@ class DevicesPostgresTest {
             val stored = assertNotNull(devices.find(ada.user.id, INSTALLATION))
             assertEquals(listOf("d", "macos", null), listOf(stored.name, stored.platform, stored.osVersion))
             assertEquals(1, devices.count(ada.user.id))
+            // The devices of remote sessions, read in one query; an unknown id is none.
+            assertEquals(listOf(stored), devices.getAll(listOf(stored.id, stored.id, Uuid.random())))
+            assertEquals(emptyList(), devices.getAll(emptyList()))
         }
 
     private companion object {
