@@ -46,7 +46,7 @@ internal class ConfirmationsRepositoryImpl(private val database: JdbcDatabase) :
         database.inOrg(orgId) { waitingRead(orgId, userId, now).map { it.toConfirmation() } }
 
     override suspend fun expire(orgId: Uuid, now: Instant): List<Confirmation> = database.inOrg(orgId) {
-        buildStatement { expireOverdue(orgId, now) }.toExecutable().execute(this).map { it.toConfirmation() }
+        buildStatement { expireOverdue(orgId, now) }.toExecutable().map { it.toConfirmation() }
     }
 
     override suspend fun answer(orgId: Uuid, id: String, outcome: ConfirmationOutcome): Boolean =

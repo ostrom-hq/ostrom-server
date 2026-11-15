@@ -7,10 +7,12 @@ import run.ostrom.server.governance.domain.ConfirmationRules
 import run.ostrom.server.governance.domain.Confirmation
 import run.ostrom.server.kernel.database.InstantColumnType
 import org.jetbrains.exposed.v1.core.CustomFunction
+import org.jetbrains.exposed.v1.core.Expression
 import org.jetbrains.exposed.v1.core.IntegerColumnType
 import org.jetbrains.exposed.v1.core.QueryParameter
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.Table
+import org.jetbrains.exposed.v1.core.TextColumnType
 import org.jetbrains.exposed.v1.core.UuidColumnType
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.case
@@ -100,8 +102,8 @@ internal fun StatementBuilder.expireOverdue(orgId: Uuid, now: Instant): Returnin
             (C.expiresAt lessEq now - ConfirmationRules.RESULT_GRACE))
     return C.updateReturning(C.columns, where = { (C.orgId eq orgId) and overdue }) {
         it[status] = case().When(pending, stringParam("expired")).Else(stringParam("failed"))
-        it[errorType] = case().When(pending, errorType).Else(stringParam(ConfirmationRules.RESULT_LOST))
-        it[errorMessage] = case().When(pending, errorMessage).Else(stringParam(ConfirmationRules.RESULT_LOST_MESSAGE))
+        it[errorType] = case().When(pending, errorType).Else(nullableText(ConfirmationRules.RESULT_LOST))
+        it[errorMessage] = case().When(pending, errorMessage).Else(nullableText(ConfirmationRules.RESULT_LOST_MESSAGE))
     }
 }
 
@@ -129,6 +131,9 @@ internal fun StatementBuilder.errorUpdate(orgId: Uuid, id: String, error: Confir
         it[errorType] = error.type
         it[errorMessage] = error.message
     }
+
+/** A bound text as an expression of a nullable column's type, for a `CASE` that keeps the column otherwise. */
+private fun nullableText(value: String): Expression<String?> = QueryParameter(value, TextColumnType())
 
 /** The function the sweep reads across organizations (owned by `ostrom_router`, migration 3). */
 internal fun expiredOrganizations(now: Instant, limit: Int): CustomFunction<Uuid> = CustomFunction(
