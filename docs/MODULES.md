@@ -223,7 +223,9 @@ fun Route.orgsRoutes(dependencies: OrgsRoutesDependencies) = with(dependencies) 
   `ktor-server-routing-openapi`, as TeamCode's `ApiDocs.kt`; ostrom-core docs/decisions/0001-generated-openapi.md).
   Nothing is written by hand: each module's `apiOperations` (`presentation/<X>Operations.kt`) gives every route it
   mounts its entry (summary, description, `operationId`, tag, parameters, `body<T>()`, `ok<T>()`, errors), and the
-  schemas come from the Kotlin models. The server serves it at `GET /api/openapi.json` (Swagger UI at `/api/docs`);
+  schemas come from the Kotlin models. The server serves it at `GET /api/openapi.json` (Swagger UI at `/api/docs`;
+  <!-- docs-truth: ignore: the document's own routes are hidden from it, so core's served-routes.txt never lists them -->
+  both kept out of the document they serve);
   `ApiDocumentPostgresTest` (app) fails for a route without its entry, an entry without its route, and a document a
   generator would refuse (a dangling `$ref`), and CI keeps it as the `openapi-generated` artifact, which the
   `api-package` job publishes as `@ostrom-hq/openapi` for the console and the site. Every test server checks its JSON
