@@ -262,8 +262,9 @@ class SlackPostgresTest {
         assertEquals(bobMember, links.memberOf(org.id, "U-same"))
         assertEquals(null, links.of(org.id, eveMember))
         links.save(org.id, StoredSlackLink(bobMember, "U-same", now))
-        // Any other database failure is not mistaken for a taken account (a timestamp PostgreSQL cannot hold).
-        assertFailsWith<ExposedSQLException> { links.save(org.id, StoredSlackLink(bobMember, "U-same", Instant.DISTANT_FUTURE)) }
+        // Any other database failure is not mistaken for a taken account (text PostgreSQL cannot hold).
+        val nul = StoredSlackLink(bobMember, "U\u0000", now)
+        assertFailsWith<ExposedSQLException> { links.save(org.id, nul) }
 
         val raced = object : SlackLinksRepository by links {
             override suspend fun memberOf(orgId: Uuid, slackUserId: String): Uuid? = null
