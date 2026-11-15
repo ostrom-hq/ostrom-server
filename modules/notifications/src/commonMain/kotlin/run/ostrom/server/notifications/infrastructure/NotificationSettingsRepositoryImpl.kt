@@ -1,74 +1,68 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.notifications.infrastructure
 
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.notifications.domain.NotificationKind
 import run.ostrom.server.notifications.domain.NotificationSetting
 import run.ostrom.server.notifications.domain.NotificationSettingsRepository
 import run.ostrom.server.notifications.domain.SwitchedOff
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.not
+import org.jetbrains.exposed.v1.core.statements.insertValue
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.upsert
 import kotlin.uuid.Uuid
 
 /**
- * [NotificationSettingsRepository] on `notifications_member_settings` (version 4 of [NotificationsMigrations]), every
- * statement confined to its organization. A stored kind this server no longer knows is left out.
+ * [NotificationSettingsRepository] on `notifications_member_settings` (version 4 of [NotificationsMigrations]) through
+ * Exposed, every statement confined to its organization (`withOrganization`, with its own `org_id` filter). A stored
+ * kind this server no longer knows is left out.
  *
- * @param driver The database.
+ * @param database The serving role's pool.
  */
-class NotificationSettingsRepositoryImpl(private val driver: Driver) : NotificationSettingsRepository {
+class NotificationSettingsRepositoryImpl(private val database: JdbcDatabase) : NotificationSettingsRepository {
     override suspend fun settings(orgId: Uuid, memberId: Uuid): List<NotificationSetting> =
-        driver.withOrganization(orgId) { tx ->
-            tx.fetchAll(
-                Statement.create(SETTINGS_SQL).bind("org_id", orgId).bind("member_id", memberId),
-            ).getOrThrow().mapNotNull { row ->
-                NotificationKind.parse(row.get("kind").asString())?.let {
-                    NotificationSetting(row.get("channel").asString(), it, row.get("enabled").asBoolean())
+        database.withOrganization(orgId) {
+            val s = NotificationsMemberSettings
+            s.select(s.channel, s.kind, s.enabled)
+                .where { (s.orgId eq orgId) and (s.memberId eq memberId) }
+                .mapNotNull { row ->
+                    val kind = NotificationKind.parse(row[s.kind])
+                    if (kind == null) null else NotificationSetting(row[s.channel], kind, row[s.enabled])
                 }
-            }
         }
 
     override suspend fun set(orgId: Uuid, memberId: Uuid, setting: NotificationSetting) {
-        driver.withOrganization(orgId) { tx ->
-            tx.execute(
-                Statement.create(SET_SQL)
-                    .bind("org_id", orgId)
-                    .bind("member_id", memberId)
-                    .bind("channel", setting.channel)
-                    .bind("kind", setting.kind.wire)
-                    .bind("enabled", setting.enabled),
-            ).getOrThrow()
+        database.withOrganization(orgId) {
+            val s = NotificationsMemberSettings
+            s.upsert(s.orgId, s.memberId, s.channel, s.kind, onUpdate = { it[s.enabled] = insertValue(s.enabled) }) {
+                it[s.orgId] = orgId
+                it[s.memberId] = memberId
+                it[s.channel] = setting.channel
+                it[s.kind] = setting.kind.wire
+                it[s.enabled] = setting.enabled
+            }
         }
     }
 
     override suspend fun disabled(orgId: Uuid, memberIds: Set<Uuid>): Set<SwitchedOff> =
-        driver.withOrganization(orgId) { tx ->
-            tx.fetchAll(
-                Statement.create(DISABLED_SQL).bind("org_id", orgId).bind("members", memberIds.joinToString(",")),
-            ).getOrThrow().mapNotNull { row ->
-                NotificationKind.parse(row.get("kind").asString())?.let {
-                    SwitchedOff(row.get("member_id").asUuid(), row.get("channel").asString(), it)
-                }
-            }.toSet()
+        database.withOrganization(orgId) {
+            val s = NotificationsMemberSettings
+            s.select(s.memberId, s.channel, s.kind)
+                .where { (s.orgId eq orgId) and not(s.enabled) and (s.memberId inList memberIds) }
+                .mapNotNull { row ->
+                    val kind = NotificationKind.parse(row[s.kind])
+                    if (kind == null) null else SwitchedOff(row[s.memberId], row[s.channel], kind)
+                }.toSet()
         }
 
     override suspend fun deleteAll(orgId: Uuid) {
-        driver.withOrganization(orgId) { tx ->
-            tx.execute(Statement.create(DELETE_SQL).bind("org_id", orgId)).getOrThrow()
+        database.withOrganization(orgId) {
+            NotificationsMemberSettings.deleteWhere { NotificationsMemberSettings.orgId eq orgId }
         }
-    }
-
-    private companion object {
-        const val SETTINGS_SQL = "SELECT channel, kind, enabled FROM notifications_member_settings " +
-            "WHERE org_id = :org_id AND member_id = :member_id"
-        const val SET_SQL = "INSERT INTO notifications_member_settings (org_id, member_id, channel, kind, enabled) " +
-            "VALUES (:org_id, :member_id, :channel, :kind, :enabled) " +
-            "ON CONFLICT (org_id, member_id, channel, kind) DO UPDATE SET enabled = EXCLUDED.enabled"
-        const val DISABLED_SQL = "SELECT member_id, channel, kind FROM notifications_member_settings " +
-            "WHERE org_id = :org_id AND NOT enabled " +
-            "AND member_id = ANY(CAST(string_to_array(CAST(:members AS TEXT), ',') AS UUID[]))"
-        const val DELETE_SQL = "DELETE FROM notifications_member_settings WHERE org_id = :org_id"
     }
 }

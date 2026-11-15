@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.notifications
 
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.withOrganization
-import run.ostrom.server.notifications.infrastructure.DELETE_SQL
-import run.ostrom.server.notifications.infrastructure.FORGET_BROWSERS_SQL
-import run.ostrom.server.notifications.infrastructure.FORGET_CREDENTIAL_SQL
-import run.ostrom.server.notifications.infrastructure.FORGET_TOKEN_SQL
-import run.ostrom.server.notifications.infrastructure.KEEP_LATEST_SQL
-import run.ostrom.server.notifications.infrastructure.OF_MEMBER_SQL
+import run.ostrom.server.notifications.infrastructure.deleteDevice
+import run.ostrom.server.notifications.infrastructure.devicesOfMember
+import run.ostrom.server.notifications.infrastructure.forgetCredentialDevices
+import run.ostrom.server.notifications.infrastructure.forgetTokenDevice
+import run.ostrom.server.notifications.infrastructure.keepLatest
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
+import org.jetbrains.exposed.v1.core.statements.Statement
+import org.jetbrains.exposed.v1.core.statements.StatementBuilder
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.uuid.Uuid
@@ -41,21 +43,18 @@ class PushDevicesQueryPlansTest {
         fixtures.execute("VACUUM ANALYZE notifications_push_devices").getOrThrow()
 
         // The member is also the person of the seeded rows (`user_id`): the same id serves both lookups.
-        fun explain(sql: String) = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org_id", orgA)
-        val statements = listOf(
-            explain(KEEP_LATEST_SQL).bind("member_id", member).bind("keep", 10),
-            explain(DELETE_SQL).bind("member_id", member).bind("id", Uuid.random()),
-            explain(OF_MEMBER_SQL).bind("member_id", member),
-            explain(FORGET_CREDENTIAL_SQL).bind("user_id", member).bind("credential_id", Uuid.random()),
-            explain(FORGET_BROWSERS_SQL).bind("user_id", member),
+        val statements: List<StatementBuilder.() -> Statement<*>> = listOf(
+            { keepLatest(orgA, member, 10) },
+            { deleteDevice(orgA, member, Uuid.random()) },
+            { devicesOfMember(orgA, member) },
+            { forgetCredentialDevices(orgA, member, Uuid.random()) },
+            { forgetCredentialDevices(orgA, member, null) },
             // A token FCM no longer knows: its device, by the primary key.
-            explain(FORGET_TOKEN_SQL).bind("id", Uuid.random()).bind("push_token", "fcm-token"),
+            { forgetTokenDevice(orgA, Uuid.random(), "fcm-token") },
         )
+        val database = server.koin.get<JdbcDatabase>()
         for (statement in statements) {
-            val plan = server.driver.withOrganization(orgA) { tx ->
-                tx.fetchAll(statement).getOrThrow()
-                    .joinToString("\n") { it.get("QUERY PLAN").asString() }
-            }
+            val plan = database.withOrganization(orgA) { plan(statement).also { rollback() } }
             assertFalse("Seq Scan on notifications_push_devices" in plan, "A scan of the table:\n$plan")
         }
     }
