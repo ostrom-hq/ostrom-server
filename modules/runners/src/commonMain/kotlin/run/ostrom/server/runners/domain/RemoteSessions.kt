@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners.domain
 
+import dev.whyoleg.cryptography.CryptographyProvider
+import dev.whyoleg.cryptography.algorithms.SHA256
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.DeviceRemovalListener
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.SignedInDevices
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
+import run.ostrom.server.kernel.logging.Logger
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
 import kotlin.uuid.Uuid
@@ -314,20 +318,26 @@ class CreateRemoteSessionUseCaseImpl(
             kind = SessionKind.REMOTE,
             host = RemoteHost(device, draft.directoryName, mode),
         )
-        return store(session, key)
+        return store(session, key, device)
     }
 
-    /** Stores [session], once per [key]: no cap holds a remote session. */
-    private suspend fun store(session: CloudSession, key: Pair<String, String>?): KeyedCreation {
+    /**
+     * Stores [session], once per [key]: no cap holds a remote session. The key's request is the one sent from
+     * [device]: the same key and body from another device is a conflict, never the first device's session.
+     */
+    private suspend fun store(session: CloudSession, key: Pair<String, String>?, device: Uuid): KeyedCreation {
         if (key == null) {
             repository.createWithinCap(session, Int.MAX_VALUE)
             return KeyedCreation(session, replayed = false)
         }
-        val record = CreateKey(key.first, key.second, session.createdAt + IDEMPOTENCY_RETENTION)
+        // The request digest is bound to the device: the same key and body sent from another device is a conflict.
+        val digest = SHA256_HASHER.hashBlocking("${key.second}\n$device".encodeToByteArray()).toHexString()
+        val record = CreateKey(key.first, digest, session.createdAt + IDEMPOTENCY_RETENTION)
         return when (val outcome = repository.createKeyed(session, Int.MAX_VALUE, record)) {
             is KeyedCreateOutcome.Replayed -> KeyedCreation(outcome.session, replayed = true)
             KeyedCreateOutcome.Conflict -> throw CloudSessionIdempotencyConflictException(
-                "This Idempotency-Key was already used with a different request, or its session no longer exists.",
+                "This Idempotency-Key was already used with a different request or from another device, or its " +
+                    "session no longer exists.",
             )
             else -> KeyedCreation(session, replayed = false)
         }
@@ -335,6 +345,7 @@ class CreateRemoteSessionUseCaseImpl(
 
     private companion object {
         private val IDEMPOTENCY_RETENTION = 24.hours
+        private val SHA256_HASHER = CryptographyProvider.Default.get(SHA256).hasher()
         const val MAX_NAME_LENGTH = 120
         const val MAX_PROMPT_LENGTH = 20_000
         private val MODEL = Regex("[A-Za-z0-9._:/@-]{1,100}")
@@ -405,7 +416,7 @@ class HostRemoteSessionUseCaseImpl(
             }
             val now = clock.now()
             val state = if (current.state == SessionState.CREATING) SessionState.CREATING else SessionState.RESUMING
-            SessionStateMachine.requireTransition(current.state, state)
+            SessionStateMachine.requireRemoteTransition(current.state, state)
             // A remote session's failure only ever says why its last execution ended (its host went offline).
             val next = current.copy(
                 state = state,
@@ -441,15 +452,35 @@ class HostRemoteSessionUseCaseImpl(
  * there. Each is asked to terminate with [RemoteSessionRules.DEVICE_REMOVED], the reconciler finishes it, transcripts
  * kept, and every session it hosted loses its host.
  *
+ * TeamCode does it in the transaction that removes the device; here the device lives in the identity store and the
+ * sessions in the runners one, so the removal is told after the device is gone. Every session gets its try: one that
+ * fails is logged and the next is ended, and the reconciler ends what is left (a live remote session whose device no
+ * longer exists), so a failure here never keeps a session alive.
+ *
  * @param repository The sessions.
  * @param clock The time.
+ * @param logger Where a session that could not be ended is reported.
  */
 class EndRemovedDeviceSessions(
     private val repository: CloudSessionsRepository,
     private val clock: Clock,
+    private val logger: Logger,
 ) : DeviceRemovalListener {
     override suspend fun removed(userId: Uuid, deviceId: Uuid) {
         val now = clock.now()
-        repository.hostedOn(deviceId).forEach { repository.endOnRemovedDevice(it, deviceId, now) }
+        val hosted = guarded(deviceId, null) { repository.hostedOn(deviceId) }.orEmpty()
+        hosted.forEach { session ->
+            guarded(deviceId, session) { repository.endOnRemovedDevice(session, deviceId, now) }
+        }
+    }
+
+    private suspend fun <T> guarded(deviceId: Uuid, session: SessionRef?, block: suspend () -> T): T? = try {
+        block()
+    } catch (error: CancellationException) {
+        throw error
+    } catch (error: Exception) {
+        val fields = mapOf("device_id" to deviceId.toString(), "session_id" to session?.let { it.id.toString() })
+        logger.warn("remote sessions of a removed device not ended, the reconciler ends them", fields, error)
+        null
     }
 }

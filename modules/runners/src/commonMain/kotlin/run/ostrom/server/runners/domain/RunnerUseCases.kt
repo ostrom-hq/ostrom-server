@@ -66,20 +66,17 @@ interface CheckRunnerTokenUseCase {
  * [CheckRunnerTokenUseCase] on the runner credentials, and the hosts of remote sessions.
  *
  * @param credentials Finds the session of the presented token.
- * @param hosts Knows a remote session's host by its owner's sign-in; null where none is accepted.
+ * @param hosts Knows a remote session's host by its owner's sign-in ([OwnerLoginPrincipalResolver], the runner token
+ *   being checked here already); null where none is accepted.
  */
 class CheckRunnerTokenUseCaseImpl(
     private val credentials: RunnerCredentials,
-    private val hosts: AuthenticateRunnerUseCase? = null,
+    private val hosts: RunnerPrincipalResolver? = null,
 ) : CheckRunnerTokenUseCase {
     override suspend fun invoke(token: String) {
         if (credentials.session(token) != null) return
-        val hosts = hosts ?: throw RunnerUnauthenticatedException()
-        try {
-            hosts.resolve(token)
-        } catch (_: ExecutionFencedException) {
-            throw RunnerUnauthenticatedException()
-        }
+        // A host's sign-in passes; which execution it may act for is decided once the call's claim is read.
+        if (hosts?.knows(token) != true) throw RunnerUnauthenticatedException()
     }
 }
 
@@ -107,14 +104,14 @@ interface RunnerHeartbeatUseCase {
  * @param usage Counts the execution time.
  * @param clock The time.
  * @param hosts Authenticates a remote session's host by its owner's sign-in (TeamCode's heartbeat through
- *   `AuthenticateRunnerUseCase`); null where none is accepted.
+ *   `AuthenticateRunnerUseCase`, the runner token being looked up here already); null where none is accepted.
  */
 class RunnerHeartbeatUseCaseImpl(
     private val repository: CloudSessionsRepository,
     private val credentials: RunnerCredentials,
     private val usage: CloudUsageMeter,
     private val clock: Clock,
-    private val hosts: AuthenticateRunnerUseCase? = null,
+    private val hosts: RunnerPrincipalResolver? = null,
 ) : RunnerHeartbeatUseCase {
     // The three refusals are the runner protocol's answers (unknown token, fenced, lost every race).
     @Suppress("ThrowsCount")
@@ -145,10 +142,16 @@ class RunnerHeartbeatUseCaseImpl(
         if (seconds > 0 || first) usage.record(session.orgId, seconds, first, now)
     }
 
-    /** The remote session a host's sign-in names for the heartbeat's claim; a cloud one is never reached this way. */
+    /**
+     * The remote session a host's sign-in names for the heartbeat's claim; a cloud one is never reached this way. A
+     * credential no resolver knows is refused (401); a host's sign-in for another session or epoch is fenced (409).
+     */
+    @Suppress("ThrowsCount") // The runner protocol's two refusals, told apart.
     private suspend fun host(token: String, heartbeat: RunnerHeartbeat): CloudSession {
         val hosts = hosts ?: throw RunnerUnauthenticatedException()
-        return hosts(token, heartbeat.sessionId, heartbeat.epoch).takeIf { it.kind == SessionKind.REMOTE }
+        val execution = hosts.resolve(token, heartbeat.sessionId, heartbeat.epoch)
+            ?: throw if (hosts.knows(token)) ExecutionFencedException() else RunnerUnauthenticatedException()
+        return repository.get(execution.orgId, execution.sessionId)?.takeIf { it.kind == SessionKind.REMOTE }
             ?: throw ExecutionFencedException()
     }
 

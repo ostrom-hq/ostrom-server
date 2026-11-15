@@ -49,8 +49,8 @@ interface SignedInDevices {
 /**
  * Told once a device is removed (its owner's `ostrom devices revoke`, an owner or an admin of an organization the
  * device's owner is in), after its sign-ins were revoked: what ran on it ends with it (TeamCode ends the device's
- * remote sessions with `device_removed`). The identity module calls every listener bound in Koin; one that fails makes
- * the removal answer an error, the device staying removed.
+ * remote sessions with `device_removed`). The identity module calls every listener bound in Koin, each after the
+ * other; a listener reports its own failures and never throws, so every listener is told.
  */
 fun interface DeviceRemovalListener {
     /**

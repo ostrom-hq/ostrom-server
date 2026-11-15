@@ -17,8 +17,7 @@ import run.ostrom.server.runners.domain.SessionState.TRANSFERRING
 object SessionStateMachine {
     private val allowed: Map<SessionState, Set<SessionState>> = mapOf(
         CREATING to setOf(RUNNING, PAUSED, FAILED, TERMINATED),
-        // A remote session's host started again replaces its running execution (RemoteSessionRules).
-        RUNNING to setOf(PAUSING, PAUSED, RESUMING, TERMINATED),
+        RUNNING to setOf(PAUSING, PAUSED, TERMINATED),
         PAUSING to setOf(PAUSED, RUNNING, TERMINATED),
         // The owner changes only at a paused boundary: no execution at all.
         PAUSED to setOf(RESUMING, TERMINATED, TRANSFERRING),
@@ -39,6 +38,18 @@ object SessionStateMachine {
     fun canMove(from: SessionState, to: SessionState): Boolean = from == to || to in allowed.getValue(from)
 
     /**
+     * Whether a remote session may move from one state to another: as any session, and its host started again
+     * replaces its running execution (RUNNING to RESUMING, [HostRemoteSessionUseCase]). A pod's session never does.
+     *
+     * @param from The current state.
+     * @param to The next state.
+     *
+     * @return True when the move is allowed.
+     */
+    fun canMoveRemote(from: SessionState, to: SessionState): Boolean =
+        canMove(from, to) || (from == RUNNING && to == RESUMING)
+
+    /**
      * Checks a move.
      *
      * @param from The current state.
@@ -48,5 +59,17 @@ object SessionStateMachine {
      */
     fun requireTransition(from: SessionState, to: SessionState) {
         check(canMove(from, to)) { "A cloud session cannot move from ${from.wire} to ${to.wire}." }
+    }
+
+    /**
+     * Checks a move of a remote session ([canMoveRemote]).
+     *
+     * @param from The current state.
+     * @param to The next state.
+     *
+     * @throws IllegalStateException When the move is not allowed: a defect, never a refusal a client causes.
+     */
+    fun requireRemoteTransition(from: SessionState, to: SessionState) {
+        check(canMoveRemote(from, to)) { "A remote session cannot move from ${from.wire} to ${to.wire}." }
     }
 }

@@ -130,21 +130,21 @@ private fun Route.optionRoutes(dependencies: CloudConversationRoutesDependencies
             val caller = orgResolver.callerOf(principal, CLOUD_WRITE)
             val enabled = call.receive<SetCloudPermissionBypassBody>().enabled
             val session = conversation.setPermissionBypass(caller, principal, sessionId(params.parent.id), enabled)
-            call.respond(session.toResponse())
+            call.respond(hosts.response(session))
         }
         put<CloudModelApi> { params ->
             val principal = call.requirePrincipal()
             val caller = orgResolver.callerOf(principal, CLOUD_WRITE)
             val model = call.receive<SetCloudModelBody>().model
             val session = conversation.setAgentOption(caller, principal, sessionId(params.parent.id), false, model)
-            call.respond(session.toResponse())
+            call.respond(hosts.response(session))
         }
         put<CloudEffortApi> { params ->
             val principal = call.requirePrincipal()
             val caller = orgResolver.callerOf(principal, CLOUD_WRITE)
             val effort = call.receive<SetCloudEffortBody>().effort
             val session = conversation.setAgentOption(caller, principal, sessionId(params.parent.id), true, effort)
-            call.respond(session.toResponse())
+            call.respond(hosts.response(session))
         }
     }
 }

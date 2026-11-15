@@ -29,6 +29,15 @@ fun interface RunnerPrincipalResolver {
      * @return The execution, or null.
      */
     suspend fun resolve(credential: String, sessionId: Uuid, epoch: Long): RunnerExecution? = resolve(credential)
+
+    /**
+     * Whether the credential is one of this resolver's, whatever execution it names: a call it knows but fences is
+     * `409 execution_fenced`, one no resolver knows `401`.
+     *
+     * @param credential The bearer credential, as presented.
+     * @return Whether this resolver knows it.
+     */
+    suspend fun knows(credential: String): Boolean = resolve(credential) != null
 }
 
 /**

@@ -15,6 +15,7 @@ import run.ostrom.server.runners.domain.SessionLimits
 import run.ostrom.server.runners.domain.SessionMode
 import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.runners.fakes.FakeRunnerTokens
+import run.ostrom.server.runners.fakes.FakeSignedInDevices
 import run.ostrom.server.runners.fakes.FakeRuntimeDriver
 import run.ostrom.server.runners.fakes.FixedPlans
 import run.ostrom.server.runners.fakes.InMemoryCloudSessionsRepository
@@ -296,5 +297,44 @@ class ReconcileRemoteSessionTest {
     @Test
     fun aFailedRemoteSessionIsDone() = runTest {
         assertNull(reconcile(remote(SessionState.FAILED)))
+    }
+
+    @Test
+    fun aLiveSessionOfARemovedDeviceEndsWithDeviceRemoved() = runTest {
+        val devices = FakeSignedInDevices()
+        val healing = ReconcileCloudSessionUseCaseImpl(
+            repository,
+            driver,
+            FakeRunnerTokens(),
+            FixedPlans(),
+            RepositoryCloudUsageMeter(repository),
+            clock,
+            ended = listOf(SessionEndListener { org, ids -> ended += org to ids }),
+            backgroundWork = { BackgroundWork.DEFAULT_MAX_MINUTES },
+            devices = devices,
+        )
+        val running = hosted()
+        assertEquals(t0 + 15.seconds, healing(running))
+        assertEquals(DesiredState.RUNNING, stored(running).desiredState)
+
+        devices.names.remove(LAPTOP)
+        val stopping = hosted(desired = DesiredState.TERMINATED)
+        val failed = remote(SessionState.FAILED)
+        val terminated = remote(SessionState.TERMINATED)
+        val hostless = remote().copy(host = null).also(repository::put)
+        assertEquals(t0, healing(running))
+        val after = stored(running)
+        assertEquals(DesiredState.TERMINATED, after.desiredState)
+        assertEquals(RemoteSessionRules.DEVICE_REMOVED, after.terminatedReason)
+        assertNull(after.host?.deviceId)
+        assertNull(healing(after))
+        assertEquals(SessionState.TERMINATED, stored(running).state)
+
+        assertNull(healing(stopping))
+        assertEquals(SessionState.TERMINATED, stored(stopping).state)
+        assertNull(healing(failed))
+        assertNull(healing(terminated))
+        assertNull(healing(hostless))
+        assertEquals(LAPTOP, stored(failed).host?.deviceId)
     }
 }

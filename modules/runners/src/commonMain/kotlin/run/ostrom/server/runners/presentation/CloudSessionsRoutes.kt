@@ -80,7 +80,7 @@ fun Route.cloudSessionsRoutes(dependencies: CloudSessionsRoutesDependencies) = w
                 val caller = orgResolver.callerOf(principal, CLOUD_WRITE)
                 val request = call.receive<SetCloudSessionGitHubAccessRequest>()
                 val session = setGitHubAccess(caller, principal, sessionId(params.parent.id), request.access)
-                call.respond(session.toResponse())
+                call.respond(hosts.response(session))
             }
         }
     }

@@ -197,6 +197,7 @@ import run.ostrom.server.runners.infrastructure.RunnersCloudSessionWakes
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
+import org.koin.core.scope.Scope
 import org.koin.dsl.module
 import org.koin.dsl.onClose
 import kotlin.time.Duration.Companion.minutes
@@ -291,8 +292,8 @@ object RunnersModule : ServerModule {
             RunnerCredentialsImpl(get(), get(), get<RunnersConfig>().podTokenReviews(get()), get(), get<Logger>())
         }
         // A remote session's host is known by its owner's sign-in (runners.cloud.remote.v1).
-        single<CheckRunnerTokenUseCase> { CheckRunnerTokenUseCaseImpl(get(), get()) }
-        single<RunnerHeartbeatUseCase> { RunnerHeartbeatUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<CheckRunnerTokenUseCase> { CheckRunnerTokenUseCaseImpl(get(), ownerLogins()) }
+        single<RunnerHeartbeatUseCase> { RunnerHeartbeatUseCaseImpl(get(), get(), get(), get(), ownerLogins()) }
         // Remote sessions: on the device of their owner's sign-in, which the identity module knows.
         single<RemoteIdleTimeout> { CloudSettingsRemoteIdleTimeout(getOrNull<CloudSettingsSource>()) }
         single<CreateRemoteSessionUseCase> {
@@ -301,7 +302,7 @@ object RunnersModule : ServerModule {
         single<HostRemoteSessionUseCase> { HostRemoteSessionUseCaseImpl(get(), getOrNull<SignedInDevices>(), get()) }
         single { RemoteHostViews(getOrNull<SignedInDevices>(), get()) }
         // A removed device ends the remote sessions it hosted (the identity module calls it).
-        single<DeviceRemovalListener> { EndRemovedDeviceSessions(get(), get()) }
+        single<DeviceRemovalListener> { EndRemovedDeviceSessions(get(), get(), get<Logger>()) }
         single<RecordCloudSessionActivityUseCase> { RecordCloudSessionActivityUseCaseImpl(get(), get()) }
         // The console's paused retention, for every runtime; paused sessions are kept without the cloud module.
         single<PausedRetention> {
@@ -316,7 +317,8 @@ object RunnersModule : ServerModule {
             val retention = get<PausedRetention>()
             val transfers = get<TransferWiring>().complete
             ReconcileCloudSessionUseCaseImpl(
-                get(), get(), get(), get(), get(), get(), ended, get(), answers, transfers, retention, limit,
+                get(), get(), get(), get(), get(), get(), ended, get(), answers, transfers, retention,
+                getOrNull<SignedInDevices>(), limit,
             )
         }
         // Ownership transfers need the orgs module's members: without it nobody can be named, and none is served.
@@ -395,8 +397,7 @@ object RunnersModule : ServerModule {
         single<TerminalTickets> { TerminalTicketsImpl(get(), get()) }
         // Who a runner call's credential names: the runner token, then a remote session owner's sign-in on its device.
         single<List<RunnerPrincipalResolver>> {
-            val owners = getOrNull<SignedInDevices>()?.let { OwnerLoginPrincipalResolver(get(), it, get(), get()) }
-            listOfNotNull(RunnerTokenPrincipalResolver(get()), owners)
+            listOfNotNull(RunnerTokenPrincipalResolver(get()), ownerLogins())
         }
         single<AuthenticateRunnerUseCase> { AuthenticateRunnerUseCaseImpl(get(), get()) }
         single<OpenTerminalUseCase> { OpenTerminalUseCaseImpl(get()) }
@@ -417,7 +418,7 @@ object RunnersModule : ServerModule {
         single { ConversationAnnouncement() }
         single<CloudConversationStore> { CloudConversationStoreImpl(get(), get()) }
         single<CloudConversationService> { CloudConversationServiceImpl(get(), get(), get(), get(), get()) }
-        single { CloudConversationRoutesDependencies(get(), get()) }
+        single { CloudConversationRoutesDependencies(get(), get(), get()) }
         single { CloudConversationMaintenance(get(), get(), getOrNull<CloudRuntimeSource>(), get()) }
         // The runner's side of the conversation: its agent, transcript upload and inputs.
         single<RunnerConversationStore> { RunnerConversationStoreImpl(get(), get()) }
@@ -584,3 +585,10 @@ class InferenceWiring(val store: CloudInferenceCredentialStore?) {
         CloudSessionWritten { session -> credentials.revokeEnded(session) }
     } ?: NoCloudSessionWritten
 }
+
+/**
+ * A remote session owner's sign-in on its device, as a runner credential ([OwnerLoginPrincipalResolver]); null where
+ * the server has no signed-in devices. It holds no state: each definition takes its own.
+ */
+private fun Scope.ownerLogins(): RunnerPrincipalResolver? =
+    getOrNull<SignedInDevices>()?.let { OwnerLoginPrincipalResolver(get(), it, get(), get()) }

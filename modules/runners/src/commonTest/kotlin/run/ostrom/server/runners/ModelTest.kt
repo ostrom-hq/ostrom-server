@@ -68,6 +68,16 @@ class ModelTest {
             SessionState.RUNNING,
             SessionState.CREATING,
         ) }
+        // Only a remote session's host replaces its running execution.
+        assertFalse(SessionStateMachine.canMove(SessionState.RUNNING, SessionState.RESUMING))
+        assertTrue(SessionStateMachine.canMoveRemote(SessionState.RUNNING, SessionState.RESUMING))
+        assertTrue(SessionStateMachine.canMoveRemote(SessionState.PAUSED, SessionState.RESUMING))
+        assertFalse(SessionStateMachine.canMoveRemote(SessionState.RUNNING, SessionState.CREATING))
+        assertFalse(SessionStateMachine.canMoveRemote(SessionState.PAUSING, SessionState.RESUMING))
+        SessionStateMachine.requireRemoteTransition(SessionState.RUNNING, SessionState.RESUMING)
+        assertFailsWith<IllegalStateException> {
+            SessionStateMachine.requireRemoteTransition(SessionState.TERMINATED, SessionState.RESUMING)
+        }
     }
 
     @Test

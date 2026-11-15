@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
-import run.ostrom.server.runners.domain.AuthenticateRunnerUseCase
 import run.ostrom.server.runners.domain.AuthenticateRunnerUseCaseImpl
 import run.ostrom.server.runners.domain.Caller
 import run.ostrom.server.runners.domain.CheckRunnerTokenUseCaseImpl
@@ -17,6 +16,7 @@ import run.ostrom.server.runners.domain.RunnerExecution
 import run.ostrom.server.runners.domain.RunnerHeartbeat
 import run.ostrom.server.runners.domain.RunnerHeartbeatUseCaseImpl
 import run.ostrom.server.runners.domain.RunnerInstruction
+import run.ostrom.server.runners.domain.RunnerPrincipalResolver
 import run.ostrom.server.runners.domain.RunnerTokenPrincipalResolver
 import run.ostrom.server.runners.domain.RunnerUnauthenticatedException
 import run.ostrom.server.runners.domain.SessionState
@@ -34,6 +34,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -45,11 +46,9 @@ class RemoteRunnerAuthTest {
     private val clock = SettableClock()
     private val devices = FakeSignedInDevices()
     private val credentials = RunnerCredentialsImpl(repository, FakeRunnerTokens())
+    private val owners = OwnerLoginPrincipalResolver(RemoteLogins, devices, TestOrgResolver, repository)
     private val authenticate = AuthenticateRunnerUseCaseImpl(
-        listOf(
-            RunnerTokenPrincipalResolver(credentials),
-            OwnerLoginPrincipalResolver(RemoteLogins, devices, TestOrgResolver, repository),
-        ),
+        listOf(RunnerTokenPrincipalResolver(credentials), owners),
         repository,
     )
     private val records = mutableListOf<Long>()
@@ -60,7 +59,7 @@ class RemoteRunnerAuthTest {
             records += seconds
         }
     }
-    private val heartbeat = RunnerHeartbeatUseCaseImpl(repository, credentials, meter, clock, authenticate)
+    private val heartbeat = RunnerHeartbeatUseCaseImpl(repository, credentials, meter, clock, owners)
     private val alice = Caller(ORG_A, ALICE.toString())
     private val laptop = REMOTE_LOGINS.getValue("alice-laptop")
 
@@ -104,6 +103,8 @@ class RemoteRunnerAuthTest {
         assertFailsWith<ExecutionFencedException> { heartbeat("alice-laptop", beat(two.id, 1)) }
         assertFailsWith<ExecutionFencedException> { heartbeat("alice-desktop", beat(one.id, 1)) }
         assertFailsWith<ExecutionFencedException> { heartbeat("bob-laptop", beat(one.id, 1)) }
+        // A credential nobody knows is refused, not fenced.
+        assertFailsWith<RunnerUnauthenticatedException> { heartbeat("nobody", beat(one.id, 1)) }
         assertEquals(RunnerExecution(ORG_A, one.id, 1), authenticate.resolve("alice-laptop"))
     }
 
@@ -117,20 +118,32 @@ class RemoteRunnerAuthTest {
     @Test
     fun aCloudSessionIsNeverReachedThroughASignIn() = runTest {
         val cloud = session().also(repository::put)
-        val anyone = object : AuthenticateRunnerUseCase {
-            override suspend fun resolve(credential: String) = RunnerExecution(ORG_A, cloud.id, 0)
-            override suspend fun invoke(credential: String, sessionId: Uuid, epoch: Long) = cloud
-        }
+        val anyone = RunnerPrincipalResolver { RunnerExecution(ORG_A, cloud.id, 0) }
         val beats = RunnerHeartbeatUseCaseImpl(repository, credentials, meter, clock, anyone)
         assertFailsWith<ExecutionFencedException> { beats("alice-laptop", beat(cloud.id, 0)) }
+        // A session gone between the claim and its read is fenced too.
+        val gone = Uuid.random()
+        val vanished = RunnerHeartbeatUseCaseImpl(
+            repository,
+            credentials,
+            meter,
+            clock,
+            RunnerPrincipalResolver { RunnerExecution(ORG_A, gone, 0) },
+        )
+        assertFailsWith<ExecutionFencedException> { vanished("alice-laptop", beat(gone, 0)) }
     }
 
     @Test
     fun theTokenCheckKnowsAHostByItsSignIn() = runTest {
         hosted()
-        val check = CheckRunnerTokenUseCaseImpl(credentials, authenticate)
+        val check = CheckRunnerTokenUseCaseImpl(credentials, owners)
         check("alice-laptop")
-        assertFailsWith<RunnerUnauthenticatedException> { check("alice-desktop") }
+        // A sign-in from a device that hosts nothing passes; its heartbeat is fenced once its claim is read.
+        check("alice-desktop")
+        assertFailsWith<RunnerUnauthenticatedException> { check("nobody") }
+        assertTrue(owners.knows("alice-desktop"))
+        assertTrue(RunnerPrincipalResolver { RunnerExecution(ORG_A, Uuid.random(), 0) }.knows("any"))
+        assertFalse(RunnerPrincipalResolver { null }.knows("any"))
         assertFailsWith<RunnerUnauthenticatedException> { CheckRunnerTokenUseCaseImpl(credentials)("alice-laptop") }
     }
 }

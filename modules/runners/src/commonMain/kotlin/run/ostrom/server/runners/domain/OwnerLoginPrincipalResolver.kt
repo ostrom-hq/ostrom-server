@@ -41,6 +41,9 @@ class OwnerLoginPrincipalResolver(
         return execution(principal, device, sessionId, epoch)
     }
 
+    /** A person's CLI sign-in from a device, live session or not: a heartbeat it sends is fenced, never refused. */
+    override suspend fun knows(credential: String): Boolean = host(credential) != null
+
     /** The person's sign-in and its device, or null for any other credential. */
     private suspend fun host(credential: String): Pair<AuthenticatedPrincipal, Uuid>? {
         val principal = logins.authenticate(credential)?.takeIf { it.kind == PrincipalKind.USER && it.signedIn }

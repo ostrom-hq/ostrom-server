@@ -43,6 +43,12 @@ import run.ostrom.server.runners.fakes.TestOrgResolver
 import run.ostrom.server.runners.fakes.session
 import run.ostrom.server.runners.infrastructure.CloudSettingsRemoteIdleTimeout
 import kotlinx.coroutines.test.runTest
+import run.ostrom.server.kernel.logging.LogLevel
+import run.ostrom.server.kernel.logging.Logger
+import run.ostrom.server.runners.domain.CloudSessionsRepository
+import run.ostrom.server.runners.domain.SessionRef
+import kotlin.coroutines.cancellation.CancellationException
+import kotlin.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -53,6 +59,15 @@ import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
 class RemoteSessionsTest {
+    private class WarningLogger : Logger {
+        val warnings = mutableListOf<Map<String, Any?>>()
+        override fun log(level: LogLevel, message: String, fields: Map<String, Any?>, error: Throwable?) {
+            if (level == LogLevel.WARN) warnings += fields
+        }
+        override fun with(fields: Map<String, Any?>): Logger = this
+    }
+
+    private val logger = WarningLogger()
     private val repository = InMemoryCloudSessionsRepository()
     private val devices = FakeSignedInDevices()
     private val clock = SettableClock()
@@ -204,6 +219,8 @@ class RemoteSessionsTest {
         assertTrue(again.replayed)
         assertEquals(first.session.id, again.session.id)
         assertFailsWith<CloudSessionIdempotencyConflictException> { create(alice, laptop, draft, "key" to "other") }
+        // The same key and request from another device never replays the first device's session.
+        assertFailsWith<CloudSessionIdempotencyConflictException> { create(alice, desktop, draft, "key" to "digest") }
         assertEquals(1, repository.sessions.size)
     }
 
@@ -287,7 +304,7 @@ class RemoteSessionsTest {
         val ended = created().copy(state = SessionState.TERMINATED).also(repository::put)
         val elsewhere = created(desktop)
 
-        EndRemovedDeviceSessions(repository, clock).removed(ALICE, LAPTOP)
+        EndRemovedDeviceSessions(repository, clock, logger).removed(ALICE, LAPTOP)
 
         val after = repository.sessions.getValue(live.id)
         assertEquals(DesiredState.TERMINATED, after.desiredState)
@@ -295,6 +312,52 @@ class RemoteSessionsTest {
         assertNull(after.host?.deviceId)
         assertNull(repository.sessions.getValue(ended.id).host?.deviceId)
         assertEquals(DESKTOP, repository.sessions.getValue(elsewhere.id).host?.deviceId)
+    }
+
+    @Test
+    fun aSessionThatCannotBeEndedIsLoggedAndTheNextOneStillEnds() = runTest {
+        val first = created()
+        val second = created()
+        val failing = object : CloudSessionsRepository by repository {
+            override suspend fun endOnRemovedDevice(ref: SessionRef, deviceId: Uuid, now: Instant): Boolean {
+                if (ref.id == first.id) error("database unavailable")
+                return repository.endOnRemovedDevice(ref, deviceId, now)
+            }
+        }
+
+        EndRemovedDeviceSessions(failing, clock, logger).removed(ALICE, LAPTOP)
+
+        assertEquals(DesiredState.RUNNING, repository.sessions.getValue(first.id).desiredState)
+        assertEquals(DesiredState.TERMINATED, repository.sessions.getValue(second.id).desiredState)
+        assertEquals(listOf(first.id.toString()), logger.warnings.map { it["session_id"] })
+    }
+
+    @Test
+    fun anUnreadableDeviceIsLoggedAndLeftToTheReconciler() = runTest {
+        val live = created()
+        val failing = object : CloudSessionsRepository by repository {
+            override suspend fun hostedOn(deviceId: Uuid, live: Boolean): List<SessionRef> =
+                error("database unavailable")
+        }
+
+        EndRemovedDeviceSessions(failing, clock, logger).removed(ALICE, LAPTOP)
+
+        assertEquals(DesiredState.RUNNING, repository.sessions.getValue(live.id).desiredState)
+        assertEquals(listOf<Any?>(null), logger.warnings.map { it["session_id"] })
+    }
+
+    @Test
+    fun aCancelledRemovalIsNeverSwallowed() = runTest {
+        created()
+        val cancelled = object : CloudSessionsRepository by repository {
+            override suspend fun hostedOn(deviceId: Uuid, live: Boolean): List<SessionRef> =
+                throw CancellationException("stop")
+        }
+
+        assertFailsWith<CancellationException> {
+            EndRemovedDeviceSessions(cancelled, clock, logger).removed(ALICE, LAPTOP)
+        }
+        assertTrue(logger.warnings.isEmpty())
     }
 
     @Test

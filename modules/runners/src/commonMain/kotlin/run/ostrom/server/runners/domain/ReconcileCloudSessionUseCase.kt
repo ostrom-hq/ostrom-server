@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners.domain
 
+import run.ostrom.server.kernel.auth.SignedInDevices
 import run.ostrom.server.kernel.sessions.PendingWaitAnswers
 import run.ostrom.server.kernel.sessions.SessionEndListener
 import kotlinx.coroutines.CancellationException
@@ -52,6 +53,9 @@ interface ReconcileCloudSessionUseCase {
  *   holds one).
  * @param retention How long a paused session keeps its workspace, read when it pauses ([CloudSession.expiresAt]).
  * @param backgroundWork How long the agent's background work holds off the idle pause, per organization.
+ * @param devices Whether a remote session's host device still exists: one removed while the removal could not end
+ *   its sessions ([EndRemovedDeviceSessions]) ends them here, with [RemoteSessionRules.DEVICE_REMOVED]; null where
+ *   the server has no signed-in devices (no remote session is ever created there).
  */
 // Each step is a decision table read top to bottom: an early return per outcome reads better than nested branches,
 // and one small function per state and per check keeps each table short.
@@ -69,12 +73,13 @@ class ReconcileCloudSessionUseCaseImpl(
     private val answers: PendingWaitAnswers = NoPendingWaitAnswers,
     private val transfers: CompleteCloudTransferUseCase? = null,
     private val retention: PausedRetention = KeepPausedSessions,
+    private val devices: SignedInDevices? = null,
     private val backgroundWork: BackgroundWorkLimit,
 ) : ReconcileCloudSessionUseCase {
     override suspend fun invoke(session: CloudSession): Instant? {
         val now = clock.now()
         // No pod, workspace, cluster nor plan: only the server's side of its lifecycle moves.
-        if (session.kind == SessionKind.REMOTE) return remote(session, now)
+        if (session.kind == SessionKind.REMOTE) return remoteOrRemoved(session, now)
         if (session.state == SessionState.TERMINATED) {
             return when {
                 session.phase == CLEANUP_BLOCKED -> blockedCleanup(session, now)
@@ -661,6 +666,25 @@ class ReconcileCloudSessionUseCaseImpl(
             }
             else -> remotePausing(s, now, live, silent)
         }
+    }
+
+    /**
+     * The host device of a live remote session when it no longer exists (removed while its sessions could not be
+     * ended then, TeamCode ending them in the removal's own transaction); null when it exists or nothing is to end.
+     */
+    private suspend fun removedHost(s: CloudSession): Uuid? {
+        val devices = devices ?: return null
+        val host = s.host?.deviceId ?: return null
+        val ending = s.desiredState == DesiredState.TERMINATED || s.state == SessionState.TERMINATED
+        if (ending || s.state == SessionState.FAILED) return null
+        return host.takeIf { it !in devices.devices(setOf(it)) }
+    }
+
+    /** A remote session whose device is gone ends with `device_removed`; [remote] decides the rest. */
+    private suspend fun remoteOrRemoved(s: CloudSession, now: Instant): Instant? {
+        val removed = removedHost(s) ?: return remote(s, now)
+        repository.endOnRemovedDevice(SessionRef(s.orgId, s.id), removed, now)
+        return now
     }
 
     /** Terminated without anything to delete: its directory is the member's. */

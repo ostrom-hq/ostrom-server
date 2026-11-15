@@ -148,8 +148,9 @@ class RemoteSessionsPostgresTest {
             assertEquals("running", running.status)
             assertEquals(true, running.host?.online)
             // Another device of the owner's, another member, a browser session: no host.
-            // Checked before its body is read, a sign-in whose device hosts nothing is no runner at all.
-            assertEquals(HttpStatusCode.Unauthorized, http.beat("alice-desktop", session.id, 2).status)
+            // A device's sign-in is a host's credential, fenced for a session it does not host; anything else is none.
+            http.beat("alice-desktop", session.id, 2).assertRefused(HttpStatusCode.Conflict, "execution_fenced")
+            assertEquals(HttpStatusCode.Unauthorized, http.beat("alice", session.id, 2).status)
             http.host("alice-desktop", session.id).assertRefused(HttpStatusCode.Conflict, "remote_host_mismatch")
             http.host("alice", session.id).assertRefused(HttpStatusCode.UnprocessableEntity, "remote_requires_device")
             assertEquals(HttpStatusCode.NotFound, http.host("bob-laptop", session.id).status)
