@@ -429,7 +429,8 @@ class KubernetesRuntimeDriver(
             // The runner and the agent never share a uid (S2-49): the agent host runs the agent in its own container,
             // which has neither the token nor a view of the runner's or the check host's processes. Every container is
             // in the pod's group (TeamCode's image contract: runner 1000, agent 1001, group 1000); the runner keeps
-            // nothing of its own on a volume the agent mounts, so the group shares the agent's side only.
+            // nothing of its own on a volume the agent mounts but the uploads, the members' files it writes 0640 for
+            // the agent to read through that group.
             put("shareProcessNamespace", false)
             putJsonObject("securityContext") {
                 put("runAsNonRoot", true)
@@ -746,10 +747,14 @@ class KubernetesRuntimeDriver(
         const val UPLOADS_VOLUME = "uploads"
 
         /** Above the runner's own bound of 768 MiB per execution: going over the limit would evict the pod. */
-        const val UPLOADS_SIZE_LIMIT = "1Gi"
+        private const val UPLOADS_MEBIBYTES = 1024
+        const val UPLOADS_SIZE_LIMIT = "${UPLOADS_MEBIBYTES}Mi"
 
         /** The runner's ephemeral storage: its own 64 MiB and the uploads volume's [UPLOADS_SIZE_LIMIT]. */
-        const val RUNNER_DISK_LIMIT = "1088Mi"
+        const val RUNNER_DISK_LIMIT = "${RUNNER_OWN_DISK_MEBIBYTES + UPLOADS_MEBIBYTES}Mi"
+
+        /** What the runner itself may write (logs), before the uploads volume. */
+        private const val RUNNER_OWN_DISK_MEBIBYTES = 64
 
         /** The volume the init container copies `ostrom` into. */
         const val BINARY_VOLUME = "ostrom-bin"

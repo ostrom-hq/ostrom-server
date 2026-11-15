@@ -18,8 +18,8 @@ object RunnerEnvironment {
     const val MODE = "OSTROM_SESSION_MODE"
 
     /**
-     * The variable of the pod's `uploads` volume (TeamCode's `TEAMCODE_UPLOADS_DIR`): where a conversation's host writes
-     * the files of a member's message for the agent. Set only where the runtime mounts that volume; without it the
+     * The variable of the pod's `uploads` volume (TeamCode's `TEAMCODE_UPLOADS_DIR`): where a conversation's host
+     * writes the files of a member's message for the agent. Set only where the runtime mounts that volume; without it the
      * runner announces no file support.
      */
     const val UPLOADS_DIR_VARIABLE = "OSTROM_UPLOADS_DIR"

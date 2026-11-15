@@ -173,7 +173,7 @@ class KubernetesRuntimeDriverTest {
         val volume = spec["volumes"]!!.jsonArray.map { it.jsonObject }
             .single { it["name"]!!.jsonPrimitive.content == "uploads" }
         val emptyDir = volume["emptyDir"]!!.jsonObject
-        assertEquals("1Gi", emptyDir["sizeLimit"]!!.jsonPrimitive.content, "Above the runner's 768 MiB per execution")
+        assertEquals("1024Mi", emptyDir["sizeLimit"]!!.jsonPrimitive.content, "Above the runner's 768 MiB")
         assertNull(emptyDir["medium"], "On disk: up to 100 MiB per file must not count against memory")
         val runner = spec["containers"]!!.jsonArray.single().jsonObject
         val agent = spec["initContainers"]!!.jsonArray.map { it.jsonObject }
