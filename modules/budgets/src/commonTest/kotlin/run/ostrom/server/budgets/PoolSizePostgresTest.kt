@@ -101,7 +101,8 @@ class PoolSizePostgresTest {
         val events = (0..2).map { i ->
             UsageEvent(
                 Uuid.random(), org, member, UsageKind.MODEL, "claude-sonnet-4-5",
-                provider = "claude", accountId = account, inputTokens = 200_000, costMicros = 600_000, at = base + i.hours + 1.minutes,
+                provider = "claude", accountId = account, inputTokens = 200_000, costMicros = 600_000,
+                at = base + i.hours + 1.minutes,
             )
         }
         koin.get<UsageRepository>().insert(org, events)
