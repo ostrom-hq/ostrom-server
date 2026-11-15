@@ -69,11 +69,15 @@ data class GitIdentity(val name: String, val email: String)
  * @property spec The recipe.
  * @property git The owner's Git identity.
  * @property variables The owner's environment variables.
+ * @property untrustedWorkspace Whether another member's execution ran on the workspace since the owner's last ready
+ *   one ([CloudSession.untrustedWorkspace]): the runner resets the agent's settings and each repository's Git
+ *   configuration before the setup and the agent run.
  */
 class PreparedEnvironment(
     val spec: CloudEnvironmentSpec,
     val git: GitIdentity,
     val variables: RunnerVariableValues,
+    val untrustedWorkspace: Boolean = false,
 ) {
     override fun toString(): String =
         "PreparedEnvironment(repositories=${spec.repositories.size}, git=${git.name}, variables=$variables)"

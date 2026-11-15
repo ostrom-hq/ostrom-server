@@ -189,3 +189,110 @@ class NamespaceNotAllowedException : OstromException(
     "The profile's namespace is no longer allowed on its cluster.",
     "namespace_not_allowed",
 )
+
+/** The transfer does not exist, or the caller is neither its owner nor its recipient. */
+class TransferNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Transfer not found.")
+
+/**
+ * The transfer request is malformed or makes no sense.
+ *
+ * @param message What to fix.
+ */
+class InvalidTransferException(message: String) :
+    OstromException(ErrorKind.INVALID_REQUEST, message, "invalid_transfer")
+
+/** The instance only lets administrators transfer sessions. */
+class TransferDisabledException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "This instance does not allow members to transfer their sessions. Ask an administrator.",
+    "transfer_disabled",
+)
+
+/**
+ * Only the transfer's recipient, or its owner, decides it.
+ *
+ * @param message Who may.
+ */
+class TransferForbiddenException(message: String) :
+    OstromException(ErrorKind.FORBIDDEN, message, "transfer_forbidden")
+
+/** The session already has an open transfer. */
+class TransferPendingException : OstromException(
+    ErrorKind.CONFLICT,
+    "The session already has an open transfer.",
+    "transfer_pending",
+)
+
+/** The session is still being created: it runs with its owner's credentials and recipe. */
+class SessionPreparingException : OstromException(
+    ErrorKind.CONFLICT,
+    "The session is still being prepared. Transfer it once it is ready.",
+    "session_preparing",
+)
+
+/** The session is over. */
+class SessionNotRunningException : OstromException(
+    ErrorKind.CONFLICT,
+    "The cloud session is terminated or being deleted.",
+    "session_not_running",
+)
+
+/** An accepted transfer moves the session: only the transfer resumes it, for the recipient. */
+class SessionTransferringException : OstromException(
+    ErrorKind.CONFLICT,
+    "The session is being transferred to another member.",
+    "session_transferring",
+)
+
+/** The offer is past its validity. */
+class TransferExpiredException : OstromException(
+    ErrorKind.CONFLICT,
+    "The offer expired. Ask the owner to offer the session again.",
+    "transfer_expired",
+)
+
+/** The transfer is decided already. */
+class TransferNotOpenException : OstromException(
+    ErrorKind.CONFLICT,
+    "The transfer is no longer open.",
+    "transfer_not_open",
+)
+
+/** The owner is being changed: the transfer can no longer be cancelled. */
+class TransferInProgressException : OstromException(
+    ErrorKind.CONFLICT,
+    "The owner is being changed; the transfer can no longer be cancelled.",
+    "transfer_in_progress",
+)
+
+/**
+ * The recipient cannot own the session.
+ *
+ * @param codes Every reason, as the failure codes of a transfer.
+ */
+class RecipientIneligibleException(codes: List<String>) : OstromException(
+    ErrorKind.UNPROCESSABLE,
+    "The recipient cannot own this session: ${codes.joinToString()}.",
+    "recipient_ineligible",
+)
+
+/** The idempotency key was used with another request. */
+class IdempotencyConflictException : OstromException(
+    ErrorKind.UNPROCESSABLE,
+    "This Idempotency-Key was already used with a different request.",
+    "idempotency_conflict",
+)
+
+/** A transfer needs its `Idempotency-Key`. */
+class IdempotencyKeyRequiredException : OstromException(
+    ErrorKind.INVALID_REQUEST,
+    "Send an Idempotency-Key of 1 to 128 characters of A-Za-z0-9._:-.",
+    "idempotency_key_required",
+)
+
+/** The session changed while the request ran: retry it. */
+class SessionBusyException : OstromException(
+    ErrorKind.CONFLICT,
+    "The cloud session changed concurrently. Retry the request.",
+    "session_busy",
+)

@@ -8,6 +8,7 @@ private val USAGE_READS = setOf(
 
 private val CLOUD_READS = setOf(
     "GET /api/v1/cloud/sessions", "GET /api/v1/cloud/sessions/{id}", "GET /api/v1/runners", "GET /api/v1/events",
+    "GET /api/v1/cloud/transfer-recipients", "GET /api/v1/cloud/transfers", "GET /api/v1/cloud/transfers/{id}",
     // A conversation's transcript, sub-agents and inputs (TeamCode's CLOUD_READ).
     "GET /api/v1/cloud/sessions/{id}/events", "GET /api/v1/cloud/sessions/{id}/events/stream",
     "GET /api/v1/cloud/sessions/{id}/agents", "GET /api/v1/cloud/sessions/{id}/messages",

@@ -50,6 +50,11 @@ import kotlin.uuid.Uuid
  *   registered runners.
  * @property clusterUnreachableSince Since when the steps of the session have found its cluster unreachable without a
  *   break ([RuntimeUnreachableException]); null while it opens. Past a bound, its execution ends without the cluster.
+ * @property transferId The accepted transfer the session is moving toward, from its acceptance until the owner changed
+ *   or the transfer ended ([CloudTransfer]); the session pauses, then changes owner at that paused boundary.
+ * @property untrustedWorkspace Whether another member's execution ran on the workspace since the owner's last ready
+ *   one: set when the owner changes, cleared when an execution of the new owner is ready. The runner resets the
+ *   agent's settings and each repository's Git configuration before it runs the setup and the agent.
  * @property expiresAt When a paused session is terminated with its workspace (TeamCode's `expiresAt`), from the
  *   instance's paused retention in force when it paused ([PausedRetention]); null while it is not paused, or when
  *   paused sessions are kept. Resuming clears it.
@@ -98,6 +103,8 @@ data class CloudSession(
     val environment: CloudEnvironmentSpec? = null,
     val profile: SessionProfile? = null,
     val clusterUnreachableSince: Instant? = null,
+    val transferId: Uuid? = null,
+    val untrustedWorkspace: Boolean = false,
     val expiresAt: Instant? = null,
     val terminatedReason: String? = null,
     val expiryBackfill: Boolean = false,
@@ -177,6 +184,12 @@ enum class SessionState(val wire: String) {
 
     /** A new execution is starting on the kept workspace. */
     RESUMING("resuming"),
+
+    /**
+     * The owner is changing at a paused boundary: no execution, the recipient checked again, then one write changes
+     * the owner. Refuses resumes, wakes and new transfers; bounded by [CompleteCloudTransferUseCase.DEADLINE].
+     */
+    TRANSFERRING("transferring"),
 
     /** Deleted: no execution, workspace deleted. Final. */
     TERMINATED("terminated"),

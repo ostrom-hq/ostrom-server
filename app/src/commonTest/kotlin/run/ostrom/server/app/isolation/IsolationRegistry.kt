@@ -37,6 +37,7 @@ import run.ostrom.server.app.isolation.Seed.SERVICE_KEY
 import run.ostrom.server.app.isolation.Seed.SESSION
 import run.ostrom.server.app.isolation.Seed.SKILL
 import run.ostrom.server.app.isolation.Seed.TOKEN
+import run.ostrom.server.app.isolation.Seed.TRANSFER
 import run.ostrom.server.app.isolation.Seed.WAIT
 import run.ostrom.server.app.isolation.Seed.WEBHOOK
 import run.ostrom.server.app.isolation.Seed.WORKFLOW
@@ -624,6 +625,15 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "PUT /api/v1/cloud/sessions/{id}/github" to target("id" to CLOUD_SESSION, body = """{"access": "shared"}"""),
     "POST /api/v1/cloud/sessions/{id}/terminal/ticket" to target("id" to CLOUD_SESSION),
     "GET /api/v1/cloud/sessions/{id}/terminal" to Case.Exempt(WEBSOCKET),
+    // Transfers of a cloud session's ownership: the caller's own, in the organization they act for.
+    "POST /api/v1/cloud/sessions/{id}/transfer" to
+        target("id" to CLOUD_SESSION, body = """{"toMemberId": "{{MEMBER_ID}}"}"""),
+    "GET /api/v1/cloud/transfer-recipients" to Case.Target(),
+    "GET /api/v1/cloud/transfers" to Case.Target(),
+    "GET /api/v1/cloud/transfers/{id}" to target("id" to TRANSFER),
+    "POST /api/v1/cloud/transfers/{id}/accept" to target("id" to TRANSFER),
+    "POST /api/v1/cloud/transfers/{id}/cancel" to target("id" to TRANSFER),
+    "POST /api/v1/cloud/transfers/{id}/decline" to target("id" to TRANSFER),
     // A conversation session's transcript, inputs and options (the session decides whose, the input is any id).
     "GET /api/v1/cloud/sessions/{id}/events" to target("id" to CLOUD_SESSION),
     "GET /api/v1/cloud/sessions/{id}/events/stream" to target("id" to CLOUD_SESSION),

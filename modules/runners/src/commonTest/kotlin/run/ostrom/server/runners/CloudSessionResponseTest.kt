@@ -13,6 +13,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
+import kotlin.uuid.Uuid
 
 class CloudSessionResponseTest {
     @Test
@@ -48,5 +49,13 @@ class CloudSessionResponseTest {
         val terminated = paused.copy(state = SessionState.TERMINATED)
         assertNull(terminated.toResponse().expiresAt)
         assertEquals("expired", terminated.toResponse().terminatedReason)
+    }
+
+    @Test
+    fun aSessionBeingTransferredNamesItsTransfer() {
+        val id = Uuid.random()
+        val moving = session(state = SessionState.PAUSED, desired = DesiredState.PAUSED)
+        assertEquals(id.toString(), moving.copy(transferId = id).toResponse().transferId)
+        assertNull(moving.toResponse().transferId)
     }
 }

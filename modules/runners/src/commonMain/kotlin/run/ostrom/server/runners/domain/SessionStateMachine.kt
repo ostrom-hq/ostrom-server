@@ -8,6 +8,7 @@ import run.ostrom.server.runners.domain.SessionState.PAUSING
 import run.ostrom.server.runners.domain.SessionState.RESUMING
 import run.ostrom.server.runners.domain.SessionState.RUNNING
 import run.ostrom.server.runners.domain.SessionState.TERMINATED
+import run.ostrom.server.runners.domain.SessionState.TRANSFERRING
 
 /**
  * The transitions a session may make. Every write of a state goes through [requireTransition], so a defect in the
@@ -18,7 +19,9 @@ object SessionStateMachine {
         CREATING to setOf(RUNNING, PAUSED, FAILED, TERMINATED),
         RUNNING to setOf(PAUSING, PAUSED, TERMINATED),
         PAUSING to setOf(PAUSED, RUNNING, TERMINATED),
-        PAUSED to setOf(RESUMING, TERMINATED),
+        // The owner changes only at a paused boundary: no execution at all.
+        PAUSED to setOf(RESUMING, TERMINATED, TRANSFERRING),
+        TRANSFERRING to setOf(PAUSED, RESUMING, TERMINATED),
         RESUMING to setOf(RUNNING, PAUSED, FAILED, TERMINATED),
         TERMINATED to emptySet(),
         FAILED to setOf(TERMINATED),

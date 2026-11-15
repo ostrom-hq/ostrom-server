@@ -16,6 +16,7 @@ import run.ostrom.server.runners.domain.RepositorySpec
 import run.ostrom.server.runners.domain.RunnerGitHubToken
 import run.ostrom.server.runners.domain.RunnerVariableValues
 import run.ostrom.server.runners.fakes.session
+import run.ostrom.server.runners.presentation.toResponse
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -272,5 +273,17 @@ class CloudEnvironmentRulesTest {
                 "variables=RunnerVariableValues([TOKEN], unavailable=[], secrets=[], oneTime=[]))",
             prepared.toString(),
         )
+    }
+
+    @Test
+    fun anUntrustedWorkspaceIsNamedToTheRunnerOnlyWhenItIs() {
+        fun prepared(untrusted: Boolean) = PreparedEnvironment(
+            CloudEnvironmentSpec(repositories = listOf(repo)),
+            GitIdentity("octo", "o@x"),
+            RunnerVariableValues(emptyMap(), emptyList()),
+            untrusted,
+        )
+        assertNull(prepared(false).toResponse().untrustedWorkspace)
+        assertEquals(true, prepared(true).toResponse().untrustedWorkspace)
     }
 }

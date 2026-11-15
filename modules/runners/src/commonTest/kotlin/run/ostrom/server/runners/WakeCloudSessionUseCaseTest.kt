@@ -107,6 +107,13 @@ class WakeCloudSessionUseCaseTest {
     }
 
     @Test
+    fun aSessionPausedForATransferOnlyTheTransferResumes() = runTest {
+        val moving = paused().copy(transferId = Uuid.random()).also(repository::put)
+        assertEquals(CloudSessionWake.NOT_PAUSED, wake(ORG_A, moving.id.toString(), waitId))
+        assertTrue(audit.isEmpty())
+    }
+
+    @Test
     fun aPausedSessionThatMayNotResumeStaysPaused() = runTest {
         val gone = session(state = SessionState.PAUSED, desired = DesiredState.PAUSED, ownerId = "bob")
         repository.put(gone)

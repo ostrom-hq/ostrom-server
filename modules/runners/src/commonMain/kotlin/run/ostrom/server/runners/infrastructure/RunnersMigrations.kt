@@ -637,4 +637,43 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(version = 17, name = "conversation_sessions", sql = CONVERSATION_SQL),
     SchemaMigration(version = 18, name = "workspace_deletion", sql = WORKSPACE_DELETION_SQL),
     SchemaMigration(version = 19, name = "create_keys", sql = CREATE_KEYS_SQL),
+    // runners.cloud.transfer.v1: a session changes owner at a paused boundary. `transfer_id` is the accepted transfer
+    // the session moves toward, `untrusted_workspace` holds from the owner change until an execution of the new
+    // owner is ready; the transfers are a tenant table (the keys of a creation are kept 24 hours by the use case).
+    SchemaMigration(
+        version = 20,
+        name = "session_transfers",
+        sql = """
+            ALTER TABLE runners_sessions ADD COLUMN transfer_id UUID;
+            ALTER TABLE runners_sessions ADD COLUMN untrusted_workspace BOOLEAN NOT NULL DEFAULT FALSE;
+            CREATE TABLE runners_session_transfers (
+                id UUID PRIMARY KEY,
+                org_id UUID NOT NULL,
+                session_id UUID NOT NULL,
+                from_member_id TEXT NOT NULL,
+                to_member_id TEXT NOT NULL,
+                initiated_by TEXT NOT NULL,
+                state TEXT NOT NULL,
+                resume BOOLEAN NOT NULL,
+                version INTEGER NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL,
+                expires_at TIMESTAMPTZ,
+                decided_by TEXT,
+                decided_at TIMESTAMPTZ,
+                completed_at TIMESTAMPTZ,
+                at_epoch BIGINT,
+                failure_code TEXT,
+                failure_message TEXT,
+                idempotency_key TEXT,
+                request_digest TEXT
+            );
+            CREATE INDEX runners_session_transfers_session ON runners_session_transfers (org_id, session_id, state);
+            CREATE INDEX runners_session_transfers_from ON runners_session_transfers (org_id, from_member_id, created_at DESC, id DESC);
+            CREATE INDEX runners_session_transfers_to ON runners_session_transfers (org_id, to_member_id, created_at DESC, id DESC);
+            CREATE UNIQUE INDEX runners_session_transfers_key
+                ON runners_session_transfers (org_id, initiated_by, idempotency_key) WHERE idempotency_key IS NOT NULL;
+            ${tenantTableSql("runners_session_transfers")}
+        """.trimIndent(),
+    ),
 )

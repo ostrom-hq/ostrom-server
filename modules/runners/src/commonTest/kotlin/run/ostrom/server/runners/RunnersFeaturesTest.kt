@@ -1,13 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.kernel.audit.OrgAuditTrail
+import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.MemberDirectory
+import run.ostrom.server.kernel.auth.OrgPrincipal
+import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.config.MapConfigSource
+import run.ostrom.server.runners.domain.CloudTransfersUseCaseImpl
 import run.ostrom.server.runners.domain.ConversationAnnouncement
 import run.ostrom.server.runners.domain.NoRunnerVariables
 import run.ostrom.server.runners.domain.RunnerGitHubToken
 import run.ostrom.server.runners.domain.RunnerGitHubTokens
+import run.ostrom.server.runners.fakes.FakeTransferRecipients
+import run.ostrom.server.runners.fakes.InMemoryCloudSessionsRepository
+import run.ostrom.server.runners.fakes.InMemoryCloudTransfersRepository
+import run.ostrom.server.runners.fakes.SettableClock
+import run.ostrom.server.runners.fakes.SwitchedTransferPolicy
 import run.ostrom.server.runners.infrastructure.ResolvedRunnerVariables
+import run.ostrom.server.runners.presentation.CloudTransfersRoutesDependencies
 import run.ostrom.server.runners.infrastructure.RunnersConfig
 import run.ostrom.server.runners.infrastructure.runnerVariables
 import run.ostrom.server.secrets.domain.EnvironmentValues
@@ -133,5 +144,37 @@ class RunnersFeaturesTest {
             )
         }.koin
         assertEquals(cloud + "runners.cloud.environment.v1", RunnersModule.features(koin))
+    }
+
+    @Test
+    fun ownershipTransfersAreListedOnlyWhenTheirRoutesAreServed() = runTest {
+        val sessions = InMemoryCloudSessionsRepository()
+        val use = CloudTransfersUseCaseImpl(
+            sessions,
+            InMemoryCloudTransfersRepository(sessions),
+            FakeTransferRecipients(),
+            SwitchedTransferPolicy(),
+            OrgAuditTrail { },
+            SettableClock(),
+        )
+        val resolver = object : PrincipalOrgResolver {
+            override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): OrgPrincipal? = null
+        }
+        val served = TransferWiring(CloudTransfersRoutesDependencies(use, resolver), null)
+        for (wiring in listOf(served, TransferWiring(null, null))) {
+            val koin = koinApplication {
+                modules(
+                    module {
+                        single {
+                            val docker = RunnersConfig.DriverKind.DOCKER
+                            RunnersConfig.from(MapConfigSource(emptyMap())).copy(driver = docker)
+                        }
+                        single { wiring }
+                    },
+                )
+            }.koin
+            val listed = setOfNotNull("runners.cloud.transfer.v1".takeIf { wiring.routes != null })
+            assertEquals(cloud + listed, RunnersModule.features(koin))
+        }
     }
 }

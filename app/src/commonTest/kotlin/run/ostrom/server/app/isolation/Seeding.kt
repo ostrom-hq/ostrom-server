@@ -6,6 +6,10 @@ import run.ostrom.server.runners.domain.AgentKind
 import run.ostrom.server.runners.domain.CloudPlan
 import run.ostrom.server.runners.domain.CloudSession
 import run.ostrom.server.runners.domain.CloudSessionsRepository
+import run.ostrom.server.runners.domain.CloudTransfer
+import run.ostrom.server.runners.domain.TransferOpening
+import run.ostrom.server.runners.domain.TransferState
+import run.ostrom.server.runners.infrastructure.CloudTransfersRepositoryImpl
 import run.ostrom.server.runners.domain.DesiredState
 import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.testing.TestServer
@@ -337,8 +341,25 @@ private suspend fun TestServer.cloudSession(party: Party) {
     )
     if (koin.get<CloudSessionsRepository>().createWithinCap(session, CLOUD_CAP)) {
         party.values[Seed.CLOUD_SESSION] = "${session.id}"
+        offerTransfer(party, session)
     } else {
         party.problems += "seed ${party.marker} cloud session: over the cap"
+    }
+}
+
+// An offer of that session to another member, as the transfer routes store it.
+private suspend fun TestServer.offerTransfer(party: Party, session: CloudSession) {
+    val now = Clock.System.now()
+    val transfer = CloudTransfer(
+        id = Uuid.random(), orgId = party.org.id, sessionId = session.id, fromMemberId = session.ownerId,
+        toMemberId = "${Uuid.random()}", initiatedBy = session.ownerId, state = TransferState.OFFERED, resume = false,
+        version = 0, createdAt = now, updatedAt = now, expiresAt = now + CloudTransfer.OFFER_VALIDITY,
+    )
+    val opened = CloudTransfersRepositoryImpl(driver, koin.get()).open(transfer, now, session = null)
+    if (opened is TransferOpening.Opened) {
+        party.values[Seed.TRANSFER] = "${transfer.id}"
+    } else {
+        party.problems += "seed ${party.marker} transfer: $opened"
     }
 }
 

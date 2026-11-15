@@ -2,6 +2,7 @@
 package run.ostrom.server.orgs.infrastructure
 
 import run.ostrom.server.kernel.auth.MemberDirectory
+import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.orgs.domain.MembersRepository
 import kotlin.uuid.Uuid
 
@@ -26,4 +27,7 @@ class MemberDirectoryImpl(private val members: MembersRepository) : MemberDirect
 
     override suspend fun memberIds(orgId: Uuid, limit: Int): List<String>? =
         members.page(orgId, null, limit + 1).takeIf { it.size <= limit }?.map { it.id.toString() }
+
+    override suspend fun roles(orgId: Uuid, limit: Int): Map<String, OrgRole>? =
+        members.page(orgId, null, limit + 1).takeIf { it.size <= limit }?.associate { it.id.toString() to it.role }
 }

@@ -281,6 +281,7 @@ fun CloudSession.toResponse() = CloudSessionResponse(
     effort = effort,
     permissionBypass = permissionBypass != null,
     waiting = waiting?.let { CloudSessionWaitingDto(it.reason, it.requestId, it.since.toString(), it.eventSeq) },
+    transferId = transferId?.toString(),
 )
 
 private const val MALFORMED_KEY = "Idempotency-Key: 1 to 128 characters of A-Za-z0-9._:-."

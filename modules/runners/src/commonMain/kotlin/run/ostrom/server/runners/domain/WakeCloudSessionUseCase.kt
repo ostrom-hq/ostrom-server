@@ -95,7 +95,8 @@ class WakeCloudSessionUseCaseImpl(
         return when {
             session == null -> CloudSessionWake.NO_SESSION
             session.state.isFinal || session.desiredState == DesiredState.TERMINATED -> CloudSessionWake.ENDED
-            session.desiredState == DesiredState.RUNNING -> CloudSessionWake.NOT_PAUSED
+            // An accepted transfer pauses the session; only the transfer resumes it, for the recipient.
+            session.desiredState == DesiredState.RUNNING || session.transferId != null -> CloudSessionWake.NOT_PAUSED
             members?.isActiveMember(orgId, session.ownerId) != true -> CloudSessionWake.OWNER_GONE
             else -> refusal(session.orgId) ?: resume(session, cause)
         }

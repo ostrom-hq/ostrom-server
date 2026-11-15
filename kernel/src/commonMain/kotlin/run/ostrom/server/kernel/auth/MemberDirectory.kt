@@ -31,6 +31,17 @@ interface MemberDirectory {
     suspend fun memberIds(orgId: Uuid, limit: Int): List<String>? = null
 
     /**
+     * The role of every member of [orgId], such as the picker of a session transfer needs.
+     *
+     * @param orgId The organization.
+     * @param limit The most members returned.
+     *
+     * @return The role of each member, by the id [OrgPrincipal.memberId] gives; null when there are more than [limit],
+     *   or when this directory cannot list them.
+     */
+    suspend fun roles(orgId: Uuid, limit: Int): Map<String, OrgRole>? = null
+
+    /**
      * The person behind a member of [orgId], for what an owner or an admin reads or changes of them (their devices).
      *
      * @param orgId The organization.
