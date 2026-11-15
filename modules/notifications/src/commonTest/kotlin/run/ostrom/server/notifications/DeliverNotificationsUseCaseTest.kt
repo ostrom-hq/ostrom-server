@@ -10,6 +10,8 @@ import run.ostrom.server.kernel.events.SessionNames
 import run.ostrom.server.kernel.events.WaitSummaries
 import run.ostrom.server.kernel.events.WaitSummary
 import run.ostrom.server.identity.domain.MailAvailability
+import run.ostrom.server.kernel.events.GateSummary
+import run.ostrom.server.notifications.domain.ApprovalChannel
 import run.ostrom.server.notifications.domain.ApprovalDelivery
 import run.ostrom.server.notifications.domain.ApprovalNotices
 import run.ostrom.server.notifications.domain.ApprovalRouter
@@ -127,7 +129,10 @@ class DeliverNotificationsUseCaseTest {
 
             assertEquals(2, queued, "C's page was queued by another replica")
             assertEquals(listOf(DeliveryRules.SOURCE_TYPES), journal.read.map { it.second }.distinct())
-            assertEquals(setOf(OrgEventType.WAIT_CREATED, OrgEventType.APPROVAL_REQUESTED), DeliveryRules.SOURCE_TYPES)
+            assertEquals(
+                setOf(OrgEventType.WAIT_CREATED, OrgEventType.APPROVAL_REQUESTED, OrgEventType.APPROVAL_DECIDED),
+                DeliveryRules.SOURCE_TYPES,
+            )
             val (a, b) = deliveries.enqueued
             assertEquals(orgA, a.first.orgId)
             val told = a.second.filterIsInstance<NotificationDelivery>()
@@ -494,6 +499,44 @@ class DeliverNotificationsUseCaseTest {
             assertEquals(DeliveryState.DELIVERED, deliveries.recorded[wait.id]?.state)
             assertEquals(listOf("fcm-token-bob"), pushes.calls.flatten().map { it.to })
             assertEquals(listOf("bob@example.com"), mail.calls.map { it.to })
+        }
+    }
+
+    @Test
+    fun aClaimedAnswerIsSentToItsChannelWhateverItsGateAndRetriedLikeAnyDelivery() {
+        runTest {
+            val decided = sampleGate(open = false).also { gates.gates = listOf(it) }
+            val answers = mutableListOf<ApprovalDelivery>()
+            var result = ChannelResult.DELIVERED
+            val chat = object : ApprovalChannel {
+                override val id: String = "chat"
+                override suspend fun reachable(orgId: Uuid, memberIds: Set<Uuid>): Set<Uuid> = emptySet()
+                override suspend fun send(delivery: ApprovalDelivery, gate: GateSummary, link: String) = error("No")
+                override suspend fun decided(delivery: ApprovalDelivery): ChannelResult {
+                    answers += delivery
+                    return result
+                }
+            }
+            val approvers = MapApprovers(mapOf("bob" to bob))
+            val mailing = MailAvailability { true }
+            val sender = ApprovalSender(
+                approvers, devices, SetLiveCredentials(setOf(CREDENTIAL)), ApprovalNotices(""), pushes, mail, mailing,
+                { listOf(chat) },
+            )
+            router = ApprovalRouter(gates, approvers, mailing, sender, { listOf(chat) })
+            val answer = approvalDelivery(orgA, decided, channel = "chat", memberId = mia).copy(decision = "approved")
+            val deliveries = MemoryDeliveries()
+            deliveries.due[orgA] = mutableListOf(answer)
+
+            assertEquals(1, useCase(FakeJournal(), CountingWaits(emptyList()), deliveries, emptyList())())
+
+            assertEquals(listOf(answer), answers, "The gate is decided, the answer goes all the same")
+            assertEquals(DeliveryState.DELIVERED, deliveries.recorded.getValue(answer.id).state)
+            result = ChannelResult.retry("ratelimited")
+            val again = answer.copy(id = Uuid.random())
+            deliveries.due[orgA] = mutableListOf(again)
+            assertEquals(1, useCase(FakeJournal(), CountingWaits(emptyList()), deliveries, emptyList())())
+            assertEquals(DeliveryState.PENDING, deliveries.recorded.getValue(again.id).state)
         }
     }
 

@@ -39,6 +39,23 @@ fun approvalRequested(seq: Long, approvalId: Uuid, gate: GateSummary, approver: 
     ),
 )
 
+/** A `cloud.approval.decided` event, as the gates publish it: [status] is the request's own. */
+fun approvalDecided(seq: Long, approvalId: Uuid, gate: GateSummary, approver: String, status: String) = JournalEntry(
+    seq,
+    OrgEventType.APPROVAL_DECIDED,
+    approvalId.toString(),
+    null,
+    ASKED_AT,
+    JsonObject(
+        mapOf(
+            "approvalId" to JsonPrimitive(approvalId.toString()),
+            "gateId" to JsonPrimitive(gate.id),
+            "approver" to JsonPrimitive(approver),
+            "status" to JsonPrimitive(status),
+        ),
+    ),
+)
+
 /** The delivery of [gate]'s request to [approver] on [channel]. */
 fun approvalDelivery(
     orgId: Uuid,

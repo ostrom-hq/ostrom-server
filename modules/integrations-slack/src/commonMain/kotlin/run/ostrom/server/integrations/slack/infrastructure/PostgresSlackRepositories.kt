@@ -5,14 +5,15 @@ import run.ostrom.server.integrations.slack.domain.SlackApprovalMessage
 import run.ostrom.server.integrations.slack.domain.SlackApprovalMessagesRepository
 import run.ostrom.server.integrations.slack.domain.SlackLinksRepository
 import run.ostrom.server.integrations.slack.domain.SlackPosted
+import run.ostrom.server.integrations.slack.domain.SlackUserTakenException
 import run.ostrom.server.integrations.slack.domain.StoredSlackLink
 import run.ostrom.server.kernel.database.JdbcDatabase
 import org.jetbrains.exposed.v1.core.ResultRow
-import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.statements.insertValue
+import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
 import org.jetbrains.exposed.v1.jdbc.Query
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.select
@@ -40,21 +41,28 @@ class PostgresSlackLinksRepository(private val database: JdbcDatabase) : SlackLi
     }
 
     override suspend fun save(orgId: Uuid, link: StoredSlackLink) {
-        database.inOrg(orgId) {
-            val l = SlackLinks
-            l.upsert(
-                l.orgId,
-                l.memberId,
-                onUpdate = {
-                    it[l.slackUserId] = insertValue(l.slackUserId)
-                    it[l.linkedAt] = insertValue(l.linkedAt)
-                },
-            ) {
-                it[this.orgId] = orgId
-                it[memberId] = link.memberId
-                it[slackUserId] = link.slackUserId
-                it[linkedAt] = link.linkedAt
+        try {
+            database.inOrg(orgId) {
+                val l = SlackLinks
+                l.upsert(
+                    l.orgId,
+                    l.memberId,
+                    onUpdate = {
+                        it[l.slackUserId] = insertValue(l.slackUserId)
+                        it[l.linkedAt] = insertValue(l.linkedAt)
+                    },
+                ) {
+                    it[this.orgId] = orgId
+                    it[memberId] = link.memberId
+                    it[slackUserId] = link.slackUserId
+                    it[linkedAt] = link.linkedAt
+                }
             }
+        } catch (error: ExposedSQLException) {
+            // The member's own row is replaced (the upsert's arbiter); what is left is another member's Slack account,
+            // taken between the use case's read and this write.
+            if (error.sqlState == UNIQUE_VIOLATION) throw SlackUserTakenException()
+            throw error
         }
     }
 
@@ -116,8 +124,8 @@ class PostgresSlackApprovalMessagesRepository(private val database: JdbcDatabase
         }
     }
 
-    override suspend fun ofGate(orgId: Uuid, gateId: Uuid): List<SlackApprovalMessage> = database.inOrg(orgId) {
-        messagesOfGate(orgId, gateId).map { row ->
+    override suspend fun of(orgId: Uuid, approvalId: Uuid): SlackApprovalMessage? = database.inOrg(orgId) {
+        messageOf(orgId, approvalId).singleOrNull()?.let { row ->
             SlackApprovalMessage(
                 approvalId = row[SlackApprovalMessages.approvalId],
                 gateId = row[SlackApprovalMessages.gateId],
@@ -131,17 +139,13 @@ class PostgresSlackApprovalMessagesRepository(private val database: JdbcDatabase
     }
 }
 
-/**
- * The messages of [gateId]'s requests, one per approver told: by the index `(org_id, gate_id)`, at most
- * [MAX_MESSAGES_OF_A_GATE].
- */
-internal fun messagesOfGate(orgId: Uuid, gateId: Uuid): Query {
+/** The message kept for [approvalId] in [orgId]: by the primary key `(org_id, approval_id)`. */
+internal fun messageOf(orgId: Uuid, approvalId: Uuid): Query {
     val m = SlackApprovalMessages
     return m.select(m.approvalId, m.gateId, m.slackChannel, m.ts)
-        .where { (m.orgId eq orgId) and (m.gateId eq gateId) }
-        .orderBy(m.approvalId to SortOrder.ASC)
-        .limit(MAX_MESSAGES_OF_A_GATE)
+        .where { (m.orgId eq orgId) and (m.approvalId eq approvalId) }
+        .limit(1)
 }
 
-/** A gate asks its approvers, an organization's members with the right: the bound, far above a real gate's. */
-internal const val MAX_MESSAGES_OF_A_GATE = 1_000
+/** PostgreSQL's SQLSTATE of a unique violation. */
+private const val UNIQUE_VIOLATION = "23505"

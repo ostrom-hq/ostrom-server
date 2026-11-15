@@ -11,7 +11,7 @@ kotlin {
             implementation(project(":kernel"))
             // The `slack` notification channel and the approvals' way to tell an approver (ApprovalChannel).
             implementation(project(":modules:notifications"))
-            // The Reject button answers the request; the gates' channel closes the messages once decided.
+            // The Reject button answers the request; the answers close the messages through the queue.
             implementation(project(":modules:gates"))
             // The member's proven e-mail address, looked up in Slack.
             implementation(project(":modules:identity"))

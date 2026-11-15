@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.integrations.slack
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import run.ostrom.server.integrations.slack.domain.SlackApprovalChannel
 import run.ostrom.server.integrations.slack.domain.SlackApprovalMessage
+import run.ostrom.server.integrations.slack.domain.SlackApprovalMessagesRepository
 import run.ostrom.server.integrations.slack.domain.SlackApps
 import run.ostrom.server.integrations.slack.domain.SlackCallException
-import run.ostrom.server.integrations.slack.domain.SlackGateChannel
 import run.ostrom.server.integrations.slack.domain.SlackNotificationChannel
 import run.ostrom.server.integrations.slack.domain.SlackPosted
 import run.ostrom.server.integrations.slack.domain.SlackTexts
 import run.ostrom.server.integrations.slack.domain.StoredSlackLink
-import run.ostrom.server.gates.domain.models.GateStatus
 import run.ostrom.server.kernel.events.GateSummary
 import run.ostrom.server.notifications.domain.ApprovalDelivery
 import run.ostrom.server.notifications.domain.ChannelResult
@@ -19,6 +19,7 @@ import run.ostrom.server.notifications.domain.Notification
 import run.ostrom.server.notifications.domain.NotificationKind
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -37,6 +38,14 @@ class SlackChannelsTest {
     private val messages = InMemorySlackMessages()
     private val texts = SlackTexts("https://console.ostrom.test")
     private val api = FakeSlackApi()
+
+    private val gate = GateSummary(
+        Uuid.random().toString(), true, listOf("ana"), "Push to main", "acme/app", listOf("bob"),
+    )
+    private val delivery = ApprovalDelivery(
+        Uuid.random(), org, bob, "bob", Uuid.random(), Uuid.parse(gate.id), "slack", 0, 1,
+        "ana asks for your yes", "Push to main · acme/app", now,
+    )
 
     private fun notification(member: Uuid) = Notification(
         Uuid.random(), org, member, NotificationKind.WAITING, "Ship", "Review", null, "w-1", "wait:w-1", now, 1,
@@ -74,76 +83,107 @@ class SlackChannelsTest {
     }
 
     @Test
-    fun aYesRequestIsPostedKeptAndClosedOnceItsGateIsDecided() = runTest {
+    fun aYesRequestIsPostedAndKept() = runTest {
         val channel = SlackApprovalChannel(apps, api, links, messages, texts)
         assertEquals(setOf(bob), channel.reachable(org, setOf(bob, carol)))
         assertEquals(emptySet(), channel.reachable(org, emptySet()))
-        val gate = GateSummary(Uuid.random().toString(), true, listOf("ana"), "Push to main", "acme/app", listOf("bob"))
-        val delivery = ApprovalDelivery(
-            Uuid.random(), org, bob, "bob", Uuid.random(), Uuid.parse(gate.id), "slack", 0, 1,
-            "ana asks for your yes", "Push to main · acme/app", now,
-        )
-
         assertEquals(ChannelResult.DELIVERED, channel.send(delivery, gate, "https://c/yes/${delivery.approvalId}"))
         val posted = SlackPosted("D-U0BOB", "1700000000.1")
         val kept = SlackApprovalMessage(delivery.approvalId, delivery.gateId, posted)
         assertEquals(listOf(kept), messages.messages.values.toList())
         assertTrue(api.posted.single().second.blocks != null, "With its buttons")
-        val carols = delivery.copy(memberId = carol)
+        val carols = delivery.copy(memberId = carol, approvalId = Uuid.random())
         assertEquals(ChannelResult.failed("slack_not_linked"), channel.send(carols, gate, "https://c"))
+        val fresh = delivery.copy(approvalId = Uuid.random())
         api.postFailure = SlackCallException("slack_unavailable", retryable = true)
-        assertEquals(ChannelResult.retry("slack_unavailable"), channel.send(delivery, gate, "https://c"))
+        assertEquals(ChannelResult.retry("slack_unavailable"), channel.send(fresh, gate, "https://c"))
         settings.configured = false
-        assertEquals(ChannelResult.failed("slack_not_configured"), channel.send(delivery, gate, "https://c"))
+        assertEquals(ChannelResult.failed("slack_not_configured"), channel.send(fresh, gate, "https://c"))
         assertEquals(emptySet(), channel.reachable(org, setOf(bob)))
     }
 
     @Test
-    fun theGatesChannelOnlyClosesTheMessagesAndNeverThrows() = runTest {
-        val gates = SlackGateChannel(apps, api, messages, texts)
-        assertEquals("slack", gates.name)
-        val gateId = Uuid.random()
-        val posted = SlackPosted("D-U0BOB", "1.1")
-        messages.messages[org to Uuid.random()] = SlackApprovalMessage(Uuid.random(), gateId, posted)
-        val gate = sampleDecidedGate(org, gateId, now)
-
-        gates.requested(gate, emptyList())
-        gates.decided(gate, emptyList())
-
-        assertEquals(listOf(posted), api.updated.map { it.first })
-        assertTrue("Rejected by bob." in api.updated.single().second.text)
-        api.failure = SlackCallException("message_not_found", retryable = false)
-        gates.decided(gate, emptyList())
-        gates.decided(gate.copy(id = Uuid.random()), emptyList())
-        settings.configured = false
-        gates.decided(gate, emptyList())
-        assertEquals(1, api.updated.size)
+    fun aRequestAlreadyKeptIsNeverSentASecondTime() = runTest {
+        val channel = SlackApprovalChannel(apps, api, links, messages, texts)
+        assertEquals(ChannelResult.DELIVERED, channel.send(delivery, gate, "https://c"))
+        // The queue lost the first outcome (its record failed): the attempt runs again.
+        assertEquals(ChannelResult.DELIVERED, channel.send(delivery, gate, "https://c"))
+        assertEquals(1, api.posted.size, "One direct message, one set of buttons")
+        assertEquals(emptyList(), api.deleted)
     }
 
     @Test
-    fun theMessageSaysWhoApprovedOrThatNothingWaitsAnyMore() = runTest {
-        val gates = SlackGateChannel(apps, api, messages, texts)
-        val gateId = Uuid.random()
-        messages.messages[org to Uuid.random()] = SlackApprovalMessage(Uuid.random(), gateId, SlackPosted("D", "1"))
-        val gate = sampleDecidedGate(org, gateId, now)
-        gates.decided(gate.copy(status = GateStatus.APPROVED), emptyList())
-        gates.decided(gate.copy(status = GateStatus.CONSUMED, label = ""), emptyList())
-        gates.decided(gate.copy(status = GateStatus.RESERVED, decidedBy = null), emptyList())
-        gates.decided(gate.copy(status = GateStatus.PENDING), emptyList())
-        val texts = api.updated.map { it.second.text }
+    fun aMessageThatCannotBeKeptIsTakenBackSoTheRetrySendsTheOnlyOne() = runTest {
+        val channel = SlackApprovalChannel(apps, api, links, messages, texts)
+        messages.failingSaves = 1
+
+        assertEquals(ChannelResult.retry("slack_not_kept"), channel.send(delivery, gate, "https://c"))
+        assertEquals(api.deleted.single(), SlackPosted("D-U0BOB", "1700000000.1"), "The first one is taken back")
+        assertEquals(emptyMap(), messages.messages)
+
+        assertEquals(ChannelResult.DELIVERED, channel.send(delivery, gate, "https://c"))
+        assertEquals(2, api.posted.size)
+        assertEquals(SlackPosted("D-U0BOB", "1700000000.2"), messages.messages.values.single().posted)
+        assertEquals(1, api.deleted.size)
+    }
+
+    @Test
+    fun aMessageThatCannotBeKeptNorTakenBackCountsAsToldRatherThanSentTwice() = runTest {
+        val channel = SlackApprovalChannel(apps, api, links, messages, texts)
+        messages.failingSaves = 1
+        api.deleteFailure = SlackCallException("cant_delete_message", retryable = false)
+
+        assertEquals(ChannelResult.DELIVERED, channel.send(delivery, gate, "https://c"))
+        assertEquals(1, api.posted.size)
+
+        messages.failingSaves = 1
+        val another = delivery.copy(approvalId = Uuid.random())
+        api.deleteFailure = SlackCallException("ratelimited", retryable = true)
+        assertEquals(ChannelResult.DELIVERED, channel.send(another, gate, "https://c"))
+        assertEquals(2, api.posted.size)
+    }
+
+    @Test
+    fun aCancelledSaveIsNotMistakenForAFailedOne() = runTest {
+        val cancelling = object : SlackApprovalMessagesRepository by messages {
+            override suspend fun save(orgId: Uuid, message: SlackApprovalMessage) = throw CancellationException("Stop")
+        }
+        val channel = SlackApprovalChannel(apps, api, links, cancelling, texts)
+        assertFailsWith<CancellationException> { channel.send(delivery, gate, "https://c") }
+        assertEquals(emptyList(), api.deleted, "Cancelled, not taken back")
+    }
+
+    @Test
+    fun anAnswerClosesTheKeptMessageWithItsOutcomeAndRetriesWhileSlackMayTakeIt() = runTest {
+        val channel = SlackApprovalChannel(apps, api, links, messages, texts)
+        val answer = delivery.copy(decision = "rejected")
+        assertEquals(ChannelResult.DELIVERED, channel.decided(answer), "Nothing was kept: nothing to close")
+        assertEquals(emptyList(), api.updated)
+        channel.send(delivery, gate, "https://c")
+        val posted = messages.messages.values.single().posted
+
+        assertEquals(ChannelResult.DELIVERED, channel.decided(answer))
+        assertEquals(posted, api.updated.single().first)
+        assertEquals("*ana asks for your yes*\nRejected by bob.", api.updated.single().second.text)
+        assertEquals(null, api.updated.single().second.blocks?.toString()?.takeIf { "button" in it }, "No buttons")
+
+        assertEquals(ChannelResult.DELIVERED, channel.decided(delivery.copy(decision = "approved")))
+        assertEquals(ChannelResult.DELIVERED, channel.decided(delivery.copy(decision = "closed")))
         assertEquals(
             listOf(
-                "*Push to main*\nApproved by bob.",
-                "*A request for a yes*\nApproved by bob.",
-                "*Push to main*\nApproved.",
-                "*Push to main*\nNo longer waits for an answer.",
+                "*ana asks for your yes*\nRejected by bob.",
+                "*ana asks for your yes*\nApproved by bob.",
+                "*ana asks for your yes*\nNo longer waits for an answer.",
             ),
-            texts,
+            api.updated.map { it.second.text },
         )
-        val failing = object : run.ostrom.server.integrations.slack.domain.SlackApprovalMessagesRepository by messages {
-            override suspend fun ofGate(orgId: Uuid, gateId: Uuid) = error("The database is down")
-        }
-        SlackGateChannel(apps, api, failing, this@SlackChannelsTest.texts).decided(gate, emptyList())
-        assertEquals(4, api.updated.size, "A failed read never reaches the answerer")
+        api.failure = SlackCallException("ratelimited", retryable = true)
+        assertEquals(ChannelResult.retry("ratelimited"), channel.decided(answer))
+        api.failure = SlackCallException("message_not_found", retryable = false)
+        assertEquals(ChannelResult.failed("message_not_found"), channel.decided(answer))
+        api.failure = null
+        settings.configured = false
+        assertEquals(ChannelResult.failed("slack_not_configured"), channel.decided(answer))
+        assertEquals(3, api.updated.size)
     }
 }

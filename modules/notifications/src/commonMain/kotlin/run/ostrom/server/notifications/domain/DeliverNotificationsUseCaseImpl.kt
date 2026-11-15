@@ -61,14 +61,17 @@ class DeliverNotificationsUseCaseImpl(
         guarded(FANOUT_FAILED, Unit) { fanOut() }
         val now = clock.now()
         val due = mutableListOf<NotificationDelivery>()
-        val asks = mutableListOf<Pair<ApprovalDelivery, GateSummary>>()
+        val asks = mutableListOf<Pair<ApprovalDelivery, GateSummary?>>()
         // The rows claimed, sent or not (one about a closed wait is failed unsent): the batch bounds the claims.
         var taken = 0
         suspend fun claim(org: Uuid, limit: Int): Boolean = guarded(CLAIM_FAILED, false) {
             val claimed = deliveries.claimDue(org, limit, now, LEASE)
             taken += claimed.size
             due += stillOpen(org, claimed.filterIsInstance<NotificationDelivery>())
-            asks += stillAsked(org, claimed.filterIsInstance<ApprovalDelivery>())
+            // An answer is sent whatever its gate: the message it updates was told while the gate was open.
+            val (answers, requests) = claimed.filterIsInstance<ApprovalDelivery>().partition { it.decision != null }
+            asks += stillAsked(org, requests)
+            asks += answers.map { it to null }
             claimed.size >= limit
         }
         val orgs = deliveries.workingOrgs(now, DeliveryRules.ORGS_PER_PASS)

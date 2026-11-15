@@ -34,6 +34,7 @@ import run.ostrom.server.integrations.slack.domain.SlackUser
  * @param http The client (redirects off, 10 s timeouts).
  * @param baseUrl Slack's API, without a trailing slash; another one only in tests.
  */
+@Suppress("TooManyFunctions") // One function per Slack method and its helpers.
 class HttpSlackApi(
     private val http: HttpClient,
     private val baseUrl: String = DEFAULT_BASE_URL,
@@ -72,6 +73,16 @@ class HttpSlackApi(
 
     override suspend fun updateMessage(token: String, posted: SlackPosted, message: SlackMessage) {
         call("chat.update", token) { json(message, "channel" to posted.channel, posted.ts) }
+    }
+
+    override suspend fun deleteMessage(token: String, posted: SlackPosted) {
+        call("chat.delete", token) {
+            val json = buildJsonObject {
+                put("channel", posted.channel)
+                put("ts", posted.ts)
+            }
+            setBody(TextContent(json.toString(), ContentType.Application.Json))
+        }
     }
 
     private fun io.ktor.client.request.HttpRequestBuilder.json(

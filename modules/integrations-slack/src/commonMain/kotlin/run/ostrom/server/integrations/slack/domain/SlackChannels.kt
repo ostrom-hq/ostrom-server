@@ -3,10 +3,6 @@ package run.ostrom.server.integrations.slack.domain
 
 import kotlinx.coroutines.CancellationException
 import run.ostrom.core.api.models.SlackChannels
-import run.ostrom.server.gates.domain.models.ApprovalRequest
-import run.ostrom.server.gates.domain.models.Gate
-import run.ostrom.server.gates.domain.models.GateStatus
-import run.ostrom.server.gates.domain.services.GateChannel
 import run.ostrom.server.kernel.events.GateSummary
 import run.ostrom.server.notifications.domain.ApprovalChannel
 import run.ostrom.server.notifications.domain.ApprovalDelivery
@@ -70,7 +66,11 @@ class SlackNotificationChannel(
 /**
  * The yes requests in Slack: a direct message to the approver's linked account with Approve, a link to the console's
  * page of the request (a yes needs a fresh proof of who the approver is, SECURITY-AUDIT S2-54), and Reject, answered
- * at `/webhooks/slack`. The message is kept, so it loses its buttons once the gate is decided ([SlackGateChannel]).
+ * at `/webhooks/slack`. The message is kept, so it loses its buttons once the request is answered ([decided], queued
+ * with the answer's event like the request itself).
+ *
+ * A request is told once: a message already kept for it was posted by an attempt whose outcome the queue lost, and
+ * is never sent again; a message that could not be kept is taken back before the attempt is retried.
  *
  * @param apps The Slack app.
  * @param api Slack.
@@ -93,6 +93,8 @@ class SlackApprovalChannel(
     }
 
     override suspend fun send(delivery: ApprovalDelivery, gate: GateSummary, link: String): ChannelResult {
+        // Told by an earlier attempt, whose record the queue lost: a second message would keep the first's buttons.
+        if (messages.of(delivery.orgId, delivery.approvalId) != null) return ChannelResult.DELIVERED
         val app = apps.current()
         val linked = app?.let { links.of(delivery.orgId, delivery.memberId) }
         return when {
@@ -104,67 +106,58 @@ class SlackApprovalChannel(
 
     private suspend fun post(app: SlackApp, userId: String, delivery: ApprovalDelivery, link: String): ChannelResult {
         val message = texts.approval(delivery.orgId, delivery.approvalId, delivery.title, delivery.body, link)
+        val posted = try {
+            api.postMessage(app.botToken, userId, message)
+        } catch (error: SlackCallException) {
+            return error.result()
+        }
+        return keep(app, delivery, posted)
+    }
+
+    // The message is sent: a retry would send a second one while this one can never be closed. It is taken back when
+    // Slack lets us (the retry then sends the only one); else it stays and the request counts as told.
+    private suspend fun keep(app: SlackApp, delivery: ApprovalDelivery, posted: SlackPosted): ChannelResult = try {
+        messages.save(delivery.orgId, SlackApprovalMessage(delivery.approvalId, delivery.gateId, posted))
+        ChannelResult.DELIVERED
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        try {
+            api.deleteMessage(app.botToken, posted)
+            ChannelResult.retry(NOT_KEPT)
+        } catch (_: SlackCallException) {
+            ChannelResult.DELIVERED
+        }
+    }
+
+    /**
+     * Closes the message kept for an answered request: the outcome, without the buttons. A request that was never told
+     * on Slack has none, and is delivered at once.
+     */
+    override suspend fun decided(delivery: ApprovalDelivery): ChannelResult {
+        val kept = messages.of(delivery.orgId, delivery.approvalId) ?: return ChannelResult.DELIVERED
+        return close(apps.current(), kept, delivery)
+    }
+
+    private suspend fun close(app: SlackApp?, kept: SlackApprovalMessage, delivery: ApprovalDelivery): ChannelResult {
+        if (app == null) return ChannelResult.failed(NOT_CONFIGURED)
         return try {
-            val posted = api.postMessage(app.botToken, userId, message)
-            messages.save(delivery.orgId, SlackApprovalMessage(delivery.approvalId, delivery.gateId, posted))
+            api.updateMessage(app.botToken, kept.posted, texts.decided(delivery.title, outcome(delivery)))
             ChannelResult.DELIVERED
         } catch (error: SlackCallException) {
             error.result()
         }
     }
-}
 
-/**
- * Updates the yes requests' messages once their gate is decided, on any channel: the outcome, without the buttons.
- * Best effort: a failure never undoes the decision, and nothing is retried (the buttons of a decided gate do nothing).
- *
- * @param apps The Slack app.
- * @param api Slack.
- * @param messages The posted messages.
- * @param texts The messages.
- */
-class SlackGateChannel(
-    private val apps: SlackApps,
-    private val api: SlackApi,
-    private val messages: SlackApprovalMessagesRepository,
-    private val texts: SlackTexts,
-) : GateChannel {
-    override val name: String = SlackChannels.SLACK
-
-    // The request goes through the notifications' queue (SlackApprovalChannel).
-    override suspend fun requested(gate: Gate, requests: List<ApprovalRequest>) = Unit
-
-    override suspend fun decided(gate: Gate, requests: List<ApprovalRequest>) {
-        try {
-            val app = apps.current() ?: return
-            val posted = messages.ofGate(gate.orgId, gate.id)
-            if (posted.isEmpty()) return
-            val message = texts.decided(gate.label.ifBlank { DEFAULT_TITLE }, outcome(gate))
-            for (each in posted) {
-                try {
-                    api.updateMessage(app.botToken, each.posted, message)
-                } catch (_: SlackCallException) {
-                    Unit
-                }
-            }
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Exception) {
-            // A failed read never reaches the answerer: the gate is decided either way.
-            Unit
-        }
-    }
-
-    private fun outcome(gate: Gate): String {
-        val by = gate.decidedBy?.let { " by $it" }.orEmpty()
-        return when (gate.status) {
-            GateStatus.APPROVED, GateStatus.RESERVED, GateStatus.CONSUMED -> "Approved$by."
-            GateStatus.REJECTED -> "Rejected$by."
-            else -> "No longer waits for an answer."
-        }
+    private fun outcome(delivery: ApprovalDelivery): String = when (delivery.decision) {
+        APPROVED -> "Approved by ${delivery.approver}."
+        REJECTED -> "Rejected by ${delivery.approver}."
+        else -> "No longer waits for an answer."
     }
 
     private companion object {
-        const val DEFAULT_TITLE = "A request for a yes"
+        const val NOT_KEPT = "slack_not_kept"
+        const val APPROVED = "approved"
+        const val REJECTED = "rejected"
     }
 }

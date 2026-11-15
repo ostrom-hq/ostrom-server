@@ -46,10 +46,16 @@ class HttpSlackApiTest {
         val posted = slack.postMessage(BOT_TOKEN, "U0BOB", SlackMessage("Hello <you>"))
         assertEquals(SlackPosted("D0BOB", "1.2"), posted)
         slack.updateMessage(BOT_TOKEN, posted, SlackMessage("Done"))
+        slack.deleteMessage(BOT_TOKEN, posted)
         assertEquals(
-            listOf("https://slack.test/api/chat.postMessage", "https://slack.test/api/chat.update"),
+            listOf(
+                "https://slack.test/api/chat.postMessage",
+                "https://slack.test/api/chat.update",
+                "https://slack.test/api/chat.delete",
+            ),
             calls.map { it.url.toString() },
         )
+        assertTrue(""""channel":"D0BOB"""" in bodies[2] && """"ts":"1.2"""" in bodies[2], bodies[2])
         assertEquals("Bearer $BOT_TOKEN", calls[0].headers[HttpHeaders.Authorization])
         assertTrue(""""channel":"U0BOB"""" in bodies[0], bodies[0])
         assertTrue(""""ts":"1.2"""" in bodies[1], bodies[1])

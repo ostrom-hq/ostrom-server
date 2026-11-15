@@ -38,26 +38,25 @@ class ApprovalSender(
 ) {
     /**
      * @param delivery The delivery.
-     * @param gate Its gate, as it is now.
+     * @param gate Its gate, as it is now; null for an answer ([ApprovalDelivery.decision]).
      *
      * @return What the attempt produced; never throws but for cancellation and a failed read.
      */
-    suspend fun send(delivery: ApprovalDelivery, gate: GateSummary): ChannelResult {
+    suspend fun send(delivery: ApprovalDelivery, gate: GateSummary?): ChannelResult {
         val approver = approvers.reach(delivery.orgId, setOf(delivery.approver))[delivery.approver]
             ?: return ChannelResult.failed(NOT_A_MEMBER)
         // Read at each send, like the approver: a module's channel is bound once the server starts.
         val others = channels()
-        return when (delivery.channel) {
-            PUSH_CHANNEL -> push(delivery, approver)
-            ApprovalRules.EMAIL_CHANNEL -> email(delivery, approver, gate)
-            else -> {
-                val channel = others.firstOrNull { it.id == delivery.channel }
-                if (channel == null) {
-                    ChannelResult.failed(CHANNEL_UNAVAILABLE)
-                } else {
-                    channel.send(delivery, gate, notices.link(delivery.approvalId))
-                }
-            }
+        val channel = others.firstOrNull { it.id == delivery.channel }
+        return when {
+            // An answer only goes to a module's channel, which updates what it posted.
+            delivery.decision != null ->
+                if (channel == null) ChannelResult.failed(CHANNEL_UNAVAILABLE) else channel.decided(delivery)
+            gate == null -> ChannelResult.failed(CHANNEL_UNAVAILABLE)
+            delivery.channel == PUSH_CHANNEL -> push(delivery, approver)
+            delivery.channel == ApprovalRules.EMAIL_CHANNEL -> email(delivery, approver, gate)
+            channel == null -> ChannelResult.failed(CHANNEL_UNAVAILABLE)
+            else -> channel.send(delivery, gate, notices.link(delivery.approvalId))
         }
     }
 

@@ -18,12 +18,35 @@ import kotlin.uuid.Uuid
 data class ApprovalEvent(val eventSeq: Long, val approvalId: Uuid, val gateId: Uuid, val approver: String)
 
 /**
+ * One approver's request, as `cloud.approval.decided` names it once its gate was answered.
+ *
+ * @property eventSeq The event.
+ * @property approvalId The request.
+ * @property gateId Its gate.
+ * @property approver The approver's login.
+ * @property status The request's own status: `approved` or `rejected` for the answerer's, `closed` for the others.
+ */
+data class ApprovalDecision(
+    val eventSeq: Long,
+    val approvalId: Uuid,
+    val gateId: Uuid,
+    val approver: String,
+    val status: String,
+)
+
+/**
  * Who is told of a request for a yes, and how: the router's approval rules, apart from [NotificationRules] (whose
  * kinds are the members' switches). Pure: every read happened before.
  */
 object ApprovalRules {
     /** The journal types that tell an approver. */
-    val SOURCE_TYPES: Set<OrgEventType> = setOf(OrgEventType.APPROVAL_REQUESTED)
+    val SOURCE_TYPES: Set<OrgEventType> = setOf(OrgEventType.APPROVAL_REQUESTED, OrgEventType.APPROVAL_DECIDED)
+
+    /**
+     * The kind of the rows that tell a channel an approver's request was answered, so it updates the message it holds
+     * (the outcome in place of the buttons). They are queued with the answer's event, apart from the request's own.
+     */
+    const val DECIDED_KIND: String = "approval_decided"
 
     /** The kind of an approval's rows in the deliveries queue: never a [NotificationKind], never a member switch. */
     const val KIND: String = "approval"
@@ -43,6 +66,24 @@ object ApprovalRules {
         val approver = entry.text("approver")
         return if (approvalId != null && gateId != null && approver != null) {
             ApprovalEvent(entry.seq, approvalId, gateId, approver)
+        } else {
+            null
+        }
+    }
+
+    /**
+     * @param entry A journal event.
+     *
+     * @return The answer it names, or null for another type or data the gates never write.
+     */
+    fun decision(entry: JournalEntry): ApprovalDecision? {
+        if (entry.type != OrgEventType.APPROVAL_DECIDED) return null
+        val approvalId = entry.text("approvalId")?.let(Uuid::parseOrNull)
+        val gateId = entry.text("gateId")?.let(Uuid::parseOrNull)
+        val approver = entry.text("approver")
+        val status = entry.text("status")
+        return if (approvalId != null && gateId != null && approver != null) {
+            status?.let { ApprovalDecision(entry.seq, approvalId, gateId, approver, it) }
         } else {
             null
         }
