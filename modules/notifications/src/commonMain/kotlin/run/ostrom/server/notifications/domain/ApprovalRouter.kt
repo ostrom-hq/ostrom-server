@@ -102,6 +102,10 @@ class ApprovalRouter(
         val reached = approvers.reach(orgId, decisions.map { it.approver }.toSet())
         return decisions.flatMap { decision ->
             val gate = known[decision.gateId.toString()]
+            val approver = reached[decision.approver]
+            // An approver who left since is still owed the answer: the message they were sent must lose its buttons.
+            // The channel finds it by the request, not by the member.
+            val member = if (approver == null) ApprovalRules.LEFT_MEMBER else approver.memberId
             if (gate == null) {
                 emptyList()
             } else {
@@ -109,9 +113,7 @@ class ApprovalRouter(
                     ApprovalDelivery(
                         id = newId(),
                         orgId = orgId,
-                        // An approver who left since is still owed the answer: the message they were sent must lose
-                        // its buttons. The channel finds it by the request, not by the member.
-                        memberId = reached[decision.approver]?.memberId ?: ApprovalRules.LEFT_MEMBER,
+                        memberId = member,
                         approver = decision.approver,
                         approvalId = decision.approvalId,
                         gateId = decision.gateId,

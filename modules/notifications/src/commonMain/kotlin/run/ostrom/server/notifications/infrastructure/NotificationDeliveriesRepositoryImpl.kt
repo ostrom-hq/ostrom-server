@@ -105,16 +105,15 @@ class NotificationDeliveriesRepositoryImpl(
     override suspend fun pendingRequests(orgId: Uuid, approvalIds: Set<Uuid>): Set<Pair<Uuid, String>> =
         database.inOrg(orgId) {
             val approvalId = NotificationDeliveries.approvalId
-            NotificationDeliveries.select(approvalId, NotificationDeliveries.channel)
+            val told = NotificationDeliveries.select(approvalId, NotificationDeliveries.channel)
                 .where {
                     (NotificationDeliveries.orgId eq orgId) and
                         (NotificationDeliveries.kind eq ApprovalRules.KIND) and
                         (NotificationDeliveries.state eq DeliveryState.PENDING.wire) and
                         (approvalId inList approvalIds)
                 }
-                .mapNotNullTo(mutableSetOf()) { row ->
-                    row[approvalId]?.let { it to row[NotificationDeliveries.channel] }
-                }
+                .groupBy({ it[approvalId] }, { it[NotificationDeliveries.channel] })
+            approvalIds.flatMapTo(mutableSetOf()) { id -> told[id].orEmpty().map { id to it } }
         }
 
     override suspend fun record(orgId: Uuid, id: Uuid, outcome: DeliveryOutcome, now: Instant) {
