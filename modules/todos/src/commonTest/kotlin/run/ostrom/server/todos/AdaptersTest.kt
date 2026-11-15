@@ -62,7 +62,7 @@ class AdaptersTest {
         Session(ORG_A, id, "s1", n, agent = "claude-code", dev = dev, startedAt = t0)
 
     private class Sessions(private val segments: List<Session>) : SessionsRepository {
-        override suspend fun <T> transaction(orgId: Uuid, block: suspend SessionsTransaction.() -> T): T = unused()
+        override suspend fun <T> transaction(orgId: Uuid, block: SessionsTransaction.() -> T): T = unused()
         override suspend fun get(orgId: Uuid, id: String): Session? = unused()
         override suspend fun segmentsOf(orgId: Uuid, id: String): List<Session> =
             if (segments.any { it.id == id }) segments else emptyList()
