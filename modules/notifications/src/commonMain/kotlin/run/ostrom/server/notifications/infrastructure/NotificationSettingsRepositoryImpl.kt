@@ -7,9 +7,10 @@ import run.ostrom.server.notifications.domain.NotificationKind
 import run.ostrom.server.notifications.domain.NotificationSetting
 import run.ostrom.server.notifications.domain.NotificationSettingsRepository
 import run.ostrom.server.notifications.domain.SwitchedOff
+import org.jetbrains.exposed.v1.core.UuidColumnType
 import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.anyFrom
 import org.jetbrains.exposed.v1.core.eq
-import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.not
 import org.jetbrains.exposed.v1.core.statements.insertValue
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
@@ -52,8 +53,10 @@ class NotificationSettingsRepositoryImpl(private val database: JdbcDatabase) : N
     override suspend fun disabled(orgId: Uuid, memberIds: Set<Uuid>): Set<SwitchedOff> =
         database.withOrganization(orgId) {
             val s = NotificationsMemberSettings
+            val members = memberIds.toList()
             s.select(s.memberId, s.channel, s.kind)
-                .where { (s.orgId eq orgId) and not(s.enabled) and (s.memberId inList memberIds) }
+                // One array parameter, however many members the fan-out names.
+                .where { (s.orgId eq orgId) and not(s.enabled) and (s.memberId eq anyFrom(members, UuidColumnType())) }
                 .mapNotNull { row ->
                     val kind = NotificationKind.parse(row[s.kind])
                     if (kind == null) null else SwitchedOff(row[s.memberId], row[s.channel], kind)
