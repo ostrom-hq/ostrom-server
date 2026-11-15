@@ -36,6 +36,7 @@ import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
@@ -48,8 +49,13 @@ class PacingPostgresTest {
     private val overrides = module { single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) } }
     private val ada = Gw.memberA.memberId
 
-    private fun write(scope: String, interval: Duration = Duration.ZERO, expiresIn: Duration = 3.minutes): DirectiveWrite {
-        val now = Clock.System.now()
+    private fun write(
+        scope: String,
+        interval: Duration = Duration.ZERO,
+        expiresIn: Duration = 3.minutes,
+    ): DirectiveWrite {
+        // PostgreSQL keeps microseconds: the instants written are read back equal.
+        val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
         val advice = PacingAdvice(if (interval > Duration.ZERO) Pace.SLOW_DOWN else Pace.NORMAL, 2, interval, "advice")
         return DirectiveWrite(
             ada,
@@ -60,7 +66,8 @@ class PacingPostgresTest {
         )
     }
 
-    private fun call(session: String?) = AdmissionRequest(Uuid.random(), Gw.orgA, ada, "claude", Workload.INTERACTIVE, null, session = session)
+    private fun call(session: String?) =
+        AdmissionRequest(Uuid.random(), Gw.orgA, ada, "claude", Workload.INTERACTIVE, null, session = session)
 
     @Test
     fun settingsAreMergedAndConfinedToTheirOrg() = serverTest(modules, overrides) { server ->
@@ -112,12 +119,14 @@ class PacingPostgresTest {
         // A new advice is delivered again.
         val next = write(sessionDigest("s1"))
         directives.save(Gw.orgA, listOf(next))
-        assertEquals(next.directive.id, directives.claim(Gw.orgA, ada, "s1", DeliveryStage.EMITTED_TO_HOOK, "tok")!!.directive.id)
+        val again = assertNotNull(directives.claim(Gw.orgA, ada, "s1", DeliveryStage.EMITTED_TO_HOOK, "tok"))
+        assertEquals(next.directive.id, again.directive.id)
         // An expired claim settles nothing.
         val pending = assertNotNull(directives.claim(Gw.orgA, ada, "s1", DeliveryStage.RECEIVED_BY_CLI, "tok"))
         server.database.superuser.execute("UPDATE gateway_directive_deliveries SET claimed_until = now()").getOrThrow()
         assertFailsWith<ClaimExpiredException> {
-            directives.acknowledge(Gw.orgA, ada, next.directive.id, DeliveryStage.RECEIVED_BY_CLI, "s1", pending.claimId, "tok")
+            val stage = DeliveryStage.RECEIVED_BY_CLI
+            directives.acknowledge(Gw.orgA, ada, next.directive.id, stage, "s1", pending.claimId, "tok")
         }
         // Old deliveries go with the purge, and a member holds at most the bound.
         server.database.superuser.execute(
@@ -143,7 +152,8 @@ class PacingPostgresTest {
         val spaced = assertFailsWith<QueueRefusedException> { queue.enter(call(null), first = true) }
         assertEquals(RefusalKind.PACING_DELAY, spaced.kind)
         assertTrue(spaced.retryIn!! in 1.seconds..10.seconds)
-        assertEquals(AdmissionEntry.Admitted, queue.enter(call("s1"), first = true), "Its session's advice spaces nothing")
+        val unspaced = queue.enter(call("s1"), first = true)
+        assertEquals(AdmissionEntry.Admitted, unspaced, "Its session's advice spaces nothing")
         val unadvised = assertFailsWith<QueueRefusedException>("A session without advice: its member's") {
             queue.enter(call("s2"), first = true)
         }
@@ -163,7 +173,8 @@ class PacingPostgresTest {
         val waiting = call(null)
         server.database.superuser.execute(
             "INSERT INTO gateway_admissions (id, org_id, member_id, scope, workload, running, created_at, ready_at, " +
-                "polled_at, expires_at) VALUES ('${waiting.id}', '${Gw.orgA}', '$ada', 'claude', 'INTERACTIVE', false, " +
+                "polled_at, expires_at) VALUES ('${waiting.id}', '${Gw.orgA}', '$ada', 'claude', 'INTERACTIVE', " +
+                "false, " +
                 "now(), now(), now(), now() + INTERVAL '1 minute')",
         ).getOrThrow()
         assertFailsWith<QueueRefusedException> { queue.enter(waiting, first = false) }

@@ -16,7 +16,8 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class TokenScopesTest {
-    private val wellFormed = Regex("[a-z][a-z0-9-]{0,31}:[a-z][a-z0-9-]{0,31}")
+    // TeamCode's `guidance` names no action, as the contract keeps it (capacity.pacing.v1).
+    private val wellFormed = Regex("[a-z][a-z0-9-]{0,31}(:[a-z][a-z0-9-]{0,31})?")
 
     @Test
     fun theCatalogueNeverListsAScopeNoTokenHolds() {

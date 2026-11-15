@@ -255,8 +255,10 @@ class DirectivesTest {
             use.acknowledge(Gw.memberA, "d1", DeliveryStage.EMITTED_TO_HOOK, "s1", null, "t")
         }
         assertEquals("invalid_claim", invalid.type)
-        assertEquals("invalid_session", assertFailsWith<InvalidDirectiveRequestException> { use.current(Gw.memberA, "a b") }.type)
-        assertEquals("invalid_stage", assertFailsWith<InvalidDirectiveRequestException> { DeliveryStage.named("x") }.type)
+        val session = assertFailsWith<InvalidDirectiveRequestException> { use.current(Gw.memberA, "a b") }
+        assertEquals("invalid_session", session.type)
+        val stage = assertFailsWith<InvalidDirectiveRequestException> { DeliveryStage.named("x") }
+        assertEquals("invalid_stage", stage.type)
         assertEquals(DeliveryStage.EMITTED_TO_HOOK, DeliveryStage.named("emitted_to_hook"))
         pacing.settings = PacingSettings(observationOnly = true)
         assertNull(use.current(Gw.memberA, null))

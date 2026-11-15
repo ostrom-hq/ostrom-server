@@ -4,6 +4,7 @@ package run.ostrom.server.gateway.infrastructure
 import run.ostrom.server.gateway.domain.AdmissionRequest
 import run.ostrom.server.kernel.database.databaseNow
 import org.jetbrains.exposed.v1.core.Expression
+import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
@@ -29,14 +30,19 @@ import kotlin.time.Instant
  * was this call's own (it went back to wait as the accounts were busy, or is retried on another account).
  */
 internal fun JdbcTransaction.pacingWait(request: AdmissionRequest): Duration? {
-    val d = GatewayDirectives
     val now = databaseNow()
-    val row = pacingRead(request, now).singleOrNull() ?: return null
-    val last = row[d.lastAdmittedAt]
-    val interval = row[d.minIntervalMs]
-    if (interval <= 0L || last == null || row[d.lastAdmittedRequest] == request.id || readPacingSettings(request.orgId).observationOnly) return null
-    val wait = last + interval.milliseconds - row[now]
-    return wait.takeIf { it > Duration.ZERO }
+    return pacingRead(request, now).singleOrNull()
+        ?.spacing(request, now)
+        ?.takeIf { it > Duration.ZERO && !readPacingSettings(request.orgId).observationOnly }
+}
+
+/** What remains of the advice's interval since the scope's last admission, or null when it spaces nothing. */
+private fun ResultRow.spacing(request: AdmissionRequest, now: Expression<Instant>): Duration? {
+    val d = GatewayDirectives
+    val last = this[d.lastAdmittedAt]
+    val interval = this[d.minIntervalMs]
+    val own = this[d.lastAdmittedRequest] == request.id
+    return if (last == null || interval <= 0L || own) null else last + interval.milliseconds - this[now]
 }
 
 /**

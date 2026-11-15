@@ -29,14 +29,17 @@ class RoutePacingUseCase(private val pacing: PacingUseCase = PacingUseCase()) {
         allowanceAvailable: Boolean = true,
     ): PacingAdvice {
         if (!allowanceAvailable) return PacingAdvice(Pace.PAUSE, maximum, PacingUseCase.PAUSE_INTERVAL, ALLOWANCE)
-        if (targets.isEmpty()) return pacing.advise(emptyList(), maximum, now)
         // One scope may use several providers: never advise acceleration merely because one is idle while another the
         // same scope uses is pressured.
         val advice = targets.map { target ->
             pacing.advise(accounts.filter { it.account.provider == target }, maximum, now)
         }
-        val ceiling = concurrencyCeiling(advice.map { it.maxConcurrent } + maximum)
-        return pacing.withCeiling(advice.maxWith(PACING_STRICTNESS), ceiling)
+        return if (advice.isEmpty()) {
+            pacing.advise(emptyList(), maximum, now)
+        } else {
+            val ceiling = concurrencyCeiling(advice.map { it.maxConcurrent } + maximum)
+            pacing.withCeiling(advice.maxWith(PACING_STRICTNESS), ceiling)
+        }
     }
 
     private companion object {

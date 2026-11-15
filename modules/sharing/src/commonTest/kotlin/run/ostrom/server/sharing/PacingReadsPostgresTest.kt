@@ -30,7 +30,7 @@ class PacingReadsPostgresTest : SharingPostgresHarness() {
         Uuid.parse(shareAs(token, id).body<SharedAccountResponse>().id)
 
     @Test
-    fun theControllerReadsTheOrgsThatShareTheirReadingsAndTheirRecentSessions() = serverTest(modules, overrides) { server ->
+    fun theControllerReadsTheOrgsWithAccountsTheirReadingsAndSessions() = serverTest(modules, overrides) { server ->
         with(server) {
             assertEquals(emptyList(), koin.get<SharingOrgs>().withAccounts())
             val account = shared()

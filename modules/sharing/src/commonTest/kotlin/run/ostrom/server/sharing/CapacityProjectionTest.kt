@@ -83,7 +83,8 @@ class CapacityProjectionTest {
 
     @Test
     fun unavailabilityIsClassifiedOnce() {
-        assertEquals(AccountUnavailability.DISABLED, AccountUnavailability.of(account(AccountStatus.DISABLED), false, now))
+        val off = AccountUnavailability.of(account(AccountStatus.DISABLED), false, now)
+        assertEquals(AccountUnavailability.DISABLED, off)
         assertEquals(
             AccountUnavailability.PENDING_HANDOVER,
             AccountUnavailability.of(account(ownership = RefreshOwnership.PENDING_HANDOVER), false, now),
@@ -121,14 +122,16 @@ class CapacityProjectionTest {
     fun aGapAppearsOnlyWhenEveryAccountRunsOutBeforeAReset() {
         val project = ProjectCapacityUseCase()
         // 0.45 left at 0.9 per hour: empty in 30 minutes, back at the reset in one hour.
-        val gap = assertNotNull(project.firstGap(listOf(headroom(.5, 1.hours)), emptyList(), mapOf("five_hour" to .9), now))
+        val busy = mapOf("five_hour" to .9)
+        val gap = assertNotNull(project.firstGap(listOf(headroom(.5, 1.hours)), emptyList(), busy, now))
         assertEquals(now + 30.minutes, gap.startsAt)
         assertEquals(now + 1.hours, gap.endsAt)
         val twoHours = ProjectCapacityUseCase(horizon = 2.hours)
         assertNull(twoHours.firstGap(listOf(headroom(.5, 1.hours)), emptyList(), mapOf("five_hour" to .3), now))
         assertNull(project.firstGap(listOf(headroom(.5, 1.hours)), emptyList(), emptyMap(), now), "Nothing burns")
         val two = listOf(headroom(.5, 1.hours), headroom(.5, 1.hours))
-        assertNull(twoHours.firstGap(two, emptyList(), mapOf("five_hour" to .6), now), "A second account carries the load")
+        val carried = twoHours.firstGap(two, emptyList(), mapOf("five_hour" to .6), now)
+        assertNull(carried, "A second account carries the load")
     }
 
     @Test

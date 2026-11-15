@@ -51,10 +51,25 @@ data class PacingRoutesDependencies(
 )
 
 /** Who reads the settings and the preview: a person, or a credential calling models or reading guidance. */
-private val READERS = arrayOf(RelayScopes.INFERENCE_USE, RelayScopes.GUIDANCE, RelayScopes.AGENT_SESSION)
+private suspend fun ApplicationCall.reader(callers: CallerResolver, writers: WriteAccess = WriteAccess.BROWSER) =
+    requireCaller(
+        callers,
+        RelayScopes.INFERENCE_USE,
+        RelayScopes.GUIDANCE,
+        RelayScopes.AGENT_SESSION,
+        writers = writers,
+    )
 
-/** Who reads and acknowledges the advice: a person, an agent token, or a key holding `guidance`. */
-private val GUIDED = arrayOf(RelayScopes.GUIDANCE, RelayScopes.AGENT_SESSION)
+/**
+ * Who reads and acknowledges the advice: a person, an agent token, or a key holding `guidance`. Its writes (claims
+ * and receipts) come from every credential that reads it: they record, never decide.
+ */
+private suspend fun ApplicationCall.guided(callers: CallerResolver) = requireCaller(
+    callers,
+    RelayScopes.GUIDANCE,
+    RelayScopes.AGENT_SESSION,
+    writers = WriteAccess.tokens(PrincipalKind.AGENT, PrincipalKind.SERVICE, PrincipalKind.USER),
+)
 
 /**
  * The capacity controller's routes (TeamCode's `PacingSettingsRoutes` and `DirectiveRoutes`, `capacity.pacing.v1`):
@@ -67,34 +82,34 @@ private val GUIDED = arrayOf(RelayScopes.GUIDANCE, RelayScopes.AGENT_SESSION)
 fun Route.pacingRoutes(dependencies: PacingRoutesDependencies) = with(dependencies) {
     authenticated {
         get<PacingSettingsApi> {
-            call.respond(getSettings(call.requireCaller(callers, *READERS)).toDto())
+            call.respond(getSettings(call.reader(callers)).toDto())
         }
         put<PacingSettingsApi> { call.putPacingSettings(dependencies) }
         get<DirectivePreviewApi> {
             call.noStore()
-            val preview = directives.preview(call.requireCaller(callers, *READERS))
+            val preview = directives.preview(call.reader(callers))
             call.respond(PacingPreviewDto(preview.settings.toDto(), preview.directive?.toDto()))
         }
         get<DirectiveCurrentApi> {
             call.noStore()
-            call.respond(DirectiveResponseDto(directives.current(call.requireCaller(callers, *GUIDED), null)?.toDto()))
+            call.respond(DirectiveResponseDto(directives.current(call.guided(callers), null)?.toDto()))
         }
         post<DirectiveCurrentApi> {
             call.noStore()
-            val caller = call.requireCaller(callers, *GUIDED, writers = GUIDANCE_WRITERS)
+            val caller = call.guided(callers)
             val session = call.ownSession(call.receive<DirectiveScopeDto>().sessionId)
             call.respond(DirectiveResponseDto(directives.current(caller, session)?.toDto()))
         }
         post<DirectiveClaimApi> {
             call.noStore()
-            val caller = call.requireCaller(callers, *GUIDED, writers = GUIDANCE_WRITERS)
+            val caller = call.guided(callers)
             val input = call.receive<DirectiveClaimRequestDto>()
             val session = call.ownSession(input.sessionId)
             val claim = directives.claim(caller, session, DeliveryStage.named(input.stage), call.tokenId())
             call.respond(DirectiveClaimDto(claim?.directive?.toDto(), claim?.claimId))
         }
         post<DirectiveReceiptApi> {
-            val caller = call.requireCaller(callers, *GUIDED, writers = GUIDANCE_WRITERS)
+            val caller = call.guided(callers)
             val input = call.receive<DirectiveReceiptDto>()
             val session = input.sessionId?.let { call.ownSession(it) }
             val stage = DeliveryStage.named(input.stage)
@@ -104,18 +119,22 @@ fun Route.pacingRoutes(dependencies: PacingRoutesDependencies) = with(dependenci
     }
 }
 
-/** The advice's writes (claims and receipts) come from every credential that reads it: they record, never decide. */
-private val GUIDANCE_WRITERS = WriteAccess.tokens(PrincipalKind.AGENT, PrincipalKind.SERVICE, PrincipalKind.USER)
-
 private suspend fun ApplicationCall.putPacingSettings(dependencies: PacingRoutesDependencies) {
-    val caller = requireCaller(dependencies.callers, *READERS, writers = WriteAccess.PERSON)
+    val caller = reader(dependencies.callers, WriteAccess.PERSON)
     requireRecentSignIn("change the capacity controller's settings")
     val principal = requirePrincipal()
     val input = receive<PacingSettingsDto>()
     val (before, after) = dependencies.setSettings(caller, input.observationOnly, input.autoPoolSize)
     pacingAuditEvents(before, after).forEach { event ->
         dependencies.audit.record(
-            OrgAuditRecord(caller.orgId, principal, event, "settings", "pacing", auditDetails("fields" to changed(before, after))),
+            OrgAuditRecord(
+                caller.orgId,
+                principal,
+                event,
+                "settings",
+                "pacing",
+                auditDetails("fields" to changed(before, after)),
+            ),
         )
     }
     respond(after.toDto())

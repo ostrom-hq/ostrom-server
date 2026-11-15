@@ -68,6 +68,7 @@ data class AgentDirective(
  * @property minimumAffordableShare The least share of the level.
  * @property interval Its spacing.
  */
+@Suppress("MagicNumber") // TeamCode's levels, stated in the documentation above.
 enum class SlowDownLevel(val minimumAffordableShare: Double, val interval: Duration) {
     /** A gap far or short. */
     LIGHT(.5, 2.seconds),

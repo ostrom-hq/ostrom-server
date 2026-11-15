@@ -124,12 +124,13 @@ class ProjectCapacityUseCase(private val horizon: Duration = PROJECTION_HORIZON)
             return null
         }
 
-        private fun refill() = accounts.forEach { account ->
-            account.windows.forEach { window ->
-                while (window.resetsAt?.let { it <= t } == true) {
-                    window.remaining = window.ceiling
-                    window.resetsAt = windowPeriod(window.name)?.let { window.resetsAt!! + it.inWholeMilliseconds }
-                }
+        private fun refill() = accounts.flatMap { it.windows }.forEach(::refill)
+
+        /** A window whose reset passed starts again full, period after period. */
+        private fun refill(window: Window) {
+            while (window.resetsAt?.let { it <= t } == true) {
+                window.remaining = window.ceiling
+                window.resetsAt = windowPeriod(window.name)?.let { window.resetsAt!! + it.inWholeMilliseconds }
             }
         }
 

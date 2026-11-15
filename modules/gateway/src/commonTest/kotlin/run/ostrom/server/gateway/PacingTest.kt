@@ -65,14 +65,17 @@ class PacingTest {
     fun pacingNeverLowersTheConcurrencyLimit() {
         assertEquals(2, controller.advise(listOf(account(rate = 5.0)), 2, now).maxConcurrent)
         val advice = (1..100).map { controller.advise(listOf(account(rate = it / 10.0)), 0, now) }
-        advice.zipWithNext().forEach { (wider, narrower) -> assertTrue(PACING_STRICTNESS.compare(narrower, wider) >= 0) }
+        advice.zipWithNext().forEach { (wider, narrower) ->
+            assertTrue(PACING_STRICTNESS.compare(narrower, wider) >= 0)
+        }
         val slow = advice.filter { it.pace == Pace.SLOW_DOWN }
         assertTrue(slow.all { it.maxConcurrent == 0 })
         assertEquals(setOf(2.seconds, 5.seconds, 10.seconds), slow.map { it.minInterval }.toSet())
         val pause = controller.advise(listOf(account(utilization = .95)), 0, now)
         assertEquals(Triple(Pace.PAUSE, 0, 30.seconds), Triple(pause.pace, pause.maxConcurrent, pause.minInterval))
         assertEquals(4, controller.advise(listOf(account(utilization = .95)), 4, now).maxConcurrent)
-        val route = RoutePacingUseCase().advise(setOf(AccountProvider.CLAUDE), emptyList(), 0, now, allowanceAvailable = false)
+        val route = RoutePacingUseCase()
+            .advise(setOf(AccountProvider.CLAUDE), emptyList(), 0, now, allowanceAvailable = false)
         assertEquals(Triple(Pace.PAUSE, 0, 30.seconds), Triple(route.pace, route.maxConcurrent, route.minInterval))
         assertFailsWith<IllegalArgumentException> { controller.advise(emptyList(), -1, now) }
     }
@@ -82,14 +85,16 @@ class PacingTest {
         val route = RoutePacingUseCase()
         val claude = setOf(AccountProvider.CLAUDE)
         val idle = route.advise(claude, List(3) { account(utilization = .3) }, 0, now)
-        assertEquals(Triple(Pace.CAN_INCREASE, 0, Duration.ZERO), Triple(idle.pace, idle.maxConcurrent, idle.minInterval))
+        val expected = Triple(Pace.CAN_INCREASE, 0, Duration.ZERO)
+        assertEquals(expected, Triple(idle.pace, idle.maxConcurrent, idle.minInterval))
         assertTrue("up to" !in idle.message)
         assertTrue("up to 3" in route.advise(claude, List(3) { account(utilization = .3) }, 3, now).message)
         // Three accounts with 0.25 left each last 0.75 / 1.0 = 45 minutes before a reset in one hour: a light slowdown.
         val slow = route.advise(claude, List(3) { account(utilization = .7, rate = 1.0 / 3) }, 0, now)
         assertEquals(Triple(Pace.SLOW_DOWN, 0, 2.seconds), Triple(slow.pace, slow.maxConcurrent, slow.minInterval))
         assertTrue("2 seconds" in slow.message)
-        assertEquals(2, route.advise(claude, List(3) { account(utilization = .7, rate = 1.0 / 3) }, 2, now).maxConcurrent)
+        val three = List(3) { account(utilization = .7, rate = 1.0 / 3) }
+        assertEquals(2, route.advise(claude, three, 2, now).maxConcurrent)
     }
 
     @Test
@@ -101,7 +106,8 @@ class PacingTest {
         assertEquals(Pace.PAUSE, controller.advise(listOf(account(status = AccountStatus.DISABLED)), 0, now).pace)
         // Above half used, no gap even at twice the rate is not enough for CAN_INCREASE.
         assertEquals(Pace.NORMAL, controller.advise(listOf(account(utilization = .6)), 0, now).pace)
-        val unknownRate = account().let { it.copy(windows = it.windows.map { w -> w.copy(forecast = QuotaForecast(null, null, QuotaForecast.State.UNKNOWN)) }) }
+        val unknown = QuotaForecast(null, null, QuotaForecast.State.UNKNOWN)
+        val unknownRate = account().let { it.copy(windows = it.windows.map { w -> w.copy(forecast = unknown) }) }
         assertEquals(Pace.UNKNOWN, controller.advise(listOf(unknownRate), 0, now).pace)
         // One provider idle never hides another one's pressure.
         val mixed = route.advise(
@@ -140,7 +146,8 @@ class PacingTest {
         assertEquals(slow, held.advice)
         assertEquals(PacingRecovery(Pace.SLOW_DOWN, now, 2.seconds), held.recovery)
         val later = now + 2.minutes
-        assertEquals(lighter, hysteresis.decide(PacingMemory(slow, later + 1.minutes, held.recovery), lighter, later).advice)
+        val settled = hysteresis.decide(PacingMemory(slow, later + 1.minutes, held.recovery), lighter, later)
+        assertEquals(lighter, settled.advice)
         val switched = hysteresis.decide(PacingMemory(slow, later + 1.minutes, held.recovery), normal, later)
         assertEquals(slow, switched.advice, "Another candidate starts its own stabilization")
         assertEquals(later, switched.recovery!!.startedAt)

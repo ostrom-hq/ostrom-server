@@ -11,7 +11,13 @@ class GatewayFeaturesTest {
     fun itsFeaturesNeedNoConfiguration() = runTest {
         val koin = koinApplication {}.koin
         assertEquals(
-            setOf("inference.v1", "inference.queue.v1", "inference.cancel.v1", "capacity.apiprices.v1"),
+            setOf(
+                "inference.v1",
+                "inference.queue.v1",
+                "inference.cancel.v1",
+                "capacity.apiprices.v1",
+                "capacity.pacing.v1",
+            ),
             GatewayModule.features(koin),
         )
     }

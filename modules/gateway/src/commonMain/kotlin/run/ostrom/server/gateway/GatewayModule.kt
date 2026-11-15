@@ -229,7 +229,9 @@ object GatewayModule : ServerModule {
         route.pacingRoutes(koin.get())
     }
 
-    /** The capacity controller's pass, each minute, one replica at a time (TeamCode's maintenance `directives.update`). */
+    /**
+     * The capacity controller's pass, each minute, one replica at a time (TeamCode's maintenance `directives.update`).
+     */
     val PACING_CONTROLLER: ScheduledJob = ScheduledJob("gateway/pacing", 1.minutes, 45.seconds)
 
     // Each minute, the controller advises every member with a recent session; a failed pass is logged and tried again

@@ -48,8 +48,9 @@ class PacingRoutesPostgresTest : GatewayHttpFixture() {
     private suspend fun TestServer.advise(scope: String) {
         val now = Clock.System.now()
         val advice = PacingAdvice(Pace.SLOW_DOWN, 0, 5.seconds, "Reduce optional work.")
-        val directive = AgentDirective(Uuid.random().toString(), Gw.memberA.memberId.toString(), advice, now, now + 3.minutes)
-        koin.get<DirectiveRepository>().save(Gw.orgA, listOf(DirectiveWrite(Gw.memberA.memberId, scope, directive, "k", null)))
+        val member = Gw.memberA.memberId
+        val directive = AgentDirective(Uuid.random().toString(), member.toString(), advice, now, now + 3.minutes)
+        koin.get<DirectiveRepository>().save(Gw.orgA, listOf(DirectiveWrite(member, scope, directive, "k", null)))
     }
 
     @Test
@@ -57,14 +58,16 @@ class PacingRoutesPostgresTest : GatewayHttpFixture() {
         with(server) {
             assertEquals(HttpStatusCode.Unauthorized, client.get("/api/v1/policy/pacing").status)
             val read = client.get("/api/v1/policy/pacing") { bearerAuth("use-a") }
-            assertEquals(PacingSettingsDto(observationOnly = false, autoPoolSize = false), read.body<PacingSettingsDto>())
-            assertEquals(HttpStatusCode.Forbidden, putJson("/api/v1/policy/pacing", "member-a", PacingSettingsDto(true)).status)
-            assertEquals(HttpStatusCode.Forbidden, putJson("/api/v1/policy/pacing", "use-a", PacingSettingsDto(true)).status)
-            assertEquals(HttpStatusCode.Forbidden, putJson("/api/v1/policy/pacing", "stale-admin-a", PacingSettingsDto(true)).status)
+            assertEquals(PacingSettingsDto(observationOnly = false, autoPoolSize = false), read.body())
+            for (token in listOf("member-a", "use-a", "stale-admin-a")) {
+                val refused = putJson("/api/v1/policy/pacing", token, PacingSettingsDto(true))
+                assertEquals(HttpStatusCode.Forbidden, refused.status, token)
+            }
             val changed = putJson("/api/v1/policy/pacing", "admin-a", PacingSettingsDto(observationOnly = true))
             assertEquals(HttpStatusCode.OK, changed.status, changed.bodyAsText())
             assertEquals(PacingSettingsDto(true, false), changed.body<PacingSettingsDto>())
-            assertEquals(PacingSettingsDto(true, true), putJson("/api/v1/policy/pacing", "admin-a", PacingSettingsDto(autoPoolSize = true)).body())
+            val both = putJson("/api/v1/policy/pacing", "admin-a", PacingSettingsDto(autoPoolSize = true))
+            assertEquals(PacingSettingsDto(true, true), both.body())
             val other = client.get("/api/v1/policy/pacing") { bearerAuth("admin-b") }
             assertEquals(PacingSettingsDto(false, false), other.body<PacingSettingsDto>(), "Another org's settings")
         }
@@ -74,7 +77,7 @@ class PacingRoutesPostgresTest : GatewayHttpFixture() {
     fun theAdviceIsReadClaimedAndAcknowledgedWithinItsSession() = serverTest(modules, overrides) { server ->
         with(server) {
             assertEquals(HttpStatusCode.Unauthorized, client.get("/api/v1/directives/current").status)
-            assertEquals(HttpStatusCode.Forbidden, client.get("/api/v1/directives/current") { bearerAuth("use-a") }.status)
+            assertEquals(HttpStatusCode.Forbidden, client.get(CURRENT) { bearerAuth("use-a") }.status)
             val none = client.get("/api/v1/directives/current") { bearerAuth("guidance-a") }
             assertEquals("no-store", none.headers[HttpHeaders.CacheControl])
             assertNull(none.body<DirectiveResponseDto>().directive)
@@ -88,31 +91,42 @@ class PacingRoutesPostgresTest : GatewayHttpFixture() {
 
             val scoped = postJson("/api/v1/directives/current", "session-1", """{"sessionId":"session-1"}""")
             assertNotNull(scoped.body<DirectiveResponseDto>().directive)
-            assertEquals(HttpStatusCode.Forbidden, postJson("/api/v1/directives/current", "session-1", """{"sessionId":"session-2"}""").status)
-            assertEquals(HttpStatusCode.BadRequest, postJson("/api/v1/directives/current", "member-a", """{"sessionId":"a b"}""").status)
+            val another = postJson(CURRENT, "session-1", """{"sessionId":"session-2"}""")
+            assertEquals(HttpStatusCode.Forbidden, another.status)
+            assertEquals(HttpStatusCode.BadRequest, postJson(CURRENT, "member-a", """{"sessionId":"a b"}""").status)
 
-            val claim = postJson("/api/v1/directives/claim", "session-1", """{"sessionId":"session-1","stage":"emitted_to_hook"}""")
+            val claimBody = """{"sessionId":"session-1","stage":"emitted_to_hook"}"""
+            val claim = postJson(CLAIM, "session-1", claimBody)
             val claimed = claim.body<DirectiveClaimDto>()
             assertNotNull(claimed.directive)
             assertNull(
-                postJson("/api/v1/directives/claim", "session-1", """{"sessionId":"session-1","stage":"emitted_to_hook"}""")
-                    .body<DirectiveClaimDto>().claimId,
+                postJson(CLAIM, "session-1", claimBody).body<DirectiveClaimDto>().claimId,
             )
-            assertEquals(HttpStatusCode.BadRequest, postJson("/api/v1/directives/claim", "session-1", """{"sessionId":"session-1","stage":"x"}""").status)
-            val receipt = """{"id":"${claimed.directive!!.id}","stage":"emitted_to_hook","sessionId":"session-1","claimId":"${claimed.claimId}"}"""
-            assertEquals(HttpStatusCode.NoContent, postJson("/api/v1/directives/receipt", "session-1", receipt).status)
-            assertEquals(HttpStatusCode.Conflict, postJson("/api/v1/directives/receipt", "member-a", receipt).status, "Another token's claim")
+            val badStage = postJson(CLAIM, "session-1", """{"sessionId":"session-1","stage":"x"}""")
+            assertEquals(HttpStatusCode.BadRequest, badStage.status)
+            val receipt = """{"id":"${claimed.directive!!.id}","stage":"emitted_to_hook",""" +
+                """"sessionId":"session-1","claimId":"${claimed.claimId}"}"""
+            assertEquals(HttpStatusCode.NoContent, postJson(RECEIPT, "session-1", receipt).status)
+            val stolen = postJson(RECEIPT, "member-a", receipt)
+            assertEquals(HttpStatusCode.Conflict, stolen.status, "Another token's claim")
             assertEquals(
                 HttpStatusCode.Conflict,
-                postJson("/api/v1/directives/receipt", "member-a", """{"id":"gone","stage":"received_by_cli"}""").status,
+                postJson(RECEIPT, "member-a", """{"id":"gone","stage":"received_by_cli"}""").status,
             )
             assertEquals(HttpStatusCode.Unauthorized, postJson("/api/v1/directives/receipt", null, receipt).status)
             // Another org's member reads nothing of Ada's.
-            assertNull(client.get("/api/v1/directives/current") { bearerAuth("admin-b") }.body<DirectiveResponseDto>().directive)
+            assertNull(client.get(CURRENT) { bearerAuth("admin-b") }.body<DirectiveResponseDto>().directive)
             // In observation mode the agent gets nothing, the preview still shows it.
             putJson("/api/v1/policy/pacing", "admin-a", PacingSettingsDto(observationOnly = true))
-            assertNull(client.get("/api/v1/directives/current") { bearerAuth("member-a") }.body<DirectiveResponseDto>().directive)
-            assertNotNull(client.get("/api/v1/directives/preview") { bearerAuth("member-a") }.body<PacingPreviewDto>().directive)
+            assertNull(client.get(CURRENT) { bearerAuth("member-a") }.body<DirectiveResponseDto>().directive)
+            assertNotNull(client.get(PREVIEW) { bearerAuth("member-a") }.body<PacingPreviewDto>().directive)
         }
+    }
+
+    private companion object {
+        const val CURRENT = "/api/v1/directives/current"
+        const val PREVIEW = "/api/v1/directives/preview"
+        const val CLAIM = "/api/v1/directives/claim"
+        const val RECEIPT = "/api/v1/directives/receipt"
     }
 }
