@@ -258,6 +258,11 @@ class CloudEnvironmentRulesTest {
                 "(exit code 3). A repository whose .git is not a plain directory is refused.$log",
             message(PreparationStep.WORKSPACE, null, 3),
         )
+        assertEquals(
+            "Resetting the agent's home and the Git configuration of api after a transfer failed. " +
+                "A repository whose .git is not a plain directory is refused.$log",
+            message(PreparationStep.WORKSPACE, 0),
+        )
     }
 
     @Test

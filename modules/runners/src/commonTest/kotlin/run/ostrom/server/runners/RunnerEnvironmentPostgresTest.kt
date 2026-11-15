@@ -195,6 +195,9 @@ class RunnerEnvironmentPostgresTest {
         assertEquals(HttpStatusCode.OK, cloning.status, cloning.bodyAsText())
         assertEquals(RunnerHeartbeatResponse("run", "creating"), cloning.body<RunnerHeartbeatResponse>())
         assertEquals("cloning_repositories", server.read(id).phase)
+        val securing = server.runner("preparation", "Bearer $token", report("securing_workspace"))
+        assertEquals(HttpStatusCode.OK, securing.status, securing.bodyAsText())
+        assertEquals("securing_workspace", server.read(id).phase)
 
         for (bad in listOf(
             report("unknown_phase"),
