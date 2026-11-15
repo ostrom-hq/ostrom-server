@@ -429,7 +429,8 @@ class KubernetesRuntimeDriver(
             // The runner and the agent never share a uid (S2-49): the agent host runs the agent in its own container,
             // which has neither the token nor a view of the runner's or the check host's processes. Every container is
             // in the pod's group (TeamCode's image contract: runner 1000, agent 1001, group 1000); the runner keeps
-            // nothing of its own on a volume the agent mounts, so the group shares the agent's side only.
+            // nothing of its own on a volume the agent mounts but the uploads, the members' files it writes 0640 for
+            // the agent to read through that group.
             put("shareProcessNamespace", false)
             putJsonObject("securityContext") {
                 put("runAsNonRoot", true)
@@ -448,10 +449,13 @@ class KubernetesRuntimeDriver(
                     container("runner", RUNNER_UID, image) {
                         command(CLOUD_RUNNER)
                         put("env", environment(spec, name, delivery.serverUrl))
-                        put("resources", resources("50m", "64Mi", "500m", "256Mi", "64Mi"))
+                        // The kubelet counts the uploads volume in the pod's ephemeral storage, the sum of its
+                        // containers' limits: the runner, which writes it, carries its 1 GiB.
+                        put("resources", resources("50m", "64Mi", "500m", "256Mi", RUNNER_DISK_LIMIT))
                         putJsonArray("volumeMounts") {
                             add(mount("agent-socket", RunnerEnvironment.AGENT_SOCKET_DIRECTORY))
                             add(mount("check-socket", RunnerEnvironment.CHECK_SOCKET_DIRECTORY))
+                            add(mount(UPLOADS_VOLUME, RunnerEnvironment.UPLOADS_DIR))
                             add(binaryMount())
                             if (settings.podIdentity) {
                                 add(
@@ -481,6 +485,8 @@ class KubernetesRuntimeDriver(
                 add(emptyDir("check-tmp", "1Gi"))
                 add(emptyDir("check-socket", "1Mi"))
                 add(emptyDir(BINARY_VOLUME, BINARY_VOLUME_SIZE))
+                // On disk: up to 100 MiB per file must not count against the containers' memory.
+                add(emptyDir(UPLOADS_VOLUME, UPLOADS_SIZE_LIMIT))
                 // The runner's proof of its pod, which the cluster reviews (TeamCode's `runner-token`); the kubelet
                 // rotates it, and only the runner's container mounts it.
                 if (settings.podIdentity) add(podToken())
@@ -537,6 +543,14 @@ class KubernetesRuntimeDriver(
             add(mount("workspace", WORKSPACE))
             add(mount("tmp", "/tmp"))
             add(mount("agent-socket", RunnerEnvironment.AGENT_SOCKET_DIRECTORY))
+            // The same path as the runner's, the one the agent reads in its message; it reads, never replaces.
+            add(
+                buildJsonObject {
+                    put("name", UPLOADS_VOLUME)
+                    put("mountPath", RunnerEnvironment.UPLOADS_DIR)
+                    put("readOnly", true)
+                },
+            )
             add(binaryMount())
         }
     }
@@ -607,6 +621,8 @@ class KubernetesRuntimeDriver(
     private fun environment(spec: ExecutionSpec, secret: String, serverUrl: String): JsonArray = buildJsonArray {
         RunnerEnvironment.of(spec, serverUrl).forEach { (key, value) -> add(variable(key, value)) }
         if (settings.podIdentity) add(variable(RunnerEnvironment.POD_TOKEN_FILE, "$POD_TOKEN_DIRECTORY/token"))
+        // The runner announces message files only with this volume (TeamCode's `TEAMCODE_UPLOADS_DIR`).
+        add(variable(RunnerEnvironment.UPLOADS_DIR_VARIABLE, RunnerEnvironment.UPLOADS_DIR))
         val keys = listOf(RunnerEnvironment.TOKEN to "token") +
             listOfNotNull(spec.prompt?.let { RunnerEnvironment.PROMPT to "prompt" })
         keys.forEach { (variable, key) ->
@@ -726,6 +742,19 @@ class KubernetesRuntimeDriver(
 
         /** The projected token's lifetime, the API's minimum (TeamCode's 600 s); the kubelet rotates the file. */
         const val POD_TOKEN_SECONDS = 600
+
+        /** The files of members' messages (TeamCode's `uploads`), at [RunnerEnvironment.UPLOADS_DIR]. */
+        const val UPLOADS_VOLUME = "uploads"
+
+        /** Above the runner's own bound of 768 MiB per execution: going over the limit would evict the pod. */
+        private const val UPLOADS_MEBIBYTES = 1024
+        const val UPLOADS_SIZE_LIMIT = "${UPLOADS_MEBIBYTES}Mi"
+
+        /** What the runner itself may write (logs), before the uploads volume. */
+        private const val RUNNER_OWN_DISK_MEBIBYTES = 64
+
+        /** The runner's ephemeral storage: its own 64 MiB and the uploads volume's [UPLOADS_SIZE_LIMIT]. */
+        const val RUNNER_DISK_LIMIT = "${RUNNER_OWN_DISK_MEBIBYTES + UPLOADS_MEBIBYTES}Mi"
 
         /** The volume the init container copies `ostrom` into. */
         const val BINARY_VOLUME = "ostrom-bin"
