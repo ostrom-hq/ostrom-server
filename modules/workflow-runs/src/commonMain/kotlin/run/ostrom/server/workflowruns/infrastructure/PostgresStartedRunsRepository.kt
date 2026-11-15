@@ -116,6 +116,7 @@ class PostgresStartedRunsRepository(
     override suspend fun runs(orgId: Uuid, query: RunsQuery): List<WorkflowRun> = driver.withOrganization(orgId) { tx ->
         var statement = Statement.create(StartedRunQueries.page(query)).bind("org_id", orgId).bind("limit", query.limit)
         query.workflowId?.let { statement = statement.bind("workflow_id", it) }
+        query.startedBy?.let { statement = statement.bind("started_by", it) }
         query.status?.let { statement = statement.bind("status", it.value) }
         query.before?.let { statement = statement.bind("before", it) }
         tx.fetchAll(statement).getOrThrow().map {
@@ -178,6 +179,7 @@ object StartedRunQueries {
         val where = listOfNotNull(
             "org_id = :org_id",
             "workflow_id = :workflow_id".takeIf { query.workflowId != null },
+            "started_by = :started_by".takeIf { query.startedBy != null },
             "status = :status".takeIf { query.status != null },
             cursor.takeIf { query.before != null },
         )

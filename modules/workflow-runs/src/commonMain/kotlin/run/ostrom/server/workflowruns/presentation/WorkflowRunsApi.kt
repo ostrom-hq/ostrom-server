@@ -161,15 +161,23 @@ data class RunnerCheckRequest(val sessionId: String, val epoch: Long, val check:
 class WorkflowRunsOfApi(val id: String, val status: String? = null, val before: String? = null)
 
 /**
- * The runs of the organization's workflows.
+ * The caller's runs of the organization's workflows, or every member's.
  *
  * @property status Only these.
  * @property before The id the previous page ended on.
  * @property limit The page size, 1 to 100, 50 by default.
+ * @property all Every member's runs: an owner, an admin or a service key.
+ * @property workflow Only this workflow's runs.
  */
 @Serializable
 @Resource("/api/v1/runs")
-class RunsApi(val status: String? = null, val before: String? = null, val limit: Int? = null)
+class RunsApi(
+    val status: String? = null,
+    val before: String? = null,
+    val limit: Int? = null,
+    val all: Boolean? = null,
+    val workflow: String? = null,
+)
 
 /**
  * A run of a workflow, with its visits.

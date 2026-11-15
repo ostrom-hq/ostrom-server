@@ -58,6 +58,12 @@ class StartRunForbiddenException : OstromException(
     "Only an owner or an admin of the organization starts a workflow run.",
 )
 
+/** Only an owner, an admin or a service key reads every member's runs (`all=true`, TeamCode's `forbidden`). */
+class ReadAllRunsForbiddenException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "Administrator access is required to read other members' runs.",
+)
+
 /** No run of the organization has this id. */
 class RunNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Run not found.")
 

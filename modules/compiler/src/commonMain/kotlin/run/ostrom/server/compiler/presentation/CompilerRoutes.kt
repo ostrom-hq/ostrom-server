@@ -11,6 +11,7 @@ import run.ostrom.server.gates.domain.models.GateActor
 import run.ostrom.server.kernel.auth.authenticated
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
+import run.ostrom.server.kernel.errors.Pages
 import run.ostrom.server.kernel.http.NullsKept
 import run.ostrom.server.kernel.http.OstromJson
 import run.ostrom.server.kernel.http.withNulls
@@ -107,7 +108,10 @@ private fun Route.workflowsRoutes(dependencies: CompilerRoutesDependencies) = wi
     get<WorkflowsApi> { params ->
         val actor = actorOf(call, CompilerScopes.readingWorkflows)
         val status = params.status?.let(::statusOf)
-        call.respond(WorkflowsPage(workflows.list(actor.orgId, params.repo, status).map(::documentOf)))
+        val limit = Pages.size(params.limit, WORKFLOWS_PAGE, WORKFLOWS_MAX_PAGE)
+        val page = workflows.list(actor.orgId, params.repo, status, params.after, limit)
+        val next = if (page.size == limit) page.last().doc.workflow.id else null
+        call.respond(WorkflowsPage(page.map(::documentOf), next))
     }
     post<WorkflowsApi> {
         val actor = personOf(call, CompilerScopes.writingWorkflows)
@@ -139,6 +143,10 @@ private fun Route.workflowsRoutes(dependencies: CompilerRoutesDependencies) = wi
 }
 
 private const val MAX_AUDIT = 200
+
+/** TeamCode's page of workflows: 50 by default, 100 at most. */
+private const val WORKFLOWS_PAGE = 50
+private const val WORKFLOWS_MAX_PAGE = 100
 
 /** An envelope writes `repo` as `null` for an organization's package: required and nullable in the contract. */
 private object EnvelopeAnswer : NullsKept<PackageEnvelope>(PackageEnvelope.serializer(), "repo")

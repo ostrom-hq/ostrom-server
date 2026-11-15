@@ -49,7 +49,9 @@ internal fun Route.startedRunsRoutes(dependencies: WorkflowRunsRoutesDependencie
     }
     get<RunsApi> { params ->
         val actor = actorOf(call, RunScopes.reading)
-        respondRuns(call, actor, RunsQuery(null, runStatusOf(params.status), params.before, pageOf(params.limit)))
+        val query = RunsQuery(params.workflow, runStatusOf(params.status), params.before, pageOf(params.limit))
+        val items = listRuns.mine(actor, query, params.all == true)
+        call.respond(RunsPage(items, nextOf(items.map { it.id }, query.limit)))
     }
     get<RunApi> { params ->
         call.respond(getRun(actorOf(call, RunScopes.reading), params.id))

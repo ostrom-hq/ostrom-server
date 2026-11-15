@@ -254,10 +254,18 @@ class StartRunPostgresTest {
         assertEquals(HttpStatusCode.Forbidden, unknown.status)
         // A person who only reads workflows starts none.
         assertEquals(HttpStatusCode.Forbidden, server.call("reader:a:lead", RUNS, body).status)
-        // Any member reads both lists; an agent token reads neither.
+        // Any member reads a workflow's runs and their own (TeamCode's `GET /workflows/runs`); an agent token reads
+        // neither. Every member's runs are for an owner, an admin or a service key.
         for (token in listOf("user:a:member", "user:a:approver", "reader:a:member", "service:a:ci")) {
             assertEquals(2, server.call(token, RUNS).ids().size, token)
-            assertEquals(2, server.call(token, "/api/v1/runs").ids().size, token)
+            assertEquals(emptyList(), server.call(token, "/api/v1/runs").ids(), token)
+        }
+        assertEquals(1, server.call("user:a:admin", "/api/v1/runs").ids().size, "The admin's own")
+        for (token in listOf("user:a:admin", "service:a:ci")) {
+            assertEquals(2, server.call(token, "/api/v1/runs?all=true").ids().size, token)
+        }
+        for (token in listOf("user:a:member", "user:a:approver", "reader:a:member")) {
+            assertEquals(HttpStatusCode.Forbidden, server.call(token, "/api/v1/runs?all=true").status, token)
         }
         assertEquals(HttpStatusCode.Forbidden, server.call("agent:a:l1", RUNS).status)
         assertEquals(HttpStatusCode.Forbidden, server.call("agent:a:l1", "/api/v1/runs").status)
@@ -336,21 +344,21 @@ class StartRunPostgresTest {
             val path = if (i % 2 == 0) "/api/v1/workflows/other/runs" else RUNS
             server.call("user:a:lead${i % 3}", path, """{"inputs":{"branch":"b$i"}}""").run().id
         }
-        val first = server.call("user:a:lead", "/api/v1/runs")
+        val first = server.call("user:a:lead", "/api/v1/runs?all=true")
         assertEquals(PAGE, first.ids().size)
         val cursor = first.next()
         assertEquals(first.ids().last(), cursor, "A full page ends with the cursor of its last run")
-        val second = server.call("user:a:lead", "/api/v1/runs?before=$cursor")
+        val second = server.call("user:a:lead", "/api/v1/runs?all=true&before=$cursor")
         assertEquals(1, second.ids().size)
         assertNull(second.next(), "A shorter page is the last")
         assertEquals(started.toSet(), (first.ids() + second.ids()).toSet())
         // A page size of the contract's bounds (1 to 100): a full page of one ends with its cursor; others are refused.
-        val one = server.call("user:a:lead", "/api/v1/runs?limit=1")
+        val one = server.call("user:a:lead", "/api/v1/runs?all=true&limit=1")
         assertEquals(first.ids().take(1), one.ids())
         assertEquals(one.ids().single(), one.next())
-        assertEquals(PAGE + 1, server.call("user:a:lead", "/api/v1/runs?limit=100").ids().size)
+        assertEquals(PAGE + 1, server.call("user:a:lead", "/api/v1/runs?all=true&limit=100").ids().size)
         for (limit in listOf(0, -1, 101, 100_000)) {
-            val refused = server.call("user:a:lead", "/api/v1/runs?limit=$limit")
+            val refused = server.call("user:a:lead", "/api/v1/runs?all=true&limit=$limit")
             assertEquals(HttpStatusCode.BadRequest, refused.status, "limit=$limit")
         }
         assertEquals(first.ids() + second.ids(), (first.ids() + second.ids()).distinct(), "No run twice")
@@ -360,6 +368,13 @@ class StartRunPostgresTest {
         assertEquals(PAGE / 2, server.call("user:a:lead", "/api/v1/workflows/other/runs").ids().size)
         val queuedOfShip = server.call("user:a:lead", "$RUNS?status=queued&before=${ofShip.first()}").ids()
         assertEquals(ofShip.drop(1), queuedOfShip)
+        // The organization's list narrowed to one workflow, and to the caller's own: lead0 started every third run.
+        val allOfShip = server.call("user:a:lead", "/api/v1/runs?all=true&workflow=$SHIP&limit=100").ids()
+        assertEquals(ofShip, allOfShip)
+        val mine = started.filterIndexed { i, _ -> (i + 1) % 3 == 0 }.reversed()
+        assertEquals(mine, server.call("user:a:lead0", "/api/v1/runs?limit=100").ids())
+        val absent = server.call("user:a:lead", "/api/v1/runs?all=true&workflow=absent")
+        assertEquals(HttpStatusCode.NotFound, absent.status, absent.bodyAsText())
     }
 
     @Test
@@ -375,6 +390,7 @@ class StartRunPostgresTest {
             Triple("runs of a workflow", StartedRunQueries.page(RunsQuery(workflowId = SHIP)), "_workflow"),
             Triple("runs by status", StartedRunQueries.page(RunsQuery(status = RunStatus.QUEUED)), "_status"),
             Triple("runs before a cursor", StartedRunQueries.page(RunsQuery(before = "wfr_x")), "pkey"),
+            Triple("runs of a starter", StartedRunQueries.page(RunsQuery(startedBy = "lead0")), "_by"),
         )
         plans.forEach { (name, sql, index) ->
             val plan = server.driver.withOrganization(orgA) { tx ->
@@ -386,6 +402,7 @@ class StartRunPostgresTest {
                 if (":workflow_id" in sql) explain = explain.bind("workflow_id", SHIP)
                 if (":status" in sql) explain = explain.bind("status", "queued")
                 if (":before" in sql) explain = explain.bind("before", "wfr_x")
+                if (":started_by" in sql) explain = explain.bind("started_by", "lead0")
                 tx.fetchAll(explain).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
             }
             println("-- $name\n$plan")

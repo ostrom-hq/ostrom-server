@@ -12,11 +12,13 @@ import run.ostrom.server.kernel.http.docs.badRequest
 import run.ostrom.server.kernel.http.docs.body
 import run.ostrom.server.kernel.http.docs.conflict
 import run.ostrom.server.kernel.http.docs.empty
+import run.ostrom.server.kernel.http.docs.error
 import run.ostrom.server.kernel.http.docs.headerText
 import run.ostrom.server.kernel.http.docs.notFound
 import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
 import run.ostrom.server.kernel.http.docs.pathId
+import run.ostrom.server.kernel.http.docs.queryFlag
 import run.ostrom.server.kernel.http.docs.queryNumber
 import run.ostrom.server.kernel.http.docs.queryText
 
@@ -82,6 +84,8 @@ private fun ApiCatalog.runOperations() {
         summary = "Runs."
         parameters {
             organizationHeader()
+            queryFlag("all", "Every member's runs: an owner, an admin or a service key; the caller's own otherwise.")
+            queryText("workflow", "Only the runs of this workflow.")
             queryText("status", STATUS)
             queryText("before", BEFORE)
             queryNumber("limit", "The page size, 1 to 100 (50 by default); 400 outside.")
@@ -89,6 +93,8 @@ private fun ApiCatalog.runOperations() {
         responses {
             ok<RunsPage>("A page of runs, `next` set when another may follow.")
             badRequest("An unknown status, a malformed cursor or a limit outside the bounds (`invalid_request`).")
+            error(HttpStatusCode.Forbidden, "`all` asked by someone else than an owner, an admin or a service key.")
+            notFound("No such workflow in the caller's organization (`not_found`).")
         }
     }
     get("/api/v1/runs/{id}") {

@@ -952,7 +952,17 @@ class CompilerPostgresTest {
         val refused = server.call("user:a:lead", "/api/v1/workflows", "POST", apiDeploys())
         assertEquals(HttpStatusCode.Conflict, refused.status)
         assertTrue(refused.bodyAsText().contains("workflow_limit"), refused.bodyAsText())
-        assertEquals(1000, server.call("user:a:lead", "/api/v1/workflows").body<WorkflowsPage>().items.size)
+        // Read page by page (TeamCode's `after`, 100 at most): all 1000, each once.
+        val read = mutableListOf<String>()
+        var after: String? = null
+        do {
+            val path = "/api/v1/workflows?limit=100" + (after?.let { "&after=$it" } ?: "")
+            val page = server.call("user:a:lead", path).body<WorkflowsPage>()
+            read += page.items.map { it.getValue("id").toString() }
+            after = page.next
+        } while (after != null)
+        assertEquals(1000, read.distinct().size)
+        assertEquals(50, server.call("user:a:lead", "/api/v1/workflows").body<WorkflowsPage>().items.size, "By default")
         // Another organization has its own 1000.
         assertEquals(HttpStatusCode.Created, server.call("user:b:lead", "/api/v1/workflows", "POST", release()).status)
     }

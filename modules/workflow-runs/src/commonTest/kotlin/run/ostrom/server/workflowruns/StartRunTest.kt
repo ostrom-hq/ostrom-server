@@ -12,6 +12,7 @@ import run.ostrom.server.kernel.sessions.CloudProfileDirectory
 import run.ostrom.server.kernel.sessions.NamedCloudProfile
 import run.ostrom.server.kernel.errors.InvalidPageException
 import run.ostrom.server.workflowruns.domain.models.InvalidRunException
+import run.ostrom.server.workflowruns.domain.models.ReadAllRunsForbiddenException
 import run.ostrom.server.workflowruns.domain.models.RunAudit
 import run.ostrom.server.workflowruns.domain.models.RunGraph
 import run.ostrom.server.workflowruns.domain.models.RunWorkflow
@@ -151,6 +152,21 @@ class StartRunTest {
             assertFailsWith<StartRunForbiddenException> { start(actor, "absent", emptyMap()) }
         }
         assertEquals(emptyList(), runs.stored)
+    }
+
+    @Test
+    fun everyMembersRunsAreReadByAnOwnerAnAdminOrAServiceKeyOnly() = runTest {
+        val readers = listOf(person(OrgRole.OWNER), person(OrgRole.ADMIN), GateActor("ci", ORG, ActorKind.SERVICE))
+        for (actor in readers) assertEquals(emptyList(), list.mine(actor, RunsQuery(), all = true))
+        val refused = listOf(
+            person(OrgRole.MEMBER),
+            person(null),
+            GateActor("agent", ORG, ActorKind.AGENT_SESSION, launchId = "lch_1", personId = "ada"),
+        )
+        for (actor in refused) {
+            assertFailsWith<ReadAllRunsForbiddenException> { list.mine(actor, RunsQuery(), all = true) }
+            assertEquals(emptyList(), list.mine(actor, RunsQuery(), all = false), "One's own runs")
+        }
     }
 
     private fun memberStart(key: String = "automation-run:1", workflowId: String = "ship") = MemberStart(

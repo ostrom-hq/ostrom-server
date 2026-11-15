@@ -56,7 +56,13 @@ class FakeAnalysisEngine(
 
 /** The compiler's workflows, as given. */
 class FakeWorkflows(private val workflows: List<StoredWorkflow> = emptyList()) : WorkflowsUseCase {
-    override suspend fun list(orgId: Uuid, repo: String?, status: WorkflowStatus?): List<StoredWorkflow> = workflows
+    override suspend fun list(
+        orgId: Uuid,
+        repo: String?,
+        status: WorkflowStatus?,
+        after: String?,
+        limit: Int,
+    ): List<StoredWorkflow> = workflows
 
     override suspend fun get(orgId: Uuid, id: String): StoredWorkflow = error("not read")
 

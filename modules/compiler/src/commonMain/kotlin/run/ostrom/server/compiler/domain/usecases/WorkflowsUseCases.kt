@@ -21,6 +21,7 @@ import run.ostrom.server.compiler.domain.services.WorkflowChecks
 import run.ostrom.server.compiler.domain.services.WorkflowRepos
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
+import run.ostrom.server.kernel.errors.Pages
 import run.ostrom.server.kernel.sessions.CloudProfileDirectory
 import run.ostrom.server.kernel.workflows.AutomationUsage
 import run.ostrom.server.kernel.workflows.WorkflowRemovals
@@ -63,9 +64,18 @@ interface WorkflowsUseCase {
      * @param orgId The organization.
      * @param repo Only those that apply to this repository, when not null.
      * @param status Only those of this status, when not null.
-     * @return The workflows.
+     * @param after Only those after this workflow of the organization, in the list's order, when not null.
+     * @param limit At most this many.
+     * @return The workflows, oldest first.
+     * @throws run.ostrom.server.kernel.errors.InvalidPageException When [after] names no workflow of the organization.
      */
-    suspend fun list(orgId: Uuid, repo: String?, status: WorkflowStatus?): List<StoredWorkflow>
+    suspend fun list(
+        orgId: Uuid,
+        repo: String?,
+        status: WorkflowStatus?,
+        after: String? = null,
+        limit: Int = Int.MAX_VALUE,
+    ): List<StoredWorkflow>
 
     /**
      * Reads a workflow.
@@ -158,18 +168,28 @@ class WorkflowsUseCaseImpl(
     private val removals: WorkflowRemovals? = null,
     private val profiles: CloudProfileDirectory? = null,
 ) : WorkflowsUseCase, ImportWorkflowsUseCase {
-    override suspend fun list(orgId: Uuid, repo: String?, status: WorkflowStatus?): List<StoredWorkflow> {
+    override suspend fun list(
+        orgId: Uuid,
+        repo: String?,
+        status: WorkflowStatus?,
+        after: String?,
+        limit: Int,
+    ): List<StoredWorkflow> {
         val all = repository.workflows(orgId)
+        // TeamCode's `after`: the page follows the workflow the previous one ended on, among all of the organization's,
+        // so a workflow that left the filter between two pages still places the next one.
+        val start = if (after == null) 0 else all.indexOfFirst { it.doc.workflow.id == after } + 1
+        if (start == 0 && after != null) Pages.unknownCursor("after")
         val applies = repo?.let { r ->
             val inputs = CompileInputs(
                 r, "", all.map { it.doc }, emptyList(), emptyList(), emptyList(), null, null, clock.now(),
             )
             PackageCompiler.workflowsFor(inputs).map { it.workflow.id }.toSet()
         }
-        return all.filter { stored ->
+        return all.drop(start).filter { stored ->
             val workflow = stored.doc.workflow
             (applies == null || workflow.id in applies) && (status == null || workflow.status == status)
-        }
+        }.take(limit)
     }
 
     override suspend fun get(orgId: Uuid, id: String): StoredWorkflow =

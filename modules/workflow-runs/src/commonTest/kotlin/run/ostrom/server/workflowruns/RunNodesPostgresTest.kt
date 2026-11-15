@@ -286,7 +286,9 @@ class RunNodesPostgresTest {
         assertNull(children.result(eve.org.id, childId))
         children.cancel(eve.org.id, childId)
         assertEquals(RunStatus.SUCCEEDED, server.stored(team, childId).status)
-        // The child of a visit is found through its index.
+        // The child of a visit is found through its index; with statistics, as the other plans are read: without them,
+        // the planner may take any index that starts with the organization.
+        server.database.owner.execute("ANALYZE workflow_runs_started").getOrThrow()
         val plan = server.driver.withOrganization(team.org.id) { tx ->
             tx.execute("SET LOCAL enable_seqscan = off").getOrThrow()
             val explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) ${StartedRunQueries.CHILD}")
