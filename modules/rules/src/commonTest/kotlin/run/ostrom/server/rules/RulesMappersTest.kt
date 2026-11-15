@@ -19,6 +19,7 @@ import run.ostrom.server.rules.presentation.GatePolicyDto
 import run.ostrom.server.rules.presentation.NewRuleRequest
 import run.ostrom.server.rules.presentation.RuleGateCheckDto
 import run.ostrom.server.rules.presentation.RuleGateDto
+import run.ostrom.server.rules.presentation.RulePatchRequest
 import run.ostrom.server.rules.presentation.RulesApi
 import run.ostrom.server.rules.presentation.toDto
 import run.ostrom.server.rules.presentation.toGate
@@ -42,6 +43,20 @@ class RulesMappersTest {
     )
 
     private fun patch(json: String) = Json.parseToJsonElement(json).jsonObject.toRulePatch()
+
+    @Test
+    fun theDocumentedPatchIsWhatTheRouteReads() {
+        val sent = RulePatchRequest("s", "proposed", scope = listOf("a"), gate = RuleGateDto(emptyList()))
+        val read = sent.sent()
+        assertEquals("s", read.statement)
+        assertEquals(RuleStatus.PROPOSED, read.status)
+        assertEquals(listOf("a"), read.scope)
+        assertEquals(GateChange.Replace(RuleGateDto(emptyList()).toGate()), read.gate)
+        assertEquals(GateChange.Keep, RulePatchRequest().sent().gate, "An absent gate is kept")
+    }
+
+    private fun RulePatchRequest.sent() =
+        Json { explicitNulls = false }.encodeToJsonElement(RulePatchRequest.serializer(), this).jsonObject.toRulePatch()
 
     @Test
     fun aRuleIsServedWithTheContractsValues() {

@@ -200,6 +200,33 @@ data class NewRuleRequest(
 )
 
 /**
+ * The body of `updateRule`, as the generated document shows it: each field is changed only when present. The route
+ * reads the raw JSON object ([toRulePatch]), since `gate` set to null removes the gate while an absent `gate` keeps it.
+ *
+ * @property statement A new statement; without [status], the rule becomes `edited`.
+ * @property status A new status.
+ * @property strength A new strength.
+ * @property reviewBy A new review date.
+ * @property scope A new scope.
+ * @property group A new group.
+ * @property why A new reason.
+ * @property output A new output.
+ * @property gate A new gate; null removes it, absent keeps it.
+ */
+@Serializable
+data class RulePatchRequest(
+    val statement: String? = null,
+    val status: String? = null,
+    val strength: String? = null,
+    val reviewBy: String? = null,
+    val scope: List<String>? = null,
+    val group: String? = null,
+    val why: String? = null,
+    val output: String? = null,
+    val gate: RuleGateDto? = null,
+)
+
+/**
  * Several decisions at once.
  *
  * @property ids The rules.

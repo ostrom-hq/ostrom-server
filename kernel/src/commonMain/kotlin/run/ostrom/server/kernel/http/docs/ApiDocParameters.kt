@@ -36,6 +36,21 @@ fun Parameters.Builder.queryText(name: String, text: String) {
 }
 
 /**
+ * An optional, repeatable string query parameter (`?name=a&name=b`): an array the client sends exploded, one
+ * `name=value` per item.
+ *
+ * @param name The parameter.
+ * @param text What its values select.
+ */
+fun Parameters.Builder.queryList(name: String, text: String) {
+    query(name) {
+        description = text
+        explode = true
+        schema = jsonSchema<List<String>>()
+    }
+}
+
+/**
  * An optional integer query parameter.
  *
  * @param name The parameter.

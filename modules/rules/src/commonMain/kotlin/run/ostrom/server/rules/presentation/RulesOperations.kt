@@ -15,7 +15,6 @@ import run.ostrom.server.kernel.http.docs.pathId
 import run.ostrom.server.kernel.http.docs.queryLimit
 import run.ostrom.server.kernel.http.docs.queryText
 import io.ktor.http.HttpStatusCode
-import kotlinx.serialization.json.JsonObject
 
 private const val RULES_TAG = "rules"
 private const val ANALYSIS_TAG = "analysis"
@@ -139,8 +138,7 @@ private fun ApiCatalog.ruleOperations2() {
             organizationHeader()
             pathId("id", RULE_ID)
         }
-        body<JsonObject>("The fields to change: statement, status, strength, reviewBy, scope, group, why, " +
-            "output and gate.")
+        body<RulePatchRequest>("The fields to change, each only when present; `gate` set to null removes the gate.")
         responses {
             ok<RuleDto>("The rule, changed.")
             ok<GovernanceConfirmationPending>(PENDING, HttpStatusCode.Accepted)
