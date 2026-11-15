@@ -182,6 +182,9 @@ class CloudConversationStorePostgresTest {
             }.type,
         )
         assertEquals(first, store.input(ORG_A, session.id, first.id))
+        server.sql("UPDATE runners_sessions SET state = 'terminated' WHERE id = '${session.id}'")
+        val late = store.insertInput(NewInput(input(session, key = "k1"), null), 100)
+        assertIs<InputOutcome.Replayed>(late, "A retry is its first answer, even once the session ended")
         assertNull(store.input(ORG_B, session.id, first.id), "Org B sees none")
         assertFailsWith<CloudSessionNotFoundException> {
             store.insertInput(NewInput(input(session).copy(orgId = ORG_B), null), 100)

@@ -152,6 +152,18 @@ class CloudConversationServiceTest {
 
         store.replay = sent.input
         assertIs<InputOutcome.Replayed>(service.send(alice, person, paused.id, request()))
+        store.replay = null
+
+        // Only a sleeping session is woken: pausing, paused, or asked to pause.
+        woken.clear()
+        val running = conversation()
+        assertFalse(service.send(alice, person, running.id, request()).input.woke)
+        assertTrue(woken.isEmpty(), "A running session needs no wake")
+        wakeAnswer = CloudSessionWake.RESUMED
+        for (asleep in listOf(conversation(SessionState.PAUSING), conversation(SessionState.PAUSED))) {
+            assertTrue(service.send(alice, person, asleep.id, request()).input.woke)
+        }
+        assertTrue(service.send(alice, person, conversation(desired = DesiredState.PAUSED).id, request()).input.woke)
     }
 
     @Test
@@ -234,6 +246,8 @@ class CloudConversationServiceTest {
         assertNull(service.setPermissionBypass(alice, person, running.id, false).permissionBypass)
         assertEquals("cloud.session.permission_bypass_disabled", audit.last().event)
         assertEquals("bypass_owner_only", code { service.setPermissionBypass(alice, key, running.id, true) })
+        val terminal = conversation(mode = SessionMode.TERMINAL)
+        assertEquals("terminal_session", code { service.setPermissionBypass(alice, person, terminal.id, true) })
         assertFailsWith<CloudSessionNotFoundException> { service.setPermissionBypass(dana, person, running.id, true) }
         val ended = conversation(SessionState.TERMINATED)
         assertEquals("session_not_running", code { service.setPermissionBypass(alice, person, ended.id, true) })

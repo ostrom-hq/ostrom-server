@@ -167,6 +167,11 @@ class CloudConversationServiceImpl(
         var checkedAt = clock.now()
         var quiet = 0L
         while (true) {
+            // The caller is checked again every 15 s, a busy transcript included.
+            if ((clock.now() - checkedAt).inWholeMilliseconds >= RECHECK_MILLIS) {
+                session = reach(caller, id)
+                checkedAt = clock.now()
+            }
             // One indexed read per poll; the page is read only when something new arrived.
             val page = if (store.lastSeq(caller.orgId, id) > cursor) {
                 store.events(caller.orgId, id, cursor, null, CloudConversationRules.MAX_PAGE, null)
@@ -186,10 +191,6 @@ class CloudConversationServiceImpl(
             }
             sleep(POLL_MILLIS)
             quiet += POLL_MILLIS
-            if ((clock.now() - checkedAt).inWholeMilliseconds >= RECHECK_MILLIS) {
-                session = reach(caller, id)
-                checkedAt = clock.now()
-            }
         }
     }
 
@@ -206,7 +207,8 @@ class CloudConversationServiceImpl(
         val input = newInput(caller, principal, session, CloudInputKind.MESSAGE, text, request)
         return when (val outcome = store.insertInput(NewInput(input, request.expectedLastEventSeq), MAX_PENDING)) {
             is InputOutcome.Replayed -> outcome
-            is InputOutcome.Accepted -> if (request.wake) {
+            // Only a sleeping session is woken: a running one needs no lookup nor write.
+            is InputOutcome.Accepted -> if (request.wake && sleeping(session)) {
                 InputOutcome.Accepted(outcome.input.copy(woke = wakeFor(outcome.input)))
             } else {
                 outcome
@@ -304,7 +306,7 @@ class CloudConversationServiceImpl(
         id: Uuid,
         enabled: Boolean,
     ): CloudSession {
-        val session = sessions.ownedBy(caller, id)
+        val session = conversation(sessions.ownedBy(caller, id))
         // An agent could approve its own tool uses, a service key acts for nobody in person.
         if (principal.kind != PrincipalKind.USER) {
             throw CloudConversationException(
@@ -426,6 +428,9 @@ class CloudConversationServiceImpl(
         }
         return session
     }
+
+    private fun sleeping(session: CloudSession): Boolean = session.desiredState == DesiredState.PAUSED ||
+        session.state == SessionState.PAUSING || session.state == SessionState.PAUSED
 
     private fun ended(session: CloudSession) {
         if (session.state.isFinal || session.desiredState == DesiredState.TERMINATED) throw notRunning()

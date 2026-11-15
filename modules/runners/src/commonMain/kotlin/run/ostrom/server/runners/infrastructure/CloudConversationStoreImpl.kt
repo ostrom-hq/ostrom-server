@@ -138,6 +138,10 @@ internal class CloudConversationStoreImpl(
     override suspend fun insertInput(new: NewInput, pendingLimit: Int): InputOutcome = database.inOrg(new.input.orgId) {
         val input = new.input
         val session = lockSession(input.orgId, input.sessionId)
+            ?: throw CloudSessionNotFoundException()
+        // A retry of an input already stored is its first answer, even once the session ended.
+        val replayed = replayOf(input)
+        if (replayed != null) return@inOrg InputOutcome.Replayed(replayed)
         val state = SessionState.fromWire(session[RunnersSessionsTable.state])
         val desired = DesiredState.fromWire(session[RunnersSessionsTable.desiredState])
         if (state.isFinal || desired == DesiredState.TERMINATED) {
@@ -146,8 +150,6 @@ internal class CloudConversationStoreImpl(
                 "The cloud session is terminated or being deleted.",
             )
         }
-        val replayed = replayOf(input)
-        if (replayed != null) return@inOrg InputOutcome.Replayed(replayed)
         val asked = new.permissionRequestId?.let { findPermissionRequest(input.orgId, input.sessionId, it) }
         new.permissionCheck?.invoke(AnswerContext(asked, state, desired, session[RunnersSessionsTable.epoch]))
         val expected = new.expectedLastEventSeq
@@ -275,6 +277,7 @@ internal class CloudConversationStoreImpl(
         var changed = 0
         for ((orgId, sessionId) in ended) {
             changed += database.inOrg(orgId) {
+                // A session deleted since it was listed took its inputs with it: nothing is left to cancel.
                 lockSession(orgId, sessionId)
                 val pending = pendingOf(orgId, sessionId)
                 pending.forEach { finish(it, CloudInputStatus.CANCELLED, "session_ended", now) }
@@ -438,11 +441,10 @@ internal class CloudConversationStoreImpl(
         }.orderBy(t.createdAt to SortOrder.ASC).limit(MAX_PENDING_ALL).map(::readInput)
     }
 
-    private fun lockSession(orgId: Uuid, sessionId: Uuid): ResultRow {
+    private fun lockSession(orgId: Uuid, sessionId: Uuid): ResultRow? {
         val s = RunnersSessionsTable
         return s.select(s.id, s.state, s.desiredState, s.epoch)
             .where { (s.orgId eq orgId) and (s.id eq sessionId) }.forUpdate().singleOrNull()
-            ?: throw CloudSessionNotFoundException()
     }
 
     private fun lastSeqOf(orgId: Uuid, sessionId: Uuid): Long {
