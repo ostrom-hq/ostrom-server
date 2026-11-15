@@ -69,6 +69,7 @@ private fun ApiCatalog.daemonChannelOperations() {
         body<RefuseDaemonOrderRequest>("A stable reason code.")
         responses {
             ok<CloudSessionResponse>("The session, ended.")
+            badRequest("A reason that is not `[a-z_]{1,64}` (`invalid_reason`).")
             notFound(NO_SESSION)
             conflict("The session no longer waits for a host (`not_waiting_host`), or waits for another device " +
                 "(`remote_host_mismatch`).")
@@ -92,8 +93,10 @@ private fun ApiCatalog.daemonAnswerOperations() {
         body<DaemonListingAnswerRequest>("The page, or why the daemon does not list the conversations.")
         responses {
             empty("Answered.")
-            badRequest("A conversation whose last activity is not a time (`invalid_listing`).")
+            badRequest("A conversation whose last activity is not a time (`invalid_listing`), or a refusal code " +
+                "that is not `[a-z_]{1,64}` (`invalid_reason`).")
             notFound("Nobody waits for this listing any more, after 30 s (`listing_not_found`).")
+            error(HttpStatusCode.PayloadTooLarge, "A body over 64 KiB (`payload_too_large`).")
             error(HttpStatusCode.UnprocessableEntity, NOT_A_DEVICE)
         }
     }
@@ -108,6 +111,7 @@ private fun ApiCatalog.daemonAnswerOperations() {
         responses {
             ok<List<DeviceFolderDto>>("The folders the device now offers.")
             badRequest("Too many folders, or an id that is malformed or repeated (`invalid_folders`).")
+            error(HttpStatusCode.PayloadTooLarge, "A body over 128 KiB (`payload_too_large`).")
             error(HttpStatusCode.UnprocessableEntity, NOT_A_DEVICE)
         }
     }
