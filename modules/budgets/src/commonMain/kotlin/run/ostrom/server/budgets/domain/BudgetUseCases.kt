@@ -84,6 +84,8 @@ class GetBudgetsUseCaseImpl(
  * @property remainingMicros What is left of their limit, never negative; null without a limit.
  * @property resetsAt The start of next month.
  * @property decision What the gateway would decide now, the org limit included.
+ * @property override Their temporary daily budget in force, if any.
+ * @property baseDailyMicros With [override], their daily limit that stops without it; null when they had none.
  */
 data class MyBudget(
     val limitMicros: Long?,
@@ -91,6 +93,8 @@ data class MyBudget(
     val remainingMicros: Long?,
     val resetsAt: Instant,
     val decision: BudgetDecision,
+    val override: ActiveBudgetOverride? = null,
+    val baseDailyMicros: Long? = null,
 )
 
 /** Reads the caller's own budget. */
@@ -132,6 +136,8 @@ class GetMyBudgetUseCaseImpl(
             // The member's budget: its limit, spend and decision are the member's and the org's. A workflow's is
             // not shown here (`MyBudget.exhaustedScope` is `org` or `member` in the contract); its refusal says so.
             decision = guard.checkRead(caller.orgId, caller.memberId, limits, spent),
+            override = limits.override,
+            baseDailyMicros = limits.baseDailyMicros,
         )
     }
 }

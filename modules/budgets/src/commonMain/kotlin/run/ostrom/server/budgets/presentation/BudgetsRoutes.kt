@@ -50,5 +50,6 @@ fun Route.budgetsRoutes(dependencies: BudgetsRoutesDependencies) = with(dependen
             val caller = call.requireCaller(callers, BudgetScopes.READ, RelayScopes.AGENT_SESSION)
             call.respond(getMyBudget(caller).toResponse())
         }
+        budgetOverrideRoutes(dependencies)
     }
 }

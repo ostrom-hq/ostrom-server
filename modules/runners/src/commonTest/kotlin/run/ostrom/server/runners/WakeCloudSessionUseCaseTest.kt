@@ -75,6 +75,16 @@ class WakeCloudSessionUseCaseTest {
     }
 
     @Test
+    fun aMessageWakesItsSessionAndTheAuditLogNamesIt() = runTest {
+        val paused = paused()
+        val inputId = Uuid.random()
+
+        assertEquals(CloudSessionWake.RESUMED, wake.forMessage(ORG_A, paused.id, inputId))
+        assertEquals(mapOf("owner" to "alice", "inputId" to inputId.toString()), audit.single().details)
+        assertEquals(CloudSessionWake.NO_SESSION, wake.forMessage(ORG_B, paused.id, inputId))
+    }
+
+    @Test
     fun aPausingSessionResumesOncePaused() = runTest {
         val pausing = paused(SessionState.PAUSING)
         assertEquals(CloudSessionWake.RESUMED, wake(ORG_A, pausing.id.toString(), waitId))
@@ -153,6 +163,7 @@ class WakeCloudSessionUseCaseTest {
         var outcome = CloudSessionWake.RESUMED
         val fixed = object : WakeCloudSessionUseCase {
             override suspend fun invoke(orgId: Uuid, sessionId: String, waitId: Uuid) = outcome
+            override suspend fun forMessage(orgId: Uuid, sessionId: Uuid, inputId: Uuid) = outcome
         }
         val wakes = RunnersCloudSessionWakes(fixed, logger)
 

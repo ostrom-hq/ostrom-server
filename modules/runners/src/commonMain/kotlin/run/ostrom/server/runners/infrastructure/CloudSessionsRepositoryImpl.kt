@@ -2,6 +2,9 @@
 package run.ostrom.server.runners.infrastructure
 
 import run.ostrom.server.runners.domain.AgentKind
+import run.ostrom.server.runners.domain.CloudHumanWait
+import run.ostrom.server.runners.domain.PermissionBypass
+import run.ostrom.server.runners.domain.SessionMode
 import run.ostrom.server.runners.domain.CloudEnvironmentSpec
 import run.ostrom.server.runners.domain.CloudSession
 import run.ostrom.server.runners.domain.CloudSessionsRepository
@@ -49,7 +52,7 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             lockOrg(session.orgId)
             if (countHolding(session.orgId, null) >= maxRunning) return@inTenant false
             execute(
-                Statement.create("""INSERT INTO runners_sessions ($COLUMNS) VALUES ($VALUES)""").bindInsert(session),
+                Statement.create("""INSERT INTO runners_sessions ($INSERTED) VALUES ($VALUES)""").bindInsert(session),
             ).getOrThrow()
             execute(
                 Statement.create(
@@ -334,6 +337,8 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         .bind("restricted_egress", session.limits.restrictedEgress)
         .bind("created_at", session.createdAt)
         .bind("github_access", session.githubAccess.wire)
+        .bind("mode", session.mode.wire)
+        .bind("effort", session.effort)
         .bind(
             "environment",
             session.environment?.let { RECIPE_JSON.encodeToString(CloudEnvironmentSpec.serializer(), it) },
@@ -420,6 +425,25 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             expiresAt = get("expires_at").asInstantOrNull(),
             expiryBackfill = get("expiry_backfill").asBoolean(),
             terminatedReason = get("terminated_reason").asStringOrNull(),
+            // A mode this version does not know is a terminal: it never takes a message it cannot deliver.
+            mode = SessionMode.fromWire(get("mode").asString()) ?: SessionMode.TERMINAL,
+            effort = get("effort").asStringOrNull(),
+            permissionBypass = bypass(),
+            waiting = waiting(),
+        )
+    }
+
+    private fun ResultSet.Row.bypass(): PermissionBypass? = get("bypass_by").asStringOrNull()?.let {
+        PermissionBypass(it, get("bypass_credential_id").asStringOrNull(), get("bypass_at").asInstant())
+    }
+
+    private fun ResultSet.Row.waiting(): CloudHumanWait? = get("waiting_reason").asStringOrNull()?.let {
+        CloudHumanWait(
+            reason = it,
+            requestId = get("waiting_request_id").asString(),
+            since = get("waiting_since").asInstant(),
+            eventSeq = get("waiting_event_seq").asLong(),
+            epoch = get("waiting_epoch").asLong(),
         )
     }
 
@@ -430,15 +454,20 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         /** The recipe's JSON on the row: a field a later version adds is ignored by this one. */
         private val RECIPE_JSON = Json { ignoreUnknownKeys = true }
 
-        const val COLUMNS = """
+        /** What a creation writes. */
+        const val INSERTED = """
             id, org_id, owner_id, name, agent, model, prompt, repository_url, repository_ref, state, desired_state,
             phase, epoch, generation, failure_code, failure_message, idle_timeout_minutes, max_run_minutes,
             restricted_egress, created_at, updated_at, execution_started_at, ready_at, last_heartbeat_at,
             last_activity_at, paused_at, terminated_at, pausing_since, runner_stopped_at, runner_token_hash,
             github_access, background_since, background_seen_at, environment, failure_retryable, profile,
             cluster_unreachable_since, transfer_id, untrusted_workspace, expires_at, terminated_reason,
-            expiry_backfill
+            expiry_backfill, mode, effort
         """
+
+        /** What a read returns: also the Bypass and the wait, which only the conversation's store writes. */
+        const val COLUMNS = """$INSERTED, bypass_by, bypass_credential_id, bypass_at, waiting_reason,
+            waiting_request_id, waiting_since, waiting_event_seq, waiting_epoch"""
         const val VALUES = """
             :id, :org_id, :owner_id, :name, :agent, :model, :prompt, :repository_url, :repository_ref, :state,
             :desired_state, :phase, :epoch, 0, :failure_code, :failure_message, :idle_timeout_minutes,
@@ -446,7 +475,7 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             :last_heartbeat_at, :last_activity_at, :paused_at, :terminated_at, :pausing_since, :runner_stopped_at,
             :runner_token_hash, :github_access, :background_since, :background_seen_at, :environment,
             :failure_retryable, :profile, :cluster_unreachable_since, :transfer_id, :untrusted_workspace,
-            :expires_at, :terminated_reason, :expiry_backfill
+            :expires_at, :terminated_reason, :expiry_backfill, :mode, :effort
         """
     }
 }

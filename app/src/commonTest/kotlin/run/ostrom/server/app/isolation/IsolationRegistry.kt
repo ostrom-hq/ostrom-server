@@ -243,6 +243,18 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
         body = """{"scope": "member", "subject": "{{MEMBER_ID}}", "usdPerMonth": 1.0}""",
         admin = true,
     ),
+    // A member's temporary daily budgets (capacity.budgetoverrides.v1): B's member, named by login, by A's admin.
+    "GET /api/v1/members/{login}/budget-overrides" to target("login" to MEMBER_LOGIN, admin = true),
+    "POST /api/v1/members/{login}/budget-overrides" to target(
+        "login" to MEMBER_LOGIN,
+        body = """{"micros": 1000000, "durationMinutes": 5, "reason": "Taken"}""",
+        admin = true,
+    ),
+    "POST /api/v1/members/{login}/budget-overrides/{id}/revoke" to Case.Target(
+        mapOf("login" to of(MEMBER_LOGIN), "id" to Param.Fresh),
+        body = """{"reason": "Taken"}""",
+        admin = true,
+    ),
 
     // Secrets.
     "GET /api/v1/secrets" to Case.Target(),
@@ -598,6 +610,23 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "POST /api/v1/cloud/transfers/{id}/accept" to target("id" to TRANSFER),
     "POST /api/v1/cloud/transfers/{id}/cancel" to target("id" to TRANSFER),
     "POST /api/v1/cloud/transfers/{id}/decline" to target("id" to TRANSFER),
+    // A conversation session's transcript, inputs and options (the session decides whose, the input is any id).
+    "GET /api/v1/cloud/sessions/{id}/events" to target("id" to CLOUD_SESSION),
+    "GET /api/v1/cloud/sessions/{id}/events/stream" to target("id" to CLOUD_SESSION),
+    "GET /api/v1/cloud/sessions/{id}/agents" to target("id" to CLOUD_SESSION),
+    "GET /api/v1/cloud/sessions/{id}/messages" to target("id" to CLOUD_SESSION),
+    "POST /api/v1/cloud/sessions/{id}/messages" to target("id" to CLOUD_SESSION, body = """{"text": "Hi"}"""),
+    "GET /api/v1/cloud/sessions/{id}/messages/{input}" to Case.Target(
+        mapOf("id" to of(CLOUD_SESSION), "input" to Param.Fixed("3d0f6c7a-5b1e-4f2a-9c8d-7e6b5a4f3c21")),
+    ),
+    "POST /api/v1/cloud/sessions/{id}/interrupt" to target("id" to CLOUD_SESSION),
+    "POST /api/v1/cloud/sessions/{id}/permissions" to
+        target("id" to CLOUD_SESSION, body = """{"requestId": "r1", "behavior": "deny"}"""),
+    "POST /api/v1/cloud/sessions/{id}/tasks/stop" to target("id" to CLOUD_SESSION, body = """{"taskId": "b1"}"""),
+    "PUT /api/v1/cloud/sessions/{id}/permission-bypass" to
+        target("id" to CLOUD_SESSION, body = """{"enabled": true}"""),
+    "PUT /api/v1/cloud/sessions/{id}/model" to target("id" to CLOUD_SESSION, body = """{"model": "opus"}"""),
+    "PUT /api/v1/cloud/sessions/{id}/effort" to target("id" to CLOUD_SESSION, body = """{"effort": "low"}"""),
     "POST /api/v1/cloud/runner/heartbeat" to Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1}"""),
     "POST /api/v1/cloud/runner/github" to Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1}"""),
     "POST /api/v1/cloud/runner/variables" to Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1}"""),

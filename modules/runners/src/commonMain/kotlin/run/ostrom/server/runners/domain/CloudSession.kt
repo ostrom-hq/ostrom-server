@@ -62,6 +62,10 @@ import kotlin.uuid.Uuid
  *   before it is asked to end.
  * @property expiryBackfill Whether the session was paused before paused sessions expired and has not been given its
  *   expiry yet: set once by the upgrade, cleared by its first step, a pause or a resume. Never served.
+ * @property mode How the agent is talked to, fixed at creation: a terminal, or a conversation.
+ * @property effort The agent's effort (reasoning level), if chosen.
+ * @property permissionBypass The owner's standing approval of tool uses, while it is on.
+ * @property waiting Why the agent waits for a person, while it does.
  */
 data class CloudSession(
     val id: Uuid,
@@ -102,6 +106,10 @@ data class CloudSession(
     val expiresAt: Instant? = null,
     val terminatedReason: String? = null,
     val expiryBackfill: Boolean = false,
+    val mode: SessionMode = SessionMode.TERMINAL,
+    val effort: String? = null,
+    val permissionBypass: PermissionBypass? = null,
+    val waiting: CloudHumanWait? = null,
 ) {
     /**
      * Whether the runner of the current start reported a failed preparation (or the server found one): the

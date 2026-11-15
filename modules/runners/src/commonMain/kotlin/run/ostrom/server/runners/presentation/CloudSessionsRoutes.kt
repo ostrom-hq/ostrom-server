@@ -53,18 +53,7 @@ fun Route.cloudSessionsRoutes(dependencies: CloudSessionsRoutesDependencies) = w
         }
         post<CloudSessionsApi> {
             val caller = orgResolver.callerOf(call.requirePrincipal(), CLOUD_WRITE)
-            val request = call.receive<CreateCloudSessionRequest>()
-            val payload = CreateCloudSessionPayload(
-                name = request.name,
-                agent = request.agent,
-                repository = request.repo?.let { RepositorySpec(it, request.ref) },
-                model = request.model,
-                prompt = request.prompt,
-                environment = request.environment?.toDomain(),
-                // A malformed id names no profile (404 on Kubernetes), and is ignored where sessions run on none.
-                profileId = request.profileId?.let { Uuid.parseOrNull(it) ?: Uuid.NIL },
-                image = request.image,
-            )
+            val payload = call.receive<CreateCloudSessionRequest>().toPayload()
             call.respond(HttpStatusCode.Created, createCloudSession(caller, payload).toResponse())
         }
         get<CloudSessionsApi.Id> { params ->
@@ -218,6 +207,21 @@ internal fun ApplicationCall.runnerToken(): String {
     return token
 }
 
+/** The domain's payload of a creation. */
+private fun CreateCloudSessionRequest.toPayload() = CreateCloudSessionPayload(
+    name = name,
+    agent = agent,
+    repository = repo?.let { RepositorySpec(it, ref) },
+    model = model,
+    prompt = prompt,
+    environment = environment?.toDomain(),
+    // A malformed id names no profile (404 on Kubernetes), and is ignored where sessions run on none.
+    profileId = profileId?.let { Uuid.parseOrNull(it) ?: Uuid.NIL },
+    image = image,
+    mode = mode,
+    effort = effort,
+)
+
 /** Maps a session to the API. */
 fun CloudSession.toResponse() = CloudSessionResponse(
     id = id.toString(),
@@ -249,5 +253,9 @@ fun CloudSession.toResponse() = CloudSessionResponse(
     environment = environment?.toDto(),
     profile = profile?.origin?.let { CloudSessionProfileDto(it.id, it.version) },
     image = profile?.image,
+    mode = mode.wire,
+    effort = effort,
+    permissionBypass = permissionBypass != null,
+    waiting = waiting?.let { CloudSessionWaitingDto(it.reason, it.requestId, it.since.toString(), it.eventSeq) },
     transferId = transferId?.toString(),
 )

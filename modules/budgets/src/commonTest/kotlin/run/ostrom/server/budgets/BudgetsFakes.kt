@@ -28,6 +28,8 @@ import org.koin.core.module.Module
 import org.koin.dsl.module
 import kotlin.time.Clock
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.ZERO
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -40,6 +42,8 @@ object TestCallers {
     val adminB = Caller(orgB, Uuid.parse("0000000b-0000-0000-0000-0000000000a1"), MemberRole.OWNER)
     private val byToken = mapOf(
         "admin-a" to adminA,
+        "stale-admin-a" to adminA,
+        "key-a" to adminA,
         "member-a" to memberA,
         "admin-b" to adminB,
         "agent-a" to memberA,
@@ -55,6 +59,7 @@ object TestCallers {
     /** The scopes and kind of each token: a browser session has every user scope (`user:*`). */
     private val principals = mapOf(
         "agent-a" to (PrincipalKind.SERVICE to setOf(RelayScopes.AGENT_SESSION)),
+        "key-a" to (PrincipalKind.SERVICE to setOf("budgets:read", "budgets:write")),
         "device-a" to (PrincipalKind.DEVICE to setOf(RelayScopes.ALL_USER)),
         "cli-read" to (PrincipalKind.USER to setOf("budgets:read")),
         "cli-write" to (PrincipalKind.USER to setOf("budgets:write")),
@@ -77,9 +82,15 @@ object TestCallers {
             object : TokenAuthenticator {
                 override suspend fun authenticate(token: String): AuthenticatedPrincipal? = when {
                     token !in byToken -> null
-                    // A token without its own kind is a browser session, with every user scope.
-                    token !in principals ->
-                        AuthenticatedPrincipal(token, PrincipalKind.USER, browserScopes, channel = BROWSER)
+                    // A token without its own kind is a browser session, with every user scope, signed in now (a
+                    // `stale-` one ten minutes ago).
+                    token !in principals -> AuthenticatedPrincipal(
+                        token,
+                        PrincipalKind.USER,
+                        browserScopes,
+                        channel = BROWSER,
+                        authenticatedAt = clock.now() - if (token.startsWith("stale-")) 10.minutes else ZERO,
+                    )
                     else -> principals.getValue(token).let { (kind, scopes) ->
                         AuthenticatedPrincipal(token, kind, scopes)
                     }

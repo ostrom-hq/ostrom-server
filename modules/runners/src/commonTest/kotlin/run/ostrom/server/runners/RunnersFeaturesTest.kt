@@ -8,6 +8,7 @@ import run.ostrom.server.kernel.auth.OrgPrincipal
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.config.MapConfigSource
 import run.ostrom.server.runners.domain.CloudTransfersUseCaseImpl
+import run.ostrom.server.runners.domain.ConversationAnnouncement
 import run.ostrom.server.runners.domain.NoRunnerVariables
 import run.ostrom.server.runners.domain.RunnerGitHubToken
 import run.ostrom.server.runners.domain.RunnerGitHubTokens
@@ -27,6 +28,7 @@ import org.koin.dsl.koinApplication
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.uuid.Uuid
 
 class RunnersFeaturesTest {
@@ -36,6 +38,23 @@ class RunnersFeaturesTest {
     private fun koin(driver: RunnersConfig.DriverKind) = koinApplication {
         modules(module { single { RunnersConfig.from(MapConfigSource(emptyMap())).copy(driver = driver) } })
     }.koin
+
+    @Test
+    fun theConversationKeysAreAnnouncedOnlyWhenTurnedOn() = runTest {
+        val docker = RunnersConfig.DriverKind.DOCKER
+        val config = RunnersConfig.from(MapConfigSource(emptyMap())).copy(driver = docker)
+        fun koin(announced: Boolean) = koinApplication {
+            modules(
+                module {
+                    single { config }
+                    single { ConversationAnnouncement(announced) }
+                },
+            )
+        }.koin
+        assertEquals(cloud, RunnersModule.features(koin(false)), "Off: the runner side is not there yet")
+        assertEquals(cloud + RunnersModule.CONVERSATION_FEATURES, RunnersModule.features(koin(true)))
+        assertFalse("runners.cloud.files.v1" in RunnersModule.CONVERSATION_FEATURES, "Files are not served")
+    }
 
     @Test
     fun cloudRunnersAreListedOnlyWithARuntimeDriver() = runTest {

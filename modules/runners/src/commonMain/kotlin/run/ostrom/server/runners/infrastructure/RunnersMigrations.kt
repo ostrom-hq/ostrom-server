@@ -111,6 +111,159 @@ private val SESSIONS_WITHOUT_PROFILE_SQL: String =
     """
         .trimIndent()
 
+/** What the conversation's maintenance does across organizations: functions owned by `ostrom_router`. */
+private val CONVERSATION_ROUTER_FUNCTIONS = listOf(
+    "runners_conversation_purge(TIMESTAMPTZ, INTEGER)",
+    "runners_conversation_wakes(INTEGER)",
+    "runners_conversation_ended(INTEGER)",
+)
+
+/**
+ * Version 17: conversation sessions (`runners.cloud.conversation.v1`, TeamCode's `V20261020100009*`,
+ * `V20261023230000.2` and the feeds' migration). `runners_sessions` gets its mode (`terminal` for every session before
+ * it), the agent's effort, the owner's Bypass (`bypass_*`) and the wait for a person (`waiting_*`).
+ * `runners_session_events` is the transcript, numbered per session (`seq`), deduplicated per execution
+ * (`runner_seq`), with the feed of each event (`''` for the main agent, so its pages are an equality on the index);
+ * `runners_session_transcripts` the per-session cursors the retention purge never deletes, so numbering never
+ * restarts; `runners_session_inputs` the messages, interrupts, answers and changes with their acknowledgement, unique
+ * per session, author and idempotency key; `runners_session_subagents` the subagents as their events arrive. All four
+ * are tenant tables; the purge, the wake sweep and the cancellation of an ended session's inputs find their rows
+ * across organizations only through [CONVERSATION_ROUTER_FUNCTIONS] (docs/tenancy.md), then work in each organization.
+ */
+private val CONVERSATION_SQL: String =
+    """
+    ALTER TABLE runners_sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'terminal';
+    ALTER TABLE runners_sessions ADD COLUMN effort TEXT;
+    ALTER TABLE runners_sessions ADD COLUMN bypass_by TEXT;
+    ALTER TABLE runners_sessions ADD COLUMN bypass_credential_id TEXT;
+    ALTER TABLE runners_sessions ADD COLUMN bypass_at TIMESTAMPTZ;
+    ALTER TABLE runners_sessions ADD COLUMN waiting_reason TEXT;
+    ALTER TABLE runners_sessions ADD COLUMN waiting_request_id TEXT;
+    ALTER TABLE runners_sessions ADD COLUMN waiting_since TIMESTAMPTZ;
+    ALTER TABLE runners_sessions ADD COLUMN waiting_event_seq BIGINT;
+    ALTER TABLE runners_sessions ADD COLUMN waiting_epoch BIGINT;
+    CREATE TABLE runners_session_events (
+        session_id UUID NOT NULL REFERENCES runners_sessions (id) ON DELETE CASCADE,
+        seq BIGINT NOT NULL,
+        org_id UUID NOT NULL,
+        epoch BIGINT NOT NULL,
+        runner_seq BIGINT,
+        type TEXT NOT NULL,
+        at TIMESTAMPTZ NOT NULL,
+        data TEXT NOT NULL,
+        feed TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (session_id, seq)
+    );
+    CREATE UNIQUE INDEX runners_session_events_runner_seq ON runners_session_events (session_id, epoch, runner_seq);
+    CREATE INDEX runners_session_events_feed ON runners_session_events (session_id, feed, seq);
+    CREATE INDEX runners_session_events_type ON runners_session_events (session_id, type, seq);
+    CREATE INDEX runners_session_events_retention ON runners_session_events (at);
+    CREATE TABLE runners_session_transcripts (
+        session_id UUID PRIMARY KEY REFERENCES runners_sessions (id) ON DELETE CASCADE,
+        org_id UUID NOT NULL,
+        last_seq BIGINT NOT NULL,
+        runner_epoch BIGINT NOT NULL,
+        runner_seq BIGINT NOT NULL
+    );
+    CREATE TABLE runners_session_inputs (
+        id UUID PRIMARY KEY,
+        session_id UUID NOT NULL REFERENCES runners_sessions (id) ON DELETE CASCADE,
+        org_id UUID NOT NULL,
+        kind TEXT NOT NULL,
+        status TEXT NOT NULL,
+        author_id TEXT NOT NULL,
+        credential_id TEXT,
+        text TEXT,
+        wake BOOLEAN NOT NULL,
+        wake_pending BOOLEAN NOT NULL DEFAULT FALSE,
+        client_key TEXT,
+        request_digest TEXT,
+        created_at TIMESTAMPTZ NOT NULL,
+        delivered_at TIMESTAMPTZ,
+        delivered_epoch BIGINT,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        consumed_at TIMESTAMPTZ,
+        finished_at TIMESTAMPTZ,
+        reason TEXT,
+        event_seq BIGINT
+    );
+    CREATE UNIQUE INDEX runners_session_inputs_client_key ON runners_session_inputs (session_id, author_id, client_key);
+    CREATE INDEX runners_session_inputs_session ON runners_session_inputs (session_id, status, created_at);
+    CREATE INDEX runners_session_inputs_list ON runners_session_inputs (session_id, created_at DESC, id DESC);
+    CREATE INDEX runners_session_inputs_pending ON runners_session_inputs (session_id)
+        WHERE status IN ('queued', 'delivered');
+    CREATE INDEX runners_session_inputs_wake ON runners_session_inputs (created_at) WHERE wake_pending;
+    CREATE INDEX runners_session_inputs_retention ON runners_session_inputs (finished_at)
+        WHERE finished_at IS NOT NULL;
+    CREATE TABLE runners_session_subagents (
+        session_id UUID NOT NULL REFERENCES runners_sessions (id) ON DELETE CASCADE,
+        id TEXT NOT NULL,
+        org_id UUID NOT NULL,
+        type TEXT,
+        description TEXT NOT NULL,
+        state TEXT NOT NULL,
+        started_at TIMESTAMPTZ NOT NULL,
+        ended_at TIMESTAMPTZ,
+        steps INTEGER NOT NULL,
+        parent_id TEXT,
+        task_id TEXT,
+        result_error BOOLEAN NOT NULL,
+        PRIMARY KEY (session_id, id)
+    );
+    CREATE INDEX runners_session_subagents_started ON runners_session_subagents (session_id, started_at);
+    ${tenantTableSql("runners_session_events")}
+    ${tenantTableSql("runners_session_transcripts")}
+    ${tenantTableSql("runners_session_inputs")}
+    ${tenantTableSql("runners_session_subagents")}
+    CREATE POLICY runners_session_events_router_purge ON runners_session_events FOR DELETE TO ostrom_router
+        USING (current_user = 'ostrom_router');
+    CREATE POLICY runners_session_events_router_read ON runners_session_events FOR SELECT TO ostrom_router
+        USING (current_user = 'ostrom_router');
+    GRANT SELECT (session_id, seq, at), DELETE ON runners_session_events TO ostrom_router;
+    CREATE POLICY runners_session_inputs_router_purge ON runners_session_inputs FOR DELETE TO ostrom_router
+        USING (current_user = 'ostrom_router');
+    CREATE POLICY runners_session_inputs_router_read ON runners_session_inputs FOR SELECT TO ostrom_router
+        USING (current_user = 'ostrom_router');
+    GRANT SELECT (id, session_id, org_id, status, wake_pending, created_at, finished_at), DELETE
+        ON runners_session_inputs TO ostrom_router;
+    GRANT SELECT (desired_state) ON runners_sessions TO ostrom_router;
+    CREATE FUNCTION runners_conversation_purge(p_before TIMESTAMPTZ, p_limit INTEGER) RETURNS BIGINT
+        LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        WITH events AS (
+            DELETE FROM runners_session_events WHERE (session_id, seq) IN (
+                SELECT e.session_id, e.seq FROM runners_session_events e WHERE e.at < p_before LIMIT p_limit
+            ) RETURNING 1
+        ), inputs AS (
+            DELETE FROM runners_session_inputs WHERE id IN (
+                SELECT i.id FROM runners_session_inputs i WHERE i.finished_at < p_before LIMIT p_limit
+            ) RETURNING 1
+        ) SELECT (SELECT COUNT(*) FROM events) + (SELECT COUNT(*) FROM inputs);
+    $$;
+    CREATE FUNCTION runners_conversation_wakes(p_limit INTEGER)
+        RETURNS TABLE (session_id UUID, org_id UUID, input_id UUID)
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        SELECT DISTINCT ON (i.session_id) i.session_id, i.org_id, i.id FROM runners_session_inputs i
+            WHERE i.wake_pending AND i.status = 'queued' ORDER BY i.session_id, i.created_at LIMIT p_limit;
+    $$;
+    CREATE FUNCTION runners_conversation_ended(p_limit INTEGER) RETURNS TABLE (session_id UUID, org_id UUID)
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        SELECT DISTINCT i.session_id, i.org_id FROM runners_session_inputs i
+            JOIN runners_sessions s ON s.id = i.session_id
+            WHERE i.status IN ('queued', 'delivered')
+            AND (s.state IN ('terminated', 'failed') OR s.desired_state = 'terminated') LIMIT p_limit;
+    $$;
+    ${CONVERSATION_ROUTER_FUNCTIONS.joinToString("\n") { "REVOKE EXECUTE ON FUNCTION $it FROM PUBLIC;" }}
+    DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+            ${CONVERSATION_ROUTER_FUNCTIONS.joinToString("\n") { "GRANT EXECUTE ON FUNCTION $it TO ostrom_app;" }}
+        END IF;
+    END $$;
+    GRANT CREATE ON SCHEMA public TO ostrom_router;
+    ${CONVERSATION_ROUTER_FUNCTIONS.joinToString("\n") { "ALTER FUNCTION $it OWNER TO ostrom_router;" }}
+    REVOKE CREATE ON SCHEMA public FROM ostrom_router
+    """
+        .trimIndent()
+
 /** What a registered runner's heartbeat reads across organizations: a function owned by `ostrom_router`. */
 private val REGISTERED_ROUTER_FUNCTIONS = listOf("runners_registered_key(UUID)")
 
@@ -395,11 +548,12 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
                 FROM runners_sessions s WHERE s.id = r.session_id AND s.expiry_backfill;
         """.trimIndent(),
     ),
+    SchemaMigration(version = 17, name = "conversation_sessions", sql = CONVERSATION_SQL),
     // runners.cloud.transfer.v1: a session changes owner at a paused boundary. `transfer_id` is the accepted transfer
     // the session moves toward, `untrusted_workspace` holds from the owner change until an execution of the new
     // owner is ready; the transfers are a tenant table (the keys of a creation are kept 24 hours by the use case).
     SchemaMigration(
-        version = 17,
+        version = 18,
         name = "session_transfers",
         sql = """
             ALTER TABLE runners_sessions ADD COLUMN transfer_id UUID;

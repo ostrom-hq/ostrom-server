@@ -9,11 +9,19 @@ private val USAGE_READS = setOf(
 private val CLOUD_READS = setOf(
     "GET /api/v1/cloud/sessions", "GET /api/v1/cloud/sessions/{id}", "GET /api/v1/runners", "GET /api/v1/events",
     "GET /api/v1/cloud/transfer-recipients", "GET /api/v1/cloud/transfers", "GET /api/v1/cloud/transfers/{id}",
+    // A conversation's transcript, sub-agents and inputs (TeamCode's CLOUD_READ).
+    "GET /api/v1/cloud/sessions/{id}/events", "GET /api/v1/cloud/sessions/{id}/events/stream",
+    "GET /api/v1/cloud/sessions/{id}/agents", "GET /api/v1/cloud/sessions/{id}/messages",
+    "GET /api/v1/cloud/sessions/{id}/messages/{input}",
 )
 
 private val CLOUD_WRITES = CLOUD_READS + setOf(
     "POST /api/v1/cloud/sessions", "DELETE /api/v1/cloud/sessions/{id}", "POST /api/v1/cloud/sessions/{id}/pause",
     "POST /api/v1/cloud/sessions/{id}/resume", "POST /api/v1/cloud/sessions/{id}/terminal/ticket",
+    // A conversation's inputs and options (TeamCode's CLOUD_WRITE); never the bypass, the owner's in person.
+    "POST /api/v1/cloud/sessions/{id}/messages", "POST /api/v1/cloud/sessions/{id}/interrupt",
+    "POST /api/v1/cloud/sessions/{id}/permissions", "POST /api/v1/cloud/sessions/{id}/tasks/stop",
+    "PUT /api/v1/cloud/sessions/{id}/model", "PUT /api/v1/cloud/sessions/{id}/effort",
 )
 
 // A service key manages the webhooks with cloud:admin only (TeamCode: an admin's key), never with a lesser scope.
