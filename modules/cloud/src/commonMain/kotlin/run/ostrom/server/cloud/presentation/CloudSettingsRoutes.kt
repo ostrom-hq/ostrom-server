@@ -32,8 +32,8 @@ internal fun Route.cloudSettingsRoutes(dependencies: CloudAdminRoutesDependencie
         }
         val current = settings.get(caller)
         val cap = request.maxRunningAutomationsPerMember ?: current.maxRunningAutomationsPerMember
-        // Not on the routes yet: a save keeps the stored idle timeout of remote sessions.
-        val next = CloudSettings(request.backgroundWorkMaxMinutes, cap, current.remoteIdleTimeoutMinutes)
+        val idle = request.remoteIdleTimeoutMinutes ?: current.remoteIdleTimeoutMinutes
+        val next = CloudSettings(request.backgroundWorkMaxMinutes, cap, idle)
         val saved = settings.save(caller, next, expected)
         audit.record(
             OrgAuditRecord(
@@ -45,6 +45,7 @@ internal fun Route.cloudSettingsRoutes(dependencies: CloudAdminRoutesDependencie
                 mapOf(
                     "backgroundWorkMaxMinutes" to saved.backgroundWorkMaxMinutes.toString(),
                     "maxRunningAutomationsPerMember" to saved.maxRunningAutomationsPerMember.toString(),
+                    "remoteIdleTimeoutMinutes" to saved.remoteIdleTimeoutMinutes.toString(),
                 ),
             ),
         )
@@ -55,6 +56,7 @@ internal fun Route.cloudSettingsRoutes(dependencies: CloudAdminRoutesDependencie
 internal fun CloudSettings.toResponse() = CloudSettingsResponse(
     backgroundWorkMaxMinutes = backgroundWorkMaxMinutes,
     maxRunningAutomationsPerMember = maxRunningAutomationsPerMember,
+    remoteIdleTimeoutMinutes = remoteIdleTimeoutMinutes,
     updatedAt = updatedAt?.toString(),
     updatedBy = updatedBy?.toString(),
 )

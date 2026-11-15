@@ -254,8 +254,7 @@ data class CloudProfileInput(
  *   once, per owner in this organization; a run over it waits queued (up to 30 minutes). A run started by a workflow
  *   action does not count (TeamCode's team setting).
  * @property remoteIdleTimeoutMinutes How long a remote session (`runners.cloud.remote.v1`) goes without a turn, a
- *   message or an attached client before it pauses; 0 never pauses one (TeamCode's team setting). Stored, not yet on
- *   the settings routes (the contract does not declare it yet).
+ *   message or an attached client before it pauses; 0 never pauses one (TeamCode's team setting).
  * @property updatedAt When it was saved last; null while nothing is stored.
  * @property updatedBy The member who saved it last; null while nothing is stored.
  */
