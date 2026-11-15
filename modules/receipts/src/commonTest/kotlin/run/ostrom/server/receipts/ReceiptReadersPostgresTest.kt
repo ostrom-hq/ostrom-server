@@ -2,6 +2,7 @@
 package run.ostrom.server.receipts
 
 import run.ostrom.server.instance.InstanceModule
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.TokenAuthenticator
@@ -12,14 +13,13 @@ import run.ostrom.server.receipts.domain.repositories.ReceiptsRepository
 import run.ostrom.server.receipts.domain.services.ReceiptOwners
 import run.ostrom.server.receipts.domain.services.ReceiptReaders
 import run.ostrom.server.receipts.domain.usecases.SignReceiptUseCase
-import run.ostrom.server.receipts.infrastructure.ReceiptsQueries
+import run.ostrom.server.receipts.infrastructure.receiptsPage
 import run.ostrom.server.receipts.presentation.ReceiptsPage
 import run.ostrom.server.receipts.presentation.VerificationResponse
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.benchTest
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -122,12 +122,13 @@ class ReceiptReadersPostgresTest {
         val approved = (0 until 200).map { "s-${it * 50 + 1}" }
         val mia = ReceiptAudience("mia", approved)
         val nobody = ReceiptAudience(null, emptyList())
+        val database = server.koin.get<JdbcDatabase>()
         val plans = linkedMapOf(
-            "newest page of the whole organization" to server.driver.plan(ReceiptQuery()),
-            "newest page of a member" to server.driver.plan(ReceiptQuery(audience = mia)),
-            "a member's page by its cursor" to server.driver.plan(ReceiptQuery(before = "rcpt_5000", audience = mia)),
-            "a member's sessions receipts" to server.driver.plan(ReceiptQuery(subjectKind = "session", audience = mia)),
-            "a member whose login is unknown" to server.driver.plan(ReceiptQuery(audience = nobody)),
+            "newest page of the whole organization" to database.plan(ReceiptQuery()),
+            "newest page of a member" to database.plan(ReceiptQuery(audience = mia)),
+            "a member's page by its cursor" to database.plan(ReceiptQuery(before = "rcpt_5000", audience = mia)),
+            "a member's sessions receipts" to database.plan(ReceiptQuery(subjectKind = "session", audience = mia)),
+            "a member whose login is unknown" to database.plan(ReceiptQuery(audience = nobody)),
         )
         val report = plans.entries.joinToString("\n\n") { (name, plan) -> "-- $name\n$plan" }
         println("-- receipts plans\n$report")
@@ -146,20 +147,9 @@ class ReceiptReadersPostgresTest {
             "CASE WHEN i % 20 = 0 THEN NULL WHEN i % 10 = 3 THEN 'mia' ELSE 'dev-' || (i % 7) END " +
             "FROM generate_series(1, $count) AS i"
 
-    private suspend fun Driver.plan(query: ReceiptQuery): String = transaction {
-        fetchAll(
-            Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", ORG_A.toString()),
-        ).getOrThrow()
-        val statement = Statement.create("EXPLAIN (ANALYZE, BUFFERS) ${ReceiptsQueries.list(query)}")
-            .bind("org", ORG_A).bind("limit", ReceiptQuery.DEFAULT_PAGE)
-        query.subjectKind?.let { statement.bind("kind", it) }
-        query.before?.let { statement.bind("before", it) }
-        query.audience?.member?.let { statement.bind("member", it) }
-        query.audience?.let { audience ->
-            statement.bind("sessions", audience.sessions.joinToString(",", "[", "]") { "\"$it\"" })
-        }
-        fetchAll(statement).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
-    }
+    // The read the repository runs, as the serving role confined to A (inOrg), as a request reads it.
+    private suspend fun JdbcDatabase.plan(query: ReceiptQuery): String =
+        inOrg(ORG_A) { plan { receiptsPage(ORG_A, query).query } }
 
     private companion object {
         /** At most a few pages of rows read and dropped by a filter: never the organization's rows one by one. */
