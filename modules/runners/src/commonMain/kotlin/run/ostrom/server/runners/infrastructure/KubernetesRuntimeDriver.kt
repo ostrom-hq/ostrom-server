@@ -10,6 +10,9 @@ import run.ostrom.server.runners.domain.StorageClassObservation
 import run.ostrom.server.runners.domain.VolumeObservation
 import run.ostrom.server.runners.domain.ExecutionSpec
 import run.ostrom.server.runners.domain.ExecutionStatus
+import run.ostrom.server.runners.domain.PodTokenIdentity
+import run.ostrom.server.runners.domain.PodTokenReviews
+import run.ostrom.server.runners.domain.RunnerCredentialsImpl
 import run.ostrom.server.runners.domain.RuntimeDriver
 import run.ostrom.server.runners.domain.RuntimeNames
 import run.ostrom.server.runners.domain.RunnerDelivery
@@ -82,7 +85,9 @@ interface KubernetesClusters {
  * labelled with the session's cluster ([CLUSTER_LABEL]) for the garbage collection. A workspace's deletion is proven
  * down to the provider's volume, and a profile's storage class is checked, as in TeamCode: besides its namespaced Role
  * (pods, secrets, claims, NetworkPolicies), the cluster's service account needs `get` and `list` on the cluster-wide
- * `persistentvolumes` and `storageclasses` (a ClusterRole; docs/MODULES.md lists the rules).
+ * `persistentvolumes` and `storageclasses` (a ClusterRole; docs/MODULES.md lists the rules). With pod identity
+ * ([KubernetesSettings.podIdentity]) the runner proves its pod with a projected token this driver reviews
+ * ([PodTokenReviews], TokenReview), which needs `create` on `tokenreviews` (`system:auth-delegator`).
  *
  * @param clusters Reaches a session's cluster.
  * @param settings The pods' priority class and the server pods' labels.
@@ -93,7 +98,7 @@ class KubernetesRuntimeDriver(
     private val clusters: KubernetesClusters,
     private val settings: KubernetesSettings,
     private val delivery: RunnerDeliverySource,
-) : RuntimeDriver, CloudClusterObjects {
+) : RuntimeDriver, CloudClusterObjects, PodTokenReviews {
     /**
      * The cluster, at its version, and namespace whose NetworkPolicies are in place, so that later starts skip them;
      * a cluster saved again (a new API server, say) gets them again.
@@ -297,6 +302,22 @@ class KubernetesRuntimeDriver(
         it.delete(path, emptyMap(), "delete claim")
     }
 
+    override suspend fun review(clusterId: String, token: String, audience: String): PodTokenIdentity? =
+        clusters.use(clusterId) { target ->
+            val body = buildJsonObject {
+                put("apiVersion", "authentication.k8s.io/v1")
+                put("kind", "TokenReview")
+                putJsonObject("spec") {
+                    put("token", token)
+                    putJsonArray("audiences") { add(JsonPrimitive(audience)) }
+                }
+            }
+            val url = "${target.apiUrl.trimEnd('/')}/apis/authentication.k8s.io/v1/tokenreviews"
+            val response = target.send(HttpMethod.Post, url, body)
+            response.requireSuccess("review token")
+            tokenIdentity(Json.parseToJsonElement(response.bodyAsText()).jsonObject, audience)
+        }
+
     /** Reads an object; null once it is gone. */
     private suspend fun KubernetesTarget.read(url: String, step: String, clusterScoped: Boolean = false): JsonObject? {
         val response = send(HttpMethod.Get, url)
@@ -432,6 +453,15 @@ class KubernetesRuntimeDriver(
                             add(mount("agent-socket", RunnerEnvironment.AGENT_SOCKET_DIRECTORY))
                             add(mount("check-socket", RunnerEnvironment.CHECK_SOCKET_DIRECTORY))
                             add(binaryMount())
+                            if (settings.podIdentity) {
+                                add(
+                                    buildJsonObject {
+                                        put("name", POD_TOKEN_VOLUME)
+                                        put("mountPath", POD_TOKEN_DIRECTORY)
+                                        put("readOnly", true)
+                                    },
+                                )
+                            }
                         }
                     },
                 )
@@ -451,6 +481,26 @@ class KubernetesRuntimeDriver(
                 add(emptyDir("check-tmp", "1Gi"))
                 add(emptyDir("check-socket", "1Mi"))
                 add(emptyDir(BINARY_VOLUME, BINARY_VOLUME_SIZE))
+                // The runner's proof of its pod, which the cluster reviews (TeamCode's `runner-token`); the kubelet
+                // rotates it, and only the runner's container mounts it.
+                if (settings.podIdentity) add(podToken())
+            }
+        }
+    }
+
+    private fun podToken(): JsonObject = buildJsonObject {
+        put("name", POD_TOKEN_VOLUME)
+        putJsonObject("projected") {
+            putJsonArray("sources") {
+                add(
+                    buildJsonObject {
+                        putJsonObject("serviceAccountToken") {
+                            put("audience", RunnerCredentialsImpl.AUDIENCE)
+                            put("expirationSeconds", POD_TOKEN_SECONDS)
+                            put("path", "token")
+                        }
+                    },
+                )
             }
         }
     }
@@ -556,6 +606,7 @@ class KubernetesRuntimeDriver(
      */
     private fun environment(spec: ExecutionSpec, secret: String, serverUrl: String): JsonArray = buildJsonArray {
         RunnerEnvironment.of(spec, serverUrl).forEach { (key, value) -> add(variable(key, value)) }
+        if (settings.podIdentity) add(variable(RunnerEnvironment.POD_TOKEN_FILE, "$POD_TOKEN_DIRECTORY/token"))
         val keys = listOf(RunnerEnvironment.TOKEN to "token") +
             listOfNotNull(spec.prompt?.let { RunnerEnvironment.PROMPT to "prompt" })
         keys.forEach { (variable, key) ->
@@ -669,6 +720,13 @@ class KubernetesRuntimeDriver(
         const val CLOUD_AGENT = "agent-supervisor"
         const val CLOUD_CHECKS = "check-host"
 
+        /** The runner's projected service-account token, with pod identity (TeamCode's `runner-token`). */
+        const val POD_TOKEN_VOLUME = "ostrom-pod-token"
+        const val POD_TOKEN_DIRECTORY = "/var/run/secrets/ostrom"
+
+        /** The projected token's lifetime, the API's minimum (TeamCode's 600 s); the kubelet rotates the file. */
+        const val POD_TOKEN_SECONDS = 600
+
         /** The volume the init container copies `ostrom` into. */
         const val BINARY_VOLUME = "ostrom-bin"
         private const val BINARY_VOLUME_SIZE = "256Mi"
@@ -712,6 +770,33 @@ class KubernetesRuntimeDriver(
             claimNamespace = json.textAt("spec", "claimRef", "namespace"),
             claimName = json.textAt("spec", "claimRef", "name"),
         )
+
+        /**
+         * The pod a TokenReview binds a token to (TeamCode's `reviewToken`).
+         *
+         * @param review The TokenReview as the API returns it.
+         * @param audience The audience the token must carry.
+         *
+         * @return The service account's namespace and the pod's name, or null when the token is not authenticated
+         *   for [audience] or is not a service account's.
+         */
+        // Each field the review lacks or contradicts refuses the token.
+        @Suppress("ReturnCount", "CyclomaticComplexMethod")
+        fun tokenIdentity(review: JsonObject, audience: String): PodTokenIdentity? {
+            val status = review["status"] as? JsonObject ?: return null
+            if ((status["authenticated"] as? JsonPrimitive)?.content != "true") return null
+            val audiences = (status["audiences"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content }
+            if (audience !in audiences) return null
+            val user = status["user"] as? JsonObject ?: return null
+            val parts = (user.textAt("username") ?: return null).split(':')
+            if (parts.size != SERVICE_ACCOUNT_PARTS || parts[0] != "system" || parts[1] != "serviceaccount") return null
+            val pod = ((user["extra"] as? JsonObject)?.get(POD_NAME_EXTRA) as? JsonArray)?.singleOrNull()
+            return PodTokenIdentity(parts[2], (pod as? JsonPrimitive)?.content)
+        }
+
+        /** `system:serviceaccount:<namespace>:<name>`. */
+        private const val SERVICE_ACCOUNT_PARTS = 4
+        private const val POD_NAME_EXTRA = "authentication.kubernetes.io/pod-name"
 
         /** The egress label value of an execution. */
         fun egress(spec: ExecutionSpec): String = if (spec.limits.restrictedEgress) "restricted" else "open"

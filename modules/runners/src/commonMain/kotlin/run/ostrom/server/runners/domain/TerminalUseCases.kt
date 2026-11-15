@@ -23,15 +23,18 @@ fun interface RunnerPrincipalResolver {
 /**
  * [RunnerPrincipalResolver] on the runner token: the current execution of the session that holds it.
  *
- * @param repository The sessions.
- * @param tokens Hashes the presented token.
+ * @param credentials Finds the session of the presented token (the runner token, or the pod's).
  */
 class RunnerTokenPrincipalResolver(
-    private val repository: CloudSessionsRepository,
-    private val tokens: RunnerTokens,
+    private val credentials: RunnerCredentials,
 ) : RunnerPrincipalResolver {
-    override suspend fun resolve(credential: String): RunnerExecution? =
-        repository.findByRunnerTokenHash(tokens.hash(credential))?.let { RunnerExecution(it.orgId, it.id, it.epoch) }
+    // A pod token of another execution is no credential of this resolver: the next resolvers are still asked, and
+    // the use case fences the call when none knows it.
+    override suspend fun resolve(credential: String): RunnerExecution? = try {
+        credentials.session(credential)?.let { RunnerExecution(it.orgId, it.id, it.epoch) }
+    } catch (_: ExecutionFencedException) {
+        null
+    }
 }
 
 /** Fences a runner call on the execution it claims: the one place every runner channel checks its caller. */

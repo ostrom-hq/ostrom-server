@@ -11,6 +11,9 @@ object RunnerEnvironment {
     /** The variable of the runner token. */
     const val TOKEN = "OSTROM_RUNNER_TOKEN"
 
+    /** The variable of the pod's projected service-account token file, on Kubernetes with pod identity. */
+    const val POD_TOKEN_FILE = "OSTROM_POD_TOKEN_FILE"
+
     /** The variable of the first message. */
     const val PROMPT = "OSTROM_AGENT_PROMPT"
 

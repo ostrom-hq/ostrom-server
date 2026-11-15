@@ -75,24 +75,22 @@ interface RunnerVariablesUseCase {
 }
 
 /**
- * [RunnerVariablesUseCase] on the repository and the members' values.
+ * [RunnerVariablesUseCase] on the runner credentials and the members' values.
  *
- * @param repository The sessions.
- * @param tokens Hashes the presented token.
+ * @param credentials Finds the session of the presented token.
  * @param variables The members' environment variables.
  * @param secrets The secrets of the session's answered waits (`waits.secrets.v1`), none without the automations
  *   module.
  * @param members Tells whether the owner is still an active member: a member who is not gets no secret either.
  */
 class RunnerVariablesUseCaseImpl(
-    private val repository: CloudSessionsRepository,
-    private val tokens: RunnerTokens,
+    private val credentials: RunnerCredentials,
     private val variables: RunnerVariables,
     private val secrets: WaitSecretSource? = null,
     private val members: MemberDirectory? = null,
 ) : RunnerVariablesUseCase {
     override suspend fun invoke(token: String, request: RunnerExecutionRequest): RunnerVariableValues {
-        val session = repository.findByRunnerTokenHash(tokens.hash(token)) ?: throw RunnerUnauthenticatedException()
+        val session = credentials.session(token) ?: throw RunnerUnauthenticatedException()
         if (session.id != request.sessionId || session.epoch != request.epoch) throw ExecutionFencedException()
         // Only while it runs (`creating`, `resuming`, `running`, `pausing`), and not one being deleted.
         if (!session.state.holdsExecution || session.desiredState == DesiredState.TERMINATED) {

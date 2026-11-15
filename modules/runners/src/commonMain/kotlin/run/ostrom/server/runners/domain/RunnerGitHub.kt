@@ -90,19 +90,17 @@ interface RunnerGitHubTokenUseCase {
 }
 
 /**
- * [RunnerGitHubTokenUseCase] on the repository and the members' links.
+ * [RunnerGitHubTokenUseCase] on the runner credentials and the members' links.
  *
- * @param repository The sessions.
- * @param tokens Hashes the presented token.
+ * @param credentials Finds the session of the presented token.
  * @param github The members' GitHub access.
  */
 class RunnerGitHubTokenUseCaseImpl(
-    private val repository: CloudSessionsRepository,
-    private val tokens: RunnerTokens,
+    private val credentials: RunnerCredentials,
     private val github: RunnerGitHubTokens,
 ) : RunnerGitHubTokenUseCase {
     override suspend fun invoke(token: String, request: RunnerGitHubRequest): RunnerGitHubToken {
-        val session = repository.findByRunnerTokenHash(tokens.hash(token)) ?: throw RunnerUnauthenticatedException()
+        val session = credentials.session(token) ?: throw RunnerUnauthenticatedException()
         // Only the current execution, while it runs or starts (the clone comes before ready), and not one being
         // deleted: a token never outlives the execution it was asked for by much.
         val current = session.id == request.sessionId && session.epoch == request.epoch &&

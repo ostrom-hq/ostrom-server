@@ -26,6 +26,10 @@ import run.ostrom.server.runners.infrastructure.DisabledRuntimeDriver
 import run.ostrom.server.runners.infrastructure.KubernetesSettings
 import run.ostrom.server.runners.infrastructure.RunnerTokensImpl
 import run.ostrom.server.runners.infrastructure.RunnersConfig
+import run.ostrom.server.runners.infrastructure.KubernetesClusters
+import run.ostrom.server.runners.infrastructure.KubernetesRuntimeDriver
+import run.ostrom.server.runners.infrastructure.KubernetesTarget
+import run.ostrom.server.runners.domain.RuntimeUnreachableException
 import run.ostrom.server.runners.domain.RunnerDeliverySource
 import run.ostrom.server.runners.presentation.CLOUD_READ
 import run.ostrom.server.runners.presentation.CLOUD_WRITE
@@ -45,6 +49,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
@@ -245,6 +250,20 @@ class ModelTest {
     }
 
     @Test
+    fun onlyTheKubernetesDriverWithPodIdentityReviewsPodTokens() {
+        val on = RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_KUBERNETES_POD_IDENTITY" to "true")))
+        val off = RunnersConfig.from(MapConfigSource(emptyMap()))
+        val clusters = object : KubernetesClusters {
+            override suspend fun <T> use(clusterId: String, block: suspend (KubernetesTarget) -> T): T =
+                throw RuntimeUnreachableException("gone")
+        }
+        val kubernetes = KubernetesRuntimeDriver(clusters, on.kubernetes) { error("unused") }
+        assertSame(kubernetes, on.podTokenReviews(kubernetes))
+        assertNull(off.podTokenReviews(kubernetes))
+        assertNull(on.podTokenReviews(DisabledRuntimeDriver()))
+    }
+
+    @Test
     fun theConfigurationReadsEveryKey() {
         val config = RunnersConfig.from(
             MapConfigSource(
@@ -254,6 +273,7 @@ class ModelTest {
                     "OSTROM_RUNNERS_IMAGE" to "ghcr.io/x/runner:1",
                     "OSTROM_RUNNERS_KUBERNETES_PRIORITY_CLASS" to "ostrom-low",
                     "OSTROM_RUNNERS_KUBERNETES_SERVER_SELECTOR" to " app.kubernetes.io/instance=prod , role=api",
+                    "OSTROM_RUNNERS_KUBERNETES_POD_IDENTITY" to "true",
                     "OSTROM_RUNNERS_DOCKER_API_URL" to "http://docker:2375",
                     "OSTROM_RUNNERS_DOCKER_NETWORK" to "ostrom",
                 ),
@@ -266,6 +286,8 @@ class ModelTest {
         assertEquals("ghcr.io/x/runner:1", config.runnerImage)
         assertEquals("ostrom-low", config.kubernetes.priorityClass)
         assertEquals(mapOf("app.kubernetes.io/instance" to "prod", "role" to "api"), config.kubernetes.serverSelector)
+        assertTrue(config.kubernetes.podIdentity)
+        assertFalse(RunnersConfig.from(MapConfigSource(emptyMap())).kubernetes.podIdentity, "Pod identity is opt-in")
         assertEquals("http://docker:2375", config.docker.apiUrl)
         assertEquals("ostrom", config.docker.network)
         assertEquals(

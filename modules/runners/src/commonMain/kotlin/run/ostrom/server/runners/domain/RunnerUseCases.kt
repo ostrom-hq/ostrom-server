@@ -63,17 +63,15 @@ interface CheckRunnerTokenUseCase {
 }
 
 /**
- * [CheckRunnerTokenUseCase] on the repository.
+ * [CheckRunnerTokenUseCase] on the runner credentials.
  *
- * @param repository The sessions.
- * @param tokens Hashes the presented token.
+ * @param credentials Finds the session of the presented token.
  */
 class CheckRunnerTokenUseCaseImpl(
-    private val repository: CloudSessionsRepository,
-    private val tokens: RunnerTokens,
+    private val credentials: RunnerCredentials,
 ) : CheckRunnerTokenUseCase {
     override suspend fun invoke(token: String) {
-        repository.findByRunnerTokenHash(tokens.hash(token)) ?: throw RunnerUnauthenticatedException()
+        credentials.session(token) ?: throw RunnerUnauthenticatedException()
     }
 }
 
@@ -97,13 +95,13 @@ interface RunnerHeartbeatUseCase {
  * [RunnerHeartbeatUseCase] on the repository.
  *
  * @param repository The sessions.
- * @param tokens Hashes the presented token.
+ * @param credentials Finds the session of the presented token.
  * @param usage Counts the execution time.
  * @param clock The time.
  */
 class RunnerHeartbeatUseCaseImpl(
     private val repository: CloudSessionsRepository,
-    private val tokens: RunnerTokens,
+    private val credentials: RunnerCredentials,
     private val usage: CloudUsageMeter,
     private val clock: Clock,
 ) : RunnerHeartbeatUseCase {
@@ -111,7 +109,7 @@ class RunnerHeartbeatUseCaseImpl(
     @Suppress("ThrowsCount")
     override suspend fun invoke(token: String, heartbeat: RunnerHeartbeat): HeartbeatAnswer {
         repeat(MAX_ATTEMPTS) {
-            val session = repository.findByRunnerTokenHash(tokens.hash(token))
+            val session = credentials.session(token)
                 ?: throw RunnerUnauthenticatedException()
             if (session.id != heartbeat.sessionId || session.epoch != heartbeat.epoch) throw ExecutionFencedException()
             val now = clock.now()

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.runners.domain.RunnerCredentialsImpl
 import run.ostrom.server.automations.domain.ServedSecrets
 import run.ostrom.server.automations.domain.WaitSecretSource
 import run.ostrom.server.kernel.auth.MemberDirectory
@@ -50,7 +51,10 @@ class RunnerVariablesTest {
 
     @Test
     fun aTokenNoSessionHoldsIsUnauthenticated() = runTest {
-        val use = RunnerVariablesUseCaseImpl(InMemoryCloudSessionsRepository(), FakeRunnerTokens(), NoRunnerVariables)
+        val use = RunnerVariablesUseCaseImpl(
+            RunnerCredentialsImpl(InMemoryCloudSessionsRepository(), FakeRunnerTokens()),
+            NoRunnerVariables,
+        )
         assertFailsWith<RunnerUnauthenticatedException> { use("token-1", RunnerExecutionRequest(Uuid.random(), 1)) }
     }
 
@@ -66,7 +70,7 @@ class RunnerVariablesTest {
         val source = WaitSecretSource { _, _, _ -> ServedSecrets(values, setOf("OSTROM_WAIT_B")) }
         val request = RunnerExecutionRequest(running.id, 1)
         fun use(active: Boolean?) = RunnerVariablesUseCaseImpl(
-            repository, tokens, NoRunnerVariables, source,
+            RunnerCredentialsImpl(repository, tokens), NoRunnerVariables, source,
             active?.let { value -> object : MemberDirectory {
                 override suspend fun isActiveMember(orgId: Uuid, memberId: String) = value
             } },
@@ -77,7 +81,7 @@ class RunnerVariablesTest {
         assertFalse("hunter" in served.toString() || "=b" in served.toString(), "Names only in a log line")
         assertEquals(served.secrets.keys, use(null)("token-1", request).secrets.keys, "No directory: the owner stands")
         assertEquals(emptyMap(), use(false)("token-1", request).secrets, "A member who left gets none")
-        val without = RunnerVariablesUseCaseImpl(repository, tokens, NoRunnerVariables)
+        val without = RunnerVariablesUseCaseImpl(RunnerCredentialsImpl(repository, tokens), NoRunnerVariables)
         assertEquals(emptyMap(), without("token-1", request).secrets)
     }
 }

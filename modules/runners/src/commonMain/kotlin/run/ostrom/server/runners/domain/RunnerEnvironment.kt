@@ -61,7 +61,7 @@ interface RunnerEnvironmentUseCase {
  * [RunnerEnvironmentUseCase] on the repository, the owners' values, GitHub links and logins.
  *
  * @param repository The sessions.
- * @param tokens Hashes the presented token.
+ * @param credentials Finds the session of the presented token.
  * @param variables The members' environment variables.
  * @param github The members' GitHub access.
  * @param members Who is an active member.
@@ -72,7 +72,7 @@ interface RunnerEnvironmentUseCase {
 @Suppress("ThrowsCount", "LongParameterList")
 class RunnerEnvironmentUseCaseImpl(
     private val repository: CloudSessionsRepository,
-    private val tokens: RunnerTokens,
+    private val credentials: RunnerCredentials,
     private val variables: RunnerVariables,
     private val github: RunnerGitHubTokens,
     private val members: MemberDirectory,
@@ -160,7 +160,7 @@ class RunnerEnvironmentUseCaseImpl(
 
     /** The session of the runner's current execution, while it prepares. */
     private suspend fun preparing(token: String, sessionId: Uuid, epoch: Long): CloudSession {
-        val session = repository.findByRunnerTokenHash(tokens.hash(token)) ?: throw RunnerUnauthenticatedException()
+        val session = credentials.session(token) ?: throw RunnerUnauthenticatedException()
         if (session.id != sessionId || session.epoch != epoch) throw ExecutionFencedException()
         val starting = session.state == SessionState.CREATING || session.state == SessionState.RESUMING
         if (!starting || session.desiredState != DesiredState.RUNNING || session.preparationFailed) {
