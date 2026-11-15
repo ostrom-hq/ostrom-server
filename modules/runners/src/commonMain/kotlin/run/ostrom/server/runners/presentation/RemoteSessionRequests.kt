@@ -6,6 +6,7 @@ import run.ostrom.server.kernel.auth.requirePrincipal
 import run.ostrom.server.runners.domain.Caller
 import run.ostrom.server.runners.domain.CloudSessionNotFoundException
 import run.ostrom.server.runners.domain.InvalidCloudSessionRequestException
+import run.ostrom.server.runners.domain.InvalidQueryException
 import run.ostrom.server.runners.domain.KeyedCreation
 import run.ostrom.server.runners.domain.RemoteSessionDraft
 import run.ostrom.server.runners.domain.RemoteSessionException
@@ -103,6 +104,19 @@ private fun CreateCloudSessionRequest.toRemoteDraft(): RemoteSessionDraft {
         resumeSessionId = resumeSessionId,
     )
 }
+
+/**
+ * The value of a query parameter read once (TeamCode's `single`).
+ *
+ * @param name The parameter.
+ * @param values Its values.
+ *
+ * @return The value, or null when absent.
+ *
+ * @throws InvalidQueryException When it was sent several times.
+ */
+internal fun atMostOnce(name: String, values: List<String>): String? =
+    if (values.size > 1) throw InvalidQueryException(name) else values.singleOrNull()
 
 /**
  * The kinds a list asks for: cloud sessions only when it names none.

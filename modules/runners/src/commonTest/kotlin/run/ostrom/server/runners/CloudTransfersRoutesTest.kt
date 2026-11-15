@@ -133,11 +133,10 @@ class CloudTransfersRoutesTest {
         key: String? = null,
         body: String? = null,
         contentType: ContentType = ContentType.Application.Json,
-        onBehalfOf: String? = null,
     ): HttpResponse = post(path) {
         header(HttpHeaders.Authorization, "Bearer $token")
         if (key != null) header("Idempotency-Key", key)
-        if (onBehalfOf != null) header(OnBehalfOf.HEADER, onBehalfOf)
+        onBehalfOf?.let { header(OnBehalfOf.HEADER, it) }
         if (body != null) {
             header(HttpHeaders.ContentType, contentType.toString())
             setBody(body)
@@ -146,6 +145,24 @@ class CloudTransfersRoutesTest {
 
     private suspend fun HttpClient.read(path: String, token: String): HttpResponse =
         get(path) { header(HttpHeaders.Authorization, "Bearer $token") }
+
+    /** The member the next writes name in `Ostrom-On-Behalf-Of`, or none. */
+    private var onBehalfOf: String? = null
+
+    /** A write sent with `Ostrom-On-Behalf-Of` naming [member]. */
+    private suspend fun HttpClient.sendFor(
+        member: String,
+        path: String,
+        token: String,
+        key: String? = null,
+        body: String? = null,
+    ): HttpResponse =
+        try {
+            onBehalfOf = member
+            send(path, token, key, body)
+        } finally {
+            onBehalfOf = null
+        }
 
     private fun running(owner: String = aliceId) = session(state = SessionState.RUNNING, ownerId = owner)
         .copy(desiredState = DesiredState.RUNNING).also(sessions::put)
@@ -308,17 +325,17 @@ class CloudTransfersRoutesTest {
     fun anAdministratorAsksAcceptsDeclinesAndCancelsForTheMemberTheHeaderNames() = run {
         val body = """{"toMemberId":"bob"}"""
         fun path() = "/api/v1/cloud/sessions/${running().id}/transfer"
-        val forbidden = client.send(path(), "bob", "k-0", body, onBehalfOf = "alice")
+        val forbidden = client.sendFor("alice", path(), "bob", "k-0", body)
         assertEquals(HttpStatusCode.Forbidden, forbidden.status)
         assertTrue(OnBehalfOf.FORBIDDEN in forbidden.bodyAsText())
-        val ghost = client.send(path(), "carol-cli", "k-0", body, onBehalfOf = "ghost")
+        val ghost = client.sendFor("ghost", path(), "carol-cli", "k-0", body)
         assertEquals(HttpStatusCode.UnprocessableEntity, ghost.status)
         assertTrue(OnBehalfOf.INVALID_MEMBER in ghost.bodyAsText())
         // An agent is refused before the header is read: a transfer write is a person's.
-        assertEquals(HttpStatusCode.Forbidden, client.send(path(), "agent", "k-0", body, onBehalfOf = "x y").status)
+        assertEquals(HttpStatusCode.Forbidden, client.sendFor("x y", path(), "agent", "k-0", body).status)
 
         // Carol gives alice's session away as alice: her rights, so it is accepted at once, and she asked.
-        val given = client.send(path(), "carol-cli", "k-1", body, onBehalfOf = "alice")
+        val given = client.sendFor("alice", path(), "carol-cli", "k-1", body)
         assertEquals(HttpStatusCode.Accepted, given.status)
         val requested = transfers.transfers.getValue(Uuid.parse(idOf(given.bodyAsText())))
         assertEquals(aliceId, requested.fromMemberId)
@@ -329,7 +346,7 @@ class CloudTransfersRoutesTest {
         val outcomes = listOf("accept" to bobId, "decline" to bobId, "cancel" to aliceId).map { (write, member) ->
             val offer = client.send(path(), "alice", "k-$write", body)
             val id = idOf(offer.bodyAsText())
-            val decided = client.send("/api/v1/cloud/transfers/$id/$write", "carol-cli", onBehalfOf = member)
+            val decided = client.sendFor(member, "/api/v1/cloud/transfers/$id/$write", "carol-cli")
             assertTrue(decided.status.value in 200..299, "$write ${decided.bodyAsText()}")
             transfers.transfers.getValue(Uuid.parse(id))
         }

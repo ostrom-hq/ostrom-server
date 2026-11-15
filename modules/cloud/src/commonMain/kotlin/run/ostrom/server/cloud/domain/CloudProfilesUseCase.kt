@@ -8,6 +8,9 @@ import run.ostrom.server.secrets.domain.Caller
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
 
+/** The roles that see every profile. */
+private val ADMINISTRATORS = setOf(OrgRole.OWNER, OrgRole.ADMIN)
+
 /** The organization's cloud profiles (TeamCode's `cloud_profiles`): versioned, assigned to members. */
 interface CloudProfilesUseCase {
     /**
@@ -91,7 +94,7 @@ class CloudProfilesUseCaseImpl(
 
     /** The member a reference names: an id as it is, a login through the members' logins; null for none. */
     private suspend fun memberId(orgId: Uuid, reference: String): String? =
-        (Uuid.parseOrNull(reference) ?: logins?.idsOf(orgId, listOf(reference))?.get(reference))?.toString()
+        (Uuid.parseOrNull(reference) ?: logins?.let { it.idsOf(orgId, listOf(reference))[reference] })?.toString()
 
     override suspend fun create(caller: Caller, input: CloudProfileInput): CloudProfile {
         caller.requireAdmin()
@@ -154,9 +157,6 @@ class CloudProfilesUseCaseImpl(
     }
 
     private companion object {
-        /** The roles that see every profile. */
-        val ADMINISTRATORS = setOf(OrgRole.OWNER, OrgRole.ADMIN)
-
         /** The reclaim policy that deletes the provider's volume with its claim. */
         const val RECLAIM_DELETE = "Delete"
 

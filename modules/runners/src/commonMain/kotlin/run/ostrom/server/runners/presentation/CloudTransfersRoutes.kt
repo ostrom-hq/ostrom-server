@@ -106,21 +106,18 @@ fun Route.cloudTransfersRoutes(dependencies: CloudTransfersRoutesDependencies) =
     }
 }
 
-/** Writes of a transfer are a person's: an agent or a service key acts for nobody in person. */
-private fun ApplicationCall.requireInteractive(): AuthenticatedPrincipal = requirePrincipal().also {
-    if (it.kind != PrincipalKind.USER) {
-        throw TransferForbiddenException("Only a person signed in transfers sessions, not an agent or a service key.")
-    }
-}
-
 /**
  * The caller of a transfer write, a person, acting for the member `Ostrom-On-Behalf-Of` names when they administer
- * the organization, and the credential they presented.
+ * the organization, and the credential they presented. Writes of a transfer are a person's: an agent or a service key
+ * acts for nobody in person, and is refused before the header is read.
  */
 private suspend fun ApplicationCall.transferActor(
     dependencies: CloudTransfersRoutesDependencies,
 ): Pair<Caller, AuthenticatedPrincipal> {
-    val principal = requireInteractive()
+    val principal = requirePrincipal()
+    if (principal.kind != PrincipalKind.USER) {
+        throw TransferForbiddenException("Only a person signed in transfers sessions, not an agent or a service key.")
+    }
     return cloudActor(dependencies.orgResolver, dependencies.resolveActor) to principal
 }
 

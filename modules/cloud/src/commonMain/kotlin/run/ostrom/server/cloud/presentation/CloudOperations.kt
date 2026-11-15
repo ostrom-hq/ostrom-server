@@ -113,30 +113,7 @@ private fun ApiCatalog.cloudClusterOperations() {
 
 /** The organization's cloud profiles. */
 private fun ApiCatalog.cloudProfileOperations() {
-    get("/api/v1/cloud/profiles") {
-        operationId = "listCloudProfiles"
-        tag(TAG)
-        summary = "The organization's cloud profiles."
-        description = "A member of the organization: an owner or an admin sees every profile, a member the ones " +
-            "assigned to them (TeamCode's `cloud_profiles`). A profile names the cluster and namespace a " +
-            "session runs in and the session image the team chose: Ostrom imposes none. With " +
-            "`runners.cloud.profiles.member.v1` (TeamCode's `cloud.profiles.member.v1`), `member` (an id or a " +
-            "login) lists the profiles that member can use, every profile for an owner or an admin."
-        parameters {
-            organizationHeader()
-            queryText("member", "The member, by id or login, whose profiles are listed; the caller when absent.")
-        }
-        responses {
-            ok<CloudProfileListResponse>("The profiles, by name.")
-            badRequest("`member` sent more than once (`invalid_query`).")
-            error(HttpStatusCode.Forbidden, "Another member named by a caller who is not an owner or an admin.")
-            notFound("The organization is not one the caller belongs to.")
-            error(
-                HttpStatusCode.UnprocessableEntity,
-                "The member named is not an active member of the organization (`invalid_effective_member`).",
-            )
-        }
-    }
+    listCloudProfilesOperation()
     post("/api/v1/cloud/profiles") {
         operationId = "createCloudProfile"
         tag(TAG)
@@ -218,3 +195,31 @@ private fun Responses.Builder.storageClass() = error(
     "The workspace storage class does not exist on the cluster (`storage_class_missing`), or retains the volumes " +
         "of deleted sessions (`storage_class_retains_volumes`).",
 )
+
+/** `GET /api/v1/cloud/profiles`: the caller's profiles, or a member's (`runners.cloud.profiles.member.v1`). */
+private fun ApiCatalog.listCloudProfilesOperation() {
+    get("/api/v1/cloud/profiles") {
+        operationId = "listCloudProfiles"
+        tag(TAG)
+        summary = "The organization's cloud profiles."
+        description = "A member of the organization: an owner or an admin sees every profile, a member the ones " +
+            "assigned to them (TeamCode's `cloud_profiles`). A profile names the cluster and namespace a " +
+            "session runs in and the session image the team chose: Ostrom imposes none. With " +
+            "`runners.cloud.profiles.member.v1` (TeamCode's `cloud.profiles.member.v1`), `member` (an id or a " +
+            "login) lists the profiles that member can use, every profile for an owner or an admin."
+        parameters {
+            organizationHeader()
+            queryText("member", "The member, by id or login, whose profiles are listed; the caller when absent.")
+        }
+        responses {
+            ok<CloudProfileListResponse>("The profiles, by name.")
+            badRequest("`member` sent more than once (`invalid_query`).")
+            error(HttpStatusCode.Forbidden, "Another member named by a caller who is not an owner or an admin.")
+            notFound("The organization is not one the caller belongs to.")
+            error(
+                HttpStatusCode.UnprocessableEntity,
+                "The member named is not an active member of the organization (`invalid_effective_member`).",
+            )
+        }
+    }
+}
