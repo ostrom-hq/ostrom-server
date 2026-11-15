@@ -12,6 +12,7 @@ import run.ostrom.server.skills.fakes.field
 import run.ostrom.server.skills.fakes.publication
 import run.ostrom.server.skills.fakes.testIdentities
 import run.ostrom.server.skills.fakes.upload
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
 import io.ktor.client.HttpClient
 import io.ktor.http.HttpMethod
@@ -44,6 +45,11 @@ class SkillsCatalogPostgresTest {
         call(get, token, "/api/v1/skill-delivery").list("skills").map {
             it.field("name") + "@" + it.field("version")
         }
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(listOf(SkillsModule), testIdentities()) { server ->
+        server.assertApiCatalogue(SkillsModule)
+    }
 
     @Test
     @Suppress("LongMethod") // One end-to-end story through the HTTP API, read top to bottom.

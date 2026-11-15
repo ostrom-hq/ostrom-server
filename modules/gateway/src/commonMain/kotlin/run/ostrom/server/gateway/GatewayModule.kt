@@ -66,6 +66,7 @@ import run.ostrom.server.gateway.infrastructure.PacingSettingsRepositoryImpl
 import run.ostrom.server.gateway.infrastructure.RequestCancellationRepositoryImpl
 import run.ostrom.server.gateway.infrastructure.SpanModelCallTracer
 import run.ostrom.server.gateway.presentation.GatewayGovernanceChange
+import run.ostrom.server.gateway.presentation.gatewayOperations
 import run.ostrom.server.gateway.presentation.GatewayRoutesDependencies
 import run.ostrom.server.gateway.presentation.PacingRoutesDependencies
 import run.ostrom.server.gateway.presentation.gatewayRoutes
@@ -77,6 +78,7 @@ import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.database.repeatDue
 import run.ostrom.server.kernel.database.scheduledWork
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.settings.InstanceSettings
@@ -110,6 +112,8 @@ import kotlin.time.Duration.Companion.seconds
  */
 object GatewayModule : ServerModule {
     override val name: String = "gateway"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { gatewayOperations() }
 
     /** The Koin name of the providers' HTTP client, replaced by tests. */
     val HTTP_CLIENT = named("gatewayHttpClient")
