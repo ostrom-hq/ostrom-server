@@ -1,20 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.runners.domain.Caller
 import run.ostrom.server.runners.fakes.ORG_A
 import run.ostrom.server.runners.fakes.ORG_B
 import run.ostrom.server.runners.fakes.testIdentities
 import run.ostrom.server.runners.infrastructure.RunnerTokensImpl
-import run.ostrom.server.runners.infrastructure.TERMINAL_TICKET_INSERT_SQL
-import run.ostrom.server.runners.infrastructure.TERMINAL_TICKET_PURGE_SQL
-import run.ostrom.server.runners.infrastructure.TERMINAL_TICKET_REDEEM_SQL
+import run.ostrom.server.runners.infrastructure.RunnersTerminalTickets
 import run.ostrom.server.runners.infrastructure.TerminalTicketsImpl
-import run.ostrom.server.runners.infrastructure.inTenant
+import run.ostrom.server.runners.infrastructure.ticketInsert
+import run.ostrom.server.runners.infrastructure.ticketPurge
+import run.ostrom.server.runners.infrastructure.ticketRedeem
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import org.jetbrains.exposed.v1.core.statements.Statement
+import org.jetbrains.exposed.v1.core.statements.StatementBuilder
+import org.jetbrains.exposed.v1.jdbc.selectAll
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -32,10 +35,10 @@ class TerminalTicketsPostgresTest {
     private val alice = Caller(ORG_A, "alice", admin = true)
     private val session = Uuid.random()
 
-    private fun TestServer.replica() = TerminalTicketsImpl(driver, RunnerTokensImpl())
+    private fun TestServer.replica() = TerminalTicketsImpl(koin.get<JdbcDatabase>(), RunnerTokensImpl())
 
-    private suspend fun TestServer.count(org: Uuid): Long = driver.inTenant(org) {
-        fetchAll("SELECT count(*) AS n FROM runners_terminal_tickets").getOrThrow().single().get("n").asLong()
+    private suspend fun TestServer.count(org: Uuid): Long = koin.get<JdbcDatabase>().inOrg(org) {
+        RunnersTerminalTickets.selectAll().count()
     }
 
     @Test
@@ -93,16 +96,14 @@ class TerminalTicketsPostgresTest {
         }
         fixtures.execute("VACUUM ANALYZE runners_terminal_tickets").getOrThrow()
 
-        fun explain(sql: String) = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org_id", ORG_A)
-        mapOf(
-            "the expired dropped" to explain(TERMINAL_TICKET_PURGE_SQL),
-            "a ticket issued" to explain(TERMINAL_TICKET_INSERT_SQL).bind("hash", "h").bind("session_id", session)
-                .bind("member_id", "alice").bind("admin", true).bind("seconds", 60L),
-            "a ticket redeemed" to explain(TERMINAL_TICKET_REDEEM_SQL).bind("hash", "h"),
+        val database = server.koin.get<JdbcDatabase>()
+        val alice = Caller(ORG_A, "alice", admin = true)
+        mapOf<String, StatementBuilder.() -> Statement<*>>(
+            "the expired dropped" to { ticketPurge(ORG_A) },
+            "a ticket issued" to { ticketInsert(alice, session, "h", 60.seconds) },
+            "a ticket redeemed" to { ticketRedeem(ORG_A, "h") },
         ).forEach { (what, statement) ->
-            val plan = server.driver.inTenant(ORG_A) {
-                fetchAll(statement).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
-            }
+            val plan = database.inOrg(ORG_A) { plan(statement).also { rollback() } }
             assertFalse("Seq Scan" in plan, "$what scans the table:\n$plan")
         }
     }

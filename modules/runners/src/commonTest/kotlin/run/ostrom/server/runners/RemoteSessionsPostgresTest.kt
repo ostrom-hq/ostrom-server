@@ -8,6 +8,7 @@ import run.ostrom.server.kernel.auth.SignedInDevices
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.MapConfigSource
 import run.ostrom.server.kernel.settings.InstanceSettings
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.runners.fakes.ORG_A_ALLOWED
 import run.ostrom.server.runners.fakes.TestOrgResolver
 import run.ostrom.server.testing.TestInstanceSettings
@@ -21,8 +22,9 @@ import run.ostrom.server.runners.domain.SessionKind
 import run.ostrom.server.runners.domain.SessionMode
 import run.ostrom.server.runners.domain.ResumeOutcome
 import run.ostrom.server.runners.domain.SessionRef
-import run.ostrom.server.runners.infrastructure.inTenant
-import io.github.smyrgeorge.sqlx4k.Statement
+import run.ostrom.server.runners.infrastructure.RunnersSessionsTable
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.update
 import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.runners.fakes.ALICE
 import run.ostrom.server.runners.fakes.DESKTOP
@@ -274,10 +276,10 @@ class RemoteSessionsPostgresTest {
             assertTrue(repository.createWithinCap(paused, 10))
             assertTrue(repository.resumeWithinCap(ORG_A, paused.id, 1, t0) is ResumeOutcome.Resumed)
             // A kind this version does not know is read as a cloud session's.
-            server.driver.inTenant(ORG_A) {
-                execute(
-                    Statement.create("UPDATE runners_sessions SET kind = 'pod' WHERE id = :id").bind("id", paused.id),
-                ).getOrThrow()
+            server.koin.get<JdbcDatabase>().inOrg(ORG_A) {
+                RunnersSessionsTable.update({ RunnersSessionsTable.id eq paused.id }) {
+                    it[RunnersSessionsTable.kind] = "pod"
+                }
             }
             assertEquals(SessionKind.CLOUD, repository.get(ORG_A, paused.id)?.kind)
         }

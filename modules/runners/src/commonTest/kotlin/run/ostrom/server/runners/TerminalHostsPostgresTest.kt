@@ -1,20 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.runners.fakes.ORG_A
 import run.ostrom.server.runners.fakes.ORG_B
 import run.ostrom.server.runners.fakes.testIdentities
-import run.ostrom.server.runners.infrastructure.TERMINAL_HOST_FIND_SQL
-import run.ostrom.server.runners.infrastructure.TERMINAL_HOST_HOLD_SQL
-import run.ostrom.server.runners.infrastructure.TERMINAL_HOST_PURGE_SQL
-import run.ostrom.server.runners.infrastructure.TERMINAL_HOST_RELEASE_SQL
-import run.ostrom.server.runners.infrastructure.TERMINAL_HOST_RENEW_SQL
+import run.ostrom.server.runners.infrastructure.RunnersTerminalHosts
 import run.ostrom.server.runners.infrastructure.TerminalHostsImpl
-import run.ostrom.server.runners.infrastructure.inTenant
+import run.ostrom.server.runners.infrastructure.terminalHostFind
+import run.ostrom.server.runners.infrastructure.terminalHostHold
+import run.ostrom.server.runners.infrastructure.terminalHostPurge
+import run.ostrom.server.runners.infrastructure.terminalHostRelease
+import run.ostrom.server.runners.infrastructure.terminalHostRenew
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import org.jetbrains.exposed.v1.core.statements.Statement
+import org.jetbrains.exposed.v1.core.statements.StatementBuilder
+import org.jetbrains.exposed.v1.jdbc.selectAll
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -29,10 +32,10 @@ import kotlin.uuid.Uuid
 class TerminalHostsPostgresTest {
     private val session = Uuid.random()
 
-    private fun TestServer.replica(url: String) = TerminalHostsImpl(driver, url)
+    private fun TestServer.replica(url: String) = TerminalHostsImpl(koin.get<JdbcDatabase>(), url)
 
-    private suspend fun TestServer.count(org: Uuid): Long = driver.inTenant(org) {
-        fetchAll("SELECT count(*) AS n FROM runners_terminal_hosts").getOrThrow().single().get("n").asLong()
+    private suspend fun TestServer.count(org: Uuid): Long = koin.get<JdbcDatabase>().inOrg(org) {
+        RunnersTerminalHosts.selectAll().count()
     }
 
     @Test
@@ -105,18 +108,15 @@ class TerminalHostsPostgresTest {
         }
         fixtures.execute("VACUUM ANALYZE runners_terminal_hosts").getOrThrow()
 
-        fun explain(sql: String) = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org_id", ORG_A)
-        fun held(sql: String) = explain(sql).bind("session_id", session).bind("epoch", 1L).bind("url", "http://a")
-        mapOf(
-            "the expired dropped" to explain(TERMINAL_HOST_PURGE_SQL),
-            "a hold taken" to held(TERMINAL_HOST_HOLD_SQL),
-            "a hold renewed" to held(TERMINAL_HOST_RENEW_SQL),
-            "a hold given back" to held(TERMINAL_HOST_RELEASE_SQL),
-            "a host found" to explain(TERMINAL_HOST_FIND_SQL).bind("session_id", session),
+        val database = server.koin.get<JdbcDatabase>()
+        mapOf<String, StatementBuilder.() -> Statement<*>>(
+            "the expired dropped" to { terminalHostPurge(ORG_A) },
+            "a hold taken" to { terminalHostHold(ORG_A, session, 1L, "http://a") },
+            "a hold renewed" to { terminalHostRenew(ORG_A, session, 1L, "http://a") },
+            "a hold given back" to { terminalHostRelease(ORG_A, session, 1L, "http://a") },
+            "a host found" to { terminalHostFind(ORG_A, session) },
         ).forEach { (what, statement) ->
-            val plan = server.driver.inTenant(ORG_A) {
-                fetchAll(statement).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
-            }
+            val plan = database.inOrg(ORG_A) { plan(statement).also { rollback() } }
             assertFalse("Seq Scan" in plan, "$what scans the table:\n$plan")
         }
     }

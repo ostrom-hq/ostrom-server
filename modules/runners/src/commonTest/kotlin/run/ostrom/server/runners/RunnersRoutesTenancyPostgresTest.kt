@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.runners.domain.CloudSessionsRepository
 import run.ostrom.server.runners.fakes.ORG_A
 import run.ostrom.server.runners.fakes.ORG_B
 import run.ostrom.server.runners.fakes.session
-import run.ostrom.server.runners.infrastructure.inTenant
+import run.ostrom.server.runners.infrastructure.RunnersSessionRoutes
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.update
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -29,29 +32,26 @@ class RunnersRoutesTenancyPostgresTest {
         val repository = server.koin.get<CloudSessionsRepository>()
         val ofA = session(createdAt = t0).copy(runnerTokenHash = "hash-a")
         repository.createWithinCap(ofA, 5)
-        val count = Statement.create("SELECT COUNT(*) AS n FROM runners_session_routes")
+        val jdbc = server.koin.get<JdbcDatabase>()
+        val routes = RunnersSessionRoutes
 
-        // The test server's driver is the serving role: without an organization, no route and no token hash at all.
-        assertEquals(0L, server.driver.fetchAll(count).getOrThrow().first().get("n").asLong())
-        assertEquals(1L, server.driver.inTenant(ORG_A) { fetchAll(count).getOrThrow().first().get("n").asLong() })
-        assertEquals(0L, server.driver.inTenant(ORG_B) { fetchAll(count).getOrThrow().first().get("n").asLong() })
+        // The test server's pool is the serving role: without an organization, no route and no token hash at all.
+        assertEquals(0L, jdbc.query { routes.selectAll().count() })
+        assertEquals(1L, jdbc.inOrg(ORG_A) { routes.selectAll().count() })
+        assertEquals(0L, jdbc.inOrg(ORG_B) { routes.selectAll().count() })
 
         // Organization B can neither swap A's runner token nor write a route in A's name.
-        val swapped = server.driver.inTenant(ORG_B) {
-            execute(
-                Statement.create("UPDATE runners_session_routes SET runner_token_hash = 'b' WHERE session_id = :id")
-                    .bind("id", ofA.id),
-            ).getOrThrow()
+        val swapped = jdbc.inOrg(ORG_B) {
+            routes.update({ routes.sessionId eq ofA.id }) { it[routes.runnerTokenHash] = "b" }
         }
-        assertEquals(0L, swapped)
+        assertEquals(0, swapped)
         assertFailsWith<Exception> {
-            server.driver.inTenant(ORG_B) {
-                execute(
-                    Statement.create(
-                        "INSERT INTO runners_session_routes (session_id, org_id, runner_token_hash) " +
-                            "VALUES (:id, :org, 'forged')",
-                    ).bind("id", Uuid.random()).bind("org", ORG_A),
-                ).getOrThrow()
+            jdbc.inOrg(ORG_B) {
+                routes.insert {
+                    it[routes.sessionId] = Uuid.random()
+                    it[routes.orgId] = ORG_A
+                    it[routes.runnerTokenHash] = "forged"
+                }
             }
         }
 

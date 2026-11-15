@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.runners.domain.CloudSessionsRepository
 import run.ostrom.server.runners.domain.GitHubAccessMode
 import run.ostrom.server.runners.domain.RunnerGitHubToken
@@ -12,14 +13,15 @@ import run.ostrom.server.runners.fakes.ORG_A
 import run.ostrom.server.runners.fakes.ORG_B
 import run.ostrom.server.runners.fakes.session
 import run.ostrom.server.runners.fakes.testIdentities
-import run.ostrom.server.runners.infrastructure.inTenant
+import run.ostrom.server.runners.infrastructure.RunnersSessionsTable
 import run.ostrom.server.runners.presentation.CloudSessionResponse
 import run.ostrom.server.runners.presentation.RunnerGitHubTokenRequest
 import run.ostrom.server.runners.presentation.RunnerGitHubTokenResponse
 import run.ostrom.server.runners.presentation.SetCloudSessionGitHubAccessRequest
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.update
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
@@ -91,11 +93,10 @@ class RunnerGitHubPostgresTest {
         assertNull(repository.setGitHubAccess(ORG_A, over.id, GitHubAccessMode.NONE, T0))
 
         // A name this version does not know grants nothing.
-        server.driver.inTenant(ORG_A) {
-            execute(
-                Statement.create("UPDATE runners_sessions SET github_access = 'everyone' WHERE id = :id")
-                    .bind("id", created.id),
-            ).getOrThrow()
+        server.koin.get<JdbcDatabase>().inOrg(ORG_A) {
+            RunnersSessionsTable.update({ RunnersSessionsTable.id eq created.id }) {
+                it[RunnersSessionsTable.githubAccess] = "everyone"
+            }
         }
         assertEquals(GitHubAccessMode.NONE, repository.get(ORG_A, created.id)?.githubAccess)
     }
@@ -147,11 +148,10 @@ class RunnerGitHubPostgresTest {
 
         // Paused then resumed without access: nothing, whatever the link.
         answer = RunnerGitHubToken.Linked("ghu_alice", EXPIRY, "octocat")
-        server.driver.inTenant(ORG_A) {
-            execute(
-                Statement.create("UPDATE runners_sessions SET github_access = 'none' WHERE id = :id")
-                    .bind("id", running.id),
-            ).getOrThrow()
+        server.koin.get<JdbcDatabase>().inOrg(ORG_A) {
+            RunnersSessionsTable.update({ RunnersSessionsTable.id eq running.id }) {
+                it[RunnersSessionsTable.githubAccess] = "none"
+            }
         }
         assertEquals(RunnerGitHubTokenResponse("not_linked"), server.ask("Bearer $token", body).body())
 

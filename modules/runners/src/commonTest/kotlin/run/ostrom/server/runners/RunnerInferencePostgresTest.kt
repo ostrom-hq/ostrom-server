@@ -3,6 +3,7 @@ package run.ostrom.server.runners
 
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.auth.MemberLogins
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.runners.domain.AgentKind
 import run.ostrom.server.runners.domain.CloudSession
 import run.ostrom.server.runners.domain.CloudSessionsRepository
@@ -13,13 +14,15 @@ import run.ostrom.server.runners.domain.RunnerTokens
 import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.runners.fakes.ALICE
 import run.ostrom.server.runners.fakes.FakeInferenceTokens
+import run.ostrom.server.runners.fakes.ORG_A
+import run.ostrom.server.runners.infrastructure.RunnersInferenceCredentials
 import run.ostrom.server.runners.fakes.session
 import run.ostrom.server.runners.fakes.testIdentities
 import run.ostrom.server.runners.presentation.RunnerInferenceCredentialResponse
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import org.jetbrains.exposed.v1.jdbc.selectAll
 import io.ktor.client.call.body
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -92,8 +95,8 @@ class RunnerInferencePostgresTest {
     private fun claim(session: CloudSession, epoch: Long = session.epoch) =
         """{"sessionId":"${session.id}","epoch":$epoch}"""
 
-    private suspend fun TestServer.rows(): Long = database.superuser
-        .fetchAll("SELECT count(*) AS n FROM runners_inference_credentials").getOrThrow().single().get("n").asLong()
+    private suspend fun TestServer.rows(): Long =
+        koin.get<JdbcDatabase>().inOrg(ORG_A) { RunnersInferenceCredentials.selectAll().count() }
 
     private suspend fun TestServer.becomes(session: CloudSession, change: (CloudSession) -> CloudSession) {
         val sessions = koin.get<CloudSessionsRepository>()

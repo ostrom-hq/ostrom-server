@@ -10,6 +10,7 @@ import run.ostrom.server.kernel.sessions.PendingWaitAnswers
 import run.ostrom.server.cloud.domain.CloudCluster
 import run.ostrom.server.cloud.domain.CloudClustersRepository
 import run.ostrom.server.cloud.domain.StoredCloudCluster
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.ScheduledWork
 import run.ostrom.server.runners.domain.AllowlistedCloudPlanProvider
 import run.ostrom.server.runners.domain.RuntimeDriver
@@ -30,8 +31,8 @@ import run.ostrom.server.runners.fakes.ALICE
 import run.ostrom.server.runners.fakes.testIdentities
 import run.ostrom.server.runners.fakes.session
 import run.ostrom.server.runners.infrastructure.SettingsAllowedOrgs
-import run.ostrom.server.runners.infrastructure.TENANT_ROLE
-import run.ostrom.server.runners.infrastructure.inTenant
+import run.ostrom.server.runners.infrastructure.RunnersSessionsTable
+import run.ostrom.server.runners.infrastructure.RunnersUsage
 import run.ostrom.server.runners.presentation.CloudSessionResponse
 import run.ostrom.server.runners.presentation.CloudSessionsResponse
 import run.ostrom.server.runners.presentation.CreateCloudSessionRequest
@@ -39,8 +40,8 @@ import run.ostrom.server.runners.presentation.RunnerHeartbeatRequest
 import run.ostrom.server.runners.presentation.RunnerHeartbeatResponse
 import run.ostrom.server.runners.presentation.RunnersPage
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.selectAll
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.delete
@@ -153,31 +154,27 @@ class CloudSessionsPostgresTest {
         val ofA = session(createdAt = t0)
         repository.createWithinCap(ofA, 5)
         repository.addUsage(ORG_A, "2026-10", 60)
-        suspend fun count(org: Uuid, table: String) = server.driver.inTenant(org) {
-            fetchAll(Statement.create("SELECT COUNT(*) AS n FROM $table")).getOrThrow().first().get("n").asLong()
-        }
-        for (table in listOf("runners_sessions", "runners_usage")) {
-            assertEquals(1L, count(ORG_A, table), table)
-            // No WHERE org_id: the policy alone hides organization A's rows.
-            assertEquals(0L, count(ORG_B, table), table)
-        }
+        val jdbc = server.koin.get<JdbcDatabase>()
+        val sessions = RunnersSessionsTable
+        val usage = RunnersUsage
+        assertEquals(1L, jdbc.inOrg(ORG_A) { sessions.selectAll().count() })
+        assertEquals(1L, jdbc.inOrg(ORG_A) { usage.selectAll().count() })
+        // No WHERE org_id: the policy alone hides organization A's rows.
+        assertEquals(0L, jdbc.inOrg(ORG_B) { sessions.selectAll().count() })
+        assertEquals(0L, jdbc.inOrg(ORG_B) { usage.selectAll().count() })
         // A write for another organization is refused.
         assertFailsWith<Exception> {
-            server.driver.inTenant(ORG_B) {
-                execute(
-                    Statement.create("INSERT INTO runners_usage (org_id, month, seconds) VALUES (:org, '2026-10', 1)")
-                        .bind("org", ORG_A),
-                ).getOrThrow()
+            jdbc.inOrg(ORG_B) {
+                usage.insert {
+                    it[orgId] = ORG_A
+                    it[month] = "2026-10"
+                    it[seconds] = 1L
+                }
             }
         }
         assertEquals(60, repository.usageSeconds(ORG_A, "2026-10"))
-        // Without an organization set, the tenant role sees nothing.
-        val unset = server.driver.transaction {
-            execute("SET LOCAL ROLE $TENANT_ROLE").getOrThrow()
-            fetchAll(Statement.create("SELECT COUNT(*) AS n FROM runners_sessions")).getOrThrow().first()
-                .get("n").asLong()
-        }
-        assertEquals(0L, unset)
+        // Without an organization set, the serving role sees nothing.
+        assertEquals(0L, jdbc.query { sessions.selectAll().count() })
     }
 
     @Test

@@ -571,7 +571,7 @@ class CloudFilesRoutesPostgresTest {
     @Test
     fun theStoreRefusesWhatChangedUnderTheUpload() = serverTest(listOf(RunnersModule), overrides()) { server ->
         val running = server.running()
-        val store = CloudFileStoreImpl(server.koin.get(), server.koin.get(), server.koin.get())
+        val store = CloudFileStoreImpl(server.koin.get(), server.koin.get())
         val now = Clock.System.now()
         fun draft(sessionId: Uuid = running.session.id, key: String? = null) = CloudFile(
             Uuid.random(), ORG_A, sessionId, ALICE.toString(), null, "f", null, 1, null, key, null, null, now, null,
