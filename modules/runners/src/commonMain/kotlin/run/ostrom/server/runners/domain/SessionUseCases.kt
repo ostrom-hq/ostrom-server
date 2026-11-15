@@ -286,7 +286,7 @@ internal fun Caller.journal(session: CloudSession, event: String): OrgAuditRecor
  * @return The details.
  */
 internal fun Caller.onBehalfDetails(vararg facts: Pair<String, Any?>): Map<String, String> =
-    auditDetails("effective_member_id" to memberId, "credential_id" to credentialId, *facts)
+    auditDetails("effective_member_id" to effectiveMemberId, "credential_id" to credentialId, *facts)
 
 /**
  * Refuses when the organization used the hours of its plan this period.

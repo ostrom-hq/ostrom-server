@@ -53,8 +53,9 @@ data class CloudTransfersRoutesDependencies(
 /**
  * The ownership transfer routes (`runners.cloud.transfer.v1`): asking, listing, reading, accepting, declining and
  * cancelling. Writes are for a person signed in: an agent or a service key never gives a session away. An
- * administrator may act for the member `Ostrom-On-Behalf-Of` names (`runners.cloud.onbehalf.writes.v1`, TeamCode's
- * `actor()`): the transfer is checked against that member, and records the administrator as who asked or decided.
+ * administrator may name a member in `Ostrom-On-Behalf-Of` (`runners.cloud.onbehalf.writes.v1`, TeamCode's
+ * `actor()`): it is only journaled as the effective member; the transfer is checked against the caller, who must own
+ * the session, receive or have offered it (TeamCode's `visible()`).
  *
  * @param dependencies The use cases.
  */
@@ -107,8 +108,8 @@ fun Route.cloudTransfersRoutes(dependencies: CloudTransfersRoutesDependencies) =
 }
 
 /**
- * The caller of a transfer write, a person, acting for the member `Ostrom-On-Behalf-Of` names when they administer
- * the organization, and the credential they presented. Writes of a transfer are a person's: an agent or a service key
+ * The caller of a transfer write, a person, on their own sessions and transfers, with the member
+ * `Ostrom-On-Behalf-Of` names journaled as the effective one, and the credential they presented. Writes of a transfer are a person's: an agent or a service key
  * acts for nobody in person, and is refused before the header is read.
  */
 private suspend fun ApplicationCall.transferActor(
@@ -118,7 +119,7 @@ private suspend fun ApplicationCall.transferActor(
     if (principal.kind != PrincipalKind.USER) {
         throw TransferForbiddenException("Only a person signed in transfers sessions, not an agent or a service key.")
     }
-    return cloudActor(dependencies.orgResolver, dependencies.resolveActor) to principal
+    return cloudActor(dependencies.orgResolver, dependencies.resolveActor).ownSessionsOnly() to principal
 }
 
 private fun ApplicationCall.idempotencyKey(): String {
