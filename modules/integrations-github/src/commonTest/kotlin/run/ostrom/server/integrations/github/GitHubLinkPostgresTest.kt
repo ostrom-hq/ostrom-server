@@ -27,6 +27,13 @@ import run.ostrom.server.integrations.github.domain.GitHubTokenClaim
 import run.ostrom.server.integrations.github.domain.GitHubTokens
 import run.ostrom.server.integrations.github.domain.GitHubUserAuthApi
 import run.ostrom.server.integrations.github.infrastructure.GitHubSettings
+import run.ostrom.server.integrations.github.infrastructure.attemptOf
+import run.ostrom.server.integrations.github.infrastructure.attemptsCleanup
+import run.ostrom.server.integrations.github.infrastructure.claimRead
+import run.ostrom.server.integrations.github.infrastructure.holderOf
+import run.ostrom.server.integrations.github.infrastructure.linkOf
+import run.ostrom.server.integrations.github.infrastructure.linksOf
+import run.ostrom.server.integrations.github.infrastructure.tokensOf
 import run.ostrom.server.integrations.github.presentation.GitHubDeviceLinkDto
 import run.ostrom.server.integrations.github.presentation.GitHubDeviceLinkPollDto
 import run.ostrom.server.integrations.github.presentation.GitHubLinkDto
@@ -40,11 +47,14 @@ import run.ostrom.server.kernel.auth.PrincipalChannel
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.TokenAuthenticator
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.orgs.domain.FindOrgUseCase
 import run.ostrom.server.orgs.domain.OrgNotFoundException
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.QueryExecutor
@@ -62,7 +72,9 @@ import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.writeString
+import org.jetbrains.exposed.v1.core.statements.StatementBuilder
 import org.koin.dsl.module
+import org.jetbrains.exposed.v1.core.statements.Statement as ExposedStatement
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -84,7 +96,7 @@ class GitHubLinkPostgresTest {
     private val clock = SettableClock(Instant.fromEpochSeconds(Clock.System.now().epochSeconds))
     private val github = FakeGitHubUserAuth()
     private val audit = RecordingAudit()
-    private val cipher = AesGcmSecretCipher(ByteArray(32) { 7 })
+    private val cipher = HookedCipher(AesGcmSecretCipher(ByteArray(32) { 7 }))
     private val members = SettableMembers(mutableSetOf(ORG to OWNER, ORG to DEV, ORG to ROBOT, OTHER_ORG to B_OWNER))
 
     // Tokens are `<kind>:<org letter>:<member>`: `user` a browser session, `cli` the CLI's login (`cloud:write`),
@@ -462,6 +474,33 @@ class GitHubLinkPostgresTest {
     }
 
     @Test
+    fun aClaimDecidesOnTheTokensTheLockedRowHoldsEvenWhenTheyChangeWhileOpening() = linkTest { server ->
+        val store = server.koin.get<GitHubLinkStore>()
+        val now = clock.now
+        val octocat = GitHubIdentity(7, "octocat")
+        suspend fun claim() = store.claim(ORG, DEV, CLIENT_ID, now, now + 1.hours, now + 5.minutes, 60.seconds)
+        store.saveLink(ORG, DEV, octocat, CLIENT_ID, GitHubTokens("ghu_old", null, null, null), now)
+
+        // The link is saved again between the read of the envelope and the locked read: the claim reads it again.
+        cipher.onOpen = { store.saveLink(ORG, DEV, octocat, CLIENT_ID, GitHubTokens("ghu_new", null, null, null), now) }
+        assertEquals("ghu_new", assertIs<GitHubTokenClaim.Ready>(claim()).accessToken)
+
+        // Rewritten at every attempt: the claim stops reading and waits.
+        var round = 0
+        cipher.always = {
+            round++
+            store.saveLink(ORG, DEV, octocat, CLIENT_ID, GitHubTokens("ghu_$round", null, null, null), now)
+        }
+        assertEquals(GitHubTokenClaim.Wait, claim())
+        assertEquals(3, round)
+        cipher.always = null
+
+        // Or removed: nothing to claim.
+        cipher.onOpen = { store.removeLink(ORG, DEV) }
+        assertEquals(GitHubTokenClaim.NotLinked, claim())
+    }
+
+    @Test
     fun aTokenThatCannotBeRefreshedLastsUntilItsLastMinute() = linkTest { server ->
         val store = server.koin.get<GitHubLinkStore>()
         val now = clock.now
@@ -521,18 +560,19 @@ class GitHubLinkPostgresTest {
         }
         fixtures.execute("VACUUM ANALYZE github_links").getOrThrow()
         fixtures.execute("VACUUM ANALYZE github_link_attempts").getOrThrow()
-        val member = "member_id = CAST('$DEV' AS uuid)"
-        val plans = linkedMapOf(
-            "a member's link" to "SELECT member_id, state FROM github_links WHERE org_id = :org AND $member",
-            "a claim" to "SELECT member_id, tokens_sealed FROM github_links WHERE org_id = :org AND $member FOR UPDATE",
-            "the account's holder" to "SELECT member_id FROM github_links WHERE org_id = :org AND github_user_id = 7",
-            "the organization's links" to
-                "SELECT member_id FROM github_links WHERE org_id = :org ORDER BY github_login, member_id LIMIT 1000",
-            "an attempt" to "SELECT member_id FROM github_link_attempts WHERE org_id = :org AND id = 'a-5'",
-            "a new attempt's cleanup" to
-                "DELETE FROM github_link_attempts WHERE org_id = :org AND ($member OR expires_at <= NOW() - " +
-                "INTERVAL '1 day')",
-        ).mapValues { (_, sql) -> server.driver.explain(sql) }
+        val database = server.koin.get<JdbcDatabase>()
+        val statements: Map<String, StatementBuilder.() -> ExposedStatement<*>> = linkedMapOf(
+            "a member's link" to { linkOf(ORG, DEV) },
+            "the sealed tokens of a link" to { tokensOf(ORG, DEV) },
+            "a claim" to { claimRead(ORG, DEV) },
+            "the account's holder" to { holderOf(ORG, 7) },
+            "the organization's links" to { linksOf(ORG, 1000) },
+            "an attempt" to { attemptOf(ORG, "a-5") },
+            "a new attempt's cleanup" to { attemptsCleanup(ORG, DEV, clock.now() - 1.days) },
+        )
+        val plans = statements.mapValues { (_, statement) ->
+            database.withOrganization(ORG) { plan(statement).also { rollback() } }
+        }
         val report = plans.entries.joinToString("\n\n") { (name, plan) -> "-- $name\n$plan" }
         SystemFileSystem.createDirectories(Path("build/reports/explain"))
         SystemFileSystem.sink(Path("build/reports/explain/integrations-github-links.txt")).buffered()
@@ -540,11 +580,6 @@ class GitHubLinkPostgresTest {
         for ((name, plan) in plans) {
             assertFalse("Seq Scan on github_" in plan, "$name scans the table:\n$plan")
         }
-    }
-
-    private suspend fun Driver.explain(sql: String): String = asTenant(ORG) {
-        fetchAll(Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org", ORG)).getOrThrow()
-            .joinToString("\n") { it.get("QUERY PLAN").asString() }
     }
 
     private suspend fun QueryExecutor.count(table: String): String =
@@ -565,3 +600,30 @@ private suspend fun <T> Driver.asTenant(org: Uuid?, block: suspend QueryExecutor
         }
         block()
     }
+
+/** The cipher of the tests, running [onOpen] once before the next envelope is opened: a write that races a claim. */
+private class HookedCipher(private val inner: SecretCipher) : SecretCipher {
+    var onOpen: (suspend () -> Unit)? = null
+
+    /** Run before every open while set, but not before the opens it makes itself (a save opens the old tokens). */
+    var always: (suspend () -> Unit)? = null
+    private var inHook = false
+
+    override suspend fun seal(plaintext: ByteArray, context: String): String = inner.seal(plaintext, context)
+
+    override suspend fun open(envelope: String, context: String): ByteArray? {
+        val hook = onOpen
+        onOpen = null
+        hook?.invoke()
+        val each = always
+        if (each != null && !inHook) {
+            inHook = true
+            try {
+                each()
+            } finally {
+                inHook = false
+            }
+        }
+        return inner.open(envelope, context)
+    }
+}
