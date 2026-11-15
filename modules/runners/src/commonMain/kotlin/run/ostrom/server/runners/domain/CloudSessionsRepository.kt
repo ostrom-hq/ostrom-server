@@ -20,6 +20,27 @@ interface CloudSessionsRepository {
     suspend fun createWithinCap(session: CloudSession, maxRunning: Int): Boolean
 
     /**
+     * Creates a session under an `Idempotency-Key` (TeamCode's `SqlCloudSessionStore.insert`), in one transaction
+     * serialized per organization like [createWithinCap]: a live record of the key from the same member answers the
+     * session it created when the request is the same, and refuses another request; an expired one is replaced. The
+     * record is written with the session.
+     *
+     * @param session The session to create.
+     * @param maxRunning The organization's cap.
+     * @param key The key, the request's digest and when the record expires.
+     *
+     * @return What happened.
+     */
+    suspend fun createKeyed(session: CloudSession, maxRunning: Int, key: CreateKey): KeyedCreateOutcome
+
+    /**
+     * Deletes a bounded batch of the expired idempotency records of every organization (TeamCode's `maintain`).
+     *
+     * @return How many were deleted.
+     */
+    suspend fun purgeExpiredCreateKeys(): Long
+
+    /**
      * Reads a session of an organization.
      *
      * @param orgId The organization.
@@ -204,4 +225,32 @@ sealed interface ResumeOutcome {
 
     /** No such session in the organization, or it is being deleted or over. */
     data object NotFound : ResumeOutcome
+}
+
+/**
+ * The `Idempotency-Key` of a creation, as stored with the session it creates.
+ *
+ * @property key The key, scoped to the organization and the initiating member.
+ * @property requestDigest The SHA-256 (hex) of the canonical request.
+ * @property expiresAt When the record stops replaying, 24 hours after the creation.
+ */
+data class CreateKey(val key: String, val requestDigest: String, val expiresAt: Instant)
+
+/** What [CloudSessionsRepository.createKeyed] did. */
+sealed interface KeyedCreateOutcome {
+    /** The session was created with the key's record. */
+    data object Created : KeyedCreateOutcome
+
+    /**
+     * The key already created a session from the same request: nothing was created.
+     *
+     * @property session That session, as it is now.
+     */
+    data class Replayed(val session: CloudSession) : KeyedCreateOutcome
+
+    /** The key was used with another request, or its session no longer exists. */
+    data object Conflict : KeyedCreateOutcome
+
+    /** The organization is at its cap. */
+    data object AtCap : KeyedCreateOutcome
 }

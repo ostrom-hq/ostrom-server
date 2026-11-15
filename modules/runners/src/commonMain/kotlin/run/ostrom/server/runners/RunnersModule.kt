@@ -38,6 +38,9 @@ import run.ostrom.server.billing.domain.GetPlanLimitsUseCase
 import run.ostrom.server.cloud.domain.CloudSettingsSource
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.events.SessionNames
+import run.ostrom.server.kernel.database.ScheduledJob
+import run.ostrom.server.kernel.database.repeatDue
+import run.ostrom.server.kernel.database.scheduledWork
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
@@ -169,6 +172,7 @@ import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import org.koin.dsl.onClose
+import kotlin.time.Duration.Companion.minutes
 
 private val REPLICA_HTTP = named("runners.replica.http")
 
@@ -389,6 +393,8 @@ object RunnersModule : ServerModule {
             ServerFeatures.RUNNERS,
             ServerFeatures.RUNNERS_CLOUD,
             ServerFeatures.RUNNERS_CLOUD_AGENT,
+            // A creation's Idempotency-Key, on every cloud runtime.
+            ServerFeatures.RUNNERS_CLOUD_IDEMPOTENCY,
             // The recipe, the Git identity and the owner's values (none without the secrets module), once the orgs
             // module says who is an active member: without it, no session would prepare.
             ServerFeatures.RUNNERS_CLOUD_ENVIRONMENT.takeIf { members },
@@ -422,6 +428,15 @@ object RunnersModule : ServerModule {
         scope.launch { signals.watch() }
         val maintenance = koin.get<CloudConversationMaintenance>()
         scope.launch { maintenance.repeat(koin.scheduledWork(), koin.get()) }
+        // Every minute, a bounded batch of the creations' expired idempotency records is deleted (TeamCode's
+        // maintain), on one replica at a time; a failed purge is logged and tried again the next minute.
+        val sessions = koin.get<CloudSessionsRepository>()
+        val work = koin.scheduledWork()
+        scope.launch {
+            work.repeatDue(CREATE_KEYS_PURGE, koin.get<Logger>(), "cloud create keys purge failed") {
+                sessions.purgeExpiredCreateKeys()
+            }
+        }
         garbageWorker(koin)?.let { garbage -> scope.launch { garbage.run() } }
     }
 
@@ -434,4 +449,7 @@ object RunnersModule : ServerModule {
         val collect = CollectCloudGarbageUseCaseImpl(live, objects, clusters, koin.get())
         return CloudGarbageWorker(koin.scheduledWork(), clusters, collect, koin.get())
     }
+
+    /** The purge of the expired idempotency records of the creations. */
+    private val CREATE_KEYS_PURGE = ScheduledJob("runners/create-keys", 1.minutes, 1.minutes)
 }

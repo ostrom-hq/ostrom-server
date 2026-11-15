@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners.domain
 
+import run.ostrom.core.api.Idempotency
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
 
@@ -35,6 +36,15 @@ class CloudSessionLimitException(max: Int) : OstromException(
     ErrorKind.PAYMENT_REQUIRED,
     "Your plan runs at most $max cloud sessions at once: pause or delete one first.",
 )
+
+/**
+ * The `Idempotency-Key` was already used with another request, or the session it created no longer exists (422
+ * `idempotency_conflict`, TeamCode's).
+ *
+ * @param message Which.
+ */
+class CloudSessionIdempotencyConflictException(message: String) :
+    OstromException(ErrorKind.UNPROCESSABLE, message, Idempotency.CONFLICT)
 
 /** The organization used all the execution hours of its plan this period. */
 class CloudHoursExhaustedException(hours: Int) : OstromException(
