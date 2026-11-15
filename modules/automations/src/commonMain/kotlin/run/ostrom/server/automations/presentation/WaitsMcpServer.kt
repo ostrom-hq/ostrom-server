@@ -4,6 +4,7 @@ package run.ostrom.server.automations.presentation
 import run.ostrom.server.automations.domain.AskWait
 import run.ostrom.server.automations.domain.TimedWaitRules
 import run.ostrom.server.automations.domain.Wait
+import run.ostrom.server.automations.domain.WaitRules
 import run.ostrom.server.automations.domain.WaitAction
 import run.ostrom.server.automations.domain.WaitCaller
 import run.ostrom.server.automations.domain.WaitField
@@ -291,7 +292,12 @@ internal class WaitsMcpServer(private val dependencies: WaitsRoutesDependencies)
                 schema(
                     required = listOf("id", "type", "label"),
                     "id" to string("A letter then letters, digits or _."),
-                    "type" to string("text, choice, confirm, number, date or info."),
+                    "type" to string(
+                        "text, choice, confirm, number, date, file, secret or info. A secret (for a value only " +
+                            "the person should read, such as a password) reaches you as the variable " +
+                            "${WaitRules.SECRET_ENV_PREFIX}<FIELD ID UPPER-CASED> in your shell, never in a " +
+                            "message; it takes no default.",
+                    ),
                     "label" to string("What it asks."),
                     "help" to string("More detail."),
                     "required" to type("boolean"),
@@ -299,6 +305,7 @@ internal class WaitsMcpServer(private val dependencies: WaitsRoutesDependencies)
                     "multiple" to type("boolean"),
                     "allowOther" to type("boolean"),
                     "maxLength" to type("integer"),
+                    "oneTime" to type("boolean"),
                 ),
             ),
             "actions" to array(

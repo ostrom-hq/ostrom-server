@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.automations.domain.ServedSecrets
+import run.ostrom.server.automations.domain.WaitSecretSessions
+import run.ostrom.server.automations.domain.WaitSecretSource
 import run.ostrom.server.runners.domain.CloudSessionsRepository
 import run.ostrom.server.runners.domain.DesiredState
 import run.ostrom.server.runners.domain.RunnerTokens
@@ -111,6 +114,55 @@ class RunnerVariablesPostgresTest {
         }
         assertEquals(emptyList(), asked)
     }
+
+    @Test
+    fun theSecretsOfTheSessionsAnsweredWaitsTravelWithTheVariablesToItsOwnerOnly() = serverTest(
+        listOf(RunnersModule),
+        module {
+            includes(overrides)
+            single<WaitSecretSource> {
+                WaitSecretSource { orgId, sessionId, ownerId ->
+                    served += Triple(orgId, sessionId, ownerId)
+                    ServedSecrets(
+                        mapOf("OSTROM_WAIT_PW" to "hunter2", "OSTROM_WAIT_KEY" to "k"),
+                        setOf("OSTROM_WAIT_PW"),
+                    )
+                }
+            }
+        },
+    ) { server ->
+        val repository = server.koin.get<CloudSessionsRepository>()
+        val tokens = server.koin.get<RunnerTokens>()
+        val token = tokens.mint()
+        val running = session(state = SessionState.RUNNING, ownerId = ALICE.toString(), createdAt = T0)
+            .copy(epoch = 2, runnerTokenHash = tokens.hash(token), executionStartedAt = T0)
+        repository.createWithinCap(running, 5)
+        val response = server.ask("Bearer $token", """{"sessionId":"${running.id}","epoch":2}""")
+        assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
+        val body = response.body<RunnerVariablesResponse>()
+        assertEquals(mapOf("OSTROM_WAIT_PW" to "hunter2", "OSTROM_WAIT_KEY" to "k"), body.secrets)
+        assertEquals(listOf("OSTROM_WAIT_PW"), body.oneTime)
+        assertEquals(mapOf("OPENROUTER_API_KEY" to "sk-or-alice"), body.variables)
+        assertEquals(listOf(Triple(ORG_A, running.id.toString(), ALICE.toString())), served)
+        assertTrue("hunter2" !in body.toString(), "Names only in a log line")
+    }
+
+    @Test
+    fun onlyACloudSessionThatHoldsItsExecutionNamesAnAgentForSecrets() =
+        serverTest(listOf(RunnersModule), overrides) { server ->
+        val repository = server.koin.get<CloudSessionsRepository>()
+        val sessions = server.koin.get<WaitSecretSessions>()
+        val running = session(state = SessionState.RUNNING, ownerId = ALICE.toString(), createdAt = T0)
+        val paused = session(state = SessionState.PAUSED, desired = DesiredState.PAUSED, createdAt = T0)
+        repository.createWithinCap(running, 5)
+        repository.createWithinCap(paused, 5)
+        assertEquals(running.agent.wire, sessions.agentOf(ORG_A, running.id.toString()))
+        assertEquals(null, sessions.agentOf(ORG_A, paused.id.toString()))
+        assertEquals(null, sessions.agentOf(ORG_A, Uuid.random().toString()))
+        assertEquals(null, sessions.agentOf(ORG_A, "not-a-uuid"))
+    }
+
+    private val served = mutableListOf<Triple<Uuid, String, String>>()
 
     private companion object {
         val T0: Instant = Instant.parse("2026-10-30T10:00:00Z")

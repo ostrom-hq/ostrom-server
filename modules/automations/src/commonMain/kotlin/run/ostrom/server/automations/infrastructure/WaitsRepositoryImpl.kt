@@ -2,16 +2,21 @@
 package run.ostrom.server.automations.infrastructure
 
 import run.ostrom.server.automations.domain.CreateOutcome
+import run.ostrom.server.automations.domain.SecretsUnavailableException
+import run.ostrom.server.automations.domain.ServedSecrets
 import run.ostrom.server.automations.domain.Wait
 import run.ostrom.server.automations.domain.WaitAnswer
 import run.ostrom.server.automations.domain.WaitFilter
+import run.ostrom.server.automations.domain.WaitSecret
 import run.ostrom.server.automations.domain.WaitSpec
 import run.ostrom.server.automations.domain.WaitsRepository
 import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.events.OrgEventType
 import run.ostrom.server.kernel.http.OstromJson
+import run.ostrom.server.secrets.domain.SecretCipher
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.Transaction
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
 import kotlinx.serialization.json.JsonObject
@@ -25,12 +30,18 @@ import kotlin.uuid.Uuid
  * (`cloud.wait.created`, `.resolved`, `.cancelled`) in its own transaction: the event exists exactly when the change
  * committed.
  *
+ * The values of secret fields (`waits.secrets.v1`) are sealed with [cipher] into `automations_wait_secrets`, in the
+ * answer's own transaction; the wait's row holds only `provided`. Without a cipher no secret can be kept or served.
+ *
  * @param driver The database.
  * @param events The organization's event feed.
+ * @param cipher Seals the secrets at rest; null on a server without the secrets module.
  */
+@Suppress("TooManyFunctions") // One implementation of the one port of the feature.
 internal class WaitsRepositoryImpl(
     private val driver: Driver,
     private val events: OrgEventPublisher,
+    private val cipher: SecretCipher? = null,
 ) : WaitsRepository {
     override suspend fun createWithinLimit(wait: Wait, maxOpen: Int, sessions: List<String>): CreateOutcome =
         driver.inTenant(wait.orgId) {
@@ -146,22 +157,99 @@ internal class WaitsRepositoryImpl(
         return driver.fetchInOrg(filter.orgId, statement).getOrThrow().map { it.toWait() }
     }
 
-    override suspend fun resolve(orgId: Uuid, id: Uuid, answer: WaitAnswer): Wait? = driver.changeInOrg(orgId, events, {
-        it.event(OrgEventType.WAIT_RESOLVED, answer.action)
-    }) {
-        Statement.create(
-            """
-            UPDATE automations_waits SET status = 'resolved', answer_action = :action, answer_values = :values,
-            answered_by = :author, answered_at = :at, resolved_at = :at, wake_pending = session_id IS NOT NULL
-            WHERE id = :id AND org_id = :org_id AND status = 'open' RETURNING $WAIT_COLUMNS
-            """,
-        ).bind("action", answer.action)
-            .bind("values", JsonObject(answer.values).toString())
-            .bind("author", answer.author)
-            .bind("at", answer.answeredAt)
-            .bind("id", id)
-            .bind("org_id", orgId)
-    }.firstOrNull()
+    override suspend fun resolve(orgId: Uuid, id: Uuid, answer: WaitAnswer, secrets: List<WaitSecret>): Wait? {
+        if (secrets.isNotEmpty() && cipher == null) throw SecretsUnavailableException()
+        return driver.inTenant(orgId) {
+            val resolved = fetchAll(
+                Statement.create(
+                    """
+                    UPDATE automations_waits SET status = 'resolved', answer_action = :action,
+                    answer_values = :values, answered_by = :author, answered_at = :at, resolved_at = :at,
+                    wake_pending = session_id IS NOT NULL
+                    WHERE id = :id AND org_id = :org_id AND status = 'open' RETURNING $WAIT_COLUMNS
+                    """,
+                ).bind("action", answer.action)
+                    .bind("values", JsonObject(answer.values).toString())
+                    .bind("author", answer.author)
+                    .bind("at", answer.answeredAt)
+                    .bind("id", id)
+                    .bind("org_id", orgId),
+            ).getOrThrow().map { it.toWait() }
+            events.publishIn(this, orgId, resolved.map { it.event(OrgEventType.WAIT_RESOLVED, answer.action) })
+            // Sealed with the answer, so that an answer is never stored without the secret it says was provided.
+            resolved.firstOrNull()?.also { wait -> cipher?.let { keep(it, wait, secrets, answer.answeredAt) } }
+        }
+    }
+
+    /**
+     * Seals [secrets] for the wait's session. The context binds each to its organization, session and name, so a value
+     * copied to another row does not open; a later answer with the same name replaces the row. The member the session
+     * runs for is the wait's asker: an agent asks for its person only. A wait with a secret field always has a session
+     * (the ask refuses it otherwise), and the table refuses a row without one.
+     */
+    private suspend fun Transaction.keep(sealing: SecretCipher, wait: Wait, secrets: List<WaitSecret>, at: Instant) {
+        for (secret in secrets) {
+            val context = secretContext(wait.orgId, wait.sessionId, secret.envName)
+            val sealed = sealing.seal(secret.value.encodeToByteArray(), context)
+            execute(
+                Statement.create(
+                    """
+                    INSERT INTO automations_wait_secrets (org_id, session_id, env_name, wait_id, field_id, owner_id,
+                    one_time, value, created_at, expires_at) VALUES (:org_id, :session_id, :env_name, :wait_id,
+                    :field_id, :owner_id, :one_time, :value, :created_at, :expires_at)
+                    ON CONFLICT (org_id, session_id, env_name) DO UPDATE SET wait_id = EXCLUDED.wait_id,
+                    field_id = EXCLUDED.field_id, owner_id = EXCLUDED.owner_id, one_time = EXCLUDED.one_time,
+                    value = EXCLUDED.value, created_at = EXCLUDED.created_at, expires_at = EXCLUDED.expires_at
+                    """,
+                ).bind("org_id", wait.orgId)
+                    .bind("session_id", wait.sessionId)
+                    .bind("env_name", secret.envName)
+                    .bind("wait_id", wait.id)
+                    .bind("field_id", secret.fieldId)
+                    .bind("owner_id", wait.createdBy)
+                    .bind("one_time", secret.oneTime)
+                    .bind("value", sealed)
+                    .bind("created_at", at)
+                    .bind("expires_at", secret.expiresAt),
+            ).getOrThrow()
+        }
+    }
+
+    override suspend fun serveSecrets(orgId: Uuid, sessionId: String, ownerId: String, now: Instant): ServedSecrets {
+        val sealing = cipher ?: return ServedSecrets()
+        return driver.inTenant(orgId) {
+            // Locked, so two replicas never serve a one-time secret twice.
+            val rows = fetchAll(
+                Statement.create(
+                    """
+                    SELECT env_name, value, one_time FROM automations_wait_secrets WHERE org_id = :org_id AND
+                    session_id = :session_id AND owner_id = :owner_id AND expires_at > :now ORDER BY env_name FOR UPDATE
+                    """,
+                ).bind("org_id", orgId).bind("session_id", sessionId).bind("owner_id", ownerId).bind("now", now),
+            ).getOrThrow().toList()
+            val values = mutableMapOf<String, String>()
+            val oneTime = mutableSetOf<String>()
+            for (row in rows) {
+                val name = row.get("env_name").asString()
+                // A value that does not open (another key, another row) is never served.
+                val opened = sealing.open(row.get("value").asString(), secretContext(orgId, sessionId, name))
+                    ?: continue
+                values[name] = opened.decodeToString()
+                if (row.get("one_time").asBoolean()) oneTime += name
+            }
+            if (oneTime.isNotEmpty()) {
+                execute(
+                    Statement.create(
+                        """
+                        DELETE FROM automations_wait_secrets WHERE org_id = :org_id AND session_id = :session_id AND
+                        env_name = ANY(string_to_array(:names, ','))
+                        """,
+                    ).bind("org_id", orgId).bind("session_id", sessionId).bind("names", oneTime.joinToString(",")),
+                ).getOrThrow()
+            }
+            ServedSecrets(values, oneTime)
+        }
+    }
 
     override suspend fun cancel(orgId: Uuid, id: Uuid, now: Instant): Wait? =
         driver.changeInOrg(orgId, events, { it.event(OrgEventType.WAIT_CANCELLED) }) {
@@ -208,3 +296,6 @@ internal class WaitsRepositoryImpl(
         ).bind("org_id", orgId).bind("session_ids", sessions.joinToString(",")),
     ).getOrThrow().first().get("open").asBoolean()
 }
+
+/** What a secret is sealed with: its organization, session and variable, so that a copied value does not open. */
+private fun secretContext(orgId: Uuid, sessionId: String?, envName: String) = "wait-secret:$orgId:$sessionId:$envName"

@@ -7,6 +7,8 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
 
 /** The checks of a wait's question and of its answer (TeamCode's `waits.md`, ported). */
 @Suppress("TooManyFunctions") // One small check per field of the question and per kind of answer.
@@ -23,6 +25,29 @@ internal object WaitRules {
     const val DEFAULT_TEXT = 8_000
     const val MAX_TEXT = 32_000
     const val MAX_OTHER = 500
+    const val MAX_FILE_NAME = 255
+
+    /** The most a secret holds, in UTF-8 bytes. */
+    const val MAX_SECRET_BYTES = 4096
+
+    /** A stored secret is deleted this long after the answer at the latest. */
+    val SECRET_LIFETIME: Duration = 24.hours
+
+    /** The variable a secret reaches the agent as: `OSTROM_WAIT_` and the field id upper-cased. */
+    const val SECRET_ENV_PREFIX = "OSTROM_WAIT_"
+
+    /** The agents that read their environment again before each command, the only ones a secret can reach. */
+    val SECRET_AGENTS = setOf("claude")
+
+    /**
+     * The variable of a secret field: a field id is `[A-Za-z][A-Za-z0-9_]{0,63}`, so the name is a valid shell
+     * identifier.
+     *
+     * @param fieldId The field.
+     *
+     * @return `OSTROM_WAIT_<FIELD ID UPPER-CASED>`.
+     */
+    fun secretVariable(fieldId: String): String = SECRET_ENV_PREFIX + fieldId.uppercase()
 
     /** The action a wait gets when its asker gives none. */
     val DONE = WaitAction("done", "Done")
@@ -36,9 +61,13 @@ internal object WaitRules {
     /**
      * Checks a question and returns it ready to store: titles trimmed, one `done` action when none is given.
      *
+     * @param spec The question.
+     * @param secretsAllowed Whether it may hold `secret` fields: an agent's or a member's request in a session, never
+     *   a workflow run's wait.
+     *
      * @throws InvalidWaitException With what to fix.
      */
-    fun question(spec: WaitSpec): WaitSpec {
+    fun question(spec: WaitSpec, secretsAllowed: Boolean = false): WaitSpec {
         val title = spec.title.trim()
         requireWait(title.length in 1..MAX_TITLE && title.none { it.isISOControl() }) {
             "title is 1 to $MAX_TITLE characters, without control characters."
@@ -48,7 +77,14 @@ internal object WaitRules {
         spec.refs.forEach(::checkRef)
         requireWait(spec.fields.size <= MAX_FIELDS) { "At most $MAX_FIELDS fields." }
         requireWait(spec.fields.map { it.id }.toSet().size == spec.fields.size) { "Field ids are unique." }
-        spec.fields.forEach(::checkField)
+        spec.fields.forEach { checkField(it, secretsAllowed) }
+        spec.fields.filter { it.type == WaitFieldType.SECRET }.groupBy { secretVariable(it.id) }.entries
+            .firstOrNull { it.value.size > 1 }?.let { (name, fields) ->
+                throw InvalidWaitException(
+                    "Secret fields ${fields.joinToString(" and ") { it.id }} would both be $name: field ids differ " +
+                        "by more than their case.",
+                )
+            }
         requireWait(spec.actions.size <= MAX_ACTIONS) { "At most $MAX_ACTIONS actions." }
         requireWait(spec.actions.map { it.id }.toSet().size == spec.actions.size) { "Action ids are unique." }
         val fillable = spec.fields.filter { it.type != WaitFieldType.INFO }.map { it.id }.toSet()
@@ -69,7 +105,7 @@ internal object WaitRules {
         }
     }
 
-    private fun checkField(field: WaitField) {
+    private fun checkField(field: WaitField, secretsAllowed: Boolean) {
         requireWait(ID.matches(field.id)) { "A field id is a letter then letters, digits or _ (64 at most)." }
         requireWait(field.label.trim().length in 1..MAX_LABEL) { "${field.id}: label is 1 to $MAX_LABEL characters." }
         requireWait((field.help?.length ?: 0) <= MAX_HELP) { "${field.id}: help is at most $MAX_HELP characters." }
@@ -88,6 +124,14 @@ internal object WaitRules {
             "${field.id}: maxLength is for text fields, 1 to $MAX_TEXT."
         }
         requireWait(field.type != WaitFieldType.INFO || !field.required) { "${field.id}: an info field has no value." }
+        if (field.type == WaitFieldType.SECRET) {
+            requireWait(secretsAllowed) {
+                "${field.id}: only a request made in a session takes a secret field, not a workflow step."
+            }
+            requireWait(field.default == null) { "${field.id}: a secret field has no default." }
+        } else {
+            requireWait(!field.oneTime) { "${field.id}: only a secret field is oneTime." }
+        }
     }
 
     private fun checkAction(action: WaitAction, fillable: Set<String>) {
@@ -118,14 +162,22 @@ internal object WaitRules {
         needed.forEach { id -> requireAnswer(filled(values[id])) { "$id must be filled." } }
     }
 
+    @Suppress("CyclomaticComplexMethod") // One line per field type.
     private fun fits(field: WaitField, value: JsonElement): Boolean = when (field.type) {
         WaitFieldType.TEXT -> value.string()?.let { it.length <= (field.maxLength ?: DEFAULT_TEXT) } == true
         WaitFieldType.CHOICE -> fitsChoice(field, value)
         WaitFieldType.CONFIRM -> value is JsonPrimitive && !value.isString && value.booleanOrNull != null
         WaitFieldType.NUMBER -> value is JsonPrimitive && !value.isString && value.doubleOrNull?.isFinite() == true
         WaitFieldType.DATE -> value.string()?.let(CalendarDates::isDate) == true
+        WaitFieldType.FILE -> value.string()?.let(::isFileName) == true
+        WaitFieldType.SECRET -> value.string()?.let(::isSecret) == true
         WaitFieldType.INFO -> false
     }
+
+    private fun isFileName(name: String): Boolean = name.isNotBlank() && name.length <= MAX_FILE_NAME &&
+        '/' !in name && '\\' !in name && name.none { it.isISOControl() }
+
+    private fun isSecret(text: String): Boolean = text.encodeToByteArray().size <= MAX_SECRET_BYTES && '\u0000' !in text
 
     private fun fitsChoice(field: WaitField, value: JsonElement): Boolean = if (field.multiple) {
         value is JsonArray && value.size <= field.options.size + 1 && value.all { option(field, it) }
@@ -144,11 +196,13 @@ internal object WaitRules {
         WaitFieldType.CONFIRM -> "true or false."
         WaitFieldType.NUMBER -> "a finite number."
         WaitFieldType.DATE -> "a date, YYYY-MM-DD."
+        WaitFieldType.FILE -> "the name of a file, at most $MAX_FILE_NAME characters without / or \\."
+        WaitFieldType.SECRET -> "a string of at most $MAX_SECRET_BYTES bytes without NUL."
         WaitFieldType.INFO -> "nothing: it is an info field."
     }
 
     /** Whether a value that fits its field fills it: neither absent, null, blank nor an empty list. */
-    private fun filled(value: JsonElement?): Boolean = when (value) {
+    internal fun filled(value: JsonElement?): Boolean = when (value) {
         null -> false
         is JsonPrimitive -> value != JsonNull && (!value.isString || value.content.isNotBlank())
         else -> (value as JsonArray).isNotEmpty()

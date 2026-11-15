@@ -9,6 +9,8 @@ import run.ostrom.server.automations.domain.AskWait
 import run.ostrom.server.automations.domain.AskWaitUseCase
 import run.ostrom.server.automations.domain.CreateOutcome
 import run.ostrom.server.automations.domain.InvalidAssigneeException
+import run.ostrom.server.automations.domain.SecretsUnavailableException
+import run.ostrom.server.automations.domain.TimedWaitsRepository
 import run.ostrom.server.automations.domain.Wait
 import run.ostrom.server.automations.domain.WaitAction
 import run.ostrom.server.automations.domain.WaitAnswer
@@ -16,6 +18,8 @@ import run.ostrom.server.automations.domain.WaitEvents
 import run.ostrom.server.automations.domain.WaitField
 import run.ostrom.server.automations.domain.WaitFieldType
 import run.ostrom.server.automations.domain.WaitFilter
+import run.ostrom.server.automations.domain.WaitSecret
+import run.ostrom.server.automations.domain.WaitSecretSessions
 import run.ostrom.server.automations.domain.WaitSessionNotFoundException
 import run.ostrom.server.automations.domain.WaitSpec
 import run.ostrom.server.automations.domain.WaitStatus
@@ -30,6 +34,7 @@ import run.ostrom.server.automations.fakes.alice
 import run.ostrom.server.automations.fakes.bob
 import run.ostrom.server.automations.fakes.testIdentities
 import run.ostrom.server.automations.infrastructure.NoMemberLogins
+import run.ostrom.server.automations.infrastructure.WaitsRepositoryImpl
 import run.ostrom.server.automations.infrastructure.inTenant
 import run.ostrom.server.automations.presentation.AnswerWaitRequest
 import run.ostrom.server.automations.presentation.CreateWaitRequest
@@ -41,6 +46,8 @@ import run.ostrom.server.kernel.events.WaitSummaries
 import run.ostrom.server.kernel.events.WaitSummary
 import run.ostrom.server.kernel.http.ApiError
 import run.ostrom.server.kernel.sessions.SessionEndListener
+import run.ostrom.server.secrets.domain.SecretCipher
+import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
@@ -64,6 +71,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -459,8 +467,99 @@ class WaitsPostgresTest {
         val malformed = client.post("/api/v1/waits") {
             bearerAuth("bob")
             contentType(ContentType.Application.Json)
-            setBody("""{"question":{"title":"x","fields":[{"id":"a","type":"secret","label":"S"}]}}""")
+            setBody("""{"question":{"title":"x","fields":[{"id":"a","type":"slider","label":"S"}]}}""")
         }
         assertEquals(HttpStatusCode.BadRequest, malformed.status)
+    }
+
+    private val sentinel = "S3NTINEL-pa55w0rd-sql"
+    private val secretQuestion = WaitSpec(
+        "Access",
+        fields = listOf(WaitField("shop_password", WaitFieldType.SECRET, "Password", oneTime = true)),
+    )
+
+    private fun secret(name: String, at: Instant, oneTime: Boolean = false, value: String = sentinel) =
+        WaitSecret("OSTROM_WAIT_$name", name.lowercase(), value, oneTime, at + 24.hours)
+
+    @Test
+    fun aSecretIsSealedAtRestServedToItsOwnerOnceAndPurged() {
+        val cipher = module {
+            single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 9 }) }
+            single<WaitSecretSessions> { WaitSecretSessions { _, _ -> "claude" } }
+        }
+        serverTest(listOf(AutomationsModule), cipher) { server ->
+            val repository = server.koin.get<WaitsRepository>()
+            val timed = server.koin.get<TimedWaitsRepository>()
+            val asked = wait().copy(question = secretQuestion)
+            assertEquals(CreateOutcome.CREATED, repository.createWithinLimit(asked, 5))
+            val answer = WaitAnswer("done", mapOf("shop_password" to JsonPrimitive("provided")), BOB.toString(), t0)
+            val secrets = listOf(secret("SHOP_PASSWORD", t0, oneTime = true), secret("API_KEY", t0, value = "key-1"))
+            assertEquals(answer, repository.resolve(ORG_A, asked.id, answer, secrets)?.answer)
+            // At rest: sealed, bound to the session, and invisible to another organization.
+            val stored = server.driver.inTenant(ORG_A) {
+                fetchAll(Statement.create("SELECT value, owner_id FROM automations_wait_secrets ORDER BY env_name"))
+                    .getOrThrow().map { it.get("value").asString() to it.get("owner_id").asString() }.toList()
+            }
+            assertEquals(listOf(BOB.toString(), BOB.toString()), stored.map { it.second })
+            assertTrue(stored.none { sentinel in it.first || "key-1" in it.first }, stored.toString())
+            assertEquals(0L, server.driver.inTenant(ORG_B) {
+                fetchAll(Statement.create("SELECT COUNT(*) AS n FROM automations_wait_secrets")).getOrThrow()
+                    .first().get("n").asLong()
+            })
+            val owner = BOB.toString()
+            assertTrue(repository.serveSecrets(ORG_A, "s1", ALICE.toString(), t0).values.isEmpty())
+            assertTrue(repository.serveSecrets(ORG_A, "s2", owner, t0).values.isEmpty())
+            val served = repository.serveSecrets(ORG_A, "s1", owner, t0 + 1.minutes)
+            val expected = mapOf("OSTROM_WAIT_API_KEY" to "key-1", "OSTROM_WAIT_SHOP_PASSWORD" to sentinel)
+            assertEquals(expected, served.values)
+            assertEquals(setOf("OSTROM_WAIT_SHOP_PASSWORD"), served.oneTime)
+            // The one-time value is gone; the other stays until it expires, then is never served.
+            assertEquals(setOf("OSTROM_WAIT_API_KEY"), repository.serveSecrets(ORG_A, "s1", owner, t0).values.keys)
+            assertTrue(repository.serveSecrets(ORG_A, "s1", owner, t0 + 25.hours).values.isEmpty())
+            assertEquals(0, timed.purgeSecrets(t0 + 1.minutes, 10))
+            assertEquals(1, timed.purgeSecrets(t0 + 25.hours, 10))
+            assertEquals(0, timed.purgeSecrets(t0 + 25.hours, 10))
+        }
+    }
+
+    @Test
+    fun aSecretOfTheSameNameReplacesTheEarlierOneAndAnAnotherKeyOpensNone() {
+        val cipher = module {
+            single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 9 }) }
+            single<WaitSecretSessions> { WaitSecretSessions { _, _ -> "claude" } }
+        }
+        serverTest(listOf(AutomationsModule), cipher) { server ->
+            val repository = server.koin.get<WaitsRepository>()
+            suspend fun answered(value: String, at: Instant) {
+                val asked = wait(at = at).copy(question = secretQuestion)
+                repository.createWithinLimit(asked, 5)
+                val answer = WaitAnswer("done", mapOf("shop_password" to JsonPrimitive("provided")), BOB.toString(), at)
+                repository.resolve(ORG_A, asked.id, answer, listOf(secret("SHOP_PASSWORD", at, value = value)))
+            }
+            answered("one", t0)
+            answered("two", t0 + 1.minutes)
+            assertEquals(
+                mapOf("OSTROM_WAIT_SHOP_PASSWORD" to "two"),
+                repository.serveSecrets(ORG_A, "s1", BOB.toString(), t0).values,
+            )
+            // Another key does not open what this one sealed: nothing is served.
+            val other = WaitsRepositoryImpl(server.driver, server.koin.get(), AesGcmSecretCipher(ByteArray(32) { 1 }))
+            assertTrue(other.serveSecrets(ORG_A, "s1", BOB.toString(), t0).values.isEmpty())
+        }
+    }
+
+    @Test
+    fun withoutAKeyNoSecretIsKeptAndTheWaitStaysOpen() = serverTest(listOf(AutomationsModule)) { server ->
+        val repository = server.koin.get<WaitsRepository>()
+        val asked = wait().copy(question = secretQuestion)
+        repository.createWithinLimit(asked, 5)
+        val answer = WaitAnswer("done", mapOf("shop_password" to JsonPrimitive("provided")), BOB.toString(), t0)
+        assertFailsWith<SecretsUnavailableException> {
+            repository.resolve(ORG_A, asked.id, answer, listOf(secret("SHOP_PASSWORD", t0)))
+        }
+        assertEquals(WaitStatus.OPEN, repository.get(ORG_A, asked.id)?.status)
+        assertTrue(repository.serveSecrets(ORG_A, "s1", BOB.toString(), t0).values.isEmpty())
+        // An answer without a secret needs no key.
+        assertEquals(WaitStatus.RESOLVED, repository.resolve(ORG_A, asked.id, answer)?.status)
     }
 }

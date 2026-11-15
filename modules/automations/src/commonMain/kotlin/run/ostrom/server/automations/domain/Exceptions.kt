@@ -132,3 +132,34 @@ class WaitEventRateLimitException(perMinute: Int) : OstromException(
 
 /** The body of an event is larger than an event wait takes. */
 class WaitEventTooLargeException : OstromException(ErrorKind.PAYLOAD_TOO_LARGE, "The body is at most 16 KiB.")
+
+/**
+ * A secret field in a session whose agent cannot receive one: only Claude Code reads its environment again before each
+ * command, so a value given later could reach no other agent (`waits.secrets.v1`).
+ *
+ * @param agent The session's agent, by name.
+ */
+class SecretUnsupportedAgentException(agent: String) : OstromException(
+    ErrorKind.UNPROCESSABLE,
+    "This session's agent ($agent) cannot receive a secret mid-session: only Claude Code reads its environment again " +
+        "before each command. Ask the person to set the secret up another way.",
+    "secret_unsupported_agent",
+)
+
+/**
+ * A secret field outside a cloud session: the value reaches the agent through the cloud session's runner, which a
+ * launch on a machine does not have.
+ */
+class SecretUnsupportedSessionException : OstromException(
+    ErrorKind.UNPROCESSABLE,
+    "A secret reaches the agent through a cloud session's runner: ask it in a cloud session, not in a launch on a " +
+        "machine.",
+    "secret_unsupported_session",
+)
+
+/** The server has no key to seal a secret with. */
+class SecretsUnavailableException : OstromException(
+    ErrorKind.UNAVAILABLE,
+    "This server has no encryption key, so it cannot keep a secret.",
+    "secrets_unavailable",
+)

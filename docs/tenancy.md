@@ -109,6 +109,7 @@ functions (the owner, a member of `ostrom_router` to hand the functions over, do
 | `sessions_stale(cutoff, limit)` | sessions | the open sessions of every organization last seen before the cutoff, for the sweep | `SessionsPostgresTest` |
 | `usage_purge(before, limit)` | usage | deletes one batch of events older than the retention | `UsagePostgresTest` |
 | `events_purge(before, limit)` | events | deletes one batch of the event feed's events older than the retention (7 days) | `EventsPostgresTest` |
+| `automations_purge_wait_secrets(now, limit)` | automations | deletes one batch of the wait secrets expired before the date, of every organization | `WaitsPostgresTest` |
 | `events_webhook_orgs(now, limit)` | events | the organizations whose webhooks have work (an enabled webhook behind the journal, a delivery due), ids only | `WebhooksPostgresTest` |
 | `events_webhook_maintain(now, give_up_before, delete_before, limit)` | events | gives up on the webhook deliveries pending for 24 hours and deletes the finished ones past the 14 days of the log | `WebhooksPostgresTest` |
 | `events_readers_behind(reader, limit)` | events | starts a reader of the journal at each organization it has not seen (at its head on the reader's first call, at its beginning once the reader has asked before, `events_reader_starts`), then lists the organizations it is behind on with its cursor and their head | `OrgEventJournalPostgresTest` |

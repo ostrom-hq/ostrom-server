@@ -139,7 +139,7 @@ private fun Route.runnerChannelRoutes(dependencies: CloudSessionsRoutesDependenc
             val request = call.receive<RunnerExecutionBody>()
             val values = runnerVariables(token, RunnerExecutionRequest(parseId(request.sessionId), request.epoch))
             call.response.header(HttpHeaders.CacheControl, "no-store")
-            call.respond(RunnerVariablesResponse(values.variables, values.unavailable))
+            call.respond(RunnerVariablesResponse(values.variables, values.unavailable, values.secrets, values.oneTime))
         }
     }
     if (runnerEnvironment != null) {

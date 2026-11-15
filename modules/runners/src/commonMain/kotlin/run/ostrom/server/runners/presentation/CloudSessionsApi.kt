@@ -209,10 +209,19 @@ data class RunnerExecutionBody(val sessionId: String, val epoch: Long)
  *
  * @property variables The values by name.
  * @property unavailable The variables withheld, by name.
+ * @property secrets The secrets of the session's answered waits by variable name (`waits.secrets.v1`).
+ * @property oneTime The names in [secrets] the server deleted by serving them.
  */
 @Serializable
-data class RunnerVariablesResponse(val variables: Map<String, String>, val unavailable: List<String>) {
-    override fun toString(): String = "RunnerVariablesResponse(${variables.keys.sorted()}, unavailable=$unavailable)"
+data class RunnerVariablesResponse(
+    val variables: Map<String, String>,
+    val unavailable: List<String>,
+    val secrets: Map<String, String> = emptyMap(),
+    val oneTime: List<String> = emptyList(),
+) {
+    override fun toString(): String =
+        "RunnerVariablesResponse(${variables.keys.sorted()}, unavailable=$unavailable, " +
+            "secrets=${secrets.keys.sorted()}, oneTime=$oneTime)"
 }
 
 /**

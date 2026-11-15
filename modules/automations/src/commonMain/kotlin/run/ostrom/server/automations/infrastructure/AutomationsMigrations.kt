@@ -113,6 +113,56 @@ private val WAITS_THAT_RESOLVE_BY_THEMSELVES_SQL: String =
     """
         .trimIndent()
 
+/** The purge of the expired wait secrets, across organizations, a function owned by `ostrom_router`. */
+private val WAIT_SECRET_ROUTER_FUNCTIONS = listOf("automations_purge_wait_secrets(TIMESTAMPTZ, INTEGER)")
+
+/**
+ * Version 9: the secrets of answered waits (`waits.secrets.v1`), sealed with the server's cipher (the context binds
+ * each to its organization, session and variable), one row per variable of a session, deleted when served if one-time
+ * and at the latest 24 hours after the answer. `automations_purge_wait_secrets` deletes one batch of the expired ones
+ * of every organization, a function owned by `ostrom_router` that returns only a count (docs/tenancy.md).
+ */
+private val WAIT_SECRETS_SQL: String =
+    """
+    CREATE TABLE automations_wait_secrets (
+        org_id UUID NOT NULL,
+        session_id TEXT NOT NULL,
+        env_name TEXT NOT NULL,
+        wait_id UUID NOT NULL REFERENCES automations_waits (id) ON DELETE CASCADE,
+        field_id TEXT NOT NULL,
+        owner_id TEXT NOT NULL,
+        one_time BOOLEAN NOT NULL,
+        value TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        expires_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (org_id, session_id, env_name)
+    );
+    CREATE INDEX automations_wait_secrets_expiry ON automations_wait_secrets (expires_at);
+    ${tenantTableSql("automations_wait_secrets")}
+    CREATE POLICY automations_wait_secrets_router ON automations_wait_secrets TO ostrom_router
+        USING (current_user = 'ostrom_router');
+    GRANT SELECT, DELETE ON automations_wait_secrets TO ostrom_router;
+    CREATE FUNCTION automations_purge_wait_secrets(p_now TIMESTAMPTZ, p_limit INTEGER) RETURNS BIGINT
+        LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        WITH gone AS (
+            DELETE FROM automations_wait_secrets WHERE (org_id, session_id, env_name) IN (
+                SELECT s.org_id, s.session_id, s.env_name FROM automations_wait_secrets s
+                WHERE s.expires_at <= p_now LIMIT p_limit
+            ) RETURNING 1
+        ) SELECT COUNT(*) FROM gone;
+    $$;
+    ${WAIT_SECRET_ROUTER_FUNCTIONS.joinToString("\n") { "REVOKE EXECUTE ON FUNCTION $it FROM PUBLIC;" }}
+    DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+            ${WAIT_SECRET_ROUTER_FUNCTIONS.joinToString("\n            ") { "GRANT EXECUTE ON FUNCTION $it TO ostrom_app;" }}
+        END IF;
+    END $$;
+    GRANT CREATE ON SCHEMA public TO ostrom_router;
+    ${WAIT_SECRET_ROUTER_FUNCTIONS.joinToString("\n") { "ALTER FUNCTION $it OWNER TO ostrom_router;" }}
+    REVOKE CREATE ON SCHEMA public FROM ostrom_router;
+    """
+        .trimIndent()
+
 /**
  * The schema of the automations module; its tables start with `automations_`, and each is confined by row-level
  * security to the organization of the transaction (S2-01). `automations_routes` (an automation's id and organization
@@ -265,5 +315,10 @@ val AutomationsMigrations: List<SchemaMigration> = listOf(
             CREATE INDEX automations_runs_followed ON automations_runs (org_id, followed_at NULLS FIRST, id)
                 WHERE status = 'started' AND workflow_run_id IS NOT NULL;
         """.trimIndent(),
+    ),
+    SchemaMigration(
+        version = 9,
+        name = "wait_secrets",
+        sql = WAIT_SECRETS_SQL,
     ),
 )

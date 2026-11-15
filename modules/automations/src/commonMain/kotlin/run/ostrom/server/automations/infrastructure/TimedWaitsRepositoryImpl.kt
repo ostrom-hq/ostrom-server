@@ -10,6 +10,7 @@ import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.events.OrgEventType
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import kotlinx.serialization.json.JsonObject
 import kotlin.time.Instant
@@ -64,4 +65,11 @@ internal class TimedWaitsRepositoryImpl(
                 .bind("org_id", orgId)
         }.firstOrNull()
     }
+
+    override suspend fun purgeSecrets(now: Instant, limit: Int): Int = driver.fetchAll(
+        // The serving role alone runs the function; it deletes one batch and returns how many, never their content.
+        Statement.create(
+            "SELECT automations_purge_wait_secrets(CAST(:now AS TIMESTAMPTZ), CAST(:limit AS INTEGER)) AS n",
+        ).bind("now", now).bind("limit", limit),
+    ).getOrThrow().first().get("n").asLong().toInt()
 }
