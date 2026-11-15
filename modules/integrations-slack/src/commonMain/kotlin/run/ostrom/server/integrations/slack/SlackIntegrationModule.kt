@@ -99,7 +99,7 @@ object SlackIntegrationModule : ServerModule {
             ReceiveSlackInteractionUseCaseImpl(get(), get(), get(), get(), get(), get(), get())
         }
         single { SlackRoutesDependencies(get(), get(), get(), get(), get()) }
-        // The notifications' channel and the approvals' way; the approvals' answers close the messages through the queue.
+        // The notifications' channel and the approvals' way (its answers close the messages through the queue).
         single<NotificationChannel>(named(SlackSettings.NAME)) { SlackNotificationChannel(get(), get(), get(), get()) }
         single<ApprovalChannel>(named(SlackSettings.NAME)) { SlackApprovalChannel(get(), get(), get(), get(), get()) }
         single<OrgDeletionListener>(named("integrations-slack")) { SlackOrgDeletionListener(get(), get()) }

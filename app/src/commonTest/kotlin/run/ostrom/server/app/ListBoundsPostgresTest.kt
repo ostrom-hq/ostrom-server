@@ -356,6 +356,9 @@ class ListBoundsPostgresTest {
             "listCloudClusters" to 403,
             "listInstanceAdmins" to 403,
             "listInstanceSettings" to 403,
+            // The member's budget overrides, served since ostrom-core#278 (server#581): the walk's member is not one
+            // the route finds (404). To seed, with the budgets' owner.
+            "listBudgetOverrides" to 404,
         )
 
         /**

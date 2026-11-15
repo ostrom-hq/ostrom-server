@@ -94,12 +94,15 @@ class ApprovalRoutingTest {
         val gate = sampleGate()
         val approval = Uuid.random()
         val event = approvalDecided(6, approval, gate, "bob", "rejected")
-        assertEquals(ApprovalDecision(6, approval, Uuid.parse(gate.id), "bob", "rejected"), ApprovalRules.decision(event))
+        val named = ApprovalDecision(6, approval, Uuid.parse(gate.id), "bob", "rejected")
+        assertEquals(named, ApprovalRules.decision(event))
         assertNull(ApprovalRules.decision(approvalRequested(6, approval, gate, "bob")), "Another type")
         assertNull(ApprovalRules.decision(event.copy(data = JsonObject(event.data - "status"))))
         assertNull(ApprovalRules.decision(event.copy(data = JsonObject(event.data - "approver"))))
-        assertNull(ApprovalRules.decision(event.copy(data = JsonObject(event.data + ("gateId" to JsonPrimitive("x"))))))
-        assertNull(ApprovalRules.decision(event.copy(data = JsonObject(event.data + ("approvalId" to JsonPrimitive("x"))))))
+        fun with(key: String, value: String) =
+            event.copy(data = JsonObject(event.data + (key to JsonPrimitive(value))))
+        assertNull(ApprovalRules.decision(with("gateId", "x")))
+        assertNull(ApprovalRules.decision(with("approvalId", "x")))
     }
 
     @Test

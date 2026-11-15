@@ -82,7 +82,8 @@ object ApprovalRules {
         val gateId = entry.text("gateId")?.let(Uuid::parseOrNull)
         val approver = entry.text("approver")
         val status = entry.text("status")
-        return if (approvalId != null && gateId != null && approver != null && status != null) {
+        if (approvalId == null || gateId == null) return null
+        return if (approver != null && status != null) {
             ApprovalDecision(entry.seq, approvalId, gateId, approver, status)
         } else {
             null

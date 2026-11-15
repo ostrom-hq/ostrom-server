@@ -178,8 +178,10 @@ class ApprovalChannelsTest {
                     ChannelResult.failed("never")
             }
             val gate = sampleGate(open = false)
-            val answer = approvalDelivery(org, gate, channel = "chat", memberId = bob.memberId).copy(decision = "closed")
+            val delivery = approvalDelivery(org, gate, channel = "chat", memberId = bob.memberId)
+            val answer = delivery.copy(decision = "closed")
             assertEquals(ChannelResult.DELIVERED, quiet.decided(answer))
+            assertEquals(ChannelResult.failed("channel_unavailable"), sender(quiet).send(delivery, null), "No gate")
         }
     }
 }

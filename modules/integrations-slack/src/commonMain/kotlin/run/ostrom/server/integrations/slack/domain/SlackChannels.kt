@@ -136,7 +136,11 @@ class SlackApprovalChannel(
      */
     override suspend fun decided(delivery: ApprovalDelivery): ChannelResult {
         val kept = messages.of(delivery.orgId, delivery.approvalId) ?: return ChannelResult.DELIVERED
-        val app = apps.current() ?: return ChannelResult.failed(NOT_CONFIGURED)
+        return close(apps.current(), kept, delivery)
+    }
+
+    private suspend fun close(app: SlackApp?, kept: SlackApprovalMessage, delivery: ApprovalDelivery): ChannelResult {
+        if (app == null) return ChannelResult.failed(NOT_CONFIGURED)
         return try {
             api.updateMessage(app.botToken, kept.posted, texts.decided(delivery.title, outcome(delivery)))
             ChannelResult.DELIVERED

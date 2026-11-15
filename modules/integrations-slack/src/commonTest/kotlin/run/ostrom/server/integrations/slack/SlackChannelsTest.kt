@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.integrations.slack
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import run.ostrom.server.integrations.slack.domain.SlackApprovalChannel
 import run.ostrom.server.integrations.slack.domain.SlackApprovalMessage
+import run.ostrom.server.integrations.slack.domain.SlackApprovalMessagesRepository
 import run.ostrom.server.integrations.slack.domain.SlackApps
 import run.ostrom.server.integrations.slack.domain.SlackCallException
 import run.ostrom.server.integrations.slack.domain.SlackNotificationChannel
@@ -17,6 +19,7 @@ import run.ostrom.server.notifications.domain.Notification
 import run.ostrom.server.notifications.domain.NotificationKind
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -89,7 +92,7 @@ class SlackChannelsTest {
         val kept = SlackApprovalMessage(delivery.approvalId, delivery.gateId, posted)
         assertEquals(listOf(kept), messages.messages.values.toList())
         assertTrue(api.posted.single().second.blocks != null, "With its buttons")
-        val carols = delivery.copy(memberId = carol)
+        val carols = delivery.copy(memberId = carol, approvalId = Uuid.random())
         assertEquals(ChannelResult.failed("slack_not_linked"), channel.send(carols, gate, "https://c"))
         val fresh = delivery.copy(approvalId = Uuid.random())
         api.postFailure = SlackCallException("slack_unavailable", retryable = true)
@@ -138,6 +141,16 @@ class SlackChannelsTest {
         api.deleteFailure = SlackCallException("ratelimited", retryable = true)
         assertEquals(ChannelResult.DELIVERED, channel.send(another, gate, "https://c"))
         assertEquals(2, api.posted.size)
+    }
+
+    @Test
+    fun aCancelledSaveIsNotMistakenForAFailedOne() = runTest {
+        val cancelling = object : SlackApprovalMessagesRepository by messages {
+            override suspend fun save(orgId: Uuid, message: SlackApprovalMessage) = throw CancellationException("Stop")
+        }
+        val channel = SlackApprovalChannel(apps, api, links, cancelling, texts)
+        assertFailsWith<CancellationException> { channel.send(delivery, gate, "https://c") }
+        assertEquals(emptyList(), api.deleted, "Cancelled, not taken back")
     }
 
     @Test
