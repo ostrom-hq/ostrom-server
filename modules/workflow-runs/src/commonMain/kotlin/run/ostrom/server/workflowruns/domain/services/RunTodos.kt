@@ -5,8 +5,7 @@ import kotlin.uuid.Uuid
 
 /**
  * Whether a step's session still has a todo to finish before it delivers (TeamCode `WorkflowTodoGate`, `409
- * todo_open`). The todos module binds it once it stores the sessions' todos; until then nothing binds it and a delivery
- * is never refused for a todo.
+ * todo_open`), on the todos module's lists (`TodosRunTodos`).
  */
 interface RunTodos {
     /**

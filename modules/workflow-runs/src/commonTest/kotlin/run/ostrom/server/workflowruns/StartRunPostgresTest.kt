@@ -232,6 +232,8 @@ class StartRunPostgresTest {
         val limited = server.call("user:a:lead", RUNS, body, key = "one-more")
         assertEquals(HttpStatusCode.Conflict, limited.status, limited.bodyAsText())
         assertTrue("run_limit" in limited.bodyAsText(), limited.bodyAsText())
+        val unkeyed = server.call("user:a:lead", RUNS, body)
+        assertEquals(HttpStatusCode.Conflict, unkeyed.status, "A start without a key is held to the same cap")
         assertEquals(HttpStatusCode.OK, server.call("user:a:lead", RUNS, body, key = "k0").status)
     }
 
@@ -329,9 +331,10 @@ class StartRunPostgresTest {
     fun aPageEndsWithACursorAndTheNextPageHasTheOlderRuns() = runsTest { server ->
         server.workflow()
         server.workflow("other")
+        // Three starters, as a member has at most MAX_UNFINISHED unfinished runs.
         val started = (1..PAGE + 1).map { i ->
             val path = if (i % 2 == 0) "/api/v1/workflows/other/runs" else RUNS
-            server.call("user:a:lead", path, """{"inputs":{"branch":"b$i"}}""").run().id
+            server.call("user:a:lead${i % 3}", path, """{"inputs":{"branch":"b$i"}}""").run().id
         }
         val first = server.call("user:a:lead", "/api/v1/runs")
         assertEquals(PAGE, first.ids().size)
@@ -362,7 +365,8 @@ class StartRunPostgresTest {
     @Test
     fun theRunQueriesUseTheirIndexes() = runsTest { server ->
         server.workflow()
-        repeat(ROWS) { server.call("user:a:lead", RUNS, """{"inputs":{"branch":"b$it"}}""") }
+        // Two starters, as a member has at most MAX_UNFINISHED unfinished runs.
+        repeat(ROWS) { server.call("user:a:lead${it % 2}", RUNS, """{"inputs":{"branch":"b$it"}}""") }
         // Statistics only: the serving role owns no table, the owner analyzes it.
         server.database.owner.execute("ANALYZE workflow_runs_started").getOrThrow()
         // Each page is read in its order from an index: with sorting priced out, a page that needs a sort says so.

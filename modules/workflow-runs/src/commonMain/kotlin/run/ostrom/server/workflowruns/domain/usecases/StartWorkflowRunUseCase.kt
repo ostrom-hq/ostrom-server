@@ -20,7 +20,6 @@ import run.ostrom.server.workflowruns.domain.models.StartRunForbiddenException
 import run.ostrom.server.workflowruns.domain.models.WorkflowNotAcceptedException
 import run.ostrom.server.workflowruns.domain.repositories.KeyedAdd
 import run.ostrom.server.workflowruns.domain.repositories.KeyedRunsRepository
-import run.ostrom.server.workflowruns.domain.repositories.StartedRunsRepository
 import run.ostrom.server.workflowruns.domain.services.RunWorkflows
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -29,7 +28,8 @@ import kotlin.uuid.Uuid
 /** Starts a run of a workflow (contract `startWorkflowRun`). */
 interface StartWorkflowRunUseCase {
     /**
-     * Records the run, queued, with the graph of its workflow as it is now: the engine plays it from there.
+     * Records the run, queued, with the graph of its workflow as it is now: the engine plays it from there. A caller
+     * has at most [MAX_UNFINISHED] unfinished runs, however they were started (TeamCode's `run_limit`).
      *
      * @param actor The caller: an owner or an admin of the organization, with a person's credential.
      * @param workflowId The workflow.
@@ -45,6 +45,7 @@ interface StartWorkflowRunUseCase {
      * @throws WorkflowNotAcceptedException When the workflow is still a proposal.
      * @throws run.ostrom.server.workflowruns.domain.models.InvalidRunException When the inputs are not the
      *   workflow's ([RunInputs]), or the profile is none of the organization's.
+     * @throws RunLimitException When the caller has [MAX_UNFINISHED] unfinished runs.
      */
     suspend operator fun invoke(
         actor: GateActor,
@@ -73,8 +74,8 @@ interface StartWorkflowRunUseCase {
 
     /**
      * Starts a run as [invoke] does, under the caller's `Idempotency-Key`: the same [key] gives back the run it
-     * started first, never a second (the key is unique per caller), and a caller has at most [MAX_UNFINISHED]
-     * unfinished runs, which an unkeyed start does not count.
+     * started first, never a second (the key is unique per caller), within the same cap of [MAX_UNFINISHED]
+     * unfinished runs.
      *
      * @param actor The caller: an owner or an admin of the organization, with a person's credential.
      * @param workflowId The workflow.
@@ -144,14 +145,12 @@ const val MAX_UNFINISHED: Int = 20
  * [StartWorkflowRunUseCase] on the repository.
  *
  * @param workflows The organization's workflows.
- * @param repository The runs.
- * @param keyed The runs started under an idempotency key.
+ * @param keyed The runs, stored within their starter's cap of unfinished runs.
  * @param clock The clock.
  * @param profiles The organization's cloud profiles a manual start may name; null where sessions run on none.
  */
 class StartWorkflowRunUseCaseImpl(
     private val workflows: RunWorkflows,
-    private val repository: StartedRunsRepository,
     private val keyed: KeyedRunsRepository,
     private val clock: Clock,
     private val profiles: CloudProfileDirectory? = null,
@@ -165,7 +164,10 @@ class StartWorkflowRunUseCaseImpl(
     ): WorkflowRun {
         val now = clock.now()
         val (run, graph, audit) = prepare(actor, workflowId, inputs, person, profileId, now)
-        repository.add(actor.orgId, run, now, graph, audit)
+        // TeamCode's `run_limit` holds for every start of a member, with an idempotency key or without.
+        if (keyed.addKeyed(actor.orgId, run, now, graph, audit, null, MAX_UNFINISHED) == KeyedAdd.AtLimit) {
+            throw RunLimitException(MAX_UNFINISHED)
+        }
         return run
     }
 

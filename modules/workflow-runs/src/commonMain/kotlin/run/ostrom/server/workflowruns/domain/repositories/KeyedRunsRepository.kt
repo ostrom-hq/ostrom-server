@@ -19,11 +19,12 @@ sealed interface KeyedAdd {
     data object AtLimit : KeyedAdd
 }
 
-/** Stores the runs started under an idempotency key, within their starter's cap of unfinished runs. */
+/** Stores the runs a member starts, under an idempotency key or not, within their cap of unfinished runs. */
 interface KeyedRunsRepository {
     /**
      * Stores a run as [StartedRunsRepository.add] does, unless its starter ([WorkflowRun.startedBy]) already started
-     * one under [key] (that run is returned), or already has [maxUnfinished] unfinished runs. Those count whatever
+     * one under [key] (that run is returned), or already has [maxUnfinished] unfinished runs (TeamCode's `run_limit`,
+     * on every start of a member). Those count whatever
      * started them (by hand, this or another automation), child runs of a workflow run aside.
      * The look-up, the count and the write are one decision, whatever replica runs another start of the same starter.
      *
@@ -32,7 +33,7 @@ interface KeyedRunsRepository {
      * @param startedAt When it started.
      * @param graph The graph it plays.
      * @param audit Its audit line, written only when the run is stored.
-     * @param key The idempotency key, unique per starter.
+     * @param key The idempotency key, unique per starter, or null for a start without one.
      * @param maxUnfinished The starter's cap.
      *
      * @return What was stored, or found.
@@ -44,7 +45,7 @@ interface KeyedRunsRepository {
         startedAt: Instant,
         graph: RunGraph,
         audit: RunAudit,
-        key: String,
+        key: String?,
         maxUnfinished: Int,
     ): KeyedAdd
 }

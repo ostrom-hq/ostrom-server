@@ -150,8 +150,8 @@ setting:
 - **Validation (`Deliverables`).** `artifact` (an artifact id), `url` (https, on `domain` or a subdomain of it when
   set), `text`, `json` checked against the schema subset (`type`, an object's `properties` and `required`, an array's
   `items`, a string's `enum`). A wrong one is `400 invalid_deliverable` and stores nothing; nothing to deliver is
-  `409 nothing_to_deliver`; a session whose todo has open items is `409 todo_open` (once the todos module is on main;
-  the port is called only when it is bound). The visit's completion is one conditional update: of two deliveries, one
+  `409 nothing_to_deliver`; a session whose todo is active with open items is `409 todo_open`, naming them (the
+  todos module's list of the step's cloud session, `TodosRunTodos`). The visit's completion is one conditional update: of two deliveries, one
   wins.
 - **Who delivers.** `…/runs/{id}/deliver`: the starter (a person, or their key with `workflows:write`). The session
   route: the starter naming `sessionId`, or **the session's agent token with the scope `workflow:session`**: Ostrom's
@@ -287,5 +287,5 @@ Contract first, each step its own pull request, merged on green CI:
 4. ostrom-web: deliver from a run's page, editing rights, the automation's workflow action, rejected proposals.
 
 What depends on another family is named where it is used: `same` session mode and the server-side reminder
-(cloud conversation), live run events (event feed), `todo_open` (todos), the secret webhook URL (TC-AUT-8), the
+(cloud conversation), live run events (event feed), the secret webhook URL (TC-AUT-8), the
 `queue` overlap (TC-AUT-4).

@@ -6,6 +6,7 @@ import run.ostrom.server.gates.domain.services.GateCheckProofs
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.sessions.CloudProfileDirectory
+import run.ostrom.server.todos.domain.TodosRepository
 import run.ostrom.server.workflowruns.domain.engine.NodePlayers
 import run.ostrom.server.workflowruns.domain.engine.PlayRunUseCase
 import run.ostrom.server.workflowruns.domain.engine.PlayRunUseCaseImpl
@@ -22,7 +23,6 @@ import run.ostrom.server.workflowruns.domain.services.RunGates
 import run.ostrom.server.workflowruns.domain.services.RunLaunches
 import run.ostrom.server.workflowruns.domain.services.RunPackages
 import run.ostrom.server.workflowruns.domain.services.RunSessions
-import run.ostrom.server.workflowruns.domain.services.RunTodos
 import run.ostrom.server.workflowruns.domain.services.RunWaits
 import run.ostrom.server.workflowruns.domain.services.RunWorkflows
 import run.ostrom.server.workflowruns.domain.services.StepSessions
@@ -58,6 +58,7 @@ import run.ostrom.server.workflowruns.domain.usecases.SignWorkflowReceiptUseCase
 import run.ostrom.server.workflowruns.domain.usecases.StartWorkflowRunUseCase
 import run.ostrom.server.workflowruns.domain.usecases.StartWorkflowRunUseCaseImpl
 import run.ostrom.server.workflowruns.domain.repositories.KeyedRunsRepository
+import run.ostrom.server.workflowruns.infrastructure.TodosRunTodos
 import run.ostrom.server.workflowruns.infrastructure.RunsAutomationWorkflows
 import run.ostrom.server.automations.domain.AutomationWorkflows
 import run.ostrom.server.workflowruns.infrastructure.AutomationsRunWaits
@@ -127,12 +128,12 @@ object WorkflowRunsModule : ServerModule {
         single<CancelWorkflowRunUseCase> { CancelWorkflowRunUseCaseImpl(get(), get(), get()) }
         single<RunWorkflows> { CompilerRunWorkflows(get()) }
         single<StartWorkflowRunUseCase> {
-            StartWorkflowRunUseCaseImpl(get(), get(), get(), get(), getOrNull<CloudProfileDirectory>())
+            StartWorkflowRunUseCaseImpl(get(), get(), get(), getOrNull<CloudProfileDirectory>())
         }
         single<AutomationWorkflows> { RunsAutomationWorkflows(get(), get(), get(), get(), get()) }
         single<ListWorkflowRunsUseCase> { ListWorkflowRunsUseCaseImpl(get(), get()) }
-        // No module keeps the sessions' todos yet: no RunTodos is bound, and a delivery is never refused `todo_open`.
-        single { RunDeliveries(get(), get(), getOrNull<RunTodos>(), get()) }
+        // The todos module keeps the sessions' todos: without it, a delivery is never refused `todo_open`.
+        single { RunDeliveries(get(), get(), TodosRunTodos(getOrNull<TodosRepository>()), get()) }
         single<DeliverRunUseCase> { DeliverRunUseCaseImpl(get(), get()) }
         single<StepSessions> { CloudStepSessions(get(), get(), get(), get(), get()) }
         single { SessionRuns(get(), get(), get()) }
