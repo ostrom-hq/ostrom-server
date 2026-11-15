@@ -18,7 +18,7 @@ internal val ACCOUNT_COLUMNS = SharingAccounts.run {
     listOf(
         id, orgId, provider, label, email, providerAccountId, ownerMemberId, priority, status, maxConcurrent,
         utilizationCeiling, monthlyBudgetMicros, allowedMembers, cooldownUntil, createdAt, version, dailyBudgetMicros,
-        ownership,
+        ownership, poolId,
     )
 }
 
@@ -71,5 +71,6 @@ internal fun ResultRow.toAccount(): SharedAccount {
         createdAt = this[a.createdAt],
         version = this[a.version],
         ownership = RefreshOwnership.valueOf(this[a.ownership]),
+        poolId = this[a.poolId],
     )
 }

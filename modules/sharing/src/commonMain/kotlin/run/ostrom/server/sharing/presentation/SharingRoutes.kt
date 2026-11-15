@@ -72,6 +72,7 @@ fun Route.sharingRoutes(dependencies: SharingRoutesDependencies) = with(dependen
                 disabled = request.paused,
                 limits = request.limitsChange(),
                 sharedWith = request.sharedWith,
+                poolId = request.poolId,
             )
             call.respond(view(caller, update(caller, id, payload)).toResponse(caller))
         }
@@ -222,4 +223,5 @@ private fun SharedAccountView.toResponse(caller: Caller) = SharedAccountResponse
     createdAt = account.createdAt.toString(),
     dailyAllocationUsd = account.limits.dailyBudgetMicros?.takeIf { identityVisible }?.let { it / MICROS_PER_USD },
     refreshOwnership = account.ownership.name.lowercase().takeIf { identityVisible },
+    poolId = account.poolId.takeIf { identityVisible },
 )

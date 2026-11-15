@@ -130,7 +130,10 @@ private fun ApiCatalog.accountChangeOperations() {
             "account waiting for a reconnection or on the wrong account keeps its status), `sharedWith`, " +
             "`dailyAllocationUsd` (more than 0, at most 1000000) and `limits`, whose keys replace theirs " +
             "while the others stay (`maxConcurrent` 0 to 64, `utilizationCeiling`, `monthlyBudgetMicros`, " +
-            "`allowedMembers`, `dailyBudgetMicros`; a key set to null clears a budget)."
+            "`allowedMembers`, `dailyBudgetMicros`; a key set to null clears a budget). `poolId` (TeamCode's " +
+            "account pool, 1 to 36 letters, digits, underscores or hyphens, else 400 `invalid_pool`) moves it to a " +
+            "pool and an empty string takes it out; only an owner or an admin sets it (403 " +
+            "`account_pool_forbidden`)."
         parameters {
             organizationHeader()
             pathId("id", ACCOUNT_ID)
@@ -139,6 +142,10 @@ private fun ApiCatalog.accountChangeOperations() {
         responses {
             ok<SharedAccountResponse>("The account after the change.")
             badRequest(BAD_ACCOUNT)
+            error(
+                HttpStatusCode.Forbidden,
+                "A member who is not an owner or an admin sets `poolId` (`account_pool_forbidden`).",
+            )
             notFound(ACCOUNT_NOT_FOUND)
         }
     }

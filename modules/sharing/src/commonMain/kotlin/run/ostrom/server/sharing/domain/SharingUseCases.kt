@@ -57,6 +57,7 @@ data class ShareAccountPayload(
  * @property ifVersion Changes it only if it is still at this [SharedAccount.version]; null changes it anyway.
  * @property sharedWith The members who may use it from now on, by login (or member id), after [limits]; empty for
  *   the whole org.
+ * @property poolId The pool it moves to (admins only); an empty string takes it out of its pool.
  */
 data class UpdateAccountPayload(
     val label: String? = null,
@@ -65,6 +66,7 @@ data class UpdateAccountPayload(
     val limits: ((AccountLimits) -> AccountLimits)? = null,
     val ifVersion: Long? = null,
     val sharedWith: List<String>? = null,
+    val poolId: String? = null,
 )
 
 /**
@@ -317,12 +319,23 @@ class UpdateSharedAccountUseCaseImpl(
             priority = payload.priority ?: account.priority,
             limits = limits,
             status = status,
+            poolId = poolOf(caller, account, payload.poolId),
         )
         val saved = repository.update(updated, payload.ifVersion)
             ?: throw if (payload.ifVersion == null) AccountNotFoundException() else AccountChangedException()
         sharing?.let { names.lend(caller.orgId, saved.id, it) }
         return saved
     }
+}
+
+/**
+ * The pool an account moves to: [requested] (an empty string for none), or its current one when none is requested.
+ * TeamCode's pools are an administrator's routing: an owner who is not one keeps the account where it is.
+ */
+private fun poolOf(caller: Caller, account: SharedAccount, requested: String?): String? {
+    if (requested == null) return account.poolId
+    if (!caller.role.isAdmin) throw AccountPoolForbiddenException()
+    return requested.ifEmpty { null }?.also(SharingRules::requirePool)
 }
 
 /** [RemoveSharedAccountUseCase]. */
