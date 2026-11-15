@@ -45,7 +45,7 @@ private val L = BudgetsLimits
 /** The columns of a limit row. */
 internal val limitColumns = listOf(L.scope, L.memberId, L.workflowId, L.period, L.action, L.limitMicros, L.updatedAt)
 
-/** `column = value`, or `column IS NULL` for none: `IS NOT DISTINCT FROM` a value. */
+/** `column = value`, or `column IS NULL` when [value] is null: the rows the sqlx4k `IS NOT DISTINCT FROM :x` read. */
 internal fun <T : Any> Column<T?>.sameAs(value: T?): Op<Boolean> = if (value == null) isNull() else eq(value)
 
 /**

@@ -49,6 +49,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import org.jetbrains.exposed.v1.core.isNotNull
+import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
 import org.jetbrains.exposed.v1.jdbc.deleteAll
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.selectAll
@@ -56,7 +57,7 @@ import org.koin.core.module.Module
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFails
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.days
@@ -598,7 +599,7 @@ class BudgetsPostgresTest {
             assertEquals(0, deleted, "$name: nor deleted by another org")
             assertTrue(visibleTo(TestCallers.orgA) > 0, name)
         }
-        assertFails("A row of another org is refused") {
+        val refused = assertFailsWith<ExposedSQLException>("A row of another org is refused") {
             database.inOrg(TestCallers.orgB) {
                 BudgetsLimits.insert {
                     it[orgId] = TestCallers.orgA
@@ -611,6 +612,7 @@ class BudgetsPostgresTest {
                 }
             }
         }
+        assertTrue("row-level security" in refused.message.orEmpty(), "Refused by the policy: ${refused.message}")
     }
 }
 
