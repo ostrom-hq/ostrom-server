@@ -155,8 +155,8 @@ internal fun StatementBuilder.transferExpired(transfer: CloudTransfer, now: Inst
     val t = RunnersSessionTransfers
     return t.update(
         {
-            (t.orgId eq transfer.orgId) and (t.sessionId eq transfer.sessionId) and (t.state eq TransferState.OFFERED.wire) and
-                (t.expiresAt lessEq now)
+            (t.orgId eq transfer.orgId) and (t.sessionId eq transfer.sessionId) and
+                (t.state eq TransferState.OFFERED.wire) and (t.expiresAt lessEq now)
         },
     ) {
         it[state] = TransferState.EXPIRED.wire

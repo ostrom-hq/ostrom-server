@@ -49,31 +49,7 @@ internal fun StatementBuilder.sessionInsert(session: CloudSession): InsertStatem
         it[prompt] = session.prompt
         it[repositoryUrl] = session.repository?.url
         it[repositoryRef] = session.repository?.ref
-        it[state] = session.state.wire
-        it[desiredState] = session.desiredState.wire
-        it[phase] = session.phase
-        it[epoch] = session.epoch
-        it[generation] = 0L
-        it[failureCode] = session.failure?.code
-        it[failureMessage] = session.failure?.message
-        it[failureRetryable] = session.failure?.retryable ?: false
-        it[idleTimeoutMinutes] = session.limits.idleTimeoutMinutes
-        it[maxRunMinutes] = session.limits.maxRunMinutes
-        it[restrictedEgress] = session.limits.restrictedEgress
-        it[createdAt] = session.createdAt
-        it[updatedAt] = session.updatedAt
-        it[executionStartedAt] = session.executionStartedAt
-        it[readyAt] = session.readyAt
-        it[lastHeartbeatAt] = session.lastHeartbeatAt
-        it[lastActivityAt] = session.lastActivityAt
-        it[pausedAt] = session.pausedAt
-        it[terminatedAt] = session.terminatedAt
-        it[pausingSince] = session.pausingSince
-        it[runnerStoppedAt] = session.runnerStoppedAt
-        it[runnerTokenHash] = session.runnerTokenHash
-        it[githubAccess] = session.githubAccess.wire
-        it[backgroundSince] = session.backgroundSince
-        it[backgroundSeenAt] = session.backgroundSeenAt
+        sessionLifecycle(it, session)
         it[environment] = session.environment?.let { spec ->
             RECIPE_JSON.encodeToString(CloudEnvironmentSpec.serializer(), spec)
         }
@@ -102,6 +78,35 @@ internal fun StatementBuilder.sessionInsert(session: CloudSession): InsertStatem
         it[bypassCredentialId] = session.permissionBypass?.credentialId
         it[bypassAt] = session.permissionBypass?.at
     }
+
+/** The lifecycle columns of a new session: its states, its failure, its limits and every instant. */
+private fun RunnersSessionsTable.sessionLifecycle(b: UpdateBuilder<*>, session: CloudSession) {
+    b[state] = session.state.wire
+    b[desiredState] = session.desiredState.wire
+    b[phase] = session.phase
+    b[epoch] = session.epoch
+    b[generation] = 0L
+    b[failureCode] = session.failure?.code
+    b[failureMessage] = session.failure?.message
+    b[failureRetryable] = session.failure?.retryable ?: false
+    b[idleTimeoutMinutes] = session.limits.idleTimeoutMinutes
+    b[maxRunMinutes] = session.limits.maxRunMinutes
+    b[restrictedEgress] = session.limits.restrictedEgress
+    b[createdAt] = session.createdAt
+    b[updatedAt] = session.updatedAt
+    b[executionStartedAt] = session.executionStartedAt
+    b[readyAt] = session.readyAt
+    b[lastHeartbeatAt] = session.lastHeartbeatAt
+    b[lastActivityAt] = session.lastActivityAt
+    b[pausedAt] = session.pausedAt
+    b[terminatedAt] = session.terminatedAt
+    b[pausingSince] = session.pausingSince
+    b[runnerStoppedAt] = session.runnerStoppedAt
+    b[runnerTokenHash] = session.runnerTokenHash
+    b[githubAccess] = session.githubAccess.wire
+    b[backgroundSince] = session.backgroundSince
+    b[backgroundSeenAt] = session.backgroundSeenAt
+}
 
 /** The reconciler's schedule of a new session, and the hash of its runner token. */
 internal fun StatementBuilder.sessionRouteInsert(session: CloudSession): InsertStatement<Number> =
@@ -142,7 +147,9 @@ internal fun toSession(row: ResultRow): CloudSession {
         phase = row[s.phase],
         epoch = row[s.epoch],
         generation = row[s.generation],
-        failure = failureCode?.let { SessionFailure(it, row.present(s.failureMessage, s.failureCode), row[s.failureRetryable]) },
+        failure = failureCode?.let {
+            SessionFailure(it, row.present(s.failureMessage, s.failureCode), row[s.failureRetryable])
+        },
         limits = SessionLimits(
             idleTimeoutMinutes = row[s.idleTimeoutMinutes],
             maxRunMinutes = row[s.maxRunMinutes],

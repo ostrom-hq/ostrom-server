@@ -262,7 +262,8 @@ internal class CloudConversationStoreImpl(private val database: JdbcDatabase) : 
 
     override suspend fun pendingWakes(limit: Int): List<PendingWake> = database.query {
         val w = RunnersConversationWakes
-        w.of(limit).select(w.sessionId, w.orgId, w.inputId).map { PendingWake(it[w.orgId], it[w.sessionId], it[w.inputId]) }
+        w.of(limit).select(w.sessionId, w.orgId, w.inputId)
+            .map { PendingWake(it[w.orgId], it[w.sessionId], it[w.inputId]) }
     }
 
     override suspend fun cancelEnded(limit: Int, now: Instant): Int {

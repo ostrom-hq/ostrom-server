@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+@file:Suppress("TooManyFunctions") // One table or function wrapper per router function.
+
 package run.ostrom.server.runners.infrastructure
 
 import run.ostrom.server.kernel.database.InstantColumnType

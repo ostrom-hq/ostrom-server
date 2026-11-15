@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+@file:Suppress("TooManyFunctions") // The port's statements, one function each, so each has its plan.
+
 package run.ostrom.server.runners.infrastructure
 
 import run.ostrom.server.kernel.audit.DiscardingTransactionalOrgAuditTrail
@@ -69,7 +71,6 @@ import kotlin.uuid.Uuid
  * @param written Told of every session written by [compareAndSet] and [setDesiredState], once committed.
  * @param audit Writes an API write's audit entry in its transaction.
  */
-@Suppress("TooManyFunctions") // One implementation of the one port of the table.
 class CloudSessionsRepositoryImpl(
     private val database: JdbcDatabase,
     private val written: CloudSessionWritten = NoCloudSessionWritten,
@@ -247,7 +248,8 @@ class CloudSessionsRepositoryImpl(
         orgId: Uuid,
         journal: OrgAuditRecord?,
         change: JdbcTransaction.(record: () -> Boolean) -> T,
-    ): T = if (journal == null) database.inOrg(orgId) { change { true } } else audit.recording(database, journal, change)
+    ): T =
+        if (journal == null) database.inOrg(orgId) { change { true } } else audit.recording(database, journal, change)
 
     /** The organization of a session, from the one table used across organizations (`runners_session_org`). */
     private suspend fun orgOf(id: Uuid): Uuid? = database.query { scalar(sessionOrg(id)) }
@@ -401,7 +403,8 @@ internal fun StatementBuilder.sessionGitHubAccess(
 ): ReturningStatement {
     val s = RunnersSessionsTable
     val allowed: Op<Boolean> = if (access == GitHubAccessMode.NONE) s.state eq PAUSED else Op.TRUE
-    return s.updateReturning(s.columns, where = { (s.id eq id) and (s.orgId eq orgId) and (s.state notInList OVER) and allowed }) {
+    val open = (s.id eq id) and (s.orgId eq orgId) and (s.state notInList OVER)
+    return s.updateReturning(s.columns, where = { open and allowed }) {
         it[githubAccess] = access.wire
         it[generation] = s.generation + 1L
         it[updatedAt] = now

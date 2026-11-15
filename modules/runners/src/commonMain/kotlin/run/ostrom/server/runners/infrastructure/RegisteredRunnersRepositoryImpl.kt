@@ -40,7 +40,7 @@ class RegisteredRunnersRepositoryImpl(private val database: JdbcDatabase) : Regi
             // The same per-organization lock as the cloud sessions' cap, under its own key.
             lockUntilCommit("runners-registered:${runner.orgId}")
             if (runnerCount(runner.orgId).single() >= max) return@inOrg RunnerRegistrationOutcome.LIMIT_REACHED
-            // No capacity yet: a runner declares it at its heartbeats. A name taken, whatever its case, inserts nothing.
+            // No capacity yet: a runner declares it at its heartbeats. A name taken (any case) inserts nothing.
             if (written { runnerInsert(runner) } == 0) {
                 RunnerRegistrationOutcome.NAME_TAKEN
             } else {

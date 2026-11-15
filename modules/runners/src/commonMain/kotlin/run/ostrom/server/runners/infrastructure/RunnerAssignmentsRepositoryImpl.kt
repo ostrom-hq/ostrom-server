@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+@file:Suppress("TooManyFunctions") // One statement per step of the assignments, tested apart.
+
 package run.ostrom.server.runners.infrastructure
 
 import run.ostrom.server.kernel.database.InstantColumnType
@@ -271,7 +273,12 @@ internal fun assignmentWaiting(orgId: Uuid, runnerId: Uuid): Query {
 }
 
 /** A waiting execution, taken by [runnerId]. */
-internal fun StatementBuilder.assignmentTake(orgId: Uuid, runnerId: Uuid, sessionId: Uuid, epoch: Long): UpdateStatement {
+internal fun StatementBuilder.assignmentTake(
+    orgId: Uuid,
+    runnerId: Uuid,
+    sessionId: Uuid,
+    epoch: Long,
+): UpdateStatement {
     val a = RunnersAssignments
     return a.update({ (a.orgId eq orgId) and (a.sessionId eq sessionId) and (a.epoch eq epoch) }) {
         it[a.runnerId] = runnerId
@@ -279,7 +286,12 @@ internal fun StatementBuilder.assignmentTake(orgId: Uuid, runnerId: Uuid, sessio
 }
 
 /** An execution handed over. */
-internal fun StatementBuilder.assignmentDelivered(orgId: Uuid, sessionId: Uuid, epoch: Long, now: Instant): UpdateStatement {
+internal fun StatementBuilder.assignmentDelivered(
+    orgId: Uuid,
+    sessionId: Uuid,
+    epoch: Long,
+    now: Instant,
+): UpdateStatement {
     val a = RunnersAssignments
     return a.update({ (a.orgId eq orgId) and (a.sessionId eq sessionId) and (a.epoch eq epoch) }) {
         it[deliveredAt] = coalesce(a.deliveredAt, QueryParameter(now, InstantColumnType()))
