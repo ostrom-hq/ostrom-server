@@ -4,6 +4,7 @@ package run.ostrom.server.governance.infrastructure
 import run.ostrom.server.governance.domain.ConfirmationError
 import run.ostrom.server.governance.domain.ConfirmationOutcome
 import run.ostrom.server.governance.domain.ConfirmationRules
+import run.ostrom.server.governance.domain.ConfirmationStatus
 import run.ostrom.server.kernel.database.InstantColumnType
 import org.jetbrains.exposed.v1.core.CustomFunction
 import org.jetbrains.exposed.v1.core.Expression
@@ -38,10 +39,10 @@ import kotlin.uuid.Uuid
 private val C = GovernanceConfirmations
 
 /** The wire value of a pending confirmation. */
-private const val PENDING = "pending"
+private val PENDING = ConfirmationStatus.PENDING.wire
 
 /** The wire value of a confirmed one. */
-private const val CONFIRMED = "confirmed"
+private val CONFIRMED = ConfirmationStatus.CONFIRMED.wire
 
 /** One confirmation, by its key. */
 internal fun confirmationRead(orgId: Uuid, id: String): Query =
@@ -61,7 +62,8 @@ internal fun waitingRead(orgId: Uuid, userId: String, now: Instant): Query = C.s
 /**
  * Expires the overdue ones of an organization, and fails the confirmed ones whose result was lost, once each (indexes
  * `governance_confirmations_expiry`, `governance_confirmations_unsettled`). The rows it marks are the backlog of one
- * sweep pass, one a minute: a handful, bounded by the partial indexes.
+ * sweep pass, one a minute: normally a handful, found through the partial indexes. PostgreSQL has no `LIMIT` on an
+ * `UPDATE`, so after a long outage one pass may return a large backlog (the old statement did the same).
  */
 internal fun StatementBuilder.expireOverdue(orgId: Uuid, now: Instant): ReturningStatement {
     val pending = C.status eq PENDING
@@ -69,7 +71,7 @@ internal fun StatementBuilder.expireOverdue(orgId: Uuid, now: Instant): Returnin
         ((C.status eq CONFIRMED) and C.resultJson.isNull() and
             (C.expiresAt lessEq now - ConfirmationRules.RESULT_GRACE))
     return C.updateReturning(C.columns, where = { (C.orgId eq orgId) and overdue }) {
-        it[status] = case().When(pending, stringParam("expired")).Else(stringParam("failed"))
+        it[status] = case().When(pending, stringParam(ConfirmationStatus.EXPIRED.wire)).Else(stringParam(ConfirmationStatus.FAILED.wire))
         it[errorType] = case().When(pending, errorType).Else(nullableText(ConfirmationRules.RESULT_LOST))
         it[errorMessage] = case().When(pending, errorMessage).Else(nullableText(ConfirmationRules.RESULT_LOST_MESSAGE))
     }
@@ -95,7 +97,7 @@ internal fun StatementBuilder.resultUpdate(orgId: Uuid, id: String, result: Stri
 /** Marks a confirmed write that failed, by its key; never one the sweep already failed (result lost). */
 internal fun StatementBuilder.errorUpdate(orgId: Uuid, id: String, error: ConfirmationError): UpdateStatement =
     C.update({ (C.orgId eq orgId) and (C.id eq id) and (C.status eq CONFIRMED) }) {
-        it[status] = "failed"
+        it[status] = ConfirmationStatus.FAILED.wire
         it[errorType] = error.type
         it[errorMessage] = error.message
     }
