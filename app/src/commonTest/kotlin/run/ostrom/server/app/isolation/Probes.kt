@@ -8,6 +8,7 @@ private val USAGE_READS = setOf(
 
 private val CLOUD_READS = setOf(
     "GET /api/v1/cloud/sessions", "GET /api/v1/cloud/sessions/{id}", "GET /api/v1/runners", "GET /api/v1/events",
+    "GET /api/v1/cloud/transfer-recipients", "GET /api/v1/cloud/transfers", "GET /api/v1/cloud/transfers/{id}",
 )
 
 private val CLOUD_WRITES = CLOUD_READS + setOf(

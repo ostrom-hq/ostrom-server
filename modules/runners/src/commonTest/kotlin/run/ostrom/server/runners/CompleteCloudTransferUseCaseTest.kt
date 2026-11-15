@@ -363,4 +363,21 @@ class CompleteCloudTransferUseCaseTest {
         assertNull(reconcile(start))
         assertEquals(SessionState.FAILED, stored(start).state)
     }
+
+    @Test
+    fun aSessionNamingNoTransferOrOneNobodyHoldsReturnsToItsOwner() = runTest {
+        val unknown = session(state = SessionState.PAUSED, desired = DesiredState.PAUSED)
+            .copy(transferId = Uuid.random()).also(repository::put)
+        reconcile(unknown)
+        assertNull(stored(unknown).transferId)
+
+        val lost = session(state = SessionState.TRANSFERRING, desired = DesiredState.PAUSED).also(repository::put)
+        reconcile(lost)
+        assertEquals(SessionState.PAUSED, stored(lost).state)
+
+        // Without the transfers wiring, a transferring session with no transfer is only watched.
+        val stranded = session(state = SessionState.TRANSFERRING, desired = DesiredState.PAUSED)
+            .also(repository::put)
+        assertEquals(t0 + 15.seconds, bare(stranded))
+    }
 }

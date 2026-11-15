@@ -109,7 +109,7 @@ class ReconcileCloudSessionUseCaseImpl(
                     now,
                 )
             session.state == SessionState.TRANSFERRING -> transfers?.step(session) ?: (now + WATCH_DELAY)
-            session.transferId != null && transfers != null -> transfers.begin(session)
+            transfers != null && session.transferId != null -> transfers.begin(session)
             else -> paused(session, now)
         }
 

@@ -23,23 +23,23 @@ class MemberTransferRecipients(
     private val members: MemberDirectory,
     private val logins: MemberLogins,
 ) : TransferRecipients {
+    private val administrators = setOf(OrgRole.OWNER, OrgRole.ADMIN)
+
     override suspend fun list(orgId: Uuid, limit: Int): List<TransferRecipient> {
         val roles = members.roles(orgId, limit) ?: return emptyList()
         val names = logins.loginsOf(orgId, roles.keys.mapNotNull(Uuid::parseOrNull))
         return roles.mapNotNull { (id, role) ->
-            names[Uuid.parse(id)]?.let { TransferRecipient(id, it, role in ADMINISTRATORS) }
+            names[Uuid.parse(id)]?.let { TransferRecipient(id, it, role in administrators) }
         }.sortedBy { it.login.lowercase() }
     }
 
-    override suspend fun find(orgId: Uuid, reference: String): String? =
-        Uuid.parseOrNull(reference)?.toString()
-            ?: logins.idsOf(orgId, listOf(reference)).values.firstOrNull()?.toString()
+    override suspend fun find(orgId: Uuid, reference: String): String? {
+        val id = Uuid.parseOrNull(reference)
+        if (id != null) return id.toString()
+        return logins.idsOf(orgId, listOf(reference)).values.firstOrNull()?.toString()
+    }
 
     override suspend fun eligible(orgId: Uuid, memberId: String): Boolean = members.isActiveMember(orgId, memberId)
-
-    private companion object {
-        val ADMINISTRATORS = setOf(OrgRole.OWNER, OrgRole.ADMIN)
-    }
 }
 
 /**

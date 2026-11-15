@@ -27,9 +27,12 @@ import run.ostrom.server.kernel.logging.JsonLogger
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.ServerModule
+import run.ostrom.server.runners.domain.CloudTransfer
 import run.ostrom.server.runners.domain.CloudTransfersUseCaseImpl
 import run.ostrom.server.runners.domain.DesiredState
+import run.ostrom.server.runners.domain.SessionFailure
 import run.ostrom.server.runners.domain.SessionState
+import run.ostrom.server.runners.domain.TransferState
 import run.ostrom.server.runners.domain.TransferRecipient
 import run.ostrom.server.runners.fakes.FakeTransferRecipients
 import run.ostrom.server.runners.fakes.InMemoryCloudSessionsRepository
@@ -44,6 +47,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.time.Clock
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** The transfer routes over the real use cases: who may write, what a request must carry, how a refusal answers. */
@@ -249,5 +253,22 @@ class CloudTransfersRoutesTest {
         policy.membersOffer = false
         assertEquals(HttpStatusCode.Forbidden, client.read("/api/v1/cloud/transfer-recipients", "alice").status)
         assertEquals(HttpStatusCode.OK, client.read("/api/v1/cloud/transfer-recipients", "carol").status)
+    }
+
+    @Test
+    fun aDecidedTransferShowsWhenWhoAndWhy() = run {
+        val at = Instant.parse("2026-10-30T10:00:00Z")
+        val done = CloudTransfer(
+            id = Uuid.random(), orgId = ORG_A, sessionId = Uuid.random(), fromMemberId = aliceId, toMemberId = bobId,
+            initiatedBy = aliceId, state = TransferState.FAILED, resume = false, version = 3, createdAt = at,
+            updatedAt = at, expiresAt = at, decidedBy = bobId, decidedAt = at, completedAt = at, atEpoch = 4,
+            failure = SessionFailure("transfer_timeout", "Too slow."),
+        ).also { transfers.transfers[it.id] = it }
+
+        val read = client.read("/api/v1/cloud/transfers/${done.id}", "alice")
+        assertEquals(HttpStatusCode.OK, read.status)
+        for (part in listOf("\"atEpoch\":4", "transfer_timeout", "\"completedAt\":\"2026-10-30T10:00:00Z\"")) {
+            assertTrue(part in read.bodyAsText(), read.bodyAsText())
+        }
     }
 }

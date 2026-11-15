@@ -227,4 +227,24 @@ class CloudTransfersPostgresTest {
             database.close()
         }
     }
+
+    @Test
+    fun anAdministratorsTransferAndItsSessionChangeAreStoredTogether() = runTest {
+        val database = TestDatabase.create() ?: return@runTest
+        try {
+            val (sessions, transfers) = repositories(database)
+            val target = pausedSession(sessions)
+            val stored = sessions.get(ORG_A, target.id)!!
+            val change = SessionChange(stored, stored.copy(transferId = null, updatedAt = now), now)
+            val failed = transfer(target.id, "k", "d").copy(
+                state = TransferState.FAILED,
+                failure = SessionFailure("recipient_unavailable", "Gone."),
+            )
+            assertIs<TransferOpening.Opened>(transfers.open(failed, now, change))
+            assertEquals("recipient_unavailable", transfers.find(ORG_A, failed.id)?.failure?.code)
+            assertEquals(1, sessions.get(ORG_A, target.id)?.generation)
+        } finally {
+            database.close()
+        }
+    }
 }
