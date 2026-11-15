@@ -95,7 +95,7 @@ class UseGateUseCaseImpl(
     // [asked]: the open sessions that asked, or null when no session is read. Each is held under its end's lock
     // (AUDIT-SERVEUR-3 B2), in one order, before the gate's row: one whose end already read its gates is not open.
     private suspend fun move(actor: GateActor, gateId: Uuid, use: GateUse, asked: List<String>?): Gate =
-        repository.transaction {
+        repository.transaction(actor.orgId) {
             val open = asked == null || stillOpen(actor.orgId, asked)
             val gate = lockGate(actor.orgId, gateId) ?: throw GateNotFoundException()
             val launch = launchOf(actor, gate)
@@ -182,7 +182,7 @@ class UseGateUseCaseImpl(
 }
 
 // Out of the class, which reads none of it: the sessions locked in one order, then whether one has not ended.
-private suspend fun GatesTransaction.stillOpen(orgId: Uuid, asked: List<String>): Boolean {
+private fun GatesTransaction.stillOpen(orgId: Uuid, asked: List<String>): Boolean {
     val held = asked.sorted()
     held.forEach { lockSession(orgId, it) }
     return held.any { sessionEndedAt(orgId, it) == null }

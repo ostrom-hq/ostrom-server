@@ -31,6 +31,7 @@ import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.Transaction
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.koin.dsl.module
@@ -56,6 +57,9 @@ class McpHostedPostgresTest : RelayPostgresHarness() {
                 .getOrThrow().first().get("org").asString()
             published += org to events
         }
+
+        override fun publishIn(transaction: JdbcTransaction, orgId: Uuid, events: List<OrgEventDraft>) =
+            error("The relay publishes on sqlx4k")
     }
 
     @Test

@@ -2,11 +2,13 @@
 package run.ostrom.server.gates.infrastructure
 
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.database.TENANT_ROLE
+import run.ostrom.server.secrets.infrastructure.TENANT_ROLE_SQL
 
 /**
  * The gates schema. Rows are isolated by organization in the database itself: row level security is forced (the
- * owner included) and every query runs in a transaction that first sets `ostrom.org_id`; without it, no row is
- * visible and none can be written.
+ * owner included) and every query runs as the tenant role in a transaction that first sets `ostrom.org_id`; without
+ * it, no row is visible and none can be written.
  */
 val GatesMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -169,5 +171,17 @@ val GatesMigrations: List<SchemaMigration> = listOf(
         9,
         "gates_sessions_by_gate",
         "CREATE INDEX gates_sessions_by_gate ON gates_sessions (org_id, gate_id)",
+    ),
+    // JVM step 4: the gates move to Exposed, whose queries run as the tenant role (`JdbcDatabase.inOrg`). It reads and
+    // writes the four tables, under the same policies (they hold for every role); no gate, request or link is ever
+    // deleted by the server, so it gets no DELETE. The role is created here too for a database that has no identity
+    // module (each module's tests), as the gateway's migration 2.
+    SchemaMigration(
+        10,
+        "gates_on_the_tenant_role",
+        TENANT_ROLE_SQL + "\n" + """
+        GRANT SELECT, INSERT, UPDATE ON gates_gates, gates_requests TO $TENANT_ROLE;
+        GRANT SELECT, INSERT ON gates_sessions, gates_session_ends TO $TENANT_ROLE
+        """.trimIndent(),
     ),
 )

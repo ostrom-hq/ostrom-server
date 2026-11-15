@@ -12,7 +12,7 @@ import run.ostrom.server.gates.domain.models.GateSubject
 import run.ostrom.server.gates.domain.models.RequestStatus
 import run.ostrom.server.gates.domain.services.GateActorResolver
 import run.ostrom.server.gates.domain.services.GateReceiptSigner
-import run.ostrom.server.gates.infrastructure.PostgresGatesRepository
+import run.ostrom.server.gates.domain.repositories.GatesRepository
 import run.ostrom.server.gates.presentation.ApprovalQueue
 import run.ostrom.server.gates.presentation.GateScopes
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -77,7 +77,7 @@ class GatesReadsBenchTest {
     @Test
     fun theApprovalQueueKeepsItsBudget() = benchTest(listOf(GatesModule), overrides) { server ->
         val gates = (0 until GATES_PER_ORG).map { gateOf(acme, it) }
-        PostgresGatesRepository(server.driver).transaction {
+        server.koin.get<GatesRepository>().transaction(acme) {
             for (gate in gates) {
                 insertGate(gate)
                 insertRequests(listOf(requestOf(gate, 0), requestOf(gate, 1)))

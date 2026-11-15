@@ -7,6 +7,7 @@ import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.events.OrgEventType
 import run.ostrom.server.mcprelay.infrastructure.HostUnreachableNoticeImpl
 import io.github.smyrgeorge.sqlx4k.Transaction
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -39,6 +40,9 @@ class HostUnreachableNoticeTest {
         }
 
         override suspend fun publishIn(transaction: Transaction, orgId: Uuid, events: List<OrgEventDraft>) =
+            error("Its own transaction")
+
+        override fun publishIn(transaction: JdbcTransaction, orgId: Uuid, events: List<OrgEventDraft>) =
             error("Its own transaction")
     }
 

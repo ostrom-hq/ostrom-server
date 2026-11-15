@@ -9,6 +9,8 @@ kotlin {
         commonMain.dependencies {
             implementation(project(":kernel"))
             implementation(project(":modules:receipts"))
+            // TENANT_ROLE_SQL: the tenant role its queries run as (migration 10), shared with every module.
+            implementation(project(":modules:secrets"))
             implementation(libs.cryptography.core)
         }
         commonTest.dependencies {

@@ -12,7 +12,7 @@ import run.ostrom.server.gates.domain.models.RequestStatus
 import run.ostrom.server.gates.domain.services.GateActorResolver
 import run.ostrom.server.gates.domain.services.GateReceiptSigner
 import run.ostrom.server.gates.domain.usecases.SessionApproversUseCase
-import run.ostrom.server.gates.infrastructure.PostgresGatesRepository
+import run.ostrom.server.gates.domain.repositories.GatesRepository
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.OrgPrincipal
 import run.ostrom.server.kernel.auth.OrgRole
@@ -93,11 +93,11 @@ class SessionApproversPostgresTest {
 
     @Test
     fun theApproversOfASessionsGatesAreTheyAGateWasSentTo() = serverTest(listOf(GatesModule), overrides) { server ->
-        val repository = PostgresGatesRepository(server.driver)
+        val repository = server.koin.get<GatesRepository>()
         val joined = gate(orgA, 1, listOf("s-1", "s-2"))
         val other = gate(orgA, 2, listOf("s-3"))
         val theirs = gate(orgB, 3, listOf("s-4"))
-        repository.transaction {
+        repository.transaction(orgA) {
             insertGate(joined)
             insertRequests(
                 listOf(request(joined, "Rev", RequestStatus.APPROVED), request(joined, "ops", RequestStatus.CLOSED)),
@@ -105,7 +105,7 @@ class SessionApproversPostgresTest {
             insertGate(other)
             insertRequests(listOf(request(other, "ops", RequestStatus.PENDING)))
         }
-        repository.transaction {
+        repository.transaction(orgB) {
             insertGate(theirs)
             insertRequests(listOf(request(theirs, "rev", RequestStatus.PENDING)))
         }

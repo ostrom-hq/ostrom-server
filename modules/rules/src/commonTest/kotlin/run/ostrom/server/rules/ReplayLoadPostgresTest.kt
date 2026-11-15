@@ -156,7 +156,7 @@ class ReplayLoadPostgresTest {
         val recent = (1..RECENT).map { it.minutes }
         val old = (1..OLD).map { 31.days + it.minutes }
         (recent + old).chunked(CHUNK).forEach { chunk ->
-            gates.transaction {
+            gates.transaction(orgA) {
                 chunk.forEach { ago ->
                     // A command of its own: no two actions share their rules' coverage, the worst case.
                     val subject = push(command = "git push origin main # $ago")
@@ -238,8 +238,10 @@ class ReplayLoadPostgresTest {
         const val MIB = 1024 * 1024
         val MAX_DURATION: Duration = 30.seconds
 
-        // The statements of a replay today (20, Build 41717982170), whatever its number of actions and rules.
-        const val MAX_STATEMENTS = 20
+        // The statements of a replay today, whatever its number of actions and rules: 20 (Build 41717982170), 21 since
+        // the gates' read runs in `inOrg`, whose tenant role (`SET LOCAL ROLE`) is one statement more (measured, JVM
+        // step 4).
+        const val MAX_STATEMENTS = 21
 
         val SAMPLE_EVERY: Duration = 0.01.seconds
         const val GATE_COLUMNS = "id, org_id, gate_key, subject, node, label, mode, status, asked_by, asked_via, " +

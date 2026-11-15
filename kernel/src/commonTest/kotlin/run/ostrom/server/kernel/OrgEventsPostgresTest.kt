@@ -3,7 +3,13 @@ package run.ostrom.server.kernel
 
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import org.jetbrains.exposed.v1.core.Table
+import org.jetbrains.exposed.v1.core.intLiteral
+import org.jetbrains.exposed.v1.jdbc.select
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.events.DiscardingOrgEventPublisher
 import run.ostrom.server.kernel.events.OrgEventDraft
 import run.ostrom.server.kernel.events.OrgEventType
@@ -29,6 +35,30 @@ class OrgEventsPostgresTest {
             assertEquals(1L, answer)
         } finally {
             database.close()
+        }
+    }
+
+    @Test
+    fun theDiscardingPublisherWritesNothingInTheCallersExposedTransaction() = runTest {
+        // On the real clock: the pool's connection timeouts are real.
+        withContext(Dispatchers.Default) {
+            val database = TestDatabase.create() ?: return@withContext
+            val jdbc = JdbcDatabase(database.servingConfig, JdbcDatabase.MIN_POOL_SIZE)
+            try {
+                val one = intLiteral(1)
+                val answer = jdbc.query {
+                    DiscardingOrgEventPublisher().publishIn(
+                        this,
+                        Uuid.random(),
+                        listOf(OrgEventDraft(OrgEventType.WAIT_RESOLVED, "wait-1", Uuid.random())),
+                    )
+                    Table.Dual.select(one).single()[one]
+                }
+                assertEquals(1, answer)
+            } finally {
+                jdbc.close()
+                database.close()
+            }
         }
     }
 }
