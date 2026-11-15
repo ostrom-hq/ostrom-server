@@ -45,6 +45,7 @@ import kotlinx.coroutines.Job
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration
@@ -175,6 +176,7 @@ class MemoryProposalsPostgresTest {
         assertEquals(setOf(ORG_A, ORG_B) - first, store.organizations(first, 10).toSet(), "by id, after the cursor")
 
         assertEquals(3, proposals.settle())
+        assertFalse(store.close(ORG_A, edited.id, accept = false, edits = null), "A closed one is not closed twice")
         val ada = caller()
         assertEquals(listOf("Fixed"), server.koin.get<MemoryRepository>().index(ada, null, emptyList(), null, 50)
             .entries.map { it.title })

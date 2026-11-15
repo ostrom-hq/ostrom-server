@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.memory.infrastructure
 
-import run.ostrom.server.kernel.database.inOrg
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.memory.domain.MemoryCaller
 import run.ostrom.server.memory.domain.MemoryCursor
 import run.ostrom.server.memory.domain.MemoryEntry
@@ -11,12 +11,19 @@ import run.ostrom.server.memory.domain.MemoryProposalStore
 import run.ostrom.server.memory.domain.MemoryStatus
 import run.ostrom.server.memory.domain.PendingProposal
 import run.ostrom.server.memory.domain.ProposalEdits
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.QueryExecutor
-import io.github.smyrgeorge.sqlx4k.ResultSet
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
+import org.jetbrains.exposed.v1.core.plus
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.Op
+import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.core.less
+import org.jetbrains.exposed.v1.core.or
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -27,113 +34,107 @@ import kotlin.uuid.Uuid
  * the caller's organization; the settling pass finds the organizations to settle through `memory_settling_orgs`, a
  * function owned by `ostrom_router` that returns their ids only, then settles each one in its own.
  *
- * @param driver The database.
+ * @param database The serving role's pool.
  * @param clock The time a decision is stamped with.
  */
-internal class MemoryProposalStoreImpl(private val driver: Driver, private val clock: Clock) : MemoryProposalStore {
+internal class MemoryProposalStoreImpl(
+    private val database: JdbcDatabase,
+    private val clock: Clock,
+) : MemoryProposalStore {
     override suspend fun attach(orgId: Uuid, id: Uuid, waitId: Uuid) {
-        driver.inOrg(orgId) {
-            execute(
-                Statement.create(
-                    "UPDATE memory_entries SET proposal_wait_id = :wait WHERE org_id = :org_id AND id = :id " +
-                        "AND status = 'proposed'",
-                ).bind("wait", waitId).bind("org_id", orgId).bind("id", id),
-            ).getOrThrow()
+        database.inOrg(orgId) {
+            val e = MemoryEntries
+            e.update({ (e.orgId eq orgId) and (e.id eq id) and (e.status eq STATUS_PROPOSED) }) {
+                it[proposalWaitId] = waitId
+            }
         }
     }
 
-    override suspend fun proposals(caller: MemoryCaller, limit: Int): List<MemoryEntry> = driver.inOrg(caller.orgId) {
-        val mine = if (caller.admin) "" else " AND author_id = :author"
-        val statement = Statement.create(
-            "SELECT $ENTRY_COLUMNS FROM memory_entries WHERE org_id = :org_id AND scope = 'team' AND owner_id = '' " +
-                "AND status = 'proposed'$mine ORDER BY updated_at, id LIMIT :limit",
-        ).bind("org_id", caller.orgId).bind("limit", limit)
-        if (!caller.admin) statement.bind("author", caller.memberId)
-        entriesOf(fetchAll(statement).getOrThrow().toList())
-    }
+    override suspend fun proposals(caller: MemoryCaller, limit: Int): List<MemoryEntry> =
+        database.inOrg(caller.orgId) {
+            val e = MemoryEntries
+            val rows = e.select(ENTRY_COLUMNS).where {
+                (e.orgId eq caller.orgId) and (e.scope eq TEAM) and (e.ownerId eq "") and
+                    (e.status eq STATUS_PROPOSED) and (if (caller.admin) Op.TRUE else e.authorId eq caller.memberId)
+            }.orderBy(e.updatedAt to SortOrder.ASC, e.id to SortOrder.ASC).limit(limit).toList()
+            entriesOf(rows)
+        }
 
     override suspend fun decide(
         caller: MemoryCaller,
         id: Uuid,
         accept: Boolean,
         check: (MemoryEntry) -> Unit,
-    ): PendingProposal = driver.inOrg(caller.orgId) {
-        val row = fetchAll(
-            Statement.create(
-                "SELECT $ENTRY_COLUMNS, proposal_wait_id FROM memory_entries WHERE org_id = :org_id AND id = :id " +
-                    "AND scope = 'team' FOR UPDATE",
-            ).bind("org_id", caller.orgId).bind("id", id),
-        ).getOrThrow().firstOrNull() ?: throw MemoryNotFoundException()
+    ): PendingProposal = database.inOrg(caller.orgId) {
+        val e = MemoryEntries
+        val row = e.select(ENTRY_COLUMNS + e.proposalWaitId)
+            .where { (e.orgId eq caller.orgId) and (e.id eq id) and (e.scope eq TEAM) }
+            .forUpdate().firstOrNull() ?: throw MemoryNotFoundException()
         val entry = entriesOf(listOf(row)).single()
         check(entry)
         if (entry.status != MemoryStatus.PROPOSED) throw MemoryNotProposedException()
         val now = clock.now()
         closeOne(caller.orgId, id, accept, null, now)
         val status = if (accept) MemoryStatus.ACTIVE else MemoryStatus.REJECTED
-        PendingProposal(
-            entry.copy(status = status, version = entry.version + 1, updatedAt = now),
-            row.get("proposal_wait_id").asUuidOrNull(),
-        )
+        val settled = entry.copy(status = status, version = entry.version + 1, updatedAt = now)
+        PendingProposal(settled, row[e.proposalWaitId])
     }
 
-    override suspend fun organizations(after: Uuid?, limit: Int): List<Uuid> = driver.fetchAll(
-        // The serving role alone runs the function; it returns organizations' ids, nothing of an entry.
-        Statement.create("SELECT org_id FROM memory_settling_orgs(CAST(:after AS UUID), CAST(:limit AS INTEGER))")
-            .bind("after", after).bind("limit", limit),
-    ).getOrThrow().map { it.get("org_id").asUuid() }
+    // The serving role alone runs the function; it returns organizations' ids, nothing of an entry.
+    override suspend fun organizations(after: Uuid?, limit: Int): List<Uuid> = database.query {
+        val f = MemorySettlingOrgs
+        f.of(after, limit).select(f.orgId).map { it[f.orgId] }
+    }
 
     override suspend fun pending(orgId: Uuid, after: MemoryCursor?, limit: Int): List<PendingProposal> =
-        driver.inOrg(orgId) {
-            val cursor = if (after == null) "" else PENDING_AFTER
-            val statement = Statement.create(
-                "SELECT $ENTRY_COLUMNS, proposal_wait_id FROM memory_entries WHERE org_id = :org_id " +
-                    "AND status = 'proposed'$cursor ORDER BY updated_at, id LIMIT :limit",
-            ).bind("org_id", orgId).bind("limit", limit)
-            if (after != null) statement.bind("after_at", after.updatedAt).bind("after_id", after.id)
-            pendingOf(fetchAll(statement).getOrThrow().toList())
+        database.inOrg(orgId) {
+            val e = MemoryEntries
+            val beyond = if (after == null) Op.TRUE else
+                (e.updatedAt greater after.updatedAt) or ((e.updatedAt eq after.updatedAt) and (e.id greater after.id))
+            val rows = e.select(ENTRY_COLUMNS + e.proposalWaitId)
+                .where { (e.orgId eq orgId) and (e.status eq STATUS_PROPOSED) and beyond }
+                .orderBy(e.updatedAt to SortOrder.ASC, e.id to SortOrder.ASC).limit(limit).toList()
+            entriesOf(rows).zip(rows) { entry, row -> PendingProposal(entry, row[e.proposalWaitId]) }
         }
 
-    private suspend fun QueryExecutor.pendingOf(rows: List<ResultSet.Row>): List<PendingProposal> =
-        entriesOf(rows).zip(rows) { entry, row -> PendingProposal(entry, row.get("proposal_wait_id").asUuidOrNull()) }
-
     override suspend fun close(orgId: Uuid, id: Uuid, accept: Boolean, edits: ProposalEdits?): Boolean =
-        driver.inOrg(orgId) { closeOne(orgId, id, accept, edits, clock.now()) }
+        database.inOrg(orgId) { closeOne(orgId, id, accept, edits, clock.now()) }
 
     override suspend fun purgeRejected(orgId: Uuid, before: Instant) {
-        driver.inOrg(orgId) {
-            execute(
-                Statement.create(
-                    "DELETE FROM memory_entries WHERE org_id = :org_id AND status = 'rejected' " +
-                        "AND updated_at < :before",
-                ).bind("org_id", orgId).bind("before", before),
-            ).getOrThrow()
+        database.inOrg(orgId) {
+            val e = MemoryEntries
+            e.deleteWhere { (e.orgId eq orgId) and (e.status eq REJECTED) and (e.updatedAt less before) }
         }
     }
 
     /** Accepts or rejects a proposal still waiting, once: a concurrent replica loses on the status. */
-    private suspend fun QueryExecutor.closeOne(
+    private fun JdbcTransaction.closeOne(
         orgId: Uuid,
         id: Uuid,
         accept: Boolean,
         edits: ProposalEdits?,
         now: Instant,
     ): Boolean {
-        val text = if (edits == null) "" else ", title = :title, summary = :summary, content = :content"
-        val statement = Statement.create(
-            "UPDATE memory_entries SET status = :status, version = version + 1, updated_at = :now$text " +
-                "WHERE org_id = :org_id AND id = :id AND status = 'proposed'",
-        ).bind("status", if (accept) "active" else "rejected").bind("now", now).bind("org_id", orgId).bind("id", id)
-        if (edits != null) {
-            statement.bind("title", edits.title).bind("summary", edits.summary).bind("content", edits.content)
+        val e = MemoryEntries
+        val closed = e.update({ (e.orgId eq orgId) and (e.id eq id) and (e.status eq STATUS_PROPOSED) }) {
+            it[status] = if (accept) STATUS_ACTIVE else REJECTED
+            it[version] = version + 1
+            it[updatedAt] = now
+            if (edits != null) {
+                it[title] = edits.title
+                it[summary] = edits.summary
+                it[content] = edits.content
+            }
         }
-        return execute(statement).getOrThrow() == 1L
+        return closed == 1
     }
 
-    private suspend fun QueryExecutor.entriesOf(rows: List<ResultSet.Row>): List<MemoryEntry> {
-        val tags = tagsOf(rows.map { it.id() })
-        return rows.map { it.toEntry(tags[it.id()].orEmpty()) }
+    private fun JdbcTransaction.entriesOf(rows: List<ResultRow>): List<MemoryEntry> {
+        val tags = tagsOf(rows.map { it[MemoryEntries.id] })
+        return rows.map { it.toEntry(tags[it[MemoryEntries.id]].orEmpty()) }
+    }
+
+    private companion object {
+        const val REJECTED = "rejected"
     }
 }
-
-/** The waiting proposals after a cursor, oldest first. */
-private const val PENDING_AFTER = " AND (updated_at > :after_at OR (updated_at = :after_at AND id > :after_id))"
