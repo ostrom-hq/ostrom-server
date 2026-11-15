@@ -77,6 +77,40 @@ class SharingRefreshPostgresTest : SharingPostgresHarness() {
     ).getOrThrow().single().let { it.get("refresh_pending").asBoolean() to it.get("credential_version").asLong() }
 
     @Test
+    fun aDecisionOnAStateThatChangedIsMadeAgainAndOneThatKeepsChangingFails() =
+        serverTest(modules, overrides) { server ->
+            with(server) {
+                val shared = shareAs("member-a").body<SharedAccountResponse>()
+                val id = Uuid.parse(shared.id)
+                val refreshes = koin.get<AccountRefreshRepository>()
+                val accounts = koin.get<SharedAccountRepository>()
+                // Another write lands between the read and the claim once: the claim is decided again, then lands.
+                var decisions = 0
+                val claimed = refreshes.locked(Sharing.orgA, id) { state ->
+                    decisions++
+                    if (decisions == 1) accounts.setStatus(Sharing.orgA, id, AccountStatus.DISABLED)
+                    RefreshWrite.Claim to state?.pending
+                }
+                assertEquals(2, decisions)
+                assertEquals(false, claimed)
+                assertEquals(true, intent(shared.id).first)
+                // A row rewritten at every decision: the look gives up.
+                var round = 0
+                assertFailsWith<IllegalStateException> {
+                    refreshes.locked(Sharing.orgA, id) { _ ->
+                        round++
+                        val next = if (round % 2 == 0) AccountStatus.DISABLED else AccountStatus.READY
+                        accounts.setStatus(Sharing.orgA, id, next)
+                        RefreshWrite.Retire to Unit
+                    }
+                }
+                assertEquals(8, round)
+                // A gone account is decided on as such, and nothing is written.
+                assertEquals(null, refreshes.locked(Sharing.orgA, Uuid.random()) { RefreshWrite.Claim to it })
+            }
+        }
+
+    @Test
     fun twoReplicasLeasingTogetherSendTheRefreshTokenOnceAndBothServeTheRenewedPair() =
         serverTest(modules, overrides) { server ->
             with(server) {

@@ -1,64 +1,56 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.sharing.infrastructure
 
-import run.ostrom.server.secrets.infrastructure.fetchInOrg
-import run.ostrom.server.secrets.infrastructure.inTenant
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.sharing.domain.QuotaWindow
 import run.ostrom.server.sharing.domain.QuotaWindowRepository
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asDouble
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
-import kotlin.time.Instant
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.vendors.ForUpdateOption
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.upsert
 import kotlin.uuid.Uuid
 
 /**
- * [QuotaWindowRepository] on PostgreSQL ([SharingMigrations]), every query confined to the org it names (S2-01). A
- * window is only written for an account of that org: the insert selects the account row, which another org's
- * confinement hides.
+ * [QuotaWindowRepository] on PostgreSQL ([SharingMigrations]) through Exposed, every query confined to the org it
+ * names (`inOrg`, S2-01). A window is only written for an account of that org: the transaction reads the account row
+ * first, which another org's confinement hides.
  *
- * @param driver The database.
+ * @param database The serving role's pool.
  */
-class QuotaWindowRepositoryImpl(private val driver: Driver) : QuotaWindowRepository {
+class QuotaWindowRepositoryImpl(private val database: JdbcDatabase) : QuotaWindowRepository {
     override suspend fun put(orgId: Uuid, id: Uuid, windows: List<QuotaWindow>) {
-        driver.inTenant(orgId) {
+        database.inOrg(orgId) {
+            // The account is held until commit (`FOR KEY SHARE`): a delete meanwhile waits, the windows never dangle.
+            if (accountOfOrg(orgId, id).forUpdate(ForUpdateOption.PostgreSQL.ForKeyShare()).empty()) return@inOrg
+            val w = SharingWindows
             windows.forEach { window ->
-                execute(
-                    Statement.create(UPSERT)
-                        .bind("org_id", orgId)
-                        .bind("id", id)
-                        .bind("name", window.window)
-                        .bind("utilization", window.utilization)
-                        .bindNullable("resets_at", window.resetsAt, Instant::class)
-                        .bind("observed_at", window.observedAt),
-                ).getOrThrow()
+                w.upsert(w.accountId, w.name, onUpdateExclude = listOf(w.orgId)) {
+                    it[w.orgId] = orgId
+                    it[w.accountId] = id
+                    it[w.name] = window.window
+                    it[w.utilization] = window.utilization
+                    it[w.resetsAt] = window.resetsAt
+                    it[w.observedAt] = window.observedAt
+                }
             }
         }
     }
 
-    override suspend fun byAccount(orgId: Uuid): Map<Uuid, List<QuotaWindow>> = driver.fetchInOrg(
-        orgId,
-        Statement.create(
-            "SELECT account_id, name, utilization, resets_at, observed_at FROM sharing_windows " +
-                "WHERE org_id = :org_id LIMIT 10000",
-        ).bind("org_id", orgId),
-    ).getOrThrow().map { row ->
-        row.get("account_id").asUuid() to QuotaWindow(
-            window = row.get("name").asString(),
-            utilization = row.get("utilization").asDouble(),
-            resetsAt = row.get("resets_at").asInstantOrNull(),
-            observedAt = row.get("observed_at").asInstant(),
-        )
-    }.groupBy({ it.first }, { it.second })
-
-    private companion object {
-        const val UPSERT =
-            "INSERT INTO sharing_windows (org_id, account_id, name, utilization, resets_at, observed_at) " +
-                "SELECT org_id, id, :name, :utilization, :resets_at, :observed_at FROM sharing_accounts " +
-                "WHERE org_id = :org_id AND id = :id " +
-                "ON CONFLICT (account_id, name) DO UPDATE SET utilization = EXCLUDED.utilization, " +
-                "resets_at = EXCLUDED.resets_at, observed_at = EXCLUDED.observed_at"
+    override suspend fun byAccount(orgId: Uuid): Map<Uuid, List<QuotaWindow>> = database.inOrg(orgId) {
+        val w = SharingWindows
+        w.select(w.accountId, w.name, w.utilization, w.resetsAt, w.observedAt)
+            .where { w.orgId eq orgId }
+            .limit(MAX_WINDOWS)
+            .map { row ->
+                row[w.accountId] to QuotaWindow(
+                    window = row[w.name],
+                    utilization = row[w.utilization],
+                    resetsAt = row[w.resetsAt],
+                    observedAt = row[w.observedAt],
+                )
+            }
+            .groupBy({ it.first }, { it.second })
     }
 }
+
+private const val MAX_WINDOWS = 10_000
