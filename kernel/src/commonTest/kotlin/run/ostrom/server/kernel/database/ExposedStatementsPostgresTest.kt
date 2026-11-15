@@ -61,9 +61,9 @@ class ExposedStatementsPostgresTest {
     @Test
     fun aWriteReturnsWhatItChangedAndAReadMapsItsRows() = withRows {
         listOf(1L to 10L, 2L to 20L, 3L to 30L).forEach { (k, v) ->
-            assertEquals(1, write { insertRow(k, v) })
+            assertEquals(1, written { insertRow(k, v) })
         }
-        assertEquals(2, write { Rows.update({ Rows.k greater 1L }) { it[Rows.v] = 5L } })
+        assertEquals(2, written { Rows.update({ Rows.k greater 1L }) { it[Rows.v] = 5L } })
 
         val read = Read(Rows.select(Rows.k).orderBy(Rows.k to SortOrder.ASC)) { it[Rows.k] }
         assertEquals(listOf(1L, 2L, 3L), read.rows())

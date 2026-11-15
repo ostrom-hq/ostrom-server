@@ -54,10 +54,20 @@ fun JdbcTransaction.lockKeyUntilCommit(key: String) {
  * Runs one write built by [body] in this transaction: the plan tests explain the same builder.
  *
  * @param body The statement.
- *
- * @return What it returns: the rows an update or a delete changed.
  */
-fun <T : Any> JdbcTransaction.write(body: StatementBuilder.() -> Statement<T>): T? =
+fun <T : Any> JdbcTransaction.write(body: StatementBuilder.() -> Statement<T>) {
+    written(body)
+}
+
+/**
+ * Runs one write built by [body] in this transaction, as [write], and returns what it returns: the rows an update or a
+ * delete changed, for a conditional write whose outcome the repository decides on.
+ *
+ * @param body The statement.
+ *
+ * @return Its result.
+ */
+fun <T : Any> JdbcTransaction.written(body: StatementBuilder.() -> Statement<T>): T? =
     buildStatement(body).toExecutable().execute(this)
 
 /**

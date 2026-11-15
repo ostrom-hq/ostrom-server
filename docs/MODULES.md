@@ -186,7 +186,7 @@ override suspend fun rename(orgId: Uuid, id: Uuid, name: String): Boolean = data
   plan tests explain is an `internal` function of the module (a `Query`, or a `StatementBuilder.()` write run with
   the kernel's `write { … }`), so the test explains what the repository sends (`AdmissionReads.kt` in the gateway).
 - The kernel's `ExposedStatements.kt` and `ExposedExpressions.kt` hold what every module shares:
-  `Read(query) { row -> … }` (a read and its mapping, the query alone for a plan), `write { … }`,
+  `Read(query) { row -> … }` (a read and its mapping, the query alone for a plan), `write { … }` (and `written { … }`, its result),
   `lockKeyUntilCommit(key)` (the sqlx4k repositories' `pg_advisory_xact_lock(hashtextextended(key, 0))`, kept so that both versions take turns during a
   rollout; `advisoryLock(key)` is its read, for a plan), `countWhere`, `maxWhere`, `maxOrZero`, `asBigint`, `sumOrZero`,
   and the keyset conditions `rowLess(columns, bounds)` and `rowBefore(columns, subquery)`, and
