@@ -32,6 +32,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
+import kotlin.uuid.Uuid
 
 /** Against a real PostgreSQL: a creation's `Idempotency-Key` (`runners.cloud.idempotency.v1`, TeamCode's create). */
 class CloudSessionIdempotencyPostgresTest {
@@ -98,12 +99,17 @@ class CloudSessionIdempotencyPostgresTest {
     fun aKeyWhoseSessionIsGoneIsAConflict() = serverTest(listOf(RunnersModule)) { server ->
         val repository = server.koin.get<CloudSessionsRepository>()
         val now = Clock.System.now()
-        val gone = session(createdAt = now)
-        repository.createKeyed(gone, 5, CreateKey("k", DIGEST, now + 1.hours))
+        // A record whose session no longer exists.
         server.driver.inTenant(ORG_A) {
-            execute(Statement.create("DELETE FROM runners_session_routes WHERE session_id = :id").bind("id", gone.id))
-                .getOrThrow()
-            execute(Statement.create("DELETE FROM runners_sessions WHERE id = :id").bind("id", gone.id)).getOrThrow()
+            execute(
+                Statement.create(
+                    """
+                    INSERT INTO runners_create_keys (org_id, member_id, idempotency_key, request_digest, session_id,
+                        created_at, expires_at) VALUES (:org_id, 'alice', 'k', :digest, :session_id, :now, :expires_at)
+                    """,
+                ).bind("org_id", ORG_A).bind("digest", DIGEST).bind("session_id", Uuid.random()).bind("now", now)
+                    .bind("expires_at", now + 1.hours),
+            ).getOrThrow()
         }
 
         assertEquals(
