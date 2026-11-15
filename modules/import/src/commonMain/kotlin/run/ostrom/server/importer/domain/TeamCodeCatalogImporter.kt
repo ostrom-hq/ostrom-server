@@ -66,6 +66,7 @@ data class HookPorts(
  * @property owned What the import created before, by kind then TeamCode id.
  * @property record Records what it creates.
  */
+@Suppress("LongParameterList") // What one run of the import knows, built once in the use case.
 internal class CatalogRun(
     val caller: Caller,
     val principal: AuthenticatedPrincipal,
@@ -169,7 +170,7 @@ internal class TeamCodeCatalogImporter(private val skills: SkillPorts?, private 
         }
     }
 
-    @Suppress("CyclomaticComplexMethod", "LongMethod") // The steps of one hook, in the catalog's order.
+    @Suppress("CyclomaticComplexMethod", "LongMethod", "ThrowsCount") // The steps of one hook, in the catalog's order.
     private suspend fun importHook(
         ports: HookPorts,
         run: CatalogRun,
@@ -224,7 +225,8 @@ internal class TeamCodeCatalogImporter(private val skills: SkillPorts?, private 
      * The members' decisions on an imported skill or hook: each mapped member's is set unless it already is; one of a
      * member Ostrom does not have, or of an item not imported, is reported skipped.
      */
-    @Suppress("LongParameterList") // The run, the item and its decisions, whether it was imported, the report, access.
+    // The run, the item and its decisions, whether it was imported, the report, access; each refusal in one `when`.
+    @Suppress("LongParameterList", "CyclomaticComplexMethod")
     private suspend fun decisions(
         run: CatalogRun,
         item: String,
@@ -294,7 +296,7 @@ internal class TeamCodeCatalogImporter(private val skills: SkillPorts?, private 
         private val owner: Uuid? = skill.ownerId?.let { run.memberMap[it] ?: throw CatalogImportRefusal(NO_OWNER) }
         private val publisher: CatalogCaller = owner?.let(run::member) ?: run.admin
 
-        @Suppress("CyclomaticComplexMethod") // The steps of one skill, in the catalog's order.
+        @Suppress("CyclomaticComplexMethod", "ThrowsCount") // The steps of one skill, in the catalog's order.
         suspend fun import(): ImportItem {
             if (skill.retired) throw CatalogImportRefusal(RETIRED)
             if (existing != null && (existing.id != recorded || existing.ownerId != owner?.toString())) {

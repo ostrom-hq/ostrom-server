@@ -76,7 +76,7 @@ internal class TeamCodeEnvironmentImporter(private val ports: EnvironmentPorts) 
     }
 
     // The rules of one variant, in the secrets module's order.
-    @Suppress("LongParameterList", "CyclomaticComplexMethod")
+    @Suppress("LongParameterList", "CyclomaticComplexMethod", "ReturnCount")
     private suspend fun variable(
         run: CatalogRun,
         admin: EnvironmentActor,

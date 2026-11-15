@@ -31,6 +31,10 @@ import run.ostrom.server.kernel.auth.ALL_USER_SCOPES
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.mcprelay.McpRelayModule
+import run.ostrom.server.runners.domain.AuthenticateRunnerUseCase
+import run.ostrom.server.runners.domain.CheckRunnerTokenUseCase
+import run.ostrom.server.runners.domain.CloudSession
+import run.ostrom.server.runners.domain.RunnerUnauthenticatedException
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.domain.EnvironmentActor
 import run.ostrom.server.secrets.domain.EnvironmentBinding
@@ -50,6 +54,8 @@ import run.ostrom.server.skills.domain.PublishSkillVersionUseCase
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import io.ktor.client.statement.bodyAsText
+import org.koin.core.module.Module
+import org.koin.dsl.module
 import io.ktor.http.HttpStatusCode
 import kotlin.io.encoding.Base64
 import kotlin.test.Test
@@ -62,7 +68,7 @@ import kotlin.uuid.Uuid
 /** Real PostgreSQL and real HTTP: skills, hooks and environment variants written through their own modules. */
 class ImportCatalogPostgresTest {
     @Test
-    fun aTeamsCatalogIsImportedOnceAndASecondRunChangesNothing() = serverTest(modules, importOverrides()) { server ->
+    fun aTeamsCatalogIsImportedOnceAndASecondRunChangesNothing() = serverTest(modules, catalogOverrides()) { server ->
         with(server) {
             val dry = report(catalog(), dryRun = true)
             assertEquals(expected(PLANNED), dry.lines())
@@ -98,7 +104,8 @@ class ImportCatalogPostgresTest {
     }
 
     @Test
-    fun aChangeInTeamCodeIsCarriedAndOnlyIt() = serverTest(modules, importOverrides()) { server ->
+    @Suppress("LongMethod") // One change of each kind, then its report, read top to bottom.
+    fun aChangeInTeamCodeIsCarriedAndOnlyIt() = serverTest(modules, catalogOverrides()) { server ->
         with(server) {
             report(catalog())
             val changed = catalog(
@@ -163,8 +170,9 @@ class ImportCatalogPostgresTest {
 
     @Test
     fun reservedNamesAndForeignItemsAreSkippedAsTheModulesRefuseThem() =
-        serverTest(modules, importOverrides()) { server -> refusals(server) }
+        serverTest(modules, catalogOverrides()) { server -> refusals(server) }
 
+    @Suppress("LongMethod") // Each refusal the modules make, then the one report, read top to bottom.
     private suspend fun refusals(server: TestServer) {
         with(server) {
             koin.get<ManageEnvironmentVariantsUseCase>().create(
@@ -255,39 +263,42 @@ class ImportCatalogPostgresTest {
     }
 
     @Test
-    fun aVersionPublishedWithOtherContentOrAMovedVariantIsSkipped() = serverTest(modules, importOverrides()) { server ->
-        with(server) {
-            report(catalog())
-            // Promoted in Ostrom since the import: no longer the member's, left alone.
-            koin.get<ManageSkillCatalogUseCase>().promote(admin, "notes")
-            val mine = koin.get<ManageEnvironmentVariantsUseCase>().list(adminA, personal = true).single()
-            koin.get<ManageEnvironmentVariantsUseCase>().promote(EnvironmentActor(adminA, principal), mine.id)
-            val conflicting = catalog().let { request ->
-                request.copy(
-                    skills = request.skills.map { skill ->
-                        skill.copy(versions = skill.versions.map { it.copy(files = listOf(file("file", "# other"))) })
-                    },
-                    hooks = request.hooks.map { hook ->
-                        hook.copy(versions = hook.versions.map { it.copy(timeoutSeconds = 30) })
-                    },
-                    variables = request.variables.map {
-                        if (it.id == "v-npm") it.copy(binding = "shared", value = "npm-v-1234") else it
-                    },
-                )
+    fun aVersionPublishedWithOtherContentOrAMovedVariantIsSkipped() =
+        serverTest(modules, catalogOverrides()) { server ->
+            with(server) {
+                report(catalog())
+                // Promoted in Ostrom since the import: no longer the member's, left alone.
+                koin.get<ManageSkillCatalogUseCase>().promote(admin, "notes")
+                val mine = koin.get<ManageEnvironmentVariantsUseCase>().list(adminA, personal = true).single()
+                koin.get<ManageEnvironmentVariantsUseCase>().promote(EnvironmentActor(adminA, principal), mine.id)
+                val conflicting = catalog().let { request ->
+                    request.copy(
+                        skills = request.skills.map { skill ->
+                            val other = listOf(file("file", "# other"))
+                            skill.copy(versions = skill.versions.map { it.copy(files = other) })
+                        },
+                        hooks = request.hooks.map { hook ->
+                            hook.copy(versions = hook.versions.map { it.copy(timeoutSeconds = 30) })
+                        },
+                        variables = request.variables.map {
+                            if (it.id == "v-npm") it.copy(binding = "shared", value = "npm-v-1234") else it
+                        },
+                    )
+                }
+                val items = report(conflicting).lines().associateBy { "${it.kind} ${it.name}" }
+                assertEquals(SKIPPED.name.lowercase(), items.getValue("skill review").action)
+                val review = items.getValue("skill review").reason.orEmpty()
+                assertTrue(review.startsWith("This version is already published"), review)
+                assertEquals(SKIPPED.name.lowercase(), items.getValue("hook guard").action)
+                assertEquals(SKIPPED.name.lowercase(), items.getValue("variable NPM_TOKEN/per-member").action)
+                val promoted = items.getValue("variable MY_KEY/mine (personal, ${memberA.memberId})")
+                assertEquals(SKIPPED.name.lowercase(), promoted.action)
+                val notes = items.getValue("skill notes")
+                assertEquals("A skill named notes exists and was not imported from TeamCode.", notes.reason)
+                val assignment = items.getValue("assignment NPM_TOKEN/${memberA.memberId}")
+                assertEquals("Its variant was not imported.", assignment.reason)
             }
-            val items = report(conflicting).lines().associateBy { "${it.kind} ${it.name}" }
-            assertEquals(SKIPPED.name.lowercase(), items.getValue("skill review").action)
-            assertTrue(items.getValue("skill review").reason.orEmpty().startsWith("This version is already published"))
-            assertEquals(SKIPPED.name.lowercase(), items.getValue("hook guard").action)
-            assertEquals(SKIPPED.name.lowercase(), items.getValue("variable NPM_TOKEN/per-member").action)
-            val promoted = items.getValue("variable MY_KEY/mine (personal, ${memberA.memberId})")
-            assertEquals(SKIPPED.name.lowercase(), promoted.action)
-            val notes = items.getValue("skill notes")
-            assertEquals("A skill named notes exists and was not imported from TeamCode.", notes.reason)
-            val assignment = items.getValue("assignment NPM_TOKEN/${memberA.memberId}")
-            assertEquals("Its variant was not imported.", assignment.reason)
         }
-    }
 
     @Test
     fun aServerWithoutCatalogsSaysSo() =
@@ -305,7 +316,7 @@ class ImportCatalogPostgresTest {
         }
 
     @Test
-    fun aMalformedFileOrBindingRefusesTheRequest() = serverTest(modules, importOverrides()) { server ->
+    fun aMalformedFileOrBindingRefusesTheRequest() = serverTest(modules, catalogOverrides()) { server ->
         with(server) {
             val badFile = TeamCodeImportRequest(
                 skills = listOf(
@@ -325,7 +336,7 @@ class ImportCatalogPostgresTest {
     }
 
     @Test
-    fun theValueCheckComparesWithoutRevealing() = serverTest(modules, importOverrides()) { server ->
+    fun theValueCheckComparesWithoutRevealing() = serverTest(modules, catalogOverrides()) { server ->
         with(server) {
             report(catalog())
             val check = koin.get<EnvironmentValueCheck>()
@@ -342,6 +353,22 @@ class ImportCatalogPostgresTest {
 
     private companion object {
         val modules = listOf(SecretsModule, McpRelayModule, SkillsModule, HooksModule, ImportModule)
+
+        /** The import's overrides, and the runners the skill and hook routes ask: none here, no runner calls. */
+        fun catalogOverrides(): Module = module {
+            includes(importOverrides())
+            single<CheckRunnerTokenUseCase> {
+                object : CheckRunnerTokenUseCase {
+                    override suspend fun invoke(token: String) = throw RunnerUnauthenticatedException()
+                }
+            }
+            single<AuthenticateRunnerUseCase> {
+                object : AuthenticateRunnerUseCase {
+                    override suspend fun invoke(token: String, sessionId: Uuid, epoch: Long): CloudSession =
+                        throw RunnerUnauthenticatedException()
+                }
+            }
+        }
         val orgA = Importing.orgA
         const val SHARED_VALUE = "ghp-shared-value-1"
         const val LENA_VALUE = "npm-lena-value-1"

@@ -43,7 +43,8 @@ import org.koin.dsl.module
 /**
  * The import module: `POST /api/v1/import/teamcode` takes what `ostrom import teamcode` read from TeamCode and writes
  * it through the secrets (with its environment variants), MCP relay, sharing, skills and hooks modules, and the
- * workflows and automations through the compiler's and the automations' import use cases ([TeamCodeProcessImporter]), when those modules are installed. Its one table
+ * workflows and automations through the compiler's and the automations' import use cases ([TeamCodeProcessImporter]),
+ * when those modules are installed. Its one table
  * records what it created, so a later run updates that and leaves alone what an admin created by hand. Shared
  * accounts go through the sharing module's use cases ([SharedAccountImporter]) when it is installed, or through a
  * bound [AccountImporter]. The cutover run is recorded in

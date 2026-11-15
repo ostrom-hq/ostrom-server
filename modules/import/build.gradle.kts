@@ -21,6 +21,7 @@ kotlin {
         }
         commonTest.dependencies {
             implementation(project(":testing"))
+            implementation(project(":modules:runners"))
             implementation(libs.ktor.client.mock)
         }
     }

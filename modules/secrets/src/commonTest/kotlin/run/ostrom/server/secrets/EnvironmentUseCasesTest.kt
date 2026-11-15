@@ -119,6 +119,10 @@ class EnvironmentUseCasesTest {
         val sealedElsewhere = Storage(stored = StoredEnvironmentVariant(variant, foreign))
         val elsewhere = EnvironmentValueCheckImpl(sealedElsewhere, cipher)
         assertFalse(elsewhere.matches(orgId, variant.id, null, SecretValue("v-1")))
+        // A member selected but never given a value has nothing to compare.
+        val unset = listOf(AssignedEnvironmentValue("TOKEN", variant.id, EnvironmentBinding.PER_MEMBER, null))
+        val unsetCheck = EnvironmentValueCheckImpl(Storage(values = unset), cipher)
+        assertFalse(unsetCheck.matches(orgId, variant.id, member, SecretValue("m-1")))
     }
 
     private fun variants(repository: EnvironmentRepository) =
