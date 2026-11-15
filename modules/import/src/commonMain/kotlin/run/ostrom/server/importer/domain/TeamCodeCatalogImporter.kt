@@ -196,9 +196,8 @@ internal class TeamCodeCatalogImporter(private val skills: SkillPorts?, private 
             changed = true
             if (!run.dryRun) {
                 val publication = ports.publish(run.admin, hook.name, version.version, definition, files, false)
-                if (existing == null) {
-                    run.record(ImportRecord(ImportRecordKind.HOOK, hook.id, hook.name, publication.hook.id))
-                }
+                // Recorded at each publication: the record replaces itself, and an existing hook is already ours.
+                run.record(ImportRecord(ImportRecordKind.HOOK, hook.id, hook.name, publication.hook.id))
             }
         }
         val pinned = existing?.pinnedVersion
@@ -294,7 +293,7 @@ internal class TeamCodeCatalogImporter(private val skills: SkillPorts?, private 
         private val recorded: Uuid?,
     ) {
         private val owner: Uuid? = skill.ownerId?.let { run.memberMap[it] ?: throw CatalogImportRefusal(NO_OWNER) }
-        private val publisher: CatalogCaller = owner?.let(run::member) ?: run.admin
+        private val publisher: CatalogCaller = if (owner == null) run.admin else run.member(owner)
 
         @Suppress("CyclomaticComplexMethod", "ThrowsCount") // The steps of one skill, in the catalog's order.
         suspend fun import(): ImportItem {
@@ -339,9 +338,8 @@ internal class TeamCodeCatalogImporter(private val skills: SkillPorts?, private 
             } else {
                 ports.publish.personal(publisher, skill.name, version, files, pin = false)
             }
-            if (existing == null) {
-                run.record(ImportRecord(ImportRecordKind.SKILL, skill.id, skill.name, publication.skill.id))
-            }
+            // Recorded at each publication: the record replaces itself, and an existing skill is already ours.
+            run.record(ImportRecord(ImportRecordKind.SKILL, skill.id, skill.name, publication.skill.id))
         }
 
         private suspend fun pin(version: String?) {
