@@ -2,12 +2,14 @@
 package run.ostrom.server.runners.presentation
 
 import io.ktor.http.HttpStatusCode
+import io.ktor.openapi.Parameters
 import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.http.docs.badRequest
 import run.ostrom.server.kernel.http.docs.body
 import run.ostrom.server.kernel.http.docs.conflict
 import run.ostrom.server.kernel.http.docs.empty
 import run.ostrom.server.kernel.http.docs.error
+import run.ostrom.server.kernel.http.docs.headerText
 import run.ostrom.server.kernel.http.docs.notFound
 import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
@@ -39,6 +41,20 @@ internal const val TOO_LARGE = "A body over the bound of this route (`payload_to
 
 /** The session id of a path. */
 internal const val SESSION_ID = "The cloud session's id."
+
+/**
+ * `Ostrom-On-Behalf-Of` of a cloud session write (`runners.cloud.onbehalf.v1`, TeamCode's `TeamCode-On-Behalf-Of`).
+ */
+internal fun Parameters.Builder.onBehalfHeader() = headerText(
+    "Ostrom-On-Behalf-Of",
+    "`runners.cloud.onbehalf.v1`: the member the write acts for, by member id or login (an id wins over a " +
+        "login that spells it), 1 to 64 characters of `A-Za-z0-9._-`. Only an owner or an admin signed in, or " +
+        "an administrator's service key with `cloud:admin`, may name another member; on any other credential it " +
+        "must be absent or name the caller (403 `on_behalf_forbidden`). The member must be an active member of " +
+        "the organization (422 `invalid_effective_member`); several values or a malformed one are 400 " +
+        "`invalid_on_behalf`. It grants no right of its own: the call acts on that member's sessions with the " +
+        "caller's rights.",
+)
 
 /**
  * The runners module's operations: the cloud agent sessions and their conversation, the ownership transfers, the

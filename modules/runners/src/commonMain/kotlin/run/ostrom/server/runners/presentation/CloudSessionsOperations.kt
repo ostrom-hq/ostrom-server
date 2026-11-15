@@ -70,6 +70,7 @@ private fun ApiCatalog.cloudSessionCreation() {
             "`idempotency_conflict`; concurrent requests with one key create one session and the others " +
             "replay. A malformed key is 400 `invalid_request`. The key is optional. $ORG_RESOLUTION"
         parameters {
+            onBehalfHeader()
             organizationHeader()
             headerText(
                 "Idempotency-Key",
@@ -128,6 +129,7 @@ private fun ApiCatalog.cloudSessionStop() {
             "deleted. Once terminated, the waits its agent asked in it that are still open are cancelled. " +
             "$ORG_RESOLUTION"
         parameters {
+            onBehalfHeader()
             organizationHeader()
             pathId("id", SESSION_ID)
         }
@@ -147,6 +149,7 @@ private fun ApiCatalog.cloudSessionPause() {
         description = "The agent stops and its pod is gone; the workspace is kept until the session expires or is " +
             "resumed. $ORG_RESOLUTION"
         parameters {
+            onBehalfHeader()
             organizationHeader()
             pathId("id", SESSION_ID)
         }
@@ -166,6 +169,7 @@ private fun ApiCatalog.cloudSessionResume() {
         description = "The reconciler starts a new execution on the kept workspace. A session an accepted transfer " +
             "is moving only resumes through that transfer. $ORG_RESOLUTION"
         parameters {
+            onBehalfHeader()
             organizationHeader()
             pathId("id", SESSION_ID)
         }
@@ -217,6 +221,7 @@ private fun ApiCatalog.cloudSessionGitHubAccess() {
             "keeps a token it already received until it expires; turning it on or sharing applies from the " +
             "runner's next token renewal. The body is at most 1 KiB. $ORG_RESOLUTION"
         parameters {
+            onBehalfHeader()
             organizationHeader()
             pathId("id", SESSION_ID)
         }

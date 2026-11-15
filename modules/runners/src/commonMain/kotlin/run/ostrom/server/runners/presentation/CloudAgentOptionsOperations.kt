@@ -34,6 +34,7 @@ private fun ApiCatalog.permissionBypassOperation() {
             "`..._disabled`). The owner only (403 `bypass_owner_only`); 409 `session_not_running` once " +
             "terminated. The body is at most 64 KiB. $ORG_RESOLUTION"
         parameters {
+            onBehalfHeader()
             organizationHeader()
             pathId("id", SESSION_ID)
         }
