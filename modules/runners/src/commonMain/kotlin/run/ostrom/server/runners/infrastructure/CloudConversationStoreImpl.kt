@@ -430,7 +430,9 @@ internal class CloudConversationStoreImpl(
             ended?.let { it to PermissionRequestState.ENDED },
             answered?.let { it to PermissionRequestState.ANSWERED },
             expired?.let { it to PermissionRequestState.EXPIRED },
-        ).sortedBy { it.first }.firstOrNull()?.second ?: PermissionRequestState.OPEN
+            // Nothing closed it: still open.
+            Long.MAX_VALUE to PermissionRequestState.OPEN,
+        ).sortedBy { it.first }.first().second
     }
 
     /** Queued and delivered inputs of a session, oldest first; the caller holds the session row lock. */
