@@ -26,7 +26,7 @@ import run.ostrom.server.gates.infrastructure.requestsOfGate
 import run.ostrom.server.gates.infrastructure.sessionEndInsert
 import run.ostrom.server.gates.infrastructure.sessionEndRead
 import run.ostrom.server.gates.infrastructure.sessionGatesRead
-import run.ostrom.server.gates.infrastructure.sessionLink
+import run.ostrom.server.gates.infrastructure.sessionLinks
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.testing.benchTest
 import kotlinx.io.buffered
@@ -123,7 +123,9 @@ class GatesQueryPlansTest {
             },
             "the sessions of an approver's gates (receipts list)" to { approvedSessions(orgA, reviewer).query },
             "a new gate (asking)" to { gateInsert(gateOf(orgA, TOTAL_GATES + 1)) },
-            "a gate's link to a session (asking)" to { sessionLink(first, "claude-new") },
+            "a gate's links to its sessions (asking)" to {
+                sessionLinks(first.copy(sessionIds = listOf("claude-new", "claude-other")))
+            },
             "a gate's askers (joining)" to { askersUpdate(first.copy(askedBy = listOf("dev-a", "dev-b"))) },
             "a gate's decision (answer, reserve, use)" to { gateUpdate(first.copy(status = GateStatus.APPROVED)) },
             "a request's answer (answer)" to { requestUpdate(answered) },

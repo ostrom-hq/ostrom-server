@@ -26,9 +26,6 @@ import kotlin.uuid.Uuid
 /** The most requests a gate's read returns. */
 internal const val MAX_REQUESTS = 100
 
-/** The most sessions an approver's read returns: the receipts they may read, never more than these. */
-internal const val MAX_APPROVED_SESSIONS = 10_000
-
 /** One approval request (not locked: its gate is the lock). */
 internal fun requestRead(orgId: Uuid, id: Uuid): Read<ApprovalRequest> {
     val r = GatesRequests
@@ -120,7 +117,8 @@ internal fun approvesSession(orgId: Uuid, approver: String, sessionId: String): 
 
 /**
  * The sessions of the gates [approver] (any case) has a request on: the approver's requests by the inbox index, then
- * each gate's links by `gates_sessions_by_gate` (migration 9).
+ * each gate's links by `gates_sessions_by_gate` (migration 9). The one list read without a `limit`, as before Exposed:
+ * it is the set of receipts the approver may read (ReceiptAccess), and a cut would deny some of them.
  */
 internal fun approvedSessions(orgId: Uuid, approver: String): Read<String> {
     val s = GatesSessions
@@ -129,6 +127,5 @@ internal fun approvedSessions(orgId: Uuid, approver: String): Read<String> {
         .select(s.sessionId)
         .withDistinct()
         .where { (r.orgId eq orgId) and (r.approverKey eq stringParam(approver).lowerCase()) and (s.orgId eq orgId) }
-        .limit(MAX_APPROVED_SESSIONS)
     return Read(query) { it[s.sessionId] }
 }

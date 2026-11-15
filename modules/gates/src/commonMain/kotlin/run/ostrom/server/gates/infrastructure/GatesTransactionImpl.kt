@@ -56,8 +56,10 @@ internal class GatesTransactionImpl(
 }
 
 // A gate's sessions are set when it opens and only grow when another session joins it (`addAskers`).
-private fun JdbcTransaction.linkSessions(gate: Gate) =
-    gate.sessionIds.forEach { session -> write { sessionLink(gate, session) } }
+// One statement for all of them, as before Exposed (none when there is no session).
+private fun JdbcTransaction.linkSessions(gate: Gate) {
+    if (gate.sessionIds.isNotEmpty()) write { sessionLinks(gate) }
+}
 
 /** AUDIT-SERVEUR-3 B2: the lock and the mark of a session's end, and the reads of its receipt. */
 private class SessionEnds(private val transaction: JdbcTransaction) : GateSessionEnds {

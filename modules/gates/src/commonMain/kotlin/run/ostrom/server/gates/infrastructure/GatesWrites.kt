@@ -6,6 +6,7 @@ import run.ostrom.server.gates.domain.models.Gate
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.statements.InsertStatement
+import org.jetbrains.exposed.v1.core.statements.MultiRowValuesInsertStatement
 import org.jetbrains.exposed.v1.core.statements.StatementBuilder
 import org.jetbrains.exposed.v1.core.statements.UpdateStatement
 import kotlin.time.Instant
@@ -31,12 +32,20 @@ internal fun StatementBuilder.gateUpdate(gate: Gate): UpdateStatement =
 internal fun StatementBuilder.askersUpdate(gate: Gate): UpdateStatement =
     GatesGates.update({ (GatesGates.orgId eq gate.orgId) and (GatesGates.id eq gate.id) }) { it.setAskers(gate) }
 
-/** Links a gate to one session that asked or joined it; a link already there stays (`ON CONFLICT DO NOTHING`). */
-internal fun StatementBuilder.sessionLink(gate: Gate, sessionId: String): InsertStatement<Long> =
-    GatesSessions.insertIgnore {
-        it[orgId] = gate.orgId
-        it[this.sessionId] = sessionId
-        it[gateId] = gate.id
+/**
+ * Links a gate to the sessions that asked or joined it, in one statement (multi-row `VALUES`); a link already there
+ * stays (`ON CONFLICT DO NOTHING`). [Gate.sessionIds] is never empty here (GatesTransactionImpl skips the write).
+ */
+internal fun StatementBuilder.sessionLinks(gate: Gate): MultiRowValuesInsertStatement =
+    MultiRowValuesInsertStatement(GatesSessions, ignore = true, shouldReturnGeneratedValues = false).apply {
+        val t = GatesSessions
+        for (session in gate.sessionIds) {
+            addBatch()
+            this[t.orgId] = gate.orgId
+            this[t.sessionId] = session
+            this[t.gateId] = gate.id
+            validateLastBatch()
+        }
     }
 
 /** Stores a new request, at its approver's [position]. */
