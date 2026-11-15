@@ -60,8 +60,8 @@ private fun ApiCatalog.ledgerOperations() {
     get("/api/v1/usage/summary") {
         operationId = "getUsageSummary"
         tag(TAG)
-        summary = "Totals of the last days per group, most expensive first; an admin reads the " +
-            "organization, a member their own."
+        summary = "Totals of the last days per group, most expensive first."
+        description = "An admin reads the organization, a member their own usage."
         parameters {
             organizationHeader()
             queryNumber("days", "The period, 1 to 90 days (7 by default).")
@@ -94,8 +94,8 @@ private fun ApiCatalog.eventOperations() {
     post("/api/v1/usage/events") {
         operationId = "recordUsageEvents"
         tag(TAG)
-        summary = "Record the client's events (skills, hooks, sessions, MCP calls); the organization, the " +
-            "member and the cost always come from the server. At most 500 events."
+        summary = "Record the client's events (skills, hooks, sessions, MCP calls)."
+        description = "The organization, the member and the cost always come from the server. At most 500 events."
         parameters {
             organizationHeader()
         }
@@ -114,9 +114,10 @@ private fun ApiCatalog.eventOperations() {
     get("/api/v1/usage/live") {
         operationId = "streamUsage"
         tag(TAG)
-        summary = "Server-sent events of the new usage events: `: connected` once subscribed, then one " +
-            "`data:` line per event (a `UsageEvent` in JSON) and a `: heartbeat` comment at intervals. A stream " +
-            "ends after a while and the EventSource reconnects, which checks the caller again."
+        summary = "Server-sent events of the new usage events."
+        description = "`: connected` once subscribed, then one `data:` line per event (a `UsageEvent` in JSON) and " +
+            "a `: heartbeat` comment at intervals. A stream ends after a while and the EventSource reconnects, " +
+            "which checks the caller again."
         parameters {
             organizationHeader()
         }

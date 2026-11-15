@@ -51,9 +51,9 @@ private fun ApiCatalog.gateOperations() {
     post("/api/v1/gates") {
         operationId = "askGate"
         tag(GATES_TAG)
-        summary = "Ask the gate of a boundary action (hook PreToolUse, CI, MCP); 409 session_closed in a " +
-            "closed session."
-        description = "409 session_closed in a closed session. 409 check_not_attested when the gate is " +
+        summary = "Ask the gate of a boundary action (hook PreToolUse, CI, MCP)."
+        description = "409 `conflict` (its message starting `session closed:`) in a closed session. 409 " +
+            "`check_not_attested` when the gate is " +
             "enforced and its rule needs a check attested (RuleGateCheck.attested) whose last run is not proven " +
             "by an Ostrom runner (isolated_runner) or by the CI on the commit the gate covers (ci); the message " +
             "names each such check and why (declared by the workstation, failed, or not run). No approver is " +
@@ -159,7 +159,7 @@ private fun ApiCatalog.localDenialOperations() {
             "whatever this call answers: the hook sends it after refusing, never waits on it, and an " +
             "unreachable server changes nothing. The server writes the audit line `gate.denied_locally` in the " +
             "organization's chain (meta: session, class, reason, the command as normalized with its secrets " +
-            "removed, repo). Planned: the server does not serve it yet."
+            "removed, repo)."
         parameters {
             organizationHeader()
         }
@@ -178,7 +178,7 @@ private fun ApiCatalog.approvalOperations() {
         summary = "Approvals, most recent first; `mine` lists those waiting for the caller."
         parameters {
             organizationHeader()
-            queryText("status", "One status or several, comma-separated (`approved,rejected,expired`); " +
+            queryText("status", "One status: `pending`, `approved`, `rejected` or `expired` (closed unanswered); " +
                 "every status when absent.")
             queryFlag("mine", "Only the approvals waiting for the caller.")
             queryText("before", "The `next` of the previous page.")
@@ -241,13 +241,14 @@ private fun ApiCatalog.answerOperations() {
     post("/api/v1/approvals/{id}/answer") {
         operationId = "answerApproval"
         tag(APPROVALS_TAG)
-        summary = "Say yes or no, as the caller. 409 shown_digest_mismatch when the shown digest differs, " +
+        summary = "Say yes or no, as the caller."
+        description = "409 shown_digest_mismatch when the shown digest differs, " +
             "409 approval_closed when already answered (a signed answer never changes); 403 " +
             "self_approval_refused when the asker answers while another approver exists; 403 " +
             "github_link_required when the gate's policy is never-self-approve, the pull request's author " +
             "linked no Ostrom person and the answerer linked no GitHub account (the gate waits, Q-GATES-G1); " +
             "403 step_up_required when a yes comes from a sign-in more than 5 minutes old, or from the phone " +
-            "app not unlocked in the last 5 minutes (`unlockMobileApp`), or (planned) from the phone app, to a " +
+            "app not unlocked in the last 5 minutes (`unlockMobileApp`), or from the phone app, to a " +
             "high-risk action, without an unlock bound to this request less than 60 seconds old and not used " +
             "yet (`unlockMobileApp.requestId`, `error.requestBound` true); the 200 is the `ApprovalView` of the " +
             "answered approval, with its signed `receipt`, a no's included."

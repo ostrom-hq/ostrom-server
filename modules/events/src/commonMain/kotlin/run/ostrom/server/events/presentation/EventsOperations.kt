@@ -68,7 +68,11 @@ private fun ApiCatalog.feedOperations() {
         parameters {
             organizationHeader()
             headerText("Last-Event-ID", "The `seq` of the last event handled; wins over `after`.")
-            queryNumber("after", "The `seq` of the last event handled (0 replays every retained event).")
+            queryText(
+                "after",
+                "The `seq` of the last event handled (0 replays every retained event); a `Last-Event-ID` header " +
+                    "wins over it.",
+            )
             queryText("types", "Comma-separated event types to keep.")
         }
         responses {

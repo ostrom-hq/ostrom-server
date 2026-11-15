@@ -12,6 +12,7 @@ import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.pathId
 import run.ostrom.server.kernel.http.docs.queryNumber
 import io.ktor.http.HttpStatusCode
+import io.ktor.openapi.Operation
 import kotlinx.serialization.json.JsonObject
 
 private const val TAG = "billing"
@@ -172,39 +173,36 @@ private fun ApiCatalog.stripeOperations() {
         operationId = "receiveStripeWebhook"
         tag(TAG)
         summary = "Stripe events (subscriptions, invoices, checkout)."
-        description = "Called by Stripe only, authenticated by the `Stripe-Signature` header (HMAC-SHA256 " +
-            "of the timestamp and the body, 5 minutes of tolerance). Each event is applied once; a replay " +
-            "answers `duplicate`. Bodies over 256 KiB are refused (413)."
-        parameters {
-            headerText("Stripe-Signature", "The signature of the event: an HMAC-SHA256 of the timestamp and " +
-                "the body, with 5 minutes of tolerance.")
-        }
-        body<JsonObject>("A Stripe event, as Stripe sends it.")
-        responses {
-            ok<WebhookResponse>("The event was received, with what was done with it.")
-            badRequest(BAD_EVENT)
-            error(HttpStatusCode.PayloadTooLarge, "An event of more than 256 KiB (`payload_too_large`).")
-        }
+        description = STRIPE_WEBHOOK
+        stripeEvent()
     }
     post("/api/v1/billing/stripe/webhook") {
         operationId = "receiveStripeWebhookAlias"
         tag(TAG)
-        summary = "Deprecated alias of `POST /webhooks/stripe`, the path the webhook was first served at: " +
-            "same signature, same answers. Removed after the public release; point the Stripe endpoint at " +
-            "`/webhooks/stripe`."
+        summary = "Deprecated alias of `POST /webhooks/stripe`."
         deprecated = true
-        description = "Called by Stripe only, authenticated by the `Stripe-Signature` header (HMAC-SHA256 " +
-            "of the timestamp and the body, 5 minutes of tolerance). Each event is applied once; a replay " +
-            "answers `duplicate`. Bodies over 256 KiB are refused (413)."
-        parameters {
-            headerText("Stripe-Signature", "The signature of the event: an HMAC-SHA256 of the timestamp and " +
-                "the body, with 5 minutes of tolerance.")
-        }
-        body<JsonObject>("A Stripe event, as Stripe sends it.")
-        responses {
-            ok<WebhookResponse>("The event was received, with what was done with it.")
-            badRequest(BAD_EVENT)
-            error(HttpStatusCode.PayloadTooLarge, "An event of more than 256 KiB (`payload_too_large`).")
-        }
+        description = "The path the webhook was first served at: same signature, same answers. Removed after the " +
+            "public release; point the Stripe endpoint at `/webhooks/stripe`. $STRIPE_WEBHOOK"
+        stripeEvent()
+    }
+}
+
+private const val STRIPE_WEBHOOK = "Called by Stripe only, authenticated by the `Stripe-Signature` header " +
+    "(HMAC-SHA256 of the timestamp and the body, 5 minutes of tolerance). Each event is applied once; a replay " +
+    "answers `duplicate`. Bodies over 256 KiB are refused (413)."
+
+/** The signed Stripe event and its answers, the same on both paths. */
+private fun Operation.Builder.stripeEvent() {
+    parameters {
+        headerText(
+            "Stripe-Signature",
+            "The signature of the event: an HMAC-SHA256 of the timestamp and the body, with 5 minutes of tolerance.",
+        )
+    }
+    body<JsonObject>("A Stripe event, as Stripe sends it.")
+    responses {
+        ok<WebhookResponse>("The event was received, with what was done with it.")
+        badRequest(BAD_EVENT)
+        error(HttpStatusCode.PayloadTooLarge, "An event of more than 256 KiB (`payload_too_large`).")
     }
 }
