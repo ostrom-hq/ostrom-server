@@ -3,12 +3,16 @@ package run.ostrom.server.runners
 
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.logging.Logger
+import run.ostrom.server.runners.domain.AuthenticateRunnerUseCaseImpl
 import run.ostrom.server.runners.domain.CheckRunnerTokenUseCaseImpl
 import run.ostrom.server.runners.domain.CloudSession
 import run.ostrom.server.runners.domain.ExecutionFencedException
 import run.ostrom.server.runners.domain.PodTokenIdentity
 import run.ostrom.server.runners.domain.PodTokenReviews
 import run.ostrom.server.runners.domain.RunnerCredentialsImpl
+import run.ostrom.server.runners.domain.RunnerExecution
+import run.ostrom.server.runners.domain.RunnerPrincipalResolver
+import run.ostrom.server.runners.domain.RunnerTokenPrincipalResolver
 import run.ostrom.server.runners.domain.RunnerUnauthenticatedException
 import run.ostrom.server.runners.domain.RuntimeNames
 import run.ostrom.server.runners.domain.SessionProfile
@@ -202,9 +206,10 @@ class RunnerCredentialsTest {
     }
 
     @Test
-    fun aFailedReviewIsUnauthenticatedLoggedWithoutTheTokenAndNotCached() = runTest {
+    fun aFailedReviewIsARefusalCachedAndLoggedOncePerPeriodWithoutTheToken() = runTest {
         val session = running()
         val token = bound(session)
+        val other = jwt(RuntimeNames.execution(session.id, 3), "other")
         reviews.failure = IllegalStateException("Kubernetes API: review token answered 403.")
         assertNull(credentials.session(token))
         val (level, message, details) = logger.events.single()
@@ -212,13 +217,43 @@ class RunnerCredentialsTest {
         assertEquals("pod token review failed", message)
         assertTrue("c1" in details && "403" in details)
         assertFalse(token in details)
+
+        // Cached as a refusal: the same token does not reach the cluster again; another is reviewed, not logged.
+        assertNull(credentials.session(token))
+        assertNull(credentials.session(other))
+        assertEquals(listOf(token, other), reviews.asked.map { it.second })
+        assertEquals(1, logger.events.size)
+
+        // Past the refusal period the token is reviewed again, and a failure is logged again.
+        clock.now += 11.seconds
+        assertNull(credentials.session(token))
+        assertEquals(3, reviews.asked.size)
+        assertEquals(2, logger.events.size)
         assertNull(RunnerCredentialsImpl(repository, tokens, reviews, clock).session(token), "Without a logger")
 
         reviews.failure = null
+        clock.now += 11.seconds
         assertEquals(session, credentials.session(token))
 
         reviews.failure = CancellationException("stopped")
         val cancelled = jwt(RuntimeNames.execution(session.id, 3), "cancelled")
         assertFailsWith<CancellationException> { credentials.session(cancelled) }
+    }
+
+    @Test
+    fun aPodTokenOpensTheRunnerTerminalAndAStaleOneLeavesTheNextResolversAsked() = runTest {
+        val session = running(epoch = 3)
+        val resolver = RunnerTokenPrincipalResolver(credentials)
+        val authenticate = AuthenticateRunnerUseCaseImpl(listOf(resolver), repository)
+        val token = bound(session)
+        assertEquals(session, authenticate(token, session.id, 3))
+        assertEquals(RunnerExecution(session.orgId, session.id, 3), authenticate.resolve(token))
+
+        val stale = bound(session, epoch = 2)
+        assertNull(resolver.resolve(stale), "Another execution's pod is not this resolver's credential")
+        assertFailsWith<ExecutionFencedException> { authenticate(stale, session.id, 2) }
+        val device = RunnerExecution(session.orgId, Uuid.random(), 1)
+        val next = RunnerPrincipalResolver { credential -> device.takeIf { credential == stale } }
+        assertEquals(device, AuthenticateRunnerUseCaseImpl(listOf(resolver, next), repository).resolve(stale))
     }
 }

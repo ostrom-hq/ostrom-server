@@ -87,6 +87,9 @@ class RunnerCredentialsImpl(
     // Accepted and refused reviews are kept apart, so a flood of bad tokens can never evict a runner's review.
     private val accepted = LinkedHashMap<String, Cached>()
     private val refused = LinkedHashMap<String, Cached>()
+
+    // The last failed review logged, by cluster: a cluster that refuses every review is logged once per refusal period.
+    private val failuresLogged = mutableMapOf<String, Instant>()
     private val lock = Mutex()
 
     // Every check that fails refuses the call the same way, without saying which.
@@ -107,7 +110,7 @@ class RunnerCredentialsImpl(
         return session
     }
 
-    @Suppress("ReturnCount") // A cached answer, a failed review, or the review.
+    @Suppress("ReturnCount") // A cached answer, or the review.
     private suspend fun review(reviews: PodTokenReviews, clusterId: String, token: String): PodTokenIdentity? {
         val key = clusterId + ":" + tokens.hash(token)
         val now = clock.now()
@@ -117,10 +120,16 @@ class RunnerCredentialsImpl(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
-            // Unreachable, forbidden (no system:auth-delegator) or unreadable: this call is refused, the next one
-            // asks again.
-            logger?.warn("pod token review failed", mapOf("cluster" to clusterId), failure)
-            return null
+            // Unreachable, forbidden (no system:auth-delegator) or unreadable: refused, and cached as a refusal so a
+            // repeated token does not reach the cluster at every call.
+            val log = lock.withLock {
+                val last = failuresLogged[clusterId]
+                val due = last == null || last + REFUSAL_CACHE_SECONDS.seconds <= now
+                if (due) failuresLogged[clusterId] = now
+                due
+            }
+            if (log) logger?.warn("pod token review failed", mapOf("cluster" to clusterId), failure)
+            null
         }
         lock.withLock {
             // Refusals are cached briefly too, so a repeated bad token is not a cluster call every time.

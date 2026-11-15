@@ -28,8 +28,13 @@ fun interface RunnerPrincipalResolver {
 class RunnerTokenPrincipalResolver(
     private val credentials: RunnerCredentials,
 ) : RunnerPrincipalResolver {
-    override suspend fun resolve(credential: String): RunnerExecution? =
+    // A pod token of another execution is no credential of this resolver: the next resolvers are still asked, and
+    // the use case fences the call when none knows it.
+    override suspend fun resolve(credential: String): RunnerExecution? = try {
         credentials.session(credential)?.let { RunnerExecution(it.orgId, it.id, it.epoch) }
+    } catch (_: ExecutionFencedException) {
+        null
+    }
 }
 
 /** Fences a runner call on the execution it claims: the one place every runner channel checks its caller. */
