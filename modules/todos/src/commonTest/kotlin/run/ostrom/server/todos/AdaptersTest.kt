@@ -112,7 +112,12 @@ class AdaptersTest {
         }
         override suspend fun resolve(orgId: Uuid, id: Uuid, answer: WaitAnswer, secrets: List<WaitSecret>): Wait? =
             unused()
-        override suspend fun serveSecrets(orgId: Uuid, sessionId: String, ownerId: String, now: Instant): ServedSecrets =
+        override suspend fun serveSecrets(
+            orgId: Uuid,
+            sessionId: String,
+            ownerId: String,
+            now: Instant,
+        ): ServedSecrets =
             unused()
         override suspend fun cancel(orgId: Uuid, id: Uuid, now: Instant): Wait? = unused()
         override suspend fun cancelOpenOfSessions(orgId: Uuid, sessions: List<String>, now: Instant): List<Wait> =
