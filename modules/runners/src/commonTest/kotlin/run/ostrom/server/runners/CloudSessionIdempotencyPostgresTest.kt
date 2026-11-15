@@ -23,6 +23,14 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -132,6 +140,23 @@ class CloudSessionIdempotencyPostgresTest {
                 .first().get("n").asLong()
         }
         assertEquals(1, left)
+    }
+
+    @Test
+    fun theModulePurgesTheExpiredRecordsOnItsOwn() = serverTest(listOf(RunnersModule)) { server ->
+        val repository = server.koin.get<CloudSessionsRepository>()
+        val now = Clock.System.now()
+        repository.createKeyed(session(createdAt = now - 2.hours), 5, CreateKey("old", DIGEST, now - 1.hours))
+        suspend fun left() = server.driver.inTenant(ORG_A) {
+            fetchAll(Statement.create("SELECT COUNT(*) AS n FROM runners_create_keys")).getOrThrow()
+                .first().get("n").asLong()
+        }
+        val job = Job()
+        RunnersModule.start(CoroutineScope(currentCoroutineContext() + job), server.koin)
+        withTimeout(20.seconds) {
+            while (left() > 0) delay(100.milliseconds)
+        }
+        job.cancelAndJoin()
     }
 
     private companion object {

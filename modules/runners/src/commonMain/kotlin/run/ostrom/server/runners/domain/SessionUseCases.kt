@@ -232,7 +232,7 @@ class CreateCloudSessionUseCaseImpl(
 
     private companion object {
         /** How long a creation's `Idempotency-Key` replays it (TeamCode's `IDEMPOTENCY_MILLIS`). */
-        val IDEMPOTENCY_RETENTION = 24.hours
+        private val IDEMPOTENCY_RETENTION = 24.hours
         const val MAX_NAME_LENGTH = 120
         const val MAX_PROMPT_LENGTH = 20_000
         const val MAX_ECHO = 32
