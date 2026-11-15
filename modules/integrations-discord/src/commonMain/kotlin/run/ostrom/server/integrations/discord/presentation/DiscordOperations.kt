@@ -2,6 +2,7 @@
 package run.ostrom.server.integrations.discord.presentation
 
 import io.ktor.http.HttpStatusCode
+import kotlinx.serialization.json.JsonObject
 import run.ostrom.core.api.models.DiscordLink
 import run.ostrom.core.api.models.DiscordLinkStart
 import run.ostrom.server.kernel.http.docs.ApiCatalog
@@ -74,10 +75,9 @@ private fun ApiCatalog.interactionOperations() {
             )
         }
         responses {
-            empty(
+            ok<JsonObject>(
                 "The interaction response, a JSON object: `type` 1 (PONG), 4 (a message for the clicker only) " +
                     "or 7 (the updated message).",
-                HttpStatusCode.OK,
             )
             badRequest("A body of more than 64 KiB, or an interaction this server does not answer " +
                 "(`invalid_request`).")
