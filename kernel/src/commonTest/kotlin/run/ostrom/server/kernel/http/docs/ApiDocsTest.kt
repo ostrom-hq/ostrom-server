@@ -129,6 +129,7 @@ class ApiDocsTest {
                 responses { empty("Received.", HttpStatusCode.Accepted) }
             }
             get("/api/v1/items/ghost") { operationId = "ghost" }
+            conditionally { get("/api/v1/items/sometimes") { operationId = "sometimes" } }
             delete("/api/v1/items/{id}") { operationId = "deleteItemAgain" }
         }
     }

@@ -30,7 +30,8 @@ suspend fun TestServer.assertApiCatalogue(module: ServerModule) {
     assertEquals(HttpStatusCode.OK, response.status, body)
     val paths = Json.parseToJsonElement(body).jsonObject.getValue("paths").jsonObject
     val served = paths.flatMap { (path, item) -> item.jsonObject.keys.map { method -> "${method.uppercase()} $path" } }
-    val missing = ApiCatalog().apply(operations).operations.map { it.key }.filter { it !in served }
+    val missing = ApiCatalog().apply(operations).operations.filter { !it.conditional }.map { it.key }
+        .filter { it !in served }
     assertEquals(emptyList(), missing, "Each entry of ${module.name} is in the served document")
     val coverage = koin.get<ApiDocs>().coverage()
     assertTrue(module.name !in coverage.uncatalogued, "${module.name} is mounted with its catalogue")

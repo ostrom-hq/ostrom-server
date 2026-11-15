@@ -37,7 +37,7 @@ internal fun ApiCatalog.budgetsOperations() {
     myBudgetOperations()
     budgetOverrideOperations()
     budgetRevocationOperations()
-    poolSizeOperations()
+    conditionally { poolSizeOperations() }
 }
 
 /** The organization's limits. */

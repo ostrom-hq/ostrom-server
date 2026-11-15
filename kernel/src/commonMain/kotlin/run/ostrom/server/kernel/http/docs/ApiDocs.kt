@@ -75,7 +75,7 @@ class ApiDocsSection(val owner: String, val catalog: ApiCatalog?, val routes: Li
  * What the document leaves undescribed.
  *
  * @property undescribed `METHOD /path` of each API route whose module has a catalogue without its entry.
- * @property unrouted `METHOD /path` of each catalogue entry no route of its module matches.
+ * @property unrouted `METHOD /path` of each catalogue entry no route of its module matches, but the conditional ones.
  * @property uncatalogued The API routes of each module that has no catalogue yet, by module.
  * @property duplicated `METHOD /path` of each entry a catalogue declares more than once (the first one is used).
  */
@@ -144,7 +144,7 @@ class ApiDocs {
             duplicated += catalog.operations.groupBy { it.key }.filterValues { it.size > 1 }.keys
             val keys = catalog.operations.map { it.key }.toSet()
             undescribed += routes.filter { it !in keys }
-            unrouted += keys.filter { it !in routes }
+            unrouted += catalog.operations.filter { !it.conditional && it.key !in routes }.map { it.key }.distinct()
         }
         return ApiDocsCoverage(undescribed, unrouted, uncatalogued, duplicated)
     }
