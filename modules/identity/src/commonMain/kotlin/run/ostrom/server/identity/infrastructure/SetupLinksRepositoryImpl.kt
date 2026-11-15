@@ -4,6 +4,7 @@ package run.ostrom.server.identity.infrastructure
 import run.ostrom.server.identity.domain.SetupLink
 import run.ostrom.server.identity.domain.SetupLinksRepository
 import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.present
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greater

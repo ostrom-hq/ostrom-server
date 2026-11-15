@@ -3,6 +3,8 @@ package run.ostrom.server.gates.infrastructure
 
 import run.ostrom.server.gates.domain.models.ApprovalRequest
 import run.ostrom.server.gates.domain.models.RequestStatus
+import run.ostrom.server.kernel.database.Read
+import run.ostrom.server.kernel.database.rowBefore
 import org.jetbrains.exposed.v1.core.JoinType
 import org.jetbrains.exposed.v1.core.Op
 import org.jetbrains.exposed.v1.core.SortOrder

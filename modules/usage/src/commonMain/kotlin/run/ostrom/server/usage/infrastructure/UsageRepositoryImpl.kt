@@ -3,6 +3,8 @@ package run.ostrom.server.usage.infrastructure
 
 import run.ostrom.server.kernel.database.InstantColumnType
 import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.lockKeyUntilCommit
+import run.ostrom.server.kernel.database.write
 import run.ostrom.server.usage.domain.Admission
 import run.ostrom.server.usage.domain.HoldWindow
 import run.ostrom.server.usage.domain.SpendHold
@@ -71,7 +73,7 @@ class UsageRepositoryImpl(private val database: JdbcDatabase) : UsageRepository 
     override suspend fun holdWithin(hold: SpendHold, limits: SpendLimits, window: HoldWindow): Admission =
         // One transaction on one connection: the lock is held until its end, and no read waits for another connection.
         database.inOrg(hold.orgId) {
-            lockUntilCommit(holdsLockKey(hold.orgId))
+            lockKeyUntilCommit(holdsLockKey(hold.orgId))
             write { holdsRetire(hold.orgId, window) }
             // A call of no launch has no launch budget, whatever the limits say.
             val applying = if (hold.launchId == null) limits.copy(launchMicros = null) else limits

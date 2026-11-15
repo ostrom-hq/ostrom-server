@@ -2,12 +2,10 @@
 package run.ostrom.server.identity.infrastructure
 
 import run.ostrom.server.kernel.database.InstantColumnType
-import org.jetbrains.exposed.v1.core.Column
 import org.jetbrains.exposed.v1.core.CustomFunction
 import org.jetbrains.exposed.v1.core.Expression
 import org.jetbrains.exposed.v1.core.LongColumnType
 import org.jetbrains.exposed.v1.core.QueryParameter
-import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.core.TextColumnType
 import org.jetbrains.exposed.v1.core.UuidColumnType
@@ -47,16 +45,3 @@ internal fun JdbcTransaction.countOf(name: String, vararg arguments: Expression<
 internal fun JdbcTransaction.call(name: String, vararg arguments: Expression<*>) {
     Table.Dual.select(CustomFunction(name, TextColumnType(), *arguments)).toList()
 }
-
-/**
- * The value of a nullable [column] that this row holds by construction, written together with [with], the one the
- * caller checked (an app's sign-in has all its three columns, a used setup link its account and its date). A row
- * that breaks it fails here, the column named, rather than later on a null.
- *
- * @param column The column.
- * @param with The column it is written with.
- *
- * @return Its value.
- */
-internal fun <T : Any> ResultRow.present(column: Column<T?>, with: Column<*>): T =
-    checkNotNull(this[column]) { "${column.name} is set with ${with.name}" }

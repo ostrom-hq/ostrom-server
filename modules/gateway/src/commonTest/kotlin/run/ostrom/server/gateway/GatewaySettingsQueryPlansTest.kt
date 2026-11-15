@@ -9,6 +9,7 @@ import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import run.ostrom.server.sharing.SharingModule
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
 import org.koin.dsl.module
 import kotlin.test.Test

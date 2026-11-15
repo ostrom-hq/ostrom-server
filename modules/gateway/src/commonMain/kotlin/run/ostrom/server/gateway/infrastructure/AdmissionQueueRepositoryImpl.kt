@@ -10,6 +10,8 @@ import run.ostrom.server.gateway.domain.QueueRefusedException
 import run.ostrom.server.gateway.domain.QueueTurns
 import run.ostrom.server.gateway.domain.RefusalKind
 import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.lockKeyUntilCommit
+import run.ostrom.server.kernel.database.write
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.uuid.Uuid
@@ -30,7 +32,7 @@ class AdmissionQueueRepositoryImpl(private val database: JdbcDatabase) : Admissi
 
     private fun JdbcTransaction.decide(request: AdmissionRequest, first: Boolean): AdmissionEntry {
         val orgId = request.orgId
-        lockUntilCommit(admissionLockKey(orgId))
+        lockKeyUntilCommit(admissionLockKey(orgId))
         write { admissionPurge(orgId) }
         val waited = if (first) {
             bound(request)

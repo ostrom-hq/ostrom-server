@@ -9,11 +9,8 @@ import run.ostrom.server.sharing.domain.QuotaWindow
 import run.ostrom.server.sharing.infrastructure.accountOfOrg
 import run.ostrom.server.sharing.infrastructure.quotaReading
 import run.ostrom.server.sharing.infrastructure.recentQuotaHistory
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
-import org.jetbrains.exposed.v1.core.statements.Statement
-import org.jetbrains.exposed.v1.core.statements.StatementBuilder
-import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
-import org.jetbrains.exposed.v1.jdbc.explain
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertFalse
@@ -82,9 +79,4 @@ class ForecastQueryPlansTest {
             assertFalse("Seq Scan" in plan, "$what scans a table:\n$plan")
         }
     }
-
-    private fun JdbcTransaction.plan(statement: StatementBuilder.() -> Statement<*>): String =
-        explain(analyze = true, options = "BUFFERS", body = statement).joinToString("\n") {
-            it.toString().removePrefix("QUERY PLAN=")
-        }
 }

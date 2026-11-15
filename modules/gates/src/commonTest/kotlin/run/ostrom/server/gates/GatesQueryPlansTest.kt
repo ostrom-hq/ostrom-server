@@ -29,14 +29,13 @@ import run.ostrom.server.gates.infrastructure.sessionGatesRead
 import run.ostrom.server.gates.infrastructure.sessionLinks
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.testing.benchTest
+import run.ostrom.server.testing.plan
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.writeString
 import org.jetbrains.exposed.v1.core.statements.Statement
 import org.jetbrains.exposed.v1.core.statements.StatementBuilder
-import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
-import org.jetbrains.exposed.v1.jdbc.explain
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertFalse
@@ -146,12 +145,6 @@ class GatesQueryPlansTest {
         }
         return gates
     }
-
-    /** The plan of [statement] as Exposed sends it, under `EXPLAIN (ANALYZE, BUFFERS)`: a write runs (rolled back). */
-    private fun JdbcTransaction.plan(statement: StatementBuilder.() -> Statement<*>): String =
-        explain(analyze = true, options = "BUFFERS", body = statement).joinToString("\n") {
-            it.toString().removePrefix("QUERY PLAN=")
-        }
 
     private fun keyOf(n: Int) = "push-main:acme/api:${n % KEYS}"
 

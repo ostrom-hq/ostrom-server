@@ -7,6 +7,7 @@ import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.usage.domain.UsageEvent
 import run.ostrom.server.usage.infrastructure.ReplicatedUsageFeed

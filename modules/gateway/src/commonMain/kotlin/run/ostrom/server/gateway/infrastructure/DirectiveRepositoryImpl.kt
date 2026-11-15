@@ -15,6 +15,7 @@ import run.ostrom.server.gateway.domain.StoredDirective
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.databaseNow
 import run.ostrom.server.kernel.database.databaseNowPlus
+import run.ostrom.server.kernel.database.lockKeyUntilCommit
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
@@ -61,7 +62,7 @@ class DirectiveRepositoryImpl(private val database: JdbcDatabase) : DirectiveRep
     }
 
     override suspend fun save(orgId: Uuid, writes: List<DirectiveWrite>) = database.inOrg(orgId) {
-        lockUntilCommit(admissionLockKey(orgId))
+        lockKeyUntilCommit(admissionLockKey(orgId))
         writes.forEach { write(orgId, it) }
         purge(orgId)
     }
@@ -118,7 +119,7 @@ class DirectiveRepositoryImpl(private val database: JdbcDatabase) : DirectiveRep
         stage: DeliveryStage,
         tokenId: String,
     ): DirectiveDelivery? = database.inOrg(orgId) {
-        lockUntilCommit(deliveryLockKey(orgId))
+        lockKeyUntilCommit(deliveryLockKey(orgId))
         val scope = sessionDigest(session)
         val directive = read(orgId, memberId, scope) ?: return@inOrg null
         val r = GatewayDirectiveDeliveries
@@ -160,7 +161,7 @@ class DirectiveRepositoryImpl(private val database: JdbcDatabase) : DirectiveRep
         claimId: String?,
         tokenId: String,
     ) = database.inOrg(orgId) {
-        lockUntilCommit(deliveryLockKey(orgId))
+        lockKeyUntilCommit(deliveryLockKey(orgId))
         val scope = scopeOf(session)
         val d = GatewayDirectives
         val live = d.select(d.id).where {

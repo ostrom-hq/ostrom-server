@@ -5,8 +5,12 @@ import run.ostrom.server.gateway.domain.AdmissionQueueRepository
 import run.ostrom.server.gateway.domain.QueueCandidate
 import run.ostrom.server.gateway.domain.QueueCounts
 import run.ostrom.server.gateway.domain.Workload
+import run.ostrom.server.kernel.database.Read
+import run.ostrom.server.kernel.database.countWhere
 import run.ostrom.server.kernel.database.databaseNow
 import run.ostrom.server.kernel.database.databaseNowPlus
+import run.ostrom.server.kernel.database.maxOrZero
+import run.ostrom.server.kernel.database.maxWhere
 import org.jetbrains.exposed.v1.core.JoinType
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.coalesce
