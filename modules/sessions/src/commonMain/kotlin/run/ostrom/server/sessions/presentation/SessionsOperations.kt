@@ -57,7 +57,7 @@ private fun ApiCatalog.sessionReadOperations() {
                 "every label given (`sessions.labels.v1`, TeamCode's `GET /runs?label=k=v`). The key is " +
                 "everything before the first `=`. It composes with the other filters and never widens what the " +
                 "caller may read. 400 `invalid_label` for a malformed one.")
-            queryLimit("The page size, 1 to 100 (50 by default); a value outside is brought into it.", maximum = 100)
+            queryLimit("The page size, 1 to 100 (50 by default); 400 under 1, a larger one is brought down to 100.", maximum = 100)
         }
         responses {
             ok<SessionsPage>("A page of segments, `next` set when another may follow.")
