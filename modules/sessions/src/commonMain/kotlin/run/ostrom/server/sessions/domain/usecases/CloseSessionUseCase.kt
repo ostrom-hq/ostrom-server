@@ -15,7 +15,6 @@ import run.ostrom.server.sessions.domain.models.EndSession
 import run.ostrom.server.sessions.domain.models.Session
 import run.ostrom.server.sessions.domain.models.SessionNotFoundException
 import run.ostrom.server.sessions.domain.repositories.SessionsRepository
-import run.ostrom.server.sessions.domain.repositories.SessionsTransaction
 import run.ostrom.server.sessions.domain.services.SessionCosts
 import run.ostrom.server.sessions.domain.usecases.SessionSegments.Companion.clip
 import kotlinx.serialization.json.JsonArray
@@ -40,16 +39,6 @@ interface CloseSessionUseCase {
      * @return The ended segment.
      */
     suspend operator fun invoke(orgId: Uuid, id: String, end: EndSession): Session
-
-    /**
-     * Ends an open segment the caller already locked, in the caller's transaction.
-     *
-     * @param tx The caller's transaction.
-     * @param session The locked segment, as read under its lock.
-     * @param end What the end says.
-     * @return The ended segment.
-     */
-    suspend fun closeLocked(tx: SessionsTransaction, session: Session, end: EndSession): Session
 }
 
 /**
@@ -131,22 +120,6 @@ class CloseSessionUseCaseImpl(
     ): Pair<Session, Told?> = repository.transaction(orgId) {
         val session = lock(id) ?: throw SessionNotFoundException()
         change(session).also { (next, _) -> if (next != session) update(next) }
-    }
-
-    // Only for an open segment its caller replaces (SessionSegments), one per resume: it still signs inside the
-    // caller's transaction, never in a burst.
-    override suspend fun closeLocked(tx: SessionsTransaction, session: Session, end: EndSession): Session {
-        val orgId = session.orgId
-        val id = session.id
-        val endedAt = now()
-        val measured = end.copy(costUsd = costs.costOf(orgId, session.launchId, session.startedAt, endedAt))
-        val inForce = rules.rulesFor(orgId, session.repo)
-        val draft = draft(session, endedAt, measured, sessionGates.close(orgId, id, endedAt), inForce)
-        val receipt = sign(orgId, draft, receiptIdOf(id))
-        val ended = endedOf(session, endedAt, measured, end)
-            .copy(receiptId = (receipt.getValue("id") as JsonPrimitive).content)
-        tx.update(ended)
-        return ended
     }
 
     private fun now(): Instant = Instant.fromEpochMilliseconds(clock.now().toEpochMilliseconds())
