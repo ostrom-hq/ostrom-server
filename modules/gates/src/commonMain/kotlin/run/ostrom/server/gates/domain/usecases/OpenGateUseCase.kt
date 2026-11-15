@@ -118,7 +118,7 @@ class OpenGateUseCaseImpl(
         val (mode, approvers) = modeOf(node)
         if (mode == GateMode.ENFORCED && approvers.isEmpty()) throw GateWithoutApproverException()
         val key = digester.digest(GateKeys.keyPreimage(orgId.toString(), request.subject, node))
-        val opened = repository.transaction {
+        val opened = repository.transaction(orgId) {
             // AUDIT-SERVEUR-3 B2: the session's lock first, then its end is read. An end that read the session's gates
             // for its receipt refuses this one; an end that comes after this transaction reads it.
             request.sessionId?.let { holdOpen(orgId, it) }
@@ -144,7 +144,7 @@ class OpenGateUseCaseImpl(
 
     // The live gate of the same action takes the new asker; a refused one answers again. An expired yes is not
     // joined: the same action asks a new one (S2-29). A shadow or ungated record is joined in its own mode only.
-    private suspend fun GatesTransaction.joined(request: OpenGate, same: List<Gate>, mode: GateMode): Opened? {
+    private fun GatesTransaction.joined(request: OpenGate, same: List<Gate>, mode: GateMode): Opened? {
         val now = clock.now()
         val live = same.firstOrNull { it.joinable(mode, now) }
         val refused = same.firstOrNull()?.takeIf { it.status == GateStatus.REJECTED }
@@ -165,7 +165,7 @@ class OpenGateUseCaseImpl(
     // Second audit H1: the ask that finds a yes takes it. Under the row lock the gate is used up, this ask is answered
     // approved, and the next ask of the same action opens a new gate: one yes, one action. The GitHub check, which
     // shares a merge's gate, only reads it. A gate that moved since `byKey` read it is joined as it is now.
-    private suspend fun GatesTransaction.taken(request: OpenGate, live: Gate, mode: GateMode): Opened? {
+    private fun GatesTransaction.taken(request: OpenGate, live: Gate, mode: GateMode): Opened? {
         val fresh = lockGate(live.orgId, live.id)
         if (fresh == null || fresh.status != GateStatus.APPROVED) return joined(request, listOfNotNull(fresh), mode)
         val joined = join(fresh, request)
@@ -181,7 +181,7 @@ class OpenGateUseCaseImpl(
         else -> false
     }
 
-    private suspend fun GatesTransaction.created(gate: Gate, approvers: List<String>): Opened {
+    private fun GatesTransaction.created(gate: Gate, approvers: List<String>): Opened {
         val now = gate.createdAt
         val requests = approvers.map { approver ->
             ApprovalRequest(Uuid.random(), gate.id, gate.orgId, approver, RequestStatus.PENDING, createdAt = now)
@@ -310,7 +310,7 @@ internal suspend fun viewOf(
 }
 
 // Holds the session open until the transaction ends: its lock, then the mark of its end.
-private suspend fun GatesTransaction.holdOpen(orgId: Uuid, sessionId: String) {
+private fun GatesTransaction.holdOpen(orgId: Uuid, sessionId: String) {
     lockSession(orgId, sessionId)
     sessionEndedAt(orgId, sessionId)?.let { throw GateSessionClosedException(sessionId, it) }
 }

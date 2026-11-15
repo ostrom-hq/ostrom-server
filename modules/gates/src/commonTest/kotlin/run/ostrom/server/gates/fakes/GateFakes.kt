@@ -62,7 +62,7 @@ class InMemoryGatesRepository : GatesRepository {
     val lockedSessions = mutableListOf<String>()
     private val mutex = Mutex()
 
-    override suspend fun <T> transaction(block: suspend GatesTransaction.() -> T): T = mutex.withLock {
+    override suspend fun <T> transaction(orgId: Uuid, block: GatesTransaction.() -> T): T = mutex.withLock {
         transactions++
         val savedGates = LinkedHashMap(gates)
         val savedRequests = LinkedHashMap(requests)
@@ -81,9 +81,13 @@ class InMemoryGatesRepository : GatesRepository {
         }
     }
 
-    override suspend fun get(orgId: Uuid, id: Uuid): Gate? = gates[id]?.takeIf { it.orgId == orgId }
+    override suspend fun get(orgId: Uuid, id: Uuid): Gate? = gateOf(orgId, id)
 
-    override suspend fun requestsOf(orgId: Uuid, gateId: Uuid): List<ApprovalRequest> =
+    private fun gateOf(orgId: Uuid, id: Uuid): Gate? = gates[id]?.takeIf { it.orgId == orgId }
+
+    override suspend fun requestsOf(orgId: Uuid, gateId: Uuid): List<ApprovalRequest> = requestsOfGate(orgId, gateId)
+
+    private fun requestsOfGate(orgId: Uuid, gateId: Uuid): List<ApprovalRequest> =
         requests.values.filter { it.gateId == gateId && it.orgId == orgId }
 
     var batchedRequestReads = 0
@@ -93,7 +97,9 @@ class InMemoryGatesRepository : GatesRepository {
         return requests.values.filter { it.gateId in gateIds && it.orgId == orgId }
     }
 
-    override suspend fun ofSession(orgId: Uuid, sessionId: String): List<Gate> =
+    override suspend fun ofSession(orgId: Uuid, sessionId: String): List<Gate> = sessionGates(orgId, sessionId)
+
+    private fun sessionGates(orgId: Uuid, sessionId: String): List<Gate> =
         gates.values.filter { it.orgId == orgId && (it.id to sessionId) in links }.sortedBy { it.createdAt }
 
     override suspend fun sessionsApprovedBy(orgId: Uuid, approver: String, sessionId: String?): List<String> {
@@ -136,35 +142,35 @@ class InMemoryGatesRepository : GatesRepository {
     }
 
     private inner class Tx : GatesTransaction {
-        override suspend fun announce(type: OrgEventType, gate: Gate, requests: List<ApprovalRequest>) {
+        override fun announce(type: OrgEventType, gate: Gate, requests: List<ApprovalRequest>) {
             announced += Triple(type, gate.id, requests.map { it.status })
         }
 
-        override suspend fun lockSession(orgId: Uuid, sessionId: String) {
+        override fun lockSession(orgId: Uuid, sessionId: String) {
             lockedSessions += sessionId
         }
 
-        override suspend fun sessionEndedAt(orgId: Uuid, sessionId: String): Instant? = sessionEnds[orgId to sessionId]
+        override fun sessionEndedAt(orgId: Uuid, sessionId: String): Instant? = sessionEnds[orgId to sessionId]
 
-        override suspend fun markSessionEnded(orgId: Uuid, sessionId: String, at: Instant) {
+        override fun markSessionEnded(orgId: Uuid, sessionId: String, at: Instant) {
             sessionEnds.getOrPut(orgId to sessionId) { at }
         }
 
-        override suspend fun gatesOfSession(orgId: Uuid, sessionId: String): List<Gate> = ofSession(orgId, sessionId)
+        override fun gatesOfSession(orgId: Uuid, sessionId: String): List<Gate> = sessionGates(orgId, sessionId)
 
         // Not counted in `batchedRequestReads`: that counts the reads outside a transaction.
-        override suspend fun requestsOfGates(orgId: Uuid, gateIds: List<Uuid>): List<ApprovalRequest> =
+        override fun requestsOfGates(orgId: Uuid, gateIds: List<Uuid>): List<ApprovalRequest> =
             requests.values.filter { it.gateId in gateIds && it.orgId == orgId }
 
-        override suspend fun lockKey(orgId: Uuid, key: String) {
+        override fun lockKey(orgId: Uuid, key: String) {
             lockedKeys += key
         }
 
-        override suspend fun byKey(orgId: Uuid, key: String, limit: Int): List<Gate> =
+        override fun byKey(orgId: Uuid, key: String, limit: Int): List<Gate> =
             gates.values.filter { it.orgId == orgId && it.key == key }.reversed().take(limit)
                 .map { gate -> staleSnapshot?.takeIf { it.id == gate.id } ?: gate }
 
-        override suspend fun addAskers(gate: Gate) {
+        override fun addAskers(gate: Gate) {
             gateUpdates++
             gates[gate.id] = gates.getValue(gate.id).copy(
                 askedBy = gate.askedBy,
@@ -176,35 +182,35 @@ class InMemoryGatesRepository : GatesRepository {
             gate.sessionIds.forEach { links += gate.id to it }
         }
 
-        override suspend fun lockGate(orgId: Uuid, id: Uuid): Gate? {
+        override fun lockGate(orgId: Uuid, id: Uuid): Gate? {
             if (vanishOnLock == id) {
                 vanishOnLock = null
                 return null
             }
-            return get(orgId, id)
+            return gateOf(orgId, id)
         }
 
-        override suspend fun request(orgId: Uuid, id: Uuid): ApprovalRequest? =
+        override fun request(orgId: Uuid, id: Uuid): ApprovalRequest? =
             requests[id]?.takeIf { it.orgId == orgId }
 
-        override suspend fun requestsOf(orgId: Uuid, gateId: Uuid): List<ApprovalRequest> =
-            this@InMemoryGatesRepository.requestsOf(orgId, gateId)
+        override fun requestsOf(orgId: Uuid, gateId: Uuid): List<ApprovalRequest> =
+            requestsOfGate(orgId, gateId)
 
-        override suspend fun insertGate(gate: Gate) {
+        override fun insertGate(gate: Gate) {
             gates[gate.id] = gate
             gate.sessionIds.forEach { links += gate.id to it }
         }
 
-        override suspend fun updateGate(gate: Gate) {
+        override fun updateGate(gate: Gate) {
             gateUpdates++
             gates[gate.id] = gate
         }
 
-        override suspend fun insertRequests(requests: List<ApprovalRequest>) {
+        override fun insertRequests(requests: List<ApprovalRequest>) {
             requests.forEach { this@InMemoryGatesRepository.requests[it.id] = it }
         }
 
-        override suspend fun updateRequests(requests: List<ApprovalRequest>) {
+        override fun updateRequests(requests: List<ApprovalRequest>) {
             requests.forEach { this@InMemoryGatesRepository.requests[it.id] = it }
         }
     }

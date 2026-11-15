@@ -14,12 +14,15 @@ import kotlin.uuid.Uuid
  */
 interface GatesRepository {
     /**
-     * Runs [block] in one database transaction; an exception rolls everything back.
+     * Runs [block] in one database transaction confined to [orgId]; an exception rolls everything back. The block is
+     * not `suspend`: it reads, decides and writes, and never calls another module or the network (CRL-03), which a use
+     * case does before or after it.
      *
+     * @param orgId The organization every read and write of [block] is of.
      * @param block The work, with locking reads and writes.
      * @return What [block] returns.
      */
-    suspend fun <T> transaction(block: suspend GatesTransaction.() -> T): T
+    suspend fun <T> transaction(orgId: Uuid, block: GatesTransaction.() -> T): T
 
     /**
      * Reads a gate.
@@ -116,7 +119,7 @@ interface GatesTransaction : GateSessionEnds, GateAnnouncements {
      * @param orgId The organization.
      * @param key The gate key.
      */
-    suspend fun lockKey(orgId: Uuid, key: String)
+    fun lockKey(orgId: Uuid, key: String)
 
     /**
      * Lists the gates opened for a key, newest first.
@@ -126,7 +129,7 @@ interface GatesTransaction : GateSessionEnds, GateAnnouncements {
      * @param limit At most this many.
      * @return The gates.
      */
-    suspend fun byKey(orgId: Uuid, key: String, limit: Int): List<Gate>
+    fun byKey(orgId: Uuid, key: String, limit: Int): List<Gate>
 
     /**
      * Reads a gate and locks it.
@@ -135,7 +138,7 @@ interface GatesTransaction : GateSessionEnds, GateAnnouncements {
      * @param id The gate.
      * @return The gate, or null.
      */
-    suspend fun lockGate(orgId: Uuid, id: Uuid): Gate?
+    fun lockGate(orgId: Uuid, id: Uuid): Gate?
 
     /**
      * Reads a request (not locked: its gate is the lock).
@@ -144,7 +147,7 @@ interface GatesTransaction : GateSessionEnds, GateAnnouncements {
      * @param id The request.
      * @return The request, or null.
      */
-    suspend fun request(orgId: Uuid, id: Uuid): ApprovalRequest?
+    fun request(orgId: Uuid, id: Uuid): ApprovalRequest?
 
     /**
      * Reads a gate's requests.
@@ -153,21 +156,21 @@ interface GatesTransaction : GateSessionEnds, GateAnnouncements {
      * @param gateId The gate.
      * @return The requests, in the approvers' order.
      */
-    suspend fun requestsOf(orgId: Uuid, gateId: Uuid): List<ApprovalRequest>
+    fun requestsOf(orgId: Uuid, gateId: Uuid): List<ApprovalRequest>
 
     /**
      * Stores a new gate.
      *
      * @param gate The gate.
      */
-    suspend fun insertGate(gate: Gate)
+    fun insertGate(gate: Gate)
 
     /**
      * Records who asks a gate (its askers, paths, sessions and launches), and nothing else of it.
      *
      * @param gate The gate with its askers as they are now.
      */
-    suspend fun addAskers(gate: Gate)
+    fun addAskers(gate: Gate)
 
     /**
      * Replaces a gate. Its sessions are linked by [insertGate] and [addAskers] only: a session added to a gate goes
@@ -175,19 +178,19 @@ interface GatesTransaction : GateSessionEnds, GateAnnouncements {
      *
      * @param gate The gate as it is now.
      */
-    suspend fun updateGate(gate: Gate)
+    fun updateGate(gate: Gate)
 
     /**
      * Stores new requests.
      *
      * @param requests The requests.
      */
-    suspend fun insertRequests(requests: List<ApprovalRequest>)
+    fun insertRequests(requests: List<ApprovalRequest>)
 
     /**
      * Replaces requests.
      *
      * @param requests The requests as they are now.
      */
-    suspend fun updateRequests(requests: List<ApprovalRequest>)
+    fun updateRequests(requests: List<ApprovalRequest>)
 }

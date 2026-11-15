@@ -38,6 +38,7 @@ import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.sessions.AgentSession
 import run.ostrom.server.kernel.sessions.AgentSessions
 import io.github.smyrgeorge.sqlx4k.Transaction
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.koin.dsl.module
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -374,6 +375,10 @@ class RecordingOrgEvents : OrgEventPublisher {
         orgId: Uuid,
         events: List<OrgEventDraft>,
     ) {
+        events.forEach { published += orgId to it }
+    }
+
+    override fun publishIn(transaction: JdbcTransaction, orgId: Uuid, events: List<OrgEventDraft>) {
         events.forEach { published += orgId to it }
     }
 }

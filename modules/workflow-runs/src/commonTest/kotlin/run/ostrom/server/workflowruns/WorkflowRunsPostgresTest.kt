@@ -22,7 +22,7 @@ import run.ostrom.server.gates.domain.models.GateSubject
 import run.ostrom.server.gates.domain.models.RequestStatus
 import run.ostrom.server.gates.domain.services.GateCheckProof
 import run.ostrom.server.gates.domain.services.GateCheckProofs
-import run.ostrom.server.gates.infrastructure.PostgresGatesRepository
+import run.ostrom.server.gates.domain.repositories.GatesRepository
 import run.ostrom.server.identity.IdentityModule
 import run.ostrom.server.identity.domain.ApiToken
 import run.ostrom.server.identity.domain.ApiTokensRepository
@@ -702,7 +702,7 @@ class WorkflowRunsPostgresTest {
             status = RequestStatus.PENDING,
             createdAt = gate.createdAt,
         )
-        PostgresGatesRepository(server.driver).transaction {
+        server.koin.get<GatesRepository>().transaction(org) {
             insertGate(gate)
             insertRequests(listOf(request))
         }

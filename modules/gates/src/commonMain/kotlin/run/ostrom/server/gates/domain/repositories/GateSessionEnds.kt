@@ -20,7 +20,7 @@ interface GateSessionEnds {
      * @param orgId The organization.
      * @param sessionId The session segment.
      */
-    suspend fun lockSession(orgId: Uuid, sessionId: String)
+    fun lockSession(orgId: Uuid, sessionId: String)
 
     /**
      * Reads when the end of a session read its gates.
@@ -29,7 +29,7 @@ interface GateSessionEnds {
      * @param sessionId The session segment.
      * @return When it ended, or null while it has not.
      */
-    suspend fun sessionEndedAt(orgId: Uuid, sessionId: String): Instant?
+    fun sessionEndedAt(orgId: Uuid, sessionId: String): Instant?
 
     /**
      * Marks a session ended; a session already marked keeps its first time.
@@ -38,7 +38,7 @@ interface GateSessionEnds {
      * @param sessionId The session segment.
      * @param at When it ended.
      */
-    suspend fun markSessionEnded(orgId: Uuid, sessionId: String, at: Instant)
+    fun markSessionEnded(orgId: Uuid, sessionId: String, at: Instant)
 
     /**
      * Lists the gates a session asked or joined, oldest first.
@@ -47,7 +47,7 @@ interface GateSessionEnds {
      * @param sessionId The session segment.
      * @return The gates.
      */
-    suspend fun gatesOfSession(orgId: Uuid, sessionId: String): List<Gate>
+    fun gatesOfSession(orgId: Uuid, sessionId: String): List<Gate>
 
     /**
      * Reads the requests of several gates in one read, each gate's in the approvers' order.
@@ -56,5 +56,5 @@ interface GateSessionEnds {
      * @param gateIds The gates, at least one.
      * @return The requests.
      */
-    suspend fun requestsOfGates(orgId: Uuid, gateIds: List<Uuid>): List<ApprovalRequest>
+    fun requestsOfGates(orgId: Uuid, gateIds: List<Uuid>): List<ApprovalRequest>
 }

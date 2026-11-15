@@ -174,7 +174,10 @@ override suspend fun rename(orgId: Uuid, id: Uuid, name: String): Boolean = data
   (`TransactionalAuditLog`); both take the kernel's advisory lock on the chain with the same SQL
   (`lockUntilCommit`, on a `JdbcTransaction` and on a sqlx4k `Transaction`, both `LOCK_UNTIL_COMMIT_SQL`). The
   Exposed writer signs an event between two transactions, never inside one (a transaction block is not `suspend`),
-  and signs it again if another writer appended meanwhile.
+  and signs it again if another writer appended meanwhile. The organization's event journal has two writers the same
+  way until every publisher moves: `OrgEventPublisher.publishIn` on a `JdbcTransaction` (the gates' approval events,
+  in the gate's own `inOrg` transaction) and on a sqlx4k `Transaction`; both move the organization's cursor with the
+  same upsert, whose row lock they wait on, so they share one gap-free sequence (`JournalWritersPostgresTest`).
 - A change that reads then writes locks what it read: `select(…).where { … }.forUpdate()` in the same transaction.
 - Exposed never retries a transaction (`defaultMaxAttempts = 1`). A refusal the domain expects (a duplicate) is an
   `insertIgnore`/`upsert` or a check in the same transaction, not a caught exception.
