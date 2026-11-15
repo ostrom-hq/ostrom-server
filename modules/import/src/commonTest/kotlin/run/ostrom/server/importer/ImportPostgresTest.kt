@@ -11,11 +11,13 @@ import run.ostrom.server.importer.domain.ImportAction.PLANNED
 import run.ostrom.server.importer.domain.ImportAction.SKIPPED
 import run.ostrom.server.importer.domain.ImportAction.UNCHANGED
 import run.ostrom.server.importer.domain.ImportAction.UPDATED
+import run.ostrom.server.importer.infrastructure.ImportProvenance
 import run.ostrom.server.importer.presentation.ImportReportDto
 import run.ostrom.server.importer.presentation.TeamCodeAccountDto
 import run.ostrom.server.importer.presentation.TeamCodeImportRequest
 import run.ostrom.server.importer.presentation.TeamCodeMcpServerDto
 import run.ostrom.server.importer.presentation.TeamCodeStdioDto
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.mcprelay.domain.GetMcpSettingsUseCase
 import run.ostrom.server.mcprelay.domain.ListArgumentPoliciesUseCase
 import run.ostrom.server.mcprelay.domain.ListMcpAssignmentsUseCase
@@ -27,19 +29,19 @@ import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.domain.SecretNotFoundException
 import run.ostrom.server.secrets.domain.SecretValue
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
-import run.ostrom.server.secrets.infrastructure.executeInOrg
-import run.ostrom.server.secrets.infrastructure.fetchInOrg
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.request.post
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
+import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.update
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -276,20 +278,29 @@ class ImportPostgresTest {
     fun rowLevelSecurityConfinesTheImportsRecordsToTheirOrg() = serverTest(modules, importOverrides()) { server ->
         with(server) {
             report(Importing.team())
-            val unfiltered = Statement.create("SELECT source_key FROM import_provenance")
-            assertEquals(6, driver.fetchInOrg(adminA.orgId, unfiltered).getOrThrow().size)
-            assertEquals(0, driver.fetchInOrg(adminB.orgId, unfiltered).getOrThrow().size, "No WHERE, no leak")
-            val stolen = Statement.create("UPDATE import_provenance SET ostrom_name = 'taken'")
-            assertEquals(0L, driver.executeInOrg(adminB.orgId, stolen).getOrThrow())
-            val planted = Statement.create(
-                "INSERT INTO import_provenance (org_id, kind, ostrom_id, source_key, ostrom_name) " +
-                    "VALUES (:org, 'SERVER', :id, 'planted', 'planted')",
-            ).bind("org", adminA.orgId).bind("id", Uuid.random())
-            assertFails("Another org's row is refused") { driver.executeInOrg(adminB.orgId, planted).getOrThrow() }
-            assertEquals(6, driver.fetchInOrg(adminA.orgId, unfiltered).getOrThrow().size, "Nothing was planted")
+            val database = koin.get<JdbcDatabase>()
+            val p = ImportProvenance
+            suspend fun visibleTo(org: Uuid) = database.inOrg(org) { p.selectAll().count() }
+            assertEquals(6L, visibleTo(adminA.orgId))
+            assertEquals(0L, visibleTo(adminB.orgId), "No WHERE, no leak")
+            val stolen = database.inOrg(adminB.orgId) { p.update { it[ostromName] = "taken" } }
+            assertEquals(0, stolen)
+            val planted = assertFailsWith<ExposedSQLException>("Another org's row is refused") {
+                database.inOrg(adminB.orgId) {
+                    p.insert {
+                        it[orgId] = adminA.orgId
+                        it[kind] = "SERVER"
+                        it[ostromId] = Uuid.random()
+                        it[sourceKey] = "planted"
+                        it[ostromName] = "planted"
+                    }
+                }
+            }
+            assertTrue("row-level security" in planted.message.orEmpty(), planted.message)
+            assertEquals(6L, visibleTo(adminA.orgId), "Nothing was planted")
             // Org B's same-named server is not org A's: its import creates its own, recorded in its own org.
             report(Importing.team().copy(memberMap = mapOf("m1" to adminB.memberId.toString())), token = "admin-b")
-            assertEquals(6, driver.fetchInOrg(adminB.orgId, unfiltered).getOrThrow().size)
+            assertEquals(6L, visibleTo(adminB.orgId))
         }
     }
 

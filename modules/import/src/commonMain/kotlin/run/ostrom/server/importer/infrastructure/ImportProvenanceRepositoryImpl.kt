@@ -5,59 +5,55 @@ import run.ostrom.server.importer.domain.ImportProvenanceRepository
 import run.ostrom.server.importer.domain.ImportRecord
 import run.ostrom.server.importer.domain.ImportRecordKind
 import run.ostrom.server.importer.domain.MAX_IMPORT_RECORDS
-import run.ostrom.server.secrets.infrastructure.fetchInOrg
-import run.ostrom.server.secrets.infrastructure.inTenant
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
+import run.ostrom.server.kernel.database.JdbcDatabase
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.or
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.select
 import kotlin.uuid.Uuid
 
 /**
- * [ImportProvenanceRepository] on PostgreSQL (table of [ImportMigrations]).
+ * [ImportProvenanceRepository] on `import_provenance` (table of [ImportMigrations]): every statement filters on its
+ * organization and runs in it (`inOrg`), under row-level security.
  *
- * @param driver The database.
+ * @param database The serving role's pool.
  */
-class ImportProvenanceRepositoryImpl(private val driver: Driver) : ImportProvenanceRepository {
-    override suspend fun list(orgId: Uuid): List<ImportRecord> = driver.fetchInOrg(
-        orgId,
-        Statement.create(
-            "SELECT kind, source_key, ostrom_name, ostrom_id FROM import_provenance WHERE org_id = :org_id " +
-                "ORDER BY kind = 'SECRET', source_key LIMIT :limit",
-        )
-            .bind("org_id", orgId)
-            .bind("limit", MAX_IMPORT_RECORDS),
-    ).getOrThrow().map { row ->
-        ImportRecord(
-            kind = ImportRecordKind.valueOf(row.get("kind").asString()),
-            sourceKey = row.get("source_key").asString(),
-            ostromName = row.get("ostrom_name").asString(),
-            ostromId = row.get("ostrom_id").asUuid(),
-        )
+class ImportProvenanceRepositoryImpl(private val database: JdbcDatabase) : ImportProvenanceRepository {
+    override suspend fun list(orgId: Uuid): List<ImportRecord> = database.inOrg(orgId) {
+        val p = ImportProvenance
+        // The other kinds first, then the secrets, each by source key.
+        p.select(p.kind, p.sourceKey, p.ostromName, p.ostromId)
+            .where { p.orgId eq orgId }
+            .orderBy((p.kind eq ImportRecordKind.SECRET.name) to SortOrder.ASC, p.sourceKey to SortOrder.ASC)
+            .limit(MAX_IMPORT_RECORDS)
+            .map { row ->
+                ImportRecord(
+                    kind = ImportRecordKind.valueOf(row[p.kind]),
+                    sourceKey = row[p.sourceKey],
+                    ostromName = row[p.ostromName],
+                    ostromId = row[p.ostromId],
+                )
+            }
     }
 
     override suspend fun record(orgId: Uuid, record: ImportRecord) {
-        driver.inTenant(orgId) {
-            execute(
-                Statement.create(
-                    "DELETE FROM import_provenance WHERE org_id = :org_id AND kind = :kind " +
-                        "AND (source_key = :source_key OR ostrom_id = :ostrom_id)",
-                )
-                    .bind("org_id", orgId)
-                    .bind("kind", record.kind.name)
-                    .bind("source_key", record.sourceKey)
-                    .bind("ostrom_id", record.ostromId),
-            ).getOrThrow()
-            execute(
-                Statement.create(
-                    "INSERT INTO import_provenance (org_id, kind, ostrom_id, source_key, ostrom_name) " +
-                        "VALUES (:org_id, :kind, :ostrom_id, :source_key, :ostrom_name)",
-                )
-                    .bind("org_id", orgId)
-                    .bind("kind", record.kind.name)
-                    .bind("ostrom_id", record.ostromId)
-                    .bind("source_key", record.sourceKey)
-                    .bind("ostrom_name", record.ostromName),
-            ).getOrThrow()
+        database.inOrg(orgId) {
+            val p = ImportProvenance
+            // One record per source key and per object of a kind: the one it replaces goes first.
+            p.deleteWhere {
+                (p.orgId eq orgId) and (p.kind eq record.kind.name) and
+                    ((p.sourceKey eq record.sourceKey) or (p.ostromId eq record.ostromId))
+            }
+            p.insert {
+                it[this.orgId] = orgId
+                it[kind] = record.kind.name
+                it[ostromId] = record.ostromId
+                it[sourceKey] = record.sourceKey
+                it[ostromName] = record.ostromName
+            }
         }
     }
 }
