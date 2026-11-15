@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.workflowruns.presentation
 
+import run.ostrom.core.api.Idempotency
 import run.ostrom.core.api.models.DeliverRequest
 import run.ostrom.core.api.models.RunStatus
 import run.ostrom.server.gates.domain.models.GateActor
@@ -10,9 +11,11 @@ import run.ostrom.server.workflowruns.domain.repositories.RunQuery
 import run.ostrom.server.workflowruns.domain.repositories.RunsQuery
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.request.header
 import io.ktor.server.request.receive
 import io.ktor.server.resources.get
 import io.ktor.server.resources.post
+import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import kotlin.uuid.Uuid
@@ -28,7 +31,16 @@ internal fun Route.startedRunsRoutes(dependencies: WorkflowRunsRoutesDependencie
     post<WorkflowRunsOfApi> { params ->
         val actor = actorOf(call, RunScopes.starting)
         val body = call.receive<StartRunRequest>()
-        call.respond(HttpStatusCode.Created, startRun(actor, params.id, body.inputs, personOf(call)))
+        val key = call.request.header(Idempotency.KEY_HEADER)?.also {
+            if (!Idempotency.isValid(it)) throw InvalidRunException(MALFORMED_KEY)
+        }
+        if (key == null) {
+            call.respond(HttpStatusCode.Created, startRun(actor, params.id, body.inputs, personOf(call)))
+        } else {
+            val started = startRun.startKeyed(actor, params.id, body.inputs, personOf(call), key)
+            if (started.replayed) call.response.header(Idempotency.REPLAYED_HEADER, "true")
+            call.respond(if (started.replayed) HttpStatusCode.OK else HttpStatusCode.Created, started.run)
+        }
     }
     get<WorkflowRunsOfApi> { params ->
         val actor = actorOf(call, RunScopes.reading)
@@ -72,6 +84,8 @@ private fun pageOf(limit: Int?): Int = when {
 }
 
 private const val MAX_PAGE = 100
+
+private const val MALFORMED_KEY = "Idempotency-Key: 1 to 128 characters of A-Za-z0-9._:-."
 
 private fun runStatusOf(value: String?): RunStatus? = value?.let { text ->
     RunStatus.entries.filter { it != RunStatus.UNKNOWN }.firstOrNull { it.value == text }

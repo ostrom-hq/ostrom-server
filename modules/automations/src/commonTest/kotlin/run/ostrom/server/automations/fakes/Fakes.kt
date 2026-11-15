@@ -4,6 +4,7 @@ package run.ostrom.server.automations.fakes
 import run.ostrom.server.automations.domain.CreateOutcome
 import run.ostrom.server.kernel.sessions.CloudSessionWakes
 import run.ostrom.server.automations.domain.DueWait
+import run.ostrom.server.automations.domain.ServedSecrets
 import run.ostrom.server.automations.domain.TimedWaitsRepository
 import run.ostrom.server.automations.domain.Wait
 import run.ostrom.server.automations.domain.WaitAgent
@@ -15,6 +16,8 @@ import run.ostrom.server.automations.domain.WaitEventTarget
 import run.ostrom.server.automations.domain.WaitEvents
 import run.ostrom.server.automations.domain.WaitFilter
 import run.ostrom.server.automations.domain.WaitResolver
+import run.ostrom.server.automations.domain.WaitSecret
+import run.ostrom.server.automations.domain.WaitSecretSessions
 import run.ostrom.server.automations.domain.WaitSessions
 import run.ostrom.server.automations.domain.WaitSessionsImpl
 import run.ostrom.server.automations.domain.WaitStatus
@@ -265,7 +268,23 @@ class InMemoryWaits : WaitsRepository {
         return if (before != null && start == 0) emptyList() else all.drop(start).take(limit)
     }
 
-    override suspend fun resolve(orgId: Uuid, id: Uuid, answer: WaitAnswer): Wait? {
+    /** The secrets kept by the answers, as the table `automations_wait_secrets` holds them: by session and name. */
+    val secrets = linkedMapOf<Pair<String, String>, KeptSecret>()
+
+    /** What [serveSecrets] was asked, in order. */
+    val served = mutableListOf<Triple<String, String, Instant>>()
+
+    override suspend fun serveSecrets(orgId: Uuid, sessionId: String, ownerId: String, now: Instant): ServedSecrets {
+        served += Triple(sessionId, ownerId, now)
+        val live = secrets.filter { (key, kept) ->
+            key.first == sessionId && kept.owner == ownerId && kept.secret.expiresAt > now
+        }
+        val oneTime = live.filterValues { it.secret.oneTime }.keys.map { it.second }.toSet()
+        secrets.keys.removeAll { (session, name) -> session == sessionId && name in oneTime }
+        return ServedSecrets(live.entries.associate { it.key.second to it.value.secret.value }, oneTime)
+    }
+
+    override suspend fun resolve(orgId: Uuid, id: Uuid, answer: WaitAnswer, secrets: List<WaitSecret>): Wait? {
         if (loseNextAnswer) {
             loseNextAnswer = false
             waits[id] = waits.getValue(id).copy(status = WaitStatus.CANCELLED, resolvedAt = answer.answeredAt)
@@ -273,7 +292,10 @@ class InMemoryWaits : WaitsRepository {
         }
         return update(orgId, id) {
             it.copy(status = WaitStatus.RESOLVED, answer = answer, resolvedAt = answer.answeredAt)
-        }?.also { if (it.sessionId != null) wakePending += it.id }
+        }?.also { wait ->
+            if (wait.sessionId != null) wakePending += wait.id
+            secrets.forEach { this.secrets[wait.sessionId.orEmpty() to it.envName] = KeptSecret(wait.createdBy, it) }
+        }
     }
 
     override suspend fun takeAnswered(orgId: Uuid, sessions: List<String>, limit: Int): List<Wait> {
@@ -299,6 +321,9 @@ class InMemoryWaits : WaitsRepository {
         return change(wait).also { waits[id] = it }
     }
 }
+
+/** A secret kept for a session, with the member the session ran for. */
+class KeptSecret(val owner: String, val secret: WaitSecret)
 
 /** Secrets numbered in the order they are minted, hashed by a readable rule: `wev_1` hashes to `hash:wev_1`. */
 class CountingSecrets : WaitEventSecrets {
@@ -327,6 +352,12 @@ class InMemoryTimedWaits(private val waits: InMemoryWaits) : TimedWaitsRepositor
         val timer = wait.timer ?: return null
         if (if (due) timer.at > answer.answeredAt else wait.resolver != WaitResolver.EVENT) return null
         return waits.resolve(orgId, id, answer)
+    }
+
+    override suspend fun purgeSecrets(now: Instant, limit: Int): Int {
+        val expired = waits.secrets.filterValues { it.secret.expiresAt <= now }.keys.take(limit)
+        waits.secrets.keys.removeAll(expired.toSet())
+        return expired.size
     }
 }
 

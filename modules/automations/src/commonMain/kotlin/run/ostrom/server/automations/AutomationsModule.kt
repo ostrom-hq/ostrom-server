@@ -31,6 +31,10 @@ import run.ostrom.server.automations.domain.WaitEventSecrets
 import run.ostrom.server.automations.domain.TimedWaitsRepository
 import run.ostrom.server.automations.domain.WaitAgentResolver
 import run.ostrom.server.automations.domain.WaitEvents
+import run.ostrom.server.automations.domain.NoSecretSessions
+import run.ostrom.server.automations.domain.WaitSecretSessions
+import run.ostrom.server.automations.domain.WaitSecretSource
+import run.ostrom.server.automations.domain.WaitSecretSourceImpl
 import run.ostrom.server.automations.domain.WaitSessions
 import run.ostrom.server.automations.domain.WaitSessionsImpl
 import run.ostrom.server.automations.domain.WaitsRepository
@@ -70,6 +74,7 @@ import run.ostrom.server.kernel.sessions.CloudSessionWakes
 import run.ostrom.server.kernel.sessions.PendingWaitAnswers
 import run.ostrom.server.kernel.sessions.SessionEndListener
 import run.ostrom.server.kernel.workflows.AutomationUsage
+import run.ostrom.server.secrets.domain.SecretCipher
 import io.ktor.server.routing.Route
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -97,7 +102,7 @@ object AutomationsModule : ServerModule {
     override val name: String = "automations"
 
     override val koinModule: Module = module {
-        single<WaitsRepository> { WaitsRepositoryImpl(get(), get()) }
+        single<WaitsRepository> { WaitsRepositoryImpl(get(), get(), getOrNull<SecretCipher>()) }
         // Another module's listener first, then the wake of a paused cloud session (runners).
         single<WaitEvents>(named(WAKING)) {
             CloudWakingWaitEvents(
@@ -125,8 +130,11 @@ object AutomationsModule : ServerModule {
                 get(),
                 get(),
                 get(),
+                getOrNull<WaitSecretSessions>() ?: NoSecretSessions,
             )
         }
+        // The secrets of answered waits, served to a cloud session's runner (the runners module asks it).
+        single<WaitSecretSource> { WaitSecretSourceImpl(get(), get(), get()) }
         single<WaitEventSecrets> { WaitEventSecretsImpl() }
         single<ReceiveWaitEventUseCase> {
             ReceiveWaitEventUseCaseImpl(
@@ -146,7 +154,9 @@ object AutomationsModule : ServerModule {
         single<SessionEndListener> {
             CancelSessionWaitsUseCaseImpl(get(), get<WaitEvents>(named(WAKING)), get())
         }
-        single<AnswerWaitUseCase> { AnswerWaitUseCaseImpl(get(), get<WaitEvents>(named(WAKING)), get()) }
+        single<AnswerWaitUseCase> {
+            AnswerWaitUseCaseImpl(get(), get<WaitEvents>(named(WAKING)), get(), get())
+        }
         single {
             WaitsRoutesDependencies(
                 get(),
@@ -197,11 +207,15 @@ object AutomationsModule : ServerModule {
      * Automations, the waits (`/api/v1/waits`) it serves and the wake of an agent's session, and the waits that resolve
      * by themselves (`wait_for`, the event address), whose clock [start] runs.
      */
-    override suspend fun features(koin: Koin): Set<String> = setOf(
+    override suspend fun features(koin: Koin): Set<String> = setOfNotNull(
         ServerFeatures.AUTOMATIONS,
         ServerFeatures.WAITS,
         ServerFeatures.WAITS_WAKE,
         ServerFeatures.WAITS_TIMED,
+        // Secret fields need a key to seal with and a way to tell an agent's session from the rest.
+        ServerFeatures.WAITS_SECRETS.takeIf {
+            koin.getOrNull<SecretCipher>() != null && koin.getOrNull<WaitSecretSessions>() != null
+        },
     )
 
     override fun start(scope: CoroutineScope, koin: Koin) {

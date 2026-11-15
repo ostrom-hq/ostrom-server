@@ -269,7 +269,8 @@ class CloudEnvironmentRulesTest {
         )
         assertFalse("s3cret" in prepared.toString())
         assertEquals(
-            "PreparedEnvironment(repositories=1, git=octo, variables=RunnerVariableValues([TOKEN], unavailable=[]))",
+            "PreparedEnvironment(repositories=1, git=octo, " +
+                "variables=RunnerVariableValues([TOKEN], unavailable=[], secrets=[], oneTime=[]))",
             prepared.toString(),
         )
     }

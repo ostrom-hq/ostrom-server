@@ -7,6 +7,7 @@ import run.ostrom.server.cloud.domain.CloudRuntimeSource
 import run.ostrom.server.runners.domain.BackfillSessionProfilesUseCase
 import run.ostrom.server.runners.domain.BackfillSessionProfilesUseCaseImpl
 import run.ostrom.server.runners.domain.CatalogSessionProfiles
+import run.ostrom.server.runners.domain.KeepPausedSessions
 import run.ostrom.server.runners.domain.NoSessionProfiles
 import run.ostrom.server.runners.domain.SessionProfiles
 import run.ostrom.server.runners.infrastructure.CloudKubernetesClusters
@@ -15,11 +16,14 @@ import run.ostrom.server.runners.infrastructure.LegacyKubernetesImport
 import run.ostrom.server.runners.infrastructure.RunnersConfig.DriverKind.KUBERNETES
 import run.ostrom.server.runners.domain.RunnerDeliverySource
 import run.ostrom.server.runners.infrastructure.CLOUD_ACCESS_SETTINGS
+import run.ostrom.server.runners.infrastructure.CloudRuntimePausedRetention
 import run.ostrom.server.runners.infrastructure.CloudRuntimeRunnerDelivery
 import run.ostrom.server.runners.infrastructure.SettingsAllowedOrgs
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.automations.domain.AutomationLauncher
 import run.ostrom.server.automations.domain.AutomationLimits
+import run.ostrom.server.automations.domain.WaitSecretSessions
+import run.ostrom.server.automations.domain.WaitSecretSource
 import run.ostrom.server.billing.domain.GetAgentUsageUseCase
 import run.ostrom.server.billing.domain.GetPlanLimitsUseCase
 import run.ostrom.server.cloud.domain.CloudSettingsSource
@@ -92,6 +96,7 @@ import run.ostrom.server.runners.domain.TerminalTickets
 import run.ostrom.server.runners.infrastructure.BillingCloudPlanProvider
 import run.ostrom.server.runners.infrastructure.BillingCloudUsageMeter
 import run.ostrom.server.runners.infrastructure.CloudSessionAutomationLauncher
+import run.ostrom.server.runners.infrastructure.CloudSessionWaitSecretSessions
 import run.ostrom.server.runners.infrastructure.CloudSettingsBackgroundWorkLimit
 import run.ostrom.server.runners.infrastructure.CloudSessionsRepositoryImpl
 import run.ostrom.server.runners.infrastructure.CloudSettingsAutomationLimits
@@ -231,8 +236,12 @@ object RunnersModule : ServerModule {
             val limit = CloudSettingsBackgroundWorkLimit(getOrNull<CloudSettingsSource>())
             val ended = getAll<SessionEndListener>()
             val answers = getOrNull<PendingWaitAnswers>() ?: NoPendingWaitAnswers
+            // The console's paused retention, for every runtime; paused sessions are kept without the cloud module.
+            val retention = getOrNull<CloudRuntimeSource>()
+                ?.let { CloudRuntimePausedRetention(it, get<Logger>()) } ?: KeepPausedSessions
+            val transfers = get<TransferWiring>().complete
             ReconcileCloudSessionUseCaseImpl(
-                get(), get(), get(), get(), get(), get(), ended, get(), answers, get<TransferWiring>().complete, limit,
+                get(), get(), get(), get(), get(), get(), ended, get(), answers, transfers, retention, limit,
             )
         }
         // Ownership transfers need the orgs module's members: without it nobody can be named, and none is served.
@@ -261,7 +270,11 @@ object RunnersModule : ServerModule {
             RunnerGitHubTokenUseCaseImpl(get(), get(), getOrNull<RunnerGitHubTokens>() ?: NoRunnerGitHubTokens)
         }
         single<RunnerVariables> { runnerVariables(getOrNull<ResolveEnvironmentUseCase>()) }
-        single<RunnerVariablesUseCase> { RunnerVariablesUseCaseImpl(get(), get(), get()) }
+        single<RunnerVariablesUseCase> {
+            RunnerVariablesUseCaseImpl(get(), get(), get(), getOrNull<WaitSecretSource>(), getOrNull<MemberDirectory>())
+        }
+        // The agent of a cloud session, for the secret fields of its waits (waits.secrets.v1).
+        single<WaitSecretSessions> { CloudSessionWaitSecretSessions(get()) }
         // Without the orgs module nobody vouches for an owner: the preparation routes are not served (404), so a
         // runner falls back to the legacy clone instead of failing every session.
         single {

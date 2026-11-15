@@ -49,12 +49,29 @@ internal object WaitMessages {
                 add("action: $label (${answer.action})")
                 add("answered by: ${author ?: answer.author}")
                 wait.question.fields.forEach { field ->
-                    text(answer.values[field.id])?.let { add("${field.label}: ${indented(it)}") }
+                    if (field.type == WaitFieldType.SECRET) {
+                        add("${field.label}: ${secretLine(field, answer.values[field.id])}")
+                    } else {
+                        text(answer.values[field.id])?.let { add("${field.label}: ${indented(it)}") }
+                    }
                 }
             }
         }
         return cut(lines.joinToString("\n"))
     }
+
+    /**
+     * What the message says of a secret field: the variable it reaches the agent as, never the value. The stored
+     * answer holds only [WaitSecrets.PROVIDED] or [WaitSecrets.NOT_PROVIDED] for it; anything else reads as not
+     * provided, so a value that should not be there cannot be echoed.
+     */
+    private fun secretLine(field: WaitField, value: JsonElement?): String =
+        if ((value as? JsonPrimitive)?.content == WaitSecrets.PROVIDED) {
+            "secret provided: ${WaitRules.secretVariable(field.id)} (available in your shell environment" +
+                (if (field.oneTime) ", for this turn only" else "") + ")"
+        } else {
+            "secret not provided"
+        }
 
     /** At most [MAX_LENGTH] characters, never half of a character in two (an emoji): the hook prints it as JSON. */
     private fun cut(text: String): String = if (text.length <= MAX_LENGTH) {

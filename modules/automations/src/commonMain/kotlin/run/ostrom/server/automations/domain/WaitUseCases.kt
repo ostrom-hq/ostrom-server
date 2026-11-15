@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.automations.domain
 
+import run.ostrom.server.kernel.audit.DiscardingOrgAuditTrail
+import run.ostrom.server.kernel.audit.OrgAuditRecord
+import run.ostrom.server.kernel.audit.OrgAuditTrail
+import run.ostrom.server.kernel.audit.auditDetails
+import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.MemberDirectory
+import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.errors.Pages
 import kotlinx.serialization.json.JsonElement
 import kotlin.time.Clock
@@ -52,6 +58,8 @@ interface AskWaitUseCase {
      * @throws SessionNotRunningException When the session ended.
      * @throws WaitLimitException When too many waits are open for the session or the caller.
      * @throws WaitForbiddenException When anyone but an agent in its session asks a wait for a time or an event.
+     * @throws SecretUnsupportedSessionException When a secret field is asked outside a cloud session.
+     * @throws SecretUnsupportedAgentException When a secret field is asked in a session whose agent is not Claude Code.
      */
     suspend fun ask(caller: WaitCaller, request: AskWait, idempotencyKey: String?): AskedWait
 }
@@ -68,7 +76,9 @@ interface AskWaitUseCase {
  * @param clock The time.
  * @param sessions Whose the sessions are.
  * @param secrets The secrets of the event addresses.
+ * @param secretSessions Which agent a cloud session runs, for the secret fields.
  */
+@Suppress("LongParameterList") // One port per collaborator, wired by name in the composition root.
 class AskWaitUseCaseImpl(
     private val repository: WaitsRepository,
     private val members: MemberDirectory,
@@ -76,6 +86,7 @@ class AskWaitUseCaseImpl(
     private val clock: Clock,
     private val sessions: WaitSessions,
     private val secrets: WaitEventSecrets,
+    private val secretSessions: WaitSecretSessions = NoSecretSessions,
 ) : AskWaitUseCase {
     override suspend fun ask(caller: WaitCaller, request: AskWait, idempotencyKey: String?): AskedWait {
         requireWait(idempotencyKey == null || KEY.matches(idempotencyKey)) {
@@ -122,6 +133,12 @@ class AskWaitUseCaseImpl(
             val session = sessions.owned(caller, request.sessionId) { WaitSessionOwnerOnlyException() }
             if (!session.open) throw SessionNotRunningException()
         }
+        // A secret is asked in a session and never by a workflow run: it has to reach an agent.
+        val secretsAllowed = request.sessionId != null && request.runId == null
+        val question = WaitRules.question(request.question, secretsAllowed)
+        if (request.sessionId != null && question.fields.any { it.type == WaitFieldType.SECRET }) {
+            requireSecretSession(caller, request.sessionId)
+        }
         val now = now()
         return Wait(
             id = Uuid.random(),
@@ -132,12 +149,22 @@ class AskWaitUseCaseImpl(
             runId = request.runId,
             assignee = assignee,
             createdBy = caller.memberId,
-            question = WaitRules.question(request.question),
+            question = question,
             answer = null,
             createdAt = now,
             resolvedAt = null,
             idempotencyKey = key,
         )
+    }
+
+    /**
+     * A secret reaches the agent through the per-command environment of Claude Code in a cloud session only: another
+     * agent reads its environment once, when its process starts, so a value given later could not reach it, and one
+     * given earlier could neither be withdrawn nor expire.
+     */
+    private suspend fun requireSecretSession(caller: WaitCaller, sessionId: String) {
+        val agent = secretSessions.agentOf(caller.orgId, sessionId) ?: throw SecretUnsupportedSessionException()
+        if (agent !in WaitRules.SECRET_AGENTS) throw SecretUnsupportedAgentException(agent)
     }
 
     /**
@@ -329,6 +356,7 @@ interface AnswerWaitUseCase {
      * @throws WaitClosedException When another answer won, or it was cancelled.
      * @throws InvalidWaitAnswerException When the answer does not fit the question.
      * @throws WaitResolvesByItselfException When it waits for a time or an event.
+     * @throws SecretsUnavailableException When it holds a secret and the server has no key to seal it with.
      */
     suspend fun answer(caller: WaitCaller, id: Uuid, action: String, values: Map<String, JsonElement>): Wait
 
@@ -348,11 +376,13 @@ interface AnswerWaitUseCase {
  * @param repository Where waits are stored.
  * @param events Told of the answer or the cancellation.
  * @param clock The time.
+ * @param audit The organization's audit log: that a secret was provided is written to it, never its value.
  */
 class AnswerWaitUseCaseImpl(
     private val repository: WaitsRepository,
     private val events: WaitEvents,
     private val clock: Clock,
+    private val audit: OrgAuditTrail = DiscardingOrgAuditTrail(),
 ) : AnswerWaitUseCase {
     override suspend fun answer(
         caller: WaitCaller,
@@ -379,8 +409,29 @@ class AnswerWaitUseCaseImpl(
         values: Map<String, JsonElement>,
     ): Wait? {
         WaitRules.answer(wait.question, action, values)
-        val answer = WaitAnswer(action, values, caller.memberId, clock.now())
-        return repository.resolve(caller.orgId, wait.id, answer)?.also { events.resolved(it) }
+        val answeredAt = clock.now()
+        // The values of secret fields leave the answer here: it stores `provided` for them, and the repository seals
+        // the values apart.
+        val split = WaitSecrets.split(wait.question.fields, values, answeredAt)
+        val answer = WaitAnswer(action, split.values, caller.memberId, answeredAt)
+        return repository.resolve(caller.orgId, wait.id, answer, split.secrets)?.also {
+            events.resolved(it)
+            if (split.secrets.isNotEmpty()) recordSecrets(caller, it, split.secrets)
+        }
+    }
+
+    /** Only the fact is audited, by field id: never a value. */
+    private suspend fun recordSecrets(caller: WaitCaller, wait: Wait, secrets: List<WaitSecret>) {
+        audit.record(
+            OrgAuditRecord(
+                orgId = caller.orgId,
+                actor = caller.principal ?: WAITS_ACTOR,
+                event = "wait.secret_provided",
+                subjectType = "wait",
+                subjectId = wait.id.toString(),
+                details = auditDetails("fields" to secrets.map { it.fieldId }),
+            ),
+        )
     }
 
     override suspend fun cancel(caller: WaitCaller, id: Uuid): Wait {
@@ -395,8 +446,10 @@ class AnswerWaitUseCaseImpl(
     /** The same member sending the same answer again gets the wait back; anyone else learns it is closed. */
     private fun replayed(wait: Wait, caller: WaitCaller, action: String, values: Map<String, JsonElement>): Wait {
         val answer = wait.answer
+        // A secret is compared as the stored answer holds it (`provided`): its value is not kept, and a retry stores
+        // nothing.
         val same = answer != null && answer.author == caller.memberId && answer.action == action &&
-            answer.values == values
+            answer.values == WaitSecrets.split(wait.question.fields, values, answer.answeredAt).values
         return if (same) wait else throw WaitClosedException()
     }
 }
@@ -413,3 +466,6 @@ private suspend fun visibleWait(repository: WaitsRepository, caller: WaitCaller,
 /** Whether [caller] reads [wait] as its assignee or an administrator: never an agent token. */
 private fun mayReadAsked(caller: WaitCaller, wait: Wait): Boolean =
     !caller.agent && (caller.admin || wait.assignee == caller.memberId)
+
+/** Who writes the audit lines of the waits that no person's request causes: the waits, a service. */
+val WAITS_ACTOR: AuthenticatedPrincipal = AuthenticatedPrincipal("waits", PrincipalKind.SERVICE, emptySet())

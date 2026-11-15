@@ -18,7 +18,7 @@ import kotlin.uuid.Uuid
 class LedgerLaunchSpend(private val repository: UsageRepository, private val clock: Clock) : LaunchSpend {
     override suspend fun spentMicros(orgId: Uuid, launchId: String): Long {
         val now = clock.now()
-        val since = now - UsageQueries.LAUNCH_LIFE_HOURS.hours
+        val since = now - LAUNCH_LIFE_HOURS.hours
         return repository.launchSpentMicros(orgId, launchId, since, now + 1.minutes)
             ?: 0
     }

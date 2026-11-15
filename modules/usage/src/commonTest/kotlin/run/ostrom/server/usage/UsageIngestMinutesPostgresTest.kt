@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.usage
 
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
@@ -48,8 +49,8 @@ class UsageIngestMinutesPostgresTest {
     @Test
     fun twoReplicasCountTheSameMinute() = serverTest(listOf(SecretsModule, UsageModule), overrides) { server ->
         server.awayFromTheMinutesEnd()
-        val one = UsageRepositoryImpl(server.driver)
-        val other = UsageRepositoryImpl(server.driver)
+        val one = UsageRepositoryImpl(server.koin.get<JdbcDatabase>())
+        val other = UsageRepositoryImpl(server.koin.get<JdbcDatabase>())
         val count = Statement.create("SELECT COUNT(*) AS n FROM usage_events")
         suspend fun recorded(org: Uuid = TestCallers.orgA) =
             server.driver.fetchInOrg(org, count).getOrThrow().first().get("n").asLong()
@@ -67,6 +68,11 @@ class UsageIngestMinutesPostgresTest {
             "Another org's minute",
         )
         assertFalse(one.insertWithinMinute(TestCallers.orgA, admin, events(9, admin), 9), "A batch over the limit")
+        val fresh = Uuid.random()
+        assertFalse(
+            one.insertWithinMinute(TestCallers.orgA, fresh, events(3, fresh), 2),
+            "A batch larger than a minute holds, in a minute not started yet",
+        )
         assertTrue(one.insertWithinMinute(TestCallers.orgA, admin, emptyList(), 8), "An empty batch writes nothing")
         assertEquals(16L, recorded())
         assertEquals(8L, recorded(TestCallers.orgB))
@@ -75,7 +81,7 @@ class UsageIngestMinutesPostgresTest {
     @Test
     fun concurrentBatchesNeverOvershoot() = serverTest(listOf(SecretsModule, UsageModule), overrides) { server ->
         server.awayFromTheMinutesEnd()
-        val replicas = List(2) { UsageRepositoryImpl(server.driver) }
+        val replicas = List(2) { UsageRepositoryImpl(server.koin.get<JdbcDatabase>()) }
         val admitted = coroutineScope {
             List(10) { index ->
                 async { replicas[index % 2].insertWithinMinute(TestCallers.orgA, member, events(1), perMinute = 6) }
@@ -86,7 +92,7 @@ class UsageIngestMinutesPostgresTest {
 
     @Test
     fun aBatchDropsTheMembersPastMinutes() = serverTest(listOf(SecretsModule, UsageModule), overrides) { server ->
-        val repository = UsageRepositoryImpl(server.driver)
+        val repository = UsageRepositoryImpl(server.koin.get<JdbcDatabase>())
         val past = Statement.create(
             "INSERT INTO usage_ingest_minutes (org_id, member_id, minute, events) VALUES (:org_id, :member_id, 5, 9)",
         ).bind("org_id", TestCallers.orgA).bind("member_id", member)

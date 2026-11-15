@@ -3,8 +3,10 @@ package run.ostrom.server.runners.domain
 
 import run.ostrom.server.kernel.sessions.PendingWaitAnswers
 import run.ostrom.server.kernel.sessions.SessionEndListener
+import kotlinx.coroutines.CancellationException
 import kotlin.time.Clock
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -47,6 +49,7 @@ interface ReconcileCloudSessionUseCase {
  *   running session resumes nothing, and nothing would resume it once paused).
  * @param transfers The owner change of an accepted transfer; null where the server offers none (a session then never
  *   holds one).
+ * @param retention How long a paused session keeps its workspace, read when it pauses ([CloudSession.expiresAt]).
  * @param backgroundWork How long the agent's background work holds off the idle pause, per organization.
  */
 // Each step is a decision table read top to bottom: an early return per outcome reads better than nested branches,
@@ -64,6 +67,7 @@ class ReconcileCloudSessionUseCaseImpl(
     private val profiles: SessionProfiles = NoSessionProfiles,
     private val answers: PendingWaitAnswers = NoPendingWaitAnswers,
     private val transfers: CompleteCloudTransferUseCase? = null,
+    private val retention: PausedRetention = KeepPausedSessions,
     private val backgroundWork: BackgroundWorkLimit,
 ) : ReconcileCloudSessionUseCase {
     override suspend fun invoke(session: CloudSession): Instant? {
@@ -128,8 +132,7 @@ class ReconcileCloudSessionUseCaseImpl(
         }
         if (now - since < UNREACHABLE_GRACE) return now + UNREACHABLE_RETRY
         val outcome = when {
-            session.desiredState == DesiredState.TERMINATED -> session.moveTo(SessionState.TERMINATED, now).copy(
-                terminatedAt = now,
+            session.desiredState == DesiredState.TERMINATED -> session.toTerminated(now).copy(
                 executionStartedAt = null,
                 phase = CLEANUP_BLOCKED,
                 failure = CLUSTER_LOST_CLEANUP,
@@ -141,7 +144,11 @@ class ReconcileCloudSessionUseCaseImpl(
         val terminated = outcome.state == SessionState.TERMINATED
         val next = write(
             outcome.copy(runnerTokenHash = null, clusterUnreachableSince = null),
-            if (terminated) now + BLOCKED_RECHECK else null,
+            when (outcome.state) {
+                SessionState.TERMINATED -> now + BLOCKED_RECHECK
+                SessionState.PAUSED -> outcome.expiresAt
+                else -> null
+            },
         )
         // Terminated, its cleanup still blocked: what its agent asked ends now (the listeners are idempotent).
         if (terminated) ended.forEach { it.ended(session.orgId, listOf(session.id.toString())) }
@@ -166,8 +173,7 @@ class ReconcileCloudSessionUseCaseImpl(
     private suspend fun terminate(session: CloudSession, now: Instant): Instant? {
         driver.stopExecutions(session)
         if (!driver.deleteWorkspace(session)) return now + STEP_DELAY
-        val terminated = session.moveTo(SessionState.TERMINATED, now)
-            .copy(terminatedAt = now, runnerTokenHash = null, phase = "cleaned")
+        val terminated = session.toTerminated(now).copy(runnerTokenHash = null, phase = "cleaned")
         // A lost write (the runner's last heartbeat, sent while its container stopped) asks for a new look.
         val next = write(terminated, null)
         // Once written: a lost write is looked at again, and its listeners told then (they are idempotent).
@@ -178,7 +184,7 @@ class ReconcileCloudSessionUseCaseImpl(
     private suspend fun starting(session: CloudSession, now: Instant): Instant? {
         if (session.desiredState == DesiredState.PAUSED) {
             driver.stopExecutions(session)
-            return write(session.toPaused(now, session.failure), null)
+            return parked(session.toPaused(now, session.failure))
         }
         val startedAt = session.executionStartedAt ?: return startExecution(session, now)
         val status = driver.executionStatus(session)
@@ -204,7 +210,7 @@ class ReconcileCloudSessionUseCaseImpl(
             "start_failed",
             "The session's runner did not start. Try again, or check the image.",
         )
-        if (session.state == SessionState.RESUMING) return write(session.toPaused(now, failure), null)
+        if (session.state == SessionState.RESUMING) return parked(session.toPaused(now, failure))
         if (!driver.deleteWorkspace(session)) return now + STEP_DELAY
         val ended = session.moveTo(SessionState.FAILED, now)
             .copy(failure = failure, runnerTokenHash = null, executionStartedAt = null)
@@ -218,7 +224,7 @@ class ReconcileCloudSessionUseCaseImpl(
     private suspend fun preparationFailed(session: CloudSession, now: Instant): Instant? {
         driver.stopExecutions(session)
         if (session.state == SessionState.RESUMING) {
-            return write(session.toPaused(now, session.failure).copy(desiredState = DesiredState.PAUSED), null)
+            return parked(session.toPaused(now, session.failure).copy(desiredState = DesiredState.PAUSED))
         }
         if (!driver.deleteWorkspace(session)) return now + STEP_DELAY
         val ended = session.moveTo(SessionState.FAILED, now)
@@ -231,7 +237,7 @@ class ReconcileCloudSessionUseCaseImpl(
         val refused = planFailure(session, now)
         if (refused != null) {
             driver.stopExecutions(session)
-            return write(session.toPaused(now, refused).copy(desiredState = DesiredState.PAUSED), null)
+            return parked(session.toPaused(now, refused).copy(desiredState = DesiredState.PAUSED))
         }
         driver.ensureWorkspace(session)
         val token = tokens.mint()
@@ -260,7 +266,7 @@ class ReconcileCloudSessionUseCaseImpl(
      */
     private suspend fun blocked(session: CloudSession, now: Instant, failure: SessionFailure): Instant? {
         if (session.state == SessionState.RESUMING) {
-            return write(session.toPaused(now, failure).copy(desiredState = DesiredState.PAUSED), null)
+            return parked(session.toPaused(now, failure).copy(desiredState = DesiredState.PAUSED))
         }
         val ended = session.moveTo(SessionState.FAILED, now)
             .copy(failure = failure, runnerTokenHash = null, executionStartedAt = null)
@@ -284,7 +290,7 @@ class ReconcileCloudSessionUseCaseImpl(
                 "execution_lost",
                 "The session's runner stopped answering; the workspace was kept.",
             )
-            return write(session.toPaused(now, failure).copy(desiredState = DesiredState.PAUSED), null)
+            return parked(session.toPaused(now, failure).copy(desiredState = DesiredState.PAUSED))
         }
         if (session.desiredState != DesiredState.RUNNING) {
             return write(session.toPausing(now, session.failure), now + STEP_DELAY)
@@ -343,16 +349,59 @@ class ReconcileCloudSessionUseCaseImpl(
         if (!done) return now + STEP_DELAY
         driver.stopExecutions(session)
         val paused = session.toPaused(now, session.failure)
-        return write(paused, if (paused.desiredState == DesiredState.RUNNING) now else null)
+        return write(paused, if (paused.desiredState == DesiredState.RUNNING) now else paused.expiresAt)
     }
 
+    /**
+     * A paused session: past its [CloudSession.expiresAt], it is terminated with its workspace (TeamCode's
+     * `cloud.session.expired`, [CloudSession.TERMINATED_EXPIRED]); asked to run, it resumes and no longer expires;
+     * otherwise it is looked at again when it expires.
+     */
     private suspend fun paused(session: CloudSession, now: Instant): Instant? {
-        if (session.desiredState != DesiredState.RUNNING) return null
-        return write(
-            session.moveTo(SessionState.RESUMING, now)
-                .copy(phase = "scheduling", executionStartedAt = null, failure = null),
-            now,
-        )
+        val expiresAt = session.expiresAt
+        if (expiresAt != null && expiresAt <= now) {
+            val expired = session.copy(
+                desiredState = DesiredState.TERMINATED,
+                terminatedReason = CloudSession.TERMINATED_EXPIRED,
+                updatedAt = now,
+            )
+            return write(expired, now)
+        }
+        if (session.desiredState == DesiredState.RUNNING) {
+            val resuming = session.moveTo(SessionState.RESUMING, now).copy(
+                phase = "scheduling",
+                executionStartedAt = null,
+                failure = null,
+                expiresAt = null,
+                expiryBackfill = false,
+            )
+            return write(resuming, now)
+        }
+        if (session.expiryBackfill) return upgradedExpiry(session, now)
+        return expiresAt
+    }
+
+    /**
+     * A session paused before paused sessions expired gets its expiry, once, from the retention in force at its first
+     * step, counted from its pause; one already past it gets [UPGRADE_GRACE], so that nothing is deleted the moment
+     * the upgrade lands. With no retention then, it is kept, as a session paused under none.
+     */
+    private suspend fun upgradedExpiry(session: CloudSession, now: Instant): Instant? {
+        val due = retentionDays()?.let { (session.pausedAt ?: now) + it.days }
+        val expiresAt = due?.let { if (it <= now) now + UPGRADE_GRACE else it }
+        return write(session.copy(expiresAt = expiresAt, expiryBackfill = false, updatedAt = now), expiresAt)
+    }
+
+    /**
+     * The paused retention in force, read once by the step that pauses the session (or gives it its expiry). A pause
+     * never fails on it: a retention that cannot be read is [PausedRetention.FALLBACK_DAYS].
+     */
+    private suspend fun retentionDays(): Int? = try {
+        retention.days()
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        PausedRetention.FALLBACK_DAYS
     }
 
     /** Why the organization's plan stops the session now: cloud sessions closed to it, or its hours used up. */
@@ -366,6 +415,9 @@ class ReconcileCloudSessionUseCaseImpl(
             else -> null
         }
     }
+
+    /** Writes a paused session, looked at again when it expires. */
+    private suspend fun parked(paused: CloudSession): Instant? = write(paused, paused.expiresAt)
 
     /** Writes a step; a lost race asks for an immediate new look, which re-reads the row. */
     private suspend fun write(next: CloudSession, nextReconcileAt: Instant?): Instant? {
@@ -383,9 +435,12 @@ class ReconcileCloudSessionUseCaseImpl(
         moveTo(SessionState.PAUSING, now)
             .copy(pausingSince = now, runnerStoppedAt = null, phase = "draining", failure = reason)
 
-    private fun CloudSession.toPaused(now: Instant, reason: SessionFailure?): CloudSession =
+    /** Paused: its workspace kept until the retention in force now runs out ([CloudSession.expiresAt]). */
+    private suspend fun CloudSession.toPaused(now: Instant, reason: SessionFailure?): CloudSession =
         moveTo(SessionState.PAUSED, now).copy(
             pausedAt = now,
+            expiresAt = retentionDays()?.let { now + it.days },
+            expiryBackfill = false,
             executionStartedAt = null,
             runnerTokenHash = null,
             runnerStoppedAt = null,
@@ -393,6 +448,14 @@ class ReconcileCloudSessionUseCaseImpl(
             readyAt = null,
             phase = null,
             failure = reason,
+        )
+
+    /** Terminated, deleted by its owner or an administrator unless it expired; it no longer expires. */
+    private fun CloudSession.toTerminated(now: Instant): CloudSession =
+        moveTo(SessionState.TERMINATED, now).copy(
+            terminatedAt = now,
+            terminatedReason = terminatedReason ?: CloudSession.TERMINATED_DELETED,
+            expiresAt = null,
         )
 
     /** Constants and readers of the enclosing type. */
@@ -435,6 +498,12 @@ class ReconcileCloudSessionUseCaseImpl(
 
         /** How long a session waits for its unreachable cluster before its execution ends without it. */
         private val UNREACHABLE_GRACE: Duration = 10.minutes
+
+        /**
+         * How long a session paused before the upgrade, whose retention already ran out, is kept: its owner sees it
+         * expire before it does.
+         */
+        private val UPGRADE_GRACE: Duration = 1.days
 
         /** The delay between two cleanups of a session deleted while its cluster was unreachable. */
         private val BLOCKED_RECHECK: Duration = 10.minutes

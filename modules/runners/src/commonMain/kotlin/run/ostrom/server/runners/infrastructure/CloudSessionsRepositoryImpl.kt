@@ -183,7 +183,8 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
                 background_since = :background_since, background_seen_at = :background_seen_at, profile =
                 :profile, cluster_unreachable_since = :cluster_unreachable_since, owner_id = :owner_id,
                 transfer_id = :transfer_id, untrusted_workspace = :untrusted_workspace,
-                github_access = :github_access
+                github_access = :github_access, expires_at = :expires_at, terminated_reason = :terminated_reason,
+                expiry_backfill = :expiry_backfill
                 WHERE id = :id AND generation = :generation RETURNING
                 $COLUMNS
                 """,
@@ -365,6 +366,9 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         .bind("transfer_id", session.transferId)
         .bind("untrusted_workspace", session.untrustedWorkspace)
         .bind("github_access", session.githubAccess.wire)
+        .bind("expires_at", session.expiresAt)
+        .bind("expiry_backfill", session.expiryBackfill)
+        .bind("terminated_reason", session.terminatedReason)
 
     private fun ResultSet.Row.toSession(): CloudSession {
         val url = get("repository_url").asStringOrNull()
@@ -413,6 +417,9 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             clusterUnreachableSince = get("cluster_unreachable_since").asInstantOrNull(),
             transferId = get("transfer_id").asUuidOrNull(),
             untrustedWorkspace = get("untrusted_workspace").asBoolean(),
+            expiresAt = get("expires_at").asInstantOrNull(),
+            expiryBackfill = get("expiry_backfill").asBoolean(),
+            terminatedReason = get("terminated_reason").asStringOrNull(),
         )
     }
 
@@ -429,7 +436,8 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             restricted_egress, created_at, updated_at, execution_started_at, ready_at, last_heartbeat_at,
             last_activity_at, paused_at, terminated_at, pausing_since, runner_stopped_at, runner_token_hash,
             github_access, background_since, background_seen_at, environment, failure_retryable, profile,
-            cluster_unreachable_since, transfer_id, untrusted_workspace
+            cluster_unreachable_since, transfer_id, untrusted_workspace, expires_at, terminated_reason,
+            expiry_backfill
         """
         const val VALUES = """
             :id, :org_id, :owner_id, :name, :agent, :model, :prompt, :repository_url, :repository_ref, :state,
@@ -437,7 +445,8 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             :max_run_minutes, :restricted_egress, :created_at, :updated_at, :execution_started_at, :ready_at,
             :last_heartbeat_at, :last_activity_at, :paused_at, :terminated_at, :pausing_since, :runner_stopped_at,
             :runner_token_hash, :github_access, :background_since, :background_seen_at, :environment,
-            :failure_retryable, :profile, :cluster_unreachable_since, :transfer_id, :untrusted_workspace
+            :failure_retryable, :profile, :cluster_unreachable_since, :transfer_id, :untrusted_workspace,
+            :expires_at, :terminated_reason, :expiry_backfill
         """
     }
 }

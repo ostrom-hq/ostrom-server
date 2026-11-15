@@ -10,6 +10,15 @@ enum class ImportRecordKind {
 
     /** An org or personal secret. */
     SECRET,
+
+    /** A team or personal skill. */
+    SKILL,
+
+    /** A hook. */
+    HOOK,
+
+    /** A team or personal environment variant. */
+    VARIABLE,
 }
 
 /**
@@ -18,7 +27,8 @@ enum class ImportRecordKind {
  *
  * @property kind What it is.
  * @property sourceKey What it comes from in TeamCode: the variant id for a server, `<variant>` for a shared credential,
- *   `<variant>/<VARIABLE>` for a command's variable, `<variant>/member/<Ostrom member>` for a member's own.
+ *   `<variant>/<VARIABLE>` for a command's variable, `<variant>/member/<Ostrom member>` for a member's own;
+ *   TeamCode's id for a skill, a hook or an environment variant.
  * @property ostromName Its name in Ostrom when it was recorded (a server keeps it across runs).
  * @property ostromId Its id in Ostrom.
  */

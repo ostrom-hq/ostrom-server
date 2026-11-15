@@ -50,6 +50,14 @@ class ResolveDueWaitsUseCaseImpl(
                 false
             }
         }
+        // Secrets past their lifetime are deleted whether used or not (a handful of rows, by index).
+        try {
+            repository.purgeSecrets(now, ResolveDueWaitsUseCase.BATCH)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            failure = failure ?: error
+        }
         failure?.let { throw it }
         return resolved
     }

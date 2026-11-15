@@ -2,10 +2,10 @@
 package run.ostrom.server.usage
 
 import run.ostrom.server.kernel.database.DatabaseNotifications
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
-import run.ostrom.server.secrets.infrastructure.inTenant
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.usage.domain.UsageEvent
@@ -13,8 +13,7 @@ import run.ostrom.server.usage.infrastructure.ReplicatedUsageFeed
 import run.ostrom.server.usage.infrastructure.UsageFeedImpl
 import run.ostrom.server.usage.infrastructure.UsageFeedReadsImpl
 import run.ostrom.server.usage.infrastructure.UsageRepositoryImpl
-import run.ostrom.server.usage.infrastructure.usageFeedReadSql
-import io.github.smyrgeorge.sqlx4k.Statement
+import run.ostrom.server.usage.infrastructure.feedRead
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.toList
@@ -43,7 +42,7 @@ class ReplicatedUsageFeedPostgresTest {
     private fun TestServer.replica() = ReplicatedUsageFeed(
         UsageFeedImpl(),
         koin.get<DatabaseNotifications>(),
-        UsageFeedReadsImpl(driver),
+        UsageFeedReadsImpl(koin.get<JdbcDatabase>()),
         RecordingLogger(),
     )
 
@@ -52,7 +51,7 @@ class ReplicatedUsageFeedPostgresTest {
         serverTest(listOf(SecretsModule, UsageModule), overrides) { server ->
             val (a, b) = server.replica() to server.replica()
             val event = modelEvent(321)
-            UsageRepositoryImpl(server.driver).insert(TestCallers.orgA, listOf(event))
+            UsageRepositoryImpl(server.koin.get<JdbcDatabase>()).insert(TestCallers.orgA, listOf(event))
             coroutineScope {
                 val running = listOf(launch { a.run() }, launch { b.run() })
                 val onB = mutableListOf<UsageEvent>()
@@ -89,12 +88,8 @@ class ReplicatedUsageFeedPostgresTest {
         }
         fixtures.execute("VACUUM ANALYZE usage_events").getOrThrow()
 
-        val statement = Statement.create("EXPLAIN (ANALYZE, BUFFERS) ${usageFeedReadSql(3)}")
-            .bind("org_id", TestCallers.orgA)
-        repeat(3) { statement.bind("id$it", Uuid.random()) }
-        val plan = server.driver.inTenant(TestCallers.orgA) {
-            fetchAll(statement).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
-        }
+        val read = feedRead(TestCallers.orgA, List(3) { Uuid.random() })
+        val plan = server.koin.get<JdbcDatabase>().inOrg(TestCallers.orgA) { plan { read } }
         assertFalse("Seq Scan" in plan, "The read scans the ledger:\n$plan")
     }
 }

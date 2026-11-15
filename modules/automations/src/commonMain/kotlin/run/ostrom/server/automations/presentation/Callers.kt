@@ -58,6 +58,7 @@ suspend fun PrincipalOrgResolver.waitCallerOf(principal: AuthenticatedPrincipal,
         memberId = member.memberId.toString(),
         admin = member.role in ADMIN_ROLES,
         interactive = principal.kind == PrincipalKind.USER,
+        principal = principal,
     )
 }
 

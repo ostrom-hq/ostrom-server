@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners.domain
 
+import run.ostrom.server.automations.domain.ServedSecrets
+import run.ostrom.server.automations.domain.WaitSecretSource
+import run.ostrom.server.kernel.auth.MemberDirectory
 import kotlin.uuid.Uuid
 
 /**
@@ -26,9 +29,19 @@ object NoRunnerVariables : RunnerVariables {
  *
  * @property variables The values by name, never logged.
  * @property unavailable The assigned variables withheld because their value cannot be read now, by name.
+ * @property secrets The secrets of the session's answered waits by variable name (`waits.secrets.v1`), never logged.
+ * @property oneTime The names in [secrets] the server deleted by serving them: the runner keeps them for the turn.
  */
-class RunnerVariableValues(val variables: Map<String, String>, val unavailable: List<String>) {
-    override fun toString(): String = "RunnerVariableValues(${variables.keys.sorted()}, unavailable=$unavailable)"
+class RunnerVariableValues(
+    val variables: Map<String, String>,
+    val unavailable: List<String>,
+    val secrets: Map<String, String> = emptyMap(),
+    val oneTime: List<String> = emptyList(),
+) {
+    override fun toString(): String =
+        "RunnerVariableValues(${variables.keys.sorted()}, unavailable=$unavailable, " +
+            "secrets=${secrets.keys.sorted()}, " +
+            "oneTime=$oneTime)"
 
     /** The empty answer. */
     companion object {
@@ -67,11 +80,16 @@ interface RunnerVariablesUseCase {
  * @param repository The sessions.
  * @param tokens Hashes the presented token.
  * @param variables The members' environment variables.
+ * @param secrets The secrets of the session's answered waits (`waits.secrets.v1`), none without the automations
+ *   module.
+ * @param members Tells whether the owner is still an active member: a member who is not gets no secret either.
  */
 class RunnerVariablesUseCaseImpl(
     private val repository: CloudSessionsRepository,
     private val tokens: RunnerTokens,
     private val variables: RunnerVariables,
+    private val secrets: WaitSecretSource? = null,
+    private val members: MemberDirectory? = null,
 ) : RunnerVariablesUseCase {
     override suspend fun invoke(token: String, request: RunnerExecutionRequest): RunnerVariableValues {
         val session = repository.findByRunnerTokenHash(tokens.hash(token)) ?: throw RunnerUnauthenticatedException()
@@ -80,6 +98,16 @@ class RunnerVariablesUseCaseImpl(
         if (!session.state.holdsExecution || session.desiredState == DesiredState.TERMINATED) {
             throw VariablesUnavailableException()
         }
-        return variables.of(session.orgId, session.ownerId)
+        val owned = variables.of(session.orgId, session.ownerId)
+        val served = waitSecrets(session) ?: return owned
+        // A one-time secret is deleted by being served: this answer is the only one that carries it.
+        return RunnerVariableValues(owned.variables, owned.unavailable, served.values, served.oneTime.sorted())
+    }
+
+    /** The session's wait secrets, only while its owner is still an active member (no directory: the owner stands). */
+    private suspend fun waitSecrets(session: CloudSession): ServedSecrets? {
+        val source = secrets ?: return null
+        val active = members == null || members.isActiveMember(session.orgId, session.ownerId)
+        return if (active) source.serve(session.orgId, session.id.toString(), session.ownerId) else null
     }
 }

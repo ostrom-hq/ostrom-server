@@ -55,6 +55,13 @@ import kotlin.uuid.Uuid
  * @property untrustedWorkspace Whether another member's execution ran on the workspace since the owner's last ready
  *   one: set when the owner changes, cleared when an execution of the new owner is ready. The runner resets the
  *   agent's settings and each repository's Git configuration before it runs the setup and the agent.
+ * @property expiresAt When a paused session is terminated with its workspace (TeamCode's `expiresAt`), from the
+ *   instance's paused retention in force when it paused ([PausedRetention]); null while it is not paused, or when
+ *   paused sessions are kept. Resuming clears it.
+ * @property terminatedReason Why a terminated session ended: [TERMINATED_DELETED] or [TERMINATED_EXPIRED]; null
+ *   before it is asked to end.
+ * @property expiryBackfill Whether the session was paused before paused sessions expired and has not been given its
+ *   expiry yet: set once by the upgrade, cleared by its first step, a pause or a resume. Never served.
  */
 data class CloudSession(
     val id: Uuid,
@@ -92,6 +99,9 @@ data class CloudSession(
     val clusterUnreachableSince: Instant? = null,
     val transferId: Uuid? = null,
     val untrustedWorkspace: Boolean = false,
+    val expiresAt: Instant? = null,
+    val terminatedReason: String? = null,
+    val expiryBackfill: Boolean = false,
 ) {
     /**
      * Whether the runner of the current start reported a failed preparation (or the server found one): the
@@ -100,6 +110,15 @@ data class CloudSession(
     val preparationFailed: Boolean
         get() = (state == SessionState.CREATING || state == SessionState.RESUMING) &&
             failure?.code == CloudEnvironmentRules.PREPARATION_FAILED
+
+    /** Constants and readers of the enclosing type. */
+    companion object {
+        /** A session its owner or an administrator deleted. */
+        const val TERMINATED_DELETED: String = "deleted"
+
+        /** A paused session whose retention ran out ([expiresAt]). */
+        const val TERMINATED_EXPIRED: String = "expired"
+    }
 }
 
 /**

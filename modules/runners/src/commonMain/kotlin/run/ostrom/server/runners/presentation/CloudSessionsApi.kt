@@ -211,10 +211,19 @@ data class RunnerExecutionBody(val sessionId: String, val epoch: Long)
  *
  * @property variables The values by name.
  * @property unavailable The variables withheld, by name.
+ * @property secrets The secrets of the session's answered waits by variable name (`waits.secrets.v1`).
+ * @property oneTime The names in [secrets] the server deleted by serving them.
  */
 @Serializable
-data class RunnerVariablesResponse(val variables: Map<String, String>, val unavailable: List<String>) {
-    override fun toString(): String = "RunnerVariablesResponse(${variables.keys.sorted()}, unavailable=$unavailable)"
+data class RunnerVariablesResponse(
+    val variables: Map<String, String>,
+    val unavailable: List<String>,
+    val secrets: Map<String, String> = emptyMap(),
+    val oneTime: List<String> = emptyList(),
+) {
+    override fun toString(): String =
+        "RunnerVariablesResponse(${variables.keys.sorted()}, unavailable=$unavailable, " +
+            "secrets=${secrets.keys.sorted()}, oneTime=$oneTime)"
 }
 
 /**
@@ -321,7 +330,9 @@ data class SessionLimitsDto(
  * owner asked for (`running`, `paused`, `terminated`); `phase` is open. `runnerId` names the registered runner the
  * current execution was handed to, on the session's own read only (`GET /api/v1/cloud/sessions/{id}`).
  * `githubAccess` says whose GitHub access its Git and `gh` use (`owner`, `shared`, `none`). `profile` and `image`
- * say what a Kubernetes session runs on (`runners.cloud.profiles.v1`).
+ * say what a Kubernetes session runs on (`runners.cloud.profiles.v1`). `expiresAt`, on a paused session, says when it
+ * is terminated with its workspace, and `terminatedReason`, on a terminated one, why it ended (`deleted`,
+ * `expired`).
  */
 @Serializable
 data class CloudSessionResponse(
@@ -343,6 +354,8 @@ data class CloudSessionResponse(
     val readyAt: String? = null,
     val lastActivityAt: String? = null,
     val pausedAt: String? = null,
+    val expiresAt: String? = null,
+    val terminatedReason: String? = null,
     val endedAt: String? = null,
     val runnerId: String? = null,
     val githubAccess: String = "owner",

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.workflowruns
 
+import run.ostrom.core.api.Idempotency
 import run.ostrom.core.api.models.RunStatus
 import run.ostrom.core.api.models.WorkflowRun
 import run.ostrom.server.automations.AutomationsModule
@@ -113,12 +114,18 @@ class StartRunPostgresTest {
 
     private fun runsTest(block: suspend (TestServer) -> Unit) = serverTest(modules, overrides) { block(it) }
 
-    private suspend fun TestServer.call(token: String?, path: String, body: String? = null): HttpResponse =
+    private suspend fun TestServer.call(
+        token: String?,
+        path: String,
+        body: String? = null,
+        key: String? = null,
+    ): HttpResponse =
         if (body == null) {
             client.get(path) { token?.let { header(HttpHeaders.Authorization, "Bearer $it") } }
         } else {
             client.post(path) {
                 token?.let { header(HttpHeaders.Authorization, "Bearer $it") }
+                key?.let { header(Idempotency.KEY_HEADER, it) }
                 setBody(TextContent(body, ContentType.Application.Json))
             }
         }
@@ -177,6 +184,55 @@ class StartRunPostgresTest {
         // The run as the lists answer it is the run as started.
         val listed = server.call("user:a:lead", "/api/v1/runs").json().getValue("items").jsonArray.single()
         assertEquals(OstromJson.encodeToJsonElement(WorkflowRun.serializer(), run), listed)
+    }
+
+    @Test
+    fun aStartWithAnIdempotencyKeyReturnsTheFirstRunWhenItIsPressedAgain() = runsTest { server ->
+        server.workflow()
+        val body = """{"inputs":{"branch":"main"}}"""
+        val first = server.call("user:a:lead", RUNS, body, key = "press-1")
+        assertEquals(HttpStatusCode.Created, first.status, first.bodyAsText())
+        assertNull(first.headers[Idempotency.REPLAYED_HEADER])
+        val replay = server.call("user:a:lead", RUNS, body, key = "press-1")
+        assertEquals(HttpStatusCode.OK, replay.status, replay.bodyAsText())
+        assertEquals("true", replay.headers[Idempotency.REPLAYED_HEADER])
+        assertEquals(first.run(), replay.run())
+        assertEquals(1, server.call("user:a:lead", "/api/v1/runs").ids().size, "The replay started nothing")
+        // Another key is another press; no key is an unkeyed start, as before.
+        assertEquals(HttpStatusCode.Created, server.call("user:a:lead", RUNS, body, key = "press-2").status)
+        assertEquals(HttpStatusCode.Created, server.call("user:a:lead", RUNS, body).status)
+        assertEquals(3, server.call("user:a:lead", "/api/v1/runs").ids().size)
+        // A key is its caller's: the admin's start under the same key is a run of the admin.
+        val other = server.call("user:a:admin", RUNS, body, key = "press-1")
+        assertEquals(HttpStatusCode.Created, other.status, other.bodyAsText())
+        assertEquals("admin", other.run().startedBy)
+    }
+
+    @Test
+    fun aKeyedStartIsRefusedForAMalformedKeyAndForWhoCannotStartBeforeItsKeyIsLookedUp() = runsTest { server ->
+        server.workflow()
+        val body = """{"inputs":{"branch":"main"}}"""
+        for (key in listOf("has space", "a/b", "x".repeat(129))) {
+            val refused = server.call("user:a:lead", RUNS, body, key = key)
+            assertEquals(HttpStatusCode.BadRequest, refused.status, "$key ${refused.bodyAsText()}")
+        }
+        for (token in listOf("user:a:member", "user:a:approver", "agent:a:l1", "service:a:ci")) {
+            assertEquals(HttpStatusCode.Forbidden, server.call(token, RUNS, body, key = "k").status, token)
+        }
+        assertEquals(emptyList(), server.call("user:a:lead", "/api/v1/runs").ids())
+    }
+
+    @Test
+    fun aKeyedStartHonoursTheCapOfUnfinishedRunsAndAReplayStaysAnswerableAtTheCap() = runsTest { server ->
+        server.workflow()
+        val body = """{"inputs":{"branch":"main"}}"""
+        repeat(MAX_UNFINISHED) {
+            assertEquals(HttpStatusCode.Created, server.call("user:a:lead", RUNS, body, key = "k$it").status)
+        }
+        val limited = server.call("user:a:lead", RUNS, body, key = "one-more")
+        assertEquals(HttpStatusCode.Conflict, limited.status, limited.bodyAsText())
+        assertTrue("run_limit" in limited.bodyAsText(), limited.bodyAsText())
+        assertEquals(HttpStatusCode.OK, server.call("user:a:lead", RUNS, body, key = "k0").status)
     }
 
     @Test
