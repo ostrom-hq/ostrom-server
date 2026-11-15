@@ -8,17 +8,18 @@ import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.TokenAuthenticator
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.TENANT_ROLE
 import run.ostrom.server.kernel.signing.InstanceSigner
 import run.ostrom.server.receipts.domain.models.StoredReceipt
 import run.ostrom.server.receipts.domain.repositories.ReceiptsRepository
 import run.ostrom.server.receipts.domain.usecases.SignReceiptUseCase
+import run.ostrom.server.receipts.infrastructure.ReceiptsReceipts
 import run.ostrom.server.receipts.presentation.ReceiptKeysResponse
 import run.ostrom.server.receipts.presentation.ReceiptsPage
 import run.ostrom.server.receipts.presentation.VerificationResponse
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.SQLError
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -29,6 +30,10 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.JsonObject
+import org.jetbrains.exposed.v1.core.TextColumnType
+import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -144,25 +149,25 @@ class ReceiptsPostgresTest {
     @Test
     fun theDatabaseItselfKeepsOrganizationsApart() = receiptsTest { server ->
         server.sign(ORG_A, "gate-1")
-        val counts = server.driver.transaction {
-            val none = fetchAll("SELECT COUNT(*) AS n FROM receipts_receipts").getOrThrow().first().get("n").asString()
-            fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", ORG_B.toString()))
-                .getOrThrow()
-            val other = fetchAll("SELECT COUNT(*) AS n FROM receipts_receipts").getOrThrow().first().get("n").asString()
-            none to other
+        val database = server.koin.get<JdbcDatabase>()
+        val counts = database.query {
+            exec("SET LOCAL ROLE $TENANT_ROLE")
+            val none = ReceiptsReceipts.selectAll().count()
+            exec("SELECT set_config('ostrom.org_id', ?, true)", listOf(TextColumnType() to ORG_B.toString())) {}
+            none to ReceiptsReceipts.selectAll().count()
         }
-        assertEquals("0" to "0", counts, "Without the organization, and from another one, no row is visible")
+        assertEquals(0L to 0L, counts, "Without the organization, and from another one, no row is visible")
         // PostgreSQL refuses the row (WITH CHECK): the statement fails, and with it the transaction.
-        val refused = assertFailsWith<SQLError> {
-            server.driver.transaction {
-                val setOrg = Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)")
-                fetchAll(setOrg.bind("org", ORG_B.toString())).getOrThrow()
-                execute(
-                    Statement.create(
-                        "INSERT INTO receipts_receipts (org_id, id, subject_kind, subject_id, body, created_at) " +
-                            "VALUES (:org, 'rcpt_x', 'gate', 'g', '{}', now())",
-                    ).bind("org", ORG_A),
-                ).getOrThrow()
+        val refused = assertFailsWith<ExposedSQLException> {
+            database.inOrg(ORG_B) {
+                ReceiptsReceipts.insert {
+                    it[orgId] = ORG_A
+                    it[id] = "rcpt_x"
+                    it[subjectKind] = "gate"
+                    it[subjectId] = "g"
+                    it[body] = "{}"
+                    it[createdAt] = Instant.parse("2026-10-30T09:00:00Z")
+                }
             }
         }
         assertTrue("row-level security" in refused.message.orEmpty(), "A row of another organization is refused")

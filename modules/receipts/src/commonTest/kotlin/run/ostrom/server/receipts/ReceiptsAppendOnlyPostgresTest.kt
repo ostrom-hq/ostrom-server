@@ -2,15 +2,17 @@
 package run.ostrom.server.receipts
 
 import run.ostrom.server.instance.InstanceModule
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.receipts.domain.usecases.SignReceiptUseCase
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.SQLError
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.Transaction
+import org.jetbrains.exposed.v1.core.TextColumnType
+import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
+import kotlin.test.assertFails
 import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
@@ -23,22 +25,23 @@ class ReceiptsAppendOnlyPostgresTest {
     private fun receiptsTest(block: suspend (TestServer) -> Unit) =
         serverTest(listOf(InstanceModule, ReceiptsModule)) { server -> block(server) }
 
-    private suspend fun <T> TestServer.asServingRole(org: Uuid?, block: suspend Transaction.() -> T): T =
-        driver.transaction {
-            if (org != null) {
-                execute(Statement.create("SELECT set_config('ostrom.org_id', :org, true)").bind("org", org.toString()))
-                    .getOrThrow()
-            }
+    // The serving role itself, not the tenant role of `inOrg`: it holds UPDATE and DELETE by default privileges.
+    private suspend fun <T> TestServer.asServingRole(org: Uuid, block: JdbcTransaction.() -> T): T =
+        koin.get<JdbcDatabase>().query {
+            exec("SELECT set_config('ostrom.org_id', ?, true)", listOf(TextColumnType() to org.toString())) {}
             block()
         }
 
     private suspend fun refusedAsAppendOnly(what: String, block: suspend () -> Unit) {
-        val error = assertFailsWith<SQLError>(what) { block() }
+        val error = assertFails(what) { block() }
+        assertTrue(error is SQLError || error is ExposedSQLException, "$what: $error")
         assertTrue("append-only" in error.message.orEmpty(), "$what: ${error.message}")
     }
 
     private suspend fun TestServer.bodies(org: Uuid): List<String> = asServingRole(org) {
-        fetchAll("SELECT body FROM receipts_receipts ORDER BY id").getOrThrow().map { it.get("body").asString() }
+        exec("SELECT body FROM receipts_receipts ORDER BY id") { rs ->
+            buildList { while (rs.next()) add(rs.getString("body")) }
+        }.orEmpty()
     }
 
     @Test
@@ -47,10 +50,10 @@ class ReceiptsAppendOnlyPostgresTest {
         val signed = server.bodies(ORG_A)
         val rewrite = "UPDATE receipts_receipts SET body = '{}'"
         val erase = "DELETE FROM receipts_receipts"
-        refusedAsAppendOnly("serving, A, rewrite") { server.asServingRole(ORG_A) { execute(rewrite).getOrThrow() } }
-        refusedAsAppendOnly("serving, A, erase") { server.asServingRole(ORG_A) { execute(erase).getOrThrow() } }
+        refusedAsAppendOnly("serving, A, rewrite") { server.asServingRole(ORG_A) { exec(rewrite) } }
+        refusedAsAppendOnly("serving, A, erase") { server.asServingRole(ORG_A) { exec(erase) } }
         // A statement that reaches no row is refused all the same: never zero rows in silence.
-        refusedAsAppendOnly("serving, B, erase") { server.asServingRole(ORG_B) { execute(erase).getOrThrow() } }
+        refusedAsAppendOnly("serving, B, erase") { server.asServingRole(ORG_B) { exec(erase) } }
         val truncate = "TRUNCATE receipts_receipts"
         refusedAsAppendOnly("owner, truncate") { server.database.owner.execute(truncate).getOrThrow() }
         refusedAsAppendOnly("superuser, replica, erase") {

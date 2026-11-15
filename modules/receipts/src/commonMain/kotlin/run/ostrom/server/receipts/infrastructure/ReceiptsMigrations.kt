@@ -2,6 +2,8 @@
 package run.ostrom.server.receipts.infrastructure
 
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.database.TENANT_ROLE
+import run.ostrom.server.kernel.database.TENANT_ROLE_SQL
 
 /**
  * The receipts schema. A receipt is stored as the exact JSON that was signed. Rows are isolated by organization in the
@@ -93,5 +95,12 @@ val ReceiptsMigrations: List<SchemaMigration> = listOf(
         CREATE INDEX receipts_without_session ON receipts_receipts (org_id, subject_kind, created_at DESC, id DESC)
             WHERE session_id IS NULL
         """.trimIndent(),
+    ),
+    // On Exposed, every statement runs in `inOrg`, as the tenant role: it reads and inserts receipts, nothing else
+    // (a receipt is never changed, and the trigger above refuses it to every role anyway).
+    SchemaMigration(
+        4,
+        "grant_receipts_to_tenant",
+        TENANT_ROLE_SQL + "\n" + "GRANT SELECT, INSERT ON receipts_receipts TO $TENANT_ROLE",
     ),
 )
