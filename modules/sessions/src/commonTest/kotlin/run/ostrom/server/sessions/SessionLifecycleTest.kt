@@ -20,7 +20,6 @@ import run.ostrom.server.sessions.domain.models.SessionNotFoundException
 import run.ostrom.server.sessions.domain.models.SessionQuery
 import run.ostrom.server.sessions.domain.models.SessionResumedElsewhereException
 import run.ostrom.server.sessions.domain.models.StartSession
-import run.ostrom.server.sessions.domain.repositories.SessionsTransaction
 import run.ostrom.server.sessions.domain.services.NoSessionCosts
 import run.ostrom.server.sessions.domain.usecases.CloseSessionUseCase
 import run.ostrom.server.sessions.domain.usecases.EndSessionUseCaseImpl
@@ -348,11 +347,12 @@ class SessionLifecycleTest {
         val failing = SweepStaleSessionsUseCaseImpl(
             bench.repository,
             object : CloseSessionUseCase {
-                override suspend fun invoke(orgId: Uuid, id: String, end: EndSession): Session =
-                    if (id == "s-1") error("boom") else bench.close(orgId, id, end)
-
-                override suspend fun closeLocked(tx: SessionsTransaction, session: Session, end: EndSession) =
-                    bench.close.closeLocked(tx, session, end)
+                override suspend fun invoke(
+                    orgId: Uuid,
+                    id: String,
+                    end: EndSession,
+                    endsIf: (Session) -> Boolean,
+                ): Session = if (id == "s-1") error("boom") else bench.close(orgId, id, end, endsIf)
             },
             bench.clock,
             bench.logger,

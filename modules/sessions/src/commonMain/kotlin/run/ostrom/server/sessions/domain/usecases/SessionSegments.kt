@@ -8,6 +8,7 @@ import run.ostrom.server.sessions.domain.models.InvalidSessionRequestException
 import run.ostrom.server.sessions.domain.models.NotYourSessionException
 import run.ostrom.server.sessions.domain.models.Opening
 import run.ostrom.server.sessions.domain.models.Session
+import run.ostrom.server.sessions.domain.models.SessionResumedElsewhereException
 import run.ostrom.server.sessions.domain.models.StartSession
 import run.ostrom.server.sessions.domain.repositories.SessionsTransaction
 import kotlin.time.Clock
@@ -33,7 +34,8 @@ class SessionSegments(
     private val labels: LaunchLabels? = null,
 ) {
     /**
-     * Opens or finds the segment of a launch. Call it under [SessionsTransaction.lockRoot].
+     * Opens or finds the segment of a launch. Call it under [SessionsTransaction.lockRoot], in a transaction that
+     * [replacing] runs.
      *
      * @param tx The organization's transaction.
      * @param orgId The organization.
@@ -59,18 +61,21 @@ class SessionSegments(
         if (open != null && sameLaunch(open.launchId, start.launchId) && !lateAdoption(open, start)) {
             return found(tx, open, start, labels)
         }
-        // S2-48: an agent token never closes a live launch's segment (nor its yes); a silent one, as the sweep would.
-        if (open != null && !opening.mayReplace && !silent(open)) throw NotYourSessionException()
-        val previous = if (open != null) close.closeLocked(tx, open, EndSession(source = Session.SUPERSEDED)) else last
+        if (open != null) supersede(open, opening)
+        // A superseded segment whose end in [replacing] failed before its receipt (the signature threw): signed first,
+        // so that the next segment cites it, as when the end and the start were one transaction.
+        if (last != null && last.receiptId == null && last.source == Session.SUPERSEDED) {
+            throw SupersededSegmentException(last, mayReplace = true)
+        }
         val source = opening.source
-        val segment = (previous?.segment ?: 0) + 1
+        val segment = (last?.segment ?: 0) + 1
         val session = Session(
             orgId = orgId,
             id = if (segment == 1) start.id else "${start.id}~r$segment",
             rootId = start.id,
             segment = segment,
-            resumedFrom = previous?.id,
-            previousReceiptId = previous?.receiptId,
+            resumedFrom = last?.id,
+            previousReceiptId = last?.receiptId,
             launchId = start.launchId,
             repo = start.repo,
             realRepo = start.realRepo?.takeIf { it != start.repo },
@@ -89,6 +94,44 @@ class SessionSegments(
         // Counted once written: only a commit that fails after it would leave one too many.
         if (segment == 1) metrics.sessionStarted(OstromMetrics.agentOf(start.agent), "local")
         return session
+    }
+
+    /**
+     * Runs [attempt], a transaction that calls [open] under the root's lock, until it opens or finds a segment. When
+     * [open] supersedes the live segment of another launch, that transaction ends without writing, the segment is
+     * ended with its receipt signed ([CloseSessionUseCase], never inside a transaction: CRL-03) if it may still be
+     * replaced once locked, and [attempt] runs again on what is written then, so the new segment chains to the ended
+     * one and its receipt, or refuses the start if the segment came back to life meanwhile (S2-48). A superseded
+     * segment ended without its receipt (its signature failed) goes through the same end, which signs it.
+     *
+     * @param orgId The organization.
+     * @param attempt The caller's transaction.
+     * @return What [attempt] returns.
+     * @throws SessionResumedElsewhereException When it still supersedes a segment after [MAX_SUPERSEDED] ends.
+     */
+    suspend fun <T> replacing(orgId: Uuid, attempt: suspend () -> T): T {
+        var ended = 0
+        while (true) {
+            val superseded = try {
+                return attempt()
+            } catch (e: SupersededSegmentException) {
+                e
+            }
+            val live = superseded.live
+            // Other launches keep taking the session over between the ends: a conflict, as a reopen elsewhere.
+            if (ended == MAX_SUPERSEDED) throw SessionResumedElsewhereException(live.rootId, live.id)
+            ended += 1
+            // Checked again under the segment's lock: a launch that gave a sign of life meanwhile keeps its segment.
+            close(orgId, live.id, EndSession(source = Session.SUPERSEDED)) { superseded.mayReplace || silent(it) }
+        }
+    }
+
+    // S2-48: an agent token never closes a live launch's segment (nor its yes); a silent one, as the sweep would. The
+    // segment is ended outside the transaction (its costs, gates, rules and receipt are other transactions), then
+    // [replacing] runs the caller's transaction again: this one has written nothing yet.
+    private fun supersede(open: Session, opening: Opening): Nothing {
+        if (!opening.mayReplace && !silent(open)) throw NotYourSessionException()
+        throw SupersededSegmentException(open, opening.mayReplace)
     }
 
     private suspend fun found(
@@ -164,6 +207,9 @@ class SessionSegments(
          */
         fun String.clip(max: Int): String? = take(max).takeIf { it.isNotBlank() }
 
+        /** How many live segments one start may end before it gives up: each end lets another launch in. */
+        const val MAX_SUPERSEDED: Int = 3
+
         /** How long after its hook opened a segment the launcher may still name it. */
         val ADOPT_WITHIN: Duration = 2.minutes
 
@@ -183,3 +229,7 @@ class SessionSegments(
         const val PATH: Int = 1000
     }
 }
+
+/** [SessionSegments.open] found [live], another launch's open segment, which ends before the next one opens. */
+internal class SupersededSegmentException(val live: Session, val mayReplace: Boolean) :
+    RuntimeException("superseded ${live.id}")

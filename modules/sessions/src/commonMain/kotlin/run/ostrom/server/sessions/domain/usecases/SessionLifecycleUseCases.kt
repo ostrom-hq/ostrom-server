@@ -55,9 +55,11 @@ class StartSessionUseCaseImpl(
         }
         // Before the transaction: a read inside it would wait for a second connection of the pool.
         val labels = segments.labelsOf(actor.orgId, bounded.launchId)
-        return repository.transaction(actor.orgId) {
-            lockRoot(bounded.id)
-            segments.open(this, actor.orgId, SessionAccess.person(actor), bounded, Opening.of(actor, null), labels)
+        return segments.replacing(actor.orgId) {
+            repository.transaction(actor.orgId) {
+                lockRoot(bounded.id)
+                segments.open(this, actor.orgId, SessionAccess.person(actor), bounded, Opening.of(actor, null), labels)
+            }
         }
     }
 }
@@ -159,7 +161,10 @@ class ReopenSessionUseCaseImpl(
     override suspend fun invoke(actor: GateActor, id: String): Reopened {
         val found = repository.get(actor.orgId, id) ?: throw SessionNotFoundException()
         SessionAccess.ensureOwner(actor, found)
-        return repository.transaction(actor.orgId) { reopen(this, actor, found.rootId, id) }
+        // Reopen only opens after an ended last segment: [replacing] only signs a superseded one's missing receipt.
+        return segments.replacing(actor.orgId) {
+            repository.transaction(actor.orgId) { reopen(this, actor, found.rootId, id) }
+        }
     }
 
     // The root, then its segments: the order every start takes its locks in.
