@@ -141,11 +141,13 @@ val LaunchesMigrations: List<SchemaMigration> = listOf(
             ADD COLUMN paused BOOLEAN NOT NULL DEFAULT FALSE
         """.trimIndent(),
     ),
-    // On Exposed, every statement runs in `inOrg`, as the tenant role: it reads, inserts and sets the limits of a
-    // launch, and never deletes one (the purge function of versions 4 and 5 does, as `ostrom_router`).
+    // On Exposed, every statement runs in `inOrg`, as the tenant role: it reads and inserts launches and sets their
+    // limits, the only columns it may change, and never deletes one (the purge function of versions 4 and 5 does, as
+    // `ostrom_router`).
     SchemaMigration(
         9,
         "grant_launches_to_tenant",
-        TENANT_ROLE_SQL + "\n" + "GRANT SELECT, INSERT, UPDATE ON launches_launches TO $TENANT_ROLE",
+        TENANT_ROLE_SQL + "\n" + "GRANT SELECT, INSERT ON launches_launches TO $TENANT_ROLE;\n" +
+            "GRANT UPDATE (budget_micros, max_concurrent, paused) ON launches_launches TO $TENANT_ROLE",
     ),
 )

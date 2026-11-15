@@ -112,7 +112,10 @@ private val L = LaunchesLaunches
 private val json = Json
 private val labelsSerializer = MapSerializer(String.serializer(), String.serializer())
 
-/** The key of the advisory lock that serializes one organization's launches, as the sqlx4k repository took it. */
+/**
+ * The key of the advisory lock that serializes one organization's launches: `'launches:' || org_id`, the key the
+ * former (sqlx4k) version hashed, so that both versions take turns while they serve together.
+ */
 internal fun launchesKey(orgId: Uuid): String = "launches:$orgId"
 
 /** The launches counted in a window, and the oldest of them (the window's start when none). */

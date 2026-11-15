@@ -21,7 +21,6 @@ import run.ostrom.server.identity.domain.User
 import run.ostrom.server.identity.domain.VerifiedIdentity
 import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.database.JdbcDatabase
-import run.ostrom.server.kernel.database.TENANT_ROLE
 import run.ostrom.server.launches.domain.models.Launch
 import run.ostrom.server.launches.domain.models.LaunchLimit
 import run.ostrom.server.launches.domain.repositories.LaunchesRepository
@@ -288,9 +287,8 @@ class LaunchesPostgresTest {
             assertEquals(HttpStatusCode.NotFound, read.status)
 
             // The database itself: without its organization set, a transaction reads no launch and writes none. The
-            // test server's driver is the serving role, as in production: row level security applies to it.
+            // test server's JDBC pool is the serving role, as in production: row level security applies to it.
             val seen = server.koin.get<JdbcDatabase>().query {
-                exec("SET LOCAL ROLE $TENANT_ROLE")
                 val none = LaunchesLaunches.selectAll().count()
                 val written = LaunchesLaunches.update { it[dev] = "mallory" }
                 none to written
