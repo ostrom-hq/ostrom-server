@@ -13,6 +13,8 @@ kotlin {
             api(project(":modules:usage"))
             // The gateway's SpendGuard port, bound here to the limits and the ledger's holds.
             implementation(project(":modules:gateway"))
+            // The automatic pool size reads the shared accounts, their windows and their readings.
+            implementation(project(":modules:sharing"))
             implementation(libs.kotlinx.datetime)
         }
         commonTest.dependencies {

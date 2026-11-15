@@ -51,6 +51,9 @@ object TestCallers {
         "cli-read" to adminA,
         "cli-write" to adminA,
         "cli-other" to adminA,
+        "login-a" to adminA,
+        "team-key-a" to adminA,
+        "team-key-member-a" to memberA,
         "stranger" to null,
     )
 
@@ -64,6 +67,8 @@ object TestCallers {
         "cli-read" to (PrincipalKind.USER to setOf("budgets:read")),
         "cli-write" to (PrincipalKind.USER to setOf("budgets:write")),
         "cli-other" to (PrincipalKind.USER to setOf(RelayScopes.MCP_READ)),
+        "team-key-a" to (PrincipalKind.SERVICE to setOf("team:read")),
+        "team-key-member-a" to (PrincipalKind.SERVICE to setOf("usage:read")),
     )
 
     /** 30 October 2026, 12:00 UTC: the month runs from 1 October to 1 November. */
@@ -82,6 +87,9 @@ object TestCallers {
             object : TokenAuthenticator {
                 override suspend fun authenticate(token: String): AuthenticatedPrincipal? = when {
                     token !in byToken -> null
+                    // The token of `ostrom login`: a person signed in, on the API.
+                    token == "login-a" ->
+                        AuthenticatedPrincipal(token, PrincipalKind.USER, setOf("budgets:read"), signedIn = true)
                     // A token without its own kind is a browser session, with every user scope, signed in now (a
                     // `stale-` one ten minutes ago).
                     token !in principals -> AuthenticatedPrincipal(
