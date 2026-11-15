@@ -184,18 +184,6 @@ jobs:
           ./gradlew -Postrom.core.local=true :cli:linkReleaseExecutableLinuxX64
           echo "bin=$PWD/cli/build/bin/linuxX64/releaseExecutable/ostrom.kexe" >> "$GITHUB_OUTPUT"
           echo "- CLI: ostrom-cli $(git rev-parse --short HEAD) ($CLI_REF), built here" >> "$GITHUB_STEP_SUMMARY"
-      # E2E-SWEEP reads the contract (the OpenAPI and api/contract/served-routes.txt of the ostrom-core the image pins
-      # in gradle/ostrom-core.ref, CS-03) and the routes the image serves (core's scripts/served-routes.py on the
-      # image's own sources): without them it is skipped (run 41549184819, E2E-SWEEP-005), as in ostrom-e2e's ci.yml.
-      # The whole history, with every file (no sparse checkout: its partial clone would fetch the pinned commit's
-      # files later, without the key), to check out that commit once the image's revision is known.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ostrom-hq/ostrom-core
-          ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
-          path: core-contract
-          fetch-depth: 0
-          persist-credentials: false
       # Called by ci-e2e: the image ci-image built from this very checkout.
       - name: The image of the calling run (ci-image)
         if: env.CALLED == 'true'
@@ -239,15 +227,6 @@ jobs:
               || { echo "::error::$image is ostrom-server@${revision:0:7}, a commit not in the history of main"; exit 1; }
           fi
           git -C server show "${revision}:ci/database-roles.sql" > "$RUNNER_TEMP/database-roles.sql"
-          # The routes this image serves, read on its own sources, then the contract's: E2E-SWEEP's served routes.
-          git -C server worktree add --detach "$RUNNER_TEMP/server-at-image" "$revision" >/dev/null
-          core_ref=$(tr -d '[:space:]' < "$RUNNER_TEMP/server-at-image/gradle/ostrom-core.ref")
-          git -C core-contract checkout --quiet --detach "$core_ref"
-          echo "- Contract: ostrom-core ${core_ref:0:7}, pinned by the image's commit" >> "$GITHUB_STEP_SUMMARY"
-          python3 core-contract/scripts/served-routes.py "$RUNNER_TEMP/server-at-image" > "$RUNNER_TEMP/served-by-server.txt"
-          cat core-contract/api/contract/served-routes.txt "$RUNNER_TEMP/served-by-server.txt" > "$RUNNER_TEMP/served-routes.txt"
-          yq -o=json core-contract/api/openapi.yaml > "$RUNNER_TEMP/openapi.json"
-          wc -l "$RUNNER_TEMP/served-by-server.txt" "$RUNNER_TEMP/served-routes.txt" "$RUNNER_TEMP/openapi.json"
           echo "image=$image" >> "$GITHUB_OUTPUT"
           {
             echo "### Images"
@@ -320,6 +299,18 @@ jobs:
             -v "$RUNNER_TEMP/ostrom-mail:/var/lib/ostrom/mail" --env-file "$RUNNER_TEMP/server.env" "$IMAGE"
           for _ in $(seq 1 60); do curl -fsS 127.0.0.1:4600/ready >/dev/null 2>&1 && exit 0; sleep 1; done
           docker logs ostrom-server; exit 1
+      # E2E-SWEEP's contract: the OpenAPI document the image generates from its own routes (`GET /api/openapi.json`,
+      # ostrom-core docs/decisions/0001), every operation of which is served; the served list is written from it too,
+      # for an ostrom-e2e that still reads one. Neither core's YAML nor its served-routes.txt is read any more.
+      - name: The image's generated OpenAPI document (E2E-SWEEP's contract)
+        run: |
+          curl -fsS http://127.0.0.1:4600/api/openapi.json -o "$RUNNER_TEMP/openapi.json"
+          jq -r '.paths | to_entries[] | .key as $path | .value | keys[]
+            | select(test("^(get|put|post|patch|delete)$")) | "\(ascii_upcase) \($path)"' \
+            "$RUNNER_TEMP/openapi.json" > "$RUNNER_TEMP/served-routes.txt"
+          test -s "$RUNNER_TEMP/served-routes.txt"
+          echo "- Contract: the image's generated document, $(wc -l < "$RUNNER_TEMP/served-routes.txt") operations" \
+            >> "$GITHUB_STEP_SUMMARY"
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           package_json_file: e2e/package.json
