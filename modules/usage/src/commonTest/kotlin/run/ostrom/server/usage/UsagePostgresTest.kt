@@ -6,6 +6,7 @@ import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import run.ostrom.server.secrets.infrastructure.executeInOrg
 import run.ostrom.server.secrets.infrastructure.fetchInOrg
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.usage.domain.SpendReader
@@ -71,6 +72,11 @@ class UsagePostgresTest {
             contentType(ContentType.Application.Json)
             setBody(UsageEventsRequest(events.toList()))
         }
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(modules, overrides) { server ->
+        server.assertApiCatalogue(UsageModule)
+    }
 
     @Test
     fun theCliDeclaresEventsThatTheOrgThenReads() = serverTest(modules, overrides) { server ->

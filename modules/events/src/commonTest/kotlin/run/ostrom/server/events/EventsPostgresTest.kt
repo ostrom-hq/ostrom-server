@@ -42,6 +42,7 @@ import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.events.OrgEventType
 import run.ostrom.server.kernel.module.OrgDeletionListener
 import run.ostrom.server.secrets.domain.SecretCipher
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import kotlin.test.Test
@@ -111,6 +112,11 @@ class EventsPostgresTest {
 
     private suspend fun TestServer.publish(org: Uuid, vararg events: OrgEventDraft) =
         koin.get<OrgEventPublisher>().publish(org, events.toList())
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(modules, overrides()) { server ->
+        server.assertApiCatalogue(EventsModule)
+    }
 
     @Test
     fun publishersShareOneGapFreeSequencePerOrganization() = serverTest(modules, overrides()) { server ->

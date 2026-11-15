@@ -63,10 +63,12 @@ import run.ostrom.server.gates.infrastructure.ReceiptsGateSigner
 import run.ostrom.server.gates.infrastructure.Sha256GateDigester
 import run.ostrom.server.gates.infrastructure.UnavailableGateSessions
 import run.ostrom.server.gates.infrastructure.UnknownPullRequestHeads
+import run.ostrom.server.gates.presentation.gatesOperations
 import run.ostrom.server.gates.presentation.GatesRoutesDependencies
 import run.ostrom.server.gates.presentation.gatesRoutes
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.events.GateSummaries
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.observability.CachedCount
 import run.ostrom.server.kernel.observability.OstromMetrics
@@ -86,6 +88,8 @@ import org.koin.dsl.module
  */
 object GatesModule : ServerModule {
     override val name: String = "gates"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { gatesOperations() }
 
     override val koinModule: Module = module {
         single { GatesRepositoryImpl(get(), get()) }

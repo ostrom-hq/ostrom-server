@@ -57,6 +57,7 @@ import run.ostrom.server.kernel.http.CallCeilingSettings
 import run.ostrom.server.kernel.http.CallsInProgress
 import run.ostrom.server.kernel.http.ReadLimits
 import run.ostrom.server.kernel.http.ReadThrottle
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.RecordingDriver
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.checkTime
@@ -253,6 +254,11 @@ class GatesPostgresTest {
             "/api/v1/approvals/${approval.id}/answer",
             AnswerApprovalRequest(if (yes) ApprovalAnswer.APPROVE else ApprovalAnswer.REJECT, approval.shownDigest),
         )
+    }
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(listOf(GatesModule), overrides) { server ->
+        server.assertApiCatalogue(GatesModule)
     }
 
     @Test

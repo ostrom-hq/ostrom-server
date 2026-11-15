@@ -53,11 +53,13 @@ import run.ostrom.server.billing.infrastructure.LoggingBillingNotifier
 import run.ostrom.server.billing.infrastructure.StripeAccount
 import run.ostrom.server.billing.infrastructure.StripeGatewayImpl
 import run.ostrom.server.billing.infrastructure.StripeSignatureVerifier
+import run.ostrom.server.billing.presentation.billingOperations
 import run.ostrom.server.billing.presentation.BillingRoutesDependencies
 import run.ostrom.server.billing.presentation.billingRoutes
 import run.ostrom.server.kernel.auth.MemberEmails
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.OrgDeletionListener
 import run.ostrom.server.kernel.module.ServerModule
@@ -92,6 +94,8 @@ private const val DEFAULT_CONSOLE_URL = "https://app.ostrom.run"
  */
 object BillingModule : ServerModule {
     override val name: String = "billing"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { billingOperations() }
 
     override val koinModule: Module = module {
         // The Stripe account an administrator sets in the console (the admin module collects every bound section).
