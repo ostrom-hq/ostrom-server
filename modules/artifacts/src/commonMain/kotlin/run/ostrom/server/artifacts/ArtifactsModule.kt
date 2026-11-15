@@ -59,6 +59,7 @@ import run.ostrom.server.artifacts.presentation.StorageRoutesDependencies
 import run.ostrom.server.artifacts.presentation.artifactContentRoutes
 import run.ostrom.server.artifacts.presentation.artifactStorageRoutes
 import run.ostrom.server.artifacts.presentation.artifactUploadRoutes
+import run.ostrom.server.artifacts.presentation.artifactsOperations
 import run.ostrom.server.artifacts.presentation.artifactsRoutes
 import run.ostrom.server.kernel.auth.AgentMembers
 import run.ostrom.server.kernel.config.ConfigSource
@@ -66,6 +67,7 @@ import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.database.repeatDue
 import run.ostrom.server.kernel.database.scheduledWork
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.network.outboundHttpClient
@@ -90,6 +92,8 @@ import kotlin.time.Duration.Companion.seconds
  */
 object ArtifactsModule : ServerModule {
     override val name: String = "artifacts"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { artifactsOperations() }
 
     // Before [koinModule], whose declarations read it as the module is built.
     /** The client of the organizations' buckets. */

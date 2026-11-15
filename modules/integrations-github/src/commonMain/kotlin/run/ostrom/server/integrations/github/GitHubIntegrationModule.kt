@@ -81,9 +81,11 @@ import run.ostrom.server.integrations.github.presentation.gitHubAppConfiguration
 import run.ostrom.server.integrations.github.presentation.gitHubDirectoryRoutes
 import run.ostrom.server.integrations.github.presentation.gitHubLinkRoutes
 import run.ostrom.server.integrations.github.presentation.gitHubManifestRoutes
+import run.ostrom.server.integrations.github.presentation.gitHubOperations
 import run.ostrom.server.integrations.github.presentation.gitHubRoutes
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.rules.domain.services.RepositoryReader
@@ -119,6 +121,8 @@ val GITHUB_HTTP = named("github-http")
  */
 object GitHubIntegrationModule : ServerModule {
     override val name: String = "integrations-github"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { gitHubOperations() }
 
     override val koinModule: Module = module {
         single(GITHUB_HTTP) {

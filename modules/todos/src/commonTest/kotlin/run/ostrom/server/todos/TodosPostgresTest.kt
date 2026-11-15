@@ -6,6 +6,7 @@ import run.ostrom.server.automations.domain.WaitAgentResolver
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.todos.domain.TodoArtifacts
 import run.ostrom.server.todos.domain.TodoCheck
@@ -72,6 +73,11 @@ class TodosPostgresTest {
         listOf(item("a"), item("b", TodoCheck.Attested("seen"), deps = listOf("a"))),
         t0,
     )
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(listOf(TodosModule), adapters) { server ->
+        server.assertApiCatalogue(TodosModule)
+    }
 
     @Test
     fun aListReadsBackAsWrittenAndChangesInPlace() = todosServer(adapters) { server ->

@@ -5,6 +5,7 @@ import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.secrets.domain.CallerResolver
 import run.ostrom.server.secrets.domain.CreateSecretUseCase
@@ -44,6 +45,7 @@ import run.ostrom.server.secrets.infrastructure.SecretsRepositoryImpl
 import run.ostrom.server.secrets.presentation.EnvironmentRoutesDependencies
 import run.ostrom.server.secrets.presentation.SecretsRoutesDependencies
 import run.ostrom.server.secrets.presentation.environmentRoutes
+import run.ostrom.server.secrets.presentation.secretsOperations
 import run.ostrom.server.secrets.presentation.secretsRoutes
 import io.ktor.server.routing.Route
 import org.koin.core.Koin
@@ -57,6 +59,8 @@ import org.koin.dsl.module
  */
 object SecretsModule : ServerModule {
     override val name: String = "secrets"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { secretsOperations() }
 
     override val koinModule: Module = module {
         single<SecretCipher> {

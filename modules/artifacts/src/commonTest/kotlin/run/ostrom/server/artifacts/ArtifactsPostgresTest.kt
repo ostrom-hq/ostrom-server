@@ -37,6 +37,7 @@ import run.ostrom.server.artifacts.presentation.UpdateArtifactRequest
 import run.ostrom.server.kernel.logging.JsonLogger
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.logging.Logger
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
@@ -90,6 +91,11 @@ class ArtifactsPostgresTest {
         t0,
         artifact.ownerId,
     )
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(listOf(ArtifactsModule), testIdentities) { server ->
+        server.assertApiCatalogue(ArtifactsModule)
+    }
 
     @Test
     fun repositoryStoresVersionsBlobsAndShares() = serverTest(listOf(ArtifactsModule)) { server ->

@@ -17,6 +17,7 @@ import run.ostrom.server.secrets.infrastructure.fetchInOrg
 import run.ostrom.server.secrets.presentation.SecretResponse
 import run.ostrom.server.secrets.presentation.SecretWriteRequest
 import run.ostrom.server.secrets.presentation.SecretsPageResponse
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.call.body
@@ -44,6 +45,11 @@ import kotlin.uuid.Uuid
 /** Real PostgreSQL and real HTTP: storage, encryption at rest, roles and org isolation. */
 class SecretsPostgresTest {
     private val base = "/api/v1/secrets"
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(listOf(SecretsModule), TestCallers.overrides) { server ->
+        server.assertApiCatalogue(SecretsModule)
+    }
 
     @Test
     fun changingASecretFromTheConsoleNeedsASignInOfLessThanFiveMinutes() =
