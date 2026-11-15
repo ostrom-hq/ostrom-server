@@ -381,6 +381,7 @@ class SecretsPostgresTest {
             null,
             repository.rotate(TestCallers.orgA, Uuid.random(), "v1:x", epoch, TestCallers.adminA.memberId),
         )
+        assertEquals(false, repository.delete(TestCallers.orgA, Uuid.random()), "Nothing to delete")
     }
 
     @Test
