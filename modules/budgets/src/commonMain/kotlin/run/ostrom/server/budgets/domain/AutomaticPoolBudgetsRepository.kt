@@ -46,9 +46,10 @@ class AutomaticPoolBudgetsRepository(
         month: Instant,
         max: Int,
     ): List<ExceededBudget> {
-        val reached = limits.exceeded(orgId, memberId, day, month, max)
+        // The org's daily rows read here may be dropped below (at most the typed limit's and one marked per action).
+        val reached = limits.exceeded(orgId, memberId, day, month, max + ORG_DAILY_ROWS)
         val orgDaily = { row: ExceededBudget -> row.scope == BudgetScope.ORG && row.limit.window == BudgetWindow.DAY }
-        if (reached.none(orgDaily)) return reached
+        if (reached.none(orgDaily)) return reached.take(max)
         val automatic = automatic(orgId)
         val typed = limits.settings(orgId, 0).org.firstOrNull { it.window == BudgetWindow.DAY }
         val action = if (typed == null) BudgetAction.BLOCK else typed.action
@@ -62,7 +63,7 @@ class AutomaticPoolBudgetsRepository(
                     row.copy(limit = BudgetLimit(automatic.micros, BudgetWindow.DAY, action))
                 else -> null
             }
-        }
+        }.take(max)
     }
 
     /**
@@ -84,5 +85,7 @@ class AutomaticPoolBudgetsRepository(
     companion object {
         /** The `limit_micros` an alert of the automatic daily limit is marked under (no typed limit is negative). */
         const val AUTOMATIC_MARK: Long = -1
+
+        private const val ORG_DAILY_ROWS = 3
     }
 }

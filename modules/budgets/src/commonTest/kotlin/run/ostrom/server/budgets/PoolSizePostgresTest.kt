@@ -268,6 +268,8 @@ class PoolSizePostgresTest {
             assertEquals(BudgetScope.ORG, listed.scope)
             assertEquals(BudgetLimit(automatic, BudgetWindow.DAY), listed.limit, "No typed limit: it stops")
             assertEquals(now, listed.since)
+            val capped = limits.exceeded(org, null, day, TestCallers.monthStart, 1)
+            assertEquals(listOf(listed), capped, "A dropped row does not use up the cap")
             assertEquals(emptyList(), exceeded(member), "A member's list holds no org limit")
 
             // The next pass moved the amount: the list shows what is in force now, not the amount at the crossing.
