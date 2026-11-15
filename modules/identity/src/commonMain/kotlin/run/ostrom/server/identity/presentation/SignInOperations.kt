@@ -6,6 +6,7 @@ import run.ostrom.server.kernel.http.docs.badRequest
 import run.ostrom.server.kernel.http.docs.body
 import run.ostrom.server.kernel.http.docs.empty
 import run.ostrom.server.kernel.http.docs.error
+import run.ostrom.server.kernel.http.docs.html
 import run.ostrom.server.kernel.http.docs.notFound
 import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.pathId
@@ -82,7 +83,7 @@ private fun ApiCatalog.providerOperations() {
         }
         responses {
             empty("Redirect to the console, or to its login page with an `error`.", HttpStatusCode.Found)
-            ok<String>(
+            html(
                 "A mobile sign-in's code: the page that links to the app's deep link " +
                     "(`ostrom://auth/callback?code=&state=`), on the person's tap.",
             )

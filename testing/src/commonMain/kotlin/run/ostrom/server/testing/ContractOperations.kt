@@ -22,7 +22,6 @@ data class ContractResponse(val json: JsonObject?, val other: Boolean = false)
  * @property id Its `operationId`.
  * @property method `GET`, `POST`…
  * @property path Its template, `/api/v1/rules/{id}`.
- * @property served True when `x-ostrom-status` is `served`: the server must answer it as the contract says.
  * @property responses By status (`200`, `404`, `default`).
  * @property query Its query parameters, the path's and its own, each with its schema (`{}` when it declares none).
  */
@@ -30,14 +29,9 @@ data class ContractOperation(
     val id: String,
     val method: String,
     val path: String,
-    val served: Boolean,
     val responses: Map<String, ContractResponse>,
     val query: Map<String, JsonObject> = emptyMap(),
 ) {
-    /** True when a success (2xx) answers a JSON body: an operation the tests must observe at least once. */
-    val answersJson: Boolean
-        get() = responses.any { (status, response) -> status.startsWith("2") && response.json != null }
-
     /**
      * What it answers with [status]: that status, or `default`.
      *
@@ -48,9 +42,8 @@ data class ContractOperation(
 }
 
 /**
- * The operations of the ostrom-core contract (`api/openapi.yaml`, as JSON), and the one a request calls. Shared by the
- * tests that must cover every operation the server serves (the strict answers of [ContractObserver], the isolation
- * matrix).
+ * The operations of the server's generated OpenAPI document, and the one a request calls. Shared by the tests that
+ * must cover every operation the server serves (the strict answers of [ContractObserver], the list bounds).
  *
  * @param schema The contract, for the responses it references.
  * @param document The whole contract.
@@ -63,9 +56,6 @@ class ContractOperations(schema: ContractSchema, document: JsonObject) {
             operation(schema, path, method, operation.jsonObject, shared)
         }
     }
-
-    /** The operations marked `served`. */
-    val served: List<ContractOperation> get() = all.filter { it.served }
 
     /**
      * The operation a request calls: same method, same number of segments, each literal segment equal; the one with the
@@ -96,7 +86,6 @@ class ContractOperations(schema: ContractSchema, document: JsonObject) {
             },
             method = method.uppercase(),
             path = path,
-            served = operation["x-ostrom-status"]?.let { it.jsonPrimitive.content } == "served",
             responses = operation["responses"]?.jsonObject.orEmpty().mapValues { (_, value) ->
                 val reference = value.jsonObject[REF]?.let { schema.resolve(it.jsonPrimitive.content) }
                 val response = reference ?: value.jsonObject

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.testing
 
-import run.ostrom.server.kernel.config.MapConfigSource
+import run.ostrom.server.kernel.http.docs.ApiCatalog
+import run.ostrom.server.kernel.http.docs.ApiDocs
+import run.ostrom.server.kernel.http.docs.ok
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.post
@@ -20,19 +22,15 @@ import io.ktor.server.routing.routing
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import io.ktor.utils.io.writeStringUtf8
-import kotlinx.io.buffered
-import kotlinx.io.files.Path
-import kotlinx.io.files.SystemFileSystem
-import kotlinx.io.readString
+import kotlinx.serialization.Serializable
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
-import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
-/** [ContractObserver] checks every answer of a server against the contract, and [Contract.from] finds the contract. */
+/** [ContractObserver] checks every answer of a server against its contract, the server's document ([Contract.of]). */
 class ContractObserverTest {
     private val json = ContentType.Application.Json
 
@@ -66,7 +64,8 @@ class ContractObserverTest {
                 }
             }
             get("/api/v1/things/export") { export(call) }
-            delete("/api/v1/things/{id}") { call.respondText("""{"x": 1}""", json) }
+            delete("/api/v1/things/{id}") { call.respondText("""{"id": "a"}""", json) }
+            get("/api/v1/bare") { call.respondText("""{"x": 1}""", json) }
             get("/health") { call.respondText("""{"x": 1}""", json) }
         }
     }
@@ -78,14 +77,9 @@ class ContractObserverTest {
         else -> call.respondBytesWriter(ContentType.Text.CSV) { writeStringUtf8("a") }
     }
 
-    private fun report(directory: Path): String = SystemFileSystem.list(directory).single().let { file ->
-        SystemFileSystem.source(file).buffered().use { it.readString() }
-    }
-
     @Test
-    fun eachDriftFailsUnlessKnownAndWhatWasSeenIsWritten() = testApplication {
-        val reports = ContractFixtures.directory()
-        val observer = ContractObserver(ContractFixtures.contract, setOf("getThing 418 $ STATUS"), reports.toString())
+    fun eachDriftFails() = testApplication {
+        val observer = ContractObserver(ContractFixtures.contract)
         things(observer)
         client.get("/api/v1/things")
         val things = listOf("a", "drift", "teapot", "crash", "crash-bare", "text", "broken", "empty", "accepted")
@@ -93,64 +87,81 @@ class ContractObserverTest {
         listOf("", "?as=json", "?as=empty", "?as=error").forEach { client.post("/api/v1/things$it") }
         client.get("/api/v1/things/export")
         client.delete("/api/v1/things/a")
+        client.get("/api/v1/bare")
         client.get("/health")
 
         val failure = assertFailsWith<AssertionError> { observer.finish() }.message.orEmpty()
         val expected = listOf(
             "getThing 200 $.id MISSING",
             "getThing 200 $.name UNDECLARED",
+            "getThing 418 $ STATUS",
             "getThing 500 $.error MISSING",
             "getThing 200 $ BODY",
             "getThing 202 $ STATUS",
             "createThing 204 $ BODY",
         )
         assertEquals(expected, failure.lines().drop(1).map { it.substringBefore("  (") }, failure)
-        val written = report(reports)
+        assertTrue("no JSON body where the contract declares one" in failure, failure)
         assertFalse("a body that is not JSON" in failure, "One line per drift: the first answer's")
-        assertTrue("a body that is not JSON" in written, "Every answer's drift is written")
-        val lines = written.lines()
-        assertTrue("seen listThings" in lines && "seen getThing" in lines, written)
-        assertFalse(lines.any { it.startsWith("seen createThing") }, "A 204 is no JSON success")
-        assertTrue(lines.any { it.startsWith("drift getThing 418 $ STATUS | ") }, "A known drift is written too")
-        assertTrue(lines.any { "no JSON body where the contract declares one" in it })
-        assertTrue(lines.any { "JSON where the contract declares none" in it })
     }
 
     @Test
     fun answersThatFollowTheContractPass() = testApplication {
-        val reports = ContractFixtures.directory()
-        val observer = ContractObserver(ContractFixtures.contract, emptySet(), reports.toString())
+        val observer = ContractObserver(ContractFixtures.contract)
         things(observer)
         client.get("/api/v1/things")
+        client.delete("/api/v1/things/a")
         // A 404 that declares plain text and JSON: either is one of its forms.
         listOf("missing", "missing-json").forEach { client.get("/api/v1/things/export?as=$it") }
         observer.finish()
-        assertEquals("seen listThings\n", report(reports))
     }
 
     @Test
-    fun withoutAContractNothingIsWatchedNorWritten() = testApplication {
-        val reports = ContractFixtures.directory()
-        val observer = ContractObserver(null, emptySet(), reports.toString())
+    fun withoutAContractNothingIsWatched() = testApplication {
+        val observer = ContractObserver(null)
         things(observer)
         client.get("/api/v1/things/drift")
         observer.finish()
-        assertTrue(SystemFileSystem.list(reports).isEmpty())
-        ContractObserver(null).finish()
     }
 
     @Test
-    fun theContractComesFromTheEnvironmentReadOncePerFile() {
-        assertNull(Contract.from(MapConfigSource(emptyMap())), "Skipped without a contract")
-        val error = assertFailsWith<IllegalStateException> {
-            Contract.from(MapConfigSource(mapOf("OSTROM_CONTRACT_REQUIRED" to "true")))
+    fun theContractIsTheServersGeneratedDocumentBuiltOncePerSetOfRoutes() = testApplication {
+        val docs = ApiDocs()
+        val observer = ContractObserver { Contract.of(docs) }
+        application {
+            install(observer.plugin)
+            routing {
+                docs.section(this, "probes", PROBES) {
+                    get("/api/v1/probes/{id}") {
+                        val answer = if (call.parameters["id"] == "bad") """{"other": 1}""" else """{"name": "a"}"""
+                        call.respondText(answer, json)
+                    }
+                }
+            }
         }
-        assertEquals("OSTROM_CONTRACT_REQUIRED is true but OSTROM_CONTRACT_OPENAPI is not set.", error.message)
-        val file = ContractFixtures.file()
-        val first = Contract.from(MapConfigSource(mapOf("OSTROM_CONTRACT_OPENAPI" to file)))
-        assertEquals(ContractFixtures.contract.operations.all, first?.operations?.all)
-        assertSame(first, Contract.from(MapConfigSource(mapOf("OSTROM_CONTRACT_OPENAPI" to file))), "Read once")
-        val other = Contract.from(MapConfigSource(mapOf("OSTROM_CONTRACT_OPENAPI" to ContractFixtures.file())))
-        assertTrue(other !== first, "Another file is read")
+        client.get("/api/v1/probes/good")
+        observer.finish()
+        client.get("/api/v1/probes/bad")
+        val failure = assertFailsWith<AssertionError> { observer.finish() }.message.orEmpty()
+        assertEquals(
+            listOf("getProbe 200 $.name MISSING", "getProbe 200 $.other UNDECLARED"),
+            failure.lines().drop(1).map { it.substringBefore("  (") },
+            failure,
+        )
+        assertSame(Contract.of(docs), Contract.of(docs), "Built once")
+        assertEquals("getProbe", Contract.of(docs).operations.match("GET", "/api/v1/probes/x")?.id)
+    }
+
+    /** What a probe answers. */
+    @Serializable
+    data class Probe(val name: String)
+
+    private companion object {
+        val PROBES: ApiCatalog.() -> Unit = {
+            get("/api/v1/probes/{id}") {
+                operationId = "getProbe"
+                responses { ok<Probe>("The probe.") }
+            }
+        }
     }
 }

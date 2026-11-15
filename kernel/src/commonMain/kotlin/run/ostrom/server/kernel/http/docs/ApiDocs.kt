@@ -125,6 +125,17 @@ class ApiDocs {
     }
 
     /**
+     * What the document is built from: each part, whether it has a catalogue, and the routes it mounted. Two servers
+     * with the same signature have the same document, so a test process builds it once per signature (the testing
+     * module's `Contract.of`).
+     *
+     * @return One line per part.
+     */
+    fun signature(): String = sections.joinToString("\n") { section ->
+        "${section.owner} ${section.catalog != null} ${section.routes.mapNotNull { it.key() }.joinToString(",")}"
+    }
+
+    /**
      * What the document leaves undescribed, for the test that holds every module's catalogue to its routes.
      *
      * @return The gaps.
@@ -185,7 +196,8 @@ class ApiDocs {
             },
         )
         val encoded = documentJson.encodeToJsonElement(OpenApiDoc.serializer(), document)
-        return encoded.jsonObject.withSingleSchemaPerType().withoutUndescribedQueryParameters().toString()
+        return encoded.jsonObject.withSingleSchemaPerType().withAnyJsonElement().withoutUndescribedQueryParameters()
+            .toString()
     }
 
     private fun annotate(route: RoutingNode, catalog: ApiCatalog?) {

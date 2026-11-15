@@ -49,7 +49,7 @@ data class Violation(val path: String, val kind: DriftKind, val detail: String) 
 private val INDEX = Regex("""\[\d+]""")
 
 /**
- * Checks JSON against the schemas of the ostrom-core contract (`api/openapi.yaml`, as JSON), strictly: every required
+ * Checks JSON against the schemas of the server's generated OpenAPI document, strictly: every required
  * property present, every property declared, every value of its type, through `$ref` (any local pointer), `oneOf` (a
  * `null` branch included), `anyOf`, `allOf`, `enum`, arrays and maps.
  *

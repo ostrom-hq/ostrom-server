@@ -3,6 +3,7 @@ package run.ostrom.server.gateway.presentation
 
 import run.ostrom.server.kernel.auth.GovernanceConfirmationPending
 import run.ostrom.server.kernel.http.docs.ApiCatalog
+import run.ostrom.server.kernel.http.docs.anyJson
 import run.ostrom.server.kernel.http.docs.badRequest
 import run.ostrom.server.kernel.http.docs.body
 import run.ostrom.server.kernel.http.docs.conflict
@@ -70,9 +71,14 @@ private const val REFUSED_429 = "Refused by the budgets before any provider is c
     "`Retry-After` when the gateway knows when one frees up. A provider's own 429, once no other account can " +
     "take the call, is relayed as the provider sent it."
 
-private const val UNAVAILABLE = "The organization has no usable account or key for this provider, the provider " +
-    "cannot be reached (502), the replica holds as many calls as it can (`overloaded_error`), or the admission " +
-    "queue is full or timed out (`queue_full`, `queue_timeout`, `queue_expired`), with `Retry-After: 15`."
+private const val PROVIDER_ANSWER = "The provider's answer, as it sent it: JSON, or server-sent events when the " +
+    "request streams."
+
+private const val UNREACHABLE = "The provider cannot be reached, in the provider's own error shape."
+
+private const val UNAVAILABLE = "The organization has no usable account or key for this provider, the replica " +
+    "holds as many calls as it can (`overloaded_error`), or the admission queue is full or timed out " +
+    "(`queue_full`, `queue_timeout`, `queue_expired`), with `Retry-After: 15`."
 
 /**
  * The gateway module's operations: the endpoints agents point their base URL at, the organization's model policy,
@@ -109,12 +115,13 @@ private fun ApiCatalog.modelCallOperations() {
             headerText("x-ostrom-client-request-id", REQUEST_ID_HEADER)
         }
         responses {
-            empty("The provider's answer, as it sent it.", HttpStatusCode.OK)
-            error(HttpStatusCode.BadRequest, REFUSED_400)
-            error(HttpStatusCode.Unauthorized, REFUSED_401)
-            error(HttpStatusCode.Forbidden, REFUSED_403)
-            error(HttpStatusCode.TooManyRequests, REFUSED_429)
-            error(HttpStatusCode.ServiceUnavailable, UNAVAILABLE)
+            anyJson(HttpStatusCode.OK, PROVIDER_ANSWER)
+            anyJson(HttpStatusCode.BadRequest, REFUSED_400)
+            anyJson(HttpStatusCode.Unauthorized, REFUSED_401)
+            anyJson(HttpStatusCode.Forbidden, REFUSED_403)
+            anyJson(HttpStatusCode.TooManyRequests, REFUSED_429)
+            anyJson(HttpStatusCode.ServiceUnavailable, UNAVAILABLE)
+            anyJson(HttpStatusCode.BadGateway, UNREACHABLE)
         }
     }
     get("/api/v1/inference/v1/models") {
@@ -126,9 +133,9 @@ private fun ApiCatalog.modelCallOperations() {
             "list allows, or every priced model when the policy names none."
         parameters { organizationHeader() }
         responses {
-            empty("The list of models, in the provider's shape.", HttpStatusCode.OK)
-            error(HttpStatusCode.Unauthorized, REFUSED_401)
-            error(HttpStatusCode.Forbidden, REFUSED_403)
+            anyJson(HttpStatusCode.OK, "The list of models, in the provider's shape.")
+            anyJson(HttpStatusCode.Unauthorized, REFUSED_401)
+            anyJson(HttpStatusCode.Forbidden, REFUSED_403)
         }
     }
 }
@@ -146,12 +153,13 @@ private fun ApiCatalog.openAiCallOperations() {
             headerText("x-ostrom-client-request-id", REQUEST_ID_HEADER)
         }
         responses {
-            empty("The provider's answer, as it sent it.", HttpStatusCode.OK)
-            error(HttpStatusCode.BadRequest, REFUSED_400)
-            error(HttpStatusCode.Unauthorized, REFUSED_401)
-            error(HttpStatusCode.Forbidden, REFUSED_403)
-            error(HttpStatusCode.TooManyRequests, REFUSED_429)
-            error(HttpStatusCode.ServiceUnavailable, UNAVAILABLE)
+            anyJson(HttpStatusCode.OK, PROVIDER_ANSWER)
+            anyJson(HttpStatusCode.BadRequest, REFUSED_400)
+            anyJson(HttpStatusCode.Unauthorized, REFUSED_401)
+            anyJson(HttpStatusCode.Forbidden, REFUSED_403)
+            anyJson(HttpStatusCode.TooManyRequests, REFUSED_429)
+            anyJson(HttpStatusCode.ServiceUnavailable, UNAVAILABLE)
+            anyJson(HttpStatusCode.BadGateway, UNREACHABLE)
         }
     }
     post("/api/v1/inference/v1/chat/completions") {
@@ -165,12 +173,13 @@ private fun ApiCatalog.openAiCallOperations() {
             headerText("x-ostrom-client-request-id", REQUEST_ID_HEADER)
         }
         responses {
-            empty("The provider's answer, as it sent it.", HttpStatusCode.OK)
-            error(HttpStatusCode.BadRequest, REFUSED_400)
-            error(HttpStatusCode.Unauthorized, REFUSED_401)
-            error(HttpStatusCode.Forbidden, REFUSED_403)
-            error(HttpStatusCode.TooManyRequests, REFUSED_429)
-            error(HttpStatusCode.ServiceUnavailable, UNAVAILABLE)
+            anyJson(HttpStatusCode.OK, PROVIDER_ANSWER)
+            anyJson(HttpStatusCode.BadRequest, REFUSED_400)
+            anyJson(HttpStatusCode.Unauthorized, REFUSED_401)
+            anyJson(HttpStatusCode.Forbidden, REFUSED_403)
+            anyJson(HttpStatusCode.TooManyRequests, REFUSED_429)
+            anyJson(HttpStatusCode.ServiceUnavailable, UNAVAILABLE)
+            anyJson(HttpStatusCode.BadGateway, UNREACHABLE)
         }
     }
 }

@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.kernel.http.docs
 
+import io.ktor.http.ContentType
+import io.ktor.http.HttpStatusCode
 import io.ktor.openapi.Parameters
+import io.ktor.openapi.Responses
 import io.ktor.openapi.jsonSchema
+import kotlinx.serialization.json.JsonObject
 
 /**
  * A required path parameter.
@@ -81,3 +85,25 @@ fun Parameters.Builder.organizationHeader() = headerText(
         "organization the person is not a member of, 404, as for anything of another organization. A token bound " +
         "to one organization (device, agent, runner, service key) acts in its own organization.",
 )
+
+/**
+ * A response whose JSON body has no schema of its own: a provider's answer or error relayed in the provider's shape,
+ * a JSON-RPC message. Any JSON object.
+ *
+ * @param status Its status.
+ * @param text What the answer means.
+ */
+fun Responses.Builder.anyJson(status: HttpStatusCode, text: String) = ok<JsonObject>(text, status)
+
+/**
+ * A response that is an HTML page, not JSON: a page a browser shows at the end of a sign-in.
+ *
+ * @param text What the page is.
+ * @param status Its status, 200 by default.
+ */
+fun Responses.Builder.html(text: String, status: HttpStatusCode = HttpStatusCode.OK) {
+    status {
+        description = text
+        ContentType.Text.Html { schema = jsonSchema<String>() }
+    }
+}

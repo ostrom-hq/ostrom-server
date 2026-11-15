@@ -104,7 +104,8 @@ slower, in all three runs. That is regular expressions and allocations, the work
 2. **Align the server with TeamCode's libraries**, Nathan's choice: Ktor **Netty**, **Exposed** (DSL) with **JDBC**
    and **HikariCP**, **Flyway** migrations, **Koin**, **logback**, and `ktor-server-routing-openapi` where it
    fits. Every other server-side library follows TeamCode's `gradle/libs.versions.toml` wherever it has an
-   equivalent. ostrom-core's `api/openapi.yaml` stays the contract the clients use.
+   equivalent. ostrom-core's `api/openapi.yaml` stayed the contract the clients used until the server generated its own
+   document (ostrom-core docs/decisions/0001-generated-openapi.md, `@ostrom-hq/openapi`).
 3. **PostgreSQL stays** (TeamCode is on MySQL). **Typed Exposed only, no hand-written SQL anywhere**, decided by
    Nathan on 2026-11-13 (audit SD-08). Row-level security policies, `SECURITY DEFINER` functions, triggers and
    `set_config` all need raw SQL, so row-level security is removed. In its place, as in TeamCode:

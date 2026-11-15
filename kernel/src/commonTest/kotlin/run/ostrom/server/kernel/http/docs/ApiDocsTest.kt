@@ -91,6 +91,7 @@ class ApiDocsTest {
                     queryNumber("limit", "At most this many notes.")
                     queryFlag("all", "Every note.")
                     organizationHeader()
+                    headerText("Idempotency-Key", "One key per attempt.", required = true)
                 }
                 responses {
                     ok<Item>("The item.")
@@ -114,11 +115,15 @@ class ApiDocsTest {
                 body<Item>("The item.", required = false)
                 responses {
                     empty("Replaced.")
+                    html("A page saying so.")
                     conflict("A newer version exists (`conflict`).")
                     error(HttpStatusCode.Unauthorized, "")
                 }
             }
-            patch("/api/v1/items/{id}") { operationId = "updateItem" }
+            patch("/api/v1/items/{id}") {
+                operationId = "updateItem"
+                responses { anyJson(HttpStatusCode.Forbidden, "Refused, in a provider's shape.") }
+            }
             delete("/api/v1/items/{id}") {
                 operationId = "deleteItem"
                 responses { empty("Deleted.") }
@@ -212,7 +217,11 @@ class ApiDocsTest {
             read["security"],
         )
         val parameters = read["parameters"]!!.jsonArray.map { it.jsonObject["name"]!!.jsonPrimitive.content }.toSet()
-        assertEquals(setOf("id", "view", "limit", "all", "Ostrom-Org"), parameters)
+        assertEquals(setOf("id", "view", "limit", "all", "Ostrom-Org", "Idempotency-Key"), parameters)
+        val headers = read["parameters"]!!.jsonArray.map { it.jsonObject }
+            .filter { it["in"]!!.jsonPrimitive.content == "header" }
+            .associate { it["name"]!!.jsonPrimitive.content to it["required"]?.jsonPrimitive?.content }
+        assertEquals(mapOf("Ostrom-Org" to null, "Idempotency-Key" to "true"), headers, "A required header says so")
         assertEquals(setOf("200", "404", "429", "401", "403", "500", "default"), read["responses"]!!.jsonObject.keys)
         assertEquals("No such item (`not_found`).", read.response("404"))
 
@@ -227,8 +236,15 @@ class ApiDocsTest {
         val replace = document.operation("/api/v1/items/{id}", "put")
         assertEquals("**Authentication:** ${ApiAccess(false).text}", replace["description"]!!.jsonPrimitive.content)
         assertEquals("No credential, or an unknown, expired or revoked one (`unauthorized`).", replace.response("401"))
+        val page = replace["responses"]!!.jsonObject["200"]!!.jsonObject["content"]!!.jsonObject
+        assertEquals(setOf("text/html"), page.keys, "A page, not JSON")
         val update = document.operation("/api/v1/items/{id}", "patch")
         assertEquals("**Authentication:** ${ApiAccess(false).text}", update["description"]!!.jsonPrimitive.content)
+        val refused = update["responses"]!!.jsonObject["403"]!!.jsonObject
+        assertTrue(refused["description"]!!.jsonPrimitive.content.startsWith("Refused, in a provider's shape. Also: "))
+        val schema = refused["content"]!!.jsonObject["application/json"]!!.jsonObject["schema"]!!.jsonObject
+        assertEquals("object", schema["type"]!!.jsonPrimitive.content, "Its own body, not the error envelope")
+        assertTrue("additionalProperties" in schema, schema.toString())
         val remove = document.operation("/api/v1/items/{id}", "delete")
         assertEquals("deleteItem", remove["operationId"]!!.jsonPrimitive.content, "The first of two entries is used")
         assertEquals("Deleted.", remove.response("204"))
@@ -269,6 +285,9 @@ class ApiDocsTest {
             ),
             docs.coverage(),
         )
+        val signature = docs.signature().lines()
+        assertTrue("pending false GET /api/v1/pending" in signature, "Each part, its catalogue and its routes")
+        assertTrue("empty true " in signature, "A catalogue without routes")
     }
 
     @Test
