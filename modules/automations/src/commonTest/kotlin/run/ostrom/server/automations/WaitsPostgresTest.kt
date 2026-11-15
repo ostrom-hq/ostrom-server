@@ -68,6 +68,10 @@ import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.update
 import org.koin.dsl.module
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
@@ -588,6 +592,56 @@ class WaitsPostgresTest {
             val owner = BOB.toString()
             val served = (1..4).map { repository.serveSecrets(ORG_A, "s1", owner, t0 + 1.minutes) }
             assertEquals(1, served.count { it.values.isNotEmpty() }, "Served once, whoever asks first")
+        }
+    }
+
+    @Test
+    fun consumersAtOnceShareNoOneTimeSecretAndEachGetsTheOthers() {
+        val cipher = module {
+            single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 9 }) }
+            single<WaitSecretSessions> { WaitSecretSessions { _, _ -> "claude" } }
+        }
+        serverTest(listOf(AutomationsModule), cipher) { server ->
+            val repository = server.koin.get<WaitsRepository>()
+            val asked = wait().copy(question = secretQuestion)
+            repository.createWithinLimit(asked, 5)
+            val answer = WaitAnswer("done", mapOf("shop_password" to JsonPrimitive("provided")), BOB.toString(), t0)
+            val secrets = listOf(secret("SHOP_PASSWORD", t0, oneTime = true), secret("API_KEY", t0))
+            repository.resolve(ORG_A, asked.id, answer, secrets)
+            val owner = BOB.toString()
+            // Four consumers on four connections at once: the claim's locks make them take turns.
+            val served = coroutineScope {
+                (1..4).map {
+                    async(Dispatchers.IO) { repository.serveSecrets(ORG_A, "s1", owner, t0 + 1.minutes) }
+                }.awaitAll()
+            }
+            val once = served.filter { "OSTROM_WAIT_SHOP_PASSWORD" in it.values }
+            assertEquals(1, once.size, "The one-time secret is served once")
+            assertEquals(setOf("OSTROM_WAIT_SHOP_PASSWORD"), once.single().oneTime)
+            assertTrue(served.all { it.values["OSTROM_WAIT_API_KEY"] == sentinel }, "The kept one, to each")
+        }
+    }
+
+    @Test
+    fun aSessionWithMoreSecretsThanAPageGetsThemAll() {
+        val cipher = module {
+            single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 9 }) }
+            single<WaitSecretSessions> { WaitSecretSessions { _, _ -> "claude" } }
+        }
+        serverTest(listOf(AutomationsModule), cipher) { server ->
+            val repository = WaitsRepositoryImpl(server.koin.get(), server.koin.get(), server.koin.get(), 2)
+            val asked = wait().copy(question = secretQuestion)
+            repository.createWithinLimit(asked, 5)
+            val answer = WaitAnswer("done", mapOf("shop_password" to JsonPrimitive("provided")), BOB.toString(), t0)
+            val secrets = listOf("A", "B", "C", "D", "E").map { secret(it, t0, oneTime = it in setOf("B", "E")) }
+            repository.resolve(ORG_A, asked.id, answer, secrets)
+            val owner = BOB.toString()
+            // Three pages of two: none left out, the one-time ones of every page consumed.
+            val first = repository.serveSecrets(ORG_A, "s1", owner, t0 + 1.minutes)
+            assertEquals(listOf("A", "B", "C", "D", "E").map { "OSTROM_WAIT_$it" }.toSet(), first.values.keys)
+            assertEquals(setOf("OSTROM_WAIT_B", "OSTROM_WAIT_E"), first.oneTime)
+            val second = repository.serveSecrets(ORG_A, "s1", owner, t0 + 1.minutes)
+            assertEquals(setOf("OSTROM_WAIT_A", "OSTROM_WAIT_C", "OSTROM_WAIT_D"), second.values.keys)
         }
     }
 

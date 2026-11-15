@@ -74,8 +74,11 @@ internal object AutomationsWaitEvent : Table("automations_wait_event") {
 }
 
 /** `automations_route_org(id)`: the organization of an automation's route, null when it has none. */
-internal fun routeOrg(id: Uuid): CustomFunction<Uuid?> =
-    CustomFunction("automations_route_org", UuidColumnType(), QueryParameter(id, UuidColumnType()))
+internal fun routeOrg(id: Uuid): CustomFunction<Uuid?> = CustomFunction(
+    "automations_route_org",
+    UuidColumnType().apply { nullable = true },
+    QueryParameter(id, UuidColumnType()),
+)
 
 /**
  * `automations_purge_wait_secrets(now, limit)`: deletes one batch of the expired secrets of every organization and

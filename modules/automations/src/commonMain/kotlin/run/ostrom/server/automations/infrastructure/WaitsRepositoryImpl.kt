@@ -33,10 +33,10 @@ import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.core.vendors.ForUpdateOption
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
-import org.jetbrains.exposed.v1.jdbc.deleteReturning
-import org.jetbrains.exposed.v1.jdbc.insertReturning
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.update
+import org.jetbrains.exposed.v1.jdbc.upsertReturning
 import org.jetbrains.exposed.v1.jdbc.updateReturning
 import org.jetbrains.exposed.v1.jdbc.upsert
 import kotlin.time.Instant
@@ -52,17 +52,19 @@ import kotlin.uuid.Uuid
  * The values of secret fields (`waits.secrets.v1`) are sealed with [cipher] into `automations_wait_secrets`, in the
  * answer's own transaction; the wait's row holds only `provided`. Without a cipher no secret can be kept or served.
  * The cipher suspends, so a transaction never calls it: [resolve] seals before its transaction, [serveSecrets] opens
- * between its two.
+ * after the one that claims the secrets.
  *
  * @param database The serving role's pool.
  * @param events The organization's event feed.
  * @param cipher Seals the secrets at rest; null on a server without the secrets module.
+ * @param secretsPage The secrets read by one statement when they are served.
  */
 @Suppress("TooManyFunctions") // One implementation of the one port of the feature.
 internal class WaitsRepositoryImpl(
     private val database: JdbcDatabase,
     private val events: OrgEventPublisher,
     private val cipher: SecretCipher? = null,
+    private val secretsPage: Int = SECRETS_PAGE,
 ) : WaitsRepository {
     override suspend fun createWithinLimit(wait: Wait, maxOpen: Int, sessions: List<String>): CreateOutcome =
         database.inOrg(wait.orgId) {
@@ -82,7 +84,15 @@ internal class WaitsRepositoryImpl(
                 .where { (w.orgId eq wait.orgId) and (w.status eq WaitStatus.OPEN.wire) and inScope }
                 .single()[waits]
             if (open >= maxOpen) return@inOrg CreateOutcome.AT_LIMIT
-            val inserted = w.insertReturning(listOf(w.id), ignoreErrors = true) {
+            // A replay of the same ask (its idempotency key) inserts nothing and returns no row: `ON CONFLICT (org_id,
+            // created_by, idempotency_key) DO UPDATE … WHERE FALSE`, the sqlx4k `DO NOTHING` on that target alone, so
+            // any other conflict still fails loudly.
+            val inserted = w.upsertReturning(
+                w.orgId, w.createdBy, w.idempotencyKey,
+                returning = listOf(w.id),
+                onUpdate = { it[w.id] = w.id },
+                where = { Op.FALSE },
+            ) {
                 it[w.id] = wait.id
                 it[w.orgId] = wait.orgId
                 it[w.kind] = wait.kind
@@ -221,38 +231,44 @@ internal class WaitsRepositoryImpl(
 
     override suspend fun serveSecrets(orgId: Uuid, sessionId: String, ownerId: String, now: Instant): ServedSecrets {
         val sealing = cipher ?: return ServedSecrets()
-        val s = AutomationsWaitSecrets
-        val rows = database.inOrg(orgId) {
-            s.select(s.envName, s.value, s.oneTime)
-                .where {
-                    (s.orgId eq orgId) and (s.sessionId eq sessionId) and (s.ownerId eq ownerId) and
-                        (s.expiresAt greater now)
-                }
-                .orderBy(s.envName to SortOrder.ASC)
-                .limit(MAX_SERVED)
-                .map { Opening(it[s.envName], it[s.value], it[s.oneTime]) }
-        }
-        // A value that does not open (another key, another row) is never served.
+        // Claimed in one transaction, the one-time rows deleted before its commit: of two consumers at once, the
+        // second waits on the first one's locks, then finds them gone.
+        val rows = database.inOrg(orgId) { claimSecrets(orgId, sessionId, ownerId, now) }
+        // Opened after the commit (the cipher suspends). A value that does not open (another key, another row) is
+        // never served; a one-time one is consumed all the same.
         val opened = rows.mapNotNull { row ->
             sealing.open(row.sealed, secretContext(orgId, sessionId, row.name))?.let { row to it.decodeToString() }
         }
-        val (once, kept) = opened.partition { (row, _) -> row.oneTime }
-        // A one-time secret is served by the replica that deletes its row: of two that read it, one gets it.
-        val taken = if (once.isEmpty()) emptyList() else database.inOrg(orgId) {
-            once.flatMap { (row, value) ->
-                s.deleteReturning(
-                    listOf(s.envName),
-                    where = {
-                        (s.orgId eq orgId) and (s.sessionId eq sessionId) and (s.envName eq row.name) and
-                            (s.value eq row.sealed)
-                    },
-                ).map { row.name to value }
-            }
-        }
         return ServedSecrets(
-            kept.associate { (row, value) -> row.name to value } + taken,
-            taken.map { (name, _) -> name }.toSet(),
+            opened.associate { (row, value) -> row.name to value },
+            opened.filter { (row, _) -> row.oneTime }.map { (row, _) -> row.name }.toSet(),
         )
+    }
+
+    // Every live secret of the session's owner, locked (`FOR UPDATE`) page after page in the order of their names,
+    // each page's one-time rows deleted in this transaction: no row is left out, and none is served twice.
+    private fun claimSecrets(orgId: Uuid, sessionId: String, ownerId: String, now: Instant): List<Opening> {
+        val s = AutomationsWaitSecrets
+        val claimed = mutableListOf<Opening>()
+        var after = ""
+        while (true) {
+            val page = s.select(s.envName, s.value, s.oneTime)
+                .where {
+                    (s.orgId eq orgId) and (s.sessionId eq sessionId) and (s.ownerId eq ownerId) and
+                        (s.expiresAt greater now) and (s.envName greater after)
+                }
+                .orderBy(s.envName to SortOrder.ASC)
+                .limit(secretsPage)
+                .forUpdate()
+                .map { Opening(it[s.envName], it[s.value], it[s.oneTime]) }
+            val once = page.filter { it.oneTime }.map { it.name }
+            if (once.isNotEmpty()) {
+                s.deleteWhere { (s.orgId eq orgId) and (s.sessionId eq sessionId) and (s.envName inList once) }
+            }
+            claimed += page
+            if (page.size < secretsPage) return claimed
+            after = page.last().name
+        }
     }
 
     override suspend fun cancel(orgId: Uuid, id: Uuid, now: Instant): Wait? =
@@ -313,8 +329,8 @@ internal class WaitsRepositoryImpl(
     private class Opening(val name: String, val sealed: String, val oneTime: Boolean)
 
     private companion object {
-        /** The most secrets of a session served at once (a session's variables). */
-        const val MAX_SERVED = 1000
+        /** The secrets of a session read by one statement; a session with more is read page after page. */
+        const val SECRETS_PAGE = 1000
     }
 }
 

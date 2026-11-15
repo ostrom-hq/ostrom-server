@@ -267,7 +267,10 @@ internal class AutomationsRepositoryImpl(private val database: JdbcDatabase) : A
             val r = AutomationsRuns
             val picked = followedPickQuery(orgId, limit).map { it[r.id] }
             if (picked.isEmpty()) return@inOrg emptyList()
-            r.updateReturning(RUN_COLUMNS, where = { (r.orgId eq orgId) and (r.id inList picked) }) {
+            r.updateReturning(RUN_COLUMNS, where = {
+                // The pick's rows are locked until the commit; the status is checked again all the same.
+                (r.orgId eq orgId) and (r.id inList picked) and (r.status eq RunStatus.STARTED.wire)
+            }) {
                 it[r.followedAt] = now
             }.map { FollowedRun(it.toRun(), it.present(r.workflowRunId, r.status)) }
         }
