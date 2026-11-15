@@ -12,6 +12,7 @@ import run.ostrom.server.kernel.auth.GovernanceWrite
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.present
 import run.ostrom.server.kernel.database.write
+import run.ostrom.server.kernel.database.written
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -50,7 +51,7 @@ internal class ConfirmationsRepositoryImpl(private val database: JdbcDatabase) :
 
     override suspend fun answer(orgId: Uuid, id: String, outcome: ConfirmationOutcome): Boolean =
         database.inOrg(orgId) {
-            write { answerUpdate(orgId, id, outcome) } == 1
+            written { answerUpdate(orgId, id, outcome) } == 1
         }
 
     override suspend fun settle(orgId: Uuid, id: String, result: JsonElement?, error: ConfirmationError?) {
