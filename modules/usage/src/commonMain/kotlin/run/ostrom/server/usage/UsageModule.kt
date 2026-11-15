@@ -38,6 +38,7 @@ import run.ostrom.server.usage.domain.SpendAdmission
 import run.ostrom.server.usage.domain.SpendAdmissionImpl
 import run.ostrom.server.usage.domain.SpendReader
 import run.ostrom.server.usage.domain.SpendReaderImpl
+import run.ostrom.server.usage.domain.TokenUsageReader
 import run.ostrom.server.usage.domain.UsageFeed
 import run.ostrom.server.usage.domain.UsageReconciliationRepository
 import run.ostrom.server.usage.domain.UsageRecorder
@@ -54,6 +55,7 @@ import run.ostrom.server.usage.infrastructure.LedgerModelUsageSink
 import run.ostrom.server.usage.infrastructure.LedgerLaunchSpend
 import run.ostrom.server.usage.infrastructure.LedgerSessionCosts
 import run.ostrom.server.usage.infrastructure.ReplicatedUsageFeed
+import run.ostrom.server.usage.infrastructure.TokenUsageReaderImpl
 import run.ostrom.server.usage.infrastructure.UsageFeedImpl
 import run.ostrom.server.usage.infrastructure.UsageFeedReadsImpl
 import run.ostrom.server.usage.infrastructure.UsageMigrations
@@ -94,6 +96,7 @@ object UsageModule : ServerModule {
         single<SessionCosts> { LedgerSessionCosts(get()) }
         single<LaunchSpend> { LedgerLaunchSpend(get(), get()) }
         single<SpendReader> { SpendReaderImpl(get()) }
+        single<TokenUsageReader> { TokenUsageReaderImpl(get<JdbcDatabase>()) }
         single<SpendAdmission> { SpendAdmissionImpl(get(), get()) }
         single<IngestUsageEventsUseCase> { IngestUsageEventsUseCaseImpl(get(), get(), get()) }
         single<UsageSummaryUseCase> { UsageSummaryUseCaseImpl(get(), get()) }

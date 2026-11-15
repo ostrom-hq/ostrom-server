@@ -3,47 +3,65 @@ package run.ostrom.server.budgets
 
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.budgets.domain.AuditedBudgetAlerts
+import run.ostrom.server.budgets.domain.AutomaticPoolBudgetsRepository
+import run.ostrom.server.budgets.domain.AutomaticPoolSize
 import run.ostrom.server.budgets.domain.BudgetAlerts
 import run.ostrom.server.budgets.domain.BudgetGuard
 import run.ostrom.server.budgets.domain.BudgetGuardImpl
 import run.ostrom.server.budgets.domain.BudgetOverridesRepository
-import run.ostrom.server.budgets.domain.GrantBudgetOverrideUseCase
-import run.ostrom.server.budgets.domain.GrantBudgetOverrideUseCaseImpl
-import run.ostrom.server.budgets.domain.ListBudgetOverridesUseCase
-import run.ostrom.server.budgets.domain.ListBudgetOverridesUseCaseImpl
-import run.ostrom.server.budgets.domain.OverriddenBudgetsRepository
-import run.ostrom.server.budgets.domain.RevokeBudgetOverrideUseCase
-import run.ostrom.server.budgets.domain.RevokeBudgetOverrideUseCaseImpl
 import run.ostrom.server.budgets.domain.BudgetsRepository
 import run.ostrom.server.budgets.domain.GetBudgetsUseCase
 import run.ostrom.server.budgets.domain.GetBudgetsUseCaseImpl
 import run.ostrom.server.budgets.domain.GetMyBudgetUseCase
 import run.ostrom.server.budgets.domain.GetMyBudgetUseCaseImpl
+import run.ostrom.server.budgets.domain.GrantBudgetOverrideUseCase
+import run.ostrom.server.budgets.domain.GrantBudgetOverrideUseCaseImpl
 import run.ostrom.server.budgets.domain.LedgerSpendGuard
+import run.ostrom.server.budgets.domain.ListBudgetOverridesUseCase
+import run.ostrom.server.budgets.domain.ListBudgetOverridesUseCaseImpl
 import run.ostrom.server.budgets.domain.NoBudgetAlerts
+import run.ostrom.server.budgets.domain.OverriddenBudgetsRepository
+import run.ostrom.server.budgets.domain.PoolSizeRepository
+import run.ostrom.server.budgets.domain.PoolSizingService
+import run.ostrom.server.budgets.domain.PoolSizingServiceImpl
+import run.ostrom.server.budgets.domain.PoolSizingSources
+import run.ostrom.server.budgets.domain.RevokeBudgetOverrideUseCase
+import run.ostrom.server.budgets.domain.RevokeBudgetOverrideUseCaseImpl
 import run.ostrom.server.budgets.domain.SetBudgetUseCase
 import run.ostrom.server.budgets.domain.SetBudgetUseCaseImpl
 import run.ostrom.server.budgets.domain.WorkflowBudgetsRemoval
 import run.ostrom.server.budgets.infrastructure.BudgetOverridesRepositoryImpl
 import run.ostrom.server.budgets.infrastructure.BudgetsMigrations
 import run.ostrom.server.budgets.infrastructure.BudgetsRepositoryImpl
+import run.ostrom.server.budgets.infrastructure.PoolSizeRepositoryImpl
 import run.ostrom.server.budgets.presentation.BudgetsRoutesDependencies
+import run.ostrom.server.budgets.presentation.PoolSizeRoutesDependencies
 import run.ostrom.server.budgets.presentation.budgetsRoutes
+import run.ostrom.server.budgets.presentation.poolSizeRoutes
+import run.ostrom.server.gateway.domain.PacingSettingsRepository
 import run.ostrom.server.gateway.domain.SpendGuard
 import run.ostrom.server.kernel.audit.OrgAuditTrail
 import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.database.repeatDue
+import run.ostrom.server.kernel.database.scheduledWork
+import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.workflows.WorkflowRemovals
 import run.ostrom.server.secrets.domain.CallerResolver
 import run.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
+import run.ostrom.server.sharing.domain.SharingOrgs
 import io.ktor.server.routing.Route
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.scope.Scope
 import org.koin.dsl.bind
 import org.koin.dsl.module
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.minutes
 import kotlin.uuid.Uuid
 
 /**
@@ -57,8 +75,19 @@ object BudgetsModule : ServerModule {
 
     override val koinModule: Module = module {
         single<BudgetOverridesRepository> { BudgetOverridesRepositoryImpl(get<JdbcDatabase>()) }
-        // Every reader of a call's limits sees the member's temporary daily budget in force.
-        single<BudgetsRepository> { OverriddenBudgetsRepository(BudgetsRepositoryImpl(get()), get()) }
+        single<PoolSizeRepository> { PoolSizeRepositoryImpl(get<JdbcDatabase>()) }
+        // Every reader of a call's limits sees the member's temporary daily budget in force, and the automatic pool
+        // size when the gateway's settings turn it on (a server without the gateway keeps the typed budgets).
+        single<BudgetsRepository> {
+            val overridden = OverriddenBudgetsRepository(BudgetsRepositoryImpl(get()), get())
+            getOrNull<PacingSettingsRepository>()?.let { AutomaticPoolBudgetsRepository(overridden, get(), it, get()) }
+                ?: overridden
+        }
+        single<PoolSizingService> {
+            val sources = PoolSizingSources(get(), get(), get(), get(), get())
+            PoolSizingServiceImpl(sources, get(), get(), get(), get(), get())
+        }
+        single { PoolSizeRoutesDependencies(callerResolver(), get()) }
         single {
             val alerts = AuditedBudgetAlerts(getOrNull<BudgetAlerts>() ?: NoBudgetAlerts(), get<OrgAuditTrail>())
             BudgetGuardImpl(get(), get(), alerts, get(), get())
@@ -79,12 +108,38 @@ object BudgetsModule : ServerModule {
 
     override fun routes(route: Route, koin: Koin) {
         route.budgetsRoutes(koin.get())
+        if (koin.sizesPools()) route.poolSizeRoutes(koin.get())
     }
 
-    /** Spend budgets and members' temporary daily budgets. */
+    /** The automatic pool size's pass, every ten minutes, one replica at a time (TeamCode's maintenance job). */
+    val POOL_SIZE: ScheduledJob = ScheduledJob("budgets/pool-size", AutomaticPoolSize.REFRESH, 5.minutes)
+
+    // A failed pass is logged and tried again ten minutes later, it never stops the server.
+    override fun start(scope: CoroutineScope, koin: Koin) {
+        if (!koin.sizesPools()) return
+        val sizing = koin.get<PoolSizingService>()
+        val logger = koin.get<Logger>()
+        val work = koin.scheduledWork()
+        scope.launch {
+            work.repeatDue(POOL_SIZE, logger, "pool size pass failed") { sizing.refresh() }
+        }
+    }
+
+    /**
+     * Spend budgets, members' temporary daily budgets, and the automatic pool size wherever the shared accounts and
+     * the gateway are served.
+     */
     override suspend fun features(koin: Koin): Set<String> =
-        setOf(ServerFeatures.BUDGETS, ServerFeatures.CAPACITY_BUDGET_OVERRIDES)
+        setOf(ServerFeatures.BUDGETS, ServerFeatures.CAPACITY_BUDGET_OVERRIDES) +
+            if (koin.sizesPools()) setOf(ServerFeatures.CAPACITY_POOL_SIZE) else emptySet()
 }
+
+/**
+ * Whether this server sizes pools: the shared accounts ([SharingOrgs]) and the gateway's settings are bound. Every
+ * server has both; a module's own tests may have neither.
+ */
+internal fun Koin.sizesPools(): Boolean =
+    getOrNull<SharingOrgs>() != null && getOrNull<PacingSettingsRepository>() != null
 
 /**
  * The [CallerResolver] a test binds, or else the one on the kernel's `PrincipalOrgResolver` (which refuses everyone

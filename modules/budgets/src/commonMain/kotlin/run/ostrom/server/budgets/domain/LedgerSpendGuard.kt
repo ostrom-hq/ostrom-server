@@ -69,6 +69,10 @@ class LedgerSpendGuard(
 
     override suspend fun release(orgId: Uuid, callId: Uuid) = admission.release(orgId, callId)
 
+    /** Whether a limit that stops is reached ([BudgetGuard.check] without a workflow): the controller's allowance. */
+    override suspend fun available(orgId: Uuid, memberId: Uuid): Boolean =
+        guard.check(orgId, memberId) !is BudgetDecision.Exhausted
+
     private fun hold(request: SpendRequest) = SpendHold(
         request.orgId,
         request.memberId,
@@ -163,8 +167,6 @@ class LedgerSpendGuard(
         }
     }
 
-    private fun Instant.date(): String = toString().substringBefore('T')
-
     /** The fixed starts of the refusals. */
     companion object {
         /** A monthly limit is spent: nothing more this month. */
@@ -188,3 +190,6 @@ private const val MICROS_PER_CENT = 10_000L
 private const val MICROS_PER_DOLLAR = 1_000_000L
 private const val MICRO_DIGITS = 6
 private const val CENT_DIGITS = 2
+
+/** The UTC date of an instant, as the refusals print it. */
+private fun Instant.date(): String = toString().substringBefore('T')

@@ -2,6 +2,7 @@
 package run.ostrom.server.budgets
 
 import run.ostrom.server.budgets.infrastructure.activeRead
+import run.ostrom.server.budgets.infrastructure.automaticRead
 import run.ostrom.server.budgets.infrastructure.historyRead
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.secrets.SecretsModule
@@ -52,5 +53,21 @@ class BudgetOverridesQueryPlansTest {
             }
             assertFalse("Seq Scan" in plan, "$name scans the table:\n$plan")
         }
+    }
+
+    @Test
+    fun theAutomaticDailyBudgetIsReadByItsPrimaryKey() = serverTest(modules, overrides) { server ->
+        val fixtures = server.database.superuser
+        fixtures.execute(
+            "INSERT INTO budgets_automatic_daily (org_id, micros, computed_at) " +
+                "SELECT CAST(md5('o' || i) AS uuid), i, now() FROM generate_series(0, 19999) AS i",
+        ).getOrThrow()
+        fixtures.execute("VACUUM ANALYZE budgets_automatic_daily").getOrThrow()
+        val org = TestCallers.orgA
+        val plan = server.koin.get<JdbcDatabase>().inOrg(org) {
+            explain(analyze = true, options = "BUFFERS") { automaticRead(org).query }
+                .joinToString("\n") { it.toString() }
+        }
+        assertFalse("Seq Scan" in plan, "The read of each call's limits scans the table:\n$plan")
     }
 }

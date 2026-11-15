@@ -16,11 +16,13 @@ import run.ostrom.server.usage.domain.UsageCursor
 import run.ostrom.server.usage.domain.UsageGroupBy
 import run.ostrom.server.usage.domain.UsageWindow
 import run.ostrom.server.usage.infrastructure.ReviewCursor
+import run.ostrom.server.usage.infrastructure.accountHoursRead
 import run.ostrom.server.usage.infrastructure.accountSpentRead
 import run.ostrom.server.usage.infrastructure.historyRead
 import run.ostrom.server.usage.infrastructure.holdTotalsRead
 import run.ostrom.server.usage.infrastructure.launchSpentRead
 import run.ostrom.server.usage.infrastructure.listRead
+import run.ostrom.server.usage.infrastructure.orgDaysRead
 import run.ostrom.server.usage.infrastructure.pendingRead
 import run.ostrom.server.usage.infrastructure.spentRead
 import run.ostrom.server.usage.infrastructure.summaryRead
@@ -101,6 +103,14 @@ class UsageQueryPlansTest {
         fixtures.execute("VACUUM ANALYZE usage_spend_days").getOrThrow()
     }
 
+    /** The automatic pool size's reads (budgets job and route): a shared account's hours, the org's days. */
+    private fun poolSizeReads(org: Uuid) = mapOf(
+        "tokens of a shared account by hour, seven days (pool size)" to
+            accountHoursRead(org, account, TestCallers.epoch - 7.days, 5_000).query,
+        "tokens of the org by day, seven days (pool size)" to
+            orgDaysRead(org, TestCallers.epoch - 7.days, 5_000).query,
+    )
+
     @Test
     fun theLedgersRequestPathReadsUseTheirIndexes() =
         serverTest(listOf(SecretsModule, UsageModule), overrides) { server ->
@@ -144,7 +154,7 @@ class UsageQueryPlansTest {
                     historyRead(org, member, ReviewCursor(TestCallers.epoch - 10.days, Uuid.random()), 51).query,
                 "summary of 30 days by model" to
                     summaryRead(UsageWindow(org, null, since), UsageGroupBy.MODEL, 1000).query,
-            )
+            ) + poolSizeReads(org)
             val database = server.koin.get<JdbcDatabase>()
             val plans = reads.mapValues { (_, read) -> database.inOrg(org) { plan { read } } }
             val report = plans.entries.joinToString("\n\n") { (name, plan) -> "-- $name\n$plan" }

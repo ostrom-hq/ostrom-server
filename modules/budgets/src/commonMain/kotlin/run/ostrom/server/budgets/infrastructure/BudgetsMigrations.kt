@@ -12,7 +12,8 @@ import run.ostrom.server.secrets.infrastructure.tenantTableSql
  * value, action, threshold and period across replicas: a changed limit alerts again. Both tables stay under the
  * row-level security of version 2: the new columns are read and written only through rows of the caller's org. Since
  * version 4, `WORKFLOW` names its workflow in `workflow_id` (set for it alone), in both tables.
- * Version 5 adds `budgets_overrides`, a member's temporary daily budgets, kept after they end.
+ * Version 5 adds `budgets_overrides`, a member's temporary daily budgets, kept after they end. Version 6 adds
+ * `budgets_automatic_daily`, the org's automatic daily budget sized from its shared accounts.
  */
 val BudgetsMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -107,5 +108,18 @@ val BudgetsMigrations: List<SchemaMigration> = listOf(
                 ON budgets_overrides (org_id, member_id, expires_at) WHERE revoked_at IS NULL;
             CREATE INDEX budgets_overrides_page ON budgets_overrides (org_id, member_id, created_at DESC, id DESC)
         """.trimIndent() + ";\n" + tenantTableSql("budgets_overrides"),
+    ),
+    // The automatic pool size (TeamCode's `pool_budgets.auto_daily_units` and `auto_computed_at`): one row an org,
+    // read by its primary key with every read of a call's limits, written every ten minutes under the org's lock.
+    SchemaMigration(
+        version = 6,
+        name = "create_budgets_automatic_daily",
+        sql = """
+            CREATE TABLE budgets_automatic_daily (
+                org_id UUID PRIMARY KEY,
+                micros BIGINT NOT NULL CHECK (micros >= 0),
+                computed_at TIMESTAMPTZ NOT NULL
+            )
+        """.trimIndent() + ";\n" + tenantTableSql("budgets_automatic_daily"),
     ),
 )

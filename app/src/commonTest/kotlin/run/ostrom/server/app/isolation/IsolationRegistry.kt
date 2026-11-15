@@ -266,6 +266,8 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/activity" to Case.Target(),
     "GET /api/v1/budgets" to Case.Target(),
     "GET /api/v1/budgets/me" to Case.Target(),
+    // The automatic pool size (capacity.poolsize.v1): the org's, read by its admins.
+    "GET /api/v1/pools/size" to Case.Target(admin = true),
     "PUT /api/v1/budgets" to Case.Target(
         body = """{"scope": "member", "subject": "{{MEMBER_ID}}", "usdPerMonth": 1.0}""",
         admin = true,
