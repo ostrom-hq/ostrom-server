@@ -28,9 +28,11 @@ import run.ostrom.server.cloud.infrastructure.CloudSettingsRepositoryImpl
 import run.ostrom.server.cloud.infrastructure.readTextFileOrNull
 import run.ostrom.server.cloud.presentation.CloudAdminRoutesDependencies
 import run.ostrom.server.cloud.presentation.cloudAdminRoutes
+import run.ostrom.server.cloud.presentation.cloudOperations
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.sessions.CloudProfileDirectory
 import run.ostrom.server.secrets.domain.CallerResolver
@@ -51,6 +53,8 @@ import kotlin.uuid.Uuid
  */
 object CloudModule : ServerModule {
     override val name: String = "cloud"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { cloudOperations() }
 
     override val koinModule: Module = module {
         single<CloudRuntimeRepository> { CloudRuntimeRepositoryImpl(get()) }

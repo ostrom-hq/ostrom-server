@@ -29,6 +29,7 @@ import run.ostrom.server.secrets.domain.CallerResolver
 import run.ostrom.server.secrets.domain.MemberRole
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
@@ -118,6 +119,11 @@ class CloudAdminRoutesPostgresTest {
         {"name":"Default","version":$version,"assignedMemberIds":["$BOB"],
         "spec":{"clusterId":"$clusterId","namespace":"sessions","image":"ghcr.io/acme/session:1"}}
     """.trimIndent()
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(listOf(CloudModule), overrides) { server ->
+        server.assertApiCatalogue(CloudModule)
+    }
 
     @Test
     fun theRuntimeIsSeededOnceThenSavedByAnAdministratorOverTheOneRead() = serverTest(
