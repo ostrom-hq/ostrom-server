@@ -17,6 +17,8 @@ import run.ostrom.server.runners.fakes.FixedPlans
 import run.ostrom.server.runners.fakes.InMemoryCloudSessionsRepository
 import run.ostrom.server.runners.fakes.SettableClock
 import run.ostrom.server.runners.fakes.session
+import run.ostrom.server.kernel.logging.LogLevel
+import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.runners.infrastructure.CloudRuntimePausedRetention
 import run.ostrom.server.runners.presentation.toResponse
 import kotlinx.coroutines.CancellationException
@@ -26,6 +28,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -214,12 +217,32 @@ class CloudSessionExpiryTest {
     }
 
     @Test
-    fun theRetentionIsTheConsolesOrThirtyDaysWithoutTheCloudModule() = runTest {
-        assertEquals(30, CloudRuntimePausedRetention(null).days())
-        val runtime = object : CloudRuntimeSource {
-            override suspend fun current() = CloudRuntime(pausedRetentionDays = null)
+    fun theRetentionIsTheConsolesAndAnUnreadableOneIsThirtyDaysLoggedByItsClassOnly() = runTest {
+        val logged = mutableListOf<Pair<String, Map<String, Any?>>>()
+        val logger = object : Logger {
+            override fun log(level: LogLevel, message: String, fields: Map<String, Any?>, error: Throwable?) {
+                assertEquals(LogLevel.WARN, level)
+                assertNull(error, "Never the error itself, which may carry a body")
+                logged += message to fields
+            }
+
+            override fun with(fields: Map<String, Any?>): Logger = this
         }
-        assertNull(CloudRuntimePausedRetention(runtime).days())
-        assertNull(KeepPausedSessions.days())
+        var read: () -> CloudRuntime = { CloudRuntime(pausedRetentionDays = null) }
+        val runtime = object : CloudRuntimeSource {
+            override suspend fun current() = read()
+        }
+        val retention = CloudRuntimePausedRetention(runtime, logger)
+        assertNull(retention.days())
+        read = { CloudRuntime(pausedRetentionDays = 7) }
+        assertEquals(7, retention.days())
+        assertTrue(logged.isEmpty())
+
+        read = { throw IllegalStateException("secret body") }
+        assertEquals(30, retention.days())
+        assertEquals("IllegalStateException", logged.single().second["error_class"])
+        read = { throw CancellationException("stopped") }
+        assertFailsWith<CancellationException> { retention.days() }
+        assertNull(KeepPausedSessions.days(), "Without the cloud module, paused sessions are kept")
     }
 }

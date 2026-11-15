@@ -124,7 +124,11 @@ class ReconcileCloudSessionUseCaseImpl(
         val terminated = outcome.state == SessionState.TERMINATED
         val next = write(
             outcome.copy(runnerTokenHash = null, clusterUnreachableSince = null),
-            if (terminated) now + BLOCKED_RECHECK else outcome.expiresAt,
+            when (outcome.state) {
+                SessionState.TERMINATED -> now + BLOCKED_RECHECK
+                SessionState.PAUSED -> outcome.expiresAt
+                else -> null
+            },
         )
         // Terminated, its cleanup still blocked: what its agent asked ends now (the listeners are idempotent).
         if (terminated) ended.forEach { it.ended(session.orgId, listOf(session.id.toString())) }

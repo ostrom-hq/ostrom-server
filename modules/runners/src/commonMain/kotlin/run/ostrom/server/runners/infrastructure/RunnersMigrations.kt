@@ -390,8 +390,9 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
             ALTER TABLE runners_sessions ADD COLUMN expires_at TIMESTAMPTZ, ADD COLUMN terminated_reason TEXT,
                 ADD COLUMN expiry_backfill BOOLEAN NOT NULL DEFAULT false;
             UPDATE runners_sessions SET expiry_backfill = true WHERE state = 'paused';
-            UPDATE runners_session_routes r SET next_reconcile_at = now() FROM runners_sessions s
-                WHERE s.id = r.session_id AND s.state = 'paused' AND r.next_reconcile_at IS NULL;
+            UPDATE runners_session_routes r
+                SET next_reconcile_at = LEAST(COALESCE(r.next_reconcile_at, now()), now())
+                FROM runners_sessions s WHERE s.id = r.session_id AND s.expiry_backfill;
         """.trimIndent(),
     ),
 )

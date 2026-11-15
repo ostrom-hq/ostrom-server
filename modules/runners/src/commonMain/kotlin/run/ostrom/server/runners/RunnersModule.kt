@@ -7,6 +7,7 @@ import run.ostrom.server.cloud.domain.CloudRuntimeSource
 import run.ostrom.server.runners.domain.BackfillSessionProfilesUseCase
 import run.ostrom.server.runners.domain.BackfillSessionProfilesUseCaseImpl
 import run.ostrom.server.runners.domain.CatalogSessionProfiles
+import run.ostrom.server.runners.domain.KeepPausedSessions
 import run.ostrom.server.runners.domain.NoSessionProfiles
 import run.ostrom.server.runners.domain.SessionProfiles
 import run.ostrom.server.runners.infrastructure.CloudKubernetesClusters
@@ -224,8 +225,9 @@ object RunnersModule : ServerModule {
             val limit = CloudSettingsBackgroundWorkLimit(getOrNull<CloudSettingsSource>())
             val ended = getAll<SessionEndListener>()
             val answers = getOrNull<PendingWaitAnswers>() ?: NoPendingWaitAnswers
-            // The console's paused retention, for every runtime (30 days without the cloud module).
-            val retention = CloudRuntimePausedRetention(getOrNull<CloudRuntimeSource>())
+            // The console's paused retention, for every runtime; paused sessions are kept without the cloud module.
+            val retention = getOrNull<CloudRuntimeSource>()
+                ?.let { CloudRuntimePausedRetention(it, get<Logger>()) } ?: KeepPausedSessions
             ReconcileCloudSessionUseCaseImpl(
                 get(), get(), get(), get(), get(), get(), ended, get(), answers, retention, limit,
             )
