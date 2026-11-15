@@ -4,6 +4,7 @@ package run.ostrom.server.gateway
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.core.telemetry.Telemetry
 import run.ostrom.server.gateway.domain.AdmissionQueueRepository
+import run.ostrom.server.gateway.domain.ApiPriceRepository
 import run.ostrom.server.gateway.domain.AllowAllSpend
 import run.ostrom.server.gateway.domain.AwaitAdmissionUseCase
 import run.ostrom.server.gateway.domain.AwaitAdmissionUseCaseImpl
@@ -11,8 +12,11 @@ import run.ostrom.server.gateway.domain.BudgetCheck
 import run.ostrom.server.gateway.domain.CancelInferenceRequestUseCase
 import run.ostrom.server.gateway.domain.CancelInferenceRequestUseCaseImpl
 import run.ostrom.server.gateway.domain.CancellationWatch
+import run.ostrom.server.gateway.domain.DatabaseOrgPrices
 import run.ostrom.server.gateway.domain.GatewayInstanceSettings
 import run.ostrom.server.gateway.domain.GatewaySettingsRepository
+import run.ostrom.server.gateway.domain.GetApiPricesUseCase
+import run.ostrom.server.gateway.domain.GetApiPricesUseCaseImpl
 import run.ostrom.server.gateway.domain.GetGatewaySettingsUseCase
 import run.ostrom.server.gateway.domain.GetGatewaySettingsUseCaseImpl
 import run.ostrom.server.gateway.domain.GetInferenceQueueUseCase
@@ -21,12 +25,16 @@ import run.ostrom.server.gateway.domain.GetModelPolicyUseCase
 import run.ostrom.server.gateway.domain.GetModelPolicyUseCaseImpl
 import run.ostrom.server.gateway.domain.InferencePlanner
 import run.ostrom.server.gateway.domain.InferenceUpstream
+import run.ostrom.server.gateway.domain.LoadApiPriceDefaultsUseCase
+import run.ostrom.server.gateway.domain.LoadApiPriceDefaultsUseCaseImpl
 import run.ostrom.server.gateway.domain.ModelCallObserver
 import run.ostrom.server.gateway.domain.ModelUsageSink
 import run.ostrom.server.gateway.domain.NoModelCallObserver
 import run.ostrom.server.gateway.domain.NoModelUsageSink
+import run.ostrom.server.gateway.domain.OrgPrices
 import run.ostrom.server.gateway.domain.PolicyModelAccess
-import run.ostrom.server.gateway.domain.PriceTable
+import run.ostrom.server.gateway.domain.PutApiPricesUseCase
+import run.ostrom.server.gateway.domain.PutApiPricesUseCaseImpl
 import run.ostrom.server.gateway.domain.PutGatewaySettingsUseCase
 import run.ostrom.server.gateway.domain.PutGatewaySettingsUseCaseImpl
 import run.ostrom.server.gateway.domain.PutModelPolicyUseCase
@@ -36,6 +44,7 @@ import run.ostrom.server.gateway.domain.RelayInferenceUseCaseImpl
 import run.ostrom.server.gateway.domain.RequestCancellationRepository
 import run.ostrom.server.gateway.domain.SpendGuard
 import run.ostrom.server.gateway.infrastructure.AdmissionQueueRepositoryImpl
+import run.ostrom.server.gateway.infrastructure.ApiPriceRepositoryImpl
 import run.ostrom.server.gateway.infrastructure.GatewayMigrations
 import run.ostrom.server.gateway.infrastructure.GatewaySettingsRepositoryImpl
 import run.ostrom.server.gateway.infrastructure.KtorInferenceUpstream
@@ -98,7 +107,8 @@ object GatewayModule : ServerModule {
         } onClose { it?.close() } // Its selector holds a thread of Dispatchers.IO until then (StoppedApplicationsTest).
         single<GatewaySettingsRepository> { GatewaySettingsRepositoryImpl(get<JdbcDatabase>()) }
         single<InferenceUpstream> { KtorInferenceUpstream(get(HTTP_CLIENT), SILENCE_MS.milliseconds) }
-        single { PriceTable() }
+        single<ApiPriceRepository> { ApiPriceRepositoryImpl(get<JdbcDatabase>()) }
+        single<OrgPrices> { DatabaseOrgPrices(get(), get()) }
         single {
             val instance = get<InstanceSettings>()
             InferencePlanner(
@@ -130,6 +140,9 @@ object GatewayModule : ServerModule {
         single<GetGatewaySettingsUseCase> { GetGatewaySettingsUseCaseImpl(get()) }
         single<PutGatewaySettingsUseCase> { PutGatewaySettingsUseCaseImpl(get()) }
         single<GetModelPolicyUseCase> { GetModelPolicyUseCaseImpl(get()) }
+        single<GetApiPricesUseCase> { GetApiPricesUseCaseImpl(get()) }
+        single<PutApiPricesUseCase> { PutApiPricesUseCaseImpl(get()) }
+        single<LoadApiPriceDefaultsUseCase> { LoadApiPriceDefaultsUseCaseImpl(get()) }
         single<ModelAccess> { PolicyModelAccess(get()) }
         single<PutModelPolicyUseCase> { PutModelPolicyUseCaseImpl(get()) }
         single<GovernanceChange>(named("gateway")) {
@@ -148,6 +161,9 @@ object GatewayModule : ServerModule {
                 audit = get(),
                 getQueue = get(),
                 cancel = get(),
+                getApiPrices = get(),
+                putApiPrices = get(),
+                loadApiPriceDefaults = get(),
             )
         }
     }
@@ -159,9 +175,14 @@ object GatewayModule : ServerModule {
     }
 
     /**
-     * The inference gateway, its admission queue and the cancellation of a call: an org configures its own provider
-     * keys, so all are served.
+     * The inference gateway, its admission queue, the cancellation of a call and the org's price table: an org
+     * configures its own provider keys, so all are served.
      */
     override suspend fun features(koin: Koin): Set<String> =
-        setOf(ServerFeatures.INFERENCE, ServerFeatures.INFERENCE_QUEUE, ServerFeatures.INFERENCE_CANCEL)
+        setOf(
+            ServerFeatures.INFERENCE,
+            ServerFeatures.INFERENCE_QUEUE,
+            ServerFeatures.INFERENCE_CANCEL,
+            ServerFeatures.CAPACITY_API_PRICES,
+        )
 }

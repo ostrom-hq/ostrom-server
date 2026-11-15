@@ -194,7 +194,7 @@ interface RelayInferenceUseCase {
 class RelayInferenceUseCaseImpl(
     private val planner: InferencePlanner,
     private val upstream: InferenceUpstream,
-    private val prices: PriceTable,
+    private val prices: OrgPrices,
     private val usage: ModelUsageSink,
     private val observer: ModelCallObserver,
     private val clock: Clock,
@@ -483,7 +483,10 @@ class RelayInferenceUseCaseImpl(
         state.exchange.recorded = true
         val started = state.exchange.started
         val tokens = state.usage
-        val cost = state.provider?.let { provider -> tokens?.let { prices.costMicros(provider, state.model, it) } }
+        // Never cancelled halfway, as the ledger write: an agent that left still has its call priced. A table that
+        // cannot be read leaves the call unpriced, never lost.
+        val table = withContext(NonCancellable) { pricesOrNull(state.exchange.caller.orgId) }
+        val cost = state.provider?.let { provider -> tokens?.let { table?.costMicros(provider, state.model, it) } }
         val record = ModelCallRecord(
             id = state.exchange.id,
             orgId = state.exchange.caller.orgId,
@@ -511,6 +514,14 @@ class RelayInferenceUseCaseImpl(
             deliver { usage.record(record) }
             deliver { observer.observe(record) }
         }
+    }
+
+    private suspend fun pricesOrNull(orgId: Uuid): PriceTable? = try {
+        prices.of(orgId)
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        null
     }
 
     /** Runs [block]; the ledger, the metrics or the traces being down must not fail a call already answered. */

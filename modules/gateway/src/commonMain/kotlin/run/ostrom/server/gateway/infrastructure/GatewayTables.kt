@@ -82,3 +82,17 @@ internal object GatewayCancellations : Table("gateway_cancellations") {
 
     override val primaryKey = PrimaryKey(orgId, memberId, requestId)
 }
+
+/** One row of an org's price table (version 7): USD millionths per million tokens, from a UTC day on. */
+internal object GatewayApiPrices : Table("gateway_api_prices") {
+    val orgId = uuid("org_id")
+    val provider = text("provider")
+    val model = text("model")
+    val effectiveFromDay = long("effective_from_day")
+    val inputMicros = long("input_micros")
+    val cacheWriteMicros = long("cache_write_micros")
+    val cacheReadMicros = long("cache_read_micros")
+    val outputMicros = long("output_micros")
+
+    override val primaryKey = PrimaryKey(orgId, provider, model, effectiveFromDay)
+}

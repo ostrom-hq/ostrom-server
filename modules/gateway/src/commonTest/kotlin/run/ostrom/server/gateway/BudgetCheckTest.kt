@@ -27,6 +27,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.uuid.Uuid
 
 /** What a call holds against the budgets before it goes, and how the gateway answers a budget that refuses it. */
 class BudgetCheckTest {
@@ -55,38 +56,39 @@ class BudgetCheckTest {
     private fun inputOf(text: String) = text.length / 2L + 1
 
     @Test
-    fun theReserveIsTheBoundedOutputPlusTheEstimatedInputAtTheDearerInputPrice() {
+    fun theReserveIsTheBoundedOutputPlusTheEstimatedInputAtTheDearerInputPrice() = runTest {
         // claude-opus-5: $25 per million output tokens, cache writes at $6.25 dearer than the $5 input.
         val text = """{"model":"claude-opus-5","max_tokens":1000}"""
         assertEquals(
             micros(1_000, 25_000_000) + micros(inputOf(text), 6_250_000),
-            check.reserveMicros(InferenceProvider.ANTHROPIC, body(text)),
+            check.reserveMicros(Uuid.random(), InferenceProvider.ANTHROPIC, body(text)),
         )
         val unbounded = """{"model":"claude-opus-5"}"""
         assertEquals(
             micros(BudgetCheck.DEFAULT_MAX_OUTPUT, 25_000_000) + micros(inputOf(unbounded), 6_250_000),
-            check.reserveMicros(InferenceProvider.CLAUDE_SHARED, body(unbounded)),
+            check.reserveMicros(Uuid.random(), InferenceProvider.CLAUDE_SHARED, body(unbounded)),
             "Without a bound, the default; a shared account is priced as its API",
         )
         val huge = """{"model":"claude-opus-5","max_tokens":999999999999}"""
         assertEquals(
             micros(BudgetCheck.MAX_OUTPUT, 25_000_000) + micros(inputOf(huge), 6_250_000),
-            check.reserveMicros(InferenceProvider.ANTHROPIC, body(huge)),
+            check.reserveMicros(Uuid.random(), InferenceProvider.ANTHROPIC, body(huge)),
             "The output held is capped",
         )
-        assertEquals(0, check.reserveMicros(InferenceProvider.OPENAI, body("""{"model":"gpt-5"}""")), "Unpriced")
+        val gpt = body("""{"model":"gpt-5"}""")
+        assertEquals(0, check.reserveMicros(Uuid.random(), InferenceProvider.OPENAI, gpt), "Unpriced")
         // claude-haiku-5-5: cache writes at $0.125, dearer than the $0.10 input.
         assertEquals(
             micros(30, 500_000) + micros(inputOf("""{"model":"claude-haiku-5-5"}"""), 125_000),
             BudgetCheck(SpendGuard { SpendDecision.Allowed }, PriceTable(), defaultMaxOutput = 30)
-                .reserveMicros(InferenceProvider.ANTHROPIC, body("""{"model":"claude-haiku-5-5"}""")),
+                .reserveMicros(Uuid.random(), InferenceProvider.ANTHROPIC, body("""{"model":"claude-haiku-5-5"}""")),
         )
         // A price whose input is dearer than its cache writes holds the input price.
         val inputDearer = PriceTable(listOf(ModelPrice("anthropic", "x", 9_000_000, 1, 1, 1_000_000)))
         assertEquals(
             micros(2, 1_000_000) + micros(inputOf("""{"model":"x","max_tokens":2}"""), 9_000_000),
             BudgetCheck(SpendGuard { SpendDecision.Allowed }, inputDearer)
-                .reserveMicros(InferenceProvider.ANTHROPIC, body("""{"model":"x","max_tokens":2}""")),
+                .reserveMicros(Uuid.random(), InferenceProvider.ANTHROPIC, body("""{"model":"x","max_tokens":2}""")),
         )
     }
 
@@ -104,7 +106,7 @@ class BudgetCheckTest {
         val callId = Gw.orgB
         val decision = guarded.check(Gw.memberA, callId, WireProtocol.MESSAGES, body(text))
         assertEquals(SpendDecision.Insufficient("Budget left too low for this call"), decision)
-        val reserve = check.reserveMicros(InferenceProvider.ANTHROPIC, body(text))
+        val reserve = check.reserveMicros(Uuid.random(), InferenceProvider.ANTHROPIC, body(text))
         assertEquals(listOf(SpendRequest(Gw.orgA, Gw.memberA.memberId, callId, reserve)), asked)
         guarded.check(Gw.memberA.copy(workflowId = "review"), callId, WireProtocol.MESSAGES, body(text))
         assertEquals("review", asked.last().workflowId, "A launch's call is checked under the workflow it plays")
