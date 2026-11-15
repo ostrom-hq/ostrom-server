@@ -7,7 +7,7 @@ import run.ostrom.server.identity.domain.ResolveUserUseCase
 import run.ostrom.server.identity.domain.User
 import run.ostrom.server.identity.domain.VerifiedIdentity
 import run.ostrom.server.kernel.auth.OrgRole
-import run.ostrom.server.kernel.database.inOrg
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.orgs.domain.Invitation
 import run.ostrom.server.orgs.domain.Member
 import run.ostrom.server.orgs.domain.Membership
@@ -17,10 +17,11 @@ import run.ostrom.server.orgs.fakes.orgDeleted
 import run.ostrom.server.orgs.infrastructure.InvitationsRepositoryImpl
 import run.ostrom.server.orgs.infrastructure.MembersRepositoryImpl
 import run.ostrom.server.orgs.infrastructure.OrgDeletionsRepositoryImpl
+import run.ostrom.server.orgs.infrastructure.OrgOrganizations
 import run.ostrom.server.orgs.infrastructure.OrgsRepositoryImpl
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import org.jetbrains.exposed.v1.jdbc.selectAll
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
@@ -56,7 +57,7 @@ class OrgsServingRolePostgresTest {
         serverTest(listOf(IdentityModule, OrgsModule)) { server ->
             val ada = server.user("ada")
             val bob = server.user("bob")
-            server.database.withRole { role, serving ->
+            server.database.withJdbcRole(JdbcDatabase.MIN_POOL_SIZE) { role, serving ->
                 // What ci/database-roles.sql and the Helm chart grant `ostrom_app`.
                 server.database.superuser
                     .execute("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO $role")
@@ -88,11 +89,9 @@ class OrgsServingRolePostgresTest {
                 assertNull(orgs.create(globex, owner(globex, bob)) { false })
                 // Confined to Globex, Acme's row and members are invisible; with no organization, nothing is.
                 assertNull(members.findByUser(globex.id, ada.id))
-                val seen = serving.inOrg(globex.id) {
-                    fetchAll("SELECT count(*) AS n FROM orgs_organizations").getOrThrow().single().get("n").asLong()
-                }
+                val seen = serving.inOrg(globex.id) { OrgOrganizations.selectAll().count() }
                 assertEquals(1L, seen)
-                assertTrue(serving.fetchAll("SELECT id FROM orgs_organizations").getOrThrow().toList().isEmpty())
+                assertTrue(serving.query { OrgOrganizations.selectAll().toList() }.isEmpty())
 
                 // An invitation link is found by its token from outside the organization.
                 val invitation =
@@ -107,7 +106,7 @@ class OrgsServingRolePostgresTest {
     fun theServingRoleChangesSettingsAndFinishesADeletionAcrossOrganizations() =
         serverTest(listOf(IdentityModule, OrgsModule)) { server ->
             val ada = server.user("ada")
-            server.database.withRole { role, serving ->
+            server.database.withJdbcRole(JdbcDatabase.MIN_POOL_SIZE) { role, serving ->
                 val superuser = server.database.superuser
                 superuser
                     .execute("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO $role")
@@ -151,7 +150,8 @@ class OrgsServingRolePostgresTest {
                     ).getOrThrow()
                     .single()
                     .get("n")
-                    .asLong()
+                    .asString()
+                    .toLong()
             // The router's eight, and the member search's (orgs migration 7, owned by ostrom_member_search).
             assertEquals(9L, hardened)
         }

@@ -2,11 +2,15 @@
 package run.ostrom.server.orgs
 
 import run.ostrom.server.identity.IdentityModule
+import run.ostrom.server.identity.domain.AuditEntry
+import run.ostrom.server.identity.domain.AuditEvent
+import run.ostrom.server.identity.domain.AuditLog
 import run.ostrom.server.identity.domain.AuditRepository
 import run.ostrom.server.identity.domain.IdentityProvider
 import run.ostrom.server.identity.domain.ResolveUserUseCase
 import run.ostrom.server.identity.domain.User
 import run.ostrom.server.identity.domain.VerifiedIdentity
+import run.ostrom.server.identity.infrastructure.TransactionalAuditLog
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.auth.OrgPrincipal
@@ -15,7 +19,7 @@ import run.ostrom.server.kernel.auth.OrgRequiredException
 import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
-import run.ostrom.server.kernel.database.inOrg
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.orgs.domain.AlreadyMemberException
 import run.ostrom.server.orgs.domain.Invitation
 import run.ostrom.server.orgs.domain.InvitationTokens
@@ -32,12 +36,17 @@ import run.ostrom.server.orgs.domain.OrgsRepository
 import run.ostrom.server.orgs.domain.People
 import run.ostrom.server.orgs.domain.SlugTakenException
 import run.ostrom.server.orgs.fakes.orgDeleted
+import run.ostrom.server.orgs.infrastructure.OrgInvitations
+import run.ostrom.server.orgs.infrastructure.OrgMembers
+import run.ostrom.server.orgs.infrastructure.OrgOrganizations
+import run.ostrom.server.orgs.infrastructure.OrgsRepositoryImpl
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.SQLError
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -95,13 +104,18 @@ class OrgsPostgresTest {
 
     private suspend fun TestServer.nameAndZone(id: Uuid): Pair<String, String> =
         database.superuser.fetchAll(
-            Statement.create("SELECT name, time_zone FROM orgs_organizations WHERE id = :id").bind("id", id),
+            "SELECT name, time_zone FROM orgs_organizations WHERE id = '$id'",
         ).getOrThrow().single().let { it.get("name").asString() to it.get("time_zone").asString() }
 
-    private suspend fun TestServer.purgeAfter(id: Uuid): Instant =
+    private suspend fun TestServer.auditLines(orgId: Uuid, action: String): Long =
         database.superuser.fetchAll(
-            Statement.create("SELECT purge_after FROM orgs_organizations WHERE id = :id").bind("id", id),
-        ).getOrThrow().single().get("purge_after").asInstant()
+            "SELECT count(*) AS n FROM identity_audit_events WHERE org_id = '$orgId' AND action = '$action'",
+        ).getOrThrow().single().get("n").asString().toLong()
+
+    private suspend fun TestServer.purgeAfter(id: Uuid): Instant = koin.get<JdbcDatabase>().inOrg(id) {
+        val o = OrgOrganizations
+        checkNotNull(o.select(o.purgeAfter).where { o.id eq id }.single()[o.purgeAfter])
+    }
 
     @Test
     @Suppress("LongMethod") // One organization's life through the repositories, read top to bottom.
@@ -179,18 +193,14 @@ class OrgsPostgresTest {
             assertTrue(acme.id !in deletions.duePurges(now + 31.days, 10))
             deletions.erase(acme2.id, now)
             assertEquals(acme2, orgs.get(acme2.id), "A live organization is never erased")
-            // Read across organizations, as no request does.
-            val tombstone =
-                server.database.superuser
-                    .fetchAll(
-                        "SELECT name, github_org_id, time_zone, purged_at FROM orgs_organizations " +
-                            "WHERE id = '${acme.id}'"
-                    ).getOrThrow()
-                    .single()
-            assertEquals("", tombstone.get("name").asString())
-            assertNull(tombstone.get("github_org_id").asStringOrNull())
-            assertEquals("UTC", tombstone.get("time_zone").asString())
-            assertEquals(now + 30.days, tombstone.get("purged_at").asInstant())
+            val o = OrgOrganizations
+            val tombstone = server.koin.get<JdbcDatabase>().inOrg(acme.id) {
+                o.select(o.name, o.githubOrgId, o.timeZone, o.purgedAt).where { o.id eq acme.id }.single()
+            }
+            assertEquals("", tombstone[o.name])
+            assertNull(tombstone[o.githubOrgId])
+            assertEquals("UTC", tombstone[o.timeZone])
+            assertEquals(now + 30.days, tombstone[o.purgedAt])
             assertFalse(orgs.slugTaken("acme"), "An erased organization gives its short name back")
         }
 
@@ -204,13 +214,13 @@ class OrgsPostgresTest {
             val owner = member(acme, ada, OrgRole.OWNER)
             val ghost = member(acme, ada, OrgRole.OWNER).copy(userId = Uuid.random())
 
-            assertFailsWith<SQLError> { orgs.create(acme, ghost) { false } }
+            assertFailsWith<ExposedSQLException> { orgs.create(acme, ghost) { false } }
             assertNull(orgs.get(acme.id), "Nothing of the failed creation is left")
             assertNull(orgs.create(acme, owner) { false })
             assertEquals(42L, orgs.get(acme.id)?.githubOrgId)
             val invitation = link(acme, owner)
             invitations.create(invitation, "h")
-            assertFailsWith<SQLError> {
+            assertFailsWith<ExposedSQLException> {
                 invitations.accept(
                     invitation,
                     member(acme, ada, OrgRole.MEMBER).copy(userId = Uuid.random()),
@@ -233,12 +243,50 @@ class OrgsPostgresTest {
             }
 
             assertEquals(1, deleted.count { it }, "Exactly one deletion wins")
-            val events = server.database.superuser.fetchAll(
-                Statement.create(
-                    "SELECT count(*) AS n FROM identity_audit_events WHERE org_id = :org AND action = 'org.deleted'",
-                ).bind("org", acme.id),
-            ).getOrThrow().single().get("n").asLong()
-            assertEquals(1L, events, "One event, chained once")
+            assertEquals(1L, server.auditLines(acme.id, "org.deleted"), "One event, chained once")
+        }
+
+    // The deletion's audit line is signed between two transactions, on the chain's head: when another writer appends
+    // meanwhile, the deletion is rolled back and its line signed again on the new head, so it is written once.
+    @Test
+    fun aDeletionWhoseAuditHeadMovedWhileItWasSignedIsSignedAgainAndWrittenOnce() =
+        serverTest(modules) { server ->
+            val log = server.koin.get<AuditLog>()
+            var races = 0
+            val racing = TransactionalAuditLog(
+                object : AuditLog by log {
+                    override fun sign(entry: AuditEntry): suspend (String?, Long) -> AuditEvent {
+                        val build = log.sign(entry)
+                        return { previousHash, sequence ->
+                            if (races > 0) log.record(AuditEntry(entry.orgId, null, "meanwhile", "t", "${races--}"))
+                            build(previousHash, sequence)
+                        }
+                    }
+                },
+            )
+            val orgs = OrgsRepositoryImpl(server.koin.get(), racing)
+            val members = server.koin.get<MembersRepository>()
+            val ada = server.user("ada")
+            val acme = org("acme")
+            val globex = org("globex")
+            orgs.create(acme, member(acme, ada, OrgRole.OWNER)) { false }
+            orgs.create(globex, member(globex, ada, OrgRole.OWNER)) { false }
+
+            races = 1
+            assertTrue(orgs.delete(acme.id, now, orgDeleted(acme.id, ada.id)))
+            assertEquals(0, races)
+            assertNull(orgs.get(acme.id))
+            assertEquals(1L, server.auditLines(acme.id, "org.deleted"), "The line is written once")
+            assertEquals(1L, server.auditLines(acme.id, "meanwhile"))
+
+            // A chain that moves at every signature: the deletion fails loudly, nothing of it written.
+            races = 100
+            assertFailsWith<IllegalStateException> { orgs.delete(globex.id, now, orgDeleted(globex.id, ada.id)) }
+            assertEquals(92, races)
+            assertEquals(globex, orgs.get(globex.id))
+            assertEquals(1, members.count(globex.id))
+            races = 0
+            assertFalse(orgs.delete(acme.id, now, orgDeleted(acme.id, ada.id)), "Already deleted: nothing to append")
         }
 
     @Test
@@ -275,6 +323,64 @@ class OrgsPostgresTest {
             assertNull(orgs.create(paid, member(paid, bob, OrgRole.OWNER)) { it == winner.id })
         }
 
+    // The claim's holders are read, asked about outside any transaction, and read again under the claim's lock: a
+    // holder another creation added meanwhile makes the answer stale, so the question is asked again on the new ones.
+    @Test
+    fun aClaimWhoseHoldersChangedWhileTheyWereAskedAboutIsSettledAgain() =
+        serverTest(modules) { server ->
+            val orgs = server.koin.get<OrgsRepository>()
+            val ada = server.user("ada")
+            val bob = server.user("bob")
+            val claim = "domain:acme.com"
+            val first = org("first", claim)
+            orgs.create(first, member(first, ada, OrgRole.OWNER)) { false }
+            val rival = org("rival", claim)
+            val mine = org("mine", claim)
+            val asked = mutableListOf<Uuid>()
+
+            val blocker = orgs.create(mine, member(mine, bob, OrgRole.OWNER)) { id ->
+                asked += id
+                // The first answer is "not paying", given while a rival that pays (the holders all pay) takes the
+                // claim too.
+                if (asked.size == 1) {
+                    assertNull(orgs.create(rival, member(rival, bob, OrgRole.OWNER)) { true })
+                    false
+                } else {
+                    true
+                }
+            }
+
+            // The first answer was about one holder, stale once the rival was created: both are asked about again.
+            assertNull(blocker, "Created once every holder pays")
+            assertEquals(mine, orgs.get(mine.id))
+            assertEquals(3, asked.size)
+            assertEquals(setOf(first.id, rival.id), asked.toSet())
+        }
+
+    @Test
+    fun aClaimWhoseHoldersKeepChangingIsGivenUpAfterEightAttempts() =
+        serverTest(modules) { server ->
+            val orgs = server.koin.get<OrgsRepository>()
+            val ada = server.user("ada")
+            val claim = "domain:acme.com"
+            val first = org("first", claim)
+            orgs.create(first, member(first, ada, OrgRole.OWNER)) { false }
+            val mine = org("mine", claim)
+            var rivals = 0
+
+            // Every question is answered while another holder is created (paying: nothing blocks its creation).
+            assertFailsWith<IllegalStateException> {
+                orgs.create(mine, member(mine, ada, OrgRole.OWNER)) {
+                    val rival = org("rival-${rivals++}", claim)
+                    orgs.create(rival, member(rival, ada, OrgRole.OWNER)) { true }
+                    false
+                }
+            }
+
+            assertEquals(8, rivals)
+            assertNull(orgs.get(mine.id), "Nothing of the abandoned creation is left")
+        }
+
     @Test
     fun membersHaveOneOwnerAndChangeRoles() =
         serverTest(modules) { server ->
@@ -295,7 +401,7 @@ class OrgsPostgresTest {
             assertEquals(2, members.count(acme.id))
             members.changeRole(acme.id, bobMember.id, OrgRole.BILLING)
             assertEquals(OrgRole.BILLING, members.findByUser(acme.id, bob.id)?.role)
-            assertFailsWith<SQLError> { members.changeRole(acme.id, bobMember.id, OrgRole.OWNER) }
+            assertFailsWith<ExposedSQLException> { members.changeRole(acme.id, bobMember.id, OrgRole.OWNER) }
             members.transferOwnership(acme.id, owner.id, bobMember.id)
             assertEquals(OrgRole.OWNER, members.findByUser(acme.id, bob.id)?.role)
             assertEquals(OrgRole.ADMIN, members.findByUser(acme.id, ada.id)?.role)
@@ -377,43 +483,34 @@ class OrgsPostgresTest {
             invitations.create(link(globex, globexOwner), "g")
 
             // Queries without any WHERE on the organization still only see the confined one.
-            for (table in listOf("orgs_organizations", "orgs_members", "orgs_invitations")) {
-                val column = if (table == "orgs_organizations") "id" else "org_id"
-                val seen =
-                    server.driver.inOrg(globex.id) {
-                        fetchAll(Statement.create("SELECT $column AS org FROM $table"))
-                            .getOrThrow()
-                            .map { it.get("org").asString() }
-                    }
-                assertEquals(listOf(globex.id.toString()), seen.distinct(), table)
+            val jdbc = server.koin.get<JdbcDatabase>()
+            val seen = jdbc.inOrg(globex.id) {
+                val o = OrgOrganizations
+                val m = OrgMembers
+                val i = OrgInvitations
+                mapOf(
+                    "orgs_organizations" to o.select(o.id).map { it[o.id] },
+                    "orgs_members" to m.select(m.orgId).map { it[m.orgId] },
+                    "orgs_invitations" to i.select(i.orgId).map { it[i.orgId] },
+                )
             }
+            seen.forEach { (table, ids) -> assertEquals(listOf(globex.id), ids.distinct(), table) }
             // Writing a row of another organization from inside one fails the policy's check.
-            assertFailsWith<SQLError> {
-                server.driver.inOrg(globex.id) {
-                    execute(
-                            Statement.create(
-                                    "INSERT INTO orgs_members (id, org_id, user_id, role, joined_at) VALUES (:id, " +
-                                        ":org, :user, 'member', :at)"
-                                )
-                                .bind("id", Uuid.random())
-                                .bind("org", acme.id)
-                                .bind("user", bob.id)
-                                .bind("at", now)
-                        )
-                        .getOrThrow()
+            assertFailsWith<ExposedSQLException> {
+                jdbc.inOrg(globex.id) {
+                    OrgMembers.insert {
+                        it[id] = Uuid.random()
+                        it[orgId] = acme.id
+                        it[userId] = bob.id
+                        it[role] = "member"
+                        it[joinedAt] = now
+                    }
                 }
             }
-            val updated =
-                server.driver.inOrg(globex.id) {
-                    execute(
-                            Statement.create(
-                                    "UPDATE orgs_organizations SET name = 'taken' WHERE id = :id"
-                                )
-                                .bind("id", acme.id)
-                        )
-                        .getOrThrow()
-                }
-            assertEquals(0L, updated)
+            val updated = jdbc.inOrg(globex.id) {
+                OrgOrganizations.update({ OrgOrganizations.id eq acme.id }) { it[name] = "taken" }
+            }
+            assertEquals(0, updated)
             assertEquals("ACME", orgs.get(acme.id)?.name)
             // The repositories confine themselves too: Globex's id never reads Acme's members.
             assertNull(server.koin.get<MembersRepository>().findByUser(globex.id, ada.id))

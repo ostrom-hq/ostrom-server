@@ -1,83 +1,68 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.orgs.infrastructure
 
-import run.ostrom.server.kernel.database.inOrg
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.orgs.domain.OrgDeletionsRepository
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
+import org.jetbrains.exposed.v1.core.Cast
+import org.jetbrains.exposed.v1.core.TextColumnType
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.concat
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.isNotNull
+import org.jetbrains.exposed.v1.core.stringLiteral
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * [OrgDeletionsRepository] on PostgreSQL. The lists go through the `SECURITY DEFINER` functions of
+ * [OrgDeletionsRepository] on PostgreSQL through Exposed. The lists go through the `SECURITY DEFINER` functions of
  * migration 3, which return ids only; each change runs inside the organization it changes.
  *
- * @param driver The database.
+ * @param database The serving role's pool.
  */
-class OrgDeletionsRepositoryImpl(private val driver: Driver) : OrgDeletionsRepository {
+class OrgDeletionsRepositoryImpl(private val database: JdbcDatabase) : OrgDeletionsRepository {
     // Across organizations: the serving role reaches the deleted ones only through these functions.
-    override suspend fun deletionsToSettle(now: Instant, limit: Int): List<Uuid> =
-        driver
-            .fetchAll(
-                Statement.create(
-                        "SELECT id FROM orgs_deletions_to_settle(CAST(:now AS TIMESTAMPTZ), CAST(:limit AS INTEGER)) id"
-                    )
-                    .bind("now", now)
-                    .bind("limit", limit)
-            )
-            .getOrThrow()
-            .map { it.get("id").asUuid() }
+    override suspend fun deletionsToSettle(now: Instant, limit: Int): List<Uuid> = database.query {
+        val t = OrgsDeletionsToSettle
+        t.of(now, limit).select(t.id).map { it[t.id] }
+    }
 
     override suspend fun markSettled(id: Uuid, at: Instant) {
-        driver.inOrg(id) {
-            execute(
-                    Statement.create(
-                            "UPDATE orgs_organizations SET deletion_settled_at = :at, deletion_retry_at = NULL " +
-                                "WHERE id = :id"
-                        )
-                        .bind("at", at)
-                        .bind("id", id)
-                )
-                .getOrThrow()
+        database.inOrg(id) {
+            val o = OrgOrganizations
+            o.update({ o.id eq id }) {
+                it[deletionSettledAt] = at
+                it[deletionRetryAt] = null
+            }
         }
     }
 
-    override suspend fun duePurges(now: Instant, limit: Int): List<Uuid> =
-        driver
-            .fetchAll(
-                Statement.create(
-                        "SELECT id FROM orgs_due_purges(CAST(:now AS TIMESTAMPTZ), CAST(:limit AS INTEGER)) id"
-                    )
-                    .bind("now", now)
-                    .bind("limit", limit)
-            )
-            .getOrThrow()
-            .map { it.get("id").asUuid() }
+    override suspend fun duePurges(now: Instant, limit: Int): List<Uuid> = database.query {
+        val t = OrgsDuePurges
+        t.of(now, limit).select(t.id).map { it[t.id] }
+    }
 
     override suspend fun erase(id: Uuid, at: Instant) {
-        driver.inOrg(id) {
-            execute(
-                    Statement.create(
-                            "UPDATE orgs_organizations SET name = '', slug = $PURGED_SLUG, github_org_id = NULL, " +
-                                "time_zone = 'UTC', purged_at = :at, deletion_retry_at = NULL " +
-                                "WHERE id = :id AND deleted_at IS NOT NULL"
-                        )
-                        .bind("at", at)
-                        .bind("id", id)
-                )
-                .getOrThrow()
+        database.inOrg(id) {
+            val o = OrgOrganizations
+            // `'~' || CAST(id AS TEXT)`, as the migration that erased the first ones ([PURGED_SLUG]).
+            val purgedSlug = concat(stringLiteral("~"), Cast(o.id, TextColumnType()))
+            o.update({ (o.id eq id) and o.deletedAt.isNotNull() }) {
+                it[name] = ""
+                it[slug] = purgedSlug
+                it[githubOrgId] = null
+                it[timeZone] = "UTC"
+                it[purgedAt] = at
+                it[deletionRetryAt] = null
+            }
         }
     }
 
     override suspend fun postpone(id: Uuid, until: Instant) {
-        driver.inOrg(id) {
-            execute(
-                    Statement.create("UPDATE orgs_organizations SET deletion_retry_at = :until WHERE id = :id")
-                        .bind("until", until)
-                        .bind("id", id)
-                )
-                .getOrThrow()
+        database.inOrg(id) {
+            val o = OrgOrganizations
+            o.update({ o.id eq id }) { it[deletionRetryAt] = until }
         }
     }
 }
