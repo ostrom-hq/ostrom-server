@@ -50,7 +50,8 @@ class ApprovalSender(
         val channel = others.firstOrNull { it.id == delivery.channel }
         return when {
             // An answer only goes to a module's channel, which updates what it posted.
-            delivery.decision != null -> channel?.decided(delivery) ?: ChannelResult.failed(CHANNEL_UNAVAILABLE)
+            delivery.decision != null ->
+                if (channel == null) ChannelResult.failed(CHANNEL_UNAVAILABLE) else channel.decided(delivery)
             gate == null -> ChannelResult.failed(CHANNEL_UNAVAILABLE)
             delivery.channel == PUSH_CHANNEL -> push(delivery, approver)
             delivery.channel == ApprovalRules.EMAIL_CHANNEL -> email(delivery, approver, gate)
