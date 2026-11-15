@@ -60,15 +60,17 @@ fun <T : Any> JdbcTransaction.write(body: StatementBuilder.() -> Statement<T>) {
 }
 
 /**
- * Runs one write built by [body] in this transaction, as [write], and returns what it returns: the rows an update or a
- * delete changed, for a conditional write whose outcome the repository decides on.
+ * Runs one write built by [body] in this transaction, as [write], and returns what it returns: the rows an insert, an
+ * update or a delete changed, for a conditional write whose outcome the repository decides on. Exposed types the
+ * result as nullable for every statement; a write always has one.
  *
  * @param body The statement.
  *
  * @return Its result.
  */
-fun <T : Any> JdbcTransaction.written(body: StatementBuilder.() -> Statement<T>): T? =
-    buildStatement(body).toExecutable().execute(this)
+@Suppress("UNCHECKED_CAST")
+fun <T : Any> JdbcTransaction.written(body: StatementBuilder.() -> Statement<T>): T =
+    buildStatement(body).toExecutable().execute(this) as T
 
 /**
  * The value of a nullable [column] that this row holds by construction, written together with [with], the one the
