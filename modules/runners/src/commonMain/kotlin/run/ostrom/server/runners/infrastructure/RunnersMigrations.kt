@@ -11,6 +11,54 @@ private val ROUTER_FUNCTIONS = listOf(
     "runners_release(UUID, TEXT, BOOLEAN, TIMESTAMPTZ)",
 )
 
+/** The purge of the expired idempotency records, across organizations (version 18). */
+private const val CREATE_KEYS_PURGE_FUNCTION = "runners_purge_create_keys()"
+
+/**
+ * Version 18 (`runners.cloud.idempotency.v1`, TeamCode's `cloud_idempotency`): the `Idempotency-Key` of a session's
+ * creation, per organization and initiating member, with the SHA-256 of its canonical request and the session it
+ * created, kept 24 hours. A tenant table; the purge of the expired records crosses organizations through one
+ * `SECURITY DEFINER` function owned by `ostrom_router`, which takes no argument and deletes at most 500 expired
+ * records a call (TeamCode's `maintain`).
+ */
+private val CREATE_KEYS_SQL: String =
+    """
+    CREATE TABLE runners_create_keys (
+        org_id UUID NOT NULL,
+        member_id TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        request_digest CHAR(64) NOT NULL,
+        session_id UUID NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        expires_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (org_id, member_id, idempotency_key)
+    );
+    CREATE INDEX runners_create_keys_expiry ON runners_create_keys (expires_at);
+    ${tenantTableSql("runners_create_keys")}
+    CREATE POLICY runners_create_keys_router_read ON runners_create_keys FOR SELECT TO ostrom_router
+        USING (current_user = 'ostrom_router');
+    CREATE POLICY runners_create_keys_router_purge ON runners_create_keys FOR DELETE TO ostrom_router
+        USING (current_user = 'ostrom_router');
+    GRANT SELECT, DELETE ON runners_create_keys TO ostrom_router;
+    CREATE FUNCTION runners_purge_create_keys() RETURNS BIGINT
+        LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        WITH gone AS (
+            DELETE FROM runners_create_keys WHERE ctid IN (
+                SELECT ctid FROM runners_create_keys WHERE expires_at <= now() LIMIT 500
+            ) RETURNING 1
+        ) SELECT count(*) FROM gone;
+    $$;
+    REVOKE EXECUTE ON FUNCTION $CREATE_KEYS_PURGE_FUNCTION FROM PUBLIC;
+    DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+            GRANT EXECUTE ON FUNCTION $CREATE_KEYS_PURGE_FUNCTION TO ostrom_app;
+        END IF;
+    END $$;
+    GRANT CREATE ON SCHEMA public TO ostrom_router;
+    ALTER FUNCTION $CREATE_KEYS_PURGE_FUNCTION OWNER TO ostrom_router;
+    REVOKE CREATE ON SCHEMA public FROM ostrom_router;
+    """.trimIndent()
+
 /**
  * Version 3: `runners_session_routes` under forced row-level security like the other tables (a request reads and
  * writes only its organization's routes), and what crosses organizations moved into narrow `SECURITY DEFINER`
@@ -588,4 +636,5 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
     ),
     SchemaMigration(version = 17, name = "conversation_sessions", sql = CONVERSATION_SQL),
     SchemaMigration(version = 18, name = "workspace_deletion", sql = WORKSPACE_DELETION_SQL),
+    SchemaMigration(version = 19, name = "create_keys", sql = CREATE_KEYS_SQL),
 )

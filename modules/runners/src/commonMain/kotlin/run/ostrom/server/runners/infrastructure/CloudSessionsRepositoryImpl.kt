@@ -10,8 +10,10 @@ import run.ostrom.server.runners.domain.CloudSession
 import run.ostrom.server.runners.domain.DeletionState
 import run.ostrom.server.runners.domain.WorkspaceDeletion
 import run.ostrom.server.runners.domain.CloudSessionsRepository
+import run.ostrom.server.runners.domain.CreateKey
 import run.ostrom.server.runners.domain.DesiredState
 import run.ostrom.server.runners.domain.GitHubAccessMode
+import run.ostrom.server.runners.domain.KeyedCreateOutcome
 import run.ostrom.server.runners.domain.RepositorySpec
 import run.ostrom.server.runners.domain.ResumeOutcome
 import run.ostrom.server.runners.domain.SessionRef
@@ -53,20 +55,51 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         driver.inTenant(session.orgId) {
             lockOrg(session.orgId)
             if (countHolding(session.orgId, null) >= maxRunning) return@inTenant false
-            execute(
-                Statement.create("""INSERT INTO runners_sessions ($INSERTED) VALUES ($VALUES)""").bindInsert(session),
-            ).getOrThrow()
+            insertSession(session)
+            true
+        }
+
+    override suspend fun createKeyed(session: CloudSession, maxRunning: Int, key: CreateKey): KeyedCreateOutcome =
+        driver.inTenant(session.orgId) {
+            // Serialized per organization like the cap: one of concurrent requests with a key creates, the others
+            // then read its record.
+            lockOrg(session.orgId)
+            val scope = "org_id = :org_id AND member_id = :member_id AND idempotency_key = :key"
+            val existing = fetchAll(
+                Statement.create(
+                    "SELECT request_digest, session_id, expires_at > :now AS live FROM runners_create_keys WHERE $scope",
+                ).bindKey(session, key).bind("now", session.createdAt),
+            ).getOrThrow().firstOrNull()
+            if (existing != null && existing.get("live").asBoolean()) {
+                if (existing.get("request_digest").asString() != key.requestDigest) {
+                    return@inTenant KeyedCreateOutcome.Conflict
+                }
+                val replayed = select(existing.get("session_id").asUuid()) ?: return@inTenant KeyedCreateOutcome.Conflict
+                return@inTenant KeyedCreateOutcome.Replayed(replayed)
+            }
+            if (existing != null) {
+                execute(Statement.create("DELETE FROM runners_create_keys WHERE $scope").bindKey(session, key))
+                    .getOrThrow()
+            }
+            if (countHolding(session.orgId, null) >= maxRunning) return@inTenant KeyedCreateOutcome.AtCap
+            insertSession(session)
             execute(
                 Statement.create(
                     """
-                    INSERT INTO runners_session_routes (session_id, org_id, runner_token_hash, next_reconcile_at)
-                    VALUES (:id, :org_id, :hash, :now)
+                    INSERT INTO runners_create_keys (org_id, member_id, idempotency_key, request_digest, session_id,
+                        created_at, expires_at) VALUES (:org_id, :member_id, :key, :digest, :session_id, :now,
+                        :expires_at)
                     """,
-                ).bind("id", session.id).bind("org_id", session.orgId).bind("hash", session.runnerTokenHash)
-                    .bind("now", session.createdAt),
+                ).bindKey(session, key).bind("digest", key.requestDigest).bind("session_id", session.id)
+                    .bind("now", session.createdAt).bind("expires_at", key.expiresAt),
             ).getOrThrow()
-            true
+            KeyedCreateOutcome.Created
         }
+
+    // The one deletion across organizations, through the function of RunnersMigrations version 18.
+    override suspend fun purgeExpiredCreateKeys(): Long = driver.fetchAll(
+        Statement.create("SELECT runners_purge_create_keys() AS n"),
+    ).getOrThrow().first().get("n").asLong()
 
     override suspend fun get(orgId: Uuid, id: Uuid): CloudSession? = driver.inTenant(orgId) { select(id) }
 
@@ -297,6 +330,24 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
     private suspend fun QueryExecutor.select(id: Uuid): CloudSession? = fetchAll(
         Statement.create("""SELECT $COLUMNS FROM runners_sessions WHERE id = :id""").bind("id", id),
     ).getOrThrow().firstOrNull()?.toSession()
+
+    private suspend fun QueryExecutor.insertSession(session: CloudSession) {
+        execute(
+            Statement.create("""INSERT INTO runners_sessions ($INSERTED) VALUES ($VALUES)""").bindInsert(session),
+        ).getOrThrow()
+        execute(
+            Statement.create(
+                """
+                INSERT INTO runners_session_routes (session_id, org_id, runner_token_hash, next_reconcile_at)
+                VALUES (:id, :org_id, :hash, :now)
+                """,
+            ).bind("id", session.id).bind("org_id", session.orgId).bind("hash", session.runnerTokenHash)
+                .bind("now", session.createdAt),
+        ).getOrThrow()
+    }
+
+    private fun Statement.bindKey(session: CloudSession, key: CreateKey): Statement =
+        bind("org_id", session.orgId).bind("member_id", session.ownerId).bind("key", key.key)
 
     private suspend fun QueryExecutor.lockOrg(orgId: Uuid) {
         fetchAll(

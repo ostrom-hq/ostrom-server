@@ -3,6 +3,7 @@ package run.ostrom.server.runners.domain
 
 import run.ostrom.server.kernel.errors.Pages
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.hours
 import kotlin.uuid.Uuid
 
 /**
@@ -52,7 +53,38 @@ interface CreateCloudSessionUseCase {
      *   the other refusals of [SessionProfiles.choose].
      */
     suspend operator fun invoke(caller: Caller, payload: CreateCloudSessionPayload): CloudSession
+
+    /**
+     * Creates the session under an `Idempotency-Key` (`runners.cloud.idempotency.v1`, TeamCode's create): the same
+     * key from the same member with the same request, within 24 hours, answers the session it created, as it is now,
+     * and creates nothing. Concurrent requests with one key create one session; the others replay it.
+     *
+     * @param caller The member, who becomes the owner and in whose name the key is kept.
+     * @param payload The request.
+     * @param key The key, valid ([run.ostrom.core.api.Idempotency.isValid]).
+     * @param requestDigest The SHA-256 (hex) of the canonical request.
+     *
+     * @return The session and whether it replays an earlier creation.
+     *
+     * @throws CloudSessionIdempotencyConflictException When the key was used with another request, or its session no
+     *   longer exists.
+     * @throws InvalidCloudSessionRequestException And the other refusals of [invoke].
+     */
+    suspend fun createKeyed(
+        caller: Caller,
+        payload: CreateCloudSessionPayload,
+        key: String,
+        requestDigest: String,
+    ): KeyedCreation
 }
+
+/**
+ * What [CreateCloudSessionUseCase.createKeyed] answers.
+ *
+ * @property session The session.
+ * @property replayed True when the key had already created it: nothing was created.
+ */
+data class KeyedCreation(val session: CloudSession, val replayed: Boolean)
 
 /**
  * [CreateCloudSessionUseCase] on the repository and the plan.
@@ -73,7 +105,34 @@ class CreateCloudSessionUseCaseImpl(
     override suspend fun invoke(caller: Caller, payload: CreateCloudSessionPayload): CloudSession =
         existing(caller, payload) ?: created(caller, payload)
 
+    override suspend fun createKeyed(
+        caller: Caller,
+        payload: CreateCloudSessionPayload,
+        key: String,
+        requestDigest: String,
+    ): KeyedCreation {
+        val (session, plan) = drafted(caller, payload)
+        val record = CreateKey(key, requestDigest, session.createdAt + IDEMPOTENCY_RETENTION)
+        return when (val outcome = repository.createKeyed(session, plan.maxRunningSessions, record)) {
+            KeyedCreateOutcome.Created -> KeyedCreation(session, replayed = false)
+            is KeyedCreateOutcome.Replayed -> KeyedCreation(outcome.session, replayed = true)
+            KeyedCreateOutcome.Conflict -> throw CloudSessionIdempotencyConflictException(
+                "This Idempotency-Key was already used with a different request, or its session no longer exists.",
+            )
+            KeyedCreateOutcome.AtCap -> throw CloudSessionLimitException(plan.maxRunningSessions)
+        }
+    }
+
     private suspend fun created(caller: Caller, payload: CreateCloudSessionPayload): CloudSession {
+        val (session, plan) = drafted(caller, payload)
+        if (!repository.createWithinCap(session, plan.maxRunningSessions)) {
+            throw CloudSessionLimitException(plan.maxRunningSessions)
+        }
+        return session
+    }
+
+    /** The session the request asks for, validated, with the plan it is created under. */
+    private suspend fun drafted(caller: Caller, payload: CreateCloudSessionPayload): Pair<CloudSession, CloudPlan> {
         val agent = AgentKind.fromWire(payload.agent) ?: throw InvalidCloudSessionRequestException(
             "Unknown agent ${payload.agent.take(MAX_ECHO)}: use ${AgentKind.entries.joinToString { it.wire }}.",
         )
@@ -123,10 +182,7 @@ class CreateCloudSessionUseCaseImpl(
             mode = mode,
             effort = payload.effort,
         )
-        if (!repository.createWithinCap(session, plan.maxRunningSessions)) {
-            throw CloudSessionLimitException(plan.maxRunningSessions)
-        }
-        return session
+        return session to plan
     }
 
     /**
@@ -175,6 +231,8 @@ class CreateCloudSessionUseCaseImpl(
     }
 
     private companion object {
+        /** How long a creation's `Idempotency-Key` replays it (TeamCode's `IDEMPOTENCY_MILLIS`). */
+        val IDEMPOTENCY_RETENTION = 24.hours
         const val MAX_NAME_LENGTH = 120
         const val MAX_PROMPT_LENGTH = 20_000
         const val MAX_ECHO = 32

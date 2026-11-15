@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners.presentation
 
+import run.ostrom.core.api.Idempotency
 import run.ostrom.server.kernel.auth.authenticated
 import run.ostrom.server.kernel.auth.requirePrincipal
 import run.ostrom.server.kernel.http.bodyLimit
+import run.ostrom.server.runners.domain.Caller
 import run.ostrom.server.runners.domain.CloudEnvironmentRules
 import run.ostrom.server.runners.domain.CloudSession
 import run.ostrom.server.runners.domain.SessionState
@@ -19,9 +21,12 @@ import run.ostrom.server.runners.domain.RunnerGitHubToken
 import run.ostrom.server.runners.domain.RunnerHeartbeat
 import run.ostrom.server.runners.domain.RunnerPreparationNotServedException
 import run.ostrom.server.runners.domain.RunnerUnauthenticatedException
+import dev.whyoleg.cryptography.CryptographyProvider
+import dev.whyoleg.cryptography.algorithms.SHA256
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.request.header
 import io.ktor.server.request.receive
 import io.ktor.server.resources.delete
 import io.ktor.server.resources.get
@@ -30,6 +35,7 @@ import io.ktor.server.resources.put
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
+import kotlinx.serialization.json.Json
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -54,8 +60,19 @@ fun Route.cloudSessionsRoutes(dependencies: CloudSessionsRoutesDependencies) = w
         }
         post<CloudSessionsApi> {
             val caller = orgResolver.callerOf(call.requirePrincipal(), CLOUD_WRITE)
-            val payload = call.receive<CreateCloudSessionRequest>().toPayload()
-            call.respond(HttpStatusCode.Created, createCloudSession(caller, payload).toResponse())
+            val request = call.receive<CreateCloudSessionRequest>()
+            val payload = request.toPayload()
+            val key = call.request.header(Idempotency.KEY_HEADER)?.also {
+                if (!Idempotency.isValid(it)) throw InvalidCloudSessionRequestException(MALFORMED_KEY)
+            }
+            if (key == null) {
+                call.respond(HttpStatusCode.Created, createCloudSession(caller, payload).toResponse())
+            } else {
+                val created = createCloudSession.createKeyed(caller, payload, key, requestDigest(request, caller))
+                if (created.replayed) call.response.header(Idempotency.REPLAYED_HEADER, "true")
+                val status = if (created.replayed) HttpStatusCode.Accepted else HttpStatusCode.Created
+                call.respond(status, created.session.toResponse())
+            }
         }
         get<CloudSessionsApi.Id> { params ->
             val caller = orgResolver.callerOf(call.requirePrincipal(), CLOUD_READ)
@@ -269,3 +286,16 @@ fun CloudSession.toResponse() = CloudSessionResponse(
     permissionBypass = permissionBypass != null,
     waiting = waiting?.let { CloudSessionWaitingDto(it.reason, it.requestId, it.since.toString(), it.eventSeq) },
 )
+
+private const val MALFORMED_KEY = "Idempotency-Key: 1 to 128 characters of A-Za-z0-9._:-."
+
+private val sha256 = CryptographyProvider.Default.get(SHA256).hasher()
+
+/**
+ * The SHA-256 (hex) of the canonical request a creation's `Idempotency-Key` is kept with (TeamCode's create): the
+ * decoded body, then the member it is created for.
+ */
+private fun requestDigest(request: CreateCloudSessionRequest, caller: Caller): String {
+    val canonical = Json.encodeToString(CreateCloudSessionRequest.serializer(), request) + "\n" + caller.memberId
+    return sha256.hashBlocking(canonical.encodeToByteArray()).toHexString()
+}
