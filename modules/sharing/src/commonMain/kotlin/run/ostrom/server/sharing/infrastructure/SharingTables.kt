@@ -40,6 +40,9 @@ internal object SharingAccounts : Table("sharing_accounts") {
     // Version 9.
     val ownership = text("ownership")
 
+    // Version 13: TeamCode's account pool.
+    val poolId = text("pool_id").nullable()
+
     override val primaryKey = PrimaryKey(id)
 }
 

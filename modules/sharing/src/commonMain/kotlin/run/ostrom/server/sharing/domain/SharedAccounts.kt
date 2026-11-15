@@ -124,6 +124,7 @@ data class AccountLimits(
  * @property version Bumped by every share, edit and status change of its row (not by the pool's refreshes and
  *   cool-downs): a conditional write names the version it read, so it never overwrites a change made in between.
  * @property ownership Who renews its tokens.
+ * @property poolId The pool it belongs to (TeamCode's account `poolId`), set by an admin; null for none.
  */
 data class SharedAccount(
     val id: Uuid,
@@ -140,6 +141,7 @@ data class SharedAccount(
     val createdAt: Instant,
     val version: Long = 0,
     val ownership: RefreshOwnership = RefreshOwnership.OSTROM,
+    val poolId: String? = null,
 ) {
     /** Whether the pool may lease it: READY, and not waiting for its handover. */
     val serves: Boolean get() = status == AccountStatus.READY && ownership != RefreshOwnership.PENDING_HANDOVER
@@ -201,12 +203,18 @@ object SharingRules {
     const val MIN_CEILING: Double = 0.05
 
     private val label = Regex("[^\\p{Cntrl}]{1,120}")
+    private val pool = Regex("[a-zA-Z0-9_-]{1,36}")
     private val token = Regex("[\\x21-\\x7e]{8,4096}")
     private val providerAccount = Regex("[A-Za-z0-9._:@-]{1,128}")
 
     /** Refuses a label that is empty, too long or has control characters. */
     fun requireLabel(value: String) {
         if (!label.matches(value)) throw InvalidAccountException("A label is 1 to 120 printable characters.")
+    }
+
+    /** Refuses a pool identifier that is not 1 to 36 letters, digits, underscores or hyphens (TeamCode's). */
+    fun requirePool(value: String) {
+        if (!pool.matches(value)) throw InvalidPoolException()
     }
 
     /** Refuses limits out of range (a NaN ceiling is in no range). */
@@ -263,6 +271,22 @@ object SharingRules {
 
 /** A malformed account. */
 class InvalidAccountException(message: String) : OstromException(ErrorKind.INVALID_REQUEST, message)
+
+/** A pool identifier out of its form: a 400 `invalid_pool` (TeamCode's). */
+class InvalidPoolException :
+    OstromException(
+        ErrorKind.INVALID_REQUEST,
+        "Use a pool identifier containing letters, digits, underscores or hyphens (up to 36 characters).",
+        "invalid_pool",
+    )
+
+/** Only an admin puts an account in a pool or takes it out: a 403 `account_pool_forbidden`. */
+class AccountPoolForbiddenException :
+    OstromException(
+        ErrorKind.FORBIDDEN,
+        "Only the organization's owners and admins put an account in a pool, not the member who shared it.",
+        "account_pool_forbidden",
+    )
 
 /** The account does not exist in the org (or the caller may not see it). */
 class AccountNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Account not found.")

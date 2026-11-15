@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.sharing
 
+import run.ostrom.server.kernel.http.ApiError
 import run.ostrom.server.kernel.settings.InstanceSettings
 import run.ostrom.server.kernel.settings.SettingsValues
 import run.ostrom.server.secrets.infrastructure.executeInOrg
@@ -186,6 +187,44 @@ class SharingPostgresTest : SharingPostgresHarness() {
 
     /** Only the fields set away from their defaults, as a client changing those alone sends them. */
     private fun AccountLimitsDto.patch() = Json.encodeToJsonElement(AccountLimitsDto.serializer(), this).jsonObject
+
+    @Test
+    fun anAdminPutsAnAccountInAPoolThatSharingAgainKeeps() = serverTest(modules, overrides) { server ->
+        with(server) {
+            val account = shareAs("member-a").body<SharedAccountResponse>()
+            assertNull(account.poolId, "No pool by default")
+            val path = "$base/${account.id}"
+            val pooled = patchAs("admin-a", path, UpdateAccountRequest(poolId = "team-b_2"))
+            assertEquals(HttpStatusCode.OK, pooled.status)
+            assertEquals("team-b_2", pooled.body<SharedAccountResponse>().poolId)
+            val renamed = patchAs("admin-a", path, UpdateAccountRequest(label = "Renamed"))
+            assertEquals("team-b_2", renamed.body<SharedAccountResponse>().poolId, "A change without it keeps it")
+            assertEquals("team-b_2", shareAs("member-a").body<SharedAccountResponse>().poolId, "Sharing again too")
+            val forbidden = patchAs("member-a", path, UpdateAccountRequest(poolId = "mine"))
+            assertEquals(HttpStatusCode.Forbidden, forbidden.status, "Its owner is not an admin")
+            assertEquals("account_pool_forbidden", forbidden.body<ApiError>().error.type)
+            val roundTrip = patchAs("member-a", path, UpdateAccountRequest(label = "Mine", poolId = "team-b_2"))
+            assertEquals(HttpStatusCode.OK, roundTrip.status, "Sending back its pool is no change")
+            assertEquals(
+                HttpStatusCode.Forbidden,
+                patchAs("member-a", path, UpdateAccountRequest(poolId = "")).status,
+                "Nor may its owner take it out",
+            )
+            val listed = client.get(base) { bearerAuth("member-a") }.body<SharedAccountsResponse>().items.single()
+            assertEquals("team-b_2", listed.poolId, "Its owner sees it")
+            val other = client.get(base) { bearerAuth("other-a") }.body<SharedAccountsResponse>().items.single()
+            assertNull(other.poolId, "Another member does not")
+            for (bad in listOf("a b", "x".repeat(37), "é")) {
+                val refused = patchAs("admin-a", path, UpdateAccountRequest(poolId = bad))
+                assertEquals(HttpStatusCode.BadRequest, refused.status, bad)
+                assertEquals("invalid_pool", refused.body<ApiError>().error.type)
+            }
+            val out = patchAs("admin-a", path, UpdateAccountRequest(poolId = "")).body<SharedAccountResponse>()
+            assertNull(out.poolId, "An empty string takes it out of its pool")
+            val stillOut = patchAs("member-a", path, UpdateAccountRequest(poolId = ""))
+            assertEquals(HttpStatusCode.OK, stillOut.status, "Out of a pool already: no change")
+        }
+    }
 
     @Test
     fun aChangeOrASecondShareKeepsTheLimitsItDoesNotName() = serverTest(modules, overrides) { server ->

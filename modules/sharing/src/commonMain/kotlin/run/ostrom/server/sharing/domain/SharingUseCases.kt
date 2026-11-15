@@ -57,6 +57,7 @@ data class ShareAccountPayload(
  * @property ifVersion Changes it only if it is still at this [SharedAccount.version]; null changes it anyway.
  * @property sharedWith The members who may use it from now on, by login (or member id), after [limits]; empty for
  *   the whole org.
+ * @property poolId The pool it moves to (admins only); an empty string takes it out of its pool.
  */
 data class UpdateAccountPayload(
     val label: String? = null,
@@ -65,6 +66,7 @@ data class UpdateAccountPayload(
     val limits: ((AccountLimits) -> AccountLimits)? = null,
     val ifVersion: Long? = null,
     val sharedWith: List<String>? = null,
+    val poolId: String? = null,
 )
 
 /**
@@ -296,6 +298,7 @@ class UpdateSharedAccountUseCaseImpl(
 ) : UpdateSharedAccountUseCase {
     override suspend fun invoke(caller: Caller, id: Uuid, payload: UpdateAccountPayload): SharedAccount {
         val account = repository.writable(caller, id)
+        requirePoolChange(caller, account, payload.poolId)
         payload.label?.let(SharingRules::requireLabel)
         val patch = payload.limits
         val patched = if (patch == null) account.limits else patch(account.limits)
@@ -317,11 +320,32 @@ class UpdateSharedAccountUseCaseImpl(
             priority = payload.priority ?: account.priority,
             limits = limits,
             status = status,
+            poolId = poolOf(account, payload.poolId),
         )
         val saved = repository.update(updated, payload.ifVersion)
             ?: throw if (payload.ifVersion == null) AccountNotFoundException() else AccountChangedException()
         sharing?.let { names.lend(caller.orgId, saved.id, it) }
         return saved
+    }
+}
+
+/**
+ * The pool an account moves to: [requested] (an empty string for none), or its current one when none is requested.
+ */
+private fun poolOf(account: SharedAccount, requested: String?): String? {
+    val pool = requested?.ifEmpty { null } ?: return if (requested == null) account.poolId else null
+    SharingRules.requirePool(pool)
+    return pool
+}
+
+/**
+ * Refuses a member who is not an owner or an admin of the organization moving an account to another pool: TeamCode's
+ * pools are an administrator's routing. Sending back the pool it is in (a client that writes the account whole) is no
+ * change.
+ */
+private fun requirePoolChange(caller: Caller, account: SharedAccount, requested: String?) {
+    if (requested != null && requested.ifEmpty { null } != account.poolId && !caller.role.isAdmin) {
+        throw AccountPoolForbiddenException()
     }
 }
 

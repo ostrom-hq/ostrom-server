@@ -108,6 +108,7 @@ class SharedAccountRepositoryImpl(private val database: JdbcDatabase) : SharedAc
                     .When(status inList AWAITING_SIGN_IN, status)
                     .Else(stringParam(account.status.name))
                 it.limits(account.limits)
+                it[poolId] = account.poolId
                 it[version] = version + 1
             }.firstOrNull()
             if (row == null) null else row.toAccount()

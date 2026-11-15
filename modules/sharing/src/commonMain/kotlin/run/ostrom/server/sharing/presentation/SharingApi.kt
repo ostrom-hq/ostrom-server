@@ -98,6 +98,8 @@ data class UpdateAccountRequest(
     val limits: JsonObject? = null,
     /** The new daily allocation, in USD (the contract's); `limits.dailyBudgetMicros: null` clears it. */
     val dailyAllocationUsd: Double? = null,
+    /** The pool it moves to (TeamCode's `poolId`, admins only); an empty string takes it out of its pool. */
+    val poolId: String? = null,
 )
 
 /** A provider window. */
@@ -121,6 +123,7 @@ data class QuotaWindowDto(
  * @property refreshOwnership `ostrom`, `pending_handover` or `access_only`; for admins and its owner only.
  * @property dailyAllocationUsd What it may serve per UTC day, in USD; absent when unlimited, and for another member's
  *   account.
+ * @property poolId The pool it belongs to (TeamCode's); absent when none, and for another member's account.
  */
 @Serializable
 data class SharedAccountResponse(
@@ -143,6 +146,7 @@ data class SharedAccountResponse(
     val createdAt: String,
     val dailyAllocationUsd: Double? = null,
     val refreshOwnership: String? = null,
+    val poolId: String? = null,
 )
 
 /** The org's accounts. */

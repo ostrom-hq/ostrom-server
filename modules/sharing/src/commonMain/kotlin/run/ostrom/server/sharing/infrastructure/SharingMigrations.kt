@@ -249,4 +249,11 @@ val SharingMigrations: List<SchemaMigration> = listOf(
     // The capacity controller's reads: an org's readings of the last hour by time, and the orgs that share accounts,
     // listed across organizations by a function that sees only `org_id` (TeamCode's single team needs neither).
     SchemaMigration(version = 12, name = "sharing_pacing_reads", sql = PACING_READS_SQL),
+    // TeamCode's account pool: an administrator's label, none by default.
+    SchemaMigration(
+        version = 13,
+        name = "sharing_account_pool",
+        sql = "ALTER TABLE sharing_accounts ADD COLUMN pool_id TEXT " +
+            "CONSTRAINT sharing_accounts_pool_id CHECK (pool_id ~ '^[A-Za-z0-9_-]{1,36}$')",
+    ),
 )
