@@ -77,11 +77,13 @@ class ApiDocsSection(val owner: String, val catalog: ApiCatalog?, val routes: Li
  * @property undescribed `METHOD /path` of each API route whose module has a catalogue without its entry.
  * @property unrouted `METHOD /path` of each catalogue entry no route of its module matches.
  * @property uncatalogued The API routes of each module that has no catalogue yet, by module.
+ * @property duplicated `METHOD /path` of each entry a catalogue declares more than once (the first one is used).
  */
 data class ApiDocsCoverage(
     val undescribed: List<String>,
     val unrouted: List<String>,
     val uncatalogued: Map<String, List<String>>,
+    val duplicated: List<String>,
 )
 
 /**
@@ -131,6 +133,7 @@ class ApiDocs {
         val undescribed = mutableListOf<String>()
         val unrouted = mutableListOf<String>()
         val uncatalogued = linkedMapOf<String, List<String>>()
+        val duplicated = mutableListOf<String>()
         for (section in sections) {
             val routes = section.routes.mapNotNull { it.key() }.filter { isApiRoute(it.substringAfter(' ')) }
             val catalog = section.catalog
@@ -138,11 +141,12 @@ class ApiDocs {
                 if (routes.isNotEmpty()) uncatalogued[section.owner] = routes
                 continue
             }
+            duplicated += catalog.operations.groupBy { it.key }.filterValues { it.size > 1 }.keys
             val keys = catalog.operations.map { it.key }.toSet()
             undescribed += routes.filter { it !in keys }
             unrouted += keys.filter { it !in routes }
         }
-        return ApiDocsCoverage(undescribed, unrouted, uncatalogued)
+        return ApiDocsCoverage(undescribed, unrouted, uncatalogued, duplicated)
     }
 
     @OptIn(ExperimentalKtorApi::class)
@@ -189,7 +193,7 @@ class ApiDocs {
         val operation = catalog?.let { entries -> entries.operations.firstOrNull { it.key == key } }
         when {
             operation != null -> {
-                val access = ApiAccess(public = !route.isAuthenticated())
+                val access = ApiAccess(public = !route.isAuthenticated(), signed = key.contains(" /webhooks/"))
                 route.describe(operation.describeWith(access))
                 route.describe(commonResponses(operation, access))
             }

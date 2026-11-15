@@ -72,21 +72,31 @@ private fun nullableUse(reference: JsonObject) =
     JsonObject(mapOf("anyOf" to JsonArray(listOf(reference, JsonObject(mapOf("type" to JsonPrimitive("null")))))))
 
 /**
- * Each operation without the query parameters it does not describe. Ktor copies the query properties of a parent
- * `@Resource` onto its nested resources (`before` and `limit` of `/api/v1/artifacts` onto `/api/v1/artifacts/{id}`),
- * which the route ignores; every query parameter a route reads has a description in its module's catalogue.
+ * Each described operation without the query parameters it does not describe. Ktor copies the query properties of a
+ * parent `@Resource` onto its nested resources (`before` and `limit` of `/api/v1/artifacts` onto
+ * `/api/v1/artifacts/{id}`), which the route ignores; every query parameter a route reads has a description in its
+ * module's catalogue.
  */
 internal fun JsonObject.withoutUndescribedQueryParameters(): JsonObject {
     val paths = this["paths"] as? JsonObject ?: return this
     val cleaned = paths.mapValues { (_, item) ->
         if (item !is JsonObject) return@mapValues item
-        JsonObject(item.mapValues { (_, operation) -> operation.withDescribedQueries() })
+        // An operation without its catalogue entry yet keeps every parameter Ktor read from its route.
+        JsonObject(
+            item.mapValues { (_, operation) ->
+                if (operation is JsonObject && "operationId" in operation) {
+                    operation.withDescribedQueries()
+                } else {
+                    operation
+                }
+            },
+        )
     }
     return JsonObject(this + ("paths" to JsonObject(cleaned)))
 }
 
-private fun JsonElement.withDescribedQueries(): JsonElement {
-    val parameters = (this as? JsonObject)?.get("parameters") as? JsonArray ?: return this
+private fun JsonObject.withDescribedQueries(): JsonObject {
+    val parameters = this["parameters"] as? JsonArray ?: return this
     val kept = parameters.filterNot { parameter ->
         parameter is JsonObject && parameter["description"] == null &&
             (parameter["in"] as? JsonPrimitive)?.contentOrNull == "query"

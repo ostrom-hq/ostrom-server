@@ -16,6 +16,8 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
+import io.ktor.server.routing.openapi.describe
+import io.ktor.openapi.jsonSchema
 import io.ktor.server.routing.patch
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
@@ -126,6 +128,7 @@ class ApiDocsTest {
                 responses { empty("Received.", HttpStatusCode.Accepted) }
             }
             get("/api/v1/items/ghost") { operationId = "ghost" }
+            delete("/api/v1/items/{id}") { operationId = "deleteItemAgain" }
         }
     }
 
@@ -135,7 +138,9 @@ class ApiDocsTest {
         override val koinModule: Module = module {}
 
         override fun routes(route: Route, koin: Koin) {
-            route.get("/api/v1/pending") { call.respond(HttpStatusCode.OK) }
+            route.get("/api/v1/pending") { call.respond(HttpStatusCode.OK) }.describe {
+                parameters { query("q") { schema = jsonSchema<String>() } }
+            }
         }
     }
 
@@ -222,15 +227,21 @@ class ApiDocsTest {
         assertEquals("No credential, or an unknown, expired or revoked one (`unauthorized`).", replace.response("401"))
         val update = document.operation("/api/v1/items/{id}", "patch")
         assertEquals("**Authentication:** ${ApiAccess(false).text}", update["description"]!!.jsonPrimitive.content)
-        assertEquals("Deleted.", document.operation("/api/v1/items/{id}", "delete").response("204"))
+        val remove = document.operation("/api/v1/items/{id}", "delete")
+        assertEquals("deleteItem", remove["operationId"]!!.jsonPrimitive.content, "The first of two entries is used")
+        assertEquals("Deleted.", remove.response("204"))
 
         val webhook = document.operation("/webhooks/items", "post")
         assertEquals(JsonArray(emptyList()), webhook["security"], "A public operation says it needs nothing")
         assertFalse("401" in webhook["responses"]!!.jsonObject)
-        assertTrue(webhook["description"]!!.jsonPrimitive.content.endsWith("No authentication."))
+        assertTrue(webhook["description"]!!.jsonPrimitive.content.endsWith(ApiAccess(true, signed = true).text))
+        val health = document.operation("/api/v1/health", "get")["description"]!!.jsonPrimitive.content
+        assertTrue(health.endsWith("No authentication."), health)
 
         val paths = document["paths"]!!.jsonObject
         assertNull(document.operation("/api/v1/items/extra", "get")["operationId"], "Kept, undescribed")
+        val pending = document.operation("/api/v1/pending", "get")["parameters"]!!.jsonArray
+        assertEquals("q", pending.single().jsonObject["name"]!!.jsonPrimitive.content, "Its query parameter is kept")
         assertTrue("/api/v1/pending" in paths, "A module without a catalogue still appears")
         assertEquals("health", document.operation("/api/v1/health", "get")["operationId"]!!.jsonPrimitive.content)
         assertTrue("/api/v1/capabilities" in paths)
@@ -252,6 +263,7 @@ class ApiDocsTest {
                 undescribed = listOf("GET /api/v1/items/extra"),
                 unrouted = listOf("GET /api/v1/items/ghost"),
                 uncatalogued = mapOf("pending" to listOf("GET /api/v1/pending")),
+                duplicated = listOf("DELETE /api/v1/items/{id}"),
             ),
             docs.coverage(),
         )

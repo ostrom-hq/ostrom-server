@@ -83,13 +83,14 @@ class ApiDocNormalizationTest {
         val document = json(
             """
             {"paths":{
-              "/a":{"parameters":[{"in":"query","name":"x"}],"get":{"parameters":[
+              "/a":{"parameters":[{"in":"query","name":"x"}],"get":{"operationId":"a","parameters":[
                 {"in":"query","name":"inherited"},
                 {"in":"query","name":"limit","description":"The page size."},
                 {"in":"path","name":"id"},
                 {"${'$'}ref":"#/components/parameters/P"},
                 7
-              ]},"post":{"parameters":[{"in":"query","name":"inherited"}]},"put":{"summary":"none"}},
+              ]},"post":{"operationId":"b","parameters":[{"in":"query","name":"inherited"}]},
+              "put":{"operationId":"c"},"patch":{"parameters":[{"in":"query","name":"pending"}]}},
               "/b":true
             }}
             """,
@@ -97,12 +98,13 @@ class ApiDocNormalizationTest {
         val expected = json(
             """
             {"paths":{
-              "/a":{"parameters":[{"in":"query","name":"x"}],"get":{"parameters":[
+              "/a":{"parameters":[{"in":"query","name":"x"}],"get":{"operationId":"a","parameters":[
                 {"in":"query","name":"limit","description":"The page size."},
                 {"in":"path","name":"id"},
                 {"${'$'}ref":"#/components/parameters/P"},
                 7
-              ]},"post":{},"put":{"summary":"none"}},
+              ]},"post":{"operationId":"b"},
+              "put":{"operationId":"c"},"patch":{"parameters":[{"in":"query","name":"pending"}]}},
               "/b":true
             }}
             """,

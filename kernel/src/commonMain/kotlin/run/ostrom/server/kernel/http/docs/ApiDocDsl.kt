@@ -100,14 +100,16 @@ class ApiCatalog {
  * Who may call an operation, read from the routing tree: a route inside `authenticated { }` needs a credential.
  *
  * @property public No credential needed.
+ * @property signed An incoming webhook: no credential, the sender's signature is the proof.
  */
-internal class ApiAccess(val public: Boolean) {
+internal class ApiAccess(val public: Boolean, val signed: Boolean = false) {
     /** The sentence the operation's description ends with. */
     val text: String
-        get() = if (public) {
-            "No authentication."
-        } else {
-            "A bearer token (CLI, app, device, agent, runner or service key) or the console's session cookie."
+        get() = when {
+            !public -> "A bearer token (CLI, app, device, agent, runner or service key) or the console's " +
+                "session cookie."
+            signed -> "No credential: the sender signs the request, and an unsigned or wrongly signed one is refused."
+            else -> "No authentication."
         }
 }
 

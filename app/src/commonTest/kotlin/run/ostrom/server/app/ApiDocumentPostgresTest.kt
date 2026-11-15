@@ -31,6 +31,7 @@ class ApiDocumentPostgresTest {
             "Each route of a module with a catalogue has its entry in the module's apiOperations",
         )
         assertEquals(emptyList(), coverage.unrouted, "Each catalogue entry names a route its module mounts")
+        assertEquals(emptyList(), coverage.duplicated, "Each route has one entry")
         // Until every module has its catalogue (ostrom-core docs/decisions/0001, Delivery), the rest is listed.
         val pending = coverage.uncatalogued.entries.joinToString("\n") { (module, routes) -> "$module: ${routes.size}" }
         println("Routes without a catalogue yet, by module:\n$pending")
