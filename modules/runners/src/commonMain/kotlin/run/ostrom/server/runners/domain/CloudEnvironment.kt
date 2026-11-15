@@ -89,6 +89,7 @@ class PreparedEnvironment(
  * @property wire The stable name in the API.
  */
 enum class PreparationPhase(val wire: String) {
+    SECURING_WORKSPACE("securing_workspace"),
     CONFIGURING_GIT("configuring_git"),
     CLONING_REPOSITORIES("cloning_repositories"),
     FETCHING_REPOSITORIES("fetching_repositories"),
@@ -118,6 +119,7 @@ enum class PreparationStep(val wire: String) {
     WORKING_DIRECTORY("working_directory"),
     SETUP_CREATE("setup_create"),
     SETUP_START("setup_start"),
+    WORKSPACE("workspace"),
     RUNNER("runner"),
     ;
 
@@ -302,7 +304,8 @@ object PreparationFailures {
      */
     fun validate(failure: PreparationFailure, spec: CloudEnvironmentSpec) {
         val count = when (failure.step) {
-            PreparationStep.CLONE, PreparationStep.CHECKOUT, PreparationStep.FETCH -> spec.repositories.size
+            PreparationStep.CLONE, PreparationStep.CHECKOUT, PreparationStep.FETCH, PreparationStep.WORKSPACE ->
+                spec.repositories.size
             PreparationStep.SETUP_CREATE -> spec.setup.create.size
             PreparationStep.SETUP_START -> spec.setup.start.size
             else -> 0
@@ -338,6 +341,9 @@ object PreparationFailures {
                 "The working directory ${spec.workingDirectory ?: "."} does not exist after cloning."
             PreparationStep.SETUP_CREATE -> "Setup command ${(failure.index ?: 0) + 1} (create) failed$exit.$log"
             PreparationStep.SETUP_START -> "Setup command ${(failure.index ?: 0) + 1} (start) failed$exit.$log"
+            PreparationStep.WORKSPACE ->
+                "Resetting the agent's home and the Git configuration of ${repository?.path ?: "the workspace"} " +
+                    "after a transfer failed$exit. A repository whose .git is not a plain directory is refused.$log"
             PreparationStep.RUNNER -> "The runner could not prepare the environment."
         }
     }
