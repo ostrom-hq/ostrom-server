@@ -3,6 +3,7 @@ package run.ostrom.server.mcprelay
 
 import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.audit.OrgAuditTrail
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.events.OrgEventDraft
 import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.events.OrgEventType
@@ -29,7 +30,6 @@ import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.Transaction
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import kotlinx.serialization.json.JsonObject
@@ -52,14 +52,16 @@ class McpHostedPostgresTest : RelayPostgresHarness() {
 
         override suspend fun publish(orgId: Uuid, events: List<OrgEventDraft>) = error("In the state's transaction")
 
-        override suspend fun publishIn(transaction: Transaction, orgId: Uuid, events: List<OrgEventDraft>) {
-            val org = transaction.fetchAll(Statement.create("SELECT current_setting('ostrom.org_id') AS org"))
-                .getOrThrow().first().get("org").asString()
-            published += org to events
-        }
+        override suspend fun publishIn(transaction: Transaction, orgId: Uuid, events: List<OrgEventDraft>) =
+            error("The relay is on Exposed")
 
-        override fun publishIn(transaction: JdbcTransaction, orgId: Uuid, events: List<OrgEventDraft>) =
-            error("The relay publishes on sqlx4k")
+        override fun publishIn(transaction: JdbcTransaction, orgId: Uuid, events: List<OrgEventDraft>) {
+            val org = transaction.exec("SELECT current_setting('ostrom.org_id')") {
+                it.next()
+                it.getString(1)
+            }
+            published += org.orEmpty() to events
+        }
     }
 
     @Test
@@ -71,7 +73,7 @@ class McpHostedPostgresTest : RelayPostgresHarness() {
                 .copy(stdio = spec)
             for (it in listOf(shared, personal)) setup.createServer(it)
             val recorder = Recorder()
-            val repository = McpRelayRepositoryImpl(server.driver, recorder)
+            val repository = McpRelayRepositoryImpl(server.koin.get<JdbcDatabase>(), recorder)
             val member = Relay.memberA.memberId
             val sharedFailed = HostedProcessRecord(Relay.orgA, shared.id, null, "k1", "failed", "crashed", Relay.epoch)
             val mineBackoff = HostedProcessRecord(

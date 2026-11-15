@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.mcprelay
 
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.mcprelay.domain.McpCallLimiter
 import run.ostrom.server.mcprelay.domain.McpCallSlot
 import run.ostrom.server.mcprelay.domain.McpLimits
@@ -29,7 +30,8 @@ class McpRelaySlotsPostgresTest : RelayPostgresHarness() {
     private val member = Relay.memberA.memberId
     private val other = Relay.otherA.memberId
 
-    private fun TestServer.replica(limits: McpLimits) = McpCallLimiter(limits, McpCallSlotRepositoryImpl(driver))
+    private fun TestServer.replica(limits: McpLimits) =
+        McpCallLimiter(limits, McpCallSlotRepositoryImpl(koin.get<JdbcDatabase>()))
 
     private suspend fun TestServer.serverId(): Uuid {
         grafana()
@@ -83,7 +85,7 @@ class McpRelaySlotsPostgresTest : RelayPostgresHarness() {
                 .getOrThrow().single().get("id").asString()
             server.database.superuser.execute("UPDATE mcp_relay_slots SET expires_at = now() + INTERVAL '1 second'")
                 .getOrThrow()
-            McpCallSlotRepositoryImpl(server.driver).renew(Relay.orgA, McpCallSlot(Uuid.parse(id)))
+            McpCallSlotRepositoryImpl(server.koin.get<JdbcDatabase>()).renew(Relay.orgA, McpCallSlot(Uuid.parse(id)))
             val renewed = server.database.superuser
                 .fetchAll("SELECT id FROM mcp_relay_slots WHERE expires_at > now() + INTERVAL '14 minutes'")
                 .getOrThrow().size
