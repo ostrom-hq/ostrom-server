@@ -4,7 +4,6 @@ package run.ostrom.server.governance.infrastructure
 import run.ostrom.server.governance.domain.ConfirmationError
 import run.ostrom.server.governance.domain.ConfirmationOutcome
 import run.ostrom.server.governance.domain.ConfirmationRules
-import run.ostrom.server.governance.domain.Confirmation
 import run.ostrom.server.kernel.database.InstantColumnType
 import org.jetbrains.exposed.v1.core.CustomFunction
 import org.jetbrains.exposed.v1.core.Expression
@@ -21,19 +20,14 @@ import org.jetbrains.exposed.v1.core.greater
 import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.core.or
-import org.jetbrains.exposed.v1.core.statements.InsertStatement
 import org.jetbrains.exposed.v1.core.statements.ReturningStatement
 import org.jetbrains.exposed.v1.core.statements.StatementBuilder
 import org.jetbrains.exposed.v1.core.statements.UpdateStatement
 import org.jetbrains.exposed.v1.core.stringParam
-import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.update
 import org.jetbrains.exposed.v1.jdbc.updateReturning
 import org.jetbrains.exposed.v1.jdbc.Query
 import org.jetbrains.exposed.v1.jdbc.select
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -48,32 +42,6 @@ private const val PENDING = "pending"
 
 /** The wire value of a confirmed one. */
 private const val CONFIRMED = "confirmed"
-
-/** Stores a new confirmation. */
-internal fun StatementBuilder.confirmationInsert(confirmation: Confirmation): InsertStatement<Number> =
-    C.insert {
-        it[orgId] = confirmation.orgId
-        it[id] = confirmation.id
-        it[kind] = confirmation.write.kind
-        it[scope] = confirmation.scope
-        it[method] = confirmation.method
-        it[path] = confirmation.path
-        it[payload] = Json.encodeToString(JsonElement.serializer(), confirmation.write.payload)
-        it[summary] = confirmation.summary
-        it[beforeJson] = confirmation.before.encoded()
-        it[afterJson] = confirmation.after.encoded()
-        it[requestedByUser] = confirmation.requestedBy.userId
-        it[requestedByMember] = confirmation.requestedBy.memberId
-        it[credential] = confirmation.credential.wire
-        it[tokenId] = confirmation.tokenId
-        it[tokenName] = confirmation.tokenName
-        it[status] = confirmation.status.wire
-        it[createdAt] = confirmation.createdAt
-        it[expiresAt] = confirmation.expiresAt
-    }
-
-/** A JSON column's text: `null` for none. */
-internal fun JsonElement?.encoded(): String = Json.encodeToString(JsonElement.serializer(), this ?: JsonNull)
 
 /** One confirmation, by its key. */
 internal fun confirmationRead(orgId: Uuid, id: String): Query =

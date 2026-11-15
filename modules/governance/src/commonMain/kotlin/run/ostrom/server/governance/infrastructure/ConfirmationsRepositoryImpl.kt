@@ -20,7 +20,7 @@ import kotlinx.serialization.json.jsonObject
 import org.jetbrains.exposed.v1.core.Column
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.statements.buildStatement
-import org.jetbrains.exposed.v1.jdbc.statements.toExecutable
+import org.jetbrains.exposed.v1.jdbc.statements.ReturningBlockingExecutable
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -46,7 +46,7 @@ internal class ConfirmationsRepositoryImpl(private val database: JdbcDatabase) :
         database.inOrg(orgId) { waitingRead(orgId, userId, now).map { it.toConfirmation() } }
 
     override suspend fun expire(orgId: Uuid, now: Instant): List<Confirmation> = database.inOrg(orgId) {
-        buildStatement { expireOverdue(orgId, now) }.toExecutable().map { it.toConfirmation() }
+        ReturningBlockingExecutable(buildStatement { expireOverdue(orgId, now) }).map { it.toConfirmation() }
     }
 
     override suspend fun answer(orgId: Uuid, id: String, outcome: ConfirmationOutcome): Boolean =
