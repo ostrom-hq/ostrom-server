@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.integrations.slack
 
-import io.github.smyrgeorge.sqlx4k.SQLError
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.mock.MockEngine
@@ -23,6 +22,7 @@ import io.ktor.http.encodeURLParameter
 import io.ktor.http.headersOf
 import io.ktor.http.parseQueryString
 import kotlinx.serialization.json.JsonObject
+import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import run.ostrom.core.api.models.ServerFeatures
@@ -263,7 +263,7 @@ class SlackPostgresTest {
         assertEquals(null, links.of(org.id, eveMember))
         links.save(org.id, StoredSlackLink(bobMember, "U-same", now))
         // Any other database failure is not mistaken for a taken account (a timestamp PostgreSQL cannot hold).
-        assertFailsWith<SQLError> { links.save(org.id, StoredSlackLink(bobMember, "U-same", Instant.DISTANT_FUTURE)) }
+        assertFailsWith<ExposedSQLException> { links.save(org.id, StoredSlackLink(bobMember, "U-same", Instant.DISTANT_FUTURE)) }
 
         val raced = object : SlackLinksRepository by links {
             override suspend fun memberOf(orgId: Uuid, slackUserId: String): Uuid? = null
