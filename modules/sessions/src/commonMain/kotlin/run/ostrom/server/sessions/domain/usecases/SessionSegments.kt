@@ -62,6 +62,11 @@ class SessionSegments(
             return found(tx, open, start, labels)
         }
         if (open != null) supersede(open, opening)
+        // A superseded segment whose end failed before its receipt (closeLocked signed it in the start's transaction):
+        // signed first, so that the next segment cites it.
+        if (last != null && last.receiptId == null && last.source == Session.SUPERSEDED) {
+            throw SupersededSegmentException(last, mayReplace = true)
+        }
         val source = opening.source
         val segment = (last?.segment ?: 0) + 1
         val session = Session(
@@ -96,7 +101,8 @@ class SessionSegments(
      * [open] supersedes the live segment of another launch, that transaction ends without writing, the segment is
      * ended with its receipt signed ([CloseSessionUseCase], never inside a transaction: CRL-03) if it may still be
      * replaced once locked, and [attempt] runs again on what is written then, so the new segment chains to the ended
-     * one, or refuses the start if the segment came back to life meanwhile (S2-48).
+     * one and its receipt, or refuses the start if the segment came back to life meanwhile (S2-48). A superseded
+     * segment ended without its receipt (its signature failed) goes through the same end, which signs it.
      *
      * @param orgId The organization.
      * @param attempt The caller's transaction.

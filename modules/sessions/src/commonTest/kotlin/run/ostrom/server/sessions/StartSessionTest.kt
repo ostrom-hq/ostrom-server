@@ -233,6 +233,32 @@ class StartSessionTest {
     }
 
     @Test
+    fun aSupersededSegmentWhoseReceiptFailedIsSignedBeforeTheNextOneCitesIt() = runTest {
+        val bench = SessionBench()
+        bench.start(agent("launch-1"), start)
+        bench.sign.failing = 1
+        assertFailsWith<IllegalStateException> { bench.start(user(), start.copy(launchId = "launch-2")) }
+        val unsigned = bench.repository.get(ORG, "s-1") ?: error("kept")
+        assertEquals(Session.SUPERSEDED, unsigned.source, "Ended before its receipt failed")
+        assertNull(unsigned.receiptId)
+
+        val next = bench.start(user(), start.copy(launchId = "launch-2"))
+        assertEquals("s-1~r2", next.id)
+        assertEquals("rcpt_session_s-1", next.previousReceiptId, "The retry signed it first")
+    }
+
+    @Test
+    fun anEndWhoseReceiptFailedIsChainedAsItIs() = runTest {
+        val bench = SessionBench()
+        bench.start(agent("launch-1"), start)
+        bench.sign.failing = 1
+        assertFailsWith<IllegalStateException> { bench.end(agent("launch-1"), "s-1", EndSession()) }
+        val next = bench.start(agent("launch-2"), start)
+        assertEquals("s-1", next.resumedFrom)
+        assertNull(next.previousReceiptId, "Only a superseded segment is signed by the next start; its end signs it")
+    }
+
+    @Test
     fun anotherPersonsSessionIsNotYours() = runTest {
         val bench = SessionBench()
         bench.start(agent(), start)
