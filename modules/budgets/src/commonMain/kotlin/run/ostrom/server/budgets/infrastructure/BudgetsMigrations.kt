@@ -12,6 +12,7 @@ import run.ostrom.server.secrets.infrastructure.tenantTableSql
  * value, action, threshold and period across replicas: a changed limit alerts again. Both tables stay under the
  * row-level security of version 2: the new columns are read and written only through rows of the caller's org. Since
  * version 4, `WORKFLOW` names its workflow in `workflow_id` (set for it alone), in both tables.
+ * Version 5 adds `budgets_overrides`, a member's temporary daily budgets, kept after they end.
  */
 val BudgetsMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -80,5 +81,31 @@ val BudgetsMigrations: List<SchemaMigration> = listOf(
                 (org_id, scope, member_id, workflow_id, period, action, period_start, threshold, limit_micros)
                 NULLS NOT DISTINCT
         """.trimIndent(),
+    ),
+    // Temporary daily budgets (TeamCode's `budget_overrides`): kept after they end, read through Exposed. The one in
+    // force is found by the partial index (at most one row a member is unrevoked and unexpired), the history by
+    // (created_at, id) descending.
+    SchemaMigration(
+        version = 5,
+        name = "create_budgets_overrides",
+        sql = """
+            CREATE TABLE budgets_overrides (
+                id UUID PRIMARY KEY,
+                org_id UUID NOT NULL,
+                member_id UUID NOT NULL,
+                micros BIGINT NOT NULL CHECK (micros >= 0),
+                created_by UUID NOT NULL,
+                reason TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                replaces_id UUID,
+                revoked_at TIMESTAMPTZ,
+                revoked_by UUID,
+                revocation_reason TEXT
+            );
+            CREATE INDEX budgets_overrides_active
+                ON budgets_overrides (org_id, member_id, expires_at) WHERE revoked_at IS NULL;
+            CREATE INDEX budgets_overrides_page ON budgets_overrides (org_id, member_id, created_at DESC, id DESC)
+        """.trimIndent() + ";\n" + tenantTableSql("budgets_overrides"),
     ),
 )

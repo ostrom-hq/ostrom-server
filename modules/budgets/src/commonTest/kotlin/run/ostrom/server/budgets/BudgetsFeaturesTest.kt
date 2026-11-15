@@ -10,6 +10,6 @@ class BudgetsFeaturesTest {
     @Test
     fun itsFeaturesNeedNoConfiguration() = runTest {
         val koin = koinApplication {}.koin
-        assertEquals(setOf("budgets.v1"), BudgetsModule.features(koin))
+        assertEquals(setOf("budgets.v1", "capacity.budgetoverrides.v1"), BudgetsModule.features(koin))
     }
 }
