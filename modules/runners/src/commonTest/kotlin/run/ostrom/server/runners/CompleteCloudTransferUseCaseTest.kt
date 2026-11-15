@@ -458,4 +458,23 @@ class CompleteCloudTransferUseCaseTest {
         assertNull(stored(paused).expiresAt)
         assertFalse(stored(paused).expiryBackfill)
     }
+
+    @Test
+    fun aPauseThatSetsAnExpiryIsStillLookedAtAtOnceForTheOwnerChange() = runTest {
+        val base = session(state = SessionState.RUNNING, desired = DesiredState.PAUSED)
+            .copy(epoch = 1, executionStartedAt = t0, readyAt = t0, lastHeartbeatAt = t0, lastActivityAt = t0)
+        val transfer = transfer(base)
+        val pausing = base.copy(
+            state = SessionState.PAUSING,
+            pausingSince = t0,
+            runnerStoppedAt = t0,
+            transferId = transfer.id,
+        ).also(repository::put)
+
+        assertEquals(t0, reconciling { 7 }(pausing))
+
+        assertEquals(SessionState.PAUSED, stored(pausing).state)
+        assertEquals(t0 + 7.days, stored(pausing).expiresAt)
+        assertEquals(t0, repository.next[pausing.id])
+    }
 }

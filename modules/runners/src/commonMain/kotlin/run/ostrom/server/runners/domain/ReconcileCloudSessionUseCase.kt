@@ -585,7 +585,8 @@ class ReconcileCloudSessionUseCaseImpl(
     /** Writes a step; a lost race asks for an immediate new look, which re-reads the row. */
     private suspend fun write(next: CloudSession, nextReconcileAt: Instant?): Instant? {
         // A pause that an accepted transfer asked for is followed by the owner change: look again at once.
-        val at = nextReconcileAt ?: clock.now().takeIf { next.transferId != null && next.state == SessionState.PAUSED }
+        // Whatever the pause asked for (its expiry, days away): the owner change is not waited for that long.
+        val at = if (next.transferId != null && next.state == SessionState.PAUSED) clock.now() else nextReconcileAt
         return if (repository.compareAndSet(next, at) == null) clock.now() else at
     }
 
