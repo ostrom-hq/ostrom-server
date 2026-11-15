@@ -84,7 +84,7 @@ private const val DEVICE_NOT_FOUND = "device_not_found"
 
 /** The CLI token a call is made with, for `current`; null for a browser session. */
 private fun AuthenticatedPrincipal.cliToken(): Uuid? =
-    Uuid.parseOrNull(credentialId.orEmpty()).takeIf { workstation != null }
+    Uuid.parseOrNull(credentialId.toString()).takeIf { workstation != null }
 
 /**
  * The caller in the organization the request names in its `Ostrom-Org` header, where the tokens of
