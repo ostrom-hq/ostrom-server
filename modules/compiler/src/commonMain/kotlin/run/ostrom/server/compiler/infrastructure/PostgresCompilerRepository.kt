@@ -9,199 +9,203 @@ import run.ostrom.server.compiler.domain.repositories.CompilerRepository
 import run.ostrom.server.compiler.domain.repositories.PackageListRepository
 import run.ostrom.server.compiler.domain.repositories.WorkflowsRepository
 import run.ostrom.server.compiler.domain.services.HarnessStamp
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.ResultSet
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.withOrganization
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
+import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.or
+import org.jetbrains.exposed.v1.core.statements.UpdateBuilder
+import org.jetbrains.exposed.v1.core.statements.insertValue
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.insertIgnore
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
+import org.jetbrains.exposed.v1.jdbc.upsert
 import kotlin.uuid.Uuid
 
 /**
- * [CompilerRepository] on PostgreSQL (sqlx4k): harnesses, packages, pins and the audit here, workflows and decisions in
- * [PostgresWorkflowsRepository], the list of the packages in [PostgresPackageListRepository]. Every call is one
- * transaction that first sets `ostrom.org_id`, read by the row level security policies of the compiler tables.
+ * [CompilerRepository] on PostgreSQL through Exposed: harnesses, packages, pins and the audit here, workflows and
+ * decisions in [PostgresWorkflowsRepository], the list of the packages in [PostgresPackageListRepository]. Every call
+ * is one transaction with the organization set (`withOrganization`), read by the row level security policies of the
+ * compiler tables, each statement filtered on `org_id` too.
  *
- * @param driver The connection pool.
+ * @param database The serving role's pool.
  */
 class PostgresCompilerRepository(
-    private val driver: Driver,
+    private val database: JdbcDatabase,
 ) : CompilerRepository,
-    WorkflowsRepository by PostgresWorkflowsRepository(driver),
-    PackageListRepository by PostgresPackageListRepository(driver) {
-    override suspend fun harness(orgId: Uuid, repo: String?, digest: String): HarnessStamp? = driver.inOrg(orgId) {
-        harnesses(orgId, repo, digest).firstOrNull()
-    }
+    WorkflowsRepository by PostgresWorkflowsRepository(database),
+    PackageListRepository by PostgresPackageListRepository(database) {
+    override suspend fun harness(orgId: Uuid, repo: String?, digest: String): HarnessStamp? =
+        database.withOrganization(orgId) { harnesses(orgId, repo, digest).firstOrNull() }
 
     override suspend fun saveHarness(orgId: Uuid, repo: String?, digest: String, stamp: HarnessStamp): HarnessStamp =
-        driver.inOrg(orgId) {
-            execute(
-                Statement.create(
-                    "INSERT INTO compiler_harnesses (org_id, repo_key, digest, version, receipt_id) " +
-                        "VALUES (:org, :repo, :digest, :version, :receipt) ON CONFLICT DO NOTHING",
-                ).bind("org", orgId).bind("repo", keyOf(repo)).bind("digest", digest)
-                    .bind("version", stamp.version).bind("receipt", stamp.receiptId),
-            )
+        database.withOrganization(orgId) {
+            CompilerHarnesses.insertIgnore {
+                it[this.orgId] = orgId
+                it[repoKey] = keyOf(repo)
+                it[this.digest] = digest
+                it[version] = stamp.version
+                it[receiptId] = stamp.receiptId
+            }
             harnesses(orgId, repo, digest).first()
         }
 
-    override suspend fun findPackage(orgId: Uuid, digest: String): StoredPackage? = driver.inOrg(orgId) {
-        fetch(
-            Statement.create(
-                "SELECT $PACKAGE_COLUMNS FROM compiler_packages WHERE org_id = :org " +
-                    "AND (content_digest = :digest OR digest = :digest) LIMIT 1",
-            ).bind("org", orgId).bind("digest", digest),
-        ).firstOrNull()?.toPackage()
+    override suspend fun findPackage(orgId: Uuid, digest: String): StoredPackage? = database.withOrganization(orgId) {
+        val p = CompilerPackages
+        val row = p.select(PACKAGE_COLUMNS)
+            .where { (p.orgId eq orgId) and ((p.contentDigest eq digest) or (p.digest eq digest)) }
+            .limit(1)
+            .firstOrNull()
+        if (row == null) null else row.toPackage()
     }
 
-    override suspend fun packages(orgId: Uuid): List<StoredPackage> = driver.inOrg(orgId) {
-        fetch(
-            Statement.create(
-                "SELECT $PACKAGE_COLUMNS FROM compiler_packages WHERE org_id = :org " +
-                    "ORDER BY compiled_at DESC, content_digest LIMIT $MAX_ROWS",
-            ).bind("org", orgId),
-        ).map { it.toPackage() }
+    override suspend fun packages(orgId: Uuid): List<StoredPackage> = database.withOrganization(orgId) {
+        val p = CompilerPackages
+        p.select(PACKAGE_COLUMNS)
+            .where { p.orgId eq orgId }
+            .orderBy(p.compiledAt to SortOrder.DESC, p.contentDigest to SortOrder.ASC)
+            .limit(MAX_ROWS)
+            .map { it.toPackage() }
     }
 
-    override suspend fun savePackage(orgId: Uuid, stored: StoredPackage): StoredPackage = driver.inOrg(orgId) {
-        execute(
-            bindPackage(
-                Statement.create(
-                    "INSERT INTO compiler_packages ($PACKAGE_COLUMNS, org_id) VALUES (:content_digest, :digest, " +
-                        ":version, :repo, :compiled_at, :envelope, :counts, :revoked, :revoked_by, :revoke_reason, " +
-                        ":org) ON CONFLICT DO NOTHING",
-                ),
-                orgId,
-                stored,
-            ),
-        )
-        fetch(
-            Statement.create(
-                "SELECT $PACKAGE_COLUMNS FROM compiler_packages WHERE org_id = :org AND content_digest = :digest",
-            ).bind("org", orgId).bind("digest", stored.envelope.contentDigest),
-        ).first().toPackage()
-    }
+    override suspend fun savePackage(orgId: Uuid, stored: StoredPackage): StoredPackage =
+        database.withOrganization(orgId) {
+            val p = CompilerPackages
+            p.insertIgnore {
+                it[this.orgId] = orgId
+                it[contentDigest] = stored.envelope.contentDigest
+                it[digest] = stored.envelope.digest
+                it[version] = stored.envelope.version
+                it[repo] = stored.envelope.repo
+                it[compiledAt] = stored.compiledAt
+                it[counts] = json.encodeToString(countsSerializer, stored.counts)
+                it.revocable(stored)
+            }
+            p.select(PACKAGE_COLUMNS)
+                .where { (p.orgId eq orgId) and (p.contentDigest eq stored.envelope.contentDigest) }
+                .single()
+                .toPackage()
+        }
 
     override suspend fun updatePackage(orgId: Uuid, stored: StoredPackage) {
-        driver.inOrg(orgId) {
-            execute(
-                Statement.create(
-                    "UPDATE compiler_packages SET envelope = :envelope, revoked = :revoked, " +
-                        "revoked_by = :revoked_by, revoke_reason = :revoke_reason " +
-                        "WHERE org_id = :org AND content_digest = :content_digest",
-                ).bind("org", orgId)
-                    .bind("content_digest", stored.envelope.contentDigest)
-                    .bind("envelope", json.encodeToString(PackageEnvelope.serializer(), stored.envelope))
-                    .bind("revoked", stored.revoked)
-                    .bind("revoked_by", stored.revokedBy)
-                    .bind("revoke_reason", stored.revokeReason),
-            )
+        database.withOrganization(orgId) {
+            val p = CompilerPackages
+            p.update({ (p.orgId eq orgId) and (p.contentDigest eq stored.envelope.contentDigest) }) {
+                it.revocable(stored)
+            }
         }
     }
 
-    override suspend fun pin(orgId: Uuid, repo: String?): PackagePin? = driver.inOrg(orgId) {
-        fetch(
-            Statement.create(
-                "SELECT content_digest, pinned_by, pinned_at FROM compiler_pins " +
-                    "WHERE org_id = :org AND repo_key = :repo",
-            ).bind("org", orgId).bind("repo", keyOf(repo)),
-        ).firstOrNull()?.let {
-            PackagePin(
-                contentDigest = it.get("content_digest").asString(),
-                by = it.get("pinned_by").asString(),
-                at = it.get("pinned_at").asInstant(),
-            )
-        }
+    override suspend fun pin(orgId: Uuid, repo: String?): PackagePin? = database.withOrganization(orgId) {
+        val pin = CompilerPins
+        val row = pin.select(pin.contentDigest, pin.pinnedBy, pin.pinnedAt)
+            .where { (pin.orgId eq orgId) and (pin.repoKey eq keyOf(repo)) }
+            .firstOrNull()
+        if (row == null) null else PackagePin(row[pin.contentDigest], row[pin.pinnedBy], row[pin.pinnedAt])
     }
 
     override suspend fun setPin(orgId: Uuid, repo: String?, pin: PackagePin?) {
-        driver.inOrg(orgId) {
-            val statement = if (pin == null) {
-                Statement.create("DELETE FROM compiler_pins WHERE org_id = :org AND repo_key = :repo")
+        database.withOrganization(orgId) {
+            val t = CompilerPins
+            if (pin == null) {
+                t.deleteWhere { (t.orgId eq orgId) and (t.repoKey eq keyOf(repo)) }
             } else {
-                Statement.create(
-                    "INSERT INTO compiler_pins (org_id, repo_key, content_digest, pinned_by, pinned_at) " +
-                        "VALUES (:org, :repo, :digest, :by, :at) ON CONFLICT (org_id, repo_key) DO UPDATE SET " +
-                        "content_digest = EXCLUDED.content_digest, pinned_by = EXCLUDED.pinned_by, " +
-                        "pinned_at = EXCLUDED.pinned_at",
-                ).bind("digest", pin.contentDigest).bind("by", pin.by).bind("at", pin.at)
+                t.upsert(
+                    t.orgId, t.repoKey,
+                    onUpdate = {
+                        it[t.contentDigest] = insertValue(t.contentDigest)
+                        it[t.pinnedBy] = insertValue(t.pinnedBy)
+                        it[t.pinnedAt] = insertValue(t.pinnedAt)
+                    },
+                ) {
+                    it[t.orgId] = orgId
+                    it[t.repoKey] = keyOf(repo)
+                    it[t.contentDigest] = pin.contentDigest
+                    it[t.pinnedBy] = pin.by
+                    it[t.pinnedAt] = pin.at
+                }
             }
-            execute(statement.bind("org", orgId).bind("repo", keyOf(repo)))
         }
     }
 
     override suspend fun audit(orgId: Uuid, line: PackageAudit) {
-        driver.inOrg(orgId) {
-            execute(
-                Statement.create(
-                    "INSERT INTO compiler_audit (org_id, id, at, event, actor, subject, meta) " +
-                        "VALUES (:org, :id, :at, :event, :actor, :subject, :meta)",
-                ).bind("org", orgId).bind("id", line.id).bind("at", line.at).bind("event", line.event)
-                    .bind("actor", line.actor).bind("subject", line.subject).bind("meta", line.meta.toString()),
-            )
+        database.withOrganization(orgId) {
+            CompilerAudit.insert {
+                it[this.orgId] = orgId
+                it[id] = line.id
+                it[at] = line.at
+                it[event] = line.event
+                it[actor] = line.actor
+                it[subject] = line.subject
+                it[meta] = line.meta.toString()
+            }
         }
     }
 
-    override suspend fun auditLog(orgId: Uuid, limit: Int): List<PackageAudit> = driver.inOrg(orgId) {
-        fetch(
-            Statement.create(
-                "SELECT id, at, event, actor, subject, meta FROM compiler_audit WHERE org_id = :org " +
-                    "ORDER BY seq DESC LIMIT :limit",
-            ).bind("org", orgId).bind("limit", limit),
-        ).map {
-            PackageAudit(
-                id = it.get("id").asString(),
-                at = it.get("at").asString(),
-                event = it.get("event").asString(),
-                actor = it.get("actor").asString(),
-                subject = it.get("subject").asString(),
-                meta = json.parseToJsonElement(it.get("meta").asString()).jsonObject,
-            )
-        }
-    }
-
-    private companion object {
-        const val MAX_ROWS = 1000
-        const val PACKAGE_COLUMNS = "content_digest, digest, version, repo, compiled_at, envelope, counts, revoked, " +
-            "revoked_by, revoke_reason"
-
-        fun ResultSet.Row.toPackage() = StoredPackage(
-            envelope = json.decodeFromString(PackageEnvelope.serializer(), get("envelope").asString())
-                .copy(revoked = get("revoked").asBoolean()),
-            compiledAt = get("compiled_at").asString(),
-            counts = json.decodeFromString(counts, get("counts").asString()),
-            revokedBy = get("revoked_by").asStringOrNull(),
-            revokeReason = get("revoke_reason").asStringOrNull(),
-        )
-
-        fun bindPackage(statement: Statement, orgId: Uuid, stored: StoredPackage): Statement = statement
-            .bind("org", orgId)
-            .bind("content_digest", stored.envelope.contentDigest)
-            .bind("digest", stored.envelope.digest)
-            .bind("version", stored.envelope.version)
-            .bind("repo", stored.envelope.repo)
-            .bind("compiled_at", stored.compiledAt)
-            .bind("envelope", json.encodeToString(PackageEnvelope.serializer(), stored.envelope))
-            .bind("counts", json.encodeToString(counts, stored.counts))
-            .bind("revoked", stored.revoked)
-            .bind("revoked_by", stored.revokedBy)
-            .bind("revoke_reason", stored.revokeReason)
+    override suspend fun auditLog(orgId: Uuid, limit: Int): List<PackageAudit> = database.withOrganization(orgId) {
+        val a = CompilerAudit
+        a.select(a.id, a.at, a.event, a.actor, a.subject, a.meta)
+            .where { a.orgId eq orgId }
+            .orderBy(a.seq to SortOrder.DESC)
+            .limit(limit)
+            .map {
+                PackageAudit(
+                    id = it[a.id],
+                    at = it[a.at],
+                    event = it[a.event],
+                    actor = it[a.actor],
+                    subject = it[a.subject],
+                    meta = json.parseToJsonElement(it[a.meta]).jsonObject,
+                )
+            }
     }
 }
 
-private suspend fun CompilerTx.harnesses(orgId: Uuid, repo: String?, digest: String): List<HarnessStamp> = fetch(
-    Statement.create(
-        "SELECT version, receipt_id FROM compiler_harnesses " +
-            "WHERE org_id = :org AND repo_key = :repo AND digest = :digest",
-    ).bind("org", orgId).bind("repo", keyOf(repo)).bind("digest", digest),
-).map { HarnessStamp(it.get("version").asString(), it.get("receipt_id").asStringOrNull()) }
+private fun harnesses(orgId: Uuid, repo: String?, digest: String): List<HarnessStamp> {
+    val h = CompilerHarnesses
+    return h.select(h.version, h.receiptId)
+        .where { (h.orgId eq orgId) and (h.repoKey eq keyOf(repo)) and (h.digest eq digest) }
+        .map { HarnessStamp(it[h.version], it[h.receiptId]) }
+}
+
+// What an update of a package replaces: its envelope and its revocation.
+private fun UpdateBuilder<*>.revocable(stored: StoredPackage) {
+    val p = CompilerPackages
+    this[p.envelope] = json.encodeToString(PackageEnvelope.serializer(), stored.envelope)
+    this[p.revoked] = stored.revoked
+    this[p.revokedBy] = stored.revokedBy
+    this[p.revokeReason] = stored.revokeReason
+}
+
+private fun ResultRow.toPackage(): StoredPackage {
+    val p = CompilerPackages
+    return StoredPackage(
+        envelope = json.decodeFromString(PackageEnvelope.serializer(), this[p.envelope])
+            .copy(revoked = this[p.revoked]),
+        compiledAt = this[p.compiledAt],
+        counts = json.decodeFromString(countsSerializer, this[p.counts]),
+        revokedBy = this[p.revokedBy],
+        revokeReason = this[p.revokeReason],
+    )
+}
 
 // The organization's own pin and harnesses live under `*`, as in the prototype.
 private fun keyOf(repo: String?): String = repo ?: "*"
 
-// Top-level, not in the private companion: a companion property has a getter nothing calls, which Kover counts.
+private const val MAX_ROWS = 1000
+
+private val PACKAGE_COLUMNS = CompilerPackages.run {
+    listOf(contentDigest, digest, version, repo, compiledAt, envelope, counts, revoked, revokedBy, revokeReason)
+}
+
+// Top-level, not in a companion: a companion property has a getter nothing calls, which Kover counts.
 private val json = Json { ignoreUnknownKeys = true }
-private val counts = MapSerializer(String.serializer(), Int.serializer())
+private val countsSerializer = MapSerializer(String.serializer(), Int.serializer())

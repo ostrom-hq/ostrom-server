@@ -5,6 +5,7 @@ import run.ostrom.core.api.models.WorkflowStatus
 import run.ostrom.server.compiler.domain.models.Authorship
 import run.ostrom.server.compiler.domain.models.DecisionDoc
 import run.ostrom.server.compiler.domain.models.StoredWorkflow
+import run.ostrom.server.compiler.domain.repositories.LockedWorkflows
 import run.ostrom.server.compiler.domain.repositories.WorkflowsRepository
 import run.ostrom.server.compiler.domain.services.CompilerDocs
 import run.ostrom.server.compiler.domain.usecases.WorkflowsUseCase
@@ -105,7 +106,7 @@ class FakeWorkflowsRepository : WorkflowsRepository {
 
     override suspend fun workflowCount(orgId: Uuid): Int = count ?: workflows.keys.count { it.first == orgId }
 
-    override suspend fun <T> underWorkflowLock(orgId: Uuid, block: suspend (WorkflowsRepository) -> T): T =
+    override suspend fun <T> underWorkflowLock(orgId: Uuid, block: (LockedWorkflows) -> T): T =
         error("a proposal takes no lock")
 
     override suspend fun lastDecisions(orgId: Uuid): List<DecisionDoc> = error("not read")

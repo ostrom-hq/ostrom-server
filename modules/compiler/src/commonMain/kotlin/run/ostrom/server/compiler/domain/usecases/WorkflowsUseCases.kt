@@ -11,8 +11,8 @@ import run.ostrom.server.compiler.domain.models.DecisionDoc
 import run.ostrom.server.compiler.domain.models.StoredWorkflow
 import run.ostrom.server.compiler.domain.models.WorkflowDoc
 import run.ostrom.server.compiler.domain.repositories.CompilerRepository
+import run.ostrom.server.compiler.domain.repositories.LockedWorkflows
 import run.ostrom.server.compiler.domain.repositories.MAX_WORKFLOWS
-import run.ostrom.server.compiler.domain.repositories.WorkflowsRepository
 import run.ostrom.server.compiler.domain.services.CallChecks
 import run.ostrom.server.compiler.domain.services.JsText
 import run.ostrom.server.compiler.domain.services.NodeConditions
@@ -248,7 +248,7 @@ class WorkflowsUseCaseImpl(
 
     // What a save checks against the organization's other workflows, under the lock: `rejected` only on a proposal,
     // and, for a workflow the server runs, a free name and calls that exist, never loop and cover their inputs.
-    private suspend fun checkAmong(orgId: Uuid, locked: WorkflowsRepository, workflow: Workflow, was: WorkflowStatus?) {
+    private fun checkAmong(orgId: Uuid, locked: LockedWorkflows, workflow: Workflow, was: WorkflowStatus?) {
         val rejected = workflow.status == WorkflowStatus.REJECTED
         if (rejected && was != WorkflowStatus.PROPOSED && was != WorkflowStatus.REJECTED) {
             throw InvalidWorkflowException("Invalid workflow: only a proposed workflow is rejected.")

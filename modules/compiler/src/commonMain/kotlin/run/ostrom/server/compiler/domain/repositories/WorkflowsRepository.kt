@@ -72,14 +72,14 @@ interface WorkflowsRepository {
     /**
      * Runs [block] holding the organization's workflow lock, in one transaction: two saves or deletes of the
      * organization's workflows (on this replica or another) never overlap, so that two of them cannot both create a
-     * call loop, take one name or pass the cap. [block] reads and writes through the repository it is given, which is
-     * bound to that transaction; anything it throws undoes what it wrote.
+     * call loop, take one name or pass the cap. [block] reads and writes through the [LockedWorkflows] it is given,
+     * bound to that transaction, and suspends nowhere; anything it throws undoes what it wrote.
      *
      * @param orgId The organization.
      * @param block What to do under the lock.
      * @return What [block] returns.
      */
-    suspend fun <T> underWorkflowLock(orgId: Uuid, block: suspend (WorkflowsRepository) -> T): T
+    suspend fun <T> underWorkflowLock(orgId: Uuid, block: (LockedWorkflows) -> T): T
 
     /**
      * Lists the last decision taken on each of the organization's workflows: what a package cites. Never the whole
@@ -97,4 +97,62 @@ interface WorkflowsRepository {
      * @param decision The decision.
      */
     suspend fun addDecision(orgId: Uuid, decision: DecisionDoc)
+}
+
+/**
+ * The organization's workflows inside the transaction of [WorkflowsRepository.underWorkflowLock]: the reads and writes
+ * of [WorkflowsRepository] that decide a save or a delete, each a statement of that transaction.
+ */
+interface LockedWorkflows {
+    /**
+     * Lists an organization's workflows.
+     *
+     * @param orgId The organization.
+     * @return The workflows, oldest first.
+     */
+    fun workflows(orgId: Uuid): List<StoredWorkflow>
+
+    /**
+     * Reads a workflow.
+     *
+     * @param orgId The organization.
+     * @param id The workflow.
+     * @return The workflow, or null.
+     */
+    fun workflow(orgId: Uuid, id: String): StoredWorkflow?
+
+    /**
+     * Creates or replaces a workflow, as [WorkflowsRepository.saveWorkflow].
+     *
+     * @param orgId The organization.
+     * @param id The workflow.
+     * @param raw Its document.
+     * @param expectedVersion The version the editor read, or null for a new workflow.
+     * @param author Who saves, and when.
+     * @return The saved workflow, or null when the id is taken or the version moved.
+     */
+    fun saveWorkflow(
+        orgId: Uuid,
+        id: String,
+        raw: JsonObject,
+        expectedVersion: Int?,
+        author: Authorship,
+    ): StoredWorkflow?
+
+    /**
+     * Deletes a workflow.
+     *
+     * @param orgId The organization.
+     * @param id The workflow.
+     * @return False when there was none.
+     */
+    fun deleteWorkflow(orgId: Uuid, id: String): Boolean
+
+    /**
+     * Counts the organization's workflows.
+     *
+     * @param orgId The organization.
+     * @return How many it keeps.
+     */
+    fun workflowCount(orgId: Uuid): Int
 }
