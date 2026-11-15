@@ -19,8 +19,28 @@ import kotlin.uuid.Uuid
  * @return What [block] returns, after the commit.
  */
 suspend fun <T> JdbcDatabase.withOrganization(orgId: Uuid, block: JdbcTransaction.() -> T): T = query {
-    exec("SELECT set_config('$TENANT_SETTING', ?, true)", listOf(TextColumnType() to orgId.toString())) {}
+    confineToOrganization(orgId)
     block()
+}
+
+/**
+ * Switches this transaction to [TENANT_ROLE] (`SET LOCAL ROLE`), until it ends: the row-level security policies of the
+ * tenant tables then bind it. [JdbcDatabase.inOrg] does it with [confineToOrganization]; a transaction that has to
+ * start as the serving role (a function only it may run) and then confines itself, one organization after another
+ * (the automations scheduler's claim), calls them in that order.
+ */
+fun JdbcTransaction.switchToTenantRole() {
+    exec("SET LOCAL ROLE $TENANT_ROLE")
+}
+
+/**
+ * Sets [TENANT_SETTING] to [orgId] for this transaction alone (`set_config(…, true)`): the policies of the tenant
+ * tables show and accept that organization's rows. Called again, it moves to another organization.
+ *
+ * @param orgId The organization.
+ */
+fun JdbcTransaction.confineToOrganization(orgId: Uuid) {
+    exec("SELECT set_config('$TENANT_SETTING', ?, true)", listOf(TextColumnType() to orgId.toString())) {}
 }
 
 /**

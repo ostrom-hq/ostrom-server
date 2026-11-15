@@ -7,10 +7,13 @@ import run.ostrom.server.automations.fakes.ALICE
 import run.ostrom.server.automations.fakes.ORG_A
 import run.ostrom.server.automations.fakes.ORG_B
 import run.ostrom.server.automations.fakes.cronDefinition
-import run.ostrom.server.automations.infrastructure.inTenant
+import run.ostrom.server.automations.infrastructure.AutomationsRoutes
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.update
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -30,27 +33,25 @@ class AutomationsRoutesTenancyPostgresTest {
         val ofA =
             Automation(Uuid.random(), ORG_A, ALICE.toString(), cronDefinition("A"), false, 1, 1, null, null, t0, t0)
         repository.createWithinLimit(ofA, 20)
-        val count = Statement.create("SELECT COUNT(*) AS n FROM automations_routes")
+        val jdbc = server.koin.get<JdbcDatabase>()
+        val routes = AutomationsRoutes
 
-        // The test server's driver is the serving role: without an organization, no route at all.
-        assertEquals(0L, server.driver.fetchAll(count).getOrThrow().first().get("n").asLong())
-        assertEquals(1L, server.driver.inTenant(ORG_A) { fetchAll(count).getOrThrow().first().get("n").asLong() })
-        assertEquals(0L, server.driver.inTenant(ORG_B) { fetchAll(count).getOrThrow().first().get("n").asLong() })
+        // The test server's pool is the serving role: without an organization, no route at all.
+        assertEquals(0L, jdbc.query { routes.selectAll().count() })
+        assertEquals(1L, jdbc.inOrg(ORG_A) { routes.selectAll().count() })
+        assertEquals(0L, jdbc.inOrg(ORG_B) { routes.selectAll().count() })
 
         // Organization B can neither reschedule A's automation nor write a route in A's name.
-        val moved = server.driver.inTenant(ORG_B) {
-            execute(
-                Statement.create("UPDATE automations_routes SET next_run_at = now() WHERE automation_id = :id")
-                    .bind("id", ofA.id),
-            ).getOrThrow()
+        val moved = jdbc.inOrg(ORG_B) {
+            routes.update({ routes.automationId eq ofA.id }) { it[routes.nextRunAt] = t0 }
         }
-        assertEquals(0L, moved)
+        assertEquals(0, moved)
         assertFailsWith<Exception> {
-            server.driver.inTenant(ORG_B) {
-                execute(
-                    Statement.create("INSERT INTO automations_routes (automation_id, org_id) VALUES (:id, :org)")
-                        .bind("id", ofA.id).bind("org", ORG_A),
-                ).getOrThrow()
+            jdbc.inOrg(ORG_B) {
+                routes.insert {
+                    it[routes.automationId] = ofA.id
+                    it[routes.orgId] = ORG_A
+                }
             }
         }
 
