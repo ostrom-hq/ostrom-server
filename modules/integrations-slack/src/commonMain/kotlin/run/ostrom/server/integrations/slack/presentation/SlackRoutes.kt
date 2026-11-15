@@ -6,13 +6,15 @@ import io.ktor.http.URLDecodeException
 import io.ktor.http.parseQueryString
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.header
-import io.ktor.server.request.receive
+import io.ktor.server.request.receiveChannel
 import io.ktor.server.resources.delete
 import io.ktor.server.resources.get
 import io.ktor.server.resources.post
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
+import io.ktor.utils.io.readRemaining
+import kotlinx.io.readByteArray
 import run.ostrom.server.integrations.slack.domain.SlackInteractionOutcome
 import run.ostrom.server.integrations.slack.domain.SlackLinkForbiddenException
 import run.ostrom.server.kernel.auth.OrgPrincipal
@@ -34,7 +36,11 @@ import run.ostrom.server.kernel.errors.OstromException
  */
 fun Route.slackRoutes(dependencies: SlackRoutesDependencies) = with(dependencies) {
     post<SlackWebhookPath> {
-        val body = call.receive<ByteArray>().decodeToString()
+        // One byte more than allowed is enough to refuse a body that is too large without reading it all, before
+        // its signature: a cut body could never match it.
+        val bytes = call.receiveChannel().readRemaining(MAX_BODY + 1L).readByteArray()
+        if (bytes.size > MAX_BODY) throw OstromException(ErrorKind.INVALID_REQUEST, "The body is at most 64 KiB.")
+        val body = bytes.decodeToString()
         val payload = runCatchingForm(body)
         val outcome = interactions(
             body,
@@ -80,5 +86,7 @@ private fun runCatchingForm(body: String): String? = try {
     null
 }
 
+// A Slack interaction is a few kilobytes: its payload carries our own short message.
+private const val MAX_BODY = 64 * 1024
 private const val SIGNATURE_HEADER = "X-Slack-Signature"
 private const val TIMESTAMP_HEADER = "X-Slack-Request-Timestamp"

@@ -245,6 +245,8 @@ class SlackPostgresTest {
             setBody("")
         }
         assertEquals(HttpStatusCode.BadRequest, empty.status, "Signed, without a payload")
+        val large = server.client.post("/webhooks/slack") { setBody("payload=" + "x".repeat(64 * 1024)) }
+        assertEquals(HttpStatusCode.BadRequest, large.status, "Too large: refused before its signature")
 
         val section = server.koin.get<SettingsSection>(named("slack"))
         assertEquals(null, section.field("botToken")?.refusal(BOT_TOKEN))
