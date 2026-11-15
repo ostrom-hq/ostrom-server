@@ -189,8 +189,11 @@ override suspend fun rename(orgId: Uuid, id: Uuid, name: String): Boolean = data
   mapping, the query alone for a plan), `write { … }`, `lockKeyUntilCommit(key)` (the sqlx4k repositories'
   `pg_advisory_xact_lock(hashtextextended(key, 0))`, kept so that both versions take turns during a rollout;
   `advisoryLock(key)` is its read, for a plan), `countWhere`, `maxWhere`, `maxOrZero`, `asBigint`, `sumOrZero`, and
-  the keyset conditions `rowLess(columns, bounds)` and `rowBefore(columns, subquery)`. A helper a second module needs
-  moves there, not into a copy.
+  the keyset conditions `rowLess(columns, bounds)` and `rowBefore(columns, subquery)`, and `ResultRow.present(column,
+  with)` (a nullable column a row holds by construction). `databaseNowPlus(duration)` moves the database's clock to the
+  microsecond. A module's migration that grants its tables to the tenant role starts with the kernel's
+  `TENANT_ROLE_SQL`. The query-plan tests explain a statement with the testing module's `plan { … }`. A helper a
+  second module needs moves there, not into a copy.
 - JSON columns are `text` written and read by the module's own serializer (`TodoJson`); Exposed's `json` columns are
   not used yet.
 - The domain never sees Exposed types: rows become domain models in the repository (`ResultRow.toX()`).

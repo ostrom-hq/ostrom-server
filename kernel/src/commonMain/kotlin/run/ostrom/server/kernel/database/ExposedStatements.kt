@@ -3,6 +3,7 @@ package run.ostrom.server.kernel.database
 
 import org.jetbrains.exposed.v1.core.AbstractQuery
 import org.jetbrains.exposed.v1.core.Cast
+import org.jetbrains.exposed.v1.core.Column
 import org.jetbrains.exposed.v1.core.Count
 import org.jetbrains.exposed.v1.core.CustomFunction
 import org.jetbrains.exposed.v1.core.Expression
@@ -66,10 +67,24 @@ fun JdbcTransaction.lockKeyUntilCommit(key: String) {
  * Runs one write built by [body] in this transaction: the plan tests explain the same builder.
  *
  * @param body The statement.
+ *
+ * @return What it returns: the rows an update or a delete changed.
  */
-fun <T : Any> JdbcTransaction.write(body: StatementBuilder.() -> Statement<T>) {
+fun <T : Any> JdbcTransaction.write(body: StatementBuilder.() -> Statement<T>): T? =
     buildStatement(body).toExecutable().execute(this)
-}
+
+/**
+ * The value of a nullable [column] that this row holds by construction, written together with [with], the one the
+ * caller checked (a key's rotation has its signature, a used link its account and its date). A row that breaks it
+ * fails here, the column named, rather than later on a null.
+ *
+ * @param column The column.
+ * @param with The column it is written with.
+ *
+ * @return Its value.
+ */
+fun <T : Any> ResultRow.present(column: Column<T?>, with: Column<*>): T =
+    checkNotNull(this[column]) { "${column.name} is set with ${with.name}" }
 
 /**
  * A read and how its rows become what a repository decides on: the [query] alone for a plan.

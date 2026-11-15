@@ -18,6 +18,28 @@ const val TENANT_ROLE = "ostrom_tenant"
 const val TENANT_SETTING = "ostrom.org_id"
 
 /**
+ * The SQL of a migration that creates [TENANT_ROLE] (tolerating one created by another module, database or test) and
+ * grants it to the migrating user, before the migration's own `GRANT … TO ostrom_tenant`: roles are global to the
+ * PostgreSQL cluster. A module moving to Exposed, whose `inOrg` switches to the role, grants its tables with it.
+ */
+const val TENANT_ROLE_SQL: String = """
+DO $$
+BEGIN
+    CREATE ROLE $TENANT_ROLE NOLOGIN;
+EXCEPTION WHEN duplicate_object OR unique_violation THEN
+    NULL;
+END
+$$;
+DO $$
+BEGIN
+    GRANT $TENANT_ROLE TO CURRENT_USER;
+EXCEPTION WHEN unique_violation THEN
+    NULL;
+END
+$$;
+"""
+
+/**
  * Runs [block] in a transaction confined to one organization: the transaction switches to [TENANT_ROLE] and sets
  * [TENANT_SETTING], so a tenant table only shows and accepts the rows of [orgId], whatever the query says. A missing
  * `WHERE org_id = …` then reads nothing of another organization instead of leaking it.

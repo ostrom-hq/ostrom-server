@@ -8,6 +8,7 @@ import run.ostrom.server.identity.domain.MobileClient
 import run.ostrom.server.identity.domain.OAuthAttempt
 import run.ostrom.server.identity.domain.OAuthAttemptsRepository
 import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.present
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
