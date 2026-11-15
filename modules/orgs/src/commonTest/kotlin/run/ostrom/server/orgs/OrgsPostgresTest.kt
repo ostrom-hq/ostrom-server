@@ -531,6 +531,9 @@ class OrgsPostgresTest {
             // The members of one organization only, or null past the limit (the MCP relay's retain sweep).
             assertEquals(listOf(owner.id.toString()), directory.memberIds(acme.id, 10))
             assertNull(directory.memberIds(acme.id, 0))
+            // Each member's role, for the picker of a session transfer, or null past the limit.
+            assertEquals(mapOf(owner.id.toString() to OrgRole.OWNER), directory.roles(acme.id, 10))
+            assertNull(directory.roles(acme.id, 0))
             // Deleting the organization removes its members: none stays active.
             orgs.delete(acme.id, now, orgDeleted(acme.id))
             assertFalse(directory.isActiveMember(acme.id, owner.id.toString()))

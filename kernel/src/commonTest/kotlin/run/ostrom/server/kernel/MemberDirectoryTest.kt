@@ -14,5 +14,6 @@ class MemberDirectoryTest {
             override suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean = true
         }
         assertNull(directory.memberIds(Uuid.random(), 10))
+        assertNull(directory.roles(Uuid.random(), 10))
     }
 }
