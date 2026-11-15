@@ -152,6 +152,20 @@ class ContractObserverTest {
         assertEquals("getProbe", Contract.of(docs).operations.match("GET", "/api/v1/probes/x")?.id)
     }
 
+    @Test
+    fun aContractThatCannotBeBuiltFailsOnceAtTheEnd() = testApplication {
+        val observer = ContractObserver { error("no document") }
+        application {
+            install(observer.plugin)
+            routing { get("/api/v1/probes/{id}") { call.respondText("""{"name": "a"}""", json) } }
+        }
+        assertEquals(HttpStatusCode.OK, client.get("/api/v1/probes/a").status)
+        assertEquals(HttpStatusCode.OK, client.get("/api/v1/probes/b").status)
+        val failure = assertFailsWith<AssertionError> { observer.finish() }
+        assertTrue(failure.message.orEmpty().contains("no document"), failure.message)
+        assertTrue(failure.cause is IllegalStateException, "${failure.cause}")
+    }
+
     /** What a probe answers. */
     @Serializable
     data class Probe(val name: String)

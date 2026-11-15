@@ -65,7 +65,7 @@ object OpenApiStructure {
                 else -> references(document, value, "$at/$key")
             }
         }
-        is JsonArray -> node.withIndex().flatMap { (index, value) -> references(document, value, "$at/$index") }
+        is JsonArray -> node.indices.flatMap { index -> references(document, node[index], "$at/$index") }
         else -> emptyList()
     }
 

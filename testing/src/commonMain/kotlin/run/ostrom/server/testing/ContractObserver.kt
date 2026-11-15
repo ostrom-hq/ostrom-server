@@ -10,6 +10,7 @@ import io.ktor.server.application.createApplicationPlugin
 import io.ktor.server.application.hooks.ResponseBodyReadyForSend
 import io.ktor.server.request.httpMethod
 import io.ktor.server.request.path
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.SerializationException
@@ -75,7 +76,8 @@ data class Drift(val operation: String, val status: Int, val violation: Violatio
  * Watches every answer of a test server and checks each JSON answer of an operation of the server's generated document
  * against it (statuses, required and undeclared properties, types): the catalogue's `ok<T>()`, `body<T>()` and errors
  * must be what the routes really answer. [finish] fails on any drift. An operation the document leaves undescribed (no
- * responses) is not checked: ApiDocumentPostgresTest fails on it. Without a contract it watches nothing.
+ * responses) is not checked: ApiDocumentPostgresTest fails on it. Without a contract it watches nothing. When the
+ * contract cannot be built, the answers go through unchecked and [finish] fails once with the reason.
  *
  * @param contract The contract, read at the first answer (the document is built once the routes are mounted), or null.
  */
@@ -88,7 +90,7 @@ class ContractObserver(contract: () -> Contract?) {
     constructor(contract: Contract?) : this({ contract })
 
     private val lock = Mutex()
-    private val contract by lazy(contract)
+    private val contract by lazy { load(contract) }
     private val drifts = mutableListOf<Drift>()
 
     /** The plugin that hands every answer to [observe]; a streamed one (no bytes in hand) is left aside. */
@@ -116,14 +118,21 @@ class ContractObserver(contract: () -> Contract?) {
      * @param body The answer's bytes, empty when none.
      */
     suspend fun observe(method: String, path: String, status: Int, type: ContentType?, body: ByteArray) {
-        val contract = contract ?: return
+        val contract = (contract as? Loaded.Built ?: return).contract
         val operation = contract.operations.match(method, path)?.takeIf { it.responses.isNotEmpty() } ?: return
         val found = violations(contract.schema, operation, status, type, body)
         if (found.isNotEmpty()) lock.withLock { drifts += found.map { Drift(operation.id, status, it) } }
     }
 
-    /** Fails on every drift met, one line per kind of drift. */
+    /** Fails when the contract could not be built, else on every drift met, one line per kind of drift. */
     suspend fun finish() {
+        val failed = contract as? Loaded.Failed
+        if (failed != null) {
+            fail(
+                "The server's OpenAPI document could not be built, so no answer was checked: ${failed.error}",
+                failed.error,
+            )
+        }
         val unknown = lock.withLock { drifts.toList() }.distinctBy { it.key }
         if (unknown.isNotEmpty()) {
             fail(
@@ -178,6 +187,23 @@ class ContractObserver(contract: () -> Contract?) {
 
     private fun body(detail: String) = Violation("$", DriftKind.BODY, detail)
 
+    // Builds the contract once; a failure is kept for finish instead of failing every answer with a 500.
+    private fun load(contract: () -> Contract?): Loaded = try {
+        contract()?.let { Loaded.Built(it) } ?: Loaded.None
+    } catch (error: CancellationException) {
+        throw error
+    } catch (error: Exception) {
+        Loaded.Failed(error)
+    }
+
+    // What the first answer found: a contract, none, or the reason it could not be built.
+    private sealed interface Loaded {
+        data object None : Loaded
+
+        data class Built(val contract: Contract) : Loaded
+
+        data class Failed(val error: Exception) : Loaded
+    }
 }
 
 private const val INTERNAL = 500
