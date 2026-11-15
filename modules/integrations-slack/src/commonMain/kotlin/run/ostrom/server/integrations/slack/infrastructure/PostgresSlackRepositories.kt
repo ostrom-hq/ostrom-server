@@ -37,7 +37,7 @@ class PostgresSlackLinksRepository(private val driver: Driver) : SlackLinksRepos
 
     override suspend fun memberOf(orgId: Uuid, slackUserId: String): Uuid? = driver.withOrganization(orgId) { tx ->
         tx.fetchAll(Statement.create(MEMBER_OF_SQL).bind("org_id", orgId).bind("slack_user_id", slackUserId))
-            .getOrThrow().firstOrNull()?.get("member_id")?.asUuid()
+            .getOrThrow().firstOrNull()?.let { it.get("member_id").asUuid() }
     }
 
     override suspend fun save(orgId: Uuid, link: StoredSlackLink) {

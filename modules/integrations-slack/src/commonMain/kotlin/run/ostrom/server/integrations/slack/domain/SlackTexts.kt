@@ -24,8 +24,13 @@ class SlackTexts(private val consoleUrl: String) {
      * @return Its direct message: the title, the text and a link to the wait or the session.
      */
     fun notification(notification: Notification): SlackMessage {
-        val link = notification.waitId?.let { "$consoleUrl/waits/${it.pathSafe()}" }
-            ?: notification.sessionId?.let { "$consoleUrl/sessions/${it.pathSafe()}" }
+        val waitId = notification.waitId
+        val sessionId = notification.sessionId
+        val link = when {
+            waitId != null -> "$consoleUrl/waits/${waitId.pathSafe()}"
+            sessionId != null -> "$consoleUrl/sessions/${sessionId.pathSafe()}"
+            else -> null
+        }
         val lines = listOfNotNull(
             "*${escape(notification.title)}*",
             escape(notification.body).ifBlank { null },
@@ -135,6 +140,17 @@ class SlackTexts(private val consoleUrl: String) {
          * @return It, with Slack's three control characters escaped.
          */
         fun escape(text: String): String = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+        /**
+         * @param configured `OSTROM_CONSOLE_URL`, as configured.
+         *
+         * @return The console's origin, without a trailing slash; [DEFAULT_CONSOLE_URL] when unset or blank.
+         */
+        fun consoleUrl(configured: String?): String =
+            configured.orEmpty().trim().ifEmpty { DEFAULT_CONSOLE_URL }.trimEnd('/')
+
+        /** The console of a development server, as the notifications module defaults it. */
+        const val DEFAULT_CONSOLE_URL: String = "http://localhost:5173"
 
         private fun String.pathSafe(): String = filter { it.isLetterOrDigit() || it == '-' || it == '_' }
     }

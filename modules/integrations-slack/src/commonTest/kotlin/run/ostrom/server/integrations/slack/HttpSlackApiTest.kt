@@ -5,11 +5,11 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope
 import io.ktor.client.engine.mock.respond
+import io.ktor.client.engine.mock.toByteArray
 import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.HttpResponseData
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
-import io.ktor.http.content.OutgoingContent
 import io.ktor.http.headersOf
 import kotlinx.coroutines.test.runTest
 import run.ostrom.server.integrations.slack.domain.SlackCallException
@@ -26,10 +26,12 @@ import kotlin.test.assertTrue
 /** Slack's Web API: its `ok`, its error codes and its HTTP failures, never its text nor the token. */
 class HttpSlackApiTest {
     private val calls = mutableListOf<HttpRequestData>()
+    private val bodies = mutableListOf<String>()
 
     private fun api(answer: suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData): HttpSlackApi {
         val engine = MockEngine { request ->
             calls += request
+            bodies += request.body.toByteArray().decodeToString()
             answer(request)
         }
         return HttpSlackApi(HttpClient(engine), "https://slack.test/api")
@@ -37,11 +39,6 @@ class HttpSlackApiTest {
 
     private fun MockRequestHandleScope.json(text: String, status: HttpStatusCode = HttpStatusCode.OK) =
         respond(text, status, headersOf(HttpHeaders.ContentType, "application/json"))
-
-    private fun HttpRequestData.text(): String = when (val content = body) {
-        is OutgoingContent.ByteArrayContent -> content.bytes().decodeToString()
-        else -> ""
-    }
 
     @Test
     fun aMessageIsPostedToThePersonWithTheTokenAndUpdatedWhereItWas() = runTest {
@@ -54,25 +51,42 @@ class HttpSlackApiTest {
             calls.map { it.url.toString() },
         )
         assertEquals("Bearer $BOT_TOKEN", calls[0].headers[HttpHeaders.Authorization])
-        assertTrue(""""channel":"U0BOB"""" in calls[0].text(), calls[0].text())
-        assertTrue(""""ts":"1.2"""" in calls[1].text(), calls[1].text())
+        assertTrue(""""channel":"U0BOB"""" in bodies[0], bodies[0])
+        assertTrue(""""ts":"1.2"""" in bodies[1], bodies[1])
     }
 
     @Test
     fun aPersonIsLookedUpByAddressAndAnUnknownOneIsNone() = runTest {
         val user = """{"ok":true,"user":{"id":"U0BOB","deleted":false,"is_bot":false}}"""
-        assertEquals(SlackUser("U0BOB", deleted = false, bot = false), api { json(user) }.lookupByEmail(BOT_TOKEN, "b@x"))
+        val found = api { json(user) }.lookupByEmail(BOT_TOKEN, "b@x")
+        assertEquals(SlackUser("U0BOB", deleted = false, bot = false), found)
         val bot = """{"ok":true,"user":{"id":"U0BOT","is_app_user":true}}"""
         assertEquals(SlackUser("U0BOT", deleted = false, bot = true), api { json(bot) }.lookupByEmail(BOT_TOKEN, "b@x"))
         assertNull(api { json("""{"ok":false,"error":"users_not_found"}""") }.lookupByEmail(BOT_TOKEN, "n@x"))
+        val refused = api { json("""{"ok":false,"error":"missing_scope"}""") }
+        val scope = assertFailsWith<SlackCallException> { refused.lookupByEmail(BOT_TOKEN, "x") }
+        assertEquals("missing_scope", scope.code)
+        val noId = api { json("""{"ok":true,"user":{"deleted":true}}""") }
+        val idless = assertFailsWith<SlackCallException> { noId.lookupByEmail(BOT_TOKEN, "x") }
+        assertEquals("slack_malformed", idless.code)
+        val robot = """{"ok":true,"user":{"id":"U0BOT","is_bot":true}}"""
+        val asBot = api { json(robot) }.lookupByEmail(BOT_TOKEN, "b@x")
+        assertEquals(SlackUser("U0BOT", deleted = false, bot = true), asBot)
+        for (id in listOf("5", "{}")) {
+            val odd = api { json("""{"ok":true,"user":{"id":$id}}""") }
+            val refused = assertFailsWith<SlackCallException> { odd.lookupByEmail(BOT_TOKEN, "x") }
+            assertEquals("slack_malformed", refused.code)
+        }
         val noUser = api { json("""{"ok":true}""") }
-        assertEquals("slack_malformed", assertFailsWith<SlackCallException> { noUser.lookupByEmail(BOT_TOKEN, "x") }.code)
+        val userless = assertFailsWith<SlackCallException> { noUser.lookupByEmail(BOT_TOKEN, "x") }
+        assertEquals("slack_malformed", userless.code)
     }
 
     @Test
     fun aTokenSlackRefusesIsNamedByItsCode() = runTest {
         assertNull(api { json("""{"ok":true}""") }.authTest(BOT_TOKEN))
         assertEquals("invalid_auth", api { json("""{"ok":false,"error":"invalid_auth"}""") }.authTest(BOT_TOKEN))
+        assertEquals("slack_error", api { json("""{"ok":false}""") }.authTest(BOT_TOKEN), "No code")
         assertEquals("slack_error", api { json("""{"ok":false,"error":"Not A Code!"}""") }.authTest(BOT_TOKEN))
     }
 
@@ -90,6 +104,10 @@ class HttpSlackApiTest {
         assertEquals("slack_malformed" to true, garbled.code to garbled.retryable)
         val noTs = failure(api { json("""{"ok":true,"channel":"D0BOB"}""") })
         assertEquals("slack_malformed", noTs.code)
+        val noChannel = failure(api { json("""{"ok":true,"ts":"1.2"}""") })
+        assertEquals("slack_malformed", noChannel.code)
+        val notAnObject = failure(api { json("[]") })
+        assertEquals("slack_malformed", notAnObject.code)
         val inactive = failure(api { json("""{"ok":false,"error":"account_inactive"}""") })
         assertEquals("account_inactive" to false, inactive.code to inactive.retryable)
         val transient = failure(api { json("""{"ok":false,"error":"internal_error"}""") })

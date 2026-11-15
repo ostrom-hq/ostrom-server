@@ -2,6 +2,7 @@
 package run.ostrom.server.integrations.slack.presentation
 
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.URLDecodeException
 import io.ktor.http.parseQueryString
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.header
@@ -75,7 +76,7 @@ private suspend fun ApplicationCall.linkOwner(orgs: PrincipalOrgResolver): OrgPr
 // The form's `payload`, or null for a body that is not one (it is answered only once its signature is checked).
 private fun runCatchingForm(body: String): String? = try {
     parseQueryString(body)["payload"]
-} catch (_: IllegalArgumentException) {
+} catch (_: URLDecodeException) {
     null
 }
 

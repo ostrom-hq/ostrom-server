@@ -11,6 +11,7 @@ import run.ostrom.server.integrations.slack.domain.SlackNotificationChannel
 import run.ostrom.server.integrations.slack.domain.SlackPosted
 import run.ostrom.server.integrations.slack.domain.SlackTexts
 import run.ostrom.server.integrations.slack.domain.StoredSlackLink
+import run.ostrom.server.gates.domain.models.GateStatus
 import run.ostrom.server.kernel.events.GateSummary
 import run.ostrom.server.notifications.domain.ApprovalDelivery
 import run.ostrom.server.notifications.domain.ChannelResult
@@ -76,6 +77,7 @@ class SlackChannelsTest {
     fun aYesRequestIsPostedKeptAndClosedOnceItsGateIsDecided() = runTest {
         val channel = SlackApprovalChannel(apps, api, links, messages, texts)
         assertEquals(setOf(bob), channel.reachable(org, setOf(bob, carol)))
+        assertEquals(emptySet(), channel.reachable(org, emptySet()))
         val gate = GateSummary(Uuid.random().toString(), true, listOf("ana"), "Push to main", "acme/app", listOf("bob"))
         val delivery = ApprovalDelivery(
             Uuid.random(), org, bob, "bob", Uuid.random(), Uuid.parse(gate.id), "slack", 0, 1,
@@ -84,7 +86,8 @@ class SlackChannelsTest {
 
         assertEquals(ChannelResult.DELIVERED, channel.send(delivery, gate, "https://c/yes/${delivery.approvalId}"))
         val posted = SlackPosted("D-U0BOB", "1700000000.1")
-        assertEquals(listOf(SlackApprovalMessage(delivery.approvalId, delivery.gateId, posted)), messages.messages.values.toList())
+        val kept = SlackApprovalMessage(delivery.approvalId, delivery.gateId, posted)
+        assertEquals(listOf(kept), messages.messages.values.toList())
         assertTrue(api.posted.single().second.blocks != null, "With its buttons")
         val carols = delivery.copy(memberId = carol)
         assertEquals(ChannelResult.failed("slack_not_linked"), channel.send(carols, gate, "https://c"))
@@ -115,5 +118,32 @@ class SlackChannelsTest {
         settings.configured = false
         gates.decided(gate, emptyList())
         assertEquals(1, api.updated.size)
+    }
+
+    @Test
+    fun theMessageSaysWhoApprovedOrThatNothingWaitsAnyMore() = runTest {
+        val gates = SlackGateChannel(apps, api, messages, texts)
+        val gateId = Uuid.random()
+        messages.messages[org to Uuid.random()] = SlackApprovalMessage(Uuid.random(), gateId, SlackPosted("D", "1"))
+        val gate = sampleDecidedGate(org, gateId, now)
+        gates.decided(gate.copy(status = GateStatus.APPROVED), emptyList())
+        gates.decided(gate.copy(status = GateStatus.CONSUMED, label = ""), emptyList())
+        gates.decided(gate.copy(status = GateStatus.RESERVED, decidedBy = null), emptyList())
+        gates.decided(gate.copy(status = GateStatus.PENDING), emptyList())
+        val texts = api.updated.map { it.second.text }
+        assertEquals(
+            listOf(
+                "*Push to main*\nApproved by bob.",
+                "*A request for a yes*\nApproved by bob.",
+                "*Push to main*\nApproved.",
+                "*Push to main*\nNo longer waits for an answer.",
+            ),
+            texts,
+        )
+        val failing = object : run.ostrom.server.integrations.slack.domain.SlackApprovalMessagesRepository by messages {
+            override suspend fun ofGate(orgId: Uuid, gateId: Uuid) = error("The database is down")
+        }
+        SlackGateChannel(apps, api, failing, this@SlackChannelsTest.texts).decided(gate, emptyList())
+        assertEquals(4, api.updated.size, "A failed read never reaches the answerer")
     }
 }

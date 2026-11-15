@@ -5,7 +5,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
-import io.ktor.client.request.HttpRequestData
+import io.ktor.client.engine.mock.toByteArray
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
@@ -17,12 +17,12 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
-import io.ktor.http.content.OutgoingContent
 import io.ktor.http.contentType
 import io.ktor.http.encodeURLParameter
 import io.ktor.http.headersOf
 import io.ktor.http.parseQueryString
 import kotlinx.serialization.json.JsonObject
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.core.api.models.SlackLink
@@ -50,6 +50,7 @@ import run.ostrom.server.identity.domain.VerifiedIdentity
 import run.ostrom.server.instance.InstanceModule
 import run.ostrom.server.integrations.slack.domain.LinkSlackUseCase
 import run.ostrom.server.integrations.slack.domain.SlackApi
+import run.ostrom.server.integrations.slack.domain.SlackLinksRepository
 import run.ostrom.server.integrations.slack.infrastructure.HmacSlackSigner
 import run.ostrom.server.integrations.slack.infrastructure.HttpSlackApi
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -65,6 +66,7 @@ import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.events.OrgEventType
 import run.ostrom.server.kernel.module.OrgDeletionListener
 import run.ostrom.server.kernel.settings.InstanceSettings
+import run.ostrom.server.kernel.settings.SettingsSection
 import run.ostrom.server.notifications.NotificationsModule
 import run.ostrom.server.notifications.domain.DeliverNotificationsUseCase
 import run.ostrom.server.notifications.domain.DeliveryRules
@@ -101,7 +103,7 @@ class SlackPostgresTest {
     private val slack = HttpClient(
         MockEngine { request ->
             val method = request.url.encodedPath.substringAfterLast('/')
-            val body = request.text()
+            val body = request.body.toByteArray().decodeToString()
             calls += method to body
             val answer = when (method) {
                 "users.lookupByEmail" -> {
@@ -109,6 +111,11 @@ class SlackPostgresTest {
                     """{"ok":true,"user":{"id":"U-${email.substringBefore('@')}","deleted":false,"is_bot":false}}"""
                 }
                 "chat.postMessage" -> """{"ok":true,"channel":"D-1","ts":"1700000000.${calls.size}"}"""
+                "auth.test" -> if (request.headers[HttpHeaders.Authorization] == "Bearer $BOT_TOKEN") {
+                    """{"ok":true}"""
+                } else {
+                    """{"ok":false,"error":"invalid_auth"}"""
+                }
                 else -> """{"ok":true}"""
             }
             respond(answer, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
@@ -133,9 +140,6 @@ class SlackPostgresTest {
         }
     }
 
-    private fun HttpRequestData.text(): String = (body as? OutgoingContent.ByteArrayContent)?.bytes()
-        ?.decodeToString().orEmpty()
-
     private suspend fun TestServer.person(login: String): User = koin.get<ResolveUserUseCase>()(
         VerifiedIdentity(IdentityProvider.GITHUB, login, "$login@example.com", true, login, login = login),
     )
@@ -146,8 +150,9 @@ class SlackPostgresTest {
         val made = org ?: Org(member.orgId, slug, slug, null, null, now).also { orgs.create(it, member) { false } }
         if (org != null) {
             database.superuser.execute(
-                "INSERT INTO orgs_members (id, org_id, user_id, role, joined_at) VALUES (CAST('${member.id}' AS uuid), " +
-                    "CAST('${org.id}' AS uuid), CAST('${user.id}' AS uuid), 'member', now())",
+                "INSERT INTO orgs_members (id, org_id, user_id, role, joined_at) VALUES " +
+                    "(CAST('${member.id}' AS uuid), CAST('${org.id}' AS uuid), CAST('${user.id}' AS uuid), " +
+                    "'member', now())",
             ).getOrThrow()
         }
         return made to member.id
@@ -191,8 +196,8 @@ class SlackPostgresTest {
         val link = server.koin.get<LinkSlackUseCase>()
         assertEquals("U-bob-s", link(org.id, bobMember).slackUserId)
         assertEquals("U-eve-s", link(org.id, eveMember).slackUserId)
-        assertEquals(listOf("bob-s@example.com", "eve-s@example.com"), calls.filter { it.first == "users.lookupByEmail" }
-            .map { parseQueryString(it.second)["email"] })
+        val looked = calls.filter { it.first == "users.lookupByEmail" }.map { parseQueryString(it.second)["email"] }
+        assertEquals(listOf("bob-s@example.com", "eve-s@example.com"), looked)
         // The router reads an organization from where it first sees it: it sees this one before the gate asks.
         server.koin.get<OrgEventPublisher>()
             .publish(org.id, listOf(OrgEventDraft(OrgEventType.WAIT_CREATED, "w-0", null, JsonObject(emptyMap()))))
@@ -209,7 +214,8 @@ class SlackPostgresTest {
         assertTrue("/yes/${request.id}" in posted.single().second)
 
         val gates = server.koin.get<GatesRepository>()
-        assertEquals(HttpStatusCode.Unauthorized, server.interaction("U-bob-s", "${org.id}:${request.id}", false).status)
+        val forged = server.interaction("U-bob-s", "${org.id}:${request.id}", signed = false)
+        assertEquals(HttpStatusCode.Unauthorized, forged.status)
         assertEquals(HttpStatusCode.OK, server.interaction("U-eve-s", "${org.id}:${request.id}").status)
         assertEquals(GateStatus.PENDING, gates.get(org.id, asked.gate.id)?.status, "Eve is not the approver")
         assertEquals(HttpStatusCode.OK, server.interaction("U-nobody", "${org.id}:${request.id}").status)
@@ -226,13 +232,35 @@ class SlackPostgresTest {
         val update = calls.single { it.first == "chat.update" }.second
         assertTrue("\"channel\":\"D-1\"" in update && "Rejected by bob-s." in update, update)
         assertEquals(HttpStatusCode.OK, server.interaction("U-bob-s", "${org.id}:${request.id}").status, "Decided")
+    }
 
-        val noPayload = server.client.post("/webhooks/slack") { setBody("") }
+    @Test
+    fun aWebhookBodyIsReadOnlyOnceSignedAndNeedsAPayload() = serverTest(modules, overrides) { server ->
+        val noPayload = server.client.post("/webhooks/slack") { setBody("payload=%zz") }
         assertEquals(HttpStatusCode.Unauthorized, noPayload.status, "Not signed: nothing read")
+        val stamp = Clock.System.now().epochSeconds.toString()
+        val empty = server.client.post("/webhooks/slack") {
+            header("X-Slack-Signature", "v0=" + HmacSlackSigner().sign(SIGNING_SECRET, "v0:$stamp:"))
+            header("X-Slack-Request-Timestamp", stamp)
+            setBody("")
+        }
+        assertEquals(HttpStatusCode.BadRequest, empty.status, "Signed, without a payload")
 
-        server.koin.getAll<OrgDeletionListener>().forEach { it.deleted(org.id) }
-        assertEquals(null, server.koin.get<run.ostrom.server.integrations.slack.domain.SlackLinksRepository>()
-            .of(org.id, bobMember))
+        val section = server.koin.get<SettingsSection>(named("slack"))
+        assertEquals(null, section.field("botToken")?.refusal(BOT_TOKEN))
+        assertEquals(
+            "Slack refuses this bot token (invalid_auth).",
+            section.field("botToken")?.refusal("xoxb-0000-0000-revokedtoken"),
+        )
+
+        val (org, bobMember) = server.memberOf(null, server.person("bob-s"), "acme")
+        server.koin.get<LinkSlackUseCase>()(org.id, bobMember)
+        val links = server.koin.get<SlackLinksRepository>()
+        assertEquals(emptyList(), links.ofMembers(org.id, emptySet()))
+        val listener = server.koin.get<OrgDeletionListener>(named("integrations-slack"))
+        listener.deleted(org.id)
+        assertEquals(null, links.of(org.id, bobMember))
+        listener.purge(org.id)
     }
 
     private val principals = mutableMapOf<String, OrgPrincipal>()

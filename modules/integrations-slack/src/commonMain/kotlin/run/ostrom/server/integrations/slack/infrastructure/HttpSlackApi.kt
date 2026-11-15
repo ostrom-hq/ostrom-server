@@ -63,7 +63,11 @@ class HttpSlackApi(
         val answer = call("chat.postMessage", token) { json(message, "channel" to userId, null) }
         val channel = answer.text("channel")
         val ts = answer.text("ts")
-        return if (channel != null && ts != null) SlackPosted(channel, ts) else throw SlackCallException(MALFORMED, true)
+        return if (channel != null && ts != null) {
+            SlackPosted(channel, ts)
+        } else {
+            throw SlackCallException(MALFORMED, retryable = true)
+        }
     }
 
     override suspend fun updateMessage(token: String, posted: SlackPosted, message: SlackMessage) {
@@ -89,30 +93,47 @@ class HttpSlackApi(
     private suspend fun call(
         method: String,
         token: String,
-        build: io.ktor.client.request.HttpRequestBuilder.() -> Unit,
+        configure: io.ktor.client.request.HttpRequestBuilder.() -> Unit,
     ): JsonObject {
-        val response: HttpResponse = try {
-            http.post("$baseUrl/$method") {
-                bearerAuth(token)
-                build()
-            }
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Exception) {
-            throw SlackCallException(UNREACHABLE, retryable = true)
-        }
-        when {
-            response.status == HttpStatusCode.TooManyRequests -> throw SlackCallException(RATE_LIMITED, true)
-            response.status.value >= SERVER_ERROR -> throw SlackCallException(UNAVAILABLE, true)
-        }
-        val answer = try {
-            Json.parseToJsonElement(response.bodyAsText()) as? JsonObject
-        } catch (_: SerializationException) {
+        val response = send(method, token, configure)
+        val status = response?.status
+        val answer = if (status == null || status == HttpStatusCode.TooManyRequests || status.value >= SERVER_ERROR) {
             null
-        } ?: throw SlackCallException(MALFORMED, retryable = true)
-        if (answer.flag("ok")) return answer
-        val code = answer.text("error")?.takeIf { CODE.matches(it) } ?: UNKNOWN
-        throw SlackCallException(code, retryable = code in TRANSIENT)
+        } else {
+            parse(response.bodyAsText())
+        }
+        val code = when {
+            status == null -> UNREACHABLE
+            status == HttpStatusCode.TooManyRequests -> RATE_LIMITED
+            status.value >= SERVER_ERROR -> UNAVAILABLE
+            answer == null -> MALFORMED
+            answer.flag("ok") -> return answer
+            else -> answer.text("error")?.takeIf { CODE.matches(it) } ?: UNKNOWN
+        }
+        throw SlackCallException(code, retryable = code in RETRYABLE)
+    }
+
+    // Null when Slack is unreachable: no answer to read.
+    private suspend fun send(
+        method: String,
+        token: String,
+        configure: io.ktor.client.request.HttpRequestBuilder.() -> Unit,
+    ): HttpResponse? = try {
+        // Named configure, not build: HttpRequestBuilder.build() would win and leave the body unset.
+        http.post("$baseUrl/$method") {
+            bearerAuth(token)
+            configure(this)
+        }
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun parse(text: String): JsonObject? = try {
+        Json.parseToJsonElement(text) as? JsonObject
+    } catch (_: SerializationException) {
+        null
     }
 
     private fun JsonObject.text(key: String): String? =
@@ -133,7 +154,10 @@ class HttpSlackApi(
         private const val UNKNOWN = "slack_error"
         private const val SERVER_ERROR = 500
         private val CODE = Regex("[a-z_]{1,48}")
-        private val TRANSIENT = setOf(
+        private val RETRYABLE = setOf(
+            UNREACHABLE,
+            UNAVAILABLE,
+            MALFORMED,
             RATE_LIMITED,
             "rate_limited",
             "internal_error",

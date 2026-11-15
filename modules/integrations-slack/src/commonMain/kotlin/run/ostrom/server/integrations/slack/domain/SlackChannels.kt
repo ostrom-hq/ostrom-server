@@ -93,16 +93,24 @@ class SlackApprovalChannel(
     }
 
     override suspend fun send(delivery: ApprovalDelivery, gate: GateSummary, link: String): ChannelResult {
-        val app = apps.current() ?: return ChannelResult.failed(NOT_CONFIGURED)
-        val linked = links.of(delivery.orgId, delivery.memberId) ?: return ChannelResult.failed(NOT_LINKED)
-        val message = texts.approval(delivery.orgId, delivery.approvalId, delivery.title, delivery.body, link)
-        val posted = try {
-            api.postMessage(app.botToken, linked.slackUserId, message)
-        } catch (error: SlackCallException) {
-            return error.result()
+        val app = apps.current()
+        val linked = app?.let { links.of(delivery.orgId, delivery.memberId) }
+        return when {
+            app == null -> ChannelResult.failed(NOT_CONFIGURED)
+            linked == null -> ChannelResult.failed(NOT_LINKED)
+            else -> post(app, linked.slackUserId, delivery, link)
         }
-        messages.save(delivery.orgId, SlackApprovalMessage(delivery.approvalId, delivery.gateId, posted))
-        return ChannelResult.DELIVERED
+    }
+
+    private suspend fun post(app: SlackApp, userId: String, delivery: ApprovalDelivery, link: String): ChannelResult {
+        val message = texts.approval(delivery.orgId, delivery.approvalId, delivery.title, delivery.body, link)
+        return try {
+            val posted = api.postMessage(app.botToken, userId, message)
+            messages.save(delivery.orgId, SlackApprovalMessage(delivery.approvalId, delivery.gateId, posted))
+            ChannelResult.DELIVERED
+        } catch (error: SlackCallException) {
+            error.result()
+        }
     }
 }
 

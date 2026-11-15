@@ -72,8 +72,8 @@ class SlackApps(private val settings: InstanceSettings) {
     /** @return The app, or null until both its secrets are stored. */
     suspend fun current(): SlackApp? {
         val values = settings.read(SlackSettings.NAME)
-        val token = values[SlackSettings.BOT_TOKEN]?.takeIf { it.isNotBlank() }
-        val secret = values[SlackSettings.SIGNING_SECRET]?.takeIf { it.isNotBlank() }
-        return if (token != null && secret != null) SlackApp(token, secret) else null
+        val token = values[SlackSettings.BOT_TOKEN].orEmpty()
+        val secret = values[SlackSettings.SIGNING_SECRET].orEmpty()
+        return if (token.isNotBlank() && secret.isNotBlank()) SlackApp(token, secret) else null
     }
 }

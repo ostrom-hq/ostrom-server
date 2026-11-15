@@ -204,8 +204,32 @@ object NotificationsModule : ServerModule {
             val scope = this
             NotificationDeliveriesRepositoryImpl(get()) { scope.get<OrgEventJournal>() }
         }
-        // The requests for a yes the gates publish: their approvers' pushes and e-mails, through the same queue, and
-        // the other modules' ways ([ApprovalChannel], Slack's).
+        approvals()
+        single<DeliverNotificationsUseCase> {
+            val scope = this
+            DeliverNotificationsUseCaseImpl(
+                journal = get(),
+                waits = getOrNull() ?: NO_WAITS,
+                // Without the runners module, no session has a name.
+                sessions = getOrNull(),
+                settings = get(),
+                deliveries = get(),
+                channels = { scope.getAll<NotificationChannel>().distinctBy { it.id } },
+                approvals = get(),
+                clock = get(),
+                logger = get(),
+            )
+        }
+        single<OrgDeletionListener>(named("notifications-deliveries")) {
+            NotificationDeliveriesOrgDeletionListener(get())
+        }
+    }
+
+    /**
+     * The approvals' half of the router: the requests for a yes the gates publish, told to their approvers on the
+     * push, the e-mail and the other modules' ways ([ApprovalChannel], Slack's), through the same queue.
+     */
+    private fun Module.approvals() {
         single {
             val scope = this
             ApprovalSender(
@@ -229,24 +253,6 @@ object NotificationsModule : ServerModule {
                 channels = { scope.getAll<ApprovalChannel>().distinctBy { it.id } },
                 switches = get(),
             )
-        }
-        single<DeliverNotificationsUseCase> {
-            val scope = this
-            DeliverNotificationsUseCaseImpl(
-                journal = get(),
-                waits = getOrNull() ?: NO_WAITS,
-                // Without the runners module, no session has a name.
-                sessions = getOrNull(),
-                settings = get(),
-                deliveries = get(),
-                channels = { scope.getAll<NotificationChannel>().distinctBy { it.id } },
-                approvals = get(),
-                clock = get(),
-                logger = get(),
-            )
-        }
-        single<OrgDeletionListener>(named("notifications-deliveries")) {
-            NotificationDeliveriesOrgDeletionListener(get())
         }
     }
 

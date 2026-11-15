@@ -125,5 +125,5 @@ private fun StoredSlackLink?.toDto(memberId: Uuid, configured: Boolean): SlackLi
     configured = configured,
     linked = this != null,
     slackUserId = this?.slackUserId,
-    linkedAt = this?.linkedAt?.toString(),
+    linkedAt = this?.run { linkedAt.toString() },
 )

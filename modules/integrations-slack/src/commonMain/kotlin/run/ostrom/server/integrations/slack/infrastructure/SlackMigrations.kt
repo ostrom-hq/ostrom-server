@@ -7,9 +7,9 @@ private const val ORG = "CAST(NULLIF(current_setting('ostrom.org_id', TRUE), '')
 
 /**
  * Version 1: each member's Slack link (`slack_links`, one per member of an organization, the Slack user found by
- * their proven e-mail address, and a Slack account linked by one member only). Version 2: the yes requests' messages in the approvers' Slack
- * (`slack_approval_messages`, one per request), updated once their gate is decided. Both confined to the organization
- * of the transaction (docs/tenancy.md).
+ * their proven e-mail address, and a Slack account linked by one member only). Version 2: the yes requests' messages
+ * in the approvers' Slack (`slack_approval_messages`, one per request), updated once their gate is decided. Both
+ * confined to the organization of the transaction (docs/tenancy.md).
  */
 val SlackMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(

@@ -22,6 +22,8 @@ import run.ostrom.server.integrations.slack.domain.SlackUser
 import run.ostrom.server.integrations.slack.domain.SlackUserNotFoundException
 import run.ostrom.server.integrations.slack.domain.UnlinkSlackUseCaseImpl
 import run.ostrom.server.kernel.auth.OrgRole
+import run.ostrom.server.kernel.settings.InstanceSettings
+import run.ostrom.server.kernel.settings.SettingsValues
 import run.ostrom.server.notifications.domain.Notification
 import run.ostrom.server.notifications.domain.NotificationKind
 import kotlin.test.Test
@@ -66,12 +68,27 @@ class SlackDomainTest {
     }
 
     @Test
+    fun theConsolesOriginIsTheConfiguredOneWithoutItsSlashElseTheDevelopmentOne() {
+        assertEquals("https://console.example", SlackTexts.consoleUrl(" https://console.example/ "))
+        assertEquals(SlackTexts.DEFAULT_CONSOLE_URL, SlackTexts.consoleUrl(null))
+        assertEquals(SlackTexts.DEFAULT_CONSOLE_URL, SlackTexts.consoleUrl("  "))
+    }
+
+    @Test
     fun theAppIsConfiguredOnlyWithBothSecretsAndNeverShowsThem() = runTest {
         val app = SlackApps(settings).current()
         assertEquals(BOT_TOKEN, app?.botToken)
         assertEquals("SlackApp(***)", app.toString())
         settings.configured = false
         assertNull(SlackApps(settings).current())
+        for ((token, secret) in listOf(" " to SIGNING_SECRET, BOT_TOKEN to " ")) {
+            val half = object : InstanceSettings {
+                override suspend fun read(section: String) = SettingsValues(
+                    mapOf(SlackSettings.BOT_TOKEN to token, SlackSettings.SIGNING_SECRET to secret),
+                )
+            }
+            assertNull(SlackApps(half).current(), "A blank secret is no app")
+        }
     }
 
     @Test
@@ -90,6 +107,11 @@ class SlackDomainTest {
             texts.notification(session).text,
         )
         assertEquals("*Ship &lt;@here&gt;*", texts.notification(session.copy(sessionId = null)).text)
+        assertEquals(
+            "*Ship &lt;@here&gt;*\n<https://console.ostrom.test/waits/w-1_x9|Open in Ostrom>",
+            texts.notification(session.copy(waitId = "w-1_x/../9")).text,
+            "Only an id's letters, digits, dashes and underscores go in the link",
+        )
     }
 
     @Test
@@ -125,7 +147,8 @@ class SlackDomainTest {
         link(api)(org, bob)
         UnlinkSlackUseCaseImpl(links)(org, bob)
         UnlinkSlackUseCaseImpl(links)(org, bob)
-        assertEquals(SlackLink(bob.toString(), true, false), GetSlackLinkUseCaseImpl(SlackApps(settings), links)(org, bob))
+        val unlinked = GetSlackLinkUseCaseImpl(SlackApps(settings), links)(org, bob)
+        assertEquals(SlackLink(bob.toString(), true, false), unlinked)
     }
 
     @Test
@@ -147,7 +170,8 @@ class SlackDomainTest {
         assertFailsWith<SlackNotConfiguredException> { link(api)(org, bob) }
         settings.configured = false
         assertFailsWith<SlackNotConfiguredException> { link(api)(org, bob) }
-        assertEquals(SlackLink(bob.toString(), false, false), GetSlackLinkUseCaseImpl(SlackApps(settings), links)(org, bob))
+        val off = GetSlackLinkUseCaseImpl(SlackApps(settings), links)(org, bob)
+        assertEquals(SlackLink(bob.toString(), false, false), off)
         assertTrue(links.links.isEmpty())
     }
 }

@@ -45,12 +45,19 @@ class ApprovalSender(
     suspend fun send(delivery: ApprovalDelivery, gate: GateSummary): ChannelResult {
         val approver = approvers.reach(delivery.orgId, setOf(delivery.approver))[delivery.approver]
             ?: return ChannelResult.failed(NOT_A_MEMBER)
+        // Read at each send, like the approver: a module's channel is bound once the server starts.
+        val others = channels()
         return when (delivery.channel) {
             PUSH_CHANNEL -> push(delivery, approver)
             ApprovalRules.EMAIL_CHANNEL -> email(delivery, approver, gate)
-            else -> channels().firstOrNull { it.id == delivery.channel }
-                ?.send(delivery, gate, notices.link(delivery.approvalId))
-                ?: ChannelResult.failed(CHANNEL_UNAVAILABLE)
+            else -> {
+                val channel = others.firstOrNull { it.id == delivery.channel }
+                if (channel == null) {
+                    ChannelResult.failed(CHANNEL_UNAVAILABLE)
+                } else {
+                    channel.send(delivery, gate, notices.link(delivery.approvalId))
+                }
+            }
         }
     }
 

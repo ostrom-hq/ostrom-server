@@ -75,6 +75,8 @@ class ApprovalChannelsTest {
             val delivery = queued.single()
             assertEquals(ChannelResult.DELIVERED, router.send(delivery, gate))
             assertEquals(listOf(delivery to notices.link(delivery.approvalId)), chat.sent)
+            val elsewhere = delivery.copy(channel = "other")
+            assertEquals(ChannelResult.failed("channel_unavailable"), router.send(elsewhere, gate), "Not bound")
         }
     }
 
@@ -93,6 +95,23 @@ class ApprovalChannelsTest {
             assertEquals(emptyList(), off.asked, "No channel, no switch read")
             val chat = approvalDelivery(org, gate, channel = "chat")
             assertEquals(ChannelResult.failed("channel_unavailable"), sender(null).send(chat, gate))
+        }
+    }
+
+    @Test
+    fun withoutSwitchesABoundChannelTellsWhomItReachesAndANonMemberNobody() {
+        runTest {
+            val chat = ChatChannel()
+            val gate = sampleGate(pending = listOf("bob", "nobody"))
+            val router = ApprovalRouter(MapGates(listOf(gate)), approvers, mailing, sender(chat), { listOf(chat) })
+            val bobs = router.queue(org, listOf(approvalRequested(1, Uuid.random(), gate, "bob")), now) {
+                Uuid.random()
+            }
+            assertEquals(listOf("chat"), bobs.map { it.channel })
+            val nobody = router.queue(org, listOf(approvalRequested(2, Uuid.random(), gate, "nobody")), now) {
+                Uuid.random()
+            }
+            assertEquals(emptyList(), nobody)
         }
     }
 }

@@ -80,25 +80,32 @@ class ReceiveSlackInteractionUseCaseImpl(
         val app = apps.current()
         val seconds = timestamp?.toLongOrNull()
         val fresh = seconds != null && abs(clock.now().epochSeconds - seconds) <= MAX_AGE_SECONDS
-        if (app == null || signature == null || !fresh) return SlackInteractionOutcome.UNAUTHORIZED
-        val expected = PREFIX + signer.sign(app.signingSecret, "v0:$timestamp:$body")
-        if (!sameText(expected, signature)) return SlackInteractionOutcome.UNAUTHORIZED
-        if (payload == null) return SlackInteractionOutcome.BAD_REQUEST
-        val interaction = parse(payload)
-        if (interaction != null) rejects(interaction).forEach { reject(interaction.userId, it) }
-        return SlackInteractionOutcome.HANDLED
+        val signed = app != null && signature != null && fresh &&
+            sameText(PREFIX + signer.sign(app.signingSecret, "v0:$timestamp:$body"), signature)
+        return when {
+            !signed -> SlackInteractionOutcome.UNAUTHORIZED
+            payload == null -> SlackInteractionOutcome.BAD_REQUEST
+            else -> {
+                parse(payload)?.let { interaction -> rejects(interaction).forEach { reject(interaction.userId, it) } }
+                SlackInteractionOutcome.HANDLED
+            }
+        }
     }
 
     private suspend fun reject(slackUserId: String, value: String) {
-        val orgId = Uuid.parseOrNull(value.substringBefore(':')) ?: return
-        val approvalId = Uuid.parseOrNull(value.substringAfter(':', "")) ?: return
-        val memberId = links.memberOf(orgId, slackUserId) ?: return
-        val member = people.member(orgId, memberId) ?: return
+        val orgId = Uuid.parseOrNull(value.substringBefore(':'))
+        val approvalId = Uuid.parseOrNull(value.substringAfter(':', ""))
+        val member = if (orgId == null || approvalId == null) {
+            null
+        } else {
+            links.memberOf(orgId, slackUserId)?.let { people.member(orgId, it) }
+        }
+        if (orgId == null || approvalId == null || member == null) return
         val actor = GateActor.person(member.login, orgId, member.role)
         try {
+            // The gates refuse anyone but the request's approver, and a decided gate.
             val view = approvals(actor, approvalId)
-            if (view.request.id != approvalId) return
-            answer(actor, approvalId, Answer.NO, view.gate.shownDigest, AnswerChannel.SLACK)
+            answer(actor, view.request.id, Answer.NO, view.gate.shownDigest, AnswerChannel.SLACK)
         } catch (_: OstromException) {
             // Another approver, a decided gate, an unknown request: the click changes nothing.
             Unit
@@ -112,11 +119,10 @@ class ReceiveSlackInteractionUseCaseImpl(
             Json.parseToJsonElement(payload) as? JsonObject
         } catch (_: SerializationException) {
             null
-        } ?: return null
-        if (root.text("type") != BLOCK_ACTIONS) return null
-        val user = (root["user"] as? JsonObject)?.text("id") ?: return null
-        val actions = (root["actions"] as? JsonArray).orEmpty().filterIsInstance<JsonObject>()
-        return Interaction(user, actions)
+        }
+        val user = root?.takeIf { it.text("type") == BLOCK_ACTIONS }?.let { (it["user"] as? JsonObject)?.text("id") }
+        val actions = (root?.get("actions") as? JsonArray).orEmpty().filterIsInstance<JsonObject>()
+        return user?.let { Interaction(it, actions) }
     }
 
     private fun rejects(interaction: Interaction): List<String> = interaction.actions

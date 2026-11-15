@@ -40,6 +40,7 @@ import run.ostrom.server.integrations.slack.infrastructure.SlackMigrations
 import run.ostrom.server.integrations.slack.infrastructure.SlackOrgDeletionListener
 import run.ostrom.server.integrations.slack.presentation.SlackRoutesDependencies
 import run.ostrom.server.integrations.slack.presentation.slackRoutes
+import run.ostrom.server.identity.domain.UsersRepository
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.OrgDeletionListener
@@ -48,6 +49,8 @@ import run.ostrom.server.kernel.network.outboundHttpClient
 import run.ostrom.server.kernel.settings.SettingsSection
 import run.ostrom.server.notifications.domain.ApprovalChannel
 import run.ostrom.server.notifications.domain.NotificationChannel
+import run.ostrom.server.orgs.domain.MembersRepository
+import run.ostrom.server.orgs.domain.OrgsRepository
 
 /**
  * The integrations-slack module: the instance's Slack app (Admin → Settings → `slack`: its bot token and signing
@@ -63,7 +66,6 @@ object SlackIntegrationModule : ServerModule {
     private val HTTP = named("slack-http")
     private const val HTTP_TIMEOUT_MS = 10_000L
     private const val CONSOLE_URL = "OSTROM_CONSOLE_URL"
-    private const val DEFAULT_CONSOLE_URL = "http://localhost:5173"
 
     override val name: String = "integrations-slack"
 
@@ -86,11 +88,13 @@ object SlackIntegrationModule : ServerModule {
         single<SlackSigner> { HmacSlackSigner() }
         single<SlackLinksRepository> { PostgresSlackLinksRepository(get()) }
         single<SlackApprovalMessagesRepository> { PostgresSlackApprovalMessagesRepository(get()) }
-        single<SlackPeople> { MemberSlackPeople(get(), get(), get()) }
-        single {
-            val console = get<ConfigSource>()[CONSOLE_URL]?.trim()?.ifEmpty { null } ?: DEFAULT_CONSOLE_URL
-            SlackTexts(console.trimEnd('/'))
+        single<SlackPeople> {
+            val members = get<MembersRepository>()
+            val users = get<UsersRepository>()
+            val orgs = get<OrgsRepository>()
+            MemberSlackPeople(members::findById, users::get, users::listEmails, orgs::get)
         }
+        single { SlackTexts(SlackTexts.consoleUrl(get<ConfigSource>()[CONSOLE_URL])) }
         single<GetSlackLinkUseCase> { GetSlackLinkUseCaseImpl(get(), get()) }
         single<LinkSlackUseCase> { LinkSlackUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single<UnlinkSlackUseCase> { UnlinkSlackUseCaseImpl(get()) }
