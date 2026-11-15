@@ -31,8 +31,11 @@ import org.koin.dsl.module
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.time.Duration.Companion.minutes
 
-/** How long a test may run: Ktor's `testApplication` gives it a minute. */
-private val TEST_TIMEOUT = 1.minutes
+/**
+ * How long a test may run. Ktor's `testApplication` gives it a minute, which a loaded CI runner exceeded
+ * (`UncompletedCoroutinesError` in the whole server's document test and RunAgentsProfilePostgresTest): three.
+ */
+private val TEST_TIMEOUT = 3.minutes
 
 /** How long a read bench may run, its tables filled: a minute is too short on a CI runner of a few cores. */
 private val BENCH_TIMEOUT = 5.minutes
