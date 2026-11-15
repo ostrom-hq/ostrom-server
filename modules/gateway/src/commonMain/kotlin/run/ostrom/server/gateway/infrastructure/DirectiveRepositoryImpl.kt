@@ -83,7 +83,7 @@ class DirectiveRepositoryImpl(private val database: JdbcDatabase) : DirectiveRep
             it[expiresAt] = write.directive.expiresAt
             it[contextKey] = write.contextKey
             val recovery = write.recovery
-            it[recoveryPace] = recovery?.pace?.name
+            it[recoveryPace] = recovery?.let { r -> r.pace.name }
             it[recoveryStartedAt] = recovery?.startedAt
             it[recoveryMinIntervalMs] = recovery?.let { r -> r.minInterval.inWholeMilliseconds }
         }
