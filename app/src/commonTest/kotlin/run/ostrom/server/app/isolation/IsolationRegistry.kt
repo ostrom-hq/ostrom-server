@@ -144,9 +144,10 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/slack/link" to Case.Own("reads the caller's own Slack link"),
     "POST /api/v1/slack/link" to Case.Own("links the Slack account of the caller's own proven address"),
     "DELETE /api/v1/slack/link" to Case.Own("removes the caller's own Slack link"),
-    // The caller's own Discord link (discord.v1): proven by Discord's sign-in in the caller's browser, never an id sent.
+    // The caller's own Discord link (discord.v1): proven by Discord's sign-in in the caller's browser, never a sent id.
     "GET /api/v1/discord/link" to Case.Own("reads the caller's own Discord link"),
-    "POST /api/v1/discord/link" to Case.Own("starts linking the caller's own Discord account, bound to their session"),
+    "POST /api/v1/discord/link" to
+        Case.Own("starts linking the caller's own Discord account, bound to their session"),
     "DELETE /api/v1/discord/link" to Case.Own("removes the caller's own Discord link"),
     "GET /api/v1/discord/link/callback" to Case.Exempt(DISCORD_CALLBACK),
 

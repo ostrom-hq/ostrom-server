@@ -374,6 +374,11 @@ class ListBoundsPostgresTest {
             "listCloudClusters" to 403,
             "listInstanceAdmins" to 403,
             "listInstanceSettings" to 403,
+            // A cloud session's events, inputs and agents, served since ostrom-core#287: a minimal bootstrap starts no
+            // cloud session, so its sub-lists are a 404.
+            "listCloudEvents" to 404,
+            "listCloudInputs" to 404,
+            "listCloudSubagents" to 404,
         )
 
         /**
@@ -387,6 +392,7 @@ class ListBoundsPostgresTest {
             "listAutomationRuns",
             "listChecks",
             "listCloudSessions",
+            "listCloudTransfers",
             "listMcpCalls",
             "listNotifications",
             "listPendingUsage",

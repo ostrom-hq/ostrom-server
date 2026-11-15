@@ -236,7 +236,11 @@ class CloudTransfersRoutesTest {
         val bySession = "/api/v1/cloud/transfers?session=${Uuid.random()}"
         assertEquals(HttpStatusCode.OK, client.read(bySession, "alice").status)
 
-        for (bad in listOf("direction=sideways", "state=nope", "session=x", "before=x", "limit=0")) {
+        // A real cursor past the last page is an empty page; one that names no transfer is refused.
+        val past = client.read("/api/v1/cloud/transfers?direction=outgoing&before=$twoId", "bob")
+        assertEquals(HttpStatusCode.OK, past.status)
+        val forged = "before=${Uuid.random()}"
+        for (bad in listOf("direction=sideways", "state=nope", "session=x", "before=x", "limit=0", forged)) {
             assertEquals(HttpStatusCode.BadRequest, client.read("/api/v1/cloud/transfers?$bad", "alice").status, bad)
         }
 
