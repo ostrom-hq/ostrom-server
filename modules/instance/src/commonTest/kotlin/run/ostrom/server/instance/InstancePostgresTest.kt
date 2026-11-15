@@ -8,6 +8,7 @@ import run.ostrom.server.instance.domain.SigningKey
 import run.ostrom.server.instance.infrastructure.InstanceRepositoryImpl
 import run.ostrom.server.instance.presentation.InstanceResponse
 import run.ostrom.server.instance.presentation.SigningKeysResponse
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.signing.InstanceSigner
 import run.ostrom.server.testing.serverTest
 import io.ktor.client.call.body
@@ -68,7 +69,7 @@ class InstancePostgresTest {
         // Migrations are the owner's, like `ostrom-server migrate`; the serving role cannot create a table.
         server.database.migrationRunner(server.koin.get())
             .migrate(InstanceModule.name, InstanceModule.migrations)
-        val repository = InstanceRepositoryImpl(server.driver)
+        val repository = InstanceRepositoryImpl(server.koin.get<JdbcDatabase>())
         assertNull(repository.get())
         assertEquals(emptyList(), repository.listKeys())
     }

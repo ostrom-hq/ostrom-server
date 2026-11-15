@@ -3,63 +3,70 @@ package run.ostrom.server.admin.infrastructure
 
 import run.ostrom.server.admin.domain.InstanceSettingsRepository
 import run.ostrom.server.admin.domain.StoredSettings
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.http.OstromJson
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.ResultSet
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
+import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.statements.UpdateBuilder
+import org.jetbrains.exposed.v1.jdbc.insertIgnore
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
 
-/** [InstanceSettingsRepository] on PostgreSQL (`admin_settings`, the instance's, no organization). */
-class InstanceSettingsRepositoryImpl(private val driver: Driver) : InstanceSettingsRepository {
-    override suspend fun get(section: String): StoredSettings? = driver.fetchAll(
-        Statement.create("SELECT $COLUMNS FROM admin_settings WHERE section = :section").bind("section", section),
-    ).getOrThrow().firstOrNull()?.toSettings()
+/**
+ * [InstanceSettingsRepository] on PostgreSQL (`admin_settings`, the instance's, no organization).
+ *
+ * @param database The serving role's pool.
+ */
+class InstanceSettingsRepositoryImpl(private val database: JdbcDatabase) : InstanceSettingsRepository {
+    override suspend fun get(section: String): StoredSettings? = database.query {
+        AdminSettings.select(AdminSettings.columns).where { AdminSettings.section eq section }
+            .singleOrNull()?.toSettings()
+    }
 
-    override suspend fun all(): Map<String, StoredSettings> =
-        driver.fetchAll("SELECT $COLUMNS FROM admin_settings").getOrThrow().map { it.toSettings() }
+    override suspend fun all(): Map<String, StoredSettings> = database.query {
+        AdminSettings.select(AdminSettings.columns)
+            .orderBy(AdminSettings.section to SortOrder.ASC)
+            .limit(MAX_SECTIONS)
+            .map { it.toSettings() }
             .associateBy { it.section }
+    }
 
-    override suspend fun save(settings: StoredSettings): Boolean = driver.execute(
-        bind(
-            Statement.create(
-                "UPDATE admin_settings SET plain_values = :plain, sealed_values = :sealed, version = :version, " +
-                    "updated_at = :at, updated_by = :by WHERE section = :section AND version = :previous",
-            ),
-            settings,
-        ).bind("previous", settings.version - 1),
-    ).getOrThrow() == 1L
+    override suspend fun save(settings: StoredSettings): Boolean = database.query {
+        // The version read before the change: a concurrent save of the same section writes nothing.
+        AdminSettings.update({
+            (AdminSettings.section eq settings.section) and (AdminSettings.version eq settings.version - 1)
+        }) { it.values(settings) } == 1
+    }
 
-    override suspend fun insertIfAbsent(settings: StoredSettings): Boolean = driver.execute(
-        bind(
-            Statement.create(
-                "INSERT INTO admin_settings (section, plain_values, sealed_values, version, updated_at, updated_by) " +
-                    "VALUES (:section, :plain, :sealed, :version, :at, :by) ON CONFLICT (section) DO NOTHING",
-            ),
-            settings,
-        ),
-    ).getOrThrow() == 1L
+    override suspend fun insertIfAbsent(settings: StoredSettings): Boolean = database.query {
+        AdminSettings.insertIgnore {
+            it[section] = settings.section
+            it.values(settings)
+        }.insertedCount == 1
+    }
 
-    private fun bind(statement: Statement, settings: StoredSettings): Statement = statement
-        .bind("section", settings.section)
-        .bind("plain", OstromJson.encodeToString(MAP, settings.values))
-        .bind("sealed", OstromJson.encodeToString(MAP, settings.sealed))
-        .bind("version", settings.version)
-        .bind("at", settings.updatedAt)
-        .bind("by", settings.updatedBy)
+    private fun UpdateBuilder<*>.values(settings: StoredSettings) {
+        this[AdminSettings.plainValues] = OstromJson.encodeToString(MAP, settings.values)
+        this[AdminSettings.sealedValues] = OstromJson.encodeToString(MAP, settings.sealed)
+        this[AdminSettings.version] = settings.version
+        this[AdminSettings.updatedAt] = settings.updatedAt
+        this[AdminSettings.updatedBy] = settings.updatedBy
+    }
 
-    private fun ResultSet.Row.toSettings() = StoredSettings(
-        section = get("section").asString(),
-        values = OstromJson.decodeFromString(MAP, get("plain_values").asString()),
-        sealed = OstromJson.decodeFromString(MAP, get("sealed_values").asString()),
-        version = get("version").asInt(),
-        updatedAt = get("updated_at").asInstant(),
-        updatedBy = get("updated_by").asUuidOrNull(),
+    private fun ResultRow.toSettings() = StoredSettings(
+        section = this[AdminSettings.section],
+        values = OstromJson.decodeFromString(MAP, this[AdminSettings.plainValues]),
+        sealed = OstromJson.decodeFromString(MAP, this[AdminSettings.sealedValues]),
+        version = this[AdminSettings.version],
+        updatedAt = this[AdminSettings.updatedAt],
+        updatedBy = this[AdminSettings.updatedBy],
     )
 }
 
-private const val COLUMNS = "section, plain_values, sealed_values, version, updated_at, updated_by"
+/** The sections are the server's own (`SettingsSection`), a few dozen: the bound of a read of all, far above. */
+private const val MAX_SECTIONS = 200
 private val MAP = MapSerializer(String.serializer(), String.serializer())

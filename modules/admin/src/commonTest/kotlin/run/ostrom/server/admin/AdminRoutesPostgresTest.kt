@@ -10,6 +10,8 @@ import run.ostrom.server.admin.domain.InstanceSettingsRepository
 import run.ostrom.server.admin.domain.RemoveOutcome
 import run.ostrom.server.admin.domain.SettingsView
 import run.ostrom.server.admin.domain.StoredSettings
+import run.ostrom.server.admin.infrastructure.currentAdmins
+import run.ostrom.server.admin.infrastructure.isCurrent
 import run.ostrom.server.admin.presentation.InstanceAdminListResponse
 import run.ostrom.server.admin.presentation.InstanceSettingsListResponse
 import run.ostrom.server.admin.presentation.InstanceSettingsResponse
@@ -20,6 +22,7 @@ import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.PrincipalChannel
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.TokenAuthenticator
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.settings.InstanceAccounts
 import run.ostrom.server.kernel.settings.InstanceAdministrators
 import run.ostrom.server.kernel.settings.InstanceAuditTrail
@@ -27,6 +30,7 @@ import run.ostrom.server.kernel.settings.InstanceSettings
 import run.ostrom.server.kernel.settings.SettingsSection
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
@@ -234,5 +238,22 @@ class AdminRoutesPostgresTest {
         assertNull(orphan.email)
         assertNull(imported.updatedBy)
         assertTrue(imported.importedFromEnvironment)
+    }
+
+    @Test
+    fun theAdministratorCheckLooksUpItsKeyAndTheListIsBounded() = serverTest(listOf(AdminModule), overrides) { server ->
+        // Fixtures only: removed administrators and the statistics, which no request writes.
+        val fixtures = server.database.superuser
+        fixtures.execute(
+            "INSERT INTO admin_instance_admins (user_id, source, added_at, removed_at) " +
+                "SELECT gen_random_uuid(), 'dashboard', now(), now() FROM generate_series(1, 5000)",
+        ).getOrThrow()
+        fixtures.execute("VACUUM ANALYZE admin_instance_admins").getOrThrow()
+        val database = server.koin.get<JdbcDatabase>()
+
+        val check = database.query { plan { isCurrent(Uuid.random()) } }
+        assertFalse("Seq Scan" in check, "The administrator check scans admin_instance_admins:\n$check")
+        val list = database.query { plan { currentAdmins() } }
+        assertTrue("Limit" in list, "The list of administrators has no bound:\n$list")
     }
 }

@@ -2,6 +2,7 @@
 package run.ostrom.server.instance
 
 import run.ostrom.server.instance.infrastructure.ScheduledWorkImpl
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.ScheduledWork
 import run.ostrom.server.testing.serverTest
 import kotlinx.coroutines.TimeoutCancellationException
@@ -27,7 +28,7 @@ import kotlin.time.Duration.Companion.seconds
 class ScheduledWorkPostgresTest {
     private fun leaseTest(block: suspend (ScheduledWork, () -> ScheduledWork) -> Unit) =
         serverTest(listOf(InstanceModule)) { server ->
-            block(server.koin.get<ScheduledWork>()) { ScheduledWorkImpl(server.driver) }
+            block(server.koin.get<ScheduledWork>()) { ScheduledWorkImpl(server.koin.get<JdbcDatabase>()) }
         }
 
     @Test
