@@ -5,6 +5,8 @@ import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.secrets.domain.Caller
 import kotlin.uuid.Uuid
 
+private const val BAD_CURSOR = "before is the id of an override of this member."
+
 /**
  * Overrides with the logins of the people they name (their member, grantor and revoker), for the API.
  *
@@ -36,7 +38,8 @@ interface ListBudgetOverridesUseCase {
      * @return The page.
      *
      * @throws run.ostrom.server.secrets.domain.AdminRequiredException When the caller is not an admin.
-     * @throws BudgetOverrideNotFoundException No such member, or [before] is not one of their overrides.
+     * @throws BudgetOverrideNotFoundException No such member.
+     * @throws InvalidBudgetOverrideException [before] is not one of their overrides (400).
      */
     suspend operator fun invoke(caller: Caller, login: String, before: String?): NamedBudgetOverrides
 }
@@ -109,9 +112,10 @@ class ListBudgetOverridesUseCaseImpl(
 ) : ListBudgetOverridesUseCase {
     override suspend fun invoke(caller: Caller, login: String, before: String?): NamedBudgetOverrides {
         val memberId = logins.memberOf(caller, login)
-        val cursor = before?.let { Uuid.parseOrNull(it) ?: throw BudgetOverrideNotFoundException("Override") }
+        // A cursor no page of this member gave (garbage, forged, another member's or organization's) is refused (400).
+        val cursor = before?.let { Uuid.parseOrNull(it) ?: throw InvalidBudgetOverrideException(BAD_CURSOR) }
         val page = repository.history(caller.orgId, memberId, cursor)
-            ?: throw BudgetOverrideNotFoundException("Override")
+            ?: throw InvalidBudgetOverrideException(BAD_CURSOR)
         return logins.named(caller, page.items, page.activeId, page.next)
     }
 }

@@ -121,9 +121,9 @@ class BudgetOverridesTest {
         val list = ListBudgetOverridesUseCaseImpl(overrides, Logins)
         assertFailsWith<AdminRequiredException> { list(TestCallers.memberA, "member", null) }
         assertFailsWith<BudgetOverrideNotFoundException> { list(admin, "nobody", null) }
-        assertFailsWith<BudgetOverrideNotFoundException> { list(admin, "member", "not-an-id") }
+        assertFailsWith<InvalidBudgetOverrideException> { list(admin, "member", "not-an-id") }
         overrides.pageMissing = true
-        assertFailsWith<BudgetOverrideNotFoundException> { list(admin, "member", Uuid.random().toString()) }
+        assertFailsWith<InvalidBudgetOverrideException> { list(admin, "member", Uuid.random().toString()) }
         overrides.pageMissing = false
         val granted = sample()
         overrides.page = BudgetOverridePage(listOf(granted), granted.id, null)
