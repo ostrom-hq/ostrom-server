@@ -134,6 +134,16 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "PATCH /api/v1/devices/{id}" to target("id" to DEVICE, body = """{"name": "renamed"}"""),
     "DELETE /api/v1/devices/{id}" to target("id" to DEVICE),
     "GET /api/v1/members/{memberId}/devices" to target("memberId" to MEMBER_ID),
+    // A device's daemon (runners.cloud.remote.daemon.v1): the caller's own device only, B's device is not found; the
+    // daemon's routes act on the device of the caller's own sign-in, and B's session is not refused.
+    "GET /api/v1/devices/{id}/folders" to target("id" to DEVICE),
+    "POST /api/v1/devices/current/daemon/poll" to Case.Own("polls for the sessions of the caller's own device"),
+    "DELETE /api/v1/devices/current/daemon" to Case.Own("marks the caller's own device offline"),
+    "PUT /api/v1/devices/current/folders" to Case.Own("publishes the caller's own device's folders"),
+    "POST /api/v1/devices/current/daemon/sessions/{id}/refuse" to
+        target("id" to CLOUD_SESSION, body = """{"reason": "taken"}"""),
+    "POST /api/v1/devices/current/daemon/listings/{id}" to
+        Case.Target(mapOf("id" to Param.Fresh), body = """{"items": []}"""),
     "POST /api/v1/push-devices" to Case.Own("registers the caller's phone"),
     "GET /api/v1/push-devices" to Case.Own("lists the caller's own phones"),
     "DELETE /api/v1/push-devices/{id}" to target("id" to PUSH_DEVICE),

@@ -80,5 +80,8 @@ internal fun ResultRow.toDevice(): RegisteredDevice {
         osVersion = this[t.osVersion],
         createdAt = this[t.createdAt],
         lastLoginAt = this[t.lastLoginAt],
+        daemonSeenAt = this[t.daemonSeenAt],
+        daemonVersion = this[t.daemonVersion],
+        daemonFeatures = daemonFeatures(this[t.daemonFeatures]),
     )
 }

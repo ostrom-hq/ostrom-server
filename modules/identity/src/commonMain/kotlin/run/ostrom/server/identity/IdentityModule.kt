@@ -186,6 +186,8 @@ import run.ostrom.server.kernel.auth.ServiceKeyAudit
 import run.ostrom.server.kernel.auth.SignOutListener
 import run.ostrom.server.kernel.auth.DeviceRemovalListener
 import run.ostrom.server.kernel.auth.SignedInDevices
+import run.ostrom.server.kernel.auth.DeviceDaemons
+import run.ostrom.server.identity.infrastructure.DeviceDaemonsImpl
 import run.ostrom.server.identity.domain.SignedInDevicesImpl
 import run.ostrom.server.kernel.auth.TokenAuthenticator
 import run.ostrom.server.kernel.database.JdbcDatabase
@@ -310,6 +312,8 @@ object IdentityModule : ServerModule {
         }
         // The device of a person's CLI sign-in, for the remote sessions of the runners module.
         single<SignedInDevices> { SignedInDevicesImpl(get(), get()) }
+        // The daemon of a person's device (runners.cloud.remote.daemon.v1): its presence, folders and listings.
+        single<DeviceDaemons> { DeviceDaemonsImpl(get()) }
         single<RenameDeviceUseCase> {
             RenameDeviceUseCaseImpl(get(), getOrNull<MemberDirectory>() ?: NoMemberDirectory, get(), get())
         }

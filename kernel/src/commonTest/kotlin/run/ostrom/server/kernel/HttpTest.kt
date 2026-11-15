@@ -477,6 +477,7 @@ class HttpTest {
             ErrorKind.RATE_LIMITED to 429,
             ErrorKind.GONE to 410,
             ErrorKind.UNAVAILABLE to 503,
+            ErrorKind.GATEWAY_TIMEOUT to 504,
             ErrorKind.INTERNAL to 500,
         )
         assertEquals(expected, ErrorKind.entries.associateWith { it.httpStatus.value })

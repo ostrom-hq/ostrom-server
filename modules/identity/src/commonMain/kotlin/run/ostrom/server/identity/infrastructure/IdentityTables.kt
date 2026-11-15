@@ -195,6 +195,42 @@ internal object IdentityDevices : Table("identity_devices") {
     val createdAt = instant("created_at")
     val lastLoginAt = instant("last_login_at")
 
+    /** The last recorded poll of the device's daemon; null when it never connected or said it stopped. */
+    val daemonSeenAt = instant("daemon_seen_at").nullable()
+    val daemonVersion = text("daemon_version").nullable()
+
+    /** What the daemon announced at the same poll, comma-separated (`resume.v1`); null for an older daemon. */
+    val daemonFeatures = text("daemon_features").nullable()
+
+    override val primaryKey = PrimaryKey(id)
+}
+
+/** The folders a device's daemon publishes: its own key and the folder's name, never a path. Replaced as a whole. */
+internal object IdentityDeviceFolders : Table("identity_device_folders") {
+    val deviceId = uuid("device_id")
+    val position = integer("position")
+    val folderId = text("folder_id")
+    val name = text("name")
+    val label = text("label").nullable()
+
+    // Read in order by the primary key's prefix, without a sort.
+    override val primaryKey = PrimaryKey(deviceId, position)
+}
+
+/**
+ * Members waiting for a device's daemon to list a folder's conversations: a row lives while its member waits
+ * (seconds); one left by a stopped replica expires and goes at the device's next request. Its answer is sealed.
+ */
+internal object IdentityDeviceDaemonListings : Table("identity_device_daemon_listings") {
+    val id = uuid("id")
+    val deviceId = uuid("device_id")
+    val folderId = text("folder_id")
+    val maxResults = integer("max_results")
+    val before = text("before_cursor").nullable()
+    val expiresAt = instant("expires_at")
+    val answeredAt = instant("answered_at").nullable()
+    val answer = text("answer_envelope").nullable()
+
     override val primaryKey = PrimaryKey(id)
 }
 

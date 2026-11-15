@@ -4,6 +4,7 @@ package run.ostrom.server.runners.domain
 import dev.whyoleg.cryptography.CryptographyProvider
 import dev.whyoleg.cryptography.algorithms.SHA256
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import run.ostrom.server.kernel.auth.DeviceDaemons
 import run.ostrom.server.kernel.auth.DeviceRemovalListener
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.SignedInDevices
@@ -120,6 +121,9 @@ object RemoteSessionRules {
 
     /** Why a remote session ended with its device. */
     const val DEVICE_REMOVED: String = "device_removed"
+
+    /** Why a session the device's daemon refused ended (`runners.cloud.remote.daemon.v1`). */
+    const val HOST_REFUSED: String = "host_refused"
 
     /** Claude Code's requests come to the clients; Codex stays in its sandbox. The default. */
     const val ASK: String = "ask"
@@ -256,12 +260,15 @@ interface CreateRemoteSessionUseCase {
  * @param devices The devices of sign-ins; null refuses every remote session.
  * @param idleTimeout The organization's idle timeout of remote sessions.
  * @param clock The time.
+ * @param daemons The daemons of members' devices; null refuses a session started on another device
+ *   (`device_target_unsupported`).
  */
 class CreateRemoteSessionUseCaseImpl(
     private val repository: CloudSessionsRepository,
     private val devices: SignedInDevices?,
     private val idleTimeout: RemoteIdleTimeout,
     private val clock: Clock,
+    private val daemons: DeviceDaemons? = null,
 ) : CreateRemoteSessionUseCase {
     override suspend fun invoke(
         caller: Caller,
@@ -273,17 +280,17 @@ class CreateRemoteSessionUseCaseImpl(
         // createRemote).
         if (caller.onBehalf) throw OnBehalfForbiddenException()
         val agent = RemoteSessionRules.validateRemote(draft)
-        // The daemons of members' devices are not served yet (`runners.cloud.remote.daemon.v1`).
-        if (draft.deviceId != null) {
-            throw RemoteSessionRules.invalid(
-                "device_target_unsupported",
-                "This server does not start remote sessions on another device.",
-            )
+        // A service key acting for its creator is no device: nobody hosts a session for another member. With a
+        // device target, the session runs on that device instead, started by its daemon (TeamCode's targetFolder).
+        val target = if (draft.deviceId == null) {
+            HostTarget(RemoteSessionRules.deviceOf(devices, principal), draft.directoryName, null)
+        } else {
+            targetFolder(principal, draft, draft.deviceId)
         }
-        // A service key acting for its creator is no device: nobody hosts a session for another member.
-        val device = RemoteSessionRules.deviceOf(devices, principal)
-        // Without a device target, the draft names its directory (validateRemote): the name when none is given.
-        val name = listOfNotNull(draft.name?.let { it.trim().takeIf(String::isNotEmpty) }, draft.directoryName).first()
+        val device = target.device
+        val directory = target.directory
+        // The draft names its directory (validateRemote), or the daemon's folder does: the name when none is given.
+        val name = listOfNotNull(draft.name?.let { it.trim().takeIf(String::isNotEmpty) }, directory).first()
         ensureValid(name.length <= MAX_NAME_LENGTH && name.none { it.isISOControl() }) {
             "The name must be 1 to $MAX_NAME_LENGTH characters, without control characters."
         }
@@ -320,11 +327,64 @@ class CreateRemoteSessionUseCaseImpl(
             permissionBypass = PermissionBypass(caller.memberId, principal.credentialId, now)
                 .takeIf { mode == RemoteSessionRules.BYPASS },
             kind = SessionKind.REMOTE,
-            host = RemoteHost(device, draft.directoryName, mode),
+            host = RemoteHost(device, directory, mode, target.folderId),
             createdBy = caller.attribution,
         )
         return store(session, key, device)
     }
+
+    /**
+     * The device and folder of a session started by a device's daemon (TeamCode's `targetFolder`). Only the device's
+     * owner, with a person's sign-in, starts one: the device row's person decides, never the caller's role, so an
+     * administrator cannot start an agent on another member's computer (`404 device_not_found`, as for an unknown
+     * device). The daemon must be online (`409 device_offline`: nothing is queued for later) and the folder one it
+     * published (`422 folder_not_published`); the daemon checks the folder again before it hosts the session.
+     */
+    // TeamCode's targetFolder: one refusal for each check, in its order.
+    @Suppress("ThrowsCount")
+    private suspend fun targetFolder(
+        principal: AuthenticatedPrincipal,
+        draft: RemoteSessionDraft,
+        target: String,
+    ): HostTarget {
+        val daemons = daemons ?: throw RemoteSessionRules.invalid(
+            "device_target_unsupported",
+            "This server does not start remote sessions on another device.",
+        )
+        val userId = Uuid.parseOrNull(principal.subjectId)?.takeIf { principal.kind == PrincipalKind.USER }
+            ?: throw RemoteSessionException(
+                ErrorKind.UNPROCESSABLE,
+                "remote_requires_login",
+                "Only the device's owner, signed in, starts a session on it; service keys cannot.",
+            )
+        val folderId = draft.folderId?.takeIf(DeviceDaemonRules::validFolderId)
+            ?: throw RemoteSessionRules.invalid(
+                "invalid_folder",
+                "Send the folderId of one of the device's published folders.",
+            )
+        // Continuing a device's conversation is runners.cloud.remote.resume.v1, not served yet.
+        if (draft.resumeSessionId != null) {
+            throw RemoteSessionRules.invalid(
+                "resume_unsupported",
+                "This server does not continue a conversation of the device yet.",
+            )
+        }
+        val deviceId = Uuid.parseOrNull(target) ?: throw DeviceDaemonRules.deviceNotFound()
+        val device = daemons.owned(userId, deviceId, clock.now()) ?: throw DeviceDaemonRules.deviceNotFound()
+        if (device.daemon?.online != true) throw DeviceDaemonRules.deviceOffline(device.name)
+        val folder = device.folders.find { it.id == folderId }
+            ?: throw DeviceDaemonRules.folderNotPublished(device.name)
+        if (draft.directoryName != null && draft.directoryName != folder.name) {
+            throw RemoteSessionRules.invalid(
+                "invalid_directory_name",
+                "The directory of a session started on a device is its folder's name; omit directoryName.",
+            )
+        }
+        return HostTarget(device.id, folder.name, folder.id)
+    }
+
+    // Where a remote session runs: the caller's own device, or another of their devices through its daemon's folder.
+    private data class HostTarget(val device: Uuid, val directory: String?, val folderId: String?)
 
     /**
      * Stores [session], once per [key]: no cap holds a remote session. The key's request is the one sent from
@@ -443,6 +503,71 @@ class HostRemoteSessionUseCaseImpl(
             )
             // The reconciler watches the new execution from now on (its first heartbeat, then the next ones).
             repository.compareAndSet(next, now)?.let { return CloudHost(it.orgId, it.epoch, it) }
+        }
+        throw RemoteSessionRules.conflict("session_busy", "The cloud session changed concurrently. Retry the request.")
+    }
+
+    private companion object {
+        const val MAX_ATTEMPTS = 5
+    }
+}
+
+/** The device's daemon refuses to host a session (`POST /api/v1/devices/current/daemon/sessions/{id}/refuse`). */
+interface RefuseRemoteHostUseCase {
+    /**
+     * Refuses it (TeamCode's `refuseHost`): the daemon's own check rejected the order (the folder left its
+     * configuration, the agent is missing...). The session ends with `failure.code` [RemoteSessionRules.HOST_REFUSED]
+     * and the daemon's [reason]. Only from the session's device, for a session started through its daemon that still
+     * waits for a host.
+     *
+     * @param caller The member.
+     * @param device The device of the caller's sign-in.
+     * @param id The session.
+     * @param reason The daemon's reason code.
+     * @return The session, terminating.
+     * @throws CloudSessionNotFoundException When the caller owns no such session started through a daemon.
+     * @throws RemoteSessionException `invalid_reason` (400), `not_waiting_host`, `remote_host_mismatch`,
+     *   `remote_host_removed` or `session_busy` (409).
+     */
+    suspend operator fun invoke(caller: Caller, device: Uuid, id: Uuid, reason: String): CloudSession
+}
+
+/**
+ * [RefuseRemoteHostUseCase] on the repository.
+ *
+ * @param repository The sessions.
+ * @param clock The time.
+ */
+class RefuseRemoteHostUseCaseImpl(
+    private val repository: CloudSessionsRepository,
+    private val clock: Clock,
+) : RefuseRemoteHostUseCase {
+    override suspend fun invoke(caller: Caller, device: Uuid, id: Uuid, reason: String): CloudSession {
+        DeviceDaemonRules.validateReason(reason)
+        val found = repository.ownedBy(caller, id)
+        // Only a session started through a daemon has a folder: a remote session of the device itself or a cloud one
+        // is not the daemon's to refuse.
+        if (found.host?.folderId == null) throw CloudSessionNotFoundException()
+        RemoteSessionRules.requireHost(device, found)
+        repeat(MAX_ATTEMPTS) {
+            val current = repository.ownedBy(caller, id)
+            val waiting = current.phase == RemoteSessionRules.WAITING_HOST &&
+                current.desiredState == DesiredState.RUNNING && !current.state.isFinal
+            if (!waiting) {
+                throw RemoteSessionRules.conflict("not_waiting_host", "This session no longer waits for its host.")
+            }
+            val now = clock.now()
+            val next = current.copy(
+                desiredState = DesiredState.TERMINATED,
+                terminatedReason = RemoteSessionRules.HOST_REFUSED,
+                failure = SessionFailure(
+                    RemoteSessionRules.HOST_REFUSED,
+                    "The device refused to start this session ($reason).",
+                    retryable = false,
+                ),
+                updatedAt = now,
+            )
+            repository.compareAndSet(next, now)?.let { return it }
         }
         throw RemoteSessionRules.conflict("session_busy", "The cloud session changed concurrently. Retry the request.")
     }
