@@ -145,7 +145,7 @@ private fun ApiCatalog.deviceFolderOperations() {
             organizationHeader()
             pathId("id", "The device's id.")
             pathId("folderId", "One of the folders the device's daemon published.")
-            queryLimit("How many, 1 to 50 (20 by default).", 50)
+            queryLimit("How many, 1 to 50 (20 by default).", maximum = 50)
             queryText("before", "The `next` of the previous page.")
         }
         responses {

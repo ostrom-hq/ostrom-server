@@ -59,7 +59,7 @@ private fun ApiCatalog.automationDefinitionOperations() {
             organizationHeader()
             queryText("owner", "`all`, or a member id: the automations of that member, for an administrator only.")
             queryText("before", "The `next` of the previous page: the id of its last automation.")
-            queryLimit("The page size, 1 to 100.", 100)
+            queryLimit("The page size, 1 to 100.", maximum = 100)
         }
         responses {
             ok<AutomationsResponse>("A page of automations, `next` set when another may follow.")
@@ -204,7 +204,7 @@ private fun ApiCatalog.automationRunOperations() {
             organizationHeader()
             pathId("id", AUTOMATION_ID)
             queryText("before", "The `next` of the previous page: the id of its last run.")
-            queryLimit("The page size, 1 to 100.", 100)
+            queryLimit("The page size, 1 to 100.", maximum = 100)
         }
         responses {
             ok<RunsResponse>("A page of runs, `next` set when another may follow.")

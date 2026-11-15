@@ -136,7 +136,7 @@ private fun ApiCatalog.meOperations() {
         summary = "The person's account-level signed audit events, newest first (scope `profile:read`)."
         parameters {
             queryNumber("before", "The `sequence` of the last event of the previous page.")
-            queryLimit("1 to 200, 50 by default.", 200)
+            queryLimit("1 to 200, 50 by default.", maximum = 200)
         }
         responses {
             ok<AuditEventsResponse>("A page of events, `nextBefore` set when another may follow.")

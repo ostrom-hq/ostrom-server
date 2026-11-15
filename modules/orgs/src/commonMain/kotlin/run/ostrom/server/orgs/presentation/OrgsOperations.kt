@@ -204,7 +204,7 @@ private fun ApiCatalog.memberOperations() {
             "created it."
         parameters {
             pathId("org", ORG_REF)
-            queryLimit("The most members of the page, 1 to 1000; 1000 without it.", 1000)
+            queryLimit("The most members of the page, 1 to 1000; 1000 without it.", maximum = 1000)
             queryText("after", "The `next` of the previous page: the members who joined after this one.")
             queryText("q", "Only the members whose login or name starts with it, whatever the case; 1 to " +
                 "100 characters.")

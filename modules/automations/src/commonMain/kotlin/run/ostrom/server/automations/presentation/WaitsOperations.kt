@@ -52,7 +52,7 @@ private fun ApiCatalog.waitReadOperations() {
                 "(404 otherwise, an administrator included).")
             queryText("runId", "Only the waits of that workflow run.")
             queryText("before", "The `next` of the previous page: the id of its last wait.")
-            queryLimit("The page size, 1 to 100 (50 by default); 400 outside.", 100)
+            queryLimit("The page size, 1 to 100 (50 by default); 400 outside.", maximum = 100)
         }
         responses {
             ok<WaitsResponse>("A page of waits, `next` set when another may follow.")

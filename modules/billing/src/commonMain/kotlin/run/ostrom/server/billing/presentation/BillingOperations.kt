@@ -158,7 +158,7 @@ private fun ApiCatalog.subscriptionOperations() {
             "`limit` under 1 is refused (400), one above 100 is brought down to 100."
         parameters {
             pathId("orgId", "The organization's id.")
-            queryLimit("At most this many invoices, 1 to 100 (24 by default).", 100)
+            queryLimit("At most this many invoices, 1 to 100 (24 by default).", maximum = 100)
         }
         responses {
             ok<InvoicesResponse>("The invoices, newest first.")

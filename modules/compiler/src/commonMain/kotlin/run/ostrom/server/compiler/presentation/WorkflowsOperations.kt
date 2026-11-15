@@ -45,7 +45,7 @@ internal fun ApiCatalog.workflowOperations() {
             queryText("status", "Only the workflows in this status (`proposed`, `accepted` or `rejected`); 400 " +
                 "otherwise.")
             queryText("after", "The `next` of the previous page: the id of its last workflow.")
-            queryLimit("The page size, 1 to 100 (50 by default); 400 below.", 100)
+            queryLimit("The page size, 1 to 100 (50 by default); 400 below.", maximum = 100)
         }
         responses {
             ok<WorkflowsPage>(

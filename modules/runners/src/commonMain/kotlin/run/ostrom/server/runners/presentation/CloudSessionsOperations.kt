@@ -46,7 +46,7 @@ private fun ApiCatalog.cloudSessionListing() {
             queryText("kind", "The kind of session to list, `cloud` or `remote`; repeat it to list both.")
             queryText("owner", "The caller's member id; anything else is refused.")
             queryText("before", "The `next` of the previous page.")
-            queryLimit("How many sessions a page holds.", 50)
+            queryLimit("How many sessions a page holds.", maximum = 50)
         }
         responses {
             ok<CloudSessionsResponse>("A page of the caller's sessions, newest first, with the cursor of the next.")

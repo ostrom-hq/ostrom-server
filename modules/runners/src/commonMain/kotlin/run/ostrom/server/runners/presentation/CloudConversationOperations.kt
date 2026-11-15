@@ -53,7 +53,7 @@ private fun ApiCatalog.transcriptPages() {
             pathId("id", SESSION_ID)
             queryNumber("after", "Only the events after this sequence number.")
             queryNumber("before", "Only the events before this sequence number.")
-            queryLimit("How many events a page holds (100 by default).", 200)
+            queryLimit("How many events a page holds (100 by default).", maximum = 200)
             queryText("feed", "`main`, or the id of the `tool.call` that started a subagent.")
         }
         responses {
@@ -119,7 +119,7 @@ private fun ApiCatalog.inputReadOperations() {
             organizationHeader()
             pathId("id", SESSION_ID)
             queryText("before", "The `nextBefore` of the previous page.")
-            queryLimit("How many inputs a page holds.", 100)
+            queryLimit("How many inputs a page holds.", maximum = 100)
         }
         responses {
             ok<CloudInputPageDto>("A page of inputs, newest first.")

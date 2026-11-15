@@ -80,7 +80,7 @@ private fun ApiCatalog.ruleOperations() {
             queryText("group", "Only the rules of this group.")
             queryText("after", "The `next` of the previous page (opaque); 400 when no page gave it.")
             queryLimit("The page size, 1 to 1000 (1000 by default); a value outside is brought " +
-                "into it.", 1000)
+                "into it.", maximum = 1000)
         }
         responses {
             ok<RulesPage>("A page of rules, `next` set when another follows.")

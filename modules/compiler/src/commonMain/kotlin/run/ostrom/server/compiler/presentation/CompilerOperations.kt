@@ -140,7 +140,10 @@ private fun ApiCatalog.packageAuditOperations() {
         summary = "Audit of compilations, pins and revocations."
         parameters {
             organizationHeader()
-            queryLimit("The number of lines, 1 to 200 (200 by default); a larger one is brought down to 200.", 200)
+            queryLimit(
+                "The number of lines, 1 to 200 (200 by default); a larger one is brought down to 200.",
+                maximum = 200,
+            )
         }
         responses {
             ok<AuditPage>("The lines, newest first.")

@@ -88,7 +88,7 @@ private fun ApiCatalog.runOperations() {
             queryText("workflow", "Only the runs of this workflow.")
             queryText("status", STATUS)
             queryText("before", BEFORE)
-            queryLimit("The page size, 1 to 100 (50 by default); 400 outside.", 100)
+            queryLimit("The page size, 1 to 100 (50 by default); 400 outside.", maximum = 100)
         }
         responses {
             ok<RunsPage>("A page of runs, `next` set when another may follow.")

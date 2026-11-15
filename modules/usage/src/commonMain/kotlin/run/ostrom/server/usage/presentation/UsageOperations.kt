@@ -85,7 +85,7 @@ private fun ApiCatalog.eventOperations() {
         parameters {
             organizationHeader()
             queryText("before", "The `next` of the previous page, or an ISO 8601 time.")
-            queryLimit("The page size, 1 to 200 (50 by default).", 200)
+            queryLimit("The page size, 1 to 200 (50 by default).", maximum = 200)
         }
         responses {
             ok<UsageEventsPageResponse>("A page of events, `next` set when another may follow.")

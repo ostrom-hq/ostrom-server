@@ -243,7 +243,7 @@ private fun ApiCatalog.listOperations() {
         parameters {
             organizationHeader()
             queryText("before", "The `next` of the previous page.")
-            queryLimit("The page size, 1 to 100 (20 by default).", 100)
+            queryLimit("The page size, 1 to 100 (20 by default).", maximum = 100)
             queryText("scope", "As TeamCode's gallery tabs: `team` (everything the caller can read, the " +
                 "default), `mine` (the ones they own) or `shared` (the ones shared with them).")
             queryText("origin", "Where the artifact was created: `local_run` (an agent on a machine), " +

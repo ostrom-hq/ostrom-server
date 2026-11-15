@@ -120,7 +120,7 @@ private fun ApiCatalog.transferListing() {
             queryText("state", "Only the transfers in this state; repeat it for several.")
             queryText("session", "Only the transfers of this session.")
             queryText("before", "The `next` of the previous page.")
-            queryLimit("How many transfers a page holds.", 50)
+            queryLimit("How many transfers a page holds.", maximum = 50)
         }
         responses {
             ok<CloudTransferPageResponse>("A page of transfers, newest first, with the cursor of the next.")

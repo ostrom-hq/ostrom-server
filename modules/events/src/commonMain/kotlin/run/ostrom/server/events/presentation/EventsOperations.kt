@@ -199,7 +199,7 @@ private fun ApiCatalog.webhookActionOperations() {
         parameters {
             organizationHeader()
             pathId("id", "The webhook's id.")
-            queryLimit("1 to 200, 50 by default.", 200)
+            queryLimit("1 to 200, 50 by default.", maximum = 200)
         }
         responses {
             ok<WebhookDeliveryList>("The deliveries, newest first.")

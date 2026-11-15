@@ -257,7 +257,7 @@ private fun ApiCatalog.directoryOperations() {
         parameters {
             organizationHeader()
             queryText("after", "The `next` of the previous page.")
-            queryLimit("The page size, 1 to 100 (100 by default).", 100)
+            queryLimit("The page size, 1 to 100 (100 by default).", maximum = 100)
         }
         responses {
             ok<ReposResponse>("A page of repositories; `next` is set when another follows.")
@@ -276,7 +276,7 @@ private fun ApiCatalog.directoryOperations() {
         parameters {
             pathId("org", "The organization's id or short name.")
             queryText("after", "The `next` of the previous page.")
-            queryLimit("The page size, 1 to 100 (100 by default).", 100)
+            queryLimit("The page size, 1 to 100 (100 by default).", maximum = 100)
         }
         responses {
             ok<TeamsResponse>("A page of teams; `next` is set when another follows.")

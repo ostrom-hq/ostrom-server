@@ -88,7 +88,7 @@ private fun ApiCatalog.entryOperations() {
             queryText("scope", "`team` or `personal`; both when absent (400 `invalid_memory` otherwise).")
             queryText("tags", "Comma-separated tags: entries having any of them.")
             queryText("after", "The `next` of the previous page (400 `invalid_memory` for any other value).")
-            queryLimit("The page size, 1 to 50 (50 by default).", 50)
+            queryLimit("The page size, 1 to 50 (50 by default).", maximum = 50)
         }
         responses {
             ok<MemoryIndexPage>("A page of entries without their content, `next` set when another follows.")
@@ -112,7 +112,7 @@ private fun ApiCatalog.entryOperations() {
             organizationHeader()
             queryText("q", "The words to look for.")
             queryText("tags", "Comma-separated tags: entries having any of them.")
-            queryLimit("At most this many entries, 1 to 20 (20 by default).", 20)
+            queryLimit("At most this many entries, 1 to 20 (20 by default).", maximum = 20)
         }
         responses {
             ok<MemorySearchResult>("The entries that match, newest first.")

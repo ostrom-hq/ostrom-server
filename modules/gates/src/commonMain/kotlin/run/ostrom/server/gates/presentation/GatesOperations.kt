@@ -183,7 +183,7 @@ private fun ApiCatalog.approvalOperations() {
                 "every status when absent.")
             queryFlag("mine", "Only the approvals waiting for the caller.")
             queryText("before", "The `next` of the previous page.")
-            queryLimit("The page size (50 by default).", 100)
+            queryLimit("The page size (50 by default).", maximum = 100)
         }
         responses {
             ok<ApprovalsPage>("A page of approvals, `next` set when another may follow.")
