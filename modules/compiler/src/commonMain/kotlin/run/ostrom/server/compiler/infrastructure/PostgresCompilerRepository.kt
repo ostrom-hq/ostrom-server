@@ -21,7 +21,6 @@ import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.core.statements.UpdateBuilder
-import org.jetbrains.exposed.v1.core.statements.insertValue
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.insertIgnore
@@ -118,14 +117,8 @@ class PostgresCompilerRepository(
             if (pin == null) {
                 t.deleteWhere { (t.orgId eq orgId) and (t.repoKey eq keyOf(repo)) }
             } else {
-                t.upsert(
-                    t.orgId, t.repoKey,
-                    onUpdate = {
-                        it[t.contentDigest] = insertValue(t.contentDigest)
-                        it[t.pinnedBy] = insertValue(t.pinnedBy)
-                        it[t.pinnedAt] = insertValue(t.pinnedAt)
-                    },
-                ) {
+                // On conflict, every column but the key takes the new pin's value (Exposed's default update).
+                t.upsert(t.orgId, t.repoKey) {
                     it[t.orgId] = orgId
                     it[t.repoKey] = keyOf(repo)
                     it[t.contentDigest] = pin.contentDigest

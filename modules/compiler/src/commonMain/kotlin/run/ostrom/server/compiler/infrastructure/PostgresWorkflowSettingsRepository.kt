@@ -9,7 +9,6 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.v1.core.eq
-import org.jetbrains.exposed.v1.core.statements.insertValue
 import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.upsert
 import kotlin.time.Instant
@@ -31,15 +30,8 @@ class PostgresWorkflowSettingsRepository(private val database: JdbcDatabase) : W
     override suspend fun saveEditors(orgId: Uuid, editors: WorkflowEditors, by: String, at: Instant) {
         database.withOrganization(orgId) {
             val s = CompilerWorkflowSettings
-            s.upsert(
-                s.orgId,
-                onUpdate = {
-                    it[s.mode] = insertValue(s.mode)
-                    it[s.memberIds] = insertValue(s.memberIds)
-                    it[s.updatedBy] = insertValue(s.updatedBy)
-                    it[s.updatedAt] = insertValue(s.updatedAt)
-                },
-            ) {
+            // On conflict, every column but the key takes the new value (Exposed's default update).
+            s.upsert(s.orgId) {
                 it[s.orgId] = orgId
                 it[s.mode] = editors.mode
                 it[s.memberIds] = Json.encodeToString(IDS, editors.memberIds.orEmpty())
