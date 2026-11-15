@@ -135,6 +135,26 @@ class CapacityProjectionTest {
     }
 
     @Test
+    fun aGapLastsUntilEveryWindowOfAnAccountResetsOrTheHorizon() {
+        val project = ProjectCapacityUseCase()
+        val empty = AccountHeadroom(
+            account(),
+            listOf(
+                WindowHeadroom("five_hour", .95, 0.0, now, now + 1.hours),
+                WindowHeadroom("seven_day", .95, 0.0, now, now + 3.hours),
+            ),
+        )
+        val both = assertNotNull(project.firstGap(emptyList(), listOf(empty), emptyMap(), now))
+        assertEquals(CapacityGap(now, now + 3.hours), both, "Serving again once its last window resets")
+        val beyond = ProjectCapacityUseCase(horizon = 1.hours)
+            .firstGap(listOf(headroom(.5, 2.hours)), emptyList(), mapOf("five_hour" to 1.0), now)
+        assertEquals(CapacityGap(now + 27.minutes, now + 1.hours), beyond, "The reset comes after the horizon")
+        val model = AccountHeadroom(account(), listOf(WindowHeadroom("model:opus", .95, 0.0, now, now + 10.minutes)))
+        val unperiodic = project.firstGap(emptyList(), listOf(model), emptyMap(), now)
+        assertEquals(CapacityGap(now, now + 10.minutes), unperiodic, "A window without a period resets once")
+    }
+
+    @Test
     fun anExhaustedAccountCountsAgainOnceItsWindowResets() {
         val project = ProjectCapacityUseCase()
         val exhausted = AccountHeadroom(

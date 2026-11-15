@@ -14,8 +14,9 @@ import kotlin.uuid.toKotlinUuid
  */
 class SharingOrgsImpl(private val database: JdbcDatabase) : SharingOrgs {
     override suspend fun withAccounts(): List<Uuid> = database.query {
+        // A query always answers a result set: exec's null is a statement's without one.
         exec("SELECT org_id FROM sharing_orgs_with_accounts() AS org_id") { rows ->
             buildList { while (rows.next()) add(rows.getObject(1, java.util.UUID::class.java).toKotlinUuid()) }
-        }.orEmpty()
+        }!!
     }
 }

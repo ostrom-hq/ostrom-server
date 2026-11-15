@@ -204,6 +204,7 @@ class ForecastServiceTest {
             NoQuotaHistory.record(Sharing.orgA, Uuid.random(), listOf(QuotaWindow("five_hour", .1, null, now)))
             val none = NoQuotaHistory.recent(Sharing.orgA, Uuid.random(), listOf("five_hour"), now..now, 1)
             assertEquals(emptyList(), none)
+            assertEquals(emptyMap(), NoQuotaHistory.recentOfOrg(Sharing.orgA, now..now, 1))
             assertEquals(0L, NoQuotaHistory.prune(now, 1))
         }
     }

@@ -109,20 +109,12 @@ class ProjectCapacityUseCase(private val horizon: Duration = PROJECTION_HORIZON)
 
     /** One run of the projection, in epoch milliseconds as TeamCode's. */
     private class Projection(val accounts: List<Projected>, var t: Long, val end: Long) {
-        var gapStart: Long? = null
+        private var gapStart: Long? = null
 
         // Each step ends at a reset or when the serving account runs out, so it is bounded by the resets before the
         // horizon.
-        fun run(): CapacityGap? {
-            repeat(MAX_STEPS) {
-                when (val outcome = step()) {
-                    Step.Continue -> Unit
-                    Step.None -> return null
-                    is Step.Gap -> return outcome.gap
-                }
-            }
-            return null
-        }
+        fun run(): CapacityGap? =
+            (generateSequence { step() }.take(MAX_STEPS).firstOrNull { it != Step.Continue } as? Step.Gap)?.gap
 
         private fun refill() = accounts.flatMap { it.windows }.forEach(::refill)
 
