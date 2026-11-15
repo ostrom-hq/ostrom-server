@@ -244,3 +244,11 @@ fun Responses.Builder.notFound(text: String) = error(HttpStatusCode.NotFound, te
  * @param text When it is answered, with its `type`.
  */
 fun Responses.Builder.conflict(text: String) = error(HttpStatusCode.Conflict, text)
+
+/** The 429 of a costly read, bounded per caller. */
+fun Responses.Builder.rateLimited() = error(
+    HttpStatusCode.TooManyRequests,
+    "Too many reads lately (`rate_limited`): nothing was read. A costly read is bounded per caller (a person, a " +
+        "device, an agent or a service): calls per minute, reads and waits together, and calls at once, the waits " +
+        "of `getGate` counted apart from the reads.",
+)

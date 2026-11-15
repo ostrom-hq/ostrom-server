@@ -30,6 +30,7 @@ import run.ostrom.server.kernel.settings.InstanceSettings
 import run.ostrom.server.kernel.settings.SettingsSection
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
 import io.ktor.client.call.body
@@ -80,6 +81,11 @@ class AdminRoutesPostgresTest {
         setOf(ALL_USER_SCOPES),
         channel = PrincipalChannel.BROWSER,
     )
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(listOf(AdminModule), overrides) { server ->
+        server.assertApiCatalogue(AdminModule)
+    }
 
     @Test
     fun theSetupLinksPersonAdministersAndAddsAnother() = serverTest(listOf(AdminModule), overrides) { server ->

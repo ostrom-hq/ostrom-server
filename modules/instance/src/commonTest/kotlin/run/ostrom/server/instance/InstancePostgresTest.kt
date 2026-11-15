@@ -10,6 +10,7 @@ import run.ostrom.server.instance.presentation.InstanceResponse
 import run.ostrom.server.instance.presentation.SigningKeysResponse
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.signing.InstanceSigner
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
 import io.ktor.client.call.body
 import io.ktor.client.request.get
@@ -23,6 +24,11 @@ import kotlin.uuid.Uuid
 
 /** Against a real PostgreSQL (CI service): the driver, the migrations and the repositories, on the JVM and natively. */
 class InstancePostgresTest {
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(listOf(InstanceModule)) { server ->
+        server.assertApiCatalogue(InstanceModule)
+    }
+
     @Test
     fun repositoryWritesThenReadsTheInstance() = serverTest(listOf(InstanceModule)) { server ->
         val repository = server.koin.get<InstanceRepository>()

@@ -3,6 +3,7 @@ package run.ostrom.server.reports
 
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.reports.domain.GetSpendingUseCase
 import run.ostrom.server.reports.domain.GetSpendingUseCaseImpl
@@ -14,6 +15,7 @@ import run.ostrom.server.reports.infrastructure.BudgetsSpendingBudgets
 import run.ostrom.server.reports.infrastructure.ReportsMigrations
 import run.ostrom.server.reports.infrastructure.ReportsRepositoryImpl
 import run.ostrom.server.reports.presentation.ReportsRoutesDependencies
+import run.ostrom.server.reports.presentation.reportsOperations
 import run.ostrom.server.reports.presentation.reportsRoutes
 import io.ktor.server.routing.Route
 import org.koin.core.Koin
@@ -26,6 +28,8 @@ import org.koin.dsl.module
  */
 object ReportsModule : ServerModule {
     override val name: String = "reports"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { reportsOperations() }
 
     override val koinModule: Module = module {
         single<ReportsRepository> { ReportsRepositoryImpl(get()) }

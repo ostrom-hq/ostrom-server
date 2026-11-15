@@ -18,9 +18,11 @@ import run.ostrom.server.admin.infrastructure.InstanceAdminsRepositoryImpl
 import run.ostrom.server.admin.infrastructure.InstanceSettingsRepositoryImpl
 import run.ostrom.server.admin.infrastructure.LegacyEnvironment
 import run.ostrom.server.admin.presentation.AdminRoutesDependencies
+import run.ostrom.server.admin.presentation.adminOperations
 import run.ostrom.server.admin.presentation.adminRoutes
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.settings.InstanceAdminGrants
 import run.ostrom.server.kernel.settings.InstanceAdministrators
@@ -42,6 +44,8 @@ import org.koin.dsl.module
  */
 object AdminModule : ServerModule {
     override val name: String = "admin"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { adminOperations() }
 
     override val koinModule: Module = module {
         single<InstanceAdminsRepository> { InstanceAdminsRepositoryImpl(get()) }
