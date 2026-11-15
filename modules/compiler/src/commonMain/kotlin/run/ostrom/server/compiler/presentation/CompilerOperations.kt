@@ -140,10 +140,11 @@ private fun ApiCatalog.packageAuditOperations() {
         summary = "Audit of compilations, pins and revocations."
         parameters {
             organizationHeader()
-            queryNumber("limit", "The number of lines, 1 to 200 (200 by default); a value outside is brought into it.")
+            queryNumber("limit", "The number of lines, 1 to 200 (200 by default); a larger one is brought down to 200.")
         }
         responses {
             ok<AuditPage>("The lines, newest first.")
+            badRequest("A `limit` of 0 or less (`invalid_request`).")
         }
     }
     get("/api/v1/packages/{digest}") {

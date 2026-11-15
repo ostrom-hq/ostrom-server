@@ -391,11 +391,14 @@ private fun ApiCatalog.journalOperations() {
             queryText("server", "Only the calls of this server.")
             queryText("dev", "Only the calls of this member (an id).")
             queryText("before", "An ISO 8601 instant, or the `next` of the previous page.")
-            queryNumber("limit", "The page size, 50 by default; brought into 1 to 200.")
+            queryNumber("limit", "The page size, 1 to 200 (50 by default); a larger one is brought down to 200.")
         }
         responses {
             ok<McpCallsPage>("A page of calls, and the cursor of the next one when there is one.")
-            badRequest("`dev` is not a member id, or `before` is not an instant nor a `next` (`invalid_request`).")
+            badRequest(
+                "A `limit` of 0 or less, `dev` not a member id, or `before` neither an instant nor a `next` " +
+                    "(`invalid_request`).",
+            )
         }
     }
     get("/api/v1/mcp/usage") {

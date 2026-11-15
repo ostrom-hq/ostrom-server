@@ -63,7 +63,7 @@ private fun ApiCatalog.automationDefinitionOperations() {
         }
         responses {
             ok<AutomationsResponse>("A page of automations, `next` set when another may follow.")
-            badRequest("A malformed cursor (`invalid_request`).")
+            badRequest("A malformed cursor, or one that names no automation of the organization's (`invalid_request`).")
         }
     }
     post("/api/v1/automations") {

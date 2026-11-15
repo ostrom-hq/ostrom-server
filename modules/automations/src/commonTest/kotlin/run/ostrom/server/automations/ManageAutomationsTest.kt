@@ -19,6 +19,7 @@ import run.ostrom.server.automations.fakes.cronDefinition
 import run.ostrom.server.automations.fakes.daveAuto
 import run.ostrom.server.automations.fakes.daveAutoKey
 import run.ostrom.server.automations.fakes.webhookDefinition
+import run.ostrom.server.kernel.errors.InvalidPageException
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -84,6 +85,8 @@ class ManageAutomationsTest {
         assertNull(last.next)
         assertFailsWith<InvalidAutomationException> { manage.list(aliceAuto, AutomationQuery(limit = 0)) }
         assertFailsWith<InvalidAutomationException> { manage.list(aliceAuto, AutomationQuery(limit = 101)) }
+        // A cursor that names no automation of the organization's is refused, never read as a position.
+        assertFailsWith<InvalidPageException> { manage.list(aliceAuto, AutomationQuery(before = Uuid.random())) }
     }
 
     @Test
