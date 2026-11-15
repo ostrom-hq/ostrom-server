@@ -218,7 +218,7 @@ enum class CloudInputStatus(val wire: String) {
  * @property requestDigest What the key stands for, so the same key with another request is refused.
  * @property attempts Deliveries so far.
  * @property eventSeq The transcript event recording its end.
- * @property files The files a message carries (`runners.cloud.files.v1`), in the order it named them.
+ * @property files The files a message carries (`runners.cloud.files.v1`), in upload order (TeamCode's).
  */
 data class CloudInput(
     val id: Uuid,

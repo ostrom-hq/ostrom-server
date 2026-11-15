@@ -103,8 +103,8 @@ private fun Route.inputRoutes(dependencies: CloudConversationRoutesDependencies)
             }
             val key = call.clientKey(body.clientMessageId)
             // The files are part of what a key stands for; a message without files keeps the digest it had.
-            val files = if (body.fileIds.isEmpty()) emptyList() else listOf("files", body.fileIds.joinToString(","))
-            val digest = digestOf(listOf("message", body.text.orEmpty(), body.wake.toString()) + files)
+            val named = if (body.fileIds.isEmpty()) emptyList() else listOf("files", body.fileIds.joinToString(","))
+            val digest = digestOf(listOf("message", body.text.orEmpty(), body.wake.toString()) + named)
             val request = InputRequest(body.text, body.wake, key, digest, body.expectedLastEventSeq, body.fileIds)
             call.accepted(conversation.send(caller, principal, sessionId(params.parent.id), request))
         }
