@@ -150,6 +150,12 @@ import run.ostrom.server.runners.infrastructure.TerminalTicketsImpl
 import run.ostrom.server.runners.infrastructure.replicaHttpClient
 import run.ostrom.server.runners.infrastructure.runnerVariables
 import run.ostrom.server.runners.presentation.CloudSessionsRoutesDependencies
+import run.ostrom.server.runners.domain.CloudInferenceCredentialStore
+import run.ostrom.server.runners.domain.CloudSessionWritten
+import run.ostrom.server.runners.domain.NoCloudSessionWritten
+import run.ostrom.server.runners.domain.RunnerInferenceTokens
+import run.ostrom.server.runners.domain.RunnerInferenceUseCaseImpl
+import run.ostrom.server.runners.infrastructure.CloudInferenceCredentialStoreImpl
 import run.ostrom.server.runners.presentation.RunnerRuntime
 import run.ostrom.server.runners.presentation.RunnersRoutesDependencies
 import run.ostrom.server.runners.presentation.TerminalRoutesDependencies
@@ -214,7 +220,14 @@ object RunnersModule : ServerModule {
         }
         single<BackfillSessionProfilesUseCase> { BackfillSessionProfilesUseCaseImpl(get(), get(), get()) }
         single(named(CLOUD_ACCESS_SETTINGS.name)) { CLOUD_ACCESS_SETTINGS }
-        single { CloudSessionsRepositoryImpl(get()) }
+        // The execution's inference credentials need the launches module's agent tokens: without it, none is served.
+        single {
+            val store = getOrNull<RunnerInferenceTokens>()?.let { tokens ->
+                CloudInferenceCredentialStoreImpl(get(), tokens, get(), get())
+            }
+            InferenceWiring(store)
+        }
+        single { CloudSessionsRepositoryImpl(get(), get<InferenceWiring>().written) }
         single<CloudSessionsRepository> { get<CloudSessionsRepositoryImpl>() }
         single<CloudAgentSessions> { RunnersCloudAgentSessions(get(), getOrNull<MemberLogins>()) }
         // The notification router titles a notification with its cloud session's name.
@@ -338,8 +351,9 @@ object RunnersModule : ServerModule {
                     get(),
                 )
             }
+            val inference = get<InferenceWiring>().store?.let { RunnerInferenceUseCaseImpl(get(), it) }
             CloudSessionsRoutesDependencies(
-                get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), environment,
+                get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), environment, inference,
             )
         }
         single<ListRunnersUseCase> { ListRunnersUseCaseImpl(get(), get()) }
@@ -448,6 +462,8 @@ object RunnersModule : ServerModule {
             ServerFeatures.RUNNERS_CLOUD_ENVIRONMENT.takeIf { members },
             ServerFeatures.RUNNERS_CLOUD_GITHUB.takeIf { github },
             ServerFeatures.RUNNERS_CLOUD_VARIABLES.takeIf { variables },
+            // The execution's inference credential, once the launches module opens the executions' launches.
+            ServerFeatures.RUNNERS_CLOUD_INFERENCE.takeIf { koin.getOrNull<InferenceWiring>()?.store != null },
             // Giving a session to another member, once the orgs module names the members.
             ServerFeatures.RUNNERS_CLOUD_TRANSFER.takeIf { koin.getOrNull<TransferWiring>()?.routes != null },
             // Sessions on the console's clusters and the organizations' profiles.
@@ -487,6 +503,15 @@ object RunnersModule : ServerModule {
                 sessions.purgeExpiredCreateKeys()
             }
         }
+        // Every minute, a bounded batch of the inference credentials expired or left by an execution that no longer
+        // runs is revoked and deleted (TeamCode's maintenance pass), on one replica at a time.
+        koin.get<InferenceWiring>().store?.let { credentials ->
+            scope.launch {
+                work.repeatDue(INFERENCE_PURGE, koin.get<Logger>(), "cloud inference credentials purge failed") {
+                    credentials.purge(INFERENCE_PURGE_LIMIT)
+                }
+            }
+        }
         garbageWorker(koin)?.let { garbage -> scope.launch { garbage.run() } }
     }
 
@@ -502,6 +527,12 @@ object RunnersModule : ServerModule {
 
     /** The purge of the expired idempotency records of the creations. */
     private val CREATE_KEYS_PURGE = ScheduledJob("runners/create-keys", 1.minutes, 1.minutes)
+
+    /** The purge of the stale inference credentials. */
+    private val INFERENCE_PURGE = ScheduledJob("runners/inference-credentials", 1.minutes, 1.minutes)
+
+    /** At most this many credentials a pass, as the creations' keys. */
+    private const val INFERENCE_PURGE_LIMIT = 500
 }
 
 /**
@@ -512,3 +543,16 @@ object RunnersModule : ServerModule {
  * @property complete The owner change at the paused boundary.
  */
 class TransferWiring(val routes: CloudTransfersRoutesDependencies?, val complete: CompleteCloudTransferUseCase?)
+
+/**
+ * The execution's inference credentials, built once (`runners.cloud.inference.v1`): null without the launches module,
+ * whose agent tokens they are.
+ *
+ * @property store The credentials.
+ */
+class InferenceWiring(val store: CloudInferenceCredentialStore?) {
+    /** What a session write tells: the store's revocation of an ended execution's credentials, or nobody. */
+    val written: CloudSessionWritten = store?.let { credentials ->
+        CloudSessionWritten { session -> credentials.revokeEnded(session) }
+    } ?: NoCloudSessionWritten
+}

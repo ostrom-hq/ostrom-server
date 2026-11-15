@@ -144,6 +144,7 @@ private fun Route.runnerChannelRoutes(dependencies: CloudSessionsRoutesDependenc
             call.response.header(HttpHeaders.CacheControl, "no-store")
             call.respond(RunnerVariablesResponse(values.variables, values.unavailable, values.secrets, values.oneTime))
         }
+        runnerInference?.let { inferenceRoute(dependencies, it) }
     }
     if (runnerEnvironment != null) {
         preparationRoutes(dependencies, runnerEnvironment)

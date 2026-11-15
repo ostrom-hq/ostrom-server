@@ -25,6 +25,7 @@ import run.ostrom.server.launches.domain.models.Launch
 import run.ostrom.server.launches.domain.models.LaunchLimit
 import run.ostrom.server.launches.domain.repositories.LaunchesRepository
 import run.ostrom.server.launches.domain.usecases.LaunchPolicy
+import run.ostrom.server.launches.infrastructure.LaunchInferenceTokens
 import run.ostrom.server.launches.infrastructure.LaunchesLaunches
 import run.ostrom.server.launches.infrastructure.launchRead
 import run.ostrom.server.launches.infrastructure.ofCloudSessionRead
@@ -43,7 +44,9 @@ import run.ostrom.server.runners.domain.CloudSession
 import run.ostrom.server.runners.domain.CloudSessionsRepository
 import run.ostrom.server.runners.domain.DesiredState
 import run.ostrom.server.runners.domain.RepositorySpec
+import run.ostrom.server.runners.domain.RunnerInferenceTokens
 import run.ostrom.server.runners.domain.RunnerTokens
+import run.ostrom.server.runners.presentation.RunnerInferenceCredentialResponse
 import run.ostrom.server.runners.domain.SessionLimits
 import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.sessions.presentation.SessionDto
@@ -56,6 +59,7 @@ import org.jetbrains.exposed.v1.jdbc.Query
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.update
 import io.ktor.client.call.body
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -434,6 +438,85 @@ class LaunchesPostgresTest {
             val issued = server.koin.get<IssueAgentTokenUseCase>()(ada.user.id, ada.org.id, orphan.id, 1.hours)
             val own = server.call(issued.secret, "/api/v1/sessions", SESSION.replace("\"s-1\"", "\"s-9\""))
             assertFalse(own.status.isSuccess(), "No such cloud session: ${own.bodyAsText()}")
+        }
+
+    private suspend fun TestServer.inference(token: String, body: String): HttpResponse =
+        client.post("/api/v1/cloud/runner/inference") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody(body)
+        }
+
+    @Test
+    fun theRunnerRenewsItsLaunchsAgentTokenAsTheExecutionsInferenceCredential() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val (session, token) = server.cloudSession(ada)
+            val before = server.inference(token, claim(session))
+            assertEquals(HttpStatusCode.Conflict, before.status)
+            assertTrue("inference_unavailable" in before.bodyAsText(), "No launch opened yet")
+            val launch = server.runnerLaunch("Bearer $token", claim(session)).body<LaunchResponse>()
+
+            val issued = server.inference(token, claim(session))
+            assertEquals(HttpStatusCode.OK, issued.status, issued.bodyAsText())
+            assertEquals("no-store", issued.headers[HttpHeaders.CacheControl])
+            val credential = issued.body<RunnerInferenceCredentialResponse>()
+            assertTrue(credential.expiresInMillis <= 1.hours.inWholeMilliseconds, "An hour at most")
+            val agent = server.call(credential.token, "/api/v1/sessions", SESSION)
+            assertEquals(HttpStatusCode.OK, agent.status, "Read as the launch's agent: ${agent.bodyAsText()}")
+            assertEquals(launch.launchId, agent.body<SessionResponse>().session.launchId)
+
+            // The execution ends: its credential goes with the write, and the runner is fenced.
+            val sessions = server.koin.get<CloudSessionsRepository>()
+            val current = assertNotNull(sessions.get(ada.org.id, session.id))
+            assertNotNull(sessions.compareAndSet(current.copy(state = SessionState.PAUSED), null))
+            assertEquals(HttpStatusCode.Unauthorized, server.call(credential.token, "/api/v1/sessions", SESSION).status)
+            assertEquals(HttpStatusCode.Conflict, server.inference(token, claim(session)).status)
+        }
+
+    @Test
+    fun anEndedExpiredOrEarlierLaunchGivesNoInferenceCredential() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val (session, token) = server.cloudSession(ada)
+            val launch = server.runnerLaunch("Bearer $token", claim(session)).body<LaunchResponse>()
+            val tokens = server.koin.get<RunnerInferenceTokens>()
+            assertNull(tokens.issue(session.copy(executionStartedAt = null), 1.hours), "No execution started")
+            assertNull(tokens.issue(session.copy(executionStartedAt = now + 1.hours), 1.hours), "An earlier one's")
+            assertNull(tokens.issue(session.copy(id = Uuid.random()), 1.hours), "No launch of that session")
+            val real = server.koin.get<LaunchesRepository>()
+            val vanished = LaunchInferenceTokens(
+                object : LaunchesRepository by real {
+                    override suspend fun find(orgId: Uuid, id: String): Launch? = null
+                },
+                server.koin.get(),
+                server.koin.get(),
+                Clock.System,
+            )
+            assertNull(vanished.issue(session, 1.hours), "A launch purged between its two reads")
+
+            // The launch's own agent ends it (the end of `ostrom <agent>`): nothing is renewed.
+            assertEquals(HttpStatusCode.NoContent, server.client.delete("/api/v1/launches/${launch.launchId}") {
+                header(HttpHeaders.Authorization, "Bearer ${launch.agentToken}")
+            }.status)
+            val ended = server.inference(token, claim(session))
+            assertTrue("inference_unavailable" in ended.bodyAsText(), ended.bodyAsText())
+
+            // A launch that expires within the hour gives a credential that ends with it; an expired one, none.
+            val later = session.copy(id = Uuid.random(), executionStartedAt = now - 3.hours)
+            val closing = stored(ada.org.id, ada.user.id, now - 2.hours)
+                .copy(cloudSessionId = later.id, expiresAt = now + 10.minutes)
+            assertNull(server.koin.get<LaunchesRepository>().create(closing, LaunchLimit.DEFAULT))
+            server.koin.get<IssueAgentTokenUseCase>()(ada.user.id, ada.org.id, closing.id, 1.hours)
+            val short = assertNotNull(tokens.issue(later, 1.hours))
+            assertTrue(short.expiresAt <= closing.expiresAt + 1.minutes, "${short.expiresAt}")
+            val expired = later.copy(id = Uuid.random())
+            val gone = stored(ada.org.id, ada.user.id, now - 2.hours)
+                .copy(cloudSessionId = expired.id, expiresAt = now - 1.minutes)
+            assertNull(server.koin.get<LaunchesRepository>().create(gone, LaunchLimit.DEFAULT))
+            assertNull(tokens.issue(expired, 1.hours), "Expired")
+            tokens.revoke(ada.org.id, listOf(short.id))
+            assertEquals(HttpStatusCode.Unauthorized, server.call(short.secret, "/api/v1/sessions", SESSION).status)
         }
 
     private fun stored(orgId: Uuid, userId: Uuid, createdAt: Instant) = Launch(

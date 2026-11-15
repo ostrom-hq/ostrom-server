@@ -106,6 +106,7 @@ class WebSessionsRepositoryImpl(private val database: JdbcDatabase) : WebSession
  * @param database The JDBC pool.
  * @param clock Bounds the purge's date.
  */
+@Suppress("TooManyFunctions") // One implementation of the one port of the table.
 class ApiTokensRepositoryImpl(
     private val database: JdbcDatabase,
     private val clock: Clock = Clock.System,
@@ -175,6 +176,27 @@ class ApiTokensRepositoryImpl(
     override suspend fun revokeOfAgentSession(agentSessionId: String, at: Instant): Long = database.query {
         countOf("identity_revoke_agent_session_tokens", textParam(agentSessionId), instantParam(at))
     }
+
+    // Inside the token's organization, on the partial index of the agent sessions' live tokens.
+    override suspend fun createForLiveAgentSession(token: ApiToken, secretHash: String, now: Instant): Boolean {
+        val orgId = requireNotNull(token.orgId) { "An agent token is bound to an organization." }
+        val session = requireNotNull(token.agentSessionId) { "An agent token names its agent session." }
+        return database.withOrganization(orgId) {
+            val live = t.select(t.id).where {
+                (t.agentSessionId eq session) and (t.orgId eq orgId) and (t.kind eq AGENT) and t.revokedAt.isNull() and
+                    (t.expiresAt greater now)
+            }.limit(1).any()
+            if (live) insertToken(token, secretHash)
+            live
+        }
+    }
+
+    override suspend fun revokeAgentToken(orgId: Uuid, id: Uuid, at: Instant): Boolean =
+        database.withOrganization(orgId) {
+            t.update({ (t.id eq id) and (t.orgId eq orgId) and (t.kind eq AGENT) and t.revokedAt.isNull() }) {
+                it[revokedAt] = at
+            } == 1
+        }
 
     // The one deletion across organizations, through the function of IdentityMigrations versions 14 and 15, which
     // bounds the date to the retention itself.

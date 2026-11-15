@@ -127,6 +127,16 @@ class SessionNotPausedException : OstromException(
     "session_not_paused",
 )
 
+/**
+ * The execution cannot run inference with a credential of the server (`inference_unavailable`, TeamCode's): a shell
+ * session runs no agent, and an execution that opened no launch (or whose launch ended) has none to renew.
+ */
+class InferenceUnavailableException : OstromException(
+    ErrorKind.CONFLICT,
+    "This execution has no launch to run inference with: open its launch first.",
+    "inference_unavailable",
+)
+
 /** The session no longer runs: its runner gets no environment variable. */
 class VariablesUnavailableException : OstromException(
     ErrorKind.CONFLICT,

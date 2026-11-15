@@ -323,3 +323,84 @@ class RevokeAgentTokensUseCaseImpl(
     override suspend fun invoke(agentSessionId: String): Long =
         tokens.revokeOfAgentSession(agentSessionId, clock.nowMillis())
 }
+
+/**
+ * Issues another agent token of an agent session that still has a live one, for the launches module: a cloud session's
+ * runner renews its execution's inference credential with it (`runners.cloud.inference.v1`). The token is an agent
+ * token like the launch's own ([AGENT_SCOPES]), so every route reads it as the launch's agent; an ended agent session
+ * (its tokens revoked) or an expired one gets none.
+ */
+interface RenewAgentTokenUseCase {
+    /**
+     * Issues the token.
+     *
+     * @param userId The user the agent works for.
+     * @param orgId The organization of the session.
+     * @param agentSessionId The agent session (1 to 128 characters).
+     * @param lifetime How long it lives, at most [MAX_AGENT_TOKEN_LIFETIME].
+     *
+     * @return The token and its secret, or null when the agent session has no live token any more.
+     *
+     * @throws IllegalArgumentException When the session id or the lifetime is out of bounds (a caller's bug).
+     */
+    suspend operator fun invoke(userId: Uuid, orgId: Uuid, agentSessionId: String, lifetime: Duration): IssuedToken?
+}
+
+/**
+ * [RenewAgentTokenUseCase] on the repository.
+ *
+ * @param tokens The tokens.
+ * @param secrets Makes secrets.
+ * @param hasher Hashes them.
+ * @param clock The clock.
+ */
+class RenewAgentTokenUseCaseImpl(
+    private val tokens: ApiTokensRepository,
+    private val secrets: SecretGenerator,
+    private val hasher: SecretHasher,
+    private val clock: Clock,
+) : RenewAgentTokenUseCase {
+    override suspend fun invoke(userId: Uuid, orgId: Uuid, agentSessionId: String, lifetime: Duration): IssuedToken? {
+        require(agentSessionId.isNotBlank() && agentSessionId.length <= MAX_SESSION_ID) { "Invalid agent session id." }
+        require(lifetime.isPositive() && lifetime <= MAX_AGENT_TOKEN_LIFETIME) { "Invalid agent token lifetime." }
+        val now = clock.nowMillis()
+        val issued = issue(secrets, TokenKind.AGENT) { id, hint ->
+            ApiToken(
+                id, userId, orgId, "agent $agentSessionId", TokenKind.AGENT, AGENT_SCOPES, hint, agentSessionId, now,
+                now + lifetime, null, null,
+            )
+        }
+        return issued.takeIf { tokens.createForLiveAgentSession(it.token, hasher.hash(it.secret), now) }
+    }
+
+    private companion object {
+        const val MAX_SESSION_ID = 128
+    }
+}
+
+/** Revokes one agent token, for the launches module: a renewed credential the runner no longer holds. */
+interface RevokeAgentTokenUseCase {
+    /**
+     * Revokes it, without an audit entry (the server revokes it, never a person).
+     *
+     * @param orgId The organization the token is bound to.
+     * @param tokenId The token.
+     *
+     * @return True when it was live and is now revoked.
+     */
+    suspend operator fun invoke(orgId: Uuid, tokenId: Uuid): Boolean
+}
+
+/**
+ * [RevokeAgentTokenUseCase] on the repository.
+ *
+ * @param tokens The tokens.
+ * @param clock The clock.
+ */
+class RevokeAgentTokenUseCaseImpl(
+    private val tokens: ApiTokensRepository,
+    private val clock: Clock,
+) : RevokeAgentTokenUseCase {
+    override suspend fun invoke(orgId: Uuid, tokenId: Uuid): Boolean =
+        tokens.revokeAgentToken(orgId, tokenId, clock.nowMillis())
+}

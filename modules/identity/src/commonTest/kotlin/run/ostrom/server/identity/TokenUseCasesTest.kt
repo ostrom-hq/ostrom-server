@@ -12,6 +12,8 @@ import run.ostrom.server.identity.domain.IssueAgentTokenUseCaseImpl
 import run.ostrom.server.identity.domain.ListTokensUseCaseImpl
 import run.ostrom.server.identity.domain.MAX_TOKENS_PER_USER
 import run.ostrom.server.identity.domain.RevokeAgentTokensUseCaseImpl
+import run.ostrom.server.identity.domain.RenewAgentTokenUseCaseImpl
+import run.ostrom.server.identity.domain.RevokeAgentTokenUseCaseImpl
 import run.ostrom.server.identity.domain.RevokeTokenUseCaseImpl
 import run.ostrom.server.identity.domain.RotateTokenUseCaseImpl
 import run.ostrom.server.identity.domain.TokenKind
@@ -221,5 +223,30 @@ class TokenUseCasesTest {
 
         assertEquals(2, RevokeAgentTokensUseCaseImpl(tokens, clock)("run-1"))
         assertEquals(0, RevokeAgentTokensUseCaseImpl(tokens, clock)("run-1"))
+    }
+
+    @Test
+    fun anAgentSessionWithALiveTokenGetsAnotherOneUntilItEnds() = runTest {
+        val renew = RenewAgentTokenUseCaseImpl(tokens, secrets, hasher, clock)
+        val revokeOne = RevokeAgentTokenUseCaseImpl(tokens, clock)
+        val orgId = Uuid.random()
+        assertNull(renew(userId, orgId, "run-1", 1.hours), "No launch token yet")
+        val launch = issueAgent(userId, orgId, "run-1", 24.hours)
+
+        val renewed = assertNotNull(renew(userId, orgId, "run-1", 1.hours))
+        assertEquals(TokenKind.AGENT, renewed.token.kind)
+        assertEquals(launch.token.scopes, renewed.token.scopes, "The launch's agent token's scopes")
+        assertEquals("run-1" to orgId, renewed.token.agentSessionId to renewed.token.orgId)
+        assertEquals(clock.now + 1.hours, renewed.token.expiresAt)
+        assertEquals(renewed.token, tokens.findBySecretHash(hasher.hash(renewed.secret)))
+        assertFailsWith<IllegalArgumentException> { renew(userId, orgId, " ", 1.hours) }
+        assertFailsWith<IllegalArgumentException> { renew(userId, orgId, "x".repeat(129), 1.hours) }
+        assertFailsWith<IllegalArgumentException> { renew(userId, orgId, "run-1", 0.hours) }
+        assertFailsWith<IllegalArgumentException> { renew(userId, orgId, "run-1", 25.hours) }
+
+        assertEquals(true, revokeOne(orgId, renewed.token.id))
+        assertEquals(false, revokeOne(orgId, renewed.token.id), "Revoked once")
+        RevokeAgentTokensUseCaseImpl(tokens, clock)("run-1")
+        assertNull(renew(userId, orgId, "run-1", 1.hours), "The agent session ended")
     }
 }

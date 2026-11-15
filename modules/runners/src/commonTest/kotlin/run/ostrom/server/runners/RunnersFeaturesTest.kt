@@ -12,7 +12,9 @@ import run.ostrom.server.runners.domain.ConversationAnnouncement
 import run.ostrom.server.runners.domain.NoRunnerVariables
 import run.ostrom.server.runners.domain.RunnerGitHubToken
 import run.ostrom.server.runners.domain.RunnerGitHubTokens
+import run.ostrom.server.runners.fakes.FakeInferenceStore
 import run.ostrom.server.runners.fakes.FakeTransferRecipients
+import run.ostrom.server.runners.fakes.session
 import run.ostrom.server.runners.fakes.InMemoryCloudSessionsRepository
 import run.ostrom.server.runners.fakes.InMemoryCloudTransfersRepository
 import run.ostrom.server.runners.fakes.SettableClock
@@ -82,6 +84,26 @@ class RunnersFeaturesTest {
             RunnersModule.features(koin(RunnersConfig.DriverKind.REGISTERED)),
             "Cloud sessions on the organization's registered runners",
         )
+    }
+
+    @Test
+    fun theInferenceCredentialIsListedOnceTheLaunchesModuleIssuesItsTokens() = runTest {
+        val docker = RunnersConfig.from(MapConfigSource(emptyMap())).copy(driver = RunnersConfig.DriverKind.DOCKER)
+        fun koin(store: FakeInferenceStore?) = koinApplication {
+            modules(
+                module {
+                    single { docker }
+                    single { InferenceWiring(store) }
+                },
+            )
+        }.koin
+        assertEquals(cloud + "runners.cloud.inference.v1", RunnersModule.features(koin(FakeInferenceStore())))
+        assertEquals(cloud, RunnersModule.features(koin(null)), "Without the launches module")
+        val store = FakeInferenceStore()
+        val written = InferenceWiring(store).written
+        val ended = session()
+        written.written(ended)
+        assertEquals(listOf(ended), store.ended, "A session write tells the store")
     }
 
     @Test

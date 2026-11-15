@@ -174,6 +174,7 @@ interface WebSessionsRepository {
 }
 
 /** API tokens. */
+@Suppress("TooManyFunctions") // One port of the one tokens table: every kind's reads and writes.
 interface ApiTokensRepository {
     /**
      * Stores a new token.
@@ -267,6 +268,30 @@ interface ApiTokensRepository {
      * @return How many tokens were revoked.
      */
     suspend fun revokeOfAgentSession(agentSessionId: String, at: Instant): Long
+
+    /**
+     * Stores another agent token of an agent session, only while one of the session's agent tokens is still live (not
+     * revoked, not expired): an ended or expired session gets none. Read and written in one transaction of the token's
+     * organization.
+     *
+     * @param token The token, an agent token of an organization.
+     * @param secretHash The SHA-256 of its secret.
+     * @param now The time that decides which tokens are live.
+     *
+     * @return True when the token was stored.
+     */
+    suspend fun createForLiveAgentSession(token: ApiToken, secretHash: String, now: Instant): Boolean
+
+    /**
+     * Revokes one agent token of an organization.
+     *
+     * @param orgId The organization the token is bound to.
+     * @param id The token.
+     * @param at When.
+     *
+     * @return True when a token that was not revoked yet is now revoked.
+     */
+    suspend fun revokeAgentToken(orgId: Uuid, id: Uuid, at: Instant): Boolean
 
     /**
      * Deletes the agent tokens expired before [before], of every organization: revoked or not, none acts any more.

@@ -85,6 +85,14 @@ class RunnerGitHubApi
 @Resource("/api/v1/cloud/runner/variables")
 class RunnerVariablesApi
 
+/**
+ * `POST /api/v1/cloud/runner/inference` (`issueRunnerInference`, `runners.cloud.inference.v1`): the execution's
+ * inference credential, an agent token of its launch.
+ */
+@Serializable
+@Resource("/api/v1/cloud/runner/inference")
+class RunnerInferenceApi
+
 /** `POST /api/v1/cloud/runner/environment` (`fetchRunnerEnvironment`): what the runner prepares. */
 @Serializable
 @Resource("/api/v1/cloud/runner/environment")
@@ -205,6 +213,18 @@ data class RunnerPreparationRequest(
  */
 @Serializable
 data class RunnerExecutionBody(val sessionId: String, val epoch: Long)
+
+/**
+ * The contract's `RunnerInferenceCredential`, for the runner's memory only; never logged.
+ *
+ * @property token The credential, the bearer of the agent's model calls through the runner's proxy.
+ * @property expiresAt When the server stops accepting it (ISO 8601).
+ * @property expiresInMillis Its lifetime from now, which the runner measures on its own clock.
+ */
+@Serializable
+data class RunnerInferenceCredentialResponse(val token: String, val expiresAt: String, val expiresInMillis: Long) {
+    override fun toString(): String = "RunnerInferenceCredentialResponse(token=[REDACTED], expiresAt=$expiresAt)"
+}
 
 /**
  * The contract's `EnvironmentValues`, never logged.

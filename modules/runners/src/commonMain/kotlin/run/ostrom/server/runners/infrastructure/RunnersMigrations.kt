@@ -59,6 +59,52 @@ private val CREATE_KEYS_SQL: String =
     REVOKE CREATE ON SCHEMA public FROM ostrom_router;
     """.trimIndent()
 
+/** The read of the stale inference credentials, across organizations (version 21). */
+private const val STALE_CREDENTIALS_FUNCTION = "runners_stale_inference_credentials(INTEGER)"
+
+/**
+ * Version 21 (`runners.cloud.inference.v1`, TeamCode's `cloud_inference_credentials`): an execution's inference
+ * credential, an agent token of its launch (the identity module's row, named by its id: no key across modules), with
+ * its session, epoch and expiry. A tenant table; the minute's purge reads the stale ones of every organization
+ * (expired, or of an execution that no longer runs) through one `SECURITY DEFINER` function owned by `ostrom_router`,
+ * at most the limit it is given, and then revokes and deletes them in their own organization.
+ */
+private val INFERENCE_CREDENTIALS_SQL: String =
+    """
+    CREATE TABLE runners_inference_credentials (
+        token_id UUID PRIMARY KEY,
+        org_id UUID NOT NULL,
+        session_id UUID NOT NULL,
+        epoch BIGINT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        expires_at TIMESTAMPTZ NOT NULL
+    );
+    CREATE INDEX runners_inference_credentials_execution ON runners_inference_credentials (session_id, epoch);
+    CREATE INDEX runners_inference_credentials_expiry ON runners_inference_credentials (expires_at);
+    ${tenantTableSql("runners_inference_credentials")}
+    CREATE POLICY runners_inference_credentials_router_read ON runners_inference_credentials FOR SELECT
+        TO ostrom_router USING (current_user = 'ostrom_router');
+    GRANT SELECT ON runners_inference_credentials TO ostrom_router;
+    GRANT SELECT (epoch, desired_state) ON runners_sessions TO ostrom_router;
+    CREATE FUNCTION runners_stale_inference_credentials(p_limit INTEGER) RETURNS TABLE (org_id UUID, token_id UUID)
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        SELECT c.org_id, c.token_id FROM runners_inference_credentials c
+            LEFT JOIN runners_sessions s ON s.id = c.session_id
+            WHERE c.expires_at <= now() OR s.id IS NULL OR s.epoch <> c.epoch
+                OR s.state NOT IN ('creating', 'running', 'pausing', 'resuming') OR s.desired_state = 'terminated'
+            ORDER BY c.expires_at LIMIT p_limit;
+    $$;
+    REVOKE EXECUTE ON FUNCTION $STALE_CREDENTIALS_FUNCTION FROM PUBLIC;
+    DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+            GRANT EXECUTE ON FUNCTION $STALE_CREDENTIALS_FUNCTION TO ostrom_app;
+        END IF;
+    END $$;
+    GRANT CREATE ON SCHEMA public TO ostrom_router;
+    ALTER FUNCTION $STALE_CREDENTIALS_FUNCTION OWNER TO ostrom_router;
+    REVOKE CREATE ON SCHEMA public FROM ostrom_router;
+    """.trimIndent()
+
 /**
  * Version 3: `runners_session_routes` under forced row-level security like the other tables (a request reads and
  * writes only its organization's routes), and what crosses organizations moved into narrow `SECURITY DEFINER`
@@ -676,4 +722,6 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
             ${tenantTableSql("runners_session_transfers")}
         """.trimIndent(),
     ),
+    // runners.cloud.inference.v1: an execution's inference credentials, an agent token of its launch each.
+    SchemaMigration(version = 21, name = "inference_credentials", sql = INFERENCE_CREDENTIALS_SQL),
 )

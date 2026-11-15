@@ -10,6 +10,8 @@ import run.ostrom.server.runners.domain.CloudSession
 import run.ostrom.server.runners.domain.DeletionState
 import run.ostrom.server.runners.domain.WorkspaceDeletion
 import run.ostrom.server.runners.domain.CloudSessionsRepository
+import run.ostrom.server.runners.domain.CloudSessionWritten
+import run.ostrom.server.runners.domain.NoCloudSessionWritten
 import run.ostrom.server.runners.domain.CreateKey
 import run.ostrom.server.runners.domain.DesiredState
 import run.ostrom.server.runners.domain.GitHubAccessMode
@@ -47,10 +49,17 @@ import kotlin.uuid.Uuid
  * The running cap is serialized per organization with a transaction-scoped advisory lock, so the count and the
  * write of two concurrent creations or resumes never interleave.
  *
+ * Once a write of a session commits ([compareAndSet], [setDesiredState]), [written] is told, so that the inference
+ * credentials of an execution that ended are revoked right after it (`runners.cloud.inference.v1`).
+ *
  * @param driver The database.
+ * @param written Told of every session written by [compareAndSet] and [setDesiredState], once committed.
  */
 @Suppress("TooManyFunctions") // One implementation of the one port of the table.
-class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRepository {
+class CloudSessionsRepositoryImpl(
+    private val driver: Driver,
+    private val written: CloudSessionWritten = NoCloudSessionWritten,
+) : CloudSessionsRepository {
     override suspend fun createWithinCap(session: CloudSession, maxRunning: Int): Boolean =
         driver.inTenant(session.orgId) {
             lockOrg(session.orgId)
@@ -152,7 +161,7 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         ).getOrThrow().firstOrNull()?.toSession()
         if (updated != null) lookAt(id, now)
         updated ?: select(id)
-    }
+    }?.also { written.written(it) }
 
     override suspend fun setGitHubAccess(
         orgId: Uuid,
@@ -195,6 +204,7 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
 
     override suspend fun compareAndSet(session: CloudSession, nextReconcileAt: Instant?): CloudSession? =
         driver.inTenant(session.orgId) { compareAndSetIn(this, session, nextReconcileAt) }
+            ?.also { written.written(it) }
 
     /**
      * Writes a session if nobody changed it since it was read, and asks the reconciler for its next look

@@ -48,6 +48,8 @@ import run.ostrom.server.launches.infrastructure.NoLaunchModelRules
 import run.ostrom.server.launches.infrastructure.OrgsHooksCheckRules
 import run.ostrom.server.launches.infrastructure.PostgresLaunchesRepository
 import run.ostrom.server.launches.infrastructure.RunnerCloudExecutions
+import run.ostrom.server.launches.infrastructure.LaunchInferenceTokens
+import run.ostrom.server.runners.domain.RunnerInferenceTokens
 import run.ostrom.server.launches.presentation.LaunchesRoutesDependencies
 import run.ostrom.server.launches.presentation.launchesRoutes
 import run.ostrom.server.secrets.domain.CallerResolver
@@ -69,7 +71,9 @@ import kotlin.time.Duration.Companion.minutes
  * sessions and compiler routes ([LaunchGateActors]), and those of the MCP relay, the inference gateway and the budgets
  * and the usage events ([LaunchRelayCallers]), so that an agent token reaches the organization's MCP servers, and the
  * agent token of the waits MCP server ([LaunchWaitAgents]), so that an agent asks a person. It also opens the launch of
- * a cloud session its runner asks for, and ends a launch when its own agent token asks (the end of `ostrom <agent>`).
+ * a cloud session its runner asks for, renews an agent token of it as the execution's inference credential
+ * (`runners.cloud.inference.v1`, the runners module's `RunnerInferenceTokens`), and ends a launch when its own agent
+ * token asks (the end of `ostrom <agent>`).
  * A launch tells the CLI when to look for the hooks and whether to stop an agent without them, and the launch's own
  * agent token records `hooks.missing` in the organization's audit log when none ran.
  * Needs the identity, orgs, gates and runners modules; it binds the secrets module's `CallerResolver` and the
@@ -84,6 +88,8 @@ object LaunchesModule : ServerModule {
         single<LauncherResolver> { IdentityLauncherResolver(get(), get(), get()) }
         single<AgentTokenService> { IdentityAgentTokens(get(), get()) }
         single<CloudExecutions> { RunnerCloudExecutions(get()) }
+        // The runners module's inference credential of an execution: another agent token of its launch.
+        single<RunnerInferenceTokens> { LaunchInferenceTokens(get(), get(), get(), get()) }
         single { LaunchAgents(get(), get(), get(), get()) }
         single<GateActorResolver> { LaunchGateActors(get(), get()) }
         single<CallerResolver> { LaunchRelayCallers(get(), get()) }
