@@ -8,7 +8,7 @@ import run.ostrom.server.secrets.infrastructure.tenantTableSql
 /**
  * The schema of the gateway module; its tables start with `gateway_`. Version 2 confines both tables to their org
  * (row-level security, SECURITY-AUDIT S2-01); version 3 adds the admission queue, version 4 the cancellation markers,
- * version 6 the capacity controller.
+ * version 6 a call's launch, version 7 the org's price table, version 8 the capacity controller.
  */
 val GatewayMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -152,6 +152,7 @@ val GatewayMigrations: List<SchemaMigration> = listOf(
                 recovery_started_at TIMESTAMPTZ,
                 recovery_min_interval_ms BIGINT,
                 last_admitted_at TIMESTAMPTZ,
+                last_admitted_request UUID,
                 PRIMARY KEY (org_id, member_id, scope_key)
             );
             CREATE INDEX gateway_directives_expiry ON gateway_directives (org_id, expires_at);

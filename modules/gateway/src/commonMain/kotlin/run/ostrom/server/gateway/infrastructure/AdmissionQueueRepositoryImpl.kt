@@ -55,8 +55,8 @@ class AdmissionQueueRepositoryImpl(private val database: JdbcDatabase) : Admissi
         when (entry) {
             AdmissionEntry.Admitted -> {
                 pacingWait(request)?.let { wait ->
-                    // Spaced out by the capacity controller: the call is refused, and leaves the queue.
-                    if (!first) write { admissionRelease(orgId, request.id) }
+                    // Spaced out by the capacity controller: the call is refused (the transaction rolls back, and
+                    // AwaitAdmission releases its place in one of its own).
                     throw QueueRefusedException(RefusalKind.PACING_DELAY, wait)
                 }
                 pacingAdmitted(request)

@@ -144,15 +144,22 @@ class PacingPostgresTest {
         assertEquals(RefusalKind.PACING_DELAY, spaced.kind)
         assertTrue(spaced.retryIn!! in 1.seconds..10.seconds)
         assertEquals(AdmissionEntry.Admitted, queue.enter(call("s1"), first = true), "Its session's advice spaces nothing")
-        assertEquals(AdmissionEntry.Admitted, queue.enter(call("s2"), first = true), "A session without advice")
+        val unadvised = assertFailsWith<QueueRefusedException>("A session without advice: its member's") {
+            queue.enter(call("s2"), first = true)
+        }
+        assertEquals(RefusalKind.PACING_DELAY, unadvised.kind)
         server.koin.get<PacingSettingsRepository>().update(Gw.orgA, true, null)
         assertEquals(AdmissionEntry.Admitted, queue.enter(call(null), first = true), "Observation mode spaces nothing")
         server.koin.get<PacingSettingsRepository>().update(Gw.orgA, false, null)
         server.database.superuser.execute(
             "UPDATE gateway_directives SET last_admitted_at = now() - INTERVAL '1 minute'",
         ).getOrThrow()
-        assertEquals(AdmissionEntry.Admitted, queue.enter(call(null), first = true), "The interval passed")
-        // A waiting call whose turn comes too soon is refused and leaves the queue.
+        val admitted = call(null)
+        assertEquals(AdmissionEntry.Admitted, queue.enter(admitted, first = true), "The interval passed")
+        // The call admitted last goes back to wait (the accounts were busy): its own admission never spaces it.
+        queue.requeue(Gw.orgA, admitted.id)
+        assertEquals(AdmissionEntry.Admitted, queue.enter(admitted, first = false), "Its own admission")
+        // A waiting call whose turn comes too soon is refused; its decision rolls back, AwaitAdmission releases it.
         val waiting = call(null)
         server.database.superuser.execute(
             "INSERT INTO gateway_admissions (id, org_id, member_id, scope, workload, running, created_at, ready_at, " +
@@ -160,7 +167,9 @@ class PacingPostgresTest {
                 "now(), now(), now(), now() + INTERVAL '1 minute')",
         ).getOrThrow()
         assertFailsWith<QueueRefusedException> { queue.enter(waiting, first = false) }
-        val left = server.database.superuser.fetchAll("SELECT id FROM gateway_admissions WHERE running = false").getOrThrow()
-        assertEquals(0, left.size)
+        val left = server.database.superuser.fetchAll(
+            "SELECT id FROM gateway_admissions WHERE running = false AND id = '${waiting.id}'",
+        ).getOrThrow()
+        assertEquals(1, left.size, "Still waiting until released")
     }
 }

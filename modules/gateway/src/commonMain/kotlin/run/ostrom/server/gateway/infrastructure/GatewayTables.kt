@@ -128,6 +128,9 @@ internal object GatewayDirectives : Table("gateway_directives") {
     /** When the scope's last call was admitted: the admission spacing reads it, the controller never writes it. */
     val lastAdmittedAt = instant("last_admitted_at").nullable()
 
+    /** The call admitted then: its own admission never spaces it again (put back to wait, or retried). */
+    val lastAdmittedRequest = uuid("last_admitted_request").nullable()
+
     override val primaryKey = PrimaryKey(orgId, memberId, scopeKey)
 }
 

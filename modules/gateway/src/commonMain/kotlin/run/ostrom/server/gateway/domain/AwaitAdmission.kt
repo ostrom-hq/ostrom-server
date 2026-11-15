@@ -129,6 +129,8 @@ class AwaitAdmissionUseCaseImpl(
         blocked = (entry as? AdmissionEntry.Waiting)?.blocked == true
         if (entry == AdmissionEntry.Admitted) started(start()) else null
     } catch (refused: QueueRefusedException) {
+        // A call spaced out by the capacity controller leaves the queue: the refusal rolled its decision back.
+        if (refused.kind == RefusalKind.PACING_DELAY) queue.release(request.orgId, request.id)
         refusal(refused.kind, queueMessage(refused.kind), model, refused.retryIn)
     }
 
