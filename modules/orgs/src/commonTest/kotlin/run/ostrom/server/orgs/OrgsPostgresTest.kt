@@ -528,6 +528,12 @@ class OrgsPostgresTest {
             assertFalse(directory.isActiveMember(acme.id, bobsOwner.id.toString()))
             assertFalse(directory.isActiveMember(acme.id, Uuid.random().toString()))
             assertFalse(directory.isActiveMember(acme.id, "not-a-member-id"))
+            // The person behind a member, for what an owner or an admin reads of them (their devices).
+            assertEquals(ada.id, directory.userIdOf(acme.id, owner.id.toString()))
+            assertNull(directory.userIdOf(acme.id, bobsOwner.id.toString()))
+            assertNull(directory.userIdOf(acme.id, "not-a-member-id"))
+            assertTrue(directory.hasUser(acme.id, ada.id))
+            assertFalse(directory.hasUser(acme.id, bob.id))
             // The members of one organization only, or null past the limit (the MCP relay's retain sweep).
             assertEquals(listOf(owner.id.toString()), directory.memberIds(acme.id, 10))
             assertNull(directory.memberIds(acme.id, 0))

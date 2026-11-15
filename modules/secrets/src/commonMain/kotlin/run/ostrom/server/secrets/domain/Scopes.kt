@@ -51,6 +51,9 @@ object RelayScopes {
 
     /** Calls the inference gateway with a personal token. */
     const val INFERENCE_USE: String = "inference:use"
+
+    /** Reads the capacity controller's advice for the holder's sessions (`capacity.pacing.v1`). */
+    const val GUIDANCE: String = "guidance"
 }
 
 /** The credential does not carry the scope the route requires. */

@@ -14,6 +14,7 @@ import run.ostrom.server.kernel.events.WaitSummaries
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.OrgDeletionListener
 import run.ostrom.server.kernel.module.ServerModule
+import run.ostrom.server.notifications.domain.ApprovalChannel
 import run.ostrom.server.notifications.domain.ApprovalNotices
 import run.ostrom.server.notifications.domain.ApprovalRouter
 import run.ostrom.server.notifications.domain.ApprovalSender
@@ -203,19 +204,7 @@ object NotificationsModule : ServerModule {
             val scope = this
             NotificationDeliveriesRepositoryImpl(get()) { scope.get<OrgEventJournal>() }
         }
-        // The requests for a yes the gates publish: their approvers' pushes and e-mails, through the same queue.
-        single {
-            ApprovalSender(
-                approvers = get(),
-                devices = get(),
-                credentials = get(),
-                notices = ApprovalNotices(get<NotificationSettings>().webOrigin),
-                push = get(),
-                mail = get(),
-                mailing = get(),
-            )
-        }
-        single { ApprovalRouter(getOrNull() ?: NO_GATES, get(), get(), get()) }
+        approvals()
         single<DeliverNotificationsUseCase> {
             val scope = this
             DeliverNotificationsUseCaseImpl(
@@ -233,6 +222,37 @@ object NotificationsModule : ServerModule {
         }
         single<OrgDeletionListener>(named("notifications-deliveries")) {
             NotificationDeliveriesOrgDeletionListener(get())
+        }
+    }
+
+    /**
+     * The approvals' half of the router: the requests for a yes the gates publish, told to their approvers on the
+     * push, the e-mail and the other modules' ways ([ApprovalChannel], Slack's), through the same queue.
+     */
+    private fun Module.approvals() {
+        single {
+            val scope = this
+            ApprovalSender(
+                approvers = get(),
+                devices = get(),
+                credentials = get(),
+                notices = ApprovalNotices(get<NotificationSettings>().webOrigin),
+                push = get(),
+                mail = get(),
+                mailing = get(),
+                channels = { scope.getAll<ApprovalChannel>().distinctBy { it.id } },
+            )
+        }
+        single {
+            val scope = this
+            ApprovalRouter(
+                getOrNull() ?: NO_GATES,
+                get(),
+                get(),
+                get(),
+                channels = { scope.getAll<ApprovalChannel>().distinctBy { it.id } },
+                switches = get(),
+            )
         }
     }
 

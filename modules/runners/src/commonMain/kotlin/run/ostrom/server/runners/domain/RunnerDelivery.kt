@@ -13,15 +13,21 @@ package run.ostrom.server.runners.domain
  * @property sessionImage The image of the session's containers where the session names none: a Docker or registered
  *   session's (`OSTROM_RUNNERS_IMAGE`); a Kubernetes session's profile names its own.
  * @property serverUrl The URL a Kubernetes session's runner calls back: the runtime's, else the server's public URL.
+ * @property workspaceAccessMode The access mode of a new Kubernetes workspace claim: the runtime's
+ *   `workspaceAccessMode`, `ReadWriteOncePod` by default (TeamCode's), `ReadWriteOnce` for storage drivers without it.
  */
 data class RunnerDelivery(
     val runnerImage: String,
     val runnerBinary: String,
     val sessionImage: String,
     val serverUrl: String = "",
+    val workspaceAccessMode: String = DEFAULT_ACCESS_MODE,
 ) {
     /** Constants of the delivery. */
     companion object {
+        /** The access mode of a workspace claim while the runtime names none (TeamCode's default). */
+        const val DEFAULT_ACCESS_MODE: String = "ReadWriteOncePod"
+
         /** Where the init container puts the binary, in the volume every container mounts. */
         const val DIRECTORY = "/opt/ostrom"
 

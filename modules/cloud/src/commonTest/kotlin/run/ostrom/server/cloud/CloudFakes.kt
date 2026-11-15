@@ -80,6 +80,13 @@ class MemoryClusters : CloudClustersRepository {
         rows[id] = stored
         return true
     }
+
+    override suspend fun recordGarbageCollection(id: Uuid, orphanedVolumes: Int?, at: Instant) {
+        val stored = rows[id] ?: return
+        rows[id] = stored.copy(
+            cluster = stored.cluster.copy(orphanedVolumes = orphanedVolumes, lastGarbageCollectionAt = at),
+        )
+    }
 }
 
 /** The profiles in memory, every version kept; [lose] makes the next publish lose its race. */

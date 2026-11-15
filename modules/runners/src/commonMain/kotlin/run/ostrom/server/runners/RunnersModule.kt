@@ -3,7 +3,16 @@ package run.ostrom.server.runners
 
 import run.ostrom.server.cloud.domain.CloudClusterAccess
 import run.ostrom.server.cloud.domain.CloudClustersUseCase
+import run.ostrom.server.cloud.domain.CloudClustersRepository
 import run.ostrom.server.cloud.domain.CloudRuntimeSource
+import run.ostrom.server.cloud.domain.WorkspaceStorageClasses
+import run.ostrom.server.kernel.database.scheduledWork
+import run.ostrom.server.runners.domain.CloudClusterObjects
+import run.ostrom.server.runners.domain.CollectCloudGarbageUseCaseImpl
+import run.ostrom.server.runners.infrastructure.CloudGarbageClusters
+import run.ostrom.server.runners.infrastructure.CloudGarbageWorker
+import run.ostrom.server.runners.infrastructure.ClusterWorkspaceStorageClasses
+import run.ostrom.server.runners.infrastructure.LiveCloudObjectsRepositoryImpl
 import run.ostrom.server.runners.domain.BackfillSessionProfilesUseCase
 import run.ostrom.server.runners.domain.BackfillSessionProfilesUseCaseImpl
 import run.ostrom.server.runners.domain.CatalogSessionProfiles
@@ -341,6 +350,8 @@ object RunnersModule : ServerModule {
             }
             TerminalRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), replica)
         }
+        // A profile's workspace storage class, read on its cluster where sessions run on Kubernetes (cloud module).
+        single<WorkspaceStorageClasses> { ClusterWorkspaceStorageClasses(get<RuntimeDriver>() as? CloudClusterObjects) }
         single<AutomationLauncher> { CloudSessionAutomationLauncher(get(), get(), get()) }
         // Conversation sessions: their transcript, inputs and options, served but not announced yet.
         single { ConversationAnnouncement() }
@@ -411,6 +422,9 @@ object RunnersModule : ServerModule {
             ServerFeatures.RUNNERS_CLOUD_TRANSFER.takeIf { koin.getOrNull<TransferWiring>()?.routes != null },
             // Sessions on the console's clusters and the organizations' profiles.
             ServerFeatures.RUNNERS_CLOUD_PROFILES.takeIf { koin.get<RunnersConfig>().driver == KUBERNETES },
+            // Proven workspace deletion, the storage class check and the garbage collection are Kubernetes's; the
+            // expiry of paused sessions holds on every runtime.
+            ServerFeatures.RUNNERS_CLOUD_RETENTION.takeIf { koin.get<RunnersConfig>().driver == KUBERNETES },
         ) + conversation
     }
 
@@ -434,6 +448,17 @@ object RunnersModule : ServerModule {
         scope.launch { signals.watch() }
         val maintenance = koin.get<CloudConversationMaintenance>()
         scope.launch { maintenance.repeat(koin.scheduledWork(), koin.get()) }
+        garbageWorker(koin)?.let { garbage -> scope.launch { garbage.run() } }
+    }
+
+    /** The clusters' garbage collection, where sessions run on the console's clusters and periodic jobs are leased. */
+    private fun garbageWorker(koin: Koin): CloudGarbageWorker? {
+        // The console's clusters, and so the cloud module, are there whenever the runtime is Kubernetes.
+        val objects = koin.get<RuntimeDriver>() as? CloudClusterObjects ?: return null
+        val clusters = CloudGarbageClusters(koin.get<CloudClustersRepository>())
+        val live = LiveCloudObjectsRepositoryImpl(koin.get())
+        val collect = CollectCloudGarbageUseCaseImpl(live, objects, clusters, koin.get())
+        return CloudGarbageWorker(koin.scheduledWork(), clusters, collect, koin.get())
     }
 }
 

@@ -76,6 +76,44 @@ private val ROUTES_UNDER_ROW_LEVEL_SECURITY_SQL: String =
     """
         .trimIndent()
 
+/** What the garbage collection reads across organizations: owned by `ostrom_router`. */
+private const val LIVE_OBJECTS_FUNCTION = "runners_cluster_live_objects(TEXT)"
+
+/**
+ * Version 18 (`runners.cloud.retention.v1`, TeamCode's workspace deletion fields): the proof that a Kubernetes
+ * session's workspace is gone, provider volume included; and the sessions of a cluster whose objects the garbage
+ * collection keeps (CollectCloudGarbageUseCase), every organization's, through one narrow `SECURITY DEFINER` function
+ * owned by `ostrom_router` (RLS audit R9): the sessions not over, and the ones whose workspace deletion is not proven,
+ * held alone by a partial index on their cluster.
+ */
+private val WORKSPACE_DELETION_SQL: String =
+    """
+    ALTER TABLE runners_sessions ADD COLUMN workspace_deletion_state TEXT,
+        ADD COLUMN workspace_claim_deleted_at TIMESTAMPTZ, ADD COLUMN workspace_volume_deleted_at TIMESTAMPTZ,
+        ADD COLUMN workspace_volume_name TEXT, ADD COLUMN workspace_volume_handle TEXT,
+        ADD COLUMN workspace_problem_code TEXT, ADD COLUMN workspace_problem_message TEXT,
+        ADD COLUMN workspace_problem_retryable BOOLEAN NOT NULL DEFAULT FALSE;
+    CREATE INDEX runners_sessions_cluster_live ON runners_sessions (((profile::jsonb) ->> 'clusterId'))
+        WHERE state NOT IN ('terminated', 'failed') OR workspace_deletion_state IN ('pending', 'blocked');
+    GRANT SELECT (epoch, workspace_deletion_state, workspace_claim_deleted_at) ON runners_sessions TO ostrom_router;
+    CREATE FUNCTION runners_cluster_live_objects(p_cluster TEXT)
+        RETURNS TABLE (session_id UUID, epoch BIGINT, state TEXT, profile TEXT, claim_deleted BOOLEAN)
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        SELECT s.id, s.epoch, s.state, s.profile, s.workspace_claim_deleted_at IS NOT NULL FROM runners_sessions s
+            WHERE ((s.profile::jsonb) ->> 'clusterId') = p_cluster
+            AND (s.state NOT IN ('terminated', 'failed') OR s.workspace_deletion_state IN ('pending', 'blocked'));
+    $$;
+    REVOKE EXECUTE ON FUNCTION $LIVE_OBJECTS_FUNCTION FROM PUBLIC;
+    DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+            GRANT EXECUTE ON FUNCTION $LIVE_OBJECTS_FUNCTION TO ostrom_app;
+        END IF;
+    END $$;
+    GRANT CREATE ON SCHEMA public TO ostrom_router;
+    ALTER FUNCTION $LIVE_OBJECTS_FUNCTION OWNER TO ostrom_router;
+    REVOKE CREATE ON SCHEMA public FROM ostrom_router;
+    """.trimIndent()
+
 /** What a server's start reads across organizations to give the former sessions a profile: owned by `ostrom_router`. */
 private const val WITHOUT_PROFILE_FUNCTION = "runners_sessions_without_profile(UUID, INTEGER)"
 
@@ -549,11 +587,12 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
         """.trimIndent(),
     ),
     SchemaMigration(version = 17, name = "conversation_sessions", sql = CONVERSATION_SQL),
+    SchemaMigration(version = 18, name = "workspace_deletion", sql = WORKSPACE_DELETION_SQL),
     // runners.cloud.transfer.v1: a session changes owner at a paused boundary. `transfer_id` is the accepted transfer
     // the session moves toward, `untrusted_workspace` holds from the owner change until an execution of the new
     // owner is ready; the transfers are a tenant table (the keys of a creation are kept 24 hours by the use case).
     SchemaMigration(
-        version = 18,
+        version = 19,
         name = "session_transfers",
         sql = """
             ALTER TABLE runners_sessions ADD COLUMN transfer_id UUID;

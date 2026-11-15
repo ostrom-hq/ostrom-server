@@ -8,6 +8,9 @@ import run.ostrom.server.identity.domain.CI_SERVICE_KEY_SCOPES
 import run.ostrom.server.identity.domain.CreateServiceKeyUseCaseImpl
 import run.ostrom.server.identity.domain.DeleteServiceKeyUseCaseImpl
 import run.ostrom.server.identity.domain.DeviceNotFoundException
+import run.ostrom.server.identity.domain.SignedInDevice
+import run.ostrom.server.identity.fakes.FakeMemberDirectory
+import run.ostrom.server.identity.fakes.InMemoryDevicesRepository
 import run.ostrom.server.identity.domain.InvalidServiceKeyScopesException
 import run.ostrom.server.identity.domain.InvalidTokenLifetimeException
 import run.ostrom.server.identity.domain.InvalidTokenNameException
@@ -55,8 +58,10 @@ class ServiceKeysAndDevicesTest {
     private val list = ListServiceKeysUseCaseImpl(keys, clock)
     private val delete = DeleteServiceKeyUseCaseImpl(keys, audit, clock)
     private val elevated = InMemoryElevatedTokensRepository(tokens)
-    private val devices = ListDevicesUseCaseImpl(tokens, elevated, clock)
-    private val signOut = SignOutDeviceUseCaseImpl(tokens, elevated, audit, clock)
+    private val registered = InMemoryDevicesRepository(tokens)
+    private val directory = FakeMemberDirectory()
+    private val devices = ListDevicesUseCaseImpl(tokens, elevated, registered, clock)
+    private val signOut = SignOutDeviceUseCaseImpl(tokens, elevated, registered, directory, audit, clock)
     private val orgA = Uuid.random()
     private val orgB = Uuid.random()
     private val ada = Uuid.random()
@@ -286,6 +291,15 @@ class ServiceKeysAndDevicesTest {
         assertEquals("cli", cli.kind)
         assertEquals(listOf(null, null, null), listOf(cli.orgId, cli.scopes, cli.expiresAt))
     }
+
+    /** A token as the listing shows it: a CLI token on its own, or the elevated one. */
+    private fun ApiToken.toDeviceResponse() =
+        SignedInDevice(
+            id,
+            name,
+            lastSeenAt = lastUsedAt,
+            elevated = takeIf { kind == TokenKind.ADMIN },
+        ).toDeviceResponse()
 
     private suspend fun token(userId: Uuid, kind: TokenKind, name: String, orgId: Uuid? = null): ApiToken {
         val token = ApiToken(

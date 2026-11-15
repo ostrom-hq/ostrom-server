@@ -217,6 +217,7 @@ internal fun JdbcTransaction.insertToken(token: ApiToken, secretHash: String, un
         it[expiresAt] = token.expiresAt
         it[this.unlockKeyHash] = unlockKeyHash
         it[authenticatedAt] = token.authenticatedAt
+        it[deviceId] = token.deviceId
     }
 }
 
@@ -235,4 +236,5 @@ internal fun ResultRow.toApiToken(t: TokenColumns) = ApiToken(
     lastUsedAt = this[t.lastUsedAt],
     revokedAt = this[t.revokedAt],
     authenticatedAt = this[t.authenticatedAt],
+    deviceId = t.deviceId?.let { this[it] },
 )

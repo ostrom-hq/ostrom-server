@@ -477,9 +477,21 @@ data class CreatedTokenResponse(val token: TokenResponse, val secret: String)
  * @property clientName What the CLI is (machine name), shown to the user.
  * @property scopes Absent or empty for the ordinary sign-in; `policy:write`, `harness:write` and `gates:policy`, all
  *   three, for `ostrom login --admin` (anything else: 400).
+ * @property installationId With `devices.v1`, the CLI's installation: a random lowercase UUID, registered as a device
+ *   of the approving person when the sign-in is approved (otherwise 400 `invalid_installation`).
+ * @property deviceName The name a device this sign-in registers carries (1 to 120 characters).
+ * @property platform `macos`, `windows`, `linux`, `ios` or `android`.
+ * @property osVersion The system's version, 1 to 64 printable characters, only with [platform].
  */
 @Serializable
-data class DeviceCodeRequest(val clientName: String? = null, val scopes: List<String>? = null)
+data class DeviceCodeRequest(
+    val clientName: String? = null,
+    val scopes: List<String>? = null,
+    val installationId: String? = null,
+    val deviceName: String? = null,
+    val platform: String? = null,
+    val osVersion: String? = null,
+)
 
 /**
  * The codes of an `ostrom login` (RFC 8628 § 3.2).

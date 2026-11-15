@@ -134,6 +134,10 @@ data class CloudClusterResponse(
     val updatedAt: String,
     /** Whether it is the server's own, reached with the server pod's rotating service account (nothing stored). */
     val inCluster: Boolean = false,
+    /** The workspace volumes no provisioner deletes, at the last garbage collection; absent before the first. */
+    val orphanedVolumes: Int? = null,
+    /** When the last garbage collection ran (every 10 minutes); absent before the first. */
+    val lastGarbageCollectionAt: String? = null,
 )
 
 /** `CloudClusterList`. */

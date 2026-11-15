@@ -81,6 +81,15 @@ interface CloudClustersRepository {
      * @return False when another save came first or the name is taken.
      */
     suspend fun update(stored: StoredCloudCluster): Boolean
+
+    /**
+     * Records the last garbage collection of a cluster (`runners.cloud.retention.v1`); a cluster since removed is left.
+     *
+     * @param id The cluster.
+     * @param orphanedVolumes The workspace volumes no provisioner deletes.
+     * @param at When the collection ran.
+     */
+    suspend fun recordGarbageCollection(id: Uuid, orphanedVolumes: Int?, at: Instant)
 }
 
 /** The organizations' profiles and their immutable versions (`cloud_profiles`, `cloud_profile_versions`). */

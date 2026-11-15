@@ -52,6 +52,13 @@ class InMemoryQuotaHistory : QuotaHistoryRepository {
         }.map { it.third }.sortedByDescending { it.observedAt }.take(limit)
     }
 
+    override suspend fun recentOfOrg(
+        orgId: Uuid,
+        observed: ClosedRange<Instant>,
+        limit: Int,
+    ): Map<Uuid, List<QuotaWindow>> = readings.filter { (org, _, it) -> org == orgId && it.observedAt in observed }
+        .sortedByDescending { it.third.observedAt }.take(limit).groupBy({ it.second }, { it.third })
+
     override suspend fun prune(before: Instant, limit: Int): Long = 0
 }
 
@@ -197,6 +204,7 @@ class ForecastServiceTest {
             NoQuotaHistory.record(Sharing.orgA, Uuid.random(), listOf(QuotaWindow("five_hour", .1, null, now)))
             val none = NoQuotaHistory.recent(Sharing.orgA, Uuid.random(), listOf("five_hour"), now..now, 1)
             assertEquals(emptyList(), none)
+            assertEquals(emptyMap(), NoQuotaHistory.recentOfOrg(Sharing.orgA, now..now, 1))
             assertEquals(0L, NoQuotaHistory.prune(now, 1))
         }
     }

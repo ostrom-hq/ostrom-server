@@ -96,16 +96,13 @@ internal fun clusterProblem(input: CloudClusterInput, stored: CloudCluster?): St
  * Why a profile is refused, or null.
  *
  * @param input What is saved.
- * @param cluster The cluster it names, or null when there is none.
+ * @param cluster The cluster it names.
  */
-internal fun profileProblem(input: CloudProfileInput, cluster: CloudCluster?): String? {
+internal fun profileProblem(input: CloudProfileInput, cluster: CloudCluster): String? {
     val spec = input.spec
     return listOfNotNull(
         "name is 1 to 100 characters.".takeIf { input.name.isBlank() || input.name.length > MAX_NAME },
-        "spec.clusterId names no cluster.".takeIf { cluster == null },
-        "spec.namespace is not one the cluster allows.".takeIf {
-            cluster != null && spec.namespace !in cluster.allowedNamespaces
-        },
+        "spec.namespace is not one the cluster allows.".takeIf { spec.namespace !in cluster.allowedNamespaces },
         "spec.image is not an image reference.".takeIf { !isImage(spec.image) },
         "spec.allowedImageOverrides holds up to 50 images, or prefixes ending in /* or :*.".takeIf {
             spec.allowedImageOverrides.size > MAX_OVERRIDES || !spec.allowedImageOverrides.all(::isOverride)

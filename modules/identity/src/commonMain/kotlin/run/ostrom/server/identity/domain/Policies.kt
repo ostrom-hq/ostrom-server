@@ -73,8 +73,15 @@ const val MEMORY_SCOPE = "memory:use"
  */
 const val ARTIFACTS_WRITE_SCOPE = "artifacts:write"
 
+/**
+ * The scope that reads the capacity controller's advice for the holder's sessions (`capacity.pacing.v1`, TeamCode's
+ * `guidance`): an agent token is issued with it, and a member may put it on a personal token or a service key.
+ */
+const val GUIDANCE_SCOPE = "guidance"
+
 /** The scopes an agent token is issued with. */
-val AGENT_SCOPES: Set<String> = setOf(AGENT_SCOPE, WORKFLOW_SESSION_SCOPE, MEMORY_SCOPE, ARTIFACTS_WRITE_SCOPE)
+val AGENT_SCOPES: Set<String> =
+    setOf(AGENT_SCOPE, WORKFLOW_SESSION_SCOPE, MEMORY_SCOPE, ARTIFACTS_WRITE_SCOPE, GUIDANCE_SCOPE)
 
 /**
  * The scope that answers a gate. No token the person can create or the CLI holds has it (audit S2-04, S2-31): such a
@@ -319,12 +326,12 @@ val CI_SERVICE_KEY_SCOPES: Set<String> = ServiceKeyScopes.CI
  * of TeamCode's service keys, mapped on the routes Ostrom serves): the inference gateway, the relayed MCP servers, the
  * creator's own usage, their cloud sessions (`cloud:write` reads too), the artifacts they can read (`artifacts:write`
  * reads too, and never changes an access level nor deletes), the skills and hooks delivered to them (`skills:read`,
- * `hooks:read`, a cloud pod's or a script's). TeamCode's `guidance` scope joins the day Ostrom serves that feature.
+ * `hooks:read`, a cloud pod's or a script's), the capacity advice for their sessions (`guidance`).
  */
 val MEMBER_SERVICE_KEY_SCOPES: Set<String> = setOf(
     "inference:use", "mcp:use", "usage:read", "cloud:read", "cloud:write", "artifacts:read", "artifacts:write",
     "skills:read", "hooks:read",
-    MEMORY_SCOPE,
+    MEMORY_SCOPE, GUIDANCE_SCOPE,
 )
 
 /**
@@ -354,8 +361,13 @@ class ServiceKeyNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Servic
 class ServiceKeysAdminRequiredException :
     OstromException(ErrorKind.FORBIDDEN, "Only an owner or an admin manages the organization's service keys.")
 
-/** The device is absent, another person's, or already signed out. */
-class DeviceNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Device not found.")
+/**
+ * The device is absent, another person's, or already signed out.
+ *
+ * @param type The `error.type`: `not_found` for a sign-out, `device_not_found` where the contract names it (renaming).
+ */
+class DeviceNotFoundException(type: String = ErrorKind.NOT_FOUND.type) :
+    OstromException(ErrorKind.NOT_FOUND, "Device not found.", type)
 
 /** The token lifetime is not between one day and [MAX_TOKEN_LIFETIME]. */
 class InvalidTokenLifetimeException :

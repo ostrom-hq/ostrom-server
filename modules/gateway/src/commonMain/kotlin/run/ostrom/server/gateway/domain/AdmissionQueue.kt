@@ -43,6 +43,7 @@ enum class Workload(val wire: String) {
  * @property launchId The launch whose agent token made the call, or null.
  * @property launchLimit The most calls that launch runs at once (the `maxConcurrent` an administrator set on it,
  *   above 0), or null for no limit.
+ * @property session The agent session the call belongs to, if any: the capacity controller spaces its admissions.
  */
 data class AdmissionRequest(
     val id: Uuid,
@@ -54,6 +55,7 @@ data class AdmissionRequest(
     val limitedMembers: Set<String> = emptySet(),
     val launchId: String? = null,
     val launchLimit: Int? = null,
+    val session: String? = null,
 )
 
 /** What the queue answered a call. */
@@ -197,6 +199,8 @@ interface AdmissionQueueRepository {
 /**
  * A call the queue refuses.
  *
- * @property kind [RefusalKind.QUEUE_FULL] or [RefusalKind.QUEUE_EXPIRED].
+ * @property kind [RefusalKind.QUEUE_FULL], [RefusalKind.QUEUE_EXPIRED] or [RefusalKind.PACING_DELAY].
+ * @property retryIn When it may try again, when the queue knows ([RefusalKind.PACING_DELAY]).
  */
-class QueueRefusedException(val kind: RefusalKind) : Exception("The admission queue refused the call: $kind.")
+class QueueRefusedException(val kind: RefusalKind, val retryIn: Duration? = null) :
+    Exception("The admission queue refused the call: $kind.")

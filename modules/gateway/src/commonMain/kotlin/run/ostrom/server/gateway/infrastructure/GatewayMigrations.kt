@@ -7,7 +7,8 @@ import run.ostrom.server.secrets.infrastructure.tenantTableSql
 
 /**
  * The schema of the gateway module; its tables start with `gateway_`. Version 2 confines both tables to their org
- * (row-level security, SECURITY-AUDIT S2-01); version 3 adds the admission queue, version 4 the cancellation markers.
+ * (row-level security, SECURITY-AUDIT S2-01); version 3 adds the admission queue, version 4 the cancellation markers,
+ * version 6 a call's launch, version 7 the org's price table, version 8 the capacity controller.
  */
 val GatewayMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -121,5 +122,68 @@ val GatewayMigrations: List<SchemaMigration> = listOf(
                 PRIMARY KEY (org_id, provider, model, effective_from_day)
             )
         """.trimIndent() + ";\n" + tenantTableSql("gateway_api_prices"),
+    ),
+    // The capacity controller (TeamCode's `pacing_settings`, `directives` and `session_directives` in one table keyed
+    // by scope, `directive_deliveries`, `directive_receipts`): its settings, its advice per member ('' scope) and
+    // session (the SHA-256 digest of its id), with when the scope's last call was admitted, which the admission
+    // spacing reads, and the deliveries of the advice to the agents' hooks.
+    SchemaMigration(
+        version = 8,
+        name = "create_gateway_pacing",
+        sql = """
+            CREATE TABLE gateway_pacing_settings (
+                org_id UUID PRIMARY KEY,
+                observation_only BOOLEAN NOT NULL DEFAULT FALSE,
+                auto_pool_size BOOLEAN NOT NULL DEFAULT FALSE
+            );
+            CREATE TABLE gateway_directives (
+                org_id UUID NOT NULL,
+                member_id UUID NOT NULL,
+                scope_key TEXT NOT NULL,
+                id TEXT NOT NULL,
+                pace TEXT NOT NULL,
+                max_concurrent INTEGER NOT NULL,
+                min_interval_ms BIGINT NOT NULL,
+                message TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                context_key TEXT NOT NULL,
+                recovery_pace TEXT,
+                recovery_started_at TIMESTAMPTZ,
+                recovery_min_interval_ms BIGINT,
+                last_admitted_at TIMESTAMPTZ,
+                last_admitted_request UUID,
+                PRIMARY KEY (org_id, member_id, scope_key),
+                -- A recovery is its three columns together, or none (DirectiveRepositoryImpl reads them so).
+                CHECK ((recovery_pace IS NULL) = (recovery_started_at IS NULL)
+                    AND (recovery_pace IS NULL) = (recovery_min_interval_ms IS NULL))
+            );
+            CREATE INDEX gateway_directives_expiry ON gateway_directives (org_id, expires_at);
+            CREATE TABLE gateway_directive_deliveries (
+                org_id UUID NOT NULL,
+                member_id UUID NOT NULL,
+                session_key TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                directive_id TEXT NOT NULL,
+                claim_id TEXT NOT NULL,
+                token_id TEXT NOT NULL,
+                claimed_until TIMESTAMPTZ NOT NULL,
+                emitted_at TIMESTAMPTZ,
+                updated_at TIMESTAMPTZ NOT NULL,
+                PRIMARY KEY (org_id, member_id, session_key, stage)
+            );
+            CREATE INDEX gateway_directive_deliveries_retention ON gateway_directive_deliveries (org_id, updated_at);
+            CREATE TABLE gateway_directive_receipts (
+                org_id UUID NOT NULL,
+                directive_id TEXT NOT NULL,
+                token_id TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                received_at TIMESTAMPTZ NOT NULL,
+                PRIMARY KEY (org_id, directive_id, token_id, stage)
+            );
+            CREATE INDEX gateway_directive_receipts_retention ON gateway_directive_receipts (org_id, received_at)
+        """.trimIndent() + ";\n" + tenantTableSql("gateway_pacing_settings") + "\n" +
+            tenantTableSql("gateway_directives") + "\n" + tenantTableSql("gateway_directive_deliveries") + "\n" +
+            tenantTableSql("gateway_directive_receipts"),
     ),
 )

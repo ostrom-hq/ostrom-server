@@ -3,6 +3,7 @@ package run.ostrom.server.identity.presentation
 
 import run.ostrom.server.identity.domain.DeviceNotFoundException
 import run.ostrom.server.identity.domain.ServiceKeyNotFoundException
+import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.OrgPrincipal
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.authenticated
@@ -13,6 +14,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.resources.delete
 import io.ktor.server.resources.get
+import io.ktor.server.resources.patch
 import io.ktor.server.resources.post
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
@@ -51,18 +53,38 @@ fun Route.keysAndDevicesRoutes(dependencies: KeysAndDevicesRoutesDependencies) =
             call.respond(HttpStatusCode.NoContent)
         }
         get<DevicesApi> {
-            val userId = call.requireBrowserSession().userId()
-            val devices = listDevices(userId, call.namedMember(orgs))
+            val principal = call.requireInteractiveLogin()
+            val devices = listDevices(principal.userId(), call.namedMember(orgs), principal.cliToken())
             call.respond(DevicesResponse(devices.map { it.toDeviceResponse() }))
         }
+        patch<DevicesApi.Id, RenameDeviceRequest> { params, request ->
+            val principal = call.requireInteractiveLogin()
+            val id = Uuid.parseOrNull(params.id) ?: throw DeviceNotFoundException(DEVICE_NOT_FOUND)
+            val member = call.namedMember(orgs)
+            val renamed = renameDevice(principal.userId(), id, request.name, member, principal.cliToken())
+            call.respond(renamed.toDeviceResponse())
+        }
         delete<DevicesApi.Id> { params ->
-            val userId = call.requireBrowserSession().userId()
+            val userId = call.requireInteractiveLogin().userId()
             val member = call.namedMember(orgs)
             signOutDevice(userId, Uuid.parseOrNull(params.id) ?: throw DeviceNotFoundException(), member)
             call.respond(HttpStatusCode.NoContent)
         }
+        get<MemberDevicesApi> { params ->
+            call.requireInteractiveLogin()
+            val caller = call.requireOrgPrincipal(orgs, null)
+            val devices = listMemberDevices(caller, params.memberId)
+            call.respond(DevicesResponse(devices.map { it.toDeviceResponse() }))
+        }
     }
 }
+
+/** The `error.type` of a device that is not there for the caller where the contract names it. */
+private const val DEVICE_NOT_FOUND = "device_not_found"
+
+/** The CLI token a call is made with, for `current`; null for a browser session. */
+private fun AuthenticatedPrincipal.cliToken(): Uuid? =
+    Uuid.parseOrNull(credentialId.toString()).takeIf { workstation != null }
 
 /**
  * The caller in the organization the request names in its `Ostrom-Org` header, where the tokens of

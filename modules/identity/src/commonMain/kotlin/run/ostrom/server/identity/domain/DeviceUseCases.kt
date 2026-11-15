@@ -69,16 +69,21 @@ interface StartDeviceAuthorizationUseCase {
      * @param source Who asks (the client address), for the rate limit; its network ([approximateNetwork]) is kept
      *   and shown before the yes.
      * @param scopes Null or empty for the ordinary sign-in; every one of [ADMIN_SCOPES] for `ostrom login --admin`.
+     * @param device What the CLI says of its installation (`devices.v1`), registered when the sign-in is approved;
+     *   ignored without an installation, and for `ostrom login --admin`, which never registers a device.
      *
      * @return The authorization and its device code.
      *
      * @throws RateLimitedException After 10 starts from the same source in 10 minutes.
      * @throws InvalidScopesException When [scopes] are neither none nor exactly [ADMIN_SCOPES].
+     * @throws InvalidInstallationException, InvalidDeviceNameException, InvalidPlatformException,
+     *   InvalidOsVersionException When [device] is out of its bounds.
      */
     suspend operator fun invoke(
         clientName: String?,
         source: String,
         scopes: Collection<String>? = null,
+        device: DeviceLoginIdentity? = null,
     ): StartedDeviceAuthorization
 }
 
@@ -102,9 +107,12 @@ class StartDeviceAuthorizationUseCaseImpl(
         clientName: String?,
         source: String,
         scopes: Collection<String>?,
+        device: DeviceLoginIdentity?,
     ): StartedDeviceAuthorization {
         val asked = scopes.orEmpty().toSet()
         if (asked.isNotEmpty() && asked != ADMIN_SCOPES) throw InvalidScopesException()
+        // An admin login lasts a working day and takes no workstation: whatever it says of an installation is ignored.
+        val installation = validatedInstallation(device.takeIf { asked.isEmpty() })
         val key = "device-start:${rateLimitSource(source)}"
         val allowed = limiter.tryAcquire(key, DEVICE_STARTS_PER_WINDOW, DEVICE_RATE_WINDOW)
         if (!allowed) throw RateLimitedException()
@@ -122,6 +130,10 @@ class StartDeviceAuthorizationUseCaseImpl(
             lastPolledAt = null,
             scopes = asked,
             requestedFrom = approximateNetwork(source),
+            installationId = installation?.installationId,
+            deviceName = installation?.deviceName,
+            platform = installation?.platform,
+            osVersion = installation?.osVersion,
         )
         authorizations.create(authorization, hasher.hash(deviceCode))
         return StartedDeviceAuthorization(authorization, deviceCode)
@@ -183,6 +195,8 @@ interface AnswerDeviceAuthorizationUseCase {
      * @throws DeviceCodeNotFoundException When it is unknown, expired or already answered.
      * @throws RateLimitedException After 20 answers by the same user in 10 minutes.
      * @throws AdminApprovalForbiddenException When approving `ostrom login --admin` without [managedOrg].
+     * @throws DeviceLimitException When approving an installation that is not registered yet while the user already
+     *   holds [MAX_REGISTERED_DEVICES] devices: the person sees it here, before the CLI is signed in.
      */
     suspend operator fun invoke(
         userId: Uuid,
@@ -196,12 +210,14 @@ interface AnswerDeviceAuthorizationUseCase {
  * [AnswerDeviceAuthorizationUseCase] on the repository.
  *
  * @param authorizations The authorizations.
+ * @param devices The registered devices, for their limit.
  * @param limiter The rate limit.
  * @param audit The audit log.
  * @param clock The clock.
  */
 class AnswerDeviceAuthorizationUseCaseImpl(
     private val authorizations: DeviceAuthorizationsRepository,
+    private val devices: DevicesRepository,
     private val limiter: RateLimiter,
     private val audit: AuditLog,
     private val clock: Clock,
@@ -218,6 +234,7 @@ class AnswerDeviceAuthorizationUseCaseImpl(
         } else {
             null
         }
+        if (approve) pending.installationId?.let { requireRoomFor(userId, it) }
         if (!authorizations.answer(pending.id, userId, approve, now, orgId)) throw DeviceCodeNotFoundException()
         val details = buildMap {
             put("client", pending.clientName)
@@ -225,6 +242,12 @@ class AnswerDeviceAuthorizationUseCaseImpl(
         }
         val action = if (approve) "device.approved" else "device.denied"
         audit.record(AuditEntry(orgId, userId, action, "device", pending.id.toString(), details))
+    }
+
+    /** A new installation needs a free place among the person's devices; one already registered always signs in. */
+    private suspend fun requireRoomFor(userId: Uuid, installationId: String) {
+        val known = devices.find(userId, installationId) != null
+        if (!known && devices.count(userId) >= MAX_REGISTERED_DEVICES) throw DeviceLimitException()
     }
 }
 
@@ -268,7 +291,7 @@ interface PollDeviceAuthorizationUseCase {
  * [PollDeviceAuthorizationUseCase] on the repository.
  *
  * @param authorizations The authorizations.
- * @param tokens Signs the oldest workstations out beyond [MAX_DEVICES_PER_USER].
+ * @param tokens Signs the oldest sign-ins out beyond [MAX_DEVICES_PER_USER].
  * @param secrets Makes the CLI token.
  * @param hasher Hashes codes and secrets.
  * @param audit The audit log.
@@ -313,13 +336,43 @@ class PollDeviceAuthorizationUseCaseImpl(
         }
         // An admin token lasts a working day and is approved each time from the console: it takes no workstation.
         if (!admin) makeRoomForDevice(tokens, audit, userId, now)
-        if (!authorizations.consume(authorization.id, issued.token, hasher.hash(issued.secret))) {
-            return DevicePollResult.Expired
-        }
+        if (!consume(authorization, issued, now)) return DevicePollResult.Expired
         val tokenId = issued.token.id.toString()
         val details = mapOf("kind" to kind.name.lowercase())
         audit.record(AuditEntry(orgId, userId, "token.created", "token", tokenId, details))
         return DevicePollResult.Approved(issued)
+    }
+
+    /** Stores the token; the one of an installation is stored as a sign-in of its device, registered by it if new. */
+    private suspend fun consume(
+        authorization: DeviceAuthorization,
+        issued: IssuedToken,
+        now: kotlin.time.Instant,
+    ): Boolean {
+        val installation = authorization.installationId.takeIf { issued.token.kind != TokenKind.ADMIN }
+        return if (installation == null) {
+            authorizations.consume(authorization.id, issued.token, hasher.hash(issued.secret))
+        } else {
+            signIn(authorization, installation, issued, now)
+        }
+    }
+
+    private suspend fun signIn(
+        authorization: DeviceAuthorization,
+        installation: String,
+        issued: IssuedToken,
+        now: kotlin.time.Instant,
+    ): Boolean {
+        val name = authorization.deviceName ?: authorization.clientName
+        val login = DeviceSignInRequest(installation, name, authorization.platform, authorization.osVersion)
+        val hash = hasher.hash(issued.secret)
+        val signIn = authorizations.consumeOnDevice(authorization.id, issued.token, hash, login, now) ?: return false
+        if (signIn.registered) {
+            val details = listOfNotNull(authorization.platform?.let { "platform" to it }).toMap()
+            val deviceId = signIn.device.id.toString()
+            audit.record(AuditEntry(null, issued.token.userId, "device.registered", "device", deviceId, details))
+        }
+        return true
     }
 
     private companion object {

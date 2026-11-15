@@ -49,6 +49,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import run.ostrom.server.cloud.domain.CloudClustersRepository
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** The cloud administration on a real server: who may, what is stored, what never comes back. */
@@ -190,6 +192,17 @@ class CloudAdminRoutesPostgresTest {
         val list = http.get("/api/v1/cloud/clusters") { bearerAuth("alice") }.body<CloudClusterListResponse>()
         assertEquals(listOf("prod", "staging"), list.clusters.map { it.name })
         assertEquals(changed, list.clusters.first())
+
+        // The garbage collection's report (runners.cloud.retention.v1): absent before the first, then served.
+        val staging = list.clusters.last()
+        assertNull(staging.orphanedVolumes)
+        assertNull(staging.lastGarbageCollectionAt)
+        val collectedAt = Instant.parse("2026-11-14T10:00:00Z")
+        server.koin.get<CloudClustersRepository>().recordGarbageCollection(Uuid.parse(staging.id), 2, collectedAt)
+        val after = http.get("/api/v1/cloud/clusters") { bearerAuth("alice") }.body<CloudClusterListResponse>()
+        assertEquals(2, after.clusters.last().orphanedVolumes)
+        assertEquals("2026-11-14T10:00:00Z", after.clusters.last().lastGarbageCollectionAt)
+        assertNull(after.clusters.first().orphanedVolumes)
     }
 
     @Test

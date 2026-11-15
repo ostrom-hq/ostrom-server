@@ -298,12 +298,31 @@ data class CreateCloudSessionRequest(
 data class CloudSessionProfileDto(val id: String, val version: Int)
 
 /**
+ * The proof that a Kubernetes session's workspace is gone (`CloudWorkspaceDeletion`, `runners.cloud.retention.v1`).
+ *
+ * @property state `none`, `pending`, `proven` or `blocked`.
+ * @property claimDeletedAt When its claim was seen gone.
+ * @property volumeDeletedAt When its PersistentVolume was seen gone.
+ * @property volumeHandle The provider's volume handle, kept as evidence.
+ * @property problem Why the deletion is blocked.
+ */
+@Serializable
+data class CloudWorkspaceDeletionDto(
+    val state: String,
+    val claimDeletedAt: String? = null,
+    val volumeDeletedAt: String? = null,
+    val volumeHandle: String? = null,
+    val problem: SessionFailureDto? = null,
+)
+
+/**
  * Why a session failed or stopped.
  *
  * @property code A stable key: `start_failed`, `execution_lost`, `idle_timeout`, `max_duration`, `hours_exhausted`,
- *   `preparation_failed`, `cluster_unavailable`, `namespace_not_allowed`.
+ *   `preparation_failed`, `cluster_unavailable`, `namespace_not_allowed`, `storage_class_missing`,
+ *   `storage_class_retains_volumes`; a workspace deletion's `volume_retained`, `volume_deletion_stalled`.
  * @property message A sentence for humans.
- * @property retryable Whether trying again may succeed, for `preparation_failed`.
+ * @property retryable Whether trying again may succeed, for `preparation_failed` and a workspace deletion's problem.
  */
 @Serializable
 data class SessionFailureDto(
@@ -358,6 +377,7 @@ data class CloudSessionResponse(
     val pausedAt: String? = null,
     val expiresAt: String? = null,
     val terminatedReason: String? = null,
+    val workspaceDeletion: CloudWorkspaceDeletionDto? = null,
     val endedAt: String? = null,
     val runnerId: String? = null,
     val githubAccess: String = "owner",

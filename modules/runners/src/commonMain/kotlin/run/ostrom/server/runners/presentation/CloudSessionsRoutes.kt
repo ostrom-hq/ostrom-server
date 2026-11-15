@@ -7,6 +7,7 @@ import run.ostrom.server.kernel.http.bodyLimit
 import run.ostrom.server.runners.domain.CloudEnvironmentRules
 import run.ostrom.server.runners.domain.CloudSession
 import run.ostrom.server.runners.domain.SessionState
+import run.ostrom.server.runners.domain.WorkspaceDeletion
 import run.ostrom.server.runners.domain.CloudSessionNotFoundException
 import run.ostrom.server.runners.domain.CreateCloudSessionPayload
 import run.ostrom.server.runners.domain.InvalidCloudSessionRequestException
@@ -247,6 +248,16 @@ fun CloudSession.toResponse() = CloudSessionResponse(
     pausedAt = pausedAt?.toString(),
     expiresAt = expiresAt?.takeIf { state == SessionState.PAUSED }?.toString(),
     terminatedReason = terminatedReason?.takeIf { state == SessionState.TERMINATED },
+    // `none` while a Kubernetes session holds its workspace; absent on Docker and registered runners.
+    workspaceDeletion = (workspaceDeletion ?: WorkspaceDeletion().takeIf { profile != null })?.let { deletion ->
+        CloudWorkspaceDeletionDto(
+            state = deletion.state.wire,
+            claimDeletedAt = deletion.claimDeletedAt?.toString(),
+            volumeDeletedAt = deletion.volumeDeletedAt?.toString(),
+            volumeHandle = deletion.volumeHandle,
+            problem = deletion.problem?.let { SessionFailureDto(it.code, it.message, it.retryable) },
+        )
+    },
     endedAt = terminatedAt?.toString(),
     runnerId = runnerId?.toString(),
     githubAccess = githubAccess.wire,

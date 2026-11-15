@@ -66,6 +66,8 @@ import kotlin.uuid.Uuid
  * @property effort The agent's effort (reasoning level), if chosen.
  * @property permissionBypass The owner's standing approval of tool uses, while it is on.
  * @property waiting Why the agent waits for a person, while it does.
+ * @property workspaceDeletion The proof its workspace is gone, provider volume included, on a runtime that
+ *   [proves it][RuntimeDriver.provesDeletion] (Kubernetes); null elsewhere, and before it ends.
  */
 data class CloudSession(
     val id: Uuid,
@@ -110,7 +112,12 @@ data class CloudSession(
     val effort: String? = null,
     val permissionBypass: PermissionBypass? = null,
     val waiting: CloudHumanWait? = null,
+    val workspaceDeletion: WorkspaceDeletion? = null,
 ) {
+    /** Its workspace's deletion while it is pending or blocked, and so looked at again until it is proven gone. */
+    val cleanup: WorkspaceDeletion?
+        get() = workspaceDeletion?.takeIf { it.state == DeletionState.PENDING || it.state == DeletionState.BLOCKED }
+
     /**
      * Whether the runner of the current start reported a failed preparation (or the server found one): the
      * session is never reported ready, and the reconciler stops the execution.
@@ -285,7 +292,8 @@ data class RepositorySpec(
  * Why a session failed or stopped.
  *
  * @property code A stable snake_case key (`start_failed`, `execution_lost`, `idle_timeout`, `max_duration`,
- *   `hours_exhausted`, `preparation_failed`, `cluster_unavailable`, `namespace_not_allowed`).
+ *   `hours_exhausted`, `preparation_failed`, `cluster_unavailable`, `namespace_not_allowed`, `storage_class_missing`,
+ *   `storage_class_retains_volumes`; a workspace deletion's `volume_retained`, `volume_deletion_stalled`).
  * @property message A sentence for humans, never a raw error of the cluster nor a runner's text.
  * @property retryable Whether trying again may succeed, for `preparation_failed` (a clone, a fetch, GitHub).
  */

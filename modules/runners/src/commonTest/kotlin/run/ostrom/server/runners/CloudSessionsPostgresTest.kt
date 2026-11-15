@@ -7,7 +7,13 @@ import run.ostrom.server.kernel.audit.OrgAuditTrail
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.sessions.CloudSessionWakes
 import run.ostrom.server.kernel.sessions.PendingWaitAnswers
+import run.ostrom.server.cloud.domain.CloudCluster
+import run.ostrom.server.cloud.domain.CloudClustersRepository
+import run.ostrom.server.cloud.domain.StoredCloudCluster
+import run.ostrom.server.kernel.database.ScheduledWork
 import run.ostrom.server.runners.domain.AllowlistedCloudPlanProvider
+import run.ostrom.server.runners.domain.RuntimeDriver
+import run.ostrom.server.runners.fakes.FakeClusterRuntime
 import run.ostrom.server.runners.domain.CloudPlan
 import run.ostrom.server.runners.domain.CloudPlanProvider
 import run.ostrom.server.runners.domain.CloudSession
@@ -61,6 +67,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -285,7 +292,40 @@ class CloudSessionsPostgresTest {
     fun theModuleStartsTheReconcilerLoop() = serverTest(listOf(RunnersModule)) { server ->
         val job = Job()
         RunnersModule.start(CoroutineScope(currentCoroutineContext() + job), server.koin)
-        assertTrue(job.children.any())
+        assertEquals(3, job.children.count(), "Its loops, no garbage collection")
+        job.cancelAndJoin()
+    }
+
+    @Test
+    fun onTheConsolesClustersTheModuleStartsTheGarbageCollectionToo() = serverTest(
+        listOf(RunnersModule),
+        module {
+            single<RuntimeDriver> { FakeClusterRuntime() }
+            single<ScheduledWork> {
+                object : ScheduledWork {
+                    override suspend fun runDue(
+                        name: String,
+                        interval: Duration,
+                        timeout: Duration,
+                        block: suspend () -> Unit,
+                    ) = false
+                }
+            }
+            single<CloudClustersRepository> {
+                object : CloudClustersRepository {
+                    override suspend fun list() = emptyList<CloudCluster>()
+                    override suspend fun get(id: Uuid): StoredCloudCluster? = null
+                    override suspend fun version(id: Uuid): Int? = null
+                    override suspend fun insert(stored: StoredCloudCluster) = false
+                    override suspend fun update(stored: StoredCloudCluster) = false
+                    override suspend fun recordGarbageCollection(id: Uuid, orphanedVolumes: Int?, at: Instant) = Unit
+                }
+            }
+        },
+    ) { server ->
+        val job = Job()
+        RunnersModule.start(CoroutineScope(currentCoroutineContext() + job), server.koin)
+        assertEquals(4, job.children.count(), "And the garbage collection")
         job.cancelAndJoin()
     }
 

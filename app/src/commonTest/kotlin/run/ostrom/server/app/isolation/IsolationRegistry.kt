@@ -126,13 +126,19 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "DELETE /api/v1/tokens/{id}" to target("id" to TOKEN),
     "POST /api/v1/tokens/{id}/rotate" to target("id" to TOKEN),
     "GET /api/v1/devices" to Case.Target(),
+    "PATCH /api/v1/devices/{id}" to target("id" to DEVICE, body = """{"name": "renamed"}"""),
     "DELETE /api/v1/devices/{id}" to target("id" to DEVICE),
+    "GET /api/v1/members/{memberId}/devices" to target("memberId" to MEMBER_ID),
     "POST /api/v1/push-devices" to Case.Own("registers the caller's phone"),
     "GET /api/v1/push-devices" to Case.Own("lists the caller's own phones"),
     "DELETE /api/v1/push-devices/{id}" to target("id" to PUSH_DEVICE),
     "GET /api/v1/notifications/settings" to Case.Own("reads the caller's own switches"),
     "PUT /api/v1/notifications/settings" to Case.Own("changes the caller's own switches"),
     "POST /api/v1/notifications/push/test" to Case.Own("pushes to the caller's own phones"),
+    // The caller's own Slack link (slack.v1): found by the caller's proven address, never by an id they send.
+    "GET /api/v1/slack/link" to Case.Own("reads the caller's own Slack link"),
+    "POST /api/v1/slack/link" to Case.Own("links the Slack account of the caller's own proven address"),
+    "DELETE /api/v1/slack/link" to Case.Own("removes the caller's own Slack link"),
 
     // Organizations, members, invitations, billing.
     "GET /api/v1/orgs" to Case.Target(),
@@ -169,6 +175,7 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "POST /api/v1/orgs/{orgId}/billing/resume" to target("orgId" to ORG_ID, body = "{}"),
     "POST /api/v1/billing/stripe/webhook" to Case.Exempt(SIGNED),
     "POST /webhooks/stripe" to Case.Exempt(SIGNED),
+    "POST /webhooks/slack" to Case.Exempt(SIGNED),
     "GET /api/v1/audit" to Case.Target(),
     "GET /api/v1/service-keys" to Case.Target(),
     "POST /api/v1/service-keys" to
@@ -212,6 +219,13 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "POST /api/v1/inference/requests/{id}/cancel" to
         Case.Target(mapOf("id" to Param.Fixed("6f1c2b0e-9a4d-4c3e-8b7a-2d5e1f0a9c41"))),
     "GET /api/v1/inference/settings" to Case.Target(),
+    "GET /api/v1/policy/pacing" to Case.Target(),
+    "PUT /api/v1/policy/pacing" to Case.Target(body = "{}", admin = true),
+    "GET /api/v1/directives/preview" to Case.Target(),
+    "GET /api/v1/directives/current" to Case.Target(),
+    "POST /api/v1/directives/current" to Case.Target(body = """{"sessionId":"s1"}"""),
+    "POST /api/v1/directives/claim" to Case.Target(body = """{"sessionId":"s1","stage":"received_by_cli"}"""),
+    "POST /api/v1/directives/receipt" to Case.Target(body = """{"id":"d1","stage":"received_by_cli"}"""),
     "PUT /api/v1/inference/settings" to Case.Target(body = "{}", admin = true),
     "GET /api/v1/inference/v1/models" to Case.Target(),
     "POST /api/v1/inference/v1/messages" to Case.Target(),

@@ -4,6 +4,7 @@ package run.ostrom.server.kernel
 import run.ostrom.server.kernel.auth.MemberDirectory
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.uuid.Uuid
 
@@ -15,5 +16,7 @@ class MemberDirectoryTest {
         }
         assertNull(directory.memberIds(Uuid.random(), 10))
         assertNull(directory.roles(Uuid.random(), 10))
+        assertNull(directory.userIdOf(Uuid.random(), "m"))
+        assertFalse(directory.hasUser(Uuid.random(), Uuid.random()))
     }
 }

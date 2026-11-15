@@ -46,6 +46,7 @@ import run.ostrom.server.sharing.domain.ShareAccountUseCase
 import run.ostrom.server.sharing.domain.ShareAccountUseCaseImpl
 import run.ostrom.server.sharing.domain.SharedAccountPool
 import run.ostrom.server.sharing.domain.SharedAccountRepository
+import run.ostrom.server.sharing.domain.SharingOrgs
 import run.ostrom.server.sharing.domain.UpdateSharedAccountUseCase
 import run.ostrom.server.sharing.domain.UpdateSharedAccountUseCaseImpl
 import run.ostrom.server.sharing.domain.ViewSharedAccountUseCase
@@ -61,6 +62,7 @@ import run.ostrom.server.sharing.infrastructure.QuotaWindowRepositoryImpl
 import run.ostrom.server.sharing.infrastructure.SecretsCredentialSecrets
 import run.ostrom.server.sharing.infrastructure.SharedAccountRepositoryImpl
 import run.ostrom.server.sharing.infrastructure.SharingMigrations
+import run.ostrom.server.sharing.infrastructure.SharingOrgsImpl
 import run.ostrom.server.sharing.presentation.ForecastRoutesDependencies
 import run.ostrom.server.sharing.presentation.GroupRoutesDependencies
 import run.ostrom.server.sharing.presentation.SharingRoutesDependencies
@@ -117,6 +119,7 @@ object SharingModule : ServerModule {
         single { AccountTokens(get(), get(), get(), get(), get()) }
         single<AccountGroups> { AccountGroupsImpl(get()) }
         single<AccountSlotRepository> { AccountSlotRepositoryImpl(get()) }
+        single<SharingOrgs> { SharingOrgsImpl(get()) }
         single { SharedAccountPool(get(), get(), get(), get(), get(), spend(), get(), get(), get(), get()) }
         single<ShareAccountUseCase> { ShareAccountUseCaseImpl(get(), get(), get()) }
         single { MemberNames(logins(), get()) }

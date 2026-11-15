@@ -68,6 +68,21 @@ class QuotaHistoryRepositoryImpl(
         }
     }
 
+    override suspend fun recentOfOrg(
+        orgId: Uuid,
+        observed: ClosedRange<Instant>,
+        limit: Int,
+    ): Map<Uuid, List<QuotaWindow>> = database.inOrg(orgId) {
+        orgQuotaHistory(orgId, observed, limit).map {
+            it[SharingQuotaHistory.accountId] to QuotaWindow(
+                it[SharingQuotaHistory.name],
+                it[SharingQuotaHistory.utilization],
+                it[SharingQuotaHistory.resetsAt],
+                it[SharingQuotaHistory.observedAt],
+            )
+        }.groupBy({ it.first }, { it.second })
+    }
+
     override suspend fun prune(before: Instant, limit: Int): Long {
         PurgeDates.check(before, clock.now())
         return database.query {
@@ -126,6 +141,22 @@ internal fun recentQuotaHistory(
             (SharingQuotaHistory.observedAt lessEq observed.endInclusive)
     }
     .orderBy(SharingQuotaHistory.observedAt to SortOrder.DESC, SharingQuotaHistory.name to SortOrder.ASC)
+    .limit(limit)
+
+/** The controller's read: the org's readings observed in [observed], newest first, by the `org` index. */
+internal fun orgQuotaHistory(orgId: Uuid, observed: ClosedRange<Instant>, limit: Int): Query = SharingQuotaHistory
+    .select(
+        SharingQuotaHistory.accountId,
+        SharingQuotaHistory.name,
+        SharingQuotaHistory.utilization,
+        SharingQuotaHistory.resetsAt,
+        SharingQuotaHistory.observedAt,
+    )
+    .where {
+        (SharingQuotaHistory.orgId eq orgId) and (SharingQuotaHistory.observedAt greaterEq observed.start) and
+            (SharingQuotaHistory.observedAt lessEq observed.endInclusive)
+    }
+    .orderBy(SharingQuotaHistory.observedAt to SortOrder.DESC)
     .limit(limit)
 
 private const val MILLIS_PER_MINUTE = 60_000L

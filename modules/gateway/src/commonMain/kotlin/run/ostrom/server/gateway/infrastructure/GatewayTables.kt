@@ -96,3 +96,67 @@ internal object GatewayApiPrices : Table("gateway_api_prices") {
 
     override val primaryKey = PrimaryKey(orgId, provider, model, effectiveFromDay)
 }
+
+/** The capacity controller's settings of each org (version 8). */
+internal object GatewayPacingSettings : Table("gateway_pacing_settings") {
+    val orgId = uuid("org_id")
+    val observationOnly = bool("observation_only")
+    val autoPoolSize = bool("auto_pool_size")
+
+    override val primaryKey = PrimaryKey(orgId)
+}
+
+/** The controller's advice per member (`scope_key` '') and session (its id's digest) (version 8). */
+internal object GatewayDirectives : Table("gateway_directives") {
+    val orgId = uuid("org_id")
+    val memberId = uuid("member_id")
+    val scopeKey = text("scope_key")
+    val id = text("id")
+
+    /** A [run.ostrom.server.gateway.domain.Pace] name. */
+    val pace = text("pace")
+    val maxConcurrent = integer("max_concurrent")
+    val minIntervalMs = long("min_interval_ms")
+    val message = text("message")
+    val createdAt = instant("created_at")
+    val expiresAt = instant("expires_at")
+    val contextKey = text("context_key")
+    val recoveryPace = text("recovery_pace").nullable()
+    val recoveryStartedAt = instant("recovery_started_at").nullable()
+    val recoveryMinIntervalMs = long("recovery_min_interval_ms").nullable()
+
+    /** When the scope's last call was admitted: the admission spacing reads it, the controller never writes it. */
+    val lastAdmittedAt = instant("last_admitted_at").nullable()
+
+    /** The call admitted then: its own admission never spaces it again (put back to wait, or retried). */
+    val lastAdmittedRequest = uuid("last_admitted_request").nullable()
+
+    override val primaryKey = PrimaryKey(orgId, memberId, scopeKey)
+}
+
+/** The deliveries of a session's advice per stage (version 8). */
+internal object GatewayDirectiveDeliveries : Table("gateway_directive_deliveries") {
+    val orgId = uuid("org_id")
+    val memberId = uuid("member_id")
+    val sessionKey = text("session_key")
+    val stage = text("stage")
+    val directiveId = text("directive_id")
+    val claimId = text("claim_id")
+    val tokenId = text("token_id")
+    val claimedUntil = instant("claimed_until")
+    val emittedAt = instant("emitted_at").nullable()
+    val updatedAt = instant("updated_at")
+
+    override val primaryKey = PrimaryKey(orgId, memberId, sessionKey, stage)
+}
+
+/** The receipts of the advice (version 8). */
+internal object GatewayDirectiveReceipts : Table("gateway_directive_receipts") {
+    val orgId = uuid("org_id")
+    val directiveId = text("directive_id")
+    val tokenId = text("token_id")
+    val stage = text("stage")
+    val receivedAt = instant("received_at")
+
+    override val primaryKey = PrimaryKey(orgId, directiveId, tokenId, stage)
+}

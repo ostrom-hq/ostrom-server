@@ -73,6 +73,16 @@ class DockerRuntimeDriverTest {
     }
 
     @Test
+    fun aDockerWorkspaceIsNotProvenDownToAProviderVolume() = runTest {
+        assertFalse(driver.provesDeletion)
+        assertNull(driver.storageClass(session))
+        assertNull(driver.workspaceClaim(session))
+        assertNull(driver.volume(session, "pv-1"))
+        assertNull(driver.claimedVolume(session))
+        assertTrue(api.lines().isEmpty(), "Nothing asked of the engine")
+    }
+
+    @Test
     fun aWorkspaceIsANamedVolumeWithItsSocketVolumes() = runTest {
         driver.ensureWorkspace(session)
         assertEquals(List(3) { "POST /volumes/create" }, api.lines())

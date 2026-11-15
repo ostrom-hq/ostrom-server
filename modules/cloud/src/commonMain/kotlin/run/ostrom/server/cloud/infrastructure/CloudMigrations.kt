@@ -87,4 +87,12 @@ val CloudMigrations: List<SchemaMigration> = listOf(
             ALTER TABLE cloud_clusters ADD COLUMN imported BOOLEAN NOT NULL DEFAULT FALSE;
         """.trimIndent(),
     ),
+    // runners.cloud.retention.v1 (TeamCode's cluster garbage report): the workspace volumes no provisioner deletes,
+    // counted by the last garbage collection, and when it ran; both absent before the first.
+    SchemaMigration(
+        version = 5,
+        name = "cloud_cluster_garbage_report",
+        sql = "ALTER TABLE cloud_clusters ADD COLUMN orphaned_volumes INTEGER, " +
+            "ADD COLUMN last_garbage_collection_at TIMESTAMPTZ",
+    ),
 )

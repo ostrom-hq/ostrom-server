@@ -2,6 +2,7 @@
 package run.ostrom.server.identity
 
 import run.ostrom.core.api.models.ServerFeatures
+import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.identity.domain.AnswerDeviceAuthorizationUseCase
 import run.ostrom.server.identity.domain.AnswerDeviceAuthorizationUseCaseImpl
 import run.ostrom.server.identity.domain.ApiTokensRepository
@@ -25,6 +26,7 @@ import run.ostrom.server.identity.domain.CredentialAuthenticatorImpl
 import run.ostrom.server.identity.domain.DeleteServiceKeyUseCase
 import run.ostrom.server.identity.domain.DeleteServiceKeyUseCaseImpl
 import run.ostrom.server.identity.domain.DeviceAuthorizationsRepository
+import run.ostrom.server.identity.domain.DevicesRepository
 import run.ostrom.server.identity.domain.ElevatedTokensRepository
 import run.ostrom.server.identity.domain.EndWebSessionUseCase
 import run.ostrom.server.identity.domain.EndWebSessionUseCaseImpl
@@ -52,6 +54,8 @@ import run.ostrom.server.identity.domain.ListAuditEventsUseCase
 import run.ostrom.server.identity.domain.ListAuditEventsUseCaseImpl
 import run.ostrom.server.identity.domain.ListDevicesUseCase
 import run.ostrom.server.identity.domain.ListDevicesUseCaseImpl
+import run.ostrom.server.identity.domain.ListMemberDevicesUseCase
+import run.ostrom.server.identity.domain.ListMemberDevicesUseCaseImpl
 import run.ostrom.server.identity.domain.ListOrgAuditUseCase
 import run.ostrom.server.identity.domain.ListOrgAuditUseCaseImpl
 import run.ostrom.server.identity.domain.ListServiceKeysUseCase
@@ -70,6 +74,8 @@ import run.ostrom.server.identity.domain.PollDeviceAuthorizationUseCase
 import run.ostrom.server.identity.domain.PollDeviceAuthorizationUseCaseImpl
 import run.ostrom.server.identity.domain.RateLimitWindows
 import run.ostrom.server.identity.domain.RateLimiter
+import run.ostrom.server.identity.domain.RenameDeviceUseCase
+import run.ostrom.server.identity.domain.RenameDeviceUseCaseImpl
 import run.ostrom.server.identity.domain.RequestMagicLinkUseCase
 import run.ostrom.server.identity.domain.RequestMagicLinkUseCaseImpl
 import run.ostrom.server.identity.domain.ResolveUserUseCase
@@ -109,6 +115,7 @@ import run.ostrom.server.identity.domain.StartWebSessionUseCaseImpl
 import run.ostrom.server.identity.domain.UnlockMobileAppUseCase
 import run.ostrom.server.identity.domain.UnlockMobileAppUseCaseImpl
 import run.ostrom.server.identity.domain.LinkedIdentities
+import run.ostrom.server.identity.domain.NoMemberDirectory
 import run.ostrom.server.identity.domain.UsersRepository
 import run.ostrom.server.identity.domain.VerifyMagicLinkUseCase
 import run.ostrom.server.identity.domain.VerifyMagicLinkUseCaseImpl
@@ -118,6 +125,7 @@ import run.ostrom.server.identity.domain.WebSessionsRepository
 import run.ostrom.server.identity.infrastructure.ApiTokensRepositoryImpl
 import run.ostrom.server.identity.infrastructure.AuditRepositoryImpl
 import run.ostrom.server.identity.infrastructure.DeviceAuthorizationsRepositoryImpl
+import run.ostrom.server.identity.infrastructure.DevicesRepositoryImpl
 import run.ostrom.server.identity.infrastructure.DirectoryMailSender
 import run.ostrom.server.identity.infrastructure.ElevatedTokensRepositoryImpl
 import run.ostrom.server.identity.infrastructure.GITHUB_SIGN_IN_SETTINGS
@@ -230,6 +238,7 @@ object IdentityModule : ServerModule {
         single<ServiceKeysRepository> { ServiceKeysRepositoryImpl(get<JdbcDatabase>()) }
         single<ElevatedTokensRepository> { ElevatedTokensRepositoryImpl(get<JdbcDatabase>()) }
         single<DeviceAuthorizationsRepository> { DeviceAuthorizationsRepositoryImpl(get<JdbcDatabase>()) }
+        single<DevicesRepository> { DevicesRepositoryImpl(get<JdbcDatabase>()) }
         single<AuditRepository> { AuditRepositoryImpl(get<JdbcDatabase>()) }
 
         single<AuditLog> { AuditLogImpl(get(), get(), get(), get()) }
@@ -278,14 +287,27 @@ object IdentityModule : ServerModule {
         single<CreateServiceKeyUseCase> { CreateServiceKeyUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single<ListServiceKeysUseCase> { ListServiceKeysUseCaseImpl(get(), get()) }
         single<DeleteServiceKeyUseCase> { DeleteServiceKeyUseCaseImpl(get(), get(), get()) }
-        single<ListDevicesUseCase> { ListDevicesUseCaseImpl(get(), get(), get()) }
-        single<SignOutDeviceUseCase> { SignOutDeviceUseCaseImpl(get(), get(), get(), get()) }
-        single { KeysAndDevicesRoutesDependencies(get(), get(), get(), get(), get(), get()) }
+        // The orgs module binds the directory of members: absent (a server without it), no one reads or changes the
+        // device of another person.
+        single<ListDevicesUseCase> { ListDevicesUseCaseImpl(get(), get(), get(), get()) }
+        single<SignOutDeviceUseCase> {
+            val members = getOrNull<MemberDirectory>() ?: NoMemberDirectory
+            SignOutDeviceUseCaseImpl(get(), get(), get(), members, get(), get())
+        }
+        single<RenameDeviceUseCase> {
+            RenameDeviceUseCaseImpl(get(), getOrNull<MemberDirectory>() ?: NoMemberDirectory, get(), get())
+        }
+        single<ListMemberDevicesUseCase> {
+            ListMemberDevicesUseCaseImpl(getOrNull<MemberDirectory>() ?: NoMemberDirectory, get())
+        }
+        single { KeysAndDevicesRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get()) }
         single<StartDeviceAuthorizationUseCase> {
             StartDeviceAuthorizationUseCaseImpl(get(), get(), get(), get(), get())
         }
         single<GetDeviceAuthorizationUseCase> { GetDeviceAuthorizationUseCaseImpl(get(), get(), get()) }
-        single<AnswerDeviceAuthorizationUseCase> { AnswerDeviceAuthorizationUseCaseImpl(get(), get(), get(), get()) }
+        single<AnswerDeviceAuthorizationUseCase> {
+            AnswerDeviceAuthorizationUseCaseImpl(get(), get(), get(), get(), get())
+        }
         single<PollDeviceAuthorizationUseCase> {
             PollDeviceAuthorizationUseCaseImpl(get(), get(), get(), get(), get(), get())
         }
@@ -418,7 +440,11 @@ object IdentityModule : ServerModule {
         route.keysAndDevicesRoutes(koin.get())
     }
 
-    /** The audit log (`/api/v1/audit`, `/api/v1/auth/me/audit`) and the wide catalogue of service-key scopes. */
+    /**
+     * The audit log (`/api/v1/audit`, `/api/v1/auth/me/audit`), the devices of the CLI (`devices.v1`: registration at
+     * the sign-in, the list, the rename, the removal, a member's for an owner or an admin) and the wide catalogue of
+     * service-key scopes.
+     */
     override suspend fun features(koin: Koin): Set<String> =
-        setOf(ServerFeatures.AUDIT, ServerFeatures.SERVICE_KEY_SCOPES)
+        setOf(ServerFeatures.AUDIT, ServerFeatures.DEVICES, ServerFeatures.SERVICE_KEY_SCOPES)
 }
