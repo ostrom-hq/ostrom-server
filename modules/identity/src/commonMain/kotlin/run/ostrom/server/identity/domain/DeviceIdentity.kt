@@ -203,6 +203,15 @@ interface DevicesRepository {
     suspend fun get(id: Uuid): RegisteredDevice?
 
     /**
+     * Reads devices, whoever owns them, in one query.
+     *
+     * @param ids The devices.
+     *
+     * @return The ones that exist.
+     */
+    suspend fun getAll(ids: Collection<Uuid>): List<RegisteredDevice>
+
+    /**
      * Lists a person's devices.
      *
      * @param userId The person.

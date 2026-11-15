@@ -183,6 +183,9 @@ import run.ostrom.server.kernel.auth.GovernanceAudit
 import run.ostrom.server.kernel.auth.PhoneUnlockProofs
 import run.ostrom.server.kernel.auth.ServiceKeyAudit
 import run.ostrom.server.kernel.auth.SignOutListener
+import run.ostrom.server.kernel.auth.DeviceRemovalListener
+import run.ostrom.server.kernel.auth.SignedInDevices
+import run.ostrom.server.identity.domain.SignedInDevicesImpl
 import run.ostrom.server.kernel.auth.TokenAuthenticator
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.ScheduledJob
@@ -299,8 +302,10 @@ object IdentityModule : ServerModule {
         single<ListDevicesUseCase> { ListDevicesUseCaseImpl(get(), get(), get(), get()) }
         single<SignOutDeviceUseCase> {
             val members = getOrNull<MemberDirectory>() ?: NoMemberDirectory
-            SignOutDeviceUseCaseImpl(get(), get(), get(), members, get(), get())
+            SignOutDeviceUseCaseImpl(get(), get(), get(), members, get(), get(), getAll<DeviceRemovalListener>())
         }
+        // The device of a person's CLI sign-in, for the remote sessions of the runners module.
+        single<SignedInDevices> { SignedInDevicesImpl(get(), get()) }
         single<RenameDeviceUseCase> {
             RenameDeviceUseCaseImpl(get(), getOrNull<MemberDirectory>() ?: NoMemberDirectory, get(), get())
         }

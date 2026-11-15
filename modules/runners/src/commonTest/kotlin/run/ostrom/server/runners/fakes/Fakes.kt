@@ -18,6 +18,8 @@ import run.ostrom.server.runners.domain.RuntimeDriver
 import run.ostrom.server.runners.domain.RuntimeUnreachableException
 import run.ostrom.server.runners.domain.SessionLimits
 import run.ostrom.server.runners.domain.SessionRef
+import run.ostrom.server.runners.domain.SessionKind
+import run.ostrom.server.runners.domain.RemoteSessionRules
 import run.ostrom.server.runners.domain.SessionState
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -177,8 +179,14 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
 
     override suspend fun getById(id: Uuid): CloudSession? = sessions[id]
 
-    override suspend fun list(orgId: Uuid, ownerId: String, before: Uuid?, limit: Int): List<CloudSession> {
-        val all = sessions.values.filter { it.orgId == orgId && it.ownerId == ownerId }
+    override suspend fun list(
+        orgId: Uuid,
+        ownerId: String,
+        before: Uuid?,
+        limit: Int,
+        kinds: Set<SessionKind>,
+    ): List<CloudSession> {
+        val all = sessions.values.filter { it.orgId == orgId && it.ownerId == ownerId && it.kind in kinds }
             .sortedWith(compareByDescending<CloudSession> { it.createdAt }.thenByDescending { it.id.toString() })
         // None after a session it does not hold, as the database.
         val start = before?.let { cursor -> all.indexOfFirst { it.id == cursor } + 1 } ?: 0
@@ -186,7 +194,8 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
     }
 
     override suspend fun executions(orgId: Uuid, ownerId: String, limit: Int): List<CloudSession> =
-        list(orgId, ownerId, null, Int.MAX_VALUE).filter { it.state.holdsExecution }.take(limit)
+        list(orgId, ownerId, null, Int.MAX_VALUE, SessionKind.entries.toSet())
+            .filter { it.state.holdsExecution }.take(limit)
 
     override suspend fun setDesiredState(
         orgId: Uuid,
@@ -217,7 +226,8 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
 
     override suspend fun resumeWithinCap(orgId: Uuid, id: Uuid, maxRunning: Int, now: Instant): ResumeOutcome {
         val current = get(orgId, id) ?: return ResumeOutcome.NotFound
-        if (!current.state.holdsExecution && holding(orgId, id) >= maxRunning) return ResumeOutcome.AtCap
+        val capped = current.kind == SessionKind.CLOUD && !current.state.holdsExecution
+        if (capped && holding(orgId, id) >= maxRunning) return ResumeOutcome.AtCap
         if (current.state.isFinal || current.desiredState == DesiredState.TERMINATED) return ResumeOutcome.NotFound
         // As the SQL: a session moving to another owner is not resumed.
         if (current.transferId != null || current.state == SessionState.TRANSFERRING) return ResumeOutcome.NotFound
@@ -254,6 +264,23 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
     override suspend fun findByRunnerTokenHash(tokenHash: String): CloudSession? =
         sessions.values.firstOrNull { it.runnerTokenHash == tokenHash }
 
+    override suspend fun hostedOn(deviceId: Uuid, live: Boolean): List<SessionRef> =
+        sessions.values.filter { it.host?.deviceId == deviceId && !(live && it.state.isFinal) }
+            .map { SessionRef(it.orgId, it.id) }
+
+    override suspend fun endOnRemovedDevice(ref: SessionRef, deviceId: Uuid, now: Instant): Boolean {
+        val current = get(ref.orgId, ref.id)?.takeIf { it.host?.deviceId == deviceId } ?: return false
+        val live = !current.state.isFinal && current.desiredState != DesiredState.TERMINATED
+        val ended = if (live) {
+            current.copy(desiredState = DesiredState.TERMINATED, terminatedReason = RemoteSessionRules.DEVICE_REMOVED)
+        } else {
+            current
+        }
+        sessions[ref.id] = ended.copy(host = current.host?.copy(deviceId = null), generation = current.generation + 1)
+        if (live) next[ref.id] = now
+        return live
+    }
+
     override suspend fun claimDue(owner: String, now: Instant, leaseUntil: Instant, limit: Int): List<CloudSession> =
         sessions.values.filter { s -> next[s.id]?.let { it <= now } == true }.take(limit)
 
@@ -277,5 +304,7 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
     }
 
     private fun holding(orgId: Uuid, except: Uuid?): Int =
-        sessions.values.count { it.orgId == orgId && it.id != except && it.state.holdsExecution }
+        sessions.values.count {
+            it.orgId == orgId && it.id != except && it.state.holdsExecution && it.kind == SessionKind.CLOUD
+        }
 }

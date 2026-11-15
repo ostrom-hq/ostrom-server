@@ -23,6 +23,9 @@ import run.ostrom.server.runners.domain.SessionFailure
 import run.ostrom.server.runners.domain.SessionLimits
 import run.ostrom.server.runners.domain.SessionProfile
 import run.ostrom.server.runners.domain.SessionState
+import run.ostrom.server.runners.domain.SessionKind
+import run.ostrom.server.runners.domain.RemoteHost
+import run.ostrom.server.runners.domain.RemoteSessionRules
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.QueryExecutor
 import io.github.smyrgeorge.sqlx4k.ResultSet
@@ -117,7 +120,13 @@ class CloudSessionsRepositoryImpl(
 
     override suspend fun getById(id: Uuid): CloudSession? = orgOf(id)?.let { get(it, id) }
 
-    override suspend fun list(orgId: Uuid, ownerId: String, before: Uuid?, limit: Int): List<CloudSession> {
+    override suspend fun list(
+        orgId: Uuid,
+        ownerId: String,
+        before: Uuid?,
+        limit: Int,
+        kinds: Set<SessionKind>,
+    ): List<CloudSession> {
         val cursor = if (before == null) {
             ""
         } else {
@@ -126,10 +135,11 @@ class CloudSessionsRepositoryImpl(
         }
         val statement = Statement.create(
             """
-            SELECT $COLUMNS FROM runners_sessions WHERE org_id = :org_id AND owner_id = :owner_id$cursor ORDER
-            BY created_at DESC, id DESC LIMIT :limit
+            SELECT $COLUMNS FROM runners_sessions WHERE org_id = :org_id AND owner_id = :owner_id
+            AND kind = ANY(CAST(:kinds AS TEXT[]))$cursor ORDER BY created_at DESC, id DESC LIMIT :limit
             """,
         ).bind("org_id", orgId).bind("owner_id", ownerId).bind("limit", limit)
+            .bind("kinds", kinds.map { it.wire }.sorted().joinToString(",", "{", "}"))
         if (before != null) statement.bind("before", before)
         return driver.inTenant(orgId) { fetchAll(statement).getOrThrow().map { it.toSession() } }
     }
@@ -185,7 +195,9 @@ class CloudSessionsRepositoryImpl(
         driver.inTenant(orgId) {
             lockOrg(orgId)
             val current = select(id) ?: return@inTenant ResumeOutcome.NotFound
-            if (!current.state.holdsExecution && countHolding(orgId, id) >= maxRunning) {
+            // A remote session runs on its owner's device: it holds no place under the cap.
+            val capped = current.kind == SessionKind.CLOUD && !current.state.holdsExecution
+            if (capped && countHolding(orgId, id) >= maxRunning) {
                 return@inTenant ResumeOutcome.AtCap
             }
             // A session deleted or ended since it was read is not brought back: it is gone, as the owner sees it.
@@ -281,6 +293,39 @@ class CloudSessionsRepositoryImpl(
     override suspend fun findByRunnerTokenHash(tokenHash: String): CloudSession? =
         route(tokenHash)
 
+    // The one read across organizations by device, through the function of RunnersMigrations version 22.
+    override suspend fun hostedOn(deviceId: Uuid, live: Boolean): List<SessionRef> = driver.fetchAll(
+        Statement.create(
+            "SELECT session_id, org_id FROM runners_sessions_on_device(CAST(:device AS UUID), CAST(:live AS BOOLEAN))",
+        ).bind("device", deviceId).bind("live", live),
+    ).getOrThrow().map { SessionRef(it.get("org_id").asUuid(), it.get("session_id").asUuid()) }
+
+    override suspend fun endOnRemovedDevice(ref: SessionRef, deviceId: Uuid, now: Instant): Boolean =
+        driver.inTenant(ref.orgId) {
+            // Its remote sessions end with the device: they could only ever run there. The reconciler finishes the
+            // termination; every one of them loses its host, so that it can never run again.
+            val ended = execute(
+                Statement.create(
+                    """
+                    UPDATE runners_sessions SET desired_state = 'terminated', terminated_reason = :reason,
+                    generation = generation + 1, updated_at = :now WHERE id = :id AND host_device_id = :device AND
+                    state NOT IN ('terminated', 'failed') AND desired_state <> 'terminated'
+                    """,
+                ).bind("reason", RemoteSessionRules.DEVICE_REMOVED).bind("now", now).bind("id", ref.id)
+                    .bind("device", deviceId),
+            ).getOrThrow() == 1L
+            execute(
+                Statement.create(
+                    """
+                    UPDATE runners_sessions SET host_device_id = NULL, generation = generation + 1
+                    WHERE id = :id AND host_device_id = :device
+                    """,
+                ).bind("id", ref.id).bind("device", deviceId),
+            ).getOrThrow()
+            if (ended) lookAt(ref.id, now)
+            ended
+        }
+
     override suspend fun claimDue(owner: String, now: Instant, leaseUntil: Instant, limit: Int): List<CloudSession> =
         driver.fetchAll(
             Statement.create(
@@ -366,6 +411,18 @@ class CloudSessionsRepositoryImpl(
         execute(
             Statement.create("""INSERT INTO runners_sessions ($INSERTED) VALUES ($VALUES)""").bindInsert(session),
         ).getOrThrow()
+        // A remote session in `bypass` mode starts with its owner's standing approval (TeamCode's permissionMode).
+        session.permissionBypass?.let { bypass ->
+            execute(
+                Statement.create(
+                    """
+                    UPDATE runners_sessions SET bypass_by = :by, bypass_credential_id = :credential, bypass_at = :at
+                    WHERE id = :id
+                    """,
+                ).bind("by", bypass.by).bind("credential", bypass.credentialId).bind("at", bypass.at)
+                    .bind("id", session.id),
+            ).getOrThrow()
+        }
         execute(
             Statement.create(
                 """
@@ -390,7 +447,7 @@ class CloudSessionsRepositoryImpl(
         Statement.create(
             """
             SELECT COUNT(*) AS n FROM runners_sessions WHERE org_id = :org_id AND state IN ('creating',
-            'running', 'pausing', 'resuming') AND id <> :except
+            'running', 'pausing', 'resuming') AND id <> :except AND kind = 'cloud'
             """,
         ).bind("org_id", orgId).bind("except", except ?: Uuid.NIL),
     ).getOrThrow().first().get("n").asInt()
@@ -411,6 +468,11 @@ class CloudSessionsRepositoryImpl(
         .bind("github_access", session.githubAccess.wire)
         .bind("mode", session.mode.wire)
         .bind("effort", session.effort)
+        .bind("kind", session.kind.wire)
+        .bind("host_device_id", session.host?.deviceId)
+        .bind("host_directory_name", session.host?.directoryName)
+        .bind("host_permission_mode", session.host?.permissionMode)
+        .bind("host_folder_id", session.host?.folderId)
         .bind(
             "environment",
             session.environment?.let { RECIPE_JSON.encodeToString(CloudEnvironmentSpec.serializer(), it) },
@@ -514,6 +576,18 @@ class CloudSessionsRepositoryImpl(
             permissionBypass = bypass(),
             waiting = waiting(),
             workspaceDeletion = toDeletion(),
+            // A kind this version does not know is a cloud session's: it never hosts it on a device.
+            kind = SessionKind.fromWire(get("kind").asString()) ?: SessionKind.CLOUD,
+            host = host(),
+        )
+    }
+
+    private fun ResultSet.Row.host(): RemoteHost? = get("host_permission_mode").asStringOrNull()?.let {
+        RemoteHost(
+            deviceId = get("host_device_id").asUuidOrNull(),
+            directoryName = get("host_directory_name").asStringOrNull(),
+            permissionMode = it,
+            folderId = get("host_folder_id").asStringOrNull(),
         )
     }
 
@@ -567,7 +641,8 @@ class CloudSessionsRepositoryImpl(
             cluster_unreachable_since, transfer_id, untrusted_workspace, expires_at, terminated_reason,
             expiry_backfill, workspace_deletion_state, workspace_claim_deleted_at, workspace_volume_deleted_at,
             workspace_volume_name, workspace_volume_handle, workspace_problem_code, workspace_problem_message,
-            workspace_problem_retryable, mode, effort
+            workspace_problem_retryable, mode, effort, kind, host_device_id, host_directory_name,
+            host_permission_mode, host_folder_id
         """
 
         /** What a read returns: also the Bypass and the wait, which only the conversation's store writes. */
@@ -583,7 +658,8 @@ class CloudSessionsRepositoryImpl(
             :expires_at, :terminated_reason, :expiry_backfill, :workspace_deletion_state,
             :workspace_claim_deleted_at, :workspace_volume_deleted_at, :workspace_volume_name,
             :workspace_volume_handle, :workspace_problem_code, :workspace_problem_message,
-            :workspace_problem_retryable, :mode, :effort
+            :workspace_problem_retryable, :mode, :effort, :kind, :host_device_id, :host_directory_name,
+            :host_permission_mode, :host_folder_id
         """
     }
 }

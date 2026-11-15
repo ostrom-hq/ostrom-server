@@ -30,8 +30,11 @@ internal fun Route.cloudSettingsRoutes(dependencies: CloudAdminRoutesDependencie
         val expected = request.updatedAt?.let {
             Instant.parseOrNull(it) ?: throw InvalidCloudSettingsException("updatedAt is a date-time.")
         }
-        val cap = request.maxRunningAutomationsPerMember ?: settings.get(caller).maxRunningAutomationsPerMember
-        val saved = settings.save(caller, CloudSettings(request.backgroundWorkMaxMinutes, cap), expected)
+        val current = settings.get(caller)
+        val cap = request.maxRunningAutomationsPerMember ?: current.maxRunningAutomationsPerMember
+        // Not on the routes yet: a save keeps the stored idle timeout of remote sessions.
+        val next = CloudSettings(request.backgroundWorkMaxMinutes, cap, current.remoteIdleTimeoutMinutes)
+        val saved = settings.save(caller, next, expected)
         audit.record(
             OrgAuditRecord(
                 caller.orgId,

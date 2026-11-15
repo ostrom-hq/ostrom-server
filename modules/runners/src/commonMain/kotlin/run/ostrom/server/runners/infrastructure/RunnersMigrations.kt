@@ -11,6 +11,49 @@ private val ROUTER_FUNCTIONS = listOf(
     "runners_release(UUID, TEXT, BOOLEAN, TIMESTAMPTZ)",
 )
 
+/** The sessions of a device, across organizations (version 22). */
+private const val ON_DEVICE_FUNCTION = "runners_sessions_on_device(UUID, BOOLEAN)"
+
+/**
+ * Version 22 (`runners.cloud.remote.v1`, TeamCode's `kind` and `host_*` columns of `cloud_sessions`): where a session
+ * runs, `cloud` for every session before, and the device of a remote one, with its directory's last segment, its
+ * permission mode and the daemon's folder. A device belongs to a person, not to an organization: the sessions it hosts,
+ * every organization's, are found through one narrow `SECURITY DEFINER` function owned by `ostrom_router` (its removal
+ * ends them, the runner channel finds its owner's sign-in there), ids and organizations only, each then read and
+ * written in its own organization; a partial index holds the hosted sessions alone. The former sessions' profile
+ * backfill never gives a remote session a cluster.
+ */
+private val REMOTE_SESSIONS_SQL: String =
+    """
+    ALTER TABLE runners_sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'cloud',
+        ADD COLUMN host_device_id UUID, ADD COLUMN host_directory_name TEXT, ADD COLUMN host_permission_mode TEXT,
+        ADD COLUMN host_folder_id TEXT;
+    CREATE INDEX runners_sessions_host_device ON runners_sessions (host_device_id) WHERE host_device_id IS NOT NULL;
+    GRANT SELECT (kind, host_device_id) ON runners_sessions TO ostrom_router;
+    CREATE FUNCTION runners_sessions_on_device(p_device UUID, p_live BOOLEAN)
+        RETURNS TABLE (session_id UUID, org_id UUID)
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        SELECT s.id, s.org_id FROM runners_sessions s WHERE s.host_device_id = p_device
+            AND (NOT p_live OR s.state NOT IN ('terminated', 'failed'));
+    $$;
+    CREATE OR REPLACE FUNCTION runners_sessions_without_profile(p_after UUID, p_limit INTEGER)
+        RETURNS TABLE (session_id UUID, org_id UUID)
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        SELECT s.id, s.org_id FROM runners_sessions s WHERE s.profile IS NULL AND s.state <> 'terminated'
+            AND s.kind = 'cloud' AND (p_after IS NULL OR s.id > p_after) ORDER BY s.id LIMIT p_limit;
+    $$;
+    REVOKE EXECUTE ON FUNCTION $ON_DEVICE_FUNCTION FROM PUBLIC;
+    DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+            GRANT EXECUTE ON FUNCTION $ON_DEVICE_FUNCTION TO ostrom_app;
+        END IF;
+    END $$;
+    GRANT CREATE ON SCHEMA public TO ostrom_router;
+    ALTER FUNCTION $ON_DEVICE_FUNCTION OWNER TO ostrom_router;
+    ALTER FUNCTION $WITHOUT_PROFILE_FUNCTION OWNER TO ostrom_router;
+    REVOKE CREATE ON SCHEMA public FROM ostrom_router;
+    """.trimIndent()
+
 /** The purge of the expired idempotency records, across organizations (version 19). */
 private const val CREATE_KEYS_PURGE_FUNCTION = "runners_purge_create_keys()"
 
@@ -724,4 +767,5 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
     ),
     // runners.cloud.inference.v1: an execution's inference credentials, an agent token of its launch each.
     SchemaMigration(version = 21, name = "inference_credentials", sql = INFERENCE_CREDENTIALS_SQL),
+    SchemaMigration(version = 22, name = "remote_sessions", sql = REMOTE_SESSIONS_SQL),
 )

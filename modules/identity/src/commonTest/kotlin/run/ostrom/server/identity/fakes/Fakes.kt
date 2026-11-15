@@ -302,6 +302,8 @@ class InMemoryDevicesRepository(private val tokens: InMemoryApiTokensRepository)
 
     override suspend fun get(id: Uuid): RegisteredDevice? = devices[id]
 
+    override suspend fun getAll(ids: Collection<Uuid>): List<RegisteredDevice> = ids.mapNotNull { devices[it] }
+
     override suspend fun list(userId: Uuid): List<RegisteredDevice> =
         devices.values.filter { it.userId == userId }.sortedByDescending { it.lastLoginAt }
 

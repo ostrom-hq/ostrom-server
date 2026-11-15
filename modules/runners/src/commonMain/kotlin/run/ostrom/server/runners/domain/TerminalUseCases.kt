@@ -10,7 +10,8 @@ import kotlin.uuid.Uuid
 
 /**
  * Who a runner call's credential names: the execution it acts for, or null when it is not one of this resolver's.
- * The execution's runner token is today's only one; a device's owner (remote sessions) is added beside it.
+ * The execution's runner token names its execution alone; the owner's sign-in on a remote session's device
+ * ([OwnerLoginPrincipalResolver]) names the session only with the claim of the call, as TeamCode's.
  */
 fun interface RunnerPrincipalResolver {
     /**
@@ -18,6 +19,16 @@ fun interface RunnerPrincipalResolver {
      * @return The execution, or null.
      */
     suspend fun resolve(credential: String): RunnerExecution?
+
+    /**
+     * The execution a call claims, once its body is read: by default the one the credential alone names.
+     *
+     * @param credential The bearer credential, as presented.
+     * @param sessionId The session the call claims.
+     * @param epoch The execution it claims.
+     * @return The execution, or null.
+     */
+    suspend fun resolve(credential: String, sessionId: Uuid, epoch: Long): RunnerExecution? = resolve(credential)
 }
 
 /**
@@ -72,8 +83,8 @@ class AuthenticateRunnerUseCaseImpl(
         resolvers.firstNotNullOfOrNull { it.resolve(credential) } ?: throw ExecutionFencedException()
 
     override suspend fun invoke(credential: String, sessionId: Uuid, epoch: Long): CloudSession {
-        val execution = resolve(credential).takeIf { it.sessionId == sessionId && it.epoch == epoch }
-            ?: throw ExecutionFencedException()
+        val execution = resolvers.firstNotNullOfOrNull { it.resolve(credential, sessionId, epoch) }
+            ?.takeIf { it.sessionId == sessionId && it.epoch == epoch } ?: throw ExecutionFencedException()
         return repository.get(execution.orgId, sessionId)?.takeIf { it.epoch == epoch }
             ?: throw ExecutionFencedException()
     }

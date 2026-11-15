@@ -13,6 +13,8 @@ import run.ostrom.server.runners.domain.NoRunnerVariables
 import run.ostrom.server.runners.domain.RunnerGitHubToken
 import run.ostrom.server.runners.domain.RunnerGitHubTokens
 import run.ostrom.server.runners.fakes.FakeInferenceStore
+import run.ostrom.server.kernel.auth.SignedInDevices
+import run.ostrom.server.runners.fakes.FakeSignedInDevices
 import run.ostrom.server.runners.fakes.FakeTransferRecipients
 import run.ostrom.server.runners.fakes.session
 import run.ostrom.server.runners.fakes.InMemoryCloudSessionsRepository
@@ -68,6 +70,14 @@ class RunnersFeaturesTest {
             RunnersModule.CONVERSATION_FEATURES,
         )
         assertFalse("runners.cloud.files.v1" in RunnersModule.CONVERSATION_FEATURES, "Files are not served")
+        // Remote sessions are hosted on the devices of sign-ins: served with the conversation, and an identity.
+        val withDevices = koin(true).also {
+            it.loadModules(listOf(module { single<SignedInDevices> { FakeSignedInDevices() } }))
+        }
+        assertEquals(
+            cloud + RunnersModule.CONVERSATION_FEATURES + "runners.cloud.remote.v1",
+            RunnersModule.features(withDevices),
+        )
     }
 
     @Test

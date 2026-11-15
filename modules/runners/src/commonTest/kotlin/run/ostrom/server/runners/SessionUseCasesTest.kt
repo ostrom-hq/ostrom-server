@@ -342,6 +342,11 @@ class SessionUseCasesTest {
         assertFailsWith<CloudSessionLimitException> { change.resume(alice, paused.id) }
         repository.usage[ORG_A to "2026-10"] = 300 * 3600L
         assertFailsWith<CloudHoursExhaustedException> { change.resume(alice, paused.id) }
+        // A remote session runs on its owner's device: neither the cap nor the hours hold it.
+        val kind = run.ostrom.server.runners.domain.SessionKind.REMOTE
+        val remote = paused.copy(id = kotlin.uuid.Uuid.random(), kind = kind)
+        repository.put(remote)
+        assertEquals(DesiredState.RUNNING, change.resume(alice, remote.id).desiredState)
         plans.plan = CloudPlan.FREE.copy(available = false)
         assertFailsWith<CloudSessionsClosedException> { change.resume(alice, paused.id) }
         assertFailsWith<CloudSessionsClosedException> { create(alice, payload()) }

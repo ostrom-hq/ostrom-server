@@ -142,5 +142,7 @@ internal fun settingsProblem(settings: CloudSettings): String? = when {
         "backgroundWorkMaxMinutes is 0 to 1440."
     settings.maxRunningAutomationsPerMember !in 1..CloudSettings.MAX_RUNNING_AUTOMATIONS ->
         "maxRunningAutomationsPerMember is 1 to 100."
+    settings.remoteIdleTimeoutMinutes !in 0..CloudSettings.MAX_REMOTE_IDLE_TIMEOUT_MINUTES ->
+        "remoteIdleTimeoutMinutes is 0 to 1440."
     else -> null
 }

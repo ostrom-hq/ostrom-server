@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners.presentation
 
-import run.ostrom.core.api.Idempotency
 import run.ostrom.server.kernel.auth.authenticated
 import run.ostrom.server.kernel.auth.requirePrincipal
 import run.ostrom.server.kernel.http.bodyLimit
 import run.ostrom.server.runners.domain.CloudEnvironmentRules
 import run.ostrom.server.runners.domain.CloudSession
+import run.ostrom.server.runners.domain.SessionKind
 import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.runners.domain.WorkspaceDeletion
 import run.ostrom.server.runners.domain.CloudSessionNotFoundException
@@ -23,7 +23,6 @@ import run.ostrom.server.runners.domain.RunnerUnauthenticatedException
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
-import io.ktor.server.request.header
 import io.ktor.server.request.receive
 import io.ktor.server.resources.delete
 import io.ktor.server.resources.get
@@ -45,48 +44,35 @@ fun Route.cloudSessionsRoutes(dependencies: CloudSessionsRoutesDependencies) = w
     authenticated {
         get<CloudSessionsApi> { params ->
             val caller = orgResolver.callerOf(call.requirePrincipal(), CLOUD_READ)
-            val sessions = listCloudSessions(caller, params.before?.let { parseId(it) }, params.limit)
+            val kinds = kinds(params.kind)
+            val sessions = listCloudSessions(caller, params.before?.let { parseId(it) }, params.limit, kinds)
             val limit = params.limit ?: DEFAULT_LIMIT
             call.respond(
                 CloudSessionsResponse(
-                    items = sessions.map { it.toResponse() },
+                    items = hosts.responses(sessions),
                     next = sessions.lastOrNull()?.let { last -> last.id.toString().takeIf { sessions.size == limit } },
                 ),
             )
         }
-        post<CloudSessionsApi> {
-            val caller = orgResolver.callerOf(call.requirePrincipal(), CLOUD_WRITE)
-            val request = call.receive<CreateCloudSessionRequest>()
-            val payload = request.toPayload()
-            val key = call.request.header(Idempotency.KEY_HEADER)?.also {
-                if (!Idempotency.isValid(it)) throw InvalidCloudSessionRequestException(MALFORMED_KEY)
-            }
-            if (key == null) {
-                call.respond(HttpStatusCode.Created, createCloudSession(caller, payload).toResponse())
-            } else {
-                val created = createCloudSession.createKeyed(caller, payload, key, requestDigest(request, caller))
-                if (created.replayed) call.response.header(Idempotency.REPLAYED_HEADER, "true")
-                val status = if (created.replayed) HttpStatusCode.Accepted else HttpStatusCode.Created
-                call.respond(status, created.session.toResponse())
-            }
-        }
+        creationRoutes(dependencies)
         get<CloudSessionsApi.Id> { params ->
             val caller = orgResolver.callerOf(call.requirePrincipal(), CLOUD_READ)
-            call.respond(getCloudSession(caller, sessionId(params.id)).toResponse())
+            call.respond(hosts.response(getCloudSession(caller, sessionId(params.id))))
         }
         delete<CloudSessionsApi.Id> { params ->
             val caller = orgResolver.callerOf(call.requirePrincipal(), CLOUD_WRITE)
-            call.respond(HttpStatusCode.Accepted, changeCloudSession.delete(caller, sessionId(params.id)).toResponse())
+            val deleted = changeCloudSession.delete(caller, sessionId(params.id))
+            call.respond(HttpStatusCode.Accepted, hosts.response(deleted))
         }
         post<CloudSessionsApi.Id.Pause> { params ->
             val caller = orgResolver.callerOf(call.requirePrincipal(), CLOUD_WRITE)
             val paused = changeCloudSession.pause(caller, sessionId(params.parent.id))
-            call.respond(HttpStatusCode.Accepted, paused.toResponse())
+            call.respond(HttpStatusCode.Accepted, hosts.response(paused))
         }
         post<CloudSessionsApi.Id.Resume> { params ->
             val caller = orgResolver.callerOf(call.requirePrincipal(), CLOUD_WRITE)
             val resumed = changeCloudSession.resume(caller, sessionId(params.parent.id))
-            call.respond(HttpStatusCode.Accepted, resumed.toResponse())
+            call.respond(HttpStatusCode.Accepted, hosts.response(resumed))
         }
         bodyLimit(ACCESS_BODY_LIMIT) {
             put<CloudSessionsApi.Id.GitHub> { params ->
@@ -223,7 +209,7 @@ internal fun ApplicationCall.runnerToken(): String {
 }
 
 /** The domain's payload of a creation. */
-private fun CreateCloudSessionRequest.toPayload() = CreateCloudSessionPayload(
+internal fun CreateCloudSessionRequest.toPayload() = CreateCloudSessionPayload(
     name = name,
     agent = agent,
     repository = repo?.let { RepositorySpec(it, ref) },
@@ -283,6 +269,8 @@ fun CloudSession.toResponse() = CloudSessionResponse(
     permissionBypass = permissionBypass != null,
     waiting = waiting?.let { CloudSessionWaitingDto(it.reason, it.requestId, it.since.toString(), it.eventSeq) },
     transferId = transferId?.toString(),
+    // Absent for a cloud session: a client from before remote sessions reads it as before.
+    kind = kind.wire.takeIf { kind != SessionKind.CLOUD },
 )
 
-private const val MALFORMED_KEY = "Idempotency-Key: 1 to 128 characters of A-Za-z0-9._:-."
+internal const val MALFORMED_KEY = "Idempotency-Key: 1 to 128 characters of A-Za-z0-9._:-."

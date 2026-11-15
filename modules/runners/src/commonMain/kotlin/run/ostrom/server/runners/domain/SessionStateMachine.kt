@@ -17,7 +17,8 @@ import run.ostrom.server.runners.domain.SessionState.TRANSFERRING
 object SessionStateMachine {
     private val allowed: Map<SessionState, Set<SessionState>> = mapOf(
         CREATING to setOf(RUNNING, PAUSED, FAILED, TERMINATED),
-        RUNNING to setOf(PAUSING, PAUSED, TERMINATED),
+        // A remote session's host started again replaces its running execution (RemoteSessionRules).
+        RUNNING to setOf(PAUSING, PAUSED, RESUMING, TERMINATED),
         PAUSING to setOf(PAUSED, RUNNING, TERMINATED),
         // The owner changes only at a paused boundary: no execution at all.
         PAUSED to setOf(RESUMING, TERMINATED, TRANSFERRING),

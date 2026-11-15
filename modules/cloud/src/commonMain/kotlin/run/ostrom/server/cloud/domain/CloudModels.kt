@@ -253,6 +253,9 @@ data class CloudProfileInput(
  * @property maxRunningAutomationsPerMember How many cloud sessions started by a member's automations may work at
  *   once, per owner in this organization; a run over it waits queued (up to 30 minutes). A run started by a workflow
  *   action does not count (TeamCode's team setting).
+ * @property remoteIdleTimeoutMinutes How long a remote session (`runners.cloud.remote.v1`) goes without a turn, a
+ *   message or an attached client before it pauses; 0 never pauses one (TeamCode's team setting). Stored, not yet on
+ *   the settings routes (the contract does not declare it yet).
  * @property updatedAt When it was saved last; null while nothing is stored.
  * @property updatedBy The member who saved it last; null while nothing is stored.
  */
@@ -260,6 +263,7 @@ data class CloudProfileInput(
 data class CloudSettings(
     val backgroundWorkMaxMinutes: Int = DEFAULT_BACKGROUND_WORK_MAX_MINUTES,
     val maxRunningAutomationsPerMember: Int = DEFAULT_MAX_RUNNING_AUTOMATIONS,
+    val remoteIdleTimeoutMinutes: Int = DEFAULT_REMOTE_IDLE_TIMEOUT_MINUTES,
     @Transient val updatedAt: Instant? = null,
     @Transient val updatedBy: Uuid? = null,
 ) {
@@ -276,5 +280,11 @@ data class CloudSettings(
 
         /** The largest cap of running automations per member. */
         const val MAX_RUNNING_AUTOMATIONS = 100
+
+        /** The idle timeout of remote sessions while the organization saved none, TeamCode's. */
+        const val DEFAULT_REMOTE_IDLE_TIMEOUT_MINUTES = 60
+
+        /** The longest idle timeout of remote sessions: a day. */
+        const val MAX_REMOTE_IDLE_TIMEOUT_MINUTES = 1440
     }
 }

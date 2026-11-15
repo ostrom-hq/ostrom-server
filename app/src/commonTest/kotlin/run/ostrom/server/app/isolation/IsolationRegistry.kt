@@ -627,6 +627,8 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "DELETE /api/v1/cloud/sessions/{id}" to target("id" to CLOUD_SESSION),
     "POST /api/v1/cloud/sessions/{id}/pause" to target("id" to CLOUD_SESSION),
     "POST /api/v1/cloud/sessions/{id}/resume" to target("id" to CLOUD_SESSION),
+    // A remote session's next execution, from its owner's device (runners.cloud.remote.v1).
+    "POST /api/v1/cloud/sessions/{id}/host" to target("id" to CLOUD_SESSION),
     "PUT /api/v1/cloud/sessions/{id}/github" to target("id" to CLOUD_SESSION, body = """{"access": "shared"}"""),
     "POST /api/v1/cloud/sessions/{id}/terminal/ticket" to target("id" to CLOUD_SESSION),
     "GET /api/v1/cloud/sessions/{id}/terminal" to Case.Exempt(WEBSOCKET),
