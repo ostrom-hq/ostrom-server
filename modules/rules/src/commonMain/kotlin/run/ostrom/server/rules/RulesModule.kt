@@ -9,6 +9,7 @@ import run.ostrom.server.gates.domain.services.GateCheckNeeds
 import run.ostrom.server.gates.domain.services.GatePolicies
 import run.ostrom.server.kernel.auth.GovernanceChange
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.rules.domain.repositories.AnalysisRepository
 import run.ostrom.server.rules.domain.repositories.RulesRepository
@@ -59,6 +60,7 @@ import run.ostrom.server.rules.infrastructure.RulesMigrations
 import run.ostrom.server.rules.presentation.AnalysisRoutesDependencies
 import run.ostrom.server.rules.presentation.RulesGovernanceChange
 import run.ostrom.server.rules.presentation.RulesGovernanceDependencies
+import run.ostrom.server.rules.presentation.rulesOperations
 import run.ostrom.server.rules.presentation.RulesRoutesDependencies
 import run.ostrom.server.rules.presentation.analysisRoutes
 import run.ostrom.server.rules.presentation.rulesRoutes
@@ -83,6 +85,8 @@ import org.koin.dsl.module
  */
 object RulesModule : ServerModule {
     override val name: String = "rules"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { rulesOperations() }
 
     override val koinModule: Module = module {
         single<RulesRepository> { PostgresRulesRepository(get()) }

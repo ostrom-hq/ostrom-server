@@ -13,6 +13,7 @@ import run.ostrom.server.hooks.fakes.field
 import run.ostrom.server.hooks.fakes.publication
 import run.ostrom.server.hooks.fakes.testIdentities
 import run.ostrom.server.hooks.fakes.upload
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
 import io.ktor.client.HttpClient
 import io.ktor.http.HttpMethod
@@ -46,6 +47,11 @@ class HooksCatalogPostgresTest {
 
     private suspend fun HttpClient.manifest(token: String) =
         call(get, token, DELIVERY).list("hooks").map { it.field("name") + "@" + it.field("version") }
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(listOf(HooksModule), testIdentities()) { server ->
+        server.assertApiCatalogue(HooksModule)
+    }
 
     @Test
     fun aPublicationNeverDeliversUntilAnAdministratorPinsIt() {

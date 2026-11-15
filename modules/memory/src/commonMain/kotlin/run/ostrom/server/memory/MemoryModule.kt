@@ -4,6 +4,7 @@ package run.ostrom.server.memory
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.kernel.database.ScheduledWork
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.OrgDeletionListener
 import run.ostrom.server.kernel.module.ServerModule
@@ -29,6 +30,7 @@ import run.ostrom.server.memory.infrastructure.MemoryRepositoryImpl
 import run.ostrom.server.memory.infrastructure.memoryWorkers
 import run.ostrom.server.memory.infrastructure.OrgMemoryAudit
 import run.ostrom.server.memory.presentation.MemoryCallers
+import run.ostrom.server.memory.presentation.memoryOperations
 import run.ostrom.server.memory.presentation.MemoryRoutesDependencies
 import run.ostrom.server.memory.presentation.memoryCurationRoutes
 import run.ostrom.server.memory.presentation.memoryRoutes
@@ -47,6 +49,8 @@ import org.koin.dsl.module
  */
 object MemoryModule : ServerModule {
     override val name: String = "memory"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { memoryOperations() }
 
     override val koinModule: Module = module {
         single<MemoryRepository> { MemoryRepositoryImpl(get(), get()) }

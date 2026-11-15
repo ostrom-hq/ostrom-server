@@ -13,6 +13,7 @@ import run.ostrom.server.memory.fakes.Callers
 import run.ostrom.server.memory.fakes.FakeProposalWaits
 import run.ostrom.server.memory.fakes.Tokens
 import run.ostrom.server.secrets.domain.CallerResolver
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import io.ktor.client.HttpClient
@@ -77,6 +78,11 @@ class MemoryRoutesPostgresTest {
         read(token, path).body<MemorySearchResult>().entries.map { it.id }
 
     private suspend fun HttpResponse.errorType(): String = body<ApiError>().error.type
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(listOf(MemoryModule), overrides) { server ->
+        server.assertApiCatalogue(MemoryModule)
+    }
 
     @Test
     fun anEntryIsWrittenListedSearchedAndReadOnDemand() = memoryTest {

@@ -7,6 +7,7 @@ import run.ostrom.server.kernel.auth.MemberEmails
 import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.module.OrgDeletionListener
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.module.TestAccountSeeder
@@ -90,6 +91,7 @@ import run.ostrom.server.orgs.presentation.MemberCommands
 import run.ostrom.server.orgs.presentation.OrgCommands
 import run.ostrom.server.orgs.presentation.OrgsConfig
 import run.ostrom.server.orgs.presentation.OrgsGovernanceChange
+import run.ostrom.server.orgs.presentation.orgsOperations
 import run.ostrom.server.orgs.presentation.OrgsRoutesDependencies
 import run.ostrom.server.orgs.presentation.myOrganizationsRoutes
 import run.ostrom.server.orgs.presentation.orgsRoutes
@@ -116,6 +118,8 @@ import org.koin.dsl.module
  */
 object OrgsModule : ServerModule {
     override val name: String = "orgs"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { orgsOperations() }
 
     override val koinModule: Module = module {
         single { OrgsConfig.from(get()) }
