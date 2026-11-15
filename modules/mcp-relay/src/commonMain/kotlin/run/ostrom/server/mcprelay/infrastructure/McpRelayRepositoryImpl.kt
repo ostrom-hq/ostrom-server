@@ -53,6 +53,7 @@ import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.core.UuidColumnType
 import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.anyFrom
 import org.jetbrains.exposed.v1.core.coalesce
 import org.jetbrains.exposed.v1.core.compoundAnd
 import org.jetbrains.exposed.v1.core.count
@@ -94,8 +95,9 @@ class McpRelayRepositoryImpl(
     private val database: JdbcDatabase,
     private val events: OrgEventPublisher,
 ) : McpRelayRepository {
-    // `ON CONFLICT (org_id, name) DO UPDATE … WHERE FALSE`: the sqlx4k `DO NOTHING` on that target alone, so any other
-    // conflict (the id) still fails loudly. A server left alone returns no row.
+    // `ON CONFLICT (org_id, name) DO UPDATE … WHERE FALSE`: nothing written on that target alone (as the sqlx4k
+    // `DO NOTHING` on it; the existing row is locked until commit), so any other conflict (the id) still fails
+    // loudly. A server left alone returns no row.
     private fun JdbcTransaction.insertServer(server: McpServer, owner: Uuid?): Boolean {
         val s = McpRelayServers
         val stdio = server.stdio
@@ -702,6 +704,7 @@ internal fun memberStatesQuery(orgId: Uuid, serverIds: List<Uuid>, memberId: Uui
     val t = McpRelayStdioStates
     return t.select(t.columns)
         .where {
-            (t.orgId eq orgId) and (t.serverId inList serverIds) and ((t.memberId eq memberId) or t.memberId.isNull())
+            (t.orgId eq orgId) and (t.serverId eq anyFrom(serverIds, UuidColumnType())) and
+                ((t.memberId eq memberId) or t.memberId.isNull())
         }
 }
