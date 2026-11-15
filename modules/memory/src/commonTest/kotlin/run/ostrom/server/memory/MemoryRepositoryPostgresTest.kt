@@ -2,7 +2,10 @@
 package run.ostrom.server.memory
 
 import run.ostrom.server.kernel.auth.TokenAuthenticator
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.module.OrgDeletionListener
+import run.ostrom.server.memory.infrastructure.MemoryEntries
+import run.ostrom.server.memory.infrastructure.MemoryTags
 import run.ostrom.server.memory.domain.MemoryLimitException
 import run.ostrom.server.memory.domain.MemoryNotFoundException
 import run.ostrom.server.memory.domain.MemoryOrigin
@@ -24,6 +27,10 @@ import run.ostrom.server.testing.serverTest
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.update
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import kotlin.test.Test
@@ -124,6 +131,30 @@ class MemoryRepositoryPostgresTest {
         val left = server.database.superuser.fetchAll("SELECT org_id FROM memory_tags").getOrThrow()
         assertEquals(listOf(ORG_B.toString()), left.map { it.get("org_id").asString() }, "Their tags go with them")
         assertEquals(kept.id, repository.read(eve, kept.id).id)
+    }
+
+    @Test
+    fun rowLevelSecurityConfinesTheMemoryToItsOrganizationOnThePool() = repositoryTest { server, repository ->
+        repository.create(caller(), note(MemoryScope.TEAM, listOf("x")), MemoryOrigin.HUMAN, null)
+        val database = server.koin.get<JdbcDatabase>()
+        val e = MemoryEntries
+        suspend fun visibleTo(org: Uuid) = database.inOrg(org) { e.selectAll().count() }
+        assertEquals(1L, visibleTo(ORG_A))
+        assertEquals(0L, visibleTo(ORG_B), "No WHERE, no leak")
+        assertEquals(0, database.inOrg(ORG_B) { e.update { it[title] = "taken" } })
+        val planted = assertFailsWith<ExposedSQLException>("Another org's row is refused") {
+            database.inOrg(ORG_B) {
+                MemoryTags.insert {
+                    it[memoryId] = Uuid.random()
+                    it[tag] = "planted"
+                    it[orgId] = ORG_A
+                    it[scope] = MemoryScope.TEAM.wire
+                    it[ownerId] = ""
+                }
+            }
+        }
+        assertTrue("row-level security" in planted.message.orEmpty(), planted.message)
+        assertEquals(1L, visibleTo(ORG_A), "Nothing was planted")
     }
 
     private companion object {

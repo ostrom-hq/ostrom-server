@@ -2,6 +2,7 @@
 package run.ostrom.server.memory.infrastructure
 
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.database.TENANT_ROLE_SQL
 
 /** The cross-organization read of the settling pass, a function owned by `ostrom_router`. */
 private const val SETTLING_ORGS = "memory_settling_orgs(UUID, INTEGER)"
@@ -161,7 +162,7 @@ val MemoryMigrations: List<SchemaMigration> = listOf(
                 PRIMARY KEY (memory_id, tag)
             );
             CREATE INDEX memory_tags_lookup ON memory_tags (org_id, scope, owner_id, tag, memory_id);
-            $TENANT_ROLE_SQL
+            ${TENANT_ROLE_SQL.trim()}
             ${tenantTableSql("memory_entries")}
             ${tenantTableSql("memory_tags")}
         """.trimIndent(),

@@ -7,8 +7,8 @@ import run.ostrom.core.api.models.MemoryIndexPage
 import run.ostrom.core.api.models.MemoryReviews
 import run.ostrom.core.api.models.SupersededMemories
 import run.ostrom.server.kernel.auth.TokenAuthenticator
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.ScheduledWork
-import run.ostrom.server.kernel.database.inOrg
 import run.ostrom.server.kernel.http.ApiError
 import run.ostrom.server.kernel.module.OrgDeletionListener
 import run.ostrom.server.memory.domain.MemoryCaller
@@ -262,7 +262,7 @@ class MemoryCurationPostgresTest {
 
         // A change since curation read the entry wins: the entry is left as it is.
         val now = Clock.System.now()
-        assertTrue(server.driver.inOrg(ORG_A) { supersede(ORG_A, older, 99, newer, now) }.isEmpty())
+        assertTrue(server.koin.get<JdbcDatabase>().inOrg(ORG_A) { supersede(ORG_A, older, 99, newer, now) }.isEmpty())
     }
 
     @Test

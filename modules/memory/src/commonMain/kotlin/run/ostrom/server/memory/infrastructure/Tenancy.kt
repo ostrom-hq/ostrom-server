@@ -8,27 +8,6 @@ import run.ostrom.server.kernel.database.TENANT_SETTING
 // caller's visibility, so a later move off row-level security keeps the same rules.
 
 /**
- * The SQL that creates [TENANT_ROLE] (tolerating one created by another module, database or test) and grants it to
- * the migrating user. Roles are global to the PostgreSQL cluster.
- */
-internal val TENANT_ROLE_SQL: String = """
-    DO $$
-    BEGIN
-        CREATE ROLE $TENANT_ROLE NOLOGIN;
-    EXCEPTION WHEN duplicate_object OR unique_violation THEN
-        NULL;
-    END
-    $$;
-    DO $$
-    BEGIN
-        GRANT $TENANT_ROLE TO CURRENT_USER;
-    EXCEPTION WHEN unique_violation THEN
-        NULL;
-    END
-    $$;
-""".trimIndent()
-
-/**
  * The SQL that confines a table with an `org_id` column: row-level security enabled and forced (its owner is confined
  * too), one fail-closed policy (no setting, no row), and the grants of [TENANT_ROLE].
  *
