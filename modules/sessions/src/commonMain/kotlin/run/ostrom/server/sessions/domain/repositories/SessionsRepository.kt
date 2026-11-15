@@ -18,13 +18,14 @@ data class StaleSession(val orgId: Uuid, val id: String, val lastSeenAt: Instant
 /** Stores the sessions, every read and write scoped to one organization. */
 interface SessionsRepository {
     /**
-     * Runs [block] in one transaction of [orgId]: nothing in it reads or writes another organization's rows.
+     * Runs [block] in one transaction of [orgId]: nothing in it reads or writes another organization's rows. The block
+     * is not `suspend`: only the transaction's own reads and writes run inside it (CRL-03).
      *
      * @param orgId The organization.
      * @param block The reads and writes.
      * @return What [block] returns.
      */
-    suspend fun <T> transaction(orgId: Uuid, block: suspend SessionsTransaction.() -> T): T
+    suspend fun <T> transaction(orgId: Uuid, block: SessionsTransaction.() -> T): T
 
     /**
      * Reads a segment.
@@ -72,7 +73,7 @@ interface SessionsTransaction {
      *
      * @param rootId The agent's session id.
      */
-    suspend fun lockRoot(rootId: String)
+    fun lockRoot(rootId: String)
 
     /**
      * Lists the segments of an agent session and locks them. Call it after [lockRoot]: locks are always taken in that
@@ -81,7 +82,7 @@ interface SessionsTransaction {
      * @param rootId The agent's session id.
      * @return Its segments, by number.
      */
-    suspend fun segments(rootId: String): List<Session>
+    fun segments(rootId: String): List<Session>
 
     /**
      * Reads a segment and locks it.
@@ -89,19 +90,19 @@ interface SessionsTransaction {
      * @param id The segment.
      * @return The segment, or null when there is none.
      */
-    suspend fun lock(id: String): Session?
+    fun lock(id: String): Session?
 
     /**
      * Inserts a segment.
      *
      * @param session The segment.
      */
-    suspend fun insert(session: Session)
+    fun insert(session: Session)
 
     /**
      * Writes a segment back.
      *
      * @param session The segment.
      */
-    suspend fun update(session: Session)
+    fun update(session: Session)
 }
