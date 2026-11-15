@@ -249,7 +249,7 @@ internal fun cloudProfileOf(
  */
 fun matchCloudProfiles(teamCode: List<TeamCodeProfile>, ostrom: List<NamedCloudProfile>): Map<String, String> =
     teamCode.mapNotNull { profile ->
-        val name = profile.name?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
+        val name = profile.name.orEmpty().trim().lowercase().takeIf { it.isNotEmpty() }
         val match = ostrom.firstOrNull { it.id.toString() == profile.id }
             ?: ostrom.filter { it.name.trim().lowercase() == name }.singleOrNull()
         match?.let { profile.id to it.id.toString() }

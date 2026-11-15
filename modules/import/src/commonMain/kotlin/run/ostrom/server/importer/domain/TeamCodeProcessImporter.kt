@@ -97,7 +97,7 @@ class TeamCodeProcessImporter(
         val mapping = TeamCodeMapping(
             memberMap.mapNotNull { (teamCode, ostrom) -> loginsById[ostrom]?.let { teamCode to it } }.toMap(),
             processes.profiles.associateBy { it.id },
-            cloudProfiles?.profiles(caller.orgId)?.let { matchCloudProfiles(processes.profiles, it) },
+            cloudProfiles?.let { matchCloudProfiles(processes.profiles, it.profiles(caller.orgId)) },
         )
         val by = loginsById[caller.memberId] ?: caller.memberId.toString()
         for (mapped in ordered(processes.workflows.map { TeamCodeWorkflowMapper.map(it, mapping) })) {
