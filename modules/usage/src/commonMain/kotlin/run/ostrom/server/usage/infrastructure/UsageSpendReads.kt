@@ -133,28 +133,31 @@ internal fun holdTotalsRead(hold: SpendHold, limits: SpendLimits, window: HoldWi
     } else {
         listOf(sums.launchSpent(launchId), sums.launchHeld(launchId))
     }
+    val (workflowSpent, workflowHeld, workflowDaySpent) = workflowSums
+    val (launchSpent, launchHeld) = launchSums
+    val orgSpent = sums.spent(org, window.since, Spender.ORG)
+    val orgHeld = sums.held(org || orgDay, Spender.ORG)
+    val memberSpent = sums.spent(member, window.since, mine)
+    val memberHeld = sums.held(member || memberDay, mine)
+    val orgDaySpent = sums.spent(orgDay, daySince, Spender.ORG)
+    val memberDaySpent = sums.spent(memberDay, daySince, mine)
     val columns = listOf(
-        sums.spent(org, window.since, Spender.ORG),
-        sums.held(org || orgDay, Spender.ORG),
-        sums.spent(member, window.since, mine),
-        sums.held(member || memberDay, mine),
-        sums.spent(orgDay, daySince, Spender.ORG),
-        sums.spent(memberDay, daySince, mine),
-    ) + workflowSums + launchSums
+        orgSpent, orgHeld, memberSpent, memberHeld, orgDaySpent, memberDaySpent,
+        workflowSpent, workflowHeld, workflowDaySpent, launchSpent, launchHeld,
+    )
     return Read(Table.Dual.select(columns)) { row ->
-        val values = columns.map { row[it] }
         SpendTotals(
-            orgSpent = values[0],
-            orgHeld = values[1],
-            memberSpent = values[2],
-            memberHeld = values[3],
-            orgDaySpent = values[4],
-            memberDaySpent = values[5],
-            workflowSpent = values[6],
-            workflowHeld = values[7],
-            workflowDaySpent = values[8],
-            launchSpent = values[9],
-            launchHeld = values[10],
+            orgSpent = row[orgSpent],
+            orgHeld = row[orgHeld],
+            memberSpent = row[memberSpent],
+            memberHeld = row[memberHeld],
+            orgDaySpent = row[orgDaySpent],
+            memberDaySpent = row[memberDaySpent],
+            workflowSpent = row[workflowSpent],
+            workflowHeld = row[workflowHeld],
+            workflowDaySpent = row[workflowDaySpent],
+            launchSpent = row[launchSpent],
+            launchHeld = row[launchHeld],
         )
     }
 }
