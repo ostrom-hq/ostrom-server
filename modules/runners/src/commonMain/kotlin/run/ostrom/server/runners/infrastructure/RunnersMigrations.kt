@@ -11,11 +11,11 @@ private val ROUTER_FUNCTIONS = listOf(
     "runners_release(UUID, TEXT, BOOLEAN, TIMESTAMPTZ)",
 )
 
-/** The purge of the expired idempotency records, across organizations (version 18). */
+/** The purge of the expired idempotency records, across organizations (version 19). */
 private const val CREATE_KEYS_PURGE_FUNCTION = "runners_purge_create_keys()"
 
 /**
- * Version 18 (`runners.cloud.idempotency.v1`, TeamCode's `cloud_idempotency`): the `Idempotency-Key` of a session's
+ * Version 19 (`runners.cloud.idempotency.v1`, TeamCode's `cloud_idempotency`): the `Idempotency-Key` of a session's
  * creation, per organization and initiating member, with the SHA-256 of its canonical request and the session it
  * created, kept 24 hours. A tenant table; the purge of the expired records crosses organizations through one
  * `SECURITY DEFINER` function owned by `ostrom_router`, which takes no argument and deletes at most 500 expired

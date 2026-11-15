@@ -299,3 +299,16 @@ private fun requestDigest(request: CreateCloudSessionRequest, caller: Caller): S
     val canonical = Json.encodeToString(CreateCloudSessionRequest.serializer(), request) + "\n" + caller.memberId
     return sha256.hashBlocking(canonical.encodeToByteArray()).toHexString()
 }
+
+/** The request as the use case reads it. */
+private fun CreateCloudSessionRequest.toPayload() = CreateCloudSessionPayload(
+    name = name,
+    agent = agent,
+    repository = repo?.let { RepositorySpec(it, ref) },
+    model = model,
+    prompt = prompt,
+    environment = environment?.toDomain(),
+    // A malformed id names no profile (404 on Kubernetes), and is ignored where sessions run on none.
+    profileId = profileId?.let { Uuid.parseOrNull(it) ?: Uuid.NIL },
+    image = image,
+)

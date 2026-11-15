@@ -86,7 +86,8 @@ class CloudSessionIdempotencyPostgresTest {
         repository.createKeyed(first, 5, CreateKey("k", DIGEST, now - 1.hours))
 
         val again = session(createdAt = now)
-        assertEquals(KeyedCreateOutcome.Created, repository.createKeyed(again, 2, CreateKey("k", DIGEST, now + 1.hours)))
+        val created = repository.createKeyed(again, 2, CreateKey("k", DIGEST, now + 1.hours))
+        assertEquals(KeyedCreateOutcome.Created, created)
         assertEquals(
             KeyedCreateOutcome.AtCap,
             repository.createKeyed(session(createdAt = now), 2, CreateKey("k2", DIGEST, now + 1.hours)),

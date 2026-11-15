@@ -67,15 +67,18 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             val scope = "org_id = :org_id AND member_id = :member_id AND idempotency_key = :key"
             val existing = fetchAll(
                 Statement.create(
-                    "SELECT request_digest, session_id, expires_at > :now AS live FROM runners_create_keys WHERE $scope",
+                    """
+                    SELECT request_digest, session_id, expires_at > :now AS live FROM runners_create_keys
+                    WHERE $scope
+                    """,
                 ).bindKey(session, key).bind("now", session.createdAt),
             ).getOrThrow().firstOrNull()
             if (existing != null && existing.get("live").asBoolean()) {
                 if (existing.get("request_digest").asString() != key.requestDigest) {
                     return@inTenant KeyedCreateOutcome.Conflict
                 }
-                val replayed = select(existing.get("session_id").asUuid()) ?: return@inTenant KeyedCreateOutcome.Conflict
-                return@inTenant KeyedCreateOutcome.Replayed(replayed)
+                val replayed = select(existing.get("session_id").asUuid())
+                return@inTenant replayed?.let { KeyedCreateOutcome.Replayed(it) } ?: KeyedCreateOutcome.Conflict
             }
             if (existing != null) {
                 execute(Statement.create("DELETE FROM runners_create_keys WHERE $scope").bindKey(session, key))
@@ -96,7 +99,7 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             KeyedCreateOutcome.Created
         }
 
-    // The one deletion across organizations, through the function of RunnersMigrations version 18.
+    // The one deletion across organizations, through the function of RunnersMigrations version 19.
     override suspend fun purgeExpiredCreateKeys(): Long = driver.fetchAll(
         Statement.create("SELECT runners_purge_create_keys() AS n"),
     ).getOrThrow().first().get("n").asLong()
