@@ -120,6 +120,7 @@ fun HostedProcesses.toDto() = McpHostedProcessesDto(
         McpHostedProcessDto(
             server = process.server,
             member = process.memberId?.toString(),
+            username = process.username,
             launcher = process.launcher,
             packageName = process.packageName,
             state = process.state,

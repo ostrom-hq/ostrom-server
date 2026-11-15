@@ -360,6 +360,8 @@ data class McpUsageResponse(val byServer: Map<String, Long>, val byTool: Map<Str
  *
  * @property server The server's name.
  * @property member The member's id, for a per-member server's process.
+ * @property username That member's login (TeamCode's `username`); absent for a shared server's process or a member
+ *   who left.
  * @property launcher npm or pypi.
  * @property packageName The pinned package.
  * @property state idle, starting, ready, failed, backoff or unknown.
@@ -375,6 +377,7 @@ data class McpUsageResponse(val byServer: Map<String, Long>, val byTool: Map<Str
 data class McpHostedProcessDto(
     val server: String,
     val member: String? = null,
+    val username: String? = null,
     val launcher: String,
     @SerialName("package") val packageName: String,
     val state: String,

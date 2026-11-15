@@ -2,6 +2,7 @@
 package run.ostrom.server.mcprelay
 
 import run.ostrom.server.kernel.auth.MemberDirectory
+import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.mcprelay.domain.ArgumentPolicy
 import run.ostrom.server.mcprelay.domain.EffectiveServer
 import run.ostrom.server.mcprelay.domain.HostStatus
@@ -423,6 +424,18 @@ class FakeMembers(var ids: List<String>?) : MemberDirectory {
     override suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean = true
 
     override suspend fun memberIds(orgId: Uuid, limit: Int): List<String>? = ids
+}
+
+/** The members' logins: [logins] by member id, every org alike; [reads] counts the lookups. */
+class FakeLogins(private val logins: Map<Uuid, String>) : MemberLogins {
+    var reads = 0
+
+    override suspend fun idsOf(orgId: Uuid, logins: Collection<String>): Map<String, Uuid> = emptyMap()
+
+    override suspend fun loginsOf(orgId: Uuid, memberIds: Collection<Uuid>): Map<Uuid, String> {
+        reads++
+        return logins.filterKeys { it in memberIds }
+    }
 }
 
 /** The orgs told that the MCP host cannot be reached, and why. */
