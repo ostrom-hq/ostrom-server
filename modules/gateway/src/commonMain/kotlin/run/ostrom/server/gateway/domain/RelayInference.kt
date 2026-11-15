@@ -276,6 +276,7 @@ class RelayInferenceUseCaseImpl(
             launchId = caller.launchId,
             // An administrator's `maxConcurrent` on the launch: 0, or none, is unlimited, as for a member.
             launchLimit = caller.caps?.maxConcurrent?.takeIf { it > 0 },
+            session = call.sessionId,
         )
 
         /** Whether the call is recorded: a failure after its record must not record it again. */

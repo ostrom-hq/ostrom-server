@@ -30,6 +30,9 @@ interface QuotaHistoryRepository {
         limit: Int,
     ): List<QuotaWindow>
 
+    /** The readings of every account of the org observed in [observed], by account, at most [limit] newest. */
+    suspend fun recentOfOrg(orgId: Uuid, observed: ClosedRange<Instant>, limit: Int): Map<Uuid, List<QuotaWindow>>
+
     /**
      * Deletes at most [limit] readings observed before [before], of every organization, never one younger than
      * [QUOTA_HISTORY_RETENTION].
@@ -72,6 +75,12 @@ object NoQuotaHistory : QuotaHistoryRepository {
         observed: ClosedRange<Instant>,
         limit: Int,
     ): List<QuotaWindow> = emptyList()
+
+    override suspend fun recentOfOrg(
+        orgId: Uuid,
+        observed: ClosedRange<Instant>,
+        limit: Int,
+    ): Map<Uuid, List<QuotaWindow>> = emptyMap()
 
     override suspend fun prune(before: Instant, limit: Int): Long = 0
 }

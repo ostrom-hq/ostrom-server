@@ -218,6 +218,13 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "POST /api/v1/inference/requests/{id}/cancel" to
         Case.Target(mapOf("id" to Param.Fixed("6f1c2b0e-9a4d-4c3e-8b7a-2d5e1f0a9c41"))),
     "GET /api/v1/inference/settings" to Case.Target(),
+    "GET /api/v1/policy/pacing" to Case.Target(),
+    "PUT /api/v1/policy/pacing" to Case.Target(body = "{}", admin = true),
+    "GET /api/v1/directives/preview" to Case.Target(),
+    "GET /api/v1/directives/current" to Case.Target(),
+    "POST /api/v1/directives/current" to Case.Target(body = """{"sessionId":"s1"}"""),
+    "POST /api/v1/directives/claim" to Case.Target(body = """{"sessionId":"s1","stage":"received_by_cli"}"""),
+    "POST /api/v1/directives/receipt" to Case.Target(body = """{"id":"d1","stage":"received_by_cli"}"""),
     "PUT /api/v1/inference/settings" to Case.Target(body = "{}", admin = true),
     "GET /api/v1/inference/v1/models" to Case.Target(),
     "POST /api/v1/inference/v1/messages" to Case.Target(),

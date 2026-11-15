@@ -13,10 +13,17 @@ import run.ostrom.server.identity.domain.validateScopes
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class TokenScopesTest {
-    private val wellFormed = Regex("[a-z][a-z0-9-]{0,31}:[a-z][a-z0-9-]{0,31}")
+    private val areaAction = Regex("[a-z][a-z0-9-]{0,31}:[a-z][a-z0-9-]{0,31}")
+
+    // The only scope without an action: TeamCode's `guidance`, which the contract keeps (capacity.pacing.v1). Every
+    // other scope is `area:action`.
+    private val legacySingleWord = setOf("guidance")
+
+    private fun wellFormed(scope: String) = scope in legacySingleWord || areaAction.matches(scope)
 
     @Test
     fun theCatalogueNeverListsAScopeNoTokenHolds() {
@@ -31,10 +38,20 @@ class TokenScopesTest {
     fun everyScopeIsWellFormedUniqueAndDescribed() {
         assertEquals(PERSONAL_TOKEN_SCOPES.size, PERSONAL_TOKEN_SCOPE_NAMES.size)
         PERSONAL_TOKEN_SCOPES.forEach {
-            assertTrue(wellFormed.matches(it.scope), it.scope)
+            assertTrue(wellFormed(it.scope), it.scope)
             assertTrue(it.description.isNotBlank() && it.description.endsWith("."), it.scope)
         }
         assertTrue(PERSONAL_TOKEN_SCOPES.size >= MAX_SCOPES, "a token can be given any 32 of them")
+    }
+
+    @Test
+    fun onlyGuidanceIsASingleWordScope() {
+        assertEquals(legacySingleWord, PERSONAL_TOKEN_SCOPE_NAMES.filterNot { areaAction.matches(it) }.toSet())
+        for (word in listOf("inference", "billing", "guidances", "guidance:")) {
+            assertFalse(wellFormed(word), word)
+            assertFailsWith<InvalidScopesException>(word) { validateScopes(listOf(word)) }
+        }
+        assertEquals(setOf("guidance"), validateScopes(listOf("guidance")))
     }
 
     @Test

@@ -83,6 +83,9 @@ abstract class GatewayHttpFixture {
         "elevated-member-a" to Gw.memberA,
         // A browser session of Ada signed in more than five minutes ago (web audit n°2 M3).
         "stale-admin-a" to Gw.adminA,
+        "guidance-a" to Gw.memberA,
+        // An agent session's token: its subject is its session.
+        "session-1" to Gw.memberA,
     )
 
     /** The tokens of `ostrom login --admin`: a person's API token holding the governance scopes. */
@@ -101,6 +104,7 @@ abstract class GatewayHttpFixture {
         "use-a" to setOf(RelayScopes.INFERENCE_USE),
         "policy-a" to setOf(RelayScopes.INFERENCE_READ),
         "inference-admin-a" to setOf(RelayScopes.INFERENCE_ADMIN),
+        "guidance-a" to setOf(RelayScopes.GUIDANCE),
     )
 
     protected val records = mutableListOf<ModelCallRecord>()
@@ -128,6 +132,12 @@ abstract class GatewayHttpFixture {
                         setOf(RelayScopes.ALL_USER),
                     )
                     token in elevated -> AuthenticatedPrincipal(token, PrincipalKind.USER, GovernanceScopes.ALL)
+                    token == "session-1" -> AuthenticatedPrincipal(
+                        token,
+                        PrincipalKind.AGENT,
+                        setOf(RelayScopes.AGENT_SESSION, RelayScopes.GUIDANCE),
+                        credentialId = "agent-token-1",
+                    )
                     token in principals -> AuthenticatedPrincipal(
                         token,
                         PrincipalKind.SERVICE,

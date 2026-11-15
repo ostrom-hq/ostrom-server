@@ -176,6 +176,9 @@ interface AccountSlotRepository {
     /** The unexpired slots of the org's accounts (absent: none). */
     suspend fun active(orgId: Uuid): Map<Uuid, Int>
 
+    /** The sessions whose account was leased within [within] (at most [MAX_ORG_AFFINITIES]), for the pacing. */
+    suspend fun activeSessions(orgId: Uuid, within: Duration): List<ActiveSession>
+
     /** The bounds. */
     companion object {
         /**
@@ -196,6 +199,21 @@ interface AccountSlotRepository {
         /** Sessions remembered at most per org. */
         const val MAX_ORG_AFFINITIES: Int = 10_000
     }
+}
+
+/**
+ * A session that called recently, as its affinity remembers it.
+ *
+ * @property memberId Its member.
+ * @property sessionHash The SHA-256 digest of its id, in hexadecimal.
+ * @property accountId The account it used last.
+ */
+data class ActiveSession(val memberId: Uuid, val sessionHash: String, val accountId: Uuid)
+
+/** The organizations that share accounts, read across organizations by the jobs that pass over each of them. */
+fun interface SharingOrgs {
+    /** The ids of the organizations with at least one shared account. */
+    suspend fun withAccounts(): List<Uuid>
 }
 
 /** The provider quota windows last observed on each account; scoped by org like the accounts. */

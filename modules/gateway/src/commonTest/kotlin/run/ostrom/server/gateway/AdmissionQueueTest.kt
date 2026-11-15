@@ -41,11 +41,12 @@ class ScriptedQueue(vararg entries: AdmissionEntry) : AdmissionQueueRepository {
     private val script = ArrayDeque(entries.toList())
     val calls = mutableListOf<String>()
     var refusal: RefusalKind? = null
+    var retryIn: Duration? = null
     var failure: Exception? = null
 
     override suspend fun enter(request: AdmissionRequest, first: Boolean): AdmissionEntry {
         calls += if (first) "enter" else "poll"
-        refusal?.let { throw QueueRefusedException(it) }
+        refusal?.let { throw QueueRefusedException(it, retryIn) }
         return script.removeFirstOrNull() ?: AdmissionEntry.Waiting(blocked = false)
     }
 
@@ -231,6 +232,19 @@ class AdmissionQueueTest {
         assertEquals("queue_full", RefusalKind.QUEUE_FULL.code)
         assertEquals("api_error", RefusalKind.QUEUE_TIMEOUT.anthropicType, "Never overloaded_error")
         assertTrue("QUEUE_FULL" in QueueRefusedException(RefusalKind.QUEUE_FULL).message.orEmpty())
+    }
+
+    @Test
+    fun aCallSpacedOutByTheControllerIsRefusedUntilItsIntervalAndLeavesTheQueue() = runTest {
+        val queue = ScriptedQueue().apply {
+            refusal = RefusalKind.PACING_DELAY
+            retryIn = 4.seconds
+        }
+        val spaced = assertIs<InferencePlan.Refused>(await(queue)(request, running = false) { ready })
+        assertEquals(RefusalKind.PACING_DELAY, spaced.refusal.kind)
+        assertEquals(clock.now() + 4.seconds, spaced.refusal.retryAt)
+        assertTrue("spacing" in spaced.refusal.message)
+        assertEquals(listOf("enter", "release"), queue.calls)
     }
 
     @Test
