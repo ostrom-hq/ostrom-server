@@ -267,12 +267,12 @@ class CompilerPostgresTest {
         return PackageCompiler.json.encodeToJsonElement(Workflow.serializer(), workflow).jsonObject
     }
 
-    // PARCOURS 3.3: the organization's view left out a gate limited to one repository (`covers(repos, null)`).
     @Test
     fun theCatalogueDescribesEachRouteOnce() = compilerTest { server ->
         server.assertApiCatalogue(CompilerModule)
     }
 
+    // PARCOURS 3.3: the organization's view left out a gate limited to one repository (`covers(repos, null)`).
     @Test
     fun theOrganizationsApproversHaveAGateLimitedToOneRepository() = compilerTest { server ->
         server.call("user:a:lead", "/api/v1/workflows", "POST", release())

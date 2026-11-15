@@ -184,13 +184,15 @@ private fun ApiCatalog.automationRunOperations() {
         parameters {
             organizationHeader()
             pathId("id", AUTOMATION_ID)
-            headerText("Idempotency-Key", "One key per test: the same key returns the first run, answered with " +
-                "`Idempotency-Replayed: true`.")
+            headerText("Idempotency-Key", "One key per test, needed unless `dryRun`: the same key returns the " +
+                "first run, answered with `Idempotency-Replayed: true`.")
         }
         body<TestRunRequest>("A sample payload, and `dryRun` to render without starting anything.")
         responses {
             ok<DryRunResponse>("A dry run (`dryRun` true): nothing starts.")
             ok<RunResponse>("A test run, started with the saved definition.", HttpStatusCode.Accepted)
+            badRequest("A test run without a well-formed `Idempotency-Key`, or a sample payload that is not a JSON " +
+                "object (`invalid_request`).")
             notFound(NOT_FOUND)
         }
     }
@@ -206,6 +208,7 @@ private fun ApiCatalog.automationRunOperations() {
         }
         responses {
             ok<RunsResponse>("A page of runs, `next` set when another may follow.")
+            badRequest("A malformed cursor, or a `limit` outside 1 to 100 (`invalid_request`).")
             notFound(NOT_FOUND)
         }
     }
@@ -228,6 +231,9 @@ private fun ApiCatalog.automationRunOperations() {
     }
 }
 
+private const val TRIGGER_INVALID = "A body over 64 KiB or not a JSON object, or a delivery key outside " +
+    "`A-Za-z0-9._:-` (1 to 128 characters) (`invalid_request`)."
+
 /** The signed webhook, which takes no login. */
 private fun ApiCatalog.automationTriggerOperations() {
     post("/api/v1/automations/{id}/trigger") {
@@ -245,6 +251,7 @@ private fun ApiCatalog.automationTriggerOperations() {
         body<JsonObject>("The event's JSON payload, which the automation's variables read.")
         responses {
             ok<TriggerResponse>("The run, queued.", HttpStatusCode.Accepted)
+            badRequest(TRIGGER_INVALID)
             error(HttpStatusCode.Unauthorized, SIGNATURE)
             conflict("The automation is paused, or this delivery was already received (`conflict`).")
             error(HttpStatusCode.TooManyRequests, SIGNATURE_RATE)
@@ -265,6 +272,7 @@ private fun ApiCatalog.automationTriggerOperations() {
         body<JsonObject>("The event's JSON payload, which the automation's variables read.")
         responses {
             ok<TriggerResponse>("The run, queued.", HttpStatusCode.Accepted)
+            badRequest(TRIGGER_INVALID)
             error(HttpStatusCode.Unauthorized, SIGNATURE)
             conflict("The automation is no longer at that version (`automation_version_changed`), is paused, or " +
                 "this delivery was already received.")
