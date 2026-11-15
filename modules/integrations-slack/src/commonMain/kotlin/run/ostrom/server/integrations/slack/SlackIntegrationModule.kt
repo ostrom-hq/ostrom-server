@@ -36,10 +36,12 @@ import run.ostrom.server.integrations.slack.infrastructure.PostgresSlackLinksRep
 import run.ostrom.server.integrations.slack.infrastructure.SlackMigrations
 import run.ostrom.server.integrations.slack.infrastructure.SlackOrgDeletionListener
 import run.ostrom.server.integrations.slack.presentation.SlackRoutesDependencies
+import run.ostrom.server.integrations.slack.presentation.slackOperations
 import run.ostrom.server.integrations.slack.presentation.slackRoutes
 import run.ostrom.server.identity.domain.UsersRepository
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.module.OrgDeletionListener
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.network.outboundHttpClient
@@ -65,6 +67,8 @@ object SlackIntegrationModule : ServerModule {
     private const val CONSOLE_URL = "OSTROM_CONSOLE_URL"
 
     override val name: String = "integrations-slack"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { slackOperations() }
 
     override val koinModule: Module = module {
         single(HTTP) {

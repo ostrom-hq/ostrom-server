@@ -11,6 +11,7 @@ import run.ostrom.server.kernel.database.scheduledWork
 import run.ostrom.server.kernel.events.GateSummaries
 import run.ostrom.server.kernel.events.OrgEventJournal
 import run.ostrom.server.kernel.events.WaitSummaries
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.OrgDeletionListener
 import run.ostrom.server.kernel.module.ServerModule
@@ -35,6 +36,7 @@ import run.ostrom.server.notifications.infrastructure.CachedRelaySenders
 import run.ostrom.server.notifications.infrastructure.PushRelayIdentitiesRepositoryImpl
 import run.ostrom.server.notifications.infrastructure.RelayPushSender
 import run.ostrom.server.kernel.network.outboundHttpClient
+import run.ostrom.server.notifications.presentation.notificationsOperations
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.notifications.domain.LiveCredentials
 import run.ostrom.server.notifications.domain.PUSH_SETTINGS
@@ -116,6 +118,8 @@ object NotificationsModule : ServerModule {
     private val NO_GATES = GateSummaries { _, _ -> emptyList() }
 
     override val name: String = "notifications"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { notificationsOperations() }
 
     override val koinModule: Module = module {
         single { NotificationSettings.from(get()) }

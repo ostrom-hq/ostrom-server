@@ -85,6 +85,7 @@ import run.ostrom.server.orgs.domain.Org
 import run.ostrom.server.orgs.domain.OrgsRepository
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
 import kotlin.test.Test
@@ -197,6 +198,11 @@ class SlackPostgresTest {
             contentType(ContentType.Application.FormUrlEncoded)
             setBody(body)
         }
+    }
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(modules, overrides) { server ->
+        server.assertApiCatalogue(SlackIntegrationModule)
     }
 
     @Test

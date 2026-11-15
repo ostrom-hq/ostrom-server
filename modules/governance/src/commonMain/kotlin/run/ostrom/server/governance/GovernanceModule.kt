@@ -25,11 +25,13 @@ import run.ostrom.server.governance.infrastructure.GovernanceMigrations
 import run.ostrom.server.governance.infrastructure.IdentityConfirmationPeople
 import run.ostrom.server.governance.infrastructure.LocalConfirmationWaits
 import run.ostrom.server.governance.presentation.ConfirmationsRoutesDependencies
+import run.ostrom.server.governance.presentation.confirmationsOperations
 import run.ostrom.server.governance.presentation.confirmationsRoutes
 import run.ostrom.server.identity.presentation.IdentityConfig
 import run.ostrom.server.kernel.auth.GovernanceChange
 import run.ostrom.server.kernel.auth.GovernanceConfirmations
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.module.ServerModule
 import io.ktor.server.routing.Route
 import kotlinx.coroutines.CoroutineScope
@@ -46,6 +48,8 @@ import org.koin.dsl.module
  */
 object GovernanceModule : ServerModule {
     override val name: String = "governance"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { confirmationsOperations() }
 
     override val koinModule: Module = module {
         single<ConfirmationsRepository> { ConfirmationsRepositoryImpl(get()) }
