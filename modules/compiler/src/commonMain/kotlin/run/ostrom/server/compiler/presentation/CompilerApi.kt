@@ -122,7 +122,12 @@ class PackagesApi(val repo: String? = null) {
 /** The workflows (contract `listWorkflows`, `createWorkflow`, `getWorkflow`, `saveWorkflow`, `deleteWorkflow`). */
 @Serializable
 @Resource("/api/v1/workflows")
-class WorkflowsApi(val repo: String? = null, val status: String? = null) {
+class WorkflowsApi(
+    val repo: String? = null,
+    val status: String? = null,
+    val after: String? = null,
+    val limit: Int? = null,
+) {
     /** One workflow. */
     @Serializable
     @Resource("{id}")
@@ -223,9 +228,10 @@ data class AuditPage(val items: List<AuditEvent>)
  * A page of workflows.
  *
  * @property items The workflows.
+ * @property next The `after` of the following page, when this one is full.
  */
 @Serializable
-data class WorkflowsPage(val items: List<JsonObject>)
+data class WorkflowsPage(val items: List<JsonObject>, val next: String? = null)
 
 /**
  * The body of a save.

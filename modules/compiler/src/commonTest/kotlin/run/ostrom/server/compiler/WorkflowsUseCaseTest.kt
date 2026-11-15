@@ -12,6 +12,7 @@ import run.ostrom.core.api.models.WorkflowNodeKind.STEP
 import run.ostrom.core.api.models.WorkflowNodeKind.WORKFLOW
 import run.ostrom.core.api.models.WorkflowStatus
 import run.ostrom.server.compiler.domain.models.PackagePin
+import run.ostrom.server.compiler.domain.models.StoredWorkflow
 import run.ostrom.server.compiler.domain.services.PackageCompiler
 import run.ostrom.server.compiler.domain.services.WorkflowRepos
 import run.ostrom.server.compiler.domain.usecases.CompileSourcesUseCaseImpl
@@ -143,6 +144,23 @@ class WorkflowsUseCaseTest {
         assertEquals(listOf("release"), workflows.list(org, "acme-api", null).map { it.doc.workflow.id })
         assertEquals(listOf("web"), workflows.list(org, null, WorkflowStatus.ACCEPTED).map { it.doc.workflow.id })
         assertEquals("release", workflows.get(org, "release").doc.workflow.id)
+    }
+
+    @Test
+    fun theListPagesAfterAWorkflowOfTheOrganizationAndRefusesAnUnknownOne() = runTest {
+        workflows.save(org, raw(release()), null, "dev-a", create = true)
+        val web = workflow("web", listOf(node("s", STEP, label = "Ship the site")), name = "Website")
+        workflows.save(org, raw(web), null, "dev-a", create = true)
+        val docs = workflow("docs", listOf(node("s", STEP, label = "Ship the docs")), name = "Docs")
+        workflows.save(org, raw(docs), null, "dev-a", create = true)
+        fun ids(page: List<StoredWorkflow>) = page.map { it.doc.workflow.id }
+
+        assertEquals(listOf("release", "web"), ids(workflows.list(org, null, null, null, 2)))
+        assertEquals(listOf("docs"), ids(workflows.list(org, null, null, "web", 2)))
+        // A workflow the filter leaves out still places the next page: web is accepted, release is not.
+        assertEquals(listOf("web"), ids(workflows.list(org, null, WorkflowStatus.ACCEPTED, "release", 1)))
+        expectFailure(ErrorKind.INVALID_REQUEST) { workflows.list(org, null, null, "nothing", 2) }
+        expectFailure(ErrorKind.INVALID_REQUEST) { workflows.list(Uuid.random(), null, null, "web", 2) }
     }
 
     @Test

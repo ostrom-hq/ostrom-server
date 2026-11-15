@@ -199,6 +199,18 @@ class CompilerIsolationPostgresTest {
         assertEquals(listOf(workflowBefore), listed, "A still lists its workflow, unchanged")
     }
 
+    @Test
+    fun theWorkflowsArePagedAndAnotherOrganizationsCursorIsRefused() = compilerTest { server ->
+        assertEquals(HttpStatusCode.Created, server.call("user:a:lead", "/api/v1/workflows", "POST", release()).status)
+
+        val first = server.call("user:a:lead", "/api/v1/workflows?limit=1").body<WorkflowsPage>()
+        assertEquals("release", first.next, "A full page names where the next starts")
+        val last = server.call("user:a:lead", "/api/v1/workflows?limit=1&after=release").body<WorkflowsPage>()
+        assertEquals(WorkflowsPage(emptyList()), last)
+        assertEquals(HttpStatusCode.BadRequest, server.call("user:a:lead", "/api/v1/workflows?limit=0").status)
+        assertEquals(HttpStatusCode.BadRequest, server.call("user:b:lead", "/api/v1/workflows?after=release").status)
+    }
+
     private suspend fun TestServer.gatedActions(token: String, repo: String): List<String> =
         call(token, "/api/v1/gates/catalog?repo=$repo").body<JsonObject>().getValue("actions").jsonArray
             .map { it.jsonObject }

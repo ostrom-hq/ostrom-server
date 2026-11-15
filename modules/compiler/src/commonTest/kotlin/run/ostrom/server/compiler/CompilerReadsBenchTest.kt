@@ -123,8 +123,9 @@ class CompilerReadsBenchTest {
         assertEquals(1, sent.map { it.size }.distinct().size, "Statements: ${sent.map { it.size }}")
 
         val reads = listOf(
-            Read("/api/v1/workflows", PER_ORG, "compiler_workflows_pkey"),
-            Read("/api/v1/workflows?status=accepted", PER_ORG, "compiler_workflows_pkey"),
+            // A page of 50 (TeamCode's), read from all of the organization's workflows, as a filter needs them.
+            Read("/api/v1/workflows", WORKFLOWS_PAGE, "compiler_workflows_pkey"),
+            Read("/api/v1/workflows?status=accepted", WORKFLOWS_PAGE, "compiler_workflows_pkey"),
             Read(PACKAGES[0], PER_ORG, "compiler_packages_recent"),
             Read(PACKAGES[1], PER_ORG / REPOS, "compiler_packages_by_repo"),
         )
@@ -164,6 +165,7 @@ class CompilerReadsBenchTest {
         // one more is an N+1, on any runner.
         const val MAX_QUERIES = 1
         const val PER_ORG = 1000
+        const val WORKFLOWS_PAGE = 50
         const val REPOS = 50
         const val URL = "https://ostrom.example/"
         val PACKAGES = listOf("/api/v1/packages", "/api/v1/packages?repo=acme%2Fr3")

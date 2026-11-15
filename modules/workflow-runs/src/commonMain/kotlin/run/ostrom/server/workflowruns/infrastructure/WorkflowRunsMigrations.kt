@@ -204,4 +204,12 @@ val WorkflowRunsMigrations: List<SchemaMigration> = listOf(
             WHERE status IN ('queued', 'running', 'waiting') AND parent_run_id IS NULL;
         """.trimIndent(),
     ),
+    // A member's own runs, newest first (`GET /api/v1/runs` without `all`, TeamCode's list by starter).
+    SchemaMigration(
+        9,
+        "runs_by_starter",
+        """
+        CREATE INDEX workflow_runs_started_by ON workflow_runs_started (org_id, started_by, started_at DESC, id DESC);
+        """.trimIndent(),
+    ),
 )

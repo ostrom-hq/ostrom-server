@@ -15,12 +15,14 @@ import kotlin.uuid.Uuid
  * @property status Only these, or every one.
  * @property before The id the previous page ended on, or null for the newest.
  * @property limit At most this many.
+ * @property startedBy Only the runs this login started, or every member's.
  */
 data class RunsQuery(
     val workflowId: String? = null,
     val status: RunStatus? = null,
     val before: String? = null,
     val limit: Int = RunQuery.PAGE,
+    val startedBy: String? = null,
 )
 
 /** Storage of the runs of workflows, isolated by organization. */
