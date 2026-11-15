@@ -210,9 +210,6 @@ private fun ApiCatalog.runnerOperations() {
             "never the runner token. A shell session opens none (400). 401 for an unknown runner token, 409 " +
             "`execution_fenced` for a session or an epoch that is not the token's current execution, 403 " +
             "when the policy refuses the owner, 404 when the owner is no longer a member."
-        parameters {
-            organizationHeader()
-        }
         body<RunnerLaunchRequest>("The cloud session the runner was started for, and the execution it was " +
             "started for.")
         responses {
