@@ -200,6 +200,41 @@ class StartRunTest {
     }
 
     @Test
+    fun aKeyedStartOfACallerGivesBackItsFirstRunAndCountsTowardsTheCap() = runTest {
+        val owner = person(OrgRole.OWNER)
+        val first = start.startKeyed(owner, "ship", mapOf("branch" to "main"), null, "press-1")
+        assertFalse(first.replayed)
+        assertEquals("ada", first.run.startedBy)
+        assertEquals("manual", first.run.source)
+        val again = start.startKeyed(owner, "ship", mapOf("branch" to "main"), null, "press-1")
+        assertEquals(StartedRun(first.run, replayed = true), again)
+        assertEquals(1, runs.stored.size, "A replay stores nothing")
+        assertEquals("started", runs.audits.single().event)
+        // A key is the caller's own: another key starts another run, until the cap.
+        repeat(MAX_UNFINISHED - 1) { start.startKeyed(owner, "ship", mapOf("branch" to "main"), null, "k$it") }
+        val limit = assertFailsWith<RunLimitException> {
+            start.startKeyed(owner, "ship", mapOf("branch" to "main"), null, "one-more")
+        }
+        assertEquals("run_limit", limit.type)
+        val replay = start.startKeyed(owner, "ship", mapOf("branch" to "main"), null, "press-1")
+        assertEquals(StartedRun(first.run, replayed = true), replay)
+    }
+
+    @Test
+    fun aKeyedStartIsCheckedLikeAnyStartBeforeTheKeyIsLookedUp() = runTest {
+        for (role in listOf(OrgRole.MEMBER, OrgRole.APPROVER, null)) {
+            assertFailsWith<StartRunForbiddenException> {
+                start.startKeyed(person(role), "ship", emptyMap(), null, "k")
+            }
+        }
+        val owner = person(OrgRole.OWNER)
+        assertFailsWith<RunWorkflowNotFoundException> { start.startKeyed(owner, "absent", emptyMap(), null, "k") }
+        assertFailsWith<WorkflowNotAcceptedException> { start.startKeyed(owner, "idea", emptyMap(), null, "k") }
+        assertFailsWith<InvalidRunException> { start.startKeyed(owner, "ship", emptyMap(), null, "k") }
+        assertEquals(emptyList(), runs.stored)
+    }
+
+    @Test
     fun anUnknownOrProposedWorkflowStartsNothingAndAnUnknownOneHasNoRuns() = runTest {
         val owner = person(OrgRole.OWNER)
         assertFailsWith<RunWorkflowNotFoundException> { start(owner, "absent", emptyMap()) }
