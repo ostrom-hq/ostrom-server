@@ -61,11 +61,15 @@ data class WorkflowBudget(val workflowId: String, val limit: BudgetLimit, val up
  * @property org The org's.
  * @property member The member's own, or else the default member limits.
  * @property workflow The limits of the workflow the call's launch plays; empty without one.
+ * @property override The member's temporary daily budget in force, already in [member] as its daily limit that stops.
+ * @property baseDailyMicros With [override], the member's daily limit that stops without it; null when they had none.
  */
 data class BudgetLimits(
     val org: List<BudgetLimit>,
     val member: List<BudgetLimit>,
     val workflow: List<BudgetLimit> = emptyList(),
+    val override: ActiveBudgetOverride? = null,
+    val baseDailyMicros: Long? = null,
 ) {
     /** The member's monthly amount, whatever it does; null without one. */
     val memberLimitMicros: Long? get() = member.monthlyMicros()

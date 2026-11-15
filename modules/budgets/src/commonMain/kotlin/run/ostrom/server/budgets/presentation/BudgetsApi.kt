@@ -79,6 +79,9 @@ data class BudgetsPage(
  * @property resetsAt The start of next month (ISO 8601).
  * @property exhausted Whether model calls are refused now.
  * @property exhaustedScope `org`, `member` or `workflow` when exhausted.
+ * @property override The temporary daily budget in force (`capacity.budgetoverrides.v1`): while it lasts, the caller's
+ *   own daily limit that stops is its `micros`.
+ * @property baseLimitMicros With [override], the daily limit that stops without it; absent when the caller had none.
  */
 @Serializable
 data class MyBudgetResponse(
@@ -88,4 +91,16 @@ data class MyBudgetResponse(
     val resetsAt: String,
     val exhausted: Boolean,
     val exhaustedScope: String? = null,
+    val override: BudgetOverrideSummaryDto? = null,
+    val baseLimitMicros: Long? = null,
 )
+
+/**
+ * The override in force, as its member sees it (contract `BudgetOverrideSummary`): no reason, no grantor.
+ *
+ * @property id Its id.
+ * @property micros The daily allowance, USD millionths.
+ * @property expiresAt When it ends (ISO 8601).
+ */
+@Serializable
+data class BudgetOverrideSummaryDto(val id: String, val micros: Long, val expiresAt: String)

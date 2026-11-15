@@ -94,6 +94,8 @@ fun MyBudget.toResponse() = MyBudgetResponse(
     resetsAt = resetsAt.toString(),
     exhausted = decision is BudgetDecision.Exhausted,
     exhaustedScope = (decision as? BudgetDecision.Exhausted)?.let { it.scope.name.lowercase() },
+    override = override?.let { BudgetOverrideSummaryDto(it.id.toString(), it.micros, it.expiresAt.toString()) },
+    baseLimitMicros = baseDailyMicros,
 )
 
 private fun Long.toUsd(): Double = this / MICROS_PER_USD

@@ -242,6 +242,18 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
         body = """{"scope": "member", "subject": "{{MEMBER_ID}}", "usdPerMonth": 1.0}""",
         admin = true,
     ),
+    // A member's temporary daily budgets (capacity.budgetoverrides.v1): B's member, named by login, by A's admin.
+    "GET /api/v1/members/{login}/budget-overrides" to target("login" to MEMBER_LOGIN, admin = true),
+    "POST /api/v1/members/{login}/budget-overrides" to target(
+        "login" to MEMBER_LOGIN,
+        body = """{"micros": 1000000, "durationMinutes": 5, "reason": "Taken"}""",
+        admin = true,
+    ),
+    "POST /api/v1/members/{login}/budget-overrides/{id}/revoke" to Case.Target(
+        mapOf("login" to of(MEMBER_LOGIN), "id" to Param.Fresh),
+        body = """{"reason": "Taken"}""",
+        admin = true,
+    ),
 
     // Secrets.
     "GET /api/v1/secrets" to Case.Target(),
