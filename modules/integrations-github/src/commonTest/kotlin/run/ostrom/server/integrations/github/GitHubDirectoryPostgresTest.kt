@@ -33,7 +33,15 @@ import run.ostrom.server.integrations.github.domain.GitHubTeam
 import run.ostrom.server.integrations.github.domain.InstanceAdmins
 import run.ostrom.server.integrations.github.domain.VerifiedGitHubApp
 import run.ostrom.server.integrations.github.infrastructure.GitHubAppSetup
-import run.ostrom.server.integrations.github.infrastructure.GitHubDirectoryQueries
+import run.ostrom.server.integrations.github.infrastructure.directoryState
+import run.ostrom.server.integrations.github.infrastructure.repoKey
+import run.ostrom.server.integrations.github.infrastructure.reposPage
+import run.ostrom.server.integrations.github.infrastructure.teamKey
+import run.ostrom.server.integrations.github.infrastructure.teamsPage
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.withOrganization
+import run.ostrom.server.testing.plan
+import org.jetbrains.exposed.v1.jdbc.Query
 import run.ostrom.server.integrations.github.infrastructure.GitHubSettings
 import run.ostrom.server.integrations.github.infrastructure.PostgresGitHubAppStore
 import run.ostrom.server.integrations.github.presentation.GitHubAppConfigurationResponse
@@ -483,7 +491,7 @@ class GitHubDirectoryPostgresTest {
             """"webhookSecret":"whsec-next","version":1}"""
         val changed = server.save("user:a:owner", next).body<GitHubAppConfigurationResponse>()
         assertEquals(92L to 2, changed.appId to changed.version)
-        val stored = PostgresGitHubAppStore(server.driver, AesGcmSecretCipher(ByteArray(32) { 7 })).app()
+        val stored = PostgresGitHubAppStore(server.koin.get(), AesGcmSecretCipher(ByteArray(32) { 7 })).app()
         assertEquals(NEXT_KEY to APP_SECRET, stored?.privateKeyPem to stored?.clientSecret)
         assertEquals("whsec-next" to "ostrom-next", stored?.webhookSecret to stored?.slug)
         val row = server.driver.fetchAll("SELECT updated_by, version FROM github_apps").getOrThrow().single()
@@ -530,7 +538,7 @@ class GitHubDirectoryPostgresTest {
 
     @Test
     fun theStoredAppIsSealedAndOpensOnlyWithItsKey() = gitHubTest { server ->
-        val sealed = PostgresGitHubAppStore(server.driver, AesGcmSecretCipher(ByteArray(32) { 7 }))
+        val sealed = PostgresGitHubAppStore(server.koin.get(), AesGcmSecretCipher(ByteArray(32) { 7 }))
         assertNull(sealed.app())
         assertTrue(sealed.saveApp(createdApp(), "usr_admin", NOW))
         assertFalse(sealed.saveApp(createdApp(78), "usr_admin", NOW), "One App per instance")
@@ -544,9 +552,16 @@ class GitHubDirectoryPostgresTest {
             val stored = row.get(column).asString()
             assertFalse("secret" in stored || "PRIVATE KEY" in stored, "$column is sealed")
         }
-        val otherKey = PostgresGitHubAppStore(server.driver, AesGcmSecretCipher(ByteArray(32) { 8 })).app()
+        val otherKey = PostgresGitHubAppStore(server.koin.get(), AesGcmSecretCipher(ByteArray(32) { 8 })).app()
         assertEquals(null to null, otherKey?.privateKeyPem to otherKey?.clientSecret)
         assertEquals("ostrom-acme", otherKey?.slug)
+
+        // A change names the stored version: a stale one replaces nothing, the current one moves it to the next.
+        assertFalse(sealed.replaceApp(createdApp(79), 5, "usr_admin", NOW), "A stale version")
+        assertEquals("77", sealed.app()?.appId)
+        assertTrue(sealed.replaceApp(createdApp(79), 1, "usr_admin", NOW))
+        assertEquals("79" to 2, sealed.app()?.appId to sealed.app()?.version)
+        assertFalse(sealed.replaceApp(createdApp(77), null, "usr_admin", NOW), "A first App: one exists already")
 
         sealed.saveState("h1", "usr_admin", NOW)
         assertNull(sealed.takeState("h1", NOW), "Expired at that instant")
@@ -595,12 +610,17 @@ class GitHubDirectoryPostgresTest {
         fixtures.execute("VACUUM ANALYZE github_repos").getOrThrow()
         fixtures.execute("VACUUM ANALYZE github_teams").getOrThrow()
         fixtures.execute("VACUUM ANALYZE github_directory_syncs").getOrThrow()
+        val database = server.koin.get<JdbcDatabase>()
+        suspend fun explain(query: Query): String =
+            database.withOrganization(ORG) { plan { query }.also { rollback() } }
         val plans = linkedMapOf(
-            "first page of repositories" to driver.explain(GitHubDirectoryQueries.repos(false)),
-            "next page of repositories" to driver.explain(GitHubDirectoryQueries.repos(true), "repo-500"),
-            "first page of teams" to driver.explain(GitHubDirectoryQueries.teams(false)),
-            "next page of teams" to driver.explain(GitHubDirectoryQueries.teams(true), "team-500"),
-            "state of the directory" to driver.explain(GitHubDirectoryQueries.STATE),
+            "first page of repositories" to explain(reposPage(ORG, null, 101)),
+            "next page of repositories" to explain(reposPage(ORG, "repo-500", 101)),
+            "first page of teams" to explain(teamsPage(ORG, null, 101)),
+            "next page of teams" to explain(teamsPage(ORG, "team-500", 101)),
+            "state of the directory" to explain(directoryState(ORG)),
+            "a repository by its key" to explain(repoKey(ORG, "repo-500")),
+            "a team by its key" to explain(teamKey(ORG, "team-500")),
         )
         val report = plans.entries.joinToString("\n\n") { (name, plan) -> "-- $name\n$plan" }
         SystemFileSystem.createDirectories(Path("build/reports/explain"))
@@ -609,14 +629,6 @@ class GitHubDirectoryPostgresTest {
         for ((name, plan) in plans) {
             assertFalse("Seq Scan on github_" in plan, "$name scans the table:\n$plan")
         }
-    }
-
-    /** The plan of [sql] in org A, read as a role row level security applies to. */
-    private suspend fun Driver.explain(sql: String, after: String? = null): String = asTenant(ORG) {
-        var statement = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org", ORG)
-        if (":limit" in sql) statement = statement.bind("limit", 101)
-        if (after != null) statement = statement.bind("after", after)
-        fetchAll(statement).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
     }
 
     private suspend fun sign(secret: String, body: String): String {

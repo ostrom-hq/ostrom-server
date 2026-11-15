@@ -25,7 +25,12 @@ import run.ostrom.server.integrations.github.domain.GitHubOriginsRepository
 import run.ostrom.server.integrations.github.domain.GitHubPull
 import run.ostrom.server.integrations.github.domain.GitHubRepository
 import run.ostrom.server.integrations.github.infrastructure.GitHubSettings
-import run.ostrom.server.integrations.github.infrastructure.GitHubWebhookQueries
+import run.ostrom.server.integrations.github.infrastructure.INSTALLATION_SETTING
+import run.ostrom.server.integrations.github.infrastructure.keyed
+import run.ostrom.server.integrations.github.infrastructure.originOf
+import run.ostrom.server.integrations.github.infrastructure.purgeDeliveries
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.testing.plan
 import run.ostrom.server.integrations.github.presentation.GitHubAppStatus
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.OrgPrincipal
@@ -549,18 +554,14 @@ class GitHubPostgresTest {
         ).getOrThrow()
         fixtures.execute("VACUUM ANALYZE github_installation_origins").getOrThrow()
         fixtures.execute("VACUUM ANALYZE github_webhook_deliveries").getOrThrow()
-        val plans = server.driver.transaction {
-            fetchAll(Statement.create("SELECT set_config('ostrom.github_installation', '42', TRUE)")).getOrThrow()
-            fun plan(sql: String) = "EXPLAIN (ANALYZE, BUFFERS) $sql"
-            linkedMapOf(
-                "who installed an installation" to fetchAll(
-                    Statement.create(plan(GitHubWebhookQueries.ORIGIN)).bind("id", 42L),
-                ).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() },
-                "purge of old deliveries" to fetchAll(
-                    Statement.create(plan(GitHubWebhookQueries.PURGE)).bind("cutoff", Clock.System.now() - 30.days),
-                ).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() },
-            )
-        }
+        val database = server.koin.get<JdbcDatabase>()
+        val plans = linkedMapOf(
+            "who installed an installation" to
+                database.keyed(INSTALLATION_SETTING, "42") { plan { originOf(42) }.also { rollback() } },
+            "purge of old deliveries" to database.keyed(INSTALLATION_SETTING, "42") {
+                plan { purgeDeliveries(Clock.System.now() - 30.days) }.also { rollback() }
+            },
+        )
         val report = plans.entries.joinToString("\n\n") { (name, plan) -> "-- $name\n$plan" }
         SystemFileSystem.createDirectories(Path("build/reports/explain"))
         SystemFileSystem.sink(Path("build/reports/explain/integrations-github-webhooks.txt")).buffered()

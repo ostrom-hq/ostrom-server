@@ -4,12 +4,16 @@ package run.ostrom.server.integrations.github.infrastructure
 import run.ostrom.server.integrations.github.domain.CreatedGitHubApp
 import run.ostrom.server.integrations.github.domain.GitHubAppCredentials
 import run.ostrom.server.integrations.github.domain.GitHubAppStore
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.secrets.domain.SecretCipher
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.plus
+import org.jetbrains.exposed.v1.core.statements.UpdateBuilder
+import org.jetbrains.exposed.v1.jdbc.deleteReturning
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.insertIgnore
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.update
 import kotlin.time.Instant
 
 /**
@@ -18,69 +22,95 @@ import kotlin.time.Instant
  * (`github-app:<id>:<field>`): an envelope moved to another field or row does not open. A value that does not open
  * (the secrets key changed) is read as absent: the App is then named but cannot sign, and the flow stays closed.
  *
- * @param driver The connection pool.
+ * @param database The serving role's pool.
  * @param cipher Seals the secrets.
  */
-class PostgresGitHubAppStore(private val driver: Driver, private val cipher: SecretCipher) : GitHubAppStore {
+class PostgresGitHubAppStore(private val database: JdbcDatabase, private val cipher: SecretCipher) :
+    GitHubAppStore {
     override suspend fun app(): GitHubAppCredentials? {
-        val row = driver.fetchAll(
-            Statement.create(
-                "SELECT app_id, slug, owner, client_id, private_key_sealed, client_secret_sealed, " +
-                    "webhook_secret_sealed, version, updated_at FROM github_apps",
-            ),
-        ).getOrThrow().firstOrNull() ?: return null
-        val id = row.get("app_id").asLong().toString()
+        val a = GitHubApps
+        val row = database.query { a.selectAll().firstOrNull() }
+        if (row == null) return null
+        val id = row[a.appId].toString()
         return GitHubAppCredentials(
             appId = id,
-            slug = row.get("slug").asString(),
-            privateKeyPem = open(row.get("private_key_sealed").asString(), id, KEY),
-            webhookSecret = row.get("webhook_secret_sealed").asStringOrNull()?.let { open(it, id, WEBHOOK) },
-            clientId = row.get("client_id").asStringOrNull(),
-            clientSecret = row.get("client_secret_sealed").asStringOrNull()?.let { open(it, id, CLIENT) },
-            owner = row.get("owner").asStringOrNull(),
-            version = row.get("version").asInt(),
-            updatedAt = row.get("updated_at").asInstant(),
+            slug = row[a.slug],
+            privateKeyPem = open(row[a.privateKeySealed], id, KEY),
+            webhookSecret = row[a.webhookSecretSealed]?.let { open(it, id, WEBHOOK) },
+            clientId = row[a.clientId],
+            clientSecret = row[a.clientSecretSealed]?.let { open(it, id, CLIENT) },
+            owner = row[a.owner],
+            version = row[a.version],
+            updatedAt = row[a.updatedAt],
         )
     }
 
-    override suspend fun saveApp(app: CreatedGitHubApp, by: String, at: Instant): Boolean =
-        driver.execute(sealed(Statement.create(INSERT), app).bind("by", by).bind("at", at)).getOrThrow() == 1L
+    // A first App: the one of the manifest flow, of the former variables, or entered by hand. The table's only key is
+    // its singleton, so the bare ON CONFLICT DO NOTHING of `insertIgnore` is the conflict on it.
+    override suspend fun saveApp(app: CreatedGitHubApp, by: String, at: Instant): Boolean {
+        val sealed = sealed(app)
+        return database.query {
+            val a = GitHubApps
+            a.insertIgnore {
+                it.setApp(sealed)
+                it[a.createdBy] = by
+                it[a.createdAt] = at
+                it[a.updatedBy] = by
+                it[a.updatedAt] = at
+            }.insertedCount == 1
+        }
+    }
 
     override suspend fun replaceApp(app: CreatedGitHubApp, expectedVersion: Int?, by: String, at: Instant): Boolean {
         if (expectedVersion == null) return saveApp(app, by, at)
-        val statement = Statement.create(
-            "UPDATE github_apps SET app_id = :id, slug = :slug, owner = :owner, client_id = :client, " +
-                "private_key_sealed = :key, client_secret_sealed = :secret, webhook_secret_sealed = :webhook, " +
-                "version = version + 1, updated_by = :by, updated_at = :at WHERE version = :version",
-        )
-        val bound = sealed(statement, app).bind("by", by).bind("at", at).bind("version", expectedVersion)
-        return driver.execute(bound).getOrThrow() == 1L
+        val sealed = sealed(app)
+        return database.query {
+            val a = GitHubApps
+            a.update({ a.version eq expectedVersion }) {
+                it.setApp(sealed)
+                it[a.version] = a.version + 1
+                it[a.updatedBy] = by
+                it[a.updatedAt] = at
+            } == 1
+        }
     }
 
     // The App's fields, its key and secrets sealed under its id.
-    private suspend fun sealed(statement: Statement, app: CreatedGitHubApp): Statement {
+    private suspend fun sealed(app: CreatedGitHubApp): SealedApp {
         val id = app.id.toString()
-        return statement.bind("id", app.id).bind("slug", app.slug).bind("owner", app.owner)
-            .bind("client", app.clientId).bind("key", seal(app.privateKeyPem, id, KEY))
-            .bind("secret", app.clientSecret?.let { seal(it, id, CLIENT) })
-            .bind("webhook", app.webhookSecret?.let { seal(it, id, WEBHOOK) })
+        return SealedApp(
+            app,
+            seal(app.privateKeyPem, id, KEY),
+            app.clientSecret?.let { seal(it, id, CLIENT) },
+            app.webhookSecret?.let { seal(it, id, WEBHOOK) },
+        )
+    }
+
+    private fun UpdateBuilder<*>.setApp(sealed: SealedApp) {
+        val a = GitHubApps
+        this[a.appId] = sealed.app.id
+        this[a.slug] = sealed.app.slug
+        this[a.owner] = sealed.app.owner
+        this[a.clientId] = sealed.app.clientId
+        this[a.privateKeySealed] = sealed.key
+        this[a.clientSecretSealed] = sealed.secret
+        this[a.webhookSecretSealed] = sealed.webhook
     }
 
     override suspend fun saveState(stateHash: String, by: String, expiresAt: Instant) {
-        driver.execute(
-            Statement.create(
-                "INSERT INTO github_manifest_states (state_hash, created_by, expires_at) VALUES (:hash, :by, :expires)",
-            ).bind("hash", stateHash).bind("by", by).bind("expires", expiresAt),
-        ).getOrThrow()
+        database.query {
+            GitHubManifestStates.insert {
+                it[GitHubManifestStates.stateHash] = stateHash
+                it[createdBy] = by
+                it[GitHubManifestStates.expiresAt] = expiresAt
+            }
+        }
     }
 
     override suspend fun takeState(stateHash: String, now: Instant): String? {
-        val row = driver.fetchAll(
-            Statement.create(
-                "DELETE FROM github_manifest_states WHERE state_hash = :hash RETURNING created_by, expires_at",
-            ).bind("hash", stateHash),
-        ).getOrThrow().firstOrNull() ?: return null
-        return if (row.get("expires_at").asInstant() > now) row.get("created_by").asString() else null
+        val s = GitHubManifestStates
+        val row = database.query { s.deleteReturning(where = { s.stateHash eq stateHash }).firstOrNull() }
+        return if (row != null && row[s.expiresAt] > now) row[s.createdBy] else null
     }
 
     private suspend fun seal(value: String, appId: String, field: String): String =
@@ -89,12 +119,10 @@ class PostgresGitHubAppStore(private val driver: Driver, private val cipher: Sec
     private suspend fun open(envelope: String, appId: String, field: String): String? =
         cipher.open(envelope, "github-app:$appId:$field")?.decodeToString()
 
+    /** The App with its key and secrets sealed. */
+    private class SealedApp(val app: CreatedGitHubApp, val key: String, val secret: String?, val webhook: String?)
+
     private companion object {
-        // A first App: the one of the manifest flow, of the former variables, or entered by hand.
-        const val INSERT = "INSERT INTO github_apps (app_id, slug, owner, client_id, private_key_sealed, " +
-            "client_secret_sealed, webhook_secret_sealed, created_by, created_at, updated_by, updated_at) VALUES " +
-            "(:id, :slug, :owner, :client, :key, :secret, :webhook, :by, :at, :by, :at) " +
-            "ON CONFLICT (singleton) DO NOTHING"
         const val KEY = "private-key"
         const val CLIENT = "client-secret"
         const val WEBHOOK = "webhook-secret"
