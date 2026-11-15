@@ -71,7 +71,8 @@ internal fun StatementBuilder.expireOverdue(orgId: Uuid, now: Instant): Returnin
         ((C.status eq CONFIRMED) and C.resultJson.isNull() and
             (C.expiresAt lessEq now - ConfirmationRules.RESULT_GRACE))
     return C.updateReturning(C.columns, where = { (C.orgId eq orgId) and overdue }) {
-        it[status] = case().When(pending, stringParam(ConfirmationStatus.EXPIRED.wire)).Else(stringParam(ConfirmationStatus.FAILED.wire))
+        it[status] = case().When(pending, stringParam(ConfirmationStatus.EXPIRED.wire))
+            .Else(stringParam(ConfirmationStatus.FAILED.wire))
         it[errorType] = case().When(pending, errorType).Else(nullableText(ConfirmationRules.RESULT_LOST))
         it[errorMessage] = case().When(pending, errorMessage).Else(nullableText(ConfirmationRules.RESULT_LOST_MESSAGE))
     }
