@@ -15,10 +15,12 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 
 /**
- * The budgets routes: admins read and set the org's limits, by the day or the month, that stop or warn (a browser
- * session, or a console token with [BudgetScopes.READ] or [BudgetScopes.WRITE]); any member, and an agent session,
- * reads their own budget. Device tokens are refused (SECURITY-AUDIT S2-03); the CLI token holds `budgets:read`
- * for `GET /budgets/me`. A change of a limit is written to the organization's audit log.
+ * The budgets routes: admins read and set the org's limits, by the day or the month, that stop or warn; any member,
+ * and an agent session, reads their own budget. Reading takes [BudgetScopes.READ]: a browser session, a console
+ * token, or the CLI token (`ostrom login`), which holds it for `GET /budgets/me` since #587, so an owner's or an
+ * admin's CLI token also reads `GET /budgets` (SECURITY-AUDIT S2-03 kept every member's limits off the CLI's tokens
+ * until then: they now read them, only for an owner or an admin, and never write them, which takes
+ * [BudgetScopes.WRITE]). Device tokens are refused. A change of a limit is written to the organization's audit log.
  *
  * @param dependencies The use cases.
  */
