@@ -9,219 +9,234 @@ import run.ostrom.server.hooks.domain.HookEvent
 import run.ostrom.server.hooks.domain.HookVersion
 import run.ostrom.server.hooks.domain.HooksRepository
 import run.ostrom.server.hooks.domain.HooksStore
-import run.ostrom.server.kernel.database.inOrg
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.lockKeyUntilCommit
+import run.ostrom.server.kernel.database.present
 import run.ostrom.server.skills.domain.ArtifactFile
 import run.ostrom.server.skills.domain.Decision
 import run.ostrom.server.skills.domain.FileMode
 import run.ostrom.server.skills.domain.MemberDecision
 import run.ostrom.server.skills.domain.ValidatedArtifact
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.ResultSet
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.Transaction
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
-import io.github.smyrgeorge.sqlx4k.postgres.extensions.asByteArray
+import org.jetbrains.exposed.v1.core.Alias
+import org.jetbrains.exposed.v1.core.JoinType
+import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.alias
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.isNotNull
+import org.jetbrains.exposed.v1.core.statements.UpdateBuilder
+import org.jetbrains.exposed.v1.core.statements.insertValue
+import org.jetbrains.exposed.v1.jdbc.Query
+import org.jetbrains.exposed.v1.jdbc.batchInsert
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
+import org.jetbrains.exposed.v1.jdbc.upsert
 import kotlin.uuid.Uuid
 
 /**
- * [HooksRepository] on PostgreSQL (tables of [HooksMigrations]), every transaction confined to its organization
- * ([inOrg], row-level security). A write takes the organization's hook lock first (a transaction-scoped advisory
- * lock), so the organization's hook writes run one after the other, on any replica.
+ * [HooksRepository] on the tables of [HooksMigrations]: every transaction confined to its organization (`inOrg`,
+ * row-level security) and every statement filtered on it. A write takes the organization's hook lock first (a
+ * transaction-scoped advisory lock, the `hashtextextended` of the sqlx4k repository, so that both versions take turns
+ * during a rollout), so the organization's hook writes run one after the other, on any replica.
  *
- * @param driver The database.
+ * @param database The serving role's pool.
  */
-internal class HooksRepositoryImpl(private val driver: Driver) : HooksRepository {
-    override suspend fun <T> read(orgId: Uuid, block: suspend HooksStore.() -> T): T =
-        driver.inOrg(orgId) { PostgresHooksStore(this, orgId).block() }
+internal class HooksRepositoryImpl(private val database: JdbcDatabase) : HooksRepository {
+    override suspend fun <T> read(orgId: Uuid, block: HooksStore.() -> T): T =
+        database.inOrg(orgId) { ExposedHooksStore(orgId).block() }
 
-    override suspend fun <T> write(orgId: Uuid, block: suspend HooksStore.() -> T): T = driver.inOrg(orgId) {
-        fetchAll(Statement.create(LOCK).bind("org_id", orgId)).getOrThrow()
-        PostgresHooksStore(this, orgId).block()
-    }
-
-    /** The SQL the repository shares with its tests. */
-    companion object {
-        /** Serializes an organization's hook writes within a transaction (released at its end). */
-        const val LOCK: String =
-            "SELECT pg_advisory_xact_lock(hashtextextended('hooks:' || CAST(:org_id AS TEXT), 0))"
+    override suspend fun <T> write(orgId: Uuid, block: HooksStore.() -> T): T = database.inOrg(orgId) {
+        lockKeyUntilCommit(lockKey(orgId))
+        ExposedHooksStore(orgId).block()
     }
 }
 
 /** The statements of one transaction. */
 @Suppress("TooManyFunctions") // One implementation of the module's one store.
-private class PostgresHooksStore(private val tx: Transaction, private val orgId: Uuid) : HooksStore {
-    override suspend fun hook(name: String): Hook? =
-        rows("$HOOK_SELECT WHERE h.org_id = :org_id AND h.name = :name") { bind("name", name) }
-            .firstOrNull()?.toHook()
+private class ExposedHooksStore(private val orgId: Uuid) : HooksStore {
+    override fun hook(name: String): Hook? =
+        hookRead().where { (h.orgId eq orgId) and (h.name eq name) }.singleOrNull()?.toHook()
 
-    override suspend fun catalog(limit: Int): List<Hook> =
-        rows("$HOOK_SELECT WHERE h.org_id = :org_id ORDER BY h.updated_at DESC, h.name LIMIT :limit") {
-            bind("limit", limit)
-        }.map { it.toHook() }
+    override fun catalog(limit: Int): List<Hook> = hookRead()
+        .where { h.orgId eq orgId }
+        .orderBy(h.updatedAt to SortOrder.DESC, h.name to SortOrder.ASC)
+        .limit(limit)
+        .map { it.toHook() }
 
-    override suspend fun countHooks(): Long =
-        rows("SELECT COUNT(*) AS n FROM hooks_hooks WHERE org_id = :org_id") { this }.first().get("n").asLong()
+    override fun countHooks(): Long = h.select(h.id).where { h.orgId eq orgId }.count()
 
-    override suspend fun insertHook(hook: Hook) = update(
-        """
-        INSERT INTO hooks_hooks (id, org_id, name, pinned_version_id, all_members, created_at, updated_at)
-        VALUES (:id, :org_id, :name, :pinned, :all, :created, :updated)
-        """,
-    ) { hookValues(hook).bind("name", hook.name).bind("created", hook.createdAt) }
+    override fun insertHook(hook: Hook) {
+        h.insert {
+            it.hookValues(hook)
+            it[id] = hook.id
+            it[orgId] = this@ExposedHooksStore.orgId
+            it[name] = hook.name
+            it[createdAt] = hook.createdAt
+        }
+    }
 
-    override suspend fun updateHook(hook: Hook) = update(
-        """
-        UPDATE hooks_hooks SET pinned_version_id = :pinned, all_members = :all, updated_at = :updated
-        WHERE id = :id AND org_id = :org_id
-        """,
-    ) { hookValues(hook) }
+    override fun updateHook(hook: Hook) {
+        h.update({ (h.id eq hook.id) and (h.orgId eq orgId) }) { it.hookValues(hook) }
+    }
 
-    override suspend fun version(hookId: Uuid, label: String): HookVersion? = rows(
-        "SELECT $VERSION_COLUMNS FROM hooks_versions WHERE org_id = :org_id AND hook_id = :hook AND version = :v",
-    ) { bind("hook", hookId).bind("v", label) }.firstOrNull()?.toVersion()
+    override fun version(hookId: Uuid, label: String): HookVersion? = v.select(VERSION_COLUMNS)
+        .where {
+            (v[HooksVersions.orgId] eq orgId) and (v[HooksVersions.hookId] eq hookId) and
+                (v[HooksVersions.version] eq label)
+        }
+        .singleOrNull()
+        ?.toVersion()
 
-    override suspend fun versions(hookId: Uuid, limit: Int): List<HookVersion> = rows(
-        """
-        SELECT $VERSION_COLUMNS FROM hooks_versions WHERE org_id = :org_id AND hook_id = :hook
-        ORDER BY published_at DESC, version LIMIT :limit
-        """,
-    ) { bind("hook", hookId).bind("limit", limit) }.map { it.toVersion() }
+    override fun versions(hookId: Uuid, limit: Int): List<HookVersion> = v.select(VERSION_COLUMNS)
+        .where { (v[HooksVersions.orgId] eq orgId) and (v[HooksVersions.hookId] eq hookId) }
+        .orderBy(v[HooksVersions.publishedAt] to SortOrder.DESC, v[HooksVersions.version] to SortOrder.ASC)
+        .limit(limit)
+        .map { it.toVersion() }
 
-    override suspend fun countVersions(hookId: Uuid): Long =
-        rows("SELECT COUNT(*) AS n FROM hooks_versions WHERE org_id = :org_id AND hook_id = :hook") {
-            bind("hook", hookId)
-        }.first().get("n").asLong()
+    override fun countVersions(hookId: Uuid): Long = HooksVersions.select(HooksVersions.id)
+        .where { (HooksVersions.orgId eq orgId) and (HooksVersions.hookId eq hookId) }
+        .count()
 
-    override suspend fun insertVersion(version: HookVersion, artifact: ValidatedArtifact) {
+    override fun insertVersion(version: HookVersion, artifact: ValidatedArtifact) {
         val definition = version.definition
-        update(
-            """
-            INSERT INTO hooks_versions (id, org_id, hook_id, version, digest, events, matcher, command,
-            timeout_seconds, size_bytes, file_count, published_by, published_at)
-            VALUES (:id, :org_id, :hook, :v, :digest, :events, :matcher, :command, :timeout, :size, :count, :by, :at)
-            """,
-        ) {
-            bind("id", version.id).bind("hook", version.hookId).bind("v", version.version)
-                .bind("digest", version.digest).bind("events", definition.wireEvents.joinToString(","))
-                .bind("matcher", definition.matcher).bind("command", definition.command)
-                .bind("timeout", definition.timeoutSeconds).bind("size", version.sizeBytes)
-                .bind("count", version.fileCount).bind("by", version.publishedBy).bind("at", version.publishedAt)
+        HooksVersions.insert {
+            it[id] = version.id
+            it[orgId] = this@ExposedHooksStore.orgId
+            it[hookId] = version.hookId
+            it[this.version] = version.version
+            it[digest] = version.digest
+            it[events] = definition.wireEvents.joinToString(",")
+            it[matcher] = definition.matcher
+            it[command] = definition.command
+            it[timeoutSeconds] = definition.timeoutSeconds
+            it[sizeBytes] = version.sizeBytes
+            it[fileCount] = version.fileCount
+            it[publishedBy] = version.publishedBy
+            it[publishedAt] = version.publishedAt
         }
-        artifact.files.zip(artifact.entries).forEach { (file, entry) ->
-            update(
-                """
-                INSERT INTO hooks_files (version_id, org_id, path, mode, size, sha256, content)
-                VALUES (:version, :org_id, :path, :mode, :size, :sha, CAST(:content AS BYTEA))
-                """,
-            ) {
-                bind("version", version.id).bind("path", entry.path).bind("mode", entry.mode.wire)
-                    .bind("size", entry.size).bind("sha", entry.sha256).bind("content", file.content)
+        // One batch: pgjdbc rewrites it into one multi-row INSERT.
+        val rows = artifact.files.zip(artifact.entries)
+        HooksFiles.batchInsert(rows, shouldReturnGeneratedValues = false) { (file, entry) ->
+            this[HooksFiles.versionId] = version.id
+            this[HooksFiles.orgId] = orgId
+            this[HooksFiles.path] = entry.path
+            this[HooksFiles.mode] = entry.mode.wire
+            this[HooksFiles.size] = entry.size
+            this[HooksFiles.sha256] = entry.sha256
+            this[HooksFiles.content] = file.content
+        }
+    }
+
+    override fun assignment(hookId: Uuid, memberId: String): HookAssignment? =
+        a.select(a.id, a.hookId, a.memberId, a.decision, a.updatedAt)
+            .where { (a.orgId eq orgId) and (a.hookId eq hookId) and (a.memberId eq memberId) }
+            .singleOrNull()
+            ?.let { row ->
+                HookAssignment(
+                    id = row[a.id],
+                    hookId = row[a.hookId],
+                    memberId = row[a.memberId],
+                    decision = row[a.decision]?.let(::decision),
+                    updatedAt = row[a.updatedAt],
+                )
             }
+
+    override fun saveAssignment(assignment: HookAssignment, updatedBy: String) {
+        a.upsert(
+            a.id,
+            onUpdate = {
+                it[a.decision] = insertValue(a.decision)
+                it[a.updatedBy] = insertValue(a.updatedBy)
+                it[a.updatedAt] = insertValue(a.updatedAt)
+            },
+        ) {
+            it[id] = assignment.id
+            it[orgId] = this@ExposedHooksStore.orgId
+            it[hookId] = assignment.hookId
+            it[memberId] = assignment.memberId
+            it[decision] = assignment.decision?.wire
+            it[this.updatedBy] = updatedBy
+            it[updatedAt] = assignment.updatedAt
         }
     }
 
-    override suspend fun assignment(hookId: Uuid, memberId: String): HookAssignment? = rows(
-        "SELECT id, hook_id, member_id, decision, updated_at FROM hooks_assignments WHERE org_id = :org_id " +
-            "AND hook_id = :hook AND member_id = :member",
-    ) { bind("hook", hookId).bind("member", memberId) }.firstOrNull()?.let { row ->
-        HookAssignment(
-            id = row.get("id").asUuid(),
-            hookId = row.get("hook_id").asUuid(),
-            memberId = row.get("member_id").asString(),
-            decision = row.get("decision").asStringOrNull()?.let(::decision),
-            updatedAt = row.get("updated_at").asInstant(),
-        )
+    override fun assignments(hookId: Uuid, limit: Int): List<MemberDecision> =
+        a.select(a.memberId, a.decision, a.updatedAt)
+            .where { (a.orgId eq orgId) and (a.hookId eq hookId) and a.decision.isNotNull() }
+            .orderBy(a.memberId)
+            .limit(limit)
+            .map { row ->
+                // Not null by the filter: `decision IS NOT NULL`.
+                MemberDecision(row[a.memberId], decision(row.present(a.decision, a.memberId)), row[a.updatedAt])
+            }
+
+    override fun candidates(memberId: String, limit: Int): List<HookCandidate> = h
+        .join(v, JoinType.LEFT, additionalConstraint = {
+            (v[HooksVersions.orgId] eq h.orgId) and (v[HooksVersions.id] eq h.pinnedVersionId)
+        })
+        .join(a, JoinType.LEFT, additionalConstraint = {
+            (a.orgId eq h.orgId) and (a.hookId eq h.id) and (a.memberId eq memberId)
+        })
+        .select(HOOK_COLUMNS + VERSION_COLUMNS + a.decision)
+        .where { h.orgId eq orgId }
+        .orderBy(h.name)
+        .limit(limit)
+        .map { row ->
+            val pinned = row.getOrNull(v[HooksVersions.id])?.let { row.toVersion() }
+            HookCandidate(row.toHook(pinnedLabel = v), pinned, row[a.decision]?.let(::decision))
+        }
+
+    override fun files(versionId: Uuid): List<ArtifactFile> = HooksFiles
+        .select(HooksFiles.path, HooksFiles.mode, HooksFiles.content)
+        .where { (HooksFiles.orgId eq orgId) and (HooksFiles.versionId eq versionId) }
+        .orderBy(HooksFiles.path)
+        .map { ArtifactFile(it[HooksFiles.path], mode(it[HooksFiles.mode]), it[HooksFiles.content]) }
+
+    // The hooks with their pinned version's label, joined on the organization too.
+    private fun hookRead(): Query = h
+        .join(p, JoinType.LEFT, additionalConstraint = {
+            (p[HooksVersions.orgId] eq h.orgId) and (p[HooksVersions.id] eq h.pinnedVersionId)
+        })
+        .select(HOOK_COLUMNS + p[HooksVersions.version])
+
+    // The columns a change writes; the id, the name and the creation are the insert's only.
+    private fun UpdateBuilder<*>.hookValues(hook: Hook) {
+        this[h.pinnedVersionId] = hook.pinnedVersionId
+        this[h.allMembers] = hook.allMembers
+        this[h.updatedAt] = hook.updatedAt
     }
 
-    override suspend fun saveAssignment(assignment: HookAssignment, updatedBy: String) = update(
-        """
-        INSERT INTO hooks_assignments (id, org_id, hook_id, member_id, decision, updated_by, updated_at)
-        VALUES (:id, :org_id, :hook, :member, :decision, :by, :at)
-        ON CONFLICT (id) DO UPDATE SET decision = EXCLUDED.decision, updated_by = EXCLUDED.updated_by,
-        updated_at = EXCLUDED.updated_at
-        """,
-    ) {
-        bind("id", assignment.id).bind("hook", assignment.hookId).bind("member", assignment.memberId)
-            .bind("decision", assignment.decision?.wire).bind("by", updatedBy).bind("at", assignment.updatedAt)
-    }
-
-    override suspend fun assignments(hookId: Uuid, limit: Int): List<MemberDecision> = rows(
-        """
-        SELECT member_id, decision, updated_at FROM hooks_assignments WHERE org_id = :org_id AND hook_id = :hook
-        AND decision IS NOT NULL ORDER BY member_id LIMIT :limit
-        """,
-    ) { bind("hook", hookId).bind("limit", limit) }.map { row ->
-        MemberDecision(
-            row.get("member_id").asString(),
-            decision(row.get("decision").asString()),
-            row.get("updated_at").asInstant(),
-        )
-    }
-
-    override suspend fun candidates(memberId: String, limit: Int): List<HookCandidate> = rows(
-        """
-        SELECT ${HOOK_COLUMNS.joinToString { "h.$it" }}, v.version AS pinned_label,
-        ${VERSION_COLUMN_NAMES.joinToString { "v.$it AS v_$it" }}, a.decision
-        FROM hooks_hooks h
-        LEFT JOIN hooks_versions v ON v.org_id = h.org_id AND v.id = h.pinned_version_id
-        LEFT JOIN hooks_assignments a ON a.org_id = h.org_id AND a.hook_id = h.id AND a.member_id = :member
-        WHERE h.org_id = :org_id ORDER BY h.name LIMIT :limit
-        """,
-    ) { bind("member", memberId).bind("limit", limit) }.map { row ->
-        val pinned = row.get("v_id").asUuidOrNull()?.let { row.toVersion(prefix = "v_") }
-        HookCandidate(row.toHook(), pinned, row.get("decision").asStringOrNull()?.let(::decision))
-    }
-
-    override suspend fun files(versionId: Uuid): List<ArtifactFile> = rows(
-        "SELECT path, mode, content FROM hooks_files WHERE org_id = :org_id AND version_id = :version ORDER BY path",
-    ) { bind("version", versionId) }.map { row ->
-        ArtifactFile(row.get("path").asString(), mode(row.get("mode").asString()), row.get("content").asByteArray())
-    }
-
-    private fun Statement.hookValues(hook: Hook): Statement = bind("id", hook.id)
-        .bind("pinned", hook.pinnedVersionId).bind("all", hook.allMembers).bind("updated", hook.updatedAt)
-
-    private suspend fun rows(sql: String, bind: Statement.() -> Statement): ResultSet =
-        tx.fetchAll(Statement.create(sql.trimIndent()).bind("org_id", orgId).bind()).getOrThrow()
-
-    private suspend fun update(sql: String, bind: Statement.() -> Statement) {
-        tx.execute(Statement.create(sql.trimIndent()).bind("org_id", orgId).bind()).getOrThrow()
-    }
-
-    private fun ResultSet.Row.toHook() = Hook(
-        id = get("id").asUuid(),
-        orgId = get("org_id").asUuid(),
-        name = get("name").asString(),
-        pinnedVersionId = get("pinned_version_id").asUuidOrNull(),
-        pinnedVersion = get("pinned_label").asStringOrNull(),
-        allMembers = get("all_members").asBoolean(),
-        createdAt = get("created_at").asInstant(),
-        updatedAt = get("updated_at").asInstant(),
+    private fun ResultRow.toHook(pinnedLabel: Alias<HooksVersions> = p) = Hook(
+        id = this[h.id],
+        orgId = this[h.orgId],
+        name = this[h.name],
+        pinnedVersionId = this[h.pinnedVersionId],
+        pinnedVersion = getOrNull(pinnedLabel[HooksVersions.version]),
+        allMembers = this[h.allMembers],
+        createdAt = this[h.createdAt],
+        updatedAt = this[h.updatedAt],
     )
 
-    private fun ResultSet.Row.toVersion(prefix: String = "") = HookVersion(
-        id = get("${prefix}id").asUuid(),
-        hookId = get("${prefix}hook_id").asUuid(),
-        version = get("${prefix}version").asString(),
-        digest = get("${prefix}digest").asString(),
+    private fun ResultRow.toVersion() = HookVersion(
+        id = this[v[HooksVersions.id]],
+        hookId = this[v[HooksVersions.hookId]],
+        version = this[v[HooksVersions.version]],
+        digest = this[v[HooksVersions.digest]],
         definition = HookDefinition(
             // Stored values are written by this module only, from the enums.
-            events = get("${prefix}events").asString().split(',').map { wire ->
+            events = this[v[HooksVersions.events]].split(',').map { wire ->
                 HookEvent.entries.first { it.wire == wire }
             }.toSet(),
-            matcher = get("${prefix}matcher").asStringOrNull(),
-            command = get("${prefix}command").asString(),
-            timeoutSeconds = get("${prefix}timeout_seconds").asInt(),
+            matcher = this[v[HooksVersions.matcher]],
+            command = this[v[HooksVersions.command]],
+            timeoutSeconds = this[v[HooksVersions.timeoutSeconds]],
         ),
-        sizeBytes = get("${prefix}size_bytes").asLong(),
-        fileCount = get("${prefix}file_count").asInt(),
-        publishedBy = get("${prefix}published_by").asString(),
-        publishedAt = get("${prefix}published_at").asInstant(),
+        sizeBytes = this[v[HooksVersions.sizeBytes]],
+        fileCount = this[v[HooksVersions.fileCount]],
+        publishedBy = this[v[HooksVersions.publishedBy]],
+        publishedAt = this[v[HooksVersions.publishedAt]],
     )
 
     // Stored values are written by this module only, from these enums.
@@ -230,13 +245,23 @@ private class PostgresHooksStore(private val tx: Transaction, private val orgId:
     private fun mode(wire: String) = FileMode.entries.first { it.wire == wire }
 }
 
-// The columns the store reads.
-private val HOOK_COLUMNS =
-    listOf("id", "org_id", "name", "pinned_version_id", "all_members", "created_at", "updated_at")
-private val HOOK_SELECT = "SELECT ${HOOK_COLUMNS.joinToString { "h.$it" }}, p.version AS pinned_label " +
-    "FROM hooks_hooks h LEFT JOIN hooks_versions p ON p.org_id = h.org_id AND p.id = h.pinned_version_id"
-private val VERSION_COLUMN_NAMES = listOf(
-    "id", "hook_id", "version", "digest", "events", "matcher", "command", "timeout_seconds", "size_bytes",
-    "file_count", "published_by", "published_at",
-)
-private val VERSION_COLUMNS = VERSION_COLUMN_NAMES.joinToString()
+// The advisory lock's key, `'hooks:' || CAST(org_id AS TEXT)` as the sqlx4k repository hashed it.
+private fun lockKey(orgId: Uuid): String = "hooks:$orgId"
+
+private val h = HooksHooks
+private val a = HooksAssignments
+
+/** The pinned version of a hook in a catalog read, for its label. */
+private val p = HooksVersions.alias("p")
+
+/** The versions a store reads whole: a hook's, or a candidate's pinned one. */
+private val v = HooksVersions.alias("v")
+
+private val HOOK_COLUMNS = listOf(h.id, h.orgId, h.name, h.pinnedVersionId, h.allMembers, h.createdAt, h.updatedAt)
+
+private val VERSION_COLUMNS = with(HooksVersions) {
+    listOf(
+        id, hookId, version, digest, events, matcher, command, timeoutSeconds, sizeBytes, fileCount, publishedBy,
+        publishedAt,
+    ).map { v[it] }
+}

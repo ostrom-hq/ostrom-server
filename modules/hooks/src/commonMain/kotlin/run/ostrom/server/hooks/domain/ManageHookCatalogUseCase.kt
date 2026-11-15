@@ -146,7 +146,7 @@ internal class ManageHookCatalogUseCaseImpl(
     private suspend fun write(
         caller: CatalogCaller,
         name: String,
-        change: suspend HooksStore.(Hook, Instant, MutableList<CatalogEvent>) -> Hook,
+        change: HooksStore.(Hook, Instant, MutableList<CatalogEvent>) -> Hook,
     ): Hook {
         ArtifactTree.checkName(name, HookLimits.KIND)
         val events = mutableListOf<CatalogEvent>()

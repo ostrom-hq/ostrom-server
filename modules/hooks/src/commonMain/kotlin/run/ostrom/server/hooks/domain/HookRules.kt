@@ -25,15 +25,15 @@ object HookScopes {
  */
 internal object HookRules {
     /** The hook [name], or 404. */
-    suspend fun HooksStore.existing(name: String): Hook =
+    fun HooksStore.existing(name: String): Hook =
         hook(name) ?: throw CatalogNotFoundException("Hook not found.")
 
     /** A version of [hook] by its label, or 404. */
-    suspend fun HooksStore.versionOf(hook: Hook, label: String): HookVersion =
+    fun HooksStore.versionOf(hook: Hook, label: String): HookVersion =
         version(hook.id, label) ?: throw CatalogNotFoundException("Hook version not found.")
 
     /** Points [hook] at [version] unless it already is. */
-    suspend fun HooksStore.pin(
+    fun HooksStore.pin(
         hook: Hook,
         version: HookVersion,
         now: Instant,
@@ -47,7 +47,7 @@ internal object HookRules {
     }
 
     /** Stops delivering [hook]. */
-    suspend fun HooksStore.unpin(hook: Hook, now: Instant, events: MutableList<CatalogEvent>): Hook {
+    fun HooksStore.unpin(hook: Hook, now: Instant, events: MutableList<CatalogEvent>): Hook {
         if (hook.pinnedVersionId == null) return hook
         val changed = hook.copy(pinnedVersionId = null, pinnedVersion = null, updatedAt = now)
         updateHook(changed)
@@ -56,7 +56,7 @@ internal object HookRules {
     }
 
     /** Sets [hook]'s audience unless it already is. */
-    suspend fun HooksStore.audience(
+    fun HooksStore.audience(
         hook: Hook,
         allMembers: Boolean,
         now: Instant,
@@ -77,7 +77,7 @@ internal object HookRules {
      * the hook has no pinned version, so the administrator's pin approves the code and who runs it together.
      */
     @Suppress("LongParameterList") // The fields of one publication.
-    suspend fun HooksStore.publish(
+    fun HooksStore.publish(
         caller: CatalogCaller,
         name: String,
         label: String,
@@ -129,7 +129,7 @@ internal object HookRules {
         }
     }
 
-    private suspend fun HooksStore.ensureRoomForAVersion(hook: Hook) {
+    private fun HooksStore.ensureRoomForAVersion(hook: Hook) {
         if (countVersions(hook.id) >= HookLimits.VERSIONS) {
             throw CatalogConflictException(
                 "hook_version_limit",
@@ -138,7 +138,7 @@ internal object HookRules {
         }
     }
 
-    private suspend fun HooksStore.create(
+    private fun HooksStore.create(
         caller: CatalogCaller,
         name: String,
         now: Instant,

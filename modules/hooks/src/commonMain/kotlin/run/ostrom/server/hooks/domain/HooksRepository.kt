@@ -10,6 +10,7 @@ import kotlin.uuid.Uuid
  * The hook catalog's storage. Every block runs in one transaction confined to its organization (row-level security);
  * [write] also serializes the organization's hook writes, so two replicas can never both pass a rule that depends on
  * the current state (a limit, a pin, the audience a key may set).
+ * The blocks are not `suspend`: nothing but the store runs inside a transaction (CRL-03).
  */
 interface HooksRepository {
     /**
@@ -20,7 +21,7 @@ interface HooksRepository {
      *
      * @return What [block] returns.
      */
-    suspend fun <T> read(orgId: Uuid, block: suspend HooksStore.() -> T): T
+    suspend fun <T> read(orgId: Uuid, block: HooksStore.() -> T): T
 
     /**
      * Writes in one transaction, after every other hook write of the organization has committed. A failure inside
@@ -31,7 +32,7 @@ interface HooksRepository {
      *
      * @return What [block] returns.
      */
-    suspend fun <T> write(orgId: Uuid, block: suspend HooksStore.() -> T): T
+    suspend fun <T> write(orgId: Uuid, block: HooksStore.() -> T): T
 }
 
 /** The statements of one transaction of [HooksRepository], all in its organization. */
@@ -39,44 +40,44 @@ interface HooksRepository {
 @Suppress("TooManyFunctions")
 interface HooksStore {
     /** The hook named [name], or null. */
-    suspend fun hook(name: String): Hook?
+    fun hook(name: String): Hook?
 
     /** The hooks, newest change first, at most [limit]. */
-    suspend fun catalog(limit: Int): List<Hook>
+    fun catalog(limit: Int): List<Hook>
 
     /** How many hooks there are. */
-    suspend fun countHooks(): Long
+    fun countHooks(): Long
 
     /** Stores a new hook. */
-    suspend fun insertHook(hook: Hook)
+    fun insertHook(hook: Hook)
 
     /** Writes a hook's pin, audience and update time. */
-    suspend fun updateHook(hook: Hook)
+    fun updateHook(hook: Hook)
 
     /** A version of [hookId] by its label, or null. */
-    suspend fun version(hookId: Uuid, label: String): HookVersion?
+    fun version(hookId: Uuid, label: String): HookVersion?
 
     /** [hookId]'s versions, newest first, at most [limit]. */
-    suspend fun versions(hookId: Uuid, limit: Int): List<HookVersion>
+    fun versions(hookId: Uuid, limit: Int): List<HookVersion>
 
     /** How many versions [hookId] has. */
-    suspend fun countVersions(hookId: Uuid): Long
+    fun countVersions(hookId: Uuid): Long
 
     /** Stores a version, its definition and its files. */
-    suspend fun insertVersion(version: HookVersion, artifact: ValidatedArtifact)
+    fun insertVersion(version: HookVersion, artifact: ValidatedArtifact)
 
     /** [memberId]'s decision row on [hookId], cleared or not, or null. */
-    suspend fun assignment(hookId: Uuid, memberId: String): HookAssignment?
+    fun assignment(hookId: Uuid, memberId: String): HookAssignment?
 
     /** Inserts or updates a decision row, by its id. */
-    suspend fun saveAssignment(assignment: HookAssignment, updatedBy: String)
+    fun saveAssignment(assignment: HookAssignment, updatedBy: String)
 
     /** [hookId]'s explicit decisions, by member id, at most [limit]. */
-    suspend fun assignments(hookId: Uuid, limit: Int): List<MemberDecision>
+    fun assignments(hookId: Uuid, limit: Int): List<MemberDecision>
 
     /** Every hook, by name, with its pinned version and [memberId]'s decision, at most [limit]. */
-    suspend fun candidates(memberId: String, limit: Int): List<HookCandidate>
+    fun candidates(memberId: String, limit: Int): List<HookCandidate>
 
     /** A version's files, sorted by path. */
-    suspend fun files(versionId: Uuid): List<ArtifactFile>
+    fun files(versionId: Uuid): List<ArtifactFile>
 }

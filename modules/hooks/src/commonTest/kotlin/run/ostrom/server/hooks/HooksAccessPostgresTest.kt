@@ -14,12 +14,17 @@ import run.ostrom.server.hooks.fakes.call
 import run.ostrom.server.hooks.fakes.field
 import run.ostrom.server.hooks.fakes.publication
 import run.ostrom.server.hooks.fakes.testIdentities
-import run.ostrom.server.kernel.database.inOrg
+import run.ostrom.server.hooks.infrastructure.HooksAssignments
+import run.ostrom.server.hooks.infrastructure.HooksFiles
+import run.ostrom.server.hooks.infrastructure.HooksHooks
+import run.ostrom.server.hooks.infrastructure.HooksVersions
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.ktor.client.HttpClient
 import io.ktor.http.HttpMethod
+import org.jetbrains.exposed.v1.core.Table
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.update
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.time.Clock
@@ -137,9 +142,8 @@ class HooksAccessPostgresTest {
         serverTest(listOf(HooksModule), testIdentities()) { server ->
             val client = server.client
             client.pinned("review", allMembers = true)
-            server.driver.inOrg(ORG_A) {
-                val corrupt = Statement.create("UPDATE hooks_files SET content = CAST(:c AS BYTEA)")
-                execute(corrupt.bind("c", byteArrayOf(1))).getOrThrow()
+            server.koin.get<JdbcDatabase>().inOrg(ORG_A) {
+                HooksFiles.update { it[content] = byteArrayOf(1) }
             }
             val download = client.call(get, "ada", "/api/v1/hook-delivery/review/1.0.0")
             assertEquals(500 to "hook_integrity", download.status to download.error)
@@ -152,13 +156,12 @@ class HooksAccessPostgresTest {
         val client = server.client
         client.pinned("review", allMembers = true)
         client.call(put, "owner", "$REVIEW/assignments/$ADA", DENY)
-        suspend fun count(org: Uuid, table: String) = server.driver.inOrg(org) {
-            fetchAll(Statement.create("SELECT COUNT(*) AS n FROM $table")).getOrThrow().first().get("n").asLong()
-        }
-        for (table in listOf("hooks_hooks", "hooks_versions", "hooks_files", "hooks_assignments")) {
-            assertEquals(1L, count(ORG_A, table), table)
+        val database = server.koin.get<JdbcDatabase>()
+        suspend fun count(org: Uuid, table: Table) = database.inOrg(org) { table.selectAll().count() }
+        for (table in listOf(HooksHooks, HooksVersions, HooksFiles, HooksAssignments)) {
+            assertEquals(1L, count(ORG_A, table), table.tableName)
             // No WHERE org_id: the policy alone hides organization A's rows.
-            assertEquals(0L, count(ORG_B, table), table)
+            assertEquals(0L, count(ORG_B, table), table.tableName)
         }
         // Organization B's owner sees nothing of A's catalog, under A's names.
         assertEquals(emptyList(), client.call(get, "zoe", "/api/v1/hooks").list())
