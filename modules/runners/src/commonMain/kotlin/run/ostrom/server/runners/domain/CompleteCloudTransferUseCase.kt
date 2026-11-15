@@ -80,7 +80,7 @@ class CompleteCloudTransferUseCase(
 
     /** One bounded step of `transferring`. */
     @Suppress("ReturnCount") // A decision table read top to bottom.
-    suspend fun step(session: CloudSession): Instant? {
+    suspend fun step(session: CloudSession): Instant {
         val now = clock.now()
         val transfer = accepted(session)
             ?: return release(session.copy(state = SessionState.PAUSED, phase = null, transferId = null), now)
@@ -153,7 +153,7 @@ class CompleteCloudTransferUseCase(
             ?.takeIf { it.state == TransferState.ACCEPTED && it.sessionId == session.id }
 
     /** Drops a transfer the session names but nobody holds open (it cannot happen through the use cases). */
-    private suspend fun release(next: CloudSession, now: Instant): Instant? {
+    private suspend fun release(next: CloudSession, now: Instant): Instant {
         repository.compareAndSet(next.copy(updatedAt = now), now)
         return now
     }
@@ -164,7 +164,7 @@ class CompleteCloudTransferUseCase(
         now: Instant,
         code: String,
         message: String,
-    ): Instant? {
+    ): Instant {
         val failed = transfer.copy(
             state = TransferState.FAILED,
             failure = SessionFailure(code, message),

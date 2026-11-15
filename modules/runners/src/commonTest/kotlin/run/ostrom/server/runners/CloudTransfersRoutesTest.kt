@@ -265,6 +265,13 @@ class CloudTransfersRoutesTest {
             failure = SessionFailure("transfer_timeout", "Too slow."),
         ).also { transfers.transfers[it.id] = it }
 
+        // An administrator's transfer is accepted at once and never expires.
+        val own = client.send(
+            "/api/v1/cloud/sessions/${running(carolId).id}/transfer", "carol", "k-admin", """{"toMemberId":"bob"}""",
+        )
+        assertEquals(HttpStatusCode.Accepted, own.status)
+        assertEquals(null, transfers.transfers.getValue(Uuid.parse(idOf(own.bodyAsText()))).expiresAt)
+
         val read = client.read("/api/v1/cloud/transfers/${done.id}", "alice")
         assertEquals(HttpStatusCode.OK, read.status)
         for (part in listOf("\"atEpoch\":4", "transfer_timeout", "\"completedAt\":\"2026-10-30T10:00:00Z\"")) {
