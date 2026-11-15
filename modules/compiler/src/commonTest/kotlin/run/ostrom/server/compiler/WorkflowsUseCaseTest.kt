@@ -22,6 +22,8 @@ import run.ostrom.server.compiler.domain.usecases.WorkflowsUseCaseImpl
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
 import run.ostrom.server.kernel.http.withNulls
+import run.ostrom.server.kernel.sessions.CloudProfileDirectory
+import run.ostrom.server.kernel.sessions.NamedCloudProfile
 import run.ostrom.server.kernel.workflows.AutomationUsage
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonArray
@@ -360,5 +362,52 @@ class WorkflowsUseCaseTest {
             workflows.import(org, JsonObject(mapOf("id" to JsonPrimitive("x"))), "nina", dryRun = true)
         }
         assertEquals("invalid_workflow", invalid.type)
+    }
+
+    @Test
+    fun anAgentNodeNamesOneOfTheOrganizationsCloudProfilesOrTheSaveIsRefusedNamingIt() = runTest {
+        val profile = Uuid.parse("00000000-0000-0000-0000-0000000f0001")
+        val directory = CloudProfileDirectory { orgId ->
+            if (orgId == org) listOf(NamedCloudProfile(profile, "backend")) else emptyList()
+        }
+        val checked = WorkflowsUseCaseImpl(repository, signer, clock, profiles = directory)
+        fun naming(id: String, profileId: String) = agentFlow(id, id).copy(
+            nodes = listOf(node("a", AGENT, run = NodeRun(instructions = "Do it", profileId = profileId))),
+        )
+        val saved = checked.save(org, raw(naming("known", profile.toString())), null, "lead", create = true)
+        assertEquals(profile.toString(), saved.doc.workflow.nodes.single().run?.profileId)
+        // A workflow that names none, and one of the harness only, read no profile.
+        checked.save(org, raw(agentFlow("none", "None")), null, "lead", create = true)
+        val harness = workflow("h", listOf(node("c", CHECK, run = NodeRun(command = "make", profileId = "x"))))
+        checked.save(org, raw(harness), null, "lead", create = true)
+        val step = workflow(
+            "step",
+            listOf(
+                node("s", STEP, run = NodeRun(command = "make", profileId = "x")),
+                node("a", AGENT, run = NodeRun(instructions = "Do it")),
+            ),
+            edges = listOf("s" to "a", "a" to null),
+        )
+        checked.save(org, raw(step), null, "lead", create = true)
+        val unknown = assertFailsWith<OstromException> {
+            checked.save(org, raw(naming("unknown", Uuid.random().toString())), null, "lead", create = true)
+        }
+        assertEquals("invalid_workflow", unknown.type)
+        assertTrue("Node a: run.profileId is no cloud profile of the organization." in unknown.message, unknown.message)
+        val malformed = assertFailsWith<OstromException> {
+            checked.save(org, raw(naming("malformed", "backend")), null, "lead", create = true)
+        }
+        assertTrue("run.profileId is a cloud profile's id (a UUID)." in malformed.message, malformed.message)
+        val elsewhere = Uuid.random()
+        assertFailsWith<OstromException> {
+            checked.save(elsewhere, raw(naming("theirs", profile.toString())), null, "lead", create = true)
+        }
+        // A profile deleted since the workflow named it never blocks another change; naming another unknown one does.
+        val gone = WorkflowsUseCaseImpl(repository, signer, clock, profiles = CloudProfileDirectory { emptyList() })
+        val renamed = naming("known", profile.toString()).copy(name = "Known again")
+        assertEquals(2, gone.save(org, raw(renamed), 1, "lead", create = false).version)
+        assertFailsWith<OstromException> {
+            gone.save(org, raw(naming("known", Uuid.random().toString())), 2, "lead", create = false)
+        }
     }
 }

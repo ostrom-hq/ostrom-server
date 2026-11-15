@@ -8,7 +8,9 @@ import run.ostrom.server.runners.domain.CloudSessionsRepository
 import run.ostrom.server.runners.domain.CreateCloudSessionPayload
 import run.ostrom.server.runners.domain.CreateCloudSessionUseCase
 import run.ostrom.server.runners.domain.DesiredState
+import run.ostrom.server.runners.domain.ProfileRefusals
 import run.ostrom.server.runners.domain.SessionState
+import run.ostrom.server.workflowruns.domain.engine.profileRefused
 import run.ostrom.server.workflowruns.domain.services.AgentRequest
 import run.ostrom.server.workflowruns.domain.services.AgentState
 import run.ostrom.server.workflowruns.domain.services.RunAgents
@@ -41,13 +43,16 @@ class CloudRunAgents(
             model = request.model,
             prompt = request.prompt,
             id = request.sessionId,
+            profileId = request.profileId,
         )
-        // A refusal of the plan or of the request (its stable message) fails the visit; anything else is retried.
+        // A refusal of the plan or of the request (its stable message) fails the visit, a refusal of the cloud profile
+        // with its key (the run's failureCode); anything else is retried.
         return try {
             create(Caller(orgId, member.memberId.toString()), payload)
             null
         } catch (refused: OstromException) {
-            refused.message
+            val key = ProfileRefusals.keyOf(refused)
+            if (key != null) profileRefused(key) else refused.message
         }
     }
 

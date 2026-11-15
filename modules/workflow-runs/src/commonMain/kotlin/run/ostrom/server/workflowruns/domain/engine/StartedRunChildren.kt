@@ -98,6 +98,8 @@ class StartedRunChildren(
             source = SOURCE,
             inputs = RunInputs.of(workflow.inputs, arguments),
             parentRunId = parent.id,
+            // Its agent nodes that name no profile run on the parent's, as the parent's own would.
+            profileId = parent.profileId,
             startedAt = clock.now().isoMillis(),
         )
         val details = auditDetails("workflow" to workflow.id, "version" to workflow.version, "parent" to parent.id)

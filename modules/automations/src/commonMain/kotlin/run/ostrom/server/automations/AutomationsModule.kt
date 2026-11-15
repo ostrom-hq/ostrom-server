@@ -70,6 +70,7 @@ import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.events.WaitSummaries
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.sessions.AgentSessions
+import run.ostrom.server.kernel.sessions.CloudProfileDirectory
 import run.ostrom.server.kernel.sessions.CloudSessionWakes
 import run.ostrom.server.kernel.sessions.PendingWaitAnswers
 import run.ostrom.server.kernel.sessions.SessionEndListener
@@ -172,7 +173,13 @@ object AutomationsModule : ServerModule {
         single<AutomationsRepository> { AutomationsRepositoryImpl(get()) }
         single<WebhookSecrets> { WebhookSecretsImpl(get()) }
         single<ManageAutomationsUseCase> {
-            ManageAutomationsUseCaseImpl(get(), get(), get(), getOrNull<AutomationWorkflows>() ?: NoWorkflows)
+            ManageAutomationsUseCaseImpl(
+                get(),
+                get(),
+                get(),
+                getOrNull<AutomationWorkflows>() ?: NoWorkflows,
+                getOrNull<CloudProfileDirectory>(),
+            )
         }
         single<ImportAutomationsUseCase> {
             ImportAutomationsUseCaseImpl(get(), get(), getOrNull<AutomationWorkflows>() ?: NoWorkflows)

@@ -4,6 +4,7 @@ package run.ostrom.server.automations.domain
 import kotlinx.datetime.IllegalTimeZoneException
 import kotlinx.datetime.TimeZone
 import kotlin.time.Instant
+import kotlin.uuid.Uuid
 
 /** The rules of an automation's definition, checked at every save. */
 internal object AutomationRules {
@@ -55,6 +56,9 @@ internal object AutomationRules {
             }
         } else {
             WorkflowActionRules.check(definition.action, workflowId, known)
+        }
+        requireAutomation(definition.action.profileId?.let { Uuid.parseOrNull(it) != null } ?: true) {
+            "action.profileId: a cloud profile's id (a UUID)."
         }
         return definition.copy(name = name)
     }

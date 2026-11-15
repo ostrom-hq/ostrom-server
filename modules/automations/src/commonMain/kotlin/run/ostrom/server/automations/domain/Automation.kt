@@ -77,6 +77,8 @@ data class AutomationTrigger(
  * @property workflowId The workflow a run starts, or null for a session.
  * @property inputs The workflow's inputs, as templates; one that renders empty is left out.
  * @property repository `owner/name`: a workflow run's repository for its agent nodes that name none.
+ * @property profileId The organization's cloud profile the session runs on, or, for a workflow action, the one of
+ *   its run's agent nodes that name none; null for the owner's only usable profile.
  */
 @Serializable
 data class AutomationAction(
@@ -88,6 +90,7 @@ data class AutomationAction(
     val workflowId: String? = null,
     val inputs: Map<String, String> = emptyMap(),
     val repository: String? = null,
+    val profileId: String? = null,
 ) {
     /** Constants and readers of the enclosing type. */
     companion object {

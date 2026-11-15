@@ -72,6 +72,7 @@ class RunsAutomationWorkflowsTest {
             workflowId: String,
             inputs: Map<String, String>,
             person: Uuid?,
+            profileId: String?,
         ): WorkflowRun = error("An automation starts as a member.")
 
         override suspend fun startFor(start: MemberStart): StartedRun {
@@ -85,6 +86,7 @@ class RunsAutomationWorkflowsTest {
             inputs: Map<String, String>,
             person: Uuid?,
             key: String,
+            profileId: String?,
         ): StartedRun = error("An automation starts as a member.")
     }
 
@@ -142,6 +144,7 @@ class RunsAutomationWorkflowsTest {
         inputs = mapOf("branch" to "main"),
         repository = "acme/api",
         idempotencyKey = "automation-run:r1",
+        profileId = "00000000-0000-0000-0000-0000000f0001",
     )
 
     @Test
@@ -171,6 +174,7 @@ class RunsAutomationWorkflowsTest {
                 key = "automation-run:r1",
                 source = "automation",
                 automationId = "00000000-0000-0000-0000-0000000a0701",
+                profileId = "00000000-0000-0000-0000-0000000f0001",
             ),
             starts.calls.single(),
         )

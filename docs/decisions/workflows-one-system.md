@@ -66,7 +66,7 @@ stricter rule, with the reason). Nothing is dropped.
 | `kind: agent` | `kind: agent` | mapped |
 | `instruction` | `run.instructions` (`detail` stays the human description) | mapped |
 | `deliverable {type, label, domain, schema}` | `run.deliverable {type, label, schema}` + `domain` | kept, `domain` added |
-| `profileId` | `run.repository`: the repository the session works in, the first of the profile's recipe (see [Profiles](#profiles)) | mapped |
+| `profileId` | `run.profileId`: the organization's cloud profile the session runs on (`runners.cloud.profiles.v1`, refused at save when unknown), else the run's, else the starter's only usable profile; and `run.repository`, the repository the session works in (see [Profiles](#profiles)) | identical (2026-11-14) |
 | `agent`, `model` | `run.agent`, `run.model` (`claude`, `codex`) | kept |
 | `kind: human` | `kind: wait` | mapped |
 | `instruction` (the wait's body) | `wait.body` | mapped |
@@ -122,7 +122,7 @@ setting:
 | --- | --- | --- |
 | The definition copied into the run | `RunGraph` copied at start | kept |
 | Started by any member, as the starter | Owners and admins only today. **Changed to any member** for an `accepted` or `edited` workflow, as themselves (their sessions, quota, GitHub link); an administrator still reads every run | mapped |
-| `profileId` at start (`400 profile_required`) | `repository` at start, for agent nodes that name none (`400 repository_required` when a node needs one and none is given) | mapped |
+| `profileId` at start (`400 profile_required`) | `profileId` at start (`WorkflowRun.profileId`, 400 `invalid_request` when unknown), for agent nodes that name none; without one, each session takes the starter's only usable profile, else fails `profile_required`; and `repository` at start | identical, the refusal moved to the session |
 | `400 invalid_inputs` | `InvalidRunException` → `invalid_inputs` | kept |
 | At most 20 unfinished runs per member, `409 run_limit` | same | added |
 | `Idempotency-Key` → the first run, `200` + `Idempotency-Replayed: true` | same, unique `(org, starter, key)` | added |
@@ -132,7 +132,7 @@ setting:
 | `same`: agent nodes are messages of one session; `handoff`: each node a new session with the earlier deliverables | `sessionMode` (above). `handoff` is played now; `same` needs a message to an existing cloud session (`sendCloudMessage`, owned by the cloud-conversation family): until the server serves it, a `same` workflow runs as `handoff` and says so in the run | added (same: after `sendCloudMessage`) |
 | `human` → a wait of kind `workflow`, its answer moves the run | `wait` node → a wait of the run (`kind: workflow`) | kept |
 | `workflow` → a child run, depth + 1, `delivered` with the child's output | `workflow` node, child run | kept |
-| failure codes | `failureCode` (added, stable) beside `failure` (the sentence): `session_failed`, `session_deleted`, `session_missing`, `ended_without_delivery`, `repository_missing` (TeamCode `profile_missing`), `starter_unavailable`, `wait_cancelled`, `wait_missing`, `max_visits:<node>`, `max_total_visits`, `max_depth`, `workflow_missing`, `invalid_arguments`, `sub_workflow_failed`, `sub_workflow_cancelled`, `expired` (two weeks), `no_transition` | added |
+| failure codes | `failureCode` (added, stable) beside `failure` (the sentence): `session_failed`, `session_deleted`, `session_missing`, `ended_without_delivery`, `repository_missing` (TeamCode `profile_missing`), `starter_unavailable`, `wait_cancelled`, `wait_missing`, `max_visits:<node>`, `max_total_visits`, `max_depth`, `workflow_missing`, `invalid_arguments`, `sub_workflow_failed`, `sub_workflow_cancelled`, `expired` (two weeks), `no_transition`, and the cloud profile's refusals of an agent session (`cloud_profile_not_found`, `profile_unassigned`, `profile_required`, `image_not_allowed`, `cluster_unavailable`, `namespace_not_allowed`) | added |
 | cancel: the starter or an administrator; withdraws the wait, cancels the child run | `POST /api/v1/runs/{id}/cancel`; now also the starter | kept, starter added |
 | `GET /workflows/runs` (`all`, `workflow`, `status`, `before`, `limit`), `currentNodeId`, `currentNodeKind` | `GET /api/v1/runs` (`status`, `before`, `limit`) and `GET /api/v1/workflows/{id}/runs`; `all` (administrators), `currentNodeKind` and a visit's `nodeTitle` added | mapped, fields added |
 | `GET /workflows/runs/{id}` | `GET /api/v1/runs/{id}` | mapped |
@@ -183,8 +183,8 @@ Ostrom's automations already have TeamCode's cron, webhook, variables, rendering
 
 | TeamCode | Ostrom | Verdict |
 | --- | --- | --- |
-| `action.kind: cloud` (prompt, profile, model, effort, runtime) | `action.prompt`, `agent`, `model`, `effort`, `maxRuntimeMinutes`; the profile → `action.repository` | mapped |
-| `action.kind: workflow`, `workflowId`, `inputs` (templates), `profileId` | `action.workflowId` (already in the contract), `action.inputs` (added), `action.repository`; the prompt must be empty; inputs that render empty are left out; checked at save against the workflow's inputs (`400 invalid_automation` naming the input) | added (TC-AUT-5) |
+| `action.kind: cloud` (prompt, profile, model, effort, runtime) | `action.prompt`, `agent`, `model`, `effort`, `maxRuntimeMinutes`, `profileId` (refused at save when unknown, `invalid_automation`; a run whose session the profile refuses fails with the refusal's key as its `reason`) | identical (2026-11-14) |
+| `action.kind: workflow`, `workflowId`, `inputs` (templates), `profileId` | `action.workflowId` (already in the contract), `action.inputs` (added), `action.profileId` (the run's `profileId`), `action.repository`; the prompt must be empty; inputs that render empty are left out; checked at save against the workflow's inputs (`400 invalid_automation` naming the input) | added (TC-AUT-5) |
 | the workflow run starts with `Idempotency-Key: automation-run:<runId>`, the run records `workflowRunId` | same, through `StartWorkflowRunUseCase` | added |
 | reasons `run_limit`, `workflow_missing`, `invalid_inputs`, `workflow_failed`, `workflow_cancelled` | same | added |
 | `DELETE /workflows/{id}` → `409 workflow_in_use` naming the automation | same, one indexed lookup on the automation's `workflow_id` | added |

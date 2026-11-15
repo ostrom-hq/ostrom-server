@@ -5,6 +5,7 @@ import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.gates.domain.services.GateCheckProofs
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
+import run.ostrom.server.kernel.sessions.CloudProfileDirectory
 import run.ostrom.server.workflowruns.domain.engine.NodePlayers
 import run.ostrom.server.workflowruns.domain.engine.PlayRunUseCase
 import run.ostrom.server.workflowruns.domain.engine.PlayRunUseCaseImpl
@@ -125,7 +126,9 @@ object WorkflowRunsModule : ServerModule {
         single<GetWorkflowRunUseCase> { GetWorkflowRunUseCaseImpl(get()) }
         single<CancelWorkflowRunUseCase> { CancelWorkflowRunUseCaseImpl(get(), get(), get()) }
         single<RunWorkflows> { CompilerRunWorkflows(get()) }
-        single<StartWorkflowRunUseCase> { StartWorkflowRunUseCaseImpl(get(), get(), get(), get()) }
+        single<StartWorkflowRunUseCase> {
+            StartWorkflowRunUseCaseImpl(get(), get(), get(), get(), getOrNull<CloudProfileDirectory>())
+        }
         single<AutomationWorkflows> { RunsAutomationWorkflows(get(), get(), get(), get(), get()) }
         single<ListWorkflowRunsUseCase> { ListWorkflowRunsUseCaseImpl(get(), get()) }
         // No module keeps the sessions' todos yet: no RunTodos is bound, and a delivery is never refused `todo_open`.

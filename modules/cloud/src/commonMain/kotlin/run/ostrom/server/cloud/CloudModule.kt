@@ -8,6 +8,7 @@ import run.ostrom.server.cloud.domain.CloudClusterAccess
 import run.ostrom.server.cloud.domain.CloudClustersRepository
 import run.ostrom.server.cloud.domain.CloudClustersUseCase
 import run.ostrom.server.cloud.domain.CloudClustersUseCaseImpl
+import run.ostrom.server.cloud.domain.CloudProfileDirectoryImpl
 import run.ostrom.server.cloud.domain.CloudProfilesRepository
 import run.ostrom.server.cloud.domain.CloudProfilesUseCase
 import run.ostrom.server.cloud.domain.CloudProfilesUseCaseImpl
@@ -31,6 +32,7 @@ import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
+import run.ostrom.server.kernel.sessions.CloudProfileDirectory
 import run.ostrom.server.secrets.domain.CallerResolver
 import run.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
 import io.ktor.server.routing.Route
@@ -54,6 +56,7 @@ object CloudModule : ServerModule {
         single<CloudRuntimeRepository> { CloudRuntimeRepositoryImpl(get()) }
         single<CloudClustersRepository> { CloudClustersRepositoryImpl(get()) }
         single<CloudProfilesRepository> { CloudProfilesRepositoryImpl(get()) }
+        single<CloudProfileDirectory> { CloudProfileDirectoryImpl(get()) }
         single { CloudAdminGate(get()) }
         single { CloudRuntimeUseCaseImpl(get(), get(), get(), get(), get()) } binds
             arrayOf(CloudRuntimeUseCase::class, CloudRuntimeSource::class)

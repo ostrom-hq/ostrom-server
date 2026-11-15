@@ -20,6 +20,8 @@ import run.ostrom.server.workflowruns.domain.engine.PlayRunUseCaseImpl
 import run.ostrom.server.workflowruns.domain.engine.RunMoves
 import run.ostrom.server.workflowruns.domain.engine.TickRunsUseCase
 import run.ostrom.server.workflowruns.domain.engine.TickRunsUseCaseImpl
+import run.ostrom.server.workflowruns.domain.engine.failureCodeOf
+import run.ostrom.server.workflowruns.domain.engine.profileRefused
 import run.ostrom.server.workflowruns.domain.engine.sessionOf
 import run.ostrom.server.workflowruns.domain.models.CancelRunForbiddenException
 import run.ostrom.server.workflowruns.domain.models.PlayedRun
@@ -302,6 +304,26 @@ class RunEngineTest {
         val label = AgentRequests.of(run.copy(workflowName = "W".repeat(200)), AGENT_NODE, id)
         assertEquals("Agent", label.prompt)
         assertEquals(AgentRequests.MAX_NAME, label.name.length)
+    }
+
+    @Test
+    fun anAgentsSessionRunsOnItsNodesProfileElseTheRunsElseNoneNamed() {
+        val node = Uuid.random()
+        val ofRun = Uuid.random()
+        val id = sessionOf(RUN, 1)
+        val named = AGENT_NODE.copy(run = NodeRun(profileId = node.toString()))
+        assertEquals(node, AgentRequests.of(run().copy(profileId = ofRun.toString()), named, id).profileId)
+        assertEquals(ofRun, AgentRequests.of(run().copy(profileId = ofRun.toString()), AGENT_NODE, id).profileId)
+        assertNull(AgentRequests.of(run(), AGENT_NODE, id).profileId)
+        assertNull(AgentRequests.of(run().copy(profileId = "not-an-id"), AGENT_NODE, id).profileId)
+    }
+
+    @Test
+    fun aRefusalOfTheCloudProfileIsTheRunsFailureCode() {
+        val refused = visit(1, "a", WorkflowNodeKind.AGENT, RunMoves.FAILED)
+            .copy(output = profileRefused("profile_required"))
+        assertEquals("profile_required", failureCodeOf(refused))
+        assertNull(failureCodeOf(refused.copy(output = "The cloud profile refused the agent session: Nope.")))
     }
 
     @Test

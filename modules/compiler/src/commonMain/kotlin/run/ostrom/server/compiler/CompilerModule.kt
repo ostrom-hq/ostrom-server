@@ -83,7 +83,14 @@ object CompilerModule : ServerModule {
         single<GatePolicyUseCase> { GatePolicyUseCaseImpl(get(), get(), get()) }
         single<ApproversGraphUseCase> { ApproversGraphUseCaseImpl(get()) }
         single {
-            WorkflowsUseCaseImpl(get(), get(), get(), automations = getOrNull(), removals = getOrNull())
+            WorkflowsUseCaseImpl(
+                get(),
+                get(),
+                get(),
+                automations = getOrNull(),
+                removals = getOrNull(),
+                profiles = getOrNull(),
+            )
         } binds arrayOf(WorkflowsUseCase::class, ImportWorkflowsUseCase::class)
         single<WorkflowSettingsRepository> { PostgresWorkflowSettingsRepository(get()) }
         single<WorkflowSettingsUseCase> {

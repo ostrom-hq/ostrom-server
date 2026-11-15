@@ -5,6 +5,7 @@ import run.ostrom.core.api.models.Deliverable
 import run.ostrom.core.api.models.WorkflowEdge
 import run.ostrom.core.api.models.WorkflowNode
 import run.ostrom.core.api.models.WorkflowNodeKind
+import kotlin.uuid.Uuid
 
 /**
  * The checks of one node of a workflow the server plays ([WorkflowChecks]): its id, title and visits, the templates of
@@ -87,6 +88,9 @@ internal object NodeChecks {
             "$at: an agent node run by the server needs run.instructions."
         }
         run.deliverable?.let { deliverable(at, it) }
+        require(run.profileId?.let { Uuid.parseOrNull(it) != null } ?: true) {
+            "$at: run.profileId is a cloud profile's id (a UUID)."
+        }
         return setOf(DELIVERED)
     }
 

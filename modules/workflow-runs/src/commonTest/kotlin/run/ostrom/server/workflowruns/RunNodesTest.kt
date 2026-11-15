@@ -314,7 +314,8 @@ class RunNodesTest {
     @Test
     fun aChildRunIsAQueuedRunOfTheParentsStarterWithTheArgumentsAsInputsStartedOncePerVisit() = runTest {
         val starts = StartedRunChildren(Workflows(BUILD), runs, runs, clock)
-        val parent = stored(RunGraph(), run(status = RunStatus.RUNNING))
+        val profile = "00000000-0000-0000-0000-0000000f0001"
+        val parent = stored(RunGraph(), run(status = RunStatus.RUNNING).copy(profileId = profile))
         val request = ChildRequest(parent, 2, "build", mapOf("target" to "{{inputs.branch}}-x"))
 
         val opened = starts.start(ORG, request)
@@ -323,11 +324,13 @@ class RunNodesTest {
         val child = runs.rows.getValue(id)
         assertEquals(BUILD.graph, child.graph)
         assertEquals(
-            listOf<Any?>("build", "Build", 3, RunStatus.QUEUED, "ada", "workflow", mapOf("target" to "main-x"), RUN),
+            listOf<Any?>(
+                "build", "Build", 3, RunStatus.QUEUED, "ada", "workflow", mapOf("target" to "main-x"), RUN, profile,
+            ),
             child.run.let {
                 listOf(
                     it.workflowId, it.workflowName, it.workflowVersion, it.status, it.startedBy, it.source, it.inputs,
-                    it.parentRunId,
+                    it.parentRunId, it.profileId,
                 )
             },
         )
