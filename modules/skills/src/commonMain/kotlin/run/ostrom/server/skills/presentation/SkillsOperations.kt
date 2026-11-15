@@ -14,11 +14,12 @@ import run.ostrom.server.kernel.http.docs.pathId
 import io.ktor.http.HttpStatusCode
 
 private const val TAG = "delivery"
-/** Declared by the runners module, whose catalogue owns the runner's calls. */
-private const val RUNNERS_TAG = "runners"
 
 internal const val ADMIN = "An owner or an admin of the organization, from the console (a browser session); every " +
     "token and service key is refused (403 `forbidden`)."
+
+private const val NOT_PINNER = "A key without `skills:pin` (`credential_scope`), or not an administrator or a " +
+    "pinning key (`forbidden`)."
 
 private const val PERSONAL = "A member's personal skill is refused with 409 `skill_personal`: promote it first."
 
@@ -70,11 +71,11 @@ private fun ApiCatalog.catalogOperations() {
         operationId = "listSkills"
         tag(TAG)
         summary = "The organization's skill catalog."
-        description = "$ADMIN Every skill of the organization, team and personal (`ownerId`), newest change first, " +
-            "at most 550."
+        description = "$ADMIN Every skill of the organization, team and personal (`ownerId`): the team's first, " +
+            "then the personal ones, each newest change first, at most 550."
         parameters { organizationHeader() }
         responses {
-            ok<SkillCatalogDto>("The skills, newest change first.")
+            ok<SkillCatalogDto>("The skills, the team's first.")
             error(HttpStatusCode.Forbidden, NOT_ADMIN)
         }
     }
@@ -203,7 +204,7 @@ private fun ApiCatalog.pinOperations() {
         body<PinSkillRequest>("The version to deliver.")
         responses {
             ok<SkillEntryDto>("The skill, with its pin.")
-            error(HttpStatusCode.Forbidden, NOT_ADMIN)
+            error(HttpStatusCode.Forbidden, NOT_PINNER)
             notFound("No such skill, or version of it, in the organization (`not_found`).")
             conflict("The skill or the version is retired (`skill_retired`, `skill_version_retired`), or the " +
                 "skill is personal (`skill_personal`).")

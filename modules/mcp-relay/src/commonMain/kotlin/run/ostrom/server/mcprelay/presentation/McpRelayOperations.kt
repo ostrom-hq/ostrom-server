@@ -39,7 +39,8 @@ private const val INVALID_SERVER = "An invalid server: a name, URL, transport, c
     "rules refuse, or a secret name that is not the organization's (`invalid_request`)."
 
 private const val NAME_TAKEN = "The name is taken by a team server or a member's personal one (`conflict`), or " +
-    "the organization holds its limit of servers (`mcp_server_limit`)."
+    "the organization holds its limit of servers (`mcp_server_limit`), or a stdio server on a server without an MCP " +
+    "host (`conflict`)."
 
 /**
  * The MCP relay module's operations: the servers an organization relays to its agents, who reaches them and with
@@ -389,7 +390,7 @@ private fun ApiCatalog.journalOperations() {
             queryText("server", "Only the calls of this server.")
             queryText("dev", "Only the calls of this member (an id).")
             queryText("before", "An ISO 8601 instant, or the `next` of the previous page.")
-            queryNumber("limit", "The page size, 1 to 200; 50 by default.")
+            queryNumber("limit", "The page size, 50 by default; brought into 1 to 200.")
         }
         responses {
             ok<McpCallsPage>("A page of calls, and the cursor of the next one when there is one.")
@@ -404,7 +405,7 @@ private fun ApiCatalog.journalOperations() {
             "or a service key reading the team."
         parameters {
             organizationHeader()
-            queryNumber("days", "The window in days, 1 to 30; 7 by default.")
+            queryNumber("days", "The window in days, 7 by default; brought into 1 to 30.")
         }
         responses {
             ok<McpUsageResponse>("The calls by server, by `server/tool` and by member and server.")

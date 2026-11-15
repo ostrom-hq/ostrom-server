@@ -66,9 +66,9 @@ import run.ostrom.server.gateway.infrastructure.PacingSettingsRepositoryImpl
 import run.ostrom.server.gateway.infrastructure.RequestCancellationRepositoryImpl
 import run.ostrom.server.gateway.infrastructure.SpanModelCallTracer
 import run.ostrom.server.gateway.presentation.GatewayGovernanceChange
-import run.ostrom.server.gateway.presentation.gatewayOperations
 import run.ostrom.server.gateway.presentation.GatewayRoutesDependencies
 import run.ostrom.server.gateway.presentation.PacingRoutesDependencies
+import run.ostrom.server.gateway.presentation.gatewayOperations
 import run.ostrom.server.gateway.presentation.gatewayRoutes
 import run.ostrom.server.gateway.presentation.pacingRoutes
 import run.ostrom.server.kernel.auth.GovernanceChange

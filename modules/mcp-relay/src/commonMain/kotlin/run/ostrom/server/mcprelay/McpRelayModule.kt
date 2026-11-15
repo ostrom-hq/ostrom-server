@@ -73,8 +73,8 @@ import run.ostrom.server.mcprelay.infrastructure.McpRelayMigrations
 import run.ostrom.server.mcprelay.infrastructure.McpRelayRepositoryImpl
 import run.ostrom.server.mcprelay.infrastructure.TransportMcpUpstream
 import run.ostrom.server.mcprelay.infrastructure.UpstreamAddressGuard
-import run.ostrom.server.mcprelay.presentation.mcpRelayOperations
 import run.ostrom.server.mcprelay.presentation.McpRelayRoutesDependencies
+import run.ostrom.server.mcprelay.presentation.mcpRelayOperations
 import run.ostrom.server.mcprelay.presentation.mcpRelayRoutes
 import run.ostrom.server.secrets.domain.CallerResolver
 import run.ostrom.server.secrets.domain.OrgPrincipalCallerResolver

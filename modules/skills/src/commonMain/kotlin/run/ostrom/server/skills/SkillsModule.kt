@@ -19,8 +19,8 @@ import run.ostrom.server.skills.infrastructure.JdkSha256
 import run.ostrom.server.skills.infrastructure.RunnersRunnerSessions
 import run.ostrom.server.skills.infrastructure.SkillsMigrations
 import run.ostrom.server.skills.infrastructure.SkillsRepositoryImpl
-import run.ostrom.server.skills.presentation.skillsOperations
 import run.ostrom.server.skills.presentation.SkillsRoutesDependencies
+import run.ostrom.server.skills.presentation.skillsOperations
 import run.ostrom.server.skills.presentation.skillsRoutes
 import io.ktor.server.routing.Route
 import org.koin.core.Koin
