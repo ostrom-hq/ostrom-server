@@ -20,8 +20,8 @@ private const val TRANSFER_ID = "The transfer's id."
 private const val NO_TRANSFER = "No such transfer, or one the caller is neither the owner nor the recipient of, or a " +
     "malformed id (`not_found`)."
 
-private const val PERSON_ONLY = "Not a person signed in: an agent or a service key never gives a session away " +
-    "(`transfer_forbidden`)."
+private const val PERSON_OR_ON_BEHALF = "Not a person signed in: an agent or a service key never gives a session " +
+    "away (`transfer_forbidden`). Or: $ON_BEHALF_FORBIDDEN"
 
 /**
  * The ownership transfers (`runners.cloud.transfer.v1`), which the module mounts only on a server that wires them: a
@@ -72,8 +72,11 @@ private fun ApiCatalog.transferOffer() {
             "session (disabled, not a member, at their cloud session limit) is 422 `recipient_ineligible` " +
             "naming every reason. `Idempotency-Key` is required (400 `idempotency_key_required`): a retry " +
             "returns the first transfer (`Idempotency-Replayed: true`), the same key with another request " +
-            "is 422 `idempotency_conflict`. The body is at most 1 KiB. $ORG_RESOLUTION"
+            "is 422 `idempotency_conflict`. With `runners.cloud.onbehalf.writes.v1`, `Ostrom-On-Behalf-Of` " +
+            "acts for the member it names, while the transfer records the caller as its initiator, as on " +
+            "accept, decline and cancel. The body is at most 1 KiB. $ORG_RESOLUTION"
         parameters {
+            onBehalfHeader(writes = true)
             organizationHeader()
             pathId("id", SESSION_ID)
             headerText(
@@ -89,14 +92,15 @@ private fun ApiCatalog.transferOffer() {
                 HttpStatusCode.Accepted)
             badRequest("No `Idempotency-Key`, or a malformed one (`idempotency_key_required`), or a recipient " +
                 "that is not a member id or a login (`invalid_transfer`).")
-            error(HttpStatusCode.Forbidden, "$PERSON_ONLY Or members may not transfer on this instance " +
+            error(HttpStatusCode.Forbidden, "$PERSON_OR_ON_BEHALF Or members may not transfer on this instance " +
                 "(`transfer_disabled`).")
             notFound(NO_SESSION)
             conflict("The session already has an open transfer (`transfer_pending`), is still being created " +
                 "(`session_preparing`), is over (`session_not_running`), or is being transferred " +
                 "(`session_transferring`).")
             error(HttpStatusCode.UnprocessableEntity, "The recipient cannot own the session " +
-                "(`recipient_ineligible`), or the key was used with another request (`idempotency_conflict`).")
+                "(`recipient_ineligible`), the key was used with another request (`idempotency_conflict`), or " +
+                "`Ostrom-On-Behalf-Of` names no active member (`invalid_effective_member`).")
             error(HttpStatusCode.PayloadTooLarge, TOO_LARGE)
         }
     }
@@ -153,6 +157,7 @@ private fun ApiCatalog.transferAcceptance() {
             "the repositories' Git configuration (`untrustedWorkspace`). Idempotent. The body is optional: " +
             "a bare POST keeps what the offer asked for. $ORG_RESOLUTION"
         parameters {
+            onBehalfHeader(writes = true)
             organizationHeader()
             pathId("id", TRANSFER_ID)
         }
@@ -160,12 +165,13 @@ private fun ApiCatalog.transferAcceptance() {
             "out to keep what the offer asked for.", required = false)
         responses {
             ok<CloudTransferResponse>("Accepted, the transfer is under way.", HttpStatusCode.Accepted)
-            error(HttpStatusCode.Forbidden, PERSON_ONLY)
+            error(HttpStatusCode.Forbidden, PERSON_OR_ON_BEHALF)
             notFound(NO_TRANSFER)
             conflict("The offer expired (`transfer_expired`), or the transfer is decided already " +
                 "(`transfer_not_open`).")
             error(HttpStatusCode.UnprocessableEntity, "The recipient can no longer own the session " +
-                "(`recipient_ineligible`).")
+                "(`recipient_ineligible`), or `Ostrom-On-Behalf-Of` names no active member " +
+                "(`invalid_effective_member`).")
         }
     }
 }
@@ -178,14 +184,16 @@ private fun ApiCatalog.transferDecision() {
         description = "`runners.cloud.transfer.v1`. Only the recipient, signed in as a person; only an offered " +
             "transfer. $ORG_RESOLUTION"
         parameters {
+            onBehalfHeader(writes = true)
             organizationHeader()
             pathId("id", TRANSFER_ID)
         }
         responses {
             ok<CloudTransferResponse>("The transfer, declined.")
-            error(HttpStatusCode.Forbidden, PERSON_ONLY)
+            error(HttpStatusCode.Forbidden, PERSON_OR_ON_BEHALF)
             notFound(NO_TRANSFER)
             conflict("The transfer is decided already (`transfer_not_open`).")
+            error(HttpStatusCode.UnprocessableEntity, ON_BEHALF_INVALID_MEMBER)
         }
     }
     post("/api/v1/cloud/transfers/{id}/cancel") {
@@ -196,15 +204,17 @@ private fun ApiCatalog.transferDecision() {
             "accepted transfer only by an administrator, and not once the session is `transferring` (409 " +
             "`transfer_in_progress`). $ORG_RESOLUTION"
         parameters {
+            onBehalfHeader(writes = true)
             organizationHeader()
             pathId("id", TRANSFER_ID)
         }
         responses {
             ok<CloudTransferResponse>("The transfer, cancelled.")
-            error(HttpStatusCode.Forbidden, PERSON_ONLY)
+            error(HttpStatusCode.Forbidden, PERSON_OR_ON_BEHALF)
             notFound(NO_TRANSFER)
             conflict("The transfer is decided already (`transfer_not_open`), or the owner is being changed " +
                 "(`transfer_in_progress`).")
+            error(HttpStatusCode.UnprocessableEntity, ON_BEHALF_INVALID_MEMBER)
         }
     }
 }

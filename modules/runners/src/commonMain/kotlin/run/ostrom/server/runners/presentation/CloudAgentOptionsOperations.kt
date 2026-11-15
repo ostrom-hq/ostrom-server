@@ -57,8 +57,11 @@ private fun ApiCatalog.agentModelOperation() {
             "`cloud.session.model_changed`, the same model writes nothing), so a paused session starts " +
             "with it; a running conversation agent also gets a `set_model` input, taken at its next turn. " +
             "A terminal session's agent gets it at its next start. 409 `session_not_running` once " +
-            "terminated. The body is at most 64 KiB. $ORG_RESOLUTION"
+            "terminated. With `runners.cloud.onbehalf.writes.v1`, an administrator changes it for the member " +
+            "`Ostrom-On-Behalf-Of` names, journaled with the effective member and the credential. The body is " +
+            "at most 64 KiB. $ORG_RESOLUTION"
         parameters {
+            onBehalfHeader(writes = true)
             organizationHeader()
             pathId("id", SESSION_ID)
         }
@@ -66,9 +69,10 @@ private fun ApiCatalog.agentModelOperation() {
         responses {
             ok<CloudSessionResponse>("The session, with its model.")
             badRequest("A model that does not fit (`invalid_agent`).")
-            error(HttpStatusCode.Forbidden, OWNER_ONLY)
+            error(HttpStatusCode.Forbidden, "$OWNER_ONLY Or: $ON_BEHALF_FORBIDDEN")
             notFound(NO_SESSION)
             conflict("The session is terminated (`session_not_running`).")
+            error(HttpStatusCode.UnprocessableEntity, ON_BEHALF_INVALID_MEMBER)
         }
     }
 }
@@ -81,8 +85,10 @@ private fun ApiCatalog.agentEffortOperation() {
         description = "`runners.cloud.effort.v1`, as `setCloudSessionModel` for the effort: $OPTION_SHAPE " +
             "Clients suggest `low`, `medium`, `high`, `xhigh` and `max` for Claude Code, `low`, `medium`, " +
             "`high` and `xhigh` for Codex. Audited `cloud.session.effort_changed`; a running conversation " +
-            "agent gets a `set_effort` input. The body is at most 64 KiB. $ORG_RESOLUTION"
+            "agent gets a `set_effort` input. `Ostrom-On-Behalf-Of` as on the model. The body is at most " +
+            "64 KiB. $ORG_RESOLUTION"
         parameters {
+            onBehalfHeader(writes = true)
             organizationHeader()
             pathId("id", SESSION_ID)
         }
@@ -90,9 +96,10 @@ private fun ApiCatalog.agentEffortOperation() {
         responses {
             ok<CloudSessionResponse>("The session, with its effort.")
             badRequest("An effort that does not fit (`invalid_agent`).")
-            error(HttpStatusCode.Forbidden, OWNER_ONLY)
+            error(HttpStatusCode.Forbidden, "$OWNER_ONLY Or: $ON_BEHALF_FORBIDDEN")
             notFound(NO_SESSION)
             conflict("The session is terminated (`session_not_running`).")
+            error(HttpStatusCode.UnprocessableEntity, ON_BEHALF_INVALID_MEMBER)
         }
     }
 }
