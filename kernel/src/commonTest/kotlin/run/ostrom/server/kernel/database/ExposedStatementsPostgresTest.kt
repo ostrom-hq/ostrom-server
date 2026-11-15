@@ -71,7 +71,9 @@ class ExposedStatementsPostgresTest {
         val one = Read(Rows.select(Rows.k).where { Rows.k eq 2L }) { it[Rows.k] }
         assertEquals(2L, one.single())
         assertEquals(2L, one.singleOrNull())
-        assertNull(Read(Rows.select(Rows.k).where { Rows.k eq 9L }) { it[Rows.k] }.singleOrNull())
+        val none = Read(Rows.select(Rows.k).where { Rows.k eq 9L }) { it[Rows.k] }
+        assertNull(none.singleOrNull())
+        assertNull(none.firstOrNull())
     }
 
     @Test
