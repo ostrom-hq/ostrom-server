@@ -195,8 +195,9 @@ class TerminalRoutesTest {
         assertEquals(TerminalCloseCodes.UNAUTHORIZED, code("?sessionId=${running.id}", "Bearer $token"))
         assertEquals(TerminalCloseCodes.UNAUTHORIZED, code("?epoch=2", "Bearer $token"))
         assertEquals(TerminalCloseCodes.UNAUTHORIZED, code("?sessionId=nope&epoch=2", "Bearer $token"))
+        // A credential no resolver knows is fenced like another execution (AuthenticateRunnerUseCase).
         assertEquals(
-            TerminalCloseCodes.UNAUTHORIZED,
+            TerminalCloseCodes.CONFLICT,
             code("?sessionId=${running.id}&epoch=2", "Bearer ostrom_runner_wrong"),
         )
         assertEquals(TerminalCloseCodes.CONFLICT, code("?sessionId=${running.id}&epoch=1", "Bearer $token"))

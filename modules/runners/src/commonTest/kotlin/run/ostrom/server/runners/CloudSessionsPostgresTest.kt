@@ -292,7 +292,7 @@ class CloudSessionsPostgresTest {
     fun theModuleStartsTheReconcilerLoop() = serverTest(listOf(RunnersModule)) { server ->
         val job = Job()
         RunnersModule.start(CoroutineScope(currentCoroutineContext() + job), server.koin)
-        assertEquals(3, job.children.count(), "Its loops, no garbage collection")
+        assertEquals(4, job.children.count(), "Its loops and the create keys purge, no garbage collection")
         job.cancelAndJoin()
     }
 
@@ -325,7 +325,7 @@ class CloudSessionsPostgresTest {
     ) { server ->
         val job = Job()
         RunnersModule.start(CoroutineScope(currentCoroutineContext() + job), server.koin)
-        assertEquals(4, job.children.count(), "And the garbage collection")
+        assertEquals(5, job.children.count(), "And the garbage collection")
         job.cancelAndJoin()
     }
 

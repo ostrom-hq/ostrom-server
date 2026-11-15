@@ -51,6 +51,18 @@ object CloudConversationRules {
     /** Question and option indexes stay below this bound (Claude Code asks at most 4 questions of 4 options). */
     const val MAX_PERMISSION_INDEX: Int = 64
 
+    /** Events a runner sends in one batch. */
+    const val MAX_EVENTS_PER_BATCH: Int = 200
+
+    /** The longest a runner's poll for inputs waits. */
+    const val MAX_RUNNER_WAIT_MILLIS: Long = 20_000L
+
+    /** A delivery not acknowledged within this time is offered again (the runner deduplicates by input id). */
+    const val REDELIVERY_MILLIS: Long = 60_000L
+
+    /** How many times an input is delivered before it is rejected. */
+    const val MAX_ATTEMPTS: Int = 3
+
     /** The `turn` phases that end a turn, and with it every permission request still open in it. */
     val TURN_END_PHASES: Set<String> = setOf("completed", "interrupted", "failed")
 
@@ -75,6 +87,14 @@ object CloudConversationRules {
      */
     fun bareDenialText(requestId: String): String =
         "{\"requestId\":\"" + requestId.replace("\\", "\\\\").replace("\"", "\\\"") + "\",\"behavior\":\"deny\"}"
+
+    /**
+     * The runner's text for the owner's standing approval of [requestId] (their bypass): an allow without a message.
+     *
+     * @return The encoded answer.
+     */
+    fun bypassAllowText(requestId: String): String =
+        "{\"requestId\":\"" + requestId.replace("\\", "\\\\").replace("\"", "\\\"") + "\",\"behavior\":\"allow\"}"
 
     /**
      * An input that only stops something (an interrupt, a task stop, a bare permission denial).
@@ -162,6 +182,7 @@ object CloudConversationRules {
         answer: PermissionAnswer,
         approver: Boolean,
         currentEpoch: Long = request.epoch,
+        standing: Boolean = false,
     ) {
         // Who may decide comes first, so someone who may not learns nothing about the request's state.
         if (!request.question && !approver) {
@@ -185,7 +206,8 @@ object CloudConversationRules {
                 throw conflict("permission_request_ended", "The turn of this permission request has ended.")
         }
         // Nobody may approve what nobody could read: an input too large for the transcript can only be denied.
-        if (answer.allow && request.inputLeftOut) {
+        // A standing approval (the owner's bypass) was given in advance, seen or not.
+        if (answer.allow && request.inputLeftOut && !standing) {
             throw invalid(
                 "permission_input_unseen",
                 "This request's input was too large to show in the transcript, so it can only be denied.",

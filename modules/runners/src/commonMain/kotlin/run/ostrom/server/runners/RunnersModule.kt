@@ -39,12 +39,17 @@ import run.ostrom.server.billing.domain.GetPlanLimitsUseCase
 import run.ostrom.server.cloud.domain.CloudSettingsSource
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.events.SessionNames
+import run.ostrom.server.kernel.database.ScheduledJob
+import run.ostrom.server.kernel.database.repeatDue
+import run.ostrom.server.kernel.database.scheduledWork
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.runners.domain.AllowlistedCloudPlanProvider
 import run.ostrom.server.runners.domain.AuthenticateRunnerUseCase
 import run.ostrom.server.runners.domain.AuthenticateRunnerUseCaseImpl
+import run.ostrom.server.runners.domain.RunnerPrincipalResolver
+import run.ostrom.server.runners.domain.RunnerTokenPrincipalResolver
 import run.ostrom.server.runners.domain.ChangeCloudSessionUseCase
 import run.ostrom.server.runners.domain.ChangeCloudSessionUseCaseImpl
 import run.ostrom.server.runners.domain.NoPendingWaitAnswers
@@ -62,6 +67,12 @@ import run.ostrom.server.runners.infrastructure.CloudConversationMaintenance
 import run.ostrom.server.runners.infrastructure.CloudConversationStoreImpl
 import run.ostrom.server.runners.presentation.CloudConversationRoutesDependencies
 import run.ostrom.server.runners.presentation.cloudConversationRoutes
+import run.ostrom.server.runners.domain.RunnerConversationStore
+import run.ostrom.server.runners.domain.RunnerConversationUseCase
+import run.ostrom.server.runners.domain.RunnerConversationUseCaseImpl
+import run.ostrom.server.runners.infrastructure.RunnerConversationStoreImpl
+import run.ostrom.server.runners.presentation.RunnerConversationRoutesDependencies
+import run.ostrom.server.runners.presentation.runnerConversationRoutes
 import run.ostrom.server.kernel.database.scheduledWork
 import run.ostrom.server.runners.domain.CloudUsageMeter
 import run.ostrom.server.runners.domain.CreateCloudSessionUseCase
@@ -169,13 +180,14 @@ import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import org.koin.dsl.onClose
+import kotlin.time.Duration.Companion.minutes
 
 private val REPLICA_HTTP = named("runners.replica.http")
 
 /**
  * The runners module: cloud sessions. A member creates a session; the leased reconciler starts one pod per
  * execution (Kubernetes namespace `ostrom`, a local Docker container, or a container on one of the organization's
- * registered runners, `ostrom-runner machine`), with a workspace volume that survives
+ * registered runners, `ostrom cloud machine`), with a workspace volume that survives
  * pauses; the runner in the pod reports through the runner channel; the free plan's guards pause idle, overlong or
  * over-budget sessions. Its cloud sessions are agent sessions to the other modules (the kernel's
  * [CloudAgentSessions]): a cloud agent's todo, waits and proposals are its cloud session's. Their names title the
@@ -338,6 +350,8 @@ object RunnersModule : ServerModule {
         }
         single { TerminalRelay() }
         single<TerminalTickets> { TerminalTicketsImpl(get(), get()) }
+        // Who a runner call's credential names; the remote sessions add a device owner's resolver to this list.
+        single<List<RunnerPrincipalResolver>> { listOf(RunnerTokenPrincipalResolver(get(), get())) }
         single<AuthenticateRunnerUseCase> { AuthenticateRunnerUseCaseImpl(get(), get()) }
         single<OpenTerminalUseCase> { OpenTerminalUseCaseImpl(get()) }
         single<IssueTerminalTicketUseCase> { IssueTerminalTicketUseCaseImpl(get(), get()) }
@@ -359,6 +373,12 @@ object RunnersModule : ServerModule {
         single<CloudConversationService> { CloudConversationServiceImpl(get(), get(), get(), get(), get()) }
         single { CloudConversationRoutesDependencies(get(), get()) }
         single { CloudConversationMaintenance(get(), get(), getOrNull<CloudRuntimeSource>(), get()) }
+        // The runner's side of the conversation: its agent, transcript upload and inputs.
+        single<RunnerConversationStore> { RunnerConversationStoreImpl(get(), get()) }
+        single<RunnerConversationUseCase> {
+            RunnerConversationUseCaseImpl(get(), get(), get(), getOrNull<MemberLogins>() ?: NoMemberLogins, get())
+        }
+        single { RunnerConversationRoutesDependencies(get(), get()) }
         single<AutomationLimits> { CloudSettingsAutomationLimits(getOrNull<CloudSettingsSource>()) }
     }
 
@@ -393,6 +413,7 @@ object RunnersModule : ServerModule {
         route.runnersRoutes(koin.get())
         route.terminalRoutes(koin.get())
         route.cloudConversationRoutes(koin.get())
+        route.runnerConversationRoutes(koin.get())
     }
 
     /**
@@ -413,6 +434,8 @@ object RunnersModule : ServerModule {
             ServerFeatures.RUNNERS,
             ServerFeatures.RUNNERS_CLOUD,
             ServerFeatures.RUNNERS_CLOUD_AGENT,
+            // A creation's Idempotency-Key, on every cloud runtime.
+            ServerFeatures.RUNNERS_CLOUD_IDEMPOTENCY,
             // The recipe, the Git identity and the owner's values (none without the secrets module), once the orgs
             // module says who is an active member: without it, no session would prepare.
             ServerFeatures.RUNNERS_CLOUD_ENVIRONMENT.takeIf { members },
@@ -448,6 +471,15 @@ object RunnersModule : ServerModule {
         scope.launch { signals.watch() }
         val maintenance = koin.get<CloudConversationMaintenance>()
         scope.launch { maintenance.repeat(koin.scheduledWork(), koin.get()) }
+        // Every minute, a bounded batch of the creations' expired idempotency records is deleted (TeamCode's
+        // maintain), on one replica at a time; a failed purge is logged and tried again the next minute.
+        val sessions = koin.get<CloudSessionsRepository>()
+        val work = koin.scheduledWork()
+        scope.launch {
+            work.repeatDue(CREATE_KEYS_PURGE, koin.get<Logger>(), "cloud create keys purge failed") {
+                sessions.purgeExpiredCreateKeys()
+            }
+        }
         garbageWorker(koin)?.let { garbage -> scope.launch { garbage.run() } }
     }
 
@@ -460,6 +492,9 @@ object RunnersModule : ServerModule {
         val collect = CollectCloudGarbageUseCaseImpl(live, objects, clusters, koin.get())
         return CloudGarbageWorker(koin.scheduledWork(), clusters, collect, koin.get())
     }
+
+    /** The purge of the expired idempotency records of the creations. */
+    private val CREATE_KEYS_PURGE = ScheduledJob("runners/create-keys", 1.minutes, 1.minutes)
 }
 
 /**

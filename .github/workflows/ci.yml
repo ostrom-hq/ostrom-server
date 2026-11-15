@@ -168,8 +168,9 @@ jobs:
           path: '**/build/reports/**'
           retention-days: 7
 
-  # The session runner (runner/) and the push relay (push/) are the Kotlin/Native programs (docs/decisions/0001): their
-  # tests run natively. The relay's binary is linked, put in its image and checked by scripts/smoke-push-relay.py.
+  # The push relay (push/) is the Kotlin/Native program (docs/decisions/0001; the session runner is the CLI's
+  # `ostrom cloud runner`, ostrom-cli): its tests run natively. The relay's binary is linked, put in its image and
+  # checked by scripts/smoke-push-relay.py.
   ci-native:
     name: Native tests and push relay image (linuxX64)
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
@@ -187,11 +188,6 @@ jobs:
       - name: Two Gradle workers for the native builds
         if: ${{ !cancelled() }}
         run: echo 'org.gradle.workers.max=2' >> ~/.gradle/gradle.properties
-      - name: Runner native tests (linuxX64)
-        if: ${{ !cancelled() }}
-        run: ./gradlew --continue :runner:linuxX64Test
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Push relay native tests (linuxX64)
         if: ${{ !cancelled() }}
         run: ./gradlew --continue :push:linuxX64Test
@@ -223,7 +219,7 @@ jobs:
           path: '**/build/reports/**'
           retention-days: 7
 
-  # The server image (jib, the JVM application of docs/decisions/0001), the session image, the server image's smoke tests
+  # The server image (jib, the JVM application of docs/decisions/0001), the server image's smoke tests
   # against PostgreSQL, then the Apache-2.0 build.
   ci-image:
     name: Binary, images and smoke tests
@@ -252,54 +248,6 @@ jobs:
         run: |
           ./gradlew :image:publishImageToLocalRegistry -PimageTags=ci -PimagePlatforms=amd64
           docker images ostrom-server:ci --format '{{.Size}}'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # From here, two Gradle workers at a time: several Kotlin/Native compilations and links at once exhaust the
-      # runner's memory (#13, exit 143 while linking linuxArm64).
-      - name: Two Gradle workers for the native builds
-        if: ${{ !cancelled() }}
-        run: echo 'org.gradle.workers.max=2' >> ~/.gradle/gradle.properties
-      # A private repository's runner has 7 GB: the Gradle and Kotlin daemons of the image build still hold much of it,
-      # and native links were killed (exit 143) even with #52's lighter daemons. Stop them, and add swap where the disk
-      # has room, before the runner's native link.
-      - name: Free memory for the native links
-        run: |
-          ./gradlew --stop
-          pkill -f KotlinCompileDaemon || true
-          df -h / /mnt
-          # Swap where the disk has room (the runner's /mnt can be too small): stopping the daemons is the main fix.
-          for size in 4G 2G; do
-            if sudo fallocate -l "$size" /native-link.swap; then
-              sudo chmod 600 /native-link.swap
-              sudo mkswap /native-link.swap
-              sudo swapon /native-link.swap
-              break
-            fi
-          done
-          free -h
-      # The swap file takes the root disk the images need (run 41029912954: "no space left on device" pulling the
-      # collector): give it back once the links are done.
-      - name: Release the swap of the native links
-        if: ${{ !cancelled() }}
-        run: |
-          sudo swapoff /native-link.swap || true
-          sudo rm -f /native-link.swap
-          df -h /
-      # After the swap is given back: the agents' CLIs take the disk the swap held (runs 41045488208, three tries).
-      - name: Cache the npm tarballs of the session image's agents
-        if: ${{ !cancelled() }}
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ostrom-agents-npm
-          key: agents-npm-${{ hashFiles('runner/agents/package-lock.json') }}
-      # S2-49: one session of the real image, run as the Docker driver runs it; the agent must not reach the token.
-      - name: Session image, the agent cannot read the runner token (S2-49)
-        if: ${{ !cancelled() }}
-        run: |
-          export SESSION_IMAGE_NPM_CACHE="$HOME/.cache/ostrom-agents-npm"
-          ci/warm-agents-npm-cache.sh "$SESSION_IMAGE_NPM_CACHE"
-          ./gradlew :runner:linkDebugExecutableLinuxX64
-          ci/runner-isolation.sh runner/build/bin/linuxX64/debugExecutable/ostrom-runner.kexe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # The image this pull request builds, for ci-e2e: ostrom-e2e main runs against it before the merge, not after.

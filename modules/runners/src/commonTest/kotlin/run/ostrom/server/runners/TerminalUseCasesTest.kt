@@ -2,6 +2,9 @@
 package run.ostrom.server.runners
 
 import run.ostrom.server.runners.domain.AuthenticateRunnerUseCaseImpl
+import run.ostrom.server.runners.domain.RunnerExecution
+import run.ostrom.server.runners.domain.RunnerPrincipalResolver
+import run.ostrom.server.runners.domain.RunnerTokenPrincipalResolver
 import run.ostrom.server.runners.domain.Caller
 import run.ostrom.server.runners.domain.CloudSessionNotFoundException
 import run.ostrom.server.runners.domain.CloudSessionStateException
@@ -10,7 +13,6 @@ import run.ostrom.server.runners.domain.ExecutionFencedException
 import run.ostrom.server.runners.domain.IssueTerminalTicketUseCaseImpl
 import run.ostrom.server.runners.domain.OpenTerminalUseCaseImpl
 import run.ostrom.server.runners.domain.RecordCloudSessionActivityUseCase
-import run.ostrom.server.runners.domain.RunnerUnauthenticatedException
 import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.runners.domain.TerminalActivity
 import run.ostrom.server.runners.domain.TerminalTicket
@@ -41,12 +43,29 @@ class TerminalUseCasesTest {
         val running = session(
             state = SessionState.RUNNING,
         ).copy(epoch = 3, runnerTokenHash = "hash(tok)").also { repository.put(it) }
-        val authenticate = AuthenticateRunnerUseCaseImpl(repository, tokens)
+        val other = RunnerPrincipalResolver { credential ->
+            RunnerExecution(ORG_B, Uuid.random(), 1).takeIf { credential == "device" }
+        }
+        val runnerToken = RunnerTokenPrincipalResolver(repository, tokens)
+        val authenticate = AuthenticateRunnerUseCaseImpl(listOf(runnerToken, other), repository)
 
+        val execution = RunnerExecution(running.orgId, running.id, 3)
         assertEquals(running, authenticate("tok", running.id, 3))
-        assertFailsWith<RunnerUnauthenticatedException> { authenticate("other", running.id, 3) }
+        assertEquals(execution, authenticate.resolve("tok"))
+        assertEquals(ORG_B, authenticate.resolve("device").orgId, "The next resolver knows another credential")
+        // An unknown credential and another execution are the same refusal.
+        assertFailsWith<ExecutionFencedException> { authenticate("other", running.id, 3) }
+        assertFailsWith<ExecutionFencedException> { authenticate.resolve("other") }
         assertFailsWith<ExecutionFencedException> { authenticate("tok", running.id, 2) }
         assertFailsWith<ExecutionFencedException> { authenticate("tok", Uuid.random(), 3) }
+        // A resolver that names a session gone, or at another execution, is fenced too.
+        val ghostNamed = RunnerPrincipalResolver { RunnerExecution(ORG_A, running.id, 3) }
+        val ghost = AuthenticateRunnerUseCaseImpl(listOf(ghostNamed), repository)
+        repository.put(running.copy(epoch = 4))
+        assertFailsWith<ExecutionFencedException> { ghost("any", running.id, 3) }
+        val goneNamed = RunnerPrincipalResolver { RunnerExecution(ORG_B, running.id, 3) }
+        val gone = AuthenticateRunnerUseCaseImpl(listOf(goneNamed), repository)
+        assertFailsWith<ExecutionFencedException> { gone("any", running.id, 3) }
     }
 
     @Test

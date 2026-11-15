@@ -6,7 +6,7 @@ import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * The executions of cloud sessions handed to registered runners (`ostrom-runner machine`), one row per execution:
+ * The executions of cloud sessions handed to registered runners (`ostrom cloud machine`), one row per execution:
  * waiting for a runner, taken by one, delivered, stopped, and dropped with its workspace. Every call is confined to
  * one organization: a runner only ever takes its own organization's sessions.
  */

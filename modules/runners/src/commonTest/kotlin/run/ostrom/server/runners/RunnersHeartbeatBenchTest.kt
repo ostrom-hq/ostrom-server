@@ -25,7 +25,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 /**
- * A registered runner's heartbeat (`ostrom-runner machine`, every 20 s by default) among 20 000 runners and 20 000
+ * A registered runner's heartbeat (`ostrom cloud machine`, every 20 s by default) among 20 000 runners and 20 000
  * executions of 200 organizations: without a body, with an empty report, and with the report of a machine that runs 3
  * sessions resumed 20 times each. Every write is explained with the reads (the heartbeat writes on every call): none
  * scans a large table, and a machine's history adds no query. Queries, plans and database p95 go to

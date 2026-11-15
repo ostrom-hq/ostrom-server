@@ -8,6 +8,7 @@ import run.ostrom.server.runners.domain.ChangeCloudSessionUseCaseImpl
 import run.ostrom.server.runners.domain.CloudHoursExhaustedException
 import run.ostrom.server.runners.domain.CloudPlan
 import run.ostrom.server.runners.domain.CloudSessionLimitException
+import run.ostrom.server.runners.domain.CloudSessionIdempotencyConflictException
 import run.ostrom.server.runners.domain.CloudSessionNotFoundException
 import run.ostrom.server.runners.domain.CloudSessionStateException
 import run.ostrom.server.runners.domain.CloudSessionsClosedException
@@ -32,6 +33,9 @@ import run.ostrom.server.runners.fakes.session
 import run.ostrom.server.runners.presentation.toResponse
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
+import kotlin.test.assertTrue
+import kotlin.test.assertFalse
+import kotlin.time.Duration.Companion.hours
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
@@ -162,6 +166,34 @@ class SessionUseCasesTest {
         assertFailsWith<CloudSessionLimitException> { create(alice, payload()) }
         // Another organization has its own cap.
         create(Caller(ORG_B, "bob"), payload())
+    }
+
+    @Test
+    fun aKeyedCreationReplaysItsSessionAndRefusesAnotherRequest() = runTest {
+        val first = create.createKeyed(alice, payload(), "press-1", "digest-a")
+        clock.now += 1.hours
+        val replay = create.createKeyed(alice, payload(), "press-1", "digest-a")
+
+        assertFalse(first.replayed)
+        assertTrue(replay.replayed)
+        assertEquals(first.session.id, replay.session.id)
+        assertEquals(1, repository.sessions.size)
+        assertEquals(first.session.createdAt + 24.hours, repository.createKeys.values.single().first.expiresAt)
+        assertFailsWith<CloudSessionIdempotencyConflictException> {
+            create.createKeyed(alice, payload(), "press-1", "digest-b")
+        }
+        // The key is the member's: another member's same key creates their own session.
+        assertFalse(create.createKeyed(Caller(ORG_A, "bob"), payload(), "press-1", "digest-a").replayed)
+    }
+
+    @Test
+    fun aKeyedCreationKeepsTheRunningCap() = runTest {
+        plans.plan = CloudPlan.FREE.copy(maxRunningSessions = 1)
+        create.createKeyed(alice, payload(), "press-1", "digest-a")
+
+        assertFailsWith<CloudSessionLimitException> { create.createKeyed(alice, payload(), "press-2", "digest-a") }
+        // A replay creates nothing, so the cap does not refuse it.
+        assertTrue(create.createKeyed(alice, payload(), "press-1", "digest-a").replayed)
     }
 
     @Test

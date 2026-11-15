@@ -6,6 +6,8 @@ import run.ostrom.server.runners.domain.CloudPlan
 import run.ostrom.server.runners.domain.CloudPlanProvider
 import run.ostrom.server.runners.domain.CloudSession
 import run.ostrom.server.runners.domain.CloudSessionsRepository
+import run.ostrom.server.runners.domain.CreateKey
+import run.ostrom.server.runners.domain.KeyedCreateOutcome
 import run.ostrom.server.runners.domain.DesiredState
 import run.ostrom.server.runners.domain.GitHubAccessMode
 import run.ostrom.server.runners.domain.ExecutionSpec
@@ -153,6 +155,23 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
         next[session.id] = session.createdAt
         return true
     }
+
+    /** The idempotency records, by organization, member and key. */
+    val createKeys = mutableMapOf<Triple<Uuid, String, String>, Pair<CreateKey, Uuid>>()
+
+    override suspend fun createKeyed(session: CloudSession, maxRunning: Int, key: CreateKey): KeyedCreateOutcome {
+        val scope = Triple(session.orgId, session.ownerId, key.key)
+        val existing = createKeys[scope]
+        if (existing != null && existing.first.expiresAt > session.createdAt) {
+            if (existing.first.requestDigest != key.requestDigest) return KeyedCreateOutcome.Conflict
+            return sessions[existing.second]?.let { KeyedCreateOutcome.Replayed(it) } ?: KeyedCreateOutcome.Conflict
+        }
+        if (!createWithinCap(session, maxRunning)) return KeyedCreateOutcome.AtCap
+        createKeys[scope] = key to session.id
+        return KeyedCreateOutcome.Created
+    }
+
+    override suspend fun purgeExpiredCreateKeys(): Long = 0
 
     override suspend fun get(orgId: Uuid, id: Uuid): CloudSession? = sessions[id]?.takeIf { it.orgId == orgId }
 

@@ -10,6 +10,7 @@ import run.ostrom.server.runners.domain.Caller
 import run.ostrom.server.runners.domain.CloudSession
 import run.ostrom.server.runners.domain.CreateCloudSessionPayload
 import run.ostrom.server.runners.domain.CreateCloudSessionUseCase
+import run.ostrom.server.runners.domain.KeyedCreation
 import run.ostrom.server.runners.domain.MeteredCreateCloudSession
 import run.ostrom.server.runners.fakes.ORG_A
 import run.ostrom.server.runners.fakes.session
@@ -25,8 +26,15 @@ class MeteredCreateCloudSessionTest {
     private val caller = Caller(ORG_A, "alice")
     private val payload = CreateCloudSessionPayload(name = null, agent = "codex", repository = null)
 
-    private fun creating(block: () -> CloudSession) = object : CreateCloudSessionUseCase {
+    private fun creating(replayed: Boolean = false, block: () -> CloudSession) = object : CreateCloudSessionUseCase {
         override suspend fun invoke(caller: Caller, payload: CreateCloudSessionPayload): CloudSession = block()
+
+        override suspend fun createKeyed(
+            caller: Caller,
+            payload: CreateCloudSessionPayload,
+            key: String,
+            requestDigest: String,
+        ): KeyedCreation = KeyedCreation(block(), replayed)
     }
 
     private fun started(): Map<Attributes, Double> =
@@ -52,5 +60,19 @@ class MeteredCreateCloudSessionTest {
         assertFailsWith<IllegalStateException> { metered(caller, payload) }
 
         assertEquals(emptyMap(), started())
+    }
+
+    @Test
+    fun aKeyedCreationIsCountedOnceAndItsReplaysNever() = runTest {
+        val created = session().copy(agent = AgentKind.CODEX)
+
+        val first = MeteredCreateCloudSession(creating { created }, OstromMetrics(meter))
+            .createKeyed(caller, payload, "key-1", "digest")
+        val replay = MeteredCreateCloudSession(creating(replayed = true) { created }, OstromMetrics(meter))
+            .createKeyed(caller, payload, "key-1", "digest")
+
+        assertSame(created, first.session)
+        assertSame(created, replay.session)
+        assertEquals(mapOf(Attributes.of("agent" to "codex", "where" to "cloud") to 1.0), started())
     }
 }

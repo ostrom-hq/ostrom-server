@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners.presentation
 
+import run.ostrom.core.api.Idempotency
 import run.ostrom.server.kernel.auth.authenticated
 import run.ostrom.server.kernel.auth.requirePrincipal
 import run.ostrom.server.kernel.http.bodyLimit
@@ -22,6 +23,7 @@ import run.ostrom.server.runners.domain.RunnerUnauthenticatedException
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.request.header
 import io.ktor.server.request.receive
 import io.ktor.server.resources.delete
 import io.ktor.server.resources.get
@@ -54,8 +56,19 @@ fun Route.cloudSessionsRoutes(dependencies: CloudSessionsRoutesDependencies) = w
         }
         post<CloudSessionsApi> {
             val caller = orgResolver.callerOf(call.requirePrincipal(), CLOUD_WRITE)
-            val payload = call.receive<CreateCloudSessionRequest>().toPayload()
-            call.respond(HttpStatusCode.Created, createCloudSession(caller, payload).toResponse())
+            val request = call.receive<CreateCloudSessionRequest>()
+            val payload = request.toPayload()
+            val key = call.request.header(Idempotency.KEY_HEADER)?.also {
+                if (!Idempotency.isValid(it)) throw InvalidCloudSessionRequestException(MALFORMED_KEY)
+            }
+            if (key == null) {
+                call.respond(HttpStatusCode.Created, createCloudSession(caller, payload).toResponse())
+            } else {
+                val created = createCloudSession.createKeyed(caller, payload, key, requestDigest(request, caller))
+                if (created.replayed) call.response.header(Idempotency.REPLAYED_HEADER, "true")
+                val status = if (created.replayed) HttpStatusCode.Accepted else HttpStatusCode.Created
+                call.respond(status, created.session.toResponse())
+            }
         }
         get<CloudSessionsApi.Id> { params ->
             val caller = orgResolver.callerOf(call.requirePrincipal(), CLOUD_READ)
@@ -270,3 +283,5 @@ fun CloudSession.toResponse() = CloudSessionResponse(
     waiting = waiting?.let { CloudSessionWaitingDto(it.reason, it.requestId, it.since.toString(), it.eventSeq) },
     transferId = transferId?.toString(),
 )
+
+private const val MALFORMED_KEY = "Idempotency-Key: 1 to 128 characters of A-Za-z0-9._:-."

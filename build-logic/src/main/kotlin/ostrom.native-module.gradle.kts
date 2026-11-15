@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // The name the foundation's modules apply: exactly ostrom.kmp (docs/CONVENTIONS.md section 9), with the targets of
-// ostrom.nativeTargets (none for the server, runner/gradle.properties for the runner). Kept so that the module build
+// ostrom.nativeTargets (none for the server, push/gradle.properties for the push relay). Kept so that the module build
 // files written before the convention plugin was shared do not change; a new module may apply either id.
 plugins {
     id("ostrom.kmp")

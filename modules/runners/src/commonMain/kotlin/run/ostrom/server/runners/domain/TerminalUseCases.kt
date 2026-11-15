@@ -8,35 +8,71 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
-/** Checks a runner's token against the execution it claims, for the terminal channel. */
-interface AuthenticateRunnerUseCase {
+/**
+ * Who a runner call's credential names: the execution it acts for, or null when it is not one of this resolver's.
+ * The execution's runner token is today's only one; a device's owner (remote sessions) is added beside it.
+ */
+fun interface RunnerPrincipalResolver {
     /**
-     * Authenticates the runner.
-     *
-     * @param token The runner token.
-     * @param sessionId The session the runner claims.
-     * @param epoch The execution it claims.
-     *
-     * @return The session.
-     *
-     * @throws RunnerUnauthenticatedException When no session has this token.
-     * @throws ExecutionFencedException When the claim is not the token's current execution.
+     * @param credential The bearer credential, as presented.
+     * @return The execution, or null.
      */
-    suspend operator fun invoke(token: String, sessionId: Uuid, epoch: Long): CloudSession
+    suspend fun resolve(credential: String): RunnerExecution?
 }
 
 /**
+ * [RunnerPrincipalResolver] on the runner token: the current execution of the session that holds it.
+ *
  * @param repository The sessions.
- * @param tokens Hashes runner tokens.
+ * @param tokens Hashes the presented token.
  */
-class AuthenticateRunnerUseCaseImpl(
+class RunnerTokenPrincipalResolver(
     private val repository: CloudSessionsRepository,
     private val tokens: RunnerTokens,
+) : RunnerPrincipalResolver {
+    override suspend fun resolve(credential: String): RunnerExecution? =
+        repository.findByRunnerTokenHash(tokens.hash(credential))?.let { RunnerExecution(it.orgId, it.id, it.epoch) }
+}
+
+/** Fences a runner call on the execution it claims: the one place every runner channel checks its caller. */
+interface AuthenticateRunnerUseCase {
+    /**
+     * Who the credential names, before the call's body is read (S2-46).
+     *
+     * @param credential The bearer credential.
+     * @return The execution it acts for.
+     * @throws ExecutionFencedException When no resolver knows the credential.
+     */
+    suspend fun resolve(credential: String): RunnerExecution
+
+    /**
+     * @param credential The bearer credential.
+     * @param sessionId The session the runner claims.
+     * @param epoch The execution it claims.
+     * @return The session, at that execution.
+     * @throws ExecutionFencedException When no resolver knows the credential, or it names another execution.
+     */
+    suspend operator fun invoke(credential: String, sessionId: Uuid, epoch: Long): CloudSession
+}
+
+/**
+ * [AuthenticateRunnerUseCase] over [resolvers], asked in order: the first that knows the credential decides.
+ *
+ * @param resolvers Who a credential may name.
+ * @param repository The sessions, read once the claim matched.
+ */
+class AuthenticateRunnerUseCaseImpl(
+    private val resolvers: List<RunnerPrincipalResolver>,
+    private val repository: CloudSessionsRepository,
 ) : AuthenticateRunnerUseCase {
-    override suspend fun invoke(token: String, sessionId: Uuid, epoch: Long): CloudSession {
-        val session = repository.findByRunnerTokenHash(tokens.hash(token)) ?: throw RunnerUnauthenticatedException()
-        if (session.id != sessionId || session.epoch != epoch) throw ExecutionFencedException()
-        return session
+    override suspend fun resolve(credential: String): RunnerExecution =
+        resolvers.firstNotNullOfOrNull { it.resolve(credential) } ?: throw ExecutionFencedException()
+
+    override suspend fun invoke(credential: String, sessionId: Uuid, epoch: Long): CloudSession {
+        val execution = resolve(credential).takeIf { it.sessionId == sessionId && it.epoch == epoch }
+            ?: throw ExecutionFencedException()
+        return repository.get(execution.orgId, sessionId)?.takeIf { it.epoch == epoch }
+            ?: throw ExecutionFencedException()
     }
 }
 

@@ -34,6 +34,7 @@ import run.ostrom.server.mcprelay.McpRelayModule
 import run.ostrom.server.runners.domain.AuthenticateRunnerUseCase
 import run.ostrom.server.runners.domain.CheckRunnerTokenUseCase
 import run.ostrom.server.runners.domain.CloudSession
+import run.ostrom.server.runners.domain.RunnerExecution
 import run.ostrom.server.runners.domain.RunnerUnauthenticatedException
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.domain.EnvironmentActor
@@ -366,7 +367,10 @@ class ImportCatalogPostgresTest {
             }
             single<AuthenticateRunnerUseCase> {
                 object : AuthenticateRunnerUseCase {
-                    override suspend fun invoke(token: String, sessionId: Uuid, epoch: Long): CloudSession =
+                    override suspend fun resolve(credential: String): RunnerExecution =
+                        throw RunnerUnauthenticatedException()
+
+                    override suspend fun invoke(credential: String, sessionId: Uuid, epoch: Long): CloudSession =
                         throw RunnerUnauthenticatedException()
                 }
             }

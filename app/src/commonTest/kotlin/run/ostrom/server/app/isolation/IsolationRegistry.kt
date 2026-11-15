@@ -663,6 +663,12 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "POST /api/v1/cloud/runner/skills/artifact" to Case.Target(body = RUNNER_ARTIFACT),
     "POST /api/v1/cloud/runner/hooks" to Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1}"""),
     "POST /api/v1/cloud/runner/hooks/artifact" to Case.Target(body = RUNNER_ARTIFACT),
+    "POST /api/v1/cloud/runner/agent" to Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1}"""),
+    "POST /api/v1/cloud/runner/events" to
+        Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1, "events": []}"""),
+    "POST /api/v1/cloud/runner/inputs" to Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1}"""),
+    "POST /api/v1/cloud/runner/inputs/ack" to
+        Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1, "acks": []}"""),
     "GET /api/v1/cloud/runner/terminal" to Case.Exempt(WEBSOCKET),
 
     // GitHub App.
