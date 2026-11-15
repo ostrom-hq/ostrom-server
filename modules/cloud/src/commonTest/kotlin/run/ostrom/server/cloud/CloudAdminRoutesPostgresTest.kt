@@ -323,8 +323,20 @@ class CloudAdminRoutesPostgresTest {
         val kept = http.send("PUT", path, "alice", without)
         assertEquals(5, kept.body<CloudSettingsResponse>().maxRunningAutomationsPerMember)
         assertEquals(5, server.koin.get<CloudSettingsSource>().current(ORG_A).maxRunningAutomationsPerMember)
-        // The idle timeout of remote sessions is not on the routes yet: a save keeps it.
-        assertEquals(60, server.koin.get<CloudSettingsSource>().current(ORG_A).remoteIdleTimeoutMinutes)
+        // The idle timeout of remote sessions: 60 by default, saved with the others, kept by a save without it.
+        assertEquals(60, kept.body<CloudSettingsResponse>().remoteIdleTimeoutMinutes)
+        val idle = http.get(path) { bearerAuth("bob") }.body<CloudSettingsResponse>()
+        val withIdle = """{"backgroundWorkMaxMinutes":10,"remoteIdleTimeoutMinutes":30,""" +
+            """"updatedAt":"${idle.updatedAt}"}"""
+        val thirty = http.send("PUT", path, "alice", withIdle).body<CloudSettingsResponse>()
+        assertEquals(30, thirty.remoteIdleTimeoutMinutes)
+        val keepIdle = """{"backgroundWorkMaxMinutes":10,"updatedAt":"${thirty.updatedAt}"}"""
+        val keptIdle = http.send("PUT", path, "alice", keepIdle).body<CloudSettingsResponse>()
+        assertEquals(30, keptIdle.remoteIdleTimeoutMinutes)
+        assertEquals(30, server.koin.get<CloudSettingsSource>().current(ORG_A).remoteIdleTimeoutMinutes)
+        val tooLong = """{"backgroundWorkMaxMinutes":10,"remoteIdleTimeoutMinutes":1441}"""
+        val longIdle = http.send("PUT", path, "alice", tooLong)
+        assertEquals(HttpStatusCode.BadRequest, longIdle.status)
 
         // Organization B sees its own defaults and its save never touches A's.
         val carols = http.get(path) { bearerAuth("carol") }.body<CloudSettingsResponse>()

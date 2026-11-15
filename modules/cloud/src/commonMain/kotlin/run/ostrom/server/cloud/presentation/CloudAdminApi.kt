@@ -2,6 +2,7 @@
 package run.ostrom.server.cloud.presentation
 
 import run.ostrom.server.cloud.domain.CloudProfileSpec
+import run.ostrom.server.cloud.domain.CloudSettings
 import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
 
@@ -227,6 +228,8 @@ data class CloudSettingsResponse(
     val backgroundWorkMaxMinutes: Int,
     /** How many automation runs of one member may work at once in the organization. */
     val maxRunningAutomationsPerMember: Int,
+    /** How long a remote session goes without a turn, a message or an attached client before it pauses; 0 never. */
+    val remoteIdleTimeoutMinutes: Int = CloudSettings.DEFAULT_REMOTE_IDLE_TIMEOUT_MINUTES,
     /** The last save; absent while nothing is stored. */
     val updatedAt: String? = null,
     /** Who saved last; absent while nothing is stored. */
@@ -240,6 +243,8 @@ data class SaveCloudSettingsRequest(
     val backgroundWorkMaxMinutes: Int,
     /** The cap of running automation runs per member, 1 to 100; absent keeps the stored one. */
     val maxRunningAutomationsPerMember: Int? = null,
+    /** The idle timeout of remote sessions, 0 to 1440 minutes; absent keeps the stored one. */
+    val remoteIdleTimeoutMinutes: Int? = null,
     /** The `updatedAt` of the settings edited; absent while nothing is stored. */
     val updatedAt: String? = null,
 )
