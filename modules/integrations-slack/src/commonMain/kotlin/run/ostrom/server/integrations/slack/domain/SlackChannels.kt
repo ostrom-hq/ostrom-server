@@ -115,19 +115,36 @@ class SlackApprovalChannel(
     }
 
     // The message is sent: a retry would send a second one while this one can never be closed. It is taken back when
-    // Slack lets us (the retry then sends the only one); else it stays and the request counts as told.
+    // Slack lets us (the retry then sends the only one); a delete Slack fails or asks to slow down on is tried again
+    // here, a few times, since nothing keeps the message to delete it later. Past that, or on a refusal for good (the
+    // bot may not delete it), it stays and the request counts as told.
     private suspend fun keep(app: SlackApp, delivery: ApprovalDelivery, posted: SlackPosted): ChannelResult = try {
         messages.save(delivery.orgId, SlackApprovalMessage(delivery.approvalId, delivery.gateId, posted))
         ChannelResult.DELIVERED
     } catch (error: CancellationException) {
         throw error
     } catch (_: Exception) {
-        try {
-            api.deleteMessage(app.botToken, posted)
-            ChannelResult.retry(NOT_KEPT)
-        } catch (_: SlackCallException) {
-            ChannelResult.DELIVERED
+        if (takeBack(app, posted)) ChannelResult.retry(NOT_KEPT) else ChannelResult.DELIVERED
+    }
+
+    // Whether the message is gone: deleted, or already not there; null while Slack fails the call.
+    private suspend fun takeBack(app: SlackApp, posted: SlackPosted): Boolean {
+        var gone: Boolean? = null
+        var tries = 0
+        while (gone == null && tries < DELETE_TRIES) {
+            tries++
+            gone = try {
+                api.deleteMessage(app.botToken, posted)
+                true
+            } catch (failure: SlackCallException) {
+                when {
+                    failure.code == GONE -> true
+                    failure.retryable -> null
+                    else -> false
+                }
+            }
         }
+        return gone == true
     }
 
     /**
@@ -157,6 +174,8 @@ class SlackApprovalChannel(
 
     private companion object {
         const val NOT_KEPT = "slack_not_kept"
+        const val GONE = "message_not_found"
+        const val DELETE_TRIES = 3
         const val APPROVED = "approved"
         const val REJECTED = "rejected"
     }

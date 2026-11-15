@@ -39,6 +39,9 @@ class FakeSlackApi(private val users: Map<String, SlackUser> = emptyMap()) : Sla
     var failure: SlackCallException? = null
     var postFailure: SlackCallException? = null
     var deleteFailure: SlackCallException? = null
+
+    /** The next deletes that fail as Slack asking to slow down (retryable). */
+    var deleteFailures = 0
     val posted = mutableListOf<Pair<String, SlackMessage>>()
     val updated = mutableListOf<Pair<SlackPosted, SlackMessage>>()
     val deleted = mutableListOf<SlackPosted>()
@@ -65,6 +68,10 @@ class FakeSlackApi(private val users: Map<String, SlackUser> = emptyMap()) : Sla
 
     override suspend fun deleteMessage(token: String, posted: SlackPosted) {
         (failure ?: deleteFailure)?.let { throw it }
+        if (deleteFailures > 0) {
+            deleteFailures--
+            throw SlackCallException("ratelimited", retryable = true)
+        }
         deleted += posted
     }
 }

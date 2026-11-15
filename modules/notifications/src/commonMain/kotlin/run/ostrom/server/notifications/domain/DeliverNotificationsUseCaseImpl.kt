@@ -43,7 +43,7 @@ import kotlin.uuid.Uuid
  * @param logger Where an organization's failed pass is reported, by the error's type only.
  * @param newId Makes a delivery's id.
  */
-@Suppress("LongParameterList") // The pass's collaborators, each a port.
+@Suppress("LongParameterList", "TooManyFunctions") // The pass's collaborators, each a port; its steps.
 class DeliverNotificationsUseCaseImpl(
     private val journal: OrgEventJournal,
     private val waits: WaitSummaries,
@@ -71,7 +71,7 @@ class DeliverNotificationsUseCaseImpl(
             // An answer is sent whatever its gate: the message it updates was told while the gate was open.
             val (answers, requests) = claimed.filterIsInstance<ApprovalDelivery>().partition { it.decision != null }
             asks += stillAsked(org, requests)
-            asks += answers.map { it to null }
+            asks += unlessRequestPending(org, answers).map { it to null }
             claimed.size >= limit
         }
         val orgs = deliveries.workingOrgs(now, DeliveryRules.ORGS_PER_PASS)
@@ -217,6 +217,30 @@ class DeliverNotificationsUseCaseImpl(
         }
     }
 
+    /**
+     * Of an organization's claimed answers, those whose request is not still to be told on the same channel: an answer
+     * that ran with its request (the same pass, or a slower attempt) would find no message to close and end, the
+     * message then posted with its buttons. The others wait for their request: put back for a few seconds without
+     * using one of their attempts (the upkeep gives up a delivery pending for too long, the request's included).
+     */
+    private suspend fun unlessRequestPending(orgId: Uuid, answers: List<ApprovalDelivery>): List<ApprovalDelivery> {
+        // Unknown (a failed read): none is sent, the claim's leases end and they are claimed again.
+        val pending = if (answers.isEmpty()) emptySet() else guarded(PENDING_READ_FAILED, null) {
+            deliveries.pendingRequests(orgId, answers.map { it.approvalId }.toSet())
+        }
+        val (waiting, ready) = if (pending == null) {
+            emptyList<ApprovalDelivery>() to emptyList()
+        } else {
+            answers.partition { it.approvalId to it.channel in pending }
+        }
+        val retryAt = clock.now() + DeliveryRules.REQUEST_WAIT
+        for (delivery in waiting) {
+            val outcome = DeliveryOutcome(DeliveryState.PENDING, delivery.attempts, retryAt, REQUEST_PENDING)
+            guarded(RECORD_FAILED, Unit) { record(delivery, outcome) }
+        }
+        return ready
+    }
+
     /** Sends one organization's batch on one channel; never throws but for cancellation. */
     private suspend fun attempt(
         channel: NotificationChannel?,
@@ -262,9 +286,11 @@ class DeliverNotificationsUseCaseImpl(
         const val NO_RESULT = "no_result"
         const val WAIT_CLOSED = "wait_closed"
         const val GATE_DECIDED = "gate_decided"
+        const val REQUEST_PENDING = "request_pending"
         const val FANOUT_FAILED = "notification fan-out failed"
         const val NAMES_FAILED = "notification session names read failed"
         const val CLAIM_FAILED = "notification claim failed"
+        const val PENDING_READ_FAILED = "notification pending requests read failed"
         const val RECORD_FAILED = "notification record failed"
         const val APPROVAL_NOT_SENT = "approval notification not sent"
         val LEASE = DeliveryRules.LEASE

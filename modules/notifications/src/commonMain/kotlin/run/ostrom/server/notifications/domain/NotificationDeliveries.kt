@@ -159,6 +159,17 @@ interface NotificationDeliveriesRepository {
     suspend fun claimDue(orgId: Uuid, limit: Int, now: Instant, lease: Duration): List<QueuedDelivery>
 
     /**
+     * The requests for a yes still to be told: their row is pending, whatever its lease (being attempted, or waiting
+     * for its next attempt). An answer must not be told before its request is, or it finds no message to close.
+     *
+     * @param orgId The organization.
+     * @param approvalIds The approvers' requests.
+     *
+     * @return The pairs of request and channel of the pending request rows among [approvalIds].
+     */
+    suspend fun pendingRequests(orgId: Uuid, approvalIds: Set<Uuid>): Set<Pair<Uuid, String>>
+
+    /**
      * Records an attempt and releases the claim.
      *
      * @param orgId The organization.
@@ -230,6 +241,9 @@ object DeliveryRules {
 
     /** Finished deliveries keep their text this long, for support; then they are deleted. */
     val RETENTION: Duration = 1.days
+
+    /** How long an answer waits for its request still to be told, before it is looked at again. */
+    val REQUEST_WAIT: Duration = 10.seconds
 
     /** The waits before attempts 2 to 5. */
     val BACKOFF: List<Duration> = listOf(10.seconds, 30.seconds, 2.minutes, 10.minutes)

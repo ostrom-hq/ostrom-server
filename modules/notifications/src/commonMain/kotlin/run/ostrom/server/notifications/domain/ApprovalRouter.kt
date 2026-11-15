@@ -87,7 +87,8 @@ class ApprovalRouter(
 
     // The answers the page names: one row per approver and bound channel, whether or not the channel reaches them now
     // (a message posted before they unlinked or switched off is still to be updated); a channel that holds none
-    // delivers at once. Nothing a gate or an approver's switch decided applies: the request was told, so it is closed.
+    // delivers at once. Nothing a gate, an approver's switch or their membership decided applies: the request was told,
+    // so it is closed.
     private suspend fun answers(
         orgId: Uuid,
         entries: List<JournalEntry>,
@@ -100,16 +101,19 @@ class ApprovalRouter(
         val known = gates.of(orgId, decisions.map { it.gateId.toString() }.toSet()).associateBy { it.id }
         val reached = approvers.reach(orgId, decisions.map { it.approver }.toSet())
         return decisions.flatMap { decision ->
-            val approver = reached[decision.approver]
             val gate = known[decision.gateId.toString()]
-            if (approver == null || gate == null) {
+            val approver = reached[decision.approver]
+            // An approver who left since is still owed the answer: the message they were sent must lose its buttons.
+            // The channel finds it by the request, not by the member.
+            val member = if (approver == null) ApprovalRules.LEFT_MEMBER else approver.memberId
+            if (gate == null) {
                 emptyList()
             } else {
                 bound.map { channel ->
                     ApprovalDelivery(
                         id = newId(),
                         orgId = orgId,
-                        memberId = approver.memberId,
+                        memberId = member,
                         approver = decision.approver,
                         approvalId = decision.approvalId,
                         gateId = decision.gateId,

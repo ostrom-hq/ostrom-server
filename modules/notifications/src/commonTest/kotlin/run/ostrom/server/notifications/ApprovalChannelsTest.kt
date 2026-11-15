@@ -7,6 +7,7 @@ import run.ostrom.server.kernel.events.GateSummary
 import run.ostrom.server.notifications.domain.ApprovalChannel
 import run.ostrom.server.notifications.domain.ApprovalDelivery
 import run.ostrom.server.notifications.domain.ApprovalNotices
+import run.ostrom.server.notifications.domain.ApprovalRules
 import run.ostrom.server.notifications.domain.ApprovalRouter
 import run.ostrom.server.notifications.domain.ApprovalSender
 import run.ostrom.server.notifications.domain.Approver
@@ -140,9 +141,15 @@ class ApprovalChannelsTest {
             val queued = router.queue(org, entries, now) { Uuid.random() }
 
             assertEquals(
-                listOf(Triple(1L, "chat", "approved"), Triple(2L, "chat", "closed")),
+                listOf(Triple(1L, "chat", "approved"), Triple(2L, "chat", "closed"), Triple(3L, "chat", "closed")),
                 queued.map { Triple(it.eventSeq, it.channel, it.decision) },
-                "Dan is not reached by chat any more, his message may still be there; no member, no gate, no data",
+                "Dan is not reached by chat any more and nobody is no member any more, their messages may still be " +
+                    "there; no gate, no data",
+            )
+            assertEquals(
+                mapOf("bob" to bob.memberId, "dan" to dan.memberId, "nobody" to ApprovalRules.LEFT_MEMBER),
+                queued.associate { it.approver to it.memberId },
+                "A member who left has no membership: the nil one, the channel finds the message by the request",
             )
             val answer = queued.first()
             assertEquals("ana asks for your yes", answer.title)
@@ -150,6 +157,9 @@ class ApprovalChannelsTest {
             assertEquals(ChannelResult.DELIVERED, router.send(answer, null), "Whatever the gate")
             assertEquals(listOf(answer), chat.answered)
             assertEquals(emptyList(), chat.sent, "An answer is no request")
+            val gone = queued.last()
+            assertEquals(ChannelResult.DELIVERED, router.send(gone, null), "A member who left still has it closed")
+            assertEquals(listOf(answer, gone), chat.answered)
             assertEquals(ChannelResult.failed("channel_unavailable"), router.send(answer.copy(channel = "other"), null))
             val push = answer.copy(channel = "push")
             assertEquals(ChannelResult.failed("channel_unavailable"), router.send(push, null), "Push keeps nothing")
