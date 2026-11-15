@@ -6,7 +6,6 @@ import run.ostrom.server.budgets.domain.BudgetAlert
 import run.ostrom.server.budgets.domain.BudgetLimit
 import run.ostrom.server.budgets.domain.BudgetLimits
 import run.ostrom.server.budgets.domain.BudgetRules
-import run.ostrom.server.budgets.domain.BudgetScope
 import run.ostrom.server.budgets.domain.BudgetSettings
 import run.ostrom.server.budgets.domain.BudgetTarget
 import run.ostrom.server.budgets.domain.BudgetWindow
@@ -14,46 +13,38 @@ import run.ostrom.server.budgets.domain.BudgetsRepository
 import run.ostrom.server.budgets.domain.ExceededBudget
 import run.ostrom.server.budgets.domain.MemberBudget
 import run.ostrom.server.budgets.domain.WorkflowBudget
-import run.ostrom.server.secrets.infrastructure.executeInOrg
-import run.ostrom.server.secrets.infrastructure.fetchInOrg
-import run.ostrom.server.secrets.infrastructure.inTenant
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.ResultSet
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.lockKeyUntilCommit
+import run.ostrom.server.kernel.database.present
+import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.statements.UpdateBuilder
+import org.jetbrains.exposed.v1.core.statements.insertValue
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
+import org.jetbrains.exposed.v1.jdbc.insertIgnore
+import org.jetbrains.exposed.v1.jdbc.upsert
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * [BudgetsRepository] on PostgreSQL (tables of [BudgetsMigrations]).
+ * [BudgetsRepository] on `budgets_limits` and `budgets_alerts` (tables of [BudgetsMigrations]): every statement filters
+ * on its organization and runs in it (`inOrg`), under row-level security.
  *
- * @param driver The database.
+ * @param database The serving role's pool.
  */
-class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
-    override suspend fun settings(orgId: Uuid, maxOverrides: Int): BudgetSettings {
+class BudgetsRepositoryImpl(private val database: JdbcDatabase) : BudgetsRepository {
+    override suspend fun settings(orgId: Uuid, maxOverrides: Int): BudgetSettings = database.inOrg(orgId) {
         // The org-wide rows (two windows each) sort first, so that the limit only ever cuts member overrides; it
         // reads one row more than every window of the members kept, so that a member is never cut between windows.
-        val rows = driver.fetchInOrg(
-            orgId,
-            Statement.create(
-                "SELECT ${BudgetsQueries.LIMIT_COLUMNS} FROM budgets_limits WHERE org_id = :org_id " +
-                    "AND scope <> 'WORKFLOW' " +
-                    "ORDER BY scope = 'MEMBER', scope, member_id, period DESC LIMIT :limit",
-            ).bind("org_id", orgId).bind("limit", maxOverrides * WINDOWS + SHARED_ROWS),
-        ).getOrThrow().map { it.toStored() }
+        val rows = settingsRead(orgId, maxOverrides * WINDOWS + SHARED_ROWS).map { it.toStored() }
         // The workflows' rows apart, so that they never take the members' places, and whole workflows only.
-        val workflows = driver.fetchInOrg(
-            orgId,
-            Statement.create(BudgetsQueries.WORKFLOW_LIMITS)
-                .bind("org_id", orgId).bind("limit", BudgetRules.MAX_WORKFLOW_BUDGETS),
-        ).getOrThrow().map { row ->
+        val workflows = workflowLimitsRead(orgId, BudgetRules.MAX_WORKFLOW_BUDGETS).map { row ->
             val stored = row.toStored()
-            WorkflowBudget(row.get("workflow_id").asString(), stored.limit, stored.updatedAt)
+            WorkflowBudget(row.present(BudgetsLimits.workflowId, BudgetsLimits.scope), stored.limit, stored.updatedAt)
         }
         val kept = rows.mapNotNull { it.memberId }.distinct().take(maxOverrides).toSet()
-        return BudgetSettings(
+        BudgetSettings(
             org = rows.filter { it.scope == ORG }.map { it.limit },
             defaultMember = rows.filter { it.scope == DEFAULT_MEMBER }.map { it.limit },
             overrides = rows.mapNotNull { row ->
@@ -67,11 +58,7 @@ class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
 
     override suspend fun limits(orgId: Uuid, memberId: Uuid, workflowId: String?): BudgetLimits {
         // A workflow's rows have no member: only the call's workflow's are read, none without one.
-        val rows = driver.fetchInOrg(
-            orgId,
-            Statement.create(BudgetsQueries.LIMITS)
-                .bind("org_id", orgId).bind("member_id", memberId).bindWorkflow(workflowId),
-        ).getOrThrow().map { it.toStored() }
+        val rows = database.inOrg(orgId) { limitsRead(orgId, memberId, workflowId).map { it.toStored() } }
         fun of(scope: String) = rows.filter { it.scope == scope }.map { it.limit }
         // A member's own limits replace the default member limits whole.
         return BudgetLimits(org = of(ORG), member = of(MEMBER).ifEmpty { of(DEFAULT_MEMBER) }, workflow = of(WORKFLOW))
@@ -84,62 +71,66 @@ class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
             is BudgetTarget.Member -> Triple(MEMBER, target.memberId, null)
             is BudgetTarget.Workflow -> Triple(WORKFLOW, null, target.workflowId)
         }
-        driver.inTenant(orgId) {
+        database.inOrg(orgId) {
             // One write of a subject at a time: without it, a second write's DELETE skips the rows the first one
             // inserts meanwhile, and the subject keeps a mix of both writes' windows and actions.
-            fetchAll(lockSubject(orgId, scope, memberId, workflowId)).getOrThrow()
-            execute(
-                Statement.create(
-                    "DELETE FROM budgets_limits WHERE org_id = :org_id AND scope = :scope " +
-                        "AND member_id IS NOT DISTINCT FROM :member_id " +
-                        "AND workflow_id IS NOT DISTINCT FROM :workflow_id",
-                ).bind("org_id", orgId).bind("scope", scope).bindMember(memberId).bindWorkflow(workflowId),
-            ).getOrThrow()
+            lockKeyUntilCommit(subjectKey(orgId, scope, memberId, workflowId))
+            val l = BudgetsLimits
+            l.deleteWhere {
+                (l.orgId eq orgId) and (l.scope eq scope) and l.memberId.sameAs(memberId) and
+                    l.workflowId.sameAs(workflowId)
+            }
             for (limit in limits) {
-                execute(
-                    Statement.create(
-                        "INSERT INTO budgets_limits (org_id, member_id, workflow_id, scope, period, action, " +
-                            "limit_micros, updated_at) " +
-                            "VALUES (:org_id, :member_id, :workflow_id, :scope, :period, :action, :limit, :at) " +
-                            UPSERT,
-                    ).bind("org_id", orgId).bind("scope", scope).bindMember(memberId).bindWorkflow(workflowId)
-                        .bind("period", limit.window.name).bind("action", limit.action.name)
-                        .bind("limit", limit.micros).bind("at", at),
-                ).getOrThrow()
+                // One row per subject and window, and the action with it: a monthly write that stops sets it back.
+                l.upsert(
+                    l.orgId, l.scope, l.memberId, l.workflowId, l.period,
+                    onUpdate = {
+                        it[l.limitMicros] = insertValue(l.limitMicros)
+                        it[l.action] = insertValue(l.action)
+                        it[l.updatedAt] = insertValue(l.updatedAt)
+                    },
+                ) {
+                    it[this.orgId] = orgId
+                    it[this.scope] = scope
+                    it[this.memberId] = memberId
+                    it[this.workflowId] = workflowId
+                    it[period] = limit.window.name
+                    it[action] = limit.action.name
+                    it[limitMicros] = limit.micros
+                    it[updatedAt] = at
+                }
             }
         }
     }
 
     override suspend fun removeWorkflow(orgId: Uuid, workflowId: String) {
-        driver.inTenant(orgId) {
+        database.inOrg(orgId) {
             // Under the subject's lock, so that a budget set at the same moment is not left behind.
-            fetchAll(lockSubject(orgId, WORKFLOW, null, workflowId)).getOrThrow()
-            for (sql in BudgetsQueries.REMOVE_WORKFLOW) {
-                execute(Statement.create(sql).bind("org_id", orgId).bind("workflow_id", workflowId)).getOrThrow()
-            }
+            lockKeyUntilCommit(subjectKey(orgId, WORKFLOW, null, workflowId))
+            val l = BudgetsLimits
+            l.deleteWhere { (l.orgId eq orgId) and (l.scope eq WORKFLOW) and (l.workflowId eq workflowId) }
+            val a = BudgetsAlerts
+            a.deleteWhere { (a.orgId eq orgId) and (a.scope eq WORKFLOW) and (a.workflowId eq workflowId) }
         }
     }
 
-    override suspend fun markAlerted(alert: BudgetAlert, at: Instant): Boolean {
-        val statement = Statement.create(
-            "INSERT INTO budgets_alerts " +
-                "(org_id, member_id, workflow_id, scope, period, action, period_start, threshold, limit_micros, " +
-                "alerted_at) VALUES (:org_id, :member_id, :workflow_id, :scope, :period, :action, :period_start, " +
-                ":threshold, :limit, :at) ON CONFLICT " +
-                "(org_id, scope, member_id, workflow_id, period, action, period_start, threshold, limit_micros) " +
-                "DO NOTHING",
-        ).bindAlert(alert).bind("at", at)
-        return driver.executeInOrg(alert.orgId, statement).getOrThrow() == 1L
+    override suspend fun markAlerted(alert: BudgetAlert, at: Instant): Boolean = database.inOrg(alert.orgId) {
+        BudgetsAlerts.insertIgnore {
+            it.alert(alert)
+            it[alertedAt] = at
+        }.insertedCount == 1
     }
 
     override suspend fun unmarkAlerted(alert: BudgetAlert) {
-        val statement = Statement.create(
-            "DELETE FROM budgets_alerts WHERE org_id = :org_id AND scope = :scope " +
-                "AND member_id IS NOT DISTINCT FROM :member_id AND workflow_id IS NOT DISTINCT FROM :workflow_id " +
-                "AND period = :period AND action = :action " +
-                "AND period_start = :period_start AND threshold = :threshold AND limit_micros = :limit",
-        ).bindAlert(alert)
-        driver.executeInOrg(alert.orgId, statement).getOrThrow()
+        database.inOrg(alert.orgId) {
+            val a = BudgetsAlerts
+            a.deleteWhere {
+                (a.orgId eq alert.orgId) and (a.scope eq alert.scope.name) and a.memberId.sameAs(alert.memberId) and
+                    a.workflowId.sameAs(alert.workflowId) and (a.period eq alert.window.name) and
+                    (a.action eq alert.action.name) and (a.periodStart eq alert.periodStart) and
+                    (a.threshold eq alert.thresholdPercent) and (a.limitMicros eq alert.limitMicros)
+            }
+        }
     }
 
     override suspend fun exceeded(
@@ -148,53 +139,35 @@ class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
         day: Instant,
         month: Instant,
         max: Int,
-    ): List<ExceededBudget> {
-        val statement = Statement.create(BudgetsQueries.exceeded(member = memberId != null))
-            .bind("org_id", orgId).bind("day", day).bind("month", month).bind("limit", max)
-        if (memberId != null) statement.bind("member_id", memberId)
-        return driver.fetchInOrg(orgId, statement).getOrThrow().map { row ->
-            ExceededBudget(
-                scope = BudgetScope.valueOf(row.get("scope").asString()),
-                memberId = row.get("member_id").asUuidOrNull(),
-                limit = BudgetLimit(
-                    micros = row.get("limit_micros").asLong(),
-                    window = BudgetWindow.valueOf(row.get("period").asString()),
-                    action = BudgetAction.valueOf(row.get("action").asString()),
-                ),
-                since = row.get("alerted_at").asInstant(),
-                workflowId = row.get("workflow_id").asStringOrNull(),
-            )
-        }
-    }
+    ): List<ExceededBudget> = database.inOrg(orgId) { exceededRead(orgId, memberId, day, month, max).rows() }
 }
 
-private fun Statement.bindAlert(alert: BudgetAlert): Statement {
-    bind("org_id", alert.orgId)
-    bind("scope", alert.scope.name)
-    bind("period", alert.window.name)
-    bind("action", alert.action.name)
-    bind("period_start", alert.periodStart)
-    bind("threshold", alert.thresholdPercent)
-    bind("limit", alert.limitMicros)
-    return bindMember(alert.memberId).bindWorkflow(alert.workflowId)
+private fun UpdateBuilder<*>.alert(alert: BudgetAlert) {
+    val a = BudgetsAlerts
+    this[a.orgId] = alert.orgId
+    this[a.scope] = alert.scope.name
+    this[a.memberId] = alert.memberId
+    this[a.workflowId] = alert.workflowId
+    this[a.period] = alert.window.name
+    this[a.action] = alert.action.name
+    this[a.periodStart] = alert.periodStart
+    this[a.threshold] = alert.thresholdPercent
+    this[a.limitMicros] = alert.limitMicros
 }
 
-private fun Statement.bindWorkflow(workflowId: String?): Statement =
-    if (workflowId == null) bindNull("workflow_id", String::class) else bind("workflow_id", workflowId)
-
-private fun Statement.bindMember(memberId: Uuid?): Statement =
-    if (memberId == null) bindNull("member_id", Uuid::class) else bind("member_id", memberId)
-
-private fun ResultSet.Row.toStored() = StoredLimit(
-    scope = get("scope").asString(),
-    memberId = get("member_id").asUuidOrNull(),
-    limit = BudgetLimit(
-        micros = get("limit_micros").asLong(),
-        window = BudgetWindow.valueOf(get("period").asString()),
-        action = BudgetAction.valueOf(get("action").asString()),
-    ),
-    updatedAt = get("updated_at").asInstant(),
-)
+private fun ResultRow.toStored(): StoredLimit {
+    val l = BudgetsLimits
+    return StoredLimit(
+        scope = this[l.scope],
+        memberId = this[l.memberId],
+        limit = BudgetLimit(
+            micros = this[l.limitMicros],
+            window = BudgetWindow.valueOf(this[l.period]),
+            action = BudgetAction.valueOf(this[l.action]),
+        ),
+        updatedAt = this[l.updatedAt],
+    )
+}
 
 private class StoredLimit(
     val scope: String,
@@ -203,22 +176,12 @@ private class StoredLimit(
     val updatedAt: Instant,
 )
 
-/** The advisory lock of one subject's limits, held to the end of the transaction. */
-private fun lockSubject(orgId: Uuid, scope: String, memberId: Uuid?, workflowId: String?): Statement =
-    Statement.create("SELECT 1 AS locked FROM (SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))) l")
-        .bind("key", "budgets_limits:$orgId:$scope:${memberId ?: ""}:${workflowId ?: ""}")
-
-/** One row per subject and window, and the action with it: a monthly write that stops sets it back. */
-private const val UPSERT = "ON CONFLICT (org_id, scope, member_id, workflow_id, period) DO UPDATE " +
-    "SET limit_micros = EXCLUDED.limit_micros, action = EXCLUDED.action, updated_at = EXCLUDED.updated_at"
-private const val ORG = "ORG"
-private const val DEFAULT_MEMBER = "DEFAULT_MEMBER"
-private const val MEMBER = "MEMBER"
-private const val WORKFLOW = "WORKFLOW"
+/** The key of one subject's advisory lock, as the sqlx4k repository took it (`hashtextextended`). */
+private fun subjectKey(orgId: Uuid, scope: String, memberId: Uuid?, workflowId: String?): String =
+    "budgets_limits:$orgId:$scope:${memberId ?: ""}:${workflowId ?: ""}"
 
 /** The org's and the default member's rows: two windows each. */
 private const val SHARED_ROWS = 4
 
 /** The windows a subject may have a limit in: a day and a month. */
 private const val WINDOWS = 2
-
