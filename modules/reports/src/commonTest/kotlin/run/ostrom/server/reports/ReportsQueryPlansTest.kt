@@ -6,17 +6,21 @@ import run.ostrom.server.compiler.CompilerModule
 import run.ostrom.server.gates.GatesModule
 import run.ostrom.server.identity.IdentityModule
 import run.ostrom.server.instance.InstanceModule
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.orgs.OrgsModule
 import run.ostrom.server.receipts.ReceiptsModule
-import run.ostrom.server.reports.infrastructure.ReportsQueries
+import run.ostrom.server.reports.domain.ActivityCursor
+import run.ostrom.server.reports.infrastructure.ActivityReads
+import run.ostrom.server.reports.infrastructure.SpendingReads
 import run.ostrom.server.reports.infrastructure.SpendingRanges
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.sessions.SessionsModule
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.usage.UsageModule
-import io.github.smyrgeorge.sqlx4k.Statement
+import org.jetbrains.exposed.v1.jdbc.Query
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
@@ -79,23 +83,19 @@ class ReportsQueryPlansTest {
             // Statistics only, which no request writes: the serving role may not vacuum (#68).
             server.database.superuser.execute("VACUUM ANALYZE $table").getOrThrow()
         }
-        val month = NOW - 30.days
-        val cursorAt = NOW - 10.days
+        val database = server.koin.get<JdbcDatabase>()
+        suspend fun explain(read: () -> Query): String = database.withOrganization(ORG_A) { plan { read() } }
+        val month = SpendingReads(ORG_A, null, SpendingRanges.of(NOW - 30.days, NOW))
+        val week = SpendingReads(ORG_A, MIA.memberId, SpendingRanges.of(NOW - 7.days, NOW))
+        val cursor = ActivityCursor(NOW - 10.days, "session.started:s240")
         val plans = linkedMapOf(
-            "spending of the organization, 30 days" to server.explain(ReportsQueries.spending(member = false)) {
-                SpendingRanges.of(month, NOW).bindTo(this)
-            },
-            "spending of a member, 7 days" to server.explain(ReportsQueries.spending(member = true)) {
-                SpendingRanges.of(NOW - 7.days, NOW).bindTo(bind("member_id", MIA.memberId))
-            },
-            "newest page of the feed" to server.explain(ReportsQueries.activity(cursor = false, repo = false)) {
-                bind("limit", 51)
-            },
-            "next page of the feed" to server.explain(ReportsQueries.activity(cursor = true, repo = false)) {
-                bind("limit", 51).bind("before_at", cursorAt).bind("before_id", "session.started:s240")
-            },
-            "a repository's page" to server.explain(ReportsQueries.activity(cursor = true, repo = true)) {
-                bind("limit", 51).bind("before_at", cursorAt).bind("before_id", "x").bind("repo", "acme/r3")
+            "spending of the organization, 30 days" to explain { month.calls() },
+            "first segments of the launches spent in" to explain { month.launches(List(50) { "lch$it" }) },
+            "spending of a member, 7 days" to explain { week.calls() },
+            "newest page of the feed" to explain { ActivityReads(ORG_A, null, null, 51).page() },
+            "next page of the feed" to explain { ActivityReads(ORG_A, cursor, null, 51).page() },
+            "a repository's page" to explain {
+                ActivityReads(ORG_A, cursor.copy(id = "x"), "acme/r3", 51).page()
             },
         )
         val report = plans.entries.joinToString("\n\n") { (name, plan) -> "-- $name\n$plan" }
@@ -105,14 +105,6 @@ class ReportsQueryPlansTest {
             for (table in listOf("usage_events", "sessions_sessions", "gates_gates")) {
                 assertFalse("Seq Scan on $table" in plan, "$name scans $table:\n$plan")
             }
-        }
-    }
-
-    /** The plan of [sql] in org A, scoped like the repository's reads; `:org_id` is bound, [bind] adds the rest. */
-    private suspend fun TestServer.explain(sql: String, bind: Statement.() -> Statement): String {
-        val statement = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org_id", ORG_A).bind()
-        return driver.withOrganization(ORG_A) { tx ->
-            tx.fetchAll(statement).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
         }
     }
 }

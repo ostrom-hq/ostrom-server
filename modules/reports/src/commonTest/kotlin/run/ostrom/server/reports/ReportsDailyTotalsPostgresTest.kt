@@ -10,16 +10,13 @@ import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.orgs.OrgsModule
 import run.ostrom.server.receipts.ReceiptsModule
 import run.ostrom.server.reports.domain.startOf
-import run.ostrom.server.reports.infrastructure.ReportsQueries
 import run.ostrom.server.reports.infrastructure.SpendingRanges
-import run.ostrom.server.reports.infrastructure.spendingStatement
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.sessions.SessionsModule
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.usage.UsageModule
 import run.ostrom.server.usage.domain.UsageRepository
-import io.github.smyrgeorge.sqlx4k.Statement
 import kotlinx.datetime.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -65,13 +62,6 @@ class ReportsDailyTotalsPostgresTest {
         )
     }
 
-    private suspend fun TestServer.rows(statement: Statement): List<String> =
-        driver.withOrganization(ORG_A) { tx ->
-            tx.fetchAll(statement).getOrThrow().map { row ->
-                listOf("dim", "group_key", "label", "micros", "sessions").joinToString("|") { row.get(it).asString() }
-            }.sorted()
-        }
-
     private suspend fun TestServer.assertSameReport(step: String) {
         val windows = listOf(
             "the month" to (startOf(LocalDate(2026, 10, 1)) to NOW),
@@ -84,12 +74,12 @@ class ReportsDailyTotalsPostgresTest {
         for ((name, window) in windows) {
             for (member in listOf(null, MIA.memberId)) {
                 val (from, to) = window
-                // The same query with no whole day: every hour of the window added up from the calls.
-                val calls = Statement.create(ReportsQueries.spending(member = member != null)).bind("org_id", ORG_A)
-                member?.let { calls.bind("member_id", it) }
-                val expected = rows(SpendingRanges.allHours(from, to).bindTo(calls))
+                // The same reads with no whole day: every hour of the window added up from the calls.
+                val expected = spendingByExposed(ORG_A, member, SpendingRanges.allHours(from, to))
                 assertTrue(expected.isNotEmpty(), "$step, $name: the window has spending")
-                assertEquals(expected, rows(spendingStatement(ORG_A, member, from, to)), "$step, $name, $member")
+                val ranges = SpendingRanges.of(from, to)
+                assertEquals(expected, spendingByExposed(ORG_A, member, ranges), "$step, $name, $member")
+                assertEquals(expected, spendingBySql(ORG_A, member, ranges), "$step, $name, $member: as the SQL")
             }
         }
     }
