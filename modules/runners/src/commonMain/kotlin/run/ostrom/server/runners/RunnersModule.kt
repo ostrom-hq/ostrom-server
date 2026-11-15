@@ -374,7 +374,7 @@ object RunnersModule : ServerModule {
         // A profile's workspace storage class, read on its cluster where sessions run on Kubernetes (cloud module).
         single<WorkspaceStorageClasses> { ClusterWorkspaceStorageClasses(get<RuntimeDriver>() as? CloudClusterObjects) }
         single<AutomationLauncher> { CloudSessionAutomationLauncher(get(), get(), get()) }
-        // Conversation sessions: their transcript, inputs and options, served but not announced yet.
+        // Conversation sessions: their transcript, inputs and options, announced.
         single { ConversationAnnouncement() }
         single<CloudConversationStore> { CloudConversationStoreImpl(get(), get()) }
         single<CloudConversationService> { CloudConversationServiceImpl(get(), get(), get(), get(), get()) }
@@ -430,7 +430,7 @@ object RunnersModule : ServerModule {
      */
     override suspend fun features(koin: Koin): Set<String> {
         if (koin.get<RunnersConfig>().driver == RunnersConfig.DriverKind.NONE) return setOf(ServerFeatures.RUNNERS)
-        // The conversation keys, files aside (not served yet), once announced.
+        // The conversation keys, files aside (not served yet), with a runtime driver.
         val announced = koin.getOrNull<ConversationAnnouncement>()?.announced == true
         val conversation = if (announced) CONVERSATION_FEATURES else emptySet()
         val github = koin.getOrNull<RunnerGitHubTokens>()?.available() == true

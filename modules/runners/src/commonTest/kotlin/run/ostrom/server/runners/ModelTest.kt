@@ -17,8 +17,10 @@ import run.ostrom.server.runners.domain.FreeCloudPlanProvider
 import run.ostrom.server.runners.domain.MissingScopeException
 import run.ostrom.server.runners.domain.NotAMemberException
 import run.ostrom.server.runners.domain.RuntimeNames
+import run.ostrom.server.runners.domain.SessionMode
 import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.runners.domain.SessionStateMachine
+import run.ostrom.server.runners.domain.executionSpec
 import run.ostrom.server.runners.fakes.ORG_A
 import run.ostrom.server.runners.fakes.ORG_B
 import run.ostrom.server.runners.fakes.session
@@ -115,6 +117,15 @@ class ModelTest {
         assertFalse("secret" in spec.toString())
         val withPrompt = spec.copy(prompt = "private words")
         assertFalse("private" in withPrompt.toString())
+    }
+
+    @Test
+    fun anExecutionCarriesItsSessionsMode() {
+        val terminal = session().copy(epoch = 2)
+        assertEquals(SessionMode.TERMINAL, terminal.executionSpec("t").mode)
+        val conversation = terminal.copy(mode = SessionMode.CONVERSATION).executionSpec("t")
+        assertEquals(SessionMode.CONVERSATION, conversation.mode)
+        assertTrue("mode=conversation" in conversation.toString())
     }
 
     @Test

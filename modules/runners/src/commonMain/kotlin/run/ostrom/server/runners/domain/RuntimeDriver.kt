@@ -154,6 +154,7 @@ class RuntimeUnreachableException(reason: String) : Exception(reason)
  * @property model The model the agent starts with, if chosen.
  * @property prompt The agent's first message, given at the first execution only.
  * @property profile What a Kubernetes execution runs on (cluster, namespace, image, resources); null elsewhere.
+ * @property mode How the agent is talked to: a conversation's runner runs it headless (`OSTROM_SESSION_MODE`).
  */
 data class ExecutionSpec(
     val sessionId: Uuid,
@@ -166,10 +167,11 @@ data class ExecutionSpec(
     val model: String? = null,
     val prompt: String? = null,
     val profile: SessionProfile? = null,
+    val mode: SessionMode = SessionMode.TERMINAL,
 ) {
     override fun toString(): String =
-        "ExecutionSpec(sessionId=$sessionId, epoch=$epoch, agent=${agent.wire}, model=$model, runnerToken=***, " +
-            "prompt=${if (prompt == null) "none" else "***"})"
+        "ExecutionSpec(sessionId=$sessionId, epoch=$epoch, agent=${agent.wire}, model=$model, mode=${mode.wire}, " +
+            "runnerToken=***, prompt=${if (prompt == null) "none" else "***"})"
 }
 
 /**
@@ -182,6 +184,7 @@ data class ExecutionSpec(
 fun CloudSession.executionSpec(runnerToken: String): ExecutionSpec =
     ExecutionSpec(
         id, orgId, epoch, agent, repository, runnerToken, limits, model, prompt.takeIf { epoch == 1L }, profile,
+        mode = mode,
     )
 
 /** The state of an execution as the runtime sees it. */

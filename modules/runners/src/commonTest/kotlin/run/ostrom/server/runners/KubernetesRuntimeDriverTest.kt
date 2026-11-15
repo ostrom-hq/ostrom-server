@@ -16,6 +16,7 @@ import run.ostrom.server.runners.fakes.session
 import run.ostrom.server.runners.infrastructure.KubernetesApiException
 import run.ostrom.server.runners.infrastructure.KubernetesRuntimeDriver
 import run.ostrom.server.runners.domain.ProfileOrigin
+import run.ostrom.server.runners.domain.SessionMode
 import run.ostrom.server.runners.domain.SessionProfile
 import run.ostrom.server.runners.domain.SessionResources
 import run.ostrom.server.runners.infrastructure.KubernetesClusters
@@ -150,9 +151,19 @@ class KubernetesRuntimeDriverTest {
         assertEquals("claude", env["OSTROM_AGENT_COMMAND"])
         assertEquals("4", env["OSTROM_EPOCH"])
         assertEquals("claude-opus-5-5", env["OSTROM_AGENT_MODEL"])
+        assertEquals("terminal", env["OSTROM_SESSION_MODE"])
         assertEquals("http://ostrom-server.ostrom.svc:8080", env["OSTROM_SERVER_URL"])
         assertFalse("Fix the tests" in pod.toString())
         assertFalse("ostrom_runner_abc" in pod.toString())
+    }
+
+    @Test
+    fun aConversationsRunnerIsToldItsMode() = runTest {
+        driver.startExecution(spec().copy(mode = SessionMode.CONVERSATION))
+        val runner = body(3)["spec"]!!.jsonObject["containers"]!!.jsonArray[0].jsonObject
+        val mode = runner["env"]!!.jsonArray.map { it.jsonObject }
+            .single { it["name"]!!.jsonPrimitive.content == "OSTROM_SESSION_MODE" }
+        assertEquals("conversation", mode["value"]!!.jsonPrimitive.content)
     }
 
     @Test

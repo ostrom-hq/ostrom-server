@@ -6,6 +6,7 @@ import run.ostrom.server.runners.domain.CloudConversationService
 import run.ostrom.server.runners.domain.CloudConversationServiceImpl
 import run.ostrom.server.runners.domain.CloudEvent
 import run.ostrom.server.runners.domain.CloudSessionNotFoundException
+import run.ostrom.server.runners.domain.ConversationAnnouncement
 import run.ostrom.server.runners.fakes.testIdentities
 import run.ostrom.server.runners.infrastructure.CloudConversationMaintenance
 import run.ostrom.server.runners.presentation.AnswerCloudPermissionBody
@@ -84,6 +85,8 @@ class CloudConversationRoutesPostgresTest {
 
     @Test
     fun aConversationIsCreatedForClaudeAndCodexOnly() = serverTest(listOf(RunnersModule), testIdentities) { server ->
+        // The module announces the conversation keys (RunnersModule.features reads this binding).
+        assertTrue(server.koin.get<ConversationAnnouncement>().announced)
         assertEquals("invalid_mode", server.create(agent = "gemini").type())
         assertEquals("invalid_mode", server.create(mode = "chat").type())
         val terminal = server.create(mode = null).body<CloudSessionResponse>()

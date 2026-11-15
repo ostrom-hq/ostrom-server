@@ -8,6 +8,7 @@ import run.ostrom.server.kernel.http.openConnections
 import run.ostrom.server.runners.domain.Caller
 import run.ostrom.server.runners.domain.CloudSessionNotFoundException
 import run.ostrom.server.runners.domain.InvalidCloudSessionRequestException
+import run.ostrom.server.runners.domain.SessionMode
 import run.ostrom.server.runners.domain.TerminalHosts
 import run.ostrom.server.runners.infrastructure.KtorTerminalForwarder
 import run.ostrom.server.runners.infrastructure.TerminalRelay
@@ -154,6 +155,10 @@ fun Route.terminalRoutes(dependencies: TerminalRoutesDependencies) = with(depend
             } catch (error: OstromException) {
                 return@webSocket close(closeReason(error))
             }
+            // A conversation's agent runs headless: its runner relays no PTY, as no member opens one.
+            if (session.mode == SessionMode.CONVERSATION) {
+                return@webSocket close(CloseReason(TerminalCloseCodes.CONFLICT, NO_TERMINAL))
+            }
             val link = relay.connectRunner(id, epoch)
                 ?: return@webSocket close(CloseReason(TerminalCloseCodes.CONFLICT, NEWER_EXECUTION))
             attachRunner(dependencies, session.orgId, id, link)
@@ -206,6 +211,7 @@ private suspend fun DefaultWebSocketServerSession.attachRunner(
 
 private const val NEED_MEMBER_CREDENTIAL = "A valid bearer token or ticket is required."
 private const val NEED_RUNNER_CREDENTIAL = "A runner token, sessionId and epoch are required."
+private const val NO_TERMINAL = "This session's agent runs headless and has no terminal."
 private const val NEED_UPGRADE = "A terminal is a WebSocket: ask for the upgrade."
 private suspend fun DefaultWebSocketServerSession.clientCaller(
     dependencies: TerminalRoutesDependencies,
