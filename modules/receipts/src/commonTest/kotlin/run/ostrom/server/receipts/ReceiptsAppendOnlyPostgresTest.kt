@@ -13,6 +13,7 @@ import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
@@ -52,6 +53,12 @@ class ReceiptsAppendOnlyPostgresTest {
         val erase = "DELETE FROM receipts_receipts"
         refusedAsAppendOnly("serving, A, rewrite") { server.asServingRole(ORG_A) { exec(rewrite) } }
         refusedAsAppendOnly("serving, A, erase") { server.asServingRole(ORG_A) { exec(erase) } }
+        // The repository's own path, the tenant role of inOrg, holds no UPDATE nor DELETE at all (migration 4).
+        val database = server.koin.get<JdbcDatabase>()
+        for ((what, sql) in listOf("rewrite" to rewrite, "erase" to erase)) {
+            val denied = assertFailsWith<ExposedSQLException>("tenant, $what") { database.inOrg(ORG_A) { exec(sql) } }
+            assertTrue("permission denied" in denied.message.orEmpty(), "tenant, $what: ${denied.message}")
+        }
         // A statement that reaches no row is refused all the same: never zero rows in silence.
         refusedAsAppendOnly("serving, B, erase") { server.asServingRole(ORG_B) { exec(erase) } }
         val truncate = "TRUNCATE receipts_receipts"
