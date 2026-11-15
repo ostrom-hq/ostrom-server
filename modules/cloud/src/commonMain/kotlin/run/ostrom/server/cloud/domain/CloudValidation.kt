@@ -45,8 +45,12 @@ internal fun runtimeProblem(runtime: CloudRuntime): String? = listOfNotNull(
     },
     "pausedRetentionDays is 1 to 3650.".takeIf { runtime.pausedRetentionDays?.let(::isRetention) == false },
     "failedWorkspaceRetentionDays is 1 to 3650.".takeIf { !isRetention(runtime.failedWorkspaceRetentionDays) },
-    "maxRunningSessionsPerMember is 1 to 1000.".takeIf { runtime.maxRunningSessionsPerMember !in 1..MAX_RUNNING },
-    "maxRetainedSessionsPerMember is 1 to 10000.".takeIf { runtime.maxRetainedSessionsPerMember !in 1..MAX_RETAINED },
+    "maxRunningSessionsPerMember is 0 to 1000 (0 means no limit).".takeIf {
+        runtime.maxRunningSessionsPerMember !in 0..MAX_RUNNING
+    },
+    "maxRetainedSessionsPerMember is 0 to 10000 (0 means no limit).".takeIf {
+        runtime.maxRetainedSessionsPerMember !in 0..MAX_RETAINED
+    },
     "transcriptRetentionDays is 1 to 3650.".takeIf { runtime.transcriptRetentionDays?.let(::isRetention) == false },
     "memberTransfers is offer or disabled.".takeIf { runtime.memberTransfers !in CloudRuntime.TRANSFERS },
     "fileMaxMebibytes is 1 to 100.".takeIf { runtime.fileMaxMebibytes !in 1..CloudRuntime.MAX_FILE_MEBIBYTES },

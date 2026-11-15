@@ -63,9 +63,9 @@ data class CloudRuntimeResponse(
     val pausedRetentionDays: Int? = null,
     /** Days a failed workspace is kept. */
     val failedWorkspaceRetentionDays: Int,
-    /** Sessions a member runs at once. */
+    /** Sessions a member runs at once, 0 to 1000; 0 means no limit. */
     val maxRunningSessionsPerMember: Int,
-    /** Sessions a member keeps. */
+    /** Sessions a member keeps (paused ones included), 0 to 10000; 0 means no limit. */
     val maxRetainedSessionsPerMember: Int,
     /** Days transcript events are kept. */
     val transcriptRetentionDays: Int? = null,
@@ -98,9 +98,9 @@ data class SaveCloudRuntimeRequest(
     val pausedRetentionDays: Int? = null,
     /** Days a failed workspace is kept. */
     val failedWorkspaceRetentionDays: Int,
-    /** Sessions a member runs at once. */
+    /** Sessions a member runs at once, 0 to 1000; 0 means no limit. */
     val maxRunningSessionsPerMember: Int,
-    /** Sessions a member keeps. */
+    /** Sessions a member keeps (paused ones included), 0 to 10000; 0 means no limit. */
     val maxRetainedSessionsPerMember: Int,
     /** Days transcript events are kept. */
     val transcriptRetentionDays: Int? = null,

@@ -60,10 +60,24 @@ object McpRules {
     private val reservedPrefixes = listOf(
         "LD_", "OSTROM_", "TEAMCODE_", "NPM_CONFIG_", "UV_", "PIP_", "NODE_", "PYTHON", "COREPACK_", "SSL", "CURL_",
         "DYLD_",
+        // `BASH_FUNC_` names an exported shell function.
+        "BASH_FUNC_",
     )
     private val reservedNames = setOf(
         "PATH", "HOME", "TMPDIR", "LANG", "SHELL", "USER", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
         "GLIBC_TUNABLES", "REQUESTS_CA_BUNDLE",
+        // The server's further names (EnvironmentRules): the loader and the runtimes, the shell, Git, SSH and gh, an
+        // agent's tools. The MCP host refuses the same, and at least what the server refuses.
+        "ELECTRON_RUN_AS_NODE", "PERL5DB", "CLASSPATH", "DOTNET_STARTUP_HOOKS", "CORECLR_PROFILER",
+        "CORECLR_PROFILER_PATH", "CORECLR_ENABLE_PROFILING", "GCONV_PATH", "OLDPWD", "SHELLOPTS", "BASHOPTS", "CDPATH",
+        "GLOBIGNORE", "PS4", "ZDOTDIR", "GIT_TERMINAL_PROMPT", "GH_CONFIG_DIR", "GIT_ASKPASS", "SSH_ASKPASS",
+        "GIT_PROXY_COMMAND", "GIT_EXTERNAL_DIFF", "GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_TEMPLATE_DIR",
+        "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR", "RIPGREP_CONFIG_PATH", "GIT_SSL_NO_VERIFY", "GIT_SSL_CAINFO", "GIT_SSL_CAPATH",
+        "GIT_ALLOW_PROTOCOL", "GIT_SSH", "GIT_SSH_COMMAND", "GIT_EXEC_PATH", "GIT_CONFIG_GLOBAL", "IFS", "ENV",
+        "BASH_ENV", "PROMPT_COMMAND", "LOGNAME", "PWD", "TMP", "TEMP", "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS",
+        "_JAVA_OPTIONS", "PERL5OPT", "PERL5LIB", "RUBYOPT", "RUBYLIB", "SSL_CERT_FILE", "SSL_CERT_DIR",
+        "NODE_EXTRA_CA_CERTS", "CURL_CA_BUNDLE", "SSLKEYLOGFILE",
     )
     private val valueless = setOf(ConditionOperator.EXISTS, ConditionOperator.ABSENT)
 
