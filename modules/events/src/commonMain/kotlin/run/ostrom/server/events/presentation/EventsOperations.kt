@@ -19,7 +19,7 @@ import run.ostrom.server.kernel.http.docs.notFound
 import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
 import run.ostrom.server.kernel.http.docs.pathId
-import run.ostrom.server.kernel.http.docs.queryNumber
+import run.ostrom.server.kernel.http.docs.queryLimit
 import run.ostrom.server.kernel.http.docs.queryText
 import io.ktor.http.HttpStatusCode
 
@@ -199,7 +199,7 @@ private fun ApiCatalog.webhookActionOperations() {
         parameters {
             organizationHeader()
             pathId("id", "The webhook's id.")
-            queryNumber("limit", "1 to 200, 50 by default.")
+            queryLimit("1 to 200, 50 by default.", maximum = 200)
         }
         responses {
             ok<WebhookDeliveryList>("The deliveries, newest first.")

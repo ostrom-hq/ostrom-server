@@ -12,7 +12,7 @@ import run.ostrom.server.kernel.http.docs.notFound
 import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
 import run.ostrom.server.kernel.http.docs.pathId
-import run.ostrom.server.kernel.http.docs.queryNumber
+import run.ostrom.server.kernel.http.docs.queryLimit
 import run.ostrom.server.kernel.http.docs.queryText
 
 private const val STATE_CHANGE = "A session whose state does not allow it, or that changed meanwhile " +
@@ -46,7 +46,7 @@ private fun ApiCatalog.cloudSessionListing() {
             queryText("kind", "The kind of session to list, `cloud`, `remote` or `local`; repeat it to list several.")
             queryText("owner", "The caller's member id; anything else is refused.")
             queryText("before", "The `next` of the previous page.")
-            queryNumber("limit", "How many sessions a page holds.")
+            queryLimit("How many sessions a page holds.", maximum = 50)
         }
         responses {
             ok<CloudSessionsResponse>("A page of the caller's sessions, newest first, with the cursor of the next.")

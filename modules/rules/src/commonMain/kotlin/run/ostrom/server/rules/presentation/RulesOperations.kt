@@ -12,10 +12,9 @@ import run.ostrom.server.kernel.http.docs.notFound
 import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
 import run.ostrom.server.kernel.http.docs.pathId
-import run.ostrom.server.kernel.http.docs.queryNumber
+import run.ostrom.server.kernel.http.docs.queryLimit
 import run.ostrom.server.kernel.http.docs.queryText
 import io.ktor.http.HttpStatusCode
-import kotlinx.serialization.json.JsonObject
 
 private const val RULES_TAG = "rules"
 private const val ANALYSIS_TAG = "analysis"
@@ -80,8 +79,8 @@ private fun ApiCatalog.ruleOperations() {
             queryText("status", "Only the rules of this status.")
             queryText("group", "Only the rules of this group.")
             queryText("after", "The `next` of the previous page (opaque); 400 when no page gave it.")
-            queryNumber("limit", "The page size, 1 to 1000 (1000 by default); a value outside is brought " +
-                "into it.")
+            queryLimit("The page size, 1 to 1000 (1000 by default); 400 under 1, a larger one is brought " +
+                "down to 1000.", maximum = 1000)
         }
         responses {
             ok<RulesPage>("A page of rules, `next` set when another follows.")
@@ -139,8 +138,7 @@ private fun ApiCatalog.ruleOperations2() {
             organizationHeader()
             pathId("id", RULE_ID)
         }
-        body<JsonObject>("The fields to change: statement, status, strength, reviewBy, scope, group, why, " +
-            "output and gate.")
+        body<RulePatchRequest>("The fields to change, each only when present; `gate` set to null removes the gate.")
         responses {
             ok<RuleDto>("The rule, changed.")
             ok<GovernanceConfirmationPending>(PENDING, HttpStatusCode.Accepted)

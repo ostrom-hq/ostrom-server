@@ -11,6 +11,7 @@ import run.ostrom.server.kernel.http.docs.notFound
 import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
 import run.ostrom.server.kernel.http.docs.pathId
+import run.ostrom.server.kernel.http.docs.queryLimit
 import run.ostrom.server.kernel.http.docs.queryNumber
 import run.ostrom.server.kernel.http.docs.queryText
 import io.ktor.http.HttpStatusCode
@@ -135,7 +136,7 @@ private fun ApiCatalog.meOperations() {
         summary = "The person's account-level signed audit events, newest first (scope `profile:read`)."
         parameters {
             queryNumber("before", "The `sequence` of the last event of the previous page.")
-            queryNumber("limit", "1 to 200, 50 by default.")
+            queryLimit("1 to 200, 50 by default.", maximum = 200)
         }
         responses {
             ok<AuditEventsResponse>("A page of events, `nextBefore` set when another may follow.")

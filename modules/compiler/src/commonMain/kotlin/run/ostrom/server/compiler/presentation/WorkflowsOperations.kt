@@ -16,7 +16,7 @@ import run.ostrom.server.kernel.http.docs.notFound
 import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
 import run.ostrom.server.kernel.http.docs.pathId
-import run.ostrom.server.kernel.http.docs.queryNumber
+import run.ostrom.server.kernel.http.docs.queryLimit
 import run.ostrom.server.kernel.http.docs.queryText
 
 private const val TAG = "workflows"
@@ -45,7 +45,7 @@ internal fun ApiCatalog.workflowOperations() {
             queryText("status", "Only the workflows in this status (`proposed`, `accepted` or `rejected`); 400 " +
                 "otherwise.")
             queryText("after", "The `next` of the previous page: the id of its last workflow.")
-            queryNumber("limit", "The page size, 1 to 100 (50 by default); 400 below.")
+            queryLimit("The page size, 1 to 100 (50 by default); 400 below.", maximum = 100)
         }
         responses {
             ok<WorkflowsPage>(

@@ -754,6 +754,7 @@ class CompilerPostgresTest {
         val compiled = audit.last().meta
         assertTrue(compiled.getValue("workflows").all { it.isDigit() }, compiled.toString())
         assertEquals(1, server.call("user:a:lead", "/api/v1/packages/audit?limit=1").body<AuditPage>().items.size)
+        assertEquals(HttpStatusCode.BadRequest, server.call("user:a:lead", "/api/v1/packages/audit?limit=0").status)
         assertEquals(4, server.call("user:a:lead", "/api/v1/packages/audit").body<AuditPage>().items.size)
         assertTrue(server.call("user:b:lead", "/api/v1/packages/audit").body<AuditPage>().items.isEmpty())
         // After the audit, which it adds to: the organization's package, pinned under `*`, listed as its status says.

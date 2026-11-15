@@ -3,6 +3,7 @@ package run.ostrom.server.secrets.presentation
 
 import run.ostrom.server.kernel.auth.authenticated
 import run.ostrom.server.kernel.auth.requireRecentSignIn
+import run.ostrom.server.kernel.errors.Pages
 import run.ostrom.server.secrets.domain.CreateSecretPayload
 import run.ostrom.server.secrets.domain.InvalidSecretException
 import run.ostrom.server.secrets.domain.RelayScopes
@@ -29,7 +30,7 @@ fun Route.secretsRoutes(dependencies: SecretsRoutesDependencies) = with(dependen
     authenticated {
         get<SecretsApi> { params ->
             val caller = call.requireCaller(callers, RelayScopes.SECRETS_READ)
-            val limit = params.limit.coerceIn(1, SecretRules.MAX_PAGE)
+            val limit = Pages.size(params.limit, SecretRules.MAX_PAGE, SecretRules.MAX_PAGE)
             val page = listSecrets(caller, params.after?.toSecretCursor(), limit)
             val next = if (page.size == limit) page.last().toCursor() else null
             call.respond(SecretsPageResponse(page.map { it.toSecretResponse() }, next))

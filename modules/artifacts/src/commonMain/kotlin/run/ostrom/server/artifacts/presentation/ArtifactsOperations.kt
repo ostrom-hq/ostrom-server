@@ -10,7 +10,7 @@ import run.ostrom.server.kernel.http.docs.notFound
 import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
 import run.ostrom.server.kernel.http.docs.pathId
-import run.ostrom.server.kernel.http.docs.queryNumber
+import run.ostrom.server.kernel.http.docs.queryLimit
 import run.ostrom.server.kernel.http.docs.queryText
 import io.ktor.http.HttpStatusCode
 
@@ -243,7 +243,7 @@ private fun ApiCatalog.listOperations() {
         parameters {
             organizationHeader()
             queryText("before", "The `next` of the previous page.")
-            queryNumber("limit", "The page size, 1 to 100 (20 by default).")
+            queryLimit("The page size, 1 to 100 (20 by default).", maximum = 100)
             queryText("scope", "As TeamCode's gallery tabs: `team` (everything the caller can read, the " +
                 "default), `mine` (the ones they own) or `shared` (the ones shared with them).")
             queryText("origin", "Where the artifact was created: `local_run` (an agent on a machine), " +

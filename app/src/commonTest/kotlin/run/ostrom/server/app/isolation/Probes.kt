@@ -63,8 +63,9 @@ internal val SERVICE_KEY_ROUTES: Map<String, Set<String>> = mapOf(
     "cloud:admin" to CLOUD_WRITES + WEBHOOKS,
     "artifacts:read" to ARTIFACT_READS,
     "artifacts:write" to ARTIFACT_READS + setOf(
-        "POST /api/v1/artifacts", "POST /api/v1/artifacts/{id}/versions", "PUT /api/v1/artifacts/{id}/members/{login}",
-        "DELETE /api/v1/artifacts/{id}/members/{login}", "PATCH /api/v1/artifacts/{id}",
+        "POST /api/v1/artifacts", "POST /api/v1/artifacts/{id}/versions",
+        "PUT /api/v1/artifacts/{id}/members/{memberId}", "DELETE /api/v1/artifacts/{id}/members/{memberId}",
+        "PATCH /api/v1/artifacts/{id}",
         "POST /api/v1/artifacts/uploads", "PUT /api/v1/artifacts/uploads/{upload}/blobs/{sha256}/{n}",
     ),
     // Its delivery, as the CLI or a cloud pod reads it; never the catalog, a member's delivery, nor a report.

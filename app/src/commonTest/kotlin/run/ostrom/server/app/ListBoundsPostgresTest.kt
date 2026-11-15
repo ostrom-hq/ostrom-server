@@ -143,8 +143,7 @@ class ListBoundsPostgresTest {
         val id = list.operation.id
         listOf("0", "-1").forEach { size ->
             val status = read(ada, path, "limit=$size").status
-            val refuses = list.paged && id !in CLAMPED_LIMITS
-            if (refuses && status != HttpStatusCode.BadRequest) f.broken += "$id limit=$size: $status, not 400"
+            if (list.paged && status != HttpStatusCode.BadRequest) f.broken += "$id limit=$size: $status, not 400"
             if (status.value >= SERVER_ERROR) f.broken += "$id limit=$size: $status"
         }
         var huge: HttpResponse? = null
@@ -172,7 +171,7 @@ class ListBoundsPostgresTest {
         ListOperations.CURSORS.forEach { name ->
             listOf(GARBAGE, "${Uuid.random()}").forEach { cursor ->
                 val status = read(ada, path, "$name=${cursor.encodeURLParameter()}").status
-                val declared = name in list.cursors && id !in UNCHECKED_CURSORS
+                val declared = name in list.cursors
                 if (declared && !refusesAsExpected(id, status)) f.broken += "$id $name=$cursor: $status, not 400"
                 if (status.value >= SERVER_ERROR) f.broken += "$id $name=$cursor: $status"
             }
@@ -213,7 +212,7 @@ class ListBoundsPostgresTest {
 
     // A replayed cursor of A is refused, or answered B's own page for a position cursor ([POSITION_CURSORS]).
     private fun refusedOrPosition(id: String, status: HttpStatusCode, refused: Set<HttpStatusCode>): Boolean =
-        status in refused || (id in POSITION_CURSORS + UNCHECKED_CURSORS && status == HttpStatusCode.OK)
+        status in refused || (id in POSITION_CURSORS && status == HttpStatusCode.OK)
 
     private suspend fun TestServer.person(login: String): Person {
         val user = koin.get<ResolveUserUseCase>()(
@@ -364,20 +363,6 @@ class ListBoundsPostgresTest {
          * answered B's own page, which row-level security keeps to B's rows (A's rows are still checked absent).
          */
         val POSITION_CURSORS = setOf("listMemory")
-
-        /**
-         * The lists that bring a `limit` outside their bounds within them instead of refusing it, as their catalogue
-         * entries say. ostrom-core's YAML did not declare their `limit`, so the walk only met them on the generated
-         * document: to refuse with a 400 as the other lists do.
-         */
-        val CLAMPED_LIMITS = setOf("listMcpCalls", "listPackageAudit", "listSecrets")
-
-        /**
-         * The lists whose `before`, a well-formed id that names no automation of the caller's (forged, or another
-         * organization's), still answers a page of the caller's own rows (A's rows are still checked absent). Met
-         * on the generated document, which declares the cursor the YAML did not: to refuse with a 400.
-         */
-        val UNCHECKED_CURSORS = setOf("listAutomations")
 
         /** The query a list requires: the words of a search. */
         val REQUIRED_QUERY = mapOf("searchMemory" to "q=lists")

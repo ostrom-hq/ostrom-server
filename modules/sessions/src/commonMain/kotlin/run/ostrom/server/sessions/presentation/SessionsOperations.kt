@@ -11,8 +11,9 @@ import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
 import run.ostrom.server.kernel.http.docs.pathId
 import run.ostrom.server.kernel.http.docs.queryFlag
-import run.ostrom.server.kernel.http.docs.queryNumber
+import run.ostrom.server.kernel.http.docs.queryLimit
 import run.ostrom.server.kernel.http.docs.queryText
+import run.ostrom.server.kernel.http.docs.queryList
 import run.ostrom.server.kernel.http.docs.rateLimited
 
 private const val TAG = "sessions"
@@ -52,11 +53,14 @@ private fun ApiCatalog.sessionReadOperations() {
             queryText("dev", "Only this person's.")
             queryFlag("open", "Only the open (true) or the ended (false) ones.")
             queryText("before", "The cursor of the next page (`next` of the previous one).")
-            queryText("label", "`key=value`, repeatable (at most 16): only the sessions whose launch carries " +
+            queryList("label", "`key=value`, repeatable (at most 16): only the sessions whose launch carries " +
                 "every label given (`sessions.labels.v1`, TeamCode's `GET /runs?label=k=v`). The key is " +
                 "everything before the first `=`. It composes with the other filters and never widens what the " +
                 "caller may read. 400 `invalid_label` for a malformed one.")
-            queryNumber("limit", "The page size, 1 to 100 (50 by default); a value outside is brought into it.")
+            queryLimit(
+                "The page size, 1 to 100 (50 by default); 400 under 1, a larger one is brought down to 100.",
+                maximum = 100,
+            )
         }
         responses {
             ok<SessionsPage>("A page of segments, `next` set when another may follow.")

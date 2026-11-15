@@ -166,7 +166,7 @@ private fun ApiCatalog.memberOperations() {
             conflict(INACTIVE)
         }
     }
-    put("/api/v1/artifacts/{id}/members/{login}") {
+    put("/api/v1/artifacts/{id}/members/{memberId}") {
         operationId = "shareArtifact"
         tag(TAG)
         summary = "Share an artifact with a member."
@@ -178,7 +178,7 @@ private fun ApiCatalog.memberOperations() {
         parameters {
             organizationHeader()
             pathId("id", ART_ID)
-            pathId("login", MEMBER_ID)
+            pathId("memberId", MEMBER_ID)
         }
         responses {
             empty("The artifact is shared with the member.")
@@ -192,7 +192,7 @@ private fun ApiCatalog.memberOperations() {
 
 /** Ending the sharing of an artifact. */
 private fun ApiCatalog.memberRemovalOperations() {
-    delete("/api/v1/artifacts/{id}/members/{login}") {
+    delete("/api/v1/artifacts/{id}/members/{memberId}") {
         operationId = "unshareArtifact"
         tag(TAG)
         summary = "Stop sharing an artifact with a member."
@@ -200,7 +200,7 @@ private fun ApiCatalog.memberRemovalOperations() {
         parameters {
             organizationHeader()
             pathId("id", ART_ID)
-            pathId("login", MEMBER_ID)
+            pathId("memberId", MEMBER_ID)
         }
         responses {
             empty("The artifact is no longer shared with the member.")

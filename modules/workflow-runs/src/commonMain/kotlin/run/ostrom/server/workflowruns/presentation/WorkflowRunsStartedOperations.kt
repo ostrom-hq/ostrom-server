@@ -19,7 +19,7 @@ import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
 import run.ostrom.server.kernel.http.docs.pathId
 import run.ostrom.server.kernel.http.docs.queryFlag
-import run.ostrom.server.kernel.http.docs.queryNumber
+import run.ostrom.server.kernel.http.docs.queryLimit
 import run.ostrom.server.kernel.http.docs.queryText
 
 private const val TAG = "workflows"
@@ -88,7 +88,7 @@ private fun ApiCatalog.runOperations() {
             queryText("workflow", "Only the runs of this workflow.")
             queryText("status", STATUS)
             queryText("before", BEFORE)
-            queryNumber("limit", "The page size, 1 to 100 (50 by default); 400 outside.")
+            queryLimit("The page size, 1 to 100 (50 by default); 400 outside.", maximum = 100)
         }
         responses {
             ok<RunsPage>("A page of runs, `next` set when another may follow.")

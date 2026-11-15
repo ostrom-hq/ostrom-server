@@ -12,6 +12,7 @@ import run.ostrom.server.kernel.auth.requireRecentSignIn
 import run.ostrom.server.kernel.database.storableInstantOrNull
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
+import run.ostrom.server.kernel.errors.Pages
 import run.ostrom.server.kernel.http.ApiError
 import run.ostrom.server.kernel.http.ErrorDetail
 import run.ostrom.server.kernel.http.heldCalls
@@ -211,7 +212,7 @@ private fun Route.journalRoutes(dependencies: McpRelayRoutesDependencies) = with
         val member = params.dev?.let {
             Uuid.parseOrNull(it) ?: throw OstromException(ErrorKind.INVALID_REQUEST, "dev is not a member id.")
         }
-        val limit = params.limit.coerceIn(1, MAX_CALLS_PAGE)
+        val limit = Pages.size(params.limit, MAX_CALLS_PAGE, MAX_CALLS_PAGE)
         val calls = listCalls(caller, before, limit, params.server, member)
         val next = if (calls.size == limit) calls.last().let { "${it.startedAt}/${it.id}" } else null
         call.respond(McpCallsPage(calls.map { it.toDto() }, next))

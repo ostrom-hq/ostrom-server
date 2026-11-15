@@ -10,7 +10,7 @@ import run.ostrom.server.kernel.http.docs.headerText
 import run.ostrom.server.kernel.http.docs.notFound
 import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.pathId
-import run.ostrom.server.kernel.http.docs.queryNumber
+import run.ostrom.server.kernel.http.docs.queryLimit
 import io.ktor.http.HttpStatusCode
 import io.ktor.openapi.Operation
 import kotlinx.serialization.json.JsonObject
@@ -158,7 +158,7 @@ private fun ApiCatalog.subscriptionOperations() {
             "`limit` under 1 is refused (400), one above 100 is brought down to 100."
         parameters {
             pathId("orgId", "The organization's id.")
-            queryNumber("limit", "At most this many invoices, 1 to 100 (24 by default).")
+            queryLimit("At most this many invoices, 1 to 100 (24 by default).", maximum = 100)
         }
         responses {
             ok<InvoicesResponse>("The invoices, newest first.")

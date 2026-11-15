@@ -91,7 +91,9 @@ class ApiDocsTest {
                 parameters {
                     pathId("id", "The item.")
                     queryText("view", "How much to show.")
-                    queryNumber("limit", "At most this many notes.")
+                    queryNumber("page", "The page.")
+                    queryLimit("At most this many notes.", 50)
+                    queryList("tag", "Only the notes with every tag.")
                     queryFlag("all", "Every note.")
                     organizationHeader()
                     headerText("Idempotency-Key", "One key per attempt.", required = true)
@@ -201,6 +203,19 @@ class ApiDocsTest {
         this["responses"]!!.jsonObject[status]!!.jsonObject["description"]!!.jsonPrimitive.content
 
     // A public operation needs nothing and answers no 401.
+    private fun assertLimits(read: JsonObject) {
+        val byName = read["parameters"]!!.jsonArray.map { it.jsonObject }
+            .associateBy { it["name"]!!.jsonPrimitive.content }
+        val limit = byName.getValue("limit")["schema"]!!.jsonObject
+        val bounds = listOf("minimum", "maximum").map { limit[it]!!.jsonPrimitive.content.substringBefore('.') }
+        assertEquals(listOf("1", "50"), bounds, "A page size shows its bounds")
+        val tag = byName.getValue("tag")
+        assertEquals("array", tag["schema"]!!.jsonObject["type"]!!.jsonPrimitive.content, "A repeatable parameter")
+        assertEquals("true", tag["explode"]!!.jsonPrimitive.content)
+        val throttled = read["responses"]!!.jsonObject["429"]!!.jsonObject["headers"]!!.jsonObject
+        assertTrue("Retry-After" in throttled, "A throttled read says when to call again")
+    }
+
     private fun assertPublicOperations(document: JsonObject) {
         val webhook = document.operation("/webhooks/items", "post")
         assertEquals(JsonArray(emptyList()), webhook["security"], "A public operation says it needs nothing")
@@ -245,7 +260,8 @@ class ApiDocsTest {
             read["security"],
         )
         val parameters = read["parameters"]!!.jsonArray.map { it.jsonObject["name"]!!.jsonPrimitive.content }.toSet()
-        assertEquals(setOf("id", "view", "limit", "all", "Ostrom-Org", "Idempotency-Key"), parameters)
+        assertEquals(setOf("id", "view", "page", "limit", "tag", "all", "Ostrom-Org", "Idempotency-Key"), parameters)
+        assertLimits(read)
         val headers = read["parameters"]!!.jsonArray.map { it.jsonObject }
             .filter { it["in"]!!.jsonPrimitive.content == "header" }
             .associate { it["name"]!!.jsonPrimitive.content to it["required"]?.jsonPrimitive?.content }

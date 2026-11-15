@@ -25,6 +25,9 @@ private const val PENDING = "Not applied: made with a person's API token (a pers
     "the write opened a confirmation that an owner or an admin confirms on the console within 15 minutes " +
     "(`getGovernanceConfirmation`)."
 
+private const val CONFIRMATIONS = "The person already has 10 governance confirmations waiting " +
+    "(`confirmation_limit`); expired, refused and answered ones do not count."
+
 private const val WORKLOAD_HEADER = "The scheduling class of an inference call in the admission queue " +
     "(`inference.queue.v1`): `interactive` (the default) or `background` (unattended work, `ostrom run " +
     "--workload background`). A hint the caller sets, not a permission: it changes only the order of waiting " +
@@ -256,6 +259,7 @@ private fun ApiCatalog.policyOperations() {
                 HttpStatusCode.Forbidden,
                 "Not an owner or an admin, or a key without `inference:admin` (`forbidden`).",
             )
+            error(HttpStatusCode.TooManyRequests, CONFIRMATIONS)
         }
     }
 }

@@ -11,7 +11,7 @@ import run.ostrom.server.kernel.http.docs.notFound
 import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
 import run.ostrom.server.kernel.http.docs.pathId
-import run.ostrom.server.kernel.http.docs.queryNumber
+import run.ostrom.server.kernel.http.docs.queryLimit
 import run.ostrom.server.kernel.http.docs.queryText
 import io.ktor.http.HttpStatusCode
 
@@ -54,12 +54,12 @@ private fun ApiCatalog.secretListOperations() {
         parameters {
             organizationHeader()
             queryText("after", "The `next` of the previous page; an opaque cursor.")
-            queryNumber("limit", "The page size, 1 to 200 (50 by default); a value outside is brought into " +
-                "it.")
+            queryLimit("The page size, 1 to 200 (50 by default); a larger one is brought down to " +
+                "200.", maximum = 200)
         }
         responses {
             ok<SecretsPageResponse>("A page of secrets; `next` is set when the page is full.")
-            badRequest("A cursor this server did not return (`invalid_request`).")
+            badRequest("A `limit` of 0 or less, or a cursor this server did not return (`invalid_request`).")
             error(HttpStatusCode.Forbidden, "A credential without the scope `secrets:read`, or a device " +
                 "token (`forbidden`).")
             notFound(ORG_NF)

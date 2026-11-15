@@ -73,28 +73,17 @@ jobs:
       OSTROM_STRIPE_E2E_REQUIRED: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # One ostrom-core for the whole run (CS-03): the commit gradle/ostrom-core.ref pins, which the Kotlin library is
-      # built from too. Only a manual run naming core_ref (squash.sh, before it squashes a core PR) checks another one.
-      - name: The ostrom-core commit this run checks against
-        id: core
-        env:
-          CORE_REF: ${{ inputs.core_ref }}
-        run: echo "ref=${CORE_REF:-$(tr -d '[:space:]' < gradle/ostrom-core.ref)}" >> "$GITHUB_OUTPUT"
-      # docs-truth (ostrom-core's tools/docs-truth) and api/contract/served-routes.txt at that commit; moved out of the
-      # workspace, so that no check of this repository scans it.
+      # docs-truth (ostrom-core's tools/docs-truth, since b9e8866 able to read the generated document) and the
+      # telemetry it reads variables from, at a pinned commit; moved out of the workspace, so that no check of this
+      # repository scans it. Move it forward by pull request.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ostrom-hq/ostrom-core
-          ref: ${{ steps.core.outputs.ref }}
+          ref: b9e88660803b24f7b02878a2db2f08c27f0f5f1b # docs-truth --openapi
           ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
           path: docs-truth-core
           persist-credentials: false
-      - name: The README and docs/ cite only routes main serves and variables the server reads (docs-truth)
-        run: |
-          mv docs-truth-core "$RUNNER_TEMP/docs-truth-core"
-          core="$RUNNER_TEMP/docs-truth-core"
-          node "$core/tools/docs-truth/bin/docs-truth.mjs" --routes "$core/api/contract/served-routes.txt" \
-            --tests --source . --source "$core/telemetry" README.md docs
+      - run: mv docs-truth-core "$RUNNER_TEMP/docs-truth-core"
       - uses: ./.github/actions/build-setup
         with:
           core-deploy-key: ${{ secrets.DEPLOY_KEY_CORE }}
@@ -116,6 +105,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # The OpenAPI document generated from the whole server's routes (ApiDocumentPostgresTest, kernel http/docs).
           OSTROM_OPENAPI_OUT: ${{ runner.temp }}/openapi-generated/openapi.json
+      # Every route the README and docs/ cite is in the document this run generated (or is one of the routes it hides:
+      # the document's own two, the probes), and every variable they cite is read by the sources (docs-truth).
+      - name: The README and docs/ cite only routes the server serves and variables it reads (docs-truth)
+        if: success() || failure()
+        run: |
+          core="$RUNNER_TEMP/docs-truth-core"
+          node "$core/tools/docs-truth/bin/docs-truth.mjs" --openapi "$RUNNER_TEMP/openapi-generated/openapi.json" \
+            --tests --source . --source "$core/telemetry" README.md docs
       # The generated document: the API contract, which the api-package job packs as @ostrom-hq/openapi (ostrom-core
       # docs/decisions/0001). Kept on a failure too, to read what a pull request changes in it.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

@@ -9,7 +9,7 @@ import run.ostrom.server.kernel.http.docs.notFound
 import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
 import run.ostrom.server.kernel.http.docs.pathId
-import run.ostrom.server.kernel.http.docs.queryNumber
+import run.ostrom.server.kernel.http.docs.queryLimit
 import run.ostrom.server.kernel.http.docs.queryText
 import run.ostrom.server.kernel.http.docs.rateLimited
 
@@ -49,7 +49,10 @@ private fun ApiCatalog.receiptReadOperations() {
             queryText("subjectKind", "Only receipts of this kind of subject.")
             queryText("subjectId", "Only receipts of this subject.")
             queryText("before", "The cursor of the next page (`next` of the previous one).")
-            queryNumber("limit", "The page size, 1 to 200 (50 by default); a value outside is brought into it.")
+            queryLimit(
+                "The page size, 1 to 200 (50 by default); 400 under 1, a larger one is brought down to 200.",
+                maximum = 200,
+            )
         }
         responses {
             ok<ReceiptPage>("A page of receipts, `next` set when another may follow.")

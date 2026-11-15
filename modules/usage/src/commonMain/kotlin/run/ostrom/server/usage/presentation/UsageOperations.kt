@@ -11,6 +11,7 @@ import run.ostrom.server.kernel.http.docs.notFound
 import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
 import run.ostrom.server.kernel.http.docs.pathId
+import run.ostrom.server.kernel.http.docs.queryLimit
 import run.ostrom.server.kernel.http.docs.queryNumber
 import run.ostrom.server.kernel.http.docs.queryText
 import io.ktor.http.HttpStatusCode
@@ -84,7 +85,7 @@ private fun ApiCatalog.eventOperations() {
         parameters {
             organizationHeader()
             queryText("before", "The `next` of the previous page, or an ISO 8601 time.")
-            queryNumber("limit", "The page size, 1 to 200 (50 by default).")
+            queryLimit("The page size, 1 to 200 (50 by default).", maximum = 200)
         }
         responses {
             ok<UsageEventsPageResponse>("A page of events, `next` set when another may follow.")

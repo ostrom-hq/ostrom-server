@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.automations.domain
 
+import run.ostrom.server.kernel.errors.Pages
 import run.ostrom.server.kernel.sessions.CloudProfileDirectory
 import run.ostrom.server.kernel.sessions.has
 import kotlin.time.Clock
@@ -110,6 +111,9 @@ class ManageAutomationsUseCaseImpl(
             null, caller.memberId -> caller.memberId
             else -> if (caller.admin) query.owner.takeUnless { it == ALL_OWNERS } else throw notAdmin()
         }
+        // A cursor is the id of an automation of the organization's (TeamCode's SqlAutomationStore.list): a forged
+        // one, or another organization's, is refused rather than read as a position.
+        query.before?.let { before -> repository.get(caller.orgId, before) ?: Pages.unknownCursor("before") }
         val items = repository.list(caller.orgId, owner, query.before, limit + 1)
         return AutomationPage(items.take(limit), items.getOrNull(limit)?.let { items[limit - 1].id })
     }

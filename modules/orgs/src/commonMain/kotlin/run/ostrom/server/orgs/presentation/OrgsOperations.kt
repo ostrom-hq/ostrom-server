@@ -11,7 +11,7 @@ import run.ostrom.server.kernel.http.docs.error
 import run.ostrom.server.kernel.http.docs.notFound
 import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.pathId
-import run.ostrom.server.kernel.http.docs.queryNumber
+import run.ostrom.server.kernel.http.docs.queryLimit
 import run.ostrom.server.kernel.http.docs.queryText
 import io.ktor.http.HttpStatusCode
 
@@ -204,7 +204,7 @@ private fun ApiCatalog.memberOperations() {
             "created it."
         parameters {
             pathId("org", ORG_REF)
-            queryNumber("limit", "The most members of the page, 1 to 1000; 1000 without it.")
+            queryLimit("The most members of the page, 1 to 1000; 1000 without it.", maximum = 1000)
             queryText("after", "The `next` of the previous page: the members who joined after this one.")
             queryText("q", "Only the members whose login or name starts with it, whatever the case; 1 to " +
                 "100 characters.")
