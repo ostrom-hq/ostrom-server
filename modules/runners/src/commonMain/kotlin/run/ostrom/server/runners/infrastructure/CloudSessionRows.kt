@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+@file:Suppress("TooManyFunctions") // The columns of a session, one function per group of them.
+
 package run.ostrom.server.runners.infrastructure
 
 import run.ostrom.server.runners.domain.AgentKind
@@ -150,11 +152,7 @@ internal fun toSession(row: ResultRow): CloudSession {
         failure = failureCode?.let {
             SessionFailure(it, row.present(s.failureMessage, s.failureCode), row[s.failureRetryable])
         },
-        limits = SessionLimits(
-            idleTimeoutMinutes = row[s.idleTimeoutMinutes],
-            maxRunMinutes = row[s.maxRunMinutes],
-            restrictedEgress = row[s.restrictedEgress],
-        ),
+        limits = limitsOf(row),
         createdAt = row[s.createdAt],
         updatedAt = row[s.updatedAt],
         executionStartedAt = row[s.executionStartedAt],
@@ -193,6 +191,11 @@ internal fun toSession(row: ResultRow): CloudSession {
         createdBy = createdByOf(row),
         launchId = row[s.launchId],
     )
+}
+
+private fun limitsOf(row: ResultRow): SessionLimits {
+    val s = RunnersSessionsTable
+    return SessionLimits(row[s.idleTimeoutMinutes], row[s.maxRunMinutes], row[s.restrictedEgress])
 }
 
 // Recorded since runners.cloud.onbehalf.v1: an older session has none, nor a row missing either member.
