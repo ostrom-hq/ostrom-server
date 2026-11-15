@@ -280,23 +280,23 @@ object HostedProcessExpansion {
  *
  * @property server The server's name.
  * @property memberId The member of a per-member server's process.
- * @property username That member's login (TeamCode's `username`); null for a shared server's process, a member who
- *   left, or when no login is known.
  * @property launcher npm or pypi.
  * @property packageName The pinned package.
  * @property state Live from the host, else as recorded.
  * @property failure The last failure not yet followed by a successful start.
  * @property status What the host said, when it answered.
+ * @property username That member's login (TeamCode's `username`); null for a shared server's process, a member who
+ *   left, or when no login is known.
  */
 data class HostedProcess(
     val server: String,
     val memberId: Uuid?,
-    val username: String? = null,
     val launcher: String,
     val packageName: String,
     val state: String,
     val failure: String?,
     val status: HostedProcessStatus?,
+    val username: String? = null,
 )
 
 /**
