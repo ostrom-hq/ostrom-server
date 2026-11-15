@@ -69,8 +69,10 @@ private const val ON_BEHALF =
         "an administrator's service key with `cloud:admin`, may name another member; on any other credential it " +
         "must be absent or name the caller (403 `on_behalf_forbidden`). The member must be an active member of " +
         "the organization (422 `invalid_effective_member`); several values or a malformed one are 400 " +
-        "`invalid_on_behalf`. It grants no right of its own: the call acts on that member's sessions with the " +
-        "caller's rights."
+        "`invalid_on_behalf`. It grants no right of its own (TeamCode's `actor()`): on a creation the member " +
+        "becomes the owner; on any other write the session or transfer must be the caller's own, whatever it " +
+        "names (404 otherwise, an administrator's role opens nobody else's), and the member is only journaled as " +
+        "the effective one."
 
 /**
  * The runners module's operations: the cloud agent sessions and their conversation, the ownership transfers, the

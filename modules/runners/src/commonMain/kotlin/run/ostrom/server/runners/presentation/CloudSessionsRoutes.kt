@@ -62,17 +62,17 @@ fun Route.cloudSessionsRoutes(dependencies: CloudSessionsRoutesDependencies) = w
             call.respond(hosts.response(getCloudSession(caller, sessionId(params.id))))
         }
         delete<CloudSessionsApi.Id> { params ->
-            val caller = call.cloudActor(orgResolver, resolveActor)
+            val caller = call.cloudActor(orgResolver, resolveActor).ownSessionsOnly()
             val deleted = changeCloudSession.delete(caller, sessionId(params.id))
             call.respond(HttpStatusCode.Accepted, hosts.response(deleted))
         }
         post<CloudSessionsApi.Id.Pause> { params ->
-            val caller = call.cloudActor(orgResolver, resolveActor)
+            val caller = call.cloudActor(orgResolver, resolveActor).ownSessionsOnly()
             val paused = changeCloudSession.pause(caller, sessionId(params.parent.id))
             call.respond(HttpStatusCode.Accepted, hosts.response(paused))
         }
         post<CloudSessionsApi.Id.Resume> { params ->
-            val caller = call.cloudActor(orgResolver, resolveActor)
+            val caller = call.cloudActor(orgResolver, resolveActor).ownSessionsOnly()
             val resumed = changeCloudSession.resume(caller, sessionId(params.parent.id))
             call.respond(HttpStatusCode.Accepted, hosts.response(resumed))
         }

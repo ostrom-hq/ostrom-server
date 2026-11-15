@@ -21,6 +21,9 @@ import kotlin.uuid.Uuid
  *   server itself, which journals nothing.
  * @property memberAdmin Whether [memberId] is an owner or an admin: [admin] for the caller themselves, the effective
  *   member's role otherwise (a profile's assignment resolves for the owner, TeamCode's create).
+ * @property effectiveMemberId The member the header named, journaled as the effective member: [memberId] on a
+ *   creation; on the other writes (see [ownSessionsOnly]) the call stays on the caller's own sessions and this only
+ *   attributes it (TeamCode's `CloudActor.effectiveMemberId` beside `visible()`).
  */
 data class Caller(
     val orgId: Uuid,
@@ -30,10 +33,18 @@ data class Caller(
     val credentialId: String? = null,
     val principal: AuthenticatedPrincipal? = null,
     val memberAdmin: Boolean = admin,
+    val effectiveMemberId: String = memberId,
 ) {
     /** Whether the request acts for another member than the one who made it. */
     val onBehalf: Boolean get() = memberId != initiatorId
 
     /** Who created a session for this request (TeamCode's `CloudActor.attribution`). */
     val attribution: CloudAttribution get() = CloudAttribution(initiatorId, credentialId, memberId)
+
+    /**
+     * The caller of a write on an existing session or transfer (pause, resume, delete, model, effort, transfers), as
+     * TeamCode's: the session must be the caller's own, whatever `Ostrom-On-Behalf-Of` names ("a role, an
+     * administrator's included, opens nobody else's"); the member it named is only journaled ([effectiveMemberId]).
+     */
+    fun ownSessionsOnly(): Caller = copy(memberId = initiatorId, memberAdmin = admin)
 }

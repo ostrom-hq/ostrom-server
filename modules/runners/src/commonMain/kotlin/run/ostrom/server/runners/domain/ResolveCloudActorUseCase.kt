@@ -7,8 +7,9 @@ import run.ostrom.server.kernel.errors.OstromException
 
 /**
  * Resolves `Ostrom-On-Behalf-Of` for a cloud session write (`runners.cloud.onbehalf.v1`, TeamCode's
- * `CloudSessionService.actor`). The header never grants a right: the call is authorized with the caller's own rights,
- * on the effective member's sessions.
+ * `CloudSessionService.actor`). The header never grants a right: the call is authorized with the caller's own rights.
+ * A creation is the effective member's; any other write stays on the caller's own sessions and only journals the
+ * effective member ([Caller.ownSessionsOnly]).
  */
 interface ResolveCloudActorUseCase {
     /**
@@ -62,7 +63,11 @@ class ResolveCloudActorUseCaseImpl(private val members: TransferRecipients?) : R
         if (target == caller.memberId) return self
         if (!administers(caller, principal)) throw OnBehalfForbiddenException()
         if (target == null || !members.eligible(caller.orgId, target)) throw InvalidEffectiveMemberException()
-        return self.copy(memberId = target, memberAdmin = members.administers(caller.orgId, target))
+        return self.copy(
+            memberId = target,
+            memberAdmin = members.administers(caller.orgId, target),
+            effectiveMemberId = target,
+        )
     }
 
     override suspend fun owner(

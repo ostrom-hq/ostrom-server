@@ -193,10 +193,15 @@ class CloudSessionsOnBehalfPostgresTest {
     }
 
     @Test
-    fun anAdministratorPausesResumesAndDeletesAMembersSession() = onBehalfTest { server ->
-        val id = server.create("bob").body<CloudSessionResponse>().id
-        assertEquals(HttpStatusCode.NotFound, server.write("pause", "dana", id, null).status, "the owner's only")
-        assertEquals(HttpStatusCode.Forbidden, server.write("pause", "alice", id, "bob").status)
+    fun theHeaderAttributesAWriteButOpensNoOtherMembersSession() = onBehalfTest { server ->
+        // TeamCode's visible(): a role, an administrator's included, opens nobody else's session, header or not.
+        val bobs = server.create("bob").body<CloudSessionResponse>().id
+        assertEquals(HttpStatusCode.Forbidden, server.write("pause", "alice", bobs, "bob").status)
+        for (method in listOf("pause", "resume", "delete")) {
+            assertEquals(HttpStatusCode.NotFound, server.write(method, "dana", bobs, "bob").status, method)
+        }
+        // On the caller's own session the header only names the member journaled as the effective one.
+        val id = server.create("dana").body<CloudSessionResponse>().id
         for (method in listOf("pause", "resume", "delete")) {
             assertEquals(HttpStatusCode.Accepted, server.write(method, "dana", id, "bob").status, method)
         }
@@ -205,7 +210,12 @@ class CloudSessionsOnBehalfPostgresTest {
             listOf("cloud.session.paused", "cloud.session.resumed", "cloud.session.deleted"),
             lines.map { it.event },
         )
-        assertTrue(lines.all { it.actor.subjectId == "dana" && it.details["effective_member_id"] == BOB.toString() })
+        assertTrue(
+            lines.all {
+                it.actor.subjectId == "dana" && it.details["effective_member_id"] == BOB.toString() &&
+                    it.details["owner"] == DANA.toString()
+            },
+        )
     }
 
     @Test
@@ -240,13 +250,15 @@ class CloudSessionsOnBehalfPostgresTest {
 
     @Test
     fun aSessionWriteWhoseJournalCannotBeWrittenDoesNotHappen() = onBehalfTest { server ->
-        val id = server.create("bob").body<CloudSessionResponse>().id
+        val id = server.create("dana-cli").body<CloudSessionResponse>().id
         journalFails = true
         assertEquals(HttpStatusCode.InternalServerError, server.create("dana-cli", "bob").status)
         assertEquals(HttpStatusCode.InternalServerError, server.write("pause", "dana-cli", id, "bob").status)
         journalFails = false
-        val listed = server.client.get("/api/v1/cloud/sessions") { bearerAuth("bob") }.body<CloudSessionsResponse>()
-        assertEquals(listOf(id), listed.items.map { it.id }, "the creation was undone")
+        val bobs = server.client.get("/api/v1/cloud/sessions") { bearerAuth("bob") }.body<CloudSessionsResponse>()
+        assertEquals(emptyList(), bobs.items.map { it.id }, "the creation was undone")
+        val listed = server.client.get("/api/v1/cloud/sessions") { bearerAuth("dana") }.body<CloudSessionsResponse>()
+        assertEquals(listOf(id), listed.items.map { it.id })
         assertEquals("running", listed.items.single().desiredStatus, "the pause was undone")
 
         assertEquals(HttpStatusCode.Accepted, server.write("pause", "dana-cli", id, "bob").status)
@@ -254,21 +266,22 @@ class CloudSessionsOnBehalfPostgresTest {
         assertEquals(HttpStatusCode.InternalServerError, server.write("resume", "dana-cli", id, "bob").status)
         assertEquals(HttpStatusCode.InternalServerError, server.write("delete", "dana-cli", id, "bob").status)
         journalFails = false
-        val read = server.client.get("/api/v1/cloud/sessions/$id") { bearerAuth("bob") }.body<CloudSessionResponse>()
+        val read = server.client.get("/api/v1/cloud/sessions/$id") { bearerAuth("dana") }.body<CloudSessionResponse>()
         assertEquals("paused", read.desiredStatus, "neither the resume nor the deletion happened")
         val paused = audit.single { it.event == "cloud.session.paused" }
         assertEquals("dana", paused.actor.subjectId)
         assertEquals(
-            mapOf("effective_member_id" to BOB.toString(), "credential_id" to "pat-dana", "owner" to BOB.toString()),
+            mapOf("effective_member_id" to BOB.toString(), "credential_id" to "pat-dana", "owner" to DANA.toString()),
             paused.details,
         )
     }
 
     @Test
-    fun anAdministratorChangesAMembersModelAndEffort() = onBehalfTest { server ->
-        val id = server.create("bob").body<CloudSessionResponse>().id
-        suspend fun option(kind: String, token: String, onBehalfOf: String, value: String = "opus") =
-            server.client.put("/api/v1/cloud/sessions/$id/$kind") {
+    fun theModelAndTheEffortAreSetOnTheCallersOwnSessionAttributedToTheMemberNamed() = onBehalfTest { server ->
+        val bobs = server.create("bob").body<CloudSessionResponse>().id
+        val id = server.create("dana-cli").body<CloudSessionResponse>().id
+        suspend fun option(kind: String, token: String, onBehalfOf: String, value: String = "opus", on: String = id) =
+            server.client.put("/api/v1/cloud/sessions/$on/$kind") {
                 bearerAuth(token)
                 header(OnBehalfOf.HEADER, onBehalfOf)
                 contentType(ContentType.Application.Json)
@@ -281,6 +294,7 @@ class CloudSessionsOnBehalfPostgresTest {
         val invalid = option("effort", "dana-cli", "ghost", "high")
         assertEquals(HttpStatusCode.UnprocessableEntity, invalid.status)
         assertTrue(OnBehalfOf.INVALID_MEMBER in invalid.bodyAsText())
+        assertEquals(HttpStatusCode.NotFound, option("model", "dana-cli", "bob", on = bobs).status, "bob's own")
         assertEquals("opus", option("model", "dana-cli", "bob").body<CloudSessionResponse>().model)
         assertEquals("high", option("effort", "dana-cli", BOB.toString(), "high").body<CloudSessionResponse>().effort)
 
@@ -289,7 +303,7 @@ class CloudSessionsOnBehalfPostgresTest {
         val details = mapOf(
             "effective_member_id" to BOB.toString(),
             "credential_id" to "pat-dana",
-            "owner" to BOB.toString(),
+            "owner" to DANA.toString(),
         )
         assertTrue(lines.all { it.actor.subjectId == "dana" && it.details == details })
     }

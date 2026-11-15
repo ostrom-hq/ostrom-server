@@ -327,11 +327,14 @@ class CloudTransfersRoutesTest {
         }
     }
 
-    /** `runners.cloud.onbehalf.writes.v1`: an administrator writes a transfer as the member the header names. */
+    /**
+     * `runners.cloud.onbehalf.writes.v1`, as TeamCode's: the header attributes a transfer write to the member it names,
+     * but opens no session or transfer of theirs; the caller must be the owner, the recipient or the former owner.
+     */
     @Test
-    fun anAdministratorAsksAcceptsDeclinesAndCancelsForTheMemberTheHeaderNames() = run {
+    fun theHeaderAttributesATransferWriteButOpensNoOtherMembersSessionOrTransfer() = run {
         val body = """{"toMemberId":"bob"}"""
-        fun path() = "/api/v1/cloud/sessions/${running().id}/transfer"
+        fun path(owner: String = aliceId) = "/api/v1/cloud/sessions/${running(owner).id}/transfer"
         val forbidden = client.sendFor("alice", path(), "bob", "k-0", body)
         assertEquals(HttpStatusCode.Forbidden, forbidden.status)
         assertTrue(OnBehalfOf.FORBIDDEN in forbidden.bodyAsText())
@@ -340,38 +343,42 @@ class CloudTransfersRoutesTest {
         assertTrue(OnBehalfOf.INVALID_MEMBER in ghost.bodyAsText())
         // An agent is refused before the header is read: a transfer write is a person's.
         assertEquals(HttpStatusCode.Forbidden, client.sendFor("x y", path(), "agent", "k-0", body).status)
+        // Alice's session is not carol's, whoever the header names (TeamCode's visible()).
+        assertEquals(HttpStatusCode.NotFound, client.sendFor("alice", path(), "carol-cli", "k-1", body).status)
 
-        // Carol gives alice's session away as alice: her rights, so it is accepted at once, and she asked.
-        val given = client.sendFor("alice", path(), "carol-cli", "k-1", body)
-        assertEquals(HttpStatusCode.Accepted, given.status)
+        // Carol's own session, given away with the header naming alice: her rights, accepted at once, journaled for
+        // alice.
+        val given = client.sendFor("alice", path(carolId), "carol-cli", "k-2", body)
+        assertEquals(HttpStatusCode.Accepted, given.status, given.bodyAsText())
         val requested = transfers.transfers.getValue(Uuid.parse(idOf(given.bodyAsText())))
-        assertEquals(aliceId, requested.fromMemberId)
+        assertEquals(carolId, requested.fromMemberId)
         assertEquals(carolId to carolId, requested.initiatedBy to requested.decidedBy)
         assertEquals(TransferState.ACCEPTED, requested.state)
 
-        // Alice's offers to bob: carol accepts one and declines one as bob, and withdraws one as alice.
-        val outcomes = listOf("accept" to bobId, "decline" to bobId, "cancel" to aliceId).map { (write, member) ->
+        // Alice's offers to bob: carol decides none of them as bob or as alice.
+        for ((write, member) in listOf("accept" to bobId, "decline" to bobId, "cancel" to aliceId)) {
             val offer = client.send(path(), "alice", "k-$write", body)
             val id = idOf(offer.bodyAsText())
             val decided = client.sendFor(member, "/api/v1/cloud/transfers/$id/$write", "carol-cli")
-            assertTrue(decided.status.value in 200..299, "$write ${decided.bodyAsText()}")
-            transfers.transfers.getValue(Uuid.parse(id))
+            assertEquals(HttpStatusCode.NotFound, decided.status, write)
+            assertEquals(TransferState.OFFERED, transfers.transfers.getValue(Uuid.parse(id)).state)
         }
-        assertEquals(
-            listOf(TransferState.ACCEPTED, TransferState.DECLINED, TransferState.CANCELLED),
-            outcomes.map { it.state },
-        )
-        assertTrue(outcomes.all { it.initiatedBy == aliceId && it.decidedBy == carolId })
+
+        // Alice's offers to carol: carol decides them as herself, journaled for the member the header names.
+        for ((write, status) in listOf("accept" to HttpStatusCode.Accepted, "decline" to HttpStatusCode.OK)) {
+            val offer = client.send(path(), "alice", "k-to-carol-$write", """{"toMemberId":"carol"}""")
+            val id = idOf(offer.bodyAsText())
+            val decided = client.sendFor("bob", "/api/v1/cloud/transfers/$id/$write", "carol-cli")
+            assertEquals(status, decided.status, decided.bodyAsText())
+            assertEquals(carolId, transfers.transfers.getValue(Uuid.parse(id)).decidedBy)
+        }
 
         val byCarol = audit.filter { it.actor.subjectId == "carol" }
         assertEquals(
-            listOf("requested", "accepted", "declined", "cancelled").map { "cloud.transfer.$it" },
+            listOf("cloud.transfer.requested", "cloud.transfer.accepted", "cloud.transfer.declined"),
             byCarol.map { it.event },
         )
-        assertEquals(
-            listOf(aliceId, bobId, bobId, aliceId),
-            byCarol.map { it.details["effective_member_id"] },
-        )
+        assertEquals(listOf(aliceId, bobId, bobId), byCarol.map { it.details["effective_member_id"] })
         assertTrue(byCarol.all { it.details["credential_id"] == "pat-carol" })
         assertTrue(audit.filter { it.actor.subjectId == "alice" }.all { it.details["effective_member_id"] == aliceId })
     }

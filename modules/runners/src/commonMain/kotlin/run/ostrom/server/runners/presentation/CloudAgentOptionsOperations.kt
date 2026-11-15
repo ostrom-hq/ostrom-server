@@ -57,8 +57,8 @@ private fun ApiCatalog.agentModelOperation() {
             "`cloud.session.model_changed`, the same model writes nothing), so a paused session starts " +
             "with it; a running conversation agent also gets a `set_model` input, taken at its next turn. " +
             "A terminal session's agent gets it at its next start. 409 `session_not_running` once " +
-            "terminated. With `runners.cloud.onbehalf.writes.v1`, an administrator changes it for the member " +
-            "`Ostrom-On-Behalf-Of` names, journaled with the effective member and the credential. The body is " +
+            "terminated. With `runners.cloud.onbehalf.writes.v1`, `Ostrom-On-Behalf-Of` journals the change for " +
+            "the member it names, on the caller's own session, with the credential. The body is " +
             "at most 64 KiB. $ORG_RESOLUTION"
         parameters {
             onBehalfHeader(writes = true)
