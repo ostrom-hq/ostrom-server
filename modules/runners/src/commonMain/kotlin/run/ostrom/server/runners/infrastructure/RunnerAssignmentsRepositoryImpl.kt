@@ -12,14 +12,22 @@ import run.ostrom.server.runners.domain.Assignment
 import run.ostrom.server.runners.domain.MachineExecutionState
 import run.ostrom.server.runners.domain.MachineReport
 import run.ostrom.server.runners.domain.RunnerAssignmentsRepository
+import org.jetbrains.exposed.v1.core.Column
+import org.jetbrains.exposed.v1.core.CustomFunction
+import org.jetbrains.exposed.v1.core.Expression
 import org.jetbrains.exposed.v1.core.JoinType
 import org.jetbrains.exposed.v1.core.LongColumnType
 import org.jetbrains.exposed.v1.core.Op
+import org.jetbrains.exposed.v1.core.QueryBuilder
 import org.jetbrains.exposed.v1.core.QueryParameter
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.TextColumnType
 import org.jetbrains.exposed.v1.core.UuidColumnType
 import org.jetbrains.exposed.v1.core.alias
+import org.jetbrains.exposed.v1.core.booleanLiteral
+import org.jetbrains.exposed.v1.core.case
+import org.jetbrains.exposed.v1.core.castTo
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.coalesce
 import org.jetbrains.exposed.v1.core.count
@@ -28,6 +36,7 @@ import org.jetbrains.exposed.v1.core.exists
 import org.jetbrains.exposed.v1.core.greater
 import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.intLiteral
+import org.jetbrains.exposed.v1.core.isDistinctFrom
 import org.jetbrains.exposed.v1.core.isNotNull
 import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.core.neq
@@ -38,6 +47,8 @@ import org.jetbrains.exposed.v1.core.statements.StatementBuilder
 import org.jetbrains.exposed.v1.core.statements.UpdateStatement
 import org.jetbrains.exposed.v1.core.vendors.ForUpdateOption
 import org.jetbrains.exposed.v1.core.wrapAsExpression
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.jetbrains.exposed.v1.jdbc.Query
 import org.jetbrains.exposed.v1.jdbc.select
@@ -77,18 +88,11 @@ class RunnerAssignmentsRepositoryImpl(private val database: JdbcDatabase) : Runn
 
     override suspend fun exchange(orgId: Uuid, runnerId: Uuid, report: MachineReport): List<Assignment> =
         database.inOrg(orgId) {
-            // What it reports, whatever its history; an execution handed over that it no longer has is missing. The
-            // runner's rows are locked while they are read, so that a stop or a delivery cannot slip between the
-            // reading and the write; only the rows that change are written.
+            // What it reports, whatever its history; an execution handed over that it no longer has is missing. One
+            // set-based statement writes only the rows that change, so no row is locked for a heartbeat that changes
+            // nothing.
             val a = RunnersAssignments
-            held(orgId, runnerId).forEach { row ->
-                val key = row[a.sessionId] to row[a.epoch]
-                val state = stateAfter(row, report.executions[key])
-                val holds = key.first in report.workspaces
-                if (state != row[a.state] || holds != row[a.holdsWorkspace]) {
-                    write { assignmentReport(orgId, key.first, key.second, state, holds) }
-                }
-            }
+            write { assignmentReport(orgId, runnerId, report) }
             // One waiting execution at a time, the oldest, so that waiting work spreads over the online runners.
             assignmentWaiting(orgId, runnerId).firstOrNull()?.let { waiting ->
                 write { assignmentTake(orgId, runnerId, waiting[a.sessionId], waiting[a.epoch]) }
@@ -143,26 +147,6 @@ internal fun assignments(): Query {
             a.sessionId, a.epoch, a.runnerId, a.state, a.deliveredAt, a.stoppedAt, a.droppedAt, r.lastSeenAt,
             SUPERSEDED,
         )
-}
-
-/** The state a runner's report leaves an execution in: the reported one, `missing` when handed over, else kept. */
-private fun stateAfter(row: ResultRow, reported: MachineExecutionState?): String? {
-    val a = RunnersAssignments
-    return when {
-        reported != null -> reported.wire
-        row[a.deliveredAt] != null && row[a.stoppedAt] == null -> MachineExecutionState.MISSING.wire
-        else -> row[a.state]
-    }
-}
-
-/** The runner's executions, locked in key order for the report that follows. */
-private fun JdbcTransaction.held(orgId: Uuid, runnerId: Uuid): List<ResultRow> {
-    val a = RunnersAssignments
-    return a.select(a.sessionId, a.epoch, a.state, a.deliveredAt, a.stoppedAt, a.holdsWorkspace)
-        .where { (a.orgId eq orgId) and (a.runnerId eq runnerId) }
-        .orderBy(a.sessionId to SortOrder.ASC, a.epoch to SortOrder.ASC)
-        .forUpdate()
-        .toList()
 }
 
 /** Whether runner `r` holds fewer executions not stopped than the capacity it declared (none: no limit). */
@@ -241,18 +225,56 @@ internal fun StatementBuilder.assignmentForget(orgId: Uuid, sessionId: Uuid): De
         (RunnersAssignments.orgId eq orgId) and (RunnersAssignments.sessionId eq sessionId)
     }
 
-/** What a runner reports of one execution: the state it is left in, and whether the runner holds the workspace. */
-internal fun StatementBuilder.assignmentReport(
-    orgId: Uuid,
-    sessionId: Uuid,
-    epoch: Long,
-    state: String?,
-    holds: Boolean,
-): UpdateStatement {
+/**
+ * What a runner reports, for its executions that differ: the state it reports, or `missing` for an execution handed
+ * over and not stopped that it no longer reports; whether it holds each session's workspace.
+ */
+internal fun StatementBuilder.assignmentReport(orgId: Uuid, runnerId: Uuid, report: MachineReport): UpdateStatement {
     val a = RunnersAssignments
-    return a.update({ (a.orgId eq orgId) and (a.sessionId eq sessionId) and (a.epoch eq epoch) }) {
+    // The report as two JSON documents, read per row: `{session: {epoch: state}}` and `{session: true}`.
+    val executions = buildJsonObject {
+        report.executions.entries.groupBy({ it.key.first }) { it.key.second to it.value }.forEach { (session, found) ->
+            put(session.toString(), buildJsonObject { found.forEach { (epoch, state) -> put("$epoch", state.wire) } })
+        }
+    }.toString()
+    val workspaces = buildJsonObject { report.workspaces.forEach { put(it.toString(), true) } }.toString()
+    val reported = jsonText(executions, a.sessionId, a.epoch)
+    val state = case().When(reported.isNotNull(), reported)
+        .When(a.deliveredAt.isNotNull() and a.stoppedAt.isNull(), reportedState(MachineExecutionState.MISSING))
+        .Else(a.state)
+    val holds = case().When(jsonText(workspaces, a.sessionId).isNotNull(), booleanLiteral(true))
+        .Else(booleanLiteral(false))
+    return a.update(
+        {
+            (a.orgId eq orgId) and (a.runnerId eq runnerId) and
+                (a.state.isDistinctFrom(state) or (a.holdsWorkspace neq holds))
+        },
+    ) {
         it[a.state] = state
         it[holdsWorkspace] = holds
+    }
+}
+
+/** The text at [key] (then [inner]) in the JSON document [json], NULL where there is none. */
+private fun jsonText(json: String, key: Column<*>, inner: Column<*>? = null): Expression<String?> {
+    val outer = key.castTo(TextColumnType())
+    return if (inner == null) {
+        CustomFunction("jsonb_extract_path_text", TextColumnType(), Jsonb(json), outer)
+    } else {
+        CustomFunction("jsonb_extract_path_text", TextColumnType(), Jsonb(json), outer, inner.castTo(TextColumnType()))
+    }
+}
+
+/** A state as a bound value, typed like the column it is compared to. */
+private fun reportedState(state: MachineExecutionState): Expression<String?> =
+    QueryParameter(state.wire, TextColumnType().apply { nullable = true })
+
+/** A JSON document bound as a value and read as `jsonb`. */
+private class Jsonb(private val json: String) : Expression<String>() {
+    override fun toQueryBuilder(queryBuilder: QueryBuilder) = queryBuilder {
+        append("CAST(")
+        append(QueryParameter(json, TextColumnType()))
+        append(" AS jsonb)")
     }
 }
 
