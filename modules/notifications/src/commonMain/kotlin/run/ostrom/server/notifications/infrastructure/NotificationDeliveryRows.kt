@@ -14,7 +14,8 @@ import kotlin.uuid.Uuid
 
 /**
  * Writes a new pending row of [delivery]: a member's notification keeps its wait and session, an approval its
- * request, gate and approver (kind [ApprovalRules.KIND], or [ApprovalRules.DECIDED_KIND] with the status in the body); the other's columns stay null.
+ * request, gate and approver (kind [ApprovalRules.KIND], or [ApprovalRules.DECIDED_KIND] with the status in the
+ * body); the other's columns stay null.
  *
  * @param orgId The organization.
  * @param delivery The delivery.
