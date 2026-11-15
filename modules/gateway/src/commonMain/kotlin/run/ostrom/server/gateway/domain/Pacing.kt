@@ -88,15 +88,12 @@ enum class SlowDownLevel(val minimumAffordableShare: Double, val interval: Durat
     }
 }
 
+/** The paces from the loosest to the strictest. */
+private val PACE_STRICTNESS = listOf(Pace.CAN_INCREASE, Pace.NORMAL, Pace.UNKNOWN, Pace.SLOW_DOWN, Pace.PAUSE)
+
 /** Tightening first: a higher pace, then a longer interval, then fewer permitted requests (zero is unlimited). */
 val PACING_STRICTNESS: Comparator<PacingAdvice> = compareBy<PacingAdvice> {
-    when (it.pace) {
-        Pace.CAN_INCREASE -> 0
-        Pace.NORMAL -> 1
-        Pace.UNKNOWN -> 2
-        Pace.SLOW_DOWN -> 3
-        Pace.PAUSE -> 4
-    }
+    PACE_STRICTNESS.indexOf(it.pace)
 }.thenBy { it.minInterval }.thenByDescending { if (it.maxConcurrent <= 0) Int.MAX_VALUE else it.maxConcurrent }
 
 /** The tightest enabled limit, or 0 (unlimited) when none applies (TeamCode's `concurrencyCeiling`). */

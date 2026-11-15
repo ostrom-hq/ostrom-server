@@ -105,7 +105,8 @@ fun Route.pacingRoutes(dependencies: PacingRoutesDependencies) = with(dependenci
             val input = call.receive<DirectiveClaimRequestDto>()
             val session = call.ownSession(input.sessionId)
             val claim = directives.claim(caller, session, DeliveryStage.named(input.stage), call.tokenId())
-            call.respond(DirectiveClaimDto(claim?.directive?.toDto(), claim?.claimId))
+            val answer = claim?.let { DirectiveClaimDto(it.directive.toDto(), it.claimId) }
+            call.respond(answer ?: DirectiveClaimDto(null, null))
         }
         post<DirectiveReceiptApi> {
             val caller = call.guided(callers)

@@ -150,7 +150,7 @@ class UpdateDirectivesUseCaseImpl(
         }
         val decision = hysteresis.decide(memory, advice, now)
         // The same advice in the same context keeps its id and creation; anything else is a new advice.
-        val kept = previous?.directive?.takeIf { it.advice == decision.advice && previous.contextKey == key }
+        val kept = previous?.let { p -> p.directive.takeIf { it.advice == decision.advice && p.contextKey == key } }
             ?: AgentDirective(Uuid.random().toString(), context.member.toString(), decision.advice, now, now)
         val directive = kept.copy(expiresAt = now + DirectiveRepository.EXPIRY)
         return DirectiveWrite(context.member, scope, directive, key, decision.recovery)

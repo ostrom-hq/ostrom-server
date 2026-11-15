@@ -122,6 +122,9 @@ class PacingPostgresTest {
         assertFailsWith<DirectiveExpiredException> {
             directives.acknowledge(Gw.orgA, ada, "gone", DeliveryStage.EMITTED_TO_HOOK, null, null, "tok")
         }
+        // The member-wide advice is acknowledged without a claim.
+        val wideId = directives.stored(Gw.orgA).getValue(ada to "").directive.id
+        directives.acknowledge(Gw.orgA, ada, wideId, DeliveryStage.RECEIVED_BY_CLI, null, null, "tok")
         // A new advice is delivered again.
         val next = write(sessionDigest("s1"))
         directives.save(Gw.orgA, listOf(next))
