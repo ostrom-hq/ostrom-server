@@ -585,7 +585,7 @@ class DeliverNotificationsUseCaseTest {
             val unread = answer.copy(id = Uuid.random())
             deliveries.due[orgA] = mutableListOf(unread)
             deliveries.failingPendingReads = true
-            assertEquals(0, useCase(FakeJournal(), CountingWaits(emptyList()), deliveries, emptyList())() - 1)
+            assertEquals(0, useCase(FakeJournal(), CountingWaits(emptyList()), deliveries, emptyList())())
             assertEquals(emptyList(), answers)
             assertEquals(null, deliveries.recorded[unread.id])
             deliveries.failingPendingReads = false
