@@ -417,18 +417,29 @@ data class TokenResponse(
 data class TokensResponse(val tokens: List<TokenResponse>)
 
 /**
- * A signed-in browser session (the contract's `AuthSession`).
+ * One of the person's sign-ins (the contract's `AuthSession`, TeamCode's `AuthSessionView`): a browser session, or a
+ * token the CLI or the phone app signed in with.
  *
- * @property id The session id.
+ * @property id The session id (a browser session's, or the token's).
+ * @property name `Web console` for a browser session; the device's name for a CLI token of a registered device; the
+ *   token's name otherwise.
+ * @property deviceId The registered device (`devices.v1`) of a token; absent for a browser session.
  * @property createdAt When it started (ISO 8601).
- * @property lastSeenAt When it was last used (ISO 8601, precise to five minutes).
+ * @property lastSeenAt When it was last used (ISO 8601, precise to five minutes); its start when it never was.
  * @property current Whether it is the session making the request.
  */
 @Serializable
-data class AuthSessionResponse(val id: String, val createdAt: String, val lastSeenAt: String, val current: Boolean)
+data class AuthSessionResponse(
+    val id: String,
+    val createdAt: String,
+    val lastSeenAt: String,
+    val current: Boolean,
+    val name: String? = null,
+    val deviceId: String? = null,
+)
 
 /**
- * The person's live browser sessions (`GET /api/v1/auth/sessions`).
+ * The person's live sign-ins (`GET /api/v1/auth/sessions`): browser sessions, CLI and phone tokens.
  *
  * @property items The sessions, the last used first.
  */

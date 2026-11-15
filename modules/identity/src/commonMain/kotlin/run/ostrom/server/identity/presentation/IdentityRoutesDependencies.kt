@@ -2,6 +2,7 @@
 package run.ostrom.server.identity.presentation
 
 import run.ostrom.server.identity.domain.AnswerDeviceAuthorizationUseCase
+import run.ostrom.server.identity.domain.AuthSessionsOfUserUseCase
 import run.ostrom.server.identity.domain.CreatePersonalTokenUseCase
 import run.ostrom.server.identity.domain.EndWebSessionUseCase
 import run.ostrom.server.identity.domain.GetDeviceAuthorizationUseCase
@@ -13,7 +14,6 @@ import run.ostrom.server.identity.domain.RevokeTokenUseCase
 import run.ostrom.server.identity.domain.RotateTokenUseCase
 import run.ostrom.server.identity.domain.SecretHasher
 import run.ostrom.server.identity.domain.StartDeviceAuthorizationUseCase
-import run.ostrom.server.identity.domain.WebSessionsOfUserUseCase
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.SignOutListener
 import run.ostrom.server.kernel.settings.InstanceAdministrators
@@ -35,7 +35,7 @@ import run.ostrom.server.kernel.settings.NoInstanceAdministrators
  * @property pollDeviceAuthorization Polls it.
  * @property getDeviceAuthorization Shows it to the user.
  * @property answerDeviceAuthorization Approves or denies it.
- * @property webSessions Lists and ends the person's browser sessions.
+ * @property authSessions Lists and ends the person's sign-ins (browser sessions, CLI and phone tokens).
  * @property signOutListeners Told after a sign-out (the phones registered with the credential are dropped).
  * @property orgResolver The organization `/me` shows when the request names one in `Ostrom-Org`.
  * @property instanceAdmins Whether `/me`'s person administers the instance (the admin module's).
@@ -54,7 +54,7 @@ data class IdentityRoutesDependencies(
     val pollDeviceAuthorization: PollDeviceAuthorizationUseCase,
     val getDeviceAuthorization: GetDeviceAuthorizationUseCase,
     val answerDeviceAuthorization: AnswerDeviceAuthorizationUseCase,
-    val webSessions: WebSessionsOfUserUseCase,
+    val authSessions: AuthSessionsOfUserUseCase,
     val signOutListeners: List<SignOutListener>,
     val orgResolver: PrincipalOrgResolver,
     val instanceAdmins: InstanceAdministrators = NoInstanceAdministrators(),
