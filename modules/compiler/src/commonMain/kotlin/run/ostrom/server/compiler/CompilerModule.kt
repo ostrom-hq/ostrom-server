@@ -6,6 +6,8 @@ import run.ostrom.server.compiler.domain.repositories.CompilerSettingsRepository
 import run.ostrom.server.compiler.domain.usecases.CompilerSettingsUseCase
 import run.ostrom.server.compiler.domain.usecases.CompilerSettingsUseCaseImpl
 import run.ostrom.server.compiler.infrastructure.PostgresCompilerSettingsRepository
+import run.ostrom.server.compiler.presentation.compilerOperations
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.compiler.domain.repositories.CompilerRepository
 import run.ostrom.server.compiler.domain.repositories.WorkflowSettingsRepository
@@ -68,6 +70,8 @@ import org.koin.dsl.module
  */
 object CompilerModule : ServerModule {
     override val name: String = "compiler"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { compilerOperations() }
 
     override val koinModule: Module = module {
         single<CompilerRepository> { PostgresCompilerRepository(get()) }

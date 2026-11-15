@@ -66,6 +66,7 @@ import run.ostrom.server.receipts.ReceiptsModule
 import run.ostrom.server.receipts.domain.usecases.GetReceiptUseCase
 import run.ostrom.server.testing.Contract
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.call.body
@@ -264,6 +265,11 @@ class CompilerPostgresTest {
         val gate = node("g", GATE, label = "Deploy", approvers = listOf("rev-b"), actions = listOf(deploy))
         val workflow = workflow("deploys", listOf(node("t", TRIGGER, label = "deploy"), gate), chain("t", "g"))
         return PackageCompiler.json.encodeToJsonElement(Workflow.serializer(), workflow).jsonObject
+    }
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = compilerTest { server ->
+        server.assertApiCatalogue(CompilerModule)
     }
 
     // PARCOURS 3.3: the organization's view left out a gate limited to one repository (`covers(repos, null)`).

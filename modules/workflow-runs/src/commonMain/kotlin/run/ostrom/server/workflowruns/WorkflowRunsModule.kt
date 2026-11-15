@@ -4,6 +4,7 @@ package run.ostrom.server.workflowruns
 import run.ostrom.core.api.models.ServerFeatures
 import run.ostrom.server.gates.domain.services.GateCheckProofs
 import run.ostrom.server.kernel.database.SchemaMigration
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.sessions.CloudProfileDirectory
 import run.ostrom.server.todos.domain.TodosRepository
@@ -77,6 +78,7 @@ import run.ostrom.server.workflowruns.infrastructure.RunsGateCheckProofs
 import run.ostrom.server.workflowruns.infrastructure.SessionsRunSessions
 import run.ostrom.server.workflowruns.infrastructure.WorkflowRunsMigrations
 import run.ostrom.server.workflowruns.presentation.WorkflowRunsRoutesDependencies
+import run.ostrom.server.workflowruns.presentation.workflowRunsOperations
 import run.ostrom.server.workflowruns.presentation.workflowRunsRoutes
 import io.ktor.server.routing.Route
 import kotlinx.coroutines.CoroutineScope
@@ -98,6 +100,8 @@ import org.koin.dsl.module
  */
 object WorkflowRunsModule : ServerModule {
     override val name: String = "workflow-runs"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { workflowRunsOperations() }
 
     override val koinModule: Module = module {
         single<WorkflowRunsRepository> { PostgresWorkflowRunsRepository(get()) }
