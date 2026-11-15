@@ -122,7 +122,12 @@ class RemoteSessionsTest {
         assertEquals(
             AgentKind.CLAUDE,
             RemoteSessionRules.validateRemote(
-                draft.copy(deviceId = "d", folderId = "f", resumeSessionId = "r", directoryName = null),
+                draft.copy(
+                    deviceId = "d",
+                    folderId = "f",
+                    resumeSessionId = "0f3c2b1a-9d8e-4c7b-a6f5-e4d3c2b1a090",
+                    directoryName = null,
+                ),
             ),
         )
         assertEquals(AgentKind.CLAUDE, RemoteSessionRules.validateRemote(draft.copy(permissionMode = "bypass")))

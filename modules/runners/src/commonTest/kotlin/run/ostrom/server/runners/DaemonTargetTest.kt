@@ -101,7 +101,9 @@ class DaemonTargetTest {
     @Test
     fun aConversationIsContinuedOnlyByAClaudeSessionThroughADaemonThatListsThem() = runTest {
         val resume = draft.copy(resumeSessionId = CONVERSATION)
-        refusal("invalid_resume") { create(alice, browser, resume.copy(deviceId = null, directoryName = "ostrom")) }
+        refusal("invalid_resume") {
+            create(alice, browser, resume.copy(deviceId = null, folderId = null, directoryName = "ostrom"))
+        }
         refusal("invalid_resume") { create(alice, browser, resume.copy(resumeSessionId = "NOT-A-UUID")) }
         refusal("resume_unsupported") { create(alice, browser, resume.copy(agent = "codex")) }
         online()
