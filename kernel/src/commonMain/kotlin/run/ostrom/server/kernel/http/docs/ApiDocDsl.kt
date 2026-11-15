@@ -166,26 +166,24 @@ internal fun commonResponses(operation: ApiOperation, access: ApiAccess): Operat
         val specific = declared[status.value]
         return if (specific.isNullOrBlank()) shared[0].uppercase() + shared.substring(1) else "$specific Also: $shared"
     }
+
+    // A status the entry declares keeps its own body (an error in a provider's shape, [anyJson]): Ktor merges the two
+    // descriptions of one status, so only the text is added; otherwise the shared case in the envelope.
+    fun Responses.Builder.shared(status: HttpStatusCode, case: String) {
+        val description = text(status, case)
+        if (status.value in declared) status { this.description = description } else error(status, description)
+    }
     return {
         responses {
             if (own.requestBody != null) {
-                error(
-                    HttpStatusCode.BadRequest,
-                    text(HttpStatusCode.BadRequest, "the body is not the expected JSON object (`invalid_request`).")
-                )
+                shared(HttpStatusCode.BadRequest, "the body is not the expected JSON object (`invalid_request`).")
             }
             if (!access.public) {
-                error(
+                shared(
                     HttpStatusCode.Unauthorized,
-                    text(
-                        HttpStatusCode.Unauthorized,
-                        "no credential, or an unknown, expired or revoked one (`unauthorized`).",
-                    ),
+                    "no credential, or an unknown, expired or revoked one (`unauthorized`).",
                 )
-                error(
-                    HttpStatusCode.Forbidden,
-                    text(HttpStatusCode.Forbidden, "the credential may not call this operation (`forbidden`)."),
-                )
+                shared(HttpStatusCode.Forbidden, "the credential may not call this operation (`forbidden`).")
             }
             if (HttpStatusCode.InternalServerError.value !in declared) {
                 error(HttpStatusCode.InternalServerError, "An unexpected server error (`internal_error`). Retry later.")

@@ -13,7 +13,8 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
- * A list operation of the contract: its page size, when it declares `limit`, and its cursors (`after`, `before`).
+ * A list operation of the server's generated document: its page size, when it declares `limit`, and its cursors
+ * (`after`, `before`).
  *
  * @property operation The operation.
  * @property maximum The `maximum` of its `limit`, or null.
@@ -33,14 +34,14 @@ internal object ListOperations {
     val CURSORS = listOf("after", "before")
 
     /**
-     * The `served` GET operations that answer a list: named `list…`, paged (`limit`, `after`, `before`), or answering
+     * The GET operations that answer a list: named `list…`, paged (`limit`, `after`, `before`), or answering
      * an array or an object with `items`. A single resource (the path ends with a parameter) is not a list, nor is an
      * operation without a JSON answer (the event feed's stream, which never ends).
      *
      * @param contract The contract.
      * @return The list operations, in the contract's order.
      */
-    fun of(contract: Contract): List<ListOperation> = contract.operations.served
+    fun of(contract: Contract): List<ListOperation> = contract.operations.all
         .filter { it.method == "GET" && !it.path.endsWith("}") && it.isList(contract.schema) }
         .map { operation ->
             val limit = operation.query["limit"]

@@ -1,33 +1,29 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.testing
 
-import run.ostrom.server.kernel.config.ConfigSource
+import run.ostrom.server.kernel.http.docs.ApiDocs
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.OutgoingContent
-import io.ktor.http.isSuccess
 import io.ktor.server.application.ApplicationPlugin
 import io.ktor.server.application.createApplicationPlugin
 import io.ktor.server.application.hooks.ResponseBodyReadyForSend
 import io.ktor.server.request.httpMethod
 import io.ktor.server.request.path
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.io.buffered
-import kotlinx.io.files.Path
-import kotlinx.io.files.SystemFileSystem
-import kotlinx.io.readString
-import kotlinx.io.writeString
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
-import kotlin.random.Random
 import kotlin.test.fail
 
 /**
- * The ostrom-core contract a test run checks the server's answers against.
+ * The contract a test server's answers are checked against: the server's own OpenAPI document, generated from its
+ * routing tree and its modules' catalogues ([ApiDocs], ostrom-core docs/decisions/0001), the one `@ostrom-hq/openapi`
+ * publishes.
  *
  * @property schema Its schemas.
  * @property operations Its operations.
@@ -35,34 +31,27 @@ import kotlin.test.fail
 class Contract(val schema: ContractSchema, val operations: ContractOperations) {
     /** Where the contract comes from. */
     companion object {
-        // Each contract file read, once per test process.
-        private val loaded = mutableMapOf<String, Contract>()
+        // Each document built, once per test process and set of routes (ApiDocs.signature).
+        private val generated = mutableMapOf<String, Contract>()
 
         /**
-         * The contract CI gives (`OSTROM_CONTRACT_OPENAPI`, the pinned ostrom-core's `api/openapi.yaml` as JSON), read
-         * once per test process; null where none is given (a local run, the native job), unless
-         * `OSTROM_CONTRACT_REQUIRED` is `true`, where a missing contract fails instead of skipping.
+         * The contract of a server: its generated document, built once per test process for each set of routes.
          *
-         * @param environment The test's configuration.
-         * @return The contract, or null.
+         * @param docs The server's document.
+         * @return The contract.
          */
-        fun from(environment: ConfigSource): Contract? {
-            val path = environment["OSTROM_CONTRACT_OPENAPI"]
-            check(path != null || environment["OSTROM_CONTRACT_REQUIRED"] != "true") {
-                "OSTROM_CONTRACT_REQUIRED is true but OSTROM_CONTRACT_OPENAPI is not set."
-            }
-            return path?.let { file -> loaded.getOrPut(file) { read(file) } }
+        fun of(docs: ApiDocs): Contract = synchronized(generated) {
+            generated.getOrPut(docs.signature()) { parse(docs.document()) }
         }
 
         /**
-         * The contract in a file.
+         * The contract an OpenAPI document describes.
          *
-         * @param file `api/openapi.yaml` as JSON.
+         * @param text The document, as JSON.
          * @return The contract.
          */
-        fun read(file: String): Contract {
-            val document = SystemFileSystem.source(Path(file)).buffered().use { it.readString() }
-                .let { Json.parseToJsonElement(it).jsonObject }
+        fun parse(text: String): Contract {
+            val document = Json.parseToJsonElement(text).jsonObject
             val schema = ContractSchema(document)
             return Contract(schema, ContractOperations(schema, document))
         }
@@ -77,29 +66,31 @@ class Contract(val schema: ContractSchema, val operations: ContractOperations) {
  * @property violation What differs.
  */
 data class Drift(val operation: String, val status: Int, val violation: Violation) {
-    /** The same drift whatever the item of a list, as [KnownDrifts] lists it: `getGateCatalog 200 $.x MISSING`. */
+    /** The same drift whatever the item of a list: `getGateCatalog 200 $.x MISSING`. */
     val key: String get() = "$operation $status ${violation.key}"
 
     override fun toString(): String = "$operation $status $violation"
 }
 
 /**
- * Watches every answer of a test server and checks each JSON answer of a `served` operation against the contract
- * (statuses, required and undeclared properties, types). [finish] writes what it saw for the coverage check
- * (`scripts/check-contract-coverage.py`) and fails on a drift [KnownDrifts] does not list. Without a contract it
- * watches nothing.
+ * Watches every answer of a test server and checks each JSON answer of an operation of the server's generated document
+ * against it (statuses, required and undeclared properties, types): the catalogue's `ok<T>()`, `body<T>()` and errors
+ * must be what the routes really answer. [finish] fails on any drift. An operation the document leaves undescribed (no
+ * responses) is not checked: ApiDocumentPostgresTest fails on it. Without a contract it watches nothing. When the
+ * contract cannot be built, the answers go through unchecked and [finish] fails once with the reason.
  *
- * @param contract The contract, or null.
- * @param known The drifts already known, each waiting for its fix.
- * @param reports Where [finish] appends what it saw, one file per test process.
+ * @param contract The contract, read at the first answer (the document is built once the routes are mounted), or null.
  */
-class ContractObserver(
-    private val contract: Contract?,
-    private val known: Set<String> = KnownDrifts.drifts.keys,
-    private val reports: String = REPORTS,
-) {
+class ContractObserver(contract: () -> Contract?) {
+    /**
+     * An observer of a contract known in advance.
+     *
+     * @param contract The contract, or null.
+     */
+    constructor(contract: Contract?) : this({ contract })
+
     private val lock = Mutex()
-    private val seen = mutableSetOf<String>()
+    private val contract by lazy { load(contract) }
     private val drifts = mutableListOf<Drift>()
 
     /** The plugin that hands every answer to [observe]; a streamed one (no bytes in hand) is left aside. */
@@ -127,34 +118,26 @@ class ContractObserver(
      * @param body The answer's bytes, empty when none.
      */
     suspend fun observe(method: String, path: String, status: Int, type: ContentType?, body: ByteArray) {
-        val contract = contract ?: return
-        val operation = contract.operations.match(method, path)?.takeIf { it.served } ?: return
+        val contract = (contract as? Loaded.Built ?: return).contract
+        val operation = contract.operations.match(method, path)?.takeIf { it.responses.isNotEmpty() } ?: return
         val found = violations(contract.schema, operation, status, type, body)
-        lock.withLock {
-            drifts += found.map { Drift(operation.id, status, it) }
-            val success = HttpStatusCode.fromValue(status).isSuccess()
-            if (success && operation.response(status)?.json != null && body.isNotEmpty()) {
-                seen += operation.id
-            }
-        }
+        if (found.isNotEmpty()) lock.withLock { drifts += found.map { Drift(operation.id, status, it) } }
     }
 
-    /**
-     * Writes what this server saw to the reports, then fails on every drift [KnownDrifts] does not list.
-     */
+    /** Fails when the contract could not be built, else on every drift met, one line per kind of drift. */
     suspend fun finish() {
-        val (operations, found) = lock.withLock { seen.toSet() to drifts.toList() }
-        if (contract != null) {
-            val lines = operations.map { "seen $it" } + found.map { "drift ${it.key} | $it" }
-            SystemFileSystem.createDirectories(Path(reports))
-            SystemFileSystem.sink(Path(reports, FILE), append = true).buffered()
-                .use { sink -> lines.forEach { sink.writeString("$it\n") } }
+        val failed = contract as? Loaded.Failed
+        if (failed != null) {
+            fail(
+                "The server's OpenAPI document could not be built, so no answer was checked: ${failed.error}",
+                failed.error,
+            )
         }
-        val unknown = found.filter { it.key !in known }.distinctBy { it.key }
+        val unknown = lock.withLock { drifts.toList() }.distinctBy { it.key }
         if (unknown.isNotEmpty()) {
             fail(
-                "The server's answers drift from the ostrom-core contract (fix the server, or the contract by an " +
-                    "additive change; list a drift waiting for its fix in KnownDrifts):\n" +
+                "The server's answers drift from its generated OpenAPI document (fix the route, or its entry in the " +
+                    "module's presentation/<X>Operations.kt):\n" +
                     unknown.joinToString("\n") { "${it.key}  ($it)" },
             )
         }
@@ -167,7 +150,7 @@ class ContractObserver(
         type: ContentType?,
         body: ByteArray,
     ): List<Violation> {
-        // A 500 is the unforeseen (ENG-007): no operation declares it, its body is still the contract's ApiError.
+        // A 500 is the unforeseen (ENG-007): its body is the ApiError envelope even where no operation declares it.
         val response = operation.response(status) ?: UNFORESEEN.takeIf { status == INTERNAL }
         val json = type?.match(ContentType.Application.Json) == true
         val declared = response?.json
@@ -204,11 +187,24 @@ class ContractObserver(
 
     private fun body(detail: String) = Violation("$", DriftKind.BODY, detail)
 
+    // Builds the contract once; a failure is kept for finish instead of failing every answer with a 500.
+    private fun load(contract: () -> Contract?): Loaded = try {
+        contract()?.let { Loaded.Built(it) } ?: Loaded.None
+    } catch (error: CancellationException) {
+        throw error
+    } catch (error: Exception) {
+        Loaded.Failed(error)
+    }
+
+    // What the first answer found: a contract, none, or the reason it could not be built.
+    private sealed interface Loaded {
+        data object None : Loaded
+
+        data class Built(val contract: Contract) : Loaded
+
+        data class Failed(val error: Exception) : Loaded
+    }
 }
 
-private const val REPORTS = "build/reports/contract"
 private const val INTERNAL = 500
 private val UNFORESEEN = ContractResponse(JsonObject(mapOf("\$ref" to JsonPrimitive("#/components/schemas/ApiError"))))
-
-// One file per test process: the module's test tasks never write to the same one.
-private val FILE = "observed-${Random.nextLong().toULong()}.txt"

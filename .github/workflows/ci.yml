@@ -71,9 +71,6 @@ jobs:
       OSTROM_STRIPE_MOCK_REQUIRED: 'true'
       OSTROM_STRIPE_E2E_KEY: ${{ secrets.STRIPE_TEST_KEY }}
       OSTROM_STRIPE_E2E_REQUIRED: 'true'
-      # The contract tests (ContractSchema) compare real answers with the pinned ostrom-core's schemas, written as JSON by
-      # the contract step below; they fail instead of being skipped here.
-      OSTROM_CONTRACT_REQUIRED: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # One ostrom-core for the whole run (CS-03): the commit gradle/ostrom-core.ref pins, which the Kotlin library is
@@ -98,24 +95,6 @@ jobs:
           core="$RUNNER_TEMP/docs-truth-core"
           node "$core/tools/docs-truth/bin/docs-truth.mjs" --routes "$core/api/contract/served-routes.txt" \
             --tests --source . --source "$core/telemetry" README.md docs
-      # The contract at that ostrom-core commit against the routes this server mounts, read from the sources (no build): fails
-      # for a mounted route the contract lacks and for a `served` operation not mounted; warns for a mounted route
-      # still `planned` (the server may merge before core).
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ostrom-hq/ostrom-core
-          ref: ${{ steps.core.outputs.ref }}
-          ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
-          path: contract-core
-          persist-credentials: false
-      - name: The mounted routes and the ostrom-core contract agree
-        run: |
-          mv contract-core "$RUNNER_TEMP/contract-core"
-          python3 scripts/check-contract.py --self-test
-          python3 scripts/check-contract.py "$RUNNER_TEMP/contract-core"
-          # The same contract as JSON, for the tests that check real answers against its schemas (ContractSchema).
-          yq -o=json "$RUNNER_TEMP/contract-core/api/openapi.yaml" > "$RUNNER_TEMP/openapi.json"
-          echo "OSTROM_CONTRACT_OPENAPI=$RUNNER_TEMP/openapi.json" >> "$GITHUB_ENV"
       - uses: ./.github/actions/build-setup
         with:
           core-deploy-key: ${{ secrets.DEPLOY_KEY_CORE }}
@@ -137,8 +116,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # The OpenAPI document generated from the whole server's routes (ApiDocumentPostgresTest, kernel http/docs).
           OSTROM_OPENAPI_OUT: ${{ runner.temp }}/openapi-generated/openapi.json
-      # The generated document, the contract @ostrom-hq/openapi packs once every module has its catalogue
-      # (ostrom-core docs/decisions/0001, Delivery step 4); until then core's api/openapi.yaml is packed.
+      # The generated document: the API contract, which the api-package job packs as @ostrom-hq/openapi (ostrom-core
+      # docs/decisions/0001). Kept on a failure too, to read what a pull request changes in it.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: success() || failure()
         with:
@@ -164,14 +143,6 @@ jobs:
           python3 scripts/perf-budgets.py --self-test
           python3 scripts/k6-thresholds.py --self-test
           python3 scripts/perf-budgets.py summary . | tee -a "$GITHUB_STEP_SUMMARY"
-      # Every served operation that answers JSON was seen answering by a test, so ContractObserver checked it against
-      # the contract (or contract/unobserved-operations.txt says why not); prints the drifts the tests met.
-      - name: Every served operation's answer was checked against the contract
-        if: success() || failure()
-        run: |
-          python3 scripts/check-contract-coverage.py --self-test
-          python3 scripts/check-contract-coverage.py "$RUNNER_TEMP/openapi.json" contract/unobserved-operations.txt \
-            testing/src/commonMain/kotlin/run/ostrom/server/testing/KnownDrifts.kt .
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -408,13 +379,13 @@ jobs:
       e2e_ref: ${{ inputs.e2e_ref || 'main' }}
     secrets: inherit
 
-  # The API package (CS-02, ostrom-core docs/decisions/0001-generated-openapi.md): the server's OpenAPI document
-  # (openapi.json) and its TypeScript types, built on every run and published from main as @ostrom-hq/openapi
-  # 0.1.<run> once `ci` is green. The web console and the site generate their clients from it. Until the server
-  # generates the document from its own routes (ktor-server-routing-openapi, on the JVM), it is the contract of the
-  # ostrom-core this server pins (gradle/ostrom-core.ref).
+  # The API package (CS-02, ostrom-core docs/decisions/0001-generated-openapi.md): the OpenAPI document the server
+  # generates from its own routes and catalogues (the openapi-generated artifact of ci-jvm, ApiDocumentPostgresTest)
+  # and its TypeScript types, built on every run and published from main as @ostrom-hq/openapi 0.1.<run> once `ci` is
+  # green. The web console and the site generate their clients from it.
   api-package:
     name: API package (@ostrom-hq/openapi)
+    needs: [ci-jvm]
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     timeout-minutes: 10
     runs-on: ubuntu-24.04
@@ -422,22 +393,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: The ostrom-core commit this server pins
-        id: core
-        run: echo "ref=$(tr -d '[:space:]' < gradle/ostrom-core.ref)" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The OpenAPI document the server generated
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          repository: ostrom-hq/ostrom-core
-          ref: ${{ steps.core.outputs.ref }}
-          ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
-          path: contract-core
-          sparse-checkout: api/openapi.yaml
-          sparse-checkout-cone-mode: false
-          persist-credentials: false
-      - name: The OpenAPI document
-        run: |
-          mv contract-core "$RUNNER_TEMP/contract-core"
-          yq -o=json "$RUNNER_TEMP/contract-core/api/openapi.yaml" > api-package/openapi.json
+          name: openapi-generated
+          path: api-package
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
@@ -447,13 +407,13 @@ jobs:
         working-directory: api-package
         env:
           VERSION: 0.1.${{ github.run_number }}
-          CORE: ${{ steps.core.outputs.ref }}
         run: |
+          test -s openapi.json
           npm ci --no-audit --no-fund
           npm run build
           npm version --no-git-tag-version "$VERSION"
           npm pack
-          echo "- API package: @ostrom-hq/openapi $VERSION (contract of ostrom-core $CORE)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- API package: @ostrom-hq/openapi $VERSION (generated by the server)" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: api-package

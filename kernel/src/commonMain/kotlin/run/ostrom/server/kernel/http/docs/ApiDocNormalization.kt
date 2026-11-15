@@ -71,6 +71,27 @@ private fun JsonElement.rewriteReferences(twins: Map<String, String>, nullable: 
 private fun nullableUse(reference: JsonObject) =
     JsonObject(mapOf("anyOf" to JsonArray(listOf(reference, JsonObject(mapOf("type" to JsonPrimitive("null")))))))
 
+/** The component Ktor writes for kotlinx's `JsonElement`, and the one it writes for a nullable use of it. */
+private const val JSON_ELEMENT = "JsonElement"
+private const val NULLABLE_JSON_ELEMENT = "JsonElement?"
+
+/**
+ * `JsonElement` as any JSON value. Ktor describes kotlinx's `JsonElement` (the values of a `JsonObject` answer, a
+ * receipt kept as JSON) as `type: object`, so a client generated from the document would refuse a string, a number
+ * or an array there; its nullable copy `JsonElement?` points to the same component, whose schema allows `null`.
+ */
+internal fun JsonObject.withAnyJsonElement(): JsonObject {
+    val components = this["components"] as? JsonObject ?: JsonObject(emptyMap())
+    val schemas = components["schemas"] as? JsonObject
+    if (schemas == null || schemas.keys.none { it == JSON_ELEMENT || it == NULLABLE_JSON_ELEMENT }) return this
+    val any = JsonObject(
+        mapOf("title" to JsonPrimitive(JSON_ELEMENT), "description" to JsonPrimitive("Any JSON value.")),
+    )
+    val kept = JsonObject(schemas - NULLABLE_JSON_ELEMENT + (JSON_ELEMENT to any))
+    val document = JsonObject(this + ("components" to JsonObject(components + ("schemas" to kept))))
+    return document.rewriteReferences(mapOf(NULLABLE_JSON_ELEMENT to JSON_ELEMENT), emptySet()) as JsonObject
+}
+
 /**
  * Each described operation without the query parameters it does not describe. Ktor copies the query properties of a
  * parent `@Resource` onto its nested resources (`before` and `limit` of `/api/v1/artifacts` onto

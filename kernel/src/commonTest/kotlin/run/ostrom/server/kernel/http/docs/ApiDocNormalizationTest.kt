@@ -7,6 +7,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
+/** What `withAnyJsonElement` writes for a `JsonElement`. */
+private const val ANY = """{"title":"JsonElement","description":"Any JSON value."}"""
+
 class ApiDocNormalizationTest {
     private fun json(text: String): JsonObject = Json.parseToJsonElement(text).jsonObject
 
@@ -16,6 +19,38 @@ class ApiDocNormalizationTest {
         assertEquals(bare, bare.withSingleSchemaPerType())
         val noSchemas = json("""{"components":{"securitySchemes":{}}}""")
         assertEquals(noSchemas, noSchemas.withSingleSchemaPerType())
+    }
+
+    @Test
+    fun aJsonElementIsAnyJsonValueAndItsNullableCopyTheSameComponent() {
+        for (kept in listOf("""{"paths":{}}""", """{"components":{}}""", """{"components":{"schemas":{"A":{}}}}""")) {
+            assertEquals(json(kept), json(kept).withAnyJsonElement())
+        }
+        val document = json(
+            """
+            {"components":{"schemas":{
+              "JsonElement":{"type":"object","title":"JsonElement"},
+              "JsonElement?":{"type":"object","title":"JsonElement?"},
+              "Map":{"type":"object","additionalProperties":{"${'$'}ref":"#/components/schemas/JsonElement"}}
+            }},
+            "paths":{"/x":{"get":{"responses":{"200":{"${'$'}ref":"#/components/schemas/JsonElement?"}}}}}}
+            """,
+        )
+        val expected = json(
+            """
+            {"components":{"schemas":{
+              "JsonElement":$ANY,
+              "Map":{"type":"object","additionalProperties":{"${'$'}ref":"#/components/schemas/JsonElement"}}
+            }},
+            "paths":{"/x":{"get":{"responses":{"200":{"${'$'}ref":"#/components/schemas/JsonElement"}}}}}}
+            """,
+        )
+        assertEquals(expected, document.withAnyJsonElement())
+        val nullableOnly = json("""{"components":{"schemas":{"JsonElement?":{"type":"object"}}}}""")
+        assertEquals(
+            json("""{"components":{"schemas":{"JsonElement":$ANY}}}"""),
+            nullableOnly.withAnyJsonElement(),
+        )
     }
 
     @Test

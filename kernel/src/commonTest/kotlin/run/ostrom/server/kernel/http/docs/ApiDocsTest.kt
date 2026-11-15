@@ -22,6 +22,7 @@ import io.ktor.server.routing.patch
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.route
+import io.ktor.server.routing.routing
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import kotlinx.serialization.Serializable
@@ -39,6 +40,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -72,6 +74,7 @@ class ApiDocsTest {
                 patch("/api/v1/items/{id}") { call.respond(HttpStatusCode.OK) }
                 delete("/api/v1/items/{id}") { call.respond(HttpStatusCode.NoContent) }
                 get("/api/v1/items/extra") { call.respond(HttpStatusCode.OK) }
+                get("/api/v1/items/plain") { call.respond(HttpStatusCode.OK) }
                 route("/api/v1/items/any") { handle { call.respond(HttpStatusCode.OK) } }
             }
             route.post("/webhooks/items") { call.respond(HttpStatusCode.Accepted) }
@@ -91,6 +94,7 @@ class ApiDocsTest {
                     queryNumber("limit", "At most this many notes.")
                     queryFlag("all", "Every note.")
                     organizationHeader()
+                    headerText("Idempotency-Key", "One key per attempt.", required = true)
                 }
                 responses {
                     ok<Item>("The item.")
@@ -114,11 +118,15 @@ class ApiDocsTest {
                 body<Item>("The item.", required = false)
                 responses {
                     empty("Replaced.")
+                    html("A page saying so.")
                     conflict("A newer version exists (`conflict`).")
                     error(HttpStatusCode.Unauthorized, "")
                 }
             }
-            patch("/api/v1/items/{id}") { operationId = "updateItem" }
+            patch("/api/v1/items/{id}") {
+                operationId = "updateItem"
+                responses { anyJson(HttpStatusCode.Forbidden, "Refused, in a provider's shape.") }
+            }
             delete("/api/v1/items/{id}") {
                 operationId = "deleteItem"
                 responses { empty("Deleted.") }
@@ -129,6 +137,7 @@ class ApiDocsTest {
                 responses { empty("Received.", HttpStatusCode.Accepted) }
             }
             get("/api/v1/items/ghost") { operationId = "ghost" }
+            get("/api/v1/items/plain") { operationId = "plainItems" }
             conditionally { get("/api/v1/items/sometimes") { operationId = "sometimes" } }
             delete("/api/v1/items/{id}") { operationId = "deleteItemAgain" }
         }
@@ -191,6 +200,30 @@ class ApiDocsTest {
     private fun JsonObject.response(status: String): String =
         this["responses"]!!.jsonObject[status]!!.jsonObject["description"]!!.jsonPrimitive.content
 
+    // A public operation needs nothing and answers no 401.
+    private fun assertPublicOperations(document: JsonObject) {
+        val webhook = document.operation("/webhooks/items", "post")
+        assertEquals(JsonArray(emptyList()), webhook["security"], "A public operation says it needs nothing")
+        assertFalse("401" in webhook["responses"]!!.jsonObject)
+        assertTrue(webhook["description"]!!.jsonPrimitive.content.endsWith(ApiAccess(true, signed = true).text))
+        val health = document.operation("/api/v1/health", "get")["description"]!!.jsonPrimitive.content
+        assertTrue(health.endsWith("No authentication."), health)
+    }
+
+    // The patch keeps its own 403 body beside the shared one; of two delete entries, the first is used.
+    private fun assertUpdateAndRemove(document: JsonObject) {
+        val update = document.operation("/api/v1/items/{id}", "patch")
+        assertEquals("**Authentication:** ${ApiAccess(false).text}", update["description"]!!.jsonPrimitive.content)
+        val refused = update["responses"]!!.jsonObject["403"]!!.jsonObject
+        assertTrue(refused["description"]!!.jsonPrimitive.content.startsWith("Refused, in a provider's shape. Also: "))
+        val schema = refused["content"]!!.jsonObject["application/json"]!!.jsonObject["schema"]!!.jsonObject
+        assertEquals("object", schema["type"]!!.jsonPrimitive.content, "Its own body, not the error envelope")
+        assertTrue("additionalProperties" in schema, schema.toString())
+        val remove = document.operation("/api/v1/items/{id}", "delete")
+        assertEquals("deleteItem", remove["operationId"]!!.jsonPrimitive.content, "The first of two entries is used")
+        assertEquals("Deleted.", remove.response("204"))
+    }
+
     @Test
     fun theDocumentDescribesEachCataloguedRouteWithItsAuthenticationAndSharedErrors() = docsServer(null) {
         val document = document()
@@ -212,7 +245,11 @@ class ApiDocsTest {
             read["security"],
         )
         val parameters = read["parameters"]!!.jsonArray.map { it.jsonObject["name"]!!.jsonPrimitive.content }.toSet()
-        assertEquals(setOf("id", "view", "limit", "all", "Ostrom-Org"), parameters)
+        assertEquals(setOf("id", "view", "limit", "all", "Ostrom-Org", "Idempotency-Key"), parameters)
+        val headers = read["parameters"]!!.jsonArray.map { it.jsonObject }
+            .filter { it["in"]!!.jsonPrimitive.content == "header" }
+            .associate { it["name"]!!.jsonPrimitive.content to it["required"]?.jsonPrimitive?.content }
+        assertEquals(mapOf("Ostrom-Org" to null, "Idempotency-Key" to "true"), headers, "A required header says so")
         assertEquals(setOf("200", "404", "429", "401", "403", "500", "default"), read["responses"]!!.jsonObject.keys)
         assertEquals("No such item (`not_found`).", read.response("404"))
 
@@ -227,21 +264,16 @@ class ApiDocsTest {
         val replace = document.operation("/api/v1/items/{id}", "put")
         assertEquals("**Authentication:** ${ApiAccess(false).text}", replace["description"]!!.jsonPrimitive.content)
         assertEquals("No credential, or an unknown, expired or revoked one (`unauthorized`).", replace.response("401"))
-        val update = document.operation("/api/v1/items/{id}", "patch")
-        assertEquals("**Authentication:** ${ApiAccess(false).text}", update["description"]!!.jsonPrimitive.content)
-        val remove = document.operation("/api/v1/items/{id}", "delete")
-        assertEquals("deleteItem", remove["operationId"]!!.jsonPrimitive.content, "The first of two entries is used")
-        assertEquals("Deleted.", remove.response("204"))
+        val page = replace["responses"]!!.jsonObject["200"]!!.jsonObject["content"]!!.jsonObject
+        assertEquals(setOf("text/html"), page.keys, "A page, not JSON")
+        assertUpdateAndRemove(document)
 
-        val webhook = document.operation("/webhooks/items", "post")
-        assertEquals(JsonArray(emptyList()), webhook["security"], "A public operation says it needs nothing")
-        assertFalse("401" in webhook["responses"]!!.jsonObject)
-        assertTrue(webhook["description"]!!.jsonPrimitive.content.endsWith(ApiAccess(true, signed = true).text))
-        val health = document.operation("/api/v1/health", "get")["description"]!!.jsonPrimitive.content
-        assertTrue(health.endsWith("No authentication."), health)
+        assertPublicOperations(document)
 
         val paths = document["paths"]!!.jsonObject
         assertNull(document.operation("/api/v1/items/extra", "get")["operationId"], "Kept, undescribed")
+        val plain = document.operation("/api/v1/items/plain", "get")["responses"]!!.jsonObject
+        assertTrue("401" in plain, "An entry without responses still gets the shared ones: $plain")
         val pending = document.operation("/api/v1/pending", "get")["parameters"]!!.jsonArray
         assertEquals("q", pending.single().jsonObject["name"]!!.jsonPrimitive.content, "Its query parameter is kept")
         assertTrue("/api/v1/pending" in paths, "A module without a catalogue still appears")
@@ -269,6 +301,27 @@ class ApiDocsTest {
             ),
             docs.coverage(),
         )
+        val signature = docs.signature().lines()
+        assertTrue("pending catalogue=none entries= routes=GET /api/v1/pending" in signature, "Without a catalogue")
+        val empty = signature.single { it.startsWith("empty ") }
+        assertTrue(empty.endsWith(" entries= routes="), "A catalogue without entries nor routes: $empty")
+        assertFalse("catalogue=none" in empty, empty)
+        val items = signature.single { it.startsWith("items ") }
+        assertTrue("GET /api/v1/items/ghost" in items.substringAfter("entries=").substringBefore(" routes="), items)
+    }
+
+    @Test
+    fun twoCataloguesOfTheSameRoutesHaveTwoSignatures() {
+        fun signatureOf(operations: ApiCatalog.() -> Unit) = ApiDocs().apply {
+            testApplication {
+                application { routing { section(this, "probes", operations) { get("/api/v1/probes") {} } } }
+                startApplication()
+            }
+        }.signature()
+        val one: ApiCatalog.() -> Unit = { get("/api/v1/probes") { operationId = "listProbes" } }
+        val other: ApiCatalog.() -> Unit = { get("/api/v1/probes") { operationId = "readProbes" } }
+        assertEquals(signatureOf(one), signatureOf(one), "The same catalogue, the same signature")
+        assertNotEquals(signatureOf(one), signatureOf(other), "Same keys and routes, another catalogue")
     }
 
     @Test

@@ -193,8 +193,8 @@ class GatesPostgresTest {
             object : GateReceiptSigner {
                 override suspend fun sign(gate: Gate): String = "rcpt_${gate.id}"
 
-                // The receipts module is not loaded here: a stored receipt reads as a signed one, in the contract's
-                // `Receipt` shape (the answers are checked against it, ContractObserver).
+                // The receipts module is not loaded here: a stored receipt reads as a signed one, in the `Receipt`
+                // shape (the answers are checked against the generated document, ContractObserver).
                 override suspend fun read(orgId: Uuid, receiptId: String?) = receiptId?.let { id ->
                     Json.parseToJsonElement(
                         """

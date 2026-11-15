@@ -10,7 +10,7 @@ All repository content (code, comments, docs, commits, pull requests) is in Engl
 
 ## Specific to this repository
 
-Layers `domain`, `infrastructure`, `presentation`, `app`; the graph is checked by `scripts/check-conventions.py`. Every route declares who may call it and has its 401/404 tests. Every new request-path query comes with its EXPLAIN ANALYZE. Short k6 load test on every pull request. Every customer table carries `org_id` under PostgreSQL Row-Level Security, with one end-to-end test per resource proving another organization cannot see or change it; console writes need a user session, agent tokens are scoped to their own session (CONVENTIONS.md section 16). Budgets: start-up < 200 ms, API p95 < 50 ms under nominal load.
+Layers `domain`, `infrastructure`, `presentation`, `app`; the graph is checked by `scripts/check-conventions.py`. Every route declares who may call it and has its 401/404 tests, and its entry in its module's `presentation/<X>Operations.kt`: the API contract is the OpenAPI document the server generates (`GET /api/openapi.json`, CI artifact `openapi-generated`, npm package `@ostrom-hq/openapi`; docs/MODULES.md section 5). Every new request-path query comes with its EXPLAIN ANALYZE. Short k6 load test on every pull request. Every customer table carries `org_id` under PostgreSQL Row-Level Security, with one end-to-end test per resource proving another organization cannot see or change it; console writes need a user session, agent tokens are scoped to their own session (CONVENTIONS.md section 16). Budgets: start-up < 200 ms, API p95 < 50 ms under nominal load.
 
 **A Build never fails on a time in milliseconds** (orchestrator, JOURNAL 02:5x). A bench holds, in `ci.yml`, what no
 runner's load changes: the queries one call sends (`maxQueries`, no N+1), the shape of its plans (no `Seq Scan` on a
@@ -23,7 +23,7 @@ time thresholds. A new bench follows the same split.
 **End-to-end before the merge.** `ci-e2e` (`ci.yml`, through `e2e-journey.yml`) plays ostrom-e2e main against the
 image the pull request builds: the isolation sweep, every scenario but the TeamCode import, and a short k6 of the gates.
 `ci` needs it. So a pull request that changes an answer, adds or removes a route, or changes a limit brings its e2e
-fix first: an ostrom-e2e pull request merged before it, as a contract change goes to ostrom-core first. A new route
+fix first: an ostrom-e2e pull request merged before it, as a new model goes to ostrom-core first. A new route
 needs its sweep case in ostrom-e2e (`PARAM_KINDS` in `scenarios/sweep.e2e.ts`, and the resource organization A makes),
 or E2E-SWEEP-001 fails the server pull request. After the race, a burst guard (E2E-LOAD-012, `load/burst.js`) sends 100 requests
 without a credential then 100 authenticated asks, and checks that the container neither stops nor is OOM-killed and

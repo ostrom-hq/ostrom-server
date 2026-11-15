@@ -12,6 +12,7 @@ import run.ostrom.server.kernel.database.migrateModules
 import run.ostrom.server.kernel.database.requireRowLevelSecurity
 import run.ostrom.server.kernel.http.OstromJson
 import run.ostrom.server.kernel.http.configureHttp
+import run.ostrom.server.kernel.http.docs.ApiDocs
 import run.ostrom.server.kernel.logging.JsonLogger
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.module.ServerModule
@@ -52,8 +53,8 @@ private const val BENCH_JDBC_POOL = 4
  * Flyway's histories through its JDBC pool and initializes the modules. Every request and every repository of the test
  * runs as that role.
  *
- * Every JSON answer of an operation the ostrom-core contract marks `served` is checked against it when CI gives the
- * contract (`OSTROM_CONTRACT_OPENAPI`): the test fails on a drift [KnownDrifts] does not list ([ContractObserver]).
+ * Every JSON answer of a described operation is checked against the server's own generated OpenAPI document, built
+ * once per test process and set of routes: the test fails on any drift ([ContractObserver]).
  *
  * @param modules The modules under test, in dependency order.
  * @param overrides Koin definitions replacing real ones (a fake clock, a fake token authenticator).
@@ -134,7 +135,7 @@ private suspend fun ApplicationTestBuilder.serve(
             )
             // The read benches count and replay the statements of the modules on Exposed too.
             ExposedRecorder.into(driver) {
-                serveWith(serverKoin(kernel, modules, overrides), modules, driver, database, environment, block)
+                serveWith(serverKoin(kernel, modules, overrides), modules, driver, database, block)
             }
         } finally {
             jdbc.close()
@@ -145,21 +146,19 @@ private suspend fun ApplicationTestBuilder.serve(
 }
 
 /** Verifies the migrations, initializes the modules, starts the application on [koin] and runs [block]. */
-@Suppress("LongParameterList") // What the test server runs on: its Koin, modules, pool, database and configuration.
 private suspend fun ApplicationTestBuilder.serveWith(
     koin: Koin,
     modules: List<ServerModule>,
     driver: RecordingDriver,
     database: TestDatabase,
-    environment: ConfigSource,
     block: suspend ApplicationTestBuilder.(TestServer) -> Unit,
 ) {
     try {
         val migrations = koin.get<MigrationRunner>()
         modules.forEach { migrations.verify(it.name, it.migrations) }
         modules.forEach { it.initialize(koin) }
-        // Every answer is checked against the pinned ostrom-core's contract when CI gives it (ContractObserver).
-        val observer = ContractObserver(Contract.from(environment))
+        // Every answer is checked against the server's generated document (ContractObserver).
+        val observer = ContractObserver { Contract.of(koin.get<ApiDocs>()) }
         application {
             install(observer.plugin)
             configureHttp(koin, modules)

@@ -19,7 +19,7 @@ import kotlin.test.assertEquals
 
 /**
  * `GET /api/v1/capabilities` on a real server started as a deployment starts: its answers go through the
- * ContractObserver, which checks them against ostrom-core's contract once the operation is `served`.
+ * ContractObserver, which checks them against the server's generated document.
  */
 class CapabilitiesPostgresTest {
     private class OneTokenAuthenticator : TokenAuthenticator {

@@ -28,10 +28,6 @@ class ContractOperationsTest {
             operations.all.map { it.id },
             "The path's parameters are not an operation; an operation without an id is named by its route",
         )
-        assertEquals(
-            listOf("listThings", "createThing", "getThing", "exportThings", "bare"),
-            operations.served.map { it.id },
-        )
         val list = operations.all.first { it.id == "listThings" }
         assertEquals("GET", list.method)
         assertEquals("/api/v1/things", list.path)
@@ -58,13 +54,6 @@ class ContractOperationsTest {
         assertEquals(JsonObject(emptyMap()), list.query.getValue("tag"), "No schema declared")
         assertEquals(emptyMap(), operations.all.first { it.id == "getThing" }.query, "A path parameter only")
         assertEquals(emptyMap(), operations.all.first { it.id == "createThing" }.query, "None of its own")
-    }
-
-    @Test
-    fun onlyASuccessWithAJsonBodyMustBeObserved() {
-        val answering = operations.all.filter { it.answersJson }.map { it.id }
-        assertEquals(listOf("listThings", "getThing", "DELETE /api/v1/things/{id}"), answering)
-        assertFalse(operations.all.first { it.id == "failing" }.answersJson, "An error's JSON is not a success")
     }
 
     @Test

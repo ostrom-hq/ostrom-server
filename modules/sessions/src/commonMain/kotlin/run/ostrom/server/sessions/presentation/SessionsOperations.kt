@@ -70,7 +70,7 @@ private fun ApiCatalog.sessionReadOperations() {
         summary = "A session segment and its receipt."
         description = "Read by the session's person, an agent token of its launch, and the approvers of its gates " +
             "(read only), who get the segment whole. An owner or an administrator reads another member's session as " +
-            "its record only, as TeamCode's run records (#238): `gates`, `gateAnswers` and `receipt` are absent, " +
+            "its record only, as TeamCode's run records: `gates`, `gateAnswers` and `receipt` are absent, " +
             "`receiptId` names the receipt they do not read. Anyone else gets 404."
         parameters {
             organizationHeader()

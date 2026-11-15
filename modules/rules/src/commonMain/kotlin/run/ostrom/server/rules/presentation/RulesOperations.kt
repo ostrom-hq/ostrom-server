@@ -215,8 +215,8 @@ private fun ApiCatalog.decisionOperations() {
         operationId = "getGatePolicy"
         tag(GATES_TAG)
         summary = "Self-approval policy."
-        description = "`never` for an organization that never chose: a yes always comes from another person " +
-            "(S2-15). `sole-approver`, which lets the gate's only approver approve their own action, marked " +
+        description = "`never` for an organization that never chose: a yes always comes from another person. " +
+            "`sole-approver`, which lets the gate's only approver approve their own action, marked " +
             "self-approved in the receipt, applies only once an owner or an admin sets it. Scope `rules:read` or " +
             "`gates:read`."
         parameters {

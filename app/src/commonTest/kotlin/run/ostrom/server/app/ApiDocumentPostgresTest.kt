@@ -3,37 +3,38 @@ package run.ostrom.server.app
 
 import run.ostrom.server.kernel.http.docs.API_OPENAPI_PATH
 import run.ostrom.server.kernel.http.docs.ApiDocs
+import run.ostrom.server.testing.OpenApiStructure
 import run.ostrom.server.testing.serverTest
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
 /**
  * The OpenAPI document of the whole server (every module, as production mounts them), generated from its routing tree
- * (kernel `http/docs/ApiDocs.kt`), the contract `@ostrom-hq/openapi` publishes. CI writes it where
- * `OSTROM_OPENAPI_OUT` says and keeps it as the `openapi-generated` artifact.
+ * (kernel `http/docs/ApiDocs.kt`): the API contract, which `@ostrom-hq/openapi` publishes (ostrom-core
+ * docs/decisions/0001). As TeamCode's ApiDocsTest, it fails for any API route (`/api/v1` and the incoming webhooks)
+ * without its catalogue entry, for an entry without its route, and for a document a generator would refuse
+ * ([OpenApiStructure]: no dangling `$ref`, every path parameter declared). CI writes it where `OSTROM_OPENAPI_OUT`
+ * says and keeps it as the `openapi-generated` artifact, which the `api-package` job packs.
  */
 class ApiDocumentPostgresTest {
     @Test
-    fun everyCataloguedModuleDescribesEachOfItsRoutesAndNothingElse() = serverTest(serverModules()) { server ->
+    fun everyApiRouteIsDescribedAndTheDocumentIsSound() = serverTest(serverModules()) { server ->
         val response = server.client.get(API_OPENAPI_PATH)
         assertEquals(HttpStatusCode.OK, response.status)
-        System.getenv("OSTROM_OPENAPI_OUT")?.let { path ->
-            File(path).apply { parentFile?.mkdirs() }.writeText(response.bodyAsText())
-        }
+        val text = response.bodyAsText()
+        System.getenv("OSTROM_OPENAPI_OUT")?.let { path -> File(path).apply { parentFile?.mkdirs() }.writeText(text) }
         val coverage = server.koin.get<ApiDocs>().coverage()
-        assertEquals(
-            emptyList(),
-            coverage.undescribed,
-            "Each route of a module with a catalogue has its entry in the module's apiOperations",
-        )
+        assertEquals(emptyMap(), coverage.uncatalogued, "Each module that mounts API routes has its apiOperations")
+        assertEquals(emptyList(), coverage.undescribed, "Each API route has its entry in its module's apiOperations")
         assertEquals(emptyList(), coverage.unrouted, "Each catalogue entry names a route its module mounts")
         assertEquals(emptyList(), coverage.duplicated, "Each route has one entry")
-        // Until every module has its catalogue (ostrom-core docs/decisions/0001, Delivery), the rest is listed.
-        val pending = coverage.uncatalogued.entries.joinToString("\n") { (module, routes) -> "$module: ${routes.size}" }
-        println("Routes without a catalogue yet, by module:\n$pending")
+        val problems = OpenApiStructure.problems(Json.parseToJsonElement(text).jsonObject)
+        assertEquals(emptyList(), problems, problems.joinToString("\n"))
     }
 }

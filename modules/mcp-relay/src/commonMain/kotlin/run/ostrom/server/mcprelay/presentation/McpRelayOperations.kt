@@ -2,6 +2,7 @@
 package run.ostrom.server.mcprelay.presentation
 
 import run.ostrom.server.kernel.http.docs.ApiCatalog
+import run.ostrom.server.kernel.http.docs.anyJson
 import run.ostrom.server.kernel.http.docs.badRequest
 import run.ostrom.server.kernel.http.docs.body
 import run.ostrom.server.kernel.http.docs.conflict
@@ -469,11 +470,19 @@ private fun ApiCatalog.endpointOperations() {
             pathId("server", "The relayed server's name, or `ostrom`, or `ostrom-workflow`.")
         }
         responses {
-            empty("The JSON-RPC answer of the server, as it sent it.", HttpStatusCode.OK)
+            anyJson(HttpStatusCode.OK, "The JSON-RPC answer of the server, as it sent it.")
             empty("Accepted, without a body: a notification or a response sent to the server.", HttpStatusCode.Accepted)
-            badRequest("The message is not JSON, or the protocol version is unsupported (`invalid_request`).")
+            anyJson(
+                HttpStatusCode.BadRequest,
+                "The message is not JSON, or the protocol version is unsupported (`invalid_request`); a batch or a " +
+                    "message that is not JSON-RPC 2.0 is a JSON-RPC error (`code` -32600).",
+            )
             error(HttpStatusCode.Forbidden, "A browser request, which sends an `Origin` (`forbidden`).")
-            notFound("No such server, or one the caller does not reach (`not_found`).")
+            anyJson(
+                HttpStatusCode.NotFound,
+                "No such server, or one the caller does not reach: `not_found`, or a JSON-RPC error (`code` -32600) " +
+                    "once the message is read.",
+            )
         }
     }
     get("/api/v1/mcp/{server}") {
@@ -486,9 +495,7 @@ private fun ApiCatalog.endpointOperations() {
             organizationHeader()
             pathId("server", "The relayed server's name.")
         }
-        responses {
-            empty("No stream is offered.", HttpStatusCode.MethodNotAllowed)
-        }
+        responses { error(HttpStatusCode.MethodNotAllowed, "No stream is offered.") }
     }
     delete("/api/v1/mcp/{server}") {
         operationId = "relayMcpSession"
@@ -499,8 +506,6 @@ private fun ApiCatalog.endpointOperations() {
             organizationHeader()
             pathId("server", "The relayed server's name.")
         }
-        responses {
-            empty("No session is held.", HttpStatusCode.MethodNotAllowed)
-        }
+        responses { error(HttpStatusCode.MethodNotAllowed, "No session is held.") }
     }
 }

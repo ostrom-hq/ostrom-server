@@ -48,8 +48,7 @@ private fun ApiCatalog.budgetOperations() {
         summary = "Budgets."
         description = "Owners and admins only, read by a browser session or a token holding `budgets:read`: one made " +
             "on the console, or the token of `ostrom login` (with or without `--admin`), which holds it for " +
-            "`getMyBudget` (SECURITY-AUDIT S2-03 kept every member's limits off the CLI's tokens until " +
-            "ostrom-server#587; they now read them, never write them, and only for an owner or an admin). A service " +
+            "`getMyBudget`: it reads the limits, never writes them, and only for an owner or an admin. A service " +
             "key holding `team:read` reads them too. A member, whatever the token: 403. A device credential (a " +
             "machine's, not the CLI's token), a key without the scope or an agent token: 403."
         parameters {
@@ -188,7 +187,7 @@ private fun ApiCatalog.poolSizeOperations() {
         tag(SHARING_TAG)
         summary = "The organization's automatic daily budget sized from its shared accounts " +
             "(`capacity.poolsize.v1`)."
-        description = "TeamCode's automatic shared pool size (ADR 0002 step 2), computed on demand from the same " +
+        description = "TeamCode's automatic shared pool size, computed on demand from the same " +
             "data as the job that stores it every ten minutes. Each shared window of each account learns its full " +
             "capacity in API-equivalent (USD millionths at the gateway's prices): a sample pairs two readings of the " +
             "same window period at least five points and one hour apart and divides the cost the gateway settled on " +

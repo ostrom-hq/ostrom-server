@@ -2,6 +2,7 @@
 package run.ostrom.server.artifacts.presentation
 
 import run.ostrom.server.kernel.http.docs.ApiCatalog
+import run.ostrom.server.kernel.http.docs.anyJson
 import run.ostrom.server.kernel.http.docs.badRequest
 import run.ostrom.server.kernel.http.docs.body
 import run.ostrom.server.kernel.http.docs.conflict
@@ -267,7 +268,7 @@ private fun ApiCatalog.mcpOperations() {
             organizationHeader()
         }
         responses {
-            empty("The JSON-RPC answer, a result or an error, as JSON.", HttpStatusCode.OK)
+            anyJson(HttpStatusCode.OK, "The JSON-RPC answer, a result or an error.")
             empty("A notification, accepted.", HttpStatusCode.Accepted)
             error(HttpStatusCode.PayloadTooLarge, "A body past what a full version needs in base64 " +
                 "(`payload_too_large`).")

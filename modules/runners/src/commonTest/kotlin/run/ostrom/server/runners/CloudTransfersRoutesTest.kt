@@ -14,7 +14,6 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.install
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
-import run.ostrom.server.kernel.config.EnvironmentConfigSource
 import run.ostrom.server.testing.Contract
 import run.ostrom.server.testing.ContractObserver
 import org.koin.dsl.koinApplication
@@ -29,6 +28,8 @@ import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.TokenAuthenticator
 import run.ostrom.server.kernel.http.configureHttp
+import run.ostrom.server.kernel.http.docs.ApiCatalog
+import run.ostrom.server.kernel.http.docs.ApiDocs
 import run.ostrom.server.kernel.logging.JsonLogger
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.logging.Logger
@@ -49,6 +50,7 @@ import run.ostrom.server.runners.fakes.SettableClock
 import run.ostrom.server.runners.fakes.SwitchedTransferPolicy
 import run.ostrom.server.runners.fakes.session
 import run.ostrom.server.runners.presentation.CloudTransfersRoutesDependencies
+import run.ostrom.server.runners.presentation.cloudTransferOperations
 import run.ostrom.server.runners.presentation.cloudTransfersRoutes
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -98,6 +100,9 @@ class CloudTransfersRoutesTest {
         override val name: String = "transfers"
         override val koinModule = module {}
 
+        // Its catalogue, so that every answer is checked against the generated document (ContractObserver).
+        override val apiOperations: ApiCatalog.() -> Unit = { cloudTransferOperations() }
+
         override fun routes(route: io.ktor.server.routing.Route, koin: org.koin.core.Koin) {
             val use = CloudTransfersUseCaseImpl(
                 sessions, transfers, recipients, policy, OrgAuditTrail { audit += it }, SettableClock(),
@@ -108,17 +113,19 @@ class CloudTransfersRoutesTest {
     }
 
     private fun run(block: suspend ApplicationTestBuilder.() -> Unit) = testApplication {
+        val docs = ApiDocs()
         val koin = koinApplication {
             modules(
                 module {
                     single<Logger> { JsonLogger(LogLevel.ERROR, sink = {}) }
                     single<Clock> { Clock.System }
                     single<TokenAuthenticator> { authenticator }
+                    single { docs }
                 },
             )
         }.koin
-        // Every answer is checked against the pinned ostrom-core's contract when CI gives it (ContractObserver).
-        val observer = ContractObserver(Contract.from(EnvironmentConfigSource()))
+        // Every answer is checked against the server's generated document (ContractObserver).
+        val observer = ContractObserver { Contract.of(docs) }
         application {
             install(observer.plugin)
             configureHttp(koin, listOf(module))

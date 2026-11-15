@@ -217,8 +217,20 @@ fun Route.orgsRoutes(dependencies: OrgsRoutesDependencies) = with(dependencies) 
 }
 ```
 
-- Every route is under `/api/v1/…` (the prefix of ostrom-core's `api/openapi.yaml`), except `/health`, which the
-  kernel also serves as `/api/v1/health`.
+- Every route is under `/api/v1/…`, except `/health`, which the kernel also serves as `/api/v1/health`, and the
+  incoming webhooks (`/webhooks/…`).
+- **The API contract is the OpenAPI document the server generates** from its routing tree (kernel `http/docs/`,
+  `ktor-server-routing-openapi`, as TeamCode's `ApiDocs.kt`; ostrom-core docs/decisions/0001-generated-openapi.md).
+  Nothing is written by hand: each module's `apiOperations` (`presentation/<X>Operations.kt`) gives every route it
+  mounts its entry (summary, description, `operationId`, tag, parameters, `body<T>()`, `ok<T>()`, errors), and the
+  schemas come from the Kotlin models. The server serves it at `GET /api/openapi.json` (Swagger UI at `/api/docs`;
+  <!-- docs-truth: ignore: the document's own routes are hidden from it, so core's served-routes.txt never lists them -->
+  both kept out of the document they serve);
+  `ApiDocumentPostgresTest` (app) fails for a route without its entry, an entry without its route, and a document a
+  generator would refuse (a dangling `$ref`), and CI keeps it as the `openapi-generated` artifact, which the
+  `api-package` job publishes as `@ostrom-hq/openapi` for the console and the site. Every test server checks its JSON
+  answers against its own document (`ContractObserver`, testing module): an entry's `ok<T>()` is what the route
+  answers. A new route is one pull request here: its model in ostrom-core `api`, the route, its entry, its tests.
 - **Errors are thrown, never answered by hand**: a domain error subclasses `OstromException(ErrorKind.X, "message safe
   for the client")` (`class OrgNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Organization not found.")`).
   The kernel answers `{"error":{"type":"not_found","message":"…"}}` (CONVENTIONS section 3.3) with the kind's status;

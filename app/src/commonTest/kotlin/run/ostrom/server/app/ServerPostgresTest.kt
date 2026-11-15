@@ -23,7 +23,7 @@ class ServerPostgresTest {
         val response = server.client.get("/health")
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals(emptyMap(), response.body<HealthResponse>().checks)
-        // The probes at their contract paths, so that their answers are checked against it (ContractObserver).
+        // The probes at their API paths, so that their answers are checked against the document (ContractObserver).
         assertEquals(HttpStatusCode.OK, server.client.get("/api/v1/health").status)
         val ready = server.client.get("/ready")
         assertEquals(HttpStatusCode.OK, ready.status)

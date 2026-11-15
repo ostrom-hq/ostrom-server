@@ -67,9 +67,16 @@ private val documentJson = Json { encodeDefaults = false }
  *
  * @property owner The kernel or the module's name.
  * @property catalog Its catalogue; null while the module has none yet, so its routes appear undescribed.
+ * @property catalogSource What declared its catalogue (the class of its builder), for [ApiDocs.signature]; null
+ *   without one.
  * @property routes The routes it mounted.
  */
-class ApiDocsSection(val owner: String, val catalog: ApiCatalog?, val routes: List<RoutingNode>)
+class ApiDocsSection(
+    val owner: String,
+    val catalog: ApiCatalog?,
+    val routes: List<RoutingNode>,
+    val catalogSource: String? = null,
+)
 
 /**
  * What the document leaves undescribed.
@@ -111,7 +118,8 @@ class ApiDocs {
         val before = node.getAllRoutes().toSet()
         route.build()
         val catalog = operations?.let { ApiCatalog().apply(it) }
-        sections += ApiDocsSection(owner, catalog, node.getAllRoutes().filter { it !in before })
+        val routes = node.getAllRoutes().filter { it !in before }
+        sections += ApiDocsSection(owner, catalog, routes, operations?.let { it::class.toString() })
     }
 
     /**
@@ -122,6 +130,19 @@ class ApiDocs {
      */
     fun document(): String = synchronized(this) {
         document ?: build().also { document = it }
+    }
+
+    /**
+     * What the document is built from: each part, its catalogue (the source of its entries and their keys) and the
+     * routes it mounted. Two servers with the same signature have the same document, so a test process builds it once
+     * per signature (the testing module's `Contract.of`); a test module that overrides a catalogue gets its own.
+     *
+     * @return One line per part.
+     */
+    fun signature(): String = sections.joinToString("\n") { section ->
+        val entries = section.catalog?.let { catalog -> catalog.operations.joinToString(",") { it.key } }
+        val routes = section.routes.mapNotNull { it.key() }.joinToString(",")
+        "${section.owner} catalogue=${section.catalogSource ?: "none"} entries=${entries.orEmpty()} routes=$routes"
     }
 
     /**
@@ -185,7 +206,8 @@ class ApiDocs {
             },
         )
         val encoded = documentJson.encodeToJsonElement(OpenApiDoc.serializer(), document)
-        return encoded.jsonObject.withSingleSchemaPerType().withoutUndescribedQueryParameters().toString()
+        return encoded.jsonObject.withSingleSchemaPerType().withAnyJsonElement().withoutUndescribedQueryParameters()
+            .toString()
     }
 
     private fun annotate(route: RoutingNode, catalog: ApiCatalog?) {
