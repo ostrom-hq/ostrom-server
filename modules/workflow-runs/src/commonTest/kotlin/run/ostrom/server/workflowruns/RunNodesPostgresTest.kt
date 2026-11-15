@@ -24,6 +24,7 @@ import run.ostrom.server.identity.domain.VerifiedIdentity
 import run.ostrom.server.instance.InstanceModule
 import run.ostrom.server.kernel.auth.OrgPrincipal
 import run.ostrom.server.kernel.auth.OrgRole
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
@@ -42,6 +43,7 @@ import run.ostrom.server.runners.domain.CloudPlanProvider
 import run.ostrom.server.runners.domain.FreeCloudPlanProvider
 import run.ostrom.server.sessions.SessionsModule
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.workflowruns.domain.engine.PlayRunUseCaseImpl
 import run.ostrom.server.workflowruns.domain.engine.TickRunsUseCase
@@ -58,8 +60,7 @@ import run.ostrom.server.workflowruns.domain.usecases.CancelWorkflowRunUseCase
 import run.ostrom.server.workflowruns.domain.usecases.StartWorkflowRunUseCase
 import run.ostrom.server.workflowruns.fakes.FixedClock
 import run.ostrom.server.workflowruns.infrastructure.AutomationsRunWaits
-import run.ostrom.server.workflowruns.infrastructure.StartedRunQueries
-import io.github.smyrgeorge.sqlx4k.Statement
+import run.ostrom.server.workflowruns.infrastructure.childOf
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import org.koin.dsl.module
@@ -289,11 +290,9 @@ class RunNodesPostgresTest {
         // The child of a visit is found through its index; with statistics, as the other plans are read: without them,
         // the planner may take any index that starts with the organization.
         server.database.owner.execute("ANALYZE workflow_runs_started").getOrThrow()
-        val plan = server.driver.withOrganization(team.org.id) { tx ->
-            tx.execute("SET LOCAL enable_seqscan = off").getOrThrow()
-            val explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) ${StartedRunQueries.CHILD}")
-                .bind("org_id", team.org.id).bind("parent_run_id", run.id).bind("parent_seq", 1)
-            tx.fetchAll(explain).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
+        val plan = server.koin.get<JdbcDatabase>().withOrganization(team.org.id) {
+            exec("SET LOCAL enable_seqscan = off")
+            plan { childOf(team.org.id, run.id, 1).query }.also { rollback() }
         }
         println("-- child of a visit\n$plan")
         assertTrue("workflow_runs_started_child" in plan, plan)

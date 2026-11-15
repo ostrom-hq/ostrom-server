@@ -12,12 +12,21 @@ import run.ostrom.server.gates.domain.models.GateActor
 import run.ostrom.server.gates.domain.services.GateActorResolver
 import run.ostrom.server.gates.presentation.GateScopes
 import run.ostrom.server.identity.IdentityModule
+import run.ostrom.server.identity.domain.AuditEntry
+import run.ostrom.server.identity.domain.AuditEvent
+import run.ostrom.server.identity.domain.AuditIntegrity
+import run.ostrom.server.identity.domain.AuditLog
+import run.ostrom.server.identity.domain.AuditRepository
+import run.ostrom.server.identity.domain.AuditVerifier
+import run.ostrom.server.identity.domain.OrgAuditQuery
+import run.ostrom.server.identity.infrastructure.TransactionalAuditLog
 import run.ostrom.server.instance.InstanceModule
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.auth.PrincipalChannel
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.TokenAuthenticator
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.kernel.http.OstromJson
 import run.ostrom.server.launches.LaunchesModule
@@ -26,6 +35,7 @@ import run.ostrom.server.receipts.ReceiptsModule
 import run.ostrom.server.runners.RunnersModule
 import run.ostrom.server.sessions.SessionsModule
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.workflowruns.domain.repositories.RunsQuery
 import run.ostrom.server.workflowruns.domain.models.RunLimitException
@@ -36,8 +46,15 @@ import run.ostrom.server.workflowruns.domain.usecases.MAX_UNFINISHED
 import run.ostrom.server.workflowruns.domain.usecases.MemberStart
 import run.ostrom.server.workflowruns.domain.usecases.StartWorkflowRunUseCase
 import run.ostrom.server.workflowruns.domain.usecases.StartedRun
-import run.ostrom.server.workflowruns.infrastructure.StartedRunQueries
-import io.github.smyrgeorge.sqlx4k.Statement
+import run.ostrom.server.workflowruns.domain.models.RunAudit
+import run.ostrom.server.workflowruns.domain.models.RunChange
+import run.ostrom.server.workflowruns.domain.models.RunGraph
+import run.ostrom.server.workflowruns.domain.repositories.KeyedAdd
+import run.ostrom.server.workflowruns.infrastructure.PostgresRunEngineRepository
+import run.ostrom.server.workflowruns.infrastructure.PostgresStartedRunsRepository
+import run.ostrom.server.workflowruns.infrastructure.keyedRun
+import run.ostrom.server.workflowruns.infrastructure.runsPage
+import run.ostrom.server.workflowruns.infrastructure.unfinishedRuns
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -386,24 +403,18 @@ class StartRunPostgresTest {
         server.database.owner.execute("ANALYZE workflow_runs_started").getOrThrow()
         // Each page is read in its order from an index: with sorting priced out, a page that needs a sort says so.
         val plans = listOf(
-            Triple("runs of the organization", StartedRunQueries.page(RunsQuery()), "workflow_runs_started_at"),
-            Triple("runs of a workflow", StartedRunQueries.page(RunsQuery(workflowId = SHIP)), "_workflow"),
-            Triple("runs by status", StartedRunQueries.page(RunsQuery(status = RunStatus.QUEUED)), "_status"),
-            Triple("runs before a cursor", StartedRunQueries.page(RunsQuery(before = "wfr_x")), "pkey"),
-            Triple("runs of a starter", StartedRunQueries.page(RunsQuery(startedBy = "lead0")), "_by"),
+            Triple("runs of the organization", RunsQuery(), "workflow_runs_started_at"),
+            Triple("runs of a workflow", RunsQuery(workflowId = SHIP), "_workflow"),
+            Triple("runs by status", RunsQuery(status = RunStatus.QUEUED), "_status"),
+            Triple("runs before a cursor", RunsQuery(before = "wfr_x"), "pkey"),
+            Triple("runs of a starter", RunsQuery(startedBy = "lead0"), "_by"),
         )
-        plans.forEach { (name, sql, index) ->
-            val plan = server.driver.withOrganization(orgA) { tx ->
-                tx.execute("SET LOCAL enable_seqscan = off").getOrThrow()
-                tx.execute("SET LOCAL enable_bitmapscan = off").getOrThrow()
-                tx.execute("SET LOCAL enable_sort = off").getOrThrow()
-                var explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org_id", orgA)
-                    .bind("limit", PAGE)
-                if (":workflow_id" in sql) explain = explain.bind("workflow_id", SHIP)
-                if (":status" in sql) explain = explain.bind("status", "queued")
-                if (":before" in sql) explain = explain.bind("before", "wfr_x")
-                if (":started_by" in sql) explain = explain.bind("started_by", "lead0")
-                tx.fetchAll(explain).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
+        plans.forEach { (name, query, index) ->
+            val plan = server.koin.get<JdbcDatabase>().withOrganization(orgA) {
+                exec("SET LOCAL enable_seqscan = off")
+                exec("SET LOCAL enable_bitmapscan = off")
+                exec("SET LOCAL enable_sort = off")
+                plan { runsPage(orgA, query).query }.also { rollback() }
             }
             println("-- $name\n$plan")
             assertTrue("Index" in plan && index in plan && "Sort" !in plan, "$name\n$plan")
@@ -432,21 +443,77 @@ class StartRunPostgresTest {
         assertFailsWith<RunWorkflowNotFoundException> { start.startFor(member("k-b", org = orgB)) }
         server.database.owner.execute("ANALYZE workflow_runs_started").getOrThrow()
         val plans = listOf(
-            "the run of a key" to StartedRunQueries.KEYED,
-            "the unfinished runs of a starter" to StartedRunQueries.UNFINISHED,
+            "the run of a key" to { keyedRun(orgA, "bob", "k1").query },
+            "the unfinished runs of a starter" to { unfinishedRuns(orgA, "bob", MAX_UNFINISHED) },
         )
-        for ((name, sql) in plans) {
-            val plan = server.driver.withOrganization(orgA) { tx ->
-                tx.execute("SET LOCAL enable_seqscan = off").getOrThrow()
-                var explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org_id", orgA)
-                    .bind("started_by", "bob")
-                explain = if (":key" in sql) explain.bind("key", "k1") else explain.bind("limit", MAX_UNFINISHED)
-                tx.fetchAll(explain).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
+        for ((name, query) in plans) {
+            val plan = server.koin.get<JdbcDatabase>().withOrganization(orgA) {
+                exec("SET LOCAL enable_seqscan = off")
+                plan { query() }.also { rollback() }
             }
             println("-- $name\n$plan")
             assertTrue("workflow_runs_started_key" in plan || "workflow_runs_started_unfinished" in plan, plan)
             assertFalse("Seq Scan" in plan, plan)
         }
+    }
+
+    // The audit lines are signed between two transactions, on the chain's head: when another writer appends meanwhile,
+    // the transaction that stores the run is rolled back and the lines are signed again on the new head. The run is
+    // stored once, its line once, the chain stays one verified chain.
+    @Test
+    fun aChangeWhoseAuditHeadMovedWhileItWasSignedIsSignedAgainAndWrittenOnce() = runsTest { server ->
+        val log = server.koin.get<AuditLog>()
+        var races = 0
+        val racing = TransactionalAuditLog(
+            object : AuditLog by log {
+                override fun sign(entry: AuditEntry): suspend (previousHash: String?, sequence: Long) -> AuditEvent {
+                    val build = log.sign(entry)
+                    return { previousHash, sequence ->
+                        if (races > 0) log.record(AuditEntry(orgA, null, "meanwhile", "t", "${races--}"))
+                        build(previousHash, sequence)
+                    }
+                }
+            },
+        )
+        val database = server.koin.get<JdbcDatabase>()
+        val runs = PostgresStartedRunsRepository(database, racing)
+        val engine = PostgresRunEngineRepository(database, racing)
+        val now = Instant.parse("2026-11-03T10:00:00Z")
+        val run = WorkflowRun(
+            id = "wfr_race", workflowId = SHIP, workflowName = "Ship", workflowVersion = 1, status = RunStatus.QUEUED,
+            startedBy = "bob", source = "manual", inputs = emptyMap(), startedAt = now.toString(),
+        )
+        races = 1
+        runs.add(orgA, run, now, RunGraph(), RunAudit("started"))
+        val child = run.copy(id = "wfr_race_child", parentRunId = run.id)
+        races = 1
+        assertEquals(child.id, runs.addChild(orgA, child, 1, RunGraph(), RunAudit("child_started")))
+        races = 1
+        val keyed = run.copy(id = "wfr_race_keyed")
+        assertEquals(KeyedAdd.Added(keyed), runs.addKeyed(orgA, keyed, now, RunGraph(), RunAudit("started"), "k", 5))
+        val next = run.copy(status = RunStatus.RUNNING)
+        races = 1
+        assertTrue(engine.write(orgA, RunChange(run, next, null, audit = listOf(RunAudit("a"), RunAudit("b")))))
+        assertTrue(engine.write(orgA, RunChange(next, run, null)), "A change with no audit line")
+        assertFalse(engine.write(orgA, RunChange(next, run, null)), "Another change came first")
+        assertEquals(run, runs.find(orgA, run.id))
+
+        val lines = server.koin.get<AuditRepository>().listOrg(orgA, OrgAuditQuery(limit = 100))
+        assertEquals(
+            listOf("started", "child_started", "started", "a", "b").sorted(),
+            lines.map { it.event.entry.action }.filter { it != "meanwhile" }.map { it.removePrefix("workflow_run.") }
+                .sorted(),
+        )
+        assertEquals(4, lines.count { it.event.entry.action == "meanwhile" })
+
+        // A chain that moves at every signature: the change fails loudly, nothing of it written.
+        races = 100
+        val never = run.copy(id = "wfr_never")
+        assertFailsWith<IllegalStateException> { runs.add(orgA, never, now, RunGraph(), RunAudit("x")) }
+        assertEquals(92, races)
+        assertEquals(null, runs.find(orgA, never.id))
+        val verifier = server.koin.get<AuditVerifier>()
+        assertTrue(lines.all { verifier.integrity(it) == AuditIntegrity.VERIFIED })
     }
 
     private fun roleOf(id: String): OrgRole = when (id) {

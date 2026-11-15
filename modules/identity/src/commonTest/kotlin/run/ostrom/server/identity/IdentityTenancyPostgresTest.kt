@@ -19,6 +19,7 @@ import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.audit.TransactionalOrgAuditTrail
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.PrincipalKind
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.PurgeDateRefusedException
 import run.ostrom.server.kernel.database.TENANT_ROLE
 import run.ostrom.server.kernel.database.inOrg
@@ -36,6 +37,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
+import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -274,6 +276,40 @@ class IdentityTenancyPostgresTest {
         assertEquals(listOf("late", "meanwhile", "first"), lines.map { it.event.entry.action })
         val verifier = s.koin.get<AuditVerifier>()
         assertEquals(List(3) { AuditIntegrity.VERIFIED }, lines.map { verifier.integrity(it) })
+    }
+
+    // A module on Exposed signs between two transactions, then appends the signed lines in its own, on the head it
+    // read: another writer's append in between makes the append refuse, for the caller to sign again.
+    @Test
+    fun linesSignedBeforeATransactionAreAppendedOnlyOnTheirHead() = serverTest(listOf(IdentityModule)) { s ->
+        val log = s.koin.get<AuditLog>()
+        val chain = s.koin.get<TransactionalAuditLog>()
+        val database = s.koin.get<JdbcDatabase>()
+        fun entry(n: Int) = AuditEntry(orgA, null, "j$n", "t", "$n")
+        assertNull(database.inOrg(orgA) { chain.head(this, orgA) }, "An empty chain has no head")
+
+        val first = chain.sign(null, listOf(entry(1), entry(2)))
+        assertEquals(listOf(1L, 2L), first.map { it.sequence })
+        assertEquals(first[0].hash, first[1].previousHash, "Chained one after the other")
+        assertTrue(database.inOrg(orgA) { chain.append(this, orgA, null, first) })
+        val head = assertNotNull(database.inOrg(orgA) { chain.head(this, orgA) })
+        assertEquals(2L to first[1].hash, head.sequence to head.hash)
+
+        val stale = chain.sign(head, listOf(entry(3)))
+        log.record(entry(4))
+        assertFalse(database.inOrg(orgA) { chain.append(this, orgA, head, stale) }, "The head moved")
+        assertFalse(database.inOrg(orgA) { chain.append(this, orgA, null, first) }, "A chain that is no longer empty")
+        val moved = assertNotNull(database.inOrg(orgA) { chain.head(this, orgA) })
+        val again = chain.sign(moved, listOf(entry(5)))
+        assertTrue(database.inOrg(orgA) { chain.append(this, orgA, moved, again) })
+        assertFailsWith<IllegalArgumentException>("Only an organization's action") {
+            chain.sign(null, listOf(AuditEntry(null, null, "account", "t", "6")))
+        }
+
+        val lines = s.koin.get<AuditRepository>().listOrg(orgA, OrgAuditQuery(limit = 10))
+        assertEquals(listOf("j5", "j4", "j2", "j1"), lines.map { it.event.entry.action })
+        val verifier = s.koin.get<AuditVerifier>()
+        assertEquals(List(4) { AuditIntegrity.VERIFIED }, lines.map { verifier.integrity(it) })
     }
 
     @Test
