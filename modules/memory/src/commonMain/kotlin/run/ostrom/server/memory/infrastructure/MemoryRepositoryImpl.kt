@@ -20,7 +20,6 @@ import run.ostrom.server.memory.domain.NewMemory
 import org.jetbrains.exposed.v1.core.plus
 import org.jetbrains.exposed.v1.core.Op
 import org.jetbrains.exposed.v1.core.ResultRow
-import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greater
@@ -37,7 +36,6 @@ import org.jetbrains.exposed.v1.jdbc.update
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
-
 
 /**
  * [MemoryRepository] on PostgreSQL ([MemoryMigrations]), TeamCode's `SqlMemoryStore`. Visibility is in every query: an

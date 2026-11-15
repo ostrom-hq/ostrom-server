@@ -101,7 +101,8 @@ internal fun JdbcTransaction.proposalsOf(orgId: Uuid, author: String): Long {
 /**
  * The older entry becomes `superseded` by the newer one, still active, once: a concurrent change loses on the older
  * entry's status and version.
- * The newer entry names it (`supersedes_id`) unless it already names another. Nothing is deleted.
+ * The newer entry names it (`supersedes_id`) unless it already names another. Nothing is deleted. Two writes: the
+ * caller's transaction makes them one (the second only when the first changed a row).
  *
  * @return The older entry's id when this call superseded it; nothing otherwise.
  */
