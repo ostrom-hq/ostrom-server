@@ -6,13 +6,18 @@ import run.ostrom.server.automations.domain.ImportAutomationsUseCase
 import run.ostrom.server.compiler.domain.usecases.ImportWorkflowsUseCase
 import run.ostrom.server.compiler.domain.usecases.WorkflowSettingsUseCase
 import run.ostrom.server.identity.domain.AuditLog
+import run.ostrom.server.hooks.domain.PublishHookVersionUseCase
 import run.ostrom.server.importer.domain.AccountImporter
+import run.ostrom.server.importer.domain.CatalogPorts
+import run.ostrom.server.importer.domain.EnvironmentPorts
+import run.ostrom.server.importer.domain.HookPorts
 import run.ostrom.server.importer.domain.ImportProvenanceRepository
 import run.ostrom.server.importer.domain.ImportTeamCodeUseCase
 import run.ostrom.server.importer.domain.ImportTeamCodeUseCaseImpl
 import run.ostrom.server.importer.domain.McpPorts
 import run.ostrom.server.importer.domain.SecretPorts
 import run.ostrom.server.importer.domain.SharedAccountImporter
+import run.ostrom.server.importer.domain.SkillPorts
 import run.ostrom.server.importer.domain.TeamCodeProcessImporter
 import run.ostrom.server.importer.domain.workflowEditorsOf
 import run.ostrom.server.importer.infrastructure.IdentityImportAudit
@@ -28,6 +33,8 @@ import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.secrets.domain.CallerResolver
 import run.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
 import run.ostrom.server.sharing.domain.ShareAccountUseCase
+import run.ostrom.server.skills.domain.PublishSkillVersionUseCase
+import run.ostrom.server.skills.infrastructure.JdkSha256
 import io.ktor.server.routing.Route
 import org.koin.core.Koin
 import org.koin.core.module.Module
@@ -35,8 +42,9 @@ import org.koin.dsl.module
 
 /**
  * The import module: `POST /api/v1/import/teamcode` takes what `ostrom import teamcode` read from TeamCode and writes
- * it through the secrets, MCP relay and sharing modules, and the workflows and automations through the compiler's and
- * the automations' import use cases ([TeamCodeProcessImporter]), when those modules are installed. Its one table
+ * it through the secrets (with its environment variants), MCP relay, sharing, skills and hooks modules, and the
+ * workflows and automations through the compiler's and the automations' import use cases ([TeamCodeProcessImporter]),
+ * when those modules are installed. Its one table
  * records what it created, so a later run updates that and leaves alone what an admin created by hand. Shared
  * accounts go through the sharing module's use cases ([SharedAccountImporter]) when it is installed, or through a
  * bound [AccountImporter]. The cutover run is recorded in
@@ -63,7 +71,12 @@ object ImportModule : ServerModule {
                 workflowEditorsOf(getOrNull<WorkflowSettingsUseCase>()),
                 getOrNull<MemberLogins>(),
             )
-            ImportTeamCodeUseCaseImpl(get(), get(), get(), members, accounts, audit, processes)
+            val catalog = CatalogPorts(
+                environment = EnvironmentPorts(get(), get(), get(), get()),
+                skills = getOrNull<PublishSkillVersionUseCase>()?.let { SkillPorts(it, get(), JdkSha256()) },
+                hooks = getOrNull<PublishHookVersionUseCase>()?.let { HookPorts(it, get(), JdkSha256()) },
+            )
+            ImportTeamCodeUseCaseImpl(get(), get(), get(), members, accounts, audit, processes, catalog)
         }
         single { ImportRoutesDependencies(getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get()), get()) }
     }

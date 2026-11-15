@@ -258,6 +258,11 @@ private const val REDACTED = "<redacted>"
  * @property workflowEditors Who edits them.
  * @property automations TeamCode's automations, without their secrets.
  * @property profiles The cloud profiles the workflows and automations name.
+ * @property skills TeamCode's skills.
+ * @property hooks TeamCode's hooks.
+ * @property variables TeamCode's environment variants, values in clear.
+ * @property variableAssignments Their assignments, members' values in clear.
+ * @property variableExclusions The members excluded from a variable.
  * @property memberMap TeamCode member id to Ostrom member id.
  */
 @Serializable
@@ -270,14 +275,19 @@ data class TeamCodeImportRequest(
     val workflowEditors: TeamCodeWorkflowEditorsDto? = null,
     val automations: List<TeamCodeAutomationDto> = emptyList(),
     val profiles: List<TeamCodeProfileDto> = emptyList(),
+    val skills: List<TeamCodeSkillDto> = emptyList(),
+    val hooks: List<TeamCodeHookDto> = emptyList(),
+    val variables: List<TeamCodeVariableDto> = emptyList(),
+    val variableAssignments: List<TeamCodeVariableAssignmentDto> = emptyList(),
+    val variableExclusions: List<TeamCodeVariableExclusionDto> = emptyList(),
     val memberMap: Map<String, String> = emptyMap(),
 )
 
 /**
  * One line of the report.
  *
- * @property kind `setting`, `secret`, `server`, `policy`, `assignment`, `account`, `workflow`, `editors` or
- *   `automation`.
+ * @property kind `setting`, `secret`, `server`, `policy`, `assignment`, `account`, `workflow`, `editors`,
+ *   `automation`, `skill`, `hook`, `variable`, `decision` or `exclusion`.
  * @property name Its name.
  * @property action `planned`, `created`, `updated`, `unchanged`, `skipped` or `revive_at_cutover` (a shared account
  *   left waiting for a reconnection until the cutover run).

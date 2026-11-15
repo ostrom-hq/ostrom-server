@@ -15,7 +15,7 @@ enum class ImportKind {
     /** A denied tool, as an argument policy. */
     POLICY,
 
-    /** A member's assignment to a server. */
+    /** A member's assignment to a server, or their selection of an environment variant. */
     ASSIGNMENT,
 
     /** A shared subscription account. */
@@ -29,6 +29,21 @@ enum class ImportKind {
 
     /** An automation (`<owner>/<name>`). */
     AUTOMATION,
+
+    /** A skill of the catalog. */
+    SKILL,
+
+    /** A hook of the catalog. */
+    HOOK,
+
+    /** An environment variant (`<VARIABLE>/<name>`). */
+    VARIABLE,
+
+    /** A member's decision on a skill or a hook (`<name>/<member>`). */
+    DECISION,
+
+    /** A member excluded from an environment variable (`<VARIABLE>/<member>`). */
+    EXCLUSION,
 }
 
 /** What the import did with an item. */

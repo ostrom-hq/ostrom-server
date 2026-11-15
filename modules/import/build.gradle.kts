@@ -16,9 +16,12 @@ kotlin {
             implementation(project(":modules:identity"))
             implementation(project(":modules:compiler"))
             implementation(project(":modules:automations"))
+            implementation(project(":modules:skills"))
+            implementation(project(":modules:hooks"))
         }
         commonTest.dependencies {
             implementation(project(":testing"))
+            implementation(project(":modules:runners"))
             implementation(libs.ktor.client.mock)
         }
     }

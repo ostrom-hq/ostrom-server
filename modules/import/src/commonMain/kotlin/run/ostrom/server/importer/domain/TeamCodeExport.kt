@@ -14,6 +14,7 @@ import kotlin.time.Instant
  * @property assignments Which member uses which variant, with their own credential.
  * @property accounts The team's shared subscription accounts.
  * @property processes The team's workflows, their editing rule and its automations.
+ * @property catalog The team's skills, hooks and environment variants.
  */
 data class TeamCodeExport(
     val members: List<TeamCodeMember> = emptyList(),
@@ -21,6 +22,7 @@ data class TeamCodeExport(
     val assignments: List<TeamCodeAssignment> = emptyList(),
     val accounts: List<TeamCodeAccount> = emptyList(),
     val processes: TeamCodeProcesses = TeamCodeProcesses(),
+    val catalog: TeamCodeCatalog = TeamCodeCatalog(),
 )
 
 /**

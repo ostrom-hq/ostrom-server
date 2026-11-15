@@ -5,20 +5,31 @@ import run.ostrom.server.importer.domain.ImportAction
 import run.ostrom.server.importer.domain.ImportHandover
 import run.ostrom.server.importer.domain.ImportReport
 import run.ostrom.server.importer.domain.TeamCodeAccount
+import run.ostrom.server.importer.domain.TeamCodeArtifactFile
 import run.ostrom.server.importer.domain.TeamCodeAssignment
 import run.ostrom.server.importer.domain.TeamCodeAutomation
+import run.ostrom.server.importer.domain.TeamCodeCatalog
+import run.ostrom.server.importer.domain.TeamCodeDecision
 import run.ostrom.server.importer.domain.TeamCodeExport
+import run.ostrom.server.importer.domain.TeamCodeHook
+import run.ostrom.server.importer.domain.TeamCodeHookVersion
 import run.ostrom.server.importer.domain.TeamCodeMcpServer
 import run.ostrom.server.importer.domain.TeamCodeMember
 import run.ostrom.server.importer.domain.TeamCodeProcesses
 import run.ostrom.server.importer.domain.TeamCodeProfile
+import run.ostrom.server.importer.domain.TeamCodeSkill
+import run.ostrom.server.importer.domain.TeamCodeSkillVersion
 import run.ostrom.server.importer.domain.TeamCodeStdio
+import run.ostrom.server.importer.domain.TeamCodeVariable
+import run.ostrom.server.importer.domain.TeamCodeVariableAssignment
+import run.ostrom.server.importer.domain.TeamCodeVariableExclusion
 import run.ostrom.server.importer.domain.TeamCodeWorkflow
 import run.ostrom.server.importer.domain.TeamCodeWorkflowEditors
 import run.ostrom.server.importer.domain.ToolMode
 import run.ostrom.server.mcprelay.domain.StdioLauncher
 import run.ostrom.server.secrets.domain.SecretValue
 import io.ktor.http.HttpHeaders
+import kotlin.io.encoding.Base64
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -36,6 +47,71 @@ fun TeamCodeImportRequest.toExport() = TeamCodeExport(
         automations = automations.map { it.toDomain() },
         profiles = profiles.map { TeamCodeProfile(it.id, it.name, it.repositories, it.setupCommands) },
     ),
+    catalog = TeamCodeCatalog(
+        skills = skills.map { it.toDomain() },
+        hooks = hooks.map { it.toDomain() },
+        variables = variables.map { it.toDomain() },
+        variableAssignments = variableAssignments.map {
+            TeamCodeVariableAssignment(it.memberId, it.variantId, it.memberValue?.let(::SecretValue))
+        },
+        variableExclusions = variableExclusions.map { TeamCodeVariableExclusion(it.memberId, it.variable) },
+    ),
+)
+
+private fun TeamCodeSkillDto.toDomain() = TeamCodeSkill(
+    id = id,
+    name = name,
+    ownerId = ownerId,
+    allMembers = allMembers,
+    retired = retired,
+    pinnedVersion = pinnedVersion,
+    versions = versions.map { version -> TeamCodeSkillVersion(version.version, version.files.map { it.toDomain() }) },
+    omittedVersions = omittedVersions,
+    decisions = decisions.map { TeamCodeDecision(it.memberId, it.decision) },
+)
+
+private fun TeamCodeHookDto.toDomain() = TeamCodeHook(
+    id = id,
+    name = name,
+    allMembers = allMembers,
+    pinnedVersion = pinnedVersion,
+    versions = versions.map { version ->
+        TeamCodeHookVersion(
+            version.version,
+            version.events,
+            version.matcher,
+            version.command,
+            version.timeoutSeconds,
+            version.files.map { it.toDomain() },
+        )
+    },
+    omittedVersions = omittedVersions,
+    decisions = decisions.map { TeamCodeDecision(it.memberId, it.decision) },
+)
+
+private fun TeamCodeArtifactFileDto.toDomain() = TeamCodeArtifactFile(
+    path,
+    mode,
+    try {
+        Base64.decode(content)
+    } catch (_: IllegalArgumentException) {
+        throw InvalidImportException("The content of $path is not base64.")
+    },
+)
+
+private fun TeamCodeVariableDto.toDomain() = TeamCodeVariable(
+    id = id,
+    variable = variable,
+    name = name,
+    perMember = when {
+        binding == "shared" -> false
+        // A per-member variant's values are the members': one on the variant would be rewritten at every run.
+        binding == "perMember" && value == null -> true
+        binding == "perMember" -> throw InvalidImportException("The per-member variant $variable/$name has a value.")
+        else -> throw InvalidImportException("The binding of $variable/$name is neither shared nor perMember.")
+    },
+    ownerId = ownerId,
+    value = value?.let(::SecretValue),
 )
 
 private fun TeamCodeAutomationDto.toDomain() = TeamCodeAutomation(

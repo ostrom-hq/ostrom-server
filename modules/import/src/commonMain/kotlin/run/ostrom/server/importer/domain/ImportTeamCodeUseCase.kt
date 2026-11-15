@@ -49,6 +49,19 @@ interface ImportTeamCodeUseCase {
     ): ImportReport
 }
 
+/**
+ * The modules the import writes skills, hooks and environment variants through.
+ *
+ * @property environment The environment variants of the secrets module.
+ * @property skills The skill catalog, or null when this server does not install it.
+ * @property hooks The hook catalog, or null when this server does not install it.
+ */
+data class CatalogPorts(
+    val environment: EnvironmentPorts,
+    val skills: SkillPorts? = null,
+    val hooks: HookPorts? = null,
+)
+
 /** The cutover hands the accounts over to Ostrom: it cannot leave them access-only too. */
 class AccessOnlyCutoverException :
     OstromException(
@@ -118,7 +131,8 @@ private class NoSharingException :
  * @param accounts The sharing module's account import, or null when it is not installed.
  * @param audit The audit log of a cutover run, or null when none is installed (a cutover is then refused, as it is
  *   without [accounts]).
- * @param processes Imports the workflows, their editing rule and the automations, after everything else.
+ * @param processes Imports the workflows, their editing rule and the automations.
+ * @param catalog The skill and hook catalogs and the environment the import writes through, last.
  */
 @Suppress("LongParameterList") // One port per module the import writes through.
 class ImportTeamCodeUseCaseImpl(
@@ -129,6 +143,7 @@ class ImportTeamCodeUseCaseImpl(
     private val accounts: AccountImporter?,
     private val audit: ImportAudit?,
     private val processes: TeamCodeProcessImporter = TeamCodeProcessImporter(null, null, null, null),
+    private val catalog: CatalogPorts,
 ) : ImportTeamCodeUseCase {
     override suspend fun invoke(
         caller: Caller,
@@ -161,7 +176,23 @@ class ImportTeamCodeUseCaseImpl(
         importAccounts(caller, export.accounts, AccountRunMode(dryRun, cutoverBy != null, accessOnly), items)
         val mode = ProcessRunMode(dryRun, cutover = cutoverBy != null, principal)
         processes.import(caller, export.processes, export.members, memberMap, mode, items)
+        val catalogRun = CatalogRun(
+            caller,
+            principal,
+            memberMap,
+            export.members.associate { it.id to it.username },
+            dryRun,
+            records.groupBy({ it.kind }, { it.sourceKey to it.ostromId }).mapValues { (_, keys) -> keys.toMap() },
+            record,
+        )
+        importCatalog(catalogRun, export.catalog, items)
         return ImportReport(items)
+    }
+
+    /** The environment variants, then the skills and the hooks (skipped with the reason without their module). */
+    private suspend fun importCatalog(run: CatalogRun, teamCode: TeamCodeCatalog, items: MutableList<ImportItem>) {
+        TeamCodeEnvironmentImporter(catalog.environment).import(run, teamCode, items)
+        TeamCodeCatalogImporter(catalog.skills, catalog.hooks).import(run, teamCode, items)
     }
 
     /**
